@@ -1,2 +1,4 @@
 # Environment variables
+supabase
+supabase/*
 .env 
