@@ -1,4 +1,4 @@
-Got it! Here’s a **detailed implementation plan** that expands on each step of the process, explaining exactly what to do, how to structure the data, how to process it, and how to store it. I’ll also provide specific instructions on how to test everything locally and deploy it to **the host**, with as much detail as possible.
+Got it! Here's a **detailed implementation plan** that expands on each step of the process, explaining exactly what to do, how to structure the data, how to process it, and how to store it. I'll also provide specific instructions on how to test everything locally and deploy it to **the host**, with as much detail as possible.
 
 ---
 
@@ -11,6 +11,7 @@ Got it! Here’s a **detailed implementation plan** that expands on each step of
 This section will outline the steps for discovering facts, scraping web content, and categorizing it for later analysis.
 
 #### **1.1. Fact Discovery and Web Scraping**
+Very similar to https://python.langchain.com/v0.1/docs/use_cases/web_scraping/
 - **Goal**: Fetch content from websites (news articles, public statements, etc.) that could contain facts related to a person, event, or topic.
 - **Steps**:
   1. **API Scraping (Alternative to Web Scraping)**:
@@ -103,7 +104,7 @@ This section will outline the steps for discovering facts, scraping web content,
 
 ### **2. Database System (PostgreSQL with Supabase)**
 
-This section will explain how to set up and interact with your database locally and on the host.
+This section explains how to set up and interact with your database locally and on the host.
 
 #### **2.1. Setting Up Supabase Locally (via Docker)**
 
@@ -116,31 +117,118 @@ This section will explain how to set up and interact with your database locally 
 - **PostgreSQL Database**: Supabase provides PostgreSQL and the `pgvector` extension for embedding storage.
 
 #### **2.2. Database Schema Design**
-Design a schema for storing facts and embeddings.
-- **Facts Table**:
+Design a schema for storing normalized facts, their original sources, mentioned persons, and embeddings, following the simplified approach.
+
+- **Facts Table (`facts`)**: Stores the unique, normalized core factual statement and its embedding.
   ```sql
+  -- Table to store unique, normalized facts
   CREATE TABLE facts (
-    id SERIAL PRIMARY KEY,
-    title TEXT,
-    content TEXT,
-    category TEXT[],
-    tags TEXT[],
-    date TIMESTAMP,
-    url TEXT
+      -- Unique identifier for the fact
+      id BIGSERIAL PRIMARY KEY,
+      -- The normalized, core factual statement (unique)
+      fact_text TEXT NOT NULL UNIQUE,
+      -- Vector embedding of the fact_text (dimension depends on your model, e.g., 1536)
+      embedding vector(1536) NOT NULL,
+      -- Optional: Relevant topics or categories associated with the fact
+      topics TEXT[],
+      -- Timestamp of when the fact was first created
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      -- Timestamp of when the fact was last updated (e.g., embedding refined)
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  );
+
+  -- Add an index for efficient vector similarity search (e.g., HNSW)
+  CREATE INDEX ON facts USING hnsw (embedding vector_l2_ops);
+
+  -- Trigger to automatically update updated_at timestamp
+  CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+  RETURNS TRIGGER AS $$
+  BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER set_facts_timestamp
+  BEFORE UPDATE ON facts
+  FOR EACH ROW
+  EXECUTE FUNCTION trigger_set_timestamp();
+  ```
+
+- **Persons Table (`persons`)**: Stores unique, normalized person names.
+  ```sql
+  -- Table to store unique persons mentioned
+  CREATE TABLE persons (
+      -- Unique identifier for the person
+      id BIGSERIAL PRIMARY KEY,
+      -- Normalized name of the person (unique)
+      name TEXT NOT NULL UNIQUE,
+      -- Timestamp of when the person was first added
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
   );
   ```
 
-- **Embeddings Table**:
+- **Fact Sources Table (`fact_sources`)**: Links a normalized fact to a specific source URL and the original quote from that source.
   ```sql
-  CREATE TABLE embeddings (
-    fact_id INTEGER REFERENCES facts(id),
-    vector vector(1536)  -- Embedding vector (dimension depends on the LLM used)
+  -- Table to link facts to their specific sources (URLs) and original quotes
+  CREATE TABLE fact_sources (
+      -- Unique identifier for this specific source instance
+      id BIGSERIAL PRIMARY KEY,
+      -- Foreign key referencing the normalized fact
+      fact_id BIGINT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+      -- The URL where the fact was found
+      source_url TEXT NOT NULL,
+      -- The original, non-normalized quote or text snippet from the source
+      original_quote TEXT,
+      -- Publication date of the source, if available
+      published_at TIMESTAMP WITH TIME ZONE,
+      -- Timestamp of when this source was scraped/processed
+      scraped_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+      -- Ensure a source URL is linked only once to a specific fact
+      UNIQUE (fact_id, source_url)
   );
+
+  -- Index for faster lookups by URL (useful for pre-checking)
+  CREATE INDEX idx_fact_sources_url ON fact_sources(source_url);
+  -- Index for faster lookups by fact_id
+  CREATE INDEX idx_fact_sources_fact_id ON fact_sources(fact_id);
+  ```
+
+- **Fact Mentions Table (`fact_mentions`)**: Links persons to specific mentions within a fact source.
+  ```sql
+  -- Junction table to link persons mentioned in a specific source quote
+  CREATE TABLE fact_mentions (
+      -- Unique identifier for the mention link
+      id BIGSERIAL PRIMARY KEY,
+      -- Foreign key referencing the specific source instance
+      fact_source_id BIGINT NOT NULL REFERENCES fact_sources(id) ON DELETE CASCADE,
+      -- Foreign key referencing the person mentioned
+      person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+      -- Ensure a person is linked only once to a specific fact source
+      UNIQUE (fact_source_id, person_id)
+  );
+
+  -- Indexes for faster lookups/joins
+  CREATE INDEX idx_fact_mentions_fact_source_id ON fact_mentions(fact_source_id);
+  CREATE INDEX idx_fact_mentions_person_id ON fact_mentions(person_id);
   ```
 
 #### **2.3. Inserting Data into the Database**
-- After scraping and classifying facts, insert them into the `facts` table.
-- Once embeddings are generated, store them in the `embeddings` table for fast similarity-based queries.
+- The `StoreFact` function in the Go storage layer encapsulates the logic:
+  - **Input**: Takes a `StoreFactInput` struct containing `NormalizedFactText`, `Embedding`, `OriginalQuote`, `SourceURL`, `PublishedAt`, `Topics`, `InvolvedPeople`.
+  - **Transaction**: All operations run within a single database transaction.
+  - **Step A (Find/Insert Fact)**:
+    - Searches `facts` table using the `Embedding` for similarity.
+    - Checks top candidates for matching `NormalizedFactText`.
+    - If match found, uses existing `fact_id`.
+    - If no match, inserts into `facts` (`NormalizedFactText`, `Embedding`, `Topics`) and gets new `fact_id`.
+  - **Step B (Find/Insert Persons)**:
+    - Upserts each normalized name from `InvolvedPeople` into `persons` table, retrieving `person_id`s.
+  - **Step C (Link Source to Fact)**:
+    - Inserts into `fact_sources` (`fact_id`, `SourceURL`, `OriginalQuote`, `PublishedAt`) using `ON CONFLICT (fact_id, source_url)` to handle updates. Retrieves `fact_source_id`.
+  - **Step D (Link Persons to Source Mention)**:
+    - Inserts into `fact_mentions` linking the `fact_source_id` and each `person_id`, using `ON CONFLICT DO NOTHING`.
+- **URL Pre-check**: A helper function `CheckSourceURLExists` queries `fact_sources` by `source_url` and can be used *before* extraction to skip already processed URLs.
 
 ---
 
@@ -164,11 +252,14 @@ This section explains how to use embeddings to detect contradictions between fac
 
 #### **3.2. Detecting Contradictions**
 - **Contradiction Detection**: Compare the embeddings of the new fact with those already stored in the database. If the similarity score is low and the category/topic is the same, flag it as contradictory.
-  - Example SQL query to find similar facts:
+  - Example SQL query to find similar canonical facts based on embedding:
     ```sql
-    SELECT * FROM facts
-    WHERE vector <-> $1 < 0.5  -- Cosine distance threshold
+    SELECT id, assertion, sentiment, embedding <-> $1 AS distance 
+    FROM canonical_facts
+    ORDER BY distance
+    LIMIT 10; -- Find top 10 potential matches by vector similarity
     ```
+  - The application logic then needs to compare the `assertion` and `sentiment` of the potential matches to determine if it's a true duplicate, a contradiction, or unrelated.
 
 #### **3.3. Categorization-Based Filtering**
 - Filter facts by category (e.g., if the new fact is about public spending, only compare it with other facts in the `public spending` category).
@@ -185,15 +276,21 @@ This section tracks the truth score of each fact over time.
 - For each fact, store the truth score in a separate table.
   ```sql
   CREATE TABLE truth_scores (
-    fact_id INTEGER REFERENCES facts(id),
-    score FLOAT
+    canonical_fact_id INTEGER REFERENCES canonical_facts(id) ON DELETE CASCADE,
+    score FLOAT,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (canonical_fact_id)
   );
   ```
 
 #### **4.2. Updating Truth Scores**
-- When a new contradiction is detected, update the fact’s truth score. For example, if a fact is contradicted, reduce the score:
+- When a new contradiction is detected, update the fact's truth score. For example, if a fact is contradicted, reduce the score:
   ```go
-  db.Exec("UPDATE truth_scores SET score = score - 0.1 WHERE fact_id = $1", factID)
+  db.Exec("UPDATE truth_scores SET score = score - 0.1, last_updated = NOW() WHERE canonical_fact_id = $1", canonicalFactID)
+  ```
+  *Or, insert if not present:*
+  ```go
+  db.Exec("INSERT INTO truth_scores (canonical_fact_id, score) VALUES ($1, $2) ON CONFLICT (canonical_fact_id) DO UPDATE SET score = truth_scores.score - 0.1, last_updated = NOW()", canonicalFactID, initialScoreAdjustment)
   ```
 
 ---

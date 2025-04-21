@@ -87,17 +87,20 @@ type FactExtractor interface {
 
 **Implementation**:
 Use an LLM (via remote API) with a carefully crafted prompt that:
-- Summarizes each statement involving the target person.
+- Extracts the core factual statement and normalizes it (`NormalizedFactText`).
+- Extracts the original sentence/snippet from the source that contains the fact (`OriginalQuote`).
+- Identifies involved people.
+- Suggests relevant topics.
 - Outputs JSON like:
 ```json
-{
-  "statement": "Person X said they plan to cut income taxes by 10%",
-  "topics": ["tax", "economy", "public finance"],
-  "person": "Person X",
-  "source_url": "...",
-  "published_at": "...",
-  "embedding": [0.021, -0.134, ...] // optional, filled later
-}
+  {
+    "normalized_fact": "Person X said they plan to cut income taxes by 10%",
+    "original_quote": "In a recent interview, Person X said they plan to cut income taxes by 10%...",
+    "topics": ["tax", "economy", "public finance"],
+    "involved_people": ["Person X"],
+    "source_url": "...", // Passed from previous step
+    "published_at": "..." // Passed from previous step
+  }
 ```
 
 **Recommended LLM providers**:
@@ -111,20 +114,46 @@ This should **not store the full article text**, only the summarized facts and t
 
 #### 🔹 **Output & Storage**
 
-All extracted facts should be saved in a PostgreSQL DB (hosted by Supabase or the host), with the following schema:
+All extracted facts should be saved in a PostgreSQL DB (hosted by Supabase or the host), with the following schema (defined in detail in the Implementation Plan and migration file):
 
 ```sql
+-- facts table (stores normalized text and embedding)
 CREATE TABLE facts (
-    id UUID PRIMARY KEY,
-    person TEXT NOT NULL,
-    statement TEXT NOT NULL,
+    id BIGSERIAL PRIMARY KEY,
+    fact_text TEXT NOT NULL UNIQUE,
+    embedding vector(1536) NOT NULL,
     topics TEXT[],
-    source_url TEXT,
-    published_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    embedding VECTOR(1536) -- optional, filled by separate step
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- persons table (stores unique normalized names)
+CREATE TABLE persons (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- fact_sources table (links fact to URL and original quote)
+CREATE TABLE fact_sources (
+    id BIGSERIAL PRIMARY KEY,
+    fact_id BIGINT NOT NULL REFERENCES facts(id) ON DELETE CASCADE,
+    source_url TEXT NOT NULL,
+    original_quote TEXT,
+    published_at TIMESTAMP WITH TIME ZONE,
+    scraped_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (fact_id, source_url)
+);
+
+-- fact_mentions table (links persons to a specific source mention)
+CREATE TABLE fact_mentions (
+    id BIGSERIAL PRIMARY KEY,
+    fact_source_id BIGINT NOT NULL REFERENCES fact_sources(id) ON DELETE CASCADE,
+    person_id BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    UNIQUE (fact_source_id, person_id)
 );
 ```
+*Note: The `embedding` is generated based on the `fact_text` (normalized fact) before storage.*
 
 ---
 

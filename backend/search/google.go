@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+
+	"github.com/rs/zerolog/log" // Import zerolog's global logger
 )
 
 // GoogleSearchProvider implements the SearchProvider interface using the Google Custom Search JSON API.
@@ -79,6 +81,8 @@ func (g *GoogleSearchProvider) SearchWithOptions(personName string, options map[
 	}
 
 	searchURL := baseURL + "?" + params.Encode()
+	// Avoid logging the full searchURL which contains the API key
+	log.Debug().Str("query", personName).Str("baseURL", baseURL).Interface("options", options).Msg("Performing Google Custom Search")
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
@@ -117,7 +121,7 @@ func (g *GoogleSearchProvider) SearchWithOptions(personName string, options map[
 			Snippet: item.Snippet,
 		})
 	}
-
+	log.Debug().Int("count", len(results)).Str("query", personName).Msg("Google search completed")
 	return results, nil
 }
 
