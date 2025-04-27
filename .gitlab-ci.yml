@@ -1,0 +1,41 @@
+# Use the official Golang image
+image: golang:1.22
+
+variables:
+  # Define the path for Go to place downloaded modules and build cache
+  GOPATH: "$CI_PROJECT_DIR/.go"
+  # Disable Go modules vendor directory to ensure fresh downloads
+  GOFLAGS: "-mod=readonly"
+
+cache:
+  paths:
+    - .go/pkg/mod/
+
+stages:
+  - lint
+  - test
+
+# Check formatting and run vet
+lint:
+  stage: lint
+  before_script:
+    # Ensure GOPATH bin is in PATH for any tools installed via go install
+    - export PATH="$GOPATH/bin:$PATH"
+    # Optional: Install golangci-lint if you prefer it over go vet
+    # - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  script:
+    - go fmt $(go list ./... | grep -v /vendor/)
+    - go vet $(go list ./... | grep -v /vendor/)
+    # Optional: Run golangci-lint if installed
+    # - golangci-lint run ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# Run tests
+test:
+  stage: test
+  script:
+    # Run tests for all packages, excluding vendor
+    - go test -v ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
