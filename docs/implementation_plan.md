@@ -305,6 +305,21 @@ This section tracks the truth score of each fact over time.
 - **Unit Tests**: Test the vector comparison logic locally to ensure that contradictions are detected.
 - **Database Testing**: Use Supabase locally to test your database queries and ensure the correctness of the search queries.
 
+#### **5.3. Generating a Ground Truth Corpus for Duplication Detection**
+- **Goal**: Create a synthetic dataset (`testdata/corpus/duplication_ground_truth.json`) to rigorously test the fact duplication detection mechanism based on embeddings.
+- **Structure**: The corpus contains JSON objects with `id`, `text` (simulated 3-5 sentence article content), and `group_id`.
+  - Texts sharing the same `group_id` represent the same core fact, deliberately paraphrased (using synonyms, different sentence structures, focus shifts).
+  - Texts with unique `group_id` represent distinct facts.
+- **Composition**: Includes approximately 20 groups of related texts (2-5 variants each) and 30 standalone, unrelated texts.
+- **Testing Usage**: 
+  1. Embed the `text` field of each entry in the corpus.
+  2. For each embedding, perform a similarity search (e.g., nearest neighbors) against all other embeddings in the corpus.
+  3. Evaluate the results based on the `group_id`: 
+     - If a neighbor shares the same `group_id`, it's a **correct match** (True Positive).
+     - If a neighbor has a different `group_id` but is identified as a match by the algorithm (above similarity threshold), it's a **false positive**.
+     - Conversely, failing to match texts with the same `group_id` (below similarity threshold) results in **false negatives**.
+  4. Calculate metrics like Precision, Recall, and F1-score to quantify the duplication detection performance against this ground truth.
+
 ---
 
 ### **6. Deployment to the host**

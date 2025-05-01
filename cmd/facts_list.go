@@ -33,11 +33,10 @@ func listFacts(cmd *cobra.Command, args []string) {
 		log.Debug().Msg(".env file not found or error loading.")
 	}
 
-	// Initialize storer
+	// Initialize storer - No longer needs embedder
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize database storer")
-		return
+		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}
 	defer storer.Close()
 
@@ -65,19 +64,19 @@ func listFacts(cmd *cobra.Command, args []string) {
 	for _, personName := range personNames {
 		fmt.Printf("\n## Person: %s\n", personName)
 		factDetails := factsByPerson[personName]
-		
+
 		// Further group by fact_text for cleaner display
 		factsMap := make(map[string][]storage.FactDetail) // Key: fact_text
 		for _, detail := range factDetails {
 			factsMap[detail.FactText] = append(factsMap[detail.FactText], detail)
 		}
-		
+
 		factTexts := make([]string, 0, len(factsMap))
 		for text := range factsMap {
 			factTexts = append(factTexts, text)
 		}
 		sort.Strings(factTexts)
-		
+
 		for _, factText := range factTexts {
 			fmt.Printf("\n  Fact: %s\n", factText)
 			sources := factsMap[factText]
@@ -91,4 +90,4 @@ func listFacts(cmd *cobra.Command, args []string) {
 	}
 
 	log.Info().Int("person_count", len(factsByPerson)).Msg("Successfully listed facts")
-} 
+}

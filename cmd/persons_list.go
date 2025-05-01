@@ -32,11 +32,10 @@ func listPersons(cmd *cobra.Command, args []string) {
 		log.Debug().Msg(".env file not found or error loading.")
 	}
 
-	// Initialize storer
+	// Initialize storer - No longer needs embedder
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize database storer")
-		return 
+		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}
 	defer storer.Close()
 
@@ -57,4 +56,4 @@ func listPersons(cmd *cobra.Command, args []string) {
 		}
 		log.Info().Int("count", len(persons)).Msg("Successfully listed persons")
 	}
-} 
+}

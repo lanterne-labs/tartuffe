@@ -51,7 +51,15 @@ Given the following text content from URL '%s':
 --- TEXT END ---
 
 Please extract all distinct factual statements made by or about the people mentioned. For each fact, provide:
-1. 'normalized_fact': The core factual claim, concisely summarized and normalized (e.g., "Person A announced plan B", "Person C criticized policy D"). Focus on the objective statement.
+1. 'normalized_fact': The core factual claim, concisely summarized but **preserving essential context for contradiction analysis**. This includes:
+    *   **Specific Actions/Verbs:** Use precise verbs (e.g., "proposed", "criticized", "denied", "confirmed").
+    *   **Key Entities:** Mention the main subject and object of the action.
+    *   **Negations:** Explicitly include negations (e.g., "did not attend", "denied the claim").
+    *   **Dates/Timeframes:** Include specific dates, years, or time references if mentioned and relevant to the claim (e.g., "in 2023", "last week").
+    *   **Locations:** Include specific locations if relevant to the claim (e.g., "in Paris", "at the summit").
+    *   **Quantities/Values:** Include specific numbers or quantities central to the claim (e.g., "cut taxes by 5%", "allocated $10 million").
+    *   **Qualifiers:** Retain important qualifiers if they significantly alter the claim's certainty or scope (e.g., "likely", "possibly", "reportedly", "plans to").
+    Keep it objective and as concise as possible WHILE retaining this critical context. Avoid introductory phrases like "It was reported that...".
 2. 'original_quote': A concise snippet from the original text (max ~250 chars) that directly supports the normalized_fact. If the supporting text is spread out, use " [...] " to bridge the essential parts. Example: "Person A stated X [...] and plans to achieve Y."
 3. 'topics': A list of 1-3 relevant topic keywords (e.g., ["economy", "tax reform"]).
 4. 'involved_people': A list of all names of people directly involved in or mentioned in the statement.
@@ -61,16 +69,16 @@ Respond ONLY with a valid JSON array containing objects matching this structure.
 Example Output Format:
 [
   {
-    "normalized_fact": "Gabriel Attal stated the government aims to reduce unemployment.",
-    "original_quote": "Gabriel Attal stated the government aims to reduce unemployment [...] within two years.",
-    "topics": ["employment", "government policy"],
+    "normalized_fact": "Gabriel Attal stated the government aims to reduce unemployment in 2024.",
+    "original_quote": "Gabriel Attal stated the government aims to reduce unemployment [...] within two years [from 2023].",
+    "topics": ["employment", "government policy", "2024"],
     "involved_people": ["Gabriel Attal"]
   },
   {
-    "normalized_fact": "Marine Le Pen criticized the proposed budget.",
-    "original_quote": "Marine Le Pen criticized the proposed budget, calling it 'unrealistic [...]' during the debate.",
-    "topics": ["budget", "politics"],
+    "normalized_fact": "Marine Le Pen criticized the proposed budget during the parliamentary debate.",
+    "original_quote": "Marine Le Pen criticized the proposed budget, calling it 'unrealistic [...].' during the debate.",
+    "topics": ["budget", "politics", "parliament"],
     "involved_people": ["Marine Le Pen"]
   }
 ]`
-) 
+)

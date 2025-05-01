@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -16,6 +17,10 @@ import (
 const (
 	mistralEmbedAPIURLDefault = "https://api.mistral.ai/v1/embeddings"
 	mistralEmbedModelDefault  = "mistral-embed"
+	maxRetries                = 3               // Maximum number of retries for rate limits
+	initialBackoff            = 1 * time.Second // Initial wait time for backoff
+	backoffMultiplier         = 2.0             // Factor to multiply backoff by each retry
+	maxJitter                 = 0.2             // Max jitter factor (e.g., 0.2 = +/- 20%)
 )
 
 // MistralEmbeddingGenerator implements EmbeddingGenerator using the Mistral API.
@@ -86,29 +91,78 @@ func (m *MistralEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, text
 		return nil, fmt.Errorf("failed to marshal Mistral embedding request payload: %w", err)
 	}
 
-	// Make the API call directly using the generator's httpClient
-	req, err := http.NewRequestWithContext(ctx, "POST", m.apiURL, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Mistral embedding request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json") // Good practice to set Accept header
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	var resp *http.Response
+	var attempt int
+	currentBackoff := initialBackoff
 
-	log.Debug().Str("url", m.apiURL).Int("batch_size", len(texts)).Msg("Sending request to Mistral Embedding API")
+	for attempt = 0; attempt <= maxRetries; attempt++ {
+		// Create a new request for each attempt (required as body is consumed)
+		req, err := http.NewRequestWithContext(ctx, "POST", m.apiURL, bytes.NewBuffer(payloadBytes))
+		if err != nil {
+			// This error is unlikely to be recoverable by retrying, so fail fast.
+			return nil, fmt.Errorf("failed to create Mistral embedding request (attempt %d): %w", attempt+1, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Authorization", "Bearer "+m.apiKey)
 
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute Mistral embedding request: %w", err)
+		log.Debug().Str("url", m.apiURL).Int("batch_size", len(texts)).Int("attempt", attempt+1).Msg("Sending request to Mistral Embedding API")
+
+		resp, err = m.httpClient.Do(req)
+		if err != nil {
+			// Network errors might be transient, consider if retry needed here, but for now, fail.
+			// If context is cancelled, stop immediately.
+			if ctx.Err() != nil {
+				log.Warn().Err(ctx.Err()).Msg("Context cancelled during Mistral API request")
+				return nil, fmt.Errorf("context cancelled during Mistral request: %w", ctx.Err())
+			}
+			log.Error().Err(err).Int("attempt", attempt+1).Msg("Failed to execute Mistral embedding request")
+			// Decide if specific network errors warrant a retry, currently failing.
+			return nil, fmt.Errorf("failed to execute Mistral embedding request (attempt %d): %w", attempt+1, err)
+		}
+
+		// Check for rate limit error (HTTP 429)
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			resp.Body.Close() // Close body before waiting
+
+			// Calculate jitter: +/- maxJitter percentage of current backoff
+			jitter := time.Duration((rand.Float64()*2 - 1) * maxJitter * float64(currentBackoff))
+			waitTime := currentBackoff + jitter
+			if waitTime < 0 {
+				waitTime = 0 // Ensure wait time is not negative
+			}
+
+			log.Warn().Int("status_code", resp.StatusCode).
+				Int("attempt", attempt+1).
+				Int("max_retries", maxRetries).
+				Dur("wait_time", waitTime).
+				Msg("Rate limit hit. Retrying after backoff.")
+
+			select {
+			case <-time.After(waitTime):
+				currentBackoff = time.Duration(float64(currentBackoff) * backoffMultiplier)
+				continue // Retry the loop
+			case <-ctx.Done():
+				log.Warn().Err(ctx.Err()).Msg("Context cancelled during backoff wait")
+				return nil, fmt.Errorf("context cancelled during backoff wait: %w", ctx.Err())
+			}
+		}
+
+		// If not a rate limit error or retries exhausted, break the loop to process the response
+		break
 	}
+
+	// Ensure response body is closed if loop finished
 	defer resp.Body.Close()
 
 	bodyBytes, readErr := io.ReadAll(resp.Body) // Read body once for potential error logging
 	if readErr != nil {
-		log.Error().Err(readErr).Str("url", m.apiURL).Int("status_code", resp.StatusCode).Msg("Failed to read Mistral embedding response body")
+		log.Error().Err(readErr).Str("url", m.apiURL).Int("status_code", resp.StatusCode).Msg("Failed to read Mistral embedding response body after retries")
+		// Even if reading fails, try to process the status code
 	}
 
-	if resp.StatusCode != http.StatusOK { // Embeddings endpoint uses 200 OK on success
+	// Check final status code after potential retries
+	if resp.StatusCode != http.StatusOK {
 		bodyStr := string(bodyBytes)
 		maxLen := 250
 		if len(bodyStr) > maxLen {
@@ -117,12 +171,12 @@ func (m *MistralEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, text
 		// Try to parse structured error first
 		var mistralResp mistralEmbeddingResponse
 		if parseErr := json.Unmarshal(bodyBytes, &mistralResp); parseErr == nil && mistralResp.Error != nil {
-			log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("api_error_code", mistralResp.Error.Code).Str("api_error_type", mistralResp.Error.Type).Str("api_error_message", mistralResp.Error.Message).Msg("Mistral embedding API returned error")
-			return nil, fmt.Errorf("Mistral embedding API returned error: [%s] %s - %s (HTTP status: %s)", mistralResp.Error.Code, mistralResp.Error.Type, mistralResp.Error.Message, resp.Status)
-		} 
+			log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("api_error_code", mistralResp.Error.Code).Str("api_error_type", mistralResp.Error.Type).Str("api_error_message", mistralResp.Error.Message).Msg("Mistral embedding API returned error after retries")
+			return nil, fmt.Errorf("Mistral embedding API returned error after retries: [%s] %s - %s (HTTP status: %s)", mistralResp.Error.Code, mistralResp.Error.Type, mistralResp.Error.Message, resp.Status)
+		}
 		// Log generic error if specific one couldn't be parsed
-		log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("response_body_snippet", bodyStr).Msg("Mistral embedding API request failed")
-		return nil, fmt.Errorf("Mistral embedding API request failed with status %s", resp.Status)
+		log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("response_body_snippet", bodyStr).Int("attempts_made", attempt).Msg("Mistral embedding API request failed after retries")
+		return nil, fmt.Errorf("Mistral embedding API request failed with status %s after %d attempts", resp.Status, attempt)
 	}
 
 	// Parse successful response
@@ -168,4 +222,4 @@ func (m *MistralEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, text
 
 	log.Debug().Int("input_count", len(texts)).Int("output_count", len(results)).Msg("Generated embeddings batch")
 	return results, nil
-} 
+}

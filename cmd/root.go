@@ -14,8 +14,24 @@ import (
 
 var (
 	logLevel  string
-	logFormat string
+	logFormat string // Flag variable, default set in init()
 )
+
+// Set the initial default logger to console format.
+// This will be used by tests and as the default for the CLI unless overridden by flags.
+func init() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: time.RFC3339,
+	})
+
+	// Set default flag values here
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Set log level (trace, debug, info, warn, error, fatal, panic)")
+	// Default format is now console (set above), flag allows overriding to json
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "console", "Set log format (json, console)")
+
+	// Other init tasks...
+}
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -24,28 +40,40 @@ var rootCmd = &cobra.Command{
 	Long: `Digital Mirror CLI provides tools to interact with the fact extraction 
 pipeline, including running periodic jobs, manual testing, and database interactions.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Logger is already initialized to console by default in init().
+		// Here we only handle potential overrides based on flags.
+
 		// Set log level
 		level, err := zerolog.ParseLevel(strings.ToLower(logLevel))
 		if err != nil {
 			level = zerolog.InfoLevel // Default to InfoLevel on parse error
+			// Use the already configured logger for this warning
 			log.Warn().Msgf("Invalid log level '%s', defaulting to 'info'", logLevel)
 		}
 		zerolog.SetGlobalLevel(level)
 
-		// Set log format (JSON default, Console optional)
-		var logWriter io.Writer = os.Stderr // Default: JSON to stderr
-		if strings.ToLower(logFormat) == "console" {
-			logWriter = zerolog.ConsoleWriter{
-				Out:        os.Stderr,
-				TimeFormat: time.RFC3339,
-				// NoColor: false, // Keep colors by default for console
-			}
+		// Check if JSON format is explicitly requested via the flag
+		var logWriter io.Writer = nil // Use nil to signal no change unless JSON is requested
+		if strings.ToLower(logFormat) == "json" {
+			// Override the writer ONLY if json is requested
+			logWriter = os.Stderr
+			log.Info().Msg("Switching log format to JSON based on flag.")
+		} else if strings.ToLower(logFormat) != "console" {
+			// Warn if an invalid format is specified, but keep the console default
+			log.Warn().Msgf("Invalid log format '%s', using default console format.", logFormat)
 		}
 
-		// Configure global logger
-		log.Logger = zerolog.New(logWriter).With().Timestamp().Logger()
+		// Reconfigure global logger ONLY if the writer was changed (i.e., to JSON)
+		if logWriter != nil {
+			log.Logger = zerolog.New(logWriter).With().Timestamp().Logger()
+		}
 
-		log.Info().Str("log-level", level.String()).Str("log-format", logFormat).Msg("Logger initialized")
+		// Log final effective settings (level is always set)
+		finalFormat := "console" // Assume console unless changed
+		if logWriter != nil {
+			finalFormat = "json"
+		}
+		log.Info().Str("log-level", zerolog.GlobalLevel().String()).Str("log-format", finalFormat).Msg("Logger configured")
 		return nil
 	},
 	// Uncomment the following line if your bare application
@@ -67,16 +95,9 @@ func Execute() {
 
 func init() {
 	// Add persistent flags for logging applicable to all commands
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Set log level (trace, debug, info, warn, error, fatal, panic)")
-	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", "console", "Set log format (json, console)")
-
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
 	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.digital-mirror.yaml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	// rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-} 
+}

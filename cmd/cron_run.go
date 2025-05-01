@@ -47,9 +47,10 @@ type factProcessingUnit struct {
 	fact          backend.Fact
 	publishedDate *time.Time
 	sourceURL     string
+	embedding     []float32 // Added field to store pre-generated embedding
 }
 
-const maxEmbeddingBatchSize = 50 // Max items per Mistral embedding API call
+const maxEmbeddingBatchSize = 50   // Max items per Mistral embedding API call
 const factExtractionRateLimit = 1  // Allowed requests per second to the fact extractor LLM
 const factExtractionBurstLimit = 1 // Burst allowed for fact extractor
 
@@ -57,7 +58,7 @@ const factExtractionBurstLimit = 1 // Burst allowed for fact extractor
 func runPipeline(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 
-	// --- 1. Configuration & Initialization --- 
+	// --- 1. Configuration & Initialization ---
 	log.Info().Msg("Starting fact extraction pipeline...")
 
 	// Load environment variables (.env file)
@@ -65,10 +66,21 @@ func runPipeline(cmd *cobra.Command, args []string) {
 		log.Debug().Msg("INFO: .env file not found or error loading, relying on environment variables.")
 	}
 
-	// Initialize components
+	// Initialize dependencies
+	embedder, err := embedding.NewMistralEmbeddingGeneratorFromEnv()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create embedder")
+	}
+
+	factExtractor, err := categorizer.NewMistralExtractorFromEnv()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to create fact extractor")
+	}
+
+	// Pass the initialized embedder to the storer constructor
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize database storer")
+		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}
 	defer storer.Close()
 	log.Info().Msg("Database connection successful.")
@@ -88,25 +100,18 @@ func runPipeline(cmd *cobra.Command, args []string) {
 	}
 	log.Info().Msg("Content extractor initialized (Apify).")
 
-	// Initialize Fact Extractor (Mistral)
-	factExtractor, err := categorizer.NewMistralExtractorFromEnv()
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize Mistral fact extractor")
-	}
-	log.Info().Msg("Fact extractor initialized (Mistral).")
-
 	// Initialize Rate Limiter for Fact Extraction
 	factLimiter := rate.NewLimiter(rate.Limit(factExtractionRateLimit), factExtractionBurstLimit)
 	log.Info().Float64("requests_per_sec", float64(factExtractionRateLimit)).Int("burst", factExtractionBurstLimit).Msg("Fact extraction rate limiter initialized")
 
 	// Initialize Embedder (Mistral)
-	embedder, err := embedding.NewMistralEmbeddingGeneratorFromEnv()
+	embedder, err = embedding.NewMistralEmbeddingGeneratorFromEnv()
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize Mistral embedder")
 	}
 	log.Info().Msg("Embedding generator initialized (Mistral).")
 
-	// --- 2. Get Target Persons from Database --- 
+	// --- 2. Get Target Persons from Database ---
 	targetPersons, err := storer.GetAllPersons(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to fetch target persons from database")
@@ -117,7 +122,7 @@ func runPipeline(cmd *cobra.Command, args []string) {
 	}
 	log.Info().Int("count", len(targetPersons)).Strs("persons", targetPersons).Msg("Found persons in database to process")
 
-	// --- 3. Collect All Facts to Process --- 
+	// --- 3. Collect All Facts to Process ---
 	var allUnitsToProcess []factProcessingUnit // Collect facts + context
 
 	log.Info().Msg("Starting URL search and content/fact extraction phase...")
@@ -180,7 +185,7 @@ func runPipeline(cmd *cobra.Command, args []string) {
 			}
 			log.Debug().Str("url", url).Msg("Rate limiter allowed access, calling fact extractor.")
 
-			facts, err := factExtractor.ExtractFacts(personName, *content)
+			facts, err := factExtractor.ExtractFacts(ctx, personName, *content)
 			if err != nil {
 				log.Error().Err(err).Str("person", personName).Str("url", url).Msg("Failed to extract facts. Skipping URL.")
 				continue
@@ -208,15 +213,13 @@ func runPipeline(cmd *cobra.Command, args []string) {
 
 	log.Info().Int("total_facts_collected", len(allUnitsToProcess)).Msg("Finished extraction phase.")
 
-	// --- 4. Batch Embedding Generation --- 
+	// --- 4. Batch Embedding Generation ---
 	if len(allUnitsToProcess) == 0 {
 		log.Info().Msg("No valid facts collected to process. Exiting.")
 		return
 	}
 
 	log.Info().Int("total_facts", len(allUnitsToProcess)).Msg("Starting batch embedding generation...")
-	allEmbeddings := make([][]float32, len(allUnitsToProcess)) // Store embeddings in order corresponding to allUnitsToProcess
-	batchesProcessed := 0
 	embeddingErrors := 0
 
 	for i := 0; i < len(allUnitsToProcess); i += maxEmbeddingBatchSize {
@@ -235,61 +238,119 @@ func runPipeline(cmd *cobra.Command, args []string) {
 
 		batchResultEmbeddings, err := embedder.GenerateEmbeddings(ctx, textsInBatch)
 		if err != nil {
-			log.Error().Err(err).Int("batch_num", batchNum).Int("batch_size", len(textsInBatch)).Msg("Failed to generate embeddings for batch. Skipping facts in this batch.")
+			log.Error().Err(err).Int("batch_num", batchNum).Int("batch_size", len(textsInBatch)).Msg("Failed to generate embeddings for batch. Will skip facts in this batch.")
 			embeddingErrors++
+			// Mark embeddings as nil for this batch
+			for j := 0; j < len(currentBatchUnits); j++ {
+				allUnitsToProcess[i+j].embedding = nil
+			}
 			continue // Skip to next batch
 		}
 
 		if len(batchResultEmbeddings) != len(textsInBatch) {
-			log.Error().Int("batch_num", batchNum).Int("expected", len(textsInBatch)).Int("received", len(batchResultEmbeddings)).Msg("Embedder returned mismatched number of embeddings for batch. Skipping facts in this batch.")
+			log.Error().Int("batch_num", batchNum).Int("expected", len(textsInBatch)).Int("received", len(batchResultEmbeddings)).Msg("Embedder returned mismatched number of embeddings for batch. Will skip facts in this batch.")
 			embeddingErrors++
+			// Mark embeddings as nil for this batch
+			for j := 0; j < len(currentBatchUnits); j++ {
+				allUnitsToProcess[i+j].embedding = nil
+			}
 			continue
 		}
 
-		// Assign embeddings back to the corresponding index in the allEmbeddings slice
+		// Assign embeddings back to the corresponding units
 		for j, embedding := range batchResultEmbeddings {
-			allEmbeddings[i+j] = embedding // i+j gives the correct index in the main slice
+			if embedding == nil || len(embedding) == 0 {
+				log.Warn().Int("batch_num", batchNum).Int("item_index_in_batch", j).Str("norm_text", textsInBatch[j]).Msg("Embedder returned nil/empty embedding for an item. Will skip this fact.")
+				allUnitsToProcess[i+j].embedding = nil // Ensure it's marked as nil
+				embeddingErrors++
+			} else {
+				allUnitsToProcess[i+j].embedding = embedding // Assign the valid embedding
+			}
 		}
-		batchesProcessed++
 	}
+	log.Info().Int("embedding_errors", embeddingErrors).Int("total_facts", len(allUnitsToProcess)).Msg("Finished batch embedding generation.")
 
-	log.Info().Int("batches_processed", batchesProcessed).Int("embedding_errors", embeddingErrors).Int("total_facts", len(allUnitsToProcess)).Msg("Finished batch embedding generation.")
+	// --- 5. Process Facts (Similarity Check & Storage) ---
+	log.Info().Msg("Starting fact processing (similarity check & storage)...")
+	processedCount := 0
+	skippedAsDuplicateCount := 0
+	storageErrors := 0
 
-	// --- 5. Store Facts with Embeddings --- 
-	log.Info().Msg("Starting fact storage phase...")
-	factsStored := 0
-	factsSkipped := 0
-	factsErrored := 0
-
-	for i, unit := range allUnitsToProcess {
-		embedding := allEmbeddings[i]
-		if embedding == nil {
-			log.Warn().Int("fact_index", i).Str("url", unit.sourceURL).Msg("Skipping storage for fact because its embedding generation failed.")
-			factsSkipped++
-			continue // Skip if embedding wasn't generated successfully
+	// Process one fact at a time, using pre-generated embeddings
+	for _, unit := range allUnitsToProcess {
+		// Skip if embedding generation failed for this unit
+		if unit.embedding == nil {
+			log.Warn().Str("url", unit.sourceURL).Str("norm_text", unit.fact.NormalizedFactText).Msg("Skipping fact processing because embedding generation failed earlier.")
+			storageErrors++ // Count as error if embedding failed
+			continue
 		}
 
-		log.Debug().Int("fact_index", i).Str("normalized_fact", unit.fact.NormalizedFactText).Msg("Storing fact")
-		storeInput := storage.StoreFactInput{
-			NormalizedFactText: unit.fact.NormalizedFactText,
-			Embedding:          embedding,
-			OriginalQuote:      unit.fact.OriginalQuote,
-			Topics:             unit.fact.Topics,
-			InvolvedPeople:     unit.fact.InvolvedPeople,
-			SourceURL:          unit.sourceURL,
-			PublishedAt:        unit.publishedDate,
-		}
+		log.Debug().Str("url", unit.sourceURL).Str("norm_text", unit.fact.NormalizedFactText).Msg("Processing collected fact unit")
 
-		factID, factSourceID, err := storer.StoreFact(ctx, storeInput)
+		// a. Check for Similarity using FindSimilarFacts
+		// Use a transaction for the check
+		txCheck, err := storer.Pool().Begin(ctx)
 		if err != nil {
-			log.Error().Err(err).Str("url", unit.sourceURL).Int("fact_index", i).Str("normalized_fact", unit.fact.NormalizedFactText).Msg("Failed to store fact")
-			factsErrored++
+			log.Error().Err(err).Str("norm_text", unit.fact.NormalizedFactText).Str("url", unit.sourceURL).Msg("Failed to begin transaction for similarity check. Skipping fact.")
+			storageErrors++
+			continue
+		}
+
+		// Call FindSimilarFacts which returns a slice of matches within the threshold
+		similarFacts, err := storer.FindSimilarFacts(ctx, txCheck, unit.embedding) // Correct call
+		_ = txCheck.Rollback(ctx)                                                  // Always rollback check transaction
+
+		if err != nil {
+			log.Error().Err(err).Str("norm_text", unit.fact.NormalizedFactText).Str("url", unit.sourceURL).Msg("Error during similarity check. Skipping fact.")
+			storageErrors++
+			continue
+		}
+
+		// b. Handle based on similarity check result
+		if len(similarFacts) > 0 {
+			// Found similar facts - Link this source to the *closest* existing fact (Simplified call)
+			closestMatch := similarFacts[0] // First result is the closest
+			log.Info().Int64("existing_fact_id", closestMatch.ID).Float64("distance", closestMatch.Distance).Str("new_source_url", unit.sourceURL).Msg("Found similar fact based on embedding. Linking source.")
+
+			linkInput := storage.LinkExistingFactToSourceInput{
+				ExistingFactID: closestMatch.ID, // Link to the closest one only
+				SourceURL:      unit.sourceURL,
+				OriginalQuote:  unit.fact.OriginalQuote,
+				PublishedAt:    unit.publishedDate,
+			}
+			_, err := storer.LinkExistingFactToSource(ctx, linkInput)
+			if err != nil {
+				log.Error().Err(err).Int64("existing_fact_id", closestMatch.ID).Str("url", unit.sourceURL).Msg("Failed to link source to existing fact.")
+				storageErrors++
+			} else {
+				skippedAsDuplicateCount++
+			}
 		} else {
-			log.Debug().Int64("fact_id", factID).Int64("fact_source_id", factSourceID).Str("normalized_fact", unit.fact.NormalizedFactText).Msg("Successfully stored/linked fact")
-			factsStored++
+			// No similar facts found - Store the new fact
+			log.Debug().Str("norm_text", unit.fact.NormalizedFactText).Str("url", unit.sourceURL).Msg("No similar facts found. Storing as new fact.")
+			storeInput := storage.StoreFactInput{
+				NormalizedFactText: unit.fact.NormalizedFactText,
+				Embedding:          unit.embedding, // Use the pre-generated embedding
+				OriginalQuote:      unit.fact.OriginalQuote,
+				Topics:             unit.fact.Topics,
+				InvolvedPeople:     unit.fact.InvolvedPeople,
+				SourceURL:          unit.sourceURL,
+				PublishedAt:        unit.publishedDate,
+			}
+			factID, factSourceID, _, err := storer.StoreFact(ctx, storeInput)
+			if err != nil {
+				log.Error().Err(err).Str("fact", unit.fact.NormalizedFactText).Str("url", unit.sourceURL).Msg("Failed to store fact")
+				continue // Skip this fact
+			}
+			log.Info().Int64("factID", factID).Int64("factSourceID", factSourceID).Str("fact", unit.fact.NormalizedFactText).Msg("Stored fact")
+
+			// CONTRAdiction check logic placeholder...
+
+			processedCount++
 		}
 	}
 
-	log.Info().Int("stored", factsStored).Int("skipped", factsSkipped).Int("errors", factsErrored).Msg("Fact storage phase finished.")
+	// Log summary - Renamed stage 4 to 5
+	log.Info().Int("processed", processedCount).Int("linked_as_duplicate", skippedAsDuplicateCount).Int("errors", storageErrors).Msg("Finished fact processing and storage phase (Stage 5).")
 	log.Info().Msg("Fact extraction pipeline finished.")
-} 
+}

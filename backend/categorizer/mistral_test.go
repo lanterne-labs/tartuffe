@@ -2,6 +2,7 @@ package categorizer
 
 import (
 	// "digital-mirror/backend/extractor" // Remove this unused import
+	"context"
 	"digital-mirror/backend/extractor"
 	"os"
 	"testing"
@@ -59,7 +60,8 @@ func TestRemoteLLMExtractor_ExtractFacts_Mistral(t *testing.T) {
 	t.Logf("Attempting to extract facts related to '%s' using Mistral...", personName)
 
 	startTime := time.Now()
-	facts, err := mistralExtractor.ExtractFacts(personName, mockContent)
+	ctx := context.Background()
+	facts, err := mistralExtractor.ExtractFacts(ctx, personName, mockContent)
 	duration := time.Since(startTime)
 
 	t.Logf("Mistral API call duration: %s", duration)

@@ -3,10 +3,11 @@ package storage
 import (
 	"context"
 	// "digital-mirror/backend" // Removed unused import
-	"digital-mirror/backend/embedding" // Assuming backend.Fact is no longer needed here directly
-	"digital-mirror/backend/util"      // Import the new util package
+	// Assuming backend.Fact is no longer needed here directly
+	"digital-mirror/backend/util" // Import the new util package
 	"fmt"
 	"os"
+
 	// "strings" // No longer needed directly
 	"time"
 
@@ -40,22 +41,27 @@ type StoreFactInput struct {
 
 // PostgresStorer implements the storage logic using PostgreSQL.
 type PostgresStorer struct {
-	pool     *pgxpool.Pool
-	embedder embedding.EmbeddingGenerator // Keep embedder if StoreFact generates embeddings, remove if pre-generated
+	pool *pgxpool.Pool
+	// embedder embedding.EmbeddingGenerator // REMOVED
+	// contradictor contradiction.ContradictionDetector // REMOVED
 }
 
 // NewPostgresStorerFromEnv creates a new PostgresStorer by connecting to the database
-// specified by the DATABASE_URL environment variable and using the provided embedder.
+// specified by the DATABASE_URL environment variable.
 func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL environment variable not set")
 	}
 
+	// REMOVED: embedder validation
+
 	config, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse database URL: %w", err)
+		return nil, fmt.Errorf("unable to parse DATABASE_URL: %w", err)
 	}
+
+	// Register pgvector types with the connection config
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		log.Debug().Msg("Registering pgvector types with pgx connection")
 		return pgxvec.RegisterTypes(ctx, conn)
@@ -63,17 +69,22 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool with pgvector: %w", err)
+		return nil, fmt.Errorf("unable to create connection pool: %w", err)
 	}
 
+	// Verify connection
 	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		pool.Close() // Close pool if ping fails
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
 
 	log.Debug().Msg("Successfully connected to database with pgvector type registered.")
-	// Note: Removed embedder initialization here, assuming it's passed in StoreFactInput
-	return &PostgresStorer{pool: pool}, nil
+
+	return &PostgresStorer{
+		pool: pool,
+		// embedder: embedder, // REMOVED
+		// contradictor: contradictor, // REMOVED
+	}, nil
 }
 
 // Close closes the underlying database connection pool.
@@ -89,7 +100,12 @@ const (
 	// embeddingSimilarityThreshold determines how close embeddings must be (cosine distance)
 	// Lower value means higher similarity (0 = identical, 2 = opposite).
 	// Adjust based on testing with your embedding model.
-	embeddingSimilarityThreshold = 0.15 // Example: requires fairly high similarity
+	// L2 distance for normalized vectors. sqrt(2 - 2*cos_sim)
+	// 0.6 corresponds to cos_sim ~0.82
+	// 0.45 corresponds to cos_sim ~0.9
+	// embeddingSimilarityThreshold = 0.15 // Example: requires fairly high similarity (CosSim ~0.99)
+	embeddingSimilarityThreshold = 0.6 // Relaxed threshold (CosSim ~0.82)
+	// embeddingSimilarityThreshold = 1.0 // Very lenient threshold for debugging (CosSim > 0.5)
 	// textSimilarityThreshold could be used with pg_trgm or other text similarity checks if needed.
 	// For now, we rely primarily on embedding + exact match on text for simplicity.
 	// textSimilarityThreshold = 0.8
@@ -98,152 +114,266 @@ const (
 )
 
 // StoreFact saves a normalized fact, links its source, and connects involved people.
-// It handles duplicate facts based on embedding similarity and normalized text.
-func (s *PostgresStorer) StoreFact(ctx context.Context, input StoreFactInput) (factID int64, factSourceID int64, err error) {
+// It NO LONGER checks for embedding similarity for deduplication.
+// It inserts the fact and links the source/mentions.
+// Contradiction checking is expected to happen *outside* this function using the returned IDs.
+func (s *PostgresStorer) StoreFact(ctx context.Context, input StoreFactInput) (factID int64, factSourceID int64, personIDs []int64, err error) {
 	// Validate input
 	if input.NormalizedFactText == "" || len(input.Embedding) == 0 || input.SourceURL == "" || len(input.InvolvedPeople) == 0 {
-		return 0, 0, fmt.Errorf("invalid input: missing required fields (NormalizedFactText, Embedding, SourceURL, InvolvedPeople)")
+		return 0, 0, nil, fmt.Errorf("invalid input: missing required fields (NormalizedFactText, Embedding, SourceURL, InvolvedPeople)")
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to begin transaction: %w", err)
+		return 0, 0, nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic during transaction: %v", r)
-			log.Error().Interface("panic_info", r).Msg("Panic recovered during StoreFact transaction") // Log panic
+			log.Error().Interface("panic_info", r).Msg("Panic recovered during StoreFact transaction")
 		}
 		if err != nil {
-			// Log error before rollback attempt
-			log.Error().Err(err).Msg("Rolling back transaction due to error")
+			log.Error().Err(err).Msg("Rolling back transaction due to error in StoreFact")
 			if rbErr := tx.Rollback(ctx); rbErr != nil {
 				log.Error().Err(rbErr).Msg("Failed to rollback transaction")
-				err = fmt.Errorf("transaction error: %v; rollback error: %w", err, rbErr) // Combine errors
+				err = fmt.Errorf("transaction error: %v; rollback error: %w", err, rbErr)
 			}
 		}
-		// Implicit commit if err is nil
 	}()
 
-	// Step A: Find or Insert Fact
-	factID, err = s.findOrInsertFact(ctx, tx, input.NormalizedFactText, input.Embedding, input.Topics)
+	// Step 1: Find or Insert Persons first to get their IDs
+	personIDs, err = s.findOrInsertPersons(ctx, tx, input.InvolvedPeople, input.NormalizedFactText)
 	if err != nil {
-		return 0, 0, fmt.Errorf("step A failed (findOrInsertFact): %w", err)
+		return 0, 0, nil, fmt.Errorf("step 1 failed (findOrInsertPersons): %w", err)
 	}
+	log.Debug().Ints64("person_ids", personIDs).Msg("Found/inserted persons")
 
-	// Step B: Find or Insert Persons
-	personIDs, err := s.findOrInsertPersons(ctx, tx, input.InvolvedPeople, input.NormalizedFactText)
+	// Step 2: Insert the new fact
+	factID, err = s.insertFact(ctx, tx, input.NormalizedFactText, input.Embedding, input.Topics)
 	if err != nil {
-		return 0, 0, fmt.Errorf("step B failed (findOrInsertPersons): %w", err)
+		return 0, 0, personIDs, fmt.Errorf("step 2 failed (insertFact): %w", err)
 	}
+	log.Info().Int64("fact_id", factID).Str("fact_text", input.NormalizedFactText).Msg("Inserted new fact")
 
-	// Step C: Link Source to Fact
+	// Step 3: Link Source to the new Fact
 	factSourceID, err = s.linkSourceToFact(ctx, tx, factID, input.SourceURL, input.OriginalQuote, input.PublishedAt)
 	if err != nil {
-		return 0, 0, fmt.Errorf("step C failed (linkSourceToFact): %w", err)
+		return factID, 0, personIDs, fmt.Errorf("step 3 failed (linkSourceToFact): %w", err)
 	}
 
-	// Step D: Link Persons to Source Mention
+	// Step 4: Link Persons to *this specific* Source Mention
 	err = s.linkPersonsToSourceMention(ctx, tx, factSourceID, personIDs)
 	if err != nil {
-		return 0, 0, fmt.Errorf("step D failed (linkPersonsToSourceMention): %w", err)
+		return factID, factSourceID, personIDs, fmt.Errorf("step 4 failed (linkPersonsToSourceMention): %w", err)
 	}
 
 	// --- Commit ---
 	if err = tx.Commit(ctx); err != nil {
-		return 0, 0, fmt.Errorf("failed to commit transaction: %w", err)
+		return 0, 0, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	return factID, factSourceID, nil // Success, err is nil
+	// Return the IDs of the newly created fact, source link, and the involved persons
+	return factID, factSourceID, personIDs, nil // Success, err is nil
 }
 
-// findOrInsertFact searches for an existing fact based on embedding and text,
-// or inserts a new one if no match is found. Operates within a transaction.
-func (s *PostgresStorer) findOrInsertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, topics []string) (factID int64, err error) {
-	var existingFactID int64 = -1 // Use -1 to indicate not found
+// findOrInsertFact REMOVED as StoreFact now always uses insertFact.
+// If text-based deduplication is needed later, it can be added back carefully.
+/*
+func (s *PostgresStorer) findOrInsertFact(...) { ... }
+*/
 
-	// 1. Search for similar facts by embedding
-	searchStmt := `
-		SELECT id, fact_text
-		FROM facts
-		ORDER BY embedding <-> $1
-		LIMIT $2`
-	rows, err := tx.Query(ctx, searchStmt, pgvector.NewVector(embedding), maxCandidatesToCheck)
+// insertFact inserts a new fact record.
+func (s *PostgresStorer) insertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, topics []string) (factID int64, err error) {
+	insertFactStmt := `
+		INSERT INTO facts (fact_text, embedding, topics)
+		VALUES ($1, $2, $3)
+		RETURNING id`
+	err = tx.QueryRow(ctx, insertFactStmt,
+		text,
+		pgvector.NewVector(embedding),
+		topics,
+	).Scan(&factID)
 	if err != nil {
-		return 0, fmt.Errorf("failed to search for similar facts: %w", err)
+		return 0, fmt.Errorf("failed to insert new fact: %w", err)
 	}
-	defer rows.Close()
-
-	// 2. Check candidates for text match
-	for rows.Next() {
-		var candidateID int64
-		var candidateText string
-		if err = rows.Scan(&candidateID, &candidateText); err != nil {
-			return 0, fmt.Errorf("failed to scan similar fact candidate: %w", err)
-		}
-		// Simple exact match for now
-		if candidateText == text {
-			existingFactID = candidateID
-			// Debug level for found items
-			log.Debug().Int64("fact_id", existingFactID).Str("fact_text", text).Msg("Found existing fact matching text")
-			break
-		}
-	}
-	if rows.Err() != nil {
-		return 0, fmt.Errorf("error iterating through similar fact candidates: %w", rows.Err())
-	}
-
-	// 3. Insert if no match found
-	if existingFactID == -1 {
-		insertFactStmt := `
-			INSERT INTO facts (fact_text, embedding, topics)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (fact_text) DO UPDATE SET embedding = EXCLUDED.embedding, topics = EXCLUDED.topics -- Update embedding/topics if text conflicts
-			RETURNING id`
-		err = tx.QueryRow(ctx, insertFactStmt,
-			text,
-			pgvector.NewVector(embedding),
-			topics,
-		).Scan(&factID)
-		if err != nil {
-			return 0, fmt.Errorf("failed to insert new fact: %w", err)
-		}
-		// Info level for new items created
-		log.Info().Int64("fact_id", factID).Str("fact_text", text).Msg("Inserted new fact")
-	} else {
-		factID = existingFactID // Use the found ID
-	}
-
+	log.Debug().Int64("new_fact_id", factID).Str("fact_text", text).Msg("Inserted new fact record")
 	return factID, nil
 }
 
-// findOrInsertPersons finds or inserts persons based on normalized names. Operates within a transaction.
+// Struct to hold similarity search results
+type SimilarFactResult struct {
+	ID       int64
+	Distance float64
+}
+
+// FindSimilarFacts searches for facts based on embedding distance
+// within a predefined threshold. Operates within a transaction or pool connection.
+// Returns a slice of matches found within the threshold, ordered by distance.
+// Changed: queryer type to Queryer interface to accept both Tx and Pool
+// Changed: Return type to []SimilarFactResult
+func (s *PostgresStorer) FindSimilarFacts(ctx context.Context, queryer pgx.Tx, embedding []float32) ([]SimilarFactResult, error) {
+	// Use a CTE to calculate distances first
+	searchStmt := `
+		WITH distances AS (
+		  SELECT id, embedding <-> $1 AS dist
+		  FROM facts
+		)
+		SELECT id, dist AS distance
+		FROM distances
+		WHERE dist <= $3 -- Filter by threshold
+		ORDER BY dist   -- Order by calculated distance
+		LIMIT $2`
+	rows, err := queryer.Query(ctx, searchStmt,
+		pgvector.NewVector(embedding),
+		maxCandidatesToCheck,         // $2 = LIMIT
+		embeddingSimilarityThreshold, // $3 = threshold
+	)
+	if err != nil {
+		// Wrap error for context
+		return nil, fmt.Errorf("failed to search for similar facts by embedding: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SimilarFactResult = make([]SimilarFactResult, 0, maxCandidatesToCheck) // Initialize slice
+
+	for rows.Next() {
+		var result SimilarFactResult
+		if err = rows.Scan(&result.ID, &result.Distance); err != nil {
+			// Wrap error for context
+			return nil, fmt.Errorf("failed to scan similar fact candidate: %w", err)
+		}
+		results = append(results, result) // Add each valid result
+	}
+
+	if rows.Err() != nil {
+		// Wrap error for context
+		return nil, fmt.Errorf("error iterating through similar fact candidates: %w", rows.Err())
+	}
+
+	// Return the slice of results (might be empty)
+	return results, nil
+}
+
+// findOrInsertPersons finds existing persons or inserts new ones based on normalized names using batch operations.
+// Returns a slice of database IDs corresponding to the input personNames.
 func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, personNames []string, factTextForLogging string) (personIDs []int64, err error) {
-	personIDs = make([]int64, 0, len(personNames))
-	personInsertStmt := `
-		INSERT INTO persons (name) VALUES ($1)
-		ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name -- Keep existing ID
-		RETURNING id`
-	for _, personName := range personNames {
-		normalizedName := util.NormalizeString(personName)
-		if normalizedName == "" {
-			// Warn level for skipped data
-			log.Warn().Str("original_name", personName).Str("related_fact_text", factTextForLogging).Msg("Skipping empty person name")
+	if len(personNames) == 0 {
+		return []int64{}, nil // Nothing to do
+	}
+
+	// 1. Normalize names and create maps for tracking
+	normalizedNameToOriginal := make(map[string]string)
+	normalizedNamesList := make([]string, 0, len(personNames))
+	uniqueNormalizedNames := make(map[string]struct{}) // Using struct{} as a lightweight set value
+
+	for _, originalName := range personNames {
+		normalized := util.NormalizeString(originalName)
+		if normalized == "" {
+			log.Warn().Str("original_name", originalName).Str("related_fact_text", factTextForLogging).Msg("Skipping empty person name during find/insert")
 			continue
 		}
-		var personID int64
-		err = tx.QueryRow(ctx, personInsertStmt, normalizedName).Scan(&personID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to insert/find person '%s' (normalized: '%s'): %w", personName, normalizedName, err)
+		if _, exists := uniqueNormalizedNames[normalized]; !exists {
+			uniqueNormalizedNames[normalized] = struct{}{}
+			normalizedNamesList = append(normalizedNamesList, normalized)
+			normalizedNameToOriginal[normalized] = originalName // Keep track for logging/errors
 		}
-		personIDs = append(personIDs, personID)
-		// Debug: log person ID mapping?
-		// log.Debug().Str("normalized_name", normalizedName).Int64("person_id", personID).Msg("Found/inserted person")
 	}
-	if len(personIDs) == 0 {
-		// This case should have been caught by input validation, but double-check.
+
+	if len(normalizedNamesList) == 0 {
 		return nil, fmt.Errorf("no valid persons associated with fact after normalization: '%s'", factTextForLogging)
 	}
+
+	// 2. Find existing persons
+	existingPersons := make(map[string]int64) // Map normalized name -> existing ID
+	findStmt := `SELECT id, name FROM persons WHERE name = ANY($1)`
+	rows, err := tx.Query(ctx, findStmt, normalizedNamesList)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing persons: %w", err)
+	}
+	defer rows.Close() // Ensure rows are closed even if scanning fails mid-way
+
+	for rows.Next() {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close() // Close immediately on error
+			return nil, fmt.Errorf("failed to scan existing person row: %w", err)
+		}
+		existingPersons[name] = id
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating existing person rows: %w", rows.Err())
+	}
+	rows.Close() // Explicit close after successful iteration
+
+	// 3. Determine which persons need insertion
+	personsToInsert := make([][]any, 0)
+	finalPersonIDsMap := make(map[string]int64) // Store all IDs (existing + new) by normalized name
+	for _, normalizedName := range normalizedNamesList {
+		if id, exists := existingPersons[normalizedName]; exists {
+			finalPersonIDsMap[normalizedName] = id
+		} else {
+			personsToInsert = append(personsToInsert, []any{normalizedName})
+		}
+	}
+
+	// 4. Batch insert missing persons using CopyFrom
+	if len(personsToInsert) > 0 {
+		copyCount, err := tx.CopyFrom(
+			ctx,
+			pgx.Identifier{"persons"},         // Table name
+			[]string{"name"},                  // Column names
+			pgx.CopyFromRows(personsToInsert), // Source data
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to batch insert new persons using CopyFrom: %w", err)
+		}
+		if int(copyCount) != len(personsToInsert) {
+			log.Warn().Int64("expected_inserts", int64(len(personsToInsert))).Int64("actual_inserts", copyCount).Msg("CopyFrom inserted unexpected number of person rows")
+			// This might happen if there's a race condition or unexpected DB state, but proceed cautiously.
+		}
+		log.Debug().Int64("insert_count", copyCount).Msg("Batch inserted new persons")
+
+		// 5. Get IDs of newly inserted persons
+		newlyInsertedNames := make([]string, len(personsToInsert))
+		for i, data := range personsToInsert {
+			newlyInsertedNames[i] = data[0].(string)
+		}
+
+		findNewStmt := `SELECT id, name FROM persons WHERE name = ANY($1)`
+		newRows, err := tx.Query(ctx, findNewStmt, newlyInsertedNames)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query newly inserted persons: %w", err)
+		}
+		defer newRows.Close()
+
+		for newRows.Next() {
+			var id int64
+			var name string
+			if err := newRows.Scan(&id, &name); err != nil {
+				newRows.Close()
+				return nil, fmt.Errorf("failed to scan newly inserted person row: %w", err)
+			}
+			finalPersonIDsMap[name] = id // Add newly inserted IDs
+		}
+		if newRows.Err() != nil {
+			return nil, fmt.Errorf("error iterating newly inserted person rows: %w", newRows.Err())
+		}
+		newRows.Close()
+	}
+
+	// 6. Collect final list of IDs in the original order of unique normalized names
+	personIDs = make([]int64, 0, len(normalizedNamesList))
+	for _, normalizedName := range normalizedNamesList {
+		if id, ok := finalPersonIDsMap[normalizedName]; ok {
+			personIDs = append(personIDs, id)
+		} else {
+			// This should not happen if logic is correct
+			log.Error().Str("normalized_name", normalizedName).Msg("Could not find final ID for person after insert/query steps")
+			return nil, fmt.Errorf("internal error: could not find final ID for person '%s'", normalizedNameToOriginal[normalizedName])
+		}
+	}
+
 	return personIDs, nil
 }
 
@@ -271,20 +401,44 @@ func (s *PostgresStorer) linkSourceToFact(ctx context.Context, tx pgx.Tx, factID
 	return factSourceID, nil
 }
 
-// linkPersonsToSourceMention links persons to a specific fact source mention. Operates within a transaction.
+// linkPersonsToSourceMention links persons to a specific fact source mention using a batch operation.
 func (s *PostgresStorer) linkPersonsToSourceMention(ctx context.Context, tx pgx.Tx, factSourceID int64, personIDs []int64) (err error) {
+	batch := &pgx.Batch{}
 	mentionInsertStmt := `
 		INSERT INTO fact_mentions (fact_source_id, person_id)
 		VALUES ($1, $2)
 		ON CONFLICT (fact_source_id, person_id) DO NOTHING` // Silently ignore duplicates here
+
+	// Queue an insert command for each person ID
 	for _, personID := range personIDs {
-		_, err = tx.Exec(ctx, mentionInsertStmt, factSourceID, personID)
-		if err != nil {
-			return fmt.Errorf("failed to insert mention for fact source %d and person %d: %w", factSourceID, personID, err)
-		}
-		// Debug: log mention link?
-		// log.Debug().Int64("fact_source_id", factSourceID).Int64("person_id", personID).Msg("Linked person mention to source")
+		batch.Queue(mentionInsertStmt, factSourceID, personID)
 	}
+
+	// Send the batch
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close() // Ensure batch results are closed
+
+	// Check results for each queued command (optional but good practice)
+	for range personIDs {
+		cmdTag, err := br.Exec()
+		if err != nil {
+			// Attempt to get more specific error context if possible
+			// For now, return a general error indicating batch failure
+			log.Error().Err(err).Int64("fact_source_id", factSourceID).Msg("Error executing batch insert for fact_mentions")
+			return fmt.Errorf("failed during batch insert for mentions (fact source %d): %w", factSourceID, err)
+		}
+		// Optionally log rows affected, though ON CONFLICT DO NOTHING means it could be 0
+		_ = cmdTag // Avoid unused variable warning
+		// log.Debug().Int64("rows_affected", cmdTag.RowsAffected()).Msg("Mention insert command executed in batch")
+	}
+
+	// Close the batch results reader explicitly before returning
+	if err := br.Close(); err != nil {
+		log.Error().Err(err).Msg("Error closing batch results for fact_mentions insert")
+		return fmt.Errorf("failed to close batch results for mentions insert: %w", err)
+	}
+
+	log.Debug().Int64("fact_source_id", factSourceID).Int("mention_count", len(personIDs)).Msg("Successfully linked persons to source mention via batch")
 	return nil // Success
 }
 
@@ -339,7 +493,7 @@ func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, 
 		ON CONFLICT (name) DO NOTHING
 		RETURNING id
 	`
-	
+
 	// Use QueryRow because RETURNING id might not return a row if the conflict occurs.
 	// We need to handle the case where no row is returned.
 	err = s.pool.QueryRow(ctx, stmt, normalizedName).Scan(&id)
@@ -430,4 +584,165 @@ func (s *PostgresStorer) GetAllFactsGroupedByPerson(ctx context.Context) (map[st
 	// For simple listing, this is usually acceptable.
 
 	return result, nil
-} 
+}
+
+// LinkExistingFactToSourceInput encapsulates data needed to link a new source to an existing fact.
+// Simplified version: only links the source info, not people specific to this source mention.
+type LinkExistingFactToSourceInput struct {
+	ExistingFactID int64      // The ID of the fact already in the database
+	SourceURL      string     // The URL of the new source
+	OriginalQuote  string     // The quote from the new source
+	PublishedAt    *time.Time // Publication date of the new source
+	// InvolvedPeople []string   // Removed: Assumes people are linked to the core fact, not each source mention
+}
+
+// LinkExistingFactToSource links a new source URL, quote, and published date
+// to a fact that already exists in the database. (Simplified version)
+func (s *PostgresStorer) LinkExistingFactToSource(ctx context.Context, input LinkExistingFactToSourceInput) (factSourceID int64, err error) {
+	// Validate input
+	// if input.ExistingFactID <= 0 || input.SourceURL == "" || len(input.InvolvedPeople) == 0 { // Old validation
+	if input.ExistingFactID <= 0 || input.SourceURL == "" { // Simplified validation
+		// return 0, fmt.Errorf("invalid input: missing required fields (ExistingFactID, SourceURL, InvolvedPeople)") // Old error
+		return 0, fmt.Errorf("invalid input: missing required fields (ExistingFactID, SourceURL)") // Simplified error
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic during transaction: %v", r)
+			log.Error().Interface("panic_info", r).Msg("Panic recovered during LinkExistingFactToSource transaction")
+		}
+		if err != nil {
+			log.Error().Err(err).Msg("Rolling back transaction due to error in LinkExistingFactToSource")
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				log.Error().Err(rbErr).Msg("Failed to rollback transaction")
+				err = fmt.Errorf("transaction error: %v; rollback error: %w", err, rbErr)
+			}
+		}
+	}()
+
+	// // Step B (modified): Find or Insert Persons mentioned in *this specific quote* // REMOVED
+	// personIDs, err := s.findOrInsertPersons(ctx, tx, input.InvolvedPeople, fmt.Sprintf("Source: %s", input.SourceURL)) // Use URL for logging context
+	// if err != nil {
+	// 	return 0, fmt.Errorf("step B failed (findOrInsertPersons for existing fact link): %w", err)
+	// }
+
+	// Step C (modified): Link Source to the *Existing* Fact ID
+	factSourceID, err = s.linkSourceToFact(ctx, tx, input.ExistingFactID, input.SourceURL, input.OriginalQuote, input.PublishedAt)
+	if err != nil {
+		// return 0, fmt.Errorf("step C failed (linkSourceToFact for existing fact): %w", err) // Old error step label
+		return 0, fmt.Errorf("failed to link source to existing fact: %w", err) // Simplified error
+	}
+
+	// // Step D (modified): Link Persons to *this specific* Source Mention // REMOVED
+	// err = s.linkPersonsToSourceMention(ctx, tx, factSourceID, personIDs)
+	// if err != nil {
+	// 	return 0, fmt.Errorf("step D failed (linkPersonsToSourceMention for existing fact): %w", err)
+	// }
+
+	// --- Commit ---
+	if err = tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction for LinkExistingFactToSource: %w", err)
+	}
+
+	log.Info().Int64("fact_id", input.ExistingFactID).Int64("fact_source_id", factSourceID).Str("source_url", input.SourceURL).Msg("Successfully linked new source to existing fact")
+	return factSourceID, nil // Success, err is nil
+}
+
+// Pool returns the underlying database connection pool.
+// This is useful for operations outside the main StoreFact/Link methods,
+// like the similarity check in the cron job.
+func (s *PostgresStorer) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
+// FindNeighborFactsForPerson searches for facts linked to a specific person that are
+// semantically similar to a given embedding, excluding a specific fact ID (usually the new one).
+// Returns IDs and text of neighboring facts within the similarity threshold.
+type NeighborFactResult struct {
+	ID       int64
+	Text     string
+	Distance float64 // Include distance for potential future use/logging
+}
+
+func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer pgx.Tx, personID int64, embedding []float32, excludeFactID int64) ([]NeighborFactResult, error) {
+	query := `
+        WITH PersonFacts AS (
+            -- Select distinct fact IDs associated with the person
+            SELECT DISTINCT fs.fact_id
+            FROM fact_mentions fm
+            JOIN fact_sources fs ON fm.fact_source_id = fs.id
+            WHERE fm.person_id = $1
+        )
+        SELECT
+            f.id,
+            f.fact_text,
+            f.embedding <-> $2 AS distance
+        FROM facts f
+        JOIN PersonFacts pf ON f.id = pf.fact_id
+        WHERE
+            f.id <> $3 -- Exclude the fact itself
+        AND
+            f.embedding <-> $2 <= $4 -- Similarity threshold
+        ORDER BY
+            distance -- Order by similarity
+        LIMIT $5`
+
+	rows, err := queryer.Query(ctx, query,
+		personID,                      // $1
+		pgvector.NewVector(embedding), // $2
+		excludeFactID,                 // $3
+		embeddingSimilarityThreshold,  // $4
+		maxCandidatesToCheck,          // $5
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query neighbor facts for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	var results []NeighborFactResult
+	for rows.Next() {
+		var res NeighborFactResult
+		if err := rows.Scan(&res.ID, &res.Text, &res.Distance); err != nil {
+			return nil, fmt.Errorf("failed to scan neighbor fact result for person %d: %w", personID, err)
+		}
+		results = append(results, res)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating neighbor fact results for person %d: %w", personID, rows.Err())
+	}
+
+	return results, nil
+}
+
+// RecordContradiction inserts a record indicating that two facts for a person are contradictory.
+// Ensures that factAID < factBID to avoid duplicate pairs in different orders.
+// Now includes a reason for the contradiction.
+func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string) error {
+	// Ensure consistent ordering of fact IDs to prevent duplicates like (1,2) and (2,1)
+	if factAID > factBID {
+		factAID, factBID = factBID, factAID
+	}
+
+	query := `
+        INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
+        SET reason = EXCLUDED.reason, -- Update reason if the pair is reported again
+            detected_at = CURRENT_TIMESTAMP`
+
+	cmdTag, err := tx.Exec(ctx, query, personID, factAID, factBID, reason)
+	if err != nil {
+		return fmt.Errorf("failed to insert/update contradiction for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
+	}
+
+	if cmdTag.RowsAffected() > 0 {
+		log.Info().Int64("person_id", personID).Int64("fact_a_id", factAID).Int64("fact_b_id", factBID).Msg("Recorded/updated contradiction")
+	}
+
+	return nil
+}

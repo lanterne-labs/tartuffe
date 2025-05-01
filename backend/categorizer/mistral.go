@@ -2,6 +2,7 @@ package categorizer
 
 import (
 	// "bytes" // Removed unused import
+	"context"
 	"digital-mirror/backend"
 	"digital-mirror/backend/extractor"
 	"encoding/json"
@@ -12,22 +13,22 @@ import (
 // --- Mistral Specific Implementation ---
 
 const (
-	mistralAPIURLDefault   = "https://api.mistral.ai/v1/chat/completions"
-	mistralModelDefault    = "mistral-small-latest" // Cost-effective choice, supports JSON mode
+	mistralAPIURLDefault = "https://api.mistral.ai/v1/chat/completions"
+	mistralModelDefault  = "mistral-small-latest" // Cost-effective choice, supports JSON mode
 )
 
 // MistralExtractor implements FactExtractor using the Mistral AI API.
 type MistralExtractor struct {
 	// apiKey is the Mistral API key.
-	apiKey     string
+	apiKey string
 	// apiURL is the endpoint for the Mistral API.
-	apiURL     string
+	apiURL string
 	// model is the specific Mistral model to use.
-	model      string
+	model string
 	// Use the shared prompt template defined in fact.go
 	systemPromptTemplate string
 	// baseClient handles the underlying HTTP communication.
-	baseClient *baseLLMClient 
+	baseClient *baseLLMClient
 }
 
 // NewMistralExtractorFromEnv creates a MistralExtractor using the API key from env and default settings.
@@ -37,12 +38,12 @@ func NewMistralExtractorFromEnv() (*MistralExtractor, error) {
 		return nil, fmt.Errorf("MISTRAL_API_KEY environment variable not set")
 	}
 	return &MistralExtractor{
-		apiKey:     apiKey,
-		apiURL:     mistralAPIURLDefault,
-		model:      mistralModelDefault,
+		apiKey: apiKey,
+		apiURL: mistralAPIURLDefault,
+		model:  mistralModelDefault,
 		// Use the shared prompt constant from fact.go
 		systemPromptTemplate: backend.FactExtractionSystemPrompt,
-		baseClient: newBaseLLMClient(),
+		baseClient:           newBaseLLMClient(),
 	}, nil
 }
 
@@ -57,10 +58,10 @@ type mistralResponseFormat struct {
 }
 
 type mistralRequest struct {
-	Model           string                `json:"model"`
-	Messages        []mistralMessage      `json:"messages"`
-	Temperature     float64               `json:"temperature"`
-	ResponseFormat  *mistralResponseFormat `json:"response_format,omitempty"`
+	Model          string                 `json:"model"`
+	Messages       []mistralMessage       `json:"messages"`
+	Temperature    float64                `json:"temperature"`
+	ResponseFormat *mistralResponseFormat `json:"response_format,omitempty"`
 }
 
 type mistralChoice struct {
@@ -71,7 +72,7 @@ type mistralChoice struct {
 
 type mistralResponse struct {
 	Choices []mistralChoice `json:"choices"`
-	Error   *struct { 
+	Error   *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 		Code    string `json:"code,omitempty"`
@@ -79,7 +80,7 @@ type mistralResponse struct {
 }
 
 // ExtractFacts implements the FactExtractor interface for Mistral.
-func (m *MistralExtractor) ExtractFacts(personName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
+func (m *MistralExtractor) ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
 	// Use the systemPromptTemplate field from the struct
 	systemPrompt := fmt.Sprintf(m.systemPromptTemplate, personName, content.URL, content.Content)
 
@@ -89,7 +90,7 @@ func (m *MistralExtractor) ExtractFacts(personName string, content extractor.Ext
 		Messages: []mistralMessage{
 			{Role: "system", Content: systemPrompt},
 		},
-		Temperature: 0.1, // Low temperature for factual extraction
+		Temperature:    0.1,                                         // Low temperature for factual extraction
 		ResponseFormat: &mistralResponseFormat{Type: "json_object"}, // Request JSON mode
 	}
 
@@ -98,8 +99,8 @@ func (m *MistralExtractor) ExtractFacts(personName string, content extractor.Ext
 		return nil, fmt.Errorf("failed to marshal Mistral request payload: %w", err)
 	}
 
-	// Use the base client to make the request
-	bodyBytes, err := m.baseClient.doRequest(m.apiURL, m.apiKey, payloadBytes)
+	// Use the base client to make the request, passing the context
+	bodyBytes, err := m.baseClient.doRequest(ctx, m.apiURL, m.apiKey, payloadBytes)
 	if err != nil {
 		// Check if the error message contains the body (due to non-200 status)
 		// If so, try to parse a structured error from it.
@@ -108,7 +109,7 @@ func (m *MistralExtractor) ExtractFacts(personName string, content extractor.Ext
 			return nil, fmt.Errorf("Mistral API returned error: [%s] %s - %s (request status: %w)", mistralResp.Error.Code, mistralResp.Error.Type, mistralResp.Error.Message, err)
 		}
 		// Otherwise, return the original error (e.g., network error or status error with non-JSON body)
-		return nil, err 
+		return nil, err
 	}
 
 	// Parse the Mistral-specific *outer* response structure
@@ -136,4 +137,4 @@ func (m *MistralExtractor) ExtractFacts(personName string, content extractor.Ext
 	}
 
 	return finalFacts, nil
-} 
+}

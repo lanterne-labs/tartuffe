@@ -44,16 +44,16 @@ func addPerson(cmd *cobra.Command, args []string) {
 		log.Debug().Msg(".env file not found or error loading.")
 	}
 
-	// Initialize storer
+	// Initialize dependencies - Storer no longer needs embedder
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize database storer")
-		return // Redundant due to Fatal, but good practice
+		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
+		return
 	}
 	defer storer.Close()
 
 	// Add the person
-	id, inserted, err := storer.AddPerson(ctx, personName) 
+	id, inserted, err := storer.AddPerson(ctx, personName)
 	if err != nil {
 		log.Error().Err(err).Str("name", normalizedName).Msg("Failed to add person")
 		return
@@ -64,4 +64,4 @@ func addPerson(cmd *cobra.Command, args []string) {
 	} else {
 		log.Info().Int64("id", id).Str("name", normalizedName).Msg("Person already exists")
 	}
-} 
+}
