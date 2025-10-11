@@ -12,19 +12,22 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// baseLLMClient provides common HTTP request logic for LLM API clients.
-type baseLLMClient struct {
+// BaseLLMClient provides common HTTP request logic for LLM API clients.
+// Renamed to be public.
+type BaseLLMClient struct {
 	httpClient *http.Client
 }
 
-// newBaseLLMClient creates a new base client with a default timeout.
-func newBaseLLMClient() *baseLLMClient {
-	return &baseLLMClient{
-		httpClient: &http.Client{Timeout: 60 * time.Second}, // Default timeout
+// NewBaseLLMClient creates a new base client with a default timeout.
+// Renamed to be public.
+func NewBaseLLMClient() *BaseLLMClient {
+	return &BaseLLMClient{
+		httpClient: &http.Client{Timeout: 60 * time.Second}, // Reset timeout to 1 minute
 	}
 }
 
 // createDefaultBackoffPolicy creates a reusable exponential backoff policy.
+// Keep private as it's internal helper.
 func createDefaultBackoffPolicy(ctx context.Context) backoff.BackOff {
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = 1 * time.Second
@@ -36,9 +39,10 @@ func createDefaultBackoffPolicy(ctx context.Context) backoff.BackOff {
 	return backoff.WithContext(bo, ctx)
 }
 
-// doRequest performs the HTTP POST request to the LLM API with context and retry logic using cenkalti/backoff.
+// DoRequest performs the HTTP POST request to the LLM API with context and retry logic using cenkalti/backoff.
+// Renamed to be public.
 // Returns the response body bytes and an error.
-func (c *baseLLMClient) doRequest(ctx context.Context, apiURL, apiKey string, payloadBytes []byte) ([]byte, error) {
+func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, payloadBytes []byte) ([]byte, error) {
 	var respBodyBytes []byte
 	var httpStatus int // Variable to store status code outside the closure if needed
 

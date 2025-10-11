@@ -52,8 +52,12 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	for i, rawFact := range extractedFactsRaw {
 		// Basic validation: Ensure normalized fact and at least one person exist
 		if rawFact.NormalizedFact == "" || len(rawFact.InvolvedPeople) == 0 {
-			// Log skipped facts at Warn level
-			log.Warn().Int("fact_index", i).Str("reason", "missing normalized_fact or involved_people").Interface("raw_fact", rawFact).Msg("Skipping invalid fact from LLM")
+			// Log skipped facts at Warn level, ADD sourceURL
+			log.Warn().Int("fact_index", i).
+				Str("reason", "missing normalized_fact or involved_people").
+				Str("source_url", sourceURL). // Add source URL
+				Interface("raw_fact", rawFact).
+				Msg("Skipping invalid fact from LLM")
 			continue
 		}
 		finalFacts = append(finalFacts, backend.Fact{
@@ -67,4 +71,4 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	}
 
 	return finalFacts, nil
-} 
+}

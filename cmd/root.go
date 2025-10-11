@@ -2,6 +2,7 @@ package cmd
 
 import (
 	// "fmt" // Unused
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -20,10 +21,20 @@ var (
 // Set the initial default logger to console format.
 // This will be used by tests and as the default for the CLI unless overridden by flags.
 func init() {
-	log.Logger = log.Output(zerolog.ConsoleWriter{
+	// Configure the ConsoleWriter
+	output := zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
-	})
+		// Add FormatLevel to use standard uppercase level strings
+		FormatLevel: func(i interface{}) string {
+			level, ok := i.(string)
+			if !ok {
+				return strings.ToUpper(fmt.Sprintf("%s", i)) // Fallback
+			}
+			return strings.ToUpper(level)
+		},
+	}
+	log.Logger = log.Output(output)
 
 	// Set default flag values here
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Set log level (trace, debug, info, warn, error, fatal, panic)")

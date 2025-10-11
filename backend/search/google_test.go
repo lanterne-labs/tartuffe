@@ -65,7 +65,7 @@ func TestGoogleSearchProvider_Search(t *testing.T) {
 	// opts := map[string]string{"num": strconv.Itoa(limit)}
 	// results, err := provider.SearchWithOptions("Gabriel Attal", opts)
 
-	// --- Placeholder: Calling original Search method for now --- 
+	// --- Placeholder: Calling original Search method for now ---
 	// We will address adding the limit parameter in the next step by modifying google.go
 	personName := "Gabriel Attal"
 	t.Logf("Performing search for: %s", personName)
@@ -160,4 +160,4 @@ func TestGoogleSearchProvider_SearchWithOptions(t *testing.T) {
 		}
 		// t.Logf("  %d: %s (%s)", i+1, res.Title, res.URL)
 	}
-} 
+}

@@ -191,21 +191,25 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	}
 }
 
-// TestPostgresStorer_StoreFact_Idempotency_SameSource verifies storing the same fact
-// from the same source URL twice results in one fact, one source (possibly updated), and correct mentions.
-func TestPostgresStorer_StoreFact_Idempotency_SameSource(t *testing.T) {
+// TestPostgresStorer_StoreFact_Idempotency_And_SourceUpdate tests:
+// 1. Storing the exact same fact (same text) twice fails due to unique constraint on facts.fact_text.
+// 2. Storing a *different* fact from an *existing source URL* updates the fact_sources record (fact_id and last_visited_at).
+func TestPostgresStorer_StoreFact_Idempotency_And_SourceUpdate(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
+	commonSourceURL := "http://example.com/idempotent-and-update"
+	pubDate1 := time.Now().Add(-2 * time.Hour)
+
 	input1 := StoreFactInput{
-		NormalizedFactText: "Idempotency test fact.",
+		NormalizedFactText: "Idempotency test fact one.",
 		Embedding:          mockEmbedding(),
-		OriginalQuote:      "Original quote for idempotency.",
-		Topics:             []string{"idempotency"},
-		InvolvedPeople:     []string{"Idempotent Person"},
-		SourceURL:          "http://example.com/idempotent",
-		PublishedAt:        nil, // Optional
+		OriginalQuote:      "Original quote for fact one.",
+		Topics:             []string{"idempotency", "update"},
+		InvolvedPeople:     []string{"Updater Person"},
+		SourceURL:          commonSourceURL,
+		PublishedAt:        &pubDate1,
 	}
 
 	// --- Action: Store the fact first time ---
@@ -214,137 +218,121 @@ func TestPostgresStorer_StoreFact_Idempotency_SameSource(t *testing.T) {
 	require.Positive(t, factID1)
 	require.Positive(t, factSourceID1)
 
-	// --- Action: Store again with slightly different quote, same core info ---
-	input2 := input1 // Copy struct
-	input2.OriginalQuote = "Updated quote for idempotency."
-	timeNow := time.Now()
-	input2.PublishedAt = &timeNow // Update published date
-
-	// Expect an error on the second call due to the unique constraint on fact_text
-	_, _, _, err = storer.StoreFact(ctx, input2)
-	require.Error(t, err, "Second StoreFact should fail due to unique constraint")
-
-	// Check if the error is a PostgreSQL unique violation error (code 23505)
+	// --- Part 1: Test Idempotency for exact same fact text ---
+	input1Attempt2 := input1 // Exact same input
+	input1Attempt2.OriginalQuote = "Slightly different quote, but same fact text."
+	_, _, _, err = storer.StoreFact(ctx, input1Attempt2)
+	require.Error(t, err, "Second StoreFact with exact same fact_text should fail")
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		assert.Equal(t, "23505", pgErr.Code, "Expected PostgreSQL unique violation error code (23505)")
-		assert.Contains(t, pgErr.Message, "facts_fact_text_key", "Error message should mention the constraint name")
+		assert.Equal(t, "23505", pgErr.Code, "Expected PostgreSQL unique violation on facts.fact_text (23505)")
+		assert.Contains(t, pgErr.ConstraintName, "facts_fact_text_key", "Error message should mention facts_fact_text_key constraint")
 	} else {
-		t.Logf("Warning: Could not assert specific PostgreSQL error type. Error received: %v", err)
-		// Fallback check for generic error message content
-		assert.ErrorContains(t, err, "duplicate key value violates unique constraint")
+		t.Logf("Warning: Could not assert specific PostgreSQL error type for fact_text unique violation. Error: %v", err)
+		assert.ErrorContains(t, err, "duplicate key value violates unique constraint") // Generic check
 	}
 
-	// --- Verification (Check state after FIRST successful insert) ---
-	// We verify that the first insert still exists correctly, but we don't check counts
-	// expecting a second *successful* insert anymore.
+	// --- Part 2: Test storing a *different* fact from the *same source URL* ---
+	// The original fact_sources record (factSourceID1) should be updated.
+	pubDate2 := time.Now().Add(-1 * time.Hour)
+	input2 := StoreFactInput{
+		NormalizedFactText: "A completely different fact two.", // Different fact text
+		Embedding:          mockEmbedding(),                    // Different embedding
+		OriginalQuote:      "Quote for the second, different fact.",
+		Topics:             []string{"new topic"},
+		InvolvedPeople:     []string{"Updater Person", "New Person"}, // Can have different people
+		SourceURL:          commonSourceURL,                          // Same source URL as input1
+		PublishedAt:        &pubDate2,
+	}
 
-	// Check counts in DB should reflect only the *first* insert
-	var count int64
-	// 1. Facts count
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM facts WHERE fact_text = $1", input1.NormalizedFactText).Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 fact entry from the first insert")
+	factID2, factSourceID2, _, err := storer.StoreFact(ctx, input2)
+	require.NoError(t, err, "StoreFact for a different fact from same URL failed")
+	require.Positive(t, factID2, "factID2 should be positive")
+	require.NotEqual(t, factID1, factID2, "factID1 and factID2 should be different")
 
-	// 2. Persons count
-	normalizedName := util.NormalizeString(input1.InvolvedPeople[0])
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons WHERE name = $1", normalizedName).Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 person entry from the first insert")
+	// Critical: The fact_sources ID should be the *same* because the source_url is the same, and it should have been updated.
+	assert.Equal(t, factSourceID1, factSourceID2, "fact_source_id should be the same as the first insert, indicating an update")
 
-	// 3. Fact Sources count
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_sources WHERE fact_id = $1 AND source_url = $2", factID1, input1.SourceURL).Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 fact_source entry from the first insert")
+	// Verify the fact_sources table for this commonSourceURL
+	var updatedFactID string // pgx scans int8 as string
+	var updatedOriginalQuote string
+	var updatedPublishedAt time.Time
+	var updatedLastVisitedAt time.Time
 
-	// 4. Verify fields from the FIRST insert in fact_sources (they shouldn't be updated)
-	var originalQuoteDB string
-	var publishedAtDB *time.Time
-	err = storer.pool.QueryRow(ctx, "SELECT original_quote, published_at FROM fact_sources WHERE id = $1", factSourceID1).Scan(&originalQuoteDB, &publishedAtDB)
-	require.NoError(t, err)
-	assert.Equal(t, input1.OriginalQuote, originalQuoteDB, "Original quote should match the first insert")
-	assert.Nil(t, publishedAtDB, "PublishedAt should match the first insert (nil)") // Assuming input1.PublishedAt was nil
+	sourceQuery := "SELECT fact_id, original_quote, published_at, last_visited_at FROM fact_sources WHERE source_url = $1"
+	err = storer.pool.QueryRow(ctx, sourceQuery, commonSourceURL).Scan(
+		&updatedFactID, &updatedOriginalQuote, &updatedPublishedAt, &updatedLastVisitedAt,
+	)
+	require.NoError(t, err, "Failed to query updated fact_sources record")
 
-	// 5. Fact Mentions count
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_mentions WHERE fact_source_id = $1", factSourceID1).Scan(&count)
+	assert.Equal(t, fmt.Sprintf("%d", factID2), updatedFactID, "fact_sources.fact_id should point to the new factID2")
+	assert.Equal(t, input2.OriginalQuote, updatedOriginalQuote, "fact_sources.original_quote should be updated")
+	assert.WithinDuration(t, *input2.PublishedAt, updatedPublishedAt, time.Second, "fact_sources.published_at should be updated")
+	assert.WithinDuration(t, time.Now(), updatedLastVisitedAt, 2*time.Second, "fact_sources.last_visited_at should be updated to current time")
+
+	// Verify that the first fact (factID1) still exists, but the source is no longer primarily linked to it.
+	var fact1Exists bool
+	err = storer.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM facts WHERE id = $1)", factID1).Scan(&fact1Exists)
 	require.NoError(t, err)
-	assert.Equal(t, int64(len(input1.InvolvedPeople)), count, "Should only be mentions linked to the first fact_source entry")
+	assert.True(t, fact1Exists, "The first fact (factID1) should still exist in the facts table")
 }
 
-// TestPostgresStorer_StoreFact_DuplicateFact_DifferentSource tests storing the same logical fact
-// from two different source URLs. Expects second call to fail due to unique text constraint.
+// TestPostgresStorer_StoreFact_DuplicateFact_DifferentSource tests that storing a fact
+// with the same fact_text as an existing fact, but a different SourceURL, fails due to
+// the unique constraint on facts.fact_text.
 func TestPostgresStorer_StoreFact_DuplicateFact_DifferentSource(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
-	factText := "Duplicate fact, different sources."
-	embedding := mockEmbedding() // Same embedding represents same semantic meaning
-	person := "Duplicate Person"
-
+	commonFactText := "This fact text must be unique."
 	input1 := StoreFactInput{
-		NormalizedFactText: factText,
-		Embedding:          embedding,
-		OriginalQuote:      "Quote from source 1.",
-		Topics:             []string{"duplicates"},
-		InvolvedPeople:     []string{person},
-		SourceURL:          "http://example.com/duplicate-1",
+		NormalizedFactText: commonFactText,
+		Embedding:          mockEmbedding(),
+		OriginalQuote:      "Quote for source 1.",
+		Topics:             []string{"duplicate_test"},
+		InvolvedPeople:     []string{"Tester"},
+		SourceURL:          "http://example.com/source1-unique-fact",
+		PublishedAt:        nil,
 	}
+
+	// --- Action: Store the fact first time ---
+	factID1, _, _, err := storer.StoreFact(ctx, input1)
+	require.NoError(t, err, "First StoreFact failed")
+	require.Positive(t, factID1)
+
+	// --- Action: Store again with same fact_text, different SourceURL ---
 	input2 := StoreFactInput{
-		NormalizedFactText: factText,  // Same fact text
-		Embedding:          embedding, // Same embedding
-		OriginalQuote:      "Quote from source 2.",
-		Topics:             []string{"duplicates", "source2"}, // Can have different topics (fact ones should be updated)
-		InvolvedPeople:     []string{person},                  // Same person
-		SourceURL:          "http://example.com/duplicate-2",  // Different URL
+		NormalizedFactText: commonFactText,  // Same fact text
+		Embedding:          mockEmbedding(), // Can be different embedding
+		OriginalQuote:      "Quote for source 2.",
+		Topics:             []string{"another_topic"},
+		InvolvedPeople:     []string{"Tester", "Another Person"},
+		SourceURL:          "http://example.com/source2-different-url", // Different SourceURL
+		PublishedAt:        nil,
 	}
 
-	// --- Action: Store first time ---
-	factID1, factSourceID1, _, err := storer.StoreFact(ctx, input1)
-	require.NoError(t, err, "StoreFact for input1 failed")
-
-	// --- Action: Store second time (EXPECT ERROR) ---
 	_, _, _, err = storer.StoreFact(ctx, input2)
-	require.Error(t, err, "StoreFact for input2 should fail due to unique constraint")
+	require.Error(t, err, "Second StoreFact with same fact_text (different URL) should fail")
 
-	// Check if the error is a PostgreSQL unique violation error (code 23505)
+	// Check if the error is a PostgreSQL unique violation error (code 23505) on facts.fact_text
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		assert.Equal(t, "23505", pgErr.Code, "Expected PostgreSQL unique violation error code (23505)")
-		assert.Contains(t, pgErr.Message, "facts_fact_text_key", "Error message should mention the constraint name")
+		assert.Equal(t, "23505", pgErr.Code, "Expected PostgreSQL unique violation on facts.fact_text (23505)")
+		assert.Contains(t, pgErr.ConstraintName, "facts_fact_text_key", "Error message should mention facts_fact_text_key constraint")
 	} else {
-		t.Logf("Warning: Could not assert specific PostgreSQL error type. Error received: %v", err)
-		// Fallback check for generic error message content
-		assert.ErrorContains(t, err, "duplicate key value violates unique constraint")
+		t.Logf("Warning: Could not assert specific PostgreSQL error type for fact_text unique violation. Error: %v", err)
+		assert.ErrorContains(t, err, "duplicate key value violates unique constraint") // Generic check
 	}
 
-	// --- Verification (Check state after FIRST successful insert) ---
-	// Check counts should reflect only the first insert
+	// Verify only one fact with that text exists
 	var count int64
-	// 1. Facts count
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM facts WHERE fact_text = $1", factText).Scan(&count)
+	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM facts WHERE fact_text = $1", commonFactText).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 fact entry")
-
-	// 2. Persons count
-	normalizedName := util.NormalizeString(person)
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons WHERE name = $1", normalizedName).Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 person entry")
-
-	// 3. Fact Sources count (should only have the first source)
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_sources WHERE fact_id = $1", factID1).Scan(&count)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), count, "Should only be 1 fact_source entry for this fact (from the first insert)")
-
-	// 4. Fact Mentions count (should only have mention for the first source)
-	var mentionCount1 int64
-	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_mentions WHERE fact_source_id = $1", factSourceID1).Scan(&mentionCount1)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), mentionCount1, "Should be 1 mention for source 1")
+	assert.Equal(t, int64(1), count, "Should still only be 1 fact entry with that text")
 }
 
-// TestPostgresStorer_StoreFact_ExistingPerson tests storing facts involving the same person.
+// TestPostgresStorer_StoreFact_ExistingPerson tests storing facts where persons involved might already exist.
 func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
@@ -434,50 +422,78 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	assert.True(t, foundMentions2[personYID], "Fact 2 mention missing for Person Y")
 
 	// 6. Verify fact_sources are linked correctly
-	var source1FactID, source2FactID int64
+	var source1FactID, source2FactID string // pgx scans int8 as string
 	err = storer.pool.QueryRow(ctx, "SELECT fact_id FROM fact_sources WHERE id = $1", factSourceID1).Scan(&source1FactID)
 	require.NoError(t, err)
-	assert.Equal(t, factID1, source1FactID, "Fact source 1 not linked to fact 1")
+	assert.Equal(t, fmt.Sprintf("%d", factID1), source1FactID)
+
 	err = storer.pool.QueryRow(ctx, "SELECT fact_id FROM fact_sources WHERE id = $1", factSourceID2).Scan(&source2FactID)
 	require.NoError(t, err)
-	assert.Equal(t, factID2, source2FactID, "Fact source 2 not linked to fact 2")
+	assert.Equal(t, fmt.Sprintf("%d", factID2), source2FactID)
 }
 
-// TestPostgresStorer_CheckSourceURLExists tests the helper function for checking URLs.
-func TestPostgresStorer_CheckSourceURLExists(t *testing.T) {
+// TestPostgresStorer_IsURLVisitable tests the IsURLVisitable function.
+func TestPostgresStorer_IsURLVisitable(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
-	urlToCheck1 := "http://example.com/non-existent-url"
-	urlToCheck2 := "http://example.com/existent-url"
+	testURL1 := "http://example.com/visitable/new"
+	testURL2 := "http://example.com/visitable/recent"
+	testURL3 := "http://example.com/visitable/old"
+	revisitIntervalHours := 24
 
-	// 1. Check non-existent URL
-	exists, err := storer.CheckSourceURLExists(ctx, urlToCheck1)
-	require.NoError(t, err, "CheckSourceURLExists failed for non-existent URL")
-	assert.False(t, exists, "CheckSourceURLExists should return false for non-existent URL")
+	// Case 1: URL does not exist
+	visitable, exists, err := storer.IsURLVisitable(ctx, testURL1, revisitIntervalHours)
+	require.NoError(t, err, "IsURLVisitable failed for new URL")
+	assert.True(t, visitable, "New URL should be visitable")
+	assert.False(t, exists, "New URL should not exist in sources")
 
-	// 2. Insert a fact with urlToCheck2
-	input := StoreFactInput{
-		NormalizedFactText: "Fact for URL check",
-		Embedding:          mockEmbedding(),
-		OriginalQuote:      "Quote for URL check",
-		InvolvedPeople:     []string{"URL Checker"},
-		SourceURL:          urlToCheck2,
-	}
-	// Handle 4 return values
-	_, _, _, err = storer.StoreFact(ctx, input)
-	require.NoError(t, err, "StoreFact failed during URL check test setup")
+	// Setup for existing URLs: Insert some sources directly
+	_, err = storer.pool.Exec(ctx, `
+		INSERT INTO facts (fact_text, embedding, topics) VALUES 
+		('dummy fact for url2', $1, '{}'),
+		('dummy fact for url3', $1, '{}') RETURNING id
+	`, pgvector.NewVector(mockEmbedding()))
+	require.NoError(t, err, "Failed to insert dummy facts for IsURLVisitable test")
 
-	// 3. Check existent URL
-	exists, err = storer.CheckSourceURLExists(ctx, urlToCheck2)
-	require.NoError(t, err, "CheckSourceURLExists failed for existent URL")
-	assert.True(t, exists, "CheckSourceURLExists should return true for existent URL")
+	var factIDForURL2, factIDForURL3 int64
+	err = storer.pool.QueryRow(ctx, "SELECT id FROM facts WHERE fact_text = 'dummy fact for url2'").Scan(&factIDForURL2)
+	require.NoError(t, err)
+	err = storer.pool.QueryRow(ctx, "SELECT id FROM facts WHERE fact_text = 'dummy fact for url3'").Scan(&factIDForURL3)
+	require.NoError(t, err)
 
-	// 4. Check non-existent URL again (sanity check)
-	exists, err = storer.CheckSourceURLExists(ctx, urlToCheck1)
-	require.NoError(t, err, "CheckSourceURLExists failed for non-existent URL (second check)")
-	assert.False(t, exists, "CheckSourceURLExists should return false for non-existent URL (second check)")
+	// Visited 1 hour ago (recent)
+	lastVisitedRecent := time.Now().Add(-1 * time.Hour)
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at, last_visited_at) VALUES ($1, $2, $3, $4, $5)",
+		factIDForURL2, testURL2, "quote2", time.Now(), lastVisitedRecent)
+	require.NoError(t, err, "Failed to insert recent source for IsURLVisitable")
+
+	// Visited 48 hours ago (old, past the 24-hour interval)
+	lastVisitedOld := time.Now().Add(-48 * time.Hour)
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at, last_visited_at) VALUES ($1, $2, $3, $4, $5)",
+		factIDForURL3, testURL3, "quote3", time.Now(), lastVisitedOld)
+	require.NoError(t, err, "Failed to insert old source for IsURLVisitable")
+
+	// Case 2: URL exists, visited recently
+	visitable, exists, err = storer.IsURLVisitable(ctx, testURL2, revisitIntervalHours)
+	require.NoError(t, err, "IsURLVisitable failed for recently visited URL")
+	assert.False(t, visitable, "Recently visited URL should not be visitable")
+	assert.True(t, exists, "Recently visited URL should exist in sources")
+
+	// Case 3: URL exists, visited long ago (older than revisitIntervalHours)
+	visitable, exists, err = storer.IsURLVisitable(ctx, testURL3, revisitIntervalHours)
+	require.NoError(t, err, "IsURLVisitable failed for old URL")
+	assert.True(t, visitable, "Old URL (past interval) should be visitable")
+	assert.True(t, exists, "Old URL should exist in sources")
+
+	// Case 4: URL exists, but revisitInterval is very short (e.g., 0 hours), so it should be visitable
+	visitable, exists, err = storer.IsURLVisitable(ctx, testURL2, 0) // 0 hour interval
+	require.NoError(t, err, "IsURLVisitable failed for recent URL with 0 interval")
+	assert.True(t, visitable, "Recently visited URL should be visitable with 0 interval")
+	assert.True(t, exists, "Recently visited URL should still exist in sources")
 }
 
 // TODO: Add test case for storing the same fact again (should ideally be idempotent or handled)

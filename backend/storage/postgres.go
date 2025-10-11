@@ -377,27 +377,43 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 	return personIDs, nil
 }
 
-// linkSourceToFact inserts or updates a record linking a source URL to a fact. Operates within a transaction.
+// linkSourceToFact links a source URL, quote, and published date to a given fact ID.
+// If the source URL already exists, it updates its last_visited_at timestamp.
+// Otherwise, it inserts a new source record with last_visited_at set to current time.
 func (s *PostgresStorer) linkSourceToFact(ctx context.Context, tx pgx.Tx, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time) (factSourceID int64, err error) {
-	sourceInsertStmt := `
-		INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (fact_id, source_url) DO UPDATE SET
-			original_quote = EXCLUDED.original_quote, -- Update quote/date if URL reappears for same fact
-			published_at = EXCLUDED.published_at,
-			scraped_at = CURRENT_TIMESTAMP
+	// Use COALESCE for published_at to handle nil case properly in SQL
+	// Update last_visited_at on conflict
+	insertSourceStmt := `
+		INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at, last_visited_at)
+		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+		ON CONFLICT (source_url) DO UPDATE
+		SET fact_id = EXCLUDED.fact_id, 
+		    original_quote = EXCLUDED.original_quote, 
+		    published_at = EXCLUDED.published_at,
+		    last_visited_at = CURRENT_TIMESTAMP
 		RETURNING id`
-	err = tx.QueryRow(ctx, sourceInsertStmt,
+	// This assumes that if a URL conflicts, we still want to associate it with the *current* factID and details.
+	// If the policy should be different (e.g., only update last_visited_at but keep old fact_id/quote), the ON CONFLICT clause needs adjustment.
+	// For now, the logic is to "refresh" the source details if re-linked.
+
+	var publishedAtVal interface{}
+	if publishedAt != nil {
+		publishedAtVal = *publishedAt
+	} else {
+		publishedAtVal = nil // Explicitly pgx.Null/nil for database
+	}
+
+	err = tx.QueryRow(ctx, insertSourceStmt,
 		factID,
 		sourceURL,
 		originalQuote,
-		publishedAt,
+		publishedAtVal,
 	).Scan(&factSourceID)
+
 	if err != nil {
-		return 0, fmt.Errorf("failed to insert/update fact source for fact ID %d and URL '%s': %w", factID, sourceURL, err)
+		return 0, fmt.Errorf("failed to insert or update fact source for URL '%s': %w", sourceURL, err)
 	}
-	// Info or Debug? Let's use Debug as it happens for every fact.
-	log.Debug().Int64("fact_source_id", factSourceID).Str("source_url", sourceURL).Int64("fact_id", factID).Msg("Linked source to fact")
+	log.Debug().Int64("fact_source_id", factSourceID).Str("source_url", sourceURL).Msg("Inserted or updated fact source and updated last_visited_at")
 	return factSourceID, nil
 }
 
@@ -444,15 +460,37 @@ func (s *PostgresStorer) linkPersonsToSourceMention(ctx context.Context, tx pgx.
 
 // --- Add methods for URL pre-check if desired ---
 
-// CheckSourceURLExists checks if a given URL is already present in the fact_sources table.
-func (s *PostgresStorer) CheckSourceURLExists(ctx context.Context, url string) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM fact_sources WHERE source_url = $1)`
-	err := s.pool.QueryRow(ctx, query, url).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check if source URL exists '%s': %w", url, err)
+// IsURLVisitable checks if a given URL should be visited based on the last visit time and a configurable interval.
+// It returns:
+// 1. visitable (bool): True if the URL can be visited (either new or past the revisit interval).
+// 2. sourceExists (bool): True if the URL already exists in the fact_sources table.
+// 3. err (error): Any error encountered during the database query.
+func (s *PostgresStorer) IsURLVisitable(ctx context.Context, url string, revisitIntervalHours int) (visitable bool, sourceExists bool, err error) {
+	var lastVisitedAt time.Time
+	query := `SELECT last_visited_at FROM fact_sources WHERE source_url = $1`
+
+	err = s.pool.QueryRow(ctx, query, url).Scan(&lastVisitedAt)
+
+	if err == pgx.ErrNoRows {
+		// URL does not exist, so it's visitable and sourceExists is false
+		return true, false, nil
 	}
-	return exists, nil
+	if err != nil {
+		// Other query error
+		return false, false, fmt.Errorf("failed to query last_visited_at for URL '%s': %w", url, err)
+	}
+
+	// URL exists, sourceExists is true
+	sourceExists = true
+
+	// Check if last_visited_at is older than NOW() - revisitIntervalHours
+	if time.Since(lastVisitedAt) > (time.Duration(revisitIntervalHours) * time.Hour) {
+		visitable = true // It's time to revisit
+	} else {
+		visitable = false // Visited too recently
+	}
+
+	return visitable, sourceExists, nil
 }
 
 // GetAllPersons retrieves a list of all unique person names from the persons table.
@@ -745,4 +783,76 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	}
 
 	return nil
+}
+
+// GetFactTextByID retrieves the normalized text of a specific fact by its ID.
+// Operates within a given transaction.
+func (s *PostgresStorer) GetFactTextByID(ctx context.Context, tx pgx.Tx, factID int64) (string, error) {
+	var factText string
+	query := `SELECT fact_text FROM facts WHERE id = $1`
+	err := tx.QueryRow(ctx, query, factID).Scan(&factText)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// Consider if ErrNoRows should be a distinct error type or just logged
+			return "", fmt.Errorf("fact not found with ID %d: %w", factID, err)
+		}
+		return "", fmt.Errorf("failed to query fact text for ID %d: %w", factID, err)
+	}
+	return factText, nil
+}
+
+// GetFactsForPerson retrieves all facts and their source details for a specific person.
+func (s *PostgresStorer) GetFactsForPerson(ctx context.Context, personName string) ([]FactDetail, error) {
+	var details []FactDetail
+
+	// First, get the person_id for the given name
+	var personID int64
+	findPersonIDStmt := `SELECT id FROM persons WHERE name = $1`
+	err := s.pool.QueryRow(ctx, findPersonIDStmt, personName).Scan(&personID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("person with name '%s' not found", personName)
+		}
+		return nil, fmt.Errorf("failed to find person_id for '%s': %w", personName, err)
+	}
+
+	query := `
+		SELECT
+			f.id AS fact_id,
+			f.fact_text,
+			fs.id AS fact_source_id,
+			fs.source_url,
+			fs.original_quote
+		FROM
+			facts f
+		JOIN
+			fact_sources fs ON f.id = fs.fact_id
+		JOIN
+			fact_mentions fm ON fs.id = fm.fact_source_id
+		WHERE
+			fm.person_id = $1
+		ORDER BY
+			f.fact_text, fs.source_url; -- Consistent ordering
+	`
+
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query facts for person_id %d ('%s'): %w", personID, personName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var detail FactDetail
+		if err := rows.Scan(&detail.FactID, &detail.FactText, &detail.FactSourceID, &detail.SourceURL, &detail.OriginalQuote); err != nil {
+			return nil, fmt.Errorf("failed to scan fact detail for person_id %d: %w", personID, err)
+		}
+		details = append(details, detail)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating fact details for person_id %d: %w", personID, rows.Err())
+	}
+
+	log.Info().Str("person_name", personName).Int("fact_count", len(details)).Msg("Successfully retrieved facts for person")
+	return details, nil
 }

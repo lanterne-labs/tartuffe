@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"digital-mirror/backend/extractor" // Correct import path
 	"time"
 )
@@ -29,56 +30,71 @@ type Fact struct {
 	Embedding []float32 `json:"embedding,omitempty"` // Use float32 for common embedding sizes
 }
 
+// ChunkingParameters defines the parameters for chunking text before fact extraction.
+type ChunkingParameters struct {
+	ThresholdChars int // Content length (in chars) above which to chunk
+	ChunkSizeChars int // Target size for each chunk (in chars)
+	OverlapChars   int // Character overlap between chunks
+}
+
 // FactExtractor defines the interface for extracting structured facts from text content using an LLM.
 type FactExtractor interface {
 	// ExtractFacts processes the given ExtractedContent and returns a slice of Fact structs.
 	// It needs the original personName searched for context in prompt generation.
-	ExtractFacts(personName string, content extractor.ExtractedContent) ([]Fact, error) // Ensure type reference is correct
+	ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]Fact, error)
+
+	// GetChunkingParameters returns the recommended chunking parameters for the specific LLM implementation.
+	GetChunkingParameters() ChunkingParameters
 }
 
 // --- Shared Prompt Template ---
 
 const (
 	// FactExtractionSystemPrompt is the template used to instruct the LLM for fact extraction.
-	// It expects %s placeholders for: personName, sourceURL, content text.
-	// It explicitly asks for a JSON array output matching the Fact structure fields
-	// (normalized_fact, original_quote, topics, involved_people).
-	FactExtractionSystemPrompt = `You are an expert AI assistant specialized in extracting factual statements from news articles and online content. Your goal is to identify specific claims, actions, or statements attributed to individuals, focusing primarily on '%s'.
+	// Updated to focus on people's actions/statements and capturing context for contradiction checks.
+	FactExtractionSystemPrompt = `You are an expert AI assistant specialized in extracting specific, verifiable factual statements about **what people say or do**, primarily focusing on '%s'. Ignore general statements or descriptions unless they directly report an action or statement by a person.
 
 Given the following text content from URL '%s':
 --- TEXT START ---
 %s
 --- TEXT END ---
 
-Please extract all distinct factual statements made by or about the people mentioned. For each fact, provide:
-1. 'normalized_fact': The core factual claim, concisely summarized but **preserving essential context for contradiction analysis**. This includes:
-    *   **Specific Actions/Verbs:** Use precise verbs (e.g., "proposed", "criticized", "denied", "confirmed").
-    *   **Key Entities:** Mention the main subject and object of the action.
-    *   **Negations:** Explicitly include negations (e.g., "did not attend", "denied the claim").
-    *   **Dates/Timeframes:** Include specific dates, years, or time references if mentioned and relevant to the claim (e.g., "in 2023", "last week").
-    *   **Locations:** Include specific locations if relevant to the claim (e.g., "in Paris", "at the summit").
-    *   **Quantities/Values:** Include specific numbers or quantities central to the claim (e.g., "cut taxes by 5%", "allocated $10 million").
-    *   **Qualifiers:** Retain important qualifiers if they significantly alter the claim's certainty or scope (e.g., "likely", "possibly", "reportedly", "plans to").
-    Keep it objective and as concise as possible WHILE retaining this critical context. Avoid introductory phrases like "It was reported that...".
-2. 'original_quote': A concise snippet from the original text (max ~250 chars) that directly supports the normalized_fact. If the supporting text is spread out, use " [...] " to bridge the essential parts. Example: "Person A stated X [...] and plans to achieve Y."
-3. 'topics': A list of 1-3 relevant topic keywords (e.g., ["economy", "tax reform"]).
-4. 'involved_people': A list of all names of people directly involved in or mentioned in the statement.
+Please extract all distinct factual statements where a person **performs an action** (e.g., voted, proposed, met, signed) or **makes a statement** (e.g., said, claimed, denied, criticized). For each fact, provide:
+1.  'normalized_fact': A concise summary of the specific action or statement attributed to the person(s). **Crucially, preserve essential context needed for contradiction analysis later.** This includes:
+    *   **Person(s):** Clearly identify by their **full name(s)** who performed the action or made the statement.
+    *   **Precise Action/Statement:** Use specific verbs. What exactly did they *do* or *say*?
+    *   **Object/Subject:** What policy, bill, event, or topic was the action/statement about? Be specific if possible (e.g., "bill H.R. 123", "the 2024 budget proposal").
+    *   **Negations:** Explicitly include terms like "not", "denied", "rejected", "failed to".
+    *   **Dates/Timeframes:** Include specific dates, years, or time references (e.g., "on Jan 15, 2024", "during the 2023 summit", "last week") if mentioned and relevant. This is vital for context.
+    *   **Locations:** Include specific locations if relevant (e.g., "in Paris", "at the G7 meeting").
+    *   **Key Quantities/Values:** Include specific numbers central to the claim if applicable (e.g., "voted against the $5M allocation").
+    *   **Qualifiers:** Retain important qualifiers if they alter the claim's certainty or scope (e.g., "reportedly", "allegedly", "plans to").
+    Keep it objective. Avoid introductory phrases.
+2.  'original_quote': A concise snippet (max ~250 chars) from the original text that directly supports the normalized_fact, using " [...] " to bridge essential parts if necessary.
+3.  'topics': 1-3 relevant topic keywords. Include specific identifiers like bill numbers or years if applicable.
+4.  'involved_people': A list of the **full names of all specific human individuals** directly involved in the action or statement (e.g., "John Doe", "Jane Smith"). **Do NOT include organizations, titles without specific names (e.g., "a senator"), roles (e.g., "spokesperson"), or generic groups (e.g., "reporters", "doctors").** If a full name is not available for a specific individual, do not include them.
 
-Respond ONLY with a valid JSON array containing objects matching this structure. Each object represents one distinct fact. If no relevant facts are found, return an empty JSON array []. Do not include any explanations or commentary outside the JSON array.
+Respond ONLY with a valid JSON array containing objects matching this structure. Return an empty array [] if no relevant actions or statements are found. Do not include explanations outside the JSON.
 
 Example Output Format:
 [
   {
-    "normalized_fact": "Gabriel Attal stated the government aims to reduce unemployment in 2024.",
-    "original_quote": "Gabriel Attal stated the government aims to reduce unemployment [...] within two years [from 2023].",
-    "topics": ["employment", "government policy", "2024"],
-    "involved_people": ["Gabriel Attal"]
+    "normalized_fact": "Alice Green proposed new environmental regulations during the May 2024 summit.",
+    "original_quote": "At the recent summit [May 2024], Alice Green presented a new proposal regarding environmental regulations.",
+    "topics": ["environment", "regulations", "summit 2024"],
+    "involved_people": ["Alice Green"]
   },
   {
-    "normalized_fact": "Marine Le Pen criticized the proposed budget during the parliamentary debate.",
-    "original_quote": "Marine Le Pen criticized the proposed budget, calling it 'unrealistic [...].' during the debate.",
-    "topics": ["budget", "politics", "parliament"],
-    "involved_people": ["Marine Le Pen"]
+    "normalized_fact": "Bob White commented on Alice Green's proposal, calling it ambitious but necessary.",
+    "original_quote": "Bob White later commented that the proposal [by Alice Green] was ambitious but necessary.",
+    "topics": ["environment", "regulations", "commentary"],
+    "involved_people": ["Bob White", "Alice Green"]
+  },
+ {
+    "normalized_fact": "Senator Davis stated he was against the infrastructure bill H.R. 500 in 2022.",
+    "original_quote": "In 2022, Senator Davis declared his opposition to the costly H.R. 500 infrastructure bill.",
+    "topics": ["infrastructure", "legislation", "H.R. 500", "2022"],
+    "involved_people": ["Senator Davis"]
   }
 ]`
 )
