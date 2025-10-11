@@ -67,16 +67,16 @@ type factProcessingUnit struct {
 }
 
 type appDependencies struct {
-	embedder              *embedding.MistralEmbeddingGenerator
-	factExtractor         *categorizer.MistralExtractor
-	contradictionDetector *contradiction.MistralContradictionDetector
+	embedder              *embedding.OpenAIEmbeddingGenerator
+	factExtractor         *categorizer.OpenAIExtractor
+	contradictionDetector *contradiction.OpenAIContradictionDetector
 	storer                *storage.PostgresStorer
 	searchProvider        *search.GoogleSearchProvider
 	contentExtractor      extractor.ContentExtractor
 	factLimiter           *rate.Limiter
 }
 
-const maxEmbeddingBatchSize = 50   // Max items per Mistral embedding API call
+const maxEmbeddingBatchSize = 50   // Max items per embedding API call
 const factExtractionRateLimit = 1  // Allowed requests per second to the fact extractor LLM
 const factExtractionBurstLimit = 1 // Burst allowed for fact extractor
 const googleSearchBatchSize = 10   // Google API 'num' parameter max is 10
@@ -107,15 +107,15 @@ func initializeDependencies(ctx context.Context) (*appDependencies, error) {
 	var err error
 
 	// Initialize services that don't depend on API key order first
-	deps.embedder, err = embedding.NewMistralEmbeddingGeneratorFromEnv()
+	deps.embedder, err = embedding.NewOpenAIEmbeddingGeneratorFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create embedder: %w", err)
 	}
-	deps.factExtractor, err = categorizer.NewMistralExtractorFromEnv()
+	deps.factExtractor, err = categorizer.NewOpenAIExtractorFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create fact extractor: %w", err)
 	}
-	deps.contradictionDetector, err = contradiction.NewMistralContradictionDetectorFromEnv()
+	deps.contradictionDetector, err = contradiction.NewOpenAIContradictionDetectorFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create contradiction detector: %w", err)
 	}

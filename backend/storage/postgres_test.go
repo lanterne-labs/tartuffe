@@ -27,9 +27,9 @@ func loadEnv(t *testing.T) {
 	t.Helper()
 	err := godotenv.Load("../../.env")
 	if err != nil {
-		// Allow tests to run if MISTRAL key is set directly in env
-		if os.Getenv("MISTRAL_API_KEY") == "" || os.Getenv("DATABASE_URL") == "" {
-			t.Log("INFO: .env file not found and MISTRAL_API_KEY or DATABASE_URL not set in env, tests needing them might be skipped.")
+		// Allow tests to run if OPEN_AI key is set directly in env
+		if os.Getenv("OPEN_AI_KEY") == "" || os.Getenv("DATABASE_URL") == "" {
+			t.Log("INFO: .env file not found and OPEN_AI_KEY or DATABASE_URL not set in env, tests needing them might be skipped.")
 		}
 	}
 }
@@ -39,8 +39,8 @@ func setupTestDB(t *testing.T) (*PostgresStorer, func()) {
 	loadEnv(t)
 	dbURL := os.Getenv("DATABASE_URL")
 	require.NotEmpty(t, dbURL, "DATABASE_URL must be set for storage tests")
-	mistralKey := os.Getenv("MISTRAL_API_KEY")
-	require.NotEmpty(t, mistralKey, "MISTRAL_API_KEY must be set for storage tests") // Needed for embedder
+	key := os.Getenv("OPEN_AI_KEY")
+	require.NotEmpty(t, key, "OPEN_AI_KEY must be set for storage tests") // Needed for embedder
 
 	ctx := context.Background()
 

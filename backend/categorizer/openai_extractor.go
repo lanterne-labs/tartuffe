@@ -15,25 +15,35 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// --- Mistral Specific Implementation ---
+// --- OpenAI-compatible Chat Completion Implementation ---
 
 const (
-	mistralAPIURLDefault = "https://api.mistral.ai/v1/chat/completions"
-	mistralModelDefault  = "mistral-small-latest" // Cost-effective choice, supports JSON mode
-	// Define character thresholds for chunking (adjust as needed)
+	// chunking parameters kept generic
 	// ~25k chars is a rough proxy for < 8k tokens to leave room for prompt/response
 	chunkingThresholdChars = 25000
 	chunkSizeChars         = 20000
 	overlapChars           = 500
 )
 
-// MistralExtractor implements FactExtractor using the Mistral AI API.
-type MistralExtractor struct {
-	// apiKey is the Mistral API key.
+// openAIChatModelDefault is a sensible default, can be overridden via OPEN_AI_CHAT_MODEL
+const openAIChatModelDefault = "gpt-4o-mini"
+
+// buildChatAPIURL composes the full chat completions endpoint from the OPEN_AI_API base.
+func buildChatAPIURL(base string) string {
+	base = strings.TrimRight(base, "/")
+	if strings.HasSuffix(base, "/chat/completions") {
+		return base
+	}
+	return base + "/chat/completions"
+}
+
+// OpenAIExtractor implements FactExtractor using an OpenAI-compatible Chat Completions API.
+type OpenAIExtractor struct {
+	// apiKey is the API key to authenticate requests.
 	apiKey string
-	// apiURL is the endpoint for the Mistral API.
+	// apiURL is the full endpoint for chat completions.
 	apiURL string
-	// model is the specific Mistral model to use.
+	// model is the model to use for chat completions.
 	model string
 	// Use the shared prompt template defined in fact.go
 	systemPromptTemplate string
@@ -41,47 +51,61 @@ type MistralExtractor struct {
 	baseClient *BaseLLMClient
 }
 
-// NewMistralExtractorFromEnv creates a MistralExtractor using the API key from env and default settings.
-func NewMistralExtractorFromEnv() (*MistralExtractor, error) {
-	apiKey := os.Getenv("MISTRAL_API_KEY")
+// NewOpenAIExtractorFromEnv creates an OpenAIExtractor using OPEN_AI_ env vars.
+// Required: OPEN_AI_KEY, OPEN_AI_API (base, e.g., https://api.openai.com/v1)
+// Optional: OPEN_AI_CHAT_MODEL (defaults to openAIChatModelDefault)
+func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
+	apiKey := os.Getenv("OPEN_AI_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("MISTRAL_API_KEY environment variable not set")
+		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
 	}
-	return &MistralExtractor{
+	base := os.Getenv("OPEN_AI_API")
+	if base == "" {
+		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
+	}
+	model := os.Getenv("OPEN_AI_CHAT_MODEL")
+	if strings.TrimSpace(model) == "" {
+		model = openAIChatModelDefault
+	}
+	return &OpenAIExtractor{
 		apiKey: apiKey,
-		apiURL: mistralAPIURLDefault,
-		model:  mistralModelDefault,
+		apiURL: buildChatAPIURL(base),
+		model:  model,
 		// Use the shared prompt constant from fact.go
 		systemPromptTemplate: backend.FactExtractionSystemPrompt,
 		baseClient:           NewBaseLLMClient(),
 	}, nil
 }
 
-// Internal structs specific to Mistral API request/response
-type MistralMessage struct {
+// ChatMessage models a single chat message for OpenAI-compatible APIs.
+type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-type MistralResponseFormat struct {
+// ResponseFormat controls the response format, e.g., JSON mode.
+type ResponseFormat struct {
 	Type string `json:"type"` // e.g., "json_object"
 }
 
-type MistralRequest struct {
-	Model          string                 `json:"model"`
-	Messages       []MistralMessage       `json:"messages"`
-	Temperature    float64                `json:"temperature"`
-	ResponseFormat *MistralResponseFormat `json:"response_format,omitempty"`
+// ChatRequest is the OpenAI-compatible chat completion request.
+type ChatRequest struct {
+	Model          string          `json:"model"`
+	Messages       []ChatMessage   `json:"messages"`
+	Temperature    float64         `json:"temperature"`
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
 
-type MistralChoice struct {
-	Index        int            `json:"index"`
-	Message      MistralMessage `json:"message"`
-	FinishReason string         `json:"finish_reason"`
+// ChatChoice models a single choice in the completion response.
+type ChatChoice struct {
+	Index        int         `json:"index"`
+	Message      ChatMessage `json:"message"`
+	FinishReason string      `json:"finish_reason"`
 }
 
-type MistralResponse struct {
-	Choices []MistralChoice `json:"choices"`
+// ChatResponse is the OpenAI-compatible completion response envelope.
+type ChatResponse struct {
+	Choices []ChatChoice `json:"choices"`
 	Error   *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -90,8 +114,8 @@ type MistralResponse struct {
 }
 
 // GetChunkingParameters implements the FactExtractor interface.
-// Returns parameters suitable for the default Mistral model.
-func (m *MistralExtractor) GetChunkingParameters() backend.ChunkingParameters {
+// Returns parameters suitable for the default configuration.
+func (m *OpenAIExtractor) GetChunkingParameters() backend.ChunkingParameters {
 	// These values can be adjusted based on the specific model used (m.model)
 	// and further testing. Keeping previous values for now.
 	return backend.ChunkingParameters{
@@ -101,67 +125,66 @@ func (m *MistralExtractor) GetChunkingParameters() backend.ChunkingParameters {
 	}
 }
 
-// callMistralAPI performs a single call to the Mistral API with the given content.
-func (m *MistralExtractor) callMistralAPI(ctx context.Context, personName, sourceURL, contentText string) ([]backend.Fact, error) {
+// callChatAPI performs a single call to the OpenAI-compatible Chat Completions API with the given content.
+func (m *OpenAIExtractor) callChatAPI(ctx context.Context, personName, sourceURL, contentText string) ([]backend.Fact, error) {
 	systemPrompt := fmt.Sprintf(m.systemPromptTemplate, personName, sourceURL, contentText)
 
-	reqPayload := MistralRequest{
+	reqPayload := ChatRequest{
 		Model: m.model,
-		Messages: []MistralMessage{
+		Messages: []ChatMessage{
 			{Role: "system", Content: systemPrompt},
 		},
 		Temperature:    0.1,
-		ResponseFormat: &MistralResponseFormat{Type: "json_object"},
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal Mistral request payload: %w", err)
+		return nil, fmt.Errorf("failed to marshal chat request payload: %w", err)
 	}
 
-	log.Debug().Str("url", m.apiURL).Int("prompt_chars", len(systemPrompt)).Msg("Attempting Mistral API call for fact extraction")
+	log.Debug().Str("url", m.apiURL).Int("prompt_chars", len(systemPrompt)).Msg("Attempting LLM chat API call for fact extraction")
 	startTime := time.Now()
 
 	bodyBytes, err := m.baseClient.DoRequest(ctx, m.apiURL, m.apiKey, payloadBytes)
 
 	duration := time.Since(startTime)
 	if err != nil {
-		// Log the error including duration
-		log.Error().Err(err).Dur("duration", duration).Str("url", m.apiURL).Msg("Mistral API call failed")
-		// Try to parse specific Mistral error from body if available
-		var mistralResp MistralResponse
-		if parseErr := json.Unmarshal(bodyBytes, &mistralResp); parseErr == nil && mistralResp.Error != nil {
-			return nil, fmt.Errorf("Mistral API returned error: [%s] %s - %s (request status: %w)", mistralResp.Error.Code, mistralResp.Error.Type, mistralResp.Error.Message, err)
+		log.Error().Err(err).Dur("duration", duration).Str("url", m.apiURL).Msg("Chat API call failed")
+		// Try to parse specific API error from body if available
+		var chatResp ChatResponse
+		if parseErr := json.Unmarshal(bodyBytes, &chatResp); parseErr == nil && chatResp.Error != nil {
+			return nil, fmt.Errorf("Chat API returned error: [%s] %s - %s (request status: %w)", chatResp.Error.Code, chatResp.Error.Type, chatResp.Error.Message, err)
 		}
 		return nil, err // Return original error from DoRequest
 	}
-	log.Debug().Dur("duration", duration).Int("response_bytes", len(bodyBytes)).Str("url", m.apiURL).Msg("Mistral API call successful")
+	log.Debug().Dur("duration", duration).Int("response_bytes", len(bodyBytes)).Str("url", m.apiURL).Msg("Chat API call successful")
 
-	var mistralResp MistralResponse
-	if err := json.Unmarshal(bodyBytes, &mistralResp); err != nil {
-		return nil, fmt.Errorf("failed to decode Mistral API response envelope: %w. Body: %s", err, string(bodyBytes))
+	var chatResp ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return nil, fmt.Errorf("failed to decode chat API response envelope: %w. Body: %s", err, string(bodyBytes))
 	}
 
-	if mistralResp.Error != nil {
-		return nil, fmt.Errorf("Mistral API returned error: [%s] %s - %s", mistralResp.Error.Code, mistralResp.Error.Type, mistralResp.Error.Message)
+	if chatResp.Error != nil {
+		return nil, fmt.Errorf("Chat API returned error: [%s] %s - %s", chatResp.Error.Code, chatResp.Error.Type, chatResp.Error.Message)
 	}
 
-	if len(mistralResp.Choices) == 0 {
-		return nil, fmt.Errorf("Mistral API returned no choices")
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("Chat API returned no choices")
 	}
 
-	jsonContent := mistralResp.Choices[0].Message.Content
+	jsonContent := chatResp.Choices[0].Message.Content
 	chunkFacts, err := parseFactJSON([]byte(jsonContent), sourceURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse facts from Mistral response content: %w", err)
+		return nil, fmt.Errorf("failed to parse facts from chat response content: %w", err)
 	}
 
 	return chunkFacts, nil
 }
 
-// ExtractFacts implements the FactExtractor interface for Mistral.
+// ExtractFacts implements the FactExtractor interface for OpenAI-compatible chat APIs.
 // Handles chunking for large content.
-func (m *MistralExtractor) ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
+func (m *OpenAIExtractor) ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
 	textContent := content.Content // Assuming this holds the markdown or main text
 	if strings.TrimSpace(textContent) == "" {
 		log.Warn().Str("url", content.URL).Msg("ExtractFacts called with empty content.")
@@ -182,7 +205,7 @@ func (m *MistralExtractor) ExtractFacts(ctx context.Context, personName string, 
 		for i, chunk := range chunks {
 			chunkNum := i + 1
 			log.Debug().Str("url", content.URL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("chunk_len", len(chunk)).Msg("Attempting fact extraction for chunk")
-			chunkFacts, err := m.callMistralAPI(ctx, personName, content.URL, chunk)
+			chunkFacts, err := m.callChatAPI(ctx, personName, content.URL, chunk)
 			if err != nil {
 				log.Error().Err(err).Str("url", content.URL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Msg("Failed to extract facts for chunk")
 				continue
@@ -195,7 +218,7 @@ func (m *MistralExtractor) ExtractFacts(ctx context.Context, personName string, 
 		// Content is small enough, process directly
 		log.Debug().Str("url", content.URL).Int("content_length", len(textContent)).Int("threshold", chunkParams.ThresholdChars).Msg("Content below threshold, processing directly without chunking.")
 		var err error
-		allExtractedFacts, err = m.callMistralAPI(ctx, personName, content.URL, textContent)
+		allExtractedFacts, err = m.callChatAPI(ctx, personName, content.URL, textContent)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract facts from content for url %s: %w", content.URL, err)
 		}

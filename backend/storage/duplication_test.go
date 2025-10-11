@@ -91,15 +91,15 @@ func TestPersonSimilarity(t *testing.T) {
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
-	mistralKey := os.Getenv("MISTRAL_API_KEY")
-	if dbURL == "" || mistralKey == "" {
-		t.Skip("Skipping similarity test: DATABASE_URL or MISTRAL_API_KEY not set")
+	openAIKey := os.Getenv("OPEN_AI_KEY")
+	if dbURL == "" || openAIKey == "" {
+		t.Skip("Skipping similarity test: DATABASE_URL or OPEN_AI_KEY not set")
 	}
 
 	// --- Test Dependencies Initialization ---
 	ctx := context.Background()
 
-	embedder, err := embedding.NewMistralEmbeddingGeneratorFromEnv()
+	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
 	require.NoError(t, err, "Failed to create embedder")
 
 	storer, err := NewPostgresStorerFromEnv(ctx)

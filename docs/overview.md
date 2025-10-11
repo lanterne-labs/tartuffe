@@ -86,7 +86,7 @@ To minimize complexity and cost, the initial version will focus on a permissione
 ### 5.3 AI Integration
 
 - **Agnostic System**: The Information-Gathering System should be agnostic to the AI system used.
-- **Endpoints**: Communicate via endpoints (e.g., OpenAI, Claude, Mistral, Deepseek, local AI models).
+- **Endpoints**: Communicate via OpenAI-compatible endpoints (e.g., OpenAI, Mistral, DeepSeek, local OpenAI-compatible servers).
 
 ### 5.4 Framework Selection
 

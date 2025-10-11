@@ -106,7 +106,7 @@ Use an LLM (via remote API) with a carefully crafted prompt that:
 **Recommended LLM providers**:
 - ✅ **OpenAI GPT-4 / GPT-3.5 Turbo** – robust instruction following.
 - ✅ **Anthropic Claude 3** – strong comprehension, high context.
-- ✅ **Mistral via Hugging Face Inference API** – if looking for OSS later.
+- ✅ **OpenAI-compatible APIs (including Mistral, DeepSeek, etc.)** – any provider exposing OpenAI-compatible endpoints.
 
 This should **not store the full article text**, only the summarized facts and their source URLs.
 

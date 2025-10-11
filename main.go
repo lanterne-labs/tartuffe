@@ -4,13 +4,11 @@ import (
 	"digital-mirror/cmd"
 	// "fmt"
 	// "log"
-
 	// "digital-mirror/backend"
 	// "digital-mirror/backend/categorizer"
 	// "digital-mirror/backend/embedding"
 	// "digital-mirror/backend/extractor"
 	// "digital-mirror/backend/storage"
-
 	// "github.com/joho/godotenv"
 )
 
@@ -45,15 +43,15 @@ func old_main() {
 	}
 	log.Println("Content extractor initialized (Apify).")
 
-	// Fact Extractor (Mistral)
-	factExtractor, err := categorizer.NewMistralExtractorFromEnv()
+    // Fact Extractor (OpenAI-compatible)
+    factExtractor, err := categorizer.NewOpenAIExtractorFromEnv()
 	if err != nil {
 		log.Fatalf("FATAL: Failed to initialize Mistral fact extractor: %v", err)
 	}
 	log.Println("Fact extractor initialized (Mistral).")
 
-	// Embedding Generator (Mistral)
-	embedder, err := embedding.NewMistralEmbeddingGeneratorFromEnv()
+    // Embedding Generator (OpenAI-compatible)
+    embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
 	if err != nil {
 		log.Fatalf("FATAL: Failed to initialize Mistral embedder: %v", err)
 	}
@@ -147,4 +145,4 @@ func old_main() {
 
 	log.Println("Pipeline finished for person: ", targetPerson)
 }
-*/ 
+*/

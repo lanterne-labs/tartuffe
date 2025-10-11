@@ -1,4 +1,4 @@
 # Environment variables
 supabase
 supabase/*
-.env 
+.env .envrc
