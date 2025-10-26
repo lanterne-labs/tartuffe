@@ -427,7 +427,6 @@ func storeAndCheckContradictions(ctx context.Context, deps *appDependencies, uni
 	}
 	log.Info().Int("unit_count", len(unitsToProcess)).Msg("Starting storage and contradiction checking...")
 	totalFactsStored := 0
-	totalContradictionsFoundThisRun := 0 // Renamed for clarity
 
 	for i, unit := range unitsToProcess {
 		if !unit.validEmbedding {
@@ -500,7 +499,6 @@ func storeAndCheckContradictions(ctx context.Context, deps *appDependencies, uni
 							break                          // Stop processing this person if DB recording fails
 						} else {
 							log.Info().Int64("fact_A_id", factID).Int64("fact_B_id", neighbor.ID).Msg("Contradiction recorded successfully.")
-							totalContradictionsFoundThisRun++
 							contradictionsRecordedInTx++
 						}
 					}
@@ -520,7 +518,7 @@ func storeAndCheckContradictions(ctx context.Context, deps *appDependencies, uni
 				log.Info().Int64("fact_id", factID).Int("contradictions_recorded", contradictionsRecordedInTx).Msg("Committing contradiction check transaction.")
 				if cmErr := checkTx.Commit(ctx); cmErr != nil {
 					log.Error().Err(cmErr).Int64("fact_id", factID).Msg("Error committing contradiction tx.")
-					// If commit fails, the contradictions weren't actually saved. totalContradictionsFoundThisRun might be overly optimistic.
+					// If commit fails, the contradictions weren't actually saved.
 				}
 			} else {
 				log.Debug().Int64("fact_id", factID).Msg("No contradictions recorded for this fact, rolling back (no-op) contradiction tx.")
@@ -531,7 +529,7 @@ func storeAndCheckContradictions(ctx context.Context, deps *appDependencies, uni
 		} // End if len(personIDs) > 0
 	} // End loop through unitsToProcess
 
-	log.Info().Int("total_facts_stored_this_run", totalFactsStored).Int("total_contradictions_found_this_run", totalContradictionsFoundThisRun).Msg("Storage and contradiction checking phase completed.")
+	log.Info().Int("total_facts_stored_this_run", totalFactsStored).Msg("Storage phase completed; contradiction checks are handled by a separate listener.")
 	return nil
 }
 

@@ -37,6 +37,10 @@ type StoreFactInput struct {
 	SourceURL string
 	// PublishedAt is the publication date of the source content, if available.
 	PublishedAt *time.Time
+	// SourceType is an optional classification tag for observability (e.g., "web", "twitter", "pdf").
+	SourceType string
+	// Metadata is optional JSON-encoded plugin-specific data about the source (e.g., tweet_id).
+	Metadata map[string]any
 }
 
 // PostgresStorer implements the storage logic using PostgreSQL.
@@ -156,7 +160,7 @@ func (s *PostgresStorer) StoreFact(ctx context.Context, input StoreFactInput) (f
 	log.Info().Int64("fact_id", factID).Str("fact_text", input.NormalizedFactText).Msg("Inserted new fact")
 
 	// Step 3: Link Source to the new Fact
-	factSourceID, err = s.linkSourceToFact(ctx, tx, factID, input.SourceURL, input.OriginalQuote, input.PublishedAt)
+	factSourceID, err = s.linkSourceToFact(ctx, tx, factID, input.SourceURL, input.OriginalQuote, input.PublishedAt, input.SourceType, input.Metadata)
 	if err != nil {
 		return factID, 0, personIDs, fmt.Errorf("step 3 failed (linkSourceToFact): %w", err)
 	}
@@ -380,17 +384,19 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 // linkSourceToFact links a source URL, quote, and published date to a given fact ID.
 // If the source URL already exists, it updates its last_visited_at timestamp.
 // Otherwise, it inserts a new source record with last_visited_at set to current time.
-func (s *PostgresStorer) linkSourceToFact(ctx context.Context, tx pgx.Tx, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time) (factSourceID int64, err error) {
+func (s *PostgresStorer) linkSourceToFact(ctx context.Context, tx pgx.Tx, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (factSourceID int64, err error) {
 	// Use COALESCE for published_at to handle nil case properly in SQL
 	// Update last_visited_at on conflict
 	insertSourceStmt := `
-		INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at, last_visited_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+		INSERT INTO fact_sources (fact_id, source_url, original_quote, published_at, last_visited_at, source_type, metadata)
+		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6)
 		ON CONFLICT (source_url) DO UPDATE
-		SET fact_id = EXCLUDED.fact_id, 
-		    original_quote = EXCLUDED.original_quote, 
+		SET fact_id = EXCLUDED.fact_id,
+		    original_quote = EXCLUDED.original_quote,
 		    published_at = EXCLUDED.published_at,
-		    last_visited_at = CURRENT_TIMESTAMP
+		    last_visited_at = CURRENT_TIMESTAMP,
+		    source_type = EXCLUDED.source_type,
+		    metadata = COALESCE(EXCLUDED.metadata, fact_sources.metadata)
 		RETURNING id`
 	// This assumes that if a URL conflicts, we still want to associate it with the *current* factID and details.
 	// If the policy should be different (e.g., only update last_visited_at but keep old fact_id/quote), the ON CONFLICT clause needs adjustment.
@@ -403,11 +409,20 @@ func (s *PostgresStorer) linkSourceToFact(ctx context.Context, tx pgx.Tx, factID
 		publishedAtVal = nil // Explicitly pgx.Null/nil for database
 	}
 
+	var metadataJSON any
+	if metadata != nil {
+		metadataJSON = metadata
+	} else {
+		metadataJSON = nil
+	}
+
 	err = tx.QueryRow(ctx, insertSourceStmt,
 		factID,
 		sourceURL,
 		originalQuote,
 		publishedAtVal,
+		sourceType,
+		metadataJSON,
 	).Scan(&factSourceID)
 
 	if err != nil {
@@ -632,6 +647,8 @@ type LinkExistingFactToSourceInput struct {
 	OriginalQuote  string     // The quote from the new source
 	PublishedAt    *time.Time // Publication date of the new source
 	// InvolvedPeople []string   // Removed: Assumes people are linked to the core fact, not each source mention
+	SourceType string         // Optional source type for observability
+	Metadata   map[string]any // Optional plugin metadata
 }
 
 // LinkExistingFactToSource links a new source URL, quote, and published date
@@ -669,7 +686,7 @@ func (s *PostgresStorer) LinkExistingFactToSource(ctx context.Context, input Lin
 	// }
 
 	// Step C (modified): Link Source to the *Existing* Fact ID
-	factSourceID, err = s.linkSourceToFact(ctx, tx, input.ExistingFactID, input.SourceURL, input.OriginalQuote, input.PublishedAt)
+	factSourceID, err = s.linkSourceToFact(ctx, tx, input.ExistingFactID, input.SourceURL, input.OriginalQuote, input.PublishedAt, input.SourceType, input.Metadata)
 	if err != nil {
 		// return 0, fmt.Errorf("step C failed (linkSourceToFact for existing fact): %w", err) // Old error step label
 		return 0, fmt.Errorf("failed to link source to existing fact: %w", err) // Simplified error

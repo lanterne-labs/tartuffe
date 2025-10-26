@@ -109,6 +109,8 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 		InvolvedPeople:     []string{" Person A ", "Person B"}, // Test normalization
 		SourceURL:          "http://example.com/policy-agreement-1",
 		PublishedAt:        &pubDate,
+		SourceType:         "test",
+		Metadata:           map[string]any{"k": "v"},
 	}
 
 	// --- Action: Store the fact ---
@@ -136,11 +138,11 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	assert.InDeltaSlice(t, input.Embedding, queriedEmbedding.Slice(), 0.00001, "Embedding mismatch")
 
 	// 2. Verify the source exists in 'fact_sources' table
-	var queriedFactID, queriedSourceURL, queriedOriginalQuote string
+	var queriedFactID, queriedSourceURL, queriedOriginalQuote, queriedSourceType string
 	var queriedPublishedAt *time.Time
-	sourceQuery := "SELECT fact_id, source_url, original_quote, published_at FROM fact_sources WHERE id = $1"
+	sourceQuery := "SELECT fact_id, source_url, original_quote, published_at, source_type FROM fact_sources WHERE id = $1"
 	err = storer.pool.QueryRow(ctx, sourceQuery, factSourceID).Scan(
-		&queriedFactID, &queriedSourceURL, &queriedOriginalQuote, &queriedPublishedAt,
+		&queriedFactID, &queriedSourceURL, &queriedOriginalQuote, &queriedPublishedAt, &queriedSourceType,
 	)
 	require.NoError(t, err, "Failed to query inserted fact source by ID")
 	assert.Equal(t, fmt.Sprintf("%d", factID), queriedFactID, "fact_sources.fact_id does not match returned factID") // Compare as string due to potential type mismatch (BIGINT vs int64)
