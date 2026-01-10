@@ -101,3 +101,4 @@ FIRECRAWL_API_KEY=...
 - **Database**: Use transactions for multi-step operations; connection pooling via pgxpool
 - **API**: REST with JSON, pagination via `limit` and `offset` query params
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
+- **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them

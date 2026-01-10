@@ -1251,7 +1251,7 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	}
 	defer rows.Close()
 
-	var facts []FactWithSource
+	facts := make([]FactWithSource, 0)
 	for rows.Next() {
 		var fact FactWithSource
 		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.SourceURL, &fact.OriginalQuote)
@@ -1299,7 +1299,7 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 	defer rows.Close()
 
-	var contradictions []ContradictionWithFacts
+	contradictions := make([]ContradictionWithFacts, 0)
 	for rows.Next() {
 		var contradiction ContradictionWithFacts
 		err := rows.Scan(&contradiction.ID, &contradiction.PersonID, &contradiction.FactAID, &contradiction.FactBID,

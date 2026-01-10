@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"digital-mirror/backend/storage"
@@ -59,7 +60,13 @@ func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000", "*"},
+		AllowOriginFunc: func(r *http.Request, origin string) bool {
+			// Allow all localhost and 127.0.0.1 origins for development
+			return strings.HasPrefix(origin, "http://localhost:") ||
+				strings.HasPrefix(origin, "http://127.0.0.1:") ||
+				strings.HasPrefix(origin, "https://localhost:") ||
+				strings.HasPrefix(origin, "https://127.0.0.1:")
+		},
 		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
