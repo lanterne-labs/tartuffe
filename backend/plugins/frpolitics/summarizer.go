@@ -1,0 +1,155 @@
+package frpolitics
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"digital-mirror/backend/categorizer"
+)
+
+// SummarizeLaws producing LLM summaries from law titles respecting a limit
+func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]LawSummary, error) {
+	if maxLaws > 0 && len(laws) > maxLaws {
+		laws = laws[:maxLaws]
+	}
+
+	result := make(map[string]LawSummary, len(laws))
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		for _, law := range laws {
+			result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Topics: []string{}, Confidence: 0}
+		}
+		return result, nil
+	}
+
+	// Process in batches of 10
+	batchSize := 10
+	for i := 0; i < len(laws); i += batchSize {
+		end := i + batchSize
+		if end > len(laws) {
+			end = len(laws)
+		}
+		batch := laws[i:end]
+
+		summaries, err := callBatchedSummaryJSON(ctx, batch)
+		if err != nil {
+			// On error, fall back to title-only for this batch
+			for _, law := range batch {
+				result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Topics: []string{}, Confidence: 0}
+			}
+			continue
+		}
+
+		for key, summary := range summaries {
+			result[key] = summary
+		}
+	}
+
+	return result, nil
+}
+
+func buildBatchedSummaryPrompt(laws []Law) string {
+	b := &strings.Builder{}
+	b.WriteString("You summarize French laws into a concise human-readable short title, a brief neutral statement with EXPLICIT directional keywords, and topics.\n")
+	b.WriteString("Short titles should be recognizable (e.g. 'Réforme des retraites' instead of 'projet de loi de financement rectificative de la sécurité sociale pour 2023').\n")
+	b.WriteString("Return JSON ONLY as an object where keys are the law keys provided and values are summary objects:\n")
+	b.WriteString("{\n  \"LAW_KEY\": {\"short_title\": string, \"simple_statement\": string, \"topics\":[string], \"confidence\": number}\n}\n\n")
+	b.WriteString("You summarize French laws into:\n")
+	b.WriteString("- short_title: concise human name\n")
+	b.WriteString("- simple_statement: MUST include EXPLICIT DIRECTION. Use action verbs like:\n")
+	b.WriteString("  * 'increases/augmente', 'decreases/diminue'\n")
+	b.WriteString("  * 'strengthens/renforce', 'weakens/affaiblit'\n")
+	b.WriteString("  * 'expands/étend', 'restricts/restreint'\n")
+	b.WriteString("  * 'creates/crée', 'abolishes/supprime'\n")
+	b.WriteString("\n")
+	b.WriteString("  GOOD examples:\n")
+	b.WriteString("  * 'Increases police powers to fight drug trafficking'\n")
+	b.WriteString("  * 'Reduces maximum prison sentences for non-violent crimes'\n")
+	b.WriteString("  * 'Extends social security coverage to freelancers'\n")
+	b.WriteString("\n")
+	b.WriteString("  BAD examples (too generic - set confidence < 0.5):\n")
+	b.WriteString("  * 'Adjusts social security funding' (no direction)\n")
+	b.WriteString("  * 'Modifies prison enforcement' (no direction)\n")
+	b.WriteString("  * 'Changes budget allocation' (no specifics)\n")
+	b.WriteString("\n")
+	b.WriteString("- topics: policy keywords like 'security', 'immigration', 'economy', 'environment'\n")
+	b.WriteString("- confidence: 0.0-1.0 where:\n")
+	b.WriteString("  * 0.0-0.4: Cannot determine policy direction - SKIP\n")
+	b.WriteString("  * 0.5-0.7: Direction is inferred but uncertain\n")
+	b.WriteString("  * 0.8-1.0: Clear, explicit policy direction\n")
+	b.WriteString("\n")
+	b.WriteString("CRITICAL: If you cannot determine the DIRECTION of the policy change from the title,\n")
+	b.WriteString("you MUST set confidence < 0.5. Never silently infer ambiguous content.\n\n")
+	b.WriteString("Laws to summarize:\n")
+	for _, law := range laws {
+		b.WriteString(fmt.Sprintf("- Key: %s\n  Title: %s\n  Legislature: %d\n", law.Key, law.Title, law.Legislature))
+	}
+	return b.String()
+}
+
+func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSummary, error) {
+	prompt := buildBatchedSummaryPrompt(laws)
+
+	// Initialize base LLM client and endpoint from environment
+	base := os.Getenv("OPEN_AI_API")
+	if strings.TrimSpace(base) == "" {
+		return nil, fmt.Errorf("OPEN_AI_API not set")
+	}
+	if !strings.HasSuffix(base, "/chat/completions") {
+		base = strings.TrimRight(base, "/") + "/chat/completions"
+	}
+	apiKey := os.Getenv("OPEN_AI_KEY")
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("OPEN_AI_KEY not set")
+	}
+	model := os.Getenv("OPEN_AI_CHAT_MODEL")
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4o-mini"
+	}
+
+	req := categorizer.ChatRequest{
+		Model:          model,
+		Messages:       []categorizer.ChatMessage{{Role: "system", Content: prompt}},
+		Temperature:    0.1,
+		ResponseFormat: &categorizer.ResponseFormat{Type: "json_object"},
+	}
+	payload, _ := json.Marshal(req)
+	baseClient := categorizer.NewBaseLLMClient()
+	body, err := baseClient.DoRequest(ctx, base, apiKey, payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var env categorizer.ChatResponse
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("decode env: %w", err)
+	}
+	if len(env.Choices) == 0 {
+		return nil, fmt.Errorf("no choices")
+	}
+
+	var rawResult map[string]struct {
+		ShortTitle      string   `json:"short_title"`
+		SimpleStatement string   `json:"simple_statement"`
+		Topics          []string `json:"topics"`
+		Confidence      float64  `json:"confidence"`
+	}
+
+	if err := json.Unmarshal([]byte(env.Choices[0].Message.Content), &rawResult); err != nil {
+		return nil, fmt.Errorf("parse summary json: %w", err)
+	}
+
+	summaries := make(map[string]LawSummary)
+	for key, out := range rawResult {
+		summaries[key] = LawSummary{
+			ShortTitle:      out.ShortTitle,
+			SimpleStatement: out.SimpleStatement,
+			Topics:          out.Topics,
+			Confidence:      out.Confidence,
+		}
+	}
+
+	return summaries, nil
+}

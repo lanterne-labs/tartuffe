@@ -1,0 +1,167 @@
+package frpolitics
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"digital-mirror/backend/storage"
+	"github.com/joho/godotenv"
+	"github.com/rs/zerolog/log"
+	"github.com/stretchr/testify/require"
+)
+
+// TestFullPipelineWithRealData runs the complete frpolitics pipeline and shows actual database results
+func TestFullPipelineWithRealData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping full pipeline test in short mode")
+	}
+
+	// Use the same configuration loading pattern as the core application
+	if err := godotenv.Load(); err != nil {
+		log.Debug().Msg(".env file not found or error loading, relying on environment variables.")
+	}
+
+	// Check if DATABASE_URL is set
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL environment variable not set, skipping full pipeline test")
+	}
+
+	ctx := context.Background()
+
+	// Initialize database connection using the same method as core application
+	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	require.NoError(t, err)
+	defer storer.Close()
+
+	t.Log("=== Running Full frpolitics Pipeline with Real Data ===")
+
+	// Configure options for a small real data test
+	since := time.Date(2022, time.July, 1, 0, 0, 0, 0, time.UTC) // July 2022 onwards
+	opts := Options{
+		Since:          &since,
+		MaxLaws:        2,    // Small dataset for demonstration
+		MaxVotes:       50,   // Limited votes
+		PartyThreshold: 0.8,  // Standard threshold
+		Legislatures:   []int{16}, // 16th legislature (2022-2024)
+		RevisitHours:   10000,     // Force revisit for test
+	}
+
+	t.Logf("Configuration:")
+	t.Logf("  Since: %v", opts.Since)
+	t.Logf("  MaxLaws: %d", opts.MaxLaws)
+	t.Logf("  MaxVotes: %d", opts.MaxVotes)
+	t.Logf("  PartyThreshold: %.2f", opts.PartyThreshold)
+	t.Logf("  Legislatures: %v", opts.Legislatures)
+
+	// Run the complete frpolitics pipeline
+	t.Log("Running frpolitics pipeline...")
+	err = Run(ctx, storer, opts)
+	require.NoError(t, err)
+	t.Log("Pipeline completed successfully!")
+
+	// Query the database to show actual results
+	t.Log("=== Querying Database for Actual Results ===")
+
+	// Get all facts grouped by person
+	allFacts, err := storer.GetAllFactsGroupedByPerson(ctx)
+	require.NoError(t, err)
+
+	t.Logf("Total facts in database: %d", countAllFacts(allFacts))
+
+	// Analyze and categorize facts
+	deputyFacts := make(map[string][]storage.FactDetail)
+	partyFacts := make(map[string][]storage.FactDetail)
+	deputyCount := 0
+	partyCount := 0
+
+	for personName, facts := range allFacts {
+		lowerName := strings.ToLower(personName)
+		isParty := strings.Contains(lowerName, "parti") ||
+			strings.Contains(lowerName, "groupe") ||
+			strings.Contains(lowerName, "rassemblement") ||
+			strings.Contains(lowerName, "socialiste") ||
+			strings.Contains(lowerName, "républicain") ||
+			strings.Contains(lowerName, "écologiste") ||
+			strings.Contains(lowerName, "communiste") ||
+			strings.Contains(lowerName, "democrate") ||
+			strings.Contains(lowerName, "udf") ||
+			strings.Contains(lowerName, "ump") ||
+			strings.Contains(lowerName, "lr") ||
+			strings.Contains(lowerName, "lrem") ||
+			strings.Contains(lowerName, "rn") ||
+			strings.Contains(lowerName, "fi") ||
+			strings.Contains(lowerName, "ps") ||
+			strings.Contains(lowerName, "eelv")
+
+		if isParty {
+			partyFacts[personName] = facts
+			partyCount += len(facts)
+		} else {
+			deputyFacts[personName] = facts
+			deputyCount += len(facts)
+		}
+	}
+
+	t.Logf("=== Database Results Summary ===")
+	t.Logf("Deputy facts: %d", deputyCount)
+	t.Logf("Party facts: %d", partyCount)
+	t.Logf("Unique deputies: %d", len(deputyFacts))
+	t.Logf("Unique parties: %d", len(partyFacts))
+
+	// Show sample deputy facts
+	t.Log("=== Sample Deputy Facts from Database ===")
+	deputyExamples := 0
+	for deputyName, facts := range deputyFacts {
+		if deputyExamples >= 5 {
+			break
+		}
+		t.Logf("Deputy: %s (%d facts)", deputyName, len(facts))
+		for i, fact := range facts {
+			if i >= 2 { // Limit facts per deputy
+				break
+			}
+			t.Logf("  Fact %d: %s", i+1, fact.FactText)
+			t.Logf("    Source: %s", fact.SourceURL)
+		}
+		deputyExamples++
+	}
+
+	// Show sample party facts
+	t.Log("=== Sample Party Facts from Database ===")
+	partyExamples := 0
+	for partyName, facts := range partyFacts {
+		if partyExamples >= 5 {
+			break
+		}
+		t.Logf("Party: %s (%d facts)", partyName, len(facts))
+		for i, fact := range facts {
+			if i >= 2 { // Limit facts per party
+				break
+			}
+			t.Logf("  Fact %d: %s", i+1, fact.FactText)
+			t.Logf("    Source: %s", fact.SourceURL)
+		}
+		partyExamples++
+	}
+
+	// Verify we have actual data
+	require.Greater(t, deputyCount, 0, "Should have deputy facts")
+	require.Greater(t, partyCount, 0, "Should have party facts")
+
+	t.Log("=== Full Pipeline Test Completed Successfully ===")
+}
+
+// countAllFacts counts total facts across all persons
+func countAllFacts(facts map[string][]storage.FactDetail) int {
+	total := 0
+	for _, personFacts := range facts {
+		total += len(personFacts)
+	}
+	return total
+}
+</content>
+</write_to_file>

@@ -1,0 +1,30 @@
+# Makefile for running frpolitics verification tests
+
+.PHONY: test-verification test-e2e test-performance test-all
+
+# Run all verification tests
+test-verification:
+	go test -v -run "TestPartyFactAccuracy|TestCalculateMajorityPosition"
+
+# Run end-to-end verification tests (requires DATABASE_URL)
+test-e2e:
+	go test -v -run "TestE2EPartyFactVerification|TestRealDataPartyFactVerification|TestPerformanceWithLargeDataset"
+
+# Run performance tests
+test-performance:
+	go test -v -run "TestPerformanceWithLargeDataset"
+
+# Run all tests
+test-all: test-verification test-e2e test-performance
+
+# Run tests with coverage
+test-cover:
+	go test -v -cover ./...
+
+# Run tests with race detection
+test-race:
+	go test -race -v ./...
+
+# Run benchmarks
+bench:
+	go test -bench=. -v ./...

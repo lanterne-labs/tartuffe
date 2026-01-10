@@ -1,0 +1,372 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+	"digital-mirror/backend/storage"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/joho/godotenv"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+)
+
+var (
+	port string
+)
+
+// webCmd represents the web command group
+var webCmd = &cobra.Command{
+	Use:   "web",
+	Short: "Commands related to the web server.",
+	Long:  `Start and manage the web server for the Digital Mirror API.`,
+}
+
+// serveCmd represents the serve command
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start the web server",
+	Long:  `Start the HTTP server that serves the API endpoints and SSE streams.`,
+	RunE:  executeServe,
+}
+
+func init() {
+	webCmd.AddCommand(serveCmd)
+	rootCmd.AddCommand(webCmd)
+
+	serveCmd.Flags().StringVarP(&port, "port", "p", "8080", "Port to run the server on")
+}
+
+// WebServer holds the HTTP server and dependencies
+type WebServer struct {
+	storer *storage.PostgresStorer
+	router *chi.Mux
+}
+
+// NewWebServer creates a new web server instance
+func NewWebServer(storer *storage.PostgresStorer) *WebServer {
+	r := chi.NewRouter()
+
+	// Middleware
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000", "*"},
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	server := &WebServer{
+		storer: storer,
+		router: r,
+	}
+
+	server.setupRoutes()
+	return server
+}
+
+// setupRoutes configures all the API routes
+func (ws *WebServer) setupRoutes() {
+	// API routes
+	ws.router.Route("/api", func(r chi.Router) {
+		r.Get("/persons", ws.handleGetPersons)
+		r.Get("/person/{id}", ws.handleGetPerson)
+		r.Get("/person/{id}/facts", ws.handleGetPersonFacts)
+		r.Get("/person/{id}/contradictions", ws.handleGetPersonContradictions)
+		r.Get("/events", ws.handleEventsSSE)
+	})
+}
+
+// handleGetPersons returns persons ranked by honesty score
+func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Parse pagination parameters
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 50 // default
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	offset := 0 // default
+	if offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get persons: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(persons)
+}
+
+// handleGetPerson returns basic person information
+func (ws *WebServer) handleGetPerson(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personIDStr := chi.URLParam(r, "id")
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	person, err := ws.storer.GetPersonByID(ctx, personID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get person: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if person == nil {
+		http.Error(w, "Person not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(person)
+}
+
+// handleGetPersonFacts returns facts for a specific person
+func (ws *WebServer) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personIDStr := chi.URLParam(r, "id")
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse pagination parameters
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 25 // default
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	offset := 0 // default
+	if offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	facts, err := ws.storer.GetPersonFacts(ctx, personID, limit, offset)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get facts: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(facts)
+}
+
+// handleGetPersonContradictions returns contradictions for a specific person
+func (ws *WebServer) handleGetPersonContradictions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personIDStr := chi.URLParam(r, "id")
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse pagination parameters
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 25 // default
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	offset := 0 // default
+	if offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	contradictions, err := ws.storer.GetPersonContradictions(ctx, personID, limit, offset)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get contradictions: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(contradictions)
+}
+
+// handleEventsSSE streams events via Server-Sent Events
+func (ws *WebServer) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Parse since_id parameter
+	sinceIDStr := r.URL.Query().Get("since_id")
+	sinceID := int64(0)
+	if sinceIDStr != "" {
+		if parsed, err := strconv.ParseInt(sinceIDStr, 10, 64); err == nil && parsed >= 0 {
+			sinceID = parsed
+		}
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
+
+	// Ensure we can flush
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial connection message
+	fmt.Fprintf(w, "data: %s\n\n", `{"type": "connected", "since_id": `+strconv.FormatInt(sinceID, 10)+`}`)
+	flusher.Flush()
+
+	log.Info().Int64("since_id", sinceID).Msg("SSE connection established")
+
+	// Stream events in a loop
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("SSE connection closed by client")
+			return
+		default:
+			// Query for new events since the last ID
+			events, err := ws.getNewEvents(ctx, sinceID)
+			if err != nil {
+				log.Error().Err(err).Msg("Error querying events")
+				time.Sleep(5 * time.Second) // Back off on error
+				continue
+			}
+
+			// Send each new event
+			for _, event := range events {
+				eventData := map[string]interface{}{
+					"id":          event.ID,
+					"topic":       event.Topic,
+					"entity_type": event.EntityType,
+					"entity_id":   event.EntityID,
+					"payload":     event.Payload,
+					"created_at":  event.CreatedAt,
+				}
+
+				eventJSON, err := json.Marshal(eventData)
+				if err != nil {
+					log.Error().Err(err).Msg("Error marshaling event")
+					continue
+				}
+
+				fmt.Fprintf(w, "data: %s\n\n", eventJSON)
+				flusher.Flush()
+
+				sinceID = event.ID // Update the last seen ID
+			}
+
+			// Wait before polling again (avoid busy loop)
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+}
+
+// Event represents an event from the event_log table
+type Event struct {
+	ID         int64           `json:"id"`
+	Topic      string          `json:"topic"`
+	EntityType string          `json:"entity_type"`
+	EntityID   int64           `json:"entity_id"`
+	Payload    json.RawMessage `json:"payload"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+// getNewEvents fetches events newer than the given ID
+func (ws *WebServer) getNewEvents(ctx context.Context, sinceID int64) ([]Event, error) {
+	query := `
+		SELECT id, topic, entity_type, entity_id, payload, created_at
+		FROM event_log
+		WHERE id > $1
+		ORDER BY id ASC
+		LIMIT 100` // Limit to prevent overwhelming the client
+
+	rows, err := ws.storer.Pool().Query(ctx, query, sinceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var event Event
+		err := rows.Scan(&event.ID, &event.Topic, &event.EntityType, &event.EntityID, &event.Payload, &event.CreatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+		events = append(events, event)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating events: %w", rows.Err())
+	}
+
+	return events, nil
+}
+
+// Start starts the HTTP server
+func (ws *WebServer) Start(addr string) error {
+	log.Info().Str("addr", addr).Msg("Starting web server")
+	return http.ListenAndServe(addr, ws.router)
+}
+
+// executeServe is the main function for the serve command
+func executeServe(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+
+	if err := godotenv.Load(); err != nil {
+		log.Debug().Msg("No .env file found, using environment variables")
+	}
+
+	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+
+	server := NewWebServer(storer)
+
+	addr := ":" + port
+	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")
+
+	return server.Start(addr)
+}

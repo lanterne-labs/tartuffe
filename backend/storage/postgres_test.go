@@ -57,8 +57,12 @@ func setupTestDB(t *testing.T) (*PostgresStorer, func()) {
 
 	// Clean up relevant tables before running the test
 	// Use TRUNCATE ... RESTART IDENTITY CASCADE for clean slate
-	_, err = storer.pool.Exec(ctx, "TRUNCATE TABLE fact_mentions, facts, persons RESTART IDENTITY CASCADE")
+	_, err = storer.pool.Exec(ctx, "TRUNCATE TABLE fact_mentions, facts, fact_sources, person_links, persons, contradictions RESTART IDENTITY CASCADE")
 	require.NoError(t, err, "Failed to truncate tables")
+
+	// Ensure the unique index required for upsert exists for tests.
+	_, err = storer.pool.Exec(ctx, "CREATE UNIQUE INDEX IF NOT EXISTS uq_person_links_src_dst_link ON person_links (src_person_id, dst_person_id, link_type);")
+	require.NoError(t, err, "Failed to ensure unique index on person_links for tests")
 
 	return storer, teardown
 }
@@ -277,6 +281,165 @@ func TestPostgresStorer_StoreFact_Idempotency_And_SourceUpdate(t *testing.T) {
 	err = storer.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM facts WHERE id = $1)", factID1).Scan(&fact1Exists)
 	require.NoError(t, err)
 	assert.True(t, fact1Exists, "The first fact (factID1) should still exist in the facts table")
+}
+
+// TestFindOrCreateAffiliation verifies the ability to create and query an affiliation link
+func TestFindOrCreateAffiliation(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	// Create two persons
+	pNameA := "Deputy Person A"
+	pNameB := "Party B"
+	pIDA, _, err := storer.AddPerson(ctx, pNameA)
+	require.NoError(t, err)
+	pIDB, _, err := storer.AddPerson(ctx, pNameB)
+	require.NoError(t, err)
+
+	// Start a transaction to upsert affiliation
+	tx, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	// Create an affiliation with valid_from and NULL valid_to
+	vf := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	err = storer.FindOrCreateAffiliation(ctx, tx, pIDA, pIDB, &vf, nil, map[string]any{"source": "actor_dataset"})
+	require.NoError(t, err)
+
+	// Commit
+	require.NoError(t, tx.Commit(ctx))
+
+	// Query the person_links table to confirm presence
+	var found int
+	err = storer.pool.QueryRow(ctx, `SELECT COUNT(*) FROM person_links WHERE src_person_id = $1 AND dst_person_id = $2 AND link_type = 'affiliation'`, pIDA, pIDB).Scan(&found)
+	require.NoError(t, err)
+	assert.Equal(t, 1, found)
+}
+
+// TestGetAffiliatedPersonIDs verifies the date-aware affiliation query helper.
+func TestGetAffiliatedPersonIDs(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	// Create deputy and two party persons
+	deputyName := "Deputy DateTest"
+	party1 := "Party One"
+	party2 := "Party Two"
+	depID, _, err := storer.AddPerson(ctx, deputyName)
+	require.NoError(t, err)
+	p1ID, _, err := storer.AddPerson(ctx, party1)
+	require.NoError(t, err)
+	p2ID, _, err := storer.AddPerson(ctx, party2)
+	require.NoError(t, err)
+
+	tx, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+
+	// Insert two affiliations with different date ranges
+	v1 := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	v2 := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+	// first: party1 from 2020-01-01 (open ended)
+	require.NoError(t, storer.FindOrCreateAffiliation(ctx, tx, depID, p1ID, &v1, nil, map[string]any{"source": "actor_dataset"}))
+	// second: party2 from 2022-01-01 to 2022-12-31
+	end := time.Date(2022, 12, 31, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, storer.FindOrCreateAffiliation(ctx, tx, depID, p2ID, &v2, &end, map[string]any{"source": "actor_dataset"}))
+
+	require.NoError(t, tx.Commit(ctx))
+
+	// Query affiliations at different dates to verify correctness
+	tx2, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx2.Rollback(ctx)
+
+	// Date 2021 -> should be affiliated with party1 only
+	date2021 := time.Date(2021, 6, 1, 0, 0, 0, 0, time.UTC)
+	ids2021, err := storer.GetAffiliatedPersonIDs(ctx, tx2, depID, &date2021)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(ids2021))
+	assert.Equal(t, p1ID, ids2021[0])
+
+	// Date 2022 -> party1 and party2 (since p2 starts in 2022 and p1 is open-ended)
+	date2022 := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
+	ids2022, err := storer.GetAffiliatedPersonIDs(ctx, tx2, depID, &date2022)
+	require.NoError(t, err)
+	// Can be in any order, so check both present
+	assert.Contains(t, ids2022, p1ID)
+	assert.Contains(t, ids2022, p2ID)
+
+	// Date 2023 -> party2 ended, so only party1 should remain
+	date2023 := time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC)
+	ids2023, err := storer.GetAffiliatedPersonIDs(ctx, tx2, depID, &date2023)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(ids2023))
+	assert.Equal(t, p1ID, ids2023[0])
+
+	require.NoError(t, tx2.Rollback(ctx))
+}
+
+// TestStoreFact_CrossAttachAffiliations ensures that if a deputy has an affiliation, storing a fact for the deputy
+// also creates a mention for the affiliated party when the fact's PublishedAt is within the affiliation window.
+func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	// Create deputy and party
+	deputy := "Deputy Aff"
+	party := "Party Aff"
+	depID, _, err := storer.AddPerson(ctx, deputy)
+	require.NoError(t, err)
+	partyID, _, err := storer.AddPerson(ctx, party)
+	require.NoError(t, err)
+
+	// Create affiliation (valid from 2024-01-01 to open-ended)
+	tx, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	vf := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, storer.FindOrCreateAffiliation(ctx, tx, depID, partyID, &vf, nil, map[string]any{"source": "actor_dataset"}))
+	require.NoError(t, tx.Commit(ctx))
+
+	// Now store a fact with PublishedAt within the affiliation window
+	pub := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	input := StoreFactInput{
+		NormalizedFactText: "Deputy Aff says X",
+		Embedding:          mockEmbedding(),
+		OriginalQuote:      "Deputy Aff said something about X",
+		Topics:             []string{"topic"},
+		InvolvedPeople:     []string{deputy},
+		SourceURL:          "http://example.com/deputy-aff",
+		PublishedAt:        &pub,
+		SourceType:         "test",
+	}
+	factID, factSourceID, personIDs, err := storer.StoreFact(ctx, input)
+	require.NoError(t, err)
+	require.NotZero(t, factID)
+	require.NotZero(t, factSourceID)
+
+	// Confirm deputy appears in returned personIDs
+	var deputyFound bool
+	var partyFound bool
+	for _, pid := range personIDs {
+		if pid == depID { deputyFound = true }
+		if pid == partyID { partyFound = true }
+	}
+	assert.True(t, deputyFound, "expected deputy ID in returned personIDs")
+	assert.True(t, partyFound, "expected party ID (affiliation) in returned personIDs")
+
+	// Finally confirm both are linked in fact_mentions table
+	rows, err := storer.pool.Query(ctx, "SELECT person_id FROM fact_mentions WHERE fact_source_id = $1", factSourceID)
+	require.NoError(t, err)
+	defer rows.Close()
+	found := map[int64]bool{}
+	for rows.Next() {
+		var pid int64
+		require.NoError(t, rows.Scan(&pid))
+		found[pid] = true
+	}
+	assert.True(t, found[depID], "deputy mention not found")
+	assert.True(t, found[partyID], "party mention not found")
 }
 
 // TestPostgresStorer_StoreFact_DuplicateFact_DifferentSource tests that storing a fact

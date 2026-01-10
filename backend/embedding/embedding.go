@@ -8,4 +8,4 @@ type EmbeddingGenerator interface {
 	// Each inner slice ([]float32) represents the vector embedding for the text at the same index.
 	// Returns an error if the generation process fails for any text.
 	GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
-} 
+}
