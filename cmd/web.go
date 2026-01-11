@@ -91,6 +91,8 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/person/{id}", ws.handleGetPerson)
 		r.Get("/person/{id}/facts", ws.handleGetPersonFacts)
 		r.Get("/person/{id}/contradictions", ws.handleGetPersonContradictions)
+		r.Get("/person/{id}/members", ws.handleGetPersonMembers)
+		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
 		r.Get("/events", ws.handleEventsSSE)
 	})
 }
@@ -229,6 +231,102 @@ func (ws *WebServer) handleGetPersonContradictions(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(contradictions)
+}
+
+// MemberInfo represents a person who is a member/affiliate of another entity
+type MemberInfo struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	EntityType   string  `json:"entity_type"`
+	HonestyScore float64 `json:"honesty_score"`
+}
+
+// handleGetPersonMembers returns persons affiliated with an entity (e.g., deputies in a party)
+func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personIDStr := chi.URLParam(r, "id")
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	// Query members (persons linked to this entity via person_links)
+	query := `
+		SELECT DISTINCT p.id, p.name, p.entity_type, p.honesty_score
+		FROM persons p
+		JOIN person_links pl ON p.id = pl.src_person_id
+		WHERE pl.dst_person_id = $1
+		ORDER BY p.name`
+
+	rows, err := ws.storer.Pool().Query(ctx, query, personID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get members: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	members := make([]MemberInfo, 0)
+	for rows.Next() {
+		var m MemberInfo
+		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.HonestyScore); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to scan member: %v", err), http.StatusInternalServerError)
+			return
+		}
+		members = append(members, m)
+	}
+
+	if rows.Err() != nil {
+		http.Error(w, fmt.Sprintf("Error iterating members: %v", rows.Err()), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(members)
+}
+
+// handleGetFactPersons returns persons who have a fact related to the given fact
+func (ws *WebServer) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	factIDStr := chi.URLParam(r, "id")
+
+	factID, err := strconv.ParseInt(factIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid fact ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse pagination parameters
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 50
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 {
+			if parsed > 1000 {
+				limit = 1000
+			} else {
+				limit = parsed
+			}
+		}
+	}
+
+	offset := 0
+	if offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	persons, err := ws.storer.GetFactPersons(ctx, factID, limit, offset)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get persons for fact: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(persons)
 }
 
 // handleEventsSSE streams events via Server-Sent Events

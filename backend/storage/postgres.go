@@ -258,42 +258,11 @@ func (s *PostgresStorer) StoreFact(ctx context.Context, input StoreFactInput) (f
 		return factID, factSourceID, personIDs, fmt.Errorf("step 4 failed (linkPersonsToSourceMention): %w", err)
 	}
 
-	// --- Automatic cross-attachment: attach any authoritative affiliations for persons ---
-	// For each person ID, find affiliated persons (dst_person_id) valid at input.PublishedAt and link them as well.
-	affiliationSet := make(map[int64]struct{})
-	for _, pid := range personIDs {
-		affIDs, affErr := s.GetAffiliatedPersonIDs(ctx, tx, pid, input.PublishedAt)
-		if affErr != nil {
-			// Non-fatal: log and continue
-			log.Warn().Err(affErr).Int64("person_id", pid).Msg("Failed to query affiliations during StoreFact; continuing without affiliations")
-			continue
-		}
-		for _, a := range affIDs {
-			affiliationSet[a] = struct{}{}
-		}
-	}
-	// Append affiliations to mentions (if any), avoiding duplicates
-	if len(affiliationSet) > 0 {
-		// Determine which affiliations are new (not already present in personIDs)
-		existing := make(map[int64]struct{}, len(personIDs))
-		for _, id := range personIDs {
-			existing[id] = struct{}{}
-		}
-		extra := make([]int64, 0)
-		for aID := range affiliationSet {
-			if _, ok := existing[aID]; !ok {
-				extra = append(extra, aID)
-			}
-		}
-		if len(extra) > 0 {
-			// Link these affiliated persons to the fact source
-			if err := s.linkPersonsToSourceMention(ctx, tx, factSourceID, extra); err != nil {
-				return factID, factSourceID, personIDs, fmt.Errorf("failed to link affiliations to fact source: %w", err)
-			}
-			// Also append them to returned personIDs
-			personIDs = append(personIDs, extra...)
-		}
-	}
+	// NOTE: Automatic cross-attachment of affiliations removed.
+	// Previously, this code would find affiliated persons (e.g., parties for deputies)
+	// and link them to the same fact. This caused parties to appear in both
+	// "voted FOR ..." (deputy facts) and "collectively voted FOR ..." (party facts).
+	// Now plugins must explicitly create party-level facts when needed.
 
 	// --- Commit ---
 	if err = tx.Commit(ctx); err != nil {
@@ -1315,4 +1284,61 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 
 	return contradictions, nil
+}
+
+// GetFactPersons returns persons who have a fact related to the given fact.
+// If the fact_text starts with "collectively ", it removes the prefix to find individual-level facts.
+// This is useful for finding persons associated with individual facts when given a collective fact.
+func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit int, offset int) ([]PersonSummary, error) {
+	query := `
+		WITH source_fact AS (
+			SELECT id, fact_text
+			FROM facts
+			WHERE id = $1
+		),
+		transformed_fact_text AS (
+			SELECT
+				id,
+				CASE
+					WHEN fact_text LIKE 'collectively %' THEN substring(fact_text from 14)
+					ELSE fact_text
+				END as transformed_text
+			FROM source_fact
+		),
+		target_fact AS (
+			SELECT f.id
+			FROM facts f, transformed_fact_text tft
+			WHERE f.fact_text = tft.transformed_text
+			LIMIT 1
+		)
+		SELECT DISTINCT
+			p.id, p.name, p.entity_type, p.honesty_score
+		FROM target_fact tf
+		JOIN fact_sources fs ON fs.fact_id = tf.id
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		JOIN persons p ON p.id = fm.person_id
+		ORDER BY p.name ASC
+		LIMIT $2 OFFSET $3`
+
+	rows, err := s.pool.Query(ctx, query, factID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query persons for fact %d: %w", factID, err)
+	}
+	defer rows.Close()
+
+	persons := make([]PersonSummary, 0)
+	for rows.Next() {
+		var person PersonSummary
+		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan person: %w", err)
+		}
+		persons = append(persons, person)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
+	}
+
+	return persons, nil
 }
