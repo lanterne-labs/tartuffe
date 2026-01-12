@@ -98,7 +98,7 @@ FIRECRAWL_API_KEY=...
 
 - **Logging**: Use zerolog (`github.com/rs/zerolog/log`) with structured fields
 - **Error handling**: Wrap errors with `fmt.Errorf("context: %w", err)`
-- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool
+- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. Always use `supabase db reset` for resetting the database, never raw SQL deletes.
 - **API**: REST with JSON, pagination via `limit` and `offset` query params
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
 - **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them
