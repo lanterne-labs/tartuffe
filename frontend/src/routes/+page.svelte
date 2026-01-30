@@ -10,13 +10,31 @@
 	let currentPage = 0;
 	let pageSize = 50;
 	let hasMore = true;
+	let entityFilter: '' | 'party' | 'human' = ''; // '' = all, 'party' = parties only, 'human' = persons only
+	let searchQuery = '';
+	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function handleSearchInput(event: Event) {
+		const target = event.target as HTMLInputElement;
+		searchQuery = target.value;
+
+		// Debounce the search to avoid excessive API calls
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
+		}
+		debounceTimer = setTimeout(() => {
+			loadPersons(0);
+		}, 300);
+	}
 
 	async function loadPersons(page = 0) {
 		error = null;
 		try {
 			loading = true;
 			const offset = page * pageSize;
-			const response = await fetch(`${API_BASE}/api/persons?limit=${pageSize}&offset=${offset}`);
+			const entityParam = entityFilter ? `&entity_type=${entityFilter}` : '';
+			const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
+			const response = await fetch(`${API_BASE}/api/persons?limit=${pageSize}&offset=${offset}${entityParam}${searchParam}`);
 
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
@@ -31,6 +49,11 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function setFilter(filter: '' | 'party' | 'human') {
+		entityFilter = filter;
+		loadPersons(0); // Reset to first page when filter changes
 	}
 
 	async function refreshPersons() {
@@ -66,19 +89,21 @@
 	onMount(() => {
 		loadPersons();
 
-		// Connect to realtime updates
-		realtimeManager.connect();
-
-		// Listen for any person updates (we refresh the whole list since rankings change)
-		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent); // -1 means listen to all persons
+		// Realtime updates disabled - they cause request floods due to historical events
+		// TODO: Fix SSE to only send events newer than connection time
+		// realtimeManager.connect();
+		// unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
 	});
 
 	onDestroy(() => {
-		if (unsubscribe) {
-			unsubscribe();
+		// if (unsubscribe) {
+		// 	unsubscribe();
+		// }
+		if (debounceTimer) {
+			clearTimeout(debounceTimer);
 		}
-		realtimeManager.disconnect();
-		clearOldEvents();
+		// realtimeManager.disconnect();
+		// clearOldEvents();
 	});
 </script>
 
@@ -88,7 +113,7 @@
 
 <div class="container">
 	<h1>Digital Mirror</h1>
-	<p>Persons ranked by honesty score</p>
+	<p>Persons ranked by popularity (number of facts)</p>
 
 	{#if error}
 		<div class="error">
@@ -96,6 +121,40 @@
 			<button on:click={() => loadPersons(0)}>Retry</button>
 		</div>
 	{/if}
+
+	<div class="search-bar">
+		<input
+			type="text"
+			placeholder="Search by name..."
+			value={searchQuery}
+			on:input={handleSearchInput}
+			class="search-input"
+		/>
+	</div>
+
+	<div class="filter-bar">
+		<button
+			class="filter-button"
+			class:active={entityFilter === ''}
+			on:click={() => setFilter('')}
+		>
+			All
+		</button>
+		<button
+			class="filter-button"
+			class:active={entityFilter === 'party'}
+			on:click={() => setFilter('party')}
+		>
+			Parties
+		</button>
+		<button
+			class="filter-button"
+			class:active={entityFilter === 'human'}
+			on:click={() => setFilter('human')}
+		>
+			Persons
+		</button>
+	</div>
 
 	<div class="persons-list">
 		{#each persons as person (person.id)}
@@ -107,6 +166,7 @@
 							<span class="party-badge">Party</span>
 						{/if}
 					</h2>
+					<span class="fact-count">{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}</span>
 				</div>
 
 				<div class="honesty-score">
@@ -153,7 +213,59 @@
 
 	p {
 		color: #6b7280;
+		margin-bottom: 1rem;
+	}
+
+	.search-bar {
+		margin-bottom: 1rem;
+	}
+
+	.search-input {
+		width: 100%;
+		padding: 0.75rem 1rem;
+		font-size: 1rem;
+		border: 1px solid #d1d5db;
+		border-radius: 0.5rem;
+		background: white;
+		color: #1f2937;
+		transition: border-color 0.2s, box-shadow 0.2s;
+	}
+
+	.search-input:focus {
+		outline: none;
+		border-color: #3b82f6;
+		box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+	}
+
+	.search-input::placeholder {
+		color: #9ca3af;
+	}
+
+	.filter-bar {
+		display: flex;
+		gap: 0.5rem;
 		margin-bottom: 2rem;
+	}
+
+	.filter-button {
+		background: #f3f4f6;
+		color: #374151;
+		border: 1px solid #d1d5db;
+		padding: 0.5rem 1rem;
+		border-radius: 0.375rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.filter-button:hover {
+		background: #e5e7eb;
+	}
+
+	.filter-button.active {
+		background: #3b82f6;
+		color: white;
+		border-color: #3b82f6;
 	}
 
 	.error {
@@ -200,6 +312,7 @@
 	.person-header {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		margin-bottom: 1rem;
 	}
 
@@ -209,6 +322,14 @@
 		font-weight: 600;
 		color: #1f2937;
 		flex: 1;
+	}
+
+	.fact-count {
+		color: #6b7280;
+		font-size: 0.875rem;
+		font-weight: 500;
+		white-space: nowrap;
+		margin-left: 1rem;
 	}
 
 	.person-header h2 a {

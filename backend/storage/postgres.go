@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	// "digital-mirror/backend" // Removed unused import
 	// Assuming backend.Fact is no longer needed here directly
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util" // Import the new util package
 	"fmt"
 	"math"
@@ -31,15 +33,24 @@ type Affiliation struct {
 // StoreFactInput encapsulates the data needed to store a fact and its source.
 // This replaces the direct use of backend.Fact in the storage layer.
 type StoreFactInput struct {
-	// NormalizedFactText is the core, normalized factual statement.
+	// SubjectEntity is the primary entity this fact is about (required).
+	// This is used as the primary person link. InvolvedPeople are secondary mentions.
+	SubjectEntity string
+	// SubjectEntityType is the type of entity: "human", "party", or "organization".
+	// Used when creating new persons in the database.
+	SubjectEntityType string
+	// NormalizedFactText is the core, normalized factual statement (with person names for display).
 	NormalizedFactText string
-	// Embedding is the vector embedding of the NormalizedFactText.
+	// EmbeddingText is the name-free version used ONLY for generating embeddings.
+	// This ensures facts cluster by topic, not by person name.
+	EmbeddingText string
+	// Embedding is the vector embedding generated from EmbeddingText.
 	Embedding []float32
 	// OriginalQuote is the exact text snippet from the source.
 	OriginalQuote string
 	// Topics are relevant keywords or categories.
 	Topics []string
-	// InvolvedPeople lists the names of individuals mentioned.
+	// InvolvedPeople lists secondary people mentioned in the fact (not the subject entity).
 	InvolvedPeople []string
 	// SourceURL is the URL where the statement was found.
 	SourceURL string
@@ -73,6 +84,13 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 		return nil, fmt.Errorf("unable to parse DATABASE_URL: %w", err)
 	}
 
+	// Configure connection pool for long-running operations (like LLM calls)
+	config.MaxConnLifetime = 30 * time.Minute      // Recycle connections periodically
+	config.MaxConnIdleTime = 5 * time.Minute       // Close idle connections before server times them out
+	config.HealthCheckPeriod = 30 * time.Second    // Check connection health periodically
+	config.MaxConns = 10                           // Reasonable pool size
+	config.MinConns = 2                            // Keep some connections warm
+
 	// Register pgvector types with the connection config
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		log.Debug().Msg("Registering pgvector types with pgx connection")
@@ -91,6 +109,9 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	}
 
 	log.Debug().Msg("Successfully connected to database with pgvector type registered.")
+
+	// Start pool stats collector for Prometheus metrics (every 15 seconds)
+	metrics.StartPoolStatsCollector(ctx, pool, 15*time.Second)
 
 	return &PostgresStorer{
 		pool: pool,
@@ -159,6 +180,53 @@ func (s *PostgresStorer) GetPersonIDByOrgRef(ctx context.Context, orgRef string)
 	return id, nil
 }
 
+// GetPersonIDByName returns the person.id associated with the given name.
+func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (int64, error) {
+	var id int64
+	query := `SELECT id FROM persons WHERE name = $1 LIMIT 1`
+	err := s.pool.QueryRow(ctx, query, name).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to find person by name %s: %w", name, err)
+	}
+	return id, nil
+}
+
+// FindPersonsByFuzzyName finds persons matching the query using fuzzy matching.
+// Returns matches sorted by similarity score (highest first).
+// threshold is the minimum similarity score (0.0 to 1.0), recommended: 0.6
+// maxResults limits the number of results returned
+func (s *PostgresStorer) FindPersonsByFuzzyName(ctx context.Context, query string, threshold float64, maxResults int) ([]util.PersonMatch, error) {
+	// Get all persons
+	allPersons, err := s.GetAllPersons(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all persons for fuzzy search: %w", err)
+	}
+
+	// Convert to format expected by FindBestMatches
+	candidates := make([]struct {
+		ID         int64
+		Name       string
+		EntityType string
+	}, len(allPersons))
+
+	for i, p := range allPersons {
+		candidates[i] = struct {
+			ID         int64
+			Name       string
+			EntityType string
+		}{
+			ID:         p.ID,
+			Name:       p.Name,
+			EntityType: p.EntityType,
+		}
+	}
+
+	// Find matches
+	matches := util.FindBestMatches(query, candidates, threshold, maxResults)
+
+	return matches, nil
+}
+
 // FindOrCreateAffiliation inserts or updates an affiliation (one-way) between two persons.
 // It uses link_type='affiliation' and is idempotent.
 func (s *PostgresStorer) FindOrCreateAffiliation(ctx context.Context, tx pgx.Tx, srcID int64, dstID int64, validFrom *time.Time, validTo *time.Time, attributes map[string]any) error {
@@ -201,77 +269,250 @@ const (
 	// For now, we rely primarily on embedding + exact match on text for simplicity.
 	// textSimilarityThreshold = 0.8
 	// maxCandidatesToCheck limits how many embedding matches we check text against.
-	maxCandidatesToCheck = 5
+	// Higher values ensure more pairs are checked for contradictions (at cost of more LLM calls)
+	maxCandidatesToCheck = 20
 )
 
-// StoreFact saves a normalized fact, links its source, and connects involved people.
-// It NO LONGER checks for embedding similarity for deduplication.
-// It inserts the fact and links the source/mentions.
-// Contradiction checking is expected to happen *outside* this function using the returned IDs.
-func (s *PostgresStorer) StoreFact(ctx context.Context, input StoreFactInput) (factID int64, factSourceID int64, personIDs []int64, err error) {
-	// Validate input
-	if input.NormalizedFactText == "" || len(input.Embedding) == 0 || input.SourceURL == "" || len(input.InvolvedPeople) == 0 {
-		return 0, 0, nil, fmt.Errorf("invalid input: missing required fields (NormalizedFactText, Embedding, SourceURL, InvolvedPeople)")
-	}
+// REMOVED: StoreFact() has been replaced by core.FactInserter
+// Use core.NewFactInserter(storer).InsertFacts() instead for intelligent fact insertion
+// with automatic similarity detection and canonical/related fact management.
+//
+// Migration guide:
+// OLD: factID, sourceID, personIDs, err := storer.StoreFact(ctx, input)
+// NEW: inserter := core.NewFactInserter(storer)
+//      err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
+//
+// Note: The new approach handles similarity detection automatically and stores
+// facts as either canonical or related based on embedding similarity.
 
+// --- Public methods for core.FactInserter ---
+
+// FindOrInsertPersons is a public wrapper around findOrInsertPersons for use by core.FactInserter.
+// It finds existing persons or inserts new ones based on normalized names.
+// Returns a slice of database IDs corresponding to the input personNames.
+func (s *PostgresStorer) FindOrInsertPersons(ctx context.Context, personNames []string) ([]int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("panic during transaction: %v", r)
-			log.Error().Interface("panic_info", r).Msg("Panic recovered during StoreFact transaction")
-		}
-		if err != nil {
-			log.Error().Err(err).Msg("Rolling back transaction due to error in StoreFact")
-			if rbErr := tx.Rollback(ctx); rbErr != nil {
-				log.Error().Err(rbErr).Msg("Failed to rollback transaction")
-				err = fmt.Errorf("transaction error: %v; rollback error: %w", err, rbErr)
-			}
-		}
-	}()
+	defer tx.Rollback(ctx) // Rollback if not committed
 
-	// Step 1: Find or Insert Persons first to get their IDs
-	personIDs, err = s.findOrInsertPersons(ctx, tx, input.InvolvedPeople, input.NormalizedFactText)
+	personIDs, err := s.findOrInsertPersons(ctx, tx, personNames, "")
 	if err != nil {
-		return 0, 0, nil, fmt.Errorf("step 1 failed (findOrInsertPersons): %w", err)
-	}
-	// Suppress per-item debug log to keep CLI output concise
-
-	// Step 2: Insert the new fact
-	factID, err = s.insertFact(ctx, tx, input.NormalizedFactText, input.Embedding, input.Topics)
-	if err != nil {
-		return 0, 0, personIDs, fmt.Errorf("step 2 failed (insertFact): %w", err)
-	}
-	// Suppress per-item info log to keep CLI output concise
-
-	// Step 3: Link Source to the new Fact
-	factSourceID, err = s.linkSourceToFact(ctx, tx, factID, input.SourceURL, input.OriginalQuote, input.PublishedAt, input.SourceType, input.Metadata)
-	if err != nil {
-		return factID, 0, personIDs, fmt.Errorf("step 3 failed (linkSourceToFact): %w", err)
+		return nil, err
 	}
 
-	// Step 4: Link Persons to *this specific* Source Mention
-	err = s.linkPersonsToSourceMention(ctx, tx, factSourceID, personIDs)
-	if err != nil {
-		return factID, factSourceID, personIDs, fmt.Errorf("step 4 failed (linkPersonsToSourceMention): %w", err)
-	}
-
-	// NOTE: Automatic cross-attachment of affiliations removed.
-	// Previously, this code would find affiliated persons (e.g., parties for deputies)
-	// and link them to the same fact. This caused parties to appear in both
-	// "voted FOR ..." (deputy facts) and "collectively voted FOR ..." (party facts).
-	// Now plugins must explicitly create party-level facts when needed.
-
-	// --- Commit ---
 	if err = tx.Commit(ctx); err != nil {
-		return 0, 0, nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Return the IDs of the newly created fact, source link, and the involved persons
-	return factID, factSourceID, personIDs, nil // Success, err is nil
+	return personIDs, nil
 }
+
+// FindOrInsertPersonWithType finds or creates a person with the specified entity type.
+// If the person already exists, returns their ID (does NOT update entity_type for existing persons).
+// If the person doesn't exist, creates them with the specified entity type.
+// entityType must be one of: "human", "party", "organization".
+func (s *PostgresStorer) FindOrInsertPersonWithType(ctx context.Context, name string, entityType string) (int64, error) {
+	normalized := util.NormalizeString(name)
+	if normalized == "" {
+		return 0, fmt.Errorf("empty person name after normalization")
+	}
+
+	// Validate entity type, default to "human" if invalid
+	switch entityType {
+	case "human", "party", "organization":
+		// valid
+	default:
+		log.Warn().Str("entity_type", entityType).Str("name", name).Msg("Invalid entity_type, defaulting to 'human'")
+		entityType = "human"
+	}
+
+	// Try to find existing person first
+	var personID int64
+	err := s.pool.QueryRow(ctx, `SELECT id FROM persons WHERE name = $1`, normalized).Scan(&personID)
+	if err == nil {
+		return personID, nil
+	}
+	if err != pgx.ErrNoRows {
+		return 0, fmt.Errorf("failed to query person: %w", err)
+	}
+
+	// Person doesn't exist, insert with entity type
+	err = s.pool.QueryRow(ctx,
+		`INSERT INTO persons (name, entity_type) VALUES ($1, $2)
+		 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+		 RETURNING id`,
+		normalized, entityType,
+	).Scan(&personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert person with entity type: %w", err)
+	}
+
+	log.Info().
+		Int64("person_id", personID).
+		Str("name", name).
+		Str("normalized_name", normalized).
+		Str("entity_type", entityType).
+		Msg("Created new person with entity type")
+
+	return personID, nil
+}
+
+// LinkSourceToFact is a public wrapper around linkSourceToFact for use by core.FactInserter.
+// It links a source URL, quote, and published date to a given fact ID.
+func (s *PostgresStorer) LinkSourceToFact(ctx context.Context, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // Rollback if not committed
+
+	sourceID, err := s.linkSourceToFact(ctx, tx, factID, sourceURL, originalQuote, publishedAt, sourceType, metadata)
+	if err != nil {
+		return 0, err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return sourceID, nil
+}
+
+// LinkPersonsToSourceMention is a public wrapper around linkPersonsToSourceMention for use by core.FactInserter.
+// It links persons to a specific fact source mention.
+func (s *PostgresStorer) LinkPersonsToSourceMention(ctx context.Context, sourceID int64, personIDs []int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx) // Rollback if not committed
+
+	if err := s.linkPersonsToSourceMention(ctx, tx, sourceID, personIDs); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// FindSimilarCanonicalFacts searches for canonical facts similar to the given embedding
+// for the specified persons, using cosine distance threshold.
+// threshold parameter is cosine distance (1 - cosine_similarity), e.g., 0.20 for 80% similarity.
+// Only returns canonical facts (is_canonical=true) to ensure deduplication works correctly.
+// Returns at most one result (LIMIT 1) - the most similar canonical fact.
+func (s *PostgresStorer) FindSimilarCanonicalFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64) ([]core.SimilarFact, error) {
+	timer := metrics.NewQueryTimer("find_similar_canonical_facts")
+	start := time.Now()
+
+	query := `
+		WITH PersonFacts AS (
+			-- Get all canonical fact IDs for these persons
+			SELECT DISTINCT fs.fact_id
+			FROM fact_mentions fm
+			JOIN fact_sources fs ON fm.fact_source_id = fs.id
+			JOIN facts f ON fs.fact_id = f.id
+			WHERE fm.person_id = ANY($1)
+			  AND f.is_canonical = true
+		)
+		SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance
+		FROM facts f
+		JOIN PersonFacts pf ON f.id = pf.fact_id
+		WHERE f.embedding <=> $2 <= $3
+		ORDER BY distance
+		LIMIT 1
+	`
+
+	rows, err := s.pool.Query(ctx, query,
+		personIDs,
+		pgvector.NewVector(embedding),
+		threshold,
+	)
+	if err != nil {
+		timer.ObserveDuration(err)
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var results []core.SimilarFact
+	for rows.Next() {
+		var sf core.SimilarFact
+		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance); err != nil {
+			timer.ObserveDuration(err)
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+		results = append(results, sf)
+	}
+
+	err = rows.Err()
+	timer.ObserveDuration(err)
+	metrics.ObserveVectorSearch(time.Since(start), len(results))
+
+	return results, err
+}
+
+// InsertCanonicalFact inserts a new canonical fact (is_canonical=true, canonical_fact_id=NULL).
+// This is the primary fact that will be used for contradiction detection.
+func (s *PostgresStorer) InsertCanonicalFact(ctx context.Context, input core.StoreFactInput) (int64, error) {
+	timer := metrics.NewQueryTimer("insert_canonical_fact")
+
+	query := `
+		INSERT INTO facts (fact_text, embedding_text, embedding, topics, is_canonical, canonical_fact_id)
+		VALUES ($1, $2, $3, $4, true, NULL)
+		RETURNING id
+	`
+	var factID int64
+	err := s.pool.QueryRow(ctx, query,
+		input.NormalizedFactText,
+		input.EmbeddingText,
+		pgvector.NewVector(input.Embedding),
+		input.Topics,
+	).Scan(&factID)
+
+	timer.ObserveDuration(err)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert canonical fact: %w", err)
+	}
+
+	log.Debug().Int64("fact_id", factID).Str("fact_text", input.NormalizedFactText[:min(len(input.NormalizedFactText), 80)]).Msg("Inserted canonical fact")
+	return factID, nil
+}
+
+// InsertRelatedFact inserts a related/similar fact (is_canonical=false, canonical_fact_id=<id>).
+// This fact is linked to a canonical fact and will NOT be used for contradiction detection.
+func (s *PostgresStorer) InsertRelatedFact(ctx context.Context, input core.StoreFactInput, canonicalFactID int64) (int64, error) {
+	timer := metrics.NewQueryTimer("insert_related_fact")
+
+	query := `
+		INSERT INTO facts (fact_text, embedding_text, embedding, topics, is_canonical, canonical_fact_id)
+		VALUES ($1, $2, $3, $4, false, $5)
+		RETURNING id
+	`
+	var factID int64
+	err := s.pool.QueryRow(ctx, query,
+		input.NormalizedFactText,
+		input.EmbeddingText,
+		pgvector.NewVector(input.Embedding),
+		input.Topics,
+		canonicalFactID,
+	).Scan(&factID)
+
+	timer.ObserveDuration(err)
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to insert related fact: %w", err)
+	}
+
+	log.Debug().Int64("fact_id", factID).Int64("canonical_fact_id", canonicalFactID).Str("fact_text", input.NormalizedFactText[:min(len(input.NormalizedFactText), 80)]).Msg("Inserted related fact")
+	return factID, nil
+}
+
+// --- End of public methods for core.FactInserter ---
 
 // findOrInsertFact REMOVED as StoreFact now always uses insertFact.
 // If text-based deduplication is needed later, it can be added back carefully.
@@ -280,10 +521,14 @@ func (s *PostgresStorer) findOrInsertFact(...) { ... }
 */
 
 // insertFact inserts a new fact record.
+// If a fact with the same text already exists, it returns the existing fact ID.
 func (s *PostgresStorer) insertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, topics []string) (factID int64, err error) {
+	// Use ON CONFLICT to handle duplicate fact_text gracefully
+	// DO UPDATE with a no-op update allows us to get the RETURNING id for both new and existing facts
 	insertFactStmt := `
 		INSERT INTO facts (fact_text, embedding, topics)
 		VALUES ($1, $2, $3)
+		ON CONFLICT (fact_text) DO UPDATE SET fact_text = EXCLUDED.fact_text
 		RETURNING id`
 	err = tx.QueryRow(ctx, insertFactStmt,
 		text,
@@ -600,26 +845,199 @@ func (s *PostgresStorer) IsURLVisitable(ctx context.Context, url string, revisit
 	return visitable, sourceExists, nil
 }
 
-// GetAllPersons retrieves a list of all unique person names from the persons table.
-func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]string, error) {
-	query := `SELECT name FROM persons ORDER BY name`
+// IsLawKeyProcessed checks if a law (identified by law_key in metadata) has already been processed.
+// Returns true if the law_key exists in fact_sources metadata, false otherwise.
+// DEPRECATED: Use IsLawFullyProcessed instead for accurate resumability.
+func (s *PostgresStorer) IsLawKeyProcessed(ctx context.Context, lawKey string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM fact_sources WHERE metadata->>'law_key' = $1)`
+	var exists bool
+	err := s.pool.QueryRow(ctx, query, lawKey).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if law_key '%s' is processed: %w", lawKey, err)
+	}
+	return exists, nil
+}
+
+// IsLawFullyProcessed checks if a law has been completely processed (all facts stored).
+// This replaces the old IsLawKeyProcessed which checked fact_sources and could give false positives.
+func (s *PostgresStorer) IsLawFullyProcessed(ctx context.Context, lawKey string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM processed_laws WHERE law_key = $1)`
+	var exists bool
+	err := s.pool.QueryRow(ctx, query, lawKey).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if law %s is processed: %w", lawKey, err)
+	}
+	return exists, nil
+}
+
+// MarkLawAsProcessed records that a law has been fully processed (all facts stored).
+// This is the "commit" marker that prevents reprocessing the law on retry.
+func (s *PostgresStorer) MarkLawAsProcessed(ctx context.Context, lawKey string, legislature int, title string, factsCount int) error {
+	query := `
+		INSERT INTO processed_laws (law_key, legislature, title, facts_count)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (law_key) DO UPDATE
+		SET processed_at = CURRENT_TIMESTAMP,
+		    facts_count = EXCLUDED.facts_count
+	`
+	_, err := s.pool.Exec(ctx, query, lawKey, legislature, title, factsCount)
+	if err != nil {
+		return fmt.Errorf("failed to mark law %s as processed: %w", lawKey, err)
+	}
+	return nil
+}
+
+// ProcessedLawInfo represents metadata about a fully processed law.
+type ProcessedLawInfo struct {
+	LawKey      string
+	Legislature int
+	Title       string
+	FactsCount  int
+	ProcessedAt time.Time
+}
+
+// GetProcessedLawInfo retrieves metadata about a processed law (for debugging/verification).
+// Returns nil if the law has not been processed.
+func (s *PostgresStorer) GetProcessedLawInfo(ctx context.Context, lawKey string) (*ProcessedLawInfo, error) {
+	query := `
+		SELECT law_key, legislature, title, facts_count, processed_at
+		FROM processed_laws
+		WHERE law_key = $1
+	`
+	var info ProcessedLawInfo
+	err := s.pool.QueryRow(ctx, query, lawKey).Scan(
+		&info.LawKey, &info.Legislature, &info.Title, &info.FactsCount, &info.ProcessedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get processed law info for %s: %w", lawKey, err)
+	}
+	return &info, nil
+}
+
+// DeletePartialLawData removes all facts, fact_sources, contradictions, and fact_mentions
+// associated with a law_key. This is used for cleanup before reprocessing an incomplete law.
+// IMPORTANT: Only deletes if the law is NOT marked as fully processed in processed_laws table.
+// Returns the number of facts deleted.
+func (s *PostgresStorer) DeletePartialLawData(ctx context.Context, lawKey string) (int, error) {
+	// Use a transaction to ensure atomic cleanup
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Safety check: Only delete if law is NOT in processed_laws table
+	var isComplete bool
+	checkQuery := `SELECT EXISTS(SELECT 1 FROM processed_laws WHERE law_key = $1)`
+	if err := tx.QueryRow(ctx, checkQuery, lawKey).Scan(&isComplete); err != nil {
+		return 0, fmt.Errorf("failed to check if law %s is complete: %w", lawKey, err)
+	}
+	if isComplete {
+		// Law is marked as complete - do NOT delete its facts
+		return 0, tx.Commit(ctx)
+	}
+
+	// Step 1: Find all fact IDs associated with this law_key
+	factIDsQuery := `
+		SELECT DISTINCT f.id
+		FROM facts f
+		JOIN fact_sources fs ON f.id = fs.fact_id::bigint
+		WHERE fs.metadata->>'law_key' = $1
+	`
+	rows, err := tx.Query(ctx, factIDsQuery, lawKey)
+	if err != nil {
+		return 0, fmt.Errorf("failed to find facts for law %s: %w", lawKey, err)
+	}
+
+	factIDs := make([]int64, 0)
+	for rows.Next() {
+		var factID int64
+		if err := rows.Scan(&factID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("failed to scan fact ID: %w", err)
+		}
+		factIDs = append(factIDs, factID)
+	}
+	rows.Close()
+
+	if len(factIDs) == 0 {
+		// No facts to delete
+		return 0, tx.Commit(ctx)
+	}
+
+	// Step 2: Delete contradictions referencing these facts
+	deleteContradictionsQuery := `
+		DELETE FROM contradictions
+		WHERE fact_a_id = ANY($1) OR fact_b_id = ANY($1)
+	`
+	_, err = tx.Exec(ctx, deleteContradictionsQuery, factIDs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete contradictions for law %s: %w", lawKey, err)
+	}
+
+	// Step 3: Delete fact_mentions (via fact_source_id)
+	deleteMentionsQuery := `
+		DELETE FROM fact_mentions
+		WHERE fact_source_id IN (
+			SELECT id FROM fact_sources WHERE metadata->>'law_key' = $1
+		)
+	`
+	_, err = tx.Exec(ctx, deleteMentionsQuery, lawKey)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete fact_mentions for law %s: %w", lawKey, err)
+	}
+
+	// Step 4: Delete fact_sources
+	deleteSourcesQuery := `DELETE FROM fact_sources WHERE metadata->>'law_key' = $1`
+	_, err = tx.Exec(ctx, deleteSourcesQuery, lawKey)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete fact_sources for law %s: %w", lawKey, err)
+	}
+
+	// Step 5: Delete facts (orphaned by removing fact_sources)
+	deleteFactsQuery := `DELETE FROM facts WHERE id = ANY($1)`
+	_, err = tx.Exec(ctx, deleteFactsQuery, factIDs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete facts for law %s: %w", lawKey, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return len(factIDs), nil
+}
+
+// PersonInfo represents a person with their details.
+type PersonInfo struct {
+	ID         int64
+	Name       string
+	EntityType string
+}
+
+// GetAllPersons retrieves all persons with their details (id, name, entity_type).
+func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error) {
+	query := `SELECT id, name, COALESCE(entity_type, 'person') as entity_type FROM persons ORDER BY name`
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons: %w", err)
 	}
 	defer rows.Close()
 
-	var persons []string
+	var persons []PersonInfo
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("failed to scan person name: %w", err)
+		var p PersonInfo
+		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
+			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
-		persons = append(persons, name)
+		persons = append(persons, p)
 	}
 
 	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating over persons rows: %w", rows.Err())
+		return nil, fmt.Errorf("error iterating over persons: %w", rows.Err())
 	}
 
 	return persons, nil
@@ -642,6 +1060,46 @@ func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, 
 	// Use QueryRow because RETURNING id might not return a row if the conflict occurs.
 	// We need to handle the case where no row is returned.
 	err = s.pool.QueryRow(ctx, stmt, normalizedName).Scan(&id)
+
+	if err == pgx.ErrNoRows {
+		// Conflict occurred, person already exists. We need to get their ID.
+		log.Debug().Str("name", normalizedName).Msg("Person already exists, fetching ID")
+		selectStmt := `SELECT id FROM persons WHERE name = $1`
+		err = s.pool.QueryRow(ctx, selectStmt, normalizedName).Scan(&id)
+		if err != nil {
+			return 0, false, fmt.Errorf("failed to fetch existing person ID for '%s': %w", normalizedName, err)
+		}
+		return id, false, nil // Return existing ID, indicate not inserted
+	} else if err != nil {
+		// Any other error during insert
+		return 0, false, fmt.Errorf("failed to insert person '%s': %w", normalizedName, err)
+	}
+
+	// If we reach here, the insert was successful and returned an ID.
+	return id, true, nil // Return new ID, indicate inserted
+}
+
+// AddPersonWithType adds a person with a specific entity_type.
+// Valid entity_type values: 'human', 'party', 'company', 'organization'
+func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, entityType string) (id int64, inserted bool, err error) {
+	normalizedName := util.NormalizeString(name)
+	if normalizedName == "" {
+		return 0, false, fmt.Errorf("cannot add empty person name")
+	}
+
+	// Validate entity_type
+	validTypes := map[string]bool{"human": true, "party": true, "company": true, "organization": true}
+	if !validTypes[entityType] {
+		return 0, false, fmt.Errorf("invalid entity_type '%s': must be one of 'human', 'party', 'company', 'organization'", entityType)
+	}
+
+	stmt := `
+		INSERT INTO persons (name, entity_type) VALUES ($1, $2)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING id
+	`
+
+	err = s.pool.QueryRow(ctx, stmt, normalizedName, entityType).Scan(&id)
 
 	if err == pgx.ErrNoRows {
 		// Conflict occurred, person already exists. We need to get their ID.
@@ -806,46 +1264,111 @@ func (s *PostgresStorer) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+// FactWithEmbedding contains a fact's ID, text, and embedding vector.
+type FactWithEmbedding struct {
+	ID          int64
+	Text        string
+	Embedding   []float32
+	PublishedAt *time.Time // Earliest publication date from fact_sources
+}
+
+// GetFactsWithEmbeddingsForPerson returns all canonical facts for a person including their embeddings.
+// This is used for batch contradiction detection.
+func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, personID int64) ([]FactWithEmbedding, error) {
+	query := `
+		WITH FactDates AS (
+			SELECT fs.fact_id, MIN(fs.published_at) AS earliest_published_at
+			FROM fact_sources fs
+			GROUP BY fs.fact_id
+		)
+		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at
+		FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		LEFT JOIN FactDates fd ON f.id = fd.fact_id
+		WHERE fm.person_id = $1
+		  AND f.is_canonical = true
+		ORDER BY f.id`
+
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query facts for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	var results []FactWithEmbedding
+	for rows.Next() {
+		var f FactWithEmbedding
+		var emb pgvector.Vector
+		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan fact for person %d: %w", personID, err)
+		}
+		f.Embedding = emb.Slice()
+		results = append(results, f)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating facts for person %d: %w", personID, rows.Err())
+	}
+
+	return results, nil
+}
+
 // FindNeighborFactsForPerson searches for facts linked to a specific person that are
 // semantically similar to a given embedding, excluding a specific fact ID (usually the new one).
 // Returns IDs and text of neighboring facts within the similarity threshold.
 type NeighborFactResult struct {
-	ID       int64
-	Text     string
-	Distance float64 // Include distance for potential future use/logging
+	ID          int64
+	Text        string
+	Distance    float64    // Include distance for potential future use/logging
+	PublishedAt *time.Time // Earliest publication date from fact_sources
 }
 
 func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer pgx.Tx, personID int64, embedding []float32, excludeFactID int64) ([]NeighborFactResult, error) {
+	timer := metrics.NewQueryTimer("find_neighbor_facts")
+	start := time.Now()
+
+	// Query returns ALL facts within the similarity threshold (no LIMIT)
+	// This ensures we check all pairs of semantically similar facts
 	query := `
         WITH PersonFacts AS (
-            -- Select distinct fact IDs associated with the person
+            -- Select distinct canonical fact IDs associated with the person
             SELECT DISTINCT fs.fact_id
             FROM fact_mentions fm
             JOIN fact_sources fs ON fm.fact_source_id = fs.id
+            JOIN facts f ON fs.fact_id = f.id
             WHERE fm.person_id = $1
+              AND f.is_canonical = true
+        ),
+        FactDates AS (
+            -- Get the earliest published_at date for each fact
+            SELECT fs.fact_id, MIN(fs.published_at) AS earliest_published_at
+            FROM fact_sources fs
+            GROUP BY fs.fact_id
         )
         SELECT
             f.id,
             f.fact_text,
-            f.embedding <-> $2 AS distance
+            f.embedding <-> $2 AS distance,
+            fd.earliest_published_at
         FROM facts f
         JOIN PersonFacts pf ON f.id = pf.fact_id
+        LEFT JOIN FactDates fd ON f.id = fd.fact_id
         WHERE
             f.id <> $3 -- Exclude the fact itself
         AND
-            f.embedding <-> $2 <= $4 -- Similarity threshold
+            f.embedding <-> $2 <= $4 -- Similarity threshold (no LIMIT - check ALL similar pairs)
         ORDER BY
-            distance -- Order by similarity
-        LIMIT $5`
+            distance`
 
 	rows, err := queryer.Query(ctx, query,
 		personID,                      // $1
 		pgvector.NewVector(embedding), // $2
 		excludeFactID,                 // $3
 		embeddingSimilarityThreshold,  // $4
-		maxCandidatesToCheck,          // $5
 	)
 	if err != nil {
+		timer.ObserveDuration(err)
 		return nil, fmt.Errorf("failed to query neighbor facts for person %d: %w", personID, err)
 	}
 	defer rows.Close()
@@ -853,17 +1376,164 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	var results []NeighborFactResult
 	for rows.Next() {
 		var res NeighborFactResult
-		if err := rows.Scan(&res.ID, &res.Text, &res.Distance); err != nil {
+		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt); err != nil {
+			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("failed to scan neighbor fact result for person %d: %w", personID, err)
 		}
 		results = append(results, res)
 	}
 
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating neighbor fact results for person %d: %w", personID, rows.Err())
+	err = rows.Err()
+	timer.ObserveDuration(err)
+	metrics.ObserveVectorSearch(time.Since(start), len(results))
+
+	if err != nil {
+		return nil, fmt.Errorf("error iterating neighbor fact results for person %d: %w", personID, err)
 	}
 
 	return results, nil
+}
+
+// GetExistingContradictionPairs returns a map of existing contradiction pairs for a person.
+// The map keys are "factAID-factBID" strings (with smaller ID first) for quick lookup.
+func (s *PostgresStorer) GetExistingContradictionPairs(ctx context.Context, personID int64) (map[string]bool, error) {
+	query := `SELECT fact_a_id, fact_b_id FROM contradictions WHERE person_id = $1`
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query existing contradictions for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	pairs := make(map[string]bool)
+	for rows.Next() {
+		var factAID, factBID int64
+		if err := rows.Scan(&factAID, &factBID); err != nil {
+			return nil, fmt.Errorf("failed to scan contradiction pair: %w", err)
+		}
+		// IDs are already normalized (smaller first) in the DB
+		key := fmt.Sprintf("%d-%d", factAID, factBID)
+		pairs[key] = true
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating contradiction pairs: %w", rows.Err())
+	}
+
+	return pairs, nil
+}
+
+// PairCheckResult represents the result of a fact pair check.
+type PairCheckResult struct {
+	FactAID         int64
+	FactBID         int64
+	IsContradiction bool
+}
+
+// GetCheckedPairs returns all previously checked fact pairs for a person.
+// Returns map["factAID-factBID"] = true for efficient lookup.
+// This includes both contradictory and non-contradictory pairs.
+func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (map[string]bool, error) {
+	query := `SELECT fact_a_id, fact_b_id FROM fact_pair_checks WHERE person_id = $1`
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query checked pairs for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	pairs := make(map[string]bool)
+	for rows.Next() {
+		var factAID, factBID int64
+		if err := rows.Scan(&factAID, &factBID); err != nil {
+			return nil, fmt.Errorf("failed to scan checked pair: %w", err)
+		}
+		key := fmt.Sprintf("%d-%d", factAID, factBID)
+		pairs[key] = true
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating checked pairs: %w", rows.Err())
+	}
+
+	return pairs, nil
+}
+
+// RecordPairCheck records that a fact pair was analyzed.
+func (s *PostgresStorer) RecordPairCheck(ctx context.Context, personID, factAID, factBID int64, isContradiction bool) error {
+	// Ensure consistent ordering
+	if factAID > factBID {
+		factAID, factBID = factBID, factAID
+	}
+
+	query := `
+		INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
+		SET is_contradiction = EXCLUDED.is_contradiction,
+		    checked_at = NOW()`
+
+	_, err := s.pool.Exec(ctx, query, personID, factAID, factBID, isContradiction)
+	if err != nil {
+		return fmt.Errorf("failed to record pair check for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
+	}
+
+	return nil
+}
+
+// RecordPairChecksBatch records multiple pair checks efficiently.
+func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int64, results []PairCheckResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+
+	// Build batch insert query
+	query := `
+		INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
+		SET is_contradiction = EXCLUDED.is_contradiction,
+		    checked_at = NOW()`
+
+	batch := &pgx.Batch{}
+	for _, result := range results {
+		factAID, factBID := result.FactAID, result.FactBID
+		// Ensure consistent ordering
+		if factAID > factBID {
+			factAID, factBID = factBID, factAID
+		}
+		batch.Queue(query, personID, factAID, factBID, result.IsContradiction)
+	}
+
+	br := s.pool.SendBatch(ctx, batch)
+	defer br.Close()
+
+	for i := 0; i < len(results); i++ {
+		_, err := br.Exec()
+		if err != nil {
+			return fmt.Errorf("failed to record pair check batch at index %d: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// RecordContradictionImmediate records a contradiction and commits immediately.
+// Use this when you want each contradiction saved right away (e.g., in CLI commands).
+func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.RecordContradiction(ctx, tx, personID, factAID, factBID, reason); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit contradiction: %w", err)
+	}
+
+	return nil
 }
 
 // RecordContradiction inserts a record indicating that two facts for a person are contradictory.
@@ -871,6 +1541,8 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 // Now includes a reason for the contradiction.
 // On new contradiction insertion, recomputes the person's honesty score and emits events.
 func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string) error {
+	timer := metrics.NewQueryTimer("record_contradiction")
+
 	// Ensure consistent ordering of fact IDs to prevent duplicates like (1,2) and (2,1)
 	if factAID > factBID {
 		factAID, factBID = factBID, factAID
@@ -887,6 +1559,8 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	var contradictionID int64
 	var wasInserted bool
 	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason).Scan(&contradictionID, &wasInserted)
+	timer.ObserveDuration(err)
+
 	if err != nil {
 		return fmt.Errorf("failed to insert/update contradiction for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
 	}
@@ -895,6 +1569,7 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 
 	// If this was a new contradiction, recompute honesty score and emit events
 	if wasInserted {
+		metrics.IncrementContradictionsDetected()
 		if err := s.recomputeHonestyScoreAndEmitEvents(ctx, tx, personID, contradictionID); err != nil {
 			return fmt.Errorf("failed to recompute honesty score and emit events: %w", err)
 		}
@@ -917,6 +1592,21 @@ func (s *PostgresStorer) GetFactTextByID(ctx context.Context, tx pgx.Tx, factID 
 		return "", fmt.Errorf("failed to query fact text for ID %d: %w", factID, err)
 	}
 	return factText, nil
+}
+
+// GetFactDateByID retrieves the earliest publication date for a fact from its sources.
+// Returns nil if no published_at date is available.
+func (s *PostgresStorer) GetFactDateByID(ctx context.Context, tx pgx.Tx, factID int64) (*time.Time, error) {
+	var publishedAt *time.Time
+	query := `SELECT MIN(published_at) FROM fact_sources WHERE fact_id = $1`
+	err := tx.QueryRow(ctx, query, factID).Scan(&publishedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil // No sources found, return nil date
+		}
+		return nil, fmt.Errorf("failed to query fact date for ID %d: %w", factID, err)
+	}
+	return publishedAt, nil
 }
 
 // GetFactsForPerson retrieves all facts and their source details for a specific person.
@@ -1061,6 +1751,9 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
 	}
 
+	// Record honesty score in Prometheus
+	metrics.ObserveHonestyScore(honestyScore)
+
 	// Emit events
 	payload := map[string]interface{}{
 		"contradiction_id": contradictionID,
@@ -1143,17 +1836,30 @@ type PersonSummary struct {
 	Name         string  `json:"name"`
 	EntityType   *string `json:"entity_type,omitempty"`
 	HonestyScore float64 `json:"honesty_score"`
+	FactCount    int     `json:"fact_count"`
 }
 
-// GetPersonsRankedByScore returns persons ranked by honesty score (descending)
-func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int) ([]PersonSummary, error) {
+// GetPersonsRankedByScore returns persons ranked by fact count (descending), then honesty score (descending)
+// entityType can be empty (all), "party", or "human" to filter results
+// search performs case-insensitive partial match on name
+func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string) ([]PersonSummary, error) {
 	query := `
-		SELECT id, name, entity_type, honesty_score
-		FROM persons
-		ORDER BY honesty_score DESC, name ASC
+		SELECT
+			p.id,
+			p.name,
+			p.entity_type,
+			p.honesty_score,
+			COUNT(DISTINCT fs.fact_id) as fact_count
+		FROM persons p
+		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
+		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
+		WHERE ($3 = '' OR p.entity_type = $3)
+		  AND ($4 = '' OR p.name ILIKE '%' || $4 || '%')
+		GROUP BY p.id, p.name, p.entity_type, p.honesty_score
+		ORDER BY fact_count DESC, p.honesty_score DESC, p.name ASC
 		LIMIT $1 OFFSET $2`
 
-	rows, err := s.pool.Query(ctx, query, limit, offset)
+	rows, err := s.pool.Query(ctx, query, limit, offset, entityType, search)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons: %w", err)
 	}
@@ -1162,7 +1868,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	var persons []PersonSummary
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore)
+		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.FactCount)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
@@ -1237,16 +1943,20 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	return facts, nil
 }
 
-// ContradictionWithFacts represents a contradiction with both fact texts
+// ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates
 type ContradictionWithFacts struct {
-	ID         int64     `json:"id"`
-	PersonID   int64     `json:"person_id"`
-	FactAID    int64     `json:"fact_a_id"`
-	FactBID    int64     `json:"fact_b_id"`
-	FactAText  string    `json:"fact_a_text"`
-	FactBText  string    `json:"fact_b_text"`
-	Reason     string    `json:"reason"`
-	DetectedAt time.Time `json:"detected_at"`
+	ID             int64      `json:"id"`
+	PersonID       int64      `json:"person_id"`
+	FactAID        int64      `json:"fact_a_id"`
+	FactBID        int64      `json:"fact_b_id"`
+	FactAText      string     `json:"fact_a_text"`
+	FactBText      string     `json:"fact_b_text"`
+	FactASourceURL *string    `json:"fact_a_source_url"`
+	FactBSourceURL *string    `json:"fact_b_source_url"`
+	FactADate      *time.Time `json:"fact_a_date"`
+	FactBDate      *time.Time `json:"fact_b_date"`
+	Reason         string     `json:"reason"`
+	DetectedAt     time.Time  `json:"detected_at"`
 }
 
 // GetPersonContradictions returns contradictions for a specific person with both fact texts
@@ -1254,10 +1964,19 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	query := `
 		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
 			   fa.fact_text as fact_a_text, fb.fact_text as fact_b_text,
+			   fsa.source_url as fact_a_source_url, fsb.source_url as fact_b_source_url,
+			   COALESCE(fsa.published_at, fa.created_at) as fact_a_date,
+			   COALESCE(fsb.published_at, fb.created_at) as fact_b_date,
 			   c.reason, c.detected_at
 		FROM contradictions c
 		JOIN facts fa ON fa.id = c.fact_a_id
 		JOIN facts fb ON fb.id = c.fact_b_id
+		LEFT JOIN LATERAL (
+			SELECT source_url, published_at FROM fact_sources WHERE fact_id = fa.id ORDER BY published_at ASC NULLS LAST LIMIT 1
+		) fsa ON true
+		LEFT JOIN LATERAL (
+			SELECT source_url, published_at FROM fact_sources WHERE fact_id = fb.id ORDER BY published_at ASC NULLS LAST LIMIT 1
+		) fsb ON true
 		WHERE c.person_id = $1
 		ORDER BY c.detected_at DESC
 		LIMIT $2 OFFSET $3`
@@ -1272,7 +1991,10 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	for rows.Next() {
 		var contradiction ContradictionWithFacts
 		err := rows.Scan(&contradiction.ID, &contradiction.PersonID, &contradiction.FactAID, &contradiction.FactBID,
-			&contradiction.FactAText, &contradiction.FactBText, &contradiction.Reason, &contradiction.DetectedAt)
+			&contradiction.FactAText, &contradiction.FactBText,
+			&contradiction.FactASourceURL, &contradiction.FactBSourceURL,
+			&contradiction.FactADate, &contradiction.FactBDate,
+			&contradiction.Reason, &contradiction.DetectedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan contradiction: %w", err)
 		}
@@ -1284,6 +2006,132 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 
 	return contradictions, nil
+}
+
+// DeleteContradictionsForPerson deletes all contradictions for a person and recalculates their honesty score.
+// Returns the number of contradictions deleted.
+func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, personID int64) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete all contradictions for this person
+	query := `DELETE FROM contradictions WHERE person_id = $1`
+	result, err := tx.Exec(ctx, query, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete contradictions for person %d: %w", personID, err)
+	}
+
+	deletedCount := int(result.RowsAffected())
+
+	if deletedCount > 0 {
+		// Recalculate honesty score (will be 1.0 since no contradictions remain)
+		factsCount, err := s.getPersonFactsCount(ctx, tx, personID)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
+		}
+
+		// With no contradictions, honesty score is 1.0 (unless no facts exist)
+		honestyScore := 1.0
+		if factsCount == 0 {
+			honestyScore = 1.0 // Default to 1.0 for persons with no facts
+		}
+
+		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore); err != nil {
+			return 0, fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
+		}
+
+		// Emit person_updated event
+		payload := map[string]interface{}{
+			"honesty_score":          honestyScore,
+			"contradictions_deleted": deletedCount,
+		}
+		if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
+			return 0, fmt.Errorf("failed to emit person_updated event: %w", err)
+		}
+
+		log.Info().Int64("person_id", personID).Int("deleted", deletedCount).Float64("honesty_score", honestyScore).Msg("Deleted contradictions and updated honesty score")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return deletedCount, nil
+}
+
+// CountFactsForPerson returns the number of facts for a person.
+// Facts are linked via fact_mentions -> fact_sources -> facts.
+func (s *PostgresStorer) CountFactsForPerson(ctx context.Context, personID int64) (int64, error) {
+	query := `
+		SELECT COUNT(DISTINCT f.id)
+		FROM facts f
+		JOIN fact_sources fs ON f.id = fs.fact_id
+		JOIN fact_mentions fm ON fs.id = fm.fact_source_id
+		WHERE fm.person_id = $1`
+	var count int64
+	err := s.pool.QueryRow(ctx, query, personID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count facts for person %d: %w", personID, err)
+	}
+	return count, nil
+}
+
+// DeleteFactsForPerson deletes all facts for a person and their associated data.
+// Facts are linked via fact_mentions -> fact_sources -> facts.
+// Returns the number of facts deleted.
+func (s *PostgresStorer) DeleteFactsForPerson(ctx context.Context, personID int64) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete contradictions for this person first
+	_, err = tx.Exec(ctx, `DELETE FROM contradictions WHERE person_id = $1`, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete contradictions: %w", err)
+	}
+
+	// Delete facts linked to this person via fact_mentions
+	// The CASCADE on foreign keys will clean up fact_sources and fact_mentions
+	result, err := tx.Exec(ctx, `
+		DELETE FROM facts
+		WHERE id IN (
+			SELECT DISTINCT f.id
+			FROM facts f
+			JOIN fact_sources fs ON f.id = fs.fact_id
+			JOIN fact_mentions fm ON fs.id = fm.fact_source_id
+			WHERE fm.person_id = $1
+		)`, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete facts for person %d: %w", personID, err)
+	}
+
+	deletedCount := result.RowsAffected()
+
+	// Reset honesty score to 1.0
+	if err := s.updatePersonHonestyScore(ctx, tx, personID, 1.0); err != nil {
+		return 0, fmt.Errorf("failed to reset honesty score: %w", err)
+	}
+
+	// Emit person_updated event
+	payload := map[string]interface{}{
+		"honesty_score": 1.0,
+		"facts_deleted": deletedCount,
+	}
+	if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
+		return 0, fmt.Errorf("failed to emit person_updated event: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	log.Info().Int64("person_id", personID).Int64("deleted", deletedCount).Msg("Deleted facts for person")
+	return deletedCount, nil
 }
 
 // GetFactPersons returns persons who have a fact related to the given fact.
@@ -1341,4 +2189,501 @@ func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit
 	}
 
 	return persons, nil
+}
+
+// --- News Search Logging ---
+
+// LogNewsSearch records a news search attempt for prioritization.
+// This helps track which persons have news coverage and which don't.
+func (s *PostgresStorer) LogNewsSearch(ctx context.Context, personID int64, query string, resultCount int, factsExtracted int) error {
+	insertQuery := `
+		INSERT INTO news_search_log (person_id, query, result_count, facts_extracted)
+		VALUES ($1, $2, $3, $4)`
+
+	_, err := s.pool.Exec(ctx, insertQuery, personID, query, resultCount, factsExtracted)
+	if err != nil {
+		return fmt.Errorf("failed to log news search for person %d: %w", personID, err)
+	}
+
+	log.Debug().
+		Int64("person_id", personID).
+		Str("query", query).
+		Int("result_count", resultCount).
+		Int("facts_extracted", factsExtracted).
+		Msg("Logged news search")
+
+	return nil
+}
+
+// ShouldSearchNews determines if we should search news for a person based on history.
+// Returns true if:
+// - No previous search exists (first time)
+// - Previous search found results (facts_extracted > 0)
+// - No search in the last lookbackDays
+func (s *PostgresStorer) ShouldSearchNews(ctx context.Context, personID int64, lookbackDays int) (bool, error) {
+	query := `
+		SELECT
+			COUNT(*) as search_count,
+			COALESCE(MAX(facts_extracted), 0) as max_facts,
+			COALESCE(MAX(searched_at), '1970-01-01'::timestamptz) as last_search
+		FROM news_search_log
+		WHERE person_id = $1
+		AND searched_at > NOW() - $2::interval`
+
+	var searchCount int
+	var maxFacts int
+	var lastSearch time.Time
+	interval := fmt.Sprintf("%d days", lookbackDays)
+
+	err := s.pool.QueryRow(ctx, query, personID, interval).Scan(&searchCount, &maxFacts, &lastSearch)
+	if err != nil {
+		return false, fmt.Errorf("failed to check news search history for person %d: %w", personID, err)
+	}
+
+	// No recent search: should search
+	if searchCount == 0 {
+		return true, nil
+	}
+
+	// Previous searches found results: should search again
+	if maxFacts > 0 {
+		return true, nil
+	}
+
+	// Previous searches found no results: skip
+	return false, nil
+}
+
+// GetNewsSearchHistory returns the news search history for a person.
+func (s *PostgresStorer) GetNewsSearchHistory(ctx context.Context, personID int64, limit int) ([]NewsSearchLogEntry, error) {
+	query := `
+		SELECT id, person_id, searched_at, result_count, facts_extracted, query
+		FROM news_search_log
+		WHERE person_id = $1
+		ORDER BY searched_at DESC
+		LIMIT $2`
+
+	rows, err := s.pool.Query(ctx, query, personID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get news search history for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	entries := make([]NewsSearchLogEntry, 0)
+	for rows.Next() {
+		var entry NewsSearchLogEntry
+		var queryStr *string
+		err := rows.Scan(&entry.ID, &entry.PersonID, &entry.SearchedAt, &entry.ResultCount, &entry.FactsExtracted, &queryStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan news search log entry: %w", err)
+		}
+		if queryStr != nil {
+			entry.Query = *queryStr
+		}
+		entries = append(entries, entry)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating news search log: %w", rows.Err())
+	}
+
+	return entries, nil
+}
+
+// NewsSearchLogEntry represents a single entry in the news search log.
+type NewsSearchLogEntry struct {
+	ID             int64
+	PersonID       int64
+	SearchedAt     time.Time
+	ResultCount    int
+	FactsExtracted int
+	Query          string
+}
+
+// --- News Queue Management ---
+
+// QueueEntry represents a person in the news queue.
+type QueueEntry struct {
+	ID         int64
+	PersonID   int64
+	Name       string
+	EntityType string
+	AddedAt    time.Time
+}
+
+// AddToNewsQueue adds a person to the news search queue.
+// Returns an error if the person doesn't exist or if the database operation fails.
+// If the person is already in the queue, this is a no-op (returns nil).
+func (s *PostgresStorer) AddToNewsQueue(ctx context.Context, personID int64) error {
+	stmt := `
+		INSERT INTO news_queue (person_id)
+		VALUES ($1)
+		ON CONFLICT (person_id) DO NOTHING`
+
+	result, err := s.pool.Exec(ctx, stmt, personID)
+	if err != nil {
+		return fmt.Errorf("failed to add person %d to news queue: %w", personID, err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		log.Debug().Int64("person_id", personID).Msg("Person already in news queue")
+	} else {
+		log.Info().Int64("person_id", personID).Msg("Added person to news queue")
+	}
+
+	return nil
+}
+
+// RemoveFromNewsQueue removes a person from the news search queue.
+// Returns an error if the person is not in the queue.
+func (s *PostgresStorer) RemoveFromNewsQueue(ctx context.Context, personID int64) error {
+	stmt := `DELETE FROM news_queue WHERE person_id = $1`
+
+	result, err := s.pool.Exec(ctx, stmt, personID)
+	if err != nil {
+		return fmt.Errorf("failed to remove person %d from news queue: %w", personID, err)
+	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("person %d not found in news queue", personID)
+	}
+
+	log.Info().Int64("person_id", personID).Msg("Removed person from news queue")
+	return nil
+}
+
+// GetNewsQueue retrieves all persons in the news search queue.
+// Results are ordered by person_id ASC (oldest persons first).
+func (s *PostgresStorer) GetNewsQueue(ctx context.Context) ([]QueueEntry, error) {
+	query := `
+		SELECT q.id, q.person_id, p.name, COALESCE(p.entity_type, 'human'), q.added_at
+		FROM news_queue q
+		JOIN persons p ON q.person_id = p.id
+		ORDER BY q.person_id ASC`
+
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get news queue: %w", err)
+	}
+	defer rows.Close()
+
+	queue := make([]QueueEntry, 0)
+	for rows.Next() {
+		var entry QueueEntry
+		err := rows.Scan(&entry.ID, &entry.PersonID, &entry.Name, &entry.EntityType, &entry.AddedAt)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan queue entry: %w", err)
+		}
+		queue = append(queue, entry)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating news queue: %w", rows.Err())
+	}
+
+	return queue, nil
+}
+
+// IsInNewsQueue checks if a person is in the news search queue.
+func (s *PostgresStorer) IsInNewsQueue(ctx context.Context, personID int64) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM news_queue WHERE person_id = $1)`
+
+	var exists bool
+	err := s.pool.QueryRow(ctx, query, personID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if person %d is in queue: %w", personID, err)
+	}
+
+	return exists, nil
+}
+
+// --- Deduplication Methods ---
+
+// FactForDedup represents a fact with fields needed for deduplication.
+type FactForDedup struct {
+	ID                 int64
+	NormalizedFactText string
+	EmbeddingText      string
+	OriginalQuote      string
+	Embedding          []float32
+	IsCanonical        bool
+	CanonicalFactID    *int64
+}
+
+// GetFactsForDeduplication retrieves all facts for a person with their embeddings.
+// Returns both canonical and non-canonical facts for deduplication analysis.
+func (s *PostgresStorer) GetFactsForDeduplication(ctx context.Context, personID int64) ([]FactForDedup, error) {
+	query := `
+		SELECT DISTINCT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
+			   COALESCE(fs.original_quote, ''), f.embedding, f.is_canonical, f.canonical_fact_id
+		FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fm.person_id = $1
+		ORDER BY f.id`
+
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query facts for deduplication: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FactForDedup
+	for rows.Next() {
+		var f FactForDedup
+		var emb pgvector.Vector
+		err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText,
+			&f.OriginalQuote, &emb, &f.IsCanonical, &f.CanonicalFactID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan fact for deduplication: %w", err)
+		}
+		f.Embedding = emb.Slice()
+		results = append(results, f)
+	}
+
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating facts for deduplication: %w", rows.Err())
+	}
+
+	return results, nil
+}
+
+// SimilarFactForDedup represents a similar fact found during deduplication search.
+type SimilarFactForDedup struct {
+	ID         int64
+	Text       string
+	Distance   float64
+	Similarity float64
+}
+
+// FindSimilarFactsForDedup finds canonical facts similar to a given embedding.
+// Returns facts within the distance threshold, excluding the specified fact ID.
+func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs []int64, embedding []float32, excludeFactID int64, distanceThreshold float64) ([]SimilarFactForDedup, error) {
+	query := `
+		WITH PersonFacts AS (
+			SELECT DISTINCT fs.fact_id
+			FROM fact_mentions fm
+			JOIN fact_sources fs ON fm.fact_source_id = fs.id
+			JOIN facts f ON fs.fact_id = f.id
+			WHERE fm.person_id = ANY($1)
+			  AND f.is_canonical = true
+		)
+		SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance
+		FROM facts f
+		JOIN PersonFacts pf ON f.id = pf.fact_id
+		WHERE f.id <> $3
+		  AND f.embedding <=> $2 <= $4
+		ORDER BY distance
+		LIMIT 20`
+
+	rows, err := s.pool.Query(ctx, query,
+		personIDs,
+		pgvector.NewVector(embedding),
+		excludeFactID,
+		distanceThreshold,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find similar facts for dedup: %w", err)
+	}
+	defer rows.Close()
+
+	var results []SimilarFactForDedup
+	for rows.Next() {
+		var sf SimilarFactForDedup
+		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance); err != nil {
+			return nil, fmt.Errorf("failed to scan similar fact: %w", err)
+		}
+		sf.Similarity = 1.0 - sf.Distance
+		results = append(results, sf)
+	}
+
+	return results, rows.Err()
+}
+
+// MarkFactAsDuplicate marks a fact as a duplicate of a canonical fact.
+func (s *PostgresStorer) MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error {
+	query := `
+		UPDATE facts
+		SET is_canonical = false, canonical_fact_id = $1
+		WHERE id = $2`
+
+	result, err := s.pool.Exec(ctx, query, canonicalID, duplicateID)
+	if err != nil {
+		return fmt.Errorf("failed to mark fact %d as duplicate of %d: %w", duplicateID, canonicalID, err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("fact %d not found", duplicateID)
+	}
+
+	log.Info().
+		Int64("duplicate_id", duplicateID).
+		Int64("canonical_id", canonicalID).
+		Msg("Marked fact as duplicate")
+
+	return nil
+}
+
+// GetFactByID retrieves a single fact by its ID for deduplication.
+func (s *PostgresStorer) GetFactByID(ctx context.Context, factID int64) (*FactForDedup, error) {
+	query := `
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), f.embedding,
+			   f.is_canonical, f.canonical_fact_id
+		FROM facts f
+		WHERE f.id = $1`
+
+	var f FactForDedup
+	var emb pgvector.Vector
+	err := s.pool.QueryRow(ctx, query, factID).Scan(
+		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &emb,
+		&f.IsCanonical, &f.CanonicalFactID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get fact %d: %w", factID, err)
+	}
+
+	f.Embedding = emb.Slice()
+	return &f, nil
+}
+
+// GetDuplicateFactsCount returns the count of non-canonical (duplicate) facts.
+func (s *PostgresStorer) GetDuplicateFactsCount(ctx context.Context) (int, error) {
+	query := `SELECT COUNT(*) FROM facts WHERE is_canonical = false`
+
+	var count int
+	err := s.pool.QueryRow(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count duplicate facts: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetDuplicateFactsByCanonicalID returns all facts marked as duplicates of a canonical fact.
+func (s *PostgresStorer) GetDuplicateFactsByCanonicalID(ctx context.Context, canonicalID int64) ([]FactForDedup, error) {
+	query := `
+		SELECT id, fact_text, COALESCE(embedding_text, ''), embedding,
+			   is_canonical, canonical_fact_id
+		FROM facts
+		WHERE canonical_fact_id = $1`
+
+	rows, err := s.pool.Query(ctx, query, canonicalID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get duplicates for canonical %d: %w", canonicalID, err)
+	}
+	defer rows.Close()
+
+	var results []FactForDedup
+	for rows.Next() {
+		var f FactForDedup
+		var emb pgvector.Vector
+		err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &emb,
+			&f.IsCanonical, &f.CanonicalFactID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan duplicate fact: %w", err)
+		}
+		f.Embedding = emb.Slice()
+		results = append(results, f)
+	}
+
+	return results, rows.Err()
+}
+
+// UpdateFactText updates a fact's text and embedding_text fields.
+// This is used when improving/normalizing facts during deduplication.
+func (s *PostgresStorer) UpdateFactText(ctx context.Context, factID int64, normalizedFact string, embeddingText string) error {
+	query := `
+		UPDATE facts
+		SET fact_text = $1, embedding_text = $2
+		WHERE id = $3`
+
+	result, err := s.pool.Exec(ctx, query, normalizedFact, embeddingText, factID)
+	if err != nil {
+		return fmt.Errorf("failed to update fact %d text: %w", factID, err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("fact %d not found", factID)
+	}
+
+	log.Info().
+		Int64("fact_id", factID).
+		Str("new_text", normalizedFact[:minInt(80, len(normalizedFact))]).
+		Msg("Updated fact text")
+
+	return nil
+}
+
+// UpdateFactEmbedding updates a fact's embedding vector.
+// This should be called after UpdateFactText with a newly generated embedding.
+func (s *PostgresStorer) UpdateFactEmbedding(ctx context.Context, factID int64, embedding []float32) error {
+	query := `
+		UPDATE facts
+		SET embedding = $1
+		WHERE id = $2`
+
+	result, err := s.pool.Exec(ctx, query, pgvector.NewVector(embedding), factID)
+	if err != nil {
+		return fmt.Errorf("failed to update fact %d embedding: %w", factID, err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("fact %d not found", factID)
+	}
+
+	log.Debug().Int64("fact_id", factID).Msg("Updated fact embedding")
+
+	return nil
+}
+
+// DeleteFact deletes a fact and its associated sources/mentions.
+// This is used when a fact is determined to be invalid (not a real fact about the person).
+func (s *PostgresStorer) DeleteFact(ctx context.Context, factID int64) error {
+	// Delete in order: mentions -> sources -> fact
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete fact_mentions for all sources of this fact
+	_, err = tx.Exec(ctx, `
+		DELETE FROM fact_mentions
+		WHERE fact_source_id IN (SELECT id FROM fact_sources WHERE fact_id = $1)`, factID)
+	if err != nil {
+		return fmt.Errorf("failed to delete fact mentions: %w", err)
+	}
+
+	// Delete fact_sources
+	_, err = tx.Exec(ctx, `DELETE FROM fact_sources WHERE fact_id = $1`, factID)
+	if err != nil {
+		return fmt.Errorf("failed to delete fact sources: %w", err)
+	}
+
+	// Delete the fact itself
+	result, err := tx.Exec(ctx, `DELETE FROM facts WHERE id = $1`, factID)
+	if err != nil {
+		return fmt.Errorf("failed to delete fact: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("fact %d not found", factID)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit deletion: %w", err)
+	}
+
+	log.Info().Int64("fact_id", factID).Msg("Deleted invalid fact")
+
+	return nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 )
 
 // VerificationReport contains the results of party fact verification
@@ -161,7 +162,9 @@ func groupVotesByParty(votes []VoteEvent, organeCache map[string]OrganeInfo) map
 		}
 
 		if partyName != "" {
-			votesByParty[partyName] = append(votesByParty[partyName], vote)
+			// Normalize the party name to match how it's stored in the database
+			normalizedName := util.NormalizeString(partyName)
+			votesByParty[normalizedName] = append(votesByParty[normalizedName], vote)
 		}
 	}
 
@@ -265,14 +268,15 @@ func TestPartyFactAccuracyWithMockData(t *testing.T) {
 	}
 
 	// Create mock party facts (correct and incorrect)
+	// Note: PersonName should be normalized as it would be in the database
 	partyFacts := []FactRecord{
 		{
-			PersonName: "Rassemblement National",
+			PersonName: "rassemblement national", // Normalized
 			FactText:   "Rassemblement National voted FOR a test law",
 			LawKey:     "test-law-1",
 		},
 		{
-			PersonName: "La France Insoumise",
+			PersonName: "la france insoumise", // Normalized
 			FactText:   "La France Insoumise voted AGAINST a test law", // This should be FOR based on votes
 			LawKey:     "test-law-1",
 		},
@@ -321,8 +325,9 @@ func TestPartyFactAccuracyThreshold(t *testing.T) {
 	}
 
 	// Test with 0.5 threshold (should generate party fact)
+	// Note: PersonName should be normalized as it would be in the database
 	partyFacts := []FactRecord{
-		{PersonName: "Test Party", FactText: "Test Party voted FOR a test law", LawKey: "test-law-1"},
+		{PersonName: "test party", FactText: "Test Party voted FOR a test law", LawKey: "test-law-1"},
 	}
 
 	report := VerifyPartyFactAccuracy(t, partyFacts, deputyVotes, organeCache, 0.5)

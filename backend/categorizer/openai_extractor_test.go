@@ -78,10 +78,11 @@ func TestRemoteLLMExtractor_ExtractFacts(t *testing.T) {
 	t.Logf("Successfully extracted %d facts:", len(facts))
 	for i, fact := range facts {
 		t.Logf("  Fact %d:", i+1)
+		t.Logf("    Subject Entity: %s", fact.SubjectEntity)
 		t.Logf("    Normalized Fact: %s", fact.NormalizedFactText)
 		t.Logf("    Original Quote: %s", fact.OriginalQuote)
 		t.Logf("    Topics: %v", fact.Topics)
-		t.Logf("    Involved People: %v", fact.InvolvedPeople)
+		t.Logf("    Involved People (secondary): %v", fact.InvolvedPeople)
 		t.Logf("    Source URL: %s", fact.SourceURL)
 
 		// Assertions
@@ -91,8 +92,10 @@ func TestRemoteLLMExtractor_ExtractFacts(t *testing.T) {
 		if fact.OriginalQuote == "" {
 			t.Errorf("Fact %d has an empty original quote", i+1)
 		}
-		if len(fact.InvolvedPeople) == 0 {
-			t.Errorf("Fact %d has no involved people listed", i+1)
+		// With multi-entity extraction, SubjectEntity is the primary person the fact is about.
+		// InvolvedPeople now only contains secondary mentions (other people in the fact).
+		if fact.SubjectEntity == "" {
+			t.Errorf("Fact %d has no subject_entity (primary person)", i+1)
 		}
 		if fact.SourceURL != mockURL {
 			t.Errorf("Fact %d has incorrect source URL: got %s, want %s", i+1, fact.SourceURL, mockURL)

@@ -36,6 +36,38 @@
 	let factPersonsHasMore: Record<number, boolean> = {};
 	const personsPageSize = 10;
 
+	// Highlighted fact state (for linking from contradictions)
+	let highlightedFactId: number | null = null;
+
+	async function goToFact(factId: number) {
+		// Switch to facts tab
+		activeTab = 'facts';
+
+		// Check if fact is already loaded
+		const factExists = facts.some(f => f.fact_id === factId);
+
+		if (!factExists) {
+			// Load all facts to find this one (reset pagination)
+			await loadFacts(0);
+		}
+
+		// Set highlighted fact
+		highlightedFactId = factId;
+
+		// Wait for DOM update then scroll to fact
+		setTimeout(() => {
+			const element = document.getElementById(`fact-${factId}`);
+			if (element) {
+				element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
+
+			// Remove highlight after animation
+			setTimeout(() => {
+				highlightedFactId = null;
+			}, 2000);
+		}, 100);
+	}
+
 	$: personId = Number($page.params.id);
 
 	async function loadPerson() {
@@ -192,6 +224,17 @@
 		return new Date(dateString).toLocaleDateString();
 	}
 
+	function formatDateWithTime(dateString: string): string {
+		const date = new Date(dateString);
+		return date.toLocaleString([], {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
 	function handleRealtimeEvent(event: any) {
 		console.log('Person page realtime event:', event);
 
@@ -210,17 +253,18 @@
 	onMount(() => {
 		loadData();
 
-		// Connect to realtime updates for this specific person
-		realtimeManager.connect();
-		unsubscribe = subscribeToPersonEvents(personId, handleRealtimeEvent);
+		// Realtime updates disabled - they cause request floods due to historical events
+		// TODO: Fix SSE to only send events newer than connection time
+		// realtimeManager.connect();
+		// unsubscribe = subscribeToPersonEvents(personId, handleRealtimeEvent);
 	});
 
 	onDestroy(() => {
-		if (unsubscribe) {
-			unsubscribe();
-		}
-		realtimeManager.disconnect();
-		clearOldEvents();
+		// if (unsubscribe) {
+		// 	unsubscribe();
+		// }
+		// realtimeManager.disconnect();
+		// clearOldEvents();
 	});
 </script>
 
@@ -313,8 +357,8 @@
 					{:else}
 						<div class="facts-list">
 							{#each facts as fact (fact.fact_id)}
-								<div class="fact-card">
-									<div class="fact-text">{fact.fact_text}</div>
+								<div id="fact-{fact.fact_id}" class="fact-card" class:highlighted={highlightedFactId === fact.fact_id}>
+									<div class="fact-text"><span class="fact-id">[{fact.fact_id}]</span> {fact.fact_text}</div>
 									<div class="fact-source">
 										<a href="{fact.source_url}" target="_blank" rel="noopener noreferrer">
 											{fact.source_url}
@@ -392,6 +436,9 @@
 						<div class="contradictions-list">
 							{#each contradictions as contradiction (contradiction.id)}
 								<div class="contradiction-card">
+									<div class="contradiction-header">
+										<span class="contradiction-id">#{contradiction.id}</span>
+									</div>
 									<div class="contradiction-reason">
 										<strong>Contradiction:</strong> {contradiction.reason}
 									</div>
@@ -400,10 +447,42 @@
 									</div>
 									<div class="facts-comparison">
 										<div class="fact-a">
-											<strong>Fact A:</strong> {contradiction.fact_a_text}
+											<div class="fact-header">
+												<strong>Statement A</strong>
+												{#if contradiction.fact_a_date}
+													<span class="fact-date">{formatDateWithTime(contradiction.fact_a_date)}</span>
+												{/if}
+											</div>
+											<div class="fact-content"><span class="fact-id">[{contradiction.fact_a_id}]</span> {contradiction.fact_a_text}</div>
+											<div class="fact-links">
+												<button class="fact-link-btn" on:click={() => goToFact(contradiction.fact_a_id)}>
+													View in Facts
+												</button>
+												{#if contradiction.fact_a_source_url}
+													<a href={contradiction.fact_a_source_url} target="_blank" rel="noopener noreferrer" class="fact-source-link">
+														View source
+													</a>
+												{/if}
+											</div>
 										</div>
 										<div class="fact-b">
-											<strong>Fact B:</strong> {contradiction.fact_b_text}
+											<div class="fact-header">
+												<strong>Statement B</strong>
+												{#if contradiction.fact_b_date}
+													<span class="fact-date">{formatDateWithTime(contradiction.fact_b_date)}</span>
+												{/if}
+											</div>
+											<div class="fact-content"><span class="fact-id">[{contradiction.fact_b_id}]</span> {contradiction.fact_b_text}</div>
+											<div class="fact-links">
+												<button class="fact-link-btn" on:click={() => goToFact(contradiction.fact_b_id)}>
+													View in Facts
+												</button>
+												{#if contradiction.fact_b_source_url}
+													<a href={contradiction.fact_b_source_url} target="_blank" rel="noopener noreferrer" class="fact-source-link">
+														View source
+													</a>
+												{/if}
+											</div>
 										</div>
 									</div>
 								</div>
@@ -572,6 +651,19 @@
 		border-radius: 0.5rem;
 		padding: 1.5rem;
 		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+		transition: background-color 0.3s, border-color 0.3s, box-shadow 0.3s;
+	}
+
+	.fact-card.highlighted {
+		background: #fef3c7;
+		border-color: #f59e0b;
+		box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
+		animation: pulse-highlight 1s ease-in-out;
+	}
+
+	@keyframes pulse-highlight {
+		0%, 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3); }
+		50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.2); }
 	}
 
 	.fact-text {
@@ -579,6 +671,13 @@
 		line-height: 1.6;
 		color: #1f2937;
 		margin-bottom: 1rem;
+	}
+
+	.fact-id {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #6b7280;
+		margin-right: 0.25rem;
 	}
 
 	.fact-source a {
@@ -600,6 +699,22 @@
 		background: #f9fafb;
 		border-radius: 0.25rem;
 		border-left: 3px solid #3b82f6;
+	}
+
+	.contradiction-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.5rem;
+	}
+
+	.contradiction-id {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: #6b7280;
+		background: #f3f4f6;
+		padding: 0.25rem 0.5rem;
+		border-radius: 0.25rem;
 	}
 
 	.contradiction-reason {
@@ -626,6 +741,9 @@
 		border-radius: 0.25rem;
 		font-size: 0.875rem;
 		line-height: 1.5;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
 	}
 
 	.fact-a {
@@ -636,6 +754,56 @@
 	.fact-b {
 		background: #fef3c7;
 		border: 1px solid #fde68a;
+	}
+
+	.fact-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.fact-date {
+		font-size: 0.75rem;
+		color: #6b7280;
+		font-weight: normal;
+	}
+
+	.fact-content {
+		flex: 1;
+	}
+
+	.fact-links {
+		display: flex;
+		gap: 1rem;
+		align-items: center;
+		margin-top: auto;
+	}
+
+	.fact-link-btn {
+		font-size: 0.75rem;
+		color: #3b82f6;
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		text-decoration: none;
+	}
+
+	.fact-link-btn:hover {
+		text-decoration: underline;
+	}
+
+	.fact-source-link {
+		font-size: 0.75rem;
+		color: #3b82f6;
+		text-decoration: none;
+		margin-top: auto;
+	}
+
+	.fact-source-link:hover {
+		text-decoration: underline;
 	}
 
 	.load-more {

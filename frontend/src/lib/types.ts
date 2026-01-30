@@ -5,6 +5,7 @@ export interface PersonSummary {
 	name: string;
 	entity_type?: string;
 	honesty_score: number;
+	fact_count: number;
 }
 
 export interface FactWithSource {
@@ -21,6 +22,10 @@ export interface ContradictionWithFacts {
 	fact_b_id: number;
 	fact_a_text: string;
 	fact_b_text: string;
+	fact_a_source_url: string | null;
+	fact_b_source_url: string | null;
+	fact_a_date: string | null;
+	fact_b_date: string | null;
 	reason: string;
 	detected_at: string;
 }

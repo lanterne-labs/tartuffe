@@ -14,16 +14,45 @@ Digital Mirror is a fact-checking and honesty-scoring system for political figur
 ```bash
 make db-start          # Start Supabase (ports 55321-55327)
 make db-stop           # Stop Supabase
-supabase db reset      # Apply all migrations from scratch
+```
+
+**⚠️ CRITICAL: Never run `supabase db reset` without asking the user first!**
+- `supabase db reset` drops ALL data including facts, persons, and processed laws
+- This command is destructive and cannot be undone
+- Only use for fresh starts or when explicitly requested
+
+**Applying Migrations**:
+```bash
+# Preferred: Apply new migrations incrementally without data loss
+# TODO: Implement goose migration tool (github.com/pressly/goose) for incremental migrations
+# For now, new migrations are auto-applied by Supabase on restart
 ```
 
 ### Backend
 ```bash
-go build -o digital-mirror .                    # Build binary
-./digital-mirror web serve --port 8080          # Run API server
-./digital-mirror cron run                       # Run fact ingestion pipeline
-./digital-mirror persons add "Name"             # Add a tracked person
+go build -o dm .                                # Build binary
+./dm web serve --port 8080                      # Run API server
+./dm persons add "Name"                         # Add a tracked person
+./dm facts list --person "Name"                 # List facts for a person
+./dm facts delete --person "Name"               # Delete all facts for a person
 ```
+
+### News Search
+```bash
+# Search news and scrape articles (uses SerpAPI + webcrawler)
+./dm plugin news search --targets "Marine Le Pen" --max-parse 10
+
+# Search news with caching (saves scraped content to disk)
+./dm plugin news search --targets "Marine Le Pen" --cache-dir ./scraped_content/news_cache
+
+# Re-extract facts from cached content only (no scraping, no API calls except LLM)
+./dm plugin news search --targets "Marine Le Pen" --cache-dir ./scraped_content/news_cache --cache-only
+
+# Ingest facts from local JSON files directly
+./dm ingest files --dir ./scraped_content/news_cache --target "Marine Le Pen"
+```
+
+The `--cache-only` flag is useful for re-running fact extraction with updated prompts without re-scraping content. Cached content is stored in target-specific subdirectories (e.g., `marine_le_pen/`).
 
 ### Frontend
 ```bash
@@ -75,7 +104,13 @@ go test -v ./backend/storage -run TestSpecificName
 
 PostgreSQL with pgvector extension. Migrations in `supabase/migrations/` are idempotent (safe to re-run).
 
-Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE).
+**Migration Strategy**:
+- New migrations are auto-detected and applied by Supabase on next `make db-start`
+- Migrations should be incremental (ALTER TABLE, not DROP/CREATE)
+- **Never reset the database without user permission** - data loss is permanent
+- Consider implementing goose (github.com/pressly/goose) for better migration control
+
+Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `news_queue` (queue for news search).
 
 ## Environment Variables
 
@@ -94,11 +129,21 @@ GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
 ```
 
+## Development Status
+
+**Nothing is in production yet.** Don't worry about backward compatibility - if something breaks, fix it. This is pre-production development.
+
 ## Conventions
 
 - **Logging**: Use zerolog (`github.com/rs/zerolog/log`) with structured fields
+  - **Never silence errors**: All errors must be logged, never swallowed silently
+  - Use `log.Error()` for actual failures (red in console)
+  - Use `log.Warn()` for recoverable issues or degraded behavior (yellow in console)
+  - Use `log.Info()` for important operational events
+  - Use `log.Debug()` for detailed troubleshooting info
 - **Error handling**: Wrap errors with `fmt.Errorf("context: %w", err)`
-- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. Always use `supabase db reset` for resetting the database, never raw SQL deletes.
+- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. **NEVER run `supabase db reset` without asking user first** - it destroys all data. Write incremental migrations instead.
 - **API**: REST with JSON, pagination via `limit` and `offset` query params
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
 - **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them
+- **Searching**: Use `ack` for searching code - it's faster and smarter than grep, automatically ignores version control directories and binary files

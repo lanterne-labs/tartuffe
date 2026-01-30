@@ -1,0 +1,18 @@
+# Prometheus config for local development
+# Assumes the Digital Mirror backend is running on host machine at port 8080
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: 'digital-mirror'
+    static_configs:
+      # host.docker.internal allows container to reach host machine
+      - targets: ['host.docker.internal:8080']
+    metrics_path: /metrics
+    scheme: http
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 	"fmt"
 	"sort"
 
@@ -48,9 +49,11 @@ func listFacts(cmd *cobra.Command, args []string) {
 
 	if listPersonFlag != "" {
 		// Logic to list facts for a specific person
-		factDetails, err := storer.GetFactsForPerson(ctx, listPersonFlag) // This method needs to be implemented
+		// Normalize the person name to match database storage (lowercase)
+		normalizedName := util.NormalizeString(listPersonFlag)
+		factDetails, err := storer.GetFactsForPerson(ctx, normalizedName)
 		if err != nil {
-			log.Error().Err(err).Str("person", listPersonFlag).Msg("Failed to retrieve facts for person")
+			log.Error().Err(err).Str("person", listPersonFlag).Str("normalized", normalizedName).Msg("Failed to retrieve facts for person")
 			return
 		}
 		if len(factDetails) == 0 {

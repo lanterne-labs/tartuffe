@@ -51,14 +51,17 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 		}
 
 		factText := buildCollectiveVoteStatement(pos, summary.SimpleStatement)
+		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
+		embeddingText := prepareLawPhrase(summary.SimpleStatement)
 		log.Debug().Str("party", name).Float64("frac", majorityFrac).Str("text", factText).Msg("frpolitics: derived collective party fact")
 		facts = append(facts, FactRecord{
-			PersonName:  name,
-			FactText:    factText,
-			Topics:      summary.Topics,
-			SourceURL:   law.URL,
-			LawKey:      law.Key,
-			PublishedAt: law.VoteDate,
+			PersonName:    name,
+			FactText:      factText,
+			EmbeddingText: embeddingText, // Just the law topic, no action verb
+			Topics:        summary.Topics,
+			SourceURL:     law.URL,
+			LawKey:        law.Key,
+			PublishedAt:   law.VoteDate,
 		})
 	}
 	return facts

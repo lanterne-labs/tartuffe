@@ -62,6 +62,8 @@ func TestConfigBasedRealDataProcessing(t *testing.T) {
 		MaxLaws:        2,         // Small dataset for testing
 		MaxVotes:       50,        // Limited votes for testing
 		PartyThreshold: 0.8,       // Standard threshold
+		MinConfidence:  0.01,
+		DisableKeywordFilter: true,       // Accept all AI summaries (no filtering for tests)
 		Legislatures:   []int{16}, // 16th legislature (2022-2024)
 		RevisitHours:   10000,     // Force revisit for test
 	}
@@ -177,6 +179,8 @@ func TestDifferentThresholdsWithConfig(t *testing.T) {
 			MaxLaws:        1,  // Small dataset
 			MaxVotes:       25, // Limited votes
 			PartyThreshold: threshold,
+			MinConfidence:  0.01,
+		DisableKeywordFilter: true, // Accept all AI summaries (no filtering for tests)
 			Legislatures:   []int{16}, // 16th legislature
 			RevisitHours:   10000,
 		}

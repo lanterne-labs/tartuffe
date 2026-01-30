@@ -2,6 +2,7 @@ package ingester
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"fmt"
@@ -30,11 +31,25 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 	if len(vecs) != len(items) {
 		return fmt.Errorf("embedding count mismatch: %d vs %d", len(vecs), len(items))
 	}
+	// Convert to core.StoreFactInput and add embeddings
+	coreInputs := make([]core.StoreFactInput, len(items))
 	for idx, it := range items {
-		it.Embedding = vecs[idx]
-		if _, _, _, err := i.Store.StoreFact(ctx, it); err != nil {
-			return err
+		coreInputs[idx] = core.StoreFactInput{
+			SubjectEntity:      it.SubjectEntity,
+			SubjectEntityType:  it.SubjectEntityType,
+			NormalizedFactText: it.NormalizedFactText,
+			Embedding:          vecs[idx],
+			OriginalQuote:      it.OriginalQuote,
+			Topics:             it.Topics,
+			InvolvedPeople:     it.InvolvedPeople,
+			SourceURL:          it.SourceURL,
+			PublishedAt:        it.PublishedAt,
+			SourceType:         it.SourceType,
+			Metadata:           it.Metadata,
 		}
 	}
-	return nil
+
+	// Use core.FactInserter to insert all facts with similarity detection
+	inserter := core.NewFactInserter(i.Store)
+	return inserter.InsertFacts(ctx, coreInputs)
 }

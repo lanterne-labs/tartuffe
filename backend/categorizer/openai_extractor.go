@@ -1,11 +1,11 @@
 package categorizer
 
 import (
-	// "bytes" // Removed unused import
 	"context"
 	"digital-mirror/backend"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/extractor"
-	"digital-mirror/backend/util" // Import util for ChunkText
+	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -45,8 +45,6 @@ type OpenAIExtractor struct {
 	apiURL string
 	// model is the model to use for chat completions.
 	model string
-	// Use the shared prompt template defined in fact.go
-	systemPromptTemplate string
 	// baseClient handles the underlying HTTP communication.
 	baseClient *BaseLLMClient
 }
@@ -68,56 +66,20 @@ func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
 		model = openAIChatModelDefault
 	}
 	return &OpenAIExtractor{
-		apiKey: apiKey,
-		apiURL: buildChatAPIURL(base),
-		model:  model,
-		// Use the shared prompt constant from fact.go
-		systemPromptTemplate: backend.FactExtractionSystemPrompt,
-		baseClient:           NewBaseLLMClient(),
+		apiKey:     apiKey,
+		apiURL:     buildChatAPIURL(base),
+		model:      model,
+		baseClient: NewBaseLLMClient(),
 	}, nil
 }
 
-// ChatMessage models a single chat message for OpenAI-compatible APIs.
-type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// ResponseFormat controls the response format, e.g., JSON mode.
-type ResponseFormat struct {
-	Type string `json:"type"` // e.g., "json_object"
-}
-
-// ChatRequest is the OpenAI-compatible chat completion request.
-type ChatRequest struct {
-	Model          string          `json:"model"`
-	Messages       []ChatMessage   `json:"messages"`
-	Temperature    float64         `json:"temperature"`
-	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
-}
-
-// ChatChoice models a single choice in the completion response.
-type ChatChoice struct {
-	Index        int         `json:"index"`
-	Message      ChatMessage `json:"message"`
-	FinishReason string      `json:"finish_reason"`
-}
-
-// ChatResponse is the OpenAI-compatible completion response envelope.
-type ChatResponse struct {
-	Choices []ChatChoice `json:"choices"`
-	Error   *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-		Code    string `json:"code,omitempty"`
-	} `json:"error,omitempty"`
-}
+// NOTE: Chat types (ChatMessage, ChatRequest, ChatResponse, etc.) are now
+// defined as type aliases in base_llm_client.go pointing to backend/llm package.
+// This allows shared usage across packages without import cycles.
 
 // GetChunkingParameters implements the FactExtractor interface.
 // Returns parameters suitable for the default configuration.
 func (m *OpenAIExtractor) GetChunkingParameters() backend.ChunkingParameters {
-	// These values can be adjusted based on the specific model used (m.model)
-	// and further testing. Keeping previous values for now.
 	return backend.ChunkingParameters{
 		ThresholdChars: 25000, // Start chunking above this size
 		ChunkSizeChars: 20000, // Aim for chunks of this size
@@ -125,10 +87,124 @@ func (m *OpenAIExtractor) GetChunkingParameters() backend.ChunkingParameters {
 	}
 }
 
-// callChatAPI performs a single call to the OpenAI-compatible Chat Completions API with the given content.
-func (m *OpenAIExtractor) callChatAPI(ctx context.Context, personName, sourceURL, contentText string) ([]backend.Fact, error) {
-	systemPrompt := fmt.Sprintf(m.systemPromptTemplate, personName, sourceURL, contentText)
+// ExtractFactsWithConfig extracts facts using the unified core prompt with optional plugin instructions.
+// This is the primary extraction method - all other methods delegate to this one.
+func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.FactExtractorConfig) ([]backend.Fact, error) {
+	if strings.TrimSpace(cfg.Content) == "" {
+		log.Warn().Str("url", cfg.SourceURL).Msg("ExtractFactsWithConfig called with empty content")
+		return []backend.Fact{}, nil
+	}
 
+	chunkParams := m.GetChunkingParameters()
+	var allExtractedFacts []backend.Fact
+
+	if len(cfg.Content) > chunkParams.ThresholdChars {
+		log.Info().Str("url", cfg.SourceURL).Int("content_length", len(cfg.Content)).Int("threshold", chunkParams.ThresholdChars).Msg("Content exceeds threshold, applying chunking for fact extraction")
+		chunks := util.ChunkText(cfg.Content, chunkParams.ChunkSizeChars, chunkParams.OverlapChars)
+		log.Info().Str("url", cfg.SourceURL).Int("chunk_count", len(chunks)).Msg("Content split into chunks")
+
+		for i, chunk := range chunks {
+			chunkNum := i + 1
+			log.Debug().Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("chunk_len", len(chunk)).Msg("Attempting fact extraction for chunk")
+
+			chunkCfg := core.FactExtractorConfig{
+				TargetName:         cfg.TargetName,
+				SourceURL:          cfg.SourceURL,
+				Content:            chunk,
+				PluginInstructions: cfg.PluginInstructions,
+			}
+			prompt := core.BuildFactExtractionPrompt(chunkCfg)
+			chunkFacts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
+			if err != nil {
+				log.Error().Err(err).Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Msg("Failed to extract facts for chunk")
+				continue
+			}
+			allExtractedFacts = append(allExtractedFacts, chunkFacts...)
+			log.Debug().Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("facts_extracted", len(chunkFacts)).Msg("Successfully processed chunk")
+		}
+	} else {
+		log.Debug().Str("url", cfg.SourceURL).Int("content_length", len(cfg.Content)).Int("threshold", chunkParams.ThresholdChars).Msg("Content below threshold, processing directly without chunking")
+
+		prompt := core.BuildFactExtractionPrompt(cfg)
+		var err error
+		allExtractedFacts, err = m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract facts from content for url %s: %w", cfg.SourceURL, err)
+		}
+	}
+
+	// Deduplicate based on NormalizedFactText
+	finalFactsMap := make(map[string]backend.Fact)
+	for _, fact := range allExtractedFacts {
+		if _, exists := finalFactsMap[fact.NormalizedFactText]; !exists {
+			finalFactsMap[fact.NormalizedFactText] = fact
+		}
+	}
+	finalFacts := make([]backend.Fact, 0, len(finalFactsMap))
+	for _, fact := range finalFactsMap {
+		finalFacts = append(finalFacts, fact)
+	}
+
+	log.Info().Str("url", cfg.SourceURL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).Msg("Fact extraction completed")
+	return finalFacts, nil
+}
+
+// ExtractFacts extracts facts from content about a person/target using the core prompt.
+// This is a convenience method that wraps ExtractFactsWithConfig.
+func (m *OpenAIExtractor) ExtractFacts(ctx context.Context, targetName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
+	cfg := core.FactExtractorConfig{
+		TargetName: targetName,
+		SourceURL:  content.URL,
+		Content:    content.Content,
+	}
+	return m.ExtractFactsWithConfig(ctx, cfg)
+}
+
+// ExtractFactsWithType extracts facts using plugin instructions appropriate for the target type.
+// targetType should be "person" or "party". Falls back to default for unknown types.
+func (m *OpenAIExtractor) ExtractFactsWithType(ctx context.Context, targetName string, targetType string, content extractor.ExtractedContent) ([]backend.Fact, error) {
+	var pluginInstructions string
+	switch targetType {
+	case "party":
+		pluginInstructions = core.PartyInstructions
+	case "person":
+		// Person extraction uses core prompt without additional instructions
+		pluginInstructions = ""
+	default:
+		pluginInstructions = ""
+	}
+
+	cfg := core.FactExtractorConfig{
+		TargetName:         targetName,
+		SourceURL:          content.URL,
+		Content:            content.Content,
+		PluginInstructions: pluginInstructions,
+	}
+	return m.ExtractFactsWithConfig(ctx, cfg)
+}
+
+// ExtractFactsForPersonWithParties extracts facts about a person while providing party context.
+// The LLM is informed about the person's party affiliations to help contextualize statements.
+// affiliatedParties should be a list of party names the person is affiliated with.
+func (m *OpenAIExtractor) ExtractFactsForPersonWithParties(ctx context.Context, personName string, affiliatedParties []string, content extractor.ExtractedContent) ([]backend.Fact, error) {
+	partiesStr := strings.Join(affiliatedParties, ", ")
+	if partiesStr == "" {
+		partiesStr = "(none)"
+	}
+
+	pluginInstructions := fmt.Sprintf(core.PersonWithPartiesInstructions, partiesStr)
+
+	cfg := core.FactExtractorConfig{
+		TargetName:         personName,
+		SourceURL:          content.URL,
+		Content:            content.Content,
+		PluginInstructions: pluginInstructions,
+	}
+	return m.ExtractFactsWithConfig(ctx, cfg)
+}
+
+// callChatAPIWithPrompt performs a single call to the Chat API with a pre-formatted prompt.
+func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPrompt string, sourceURL string) ([]backend.Fact, error) {
 	reqPayload := ChatRequest{
 		Model: m.model,
 		Messages: []ChatMessage{
@@ -151,12 +227,11 @@ func (m *OpenAIExtractor) callChatAPI(ctx context.Context, personName, sourceURL
 	duration := time.Since(startTime)
 	if err != nil {
 		log.Error().Err(err).Dur("duration", duration).Str("url", m.apiURL).Msg("Chat API call failed")
-		// Try to parse specific API error from body if available
 		var chatResp ChatResponse
 		if parseErr := json.Unmarshal(bodyBytes, &chatResp); parseErr == nil && chatResp.Error != nil {
 			return nil, fmt.Errorf("Chat API returned error: [%s] %s - %s (request status: %w)", chatResp.Error.Code, chatResp.Error.Type, chatResp.Error.Message, err)
 		}
-		return nil, err // Return original error from DoRequest
+		return nil, err
 	}
 	log.Debug().Dur("duration", duration).Int("response_bytes", len(bodyBytes)).Str("url", m.apiURL).Msg("Chat API call successful")
 
@@ -180,64 +255,4 @@ func (m *OpenAIExtractor) callChatAPI(ctx context.Context, personName, sourceURL
 	}
 
 	return chunkFacts, nil
-}
-
-// ExtractFacts implements the FactExtractor interface for OpenAI-compatible chat APIs.
-// Handles chunking for large content.
-func (m *OpenAIExtractor) ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
-	textContent := content.Content // Assuming this holds the markdown or main text
-	if strings.TrimSpace(textContent) == "" {
-		log.Warn().Str("url", content.URL).Msg("ExtractFacts called with empty content.")
-		return []backend.Fact{}, nil // Return empty slice, not an error
-	}
-
-	// Get chunking parameters from the extractor itself
-	chunkParams := m.GetChunkingParameters()
-
-	var allExtractedFacts []backend.Fact
-
-	// Check if content is large enough to require chunking
-	if len(textContent) > chunkParams.ThresholdChars {
-		log.Info().Str("url", content.URL).Int("content_length", len(textContent)).Int("threshold", chunkParams.ThresholdChars).Msg("Content exceeds threshold, applying chunking for fact extraction.")
-		chunks := util.ChunkText(textContent, chunkParams.ChunkSizeChars, chunkParams.OverlapChars)
-		log.Info().Str("url", content.URL).Int("chunk_count", len(chunks)).Msg("Content split into chunks")
-
-		for i, chunk := range chunks {
-			chunkNum := i + 1
-			log.Debug().Str("url", content.URL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("chunk_len", len(chunk)).Msg("Attempting fact extraction for chunk")
-			chunkFacts, err := m.callChatAPI(ctx, personName, content.URL, chunk)
-			if err != nil {
-				log.Error().Err(err).Str("url", content.URL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Msg("Failed to extract facts for chunk")
-				continue
-			}
-			allExtractedFacts = append(allExtractedFacts, chunkFacts...)
-			log.Debug().Str("url", content.URL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("facts_extracted", len(chunkFacts)).Msg("Successfully processed chunk")
-		}
-
-	} else {
-		// Content is small enough, process directly
-		log.Debug().Str("url", content.URL).Int("content_length", len(textContent)).Int("threshold", chunkParams.ThresholdChars).Msg("Content below threshold, processing directly without chunking.")
-		var err error
-		allExtractedFacts, err = m.callChatAPI(ctx, personName, content.URL, textContent)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract facts from content for url %s: %w", content.URL, err)
-		}
-	}
-
-	// --- Post-processing: Deduplicate ---
-
-	// Simple deduplication based on NormalizedFactText (if chunking created duplicates)
-	finalFactsMap := make(map[string]backend.Fact)
-	for _, fact := range allExtractedFacts {
-		if _, exists := finalFactsMap[fact.NormalizedFactText]; !exists {
-			finalFactsMap[fact.NormalizedFactText] = fact
-		}
-	}
-	finalFacts := make([]backend.Fact, 0, len(finalFactsMap))
-	for _, fact := range finalFactsMap {
-		finalFacts = append(finalFacts, fact)
-	}
-
-	log.Info().Str("url", content.URL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).Msg("Fact extraction completed")
-	return finalFacts, nil
 }

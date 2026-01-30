@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/metrics"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -120,6 +122,10 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 		return [][]float32{}, nil // Return empty slice if no input
 	}
 
+	// Record batch size for metrics
+	metrics.ObserveEmbeddingBatchSize(len(texts))
+	timer := metrics.NewLLMTimer("embedding", m.model)
+
 	reqPayload := embedRequest{
 		Model: m.model,
 		Input: texts,
@@ -127,6 +133,7 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {
+		timer.ObserveDuration(err)
 		return nil, fmt.Errorf("failed to marshal embeddings request payload: %w", err)
 	}
 
@@ -163,6 +170,9 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 		// Check for rate limit error (HTTP 429)
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
 			resp.Body.Close() // Close body before waiting
+
+			// Record retry metric
+			metrics.IncrementLLMRetry("embedding", "rate_limit")
 
 			// Calculate jitter: +/- maxJitter percentage of current backoff
 			jitter := time.Duration((rand.Float64()*2 - 1) * maxJitter * float64(currentBackoff))
@@ -211,11 +221,15 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 		var embResp embedResponse
 		if parseErr := json.Unmarshal(bodyBytes, &embResp); parseErr == nil && embResp.Error != nil {
 			log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("api_error_code", embResp.Error.Code).Str("api_error_type", embResp.Error.Type).Str("api_error_message", embResp.Error.Message).Msg("Embeddings API returned error after retries")
-			return nil, fmt.Errorf("Embeddings API returned error after retries: [%s] %s - %s (HTTP status: %s)", embResp.Error.Code, embResp.Error.Type, embResp.Error.Message, resp.Status)
+			err := fmt.Errorf("Embeddings API returned error after retries: [%s] %s - %s (HTTP status: %s)", embResp.Error.Code, embResp.Error.Type, embResp.Error.Message, resp.Status)
+			timer.ObserveDuration(err)
+			return nil, err
 		}
 		// Log generic error if specific one couldn't be parsed
 		log.Error().Int("status_code", resp.StatusCode).Str("url", m.apiURL).Str("response_body_snippet", bodyStr).Int("attempts_made", attempt).Msg("Embeddings API request failed after retries")
-		return nil, fmt.Errorf("Embeddings API request failed with status %s after %d attempts", resp.Status, attempt)
+		err := fmt.Errorf("Embeddings API request failed with status %s after %d attempts", resp.Status, attempt)
+		timer.ObserveDuration(err)
+		return nil, err
 	}
 
 	// Parse successful response
@@ -255,10 +269,13 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 	// Final check: ensure no nil entries in the result (e.g., due to bad index)
 	for i, emb := range results {
 		if emb == nil {
-			return nil, fmt.Errorf("missing embedding for input text at index %d", i)
+			err := fmt.Errorf("missing embedding for input text at index %d", i)
+			timer.ObserveDuration(err)
+			return nil, err
 		}
 	}
 
+	timer.ObserveDuration(nil)
 	log.Debug().Int("input_count", len(texts)).Int("output_count", len(results)).Msg("Generated embeddings batch")
 	return results, nil
 }

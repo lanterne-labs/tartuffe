@@ -110,8 +110,8 @@ func old_main() {
 		for i, fact := range facts {
 			log.Printf("  Processing fact %d/%d: '%s'", i+1, len(facts), fact.NormalizedFactText)
 
-			// 4a. Generate Embedding
-			embeddings, err := embedder.GenerateEmbeddings(ctx, []string{fact.NormalizedFactText})
+			// 4a. Generate Embedding from EmbeddingText (name-free version) to cluster by topic
+			embeddings, err := embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
 			if err != nil {
 				log.Printf("  ERROR generating embedding: %v. Skipping fact.", err)
 				continue

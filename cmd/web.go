@@ -9,12 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -74,6 +76,9 @@ func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 		MaxAge:           300,
 	}))
 
+	// Prometheus metrics middleware
+	r.Use(metrics.Middleware)
+
 	server := &WebServer{
 		storer: storer,
 		router: r,
@@ -85,6 +90,9 @@ func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 
 // setupRoutes configures all the API routes
 func (ws *WebServer) setupRoutes() {
+	// Prometheus metrics endpoint
+	ws.router.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+
 	// API routes
 	ws.router.Route("/api", func(r chi.Router) {
 		r.Get("/persons", ws.handleGetPersons)
@@ -97,13 +105,15 @@ func (ws *WebServer) setupRoutes() {
 	})
 }
 
-// handleGetPersons returns persons ranked by honesty score
+// handleGetPersons returns persons ranked by fact count and honesty score
 func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Parse pagination parameters
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
+	entityType := r.URL.Query().Get("entity_type") // "party", "human", or empty for all
+	search := r.URL.Query().Get("search")          // case-insensitive partial match on name
 
 	limit := 50 // default
 	if limitStr != "" {
@@ -119,7 +129,7 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset)
+	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset, entityType, search)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get persons: %v", err), http.StatusInternalServerError)
 		return
@@ -332,6 +342,10 @@ func (ws *WebServer) handleGetFactPersons(w http.ResponseWriter, r *http.Request
 // handleEventsSSE streams events via Server-Sent Events
 func (ws *WebServer) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Track active SSE connections
+	metrics.IncrementSSEConnections()
+	defer metrics.DecrementSSEConnections()
 
 	// Parse since_id parameter
 	sinceIDStr := r.URL.Query().Get("since_id")

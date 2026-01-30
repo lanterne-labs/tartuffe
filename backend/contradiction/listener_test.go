@@ -28,9 +28,10 @@ func (f *fakeEmbedder) GenerateEmbeddings(ctx context.Context, texts []string) (
 }
 
 // fakeDetector flags contradictions when one mentions "supports tax cuts" and the other "opposes tax cuts".
+// For simplicity, this fake detector ignores dates - a real implementation would consider temporal ordering.
 type fakeDetector struct{}
 
-func (f *fakeDetector) AreContradictory(ctx context.Context, a, b string) (bool, string, error) {
+func (f *fakeDetector) AreContradictory(ctx context.Context, a string, dateA *time.Time, b string, dateB *time.Time) (bool, string, error) {
 	as := containsAllFold(a, []string{"supports", "tax", "cuts"})
 	ao := containsAllFold(a, []string{"opposes", "tax", "cuts"})
 	bs := containsAllFold(b, []string{"supports", "tax", "cuts"})
@@ -80,26 +81,26 @@ func TestEndToEnd_ArtificialFacts_Contradictions(t *testing.T) {
 	now := time.Now().UTC()
 	inputs := []storage.StoreFactInput{
 		{
+			SubjectEntity:      person,
 			NormalizedFactText: "Alice Doe supports tax cuts in 2024",
 			OriginalQuote:      "supports tax cuts",
 			Topics:             []string{"tax"},
-			InvolvedPeople:     []string{person},
 			SourceURL:          "http://example.com/a1",
 			PublishedAt:        &now,
 		},
 		{
+			SubjectEntity:      person,
 			NormalizedFactText: "Alice Doe opposes tax cuts in 2024",
 			OriginalQuote:      "opposes tax cuts",
 			Topics:             []string{"tax"},
-			InvolvedPeople:     []string{person},
 			SourceURL:          "http://example.com/a2",
 			PublishedAt:        &now,
 		},
 		{
+			SubjectEntity:      person,
 			NormalizedFactText: "Alice Doe visited Paris in 2023",
 			OriginalQuote:      "visited Paris",
 			Topics:             []string{"travel"},
-			InvolvedPeople:     []string{person},
 			SourceURL:          "http://example.com/a3",
 			PublishedAt:        &now,
 		},

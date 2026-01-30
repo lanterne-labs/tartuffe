@@ -18,6 +18,13 @@ var (
 	logFormat string // Flag variable, default set in init()
 )
 
+// ANSI color codes for log levels
+const (
+	colorRed    = "\033[31m"
+	colorYellow = "\033[33m"
+	colorReset  = "\033[0m"
+)
+
 // Set the initial default logger to console format.
 // This will be used by tests and as the default for the CLI unless overridden by flags.
 func init() {
@@ -25,13 +32,21 @@ func init() {
 	output := zerolog.ConsoleWriter{
 		Out:        os.Stderr,
 		TimeFormat: time.RFC3339,
-		// Add FormatLevel to use standard uppercase level strings
+		// Add FormatLevel to use colored uppercase level strings
 		FormatLevel: func(i interface{}) string {
 			level, ok := i.(string)
 			if !ok {
 				return strings.ToUpper(fmt.Sprintf("%s", i)) // Fallback
 			}
-			return strings.ToUpper(level)
+			upperLevel := strings.ToUpper(level)
+			switch level {
+			case "error", "fatal", "panic":
+				return colorRed + upperLevel + colorReset
+			case "warn", "warning":
+				return colorYellow + upperLevel + colorReset
+			default:
+				return upperLevel
+			}
 		},
 	}
 	log.Logger = log.Output(output)

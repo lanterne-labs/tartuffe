@@ -148,9 +148,10 @@ func (e *FirecrawlExtractor) ExtractContent(url string) (*ExtractedContent, erro
 		} else {
 			// Attempt other common formats if needed, or log the parse error
 			log.Warn().Str("url", url).Str("date_string", firecrawlResp.Data.Metadata.PublishedTime).Err(err).Msg("Failed to parse publishedTime from Firecrawl metadata")
-			// Try parsing without timezone offset if that's common
+			// Try parsing with other common formats
 			formatsToTry := []string{
-				"2006-01-02T15:04:05", // ISO without Z/offset
+				"2006-01-02T15:04:05-0700", // ISO 8601 with numeric timezone (no colon)
+				"2006-01-02T15:04:05",      // ISO without Z/offset
 				"2006-01-02 15:04:05",
 				"Mon, 02 Jan 2006 15:04:05 MST", // RFC1123
 				time.RFC1123Z,

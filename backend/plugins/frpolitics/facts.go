@@ -5,16 +5,22 @@ import (
 	"fmt"
 	"time"
 
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
+
+	"github.com/rs/zerolog/log"
 )
 
 // FactRecord captures a single fact to be stored using storage layer
 type FactRecord struct {
 	// PersonName is the normalized person name to mention (human or party)
 	PersonName string
-	// FactText is the normalized fact text
+	// FactText is the normalized fact text (without person names for display)
 	FactText string
+	// EmbeddingText is the text used for generating embeddings (without person names)
+	// For frpolitics, this equals FactText since FactText is already name-free
+	EmbeddingText string
 	// Topics are derived topics
 	Topics []string
 	// SourceURL is the canonical law page URL
@@ -43,23 +49,45 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		return fmt.Errorf("failed to initialize embedding generator: %w", err)
 	}
 
-	// Collect unique fact texts for embedding generation
-	factTexts := make([]string, 0, len(factTextToRecords))
-	for factText := range factTextToRecords {
-		factTexts = append(factTexts, factText)
+	// Collect unique embedding texts for embedding generation
+	// For frpolitics, EmbeddingText equals FactText since both are name-free
+	embeddingTexts := make([]string, 0, len(factTextToRecords))
+	embeddingTextToFactText := make(map[string]string, len(factTextToRecords))
+	for factText, records := range factTextToRecords {
+		if len(records) > 0 {
+			embText := records[0].EmbeddingText
+			if embText == "" {
+				embText = factText // Fallback if EmbeddingText not set
+			}
+			embeddingTexts = append(embeddingTexts, embText)
+			embeddingTextToFactText[embText] = factText
+		}
 	}
 
-	// Generate embeddings in batches
+	// Generate embeddings in batches using EmbeddingText (name-free version)
 	batchSize := 50
-	embeddingsMap := make(map[string][]float32, len(factTexts))
+	embeddingsMap := make(map[string][]float32, len(embeddingTexts))
+	totalBatches := (len(embeddingTexts) + batchSize - 1) / batchSize
 
-	for i := 0; i < len(factTexts); i += batchSize {
+	for i := 0; i < len(embeddingTexts); i += batchSize {
 		end := i + batchSize
-		if end > len(factTexts) {
-			end = len(factTexts)
+		if end > len(embeddingTexts) {
+			end = len(embeddingTexts)
+		}
+		currentBatch := (i / batchSize) + 1
+
+		// Log progress every 10% of batches or every batch if less than 10 batches
+		if totalBatches <= 10 || currentBatch%(totalBatches/10) == 0 || currentBatch == 1 || currentBatch == totalBatches {
+			log.Info().
+				Int("current_batch", currentBatch).
+				Int("total_batches", totalBatches).
+				Int("percent", (currentBatch*100)/totalBatches).
+				Int("facts_start", i+1).
+				Int("facts_end", end).
+				Msg("frpolitics: embedding generation progress")
 		}
 
-		batchTexts := factTexts[i:end]
+		batchTexts := embeddingTexts[i:end]
 		embs, err := embGen.GenerateEmbeddings(ctx, batchTexts)
 		if err != nil {
 			return fmt.Errorf("failed to generate embeddings for batch %d-%d: %w", i, end, err)
@@ -68,9 +96,21 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		for j, text := range batchTexts {
 			embeddingsMap[text] = embs[j]
 		}
+
+		// Add small delay between batches to avoid rate limiting (skip on last batch)
+		if currentBatch < totalBatches {
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 
-	// Store each unique fact with all associated persons
+	// Build inputs for the core fact inserter
+	totalFacts := len(factTextToRecords)
+	inputs := make([]core.StoreFactInput, 0, totalFacts)
+
+	log.Info().
+		Int("total_facts", totalFacts).
+		Msg("frpolitics: preparing facts for insertion")
+
 	for factText, records := range factTextToRecords {
 		if len(records) == 0 {
 			continue
@@ -79,10 +119,20 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		// Use the first record for metadata (they should all have the same law info)
 		firstRec := records[0]
 
-		// Collect all person names associated with this fact
-		personNames := make([]string, 0, len(records))
-		for _, rec := range records {
-			personNames = append(personNames, rec.PersonName)
+		// Get embedding text (name-free version)
+		embeddingText := firstRec.EmbeddingText
+		if embeddingText == "" {
+			embeddingText = factText // Fallback if EmbeddingText not set
+		}
+
+		// First person is the subject entity, rest are secondary mentions
+		subjectEntity := firstRec.PersonName
+		var secondaryPersons []string
+		if len(records) > 1 {
+			secondaryPersons = make([]string, 0, len(records)-1)
+			for _, rec := range records[1:] {
+				secondaryPersons = append(secondaryPersons, rec.PersonName)
+			}
 		}
 
 		// Ensure metadata includes law information for traceability
@@ -103,22 +153,36 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 			originalQuote += fmt.Sprintf("\nSource: %s", firstRec.SourceURL)
 		}
 
-		input := storage.StoreFactInput{
+		input := core.StoreFactInput{
+			SubjectEntity:      subjectEntity,
 			NormalizedFactText: factText,
-			Embedding:          embeddingsMap[factText],
+			EmbeddingText:      embeddingText, // Name-free version for embeddings
+			Embedding:          embeddingsMap[embeddingText],
 			OriginalQuote:      originalQuote,
 			Topics:             firstRec.Topics,
-			InvolvedPeople:     personNames,
+			InvolvedPeople:     secondaryPersons,
 			SourceURL:          firstRec.SourceURL,
 			PublishedAt:        firstRec.PublishedAt,
 			SourceType:         "assemblee_law_page",
 			Metadata:           metadata,
 		}
-		_, _, _, err := storer.StoreFact(ctx, input)
-		if err != nil {
-			return fmt.Errorf("failed to store fact '%s': %w", factText[:50], err)
-		}
+		inputs = append(inputs, input)
 	}
+
+	// Use the core fact inserter to intelligently insert facts with similarity detection
+	inserter := core.NewFactInserter(storer)
+
+	log.Info().
+		Int("total_facts", len(inputs)).
+		Msg("frpolitics: starting fact insertion with similarity detection")
+
+	if err := inserter.InsertFacts(ctx, inputs); err != nil {
+		return fmt.Errorf("failed to insert facts: %w", err)
+	}
+
+	log.Info().
+		Int("total_facts", len(inputs)).
+		Msg("frpolitics: fact insertion complete")
 
 	return nil
 }

@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"digital-mirror/backend/categorizer"
+
+	"github.com/rs/zerolog/log"
 )
 
 // SummarizeLaws producing LLM summaries from law titles respecting a limit
@@ -26,12 +29,31 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 
 	// Process in batches of 10
 	batchSize := 10
+	totalBatches := (len(laws) + batchSize - 1) / batchSize
 	for i := 0; i < len(laws); i += batchSize {
 		end := i + batchSize
 		if end > len(laws) {
 			end = len(laws)
 		}
 		batch := laws[i:end]
+		currentBatch := (i / batchSize) + 1
+
+		// Log progress every 10% of batches or every batch if less than 10 batches
+		if totalBatches <= 10 || currentBatch%(totalBatches/10) == 0 || currentBatch == 1 || currentBatch == totalBatches {
+			// Show sample keys from this batch
+			sampleKeys := make([]string, 0, 3)
+			for j := 0; j < len(batch) && j < 3; j++ {
+				sampleKeys = append(sampleKeys, batch[j].Key)
+			}
+			log.Info().
+				Int("batch", currentBatch).
+				Int("total_batches", totalBatches).
+				Int("percent", currentBatch*100/totalBatches).
+				Int("laws_from", i+1).
+				Int("laws_to", end).
+				Strs("sample_keys", sampleKeys).
+				Msg("frpolitics: law summarization progress")
+		}
 
 		summaries, err := callBatchedSummaryJSON(ctx, batch)
 		if err != nil {
@@ -44,6 +66,11 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 
 		for key, summary := range summaries {
 			result[key] = summary
+		}
+
+		// Add small delay between batches to avoid rate limiting (skip on last batch)
+		if currentBatch < totalBatches {
+			time.Sleep(200 * time.Millisecond)
 		}
 	}
 

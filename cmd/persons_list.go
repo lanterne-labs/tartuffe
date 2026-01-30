@@ -51,8 +51,8 @@ func listPersons(cmd *cobra.Command, args []string) {
 		log.Info().Msg("No persons found in the database.")
 	} else {
 		fmt.Printf("Found %d persons:\n", len(persons))
-		for _, name := range persons {
-			fmt.Printf("- %s\n", name)
+		for _, p := range persons {
+			fmt.Printf("- %s (%s)\n", p.Name, p.EntityType)
 		}
 		log.Info().Int("count", len(persons)).Msg("Successfully listed persons")
 	}

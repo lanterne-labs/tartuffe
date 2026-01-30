@@ -113,14 +113,31 @@ export const realtimeManager = new RealtimeManager();
 // Helper function to subscribe to events for a specific person
 // Pass -1 as personId to listen to all person events
 export function subscribeToPersonEvents(personId: number, callback: (event: RealtimeEvent) => void) {
+	let lastProcessedIndex = -1;
+	let initialized = false;
+
 	const unsubscribe = realtimeEvents.subscribe(events => {
-		// Process new events
-		const relevantEvents = events.filter(event => personId === -1 || event.personId === personId);
-		relevantEvents.forEach(callback);
+		// On first subscription, mark all existing events as "seen" without processing
+		// This prevents processing historical events that were already in the store
+		if (!initialized) {
+			lastProcessedIndex = events.length - 1;
+			initialized = true;
+			return;
+		}
+
+		// Only process NEW events (after lastProcessedIndex)
+		for (let i = lastProcessedIndex + 1; i < events.length; i++) {
+			const event = events[i];
+			if (personId === -1 || event.personId === personId) {
+				callback(event);
+			}
+		}
+		lastProcessedIndex = events.length - 1;
 
 		// Keep only recent events to prevent memory leaks
 		if (events.length > 100) {
 			realtimeEvents.update(currentEvents => currentEvents.slice(-50));
+			lastProcessedIndex = Math.max(-1, lastProcessedIndex - 50);
 		}
 	});
 

@@ -8,18 +8,24 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary) []FactRe
 		return nil
 	}
 	out := make([]FactRecord, 0, len(events))
+	// Use just the law topic for embedding - this ensures:
+	// 1. All votes on the SAME law cluster together (FOR, AGAINST, ABSTAIN are neighbors)
+	// 2. Votes on DIFFERENT laws don't cluster together
+	// The action verb (voted FOR/AGAINST) is preserved in FactText for display + LLM comparison
+	embeddingText := prepareLawPhrase(summary.SimpleStatement)
 	for _, ev := range events {
 		text := buildVoteStatement(ev.Position, summary.SimpleStatement)
 		if len(out) < 3 {
 			log.Debug().Str("deputy", ev.DisplayName).Str("text", text).Msg("frpolitics: derived deputy fact")
 		}
 		out = append(out, FactRecord{
-			PersonName:  ev.DisplayName,
-			FactText:    text,
-			Topics:      summary.Topics,
-			SourceURL:   law.URL,
-			LawKey:      law.Key,
-			PublishedAt: law.VoteDate,
+			PersonName:    ev.DisplayName,
+			FactText:      text,
+			EmbeddingText: embeddingText, // Just the law topic, no action verb
+			Topics:        summary.Topics,
+			SourceURL:     law.URL,
+			LawKey:        law.Key,
+			PublishedAt:   law.VoteDate,
 		})
 	}
 	return out
@@ -81,13 +87,16 @@ func derivePartyFactsFromEvents(law Law, events []VoteEvent, threshold float64, 
 			}
 		}
 		factText := buildVoteStatement(maj, summary.SimpleStatement)
+		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
+		embeddingText := prepareLawPhrase(summary.SimpleStatement)
 		facts = append(facts, FactRecord{
-			PersonName:  name,
-			FactText:    factText,
-			Topics:      summary.Topics,
-			SourceURL:   law.URL,
-			LawKey:      law.Key,
-			PublishedAt: law.VoteDate,
+			PersonName:    name,
+			FactText:      factText,
+			EmbeddingText: embeddingText, // Just the law topic, no action verb
+			Topics:        summary.Topics,
+			SourceURL:     law.URL,
+			LawKey:        law.Key,
+			PublishedAt:   law.VoteDate,
 		})
 	}
 	return facts

@@ -17,55 +17,77 @@ import (
 func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) { // Use backend.Fact type
 	// Temporary struct mirroring the expected JSON output fields from the LLM prompt
 	var extractedFactsRaw []struct {
-		NormalizedFact string   `json:"normalized_fact"` // Match the prompt's JSON key
-		OriginalQuote  string   `json:"original_quote"`  // Match the prompt's JSON key
-		Topics         []string `json:"topics"`
-		InvolvedPeople []string `json:"involved_people"`
+		SubjectEntity     string   `json:"subject_entity"`      // The entity this fact is about
+		SubjectEntityType string   `json:"subject_entity_type"` // "human", "party", or "organization"
+		NormalizedFact    string   `json:"normalized_fact"`     // Match the prompt's JSON key
+		EmbeddingText     string   `json:"embedding_text"`      // Name-free version for embedding generation
+		OriginalQuote     string   `json:"original_quote"`      // Match the prompt's JSON key
+		Topics            []string `json:"topics"`
+		InvolvedPeople    []string `json:"involved_people"`
 	}
 
 	jsonContent := string(jsonData)
+
+	// Pre-process: strip markdown code blocks if present
+	trimmedContent := strings.TrimSpace(jsonContent)
+	if strings.HasPrefix(trimmedContent, "```json") {
+		trimmedContent = strings.TrimPrefix(trimmedContent, "```json")
+		trimmedContent = strings.TrimSuffix(trimmedContent, "```")
+		trimmedContent = strings.TrimSpace(trimmedContent)
+		jsonData = []byte(trimmedContent)
+	} else if strings.HasPrefix(trimmedContent, "```") {
+		trimmedContent = strings.TrimPrefix(trimmedContent, "```")
+		trimmedContent = strings.TrimSuffix(trimmedContent, "```")
+		trimmedContent = strings.TrimSpace(trimmedContent)
+		jsonData = []byte(trimmedContent)
+	}
+
+	// Handle case where LLM returns a single object instead of an array
+	trimmedForCheck := strings.TrimSpace(string(jsonData))
+	if strings.HasPrefix(trimmedForCheck, "{") && !strings.HasPrefix(trimmedForCheck, "[") {
+		// Wrap single object in an array
+		jsonData = []byte("[" + trimmedForCheck + "]")
+		log.Debug().Msg("Wrapped single fact object in array")
+	}
+
 	if err := json.Unmarshal(jsonData, &extractedFactsRaw); err != nil {
-		// Sometimes the LLM might wrap the JSON in ```json ... ```, try to strip it.
-		trimmedContent := strings.TrimSpace(jsonContent)
-		if strings.HasPrefix(trimmedContent, "```json") {
-			trimmedContent = strings.TrimPrefix(trimmedContent, "```json")
-			trimmedContent = strings.TrimSuffix(trimmedContent, "```")
-			trimmedContent = strings.TrimSpace(trimmedContent)
-			jsonData = []byte(trimmedContent) // Use trimmed data for retry
-			if retryErr := json.Unmarshal(jsonData, &extractedFactsRaw); retryErr == nil {
-				err = nil // Clear the error if retry succeeded
-			} else {
-				// Combine errors if retry also failed
-				err = fmt.Errorf("failed to decode LLM JSON content: %w (original content: %s). Retry after trimming backticks also failed: %v", err, jsonContent, retryErr)
-			}
-		} else {
-			err = fmt.Errorf("failed to decode LLM JSON content: %w (original content: %s)", err, jsonContent)
-		}
-		if err != nil {
-			log.Error().Err(err).Str("raw_json", jsonContent).Msg("Failed to decode LLM JSON response for facts")
-			return nil, err // Return the detailed error
-		}
+		err = fmt.Errorf("failed to decode LLM JSON content: %w (original content: %s)", err, jsonContent)
+		log.Error().Err(err).Str("raw_json", jsonContent).Msg("Failed to decode LLM JSON response for facts")
+		return nil, err
 	}
 
 	// Convert raw extracted facts to the final Fact struct, adding context
 	finalFacts := make([]backend.Fact, 0, len(extractedFactsRaw))
 	for i, rawFact := range extractedFactsRaw {
-		// Basic validation: Ensure normalized fact and at least one person exist
-		if rawFact.NormalizedFact == "" || len(rawFact.InvolvedPeople) == 0 {
+		// Basic validation: Ensure normalized fact and subject_entity exist
+		if rawFact.NormalizedFact == "" || rawFact.SubjectEntity == "" {
 			// Log skipped facts at Warn level, ADD sourceURL
 			log.Warn().Int("fact_index", i).
-				Str("reason", "missing normalized_fact or involved_people").
+				Str("reason", "missing normalized_fact or subject_entity").
 				Str("source_url", sourceURL). // Add source URL
 				Interface("raw_fact", rawFact).
 				Msg("Skipping invalid fact from LLM")
 			continue
 		}
+
+		// Warn if embedding_text is missing (required field)
+		if rawFact.EmbeddingText == "" {
+			log.Warn().Int("fact_index", i).
+				Str("normalized_fact", rawFact.NormalizedFact).
+				Str("source_url", sourceURL).
+				Msg("LLM did not provide embedding_text, using normalized_fact as fallback")
+			rawFact.EmbeddingText = rawFact.NormalizedFact
+		}
+
 		finalFacts = append(finalFacts, backend.Fact{
-			NormalizedFactText: rawFact.NormalizedFact, // Map to correct field
-			OriginalQuote:      rawFact.OriginalQuote,  // Map to correct field
+			SubjectEntity:      rawFact.SubjectEntity,     // Primary entity this fact is about
+			SubjectEntityType:  rawFact.SubjectEntityType, // Entity type (human/party/organization)
+			NormalizedFactText: rawFact.NormalizedFact,    // Map to correct field
+			EmbeddingText:      rawFact.EmbeddingText,     // Name-free version for embeddings
+			OriginalQuote:      rawFact.OriginalQuote,     // Map to correct field
 			Topics:             rawFact.Topics,
-			InvolvedPeople:     rawFact.InvolvedPeople,
-			SourceURL:          sourceURL, // Add context passed from extractor
+			InvolvedPeople:     rawFact.InvolvedPeople, // Secondary people mentioned
+			SourceURL:          sourceURL,              // Add context passed from extractor
 			PublishedAt:        publishedAt,
 		})
 	}
