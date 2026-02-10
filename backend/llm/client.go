@@ -5,6 +5,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"digital-mirror/backend/metrics"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +43,7 @@ func createDefaultBackoffPolicy(ctx context.Context) backoff.BackOff {
 func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, payloadBytes []byte) ([]byte, error) {
 	var respBodyBytes []byte
 	var httpStatus int
+	start := time.Now()
 
 	operation := func() error {
 		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(payloadBytes))
@@ -54,8 +56,9 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			log.Warn().Err(err).Str("url", apiURL).Msg("HTTP request failed during LLM call attempt")
-			return backoff.Permanent(fmt.Errorf("failed to execute LLM API request to %s: %w", apiURL, err))
+			metrics.IncrementLLMRetry("chat", "connection_error")
+			log.Warn().Err(err).Str("url", apiURL).Msg("HTTP request failed during LLM call attempt, will retry")
+			return fmt.Errorf("failed to execute LLM API request to %s: %w", apiURL, err)
 		}
 		defer resp.Body.Close()
 
@@ -63,8 +66,9 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 
 		bodyBytes, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
-			log.Error().Err(readErr).Str("url", apiURL).Int("status_code", resp.StatusCode).Msg("Failed to read LLM API response body")
-			return backoff.Permanent(fmt.Errorf("failed to read LLM API response body (status %d): %w", resp.StatusCode, readErr))
+			metrics.IncrementLLMRetry("chat", "read_timeout")
+			log.Warn().Err(readErr).Str("url", apiURL).Int("status_code", resp.StatusCode).Msg("Failed to read LLM API response body, will retry")
+			return fmt.Errorf("failed to read LLM API response body (status %d): %w", resp.StatusCode, readErr)
 		}
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -79,6 +83,7 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests {
+			metrics.IncrementLLMRetry("chat", "rate_limit")
 			log.Warn().Int("status_code", resp.StatusCode).Str("url", apiURL).Msg("LLM API rate limit hit. Will retry.")
 			return fmt.Errorf("rate limit exceeded (status %d)", resp.StatusCode)
 		}
@@ -89,8 +94,9 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		}
 
 		if resp.StatusCode >= 500 {
-			log.Error().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API request failed with server error")
-			return backoff.Permanent(fmt.Errorf("LLM API server error: %s (%s)", resp.Status, bodyStr))
+			metrics.IncrementLLMRetry("chat", "server_error")
+			log.Warn().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API server error, will retry")
+			return fmt.Errorf("LLM API server error: %s (%s)", resp.Status, bodyStr)
 		}
 
 		log.Error().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API request failed with unexpected status code")
@@ -104,14 +110,18 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 	bo := createDefaultBackoffPolicy(ctx)
 	err := backoff.RetryNotify(operation, bo, notify)
 
+	duration := time.Since(start)
+
 	if err != nil {
+		metrics.ObserveLLMRequest("chat", "", duration, err)
 		if httpStatus >= 300 {
 			return respBodyBytes, fmt.Errorf("LLM API request failed after retries: %w", err)
 		}
 		return nil, fmt.Errorf("LLM API request failed after retries: %w", err)
 	}
 
-	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Msg("Received successful response from LLM API via backoff retry function")
+	metrics.ObserveLLMRequest("chat", "", duration, nil)
+	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Dur("duration", duration).Msg("LLM API request completed")
 	return respBodyBytes, nil
 }
 
@@ -126,12 +136,20 @@ type ResponseFormat struct {
 	Type string `json:"type"` // e.g., "json_object"
 }
 
+// ProviderConfig controls provider routing for OpenRouter-compatible APIs.
+type ProviderConfig struct {
+	AllowFallbacks *bool    `json:"allow_fallbacks,omitempty"`
+	Ignore         []string `json:"ignore,omitempty"`
+	Order          []string `json:"order,omitempty"`
+}
+
 // ChatRequest is the OpenAI-compatible chat completion request.
 type ChatRequest struct {
 	Model          string          `json:"model"`
 	Messages       []ChatMessage   `json:"messages"`
 	Temperature    float64         `json:"temperature"`
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+	Provider       *ProviderConfig `json:"provider,omitempty"`
 }
 
 // ChatChoice models a single choice in the completion response.

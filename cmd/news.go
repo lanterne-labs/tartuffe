@@ -33,16 +33,16 @@ var newsCmd = &cobra.Command{
 
 // newsSearchCmd represents the news search command
 var newsSearchCmd = &cobra.Command{
-	Use:   "search",
-	Short: "Search news for specific targets",
-	Long:  `Search news sources for mentions of specific persons or parties and extract facts.`,
-	RunE:  runNewsSearch,
+	Use:         "search",
+	Short:       "Search news for specific targets",
+	Long:        `Search news sources for mentions of specific persons or parties and extract facts.`,
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runNewsSearch,
 }
 
 func init() {
 	pluginCmd.AddCommand(newsCmd)
 	newsCmd.AddCommand(newsSearchCmd)
-	newsCmd.AddCommand(queueCmd)
 
 	// Target selection
 	newsSearchCmd.Flags().StringSlice("targets", nil, "specific persons/parties to search news for (by name)")
@@ -57,6 +57,8 @@ func init() {
 	newsSearchCmd.Flags().String("extractor", "webcrawler", "content extractor to use (webcrawler, firecrawl, apify)")
 	newsSearchCmd.Flags().String("cache-dir", "", "directory to cache extracted content (enables caching)")
 	newsSearchCmd.Flags().Bool("cache-only", false, "only load from cache, don't scrape (requires --cache-dir)")
+	newsSearchCmd.Flags().Int("window-days", 0, "break date range into windows of N days (requires --since, 0=disabled)")
+	newsSearchCmd.Flags().Int("max-per-story", 0, "max articles per story_token (0=no cap)")
 }
 
 func runNewsSearch(cmd *cobra.Command, args []string) error {
@@ -86,10 +88,17 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 	extractorType, _ := cmd.Flags().GetString("extractor")
 	cacheDir, _ := cmd.Flags().GetString("cache-dir")
 	cacheOnly, _ := cmd.Flags().GetBool("cache-only")
+	windowDays, _ := cmd.Flags().GetInt("window-days")
+	maxPerStory, _ := cmd.Flags().GetInt("max-per-story")
 
 	// Validate cache-only requires cache-dir
 	if cacheOnly && cacheDir == "" {
 		return fmt.Errorf("--cache-only requires --cache-dir to be set")
+	}
+
+	// Validate window-days requires --since
+	if windowDays > 0 && sinceStr == "" {
+		return fmt.Errorf("--window-days requires --since to be set")
 	}
 
 	// Parse since date
@@ -115,14 +124,14 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 
 	// Build targets list
 	var searchTargets []news.SearchTarget
-	var ambiguousQueries map[string]news.TargetResolutionResult
+	var ambiguousQueries map[string]core.TargetResolutionResult
 
 	if len(targets) > 0 {
 		// Resolve target names with fuzzy matching
 		log.Info().Int("count", len(targets)).Msg("Resolving specified news targets")
 
-		resolutions := news.ResolveTargetNames(ctx, storer, targets)
-		ambiguousQueries = make(map[string]news.TargetResolutionResult)
+		resolutions := core.ResolveTargetNames(ctx, storer, targets)
+		ambiguousQueries = make(map[string]core.TargetResolutionResult)
 
 		for query, result := range resolutions {
 			if result.Error != nil {
@@ -133,7 +142,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			if result.IsExactMatch {
 				// Exact match found
 				log.Info().Str("query", query).Str("matched", result.ExactMatch.Name).Msg("Exact match found")
-				searchTargets = append(searchTargets, *result.ExactMatch)
+				searchTargets = append(searchTargets, resolvedTargetToSearchTarget(result.ExactMatch))
 			} else if len(result.FuzzyMatches) > 0 {
 				// Ambiguous - store for later
 				log.Warn().Str("query", query).Int("candidates", len(result.FuzzyMatches)).Msg("Ambiguous name - disambiguation needed")
@@ -164,9 +173,9 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 
 			// Re-resolve the resolved names
 			for _, target := range resolvedTargets {
-				result := news.ResolveTargetName(ctx, storer, target)
+				result := core.ResolveTargetName(ctx, storer, target)
 				if result.IsExactMatch {
-					searchTargets = append(searchTargets, *result.ExactMatch)
+					searchTargets = append(searchTargets, resolvedTargetToSearchTarget(result.ExactMatch))
 				}
 			}
 		}
@@ -245,6 +254,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 		Location:     location,
 		RevisitHours: 24 * 365 * 10, // Never re-fetch same URL (10 years)
 		DryRun:       dryRun,
+		MaxPerStory:  maxPerStory,
 	}
 
 	// Prioritize targets
@@ -309,7 +319,13 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		result, err := newsProvider.CollectFacts(ctx, target, opts)
+		var result *news.Result
+		if windowDays > 0 {
+			opts.WindowDays = windowDays
+			result, err = newsProvider.CollectFactsWithDateWindows(ctx, target, opts)
+		} else {
+			result, err = newsProvider.CollectFacts(ctx, target, opts)
+		}
 		if err != nil {
 			log.Error().Err(err).Str("target", target.Name).Msg("Failed to collect facts for target")
 			continue
@@ -352,7 +368,7 @@ func getTargetCacheDir(baseDir string, targetName string) string {
 }
 
 // handleDisambiguationForce automatically creates missing persons without prompting
-func handleDisambiguationForce(ctx context.Context, storer *storage.PostgresStorer, ambiguous map[string]news.TargetResolutionResult) ([]string, error) {
+func handleDisambiguationForce(ctx context.Context, storer *storage.PostgresStorer, ambiguous map[string]core.TargetResolutionResult) ([]string, error) {
 	resolvedTargets := make([]string, 0)
 	const forceThreshold = 0.8 // Only auto-use matches with >80% similarity
 
@@ -418,7 +434,7 @@ func handleDisambiguationForce(ctx context.Context, storer *storage.PostgresStor
 }
 
 // handleDisambiguation prompts the user to disambiguate or create missing targets
-func handleDisambiguation(ctx context.Context, storer *storage.PostgresStorer, ambiguous map[string]news.TargetResolutionResult) ([]string, error) {
+func handleDisambiguation(ctx context.Context, storer *storage.PostgresStorer, ambiguous map[string]core.TargetResolutionResult) ([]string, error) {
 	fmt.Println("\nSome target names need disambiguation or don't exist yet:")
 	fmt.Println()
 
@@ -466,7 +482,7 @@ func handleDisambiguation(ctx context.Context, storer *storage.PostgresStorer, a
 
 		for i, match := range result.FuzzyMatches {
 			fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-				i+1, match.Target.Name, match.Target.Type, match.Score)
+				i+1, match.Target.Name, match.Target.EntityType, match.Score)
 		}
 		fmt.Printf("  0) Skip this target\n")
 		fmt.Print("Enter your choice (0-" + fmt.Sprintf("%d", len(result.FuzzyMatches)) + "): ")
@@ -515,7 +531,7 @@ func runCacheOnlyExtraction(
 		Str("cache_dir", cacheDir).
 		Msg("Starting cache-only extraction (no news search)")
 
-	factInserter := core.NewFactInserter(storer)
+	factInserter := core.NewFactInserter(storer, nil)
 	totalFacts := 0
 	totalFiles := 0
 
@@ -630,4 +646,17 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// resolvedTargetToSearchTarget converts a core.ResolvedTarget to a news.SearchTarget.
+func resolvedTargetToSearchTarget(rt *core.ResolvedTarget) news.SearchTarget {
+	targetType := news.TargetPerson
+	if rt.EntityType == "party" {
+		targetType = news.TargetParty
+	}
+	return news.SearchTarget{
+		Name:     rt.Name,
+		Type:     targetType,
+		PersonID: rt.PersonID,
+	}
 }

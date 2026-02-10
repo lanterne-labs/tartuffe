@@ -11,9 +11,11 @@ import (
 )
 
 func TestFirecrawlExtractor_ExtractContent_Live(t *testing.T) {
+	t.Skip("Firecrawl is not currently used; skipping live test")
+
 	// Load .env file from the project root
 	// Assumes the .env file is two levels up from the current test file (e.g., backend/extractor -> .env)
-	err := godotenv.Load(filepath.Join("..", "..", ".env"))
+	err := godotenv.Overload(filepath.Join("..", "..", ".env"))
 	if err != nil {
 		t.Logf("Could not load .env file, proceeding with environment variables: %v", err)
 	}

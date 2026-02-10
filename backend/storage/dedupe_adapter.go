@@ -54,8 +54,7 @@ func (a *DedupeStorerAdapter) GetFactsForDeduplication(ctx context.Context, pers
 			EmbeddingText:      f.EmbeddingText,
 			OriginalQuote:      f.OriginalQuote,
 			Embedding:          f.Embedding,
-			IsCanonical:        f.IsCanonical,
-			CanonicalFactID:    f.CanonicalFactID,
+			IsCanonical:        f.IsCanonical, // Now means "is active" (not a duplicate)
 		}
 	}
 	return result, nil
@@ -80,7 +79,8 @@ func (a *DedupeStorerAdapter) FindSimilarFactsForDedup(ctx context.Context, pers
 	return result, nil
 }
 
-// MarkFactAsDuplicate marks a fact as a duplicate of a canonical fact.
+// MarkFactAsDuplicate marks a fact as a duplicate of a canonical fact
+// by inserting a 'duplicate' relation into fact_relations.
 func (a *DedupeStorerAdapter) MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error {
 	return a.storer.MarkFactAsDuplicate(ctx, duplicateID, canonicalID)
 }
@@ -98,8 +98,7 @@ func (a *DedupeStorerAdapter) GetFactByID(ctx context.Context, factID int64) (*c
 		EmbeddingText:      fact.EmbeddingText,
 		OriginalQuote:      fact.OriginalQuote,
 		Embedding:          fact.Embedding,
-		IsCanonical:        fact.IsCanonical,
-		CanonicalFactID:    fact.CanonicalFactID,
+		IsCanonical:        fact.IsCanonical, // Now means "is active" (not a duplicate)
 	}, nil
 }
 

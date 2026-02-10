@@ -26,8 +26,10 @@ func TestWebcrawlerAPIExtractor_MissingAPIKey(t *testing.T) {
 }
 
 func TestWebcrawlerAPIExtractor_ExtractContent_Live(t *testing.T) {
+	t.Skip("WebcrawlerAPI is not currently used; skipping live test")
+
 	// Load .env file from the project root
-	err := godotenv.Load(filepath.Join("..", "..", ".env"))
+	err := godotenv.Overload(filepath.Join("..", "..", ".env"))
 	if err != nil {
 		t.Logf("Could not load .env file, proceeding with environment variables: %v", err)
 	}

@@ -170,7 +170,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 	}
 
 	// Use the core fact inserter to intelligently insert facts with similarity detection
-	inserter := core.NewFactInserter(storer)
+	inserter := core.NewFactInserter(storer, nil)
 
 	log.Info().
 		Int("total_facts", len(inputs)).

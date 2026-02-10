@@ -16,7 +16,7 @@ import (
 func loadEnv(t *testing.T) {
 	t.Helper()
 	// Assumes .env is at the project root
-	err := godotenv.Load("../../.env")
+	err := godotenv.Overload("../../.env")
 	if err != nil {
 		t.Log("INFO: .env file not found or failed to load, tests needing env vars might be skipped.")
 	}

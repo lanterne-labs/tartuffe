@@ -15,7 +15,7 @@ func loadEnv(t *testing.T) {
 	t.Helper()
 	// Construct the path to the .env file relative to the test file location.
 	// Assumes .env is at the project root, and tests are in subdirs like backend/search.
-	err := godotenv.Load("../../.env") // Adjust path as necessary
+	err := godotenv.Overload("../../.env") // Adjust path as necessary
 	if err != nil {
 		t.Log("INFO: .env file not found or failed to load, tests needing env vars might be skipped.")
 	}

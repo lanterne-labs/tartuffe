@@ -97,15 +97,16 @@ func LoadConfig() (*Config, error) {
 // LoadConfigForTest loads configuration for testing, with optional .env file path
 func LoadConfigForTest(envPath ...string) (*Config, error) {
 	// Try to load .env file from specified path or defaults
+	// Use Overload (not Load) so .env values always win over stale direnv/shell vars
 	if len(envPath) > 0 && envPath[0] != "" {
-		if err := godotenv.Load(envPath[0]); err != nil {
+		if err := godotenv.Overload(envPath[0]); err != nil {
 			return nil, fmt.Errorf("failed to load .env file from %s: %w", envPath[0], err)
 		}
 	} else {
 		// Try common test locations
 		paths := []string{"../../../.env", "../../.env", "../.env", ".env"}
 		for _, path := range paths {
-			if err := godotenv.Load(path); err == nil {
+			if err := godotenv.Overload(path); err == nil {
 				break // Successfully loaded
 			}
 		}

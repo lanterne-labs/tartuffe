@@ -179,7 +179,7 @@ Source URL: %s
 Content:
 %s
 
-Respond ONLY with a valid JSON array. Return an empty array [] if no verifiable facts are found.
+Your response must contain ONLY a valid JSON array and nothing else — no commentary, no explanation, no text before or after the JSON. Return [] if no verifiable facts are found.
 
 Example Output Format:
 [

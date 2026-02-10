@@ -28,7 +28,7 @@ func parseDate(dateStr string) *time.Time {
 // It requires the OPEN_AI_KEY environment variable to be set.
 func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 	// Load .env file if it exists (ignoring errors if it doesn't)
-	_ = godotenv.Load()
+	_ = godotenv.Overload()
 
 	apiKey := os.Getenv("OPEN_AI_KEY")
 	if apiKey == "" {
@@ -39,7 +39,7 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 	require.NoError(t, err, "Failed to create OpenAIContradictionDetector from environment")
 
 	// Use a context with a timeout for the API call
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // 120-second timeout for more test cases
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second) // 300-second timeout for 11 sequential API calls
 	defer cancel()
 
 	testCases := []struct {
@@ -121,7 +121,7 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 		},
 		{
 			name:                    "Temporal - Denial After Claim (Contradictory)",
-			factA:                   "Marine Le Pen stated the EU Parliament was fully aware of the mutualization.",
+			factA:                   "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice.",
 			dateA:                   "2024-01-15",
 			factB:                   "Marine Le Pen claimed she never knew about any mutualization scheme.",
 			dateB:                   "2024-03-20",

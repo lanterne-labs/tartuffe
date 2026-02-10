@@ -16,10 +16,7 @@ make db-start          # Start Supabase (ports 55321-55327)
 make db-stop           # Stop Supabase
 ```
 
-**⚠️ CRITICAL: Never run `supabase db reset` without asking the user first!**
-- `supabase db reset` drops ALL data including facts, persons, and processed laws
-- This command is destructive and cannot be undone
-- Only use for fresh starts or when explicitly requested
+**`supabase db reset`**: You can run this when needed (e.g., to apply new migrations). It drops all data but nothing is in production yet. Note that another application also uses Supabase, but this should be fine.
 
 **Applying Migrations**:
 ```bash
@@ -142,7 +139,7 @@ FIRECRAWL_API_KEY=...
   - Use `log.Info()` for important operational events
   - Use `log.Debug()` for detailed troubleshooting info
 - **Error handling**: Wrap errors with `fmt.Errorf("context: %w", err)`
-- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. **NEVER run `supabase db reset` without asking user first** - it destroys all data. Write incremental migrations instead.
+- **Database**: Use transactions for multi-step operations; connection pooling via pgxpool. `supabase db reset` is fine to run when needed (e.g., applying migrations). Prefer incremental migrations when possible.
 - **API**: REST with JSON, pagination via `limit` and `offset` query params
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
 - **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them

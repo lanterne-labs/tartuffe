@@ -1,13 +1,13 @@
 package cmd
 
 import (
-	// "fmt" // Unused
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -100,6 +100,17 @@ pipeline, including running periodic jobs, manual testing, and database interact
 			finalFormat = "json"
 		}
 		log.Info().Str("log-level", zerolog.GlobalLevel().String()).Str("log-format", finalFormat).Msg("Logger configured")
+
+		// Load .env if available (before migrations need DATABASE_URL)
+		_ = godotenv.Load()
+
+		// Run migrations for DB-dependent commands
+		if cmd.Annotations != nil && cmd.Annotations["needs_db"] == "true" {
+			if err := ensureMigrations(cmd.Context()); err != nil {
+				return fmt.Errorf("failed to run migrations: %w", err)
+			}
+		}
+
 		return nil
 	},
 	// Uncomment the following line if your bare application

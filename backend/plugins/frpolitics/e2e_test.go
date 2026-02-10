@@ -56,8 +56,8 @@ func TestE2EWithSampleData(t *testing.T) {
 		MaxLaws:        10,        // Process more laws
 		MaxVotes:       5000,      // Process more votes
 		PartyThreshold: 0.7,       // Standard threshold
-		MinConfidence:  0.01,
-		DisableKeywordFilter: true,      // Accept almost all AI summaries (minimal filtering for tests)
+		DisableKeywordFilter: true, // Skip keyword filtering for tests
+		DisableAIFilter:      true, // Skip AI confidence filtering for tests
 		Legislatures:   []int{17}, // 17th legislature for more recent data if available
 	}
 

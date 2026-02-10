@@ -83,7 +83,7 @@ func TestPersonSimilarity(t *testing.T) {
 	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	log.Debug().Msg("Console logger forced for TestPersonSimilarity")
 
-	err := godotenv.Load(filepath.Join("..", "..", ".env"))
+	err := godotenv.Overload(filepath.Join("..", "..", ".env"))
 	if err != nil {
 		t.Log("INFO: .env file not found or failed to load, relying on environment variables.")
 	} else {

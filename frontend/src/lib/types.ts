@@ -6,6 +6,7 @@ export interface PersonSummary {
 	entity_type?: string;
 	honesty_score: number;
 	fact_count: number;
+	image_url?: string;
 }
 
 export interface FactWithSource {

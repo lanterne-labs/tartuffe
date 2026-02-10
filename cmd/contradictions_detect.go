@@ -37,7 +37,8 @@ var contradictionsDetectCmd = &cobra.Command{
 and LLM-based comparison. By default, processes all persons. Use --person flag
 to process only a specific person. Use --dry-run to see what would be detected
 without recording to the database.`,
-	RunE: runContradictionDetection,
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runContradictionDetection,
 }
 
 func init() {
@@ -89,7 +90,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 	totalPairsChecked := 0
 
 	for _, person := range persons {
-		// Get all facts for this person with embeddings
+		// Get all active (non-duplicate) facts for this person with embeddings
 		facts, err := storer.GetFactsWithEmbeddingsForPerson(ctx, person.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Failed to get facts, skipping")
@@ -153,25 +154,58 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			// Add to all pairs
+			// Walk UP implication chains for each pair target and build pairs
 			for _, other := range pairsToCheck {
+				targetID := other.ID
+				targetText := other.Text
+				targetDate := other.PublishedAt
+
+				// Walk up the implication chain
+				ancestorID, err := storer.GetMostGeneralAncestor(ctx, other.ID)
+				if err != nil {
+					log.Warn().Err(err).Int64("fact_id", other.ID).Msg("Failed to get ancestor, using original")
+				} else if ancestorID != other.ID {
+					// Fetch ancestor text - need a tx for this
+					var ancestorTx pgx.Tx
+					if readTx != nil {
+						ancestorTx = readTx
+					} else {
+						ancestorTx2, txErr := storer.Pool().Begin(ctx)
+						if txErr == nil {
+							ancestorTx = ancestorTx2
+							defer func() { _ = ancestorTx2.Rollback(ctx) }()
+						}
+					}
+					if ancestorTx != nil {
+						ancestorText, err := storer.GetFactTextByID(ctx, ancestorTx, ancestorID)
+						if err == nil {
+							targetID = ancestorID
+							targetText = ancestorText
+							ancestorDate, err := storer.GetFactDateByID(ctx, ancestorTx, ancestorID)
+							if err == nil {
+								targetDate = ancestorDate
+							}
+						}
+					}
+				}
+
 				allPairs = append(allPairs, pairInfo{
 					factAID:   fact.ID,
 					factAText: fact.Text,
 					factADate: fact.PublishedAt,
-					factBID:   other.ID,
-					factBText: other.Text,
-					factBDate: other.PublishedAt,
+					factBID:   targetID,
+					factBText: targetText,
+					factBDate: targetDate,
 				})
 			}
 		}
 
-		// Close read transaction (we only needed it for neighbor queries)
+		// Close read transaction
 		if readTx != nil {
 			_ = readTx.Rollback(ctx)
 		}
 
-		// Get ALL checked pairs (not just contradictions) to avoid re-checking
+		// Get ALL checked pairs to avoid re-checking
 		checkedPairs, err := storer.GetCheckedPairs(ctx, person.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Failed to get checked pairs")
@@ -181,7 +215,6 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 		// Filter out pairs that have already been checked
 		var filteredPairs []pairInfo
 		for _, pair := range allPairs {
-			// Normalize pair order (smaller ID first) to match DB storage
 			idA, idB := pair.factAID, pair.factBID
 			if idA > idB {
 				idA, idB = idB, idA
@@ -236,7 +269,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 					continue
 				}
 
-				// Collect all pair results for batch recording
+				// Record the pair check (using the walked-up IDs)
 				pairResults = append(pairResults, storage.PairCheckResult{
 					FactAID:         batch[j].factAID,
 					FactBID:         batch[j].factBID,
@@ -261,7 +294,6 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 					fmt.Printf("Reason: %s\n", result.Reason)
 
 					if !detectDryRun {
-						// Save immediately - don't wait for batch to finish
 						if err := storer.RecordContradictionImmediate(ctx, person.ID, batch[j].factAID, batch[j].factBID, result.Reason); err != nil {
 							log.Error().Err(err).Msg("Failed to record contradiction")
 						} else {
@@ -281,7 +313,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 			// Log batch progress
 			log.Debug().Int("batch_start", i).Int("batch_end", end).Int("total_pairs", len(allPairs)).Str("person", person.Name).Msg("Batch processed")
 
-			// Rate limiting: delay between batches to avoid hitting API limits
+			// Rate limiting
 			if end < len(allPairs) {
 				time.Sleep(contradiction.DelayBetweenBatches)
 			}

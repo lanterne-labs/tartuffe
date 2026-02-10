@@ -11,6 +11,7 @@ import (
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -61,6 +62,13 @@ type Options struct {
 	SkipUnknown bool
 	// DryRun shows what would be done without actually fetching or storing anything.
 	DryRun bool
+	// WindowDays breaks the DateFrom→DateTo range into windows of N days.
+	// When > 0, requires DateFrom to be set. DateTo defaults to time.Now() if nil.
+	WindowDays int
+	// MaxPerStory limits how many articles with the same story_token are processed
+	// in a single search. 0 = no cap (default). Articles with empty story_token are
+	// never capped (each treated as unique).
+	MaxPerStory int
 }
 
 // Result contains the outcome of a news search for a single target.
@@ -71,12 +79,20 @@ type Result struct {
 	ArticlesFound int
 	// ArticlesParsed is the number of articles actually parsed for facts.
 	ArticlesParsed int
+	// ArticlesParsedNoFacts is the number of articles parsed that yielded zero facts.
+	ArticlesParsedNoFacts int
 	// FactsExtracted is the number of facts extracted from the articles.
 	FactsExtracted int
 	// SkippedAlreadyProcessed is the number of URLs skipped because already in database.
 	SkippedAlreadyProcessed int
 	// SkippedEmptyURL is the number of articles skipped due to empty URLs.
 	SkippedEmptyURL int
+	// SkippedStoryCap is the number of articles skipped due to story cap.
+	SkippedStoryCap int
+	// StoryCappedDates holds the dates of articles that were skipped due to story cap (for re-query window calculation).
+	StoryCappedDates []time.Time
+	// StoryCappedTokens holds the unique story_tokens that were capped.
+	StoryCappedTokens []string
 	// Errors contains any errors encountered during processing.
 	Errors []error
 }
@@ -183,6 +199,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 	maxParse := opts.MaxParse
 
 	// Phase 1: Collect visitable URLs up to maxParse limit
+	storyTokenCounts := make(map[string]int)
 	var urlsToExtract []string
 	var articlesToProcess []search.NewsResult
 	for _, article := range newsResults {
@@ -195,6 +212,25 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 			result.SkippedEmptyURL++
 			metrics.IncrementNewsArticles("skipped_empty_url")
 			continue
+		}
+		// Story cap: skip articles that exceed MaxPerStory for their story_token
+		if opts.MaxPerStory > 0 && article.StoryToken != "" {
+			if storyTokenCounts[article.StoryToken] >= opts.MaxPerStory {
+				log.Debug().
+					Str("url", article.Link).
+					Str("story_token", article.StoryToken).
+					Int("cap", opts.MaxPerStory).
+					Msg("news: skipping article due to story cap")
+				result.SkippedStoryCap++
+				if article.Date != nil {
+					result.StoryCappedDates = append(result.StoryCappedDates, *article.Date)
+				}
+				if !containsString(result.StoryCappedTokens, article.StoryToken) {
+					result.StoryCappedTokens = append(result.StoryCappedTokens, article.StoryToken)
+				}
+				metrics.IncrementNewsArticles("skipped_story_cap")
+				continue
+			}
 		}
 		// Check if URL was already processed
 		visitable, _, err := p.Storer.IsURLVisitable(ctx, article.Link, revisitHours)
@@ -211,6 +247,19 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 		}
 		urlsToExtract = append(urlsToExtract, article.Link)
 		articlesToProcess = append(articlesToProcess, article)
+		// Track story token count after adding
+		if article.StoryToken != "" {
+			storyTokenCounts[article.StoryToken]++
+		}
+	}
+
+	// Log story cap stats
+	if result.SkippedStoryCap > 0 {
+		log.Info().
+			Str("target", target.Name).
+			Int("skipped_story_cap", result.SkippedStoryCap).
+			Int("capped_stories", len(result.StoryCappedTokens)).
+			Msg("news: articles skipped due to story cap")
 	}
 
 	if len(urlsToExtract) == 0 {
@@ -313,9 +362,9 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 
 		if len(facts) == 0 {
 			log.Debug().Str("url", article.Link).Msg("news: no facts extracted")
-			// Still count this as parsed since we successfully extracted (even if empty)
 			result.ArticlesParsed++
-			metrics.IncrementNewsArticles("parsed")
+			result.ArticlesParsedNoFacts++
+			metrics.IncrementNewsArticles("parsed_no_facts")
 			continue
 		}
 
@@ -354,7 +403,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 				},
 			}
 
-			inserter := core.NewFactInserter(p.Storer)
+			inserter := core.NewFactInserter(p.Storer, nil)
 			err = inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).
@@ -384,12 +433,233 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 	log.Info().
 		Str("target", target.Name).
 		Int("articles_parsed", result.ArticlesParsed).
+		Int("articles_no_facts", result.ArticlesParsedNoFacts).
 		Int("facts_extracted", result.FactsExtracted).
 		Int("skipped_already_processed", result.SkippedAlreadyProcessed).
+		Int("skipped_story_cap", result.SkippedStoryCap).
 		Int("errors", len(result.Errors)).
 		Msg("news: collection completed")
 
 	return result, nil
+}
+
+// CollectFactsWithDateWindows breaks the date range into windows of opts.WindowDays days
+// and calls CollectFacts for each window. This works around Google News result caps by
+// making multiple narrower queries. Errors in individual windows are logged and collected
+// but do not stop processing of subsequent windows.
+func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target SearchTarget, opts Options) (*Result, error) {
+	if opts.WindowDays <= 0 {
+		return nil, fmt.Errorf("WindowDays must be > 0, got %d", opts.WindowDays)
+	}
+	if opts.DateFrom == nil {
+		return nil, fmt.Errorf("DateFrom is required when using date windows")
+	}
+
+	dateTo := time.Now()
+	if opts.DateTo != nil {
+		dateTo = *opts.DateTo
+	}
+	dateFrom := *opts.DateFrom
+
+	if !dateFrom.Before(dateTo) {
+		return nil, fmt.Errorf("DateFrom (%s) must be before DateTo (%s)", dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
+	}
+
+	// Generate windows
+	var windows []dateWindow
+	cursor := dateFrom
+	for cursor.Before(dateTo) {
+		end := cursor.AddDate(0, 0, opts.WindowDays)
+		if end.After(dateTo) {
+			end = dateTo
+		}
+		windows = append(windows, dateWindow{from: cursor, to: end})
+		cursor = end
+	}
+
+	totalWindows := len(windows)
+	log.Info().
+		Str("target", target.Name).
+		Int("windows", totalWindows).
+		Int("window_days", opts.WindowDays).
+		Str("date_from", dateFrom.Format("2006-01-02")).
+		Str("date_to", dateTo.Format("2006-01-02")).
+		Msg("Starting date-windowed collection")
+
+	// Aggregate result
+	aggregate := &Result{
+		Target: target,
+	}
+
+	for i, w := range windows {
+		select {
+		case <-ctx.Done():
+			log.Warn().
+				Str("target", target.Name).
+				Int("window", i+1).
+				Int("total_windows", totalWindows).
+				Msg("Context cancelled, returning partial results")
+			aggregate.Errors = append(aggregate.Errors, ctx.Err())
+			return aggregate, ctx.Err()
+		default:
+		}
+
+		log.Info().
+			Str("target", target.Name).
+			Int("window", i+1).
+			Int("total_windows", totalWindows).
+			Str("from", w.from.Format("2006-01-02")).
+			Str("to", w.to.Format("2006-01-02")).
+			Msg("Processing date window")
+
+		// Copy opts for this window, override dates, clear WindowDays to prevent recursion
+		windowOpts := opts
+		windowOpts.DateFrom = &w.from
+		windowTo := w.to
+		windowOpts.DateTo = &windowTo
+		windowOpts.WindowDays = 0
+
+		result, err := p.CollectFacts(ctx, target, windowOpts)
+		if err != nil {
+			log.Error().Err(err).
+				Str("target", target.Name).
+				Int("window", i+1).
+				Int("total_windows", totalWindows).
+				Msg("Window failed, continuing to next")
+			aggregate.Errors = append(aggregate.Errors, fmt.Errorf("window %d/%d (%s to %s): %w",
+				i+1, totalWindows, w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err))
+			continue
+		}
+
+		// Aggregate counters
+		aggregateResult(aggregate, result)
+
+		// Re-query with shifted window if story cap was hit and budget remains
+		if opts.MaxPerStory > 0 && result.SkippedStoryCap > 0 && result.ArticlesParsed < opts.MaxParse {
+			reQueryWindow := computeReQueryWindow(w.from, w.to, result.StoryCappedDates)
+			if reQueryWindow != nil {
+				remainingBudget := opts.MaxParse - result.ArticlesParsed
+				log.Info().
+					Str("target", target.Name).
+					Int("window", i+1).
+					Str("requery_from", reQueryWindow.from.Format("2006-01-02")).
+					Str("requery_to", reQueryWindow.to.Format("2006-01-02")).
+					Int("remaining_budget", remainingBudget).
+					Int("skipped_story_cap", result.SkippedStoryCap).
+					Msg("Re-querying with shifted window to find diverse stories")
+
+				reQueryOpts := windowOpts
+				reQueryOpts.DateFrom = &reQueryWindow.from
+				reQueryTo := reQueryWindow.to
+				reQueryOpts.DateTo = &reQueryTo
+				reQueryOpts.MaxParse = remainingBudget
+
+				reResult, reErr := p.CollectFacts(ctx, target, reQueryOpts)
+				if reErr != nil {
+					log.Warn().Err(reErr).
+						Str("target", target.Name).
+						Int("window", i+1).
+						Msg("Re-query failed, continuing")
+					aggregate.Errors = append(aggregate.Errors, fmt.Errorf("re-query window %d/%d: %w", i+1, totalWindows, reErr))
+				} else {
+					aggregateResult(aggregate, reResult)
+					log.Info().
+						Str("target", target.Name).
+						Int("window", i+1).
+						Int("requery_articles_parsed", reResult.ArticlesParsed).
+						Int("requery_facts_extracted", reResult.FactsExtracted).
+						Msg("Re-query completed")
+				}
+			}
+		}
+	}
+
+	log.Info().
+		Str("target", target.Name).
+		Int("windows_processed", totalWindows).
+		Int("articles_found", aggregate.ArticlesFound).
+		Int("articles_parsed", aggregate.ArticlesParsed).
+		Int("facts_extracted", aggregate.FactsExtracted).
+		Int("skipped_already_processed", aggregate.SkippedAlreadyProcessed).
+		Int("skipped_story_cap", aggregate.SkippedStoryCap).
+		Int("errors", len(aggregate.Errors)).
+		Msg("Date-windowed collection completed")
+
+	return aggregate, nil
+}
+
+// dateWindow represents a time range for a search window.
+type dateWindow struct {
+	from time.Time
+	to   time.Time
+}
+
+// aggregateResult adds the counters from src into dst.
+func aggregateResult(dst *Result, src *Result) {
+	dst.ArticlesFound += src.ArticlesFound
+	dst.ArticlesParsed += src.ArticlesParsed
+	dst.ArticlesParsedNoFacts += src.ArticlesParsedNoFacts
+	dst.FactsExtracted += src.FactsExtracted
+	dst.SkippedAlreadyProcessed += src.SkippedAlreadyProcessed
+	dst.SkippedEmptyURL += src.SkippedEmptyURL
+	dst.SkippedStoryCap += src.SkippedStoryCap
+	dst.StoryCappedDates = append(dst.StoryCappedDates, src.StoryCappedDates...)
+	for _, token := range src.StoryCappedTokens {
+		if !containsString(dst.StoryCappedTokens, token) {
+			dst.StoryCappedTokens = append(dst.StoryCappedTokens, token)
+		}
+	}
+	dst.Errors = append(dst.Errors, src.Errors...)
+}
+
+// computeReQueryWindow calculates a sub-window that avoids the date cluster of capped articles.
+// It picks the larger gap (before or after the cluster) within the original window.
+// Returns nil if no viable sub-window >= 1 day exists.
+func computeReQueryWindow(windowFrom, windowTo time.Time, cappedDates []time.Time) *dateWindow {
+	if len(cappedDates) == 0 {
+		return nil
+	}
+
+	// Sort capped dates to find cluster boundaries
+	sorted := make([]time.Time, len(cappedDates))
+	copy(sorted, cappedDates)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Before(sorted[j]) })
+
+	// Cluster boundaries with 1-day buffer, clamped to window
+	clusterStart := sorted[0].AddDate(0, 0, -1)
+	if clusterStart.Before(windowFrom) {
+		clusterStart = windowFrom
+	}
+	clusterEnd := sorted[len(sorted)-1].AddDate(0, 0, 1)
+	if clusterEnd.After(windowTo) {
+		clusterEnd = windowTo
+	}
+
+	// Calculate gaps
+	beforeGap := clusterStart.Sub(windowFrom)
+	afterGap := windowTo.Sub(clusterEnd)
+
+	minDuration := 24 * time.Hour
+
+	// Pick the larger gap
+	if beforeGap >= afterGap && beforeGap >= minDuration {
+		return &dateWindow{from: windowFrom, to: clusterStart}
+	}
+	if afterGap >= minDuration {
+		return &dateWindow{from: clusterEnd, to: windowTo}
+	}
+
+	return nil
+}
+
+// containsString checks if a slice contains a specific string.
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
 }
 
 // getAffiliatedParties retrieves parties affiliated with a person at a specific date.

@@ -215,7 +215,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 
 				for i, match := range result.FuzzyMatches {
 					fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-						i+1, match.Target.Name, match.Target.Type, match.Score)
+						i+1, match.Target.Name, match.Target.EntityType, match.Score)
 				}
 				fmt.Printf("  0) Skip this target\n")
 				fmt.Print("Enter your choice (0-" + fmt.Sprintf("%d", len(result.FuzzyMatches)) + "): ")

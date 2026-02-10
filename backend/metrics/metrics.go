@@ -54,6 +54,7 @@ func init() {
 		ContradictionsDetectedTotal,
 		ContradictionChecksTotal,
 		NewsArticlesProcessedTotal,
+		TweetsProcessedTotal,
 		ContentExtractionDuration,
 		HonestyScoreUpdates,
 	)

@@ -17,12 +17,12 @@ import (
 )
 
 // embeddingDimension defines the dimension for mock embeddings
-const embeddingDimension = 1024 // Match Mistral dimension
+const embeddingDimension = 1536
 
 // Helper function to load .env for tests
 func loadEnv(t *testing.T) {
 	t.Helper()
-	err := godotenv.Load("../../.env")
+	err := godotenv.Overload("../../.env")
 	if err != nil {
 		// Allow tests to run if OPEN_AI key is set directly in env
 		if os.Getenv("OPEN_AI_KEY") == "" || os.Getenv("DATABASE_URL") == "" {
@@ -93,7 +93,7 @@ func insertFactForTest(ctx context.Context, t *testing.T, storer *PostgresStorer
 	}
 
 	// Use core.FactInserter to insert
-	inserter := core.NewFactInserter(storer)
+	inserter := core.NewFactInserter(storer, nil)
 	err = inserter.InsertFacts(ctx, []core.StoreFactInput{coreInput})
 	if err != nil {
 		return 0, 0, err

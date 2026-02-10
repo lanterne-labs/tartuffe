@@ -20,7 +20,7 @@ type fakeEmbedder struct{}
 func (f *fakeEmbedder) GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i := range texts {
-		v := make([]float32, 1024)
+		v := make([]float32, 1536)
 		// all zeros is fine for distance = 0
 		out[i] = v
 	}
@@ -54,7 +54,7 @@ func containsAllFold(s string, subs []string) bool {
 
 func TestEndToEnd_ArtificialFacts_Contradictions(t *testing.T) {
 	t.Helper()
-	_ = godotenv.Load("../../.env")
+	_ = godotenv.Overload("../../.env")
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		t.Skip("DATABASE_URL not set; skipping end-to-end contradiction test")

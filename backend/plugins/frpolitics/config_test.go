@@ -41,7 +41,7 @@ func TestConfigLoading(t *testing.T) {
 // TestConfigBasedRealDataProcessing tests the full pipeline using configuration
 func TestConfigBasedRealDataProcessing(t *testing.T) {
 	// Load .env file from project root like the main application does
-	if err := godotenv.Load("../../.env"); err != nil {
+	if err := godotenv.Overload("../../.env"); err != nil {
 		t.Skipf("Skipping test due to .env loading error: %v", err)
 		return
 	}
@@ -58,14 +58,14 @@ func TestConfigBasedRealDataProcessing(t *testing.T) {
 	// Configure options with test values
 	since := time.Date(2023, time.January, 1, 0, 0, 0, 0, time.UTC) // January 2023
 	opts := Options{
-		Since:          &since,
-		MaxLaws:        2,         // Small dataset for testing
-		MaxVotes:       50,        // Limited votes for testing
-		PartyThreshold: 0.8,       // Standard threshold
-		MinConfidence:  0.01,
-		DisableKeywordFilter: true,       // Accept all AI summaries (no filtering for tests)
-		Legislatures:   []int{16}, // 16th legislature (2022-2024)
-		RevisitHours:   10000,     // Force revisit for test
+		Since:                &since,
+		MaxLaws:              2,         // Small dataset for testing
+		MaxVotes:             50,        // Limited votes for testing
+		PartyThreshold:       0.8,       // Standard threshold
+		DisableKeywordFilter: true,      // Skip keyword filtering for tests
+		DisableAIFilter:      true,      // Skip AI confidence filtering for tests
+		Legislatures:         []int{16}, // 16th legislature (2022-2024)
+		RevisitHours:         10000,     // Force revisit for test
 	}
 
 	t.Logf("Running frpolitics with options: Since=%v, MaxLaws=%d, MaxVotes=%d, PartyThreshold=%.2f, Legislatures=%v",
@@ -153,7 +153,7 @@ func TestConfigBasedRealDataProcessing(t *testing.T) {
 // TestDifferentThresholdsWithConfig tests how different thresholds affect party fact generation
 func TestDifferentThresholdsWithConfig(t *testing.T) {
 	// Load .env file from project root like the main application does
-	if err := godotenv.Load("../../.env"); err != nil {
+	if err := godotenv.Overload("../../.env"); err != nil {
 		t.Skipf("Skipping test due to .env loading error: %v", err)
 		return
 	}
@@ -175,14 +175,14 @@ func TestDifferentThresholdsWithConfig(t *testing.T) {
 		// Configure options
 		since := time.Date(2023, time.January, 1, 0, 0, 0, 0, time.UTC)
 		opts := Options{
-			Since:          &since,
-			MaxLaws:        1,  // Small dataset
-			MaxVotes:       25, // Limited votes
-			PartyThreshold: threshold,
-			MinConfidence:  0.01,
-		DisableKeywordFilter: true, // Accept all AI summaries (no filtering for tests)
-			Legislatures:   []int{16}, // 16th legislature
-			RevisitHours:   10000,
+			Since:                &since,
+			MaxLaws:              1,  // Small dataset
+			MaxVotes:             25, // Limited votes
+			PartyThreshold:       threshold,
+			DisableKeywordFilter: true, // Skip keyword filtering for tests
+			DisableAIFilter:      true, // Skip AI confidence filtering for tests
+			Legislatures:         []int{16}, // 16th legislature
+			RevisitHours:         10000,
 		}
 
 		// Run plugin

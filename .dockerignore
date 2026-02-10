@@ -1,0 +1,9 @@
+.env
+.env.bak
+.envrc
+node_modules
+frontend/node_modules
+scraped_content
+.git
+digital-mirror
+dm

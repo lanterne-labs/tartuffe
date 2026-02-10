@@ -1,6 +1,7 @@
 package categorizer
 
 import (
+	"bytes"
 	"digital-mirror/backend" // Need backend package for the Fact struct type
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,8 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		log.Debug().Msg("Wrapped single fact object in array")
 	}
 
+	jsonData = extractFirstJSON(jsonData)
+
 	if err := json.Unmarshal(jsonData, &extractedFactsRaw); err != nil {
 		err = fmt.Errorf("failed to decode LLM JSON content: %w (original content: %s)", err, jsonContent)
 		log.Error().Err(err).Str("raw_json", jsonContent).Msg("Failed to decode LLM JSON response for facts")
@@ -93,4 +96,20 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	}
 
 	return finalFacts, nil
+}
+
+// extractFirstJSON uses json.Decoder to extract the first complete JSON value
+// from data, discarding any trailing text the LLM may have appended.
+func extractFirstJSON(data []byte) []byte {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return data // let downstream error handling deal with it
+	}
+	// If there was trailing content, log a warning
+	if dec.More() || dec.InputOffset() < int64(len(bytes.TrimSpace(data))) {
+		log.Warn().Str("trailing_text", strings.TrimSpace(string(data[dec.InputOffset():]))).
+			Msg("Stripped trailing text from LLM JSON response")
+	}
+	return raw
 }

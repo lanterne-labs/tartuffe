@@ -271,3 +271,113 @@ func (s *SerpAPINewsProvider) Search(personName string) ([]SearchResult, error) 
 	}
 	return results, nil
 }
+
+// ImageSearchOptions configures an image search query.
+type ImageSearchOptions struct {
+	// Query is the search query string. If empty, the query parameter passed to SearchImages is used instead.
+	Query string
+	// Location restricts results to a specific country/region (e.g., "France", "United States").
+	Location string
+	// Limit is the maximum number of results to return. Default is 10.
+	Limit int
+}
+
+// ImageResult represents a single image found by the search.
+type ImageResult struct {
+	// Original is the URL to the full-size image.
+	Original string
+	// Thumbnail is the URL to a thumbnail version of the image.
+	Thumbnail string
+	// OriginalWidth is the width of the original image in pixels.
+	OriginalWidth int
+	// OriginalHeight is the height of the original image in pixels.
+	OriginalHeight int
+	// Source is the domain/website where the image was found.
+	Source string
+	// Title is the title or alt text associated with the image.
+	Title string
+	// Position is the rank of this result in the search results.
+	Position int
+}
+
+// serpAPIImageResponse defines the structure for the JSON response from SerpAPI Google Images.
+type serpAPIImageResponse struct {
+	SearchMetadata struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	} `json:"search_metadata"`
+	ImagesResults []struct {
+		Position       int    `json:"position"`
+		Original       string `json:"original"`
+		Thumbnail      string `json:"thumbnail"`
+		OriginalWidth  int    `json:"original_width"`
+		OriginalHeight int    `json:"original_height"`
+		Source         string `json:"source"`
+		Title          string `json:"title"`
+	} `json:"images_results"`
+	Error string `json:"error"`
+}
+
+// SearchImages performs an image search for the given query using SerpAPI Google Images.
+func (s *SerpAPINewsProvider) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
+	baseURL := "https://serpapi.com/search.json"
+	params := url.Values{}
+	params.Add("api_key", s.apiKey)
+	params.Add("engine", "google_images")
+	params.Add("q", query)
+	params.Add("ijn", "0")
+
+	if opts.Location != "" {
+		params.Add("gl", mapLocationToGLCode(opts.Location))
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	params.Add("num", fmt.Sprintf("%d", limit))
+
+	searchURL := baseURL + "?" + params.Encode()
+
+	log.Debug().Str("query", query).Int("limit", limit).Msg("Performing SerpAPI image search")
+
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create image search request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute image search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SerpAPI image search request failed with status: %s", resp.Status)
+	}
+
+	var searchResp serpAPIImageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode image search response: %w", err)
+	}
+
+	if searchResp.Error != "" {
+		return nil, fmt.Errorf("SerpAPI image search error: %s", searchResp.Error)
+	}
+
+	results := make([]ImageResult, 0, len(searchResp.ImagesResults))
+	for _, item := range searchResp.ImagesResults {
+		results = append(results, ImageResult{
+			Original:       item.Original,
+			Thumbnail:      item.Thumbnail,
+			OriginalWidth:  item.OriginalWidth,
+			OriginalHeight: item.OriginalHeight,
+			Source:         item.Source,
+			Title:          item.Title,
+			Position:       item.Position,
+		})
+	}
+
+	log.Debug().Int("count", len(results)).Str("query", query).Msg("SerpAPI image search completed")
+	return results, nil
+}

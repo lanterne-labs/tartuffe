@@ -89,21 +89,19 @@
 	onMount(() => {
 		loadPersons();
 
-		// Realtime updates disabled - they cause request floods due to historical events
-		// TODO: Fix SSE to only send events newer than connection time
-		// realtimeManager.connect();
-		// unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
+		realtimeManager.connect();
+		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
 	});
 
 	onDestroy(() => {
-		// if (unsubscribe) {
-		// 	unsubscribe();
-		// }
+		if (unsubscribe) {
+			unsubscribe();
+		}
 		if (debounceTimer) {
 			clearTimeout(debounceTimer);
 		}
-		// realtimeManager.disconnect();
-		// clearOldEvents();
+		realtimeManager.disconnect();
+		clearOldEvents();
 	});
 </script>
 
@@ -160,6 +158,15 @@
 		{#each persons as person (person.id)}
 			<div class="person-card">
 				<div class="person-header">
+					<a href="/person/{person.id}" class="avatar-link">
+						{#if person.image_url}
+							<img src={person.image_url} alt={person.name} class="avatar avatar-48" />
+						{:else}
+							<div class="avatar avatar-48 avatar-placeholder">
+								{person.name.charAt(0).toUpperCase()}
+							</div>
+						{/if}
+					</a>
 					<h2>
 						<a href="/person/{person.id}">{person.name}</a>
 						{#if person.entity_type === 'party'}
@@ -314,6 +321,31 @@
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: 1rem;
+		gap: 1rem;
+	}
+
+	.avatar-link {
+		flex-shrink: 0;
+	}
+
+	.avatar {
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.avatar-48 {
+		width: 48px;
+		height: 48px;
+	}
+
+	.avatar-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #e5e7eb;
+		color: #6b7280;
+		font-weight: 600;
+		font-size: 1.25rem;
 	}
 
 	.person-header h2 {

@@ -24,8 +24,8 @@ const (
 	maxJitter         = 0.2             // Max jitter factor (e.g., 0.2 = +/- 20%)
 )
 
-// openAIEmbedModelDefault uses a 1024-dim model to match DB schema by default (provider-dependent)
-const openAIEmbedModelDefault = "mistral-embed"
+// openAIEmbedModelDefault uses text-embedding-3-small (1536 dimensions) by default
+const openAIEmbedModelDefault = "text-embedding-3-small"
 
 // buildEmbedAPIURL composes the full embeddings endpoint from the OPEN_AI_API base.
 func buildEmbedAPIURL(base string) string {

@@ -13,7 +13,7 @@ import (
 // Helper function to load .env for tests
 func loadEnv(t *testing.T) {
 	t.Helper()
-	err := godotenv.Load("../../.env")
+	err := godotenv.Overload("../../.env")
 	if err != nil {
 		t.Log("INFO: .env file not found or failed to load, tests needing env vars might be skipped.")
 	}
@@ -44,7 +44,7 @@ func TestOpenAIEmbeddingGenerator_GenerateEmbeddings(t *testing.T) {
 	require.NoError(t, err, "GenerateEmbeddings failed")
 	require.Len(t, embeddings, len(testTexts), "Incorrect number of embeddings returned")
 
-	expectedDimensions := 1024 // default embed dimensions used in DB schema
+	expectedDimensions := 1536 // text-embedding-3-small dimensions
 	for i, emb := range embeddings {
 		t.Logf("Embedding %d: %d dimensions (first few: %v...)", i+1, len(emb), emb[:min(5, len(emb))])
 		assert.Len(t, emb, expectedDimensions, "Embedding %d has incorrect dimensions", i+1)

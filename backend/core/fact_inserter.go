@@ -11,35 +11,44 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// FactInserter handles intelligent fact insertion with similarity detection.
-// It automatically detects similar facts using embedding similarity and stores
-// only one "canonical fact" for contradiction detection, while preserving all
-// related/similar facts for traceability.
+// FactRelationInput represents a relation between two facts.
+// This type is defined in core to avoid import cycles between core and storage.
+type FactRelationInput struct {
+	GeneralFactID  int64
+	SpecificFactID int64
+	RelationType   string // "duplicate" or "implication"
+	Reason         string
+}
+
+// FactInserter handles intelligent fact insertion with relation classification.
+// It always inserts facts, then classifies their relationships to existing similar facts
+// (duplicate, implication, or unrelated) via an LLM call.
 type FactInserter struct {
-	storer              Storer
-	similarityThreshold float64 // L2 distance threshold (default: 0.80)
+	storer               Storer
+	classifier           *RelationClassifier
+	similarityThreshold  float64 // Cosine distance threshold for relation candidate search
 }
 
 // Storer defines the interface for storage operations needed by FactInserter.
 // This is typically implemented by storage.PostgresStorer.
 type Storer interface {
 	// FindOrInsertPersons resolves person names to person IDs, creating new records if needed.
-	// New persons are created with entity_type='human' by default.
 	FindOrInsertPersons(ctx context.Context, names []string) ([]int64, error)
 
-	// FindOrInsertPersonWithType resolves a person name to a person ID, creating a new record if needed.
-	// If the person doesn't exist, it creates one with the specified entity type (human/party/organization).
+	// FindOrInsertPersonWithType resolves a person name to a person ID with entity type.
 	FindOrInsertPersonWithType(ctx context.Context, name string, entityType string) (int64, error)
 
-	// FindSimilarCanonicalFacts searches for canonical facts similar to the given embedding
-	// for the specified persons, using L2 distance threshold.
-	FindSimilarCanonicalFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64) ([]SimilarFact, error)
+	// FindSimilarActiveFacts searches for active (non-duplicate) facts similar to the given embedding.
+	FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]SimilarFact, error)
 
-	// InsertCanonicalFact inserts a new canonical fact (is_canonical=true, canonical_fact_id=NULL).
-	InsertCanonicalFact(ctx context.Context, input StoreFactInput) (factID int64, err error)
+	// InsertFact inserts a new fact into the database.
+	InsertFact(ctx context.Context, input StoreFactInput) (factID int64, err error)
 
-	// InsertRelatedFact inserts a related/similar fact (is_canonical=false, canonical_fact_id=<id>).
-	InsertRelatedFact(ctx context.Context, input StoreFactInput, canonicalFactID int64) (factID int64, err error)
+	// InsertFactRelationsBatch inserts multiple fact relations efficiently.
+	InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error
+
+	// IsAncestorOf checks if ancestorID is an ancestor of descendantID via implication chain.
+	IsAncestorOf(ctx context.Context, ancestorID int64, descendantID int64) (bool, error)
 
 	// LinkSourceToFact links a source URL to a fact, creating a fact_sources record.
 	LinkSourceToFact(ctx context.Context, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (sourceID int64, err error)
@@ -71,39 +80,30 @@ type SimilarFact struct {
 	Distance float64 // Cosine distance (1 - cosine_similarity) from query embedding
 }
 
-// NewFactInserter creates a new FactInserter with the given storer.
-// The similarity threshold is the minimum cosine similarity (0-1) to consider facts as "the same".
-// It is loaded from the FACT_SIMILARITY_THRESHOLD env var, defaulting to 0.90 (90% similar).
-// The threshold is converted to cosine distance (1 - similarity) for use in pgvector queries.
-func NewFactInserter(storer Storer) *FactInserter {
-	cosineSimilarity := 0.90 // default: 90% similar (stricter to avoid false groupings)
-	if env := os.Getenv("FACT_SIMILARITY_THRESHOLD"); env != "" {
+// NewFactInserter creates a new FactInserter with the given storer and optional relation classifier.
+// The similarity threshold for relation candidate search is loaded from IMPLICATION_SIMILARITY_THRESHOLD
+// env var, defaulting to 0.60 (60% cosine similarity).
+func NewFactInserter(storer Storer, classifier *RelationClassifier) *FactInserter {
+	cosineSimilarity := 0.60 // default: 60% similar (broader search for relation candidates)
+	if env := os.Getenv("IMPLICATION_SIMILARITY_THRESHOLD"); env != "" {
 		if t, err := strconv.ParseFloat(env, 64); err == nil {
 			cosineSimilarity = t
-			log.Info().Float64("cosine_similarity", cosineSimilarity).Msg("Loaded FACT_SIMILARITY_THRESHOLD from environment")
+			log.Info().Float64("cosine_similarity", cosineSimilarity).Msg("Loaded IMPLICATION_SIMILARITY_THRESHOLD from environment")
 		} else {
-			log.Warn().Str("value", env).Err(err).Msg("Invalid FACT_SIMILARITY_THRESHOLD, using default 0.80")
+			log.Warn().Str("value", env).Err(err).Msg("Invalid IMPLICATION_SIMILARITY_THRESHOLD, using default 0.60")
 		}
 	}
 
-	// Convert cosine similarity to cosine distance for pgvector
-	// cosine_distance = 1 - cosine_similarity
-	// So for 80% similarity (0.80), we want cosine distance <= 0.20
 	cosineDistance := 1.0 - cosineSimilarity
 
 	return &FactInserter{
 		storer:              storer,
+		classifier:          classifier,
 		similarityThreshold: cosineDistance,
 	}
 }
 
-// InsertFacts processes a batch of facts and intelligently inserts them
-// as canonical or related facts based on embedding similarity.
-// For each fact, it:
-// 1. Searches for similar canonical facts associated with the same persons
-// 2. If found, inserts as a related fact linked to the canonical fact
-// 3. If not found, inserts as a new canonical fact
-// All facts preserve their source and person mention links for traceability.
+// InsertFacts processes a batch of facts, inserting each and classifying relations.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) error {
 	for i, fact := range facts {
 		log.Debug().
@@ -119,24 +119,21 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 	return nil
 }
 
-// insertSingleFact handles insertion of a single fact with similarity detection.
+// insertSingleFact handles insertion of a single fact with relation classification.
 func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) error {
-	// SubjectEntity is required - it's the primary person/entity this fact is about
 	if input.SubjectEntity == "" {
 		return fmt.Errorf("subject_entity is required")
 	}
 
-	// Resolve subject entity to person ID, using entity type if provided
+	// Resolve subject entity to person ID
 	var subjectID int64
 	var err error
 	if input.SubjectEntityType != "" {
-		// Use the new method that accepts entity type
 		subjectID, err = fi.storer.FindOrInsertPersonWithType(ctx, input.SubjectEntity, input.SubjectEntityType)
 		if err != nil {
 			return fmt.Errorf("failed to find/insert subject entity with type: %w", err)
 		}
 	} else {
-		// Fall back to existing method (defaults to human)
 		subjectIDs, err := fi.storer.FindOrInsertPersons(ctx, []string{input.SubjectEntity})
 		if err != nil {
 			return fmt.Errorf("failed to find/insert subject entity: %w", err)
@@ -147,7 +144,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
-	// Resolve InvolvedPeople as secondary mentions (if any)
+	// Resolve InvolvedPeople as secondary mentions
 	var secondaryPersonIDs []int64
 	if len(input.InvolvedPeople) > 0 {
 		secondaryPersonIDs, err = fi.storer.FindOrInsertPersons(ctx, input.InvolvedPeople)
@@ -158,51 +155,14 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		}
 	}
 
-	// Search for similar canonical facts for the subject entity
-	similarFacts, err := fi.storer.FindSimilarCanonicalFacts(
-		ctx,
-		[]int64{subjectID},
-		input.Embedding,
-		fi.similarityThreshold,
-	)
+	// Always insert the fact
+	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {
-		return fmt.Errorf("failed to find similar facts: %w", err)
+		return fmt.Errorf("failed to insert fact: %w", err)
 	}
+	metrics.IncrementFactsExtracted(input.SourceType, true)
 
-	var factID int64
-
-	if len(similarFacts) > 0 {
-		// Found similar canonical fact - insert as related fact
-		canonicalFactID := similarFacts[0].ID
-
-		log.Info().
-			Int64("canonical_fact_id", canonicalFactID).
-			Float64("distance", similarFacts[0].Distance).
-			Str("canonical_text", truncate(similarFacts[0].Text, 80)).
-			Str("new_fact_text", truncate(input.NormalizedFactText, 80)).
-			Str("subject_entity", input.SubjectEntity).
-			Msg("Found similar canonical fact, inserting as related")
-
-		factID, err = fi.storer.InsertRelatedFact(ctx, input, canonicalFactID)
-		if err != nil {
-			return fmt.Errorf("failed to insert related fact: %w", err)
-		}
-		metrics.IncrementFactsExtracted(input.SourceType, false) // Related fact
-	} else {
-		// No similar fact found - insert as new canonical fact
-		log.Info().
-			Str("fact_text", truncate(input.NormalizedFactText, 80)).
-			Str("subject_entity", input.SubjectEntity).
-			Msg("No similar fact found, inserting as canonical")
-
-		factID, err = fi.storer.InsertCanonicalFact(ctx, input)
-		if err != nil {
-			return fmt.Errorf("failed to insert canonical fact: %w", err)
-		}
-		metrics.IncrementFactsExtracted(input.SourceType, true) // Canonical fact
-	}
-
-	// Link source to the fact (canonical or related)
+	// Link source to the fact
 	sourceID, err := fi.storer.LinkSourceToFact(
 		ctx,
 		factID,
@@ -221,12 +181,17 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
-	// Link secondary persons to this source mention (if any)
+	// Link secondary persons
 	if len(secondaryPersonIDs) > 0 {
 		if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, secondaryPersonIDs); err != nil {
 			log.Warn().Err(err).Interface("secondary_person_ids", secondaryPersonIDs).
 				Msg("Failed to link secondary persons to source")
 		}
+	}
+
+	// Classify relations with similar facts (non-blocking - fact is already inserted)
+	if fi.classifier != nil {
+		fi.classifyRelations(ctx, factID, input, subjectID)
 	}
 
 	log.Debug().
@@ -237,6 +202,120 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Msg("Successfully inserted fact with source and person links")
 
 	return nil
+}
+
+// classifyRelations finds similar active facts and classifies their relationships.
+// This is non-blocking: errors are logged but don't prevent fact insertion.
+func (fi *FactInserter) classifyRelations(ctx context.Context, newFactID int64, input StoreFactInput, subjectID int64) {
+	similarFacts, err := fi.storer.FindSimilarActiveFacts(
+		ctx,
+		[]int64{subjectID},
+		input.Embedding,
+		fi.similarityThreshold,
+		20,
+	)
+	if err != nil {
+		log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Failed to find similar facts for relation classification")
+		return
+	}
+
+	if len(similarFacts) == 0 {
+		return
+	}
+
+	// Build classification inputs (exclude the new fact itself)
+	var classInputs []ClassificationInput
+	for _, sf := range similarFacts {
+		if sf.ID == newFactID {
+			continue
+		}
+		classInputs = append(classInputs, ClassificationInput{
+			ExistingFactID:   sf.ID,
+			ExistingFactText: sf.Text,
+			// PublishedAt not available from SimilarFact; nil is acceptable
+		})
+	}
+
+	if len(classInputs) == 0 {
+		return
+	}
+
+	results, err := fi.classifier.Classify(ctx, input.NormalizedFactText, input.PublishedAt, classInputs)
+	if err != nil {
+		log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Relation classification failed, fact already inserted")
+		return
+	}
+
+	if len(results) == 0 {
+		return
+	}
+
+	// Convert classification results to fact relation inputs
+	var relations []FactRelationInput
+	for _, r := range results {
+		var rel FactRelationInput
+		rel.Reason = r.Reason
+
+		switch r.Relation {
+		case "duplicate":
+			// For duplicates: the older fact is general, the newer is specific
+			// Since we just inserted newFact, it's the newer one
+			rel.GeneralFactID = r.ExistingFactID
+			rel.SpecificFactID = newFactID
+			rel.RelationType = "duplicate"
+
+		case "implication_new_is_general":
+			// New fact is more general, existing is more specific
+			rel.GeneralFactID = newFactID
+			rel.SpecificFactID = r.ExistingFactID
+			rel.RelationType = "implication"
+
+			// Cycle prevention: check that existing fact is not already an ancestor of new fact
+			isAnc, err := fi.storer.IsAncestorOf(ctx, r.ExistingFactID, newFactID)
+			if err != nil {
+				log.Warn().Err(err).Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
+					Msg("Failed to check ancestry, skipping relation")
+				continue
+			}
+			if isAnc {
+				log.Warn().Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
+					Msg("Skipping implication relation: would create cycle")
+				continue
+			}
+
+		case "implication_new_is_specific":
+			// New fact is more specific, existing is more general
+			rel.GeneralFactID = r.ExistingFactID
+			rel.SpecificFactID = newFactID
+			rel.RelationType = "implication"
+
+			// Cycle prevention: check that new fact is not already an ancestor of existing
+			isAnc, err := fi.storer.IsAncestorOf(ctx, newFactID, r.ExistingFactID)
+			if err != nil {
+				log.Warn().Err(err).Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
+					Msg("Failed to check ancestry, skipping relation")
+				continue
+			}
+			if isAnc {
+				log.Warn().Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
+					Msg("Skipping implication relation: would create cycle")
+				continue
+			}
+
+		default:
+			continue
+		}
+
+		relations = append(relations, rel)
+	}
+
+	if len(relations) > 0 {
+		if err := fi.storer.InsertFactRelationsBatch(ctx, relations); err != nil {
+			log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Failed to insert fact relations")
+		} else {
+			log.Info().Int64("fact_id", newFactID).Int("relations", len(relations)).Msg("Recorded fact relations")
+		}
+	}
 }
 
 // truncate truncates a string to maxLen characters, appending "..." if truncated.

@@ -12,7 +12,6 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/plugins/news"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 
@@ -23,9 +22,10 @@ import (
 
 // ingestFilesCmd represents the ingest files command
 var ingestFilesCmd = &cobra.Command{
-	Use:   "files",
-	Short: "Ingest facts from local JSON files",
-	Long: `Ingest facts from local JSON files into the database.
+	Use:         "files",
+	Short:       "Ingest facts from local JSON files",
+	Annotations: map[string]string{"needs_db": "true"},
+	Long:        `Ingest facts from local JSON files into the database.
 
 Files must be in the cached content JSON format:
 {
@@ -131,7 +131,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize fact inserter
-	factInserter := core.NewFactInserter(storer)
+	factInserter := core.NewFactInserter(storer, nil)
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)
@@ -185,7 +185,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 // resolveTarget resolves the target name to an existing person/party or creates one.
 func resolveTarget(ctx context.Context, storer *storage.PostgresStorer, targetName string, targetType string, force bool) (string, error) {
 	// Use fuzzy matching to resolve the target
-	result := news.ResolveTargetName(ctx, storer, targetName)
+	result := core.ResolveTargetName(ctx, storer, targetName)
 
 	if result.Error != nil {
 		return "", fmt.Errorf("failed to resolve target name: %w", result.Error)
@@ -227,7 +227,7 @@ func resolveTarget(ctx context.Context, storer *storage.PostgresStorer, targetNa
 
 		for i, match := range result.FuzzyMatches {
 			fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-				i+1, match.Target.Name, match.Target.Type, match.Score)
+				i+1, match.Target.Name, match.Target.EntityType, match.Score)
 		}
 		fmt.Printf("  0) Create new %s %q\n", targetType, targetName)
 		fmt.Printf("  -1) Cancel\n")

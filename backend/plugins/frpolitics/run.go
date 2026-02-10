@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/plugins/news"
@@ -23,7 +24,7 @@ import (
 
 // AmbiguousNamesError is returned when target names cannot be uniquely resolved.
 type AmbiguousNamesError struct {
-	Resolutions map[string]news.TargetResolutionResult
+	Resolutions map[string]core.TargetResolutionResult
 }
 
 func (e *AmbiguousNamesError) Error() string {
@@ -133,41 +134,46 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	log.Info().Int("summaries_generated", len(summaries)).Msg("frpolitics: law summarization completed")
 
 	// 3b) Apply AI confidence filtering
-	// Use 0.5 as default threshold if MinConfidence is not set (0.0)
-	minConfidence := opts.MinConfidence
-	if minConfidence == 0.0 {
-		minConfidence = 0.5 // Default threshold for production use
-	}
-	log.Info().Int("total_laws", len(keywordFilteredLaws)).Float64("min_confidence", minConfidence).Msg("frpolitics: starting AI confidence filtering")
 	var aiFilteredLaws []Law
-	totalLaws := len(keywordFilteredLaws)
-	for idx, law := range keywordFilteredLaws {
-		// Log progress every 10%
-		if totalLaws > 10 && idx > 0 && idx%(totalLaws/10) == 0 {
-			log.Info().Int("processed", idx).Int("total", totalLaws).Int("percent", (idx*100)/totalLaws).Msg("frpolitics: AI filtering progress")
+	if opts.DisableAIFilter {
+		log.Info().Msg("frpolitics: AI confidence filtering disabled, keeping all laws")
+		aiFilteredLaws = keywordFilteredLaws
+	} else {
+		// Use 0.5 as default threshold if MinConfidence is not set (0.0)
+		minConfidence := opts.MinConfidence
+		if minConfidence == 0.0 {
+			minConfidence = 0.5 // Default threshold for production use
 		}
-
-		summary, ok := summaries[law.Key]
-		if !ok {
-			// No summary available, keep the law (fallback behavior)
-			aiFilteredLaws = append(aiFilteredLaws, law)
-			continue
-		}
-
-		if summary.Confidence < minConfidence {
-			// Skip low-confidence laws
-			confidence := summary.Confidence
-			err := storer.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, "low_ai_confidence", "", &confidence)
-			if err != nil {
-				return fmt.Errorf("failed to store skipped law %s: %w", law.Key, err)
+		log.Info().Int("total_laws", len(keywordFilteredLaws)).Float64("min_confidence", minConfidence).Msg("frpolitics: starting AI confidence filtering")
+		totalLaws := len(keywordFilteredLaws)
+		for idx, law := range keywordFilteredLaws {
+			// Log progress every 10%
+			if totalLaws > 10 && idx > 0 && idx%(totalLaws/10) == 0 {
+				log.Info().Int("processed", idx).Int("total", totalLaws).Int("percent", (idx*100)/totalLaws).Msg("frpolitics: AI filtering progress")
 			}
-		} else {
-			// Keep high-confidence laws
-			aiFilteredLaws = append(aiFilteredLaws, law)
-		}
-	}
 
-	log.Info().Int("ai_filtered", len(aiFilteredLaws)).Int("skipped_ai", len(keywordFilteredLaws)-len(aiFilteredLaws)).Msg("frpolitics: AI confidence filtering finished")
+			summary, ok := summaries[law.Key]
+			if !ok {
+				// No summary available, keep the law (fallback behavior)
+				aiFilteredLaws = append(aiFilteredLaws, law)
+				continue
+			}
+
+			if summary.Confidence < minConfidence {
+				// Skip low-confidence laws
+				confidence := summary.Confidence
+				err := storer.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, "low_ai_confidence", "", &confidence)
+				if err != nil {
+					return fmt.Errorf("failed to store skipped law %s: %w", law.Key, err)
+				}
+			} else {
+				// Keep high-confidence laws
+				aiFilteredLaws = append(aiFilteredLaws, law)
+			}
+		}
+
+		log.Info().Int("ai_filtered", len(aiFilteredLaws)).Int("skipped_ai", len(keywordFilteredLaws)-len(aiFilteredLaws)).Msg("frpolitics: AI confidence filtering finished")
+	}
 
 	if len(aiFilteredLaws) == 0 {
 		return nil
@@ -797,14 +803,14 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 
 	// Build targets list
 	var targets []news.SearchTarget
-	var ambiguousQueries map[string]news.TargetResolutionResult
+	var ambiguousQueries map[string]core.TargetResolutionResult
 
 	if len(opts.NewsTargets) > 0 {
 		// Resolve target names with fuzzy matching
 		log.Info().Int("count", len(opts.NewsTargets)).Msg("frpolitics: resolving specified news targets")
 
-		resolutions := news.ResolveTargetNames(ctx, storer, opts.NewsTargets)
-		ambiguousQueries = make(map[string]news.TargetResolutionResult)
+		resolutions := core.ResolveTargetNames(ctx, storer, opts.NewsTargets)
+		ambiguousQueries = make(map[string]core.TargetResolutionResult)
 
 		for query, result := range resolutions {
 			if result.Error != nil {
@@ -815,7 +821,15 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 			if result.IsExactMatch {
 				// Exact match found
 				log.Info().Str("query", query).Str("matched", result.ExactMatch.Name).Msg("Exact match found")
-				targets = append(targets, *result.ExactMatch)
+				targetType := news.TargetPerson
+				if result.ExactMatch.EntityType == "party" {
+					targetType = news.TargetParty
+				}
+				targets = append(targets, news.SearchTarget{
+					Name:     result.ExactMatch.Name,
+					Type:     targetType,
+					PersonID: result.ExactMatch.PersonID,
+				})
 			} else if len(result.FuzzyMatches) > 0 {
 				// Ambiguous - store for later
 				log.Warn().Str("query", query).Int("candidates", len(result.FuzzyMatches)).Msg("Ambiguous name - disambiguation needed")

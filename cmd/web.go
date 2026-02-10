@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -34,10 +35,11 @@ var webCmd = &cobra.Command{
 
 // serveCmd represents the serve command
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the web server",
-	Long:  `Start the HTTP server that serves the API endpoints and SSE streams.`,
-	RunE:  executeServe,
+	Use:         "serve",
+	Short:       "Start the web server",
+	Long:        `Start the HTTP server that serves the API endpoints and SSE streams.`,
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        executeServe,
 }
 
 func init() {
@@ -62,16 +64,10 @@ func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
-		AllowOriginFunc: func(r *http.Request, origin string) bool {
-			// Allow all localhost and 127.0.0.1 origins for development
-			return strings.HasPrefix(origin, "http://localhost:") ||
-				strings.HasPrefix(origin, "http://127.0.0.1:") ||
-				strings.HasPrefix(origin, "https://localhost:") ||
-				strings.HasPrefix(origin, "https://127.0.0.1:")
-		},
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link"},
+		AllowOriginFunc: corsOriginFunc(),
+		AllowedMethods:  []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:  []string{"Accept", "Authorization", "Content-Type"},
+		ExposedHeaders:  []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -88,10 +84,38 @@ func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 	return server
 }
 
+// corsOriginFunc returns a CORS origin checker based on the ALLOWED_ORIGINS env var.
+// If ALLOWED_ORIGINS is set (comma-separated), only those origins are permitted.
+// Otherwise, localhost/127.0.0.1 origins are allowed for development.
+func corsOriginFunc() func(r *http.Request, origin string) bool {
+	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
+		allowed := make(map[string]struct{})
+		for _, o := range strings.Split(env, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				allowed[o] = struct{}{}
+			}
+		}
+		return func(r *http.Request, origin string) bool {
+			_, ok := allowed[origin]
+			return ok
+		}
+	}
+	return func(r *http.Request, origin string) bool {
+		return strings.HasPrefix(origin, "http://localhost:") ||
+			strings.HasPrefix(origin, "http://127.0.0.1:") ||
+			strings.HasPrefix(origin, "https://localhost:") ||
+			strings.HasPrefix(origin, "https://127.0.0.1:")
+	}
+}
+
 // setupRoutes configures all the API routes
 func (ws *WebServer) setupRoutes() {
 	// Prometheus metrics endpoint
 	ws.router.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+
+	// Health check endpoint
+	ws.router.Get("/health", ws.handleHealth)
 
 	// API routes
 	ws.router.Route("/api", func(r chi.Router) {
@@ -102,6 +126,25 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/person/{id}/members", ws.handleGetPersonMembers)
 		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
 		r.Get("/events", ws.handleEventsSSE)
+	})
+}
+
+// handleHealth checks database connectivity and returns server health status.
+func (ws *WebServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := ws.storer.Pool().Ping(ctx); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
 	})
 }
 
@@ -249,6 +292,7 @@ type MemberInfo struct {
 	Name         string  `json:"name"`
 	EntityType   string  `json:"entity_type"`
 	HonestyScore float64 `json:"honesty_score"`
+	ImageURL     *string `json:"image_url,omitempty"`
 }
 
 // handleGetPersonMembers returns persons affiliated with an entity (e.g., deputies in a party)
@@ -264,7 +308,7 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 
 	// Query members (persons linked to this entity via person_links)
 	query := `
-		SELECT DISTINCT p.id, p.name, p.entity_type, p.honesty_score
+		SELECT DISTINCT p.id, p.name, p.entity_type, p.honesty_score, p.image_url
 		FROM persons p
 		JOIN person_links pl ON p.id = pl.src_person_id
 		WHERE pl.dst_person_id = $1
@@ -280,7 +324,7 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 	members := make([]MemberInfo, 0)
 	for rows.Next() {
 		var m MemberInfo
-		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.HonestyScore); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.HonestyScore, &m.ImageURL); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to scan member: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -351,8 +395,16 @@ func (ws *WebServer) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	sinceIDStr := r.URL.Query().Get("since_id")
 	sinceID := int64(0)
 	if sinceIDStr != "" {
+		// Client reconnecting — replay from their last seen ID
 		if parsed, err := strconv.ParseInt(sinceIDStr, 10, 64); err == nil && parsed >= 0 {
 			sinceID = parsed
+		}
+	} else {
+		// Fresh connection — start from latest, only show new events
+		row := ws.storer.Pool().QueryRow(ctx, "SELECT COALESCE(MAX(id), 0) FROM event_log")
+		if err := row.Scan(&sinceID); err != nil {
+			log.Error().Err(err).Msg("Failed to query max event ID, starting from 0")
+			sinceID = 0
 		}
 	}
 

@@ -41,7 +41,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Name:      "news_articles_processed_total",
-			Help:      "Total number of news articles processed by status (parsed/skipped/error)",
+			Help:      "Total number of news articles processed by status (parsed/parsed_no_facts/skipped/error)",
 		},
 		[]string{"status"},
 	)
@@ -55,6 +55,16 @@ var (
 			Buckets:   []float64{0.5, 1, 2.5, 5, 10, 15, 30, 45, 60},
 		},
 		[]string{"extractor"},
+	)
+
+	// TweetsProcessedTotal counts tweets by status
+	TweetsProcessedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "tweets_processed_total",
+			Help:      "Total number of tweets processed by status (parsed/parsed_no_facts/fact_extracted/skipped_retweet/skipped_already_processed/error)",
+		},
+		[]string{"status"},
 	)
 
 	// HonestyScoreUpdates tracks the distribution of honesty score updates
@@ -90,6 +100,11 @@ func IncrementContradictionChecks(result string) {
 // IncrementNewsArticles increments the news article counter
 func IncrementNewsArticles(status string) {
 	NewsArticlesProcessedTotal.WithLabelValues(status).Inc()
+}
+
+// IncrementTweets increments the tweet counter
+func IncrementTweets(status string) {
+	TweetsProcessedTotal.WithLabelValues(status).Inc()
 }
 
 // ObserveContentExtraction records content extraction duration

@@ -94,10 +94,10 @@ Response:
 NO: The later statement indicates she learned about the mutualization scheme after the earlier denial of knowledge.
 
 Example 2 (Denial After Claim - Contradictory):
-Statement A (dated January 15, 2024): "Marine Le Pen stated the EU Parliament was fully aware of the mutualization."
+Statement A (dated January 15, 2024): "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice."
 Statement B (dated March 20, 2024): "Marine Le Pen claimed she never knew about any mutualization scheme."
 Response:
-YES: She claimed knowledge on January 15, then denied having that knowledge on March 20 - you cannot unknow something.
+YES: She claimed personal knowledge of the mutualization on January 15, then denied having that knowledge on March 20 - you cannot unknow something.
 
 Example 3 (Unknown Dates - Be Skeptical):
 Statement A (dated unknown date): "CEO Jones supported policy X."

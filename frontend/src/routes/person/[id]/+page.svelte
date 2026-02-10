@@ -10,6 +10,7 @@
 		name: string;
 		entity_type: string;
 		honesty_score: number;
+		image_url?: string;
 	}
 
 	let person: PersonSummary | null = null;
@@ -253,18 +254,16 @@
 	onMount(() => {
 		loadData();
 
-		// Realtime updates disabled - they cause request floods due to historical events
-		// TODO: Fix SSE to only send events newer than connection time
-		// realtimeManager.connect();
-		// unsubscribe = subscribeToPersonEvents(personId, handleRealtimeEvent);
+		realtimeManager.connect();
+		unsubscribe = subscribeToPersonEvents(personId, handleRealtimeEvent);
 	});
 
 	onDestroy(() => {
-		// if (unsubscribe) {
-		// 	unsubscribe();
-		// }
-		// realtimeManager.disconnect();
-		// clearOldEvents();
+		if (unsubscribe) {
+			unsubscribe();
+		}
+		realtimeManager.disconnect();
+		clearOldEvents();
 	});
 </script>
 
@@ -279,12 +278,21 @@
 			<h1>Loading...</h1>
 		{:else if person}
 			<div class="person-header">
-				<h1>
-					{person.name}
-					{#if person.entity_type === 'party'}
-						<span class="party-badge">Party</span>
+				<div class="person-title-row">
+					{#if person.image_url}
+						<img src={person.image_url} alt={person.name} class="avatar avatar-96" />
+					{:else}
+						<div class="avatar avatar-96 avatar-placeholder">
+							{person.name.charAt(0).toUpperCase()}
+						</div>
 					{/if}
-				</h1>
+					<h1>
+						{person.name}
+						{#if person.entity_type === 'party'}
+							<span class="party-badge">Party</span>
+						{/if}
+					</h1>
+				</div>
 
 				<div class="honesty-score">
 					<div class="score-bar">
@@ -313,6 +321,13 @@
 							<div class="members-list">
 								{#each members as member (member.id)}
 									<a href="/person/{member.id}" class="member-item">
+										{#if member.image_url}
+											<img src={member.image_url} alt={member.name} class="avatar avatar-24" />
+										{:else}
+											<div class="avatar avatar-24 avatar-placeholder avatar-placeholder-sm">
+												{member.name.charAt(0).toUpperCase()}
+											</div>
+										{/if}
 										<span class="member-name">{member.name}</span>
 										<span class="member-score" style="color: {getHonestyColor(member.honesty_score)}">
 											{(member.honesty_score * 100).toFixed(0)}%
@@ -527,8 +542,45 @@
 		text-decoration: underline;
 	}
 
+	.person-title-row {
+		display: flex;
+		align-items: center;
+		gap: 1.5rem;
+		margin-bottom: 1rem;
+	}
+
+	.avatar {
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+
+	.avatar-96 {
+		width: 96px;
+		height: 96px;
+	}
+
+	.avatar-24 {
+		width: 24px;
+		height: 24px;
+	}
+
+	.avatar-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #e5e7eb;
+		color: #6b7280;
+		font-weight: 600;
+		font-size: 2rem;
+	}
+
+	.avatar-placeholder-sm {
+		font-size: 0.75rem;
+	}
+
 	.person-header h1 {
-		margin: 0 0 1rem 0;
+		margin: 0;
 		color: #1f2937;
 		display: flex;
 		align-items: center;
@@ -877,8 +929,8 @@
 
 	.member-item {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		gap: 0.5rem;
 		padding: 0.5rem 0.75rem;
 		background: white;
 		border: 1px solid #e5e7eb;
@@ -897,6 +949,7 @@
 	.member-name {
 		color: #1f2937;
 		text-transform: capitalize;
+		flex: 1;
 	}
 
 	.member-score {

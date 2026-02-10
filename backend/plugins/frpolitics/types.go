@@ -73,6 +73,8 @@ type Options struct {
 	MinConfidence float64
 	// DisableKeywordFilter when true, skips keyword-based filtering (useful for tests)
 	DisableKeywordFilter bool
+	// DisableAIFilter when true, skips AI confidence filtering (useful for tests)
+	DisableAIFilter bool
 	// Legislatures enumerates legislature numbers to fetch from (e.g., 16)
 	Legislatures []int
 	// RevisitHours controls source revisit window; 0 means always revisit now
