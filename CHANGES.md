@@ -7,7 +7,7 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 ### What was done
 - **Migration**: Added `image_url TEXT` column to `persons` table.
 - **SerpAPI Image Search**: Extended `backend/search/serpapi.go` with `SearchImages()` method using `google_images` engine. Returns `ImageResult` with dimensions, source, thumbnail.
-- **R2 Object Storage**: New `backend/objectstore/r2.go` package — Cloudflare R2 (S3-compatible) client with `Upload()` and `Delete()` methods via AWS SDK v2.
+- **Object Storage**: New `backend/objectstore/r2.go` package — S3-compatible client with `ObjectStore` interface, `Upload()` and `Delete()` methods via AWS SDK v2. Env vars: `STORAGE_ENDPOINT`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, `STORAGE_BUCKET`. No separate public URL — uses endpoint directly.
 - **Storage Layer**: Added `ImageURL` to `PersonSummary`, updated all queries (GetPersonsRankedByScore, GetPersonByID, GetFactPersons, members query). New methods: `SetPersonImageURL()`, `GetPersonsWithoutImage()`.
 - **Photos Plugin**: `backend/plugins/photos/` — searches images, scores candidates by resolution/aspect ratio/domain reputation/position, downloads best match, uploads to R2, stores URL. Scoring heuristic: max 100 pts (resolution 40 + aspect 20 + domain 25 + position 15). Tries up to 5 fallback candidates.
 - **CLI**: `dm plugin photos search --targets "Name" [--all] [--force] [--dry-run]`.

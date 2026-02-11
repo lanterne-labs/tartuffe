@@ -18,11 +18,11 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
-// R2Client is a Cloudflare R2 (S3-compatible) storage client.
+// R2Client is an S3-compatible storage client (works with Cloudflare R2, MinIO, etc).
 type R2Client struct {
 	client    *s3.Client
 	bucket    string
-	publicURL string
+	publicURL string // base URL for public access (e.g. https://pub-xxx.r2.dev)
 }
 
 // NewR2ClientWithS3 creates an R2Client wrapping an existing S3 client.
@@ -35,21 +35,21 @@ func NewR2ClientWithS3(client *s3.Client, bucketName, publicURL string) *R2Clien
 	}
 }
 
-// NewR2Client creates an R2 storage client pointed at the given Cloudflare account.
-func NewR2Client(accountID, accessKeyID, accessKeySecret, bucketName, publicURL string) (*R2Client, error) {
-	endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
-
+// NewR2Client creates an S3-compatible storage client.
+// endpoint is the S3 API URL; publicURL is the base URL for serving files publicly.
+func NewR2Client(endpoint, accessKey, secretKey, bucketName, publicURL string) (*R2Client, error) {
 	client := s3.New(s3.Options{
 		BaseEndpoint: aws.String(endpoint),
 		Region:       "auto",
-		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKeyID, accessKeySecret, "")),
+		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		UsePathStyle: true,
 	})
 
 	log.Debug().
 		Str("endpoint", endpoint).
+		Str("public_url", publicURL).
 		Str("bucket", bucketName).
-		Msg("R2 client created")
+		Msg("storage client created")
 
 	return &R2Client{
 		client:    client,
@@ -58,15 +58,15 @@ func NewR2Client(accountID, accessKeyID, accessKeySecret, bucketName, publicURL 
 	}, nil
 }
 
-// NewR2ClientFromEnv creates an R2 client from environment variables:
-// R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_ACCESS_KEY_SECRET, R2_BUCKET_NAME, R2_PUBLIC_URL.
+// NewR2ClientFromEnv creates a storage client from environment variables:
+// STORAGE_ENDPOINT, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY, STORAGE_BUCKET, STORAGE_PUBLIC_URL.
 func NewR2ClientFromEnv() (*R2Client, error) {
 	vars := map[string]string{
-		"R2_ACCOUNT_ID":        os.Getenv("R2_ACCOUNT_ID"),
-		"R2_ACCESS_KEY_ID":     os.Getenv("R2_ACCESS_KEY_ID"),
-		"R2_ACCESS_KEY_SECRET": os.Getenv("R2_ACCESS_KEY_SECRET"),
-		"R2_BUCKET_NAME":       os.Getenv("R2_BUCKET_NAME"),
-		"R2_PUBLIC_URL":        os.Getenv("R2_PUBLIC_URL"),
+		"STORAGE_ENDPOINT":   os.Getenv("STORAGE_ENDPOINT"),
+		"STORAGE_ACCESS_KEY": os.Getenv("STORAGE_ACCESS_KEY"),
+		"STORAGE_SECRET_KEY": os.Getenv("STORAGE_SECRET_KEY"),
+		"STORAGE_BUCKET":     os.Getenv("STORAGE_BUCKET"),
+		"STORAGE_PUBLIC_URL": os.Getenv("STORAGE_PUBLIC_URL"),
 	}
 
 	for name, val := range vars {
@@ -76,11 +76,11 @@ func NewR2ClientFromEnv() (*R2Client, error) {
 	}
 
 	return NewR2Client(
-		vars["R2_ACCOUNT_ID"],
-		vars["R2_ACCESS_KEY_ID"],
-		vars["R2_ACCESS_KEY_SECRET"],
-		vars["R2_BUCKET_NAME"],
-		vars["R2_PUBLIC_URL"],
+		vars["STORAGE_ENDPOINT"],
+		vars["STORAGE_ACCESS_KEY"],
+		vars["STORAGE_SECRET_KEY"],
+		vars["STORAGE_BUCKET"],
+		vars["STORAGE_PUBLIC_URL"],
 	)
 }
 

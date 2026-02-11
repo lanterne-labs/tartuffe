@@ -547,6 +547,7 @@
 		align-items: center;
 		gap: 1.5rem;
 		margin-bottom: 1rem;
+		text-transform: capitalize;
 	}
 
 	.avatar {

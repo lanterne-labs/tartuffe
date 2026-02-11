@@ -43,17 +43,26 @@ func TestBuildSearchQuery(t *testing.T) {
 	}
 }
 
+func TestIsBlockedURL(t *testing.T) {
+	assert.True(t, isBlockedURL("https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=123"))
+	assert.True(t, isBlockedURL("https://lookaside.instagram.com/seo/google_widget/crawler/?media_id=456"))
+	assert.True(t, isBlockedURL("https://scontent.fbcdn.net/v/t1.6435-9/123.jpg"))
+	assert.False(t, isBlockedURL("https://upload.wikimedia.org/wikipedia/commons/photo.jpg"))
+	assert.False(t, isBlockedURL("https://example.com/image.jpg"))
+}
+
 func TestScoreImages(t *testing.T) {
 	images := []search.ImageResult{
 		{Original: "http://a.com/large.jpg", OriginalWidth: 800, OriginalHeight: 800, Source: "wikipedia.org", Position: 1},
 		{Original: "http://b.com/small.jpg", OriginalWidth: 100, OriginalHeight: 100, Source: "random.com", Position: 2},
 		{Original: "http://c.com/wide.jpg", OriginalWidth: 1200, OriginalHeight: 300, Source: "reuters.com", Position: 3},
 		{Original: "http://d.com/medium.jpg", OriginalWidth: 500, OriginalHeight: 600, Source: "lemonde.fr", Position: 4},
+		{Original: "https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=123", OriginalWidth: 800, OriginalHeight: 800, Source: "Facebook", Position: 5},
 	}
 
 	scored := scoreImages(images, 200, 200)
 
-	// Small image should be filtered out
+	// Small image and blocked Facebook URL should be filtered out
 	assert.Len(t, scored, 3)
 
 	// First result should be the wikipedia one (high domain + good aspect ratio + high resolution)

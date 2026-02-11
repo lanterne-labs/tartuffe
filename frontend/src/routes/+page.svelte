@@ -367,6 +367,7 @@
 	.person-header h2 a {
 		color: inherit;
 		text-decoration: none;
+		text-transform: capitalize;
 	}
 
 	.person-header h2 a:hover {

@@ -191,19 +191,45 @@ func buildSearchQuery(person storage.PersonSummary) string {
 	}
 
 	if entityType == "party" {
-		return fmt.Sprintf(`"%s" political party logo`, person.Name)
+		return fmt.Sprintf(`"%s" parti politique logo`, person.Name)
 	}
-	return fmt.Sprintf(`"%s" official portrait photo`, person.Name)
+	return fmt.Sprintf(`"%s" official`, person.Name)
+}
+
+// blockedURLPatterns contains URL substrings from domains that consistently block
+// direct image downloads (return HTML instead of images).
+var blockedURLPatterns = []string{
+	"lookaside.fbsbx.com",
+	"lookaside.instagram.com",
+	"scontent.fbcdn.net",
+	"scontent.cdninstagram.com",
+	"platform-lookaside.fbsbx.com",
+}
+
+// isBlockedURL returns true if the URL matches a known-bad pattern.
+func isBlockedURL(url string) bool {
+	lower := strings.ToLower(url)
+	for _, pattern := range blockedURLPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // scoreImages scores image candidates and returns them sorted by score (highest first).
-// Images below the minimum dimensions are excluded.
+// Images below the minimum dimensions or from blocked domains are excluded.
 func scoreImages(images []search.ImageResult, minWidth, minHeight int) []ScoredImage {
 	var scored []ScoredImage
 
 	for _, img := range images {
 		// Filter out images below minimum size
 		if img.OriginalWidth < minWidth || img.OriginalHeight < minHeight {
+			continue
+		}
+
+		// Filter out URLs from domains that never serve images directly
+		if isBlockedURL(img.Original) {
 			continue
 		}
 
@@ -321,6 +347,7 @@ func downloadImage(ctx context.Context, client *http.Client, url string) ([]byte
 	if err != nil {
 		return nil, "", fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("User-Agent", "DigitalMirror/1.0 (photo-fetcher; contact@digital-mirror.app)")
 
 	resp, err := client.Do(req)
 	if err != nil {
