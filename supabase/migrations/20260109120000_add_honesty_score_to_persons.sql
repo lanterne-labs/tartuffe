@@ -7,6 +7,7 @@ ALTER TABLE persons
 ADD COLUMN IF NOT EXISTS honesty_score DOUBLE PRECISION NOT NULL DEFAULT 1.0;
 
 -- Add constraint to ensure honesty_score is between 0.0 and 1.0
+-- +goose StatementBegin
 DO $$
 BEGIN
     ALTER TABLE persons
@@ -14,3 +15,4 @@ BEGIN
 EXCEPTION
     WHEN duplicate_object THEN NULL;
 END $$;
+-- +goose StatementEnd

@@ -1,12 +1,14 @@
 -- +goose Up
 -- Notify channel for facts inserted/updated so external services can react
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION notify_facts_changed() RETURNS trigger AS $$
 BEGIN
     PERFORM pg_notify('facts_changed', NEW.id::text);
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 DROP TRIGGER IF EXISTS facts_changed_insert ON facts;
 CREATE TRIGGER facts_changed_insert

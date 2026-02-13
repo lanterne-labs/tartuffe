@@ -9,6 +9,7 @@ UPDATE person_links SET link_type = 'affiliation' WHERE link_type = 'membership'
 -- This requires that there are no duplicates currently; if duplicates exist, this will fail.
 -- In that case you may want to deduplicate first.
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -16,6 +17,7 @@ BEGIN
         CREATE UNIQUE INDEX uq_person_links_src_dst_link ON person_links (src_person_id, dst_person_id, link_type);
     END IF;
 END$$;
+-- +goose StatementEnd
 
 -- 3) Update link_type constraint to only allow 'affiliation'
 ALTER TABLE person_links DROP CONSTRAINT IF EXISTS person_links_link_type_check;

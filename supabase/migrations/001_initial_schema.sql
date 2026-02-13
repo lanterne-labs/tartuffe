@@ -24,6 +24,7 @@ CREATE INDEX ON facts USING hnsw (embedding vector_l2_ops);
 -- Or use IVFFlat: CREATE INDEX ON facts USING ivfflat (embedding vector_l2_ops) WITH (lists = 100);
 
 -- Trigger to automatically update updated_at timestamp
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -31,6 +32,7 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER set_facts_timestamp
 BEFORE UPDATE ON facts
