@@ -4,9 +4,9 @@
 .envrc
 prod.sql
 
-# Supabase local
-supabase
+# Supabase local (keep migrations for production)
 supabase/*
+!supabase/migrations/
 
 # Compiled binaries
 dm
