@@ -322,6 +322,16 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 		Storer:        storer,
 	}
 
+	type handleResult struct {
+		handle           string
+		tweetsFetched    int
+		tweetsProcessed  int
+		factsExtracted   int
+		skippedRetweets  int
+		errorCount       int
+	}
+	var allHandleResults []handleResult
+
 	totalFacts := 0
 	totalTweets := 0
 
@@ -355,6 +365,15 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 			Bool("skipped_range", result.SkippedAlreadyFetchedRange).
 			Msg("Completed twitter handle")
 
+		allHandleResults = append(allHandleResults, handleResult{
+			handle:          handle.Handle,
+			tweetsFetched:   result.TweetsFetched,
+			tweetsProcessed: result.TweetsProcessed,
+			factsExtracted:  result.FactsExtracted,
+			skippedRetweets: result.SkippedRetweets,
+			errorCount:      len(result.Errors),
+		})
+
 		totalFacts += result.FactsExtracted
 		totalTweets += result.TweetsFetched
 	}
@@ -364,6 +383,23 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 		Int("total_tweets", totalTweets).
 		Int("total_facts", totalFacts).
 		Msg("Twitter fetch completed")
+
+	// Record job metrics (skip in dry-run mode)
+	if !dryRun {
+		var jobMetrics []storage.JobMetric
+		for _, hr := range allHandleResults {
+			jobMetrics = append(jobMetrics,
+				storage.JobMetric{JobType: "twitter-fetch", Target: hr.handle, Metric: "tweets_fetched", Value: float64(hr.tweetsFetched)},
+				storage.JobMetric{JobType: "twitter-fetch", Target: hr.handle, Metric: "tweets_processed", Value: float64(hr.tweetsProcessed)},
+				storage.JobMetric{JobType: "twitter-fetch", Target: hr.handle, Metric: "facts_extracted", Value: float64(hr.factsExtracted)},
+				storage.JobMetric{JobType: "twitter-fetch", Target: hr.handle, Metric: "skipped_retweets", Value: float64(hr.skippedRetweets)},
+				storage.JobMetric{JobType: "twitter-fetch", Target: hr.handle, Metric: "errors", Value: float64(hr.errorCount)},
+			)
+		}
+		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+			log.Error().Err(err).Msg("Failed to record job metrics")
+		}
+	}
 
 	return nil
 }

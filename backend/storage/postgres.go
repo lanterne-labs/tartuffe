@@ -1982,37 +1982,41 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 
 // ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates
 type ContradictionWithFacts struct {
-	ID             int64      `json:"id"`
-	PersonID       int64      `json:"person_id"`
-	FactAID        int64      `json:"fact_a_id"`
-	FactBID        int64      `json:"fact_b_id"`
-	FactAText      string     `json:"fact_a_text"`
-	FactBText      string     `json:"fact_b_text"`
-	FactASourceURL *string    `json:"fact_a_source_url"`
-	FactBSourceURL *string    `json:"fact_b_source_url"`
-	FactADate      *time.Time `json:"fact_a_date"`
-	FactBDate      *time.Time `json:"fact_b_date"`
-	Reason         string     `json:"reason"`
-	DetectedAt     time.Time  `json:"detected_at"`
+	ID              int64      `json:"id"`
+	PersonID        int64      `json:"person_id"`
+	FactAID         int64      `json:"fact_a_id"`
+	FactBID         int64      `json:"fact_b_id"`
+	FactAText       string     `json:"fact_a_text"`
+	FactBText       string     `json:"fact_b_text"`
+	FactASourceURLs []string   `json:"fact_a_source_urls"`
+	FactBSourceURLs []string   `json:"fact_b_source_urls"`
+	FactADate       *time.Time `json:"fact_a_date"`
+	FactBDate       *time.Time `json:"fact_b_date"`
+	Reason          string     `json:"reason"`
+	DetectedAt      time.Time  `json:"detected_at"`
 }
 
 // GetPersonContradictions returns contradictions for a specific person with both fact texts
 func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) ([]ContradictionWithFacts, error) {
 	query := `
 		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
-			   fa.fact_text as fact_a_text, fb.fact_text as fact_b_text,
-			   fsa.source_url as fact_a_source_url, fsb.source_url as fact_b_source_url,
-			   COALESCE(fsa.published_at, fa.created_at) as fact_a_date,
-			   COALESCE(fsb.published_at, fb.created_at) as fact_b_date,
+			   fa.fact_text, fb.fact_text,
+			   COALESCE(fsa.urls, '{}'), COALESCE(fsb.urls, '{}'),
+			   COALESCE(fsa.earliest, fa.created_at),
+			   COALESCE(fsb.earliest, fb.created_at),
 			   c.reason, c.detected_at
 		FROM contradictions c
 		JOIN facts fa ON fa.id = c.fact_a_id
 		JOIN facts fb ON fb.id = c.fact_b_id
 		LEFT JOIN LATERAL (
-			SELECT source_url, published_at FROM fact_sources WHERE fact_id = fa.id ORDER BY published_at ASC NULLS LAST LIMIT 1
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fa.id
 		) fsa ON true
 		LEFT JOIN LATERAL (
-			SELECT source_url, published_at FROM fact_sources WHERE fact_id = fb.id ORDER BY published_at ASC NULLS LAST LIMIT 1
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fb.id
 		) fsb ON true
 		WHERE c.person_id = $1
 		ORDER BY c.detected_at DESC
@@ -2029,7 +2033,7 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 		var contradiction ContradictionWithFacts
 		err := rows.Scan(&contradiction.ID, &contradiction.PersonID, &contradiction.FactAID, &contradiction.FactBID,
 			&contradiction.FactAText, &contradiction.FactBText,
-			&contradiction.FactASourceURL, &contradiction.FactBSourceURL,
+			&contradiction.FactASourceURLs, &contradiction.FactBSourceURLs,
 			&contradiction.FactADate, &contradiction.FactBDate,
 			&contradiction.Reason, &contradiction.DetectedAt)
 		if err != nil {
@@ -2062,6 +2066,12 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 	}
 
 	deletedCount := int(result.RowsAffected())
+
+	// Reset pair tracking so all pairs are re-analyzed on next detection run
+	_, err = tx.Exec(ctx, `DELETE FROM fact_pair_checks WHERE person_id = $1`, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to reset pair checks for person %d: %w", personID, err)
+	}
 
 	if deletedCount > 0 {
 		// Recalculate honesty score (will be 1.0 since no contradictions remain)
@@ -2130,6 +2140,16 @@ func (s *PostgresStorer) DeleteFactsForPerson(ctx context.Context, personID int6
 	_, err = tx.Exec(ctx, `DELETE FROM contradictions WHERE person_id = $1`, personID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete contradictions: %w", err)
+	}
+
+	// Clear plugin metadata so plugins will re-process after facts are deleted
+	_, err = tx.Exec(ctx, `DELETE FROM news_search_log WHERE person_id = $1`, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete news search logs: %w", err)
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM twitter_fetch_log WHERE handle_id IN (SELECT id FROM twitter_handles WHERE person_id = $1)`, personID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete twitter fetch logs: %w", err)
 	}
 
 	// Delete facts linked to this person via fact_mentions
@@ -3049,4 +3069,36 @@ func (s *PostgresStorer) GetPersonsWithoutImage(ctx context.Context) ([]PersonSu
 	}
 
 	return persons, nil
+}
+
+// JobMetric represents a single metric data point from a CLI job.
+type JobMetric struct {
+	JobType string
+	Target  string
+	Metric  string
+	Value   float64
+}
+
+// RecordJobMetrics inserts multiple job metrics in a single batch.
+func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetric) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+
+	query := "INSERT INTO job_metrics (job_type, target, metric, value) VALUES "
+	args := make([]interface{}, 0, len(metrics)*4)
+	for i, m := range metrics {
+		if i > 0 {
+			query += ", "
+		}
+		base := i * 4
+		query += fmt.Sprintf("($%d, $%d, $%d, $%d)", base+1, base+2, base+3, base+4)
+		args = append(args, m.JobType, m.Target, m.Metric, m.Value)
+	}
+
+	_, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("record job metrics: %w", err)
+	}
+	return nil
 }

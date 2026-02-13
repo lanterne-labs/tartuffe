@@ -51,6 +51,9 @@ type IngestOptions struct {
 	// SkipDedupeCheck disables real-time deduplication checking during ingestion.
 	// When false (default), new facts are checked against existing facts before inserting.
 	SkipDedupeCheck bool
+	// KeepSourceDir, when set, dumps article content + extracted facts to JSON files
+	// in this directory for debugging LLM fact extraction.
+	KeepSourceDir string
 }
 
 // IngestResult contains the outcome of a file ingestion run.
@@ -209,6 +212,13 @@ func (fi *FileIngester) processFile(ctx context.Context, path string, opts Inges
 	facts, err := fi.factExtractor.ExtractFactsWithType(ctx, opts.TargetName, opts.TargetType, extracted)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract facts: %w", err)
+	}
+
+	// Dump source content + extracted facts for debugging if requested
+	if opts.KeepSourceDir != "" {
+		if dumpErr := DumpSourceAndFacts(opts.KeepSourceDir, opts.TargetName, content.URL, content.Title, content.Content, content.DatePublished, facts); dumpErr != nil {
+			log.Warn().Err(dumpErr).Str("file", path).Msg("Failed to dump source and facts")
+		}
 	}
 
 	log.Debug().

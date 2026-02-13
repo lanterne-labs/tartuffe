@@ -332,5 +332,16 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 		fmt.Printf("(Dry run - nothing recorded to database)\n")
 	}
 
+	// Record job metrics (skip in dry-run mode)
+	if !detectDryRun {
+		jobMetrics := []storage.JobMetric{
+			{JobType: "contradictions-detect", Target: "", Metric: "pairs_checked", Value: float64(totalPairsChecked)},
+			{JobType: "contradictions-detect", Target: "", Metric: "contradictions_found", Value: float64(totalContradictions)},
+		}
+		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+			log.Error().Err(err).Msg("Failed to record job metrics")
+		}
+	}
+
 	return nil
 }

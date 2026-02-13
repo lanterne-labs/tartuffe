@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -22,3 +22,4 @@ COPY --from=builder /app/supabase/migrations /migrations
 ENV MIGRATIONS_DIR=/migrations
 
 ENTRYPOINT ["dm"]
+CMD ["web", "serve"]

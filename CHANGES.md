@@ -2,6 +2,49 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-11: Job Metrics Table
+
+### What was done
+- **Migration**: New `job_metrics` table (job_type, target, metric, value, created_at) with indexes on job_type, created_at, metric. Designed for Grafana to query directly.
+- **Storage**: `JobMetric` struct and `RecordJobMetrics` batch insert method on `PostgresStorer`.
+- **CLI instrumentation**: All 6 CLI commands record per-run business metrics to `job_metrics` before returning: `news-search`, `twitter-fetch`, `contradictions-detect`, `ingest-files`, `photos-search`, `queue-process`. Metrics are skipped in dry-run mode (except queue-process which has no global dry-run).
+
+### Key design decisions
+- Batch insert (single query with N value tuples) to minimize round trips.
+- Per-target metrics for news and twitter; aggregate metrics for contradictions, photos, and queue.
+- No dry-run metrics recording to avoid polluting data.
+
+## 2026-02-11: Frontend Dark Theme Redesign
+
+### What was done
+- **Global CSS design tokens**: Created `frontend/src/app.css` with CSS custom properties for dark navy theme (colors, glass-morphism, typography, shadows, transitions). Includes shimmer skeleton animation and global reset.
+- **app.html**: Added SEO meta tags, Open Graph/Twitter cards, Inter font from Google Fonts.
+- **Layout**: Sticky glass-morphism nav bar, page transitions using `svelte/transition` fly. Imports global CSS.
+- **Dashboard (+page.svelte)**: Rewritten with Svelte 5 syntax (`$state`, `onclick`/`oninput`), grid layout with glass cards, SVG score rings (stroke-dasharray), shimmer skeleton loaders, pill filter buttons.
+- **Person detail page**: Rewritten with Svelte 5 syntax (`$state`, `$derived`, `onclick`), hero section with SVG gauge, glass cards for facts/contradictions, dark-themed contradiction comparison panels, blue glow for highlighted facts, responsive layout.
+- **Error page**: New `+error.svelte` with dark theme styling.
+- **Realtime cleanup**: Removed `console.log` for routine SSE events (connection opened, reconnect attempts). Kept `console.error` for actual failures.
+
+### Key design decisions
+- All colors/spacing/shadows as CSS custom properties for consistency and easy theming.
+- Glass-morphism via `backdrop-filter: blur(12px)` with semi-transparent backgrounds.
+- SVG ring gauges use `stroke-dasharray` with circumference `2*PI*14` for score visualization.
+- Svelte 5 runes (`$state`, `$derived`) replace legacy reactive declarations (`$:`, `let x = ...`).
+- `console.error` calls in `loadMembers` and `loadFactPersons` converted to set `error` state variable instead.
+
+## 2026-02-11: Backend Security Hardening
+
+### What was done
+- **Separate Metrics Port**: Moved `/metrics` endpoint from the main API router to a dedicated internal-only HTTP server on `METRICS_PORT` (default `9090`). `/health` is available on both servers. Prometheus/Grafana scrape `localhost:9090/metrics` without exposing metrics publicly.
+- **HTTP Rate Limiting**: Added `github.com/go-chi/httprate` middleware. Limits requests per IP to `RATE_LIMIT_PER_MINUTE` (default 100). Returns 429 when exceeded.
+- **Security Headers Middleware**: New `securityHeaders` middleware sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Content-Security-Policy`, and conditional `Strict-Transport-Security` (only when `X-Forwarded-Proto: https`).
+- **Middleware Order**: Reordered to: securityHeaders, Logger, Recoverer, Timeout, RateLimit, CORS, metrics.
+
+### Key design decisions
+- Metrics server runs as a goroutine within the same process — no separate binary needed. If it fails, it logs an error but doesn't crash the main server.
+- HSTS is conditional on `X-Forwarded-Proto` to avoid breaking local HTTP development.
+- Rate limiting is applied after timeout but before CORS, so preflight OPTIONS requests also count toward the limit.
+
 ## 2026-02-10: Photo Search Plugin
 
 ### What was done

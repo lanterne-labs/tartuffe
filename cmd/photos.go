@@ -214,5 +214,17 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 		Int("errors", errors).
 		Msg("Photo search completed")
 
+	// Record job metrics (skip in dry-run mode)
+	if !dryRun {
+		jobMetrics := []storage.JobMetric{
+			{JobType: "photos-search", Target: "", Metric: "uploaded", Value: float64(uploaded)},
+			{JobType: "photos-search", Target: "", Metric: "skipped", Value: float64(skipped)},
+			{JobType: "photos-search", Target: "", Metric: "errors", Value: float64(errors)},
+		}
+		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+			log.Error().Err(err).Msg("Failed to record job metrics")
+		}
+	}
+
 	return nil
 }

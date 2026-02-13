@@ -59,6 +59,7 @@ func init() {
 	newsSearchCmd.Flags().Bool("cache-only", false, "only load from cache, don't scrape (requires --cache-dir)")
 	newsSearchCmd.Flags().Int("window-days", 0, "break date range into windows of N days (requires --since, 0=disabled)")
 	newsSearchCmd.Flags().Int("max-per-story", 0, "max articles per story_token (0=no cap)")
+	newsSearchCmd.Flags().String("keep-source", "", "dump article content + extracted facts to this directory for debugging")
 }
 
 func runNewsSearch(cmd *cobra.Command, args []string) error {
@@ -90,6 +91,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 	cacheOnly, _ := cmd.Flags().GetBool("cache-only")
 	windowDays, _ := cmd.Flags().GetInt("window-days")
 	maxPerStory, _ := cmd.Flags().GetInt("max-per-story")
+	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
 
 	// Validate cache-only requires cache-dir
 	if cacheOnly && cacheDir == "" {
@@ -249,12 +251,13 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 
 	// Set up search options
 	opts := news.Options{
-		DateFrom:     since,
-		MaxParse:     maxParse,
-		Location:     location,
-		RevisitHours: 24 * 365 * 10, // Never re-fetch same URL (10 years)
-		DryRun:       dryRun,
-		MaxPerStory:  maxPerStory,
+		DateFrom:      since,
+		MaxParse:      maxParse,
+		Location:      location,
+		RevisitHours:  24 * 365 * 10, // Never re-fetch same URL (10 years)
+		DryRun:        dryRun,
+		MaxPerStory:   maxPerStory,
+		KeepSourceDir: keepSourceDir,
 	}
 
 	// Prioritize targets
@@ -273,10 +276,20 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 
 	// Cache-only mode: skip news search entirely and process cached files
 	if cacheOnly {
-		return runCacheOnlyExtraction(ctx, prioritizedTargets, cacheDir, factExtractor, embedder, storer)
+		return runCacheOnlyExtraction(ctx, prioritizedTargets, cacheDir, factExtractor, embedder, storer, keepSourceDir)
 	}
 
 	// Search news for each target
+	type targetResult struct {
+		name                   string
+		articlesFound          int
+		articlesParsed         int
+		factsExtracted         int
+		skippedAlreadyProcessed int
+		errorCount             int
+	}
+	var allTargetResults []targetResult
+
 	totalFacts := 0
 	totalSkipped := 0
 	for i, target := range prioritizedTargets {
@@ -339,6 +352,15 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			Int("skipped_already_processed", result.SkippedAlreadyProcessed).
 			Msg("Completed news search for target")
 
+		allTargetResults = append(allTargetResults, targetResult{
+			name:                    target.Name,
+			articlesFound:           result.ArticlesFound,
+			articlesParsed:          result.ArticlesParsed,
+			factsExtracted:          result.FactsExtracted,
+			skippedAlreadyProcessed: result.SkippedAlreadyProcessed,
+			errorCount:              len(result.Errors),
+		})
+
 		totalFacts += result.FactsExtracted
 		totalSkipped += result.SkippedAlreadyProcessed
 	}
@@ -348,6 +370,23 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 		Int("total_facts", totalFacts).
 		Int("total_skipped_already_processed", totalSkipped).
 		Msg("News search completed successfully")
+
+	// Record job metrics (skip in dry-run mode)
+	if !dryRun {
+		var jobMetrics []storage.JobMetric
+		for _, tr := range allTargetResults {
+			jobMetrics = append(jobMetrics,
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "articles_found", Value: float64(tr.articlesFound)},
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "articles_parsed", Value: float64(tr.articlesParsed)},
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "facts_extracted", Value: float64(tr.factsExtracted)},
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "skipped_already_processed", Value: float64(tr.skippedAlreadyProcessed)},
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "errors", Value: float64(tr.errorCount)},
+			)
+		}
+		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+			log.Error().Err(err).Msg("Failed to record job metrics")
+		}
+	}
 
 	return nil
 }
@@ -525,6 +564,7 @@ func runCacheOnlyExtraction(
 	factExtractor *categorizer.OpenAIExtractor,
 	embedder *embedding.OpenAIEmbeddingGenerator,
 	storer *storage.PostgresStorer,
+	keepSourceDir string,
 ) error {
 	log.Info().
 		Int("targets", len(targets)).
@@ -576,6 +616,13 @@ func runCacheOnlyExtraction(
 			if err != nil {
 				log.Warn().Err(err).Str("url", content.URL).Msg("Failed to extract facts from cached content")
 				continue
+			}
+
+			// Dump source content + extracted facts for debugging if requested
+			if keepSourceDir != "" {
+				if dumpErr := core.DumpSourceAndFacts(keepSourceDir, target.Name, content.URL, content.Title, content.Content, content.DatePublished, facts); dumpErr != nil {
+					log.Warn().Err(dumpErr).Str("url", content.URL).Msg("Failed to dump source and facts")
+				}
 			}
 
 			if len(facts) == 0 {

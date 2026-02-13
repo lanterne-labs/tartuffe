@@ -30,7 +30,6 @@ class RealtimeManager {
 		this.eventSource = new EventSource(url);
 
 		this.eventSource.onopen = () => {
-			console.log('SSE connection opened');
 			this.reconnectAttempts = 0;
 			this.reconnectDelay = 1000;
 		};
@@ -79,7 +78,6 @@ class RealtimeManager {
 			if (this.reconnectAttempts < this.maxReconnectAttempts) {
 				this.reconnectAttempts++;
 				setTimeout(() => {
-					console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
 					this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000); // Max 30 seconds
 					this.connect();
 				}, this.reconnectDelay);

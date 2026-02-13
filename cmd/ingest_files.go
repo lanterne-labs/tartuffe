@@ -66,6 +66,7 @@ func init() {
 	ingestFilesCmd.Flags().String("source-type", "file", "source type for fact_sources table")
 	ingestFilesCmd.Flags().Bool("dry-run", false, "extract facts but don't store them")
 	ingestFilesCmd.Flags().BoolP("force", "f", false, "create target if not found in database")
+	ingestFilesCmd.Flags().String("keep-source", "", "dump article content + extracted facts to this directory for debugging")
 }
 
 func runIngestFiles(cmd *cobra.Command, args []string) error {
@@ -85,6 +86,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	sourceType, _ := cmd.Flags().GetString("source-type")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
+	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
 
 	// Validate source selection
 	if dir == "" && file == "" {
@@ -138,10 +140,11 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 
 	// Set up options
 	opts := core.IngestOptions{
-		TargetName: resolvedTarget,
-		TargetType: targetType,
-		SourceType: sourceType,
-		DryRun:     dryRun,
+		TargetName:    resolvedTarget,
+		TargetType:    targetType,
+		SourceType:    sourceType,
+		DryRun:        dryRun,
+		KeepSourceDir: keepSourceDir,
 	}
 
 	// Process files
@@ -176,6 +179,19 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Errors:             %d\n", len(result.Errors))
 		for _, e := range result.Errors {
 			fmt.Printf("    - %s: %v\n", e.Path, e.Error)
+		}
+	}
+
+	// Record job metrics (skip in dry-run mode)
+	if !dryRun {
+		jobMetrics := []storage.JobMetric{
+			{JobType: "ingest-files", Target: resolvedTarget, Metric: "files_processed", Value: float64(result.FilesProcessed)},
+			{JobType: "ingest-files", Target: resolvedTarget, Metric: "facts_extracted", Value: float64(result.FactsExtracted)},
+			{JobType: "ingest-files", Target: resolvedTarget, Metric: "facts_stored", Value: float64(result.FactsStored)},
+			{JobType: "ingest-files", Target: resolvedTarget, Metric: "duplicates_skipped", Value: float64(result.DuplicatesSkipped)},
+		}
+		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+			log.Error().Err(err).Msg("Failed to record job metrics")
 		}
 	}
 

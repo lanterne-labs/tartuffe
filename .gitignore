@@ -1,4 +1,26 @@
 # Environment variables
+.env
+.env.*
+.envrc
+prod.sql
+
+# Supabase local
 supabase
 supabase/*
-.env .envrc
+
+# Compiled binaries
+dm
+digital-mirror
+*.exe
+
+# Local data
+scraped_content/
+
+# Planning/analysis docs
+*.md
+!README.md
+!CHANGES.md
+!CLAUDE.md
+
+# Claude Code
+.claude/

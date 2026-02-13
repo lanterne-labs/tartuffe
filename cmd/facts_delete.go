@@ -98,12 +98,12 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete facts: %w", err)
 	}
 
-	fmt.Printf("Deleted %d facts for %s: %s\n", deleted, targetType, targetName)
+	fmt.Printf("Deleted %d facts for %s: %s (plugin metadata cleared, plugins will re-process)\n", deleted, targetType, targetName)
 	log.Info().
 		Str("target", targetName).
 		Str("type", targetType).
 		Int64("deleted", deleted).
-		Msg("Facts deleted")
+		Msg("Facts and plugin metadata deleted")
 
 	return nil
 }

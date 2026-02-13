@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
@@ -46,7 +47,11 @@ func init() {
 	webCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(webCmd)
 
-	serveCmd.Flags().StringVarP(&port, "port", "p", "8080", "Port to run the server on")
+	defaultPort := "8080"
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		defaultPort = envPort
+	}
+	serveCmd.Flags().StringVarP(&port, "port", "p", defaultPort, "Port to run the server on")
 }
 
 // WebServer holds the HTTP server and dependencies
@@ -59,20 +64,29 @@ type WebServer struct {
 func NewWebServer(storer *storage.PostgresStorer) *WebServer {
 	r := chi.NewRouter()
 
-	// Middleware
+	// Parse rate limit from env (default: 100 req/min per IP)
+	rateLimit := 100
+	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			rateLimit = parsed
+		}
+	}
+
+	// Middleware — applied in order:
+	// securityHeaders → Logger → Recoverer → Timeout → RateLimit → CORS → metrics
+	r.Use(securityHeaders)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(httprate.LimitByIP(rateLimit, 1*time.Minute))
 	r.Use(cors.Handler(cors.Options{
-		AllowOriginFunc: corsOriginFunc(),
-		AllowedMethods:  []string{"GET", "POST", "OPTIONS"},
-		AllowedHeaders:  []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:  []string{"Link"},
+		AllowOriginFunc:  corsOriginFunc(),
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-
-	// Prometheus metrics middleware
 	r.Use(metrics.Middleware)
 
 	server := &WebServer{
@@ -109,12 +123,27 @@ func corsOriginFunc() func(r *http.Request, origin string) bool {
 	}
 }
 
+// securityHeaders adds standard security headers to all responses.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'")
+
+		// HSTS only when behind HTTPS (reverse proxy sets X-Forwarded-Proto)
+		if r.Header.Get("X-Forwarded-Proto") == "https" {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // setupRoutes configures all the API routes
 func (ws *WebServer) setupRoutes() {
-	// Prometheus metrics endpoint
-	ws.router.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
-
-	// Health check endpoint
+	// Health check endpoint (kept on main API for external LB probes)
 	ws.router.Get("/health", ws.handleHealth)
 
 	// API routes
@@ -535,6 +564,37 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	defer storer.Close()
 
 	server := NewWebServer(storer)
+
+	// Start internal metrics server on a separate port
+	metricsPort := "9090"
+	if v := os.Getenv("METRICS_PORT"); v != "" {
+		metricsPort = v
+	}
+
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	metricsMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := storer.Pool().Ping(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "error",
+				"error":  err.Error(),
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "ok",
+		})
+	})
+
+	go func() {
+		metricsAddr := ":" + metricsPort
+		log.Info().Str("port", metricsPort).Msg("Starting internal metrics server")
+		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
+			log.Error().Err(err).Msg("Metrics server failed")
+		}
+	}()
 
 	addr := ":" + port
 	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")

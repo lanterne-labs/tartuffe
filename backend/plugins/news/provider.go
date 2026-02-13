@@ -69,6 +69,9 @@ type Options struct {
 	// in a single search. 0 = no cap (default). Articles with empty story_token are
 	// never capped (each treated as unique).
 	MaxPerStory int
+	// KeepSourceDir, when set, dumps article content + extracted facts to JSON files
+	// in this directory for debugging LLM fact extraction.
+	KeepSourceDir string
 }
 
 // Result contains the outcome of a news search for a single target.
@@ -358,6 +361,13 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 			log.Warn().Err(err).Str("url", article.Link).Msg("Failed to extract facts")
 			result.Errors = append(result.Errors, err)
 			continue
+		}
+
+		// Dump source content + extracted facts for debugging if requested
+		if opts.KeepSourceDir != "" {
+			if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, article.Link, content.Title, content.Content, publishedAt, facts); dumpErr != nil {
+				log.Warn().Err(dumpErr).Str("url", article.Link).Msg("Failed to dump source and facts")
+			}
 		}
 
 		if len(facts) == 0 {

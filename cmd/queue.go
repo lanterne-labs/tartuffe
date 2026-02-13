@@ -99,6 +99,9 @@ func init() {
 	queueProcessCmd.Flags().Int("news-max-per-story", 0, "max articles per story_token (0=no cap)")
 	queueProcessCmd.Flags().String("news-location", "France", "restrict news search to this country")
 
+	// Debugging flags
+	queueProcessCmd.Flags().String("keep-source", "", "dump article content + extracted facts to this directory for debugging")
+
 	// Twitter-specific flags
 	queueProcessCmd.Flags().Int("twitter-max-tweets", 50, "maximum tweets to fetch per handle")
 	queueProcessCmd.Flags().Int("twitter-batch-size", 20, "tweets per LLM extraction call")
@@ -305,6 +308,9 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 	windowDays, _ := cmd.Flags().GetInt("window-days")
 	pluginsStr, _ := cmd.Flags().GetString("plugins")
 
+	// Debugging flags
+	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
+
 	// News-specific flags
 	newsMaxParse, _ := cmd.Flags().GetInt("news-max-parse")
 	newsExtractorType, _ := cmd.Flags().GetString("news-extractor")
@@ -481,11 +487,12 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 			}
 
 			newsOpts := news.Options{
-				DateFrom:     since,
-				MaxParse:     newsMaxParse,
-				Location:     newsLocation,
-				RevisitHours: 24 * 365 * 10,
-				MaxPerStory:  newsMaxPerStory,
+				DateFrom:      since,
+				MaxParse:      newsMaxParse,
+				Location:      newsLocation,
+				RevisitHours:  24 * 365 * 10,
+				MaxPerStory:   newsMaxPerStory,
+				KeepSourceDir: keepSourceDir,
 			}
 
 			var newsResult *news.Result
@@ -578,6 +585,17 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Errors: %d\n", errorCount)
 	fmt.Printf("  News facts: %d\n", totalNewsFacts)
 	fmt.Printf("  Twitter facts: %d\n", totalTwitterFacts)
+
+	// Record job metrics
+	jobMetrics := []storage.JobMetric{
+		{JobType: "queue-process", Target: "", Metric: "news_facts", Value: float64(totalNewsFacts)},
+		{JobType: "queue-process", Target: "", Metric: "twitter_facts", Value: float64(totalTwitterFacts)},
+		{JobType: "queue-process", Target: "", Metric: "success_count", Value: float64(successCount)},
+		{JobType: "queue-process", Target: "", Metric: "error_count", Value: float64(errorCount)},
+	}
+	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+		log.Error().Err(err).Msg("Failed to record job metrics")
+	}
 
 	return nil
 }

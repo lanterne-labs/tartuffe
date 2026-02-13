@@ -7,8 +7,8 @@ const computeDefaultApiBase = () => {
 	const { protocol, hostname, port } = window.location;
 	let targetPort = port;
 
-	// When running Vite dev server on port 3000, assume Go API is on 8080 of same host
-	if (!import.meta.env.VITE_API_BASE && port === '3000') {
+	// When running Vite dev server (any port that isn't 8080), assume Go API is on 8080
+	if (!import.meta.env.VITE_API_BASE && port && port !== '8080') {
 		targetPort = '8080';
 	}
 

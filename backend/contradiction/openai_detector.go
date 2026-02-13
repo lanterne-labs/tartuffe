@@ -39,27 +39,25 @@ A **contradiction** means both statements CANNOT be simultaneously true regardin
 **CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
 A contradiction must be about the SAME SUBJECT - specifically about the person's own knowledge, beliefs, actions, or positions.
 
-**IS a contradiction** when:
-- The person's claim about THEMSELVES conflicts with their other claim about THEMSELVES
-  - "I knew X" vs "I didn't know X"
-  - "I did X" vs "I never did X"
-- The person's claim about THEMSELVES conflicts with AUTHORITATIVE FINDINGS about THEM
-  - Person says: "I didn't know about the scheme"
-  - Court/investigators found: "She knew and supervised the scheme"
-  - → This IS a contradiction because both statements are about HER knowledge/actions
+**PROMISE-BASED REASONING (core framework):**
+For every pair, identify which fact is the **"promise"** (a claim, denial, or commitment by the person) and which is the potential **"breaker"** (a fact that could invalidate it). Either fact can be the promise — it is NOT necessarily the chronologically first one.
+
+A breaker genuinely invalidates a promise when:
+- The person's OWN later or earlier statement directly contradicts their promise (e.g., "I knew X" vs "I never knew X")
+- An AUTHORITATIVE FINDING (conviction, court ruling, official investigation conclusion) contradicts the person's denial or claim
+- The person's OWN ACTION contradicts their stated commitment or position
+
+A breaker does NOT invalidate a promise when:
+- An ACCUSATION, CHARGE, INDICTMENT, or TRIAL (procedural steps) is paired with a denial — being accused or tried is NOT a finding of guilt
+- An INVESTIGATION (without conclusion) is paired with a denial — being investigated does NOT establish facts
+- An EXTERNAL PARTY'S action is the alleged breaker — only the person's own statements/actions or authoritative findings about them count
 
 **Is NOT a contradiction** when:
-- Statement A is about the person's own belief/acknowledgment, but Statement B is about what an EXTERNAL PARTY (government, parliament, organization) did or didn't do as their own action
-- Example: "I acknowledge we can be criticized" (her own acknowledgment) vs "The Parliament never told us" (Parliament's action) - these are about DIFFERENT SUBJECTS (her belief vs Parliament's behavior)
-- Both statements mention similar TOPICS (e.g., "assistants", "funds") but are about DIFFERENT SUBJECTS (e.g., what Parliament did vs what she told her colleagues) - similar keywords do NOT make a contradiction
-- Example: "The Parliament never advised us about assistants" (Parliament's action) vs "I deny telling MEPs they'd get assistants" (her communication to MEPs) - both mention "assistants" but are about completely different actions by different actors
-- Statements are about different LEVELS of involvement - agreeing to a policy/system is NOT the same as personally executing it
-- Example: "I couldn't say no to X about the mutualization system" (agreeing to a practice) vs "I had no role in hiring those assistants" (not involved in execution) - both can be true, different levels of involvement
-- One statement is VAGUE/GENERAL while the other is SPECIFIC, and there is NO clear indication they refer to the same thing - BUT if context (names, dates, events) makes it clear they ARE about the same thing, it IS a contradiction
-- Example: "I discovered some emails" (vague - which emails?) vs "I had no knowledge of emails between X and Y" (specific) - without clear indication these are the same emails, this is NOT a contradiction
-- Counter-example: "I discovered the Schaffhauser emails" vs "I had no knowledge of the Schaffhauser emails" - clearly the same emails, this IS a contradiction
-- **SUBJECTIVE AWARENESS vs OBJECTIVE FACTS are DIFFERENT STATEMENT TYPES**: "I wasn't aware of X" (subjective past state of mind) and "X didn't happen" (objective factual claim) are COMPATIBLE, not contradictory. Denying X happened does NOT imply you previously knew about X - it could be a conclusion reached after investigation. These statements reinforce each other: "I wasn't aware of any offense because there was none."
-- This is ONLY contradictory if: earlier she says "I knew about X" or "I dealt with X" (demonstrating knowledge), then later claims "I wasn't aware of X" (cannot unknow)
+- Statement A is about the person's own belief/acknowledgment, but Statement B is about what an EXTERNAL PARTY did or didn't do as their own action (different subjects)
+- Both statements mention similar TOPICS but are about DIFFERENT SUBJECTS (e.g., what Parliament did vs what she told her colleagues) — similar keywords do NOT make a contradiction
+- Statements are about different LEVELS of involvement — agreeing to a policy/system is NOT the same as personally executing it
+- One statement is VAGUE/GENERAL while the other is SPECIFIC, and there is NO clear indication they refer to the same thing — BUT if context (names, dates, events) makes it clear they ARE about the same thing, it IS a contradiction
+- **SUBJECTIVE AWARENESS vs OBJECTIVE FACTS**: "I wasn't aware of X" (subjective) and "X didn't happen" (objective) are COMPATIBLE — denying X happened doesn't imply prior knowledge of X. ONLY contradictory if the person demonstrably knew about X earlier
 
 **CRITICAL - TEMPORAL REASONING:**
 When analyzing statements, you MUST consider the publication dates to determine if apparent contradictions are actually legitimate changes of knowledge or position over time:
@@ -72,20 +70,12 @@ When analyzing statements, you MUST consider the publication dates to determine 
 
 4. **Unknown dates**: If one or both dates are "unknown date", be SKEPTICAL about flagging contradictions. Only flag if the statements are completely irreconcilable regardless of temporal ordering (e.g., "I was in Paris" vs "I was in Tokyo" on the same referenced day).
 
-**Do NOT flag a contradiction** if:
-*   One statement is about the person's own position and the other is about an external party's actions or knowledge.
-*   Statements describe different events, actions, or subjects (e.g., different bills, different meetings, different years).
-*   Statements differ only in phrasing, granularity, or focus but convey compatible information.
-*   One statement is simply more vague or general than the other.
-*   Statements reflect gaining new knowledge or changing position over time (earlier statement → later update is natural progression).
-*   Dates are unknown AND the statements could be reconciled by assuming an appropriate temporal ordering.
-
 Statement A (dated %s): "%s"
 Statement B (dated %s): "%s"
 
 Answer format:
 Start your response ONLY with "YES:" if they logically contradict, or "NO:" if they do not.
-Immediately after "YES:" or "NO:", provide a concise (1 sentence maximum) explanation focusing on the core reason for the contradiction or lack thereof.
+Immediately after "YES:" or "NO:", provide a concise (1 sentence maximum) explanation that identifies the promise and whether the other fact breaks it.
 
 Example 1 (Learning Over Time - NOT Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen said she didn't know about the mutualization scheme."
@@ -129,17 +119,17 @@ Statement B (dated January 21, 2024): "Marine Le Pen ordered and supervised the 
 Response:
 YES: Her claim of ignorance directly contradicts the authoritative finding that she knew and supervised the scheme - both statements are about HER knowledge and actions.
 
-Example 8 (Similar Keywords But Different Subjects - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen said the EU Parliament never advised or criticized her party about having assistants work with multiple deputies."
-Statement B (dated January 20, 2024): "Marine Le Pen denied telling FN MEPs elected in 2014 that they would benefit from a parliamentary assistant."
+Example 8 (Trial/Accusation vs Denial - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen a été jugée en appel pour détournement de fonds publics européens dans l'affaire des assistants parlementaires du FN."
+Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations dans l'affaire des assistants parlementaires."
 Response:
-NO: Despite both mentioning "assistants", these are about different subjects - Statement A is about what the Parliament did (advise/criticize), Statement B is about what she communicated to her MEPs. Different actors, different actions.
+NO: The promise is her denial of wrongdoing. Being tried (a procedural step) is NOT a finding of guilt — it does not break her denial. Only a conviction or court finding would.
 
-Example 9 (Policy Agreement vs Personal Execution - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen said it was complicated to say no to Jean-Marie Le Pen regarding the mutualization of parliamentary assistants."
-Statement B (dated January 20, 2024): "Marine Le Pen denied having any role in the hiring of assistants for Gollnisch and Jean-Marie Le Pen."
+Example 9 (Court Finding vs Denial - Contradictory):
+Statement A (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics par la cour d'appel de Paris."
+Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations dans l'affaire des assistants parlementaires."
 Response:
-NO: Agreeing to a system/practice (not refusing her father's request about mutualization) is different from personally executing hiring decisions. Both statements can be true - she accepted the policy but wasn't involved in specific hiring.
+YES: The promise is her denial of any misappropriation. The court's guilty verdict is an authoritative finding that directly breaks her denial.
 
 Example 10 (Vague Reference vs Specific Reference - NOT Contradictory):
 Statement A (dated January 20, 2024): "Marine Le Pen said she discovered emails she wasn't the recipient of."
@@ -318,8 +308,13 @@ const batchPromptTpl = `You are analyzing multiple pairs of statements for contr
 - Person's claim vs external party's action = NOT a contradiction (different subjects)
 - Similar keywords but different subjects = NOT a contradiction
 - Vague vs specific without clear link = NOT a contradiction
-- Policy agreement vs personal execution = NOT a contradiction (different levels)
-- Subjective awareness vs objective fact = NOT a contradiction ("I wasn't aware of X" + "X didn't happen" are compatible and reinforce each other - denying X happened doesn't imply prior knowledge of X)
+- Subjective awareness vs objective fact = NOT a contradiction ("I wasn't aware of X" + "X didn't happen" are compatible - denying X happened doesn't imply prior knowledge of X)
+
+**PROMISE-BASED REASONING:**
+- Identify which fact is the "promise" (claim/denial/commitment) and which is the potential "breaker"
+- The promise can be EITHER fact (not necessarily chronologically first)
+- ACCUSATIONS/CHARGES/TRIALS are procedural steps, NOT findings — do NOT break a denial
+- Only CONVICTIONS/COURT FINDINGS or the person's OWN contradictory actions break a promise
 
 **TEMPORAL RULES:**
 - Earlier "didn't know" → Later "knew" = NOT contradiction (learned over time)
