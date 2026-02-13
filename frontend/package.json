@@ -20,6 +20,9 @@
 		"typescript": "^5.9.3",
 		"vite": "^7.2.6"
 	},
+	"engines": {
+		"node": ">=22"
+	},
 	"dependencies": {
 		"@sveltejs/adapter-node": "^5.0.0"
 	}
