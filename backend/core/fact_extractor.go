@@ -15,20 +15,19 @@ Extract facts about ALL relevant persons, parties, and organizations mentioned i
 Focus especially on the primary subject '%s' but do NOT limit extraction to only that entity.
 
 ## What Constitutes a VALID Fact
-Extract facts that are ABOUT an entity's own actions or statements:
+A valid fact must be CONCRETE, SPECIFIC, and CONTRADICTABLE. It must describe something the entity DID or SAID with enough specificity that it could later be proven false or contradicted by the entity themselves.
 
-✅ VALID - Actions an entity took:
-   - "X voted against bill Y"
-   - "X attended meeting Z"
-   - "X signed agreement Y"
-   - "X was sentenced to / convicted of / acquitted of..."
-   - "Parliament X contested claim Y"
+✅ VALID - Concrete actions with specific details:
+   - "X voted against bill Y on date Z"
+   - "X signed agreement Y with party Z"
+   - "X was sentenced to 4 years in prison and 5 years of ineligibility"
+   - "X received €120,000 per year from party Y"
 
-✅ VALID - Statements about THEMSELVES or their own situation:
+✅ VALID - Specific claims or denials that can be contradicted:
    - "X stated she had no feeling of committing a crime"
-   - "X denied the allegations against her"
-   - "X confirmed she will run for election"
-   - "X refused to acknowledge the charges"
+   - "X denied receiving any illegal funds"
+   - "X confirmed she will run for the 2027 election"
+   - "X stated RN never employed fictitious assistants"
 
 ## What to EXCLUDE (CRITICAL - READ CAREFULLY)
 
@@ -64,50 +63,82 @@ WHY? Because:
 
 ❌ INVALID - Journalist opinions, editorial commentary, general descriptions
 
+### Concreteness Rule (CRITICAL)
+Facts MUST contain specific, concrete information — numbers, dates, named actions, precise claims. Vague qualitative assessments are NOT facts.
+
+❌ INVALID - Vague opinions without concrete data:
+   - "Party X pays its leaders generously" ← "generously" is subjective, no numbers
+   - "X is very popular" ← vague, no data
+   - "X has a strong position on immigration" ← vague qualifier, no specifics
+
+✅ VALID - Same ideas but with concrete data:
+   - "Party X paid its president €120,000 per year" ← specific number
+   - "X received 41%% of the vote in the first round" ← specific data
+   - "X proposed to reduce immigration quotas by 50%%" ← specific policy
+
 ### Non-Contradictable Statements (CRITICAL)
-We track facts to detect when someone CONTRADICTS themselves. Some statements can NEVER be contradicted because they're truisms, subjective assessments, or unfalsifiable claims.
+We track facts to detect when someone CONTRADICTS themselves. Some statements can NEVER lead to a contradiction and must be EXCLUDED.
 
-❌ INVALID - Truisms and self-evident statements:
-   - "X said proving innocence after many years is difficult" ← Everyone agrees with this, it's obvious
-   - "X stated the situation is complex" ← Vague, unfalsifiable
-   - "X declared justice takes time" ← Universal truth, not a position
+❌ INVALID - Scheduling, procedural, and calendar facts:
+   - "X will learn her verdict on July 7" ← a court date, not contradictable
+   - "X's trial will resume on March 15" ← scheduling, not a position
+   - "The ruling will be handed down next month" ← procedural timing
+   - WHY: A date can't be "contradicted" — it's just information about when something happens
 
-❌ INVALID - Subjective process observations:
-   - "X said the trial was exhausting" ← Personal experience, can't be contradicted
-   - "X found the proceedings lengthy" ← Subjective assessment
-   - "X felt misunderstood by the court" ← Internal feeling, unfalsifiable
+❌ INVALID - Conditional, potential, or speculative statements:
+   - "X risks a sentence of ineligibility that could prevent her from running" ← conditional "could"
+   - "X might face up to 10 years in prison" ← speculative "might"
+   - "X could lose her seat if convicted" ← hypothetical scenario
+   - WHY: Potential outcomes are not facts — they haven't happened yet
 
-❌ INVALID - Rhetorical/defensive framing:
-   - "X said it's hard to defend oneself in these circumstances" ← Meta-commentary
-   - "X stated the evidence was hard to gather" ← Process complaint, not a factual claim
+❌ INVALID - Third-party commentary about the target's situation:
+   - "X's lawyer warned the court that the election is near" ← the lawyer's action, not X's
+   - "Analysts say X will struggle to win" ← third-party analysis
+   - WHY: These are about OTHER people's actions or opinions regarding X, not X's own positions
+
+❌ INVALID - Hopes, expectations, and wishes:
+   - "X said she hoped for a quicker verdict" ← a hope, not a contradictable claim
+   - "X expressed her desire for the proceedings to end" ← subjective wish
+   - "X declared she expects to be acquitted" ← expectation, not a factual claim
+   - WHY: Wishes and hopes can't be contradicted — they're internal states
+
+❌ INVALID - Truisms and subjective observations:
+   - "X said proving innocence after many years is difficult" ← obvious truism
+   - "X stated the situation is complex" ← vague, unfalsifiable
+   - "X said the trial was exhausting" ← personal feeling
+   - "X said it's hard to defend oneself" ← meta-commentary
 
 ✅ VALID - Contradictable claims:
-   - "X said they never received illegal funds" ← Can be contradicted by evidence, courts, or their own later statements
-   - "X stated they voted for bill Y" ← Verifiable against official records
-   - "X denied meeting with person Z" ← Specific claim that courts/investigations can disprove
+   - "X said they never received illegal funds" ← can be contradicted by evidence or their own later statements
+   - "X stated they voted for bill Y" ← verifiable against official records
+   - "X denied meeting with person Z" ← specific claim that can be disproven
+   - "X was sentenced to 4 years in prison" ← concrete judicial outcome
 
-ASK: "Could this person OR an authoritative source (courts, official records, investigations) ever prove the opposite?"
-- "It's hard to prove innocence after 15 years" → Would any court ruling or official record contradict this? No, it's a truism. ❌ REJECT
-- "I never took illegal funds" → Could a court ruling, investigation, or official documents prove otherwise? Yes. ✅ VALID
-- "The trial process was unfair" → Can an authoritative source prove a process was objectively "fair"? No, it's subjective. ❌ REJECT
-- "I did not embezzle EU funds" → Can EU auditors or courts prove otherwise? Yes. ✅ VALID
+ASK: "Could this person OR an authoritative source (courts, official records, investigations) ever prove the opposite? Could the person themselves say the opposite in the future?"
+- "I never took illegal funds" → Could a court or the person themselves later contradict this? Yes. ✅ VALID
+- "X will learn her verdict on July 7" → Could this be contradicted? No, it's just a date. ❌ REJECT
+- "X risks a sentence of ineligibility" → Is this a fact? No, it's a potential outcome. ❌ REJECT
+- "X's lawyer said the election is important" → Is this about X? No, it's about X's lawyer. ❌ REJECT
 
-## KEY TEST (Apply to EVERY fact)
-Ask TWO questions:
-1. "Is this about the subject entity themselves OR an entity they're affiliated with?"
-2. "If later contradicted, should the SUBJECT be held accountable?"
+## KEY TEST (Apply to EVERY extracted fact)
+Ask ALL THREE questions. The fact must pass ALL of them:
 
-✅ "Marine Le Pen stated she is innocent" → About herself, accountable ✅
-✅ "Marine Le Pen stated RN never hid anything" → About her party, she's accountable ✅
-❌ "Marine Le Pen said Parliament failed" → About Parliament (unaffiliated), not her accountability ❌
+1. "Is this CONCRETE and SPECIFIC?" (contains numbers, names, specific actions — not vague qualifiers)
+2. "Is this about the entity's OWN actions/statements or their affiliated organization?"
+3. "Could the entity themselves CONTRADICT this in the future, or could evidence prove it false?"
 
-More examples:
-- "Marine Le Pen was sentenced to 4 years" ← ABOUT Marine Le Pen ✅
-- "Marine Le Pen stated she had no intent to commit crime" ← ABOUT herself ✅
-- "Marine Le Pen stated RN/Rassemblement national never hid anything" ← ABOUT her party ✅ (she represents it)
-- "European Parliament contested lack of clarity" ← ABOUT European Parliament ✅
-- "Marine Le Pen declared Parliament didn't play alert role" ← OPINION about Parliament ❌ (REJECT! She doesn't represent Parliament)
-- "Marine Le Pen blamed the judges for bias" ← OPINION about judges ❌ (REJECT! She doesn't represent the court)
+If ANY answer is NO → REJECT the fact.
+
+Examples:
+✅ "Marine Le Pen a déclaré n'avoir commis aucun délit" → Concrete claim, about herself, contradictable ✅✅✅
+✅ "Marine Le Pen a été condamnée à 4 ans de prison" → Specific sentence, about herself, factual ✅✅✅
+✅ "Le RN a versé 120 000€ par an à sa présidente" → Concrete number, about affiliated party, verifiable ✅✅✅
+❌ "Le RN rémunère grassement ses dirigeants" → Vague ("grassement"), no numbers ❌ FAILS test 1
+❌ "Marine Le Pen sera fixée sur son sort le 7 juillet" → A calendar date, not contradictable ❌ FAILS test 3
+❌ "Marine Le Pen risque une peine d'inéligibilité" → Conditional, hasn't happened ❌ FAILS test 3
+❌ "L'avocat de Marine Le Pen a prévenu la cour" → About the lawyer, not about Le Pen ❌ FAILS test 2
+❌ "Marine Le Pen espérait un délibéré plus rapide" → A hope/wish, not contradictable ❌ FAILS test 3
+❌ "Marine Le Pen a déclaré que le Parlement a failli" → About Parliament, unaffiliated ❌ FAILS test 2
 
 ## Consolidation Rules (CRITICAL)
 Your goal is to extract the SMALLEST number of facts that capture ALL distinct positions/actions.
