@@ -29,127 +29,123 @@ A valid fact must be CONCRETE, SPECIFIC, and CONTRADICTABLE. It must describe so
    - "X confirmed she will run for the 2027 election"
    - "X stated RN never employed fictitious assistants"
 
-## What to EXCLUDE (CRITICAL - READ CAREFULLY)
+## MANDATORY REJECTION (Read FIRST, apply BEFORE extracting)
 
 We track facts to detect CONTRADICTIONS in an entity's OWN positions over time.
-If X says "Y failed" and Y says "I didn't fail" - that's NOT a contradiction, just disagreement between unrelated parties.
+Before extracting ANY fact, check it against these AUTO-REJECT rules. If it matches ANY rule, do NOT include it.
 
-### The Affiliation Rule
-Facts are VALID when they're about:
+### AUTO-REJECT TRIGGERS (check these words/patterns FIRST)
+If a candidate fact contains any of these patterns, REJECT it immediately:
+
+**Conditional/speculative language** → REJECT:
+"risque", "pourrait", "pourra", "pourront", "pourrait être", "might", "could", "may", "if convicted"
+
+**Hopes/wishes/preferences** → REJECT:
+"espère", "espérait", "espérons", "souhaite", "souhaiterait", "hoped", "wishes", "desires", "mieux je me portais"
+
+**Scheduling/calendar** → REJECT:
+"sera fixé(e)", "sera rendu(e)", "est attendu(e) le", "le prononcé est prévu", "la décision sera", "will learn on", "verdict on [date]"
+
+**Lawyer/legal representative as subject** → REJECT:
+"Me ", "Maître ", "l'avocat(e) de", "a plaidé que", "a plaidé l'innocence", "les avocats de"
+
+**Travel/logistics/sightings** → REJECT:
+"est arrivé(e) à/en", "a été aperçu(e)", "était accompagné(e) de", "arrivée discrète", "descente d'avion"
+
+**Reactions to scheduling/procedural events** → REJECT:
+"a réagi à la date", "a réagi au calendrier", "more time would have been", "plus tôt c'était"
+
+### Rule 1: Affiliation Rule
+Facts are VALID when about:
 1. The entity ITSELF (their own actions, statements about themselves)
 2. An entity they are AFFILIATED WITH or REPRESENT (their party, their organization)
 
-Facts are INVALID when they're about:
-- EXTERNAL entities the speaker has NO affiliation with
+Facts are INVALID when about EXTERNAL entities the speaker has NO affiliation with.
 
-WHY? Because:
-- If Marine Le Pen says "Rassemblement national never hid anything" → She represents RN, so she's accountable if RN did hide something
-- If Marine Le Pen says "Parliament failed its duty" → She has no control over Parliament, so if Parliament disagrees, it's just two parties disagreeing
+❌ INVALID - About unaffiliated entities:
+   - "X said the Parliament did not play its role" ← X doesn't represent Parliament
+   - "X declared the court was biased" ← X doesn't represent the court
+   - "X accused Y (an opponent) of corruption" ← X has no affiliation with Y
 
-❌ INVALID - Opinions/claims about UNAFFILIATED external entities:
-   - "X said the Parliament did not play its role" ← INVALID: X doesn't represent Parliament
-   - "X declared the court was biased" ← INVALID: X doesn't represent the court
-   - "X believes the economy is failing" ← INVALID: X doesn't control the economy
-   - "X accused Y (an opponent) of corruption" ← INVALID: X has no affiliation with Y
+✅ VALID - About affiliated entities:
+   - "Marine Le Pen stated RN never hid anything" ← she leads/represents RN
+   - "The party leader denied the party received illegal funds" ← speaking for their organization
 
-✅ VALID - Claims about affiliated entities:
-   - "Marine Le Pen stated Rassemblement national never hid anything" ← VALID: she leads/represents RN
-   - "A deputy stated their party supports this policy" ← VALID: they represent the party
-   - "The party leader denied the party received illegal funds" ← VALID: speaking for their organization
+### Rule 2: Lawyers are NOT valid entities
+Lawyers (Me/Maître X) acting in their PROFESSIONAL capacity are NEVER valid subject_entity.
+- A lawyer pleading for their client is performing a job, not expressing a personal contradictable position
+- "Me Bosselut a plaidé l'innocence de Marine Le Pen" → REJECT (lawyer doing their job)
+- "Me Chirac-Kollarik a déclaré que travail fictif = zéro travail" → REJECT (lawyer argument in court)
+- EXCEPTION: A lawyer making claims about THEMSELVES outside court ("I never bribed anyone") would be valid
 
-❌ INVALID - Third-party statements/claims about someone:
-   - "Critics say X is corrupt" ← third-party opinion
-   - "Y accused X of fraud" ← Y's claim, not verified fact
-
-❌ INVALID - Journalist opinions, editorial commentary, general descriptions
-
-### Concreteness Rule (CRITICAL)
+### Rule 3: Concreteness Rule
 Facts MUST contain specific, concrete information — numbers, dates, named actions, precise claims. Vague qualitative assessments are NOT facts.
 
-❌ INVALID - Vague opinions without concrete data:
-   - "Party X pays its leaders generously" ← "generously" is subjective, no numbers
-   - "X is very popular" ← vague, no data
-   - "X has a strong position on immigration" ← vague qualifier, no specifics
+❌ "Party X pays its leaders generously" ← "generously" is subjective, no numbers
+✅ "Party X paid its president €120,000 per year" ← specific number
 
-✅ VALID - Same ideas but with concrete data:
-   - "Party X paid its president €120,000 per year" ← specific number
-   - "X received 41%% of the vote in the first round" ← specific data
-   - "X proposed to reduce immigration quotas by 50%%" ← specific policy
+### Rule 4: Non-Contradictable Statements
+If a statement can NEVER lead to a self-contradiction, REJECT it.
 
-### Non-Contradictable Statements (CRITICAL)
-We track facts to detect when someone CONTRADICTS themselves. Some statements can NEVER lead to a contradiction and must be EXCLUDED.
+❌ Scheduling/calendar: "X will learn her verdict on July 7" ← a date can't be contradicted
+❌ Conditional/speculative: "X risks ineligibility" ← hasn't happened, "risque" = speculative
+❌ Hopes/wishes: "X hoped for a quicker verdict" ← internal state, not contradictable
+❌ Truisms: "X said defending oneself is hard" ← obvious, unfalsifiable
+❌ Travel/logistics: "X arrived in Guadeloupe" ← mundane movement, not a position
+❌ Reactions to events: "X said 'the sooner the better'" ← preference, not a political claim
 
-❌ INVALID - Scheduling, procedural, and calendar facts:
-   - "X will learn her verdict on July 7" ← a court date, not contradictable
-   - "X's trial will resume on March 15" ← scheduling, not a position
-   - "The ruling will be handed down next month" ← procedural timing
-   - WHY: A date can't be "contradicted" — it's just information about when something happens
+✅ Contradictable claims:
+   - "X said they never received illegal funds" ← can be contradicted by evidence
+   - "X was sentenced to 4 years in prison" ← concrete judicial outcome (ALREADY happened)
+   - "X denied meeting with person Z" ← specific denial that can be disproven
 
-❌ INVALID - Conditional, potential, or speculative statements:
-   - "X risks a sentence of ineligibility that could prevent her from running" ← conditional "could"
-   - "X might face up to 10 years in prison" ← speculative "might"
-   - "X could lose her seat if convicted" ← hypothetical scenario
-   - WHY: Potential outcomes are not facts — they haven't happened yet
+### Rule 5: Third-party statements are NOT facts about the target
+- "X's lawyer warned the court" → about the LAWYER, not X
+- "Analysts say X will struggle" → about analysts' opinions
+- "Y didn't comment on X's situation" → about Y's non-action
+- "Critics say X is corrupt" → third-party opinion
 
-❌ INVALID - Third-party commentary about the target's situation:
-   - "X's lawyer warned the court that the election is near" ← the lawyer's action, not X's
-   - "Analysts say X will struggle to win" ← third-party analysis
-   - WHY: These are about OTHER people's actions or opinions regarding X, not X's own positions
+### Rule 6: Deduplication (STRICT)
+If two candidate facts express the SAME CORE CLAIM in different words, keep ONLY ONE — the most specific version.
+Example: "didn't commit a crime", "had no awareness of committing a crime", "couldn't imagine breaking a rule" → These ALL mean "claims innocence". Keep ONLY the most concrete version.
 
-❌ INVALID - Hopes, expectations, and wishes:
-   - "X said she hoped for a quicker verdict" ← a hope, not a contradictable claim
-   - "X expressed her desire for the proceedings to end" ← subjective wish
-   - "X declared she expects to be acquitted" ← expectation, not a factual claim
-   - WHY: Wishes and hopes can't be contradicted — they're internal states
-
-❌ INVALID - Truisms and subjective observations:
-   - "X said proving innocence after many years is difficult" ← obvious truism
-   - "X stated the situation is complex" ← vague, unfalsifiable
-   - "X said the trial was exhausting" ← personal feeling
-   - "X said it's hard to defend oneself" ← meta-commentary
-
-✅ VALID - Contradictable claims:
-   - "X said they never received illegal funds" ← can be contradicted by evidence or their own later statements
-   - "X stated they voted for bill Y" ← verifiable against official records
-   - "X denied meeting with person Z" ← specific claim that can be disproven
-   - "X was sentenced to 4 years in prison" ← concrete judicial outcome
-
-ASK: "Could this person OR an authoritative source (courts, official records, investigations) ever prove the opposite? Could the person themselves say the opposite in the future?"
-- "I never took illegal funds" → Could a court or the person themselves later contradict this? Yes. ✅ VALID
-- "X will learn her verdict on July 7" → Could this be contradicted? No, it's just a date. ❌ REJECT
-- "X risks a sentence of ineligibility" → Is this a fact? No, it's a potential outcome. ❌ REJECT
-- "X's lawyer said the election is important" → Is this about X? No, it's about X's lawyer. ❌ REJECT
-
-## KEY TEST (Apply to EVERY extracted fact)
-Ask ALL THREE questions. The fact must pass ALL of them:
+## KEY TEST (Apply to EVERY fact BEFORE including it)
+Ask ALL FOUR questions. The fact must pass ALL of them:
 
 1. "Is this CONCRETE and SPECIFIC?" (contains numbers, names, specific actions — not vague qualifiers)
-2. "Is this about the entity's OWN actions/statements or their affiliated organization?"
-3. "Could the entity themselves CONTRADICT this in the future, or could evidence prove it false?"
+2. "Is this about the entity's OWN actions/statements or their affiliated organization?" (NOT lawyers, NOT third parties)
+3. "Could the entity themselves CONTRADICT this in the future, or could evidence prove it false?" (NOT hopes, NOT scheduling, NOT travel)
+4. "Does this represent a POLITICAL POSITION, POLICY CLAIM, DENIAL, or VERIFIABLE ACTION?" (NOT logistics, NOT reactions to calendar events, NOT feelings)
 
 If ANY answer is NO → REJECT the fact.
 
 Examples:
-✅ "Marine Le Pen a déclaré n'avoir commis aucun délit" → Concrete claim, about herself, contradictable ✅✅✅
-✅ "Marine Le Pen a été condamnée à 4 ans de prison" → Specific sentence, about herself, factual ✅✅✅
-✅ "Le RN a versé 120 000€ par an à sa présidente" → Concrete number, about affiliated party, verifiable ✅✅✅
+✅ "Marine Le Pen a déclaré n'avoir commis aucun délit" → Specific denial, about herself, contradictable, political position ✅✅✅✅
+✅ "Marine Le Pen a été condamnée à 4 ans de prison" → Specific, about herself, factual outcome, verifiable action ✅✅✅✅
+✅ "Le RN a versé 120 000€ par an à sa présidente" → Concrete number, affiliated party, verifiable, financial action ✅✅✅✅
 ❌ "Le RN rémunère grassement ses dirigeants" → Vague ("grassement"), no numbers ❌ FAILS test 1
-❌ "Marine Le Pen sera fixée sur son sort le 7 juillet" → A calendar date, not contradictable ❌ FAILS test 3
-❌ "Marine Le Pen risque une peine d'inéligibilité" → Conditional, hasn't happened ❌ FAILS test 3
-❌ "L'avocat de Marine Le Pen a prévenu la cour" → About the lawyer, not about Le Pen ❌ FAILS test 2
+❌ "Marine Le Pen sera fixée sur son sort le 7 juillet" → Calendar date, not contradictable ❌ FAILS test 3
+❌ "Marine Le Pen risque une peine d'inéligibilité" → Conditional ("risque"), hasn't happened ❌ FAILS test 3
+❌ "Me Bosselut a plaidé l'innocence de Marine Le Pen" → About the lawyer, not about Le Pen ❌ FAILS test 2
 ❌ "Marine Le Pen espérait un délibéré plus rapide" → A hope/wish, not contradictable ❌ FAILS test 3
+❌ "Marine Le Pen est arrivée en Guadeloupe" → Travel/logistics, not a political position ❌ FAILS test 4
+❌ "Marine Le Pen a réagi en disant 'plus tôt c'était mieux'" → Preference/reaction, not a position ❌ FAILS test 4
 ❌ "Marine Le Pen a déclaré que le Parlement a failli" → About Parliament, unaffiliated ❌ FAILS test 2
+❌ "Rody Tolassy n'a pas souhaité commenter" → Third-party non-action ❌ FAILS test 2
 
 ## Consolidation Rules (CRITICAL)
 Your goal is to extract the SMALLEST number of facts that capture ALL distinct positions/actions.
+Typical article: 2-5 genuinely valid facts. If you have more than 6, you are probably including invalid ones. Re-check.
 
-1. **MERGE similar statements**: If an entity expresses the same position multiple times in different words, extract ONE fact that best captures that position.
+1. **MERGE aggressively**: If an entity expresses the same core idea in different words, keep ONLY ONE — the most specific, concrete version. Examples of facts that MUST be merged into one:
+   - "n'avoir aucun sentiment d'avoir commis un délit" / "n'avoir pas la conscience de commettre un délit" / "n'avoir pu imaginer enfreindre une règle" → ALL mean "claims innocence" → keep ONE
+   - "a nié tout détournement" / "n'a pas détourné de fonds" → same denial → keep ONE
 
 2. **Language**: Extract facts in the entity's NATIVE LANGUAGE if available (e.g., French for French politicians). NEVER extract the same fact in multiple languages.
 
-3. **Focus on distinct claims**: Each fact should represent a UNIQUE position, action, or statement.
+3. **Focus on distinct claims**: Each fact should represent a UNIQUE position, action, or statement that is semantically different from all others.
 
-4. **Quality over quantity**: An article might only contain 3-5 genuinely distinct factual claims per entity.
+4. **Quality over quantity**: Fewer correct facts is ALWAYS better than more facts with invalid ones included. When in doubt, EXCLUDE.
 
 ## JSON Output Format (REQUIRED)
 Return a JSON array with objects containing these 7 fields:
