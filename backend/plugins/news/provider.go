@@ -414,7 +414,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 			}
 
 			inserter := core.NewFactInserter(p.Storer, nil)
-			err = inserter.InsertFacts(ctx, []core.StoreFactInput{input})
+			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).
 					Str("fact", fact.NormalizedFactText).
@@ -424,7 +424,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 				continue
 			}
 
-			result.FactsExtracted++
+			result.FactsExtracted += insertResult.Inserted
 		}
 
 		log.Debug().

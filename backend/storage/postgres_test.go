@@ -94,7 +94,7 @@ func insertFactForTest(ctx context.Context, t *testing.T, storer *PostgresStorer
 
 	// Use core.FactInserter to insert
 	inserter := core.NewFactInserter(storer, nil)
-	err = inserter.InsertFacts(ctx, []core.StoreFactInput{coreInput})
+	_, err = inserter.InsertFacts(ctx, []core.StoreFactInput{coreInput})
 	if err != nil {
 		return 0, 0, err
 	}

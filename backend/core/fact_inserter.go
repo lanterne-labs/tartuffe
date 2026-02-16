@@ -20,6 +20,12 @@ type FactRelationInput struct {
 	Reason         string
 }
 
+// InsertResult contains the outcome of a batch InsertFacts call.
+type InsertResult struct {
+	Inserted int // Number of facts successfully inserted
+	Skipped  int // Number of facts skipped as duplicates
+}
+
 // FactInserter handles intelligent fact insertion with relation classification.
 // It always inserts facts, then classifies their relationships to existing similar facts
 // (duplicate, implication, or unrelated) via an LLM call.
@@ -27,6 +33,7 @@ type FactInserter struct {
 	storer               Storer
 	classifier           *RelationClassifier
 	similarityThreshold  float64 // Cosine distance threshold for relation candidate search
+	autoDedupeThreshold  float64 // Cosine similarity above which to skip as duplicate
 }
 
 // Storer defines the interface for storage operations needed by FactInserter.
@@ -95,16 +102,20 @@ func NewFactInserter(storer Storer, classifier *RelationClassifier) *FactInserte
 	}
 
 	cosineDistance := 1.0 - cosineSimilarity
+	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.92)
 
 	return &FactInserter{
 		storer:              storer,
 		classifier:          classifier,
 		similarityThreshold: cosineDistance,
+		autoDedupeThreshold: autoDedupeThreshold,
 	}
 }
 
 // InsertFacts processes a batch of facts, inserting each and classifying relations.
-func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) error {
+// Facts that are near-duplicates of existing active facts (above autoDedupeThreshold) are skipped.
+func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
+	result := &InsertResult{}
 	for i, fact := range facts {
 		log.Debug().
 			Int("index", i+1).
@@ -112,17 +123,24 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 			Str("fact_text", truncate(fact.NormalizedFactText, 100)).
 			Msg("Processing fact for insertion")
 
-		if err := fi.insertSingleFact(ctx, fact); err != nil {
-			return fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
+		inserted, err := fi.insertSingleFact(ctx, fact)
+		if err != nil {
+			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
+		}
+		if inserted {
+			result.Inserted++
+		} else {
+			result.Skipped++
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // insertSingleFact handles insertion of a single fact with relation classification.
-func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) error {
+// Returns (true, nil) if the fact was inserted, (false, nil) if it was skipped as a duplicate.
+func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (bool, error) {
 	if input.SubjectEntity == "" {
-		return fmt.Errorf("subject_entity is required")
+		return false, fmt.Errorf("subject_entity is required")
 	}
 
 	// Resolve subject entity to person ID
@@ -131,17 +149,34 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	if input.SubjectEntityType != "" {
 		subjectID, err = fi.storer.FindOrInsertPersonWithType(ctx, input.SubjectEntity, input.SubjectEntityType)
 		if err != nil {
-			return fmt.Errorf("failed to find/insert subject entity with type: %w", err)
+			return false, fmt.Errorf("failed to find/insert subject entity with type: %w", err)
 		}
 	} else {
 		subjectIDs, err := fi.storer.FindOrInsertPersons(ctx, []string{input.SubjectEntity})
 		if err != nil {
-			return fmt.Errorf("failed to find/insert subject entity: %w", err)
+			return false, fmt.Errorf("failed to find/insert subject entity: %w", err)
 		}
 		if len(subjectIDs) == 0 {
-			return fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
+			return false, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
 		}
 		subjectID = subjectIDs[0]
+	}
+
+	// Check for near-duplicate before inserting
+	if len(input.Embedding) > 0 {
+		distanceThreshold := 1.0 - fi.autoDedupeThreshold
+		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, distanceThreshold, 1)
+		if err != nil {
+			log.Warn().Err(err).Str("fact", truncate(input.NormalizedFactText, 80)).
+				Msg("Dedup check failed, proceeding with insertion")
+		} else if len(similar) > 0 {
+			log.Info().
+				Int64("existing_fact_id", similar[0].ID).
+				Float64("distance", similar[0].Distance).
+				Str("fact", truncate(input.NormalizedFactText, 80)).
+				Msg("Skipping duplicate fact")
+			return false, nil
+		}
 	}
 
 	// Resolve InvolvedPeople as secondary mentions
@@ -155,10 +190,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		}
 	}
 
-	// Always insert the fact
+	// Insert the fact
 	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {
-		return fmt.Errorf("failed to insert fact: %w", err)
+		return false, fmt.Errorf("failed to insert fact: %w", err)
 	}
 	metrics.IncrementFactsExtracted(input.SourceType, true)
 
@@ -173,12 +208,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		input.Metadata,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to link source: %w", err)
+		return false, fmt.Errorf("failed to link source: %w", err)
 	}
 
 	// Link subject entity to this source mention
 	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
-		return fmt.Errorf("failed to link subject entity: %w", err)
+		return false, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
 	// Link secondary persons
@@ -201,7 +236,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Int("num_secondary_persons", len(secondaryPersonIDs)).
 		Msg("Successfully inserted fact with source and person links")
 
-	return nil
+	return true, nil
 }
 
 // classifyRelations finds similar active facts and classifies their relationships.

@@ -30,12 +30,11 @@ type EmbeddingGenerator interface {
 
 // FileIngester handles ingestion of facts from local JSON files.
 // It reads cached content files, extracts facts using LLM, generates embeddings,
-// and stores the facts with deduplication.
+// and stores the facts with deduplication (handled automatically by FactInserter).
 type FileIngester struct {
 	factExtractor FactExtractor
 	embedder      EmbeddingGenerator
 	factInserter  *FactInserter
-	deduplicator  *FactDeduplicator // Optional: for real-time deduplication during ingestion
 }
 
 // IngestOptions configures the file ingestion process.
@@ -48,9 +47,6 @@ type IngestOptions struct {
 	SourceType string
 	// DryRun extracts facts but does not store them.
 	DryRun bool
-	// SkipDedupeCheck disables real-time deduplication checking during ingestion.
-	// When false (default), new facts are checked against existing facts before inserting.
-	SkipDedupeCheck bool
 	// KeepSourceDir, when set, dumps article content + extracted facts to JSON files
 	// in this directory for debugging LLM fact extraction.
 	KeepSourceDir string
@@ -96,12 +92,6 @@ func NewFileIngester(
 		embedder:      embedder,
 		factInserter:  factInserter,
 	}
-}
-
-// SetDeduplicator sets an optional deduplicator for real-time deduplication during ingestion.
-// When set, new facts are checked against existing facts before inserting.
-func (fi *FileIngester) SetDeduplicator(deduplicator *FactDeduplicator) {
-	fi.deduplicator = deduplicator
 }
 
 // IngestDirectory processes all JSON files in a directory.
@@ -282,31 +272,15 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 			},
 		}
 
-		// Check for duplicates before inserting (if deduplicator is set)
-		if fi.deduplicator != nil && !opts.SkipDedupeCheck {
-			dupeGroup, err := fi.deduplicator.CheckNewFact(ctx, &input, DedupeOptions{
-				SkipLLM: true, // Real-time: only use fast embedding checks
-			})
-			if err != nil {
-				log.Warn().Err(err).Msg("Deduplication check failed, proceeding with insert")
-			} else if dupeGroup != nil {
-				log.Info().
-					Int64("canonical_id", dupeGroup.CanonicalID).
-					Str("fact", truncateString(fact.NormalizedFactText, 60)).
-					Msg("Duplicate detected during ingestion, skipping")
-				result.duplicatesSkipped++
-				continue
-			}
-		}
-
-		// Insert using the fact inserter (handles similarity-based grouping)
-		err = fi.factInserter.InsertFacts(ctx, []StoreFactInput{input})
+		// Insert using the fact inserter (handles dedup + similarity-based grouping)
+		insertResult, err := fi.factInserter.InsertFacts(ctx, []StoreFactInput{input})
 		if err != nil {
 			log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
 			continue
 		}
 
-		result.stored++
+		result.stored += insertResult.Inserted
+		result.duplicatesSkipped += insertResult.Skipped
 	}
 
 	return result, nil

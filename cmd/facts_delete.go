@@ -30,6 +30,7 @@ func init() {
 	factsCmd.AddCommand(factsDeleteCmd)
 	factsDeleteCmd.Flags().StringP("person", "p", "", "Person name to delete facts for")
 	factsDeleteCmd.Flags().String("party", "", "Party name to delete facts for")
+	factsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 }
 
 func deleteFacts(cmd *cobra.Command, args []string) error {
@@ -83,13 +84,16 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("About to delete %d facts for %s: %s\n", factCount, targetType, targetName)
-	fmt.Print("Continue? (y/n): ")
 
-	var confirm string
-	fmt.Scanln(&confirm)
-	if confirm != "y" && confirm != "Y" {
-		fmt.Println("Cancelled.")
-		return nil
+	skipConfirm, _ := cmd.Flags().GetBool("yes")
+	if !skipConfirm {
+		fmt.Print("Continue? (y/n): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "y" && confirm != "Y" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
 	}
 
 	// Delete facts

@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-16: Auto-dedup Facts at Ingestion Time
+
+### What was done
+- **`FactInserter.insertSingleFact()`** now checks for near-duplicate active facts (via `FindSimilarActiveFacts`) before inserting. Uses `DEDUPE_AUTO_THRESHOLD` (default 0.92) — same env var as the batch `FactDeduplicator`.
+- **`InsertFacts()`** returns `(*InsertResult, error)` with `Inserted` and `Skipped` counts. All 7 callers updated.
+- **Removed `CheckNewFact()`** from `FactDeduplicator` — it was broken (searched by `InvolvedPeople` instead of `SubjectEntity`) and never called. The new inserter-level dedup replaces it.
+- **Cleaned up `FileIngester`**: removed `deduplicator` field, `SetDeduplicator()`, and `SkipDedupeCheck` option since dedup now happens inside the inserter.
+
+### Key design decisions
+- Dedup errors are logged as warnings and don't block insertion — availability over consistency.
+- Same threshold shared between ingestion-time dedup and batch CLI dedup via `getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.92)`.
+
 ## 2026-02-11: Job Metrics Table
 
 ### What was done

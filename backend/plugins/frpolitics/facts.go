@@ -176,7 +176,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		Int("total_facts", len(inputs)).
 		Msg("frpolitics: starting fact insertion with similarity detection")
 
-	if err := inserter.InsertFacts(ctx, inputs); err != nil {
+	if _, err := inserter.InsertFacts(ctx, inputs); err != nil {
 		return fmt.Errorf("failed to insert facts: %w", err)
 	}
 

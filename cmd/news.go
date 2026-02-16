@@ -657,13 +657,13 @@ func runCacheOnlyExtraction(
 					},
 				}
 
-				err = factInserter.InsertFacts(ctx, []core.StoreFactInput{input})
+				insertResult, err := factInserter.InsertFacts(ctx, []core.StoreFactInput{input})
 				if err != nil {
 					log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
 					continue
 				}
 
-				targetFacts++
+				targetFacts += insertResult.Inserted
 			}
 
 			totalFiles++

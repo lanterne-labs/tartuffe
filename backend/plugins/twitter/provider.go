@@ -228,7 +228,8 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				},
 			}
 
-			if err := factInserter.InsertFacts(ctx, []core.StoreFactInput{input}); err != nil {
+			insertResult, err := factInserter.InsertFacts(ctx, []core.StoreFactInput{input})
+			if err != nil {
 				log.Warn().Err(err).
 					Str("fact", truncate(fact.NormalizedFactText, 80)).
 					Msg("twitter: failed to store fact")
@@ -236,7 +237,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				continue
 			}
 
-			result.FactsExtracted++
+			result.FactsExtracted += insertResult.Inserted
 			metrics.IncrementTweets("fact_extracted")
 		}
 	}
