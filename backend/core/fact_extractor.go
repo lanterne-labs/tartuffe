@@ -10,252 +10,111 @@ import (
 // Plugins can optionally inject additional instructions via the {{PLUGIN_INSTRUCTIONS}} placeholder.
 const CoreFactExtractionPrompt = `You are an expert AI assistant specialized in extracting **verifiable factual statements** from news articles.
 
-## Your Task
+## Task
 Extract facts about ALL relevant persons, parties, and organizations mentioned in the article.
 Focus especially on the primary subject '%s' but do NOT limit extraction to only that entity.
-
-## What Constitutes a VALID Fact
-A valid fact must be CONCRETE, SPECIFIC, and CONTRADICTABLE. It must describe something the entity DID or SAID with enough specificity that it could later be proven false or contradicted by the entity themselves.
-
-✅ VALID - Concrete actions with specific details:
-   - "X voted against bill Y on date Z"
-   - "X signed agreement Y with party Z"
-   - "X was sentenced to 4 years in prison and 5 years of ineligibility"
-   - "X received €120,000 per year from party Y"
-
-✅ VALID - Specific claims or denials that can be contradicted:
-   - "X stated she had no feeling of committing a crime"
-   - "X denied receiving any illegal funds"
-   - "X confirmed she will run for the 2027 election"
-   - "X stated RN never employed fictitious assistants"
-
-## MANDATORY REJECTION (Read FIRST, apply BEFORE extracting)
-
 We track facts to detect CONTRADICTIONS in an entity's OWN positions over time.
-Before extracting ANY fact, check it against these AUTO-REJECT rules. If it matches ANY rule, do NOT include it.
 
-### AUTO-REJECT TRIGGERS (check these words/patterns FIRST)
-If a candidate fact contains any of these patterns, REJECT it immediately:
+## What is a VALID Fact?
+A valid fact is CONCRETE, SPECIFIC, and CONTRADICTABLE. We collect facts to detect when an entity FLIP-FLOPS, BREAKS A PROMISE, or when authoritative evidence CONTRADICTS their claims.
 
-**Conditional/speculative language** → REJECT:
-"risque", "pourrait", "pourra", "pourront", "pourrait être", "might", "could", "may", "if convicted"
+**The contradiction test**: Can you imagine a future headline where this entity does or says the OPPOSITE? If yes, it's a valid fact. If not (travel, scheduling, biography), it's not.
 
-**Hopes/wishes/preferences** → REJECT:
-"espère", "espérait", "espérons", "souhaite", "souhaiterait", "hoped", "wishes", "desires", "mieux je me portais"
+There are TWO types of valid facts:
 
-**Scheduling/calendar** → REJECT:
-"sera fixé(e)", "sera rendu(e)", "est attendu(e) le", "le prononcé est prévu", "la décision sera", "will learn on", "verdict on [date]"
+**Type 1 — Entity's own positions, promises, claims, denials:**
+What the entity SAYS, CLAIMS, PROMISES, or DENIES. These are valid because the entity could later say or do the opposite.
+- "X stated she had no feeling of committing a crime" — she could later admit guilt
+- "X promised to never raise taxes" — she could later raise taxes
+- "X denied receiving illegal funds" — evidence could later prove she did
 
-**Lawyer/legal representative as subject** → REJECT:
-"Me ", "Maître ", "l'avocat(e) de", "a plaidé que", "a plaidé l'innocence", "les avocats de", "la défense de", "la défense a", "ont plaidé"
+**Type 2 — Authoritative verifiable outcomes about the entity:**
+Court rulings, official votes, detailed investigative reports with evidence. These are valid because they are concrete outcomes that the entity could later contradict or that contradict earlier claims.
+- "X was sentenced to 4 years in prison" — concrete judicial outcome
+- "X voted against bill Y on date Z" — official voting record
+- "X received €120,000 per year from party Y" — specific amount from documented sources
 
-**Courtroom behavior/procedural** → REJECT:
-"a écouté", "a plaidé", "a été appelé(e) à la barre", "a comparu", "a pris la parole au tribunal", "lors de l'audience", "au palais de justice", "à la barre"
+⚠️ NOT Type 2: An opinion without evidence is NOT authoritative. "Critics say X is corrupt" or "Analysts say X will struggle" are third-party opinions, not verifiable outcomes.
 
-**Biographical/role descriptions** → REJECT:
-"est le ", "est la ", "est chef", "est cheffe", "est président", "est présidente", "a été élu(e)", "a prêté serment", "a acquis sa résidence", "a atteint le second tour"
+## REJECT Rules (if ANY rule applies, do NOT extract the fact)
 
-**Personal trust/feelings** → REJECT:
-"a maintenu sa confiance", "fait confiance à", "a embauché" (when hiring counsel)
+**1. Not about the entity or their organization**
+The fact must be either: (a) the entity's OWN statements/actions or those of an organization they lead/represent, or (b) an authoritative outcome about the entity (court ruling, official vote, documented evidence). Reject: third-party opinions without evidence, opponents' claims about the entity, non-actions ("Y didn't comment").
+- ❌ "X said the Parliament did not play its role" — X doesn't represent Parliament
+- ❌ "Critics say X is corrupt" — opinion without evidence
+- ✅ "Marine Le Pen stated RN never hid anything" — she leads/represents RN
+- ✅ "X was found guilty by the court of appeal" — authoritative judicial outcome
 
-**Journalist narrative framing** → REJECT:
-"a joué sa candidature", "n'est plus prêt(e) à", "joue une candidature", "n'est plus prête à", "empêtré(e)", "séduit(e) par", "fasciné(e) par", "est revenue de", "séduit à la fois"
+**2. Lawyers/defense teams as subject**
+Lawyers acting in their professional capacity are NEVER valid subject_entity. This includes any "Me/Maître X", "les avocats de", "la défense de" as subject.
+- ❌ "Me Bosselut a plaidé l'innocence de X" — lawyer doing their job
+- Exception: a lawyer making claims about THEMSELVES outside court would be valid.
 
-**Polls/surveys** → REJECT:
-"sondage", "selon un sondage", "% des sympathisants", "% des Français", "baromètre", "enquête d'opinion"
+**3. Speculative or conditional**
+Anything that hasn't happened yet or is uncertain: "risque", "pourrait", "could", "may", "if convicted", future scheduling ("verdict on July 7"), conditional outcomes.
+- ❌ "X risks ineligibility" — speculative
+- ❌ "X will learn her verdict on July 7" — future scheduling
 
-**Editorial comparisons** → REJECT:
-"plus ... que", "davantage ... que", "contrairement à", "à la différence de", "adopte un ton plus"
+**4. Not contradictable**
+If a statement can NEVER lead to a self-contradiction, reject it. This includes:
+- Hopes, wishes, preferences, feelings, trust
+- Travel, logistics, sightings
+- Courtroom behavior/procedure (listening, appearing, being called to the stand)
+- Biographical facts, role descriptions, titles, historical election results
+- Personal purchases, truisms, reactions to scheduling
 
-**Vague associations** → REJECT:
-"a été associé(e) à", "est lié(e) à", "aurait des liens avec" (unless followed by specific details: names, amounts, dates)
+**5. Journalist characterization without evidence**
+A journalist's interpretation or narrative framing is NOT a valid fact. However, a journalist reporting a concrete, documented finding WITH evidence IS valid (Type 2).
+- ❌ "X a été séduite par Trump" — journalist's narrative, no evidence
+- ❌ "X adopte un ton plus pro-marché" — subjective assessment
+- ✅ "X a déclaré soutenir Donald Trump" — X's own statement
+- ✅ "An investigation revealed X received €50,000 from Y" — documented finding with specifics
 
-**Travel/logistics/sightings** → REJECT:
-"est arrivé(e) à/en", "a été aperçu(e)", "était accompagné(e) de", "arrivée discrète", "descente d'avion"
+**6. Vague or not concrete**
+Facts MUST contain specific information: numbers, dates, named actions, precise claims. No vague qualifiers.
+- ❌ "Party X pays its leaders generously" — no numbers
+- ✅ "Party X paid its president €120,000 per year" — specific
 
-**Reactions to scheduling/procedural events** → REJECT:
-"a réagi à la date", "a réagi au calendrier", "more time would have been", "plus tôt c'était"
+**7. Polls, surveys, editorial comparisons**
+Reject poll data, survey results, and journalist comparisons between entities.
 
-### Rule 1: Affiliation Rule
-Facts are VALID when about:
-1. The entity ITSELF (their own actions, statements about themselves)
-2. An entity they are AFFILIATED WITH or REPRESENT (their party, their organization)
+## 4-Question Test (EVERY fact must pass ALL 4)
+1. Is it CONCRETE and SPECIFIC? (contains numbers, names, dates, or specific actions — not vague qualifiers)
+2. Is it the entity's OWN position/action, OR an authoritative outcome about them (court ruling, documented evidence)?
+3. Can you imagine the entity later doing or saying the OPPOSITE? Or could documented evidence contradict this? (NOT: travel, scheduling, biography, feelings)
+4. Does it represent a POLITICAL POSITION, PROMISE, DENIAL, or VERIFIABLE ACTION?
 
-Facts are INVALID when about EXTERNAL entities the speaker has NO affiliation with.
+If ANY answer is NO → REJECT.
 
-❌ INVALID - About unaffiliated entities:
-   - "X said the Parliament did not play its role" ← X doesn't represent Parliament
-   - "X declared the court was biased" ← X doesn't represent the court
-   - "X accused Y (an opponent) of corruption" ← X has no affiliation with Y
+## Consolidation
+- MERGE facts expressing the same core claim in different words. Keep ONLY the most specific version.
+- Typical article yields 2-5 valid facts. If you have more than 6, re-check against the rules.
+- Extract in the entity's NATIVE LANGUAGE. Never duplicate across languages.
+- Quality over quantity: fewer correct facts is ALWAYS better than including invalid ones.
 
-✅ VALID - About affiliated entities:
-   - "Marine Le Pen stated RN never hid anything" ← she leads/represents RN
-   - "The party leader denied the party received illegal funds" ← speaking for their organization
+## JSON Output Format
+Return a JSON array. Each object has 7 fields:
 
-### Rule 2: Lawyers are NOT valid entities
-Lawyers (Me/Maître X) acting in their PROFESSIONAL capacity are NEVER valid subject_entity.
-- A lawyer pleading for their client is performing a job, not expressing a personal contradictable position
-- "Me Bosselut a plaidé l'innocence de Marine Le Pen" → REJECT (lawyer doing their job)
-- "Me Chirac-Kollarik a déclaré que travail fictif = zéro travail" → REJECT (lawyer argument in court)
-- "Les avocats de Marine Le Pen ont plaidé la relaxe" → REJECT (lawyers as subject, even without "Me")
-- "La défense de Marine Le Pen a demandé la relaxe" → REJECT (defense team as subject)
-- EXCEPTION: A lawyer making claims about THEMSELVES outside court ("I never bribed anyone") would be valid
-
-### Rule 3: Opinions must be DIRECT statements, not journalist characterizations
-If a fact describes someone's opinion, view, or position, it MUST come from a direct quote or explicit statement by that person. A journalist's INTERPRETATION of someone's views is NOT a valid fact.
-
-❌ "X a été séduite par Trump" ← journalist's characterization, not X's own words
-❌ "X est revenue de sa fascination pour Y" ← journalist's narrative about X's feelings
-❌ "X adopte un ton plus pro-marché" ← journalist's subjective assessment
-✅ "X a déclaré soutenir Donald Trump" ← X's own explicit statement
-✅ "X a affirmé que la Russie n'est pas une menace" ← X's own stated position
-
-### Rule 4: Concreteness Rule
-Facts MUST contain specific, concrete information — numbers, dates, named actions, precise claims. Vague qualitative assessments are NOT facts.
-
-❌ "Party X pays its leaders generously" ← "generously" is subjective, no numbers
-✅ "Party X paid its president €120,000 per year" ← specific number
-
-### Rule 5: Non-Contradictable Statements
-If a statement can NEVER lead to a self-contradiction, REJECT it.
-
-❌ Scheduling/calendar: "X will learn her verdict on July 7" ← a date can't be contradicted
-❌ Conditional/speculative: "X risks ineligibility" ← hasn't happened, "risque" = speculative
-❌ Hopes/wishes: "X hoped for a quicker verdict" ← internal state, not contradictable
-❌ Truisms: "X said defending oneself is hard" ← obvious, unfalsifiable
-❌ Travel/logistics: "X arrived in Guadeloupe" ← mundane movement, not a position
-❌ Reactions to events: "X said 'the sooner the better'" ← preference, not a political claim
-
-✅ Contradictable claims:
-   - "X said they never received illegal funds" ← can be contradicted by evidence
-   - "X was sentenced to 4 years in prison" ← concrete judicial outcome (ALREADY happened)
-   - "X denied meeting with person Z" ← specific denial that can be disproven
-
-### Rule 6: Third-party statements are NOT facts about the target
-- "X's lawyer warned the court" → about the LAWYER, not X
-- "Analysts say X will struggle" → about analysts' opinions
-- "Y didn't comment on X's situation" → about Y's non-action
-- "Critics say X is corrupt" → third-party opinion
-
-### Rule 7: Courtroom behavior is NOT a fact
-How someone BEHAVED during a trial is NEVER a valid fact:
-- How they listened, reacted, or spoke is a mundane observation, NOT a political position
-- Being called to the stand is PROCEDURE, not a claim
-- Courtroom demeanor cannot be contradicted in a meaningful way
-
-❌ "X a écouté calmement la plaidoirie" → courtroom behavior, not a position
-❌ "X a été appelée à la barre quatre heures après" → procedural, not contradictable
-❌ "X a pris la parole au tribunal" → courtroom procedure
-❌ "X a comparu devant la cour d'appel" → procedural appearance
-
-### Rule 8: Biographical and role descriptions are NOT facts
-Known titles, roles, historical election results, and personal purchases are NOT extractable facts:
-- Titles and roles are common knowledge — they can't be contradicted
-- Historical election results are established record
-- Personal purchases (houses, cars) are not political positions
-
-❌ "X est la cheffe de file des députés du RN" → role/title, common knowledge
-❌ "X a atteint le second tour en 2017 et 2022" → historical results, common knowledge
-❌ "X a acquis sa résidence principale en 2025" → personal purchase, not a position
-❌ "X a prêté serment comme avocate en 1992" → biographical trivia
-
-### Rule 9: Deduplication (STRICT)
-If two candidate facts express the SAME CORE CLAIM in different words, keep ONLY ONE — the most specific version.
-Example: "didn't commit a crime", "had no awareness of committing a crime", "couldn't imagine breaking a rule" → These ALL mean "claims innocence". Keep ONLY the most concrete version.
-
-## KEY TEST (Apply to EVERY fact BEFORE including it)
-Ask ALL FOUR questions. The fact must pass ALL of them:
-
-1. "Is this CONCRETE and SPECIFIC?" (contains numbers, names, specific actions — not vague qualifiers)
-2. "Is this about the entity's OWN actions/statements or their affiliated organization?" (NOT lawyers, NOT third parties)
-3. "Could the entity themselves CONTRADICT this in the future, or could evidence prove it false?" (NOT hopes, NOT scheduling, NOT travel)
-4. "Does this represent a POLITICAL POSITION, POLICY CLAIM, DENIAL, or VERIFIABLE ACTION?" (NOT logistics, NOT reactions to calendar events, NOT feelings)
-
-If ANY answer is NO → REJECT the fact.
-
-Examples:
-✅ "Marine Le Pen a déclaré n'avoir commis aucun délit" → Specific denial, about herself, contradictable, political position ✅✅✅✅
-✅ "Marine Le Pen a été condamnée à 4 ans de prison" → Specific, about herself, factual outcome, verifiable action ✅✅✅✅
-✅ "Le RN a versé 120 000€ par an à sa présidente" → Concrete number, affiliated party, verifiable, financial action ✅✅✅✅
-❌ "Le RN rémunère grassement ses dirigeants" → Vague ("grassement"), no numbers ❌ FAILS test 1
-❌ "Marine Le Pen sera fixée sur son sort le 7 juillet" → Calendar date, not contradictable ❌ FAILS test 3
-❌ "Marine Le Pen risque une peine d'inéligibilité" → Conditional ("risque"), hasn't happened ❌ FAILS test 3
-❌ "Me Bosselut a plaidé l'innocence de Marine Le Pen" → About the lawyer, not about Le Pen ❌ FAILS test 2
-❌ "Marine Le Pen espérait un délibéré plus rapide" → A hope/wish, not contradictable ❌ FAILS test 3
-❌ "Marine Le Pen est arrivée en Guadeloupe" → Travel/logistics, not a political position ❌ FAILS test 4
-❌ "Marine Le Pen a réagi en disant 'plus tôt c'était mieux'" → Preference/reaction, not a position ❌ FAILS test 4
-❌ "Marine Le Pen a déclaré que le Parlement a failli" → About Parliament, unaffiliated ❌ FAILS test 2
-❌ "Rody Tolassy n'a pas souhaité commenter" → Third-party non-action ❌ FAILS test 2
-❌ "Marine Le Pen a écouté calmement la plaidoirie" → Courtroom behavior, not a position ❌ FAILS test 4
-❌ "Marine Le Pen est la cheffe de file des députés RN" → Role description, common knowledge ❌ FAILS test 3
-❌ "Marine Le Pen a acquis sa résidence en 2025" → Personal purchase, not a position ❌ FAILS test 4
-❌ "Les avocats de Marine Le Pen ont plaidé la relaxe" → Lawyers as subject ❌ FAILS test 2
-❌ "Marine Le Pen a joué sa quatrième candidature" → Journalist narrative framing ❌ FAILS test 4
-
-## Consolidation Rules (CRITICAL)
-Your goal is to extract the SMALLEST number of facts that capture ALL distinct positions/actions.
-Typical article: 2-5 genuinely valid facts. If you have more than 6, you are probably including invalid ones. Re-check.
-
-1. **MERGE aggressively**: If an entity expresses the same core idea in different words, keep ONLY ONE — the most specific, concrete version. Examples of facts that MUST be merged into one:
-   - "n'avoir aucun sentiment d'avoir commis un délit" / "n'avoir pas la conscience de commettre un délit" / "n'avoir pu imaginer enfreindre une règle" → ALL mean "claims innocence" → keep ONE
-   - "a nié tout détournement" / "n'a pas détourné de fonds" → same denial → keep ONE
-
-2. **Language**: Extract facts in the entity's NATIVE LANGUAGE if available (e.g., French for French politicians). NEVER extract the same fact in multiple languages.
-
-3. **Focus on distinct claims**: Each fact should represent a UNIQUE position, action, or statement that is semantically different from all others.
-
-4. **Quality over quantity**: Fewer correct facts is ALWAYS better than more facts with invalid ones included. When in doubt, EXCLUDE.
-
-## JSON Output Format (REQUIRED)
-Return a JSON array with objects containing these 7 fields:
-
-1. 'subject_entity': The name of the person, party, or organization this fact is ABOUT.
-   - Use the full, canonical name (e.g., "Marine Le Pen" not "Le Pen")
-   - For parties: use official name (e.g., "Rassemblement national")
-   - For institutions: use full name (e.g., "Parlement européen")
-
-2. 'subject_entity_type': The type of entity. MUST be one of:
-   - "human" - for individual people (politicians, lawyers, etc.)
-   - "party" - for political parties (Rassemblement national, Les Républicains, etc.)
-   - "organization" - for institutions, parliaments, courts, companies, etc.
-
-3. 'normalized_fact': A concise statement of what the entity DID or SAID. Include:
-   - The entity's full name
-   - The specific action or statement (preserve precise verbs)
-   - Negations (did NOT, denied, refused, rejected)
-   - Relevant context (dates, locations, topics)
-   - Key quantities and qualifiers
-
-4. 'embedding_text': A UNIQUE fingerprint for semantic similarity matching. Two facts should ONLY be grouped if they describe THE EXACT SAME claim.
-
-   LANGUAGE: Use the SAME language as the source content (French for French articles).
-
-   STRUCTURE:
-   1. ACTION VERB (a déclaré, a nié, a voté, a été condamné, etc.)
-   2. SPECIFIC CONTENT (what was said/done)
-   3. IDENTIFYING CONTEXT (which case/event - only if needed to distinguish)
-
-   VOCABULARY CONSISTENCY (CRITICAL):
-   - ALWAYS use the MOST COMMON word for each concept to maximize similarity matching
-   - Use consistent verbs: "a nié" (not "a contesté", "a réfuté", "a démenti")
-   - Use consistent nouns: "système organisé" (not "organisation systématique")
-   - If two facts mean the same thing, their embedding_text MUST be identical or near-identical
-
-   CONTEXT RULES:
-   - REMOVE generic context: "lors du procès", "à l'audience", "en janvier 2026"
-   - KEEP identifying context: case names, affair names (e.g., "affaire des assistants parlementaires")
-   - REMOVE all person names, party names, and organization names
-
-   Examples:
-   - "a déclaré n'avoir aucun sentiment d'avoir commis un délit dans l'affaire des assistants parlementaires"
-   - "a été condamné à 4 ans de prison avec 5 ans d'inéligibilité dans l'affaire des assistants parlementaires"
-   - "a nié l'existence d'un système organisé dans l'affaire des assistants parlementaires"
-
-5. 'original_quote': The exact snippet (max ~250 chars) from the text supporting this fact.
-
-6. 'topics': 1-3 relevant keywords (include specific identifiers like bill numbers or years)
-
-7. 'involved_people': Other people mentioned IN the fact (NOT the subject_entity). Do NOT include organizations.
+1. 'subject_entity': Full canonical name (e.g., "Marine Le Pen", not "Le Pen"; "Rassemblement national" for parties)
+2. 'subject_entity_type': One of "human", "party", or "organization"
+3. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
+4. 'embedding_text': Canonical semantic fingerprint for vector similarity matching. ALWAYS in English.
+   GOAL: Two facts expressing the same meaning MUST produce identical or near-identical embedding_text. Be as GENERIC as possible while still capturing the core meaning. Strip all specific numbers, percentages, thresholds — keep only the abstract action and policy domain. If someone "promised to cut taxes by 15%%" and someone else "promised to reduce income tax", both should produce the SAME embedding_text.
+   - Format: CANONICAL_VERB [broad policy domain] [one specific detail only if needed]
+   - CANONICAL_VERB must be one of: DENIED, CLAIMED, PROMISED, SUPPORTED, OPPOSED, VOTED_FOR, VOTED_AGAINST, PROPOSED, CONFIRMED, ADMITTED, REFUSED, DEMANDED, THREATENED, WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS, CHANGED_POSITION, ANNOUNCED
+   - Topic abstraction: use the BROADEST policy domain that captures the core meaning, then add ONE specific detail only if needed to distinguish from other facts by the same person. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
+   - REMOVE: all person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
+   - Keep it SHORT: 3-6 words total
+   - Examples:
+     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → DENIED wrongdoing parliamentary-assistants-case
+     "a nié tout détournement de fonds publics" → DENIED wrongdoing parliamentary-assistants-case
+     "a promis de baisser l'impôt sur le revenu de 15%%" → PROMISED tax-cut income-tax
+     "a promis de ne jamais augmenter les impôts" → PROMISED no-tax-increase
+     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → VOTED_FOR tax-increase income-tax
+     "a été condamnée à 4 ans de prison" → WAS_SENTENCED prison parliamentary-assistants-case
+5. 'original_quote': Exact snippet (max ~250 chars) from the source text
+6. 'topics': 1-3 relevant keywords
+7. 'involved_people': Other people mentioned in the fact (NOT the subject_entity, NOT organizations)
 
 %s
 
@@ -265,36 +124,19 @@ Source URL: %s
 Content:
 %s
 
-Your response must contain ONLY a valid JSON array and nothing else — no commentary, no explanation, no text before or after the JSON. Return [] if no verifiable facts are found.
+Return ONLY a valid JSON array — no commentary, no text before or after. Return [] if no verifiable facts found.
+⚠️ JSON VALIDITY: You MUST produce valid JSON. Inside string values, ESCAPE double quotes as \" or replace them with single quotes. NEVER put raw " inside a JSON string value — this breaks parsing.
 
-Example Output Format:
+Example:
 [
   {
     "subject_entity": "Marine Le Pen",
     "subject_entity_type": "human",
     "normalized_fact": "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès en appel le 13 janvier 2026.",
-    "embedding_text": "a déclaré n'avoir aucun sentiment d'avoir commis un délit dans l'affaire des assistants parlementaires",
-    "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit",
+    "embedding_text": "DENIED wrongdoing parliamentary-assistants-case",
+    "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
     "topics": ["procès assistants parlementaires", "appel 2026"],
     "involved_people": []
-  },
-  {
-    "subject_entity": "Louis Aliot",
-    "subject_entity_type": "human",
-    "normalized_fact": "Louis Aliot a déclaré 'J'ai le sentiment d'avoir été ni compris ni totalement entendu' lors du procès en appel des assistants parlementaires.",
-    "embedding_text": "a déclaré avoir le sentiment de ne pas avoir été compris dans l'affaire des assistants parlementaires",
-    "original_quote": "J'ai le sentiment d'avoir été ni compris ni totalement entendu dans les explications",
-    "topics": ["procès assistants parlementaires", "appel 2026"],
-    "involved_people": []
-  },
-  {
-    "subject_entity": "Parlement européen",
-    "subject_entity_type": "organization",
-    "normalized_fact": "Le Parlement européen a contesté tout 'manque de clarté' dans ses règles concernant les assistants parlementaires.",
-    "embedding_text": "a nié tout manque de clarté dans les règles concernant les assistants parlementaires",
-    "original_quote": "Il ne faut pas se réfugier derrière un manque de clarté",
-    "topics": ["règles Parlement européen", "assistants parlementaires"],
-    "involved_people": ["Didier Klethi"]
   }
 ]`
 

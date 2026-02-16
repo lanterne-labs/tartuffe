@@ -10,7 +10,7 @@ func TestParseFactJSON(t *testing.T) {
 	sourceURL := "https://example.com/article"
 
 	t.Run("valid JSON array", func(t *testing.T) {
-		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"a voté contre le projet X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]`)
+		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]`)
 		facts, err := parseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -35,7 +35,7 @@ func TestParseFactJSON(t *testing.T) {
 	})
 
 	t.Run("facts array with trailing text", func(t *testing.T) {
-		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"a voté contre le projet X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]
+		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]
 Here are the facts I extracted from the article.`)
 		facts, err := parseFactJSON(input, sourceURL, &now)
 		if err != nil {

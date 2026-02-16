@@ -21,11 +21,11 @@ type Fact struct {
 	// This version INCLUDES person names and is used for display and LLM contradiction comparison.
 	// Example: "Marine Le Pen plans to cut income taxes".
 	NormalizedFactText string `json:"normalized_fact"`
-	// EmbeddingText is a name-free version of the fact used ONLY for generating vector embeddings.
-	// This version REMOVES person/organization names to ensure facts cluster by topic, not by person.
-	// Example: "Plans to cut income taxes during political speech"
-	// This enables both proper deduplication (same topic + same stance = duplicate) and
-	// contradiction detection (same topic + different stance = neighbors to compare).
+	// EmbeddingText is a canonical semantic fingerprint used ONLY for generating vector embeddings.
+	// Always English, using a fixed canonical verb + broad policy domain keywords.
+	// Example: "PROMISED 15-percent-tax-cut income-tax"
+	// This enables both dedup (same meaning → near-identical vector) and
+	// contradiction detection (opposing positions → same neighborhood).
 	EmbeddingText string `json:"embedding_text"`
 	// OriginalQuote is the original sentence or snippet from the source document
 	// corresponding to the NormalizedFactText. Provides context and verification.

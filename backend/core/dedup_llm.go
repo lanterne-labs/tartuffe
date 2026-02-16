@@ -213,7 +213,7 @@ Return JSON in exactly this format:
     {
       "id": 4,
       "improved_normalized_fact": "Marine Le Pen stated during her appeal trial that she had no feeling of committing a crime when hiring EU parliamentary assistants.",
-      "improved_embedding_text": "Stated had no feeling of committing crime when hiring assistants in EU parliamentary assistants case",
+      "improved_embedding_text": "DENIED wrongdoing parliamentary-assistants-case",
       "reason": "Made more specific about what she claimed"
     }
   ]

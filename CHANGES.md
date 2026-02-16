@@ -2,6 +2,39 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-16: Canonical embedding_text format
+
+### What was done
+- Redesigned `embedding_text` field in the fact extraction prompt from free-form native-language sentences to **canonical English fingerprints**: `CANONICAL_VERB [broad-policy-domain] [detail]`.
+- Fixed vocabulary of 20 canonical verbs (DENIED, CLAIMED, PROMISED, VOTED_FOR, etc.) ensures consistent phrasing across extractions.
+- Topic abstraction rule: use broadest policy domain so related positions cluster (e.g., "workers-social-rights" covers both "more financial freedom" and "reduce holidays").
+- Always English — embedding model (text-embedding-3-small) clusters English tighter than French.
+- Updated dedup LLM prompt example and test fixtures to match.
+
+### Key design decisions
+- `embedding_text` is ONLY used for pgvector cosine similarity (dedup at 0.92, contradiction neighborhood at 0.68). The LLM contradiction check uses `normalized_fact` (with names). So it's a semantic key, not display text.
+- Canonical verbs eliminate synonym variation ("a nié" vs "a contesté" vs "a réfuté" → all become DENIED).
+- Broad topic domains ensure contradictory positions land in the same neighborhood for detection.
+
+## 2026-02-16: Simplify Fact Extraction Prompt
+
+### What was done
+- Rewrote `CoreFactExtractionPrompt` in `backend/core/fact_extractor.go` — ~290 lines → ~105 lines (~65% reduction).
+- **Removed AUTO-REJECT TRIGGERS** section (40 lines of French keyword patterns like "risque", "pourrait", "espère"). These were asking the LLM to do regex matching, which is fragile and wastes context on a small model. The semantic rules already cover the same concepts.
+- **Consolidated 9 numbered rules into 7 REJECT rules** — merged overlapping rules (courtroom behavior + biographical + non-contradictable into fewer rules), eliminated redundant examples.
+- **Trimmed KEY TEST section** — removed 14 worked examples (concepts already covered by the rules), kept just the 4-question checklist.
+- **Reduced output examples** from 3 JSON objects to 1.
+
+- **Added "contradiction test" framing**: "Can you imagine a future headline where this entity does or says the OPPOSITE?" — makes the core purpose explicit to the model.
+- **Added Type 1 / Type 2 valid facts**: Type 1 = entity's own positions/promises/denials (could later flip-flop). Type 2 = authoritative outcomes (court rulings, documented evidence, official votes). Explicitly excludes opinions without evidence from Type 2.
+- **Updated Rule 1 and Rule 5** to align with the two-type system. Journalist reporting a documented finding with evidence is now explicitly valid (Type 2), while journalist narrative/opinion without evidence remains rejected.
+
+### Key design decisions
+- Semantic rules over keyword lists: the LLM should reject "X risque une peine" because it fails the "speculative/conditional" rule, not because the word "risque" appears. Keyword matching via LLM is inherently fragile.
+- The "promise → break promise" framing makes the *purpose* of fact extraction clear to the model, so it can make better judgment calls on edge cases.
+- One example output is sufficient for format compliance — 3 examples wasted ~30 lines of context.
+- Fewer tokens in prompt = more room for article content in the context window, especially important for Ministral 8B.
+
 ## 2026-02-16: Auto-dedup Facts at Ingestion Time
 
 ### What was done
