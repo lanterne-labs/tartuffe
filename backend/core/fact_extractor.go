@@ -59,7 +59,16 @@ If a candidate fact contains any of these patterns, REJECT it immediately:
 "a maintenu sa confiance", "fait confiance à", "a embauché" (when hiring counsel)
 
 **Journalist narrative framing** → REJECT:
-"a joué sa candidature", "n'est plus prêt(e) à", "joue une candidature", "n'est plus prête à"
+"a joué sa candidature", "n'est plus prêt(e) à", "joue une candidature", "n'est plus prête à", "empêtré(e)", "séduit(e) par", "fasciné(e) par", "est revenue de", "séduit à la fois"
+
+**Polls/surveys** → REJECT:
+"sondage", "selon un sondage", "% des sympathisants", "% des Français", "baromètre", "enquête d'opinion"
+
+**Editorial comparisons** → REJECT:
+"plus ... que", "davantage ... que", "contrairement à", "à la différence de", "adopte un ton plus"
+
+**Vague associations** → REJECT:
+"a été associé(e) à", "est lié(e) à", "aurait des liens avec" (unless followed by specific details: names, amounts, dates)
 
 **Travel/logistics/sightings** → REJECT:
 "est arrivé(e) à/en", "a été aperçu(e)", "était accompagné(e) de", "arrivée discrète", "descente d'avion"
@@ -92,13 +101,22 @@ Lawyers (Me/Maître X) acting in their PROFESSIONAL capacity are NEVER valid sub
 - "La défense de Marine Le Pen a demandé la relaxe" → REJECT (defense team as subject)
 - EXCEPTION: A lawyer making claims about THEMSELVES outside court ("I never bribed anyone") would be valid
 
-### Rule 3: Concreteness Rule
+### Rule 3: Opinions must be DIRECT statements, not journalist characterizations
+If a fact describes someone's opinion, view, or position, it MUST come from a direct quote or explicit statement by that person. A journalist's INTERPRETATION of someone's views is NOT a valid fact.
+
+❌ "X a été séduite par Trump" ← journalist's characterization, not X's own words
+❌ "X est revenue de sa fascination pour Y" ← journalist's narrative about X's feelings
+❌ "X adopte un ton plus pro-marché" ← journalist's subjective assessment
+✅ "X a déclaré soutenir Donald Trump" ← X's own explicit statement
+✅ "X a affirmé que la Russie n'est pas une menace" ← X's own stated position
+
+### Rule 4: Concreteness Rule
 Facts MUST contain specific, concrete information — numbers, dates, named actions, precise claims. Vague qualitative assessments are NOT facts.
 
 ❌ "Party X pays its leaders generously" ← "generously" is subjective, no numbers
 ✅ "Party X paid its president €120,000 per year" ← specific number
 
-### Rule 4: Non-Contradictable Statements
+### Rule 5: Non-Contradictable Statements
 If a statement can NEVER lead to a self-contradiction, REJECT it.
 
 ❌ Scheduling/calendar: "X will learn her verdict on July 7" ← a date can't be contradicted
@@ -113,7 +131,7 @@ If a statement can NEVER lead to a self-contradiction, REJECT it.
    - "X was sentenced to 4 years in prison" ← concrete judicial outcome (ALREADY happened)
    - "X denied meeting with person Z" ← specific denial that can be disproven
 
-### Rule 5: Third-party statements are NOT facts about the target
+### Rule 6: Third-party statements are NOT facts about the target
 - "X's lawyer warned the court" → about the LAWYER, not X
 - "Analysts say X will struggle" → about analysts' opinions
 - "Y didn't comment on X's situation" → about Y's non-action
@@ -141,7 +159,7 @@ Known titles, roles, historical election results, and personal purchases are NOT
 ❌ "X a acquis sa résidence principale en 2025" → personal purchase, not a position
 ❌ "X a prêté serment comme avocate en 1992" → biographical trivia
 
-### Rule 6: Deduplication (STRICT)
+### Rule 9: Deduplication (STRICT)
 If two candidate facts express the SAME CORE CLAIM in different words, keep ONLY ONE — the most specific version.
 Example: "didn't commit a crime", "had no awareness of committing a crime", "couldn't imagine breaking a rule" → These ALL mean "claims innocence". Keep ONLY the most concrete version.
 
