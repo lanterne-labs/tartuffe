@@ -47,7 +47,19 @@ If a candidate fact contains any of these patterns, REJECT it immediately:
 "sera fixé(e)", "sera rendu(e)", "est attendu(e) le", "le prononcé est prévu", "la décision sera", "will learn on", "verdict on [date]"
 
 **Lawyer/legal representative as subject** → REJECT:
-"Me ", "Maître ", "l'avocat(e) de", "a plaidé que", "a plaidé l'innocence", "les avocats de"
+"Me ", "Maître ", "l'avocat(e) de", "a plaidé que", "a plaidé l'innocence", "les avocats de", "la défense de", "la défense a", "ont plaidé"
+
+**Courtroom behavior/procedural** → REJECT:
+"a écouté", "a plaidé", "a été appelé(e) à la barre", "a comparu", "a pris la parole au tribunal", "lors de l'audience", "au palais de justice", "à la barre"
+
+**Biographical/role descriptions** → REJECT:
+"est le ", "est la ", "est chef", "est cheffe", "est président", "est présidente", "a été élu(e)", "a prêté serment", "a acquis sa résidence", "a atteint le second tour"
+
+**Personal trust/feelings** → REJECT:
+"a maintenu sa confiance", "fait confiance à", "a embauché" (when hiring counsel)
+
+**Journalist narrative framing** → REJECT:
+"a joué sa candidature", "n'est plus prêt(e) à", "joue une candidature", "n'est plus prête à"
 
 **Travel/logistics/sightings** → REJECT:
 "est arrivé(e) à/en", "a été aperçu(e)", "était accompagné(e) de", "arrivée discrète", "descente d'avion"
@@ -76,6 +88,8 @@ Lawyers (Me/Maître X) acting in their PROFESSIONAL capacity are NEVER valid sub
 - A lawyer pleading for their client is performing a job, not expressing a personal contradictable position
 - "Me Bosselut a plaidé l'innocence de Marine Le Pen" → REJECT (lawyer doing their job)
 - "Me Chirac-Kollarik a déclaré que travail fictif = zéro travail" → REJECT (lawyer argument in court)
+- "Les avocats de Marine Le Pen ont plaidé la relaxe" → REJECT (lawyers as subject, even without "Me")
+- "La défense de Marine Le Pen a demandé la relaxe" → REJECT (defense team as subject)
 - EXCEPTION: A lawyer making claims about THEMSELVES outside court ("I never bribed anyone") would be valid
 
 ### Rule 3: Concreteness Rule
@@ -105,6 +119,28 @@ If a statement can NEVER lead to a self-contradiction, REJECT it.
 - "Y didn't comment on X's situation" → about Y's non-action
 - "Critics say X is corrupt" → third-party opinion
 
+### Rule 7: Courtroom behavior is NOT a fact
+How someone BEHAVED during a trial is NEVER a valid fact:
+- How they listened, reacted, or spoke is a mundane observation, NOT a political position
+- Being called to the stand is PROCEDURE, not a claim
+- Courtroom demeanor cannot be contradicted in a meaningful way
+
+❌ "X a écouté calmement la plaidoirie" → courtroom behavior, not a position
+❌ "X a été appelée à la barre quatre heures après" → procedural, not contradictable
+❌ "X a pris la parole au tribunal" → courtroom procedure
+❌ "X a comparu devant la cour d'appel" → procedural appearance
+
+### Rule 8: Biographical and role descriptions are NOT facts
+Known titles, roles, historical election results, and personal purchases are NOT extractable facts:
+- Titles and roles are common knowledge — they can't be contradicted
+- Historical election results are established record
+- Personal purchases (houses, cars) are not political positions
+
+❌ "X est la cheffe de file des députés du RN" → role/title, common knowledge
+❌ "X a atteint le second tour en 2017 et 2022" → historical results, common knowledge
+❌ "X a acquis sa résidence principale en 2025" → personal purchase, not a position
+❌ "X a prêté serment comme avocate en 1992" → biographical trivia
+
 ### Rule 6: Deduplication (STRICT)
 If two candidate facts express the SAME CORE CLAIM in different words, keep ONLY ONE — the most specific version.
 Example: "didn't commit a crime", "had no awareness of committing a crime", "couldn't imagine breaking a rule" → These ALL mean "claims innocence". Keep ONLY the most concrete version.
@@ -132,6 +168,11 @@ Examples:
 ❌ "Marine Le Pen a réagi en disant 'plus tôt c'était mieux'" → Preference/reaction, not a position ❌ FAILS test 4
 ❌ "Marine Le Pen a déclaré que le Parlement a failli" → About Parliament, unaffiliated ❌ FAILS test 2
 ❌ "Rody Tolassy n'a pas souhaité commenter" → Third-party non-action ❌ FAILS test 2
+❌ "Marine Le Pen a écouté calmement la plaidoirie" → Courtroom behavior, not a position ❌ FAILS test 4
+❌ "Marine Le Pen est la cheffe de file des députés RN" → Role description, common knowledge ❌ FAILS test 3
+❌ "Marine Le Pen a acquis sa résidence en 2025" → Personal purchase, not a position ❌ FAILS test 4
+❌ "Les avocats de Marine Le Pen ont plaidé la relaxe" → Lawyers as subject ❌ FAILS test 2
+❌ "Marine Le Pen a joué sa quatrième candidature" → Journalist narrative framing ❌ FAILS test 4
 
 ## Consolidation Rules (CRITICAL)
 Your goal is to extract the SMALLEST number of facts that capture ALL distinct positions/actions.
