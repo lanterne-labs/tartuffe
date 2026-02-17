@@ -98,6 +98,8 @@ Return a JSON array. Each object has 7 fields:
 1. 'subject_entity': Full canonical name (e.g., "Marine Le Pen", not "Le Pen"; "Rassemblement national" for parties)
 2. 'subject_entity_type': One of "human", "party", or "organization"
 3. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
+   ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
+   ⚠️ NO CANONICAL VERBS: NEVER use DENIED, CLAIMED, PROMISED, WAS_CONVICTED, etc. in this field. Use natural language only. Write "a nié", "a affirmé", "a promis" — NOT "a DENIED" or "a CLAIMED".
 4. 'embedding_text': Canonical semantic fingerprint for vector similarity matching. ALWAYS in English.
    GOAL: Two facts expressing the same meaning MUST produce identical or near-identical embedding_text. Be as GENERIC as possible while still capturing the core meaning. Strip all specific numbers, percentages, thresholds — keep only the abstract action and policy domain. If someone "promised to cut taxes by 15%%" and someone else "promised to reduce income tax", both should produce the SAME embedding_text.
    - Format: CANONICAL_VERB [broad policy domain] [one specific detail only if needed]
