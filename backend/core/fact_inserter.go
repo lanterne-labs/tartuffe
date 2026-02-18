@@ -179,17 +179,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		}
 	}
 
-	// Resolve InvolvedPeople as secondary mentions
-	var secondaryPersonIDs []int64
-	if len(input.InvolvedPeople) > 0 {
-		secondaryPersonIDs, err = fi.storer.FindOrInsertPersons(ctx, input.InvolvedPeople)
-		if err != nil {
-			log.Warn().Err(err).Strs("involved_people", input.InvolvedPeople).
-				Msg("Failed to resolve secondary persons, continuing with subject only")
-			secondaryPersonIDs = nil
-		}
-	}
-
 	// Insert the fact
 	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {
@@ -216,14 +205,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return false, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
-	// Link secondary persons
-	if len(secondaryPersonIDs) > 0 {
-		if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, secondaryPersonIDs); err != nil {
-			log.Warn().Err(err).Interface("secondary_person_ids", secondaryPersonIDs).
-				Msg("Failed to link secondary persons to source")
-		}
-	}
-
 	// Classify relations with similar facts (non-blocking - fact is already inserted)
 	if fi.classifier != nil {
 		fi.classifyRelations(ctx, factID, input, subjectID)
@@ -233,7 +214,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Int64("fact_id", factID).
 		Int64("source_id", sourceID).
 		Str("subject_entity", input.SubjectEntity).
-		Int("num_secondary_persons", len(secondaryPersonIDs)).
 		Msg("Successfully inserted fact with source and person links")
 
 	return true, nil

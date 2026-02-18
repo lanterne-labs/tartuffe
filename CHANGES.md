@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-18: Fix Fact Linking + Unify Contradiction Prompt
+
+### What was done
+- **`fact_inserter.go`**: Removed `involved_people` linking to `fact_mentions`. Previously both `subject_entity` AND `involved_people` were linked with no role distinction, causing facts about other people (Trump, Bardella, etc.) to be attributed to someone merely mentioned. Now only `subject_entity` creates a `fact_mentions` link.
+- **`fact_extractor.go`**: Strengthened `subject_entity` field description to clarify it's the ACTOR/SPEAKER, not the person talked about. Added examples. Clarified `involved_people` won't be attributed the fact.
+- **Unified contradiction prompt**: Merged `contradictionPromptTpl` (single pair, 12 examples) and `batchPromptTpl` (batch, 0 examples) into a single prompt with all 12 examples + batch `PAIR N:` format. `AreContradictory()` now delegates to `AreContradictoryBatch()`.
+- **SQL cleanup**: Deleted 579 mislinked `fact_mentions` across all persons. Marine Le Pen went from 177 → 148 facts.
+
+### Key design decisions
+- `InvolvedPeople` field kept in `StoreFactInput` (useful metadata) but no longer creates DB links.
+- Single prompt ensures batch and single-pair detection have identical quality (the old batch prompt had zero examples).
+
 ## 2026-02-16: Canonical embedding_text format
 
 ### What was done

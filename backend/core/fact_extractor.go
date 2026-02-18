@@ -95,7 +95,10 @@ If ANY answer is NO → REJECT.
 ## JSON Output Format
 Return a JSON array. Each object has 7 fields:
 
-1. 'subject_entity': Full canonical name (e.g., "Marine Le Pen", not "Le Pen"; "Rassemblement national" for parties)
+1. 'subject_entity': The person/party WHO PERFORMS THE ACTION or MAKES THE STATEMENT described in the fact.
+   This is NOT the person being talked about — it's the ACTOR/SPEAKER. Use full canonical name.
+   Example: "Trump criticized Le Pen" → subject_entity = "Donald Trump" (he speaks), involved_people = ["Marine Le Pen"]
+   Example: "Marine Le Pen denied wrongdoing" → subject_entity = "Marine Le Pen" (she denies)
 2. 'subject_entity_type': One of "human", "party", or "organization"
 3. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
    ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
@@ -116,7 +119,8 @@ Return a JSON array. Each object has 7 fields:
      "a été condamnée à 4 ans de prison" → WAS_SENTENCED prison parliamentary-assistants-case
 5. 'original_quote': Exact snippet (max ~250 chars) from the source text
 6. 'topics': 1-3 relevant keywords
-7. 'involved_people': Other people mentioned in the fact (NOT the subject_entity, NOT organizations)
+7. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
+   These people will NOT have this fact attributed to them — only subject_entity owns the fact
 
 %s
 
