@@ -102,7 +102,7 @@ func NewFactInserter(storer Storer, classifier *RelationClassifier) *FactInserte
 	}
 
 	cosineDistance := 1.0 - cosineSimilarity
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.92)
+	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.90)
 
 	return &FactInserter{
 		storer:              storer,

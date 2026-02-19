@@ -164,25 +164,22 @@ func (v *DedupLLMVerifier) buildPrompt(facts []FactForDedup) string {
 2. FLAG INVALID FACTS - things that are NOT facts about the person
 3. SUGGEST IMPROVEMENTS - make facts more precise/distinct
 
-## WHAT IS A VALID FACT ABOUT A PERSON?
-✅ VALID - Actions the person took:
-   - "X voted against bill Y"
-   - "X attended meeting Z"
-   - "X signed agreement Y"
-
-✅ VALID - Statements about themselves or their own actions:
+## WHAT IS A VALID FACT?
+✅ Type 1 — Entity's own positions, promises, claims, denials:
    - "X stated she had no feeling of committing a crime"
    - "X denied the allegations against her"
-   - "X confirmed she will run for election"
+   - "X claimed the Parliament did not play its role"
 
-❌ INVALID - Opinions about external things (not about themselves):
-   - "X claimed the Parliament did not play its role" ← opinion about Parliament, not a fact about X
-   - "X believes the economy is failing" ← opinion about economy
-   - "X thinks the government is wrong" ← opinion about government
+✅ Type 2 — Authoritative verifiable outcomes:
+   - "X was sentenced to 4 years in prison" — court ruling
+   - "X was found guilty of misappropriation" — judicial finding
 
-❌ INVALID - Third-party statements about the person:
-   - "Critics say X is corrupt" ← not X's action/statement
-   - "The court found X guilty" ← court's action, not X's (unless framed as "X was found guilty")
+❌ INVALID — Third-party opinions without evidence:
+   - "Critics say X is corrupt" — not X's action or authoritative finding
+
+❌ INVALID — Non-contradictable information:
+   - "X attended the hearing" — scheduling
+   - "X was born in 1968" — biography
 
 ## DUPLICATES
 DUPLICATE means:

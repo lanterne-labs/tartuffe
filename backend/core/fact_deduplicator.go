@@ -91,7 +91,7 @@ type DedupeOptions struct {
 // DedupeResult contains the outcome of a deduplication run.
 type DedupeResult struct {
 	TotalFactsChecked int
-	AutoDeduped       int // Tier 1 (>0.92 similarity)
+	AutoDeduped       int // Tier 1 (>0.90 similarity)
 	LLMVerified       int // Tier 3 (LLM confirmed duplicate)
 	LLMKept           int // Tier 3 (LLM said not duplicate)
 	FactsImproved     int // Facts that were normalized/improved
@@ -128,7 +128,7 @@ type DuplicateGroup struct {
 // Thresholds are loaded from environment variables with sensible defaults.
 func NewFactDeduplicator(storer DedupeStorer, llmVerifier *DedupLLMVerifier) *FactDeduplicator {
 	// Load thresholds from environment or use defaults
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.92)
+	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.90)
 	uncertainLowThreshold := getEnvFloat("DEDUPE_UNCERTAIN_THRESHOLD", 0.75)
 
 	log.Info().
