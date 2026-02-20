@@ -2,6 +2,17 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-19: Fix Dedup Pipeline — Threshold, Prompt, Model
+
+### What was done
+- **Auto-dedup threshold**: Lowered from 0.92 → 0.90 in both `fact_inserter.go` and `fact_deduplicator.go`. Catches ~42 more paraphrase pairs at ingestion time without LLM cost.
+- **Dedup LLM prompt**: Aligned with extraction prompt's Type 1/Type 2 framework. Court rulings and judicial findings are now valid Type 2 facts (previously the dedup prompt rejected "X was found guilty" as invalid, contradicting the extraction prompt).
+- **Model upgrade**: Changed `OPEN_AI_CHAT_MODEL` on the host from `mistralai/ministral-8b-2512` to `google/gemini-2.0-flash-001`. Ministral 8B was too weak for reasoning tasks (inconsistent embedding_text, poor dedup/contradiction judgment).
+
+### Key design decisions
+- Uncertain zone stays at 0.75-0.90 (not lowered to 0.60 — too noisy, and the relation classifier already handles 0.60+ at ingestion).
+- Single model for all tasks (extraction, dedup, contradiction, classification) — Gemini Flash is cheap enough.
+
 ## 2026-02-18: Fix Fact Linking + Unify Contradiction Prompt
 
 ### What was done

@@ -61,6 +61,9 @@ A breaker does NOT invalidate a promise when:
 - DOWNPLAYING ≠ CONTRADICTING: Acknowledging an error, negligence, or that "things could have been better" does NOT contradict denying criminal intent or claiming good faith. A person can admit mistakes while genuinely believing they didn't commit a crime. "Bonne foi" (good faith) is COMPATIBLE with negligence. Only flag if the person explicitly DENIES the specific fact they elsewhere ADMITS
 - CONVICTION does NOT contradict ACKNOWLEDGMENT OF IMPERFECTIONS: A court conviction does not contradict someone saying "things could have been more rigorous" or "reproaches can be made" — the conviction EXCEEDS the acknowledgment but does not logically contradict it. Only "I deny all wrongdoing" + conviction = contradiction
 - COMPLEMENTARY FACTS about the same event: Two facts describing different ASPECTS of the same ruling, sentence, or event (e.g., prison term + ineligibility, first-instance sentence + appeal sentence) are SUPPLEMENTARY, not contradictory. Different court proceedings naturally produce different sentence details
+- COHERENT DEFENSE STRATEGY: Multiple denials, rejections, or claims about DIFFERENT ASPECTS of the same case are a consistent defense, not contradictions. "Denied hiring instructions" + "denied gross negligence" = same defense posture. Only contradictory if the person explicitly ADMITS a specific claim in one statement and DENIES that SAME specific claim in another
+- CONSISTENT IGNORANCE PATTERN: Multiple claims of not knowing about DIFFERENT aspects of the same situation REINFORCE each other — they form a consistent "I didn't know" defense. "Didn't know X" + "didn't know Y" = compatible. Only contradictory if one statement DEMONSTRATES knowledge that another statement DENIES
+- SAME POSITION IN DIFFERENT WORDS: If both statements support the SAME claim or take the SAME side, they CANNOT contradict each other regardless of phrasing, language, or level of detail — paraphrases and translations are not contradictions
 
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
@@ -144,6 +147,26 @@ PAIR 15 (Conviction vs Acknowledgment of Imperfections - NOT Contradictory):
 Statement A (dated January 20, 2024): "Marine Le Pen a reconnu que 'beaucoup de choses auraient pu se passer de manière plus rigoureuse' dans le traitement des assistants parlementaires."
 Statement B (dated March 28, 2024): "Marine Le Pen a été condamnée pour détournement de fonds publics dans l'affaire des assistants parlementaires."
 PAIR 15: NO: The conviction does not contradict her acknowledgment of imperfections — it exceeds it. She admitted things could have been better; the court found it criminal. These are different DEGREES of the same assessment, not logical opposites. Only an explicit denial of wrongdoing + conviction = contradiction.
+
+PAIR 16 (Coherent Defense — Different Denials About Same Case - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen a nié avoir donné des instructions d'embauche fictive dans l'affaire des assistants parlementaires."
+Statement B (dated January 22, 2024): "Marine Le Pen a rejeté les accusations de faute lourde dans la gestion des fonds européens."
+PAIR 16: NO: Both statements are denials about different aspects of the same case — denying hiring instructions and denying gross negligence form a consistent defense posture, not a contradiction.
+
+PAIR 17 (Consistent Ignorance — Didn't Know Different Things - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen a déclaré ignorer que 80%% du budget des assistants parlementaires était reversé au parti."
+Statement B (dated January 22, 2024): "Marine Le Pen a affirmé ne pas savoir que Julien Odoul avait été embauché comme assistant parlementaire fictif."
+PAIR 17: NO: Not knowing about the 80%% budget figure and not knowing about a specific hiring are claims of ignorance about DIFFERENT aspects — they reinforce the consistent "I didn't know" defense rather than contradicting each other.
+
+PAIR 18 (Same Position in Different Words - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen a affirmé que le RN n'a jamais dissimulé les détails de l'emploi de ses assistants parlementaires."
+Statement B (dated January 22, 2024): "Marine Le Pen a déclaré que le Rassemblement national n'avait rien caché concernant les pratiques d'emploi de ses assistants."
+PAIR 18: NO: Both statements express the same position — that the party did not hide information about assistant employment — using different words. Paraphrases of the same claim cannot contradict each other.
+
+PAIR 19 (Unrelated Facts About Same Person - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen a été interrogée pendant 13 heures lors de son procès en appel."
+Statement B (dated March 28, 2024): "Marine Le Pen a déclaré vouloir épuiser toutes les voies de recours après sa condamnation."
+PAIR 19: NO: Being interrogated for 13 hours and wanting to exhaust appeals are completely unrelated facts about different events at different times — no logical relationship exists between them.
 
 **PAIRS TO ANALYZE:**
 %s
