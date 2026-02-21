@@ -64,6 +64,9 @@ A breaker does NOT invalidate a promise when:
 - COHERENT DEFENSE STRATEGY: Multiple denials, rejections, or claims about DIFFERENT ASPECTS of the same case are a consistent defense, not contradictions. "Denied hiring instructions" + "denied gross negligence" = same defense posture. Only contradictory if the person explicitly ADMITS a specific claim in one statement and DENIES that SAME specific claim in another
 - CONSISTENT IGNORANCE PATTERN: Multiple claims of not knowing about DIFFERENT aspects of the same situation REINFORCE each other — they form a consistent "I didn't know" defense. "Didn't know X" + "didn't know Y" = compatible. Only contradictory if one statement DEMONSTRATES knowledge that another statement DENIES
 - SAME POSITION IN DIFFERENT WORDS: If both statements support the SAME claim or take the SAME side, they CANNOT contradict each other regardless of phrasing, language, or level of detail — paraphrases and translations are not contradictions
+- EXPLORATORY POSTURE: Claiming to "seek to understand," "be in the discovery of," or "try to learn about" a situation is COMPATIBLE with specific instances of not knowing details — the exploration EXPLAINS the ignorance. "I was trying to understand" + "I didn't know X" = consistent. Only contradictory if the person simultaneously claims EXPERT KNOWLEDGE of the thing they claim to be discovering
+- LEGAL PROCESS STAGES: Accusation, indictment, trial, and conviction are sequential stages of the SAME legal process — they do NOT contradict each other. Being accused AND later convicted is normal progression, not a contradiction. Only the person's OWN contradictory statements count
+- CONVICTION SCOPE: A general conviction (e.g., "found guilty of embezzlement") does NOT automatically contradict every specific factual claim the person made about individual details within the case. Only flag if the conviction SPECIFICALLY disproves the particular claim being paired with it
 
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
@@ -168,6 +171,31 @@ Statement A (dated January 20, 2024): "Marine Le Pen a été interrogée pendant
 Statement B (dated March 28, 2024): "Marine Le Pen a déclaré vouloir épuiser toutes les voies de recours après sa condamnation."
 PAIR 19: NO: Being interrogated for 13 hours and wanting to exhaust appeals are completely unrelated facts about different events at different times — no logical relationship exists between them.
 
+PAIR 20 (Exploratory Posture + Specific Ignorance - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen claimed she was only seeking to understand the situation regarding the parliamentary assistants."
+Statement B (dated January 20, 2024): "Marine Le Pen admitted she did not know that her advisor was actually the parliamentary assistant of another MEP."
+PAIR 20: NO: Seeking to understand and not knowing a specific detail are compatible — the ignorance explains why she was seeking to understand, not the opposite.
+
+PAIR 21 (Legal Process Stages - NOT Contradictory):
+Statement A (dated January 20, 2024): "Le Rassemblement National est accusé de détournement de fonds publics dans l'affaire des assistants parlementaires."
+Statement B (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics dans l'affaire des assistants parlementaires."
+PAIR 21: NO: Accusation and conviction are sequential stages of the same legal process — being accused and then convicted is normal progression, not a contradiction.
+
+PAIR 22 (Different Descriptions of Same Sentence - NOT Contradictory):
+Statement A (dated March 28, 2024): "Marine Le Pen a été condamnée à quatre ans de prison, 100 000 euros d'amende et cinq ans d'inéligibilité."
+Statement B (dated March 28, 2024): "Marine Le Pen a été condamnée à cinq ans d'inéligibilité avec exécution immédiate."
+PAIR 22: NO: Both describe the same first-instance sentence — Statement A gives the full breakdown while Statement B focuses on the ineligibility component. These are supplementary details, not contradictions.
+
+PAIR 23 (Conviction vs Specific Detail Defense - NOT Contradictory):
+Statement A (dated March 28, 2024): "Marine Le Pen was sentenced to five years of ineligibility for misappropriation of public funds."
+Statement B (dated January 20, 2024): "Marine Le Pen denied that her parliamentary assistant was solely a bodyguard, stating he had broader administrative functions."
+PAIR 23: NO: The conviction for the broad embezzlement scheme does not specifically disprove her claim about one assistant's job functions — these operate at different levels of specificity.
+
+PAIR 24 (Coherent Defense — Different Denials Reinforcing Same Position - NOT Contradictory):
+Statement A (dated January 20, 2024): "Marine Le Pen stated she was not aware of her sister's salary as a parliamentary assistant."
+Statement B (dated January 22, 2024): "Marine Le Pen rejected responsibility for the salaries paid to relatives in the parliamentary assistants case."
+PAIR 24: NO: Not knowing a specific salary and rejecting responsibility for relatives' salaries are both part of the same defense — distancing herself from relatives' employment terms. Two denials about the same topic reinforce each other.
+
 **PAIRS TO ANALYZE:**
 %s
 
@@ -178,7 +206,8 @@ or
 PAIR N: NO: reason
 
 Where N is the pair number (1, 2, 3, etc.).
-Respond for ALL pairs, one per line. Reason must be 1 sentence maximum.`
+Respond for ALL pairs, one per line. Reason must be 1 sentence maximum.
+CRITICAL: If your reasoning concludes the statements are "supplementary," "compatible," "reinforcing," or "not contradictory," your verdict MUST be NO. Never output YES when your own analysis shows the facts don't contradict.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
