@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call
-	MaxPairsPerBatch = 5
-	// DelayBetweenBatches is the delay between batch API calls to respect rate limits
-	// Groq free tier: 30 RPM, 6K TPM - 2s delay = 30 req/min max
-	DelayBetweenBatches = 2 * time.Second
+	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call.
+	// Set to 1 so the model gives full attention to each pair, avoiding cross-pair confusion
+	// and verdict errors caused by diluted attention over multiple pairs.
+	MaxPairsPerBatch = 1
+	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
+	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
+	DelayBetweenBatches = 1 * time.Second
 )
 
 // pairRegex matches "PAIR N: YES: reason" or "PAIR N: NO: reason" in LLM batch responses.
@@ -79,16 +81,19 @@ A breaker does NOT invalidate a promise when:
 PAIR 1 (Learning Over Time - NOT Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen said she didn't know about the mutualization scheme."
 Statement B (dated March 20, 2024): "Marine Le Pen claimed the EU Parliament knew about mutualization and it was normal practice."
+PAIR 1: REASONING: Statement B is dated later than A. She denied knowledge in January, then discussed mutualization as normal in March. This fits the LEARNING OVER TIME temporal rule — earlier "didn't know" followed by later knowledge is not contradictory.
 PAIR 1: NO: The later statement indicates she learned about the mutualization scheme after the earlier denial of knowledge.
 
 PAIR 2 (Denial After Claim - Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice."
 Statement B (dated March 20, 2024): "Marine Le Pen claimed she never knew about any mutualization scheme."
+PAIR 2: REASONING: She claimed full awareness in January, then denied any knowledge in March. The temporal rule says earlier "claimed X" followed by later "denied X" IS a contradiction — you cannot unknow something.
 PAIR 2: YES: She claimed personal knowledge of the mutualization on January 15, then denied having that knowledge on March 20 - you cannot unknow something.
 
 PAIR 3 (Unknown Dates - Be Skeptical):
 Statement A (dated unknown date): "CEO Jones supported policy X."
 Statement B (dated unknown date): "CEO Jones opposed policy X."
+PAIR 3: REASONING: Both dates are unknown. The statements appear opposite, but per the UNKNOWN DATES temporal rule, we must be skeptical — without dates, these could represent a legitimate change of position over time.
 PAIR 3: NO: Without dates, these could represent a legitimate change of position over time.
 
 PAIR 4 (Same Date Conflict - Contradictory):
@@ -200,14 +205,14 @@ PAIR 24: NO: Not knowing a specific salary and rejecting responsibility for rela
 %s
 
 **RESPONSE FORMAT:**
-For each pair, respond with EXACTLY this format on its own line:
-PAIR N: YES: reason
-or
-PAIR N: NO: reason
+For each pair, respond with EXACTLY two lines:
 
-Where N is the pair number (1, 2, 3, etc.).
-Respond for ALL pairs, one per line. Reason must be 1 sentence maximum.
-CRITICAL: If your reasoning concludes the statements are "supplementary," "compatible," "reinforcing," or "not contradictory," your verdict MUST be NO. Never output YES when your own analysis shows the facts don't contradict.`
+Line 1 (mandatory): PAIR N: REASONING: [Identify core claims in each statement, check which rules apply, 1-2 sentences of analysis]
+Line 2 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
+
+You MUST write your REASONING line BEFORE your verdict line. Analyze before committing.
+If your reasoning concludes the statements are compatible, supplementary, or not contradictory, your verdict MUST be NO.
+CRITICAL: Never output YES when your own analysis shows the facts don't contradict.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
