@@ -18,6 +18,7 @@ var (
 	detectPersonFlag string
 	detectDryRun     bool
 	detectCheckAll   bool
+	detectDebug      bool
 )
 
 // pairInfo holds information about a fact pair to check
@@ -46,6 +47,7 @@ func init() {
 	contradictionsDetectCmd.Flags().StringVarP(&detectPersonFlag, "person", "p", "", "Specific person name to process (optional)")
 	contradictionsDetectCmd.Flags().BoolVar(&detectDryRun, "dry-run", false, "Show detected contradictions without recording to database")
 	contradictionsDetectCmd.Flags().BoolVar(&detectCheckAll, "check-all", false, "Check all fact pairs, not just semantically similar ones")
+	contradictionsDetectCmd.Flags().BoolVar(&detectDebug, "debug", false, "Print LLM reasoning and verdict for every pair")
 }
 
 func runContradictionDetection(cmd *cobra.Command, args []string) error {
@@ -267,6 +269,22 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				if result.Error != nil {
 					log.Error().Err(result.Error).Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).Msg("Detector error")
 					continue
+				}
+
+				// Print debug info for every pair when --debug is set
+				if detectDebug {
+					fmt.Printf("\n[DEBUG] Fact A [%d]: %q\n", batch[j].factAID, batch[j].factAText)
+					fmt.Printf("[DEBUG] Fact B [%d]: %q\n", batch[j].factBID, batch[j].factBText)
+					reasoning := result.Reasoning
+					if reasoning == "" {
+						reasoning = result.RawResponse
+					}
+					fmt.Printf("[DEBUG] REASONING: %s\n", reasoning)
+					verdict := "NO"
+					if result.IsContradictory {
+						verdict = "YES"
+					}
+					fmt.Printf("[DEBUG] VERDICT: %s — %s\n", verdict, result.Reason)
 				}
 
 				// Record the pair check (using the walked-up IDs)

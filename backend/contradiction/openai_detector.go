@@ -16,9 +16,9 @@ import (
 
 const (
 	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call.
-	// Set to 1 so the model gives full attention to each pair, avoiding cross-pair confusion
-	// and verdict errors caused by diluted attention over multiple pairs.
-	MaxPairsPerBatch = 1
+	// Set to 3 as a tradeoff between cost (3x cheaper than batch=1) and accuracy.
+	// Monitor with --debug flag to check for cross-pair confusion.
+	MaxPairsPerBatch = 3
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
 	DelayBetweenBatches = 1 * time.Second
@@ -26,6 +26,9 @@ const (
 
 // pairRegex matches "PAIR N: YES: reason" or "PAIR N: NO: reason" in LLM batch responses.
 var pairRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*(YES|NO)\s*:\s*(.*)`)
+
+// reasoningRegex matches "PAIR N: REASONING: ..." lines in LLM batch responses.
+var reasoningRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*REASONING\s*:\s*(.*)`)
 
 // formatDateForLLM formats a time pointer for display in the LLM prompt.
 // Returns "unknown date" if the time is nil.
@@ -297,6 +300,8 @@ type BatchResult struct {
 	PairIndex       int // Index in the input slice
 	IsContradictory bool
 	Reason          string
+	Reasoning       string // Parsed REASONING line from LLM (analysis before verdict)
+	RawResponse     string // Full LLM response text for inspection
 	Error           error
 }
 
@@ -382,6 +387,12 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 
 	// Parse each PAIR N: YES/NO: reason line
 	llmResponse := chatResp.Choices[0].Message.Content
+
+	// Store raw response on every result for inspection
+	for i := range results {
+		results[i].RawResponse = llmResponse
+	}
+
 	parseBatchResponse(llmResponse, results)
 
 	// Log results and update metrics
@@ -410,7 +421,7 @@ func parseBatchResponse(response string, results []BatchResult) {
 		results[i].Error = fmt.Errorf("no response parsed for pair %d", i+1)
 	}
 
-	// Match "PAIR N: YES: reason" or "PAIR N: NO: reason"
+	// Match REASONING and YES/NO verdict lines
 
 	lines := strings.Split(response, "\n")
 	for _, line := range lines {
@@ -419,6 +430,18 @@ func parseBatchResponse(response string, results []BatchResult) {
 			continue
 		}
 
+		// Try REASONING line first
+		if rm := reasoningRegex.FindStringSubmatch(line); rm != nil {
+			var pairNum int
+			fmt.Sscanf(rm[1], "%d", &pairNum)
+			pairIdx := pairNum - 1
+			if pairIdx >= 0 && pairIdx < len(results) {
+				results[pairIdx].Reasoning = strings.TrimSpace(rm[2])
+			}
+			continue
+		}
+
+		// Try verdict line (YES/NO)
 		matches := pairRegex.FindStringSubmatch(line)
 		if matches == nil {
 			continue
