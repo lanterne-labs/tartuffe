@@ -86,6 +86,12 @@ Reject poll data, survey results, and journalist comparisons between entities.
 
 If ANY answer is NO → REJECT.
 
+## Self-Consistency Check
+Before finalizing each fact, re-read your normalized_fact and verify:
+- Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
+- Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.
+- If you catch an internal contradiction, re-read the original_quote carefully and rewrite.
+
 ## Consolidation
 - MERGE facts expressing the same core claim in different words. Keep ONLY the most specific version.
 - Typical article yields 2-5 valid facts. If you have more than 6, re-check against the rules.
