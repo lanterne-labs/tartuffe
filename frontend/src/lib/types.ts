@@ -31,6 +31,11 @@ export interface ContradictionWithFacts {
 	detected_at: string;
 }
 
+export interface PaginatedResponse<T> {
+	items: T[];
+	total: number;
+}
+
 export interface EventData {
 	id: number;
 	topic: string;

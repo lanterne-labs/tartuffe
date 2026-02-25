@@ -2,6 +2,33 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-24: Real Counts + Exponential Honesty Score
+
+### What was done
+- **Paginated API responses**: `GetPersonFacts` and `GetPersonContradictions` now return `{items: [], total: N}` instead of bare arrays. Total count computed via CTE subselect in a single query (no extra round trip). Frontend tab labels show real total (e.g., "Facts (148)") instead of "25+".
+- **Exponential honesty score**: Replaced `1 - contradictions/facts` with `exp(-4 * contradictions/facts)`. At 7% contradiction ratio, score drops to 76% (was 93%). Extracted as `ComputeHonestyScore()` pure function used by all score-computing paths.
+- **`dm scores recompute` CLI**: Bulk-recomputes all person scores in a single transaction. Supports `--dry-run`. One SQL query fetches all persons with their counts.
+
+### Key design decisions
+- CTE total uses `COUNT(DISTINCT id)` to count unique facts, not fact-source rows (a fact with multiple sources should count as one).
+- `ComputeHonestyScore` is a pure function (no DB) for easy unit testing. Decay factor k=4 is an exported constant.
+- Fallback count query runs only when the paginated page returns 0 rows (e.g., offset past end).
+
+## 2026-02-23: Contradiction Detection — Debug flag, Gemini 2.5 Flash, batch=3, self-consistency check
+
+### What was done
+- **`--debug` flag on `dm contradictions detect`**: Prints LLM reasoning + verdict for every pair, not just contradictions. Uses parsed REASONING line with full raw response as fallback.
+- **REASONING line parsing**: New `reasoningRegex` in `openai_detector.go` captures `PAIR N: REASONING: ...` lines from the reasoning-first prompt format. Stored in `BatchResult.Reasoning` field.
+- **Model switch**: `OPEN_AI_CHAT_MODEL` changed from `google/gemini-2.0-flash-001` to `google/gemini-2.5-flash` (OpenRouter).
+- **Batch size increase**: `MaxPairsPerBatch` increased from 1 to 3. Tested with Gemini 2.5 Flash — no cross-pair confusion, 3x cheaper.
+- **Self-consistency check in fact extraction prompt**: Added to `CoreFactExtractionPrompt` to prevent self-contradictory `normalized_fact` text. Specifically targets negation chain misreads (e.g., "DENIED X lacks Y" when source says "accused X of lacking Y").
+- **Deleted `cmd/contradictions_evaluate.go`**: Was created by mistake, never committed.
+
+### Key design decisions
+- Self-consistency check is an instruction-only approach (no second LLM pass). Cost-neutral. Can add validation pass later if needed.
+- `google/gemini-2.5-flash` is the correct OpenRouter model ID (not `-preview`).
+- Production run: 616 pairs checked, 33 contradictions found, 0 errors. ~15 minutes.
+
 ## 2026-02-19: Fix Dedup Pipeline — Threshold, Prompt, Model
 
 ### What was done

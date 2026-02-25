@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionWithFacts } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 
@@ -30,6 +30,8 @@
 	let contradictionsPageSize = 25;
 	let hasMoreFacts = $state(true);
 	let hasMoreContradictions = $state(true);
+	let totalFacts = $state(0);
+	let totalContradictions = $state(0);
 
 	let expandedFacts: Record<number, boolean> = $state({});
 	let factPersons: Record<number, PersonSummary[]> = $state({});
@@ -81,9 +83,10 @@
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
-			const data = await response.json();
-			facts = page === 0 ? data : [...facts, ...data];
-			hasMoreFacts = data.length === factsPageSize;
+			const data: PaginatedResponse<FactWithSource> = await response.json();
+			facts = page === 0 ? data.items : [...facts, ...data.items];
+			totalFacts = data.total;
+			hasMoreFacts = facts.length < data.total;
 			factsPage = page;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
@@ -97,9 +100,10 @@
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
-			const data = await response.json();
-			contradictions = page === 0 ? data : [...contradictions, ...data];
-			hasMoreContradictions = data.length === contradictionsPageSize;
+			const data: PaginatedResponse<ContradictionWithFacts> = await response.json();
+			contradictions = page === 0 ? data.items : [...contradictions, ...data.items];
+			totalContradictions = data.total;
+			hasMoreContradictions = contradictions.length < data.total;
 			contradictionsPage = page;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
@@ -339,10 +343,10 @@
 
 		<div class="tabs">
 			<button class="tab" class:active={activeTab === 'facts'} onclick={() => activeTab = 'facts'}>
-				Facts ({facts.length}{hasMoreFacts ? '+' : ''})
+				Facts ({totalFacts})
 			</button>
 			<button class="tab" class:active={activeTab === 'contradictions'} onclick={() => activeTab = 'contradictions'}>
-				Contradictions ({contradictions.length}{hasMoreContradictions ? '+' : ''})
+				Contradictions ({totalContradictions})
 			</button>
 		</div>
 

@@ -50,19 +50,19 @@ func runContradictionShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to find person %q: %w", showPersonFlag, err)
 	}
 
-	contradictions, err := storer.GetPersonContradictions(ctx, personID, 100, 0)
+	result, err := storer.GetPersonContradictions(ctx, personID, 100, 0)
 	if err != nil {
 		return fmt.Errorf("failed to get contradictions: %w", err)
 	}
 
-	if len(contradictions) == 0 {
+	if len(result.Items) == 0 {
 		fmt.Printf("No contradictions found for %s (ID: %d)\n", normalizedName, personID)
 		return nil
 	}
 
-	fmt.Printf("Found %d contradiction(s) for %s (ID: %d)\n\n", len(contradictions), normalizedName, personID)
+	fmt.Printf("Found %d contradiction(s) for %s (ID: %d)\n\n", result.Total, normalizedName, personID)
 
-	for i, c := range contradictions {
+	for i, c := range result.Items {
 		dateA := "unknown"
 		if c.FactADate != nil {
 			dateA = c.FactADate.Format("2006-01-02")

@@ -192,46 +192,33 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	require.NotNil(t, queriedPublishedAt, "PublishedAt should not be nil in DB")
 	assert.WithinDuration(t, *input.PublishedAt, *queriedPublishedAt, time.Second, "PublishedAt mismatch in fact_sources")
 
-	// 3. Verify the persons exist and get their IDs
-	personIDs := make(map[string]int64) // Map normalized name to ID
-	normalizedNamesForQuery := []string{"person a", "person b"}
-	personsQuery := "SELECT id, name FROM persons WHERE name = ANY($1::text[])"
-	rows, err := storer.pool.Query(ctx, personsQuery, normalizedNamesForQuery)
-	require.NoError(t, err, "Failed to query persons")
-	personCount := 0
-	for rows.Next() {
-		var personID int64
-		var personName string
-		err = rows.Scan(&personID, &personName)
-		require.NoError(t, err, "Failed to scan person row")
-		personIDs[personName] = personID
-		personCount++
-	}
-	require.NoError(t, rows.Err(), "Error iterating person rows")
-	require.Equal(t, len(normalizedNamesForQuery), personCount, "Incorrect number of persons found")
-	rows.Close()
+	// 3. Verify only the subject entity person exists (InvolvedPeople no longer create DB links)
+	var personAID int64
+	err = storer.pool.QueryRow(ctx, "SELECT id FROM persons WHERE name = $1", "person a").Scan(&personAID)
+	require.NoError(t, err, "Subject entity 'person a' should exist")
+	require.Positive(t, personAID)
 
-	// 4. Verify the fact_mentions links exist
+	// Person B (InvolvedPeople only) should NOT be in the DB
+	var personBCount int
+	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons WHERE name = $1", "person b").Scan(&personBCount)
+	require.NoError(t, err)
+	assert.Equal(t, 0, personBCount, "InvolvedPeople should not create person records")
+
+	// 4. Verify the fact_mentions link exists only for subject entity
 	mentionsQuery := "SELECT person_id FROM fact_mentions WHERE fact_source_id = $1"
 	mentionRows, err := storer.pool.Query(ctx, mentionsQuery, factSourceID)
 	require.NoError(t, err, "Failed to query fact_mentions")
 	mentionCount := 0
-	foundPersonIDs := make(map[int64]bool)
 	for mentionRows.Next() {
 		var personID int64
 		err = mentionRows.Scan(&personID)
 		require.NoError(t, err, "Failed to scan mention row")
-		foundPersonIDs[personID] = true
+		assert.Equal(t, personAID, personID, "Mention should be for subject entity Person A")
 		mentionCount++
 	}
 	require.NoError(t, mentionRows.Err(), "Error iterating mention rows")
-	assert.Equal(t, len(normalizedNamesForQuery), mentionCount, "Incorrect number of mentions found")
+	assert.Equal(t, 1, mentionCount, "Should have exactly 1 mention (subject entity only)")
 	mentionRows.Close()
-
-	// Check if the found mention person IDs match the inserted person IDs
-	for _, expectedID := range personIDs {
-		assert.True(t, foundPersonIDs[expectedID], "Mention link missing for person ID %d", expectedID)
-	}
 }
 // DISABLED: 
 // DISABLED: // TestPostgresStorer_StoreFact_Idempotency_And_SourceUpdate tests:
@@ -575,11 +562,11 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	require.NoError(t, err, "insertFactForTest for input2 failed")
 
 	// --- Verification ---
-	// 1. Check Person count
+	// 1. Check Person count — only 1 person (X), since InvolvedPeople no longer create DB records
 	var personCount int64
 	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons").Scan(&personCount)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), personCount, "Should only be 2 persons (X and Y) in the table")
+	assert.Equal(t, int64(1), personCount, "Should only be 1 person (X) — InvolvedPeople don't create records")
 
 	// 2. Verify Person X ID hasn't changed
 	var personXID_after int64
@@ -587,11 +574,11 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, personXID, personXID_after, "Person X ID should remain the same")
 
-	// 3. Verify Person Y exists
-	var personYID int64
-	err = storer.pool.QueryRow(ctx, "SELECT id FROM persons WHERE name = $1", normalizedY).Scan(&personYID)
+	// 3. Verify Person Y does NOT exist (InvolvedPeople no longer create DB records)
+	var personYCount int
+	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons WHERE name = $1", normalizedY).Scan(&personYCount)
 	require.NoError(t, err)
-	require.Positive(t, personYID)
+	assert.Equal(t, 0, personYCount, "Person Y should not exist — InvolvedPeople don't create records")
 
 	// 4. Verify Mentions for Fact 1 (should only link Person X)
 	var mentionCount1 int64
@@ -603,22 +590,15 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, personXID, mention1PersonID, "Mention for Fact 1 source should be Person X")
 
-	// 5. Verify Mentions for Fact 2 (should link Person X and Person Y)
+	// 5. Verify Mentions for Fact 2 (should link Person X only — InvolvedPeople no longer create mentions)
 	var mentionCount2 int64
 	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_mentions WHERE fact_source_id = $1", factSourceID2).Scan(&mentionCount2)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), mentionCount2, "Fact 2 source should have 2 mentions")
-	rows, err := storer.pool.Query(ctx, "SELECT person_id FROM fact_mentions WHERE fact_source_id = $1", factSourceID2)
+	assert.Equal(t, int64(1), mentionCount2, "Fact 2 source should have 1 mention (subject entity only)")
+	var mention2PersonID int64
+	err = storer.pool.QueryRow(ctx, "SELECT person_id FROM fact_mentions WHERE fact_source_id = $1", factSourceID2).Scan(&mention2PersonID)
 	require.NoError(t, err)
-	foundMentions2 := make(map[int64]bool)
-	for rows.Next() {
-		var pid int64
-		rows.Scan(&pid)
-		foundMentions2[pid] = true
-	}
-	rows.Close()
-	assert.True(t, foundMentions2[personXID], "Fact 2 mention missing for Person X")
-	assert.True(t, foundMentions2[personYID], "Fact 2 mention missing for Person Y")
+	assert.Equal(t, personXID, mention2PersonID, "Mention for Fact 2 source should be Person X (subject entity)")
 
 	// 6. Verify fact_sources are linked correctly
 	var source1FactID, source2FactID string // pgx scans int8 as string
@@ -955,4 +935,32 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_sources WHERE metadata->>'law_key' = $1", lawKey2).Scan(&count2)
 	require.NoError(t, err)
 	assert.Equal(t, 1, count2, "Should still have 1 fact_source for complete law")
+}
+
+func TestComputeHonestyScore(t *testing.T) {
+	tests := []struct {
+		name               string
+		facts              int
+		contradictions     int
+		expectedMin        float64
+		expectedMax        float64
+	}{
+		{"zero facts returns 1.0", 0, 0, 1.0, 1.0},
+		{"zero contradictions returns 1.0", 200, 0, 1.0, 1.0},
+		{"5/200 ~ 90%", 200, 5, 0.89, 0.91},
+		{"14/200 ~ 76%", 200, 14, 0.74, 0.77},
+		{"20/200 ~ 67%", 200, 20, 0.66, 0.68},
+		{"50/200 ~ 37%", 200, 50, 0.36, 0.38},
+		{"100/200 ~ 14%", 200, 100, 0.13, 0.15},
+		{"ratio > 1 still works", 10, 20, 0.0, 0.01},
+		{"all contradicted approaches zero", 10, 10, 0.01, 0.02},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := ComputeHonestyScore(tt.facts, tt.contradictions)
+			assert.GreaterOrEqual(t, score, tt.expectedMin, "score too low")
+			assert.LessOrEqual(t, score, tt.expectedMax, "score too high")
+		})
+	}
 }

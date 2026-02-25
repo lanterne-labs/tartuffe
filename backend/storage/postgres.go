@@ -1759,6 +1759,20 @@ func (s *PostgresStorer) StoreSkippedLaw(ctx context.Context, lawKey, title stri
 	return nil
 }
 
+// HonestyScoreDecayFactor controls the aggressiveness of the exponential penalty.
+// Higher values penalize contradictions more. At k=4, 7% contradiction ratio → 76% score.
+const HonestyScoreDecayFactor = 4.0
+
+// ComputeHonestyScore returns exp(-k * contradictions/facts).
+// If factsCount is 0, returns 1.0 (benefit of the doubt).
+func ComputeHonestyScore(factsCount, contradictionsCount int) float64 {
+	if factsCount == 0 {
+		return 1.0
+	}
+	ratio := float64(contradictionsCount) / float64(factsCount)
+	return math.Exp(-HonestyScoreDecayFactor * ratio)
+}
+
 // recomputeHonestyScoreAndEmitEvents recomputes the honesty score for a person and emits relevant events
 func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context, tx pgx.Tx, personID int64, contradictionID int64) error {
 	// Get counts for honesty score calculation
@@ -1772,14 +1786,8 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to get contradictions count for person %d: %w", personID, err)
 	}
 
-	// Calculate honesty score: 1 - (contradictions / max(1, facts))
-	honestyScore := 1.0 - float64(contradictionsCount)/math.Max(1, float64(factsCount))
-	// Clamp to [0.0, 1.0]
-	if honestyScore < 0.0 {
-		honestyScore = 0.0
-	} else if honestyScore > 1.0 {
-		honestyScore = 1.0
-	}
+	// Calculate honesty score: exp(-k * contradictions/facts)
+	honestyScore := ComputeHonestyScore(factsCount, contradictionsCount)
 
 	// Update the honesty score
 	if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore); err != nil {
@@ -1946,15 +1954,32 @@ type FactWithSource struct {
 	OriginalQuote string `json:"original_quote"`
 }
 
-// GetPersonFacts returns facts for a specific person with their sources
-func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) ([]FactWithSource, error) {
+// PaginatedFacts wraps a page of facts with the total count.
+type PaginatedFacts struct {
+	Items []FactWithSource `json:"items"`
+	Total int              `json:"total"`
+}
+
+// PaginatedContradictions wraps a page of contradictions with the total count.
+type PaginatedContradictions struct {
+	Items []ContradictionWithFacts `json:"items"`
+	Total int                     `json:"total"`
+}
+
+// GetPersonFacts returns a page of facts for a person together with the total count.
+func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*PaginatedFacts, error) {
 	query := `
-		SELECT DISTINCT f.id, f.fact_text, fs.source_url, fs.original_quote
-		FROM facts f
-		JOIN fact_sources fs ON fs.fact_id = f.id
-		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-		WHERE fm.person_id = $1
-		ORDER BY f.id
+		WITH fact_rows AS (
+			SELECT DISTINCT f.id, f.fact_text, fs.source_url, fs.original_quote
+			FROM facts f
+			JOIN fact_sources fs ON fs.fact_id = f.id
+			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			WHERE fm.person_id = $1
+		)
+		SELECT id, fact_text, source_url, original_quote,
+		       (SELECT COUNT(DISTINCT id) FROM fact_rows) AS total_count
+		FROM fact_rows
+		ORDER BY id
 		LIMIT $2 OFFSET $3`
 
 	rows, err := s.pool.Query(ctx, query, personID, limit, offset)
@@ -1963,21 +1988,34 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	}
 	defer rows.Close()
 
-	facts := make([]FactWithSource, 0)
+	result := &PaginatedFacts{Items: make([]FactWithSource, 0)}
 	for rows.Next() {
 		var fact FactWithSource
-		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.SourceURL, &fact.OriginalQuote)
+		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.SourceURL, &fact.OriginalQuote, &result.Total)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan fact: %w", err)
 		}
-		facts = append(facts, fact)
+		result.Items = append(result.Items, fact)
 	}
 
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("error iterating facts: %w", rows.Err())
 	}
 
-	return facts, nil
+	// If no rows returned, we still need the total count
+	if len(result.Items) == 0 {
+		countQuery := `
+			SELECT COUNT(DISTINCT f.id)
+			FROM facts f
+			JOIN fact_sources fs ON fs.fact_id = f.id
+			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			WHERE fm.person_id = $1`
+		if err := s.pool.QueryRow(ctx, countQuery, personID).Scan(&result.Total); err != nil {
+			return nil, fmt.Errorf("failed to count facts for person %d: %w", personID, err)
+		}
+	}
+
+	return result, nil
 }
 
 // ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates
@@ -1996,30 +2034,39 @@ type ContradictionWithFacts struct {
 	DetectedAt      time.Time  `json:"detected_at"`
 }
 
-// GetPersonContradictions returns contradictions for a specific person with both fact texts
-func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) ([]ContradictionWithFacts, error) {
+// GetPersonContradictions returns a page of contradictions for a person together with the total count.
+func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*PaginatedContradictions, error) {
 	query := `
-		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
-			   fa.fact_text, fb.fact_text,
-			   COALESCE(fsa.urls, '{}'), COALESCE(fsb.urls, '{}'),
-			   COALESCE(fsa.earliest, fa.created_at),
-			   COALESCE(fsb.earliest, fb.created_at),
-			   c.reason, c.detected_at
-		FROM contradictions c
-		JOIN facts fa ON fa.id = c.fact_a_id
-		JOIN facts fb ON fb.id = c.fact_b_id
-		LEFT JOIN LATERAL (
-			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
-			       MIN(published_at) AS earliest
-			FROM fact_sources WHERE fact_id = fa.id
-		) fsa ON true
-		LEFT JOIN LATERAL (
-			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
-			       MIN(published_at) AS earliest
-			FROM fact_sources WHERE fact_id = fb.id
-		) fsb ON true
-		WHERE c.person_id = $1
-		ORDER BY c.detected_at DESC
+		WITH contradiction_rows AS (
+			SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
+				   fa.fact_text AS fact_a_text, fb.fact_text AS fact_b_text,
+				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
+				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
+				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
+				   c.reason, c.detected_at
+			FROM contradictions c
+			JOIN facts fa ON fa.id = c.fact_a_id
+			JOIN facts fb ON fb.id = c.fact_b_id
+			LEFT JOIN LATERAL (
+				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+				       MIN(published_at) AS earliest
+				FROM fact_sources WHERE fact_id = fa.id
+			) fsa ON true
+			LEFT JOIN LATERAL (
+				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+				       MIN(published_at) AS earliest
+				FROM fact_sources WHERE fact_id = fb.id
+			) fsb ON true
+			WHERE c.person_id = $1
+		)
+		SELECT id, person_id, fact_a_id, fact_b_id,
+		       fact_a_text, fact_b_text,
+		       fact_a_urls, fact_b_urls,
+		       fact_a_date, fact_b_date,
+		       reason, detected_at,
+		       (SELECT COUNT(*) FROM contradiction_rows) AS total_count
+		FROM contradiction_rows
+		ORDER BY detected_at DESC
 		LIMIT $2 OFFSET $3`
 
 	rows, err := s.pool.Query(ctx, query, personID, limit, offset)
@@ -2028,25 +2075,33 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 	defer rows.Close()
 
-	contradictions := make([]ContradictionWithFacts, 0)
+	result := &PaginatedContradictions{Items: make([]ContradictionWithFacts, 0)}
 	for rows.Next() {
-		var contradiction ContradictionWithFacts
-		err := rows.Scan(&contradiction.ID, &contradiction.PersonID, &contradiction.FactAID, &contradiction.FactBID,
-			&contradiction.FactAText, &contradiction.FactBText,
-			&contradiction.FactASourceURLs, &contradiction.FactBSourceURLs,
-			&contradiction.FactADate, &contradiction.FactBDate,
-			&contradiction.Reason, &contradiction.DetectedAt)
+		var c ContradictionWithFacts
+		err := rows.Scan(&c.ID, &c.PersonID, &c.FactAID, &c.FactBID,
+			&c.FactAText, &c.FactBText,
+			&c.FactASourceURLs, &c.FactBSourceURLs,
+			&c.FactADate, &c.FactBDate,
+			&c.Reason, &c.DetectedAt, &result.Total)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan contradiction: %w", err)
 		}
-		contradictions = append(contradictions, contradiction)
+		result.Items = append(result.Items, c)
 	}
 
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("error iterating contradictions: %w", rows.Err())
 	}
 
-	return contradictions, nil
+	// If no rows returned, we still need the total count
+	if len(result.Items) == 0 {
+		countQuery := `SELECT COUNT(*) FROM contradictions WHERE person_id = $1`
+		if err := s.pool.QueryRow(ctx, countQuery, personID).Scan(&result.Total); err != nil {
+			return nil, fmt.Errorf("failed to count contradictions for person %d: %w", personID, err)
+		}
+	}
+
+	return result, nil
 }
 
 // DeleteContradictionsForPerson deletes all contradictions for a person and recalculates their honesty score.
@@ -2080,11 +2135,7 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 			return 0, fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
 		}
 
-		// With no contradictions, honesty score is 1.0 (unless no facts exist)
-		honestyScore := 1.0
-		if factsCount == 0 {
-			honestyScore = 1.0 // Default to 1.0 for persons with no facts
-		}
+		honestyScore := ComputeHonestyScore(factsCount, 0)
 
 		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore); err != nil {
 			return 0, fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
@@ -3101,4 +3152,78 @@ func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetr
 		return fmt.Errorf("record job metrics: %w", err)
 	}
 	return nil
+}
+
+// ScoreUpdate holds old and new honesty scores for a person, used by RecomputeAllHonestyScores.
+type ScoreUpdate struct {
+	PersonID      int64
+	PersonName    string
+	OldScore      float64
+	NewScore      float64
+	Facts         int
+	Contradictions int
+}
+
+// RecomputeAllHonestyScores recalculates honesty scores for every person
+// using ComputeHonestyScore. If dryRun is true, scores are not written.
+func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun bool) ([]ScoreUpdate, error) {
+	query := `
+		SELECT p.id, p.name, p.honesty_score,
+		       COALESCE(fc.cnt, 0) AS facts_count,
+		       COALESCE(cc.cnt, 0) AS contradictions_count
+		FROM persons p
+		LEFT JOIN (
+			SELECT fm.person_id, COUNT(DISTINCT f.id) AS cnt
+			FROM facts f
+			JOIN fact_sources fs ON fs.fact_id = f.id
+			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			GROUP BY fm.person_id
+		) fc ON fc.person_id = p.id
+		LEFT JOIN (
+			SELECT person_id, COUNT(*) AS cnt
+			FROM contradictions
+			GROUP BY person_id
+		) cc ON cc.person_id = p.id
+		ORDER BY p.id`
+
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query persons for score recompute: %w", err)
+	}
+	defer rows.Close()
+
+	var updates []ScoreUpdate
+	for rows.Next() {
+		var u ScoreUpdate
+		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.OldScore, &u.Facts, &u.Contradictions); err != nil {
+			return nil, fmt.Errorf("failed to scan person row: %w", err)
+		}
+		u.NewScore = ComputeHonestyScore(u.Facts, u.Contradictions)
+		updates = append(updates, u)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
+	}
+
+	if dryRun {
+		return updates, nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for _, u := range updates {
+		if _, err := tx.Exec(ctx, `UPDATE persons SET honesty_score = $1 WHERE id = $2`, u.NewScore, u.PersonID); err != nil {
+			return nil, fmt.Errorf("failed to update score for person %d: %w", u.PersonID, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("failed to commit score updates: %w", err)
+	}
+
+	return updates, nil
 }

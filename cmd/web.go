@@ -266,14 +266,14 @@ func (ws *WebServer) handleGetPersonFacts(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	facts, err := ws.storer.GetPersonFacts(ctx, personID, limit, offset)
+	result, err := ws.storer.GetPersonFacts(ctx, personID, limit, offset)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get facts: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(facts)
+	json.NewEncoder(w).Encode(result)
 }
 
 // handleGetPersonContradictions returns contradictions for a specific person
@@ -305,14 +305,14 @@ func (ws *WebServer) handleGetPersonContradictions(w http.ResponseWriter, r *htt
 		}
 	}
 
-	contradictions, err := ws.storer.GetPersonContradictions(ctx, personID, limit, offset)
+	result, err := ws.storer.GetPersonContradictions(ctx, personID, limit, offset)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get contradictions: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(contradictions)
+	json.NewEncoder(w).Encode(result)
 }
 
 // MemberInfo represents a person who is a member/affiliate of another entity

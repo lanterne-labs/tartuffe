@@ -188,12 +188,12 @@ func calculateMajorityPosition(votes []VoteEvent) (VotePosition, float64) {
 		counts[vote.Position]++
 	}
 
-	// Find the position with maximum votes
+	// Find the position with maximum votes (deterministic tie-break: For > Against > Abstention)
 	maxCount := 0
 	majorityPos := VoteNonVotant
-	for pos, count := range counts {
-		if count > maxCount && pos != VoteNonVotant {
-			maxCount = count
+	for _, pos := range []VotePosition{VoteFor, VoteAgainst, VoteAbstention} {
+		if counts[pos] > maxCount {
+			maxCount = counts[pos]
 			majorityPos = pos
 		}
 	}

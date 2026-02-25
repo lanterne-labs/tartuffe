@@ -82,7 +82,7 @@ go test -v ./backend/storage -run TestSpecificName
 3. **Fact Generation**: Convert domain events (votes, statements) to structured Fact objects
 4. **Embedding**: Generate vector embeddings via OpenAI-compatible API, store in pgvector
 5. **Contradiction Detection**: Query K-nearest neighbors per person, compare with LLM
-6. **Score Update**: Recalculate honesty score: `1 - (contradictions / max(1, facts))`
+6. **Score Update**: Recalculate honesty score: `exp(-4 * contradictions / facts)` (exponential decay, k=4)
 7. **Event Emission**: Insert events to `event_log` table for SSE streaming
 
 ### Key Components

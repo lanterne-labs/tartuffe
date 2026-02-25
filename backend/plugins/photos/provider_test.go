@@ -21,17 +21,17 @@ func TestBuildSearchQuery(t *testing.T) {
 		{
 			name:     "human person",
 			person:   storage.PersonSummary{Name: "Marine Le Pen", EntityType: &human},
-			expected: `"Marine Le Pen" official portrait photo`,
+			expected: `"Marine Le Pen" official`,
 		},
 		{
 			name:     "party",
 			person:   storage.PersonSummary{Name: "Renaissance", EntityType: &party},
-			expected: `"Renaissance" political party logo`,
+			expected: `"Renaissance" parti politique logo`,
 		},
 		{
 			name:     "nil entity type defaults to human",
 			person:   storage.PersonSummary{Name: "Jean Dupont"},
-			expected: `"Jean Dupont" official portrait photo`,
+			expected: `"Jean Dupont" official`,
 		},
 	}
 
