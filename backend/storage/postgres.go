@@ -1759,18 +1759,23 @@ func (s *PostgresStorer) StoreSkippedLaw(ctx context.Context, lawKey, title stri
 	return nil
 }
 
-// HonestyScoreDecayFactor controls the aggressiveness of the exponential penalty.
-// Higher values penalize contradictions more. At k=4, 7% contradiction ratio → 76% score.
-const HonestyScoreDecayFactor = 4.0
+// HonestyScoreRatioDecay controls the exponential penalty based on contradiction ratio.
+const HonestyScoreRatioDecay = 4.0
 
-// ComputeHonestyScore returns exp(-k * contradictions/facts).
+// HonestyScoreAbsoluteDecay controls the exponential penalty per absolute contradiction.
+// Each contradiction contributes an additional fixed penalty regardless of fact count.
+const HonestyScoreAbsoluteDecay = 0.02
+
+// ComputeHonestyScore returns exp(-k * contradictions/facts - j * contradictions).
+// The hybrid formula penalizes both the ratio and the absolute count of contradictions,
+// preventing high fact counts from diluting the impact of many contradictions.
 // If factsCount is 0, returns 1.0 (benefit of the doubt).
 func ComputeHonestyScore(factsCount, contradictionsCount int) float64 {
 	if factsCount == 0 {
 		return 1.0
 	}
 	ratio := float64(contradictionsCount) / float64(factsCount)
-	return math.Exp(-HonestyScoreDecayFactor * ratio)
+	return math.Exp(-HonestyScoreRatioDecay*ratio - HonestyScoreAbsoluteDecay*float64(contradictionsCount))
 }
 
 // recomputeHonestyScoreAndEmitEvents recomputes the honesty score for a person and emits relevant events

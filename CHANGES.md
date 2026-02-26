@@ -6,12 +6,12 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 
 ### What was done
 - **Paginated API responses**: `GetPersonFacts` and `GetPersonContradictions` now return `{items: [], total: N}` instead of bare arrays. Total count computed via CTE subselect in a single query (no extra round trip). Frontend tab labels show real total (e.g., "Facts (148)") instead of "25+".
-- **Exponential honesty score**: Replaced `1 - contradictions/facts` with `exp(-4 * contradictions/facts)`. At 7% contradiction ratio, score drops to 76% (was 93%). Extracted as `ComputeHonestyScore()` pure function used by all score-computing paths.
+- **Hybrid honesty score**: Formula is `exp(-4 * ratio - 0.02 * contradictions)` — combines ratio-based decay (k=4) with absolute contradiction penalty (j=0.02). This prevents high fact counts from diluting many contradictions. E.g., 31/500 → 42% (was 78% with ratio-only, was 93% with linear).
 - **`dm scores recompute` CLI**: Bulk-recomputes all person scores in a single transaction. Supports `--dry-run`. One SQL query fetches all persons with their counts.
 
 ### Key design decisions
 - CTE total uses `COUNT(DISTINCT id)` to count unique facts, not fact-source rows (a fact with multiple sources should count as one).
-- `ComputeHonestyScore` is a pure function (no DB) for easy unit testing. Decay factor k=4 is an exported constant.
+- `ComputeHonestyScore` is a pure function (no DB) for easy unit testing. Decay factors k=4 and j=0.02 are exported constants.
 - Fallback count query runs only when the paginated page returns 0 rows (e.g., offset past end).
 
 ## 2026-02-23: Contradiction Detection — Debug flag, Gemini 2.5 Flash, batch=3, self-consistency check
