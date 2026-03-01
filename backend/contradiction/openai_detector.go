@@ -16,9 +16,9 @@ import (
 
 const (
 	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call.
-	// Set to 3 as a tradeoff between cost (3x cheaper than batch=1) and accuracy.
+	// Set to 5 as a tradeoff between cost (~40% fewer calls than batch=3) and accuracy.
 	// Monitor with --debug flag to check for cross-pair confusion.
-	MaxPairsPerBatch = 3
+	MaxPairsPerBatch = 5
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
 	DelayBetweenBatches = 1 * time.Second

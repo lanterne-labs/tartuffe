@@ -400,7 +400,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 				EmbeddingText:      fact.EmbeddingText,
 				Embedding:          embeddings[0],
 				OriginalQuote:      fact.OriginalQuote,
-				Topics:             fact.Topics,
+				CanonicalVerb:      fact.CanonicalVerb,
 				InvolvedPeople:     fact.InvolvedPeople, // Secondary people mentioned
 				SourceURL:          article.Link,
 				PublishedAt:        publishedAt,

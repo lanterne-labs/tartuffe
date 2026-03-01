@@ -18,12 +18,13 @@ import (
 func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) { // Use backend.Fact type
 	// Temporary struct mirroring the expected JSON output fields from the LLM prompt
 	var extractedFactsRaw []struct {
+		Reasoning         string   `json:"reasoning"`           // LLM reasoning (logged, not stored)
 		SubjectEntity     string   `json:"subject_entity"`      // The entity this fact is about
 		SubjectEntityType string   `json:"subject_entity_type"` // "human", "party", or "organization"
 		NormalizedFact    string   `json:"normalized_fact"`     // Match the prompt's JSON key
-		EmbeddingText     string   `json:"embedding_text"`      // Name-free version for embedding generation
+		CanonicalVerb     string   `json:"canonical_verb"`      // One of 20 canonical verbs
+		EmbeddingText     string   `json:"embedding_text"`      // Verb-free topic for embedding generation
 		OriginalQuote     string   `json:"original_quote"`      // Match the prompt's JSON key
-		Topics            []string `json:"topics"`
 		InvolvedPeople    []string `json:"involved_people"`
 	}
 
@@ -73,6 +74,14 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			continue
 		}
 
+		// Log reasoning at debug level
+		if rawFact.Reasoning != "" {
+			log.Debug().
+				Str("reasoning", rawFact.Reasoning).
+				Str("fact", truncateStr(rawFact.NormalizedFact, 80)).
+				Msg("LLM extraction reasoning")
+		}
+
 		// Warn if embedding_text is missing (required field)
 		if rawFact.EmbeddingText == "" {
 			log.Warn().Int("fact_index", i).
@@ -82,13 +91,34 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			rawFact.EmbeddingText = rawFact.NormalizedFact
 		}
 
+		// Validate canonical_verb is one of the 20 known verbs
+		if rawFact.CanonicalVerb != "" {
+			if !isKnownVerb(rawFact.CanonicalVerb) {
+				log.Warn().Int("fact_index", i).
+					Str("canonical_verb", rawFact.CanonicalVerb).
+					Str("source_url", sourceURL).
+					Msg("LLM returned unknown canonical_verb, keeping as-is")
+			}
+		} else {
+			// Fallback: try to parse verb from embedding_text first word (backward compat)
+			verb, topic, ok := ParseVerbFromEmbeddingText(rawFact.EmbeddingText)
+			if ok {
+				rawFact.CanonicalVerb = verb
+				rawFact.EmbeddingText = topic
+				log.Debug().Int("fact_index", i).
+					Str("parsed_verb", verb).
+					Str("topic", topic).
+					Msg("Parsed canonical_verb from embedding_text (backward compat)")
+			}
+		}
+
 		finalFacts = append(finalFacts, backend.Fact{
 			SubjectEntity:      rawFact.SubjectEntity,     // Primary entity this fact is about
 			SubjectEntityType:  rawFact.SubjectEntityType, // Entity type (human/party/organization)
 			NormalizedFactText: rawFact.NormalizedFact,    // Map to correct field
 			EmbeddingText:      rawFact.EmbeddingText,     // Name-free version for embeddings
 			OriginalQuote:      rawFact.OriginalQuote,     // Map to correct field
-			Topics:             rawFact.Topics,
+			CanonicalVerb:      rawFact.CanonicalVerb,
 			InvolvedPeople:     rawFact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:          sourceURL,              // Add context passed from extractor
 			PublishedAt:        publishedAt,
@@ -96,6 +126,50 @@ func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	}
 
 	return finalFacts, nil
+}
+
+// knownVerbs is the set of 20 canonical verbs used in fact extraction.
+var knownVerbs = map[string]bool{
+	"DENIED": true, "CLAIMED": true, "PROMISED": true, "SUPPORTED": true,
+	"OPPOSED": true, "VOTED_FOR": true, "VOTED_AGAINST": true, "PROPOSED": true,
+	"CONFIRMED": true, "ADMITTED": true, "REFUSED": true, "DEMANDED": true,
+	"THREATENED": true, "WAS_SENTENCED": true, "WAS_CONVICTED": true,
+	"WAS_ACQUITTED": true, "WAS_FINED": true, "RECEIVED_FUNDS": true,
+	"CHANGED_POSITION": true, "ANNOUNCED": true,
+}
+
+// isKnownVerb checks if a verb is one of the 20 canonical verbs.
+func isKnownVerb(verb string) bool {
+	return knownVerbs[strings.ToUpper(verb)]
+}
+
+// ParseVerbFromEmbeddingText attempts to extract a canonical verb prefix from an embedding_text string.
+// Returns (verb, remainingTopic, true) if a known verb is found as the first word.
+// Returns ("", "", false) if no known verb is found.
+func ParseVerbFromEmbeddingText(embeddingText string) (verb string, topic string, ok bool) {
+	embeddingText = strings.TrimSpace(embeddingText)
+	if embeddingText == "" {
+		return "", "", false
+	}
+	// Try single-word verbs first, then two-word verbs (VOTED_FOR, WAS_SENTENCED, etc.)
+	parts := strings.SplitN(embeddingText, " ", 2)
+	firstWord := strings.ToUpper(parts[0])
+	if knownVerbs[firstWord] {
+		remainder := ""
+		if len(parts) > 1 {
+			remainder = strings.TrimSpace(parts[1])
+		}
+		return firstWord, remainder, true
+	}
+	return "", "", false
+}
+
+// truncateStr truncates a string to maxLen characters.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // extractFirstJSON uses json.Decoder to extract the first complete JSON value

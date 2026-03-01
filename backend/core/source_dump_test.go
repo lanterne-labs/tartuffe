@@ -24,13 +24,13 @@ func TestDumpSourceAndFacts(t *testing.T) {
 			SubjectEntity:      "Marine Le Pen",
 			NormalizedFactText: "Marine Le Pen voted against the budget bill",
 			OriginalQuote:      "Le Pen cast her vote against the proposed budget bill.",
-			Topics:             []string{"budget", "vote"},
+			CanonicalVerb:      "VOTED_AGAINST",
 		},
 		{
 			SubjectEntity:      "Marine Le Pen",
 			NormalizedFactText: "Marine Le Pen called for new elections",
 			OriginalQuote:      "She demanded new elections be held immediately.",
-			Topics:             []string{"elections"},
+			CanonicalVerb:      "DEMANDED",
 		},
 	}
 

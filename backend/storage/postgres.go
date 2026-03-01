@@ -48,8 +48,8 @@ type StoreFactInput struct {
 	Embedding []float32
 	// OriginalQuote is the exact text snippet from the source.
 	OriginalQuote string
-	// Topics are relevant keywords or categories.
-	Topics []string
+	// CanonicalVerb is one of 20 canonical verbs for verb-aware filtering.
+	CanonicalVerb string
 	// InvolvedPeople lists secondary people mentioned in the fact (not the subject entity).
 	InvolvedPeople []string
 	// SourceURL is the URL where the statement was found.
@@ -467,7 +467,7 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 	timer := metrics.NewQueryTimer("insert_fact")
 
 	query := `
-		INSERT INTO facts (fact_text, embedding_text, embedding, topics)
+		INSERT INTO facts (fact_text, embedding_text, embedding, canonical_verb)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id
 	`
@@ -476,7 +476,7 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		input.NormalizedFactText,
 		input.EmbeddingText,
 		pgvector.NewVector(input.Embedding),
-		input.Topics,
+		input.CanonicalVerb,
 	).Scan(&factID)
 
 	timer.ObserveDuration(err)
@@ -489,6 +489,16 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 	return factID, nil
 }
 
+// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
+func (s *PostgresStorer) GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error) {
+	var verb string
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(canonical_verb, '') FROM facts WHERE id = $1`, factID).Scan(&verb)
+	if err != nil {
+		return "", fmt.Errorf("failed to get canonical verb for fact %d: %w", factID, err)
+	}
+	return verb, nil
+}
+
 // --- End of public methods for core.FactInserter ---
 
 // findOrInsertFact REMOVED as StoreFact now always uses insertFact.
@@ -499,18 +509,18 @@ func (s *PostgresStorer) findOrInsertFact(...) { ... }
 
 // insertFact inserts a new fact record.
 // If a fact with the same text already exists, it returns the existing fact ID.
-func (s *PostgresStorer) insertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, topics []string) (factID int64, err error) {
+func (s *PostgresStorer) insertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, canonicalVerb string) (factID int64, err error) {
 	// Use ON CONFLICT to handle duplicate fact_text gracefully
 	// DO UPDATE with a no-op update allows us to get the RETURNING id for both new and existing facts
 	insertFactStmt := `
-		INSERT INTO facts (fact_text, embedding, topics)
+		INSERT INTO facts (fact_text, embedding, canonical_verb)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (fact_text) DO UPDATE SET fact_text = EXCLUDED.fact_text
 		RETURNING id`
 	err = tx.QueryRow(ctx, insertFactStmt,
 		text,
 		pgvector.NewVector(embedding),
-		topics,
+		canonicalVerb,
 	).Scan(&factID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert new fact: %w", err)
@@ -1296,10 +1306,11 @@ func (s *PostgresStorer) Pool() *pgxpool.Pool {
 
 // FactWithEmbedding contains a fact's ID, text, and embedding vector.
 type FactWithEmbedding struct {
-	ID          int64
-	Text        string
-	Embedding   []float32
-	PublishedAt *time.Time // Earliest publication date from fact_sources
+	ID            int64
+	Text          string
+	Embedding     []float32
+	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	CanonicalVerb string
 }
 
 // GetFactsWithEmbeddingsForPerson returns all active (non-duplicate) facts for a person including their embeddings.
@@ -1311,7 +1322,7 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 			FROM fact_sources fs
 			GROUP BY fs.fact_id
 		)
-		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at
+		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at, COALESCE(f.canonical_verb, '') AS canonical_verb
 		FROM facts f
 		JOIN fact_sources fs ON fs.fact_id = f.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -1333,7 +1344,7 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 	for rows.Next() {
 		var f FactWithEmbedding
 		var emb pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb); err != nil {
 			return nil, fmt.Errorf("failed to scan fact for person %d: %w", personID, err)
 		}
 		f.Embedding = emb.Slice()
@@ -1351,10 +1362,11 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 // semantically similar to a given embedding, excluding a specific fact ID (usually the new one).
 // Returns IDs and text of neighboring facts within the similarity threshold.
 type NeighborFactResult struct {
-	ID          int64
-	Text        string
-	Distance    float64    // Include distance for potential future use/logging
-	PublishedAt *time.Time // Earliest publication date from fact_sources
+	ID            int64
+	Text          string
+	Distance      float64    // Include distance for potential future use/logging
+	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	CanonicalVerb string     // Canonical verb for verb-aware filtering
 }
 
 func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer pgx.Tx, personID int64, embedding []float32, excludeFactID int64) ([]NeighborFactResult, error) {
@@ -1381,7 +1393,8 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
             f.id,
             f.fact_text,
             f.embedding <-> $2 AS distance,
-            fd.earliest_published_at
+            fd.earliest_published_at,
+            COALESCE(f.canonical_verb, '') AS canonical_verb
         FROM facts f
         JOIN PersonFacts pf ON f.id = pf.fact_id
         LEFT JOIN FactDates fd ON f.id = fd.fact_id
@@ -1411,7 +1424,7 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	var results []NeighborFactResult
 	for rows.Next() {
 		var res NeighborFactResult
-		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt); err != nil {
+		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt, &res.CanonicalVerb); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("failed to scan neighbor fact result for person %d: %w", personID, err)
 		}
@@ -2518,6 +2531,7 @@ func (s *PostgresStorer) IsInSearchQueue(ctx context.Context, personID int64) (b
 type FactForDedup struct {
 	ID                 int64
 	NormalizedFactText string
+	CanonicalVerb      string
 	EmbeddingText      string
 	OriginalQuote      string
 	Embedding          []float32
@@ -2530,6 +2544,7 @@ type FactForDedup struct {
 func (s *PostgresStorer) GetFactsForDeduplication(ctx context.Context, personID int64) ([]FactForDedup, error) {
 	query := `
 		SELECT DISTINCT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
+			   COALESCE(f.canonical_verb, ''),
 			   COALESCE(fs.original_quote, ''), f.embedding,
 			   NOT EXISTS (
 			       SELECT 1 FROM fact_relations fr
@@ -2553,7 +2568,7 @@ func (s *PostgresStorer) GetFactsForDeduplication(ctx context.Context, personID 
 		var emb pgvector.Vector
 		var isActive bool
 		err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText,
-			&f.OriginalQuote, &emb, &isActive)
+			&f.CanonicalVerb, &f.OriginalQuote, &emb, &isActive)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan fact for deduplication: %w", err)
 		}
@@ -2650,7 +2665,8 @@ func (s *PostgresStorer) MarkFactAsDuplicate(ctx context.Context, duplicateID in
 // GetFactByID retrieves a single fact by its ID for deduplication.
 func (s *PostgresStorer) GetFactByID(ctx context.Context, factID int64) (*FactForDedup, error) {
 	query := `
-		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), f.embedding,
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
+			   COALESCE(f.canonical_verb, ''), f.embedding,
 			   NOT EXISTS (
 			       SELECT 1 FROM fact_relations fr
 			       WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
@@ -2662,7 +2678,7 @@ func (s *PostgresStorer) GetFactByID(ctx context.Context, factID int64) (*FactFo
 	var emb pgvector.Vector
 	var isActive bool
 	err := s.pool.QueryRow(ctx, query, factID).Scan(
-		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &emb, &isActive)
+		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &emb, &isActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fact %d: %w", factID, err)

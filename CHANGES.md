@@ -2,6 +2,24 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-02-27: Separate Stance (canonical_verb) from Topic (embedding_text)
+
+### What was done
+- **New `canonical_verb` column**: Split the verb prefix out of `embedding_text` into its own indexed column. Migration adds `canonical_verb TEXT` with B-tree index and drops `topics TEXT[]`.
+- **Verb-free embedding_text**: Embeddings now encode only the topic domain (e.g., `wrongdoing parliamentary-assistants-case`), not the stance. This makes contradictory facts (DENIED vs WAS_CONVICTED on same topic) cluster together in vector space.
+- **Reasoning-first extraction prompt**: LLM now outputs `reasoning` as the first JSON field before committing to `canonical_verb` and other fields. Reasoning logged at debug level.
+- **Verb-aware auto-dedup**: Insertion dedup now checks up to 5 similar facts. Same verb + high similarity → skip. Different verb → never skip (opposing stances must coexist).
+- **Same-verb skip in contradiction detection**: Both CLI and real-time listener skip same-verb pairs with >0.85 similarity before calling the LLM. Reduces wasted LLM calls on paraphrases.
+- **Batched listener**: Real-time contradiction listener now uses `AreContradictoryBatch` instead of per-pair calls.
+- **Dedup LLM prompt**: Added pairwise `analysis` array for reasoning before grouping. `canonical_verb` included in fact JSON for verb-aware dedup. Default batch size reduced from 50 to 10.
+- **Backfill CLI**: `dm facts backfill-verbs [--dry-run]` parses verb prefix from existing `embedding_text`, updates `canonical_verb`, strips verb from `embedding_text`, and re-generates embeddings.
+
+### Key design decisions
+- frpolitics plugin already used verb-free `embedding_text` (via `prepareLawPhrase`), validating that topic-only embeddings cluster related votes correctly.
+- `Topics []string` column removed entirely — it was unused for any logic, and `canonical_verb` + topic-domain embedding replaces its purpose.
+- `CanonicalVerb` is a simple string, not an enum — allows unknown verbs to pass through with a warning rather than failing.
+- Backward compatibility: parser falls back to parsing verb from `embedding_text` first word when `canonical_verb` is empty.
+
 ## 2026-02-24: Real Counts + Exponential Honesty Score
 
 ### What was done

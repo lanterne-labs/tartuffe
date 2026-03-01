@@ -31,8 +31,9 @@ type Fact struct {
 	// corresponding to the NormalizedFactText. Provides context and verification.
 	// Example: "In a fiery speech yesterday, Person X declared their unwavering intention to slash income taxes..."
 	OriginalQuote string `json:"original_quote"`
-	// Topics are relevant keywords or categories for the statement.
-	Topics []string `json:"topics"`
+	// CanonicalVerb is one of 20 canonical verbs (DENIED, CLAIMED, PROMISED, etc.)
+	// extracted separately from the embedding text for verb-aware dedup/contradiction filtering.
+	CanonicalVerb string `json:"canonical_verb,omitempty"`
 	// InvolvedPeople lists other people mentioned in the fact (not the subject entity).
 	// These are secondary people involved in or relevant to the statement.
 	InvolvedPeople []string `json:"involved_people"`

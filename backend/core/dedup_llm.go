@@ -19,11 +19,18 @@ type DedupLLMVerifier struct {
 	baseClient *llm.BaseLLMClient
 }
 
+// LLMDedupeAnalysisEntry represents a pairwise reasoning entry from the LLM.
+type LLMDedupeAnalysisEntry struct {
+	IDs       []int64 `json:"ids"`
+	Reasoning string  `json:"reasoning"`
+}
+
 // LLMDedupeResponse is the expected JSON response from the LLM.
 type LLMDedupeResponse struct {
-	UniqueGroups     []UniqueGroup     `json:"unique_groups"`
-	FactImprovements []FactImprovement `json:"fact_improvements"`
-	InvalidFacts     []InvalidFact     `json:"invalid_facts"`
+	Analysis         []LLMDedupeAnalysisEntry `json:"analysis"`          // Pairwise reasoning (logged, not acted on)
+	UniqueGroups     []UniqueGroup            `json:"unique_groups"`
+	FactImprovements []FactImprovement        `json:"fact_improvements"`
+	InvalidFacts     []InvalidFact            `json:"invalid_facts"`
 }
 
 // UniqueGroup represents a group of facts where one is kept and others are duplicates.
@@ -131,6 +138,14 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 
+	// Log pairwise analysis entries at debug level
+	for _, a := range response.Analysis {
+		log.Debug().
+			Interface("ids", a.IDs).
+			Str("reasoning", a.Reasoning).
+			Msg("LLM dedup pairwise analysis")
+	}
+
 	log.Info().Int("duplicate_groups", len(response.UniqueGroups)).Msg("LLM deduplication verification complete")
 
 	return response, nil
@@ -142,6 +157,7 @@ func (v *DedupLLMVerifier) buildPrompt(facts []FactForDedup) string {
 	type factJSON struct {
 		ID             int64  `json:"id"`
 		NormalizedFact string `json:"normalized_fact"`
+		CanonicalVerb  string `json:"canonical_verb,omitempty"`
 		EmbeddingText  string `json:"embedding_text"`
 		OriginalQuote  string `json:"original_quote,omitempty"`
 	}
@@ -151,6 +167,7 @@ func (v *DedupLLMVerifier) buildPrompt(facts []FactForDedup) string {
 		factsForPrompt[i] = factJSON{
 			ID:             f.ID,
 			NormalizedFact: f.NormalizedFactText,
+			CanonicalVerb:  f.CanonicalVerb,
 			EmbeddingText:  f.EmbeddingText,
 			OriginalQuote:  f.OriginalQuote,
 		}
@@ -158,68 +175,52 @@ func (v *DedupLLMVerifier) buildPrompt(facts []FactForDedup) string {
 
 	factsJSON, _ := json.MarshalIndent(factsForPrompt, "", "  ")
 
-	prompt := fmt.Sprintf(`You are a fact quality and deduplication assistant. Analyze these facts and:
+	prompt := fmt.Sprintf(`You are a fact quality and deduplication assistant. Each fact has a canonical_verb (the stance) and embedding_text (the topic).
 
-1. IDENTIFY DUPLICATES - facts that say the same thing
-2. FLAG INVALID FACTS - things that are NOT facts about the person
-3. SUGGEST IMPROVEMENTS - make facts more precise/distinct
+## STEP 1: Pairwise analysis
+For each potential duplicate pair, reason briefly: same topic AND same stance? Or different actions/dates?
 
-## WHAT IS A VALID FACT?
-✅ Type 1 — Entity's own positions, promises, claims, denials:
-   - "X stated she had no feeling of committing a crime"
-   - "X denied the allegations against her"
-   - "X claimed the Parliament did not play its role"
+## STEP 2: Based on your analysis, produce the output
 
-✅ Type 2 — Authoritative verifiable outcomes:
-   - "X was sentenced to 4 years in prison" — court ruling
-   - "X was found guilty of misappropriation" — judicial finding
+### WHAT IS A VALID FACT?
+✅ Type 1 — Entity's own positions, promises, claims, denials
+✅ Type 2 — Authoritative verifiable outcomes (court rulings, votes, documented findings)
+❌ INVALID — Third-party opinions, non-contradictable info (scheduling, biography)
 
-❌ INVALID — Third-party opinions without evidence:
-   - "Critics say X is corrupt" — not X's action or authoritative finding
+### DUPLICATES
+DUPLICATE means: same statement in different languages, minor wording differences, or one is a subset of another.
+NOT duplicates: same person but different actions/dates/claims. CRITICAL: Two facts with DIFFERENT canonical_verbs are almost NEVER duplicates (e.g., DENIED vs WAS_CONVICTED are opposing stances on the same topic).
 
-❌ INVALID — Non-contradictable information:
-   - "X attended the hearing" — scheduling
-   - "X was born in 1968" — biography
-
-## DUPLICATES
-DUPLICATE means:
-- Same statement in different languages
-- Same quote with minor wording differences
-- One fact is a subset of another
-
-NOT duplicates: Same person, different actions/dates/claims
-
-## IMPROVEMENTS
-Suggest improvements when:
-- A fact could be more specific about WHAT the person did/said
-- The embedding_text is too generic and could match unrelated facts
-- The fact mixes action with opinion (split or refocus on action)
+### IMPROVEMENTS
+Suggest when embedding_text is too generic or the fact mixes action with opinion.
 
 INPUT FACTS:
 %s
 
-Return JSON in exactly this format:
+Return JSON:
 {
+  "analysis": [
+    {"ids": [1, 2], "reasoning": "Same verb DENIED + same topic wrongdoing → duplicate"}
+  ],
   "unique_groups": [
-    {"keep_id": 1, "duplicate_ids": [2], "reason": "Same statement in FR/EN"}
+    {"keep_id": 1, "duplicate_ids": [2], "reason": "Same denial in FR/EN"}
   ],
   "invalid_facts": [
-    {"id": 3, "reason": "Opinion about Parliament, not a fact about the person's actions"}
+    {"id": 3, "reason": "Opinion, not a verifiable fact"}
   ],
   "fact_improvements": [
     {
       "id": 4,
-      "improved_normalized_fact": "Marine Le Pen stated during her appeal trial that she had no feeling of committing a crime when hiring EU parliamentary assistants.",
-      "improved_embedding_text": "DENIED wrongdoing parliamentary-assistants-case",
-      "reason": "Made more specific about what she claimed"
+      "improved_normalized_fact": "Marine Le Pen a déclaré n'avoir eu aucun sentiment d'avoir commis un délit.",
+      "improved_embedding_text": "wrongdoing parliamentary-assistants-case",
+      "reason": "Made more specific"
     }
   ]
 }
 
 Rules:
-- Only include arrays that have items (omit empty arrays)
+- analysis is for your reasoning only — it does not affect the output structure
 - A fact can appear in only ONE of: unique_groups, invalid_facts, or fact_improvements
-- If a fact is fine as-is, don't include it anywhere
 - Return {"unique_groups": [], "invalid_facts": [], "fact_improvements": []} if everything is fine
 
 IMPORTANT: Return ONLY valid JSON.`, string(factsJSON))

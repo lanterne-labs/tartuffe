@@ -141,15 +141,22 @@ pour l'industrie automobile.`
 			t.Errorf("Fact %d: source_url = %q, want %q", i+1, fact.SourceURL, mockURL)
 		}
 
-		// embedding_text must use canonical format
+		// canonical_verb must be set to one of the 20 known verbs
+		if fact.CanonicalVerb == "" {
+			t.Errorf("Fact %d: empty canonical_verb", i+1)
+		} else if !isKnownVerb(fact.CanonicalVerb) {
+			t.Errorf("Fact %d: unknown canonical_verb %q", i+1, fact.CanonicalVerb)
+		}
+		// embedding_text must be verb-free topic
 		if fact.EmbeddingText == "" {
 			t.Errorf("Fact %d: empty embedding_text", i+1)
 			continue
 		}
-		if !startsWithCanonicalVerb(fact.EmbeddingText) {
-			t.Errorf("Fact %d: embedding_text %q does not start with a canonical verb", i+1, fact.EmbeddingText)
+		// embedding_text should NOT start with a canonical verb (verb is now separate)
+		if startsWithCanonicalVerb(fact.EmbeddingText) {
+			t.Errorf("Fact %d: embedding_text %q still starts with a canonical verb (should be verb-free)", i+1, fact.EmbeddingText)
 		}
-		// Must be short (5-12 words)
+		// Must be short (2-12 words)
 		words := strings.Fields(fact.EmbeddingText)
 		if len(words) > 15 {
 			t.Errorf("Fact %d: embedding_text has %d words (expected ≤15): %q", i+1, len(words), fact.EmbeddingText)

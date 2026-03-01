@@ -48,8 +48,6 @@ type LawSummary struct {
 	ShortTitle string
 	// SimpleStatement is a compact, human-readable summary
 	SimpleStatement string
-	// Topics are short keywords for embeddings/search
-	Topics []string
 	// Confidence is an optional confidence score [0..1]
 	Confidence float64
 }

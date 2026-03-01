@@ -28,7 +28,7 @@ type SourceDumpFact struct {
 	SubjectEntity  string   `json:"subject_entity"`
 	NormalizedFact string   `json:"normalized_fact"`
 	OriginalQuote  string   `json:"original_quote"`
-	Topics         []string `json:"topics"`
+	CanonicalVerb  string   `json:"canonical_verb,omitempty"`
 }
 
 // DumpSourceAndFacts writes a JSON file containing the article content and extracted facts.
@@ -54,7 +54,7 @@ func DumpSourceAndFacts(dir, targetName, sourceURL, title, content string, dateP
 			SubjectEntity:  f.SubjectEntity,
 			NormalizedFact: f.NormalizedFactText,
 			OriginalQuote:  f.OriginalQuote,
-			Topics:         f.Topics,
+			CanonicalVerb:  f.CanonicalVerb,
 		}
 	}
 

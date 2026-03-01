@@ -21,8 +21,8 @@ type FactRecord struct {
 	// EmbeddingText is the text used for generating embeddings (without person names)
 	// For frpolitics, this equals FactText since FactText is already name-free
 	EmbeddingText string
-	// Topics are derived topics
-	Topics []string
+	// CanonicalVerb is the canonical verb (VOTED_FOR, VOTED_AGAINST, etc.)
+	CanonicalVerb string
 	// SourceURL is the canonical law page URL
 	SourceURL string
 	// LawKey is a minimal identifier recorded in fact source metadata
@@ -159,7 +159,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 			EmbeddingText:      embeddingText, // Name-free version for embeddings
 			Embedding:          embeddingsMap[embeddingText],
 			OriginalQuote:      originalQuote,
-			Topics:             firstRec.Topics,
+			CanonicalVerb:      firstRec.CanonicalVerb,
 			InvolvedPeople:     secondaryPersons,
 			SourceURL:          firstRec.SourceURL,
 			PublishedAt:        firstRec.PublishedAt,

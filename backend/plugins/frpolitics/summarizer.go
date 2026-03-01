@@ -22,7 +22,7 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 	result := make(map[string]LawSummary, len(laws))
 	if os.Getenv("OPEN_AI_KEY") == "" {
 		for _, law := range laws {
-			result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Topics: []string{}, Confidence: 0}
+			result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Confidence: 0}
 		}
 		return result, nil
 	}
@@ -59,7 +59,7 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 		if err != nil {
 			// On error, fall back to title-only for this batch
 			for _, law := range batch {
-				result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Topics: []string{}, Confidence: 0}
+				result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Confidence: 0}
 			}
 			continue
 		}
@@ -79,10 +79,10 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 
 func buildBatchedSummaryPrompt(laws []Law) string {
 	b := &strings.Builder{}
-	b.WriteString("You summarize French laws into a concise human-readable short title, a brief neutral statement with EXPLICIT directional keywords, and topics.\n")
+	b.WriteString("You summarize French laws into a concise human-readable short title and a brief neutral statement with EXPLICIT directional keywords.\n")
 	b.WriteString("Short titles should be recognizable (e.g. 'Réforme des retraites' instead of 'projet de loi de financement rectificative de la sécurité sociale pour 2023').\n")
 	b.WriteString("Return JSON ONLY as an object where keys are the law keys provided and values are summary objects:\n")
-	b.WriteString("{\n  \"LAW_KEY\": {\"short_title\": string, \"simple_statement\": string, \"topics\":[string], \"confidence\": number}\n}\n\n")
+	b.WriteString("{\n  \"LAW_KEY\": {\"short_title\": string, \"simple_statement\": string, \"confidence\": number}\n}\n\n")
 	b.WriteString("You summarize French laws into:\n")
 	b.WriteString("- short_title: concise human name\n")
 	b.WriteString("- simple_statement: MUST include EXPLICIT DIRECTION. Use action verbs like:\n")
@@ -101,7 +101,6 @@ func buildBatchedSummaryPrompt(laws []Law) string {
 	b.WriteString("  * 'Modifies prison enforcement' (no direction)\n")
 	b.WriteString("  * 'Changes budget allocation' (no specifics)\n")
 	b.WriteString("\n")
-	b.WriteString("- topics: policy keywords like 'security', 'immigration', 'economy', 'environment'\n")
 	b.WriteString("- confidence: 0.0-1.0 where:\n")
 	b.WriteString("  * 0.0-0.4: Cannot determine policy direction - SKIP\n")
 	b.WriteString("  * 0.5-0.7: Direction is inferred but uncertain\n")
@@ -158,10 +157,9 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 	}
 
 	var rawResult map[string]struct {
-		ShortTitle      string   `json:"short_title"`
-		SimpleStatement string   `json:"simple_statement"`
-		Topics          []string `json:"topics"`
-		Confidence      float64  `json:"confidence"`
+		ShortTitle      string  `json:"short_title"`
+		SimpleStatement string  `json:"simple_statement"`
+		Confidence      float64 `json:"confidence"`
 	}
 
 	if err := json.Unmarshal([]byte(env.Choices[0].Message.Content), &rawResult); err != nil {
@@ -173,7 +171,6 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 		summaries[key] = LawSummary{
 			ShortTitle:      out.ShortTitle,
 			SimpleStatement: out.SimpleStatement,
-			Topics:          out.Topics,
 			Confidence:      out.Confidence,
 		}
 	}

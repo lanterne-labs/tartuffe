@@ -120,6 +120,8 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		sameVerbSkipped := 0
+
 		for _, fact := range facts {
 			var pairsToCheck []struct {
 				ID          int64
@@ -147,6 +149,20 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				}
 				for _, neighbor := range neighbors {
 					if neighbor.ID > fact.ID {
+						// Skip same-verb pairs with high similarity (>0.85) —
+						// these are paraphrases, not contradictions
+						if fact.CanonicalVerb != "" && neighbor.CanonicalVerb != "" &&
+							fact.CanonicalVerb == neighbor.CanonicalVerb &&
+							(1.0-neighbor.Distance) > 0.85 {
+							sameVerbSkipped++
+							log.Debug().
+								Int64("fact_a", fact.ID).
+								Int64("fact_b", neighbor.ID).
+								Str("verb", fact.CanonicalVerb).
+								Float64("similarity", 1.0-neighbor.Distance).
+								Msg("Skipping same-verb pair")
+							continue
+						}
 						pairsToCheck = append(pairsToCheck, struct {
 							ID          int64
 							Text        string
@@ -230,6 +246,9 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 		skipped := len(allPairs) - len(filteredPairs)
 		if skipped > 0 {
 			log.Info().Str("person", person.Name).Int("skipped", skipped).Msg("Skipped pairs with existing checks")
+		}
+		if sameVerbSkipped > 0 {
+			log.Info().Str("person", person.Name).Int("skipped", sameVerbSkipped).Msg("Skipped same-verb pairs (paraphrases)")
 		}
 		allPairs = filteredPairs
 

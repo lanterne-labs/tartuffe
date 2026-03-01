@@ -133,15 +133,21 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 		}
 	}
 
-	// Deduplicate based on NormalizedFactText
-	finalFactsMap := make(map[string]backend.Fact)
+	// Consolidate: group by (CanonicalVerb, EmbeddingText), keep the most specific (longest NormalizedFactText)
+	type groupKey struct {
+		Verb      string
+		Embedding string
+	}
+	groupMap := make(map[groupKey]backend.Fact)
 	for _, fact := range allExtractedFacts {
-		if _, exists := finalFactsMap[fact.NormalizedFactText]; !exists {
-			finalFactsMap[fact.NormalizedFactText] = fact
+		key := groupKey{Verb: fact.CanonicalVerb, Embedding: fact.EmbeddingText}
+		existing, exists := groupMap[key]
+		if !exists || len(fact.NormalizedFactText) > len(existing.NormalizedFactText) {
+			groupMap[key] = fact
 		}
 	}
-	finalFacts := make([]backend.Fact, 0, len(finalFactsMap))
-	for _, fact := range finalFactsMap {
+	finalFacts := make([]backend.Fact, 0, len(groupMap))
+	for _, fact := range groupMap {
 		finalFacts = append(finalFacts, fact)
 	}
 

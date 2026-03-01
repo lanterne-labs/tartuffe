@@ -62,6 +62,9 @@ type Storer interface {
 
 	// LinkPersonsToSourceMention links persons to a fact source, creating fact_mentions records.
 	LinkPersonsToSourceMention(ctx context.Context, sourceID int64, personIDs []int64) error
+
+	// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
+	GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error)
 }
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
@@ -72,7 +75,7 @@ type StoreFactInput struct {
 	EmbeddingText      string    // Name-free version used ONLY for embedding generation
 	Embedding          []float32 // Vector embedding (generated from EmbeddingText)
 	OriginalQuote      string
-	Topics             []string
+	CanonicalVerb      string
 	InvolvedPeople     []string // Secondary people mentioned in the fact (not the subject)
 	SourceURL          string
 	PublishedAt        *time.Time
@@ -162,20 +165,39 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
-	// Check for near-duplicate before inserting
+	// Verb-aware near-duplicate check before inserting
+	// Same verb + high similarity → auto-dedup (skip)
+	// Different verb → NEVER auto-dedup (opposing stances on same topic must coexist)
 	if len(input.Embedding) > 0 {
 		distanceThreshold := 1.0 - fi.autoDedupeThreshold
-		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, distanceThreshold, 1)
+		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, distanceThreshold, 5)
 		if err != nil {
 			log.Warn().Err(err).Str("fact", truncate(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
-		} else if len(similar) > 0 {
-			log.Info().
-				Int64("existing_fact_id", similar[0].ID).
-				Float64("distance", similar[0].Distance).
-				Str("fact", truncate(input.NormalizedFactText, 80)).
-				Msg("Skipping duplicate fact")
-			return false, nil
+		} else {
+			for _, sf := range similar {
+				existingVerb, verbErr := fi.storer.GetFactCanonicalVerb(ctx, sf.ID)
+				if verbErr != nil {
+					log.Debug().Err(verbErr).Int64("fact_id", sf.ID).Msg("Failed to get canonical verb for similar fact")
+					continue
+				}
+				// Only auto-dedup if same verb (or both empty)
+				if existingVerb == input.CanonicalVerb {
+					log.Info().
+						Int64("existing_fact_id", sf.ID).
+						Float64("distance", sf.Distance).
+						Str("verb", input.CanonicalVerb).
+						Str("fact", truncate(input.NormalizedFactText, 80)).
+						Msg("Skipping duplicate fact (same verb + high similarity)")
+					return false, nil
+				}
+				log.Debug().
+					Int64("existing_fact_id", sf.ID).
+					Float64("distance", sf.Distance).
+					Str("new_verb", input.CanonicalVerb).
+					Str("existing_verb", existingVerb).
+					Msg("High similarity but different verb, NOT deduping")
+			}
 		}
 	}
 

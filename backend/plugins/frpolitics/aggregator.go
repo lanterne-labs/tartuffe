@@ -58,13 +58,25 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			PersonName:    name,
 			FactText:      factText,
 			EmbeddingText: embeddingText, // Just the law topic, no action verb
-			Topics:        summary.Topics,
+			CanonicalVerb: deriveCollectiveVerb(pos),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
 			PublishedAt:   law.VoteDate,
 		})
 	}
 	return facts
+}
+
+// deriveCollectiveVerb converts a VotePosition to a canonical verb for collective votes.
+func deriveCollectiveVerb(pos VotePosition) string {
+	switch pos {
+	case VoteFor:
+		return "VOTED_FOR"
+	case VoteAgainst:
+		return "VOTED_AGAINST"
+	default:
+		return ""
+	}
 }
 
 func buildCollectiveVoteStatement(pos VotePosition, lawSimple string) string {

@@ -9,8 +9,8 @@ func TestParseFactJSON(t *testing.T) {
 	now := time.Now()
 	sourceURL := "https://example.com/article"
 
-	t.Run("valid JSON array", func(t *testing.T) {
-		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]`)
+	t.Run("valid JSON array with new format", func(t *testing.T) {
+		input := []byte(`[{"reasoning":"Type 2: official vote record","subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","canonical_verb":"VOTED_AGAINST","embedding_text":"bill-X","original_quote":"voted against","involved_people":[]}]`)
 		facts, err := parseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -20,6 +20,31 @@ func TestParseFactJSON(t *testing.T) {
 		}
 		if facts[0].SubjectEntity != "Marine Le Pen" {
 			t.Errorf("expected subject_entity 'Marine Le Pen', got %q", facts[0].SubjectEntity)
+		}
+		if facts[0].CanonicalVerb != "VOTED_AGAINST" {
+			t.Errorf("expected canonical_verb 'VOTED_AGAINST', got %q", facts[0].CanonicalVerb)
+		}
+		if facts[0].EmbeddingText != "bill-X" {
+			t.Errorf("expected embedding_text 'bill-X', got %q", facts[0].EmbeddingText)
+		}
+	})
+
+	t.Run("backward compat: verb parsed from embedding_text", func(t *testing.T) {
+		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","involved_people":[]}]`)
+		facts, err := parseFactJSON(input, sourceURL, &now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(facts) != 1 {
+			t.Fatalf("expected 1 fact, got %d", len(facts))
+		}
+		// canonical_verb should be parsed from embedding_text
+		if facts[0].CanonicalVerb != "VOTED_AGAINST" {
+			t.Errorf("expected parsed canonical_verb 'VOTED_AGAINST', got %q", facts[0].CanonicalVerb)
+		}
+		// embedding_text should have verb stripped
+		if facts[0].EmbeddingText != "bill-X" {
+			t.Errorf("expected verb-free embedding_text 'bill-X', got %q", facts[0].EmbeddingText)
 		}
 	})
 
@@ -35,7 +60,7 @@ func TestParseFactJSON(t *testing.T) {
 	})
 
 	t.Run("facts array with trailing text", func(t *testing.T) {
-		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","topics":["politics"],"involved_people":[]}]
+		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","canonical_verb":"VOTED_AGAINST","embedding_text":"bill-X","original_quote":"voted against","involved_people":[]}]
 Here are the facts I extracted from the article.`)
 		facts, err := parseFactJSON(input, sourceURL, &now)
 		if err != nil {
@@ -67,6 +92,56 @@ Here are the facts I extracted from the article.`)
 			t.Fatalf("expected 0 facts, got %d", len(facts))
 		}
 	})
+}
+
+func TestParseVerbFromEmbeddingText(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantVerb  string
+		wantTopic string
+		wantOK    bool
+	}{
+		{"DENIED wrongdoing parliamentary-assistants-case", "DENIED", "wrongdoing parliamentary-assistants-case", true},
+		{"CLAIMED innocence", "CLAIMED", "innocence", true},
+		{"PROMISED tax-cut income-tax", "PROMISED", "tax-cut income-tax", true},
+		{"VOTED_FOR tax-increase", "VOTED_FOR", "tax-increase", true},
+		{"VOTED_AGAINST immigration-reform", "VOTED_AGAINST", "immigration-reform", true},
+		{"WAS_SENTENCED prison", "WAS_SENTENCED", "prison", true},
+		{"WAS_CONVICTED fraud", "WAS_CONVICTED", "fraud", true},
+		{"WAS_ACQUITTED charges", "WAS_ACQUITTED", "charges", true},
+		{"WAS_FINED tax-evasion", "WAS_FINED", "tax-evasion", true},
+		{"RECEIVED_FUNDS party-financing", "RECEIVED_FUNDS", "party-financing", true},
+		{"CHANGED_POSITION climate-policy", "CHANGED_POSITION", "climate-policy", true},
+		{"ANNOUNCED new-policy", "ANNOUNCED", "new-policy", true},
+		{"SUPPORTED workers-rights", "SUPPORTED", "workers-rights", true},
+		{"OPPOSED immigration-reform", "OPPOSED", "immigration-reform", true},
+		{"PROPOSED budget-increase", "PROPOSED", "budget-increase", true},
+		{"CONFIRMED attendance", "CONFIRMED", "attendance", true},
+		{"ADMITTED wrongdoing", "ADMITTED", "wrongdoing", true},
+		{"REFUSED cooperation", "REFUSED", "cooperation", true},
+		{"DEMANDED action", "DEMANDED", "action", true},
+		{"THREATENED sanctions", "THREATENED", "sanctions", true},
+		// Edge cases
+		{"wrongdoing parliamentary-assistants-case", "", "", false}, // no verb prefix
+		{"", "", "", false},                  // empty string
+		{"DENIED", "DENIED", "", true},       // verb only, no topic
+		{"notaverb something", "", "", false}, // unknown first word
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			verb, topic, ok := ParseVerbFromEmbeddingText(tt.input)
+			if ok != tt.wantOK {
+				t.Errorf("ParseVerbFromEmbeddingText(%q) ok = %v, want %v", tt.input, ok, tt.wantOK)
+			}
+			if verb != tt.wantVerb {
+				t.Errorf("ParseVerbFromEmbeddingText(%q) verb = %q, want %q", tt.input, verb, tt.wantVerb)
+			}
+			if topic != tt.wantTopic {
+				t.Errorf("ParseVerbFromEmbeddingText(%q) topic = %q, want %q", tt.input, topic, tt.wantTopic)
+			}
+		})
+	}
 }
 
 func TestExtractFirstJSON(t *testing.T) {

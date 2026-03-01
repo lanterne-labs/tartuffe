@@ -645,7 +645,7 @@ func runCacheOnlyExtraction(
 					EmbeddingText:      fact.EmbeddingText,
 					Embedding:          embeddings[0],
 					OriginalQuote:      fact.OriginalQuote,
-					Topics:             fact.Topics,
+					CanonicalVerb:      fact.CanonicalVerb,
 					InvolvedPeople:     fact.InvolvedPeople,
 					SourceURL:          content.URL,
 					PublishedAt:        content.DatePublished,

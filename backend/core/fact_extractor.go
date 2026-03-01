@@ -78,14 +78,6 @@ Facts MUST contain specific information: numbers, dates, named actions, precise 
 **7. Polls, surveys, editorial comparisons**
 Reject poll data, survey results, and journalist comparisons between entities.
 
-## 4-Question Test (EVERY fact must pass ALL 4)
-1. Is it CONCRETE and SPECIFIC? (contains numbers, names, dates, or specific actions — not vague qualifiers)
-2. Is it the entity's OWN position/action, OR an authoritative outcome about them (court ruling, documented evidence)?
-3. Can you imagine the entity later doing or saying the OPPOSITE? Or could documented evidence contradict this? (NOT: travel, scheduling, biography, feelings)
-4. Does it represent a POLITICAL POSITION, PROMISE, DENIAL, or VERIFIABLE ACTION?
-
-If ANY answer is NO → REJECT.
-
 ## Self-Consistency Check
 Before finalizing each fact, re-read your normalized_fact and verify:
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
@@ -99,33 +91,32 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - Quality over quantity: fewer correct facts is ALWAYS better than including invalid ones.
 
 ## JSON Output Format
-Return a JSON array. Each object has 7 fields:
+Return a JSON array. Each object has 8 fields (in this order):
 
-1. 'subject_entity': The person/party WHO PERFORMS THE ACTION or MAKES THE STATEMENT described in the fact.
+1. 'reasoning': Think step-by-step BEFORE committing to the other fields. Ask yourself: What type of fact is this (Type 1 or Type 2)? Which canonical verb best describes the stance? Is this truly contradictable? This field is for your analysis — be concise (1-2 sentences).
+2. 'subject_entity': The person/party WHO PERFORMS THE ACTION or MAKES THE STATEMENT described in the fact.
    This is NOT the person being talked about — it's the ACTOR/SPEAKER. Use full canonical name.
    Example: "Trump criticized Le Pen" → subject_entity = "Donald Trump" (he speaks), involved_people = ["Marine Le Pen"]
    Example: "Marine Le Pen denied wrongdoing" → subject_entity = "Marine Le Pen" (she denies)
-2. 'subject_entity_type': One of "human", "party", or "organization"
-3. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
+3. 'subject_entity_type': One of "human", "party", or "organization"
+4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
    ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
    ⚠️ NO CANONICAL VERBS: NEVER use DENIED, CLAIMED, PROMISED, WAS_CONVICTED, etc. in this field. Use natural language only. Write "a nié", "a affirmé", "a promis" — NOT "a DENIED" or "a CLAIMED".
-4. 'embedding_text': Canonical semantic fingerprint for vector similarity matching. ALWAYS in English.
-   GOAL: Two facts expressing the same meaning MUST produce identical or near-identical embedding_text. Be as GENERIC as possible while still capturing the core meaning. Strip all specific numbers, percentages, thresholds — keep only the abstract action and policy domain. If someone "promised to cut taxes by 15%%" and someone else "promised to reduce income tax", both should produce the SAME embedding_text.
-   - Format: CANONICAL_VERB [broad policy domain] [one specific detail only if needed]
-   - CANONICAL_VERB must be one of: DENIED, CLAIMED, PROMISED, SUPPORTED, OPPOSED, VOTED_FOR, VOTED_AGAINST, PROPOSED, CONFIRMED, ADMITTED, REFUSED, DEMANDED, THREATENED, WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS, CHANGED_POSITION, ANNOUNCED
-   - Topic abstraction: use the BROADEST policy domain that captures the core meaning, then add ONE specific detail only if needed to distinguish from other facts by the same person. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
-   - REMOVE: all person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
-   - Keep it SHORT: 3-6 words total
+5. 'canonical_verb': One of these 20 verbs that best captures the entity's STANCE:
+   DENIED, CLAIMED, PROMISED, SUPPORTED, OPPOSED, VOTED_FOR, VOTED_AGAINST, PROPOSED, CONFIRMED, ADMITTED, REFUSED, DEMANDED, THREATENED, WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS, CHANGED_POSITION, ANNOUNCED
+6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. ALWAYS in English. NO VERB PREFIX.
+   GOAL: Two facts about the same topic MUST produce identical or near-identical embedding_text, REGARDLESS of the entity's stance. The canonical_verb field already captures the stance separately.
+   - Format: [broad policy domain] [one specific detail only if needed]
+   - Topic abstraction: use the BROADEST policy domain. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
+   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
+   - Keep it SHORT: 2-5 words total
    - Examples:
-     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → DENIED wrongdoing parliamentary-assistants-case
-     "a nié tout détournement de fonds publics" → DENIED wrongdoing parliamentary-assistants-case
-     "a promis de baisser l'impôt sur le revenu de 15%%" → PROMISED tax-cut income-tax
-     "a promis de ne jamais augmenter les impôts" → PROMISED no-tax-increase
-     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → VOTED_FOR tax-increase income-tax
-     "a été condamnée à 4 ans de prison" → WAS_SENTENCED prison parliamentary-assistants-case
-5. 'original_quote': Exact snippet (max ~250 chars) from the source text
-6. 'topics': 1-3 relevant keywords
-7. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
+     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → wrongdoing parliamentary-assistants-case
+     "a promis de baisser l'impôt sur le revenu de 15%%" → tax-cut income-tax
+     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → tax-increase income-tax
+     "a été condamnée à 4 ans de prison" → prison parliamentary-assistants-case
+7. 'original_quote': Exact snippet (max ~250 chars) from the source text
+8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
 
 %s
@@ -142,12 +133,13 @@ Return ONLY a valid JSON array — no commentary, no text before or after. Retur
 Example:
 [
   {
+    "reasoning": "Type 1: Le Pen's own denial of wrongdoing. Contradictable: she could later admit guilt. Verb: DENIED.",
     "subject_entity": "Marine Le Pen",
     "subject_entity_type": "human",
     "normalized_fact": "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès en appel le 13 janvier 2026.",
-    "embedding_text": "DENIED wrongdoing parliamentary-assistants-case",
+    "canonical_verb": "DENIED",
+    "embedding_text": "wrongdoing parliamentary-assistants-case",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
-    "topics": ["procès assistants parlementaires", "appel 2026"],
     "involved_people": []
   }
 ]`

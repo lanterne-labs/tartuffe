@@ -248,7 +248,7 @@ func cleanDatabase(t *testing.T, pool interface {
 // extractPartyFactsFromDB retrieves all party facts from the database
 func extractPartyFactsFromDB(t *testing.T, storer *storage.PostgresStorer) []FactRecord {
 	query := `
-		SELECT DISTINCT f.id, f.fact_text, f.topics, fs.source_url, 
+		SELECT DISTINCT f.id, f.fact_text, COALESCE(f.canonical_verb, ''), fs.source_url,
 		       fs.metadata->>'law_key' as law_key, fs.published_at,
 		       p.name as person_name
 		FROM facts f
@@ -269,13 +269,13 @@ func extractPartyFactsFromDB(t *testing.T, storer *storage.PostgresStorer) []Fac
 	for rows.Next() {
 		var fact FactRecord
 		var lawKey string
-		var topics []string
+		var canonicalVerb string
 		var id int64
 
 		err := rows.Scan(
 			&id,
 			&fact.FactText,
-			&topics,
+			&canonicalVerb,
 			&fact.SourceURL,
 			&lawKey,
 			&fact.PublishedAt,
@@ -286,7 +286,7 @@ func extractPartyFactsFromDB(t *testing.T, storer *storage.PostgresStorer) []Fac
 			continue
 		}
 
-		fact.Topics = topics
+		fact.CanonicalVerb = canonicalVerb
 		fact.LawKey = lawKey
 		facts = append(facts, fact)
 	}

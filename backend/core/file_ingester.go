@@ -156,7 +156,7 @@ func (fi *FileIngester) IngestFiles(ctx context.Context, paths []string, opts In
 			for _, fact := range facts {
 				log.Info().
 					Str("fact", truncateString(fact.NormalizedFactText, 100)).
-					Strs("topics", fact.Topics).
+					Str("canonical_verb", fact.CanonicalVerb).
 					Strs("people", fact.InvolvedPeople).
 					Msg("[DRY-RUN] Extracted fact")
 			}
@@ -260,7 +260,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 			EmbeddingText:      fact.EmbeddingText,
 			Embedding:          embeddings[0],
 			OriginalQuote:      fact.OriginalQuote,
-			Topics:             fact.Topics,
+			CanonicalVerb:      fact.CanonicalVerb,
 			InvolvedPeople:     fact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:          fact.SourceURL,
 			PublishedAt:        fact.PublishedAt,

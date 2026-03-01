@@ -126,7 +126,7 @@ func old_main() {
 				NormalizedFactText: fact.NormalizedFactText,
 				Embedding:          embeddings[0],
 				OriginalQuote:      fact.OriginalQuote,
-				Topics:             fact.Topics,
+				CanonicalVerb:      fact.CanonicalVerb,
 				InvolvedPeople:     fact.InvolvedPeople,
 				SourceURL:          url,
 				PublishedAt:        content.DatePublished, // Use date from content extraction

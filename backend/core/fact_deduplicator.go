@@ -54,6 +54,7 @@ type DedupePersonInfo struct {
 type FactForDedup struct {
 	ID                 int64     `json:"id"`
 	NormalizedFactText string    `json:"normalized_fact"`
+	CanonicalVerb      string    `json:"canonical_verb,omitempty"`
 	EmbeddingText      string    `json:"embedding_text"`
 	OriginalQuote      string    `json:"original_quote,omitempty"`
 	Embedding          []float32 `json:"-"` // Not included in JSON for LLM
@@ -344,7 +345,7 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
-		batchSize = getEnvInt("DEDUPE_LLM_BATCH_SIZE", 50)
+		batchSize = getEnvInt("DEDUPE_LLM_BATCH_SIZE", 10)
 	}
 
 	log.Info().Int("pairs", len(pairs)).Int("batch_size", batchSize).Msg("Processing uncertain pairs with LLM")

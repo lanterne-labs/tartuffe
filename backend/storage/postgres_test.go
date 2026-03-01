@@ -84,7 +84,7 @@ func insertFactForTest(ctx context.Context, t *testing.T, storer *PostgresStorer
 		NormalizedFactText: input.NormalizedFactText,
 		Embedding:          input.Embedding,
 		OriginalQuote:      input.OriginalQuote,
-		Topics:             input.Topics,
+		CanonicalVerb:      input.CanonicalVerb,
 		InvolvedPeople:     input.InvolvedPeople,
 		SourceURL:          input.SourceURL,
 		PublishedAt:        input.PublishedAt,
@@ -146,7 +146,7 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 		NormalizedFactText: "Person A and Person B agree on Policy X.",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "In a joint statement, Person A and B declared their full support for Policy X.",
-		Topics:             []string{"policy", "agreement"},
+		CanonicalVerb:      "SUPPORTED",
 		InvolvedPeople:     []string{"Person B"}, // Secondary person mentioned
 		SourceURL:          "http://example.com/policy-agreement-1",
 		PublishedAt:        &pubDate,
@@ -164,16 +164,15 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	// --- Verification ---
 	var queriedFactText string
 	var queriedEmbedding pgvector.Vector
-	var queriedTopics []string
-
 	// 1. Verify the fact exists in 'facts' table
-	factQuery := "SELECT fact_text, embedding, topics FROM facts WHERE id = $1"
+	factQuery := "SELECT fact_text, embedding, COALESCE(canonical_verb, '') FROM facts WHERE id = $1"
+	var queriedCanonicalVerb string
 	err = storer.pool.QueryRow(ctx, factQuery, factID).Scan(
-		&queriedFactText, &queriedEmbedding, &queriedTopics,
+		&queriedFactText, &queriedEmbedding, &queriedCanonicalVerb,
 	)
 	require.NoError(t, err, "Failed to query inserted fact by ID")
 	assert.Equal(t, input.NormalizedFactText, queriedFactText)
-	assert.Equal(t, input.Topics, queriedTopics)
+	assert.Equal(t, input.CanonicalVerb, queriedCanonicalVerb)
 	require.NotNil(t, queriedEmbedding, "Embedding should not be nil in DB")
 	// Compare float slices carefully
 	assert.InDeltaSlice(t, input.Embedding, queriedEmbedding.Slice(), 0.00001, "Embedding mismatch")
@@ -438,7 +437,7 @@ func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
 		NormalizedFactText: "Deputy Aff says X",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Deputy Aff said something about X",
-		Topics:             []string{"topic"},
+		CanonicalVerb:      "",
 		SourceURL:          "http://example.com/deputy-aff",
 		PublishedAt:        &pub,
 		SourceType:         "test",
@@ -534,7 +533,7 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 		NormalizedFactText: "Fact 1 about Person X",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Quote for fact 1",
-		Topics:             []string{"topic1"},
+		CanonicalVerb:      "",
 		SourceURL:          "http://example.com/fact1-personx",
 	}
 	// Handle 4 return values
@@ -553,7 +552,7 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 		NormalizedFactText: "Fact 2 involving Person X and Person Y",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Quote for fact 2",
-		Topics:             []string{"topic2"},
+		CanonicalVerb:      "",
 		InvolvedPeople:     []string{personY}, // Secondary mention
 		SourceURL:          "http://example.com/fact2-personxy",
 	}
@@ -630,9 +629,9 @@ func TestPostgresStorer_IsURLVisitable(t *testing.T) {
 
 	// Setup for existing URLs: Insert some sources directly
 	_, err = storer.pool.Exec(ctx, `
-		INSERT INTO facts (fact_text, embedding, topics) VALUES 
-		('dummy fact for url2', $1, '{}'),
-		('dummy fact for url3', $1, '{}') RETURNING id
+		INSERT INTO facts (fact_text, embedding) VALUES
+		('dummy fact for url2', $1),
+		('dummy fact for url3', $1) RETURNING id
 	`, pgvector.NewVector(mockEmbedding()))
 	require.NoError(t, err, "Failed to insert dummy facts for IsURLVisitable test")
 
@@ -695,7 +694,7 @@ func TestPostgresStorer_MultipleFacts_SameLawKey(t *testing.T) {
 		NormalizedFactText: "Party A voted FOR law 16-1234",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Party A voted FOR...",
-		Topics:             []string{"vote", "law"},
+		CanonicalVerb:      "VOTED_FOR",
 		SourceURL:          fmt.Sprintf("https://example.com/law-%s", lawKey1),
 		PublishedAt:        &pubDate1,
 		SourceType:         "assemblee_law_page",
@@ -714,7 +713,7 @@ func TestPostgresStorer_MultipleFacts_SameLawKey(t *testing.T) {
 		NormalizedFactText: "Party B voted AGAINST law 16-1234", // Different fact text
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Party B voted AGAINST...",
-		Topics:             []string{"vote", "law"},
+		CanonicalVerb:      "VOTED_FOR",
 		SourceURL:          "https://example.com/another-source", // Different URL
 		PublishedAt:        &pubDate2,
 		SourceType:         "assemblee_law_page",
@@ -739,7 +738,7 @@ func TestPostgresStorer_MultipleFacts_SameLawKey(t *testing.T) {
 		NormalizedFactText: "Party C voted FOR law 16-5678",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Party C voted FOR...",
-		Topics:             []string{"vote", "law"},
+		CanonicalVerb:      "VOTED_FOR",
 		SourceURL:          fmt.Sprintf("https://example.com/law-%s", lawKey2),
 		PublishedAt:        &pubDate3,
 		SourceType:         "assemblee_law_page",
@@ -844,7 +843,7 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 		NormalizedFactText: "Partial fact 1 for law 16-9001",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Quote 1",
-		Topics:             []string{"test"},
+		CanonicalVerb:      "",
 		SourceURL:          "https://test.com/9001-1",
 		PublishedAt:        &pubDate,
 		SourceType:         "assemblee_law_page",
@@ -860,7 +859,7 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 		NormalizedFactText: "Partial fact 2 for law 16-9001",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Quote 2",
-		Topics:             []string{"test"},
+		CanonicalVerb:      "",
 		SourceURL:          "https://test.com/9001-2",
 		PublishedAt:        &pubDate,
 		SourceType:         "assemblee_law_page",
@@ -906,7 +905,7 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 		NormalizedFactText: "Complete fact for law 16-9002",
 		Embedding:          mockEmbedding(),
 		OriginalQuote:      "Quote 3",
-		Topics:             []string{"test"},
+		CanonicalVerb:      "",
 		SourceURL:          "https://test.com/9002",
 		PublishedAt:        &pubDate,
 		SourceType:         "assemblee_law_page",

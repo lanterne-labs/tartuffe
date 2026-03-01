@@ -40,7 +40,7 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 			NormalizedFactText: it.NormalizedFactText,
 			Embedding:          vecs[idx],
 			OriginalQuote:      it.OriginalQuote,
-			Topics:             it.Topics,
+			CanonicalVerb:      it.CanonicalVerb,
 			InvolvedPeople:     it.InvolvedPeople,
 			SourceURL:          it.SourceURL,
 			PublishedAt:        it.PublishedAt,

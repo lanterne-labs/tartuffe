@@ -217,7 +217,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				EmbeddingText:      fact.EmbeddingText,
 				Embedding:          embeddings[0],
 				OriginalQuote:      fact.OriginalQuote,
-				Topics:             fact.Topics,
+				CanonicalVerb:      fact.CanonicalVerb,
 				InvolvedPeople:     fact.InvolvedPeople,
 				SourceURL:          sourceURL,
 				PublishedAt:        fact.PublishedAt,

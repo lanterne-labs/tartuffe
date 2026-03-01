@@ -101,12 +101,39 @@ func (l *Listener) processFact(ctx context.Context, newFactID int64) error {
 		return err
 	}
 
+	// Get new fact's canonical verb for verb-aware filtering
+	newVerb, _ := l.Storer.GetFactCanonicalVerb(ctx, newFactID)
+
 	for _, pid := range pids {
 		neighbors, err := l.Storer.FindNeighborFactsForPerson(ctx, tx, pid, emb, newFactID)
 		if err != nil {
 			return err
 		}
+
+		// Collect valid pairs after verb-aware filtering
+		type candidatePair struct {
+			factAText string
+			factADate *time.Time
+			factBID   int64
+			factBText string
+			factBDate *time.Time
+		}
+		var pairs []candidatePair
+
 		for _, nb := range neighbors {
+			// Skip same-verb pairs with high similarity (>0.85) — paraphrases, not contradictions
+			if newVerb != "" && nb.CanonicalVerb != "" &&
+				newVerb == nb.CanonicalVerb &&
+				(1.0-nb.Distance) > 0.85 {
+				log.Debug().
+					Int64("new_fact", newFactID).
+					Int64("neighbor", nb.ID).
+					Str("verb", newVerb).
+					Float64("similarity", 1.0-nb.Distance).
+					Msg("Skipping same-verb pair in listener")
+				continue
+			}
+
 			// Walk UP the implication chain to find the most general ancestor
 			targetID := nb.ID
 			targetText := nb.Text
@@ -116,7 +143,6 @@ func (l *Listener) processFact(ctx context.Context, newFactID int64) error {
 			if err != nil {
 				log.Warn().Err(err).Int64("fact_id", nb.ID).Msg("Failed to get ancestor, using original fact")
 			} else if ancestorID != nb.ID {
-				// Fetch ancestor text and date for comparison
 				ancestorText, err := l.Storer.GetFactTextByID(ctx, tx, ancestorID)
 				if err != nil {
 					log.Warn().Err(err).Int64("ancestor_id", ancestorID).Msg("Failed to get ancestor text, using original")
@@ -130,17 +156,70 @@ func (l *Listener) processFact(ctx context.Context, newFactID int64) error {
 				}
 			}
 
-			// Check for contradiction with the (possibly walked-up) fact
-			isContra, reason, derr := l.Detector.AreContradictory(ctx, newText, newDate, targetText, targetDate)
-			if derr != nil {
-				log.Warn().Err(derr).Msg("detector error")
+			pairs = append(pairs, candidatePair{
+				factAText: newText,
+				factADate: newDate,
+				factBID:   targetID,
+				factBText: targetText,
+				factBDate: targetDate,
+			})
+		}
+
+		// Process pairs in batches using AreContradictoryBatch
+		for i := 0; i < len(pairs); i += MaxPairsPerBatch {
+			end := i + MaxPairsPerBatch
+			if end > len(pairs) {
+				end = len(pairs)
+			}
+			batch := pairs[i:end]
+
+			// Build FactPair slice for batch detector
+			factPairs := make([]FactPair, len(batch))
+			for j, p := range batch {
+				factPairs[j] = FactPair{
+					TextA: p.factAText,
+					DateA: p.factADate,
+					TextB: p.factBText,
+					DateB: p.factBDate,
+				}
+			}
+
+			// Use concrete type assertion for batch method (not on interface)
+			batchDetector, ok := l.Detector.(*OpenAIContradictionDetector)
+			if !ok {
+				// Fallback: call AreContradictory per pair
+				for j, p := range batch {
+					isContra, reason, derr := l.Detector.AreContradictory(ctx, p.factAText, p.factADate, p.factBText, p.factBDate)
+					if derr != nil {
+						log.Warn().Err(derr).Msg("detector error")
+						continue
+					}
+					if isContra {
+						if err := l.Storer.RecordContradictionImmediate(ctx, pid, newFactID, p.factBID, reason); err != nil {
+							log.Error().Err(err).Int64("fact_a", newFactID).Int64("fact_b", p.factBID).Msg("Failed to record contradiction")
+						} else {
+							log.Info().Int64("fact_a", newFactID).Int64("fact_b", p.factBID).Int64("person_id", pid).Msg("Contradiction recorded and committed")
+						}
+					}
+					_ = j
+				}
 				continue
 			}
-			if isContra {
-				if err := l.Storer.RecordContradictionImmediate(ctx, pid, newFactID, targetID, reason); err != nil {
-					log.Error().Err(err).Int64("fact_a", newFactID).Int64("fact_b", targetID).Msg("Failed to record contradiction")
-				} else {
-					log.Info().Int64("fact_a", newFactID).Int64("fact_b", targetID).Int64("person_id", pid).Msg("Contradiction recorded and committed")
+
+			results := batchDetector.AreContradictoryBatch(ctx, factPairs)
+			if err != nil {
+				log.Warn().Err(err).Int("batch_size", len(batch)).Msg("Batch contradiction detection error")
+				continue
+			}
+
+			for j, br := range results {
+				if br.IsContradictory {
+					p := batch[j]
+					if err := l.Storer.RecordContradictionImmediate(ctx, pid, newFactID, p.factBID, br.Reason); err != nil {
+						log.Error().Err(err).Int64("fact_a", newFactID).Int64("fact_b", p.factBID).Msg("Failed to record contradiction")
+					} else {
+						log.Info().Int64("fact_a", newFactID).Int64("fact_b", p.factBID).Int64("person_id", pid).Msg("Contradiction recorded and committed")
+					}
 				}
 			}
 		}
