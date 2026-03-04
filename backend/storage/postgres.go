@@ -1912,7 +1912,9 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 			p.entity_type,
 			p.honesty_score,
 			p.image_url,
-			COUNT(DISTINCT fs.fact_id) as fact_count
+			COUNT(DISTINCT fs.fact_id) FILTER (
+				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
+			) as fact_count
 		FROM persons p
 		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
 		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
@@ -1993,6 +1995,7 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 			JOIN fact_sources fs ON fs.fact_id = f.id
 			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = $1
+			  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		)
 		SELECT id, fact_text, source_url, original_quote,
 		       (SELECT COUNT(DISTINCT id) FROM fact_rows) AS total_count
@@ -2027,7 +2030,8 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 			FROM facts f
 			JOIN fact_sources fs ON fs.fact_id = f.id
 			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-			WHERE fm.person_id = $1`
+			WHERE fm.person_id = $1
+			  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')`
 		if err := s.pool.QueryRow(ctx, countQuery, personID).Scan(&result.Total); err != nil {
 			return nil, fmt.Errorf("failed to count facts for person %d: %w", personID, err)
 		}

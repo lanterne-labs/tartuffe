@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-04: Fix Fact Deduplication Pipeline
+
+### What was done
+- **Auto-dedup threshold**: Lowered from 0.90 → 0.85. Data analysis showed 97 same-verb pairs at distance 0.10-0.15 were virtually all genuine duplicates.
+- **Self-initialized classifier**: `NewFactInserter` no longer takes a `classifier` parameter. It calls `NewRelationClassifierFromEnv()` internally with graceful degradation (nil if env vars missing). All 7 callers simplified.
+- **Duplicate filtering in API**: `GetPersonFacts` and `GetPersonsRankedByScore` now exclude facts marked as duplicates via `fact_relations` table (same pattern as `FindSimilarActiveFacts`).
+- **Classification prompt improvement**: Added `canonical_verb` to both new and existing fact context. Added concrete political examples (same claim from different articles = duplicate, same topic but different stance = unrelated).
+
+### Key design decisions
+- Classifier self-initialization keeps the pipeline self-contained — callers don't need to know about LLM configuration.
+- `FILTER (WHERE NOT EXISTS ...)` on the `COUNT` aggregate in `GetPersonsRankedByScore` avoids a subquery or extra join.
+
 ## 2026-02-27: Separate Stance (canonical_verb) from Topic (embedding_text)
 
 ### What was done

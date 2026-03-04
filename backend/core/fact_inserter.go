@@ -90,10 +90,19 @@ type SimilarFact struct {
 	Distance float64 // Cosine distance (1 - cosine_similarity) from query embedding
 }
 
-// NewFactInserter creates a new FactInserter with the given storer and optional relation classifier.
+// NewFactInserter creates a new FactInserter with the given storer.
+// The relation classifier is self-initialized from OPEN_AI_* env vars.
+// If env vars are missing (tests, no LLM configured), the classifier is nil (graceful degradation).
 // The similarity threshold for relation candidate search is loaded from IMPLICATION_SIMILARITY_THRESHOLD
 // env var, defaulting to 0.60 (60% cosine similarity).
-func NewFactInserter(storer Storer, classifier *RelationClassifier) *FactInserter {
+func NewFactInserter(storer Storer) *FactInserter {
+	var classifier *RelationClassifier
+	c, err := NewRelationClassifierFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("Relation classifier not available, skipping relation classification")
+	} else {
+		classifier = c
+	}
 	cosineSimilarity := 0.60 // default: 60% similar (broader search for relation candidates)
 	if env := os.Getenv("IMPLICATION_SIMILARITY_THRESHOLD"); env != "" {
 		if t, err := strconv.ParseFloat(env, 64); err == nil {
@@ -105,7 +114,7 @@ func NewFactInserter(storer Storer, classifier *RelationClassifier) *FactInserte
 	}
 
 	cosineDistance := 1.0 - cosineSimilarity
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.90)
+	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.85)
 
 	return &FactInserter{
 		storer:              storer,
@@ -266,9 +275,11 @@ func (fi *FactInserter) classifyRelations(ctx context.Context, newFactID int64, 
 		if sf.ID == newFactID {
 			continue
 		}
+		existingVerb, _ := fi.storer.GetFactCanonicalVerb(ctx, sf.ID)
 		classInputs = append(classInputs, ClassificationInput{
 			ExistingFactID:   sf.ID,
 			ExistingFactText: sf.Text,
+			CanonicalVerb:    existingVerb,
 			// PublishedAt not available from SimilarFact; nil is acceptable
 		})
 	}
@@ -277,7 +288,7 @@ func (fi *FactInserter) classifyRelations(ctx context.Context, newFactID int64, 
 		return
 	}
 
-	results, err := fi.classifier.Classify(ctx, input.NormalizedFactText, input.PublishedAt, classInputs)
+	results, err := fi.classifier.Classify(ctx, input.CanonicalVerb, input.NormalizedFactText, input.PublishedAt, classInputs)
 	if err != nil {
 		log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Relation classification failed, fact already inserted")
 		return

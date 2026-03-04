@@ -133,7 +133,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize fact inserter
-	factInserter := core.NewFactInserter(storer, nil)
+	factInserter := core.NewFactInserter(storer)
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)

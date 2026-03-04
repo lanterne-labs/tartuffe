@@ -60,6 +60,7 @@ func NewRelationClassifierFromEnv() (*RelationClassifier, error) {
 type ClassificationInput struct {
 	ExistingFactID   int64
 	ExistingFactText string
+	CanonicalVerb    string
 	PublishedAt      *time.Time
 }
 
@@ -83,19 +84,23 @@ type llmClassification struct {
 
 const classificationPrompt = `You are analyzing how a NEW fact relates to EXISTING facts about the same person/entity.
 
+Each fact has a canonical_verb (the stance/action: DENIED, CLAIMED, VOTED_FOR, etc.) and text describing the topic.
+
 For each existing fact, classify its relationship to the new fact as one of:
-- "duplicate": The new fact and existing fact express the same information (possibly with different wording).
-- "implication_new_is_general": The new fact is MORE GENERAL - the existing fact is a specific instance or subset of the new fact. (Example: new="X voted against environmental bills" is general; existing="X voted against Bill 123 on carbon tax" is specific.)
+- "duplicate": The new fact and existing fact express the same information (possibly with different wording). Same stance on the same topic from different articles = duplicate.
+- "implication_new_is_general": The new fact is MORE GENERAL - the existing fact is a specific instance or subset of the new fact.
 - "implication_new_is_specific": The new fact is MORE SPECIFIC - it's a specific instance of the existing fact.
 - "unrelated": The facts are about different topics or have no logical subsumption relationship.
 
 **IMPORTANT RULES:**
 - "duplicate" means they say essentially the same thing, not just that they're related
+- Two articles reporting the same claim/vote/denial = duplicate (e.g., "Le Pen DENIED corruption charges" from Le Monde and "Le Pen DENIED corruption charges" from Le Figaro)
+- Same topic but different stance = unrelated (e.g., "X VOTED_FOR pension reform" vs "X CRITICIZED pension reform")
 - An implication means one logically ENTAILS the other (knowing A guarantees B)
-- Voting on the same general topic is NOT an implication unless one statement genuinely subsumes the other
 - When in doubt, classify as "unrelated" - false positives are worse than misses
 
 NEW FACT:
+Verb: %s
 Text: %s
 Published: %s
 
@@ -108,7 +113,7 @@ Respond ONLY with a JSON object in this exact format:
 
 // Classify classifies the relationship between a new fact and a set of similar existing facts.
 // Returns classification results for each existing fact.
-func (rc *RelationClassifier) Classify(ctx context.Context, newFactText string, newFactPublishedAt *time.Time, existingFacts []ClassificationInput) ([]ClassificationResult, error) {
+func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, newFactText string, newFactPublishedAt *time.Time, existingFacts []ClassificationInput) ([]ClassificationResult, error) {
 	if len(existingFacts) == 0 {
 		return nil, nil
 	}
@@ -122,7 +127,7 @@ func (rc *RelationClassifier) Classify(ctx context.Context, newFactText string, 
 		if f.PublishedAt != nil {
 			pubDate = f.PublishedAt.Format("January 2, 2006")
 		}
-		fmt.Fprintf(&factsSection, "- ID: %d | Text: %s | Published: %s\n", f.ExistingFactID, f.ExistingFactText, pubDate)
+		fmt.Fprintf(&factsSection, "- ID: %d | Verb: %s | Text: %s | Published: %s\n", f.ExistingFactID, f.CanonicalVerb, f.ExistingFactText, pubDate)
 	}
 
 	newPubDate := "unknown date"
@@ -130,7 +135,7 @@ func (rc *RelationClassifier) Classify(ctx context.Context, newFactText string, 
 		newPubDate = newFactPublishedAt.Format("January 2, 2006")
 	}
 
-	prompt := fmt.Sprintf(classificationPrompt, newFactText, newPubDate, factsSection.String())
+	prompt := fmt.Sprintf(classificationPrompt, newFactVerb, newFactText, newPubDate, factsSection.String())
 
 	// Build request
 	reqBody := llm.ChatRequest{

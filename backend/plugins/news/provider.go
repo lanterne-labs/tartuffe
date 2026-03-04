@@ -413,7 +413,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 				},
 			}
 
-			inserter := core.NewFactInserter(p.Storer, nil)
+			inserter := core.NewFactInserter(p.Storer)
 			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).

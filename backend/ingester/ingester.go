@@ -50,7 +50,7 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 	}
 
 	// Use core.FactInserter to insert all facts with similarity detection
-	inserter := core.NewFactInserter(i.Store, nil)
+	inserter := core.NewFactInserter(i.Store)
 	_, err = inserter.InsertFacts(ctx, coreInputs)
 	return err
 }

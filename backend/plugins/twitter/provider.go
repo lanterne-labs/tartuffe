@@ -160,7 +160,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 	}
 
 	// Process in batches
-	factInserter := core.NewFactInserter(p.Storer, nil)
+	factInserter := core.NewFactInserter(p.Storer)
 
 	for i := 0; i < len(toProcess); i += batchSize {
 		end := i + batchSize

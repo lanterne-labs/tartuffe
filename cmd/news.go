@@ -571,7 +571,7 @@ func runCacheOnlyExtraction(
 		Str("cache_dir", cacheDir).
 		Msg("Starting cache-only extraction (no news search)")
 
-	factInserter := core.NewFactInserter(storer, nil)
+	factInserter := core.NewFactInserter(storer)
 	totalFacts := 0
 	totalFiles := 0
 
