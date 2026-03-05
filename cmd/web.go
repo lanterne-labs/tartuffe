@@ -596,6 +596,22 @@ func executeServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	// Start Prometheus remote write if configured (e.g. Grafana Cloud)
+	if rwURL := os.Getenv("PROMETHEUS_REMOTE_WRITE_URL"); rwURL != "" {
+		rwUser := os.Getenv("PROMETHEUS_REMOTE_WRITE_USER")
+		rwPass := os.Getenv("PROMETHEUS_REMOTE_WRITE_PASSWORD")
+		if rwUser == "" || rwPass == "" {
+			return fmt.Errorf("PROMETHEUS_REMOTE_WRITE_URL is set but PROMETHEUS_REMOTE_WRITE_USER or PROMETHEUS_REMOTE_WRITE_PASSWORD is missing")
+		}
+		rwCfg := metrics.RemoteWriteConfig{
+			URL:      rwURL,
+			Username: rwUser,
+			Password: rwPass,
+			Interval: 15 * time.Second,
+		}
+		go metrics.StartRemoteWrite(ctx, rwCfg)
+	}
+
 	addr := ":" + port
 	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")
 
