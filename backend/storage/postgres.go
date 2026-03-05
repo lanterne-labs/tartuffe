@@ -1791,9 +1791,18 @@ func ComputeHonestyScore(factsCount, contradictionsCount int) float64 {
 	return math.Exp(-HonestyScoreRatioDecay*ratio - HonestyScoreAbsoluteDecay*float64(contradictionsCount))
 }
 
+// ComputeAggregateScore returns the aggregate honesty score for an entity.
+// If membersScore is nil (no members), returns ownScore directly.
+// Otherwise returns 0.5*ownScore + 0.5*membersScore.
+func ComputeAggregateScore(ownScore float64, membersScore *float64) float64 {
+	if membersScore == nil {
+		return ownScore
+	}
+	return 0.5*ownScore + 0.5*(*membersScore)
+}
+
 // recomputeHonestyScoreAndEmitEvents recomputes the honesty score for a person and emits relevant events
 func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context, tx pgx.Tx, personID int64, contradictionID int64) error {
-	// Get counts for honesty score calculation
 	factsCount, err := s.getPersonFactsCount(ctx, tx, personID)
 	if err != nil {
 		return fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
@@ -1804,21 +1813,34 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to get contradictions count for person %d: %w", personID, err)
 	}
 
-	// Calculate honesty score: exp(-k * contradictions/facts)
-	honestyScore := ComputeHonestyScore(factsCount, contradictionsCount)
+	ownScore := ComputeHonestyScore(factsCount, contradictionsCount)
 
-	// Update the honesty score
-	if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore); err != nil {
+	// Check entity type to determine if we need members_score
+	var entityType *string
+	err = tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType)
+	if err != nil {
+		return fmt.Errorf("failed to get entity_type for person %d: %w", personID, err)
+	}
+
+	var membersScore *float64
+	if entityType != nil && *entityType != "human" {
+		membersScore, err = s.computeMembersScore(ctx, tx, personID)
+		if err != nil {
+			return fmt.Errorf("failed to compute members score for person %d: %w", personID, err)
+		}
+	}
+
+	aggregate := ComputeAggregateScore(ownScore, membersScore)
+
+	if err := s.updatePersonHonestyScore(ctx, tx, personID, ownScore, membersScore, aggregate); err != nil {
 		return fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
 	}
 
-	// Record honesty score in Prometheus
-	metrics.ObserveHonestyScore(honestyScore)
+	metrics.ObserveHonestyScore(aggregate)
 
-	// Emit events
 	payload := map[string]interface{}{
 		"contradiction_id": contradictionID,
-		"honesty_score":    honestyScore,
+		"honesty_score":    aggregate,
 	}
 
 	if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
@@ -1829,7 +1851,85 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to emit contradiction_added event: %w", err)
 	}
 
-	log.Info().Int64("person_id", personID).Float64("honesty_score", honestyScore).Int("facts_count", factsCount).Int("contradictions_count", contradictionsCount).Msg("Recomputed honesty score and emitted events")
+	log.Info().Int64("person_id", personID).Float64("own_score", ownScore).Interface("members_score", membersScore).Float64("aggregate", aggregate).Int("facts_count", factsCount).Int("contradictions_count", contradictionsCount).Msg("Recomputed honesty score and emitted events")
+
+	// Cascade: recompute parent entity scores
+	if err := s.recomputeParentEntityScores(ctx, tx, personID); err != nil {
+		return fmt.Errorf("failed to recompute parent entity scores: %w", err)
+	}
+
+	return nil
+}
+
+// computeMembersScore calculates the average honesty_score of active members for an entity.
+// Returns nil if no active members exist.
+func (s *PostgresStorer) computeMembersScore(ctx context.Context, tx pgx.Tx, entityID int64) (*float64, error) {
+	query := `
+		SELECT AVG(p.honesty_score) FROM persons p
+		JOIN person_links pl ON p.id = pl.src_person_id
+		WHERE pl.dst_person_id = $1
+		  AND (pl.valid_to IS NULL OR pl.valid_to >= CURRENT_DATE)`
+
+	var avg *float64
+	err := tx.QueryRow(ctx, query, entityID).Scan(&avg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute members score for entity %d: %w", entityID, err)
+	}
+	return avg, nil
+}
+
+// recomputeParentEntityScores recomputes members_score and honesty_score for all parent entities
+// of the given person (via person_links where src_person_id = personID).
+func (s *PostgresStorer) recomputeParentEntityScores(ctx context.Context, tx pgx.Tx, personID int64) error {
+	query := `SELECT DISTINCT dst_person_id FROM person_links WHERE src_person_id = $1 AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)`
+	rows, err := tx.Query(ctx, query, personID)
+	if err != nil {
+		return fmt.Errorf("failed to find parent entities for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	var parentIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("failed to scan parent entity ID: %w", err)
+		}
+		parentIDs = append(parentIDs, id)
+	}
+	if rows.Err() != nil {
+		return fmt.Errorf("error iterating parent entities: %w", rows.Err())
+	}
+
+	for _, parentID := range parentIDs {
+		membersScore, err := s.computeMembersScore(ctx, tx, parentID)
+		if err != nil {
+			return err
+		}
+
+		// Get the entity's own_score
+		var ownScore float64
+		err = tx.QueryRow(ctx, `SELECT own_score FROM persons WHERE id = $1`, parentID).Scan(&ownScore)
+		if err != nil {
+			return fmt.Errorf("failed to get own_score for entity %d: %w", parentID, err)
+		}
+
+		aggregate := ComputeAggregateScore(ownScore, membersScore)
+
+		if err := s.updatePersonHonestyScore(ctx, tx, parentID, ownScore, membersScore, aggregate); err != nil {
+			return err
+		}
+
+		if err := s.insertEvent(ctx, tx, "person_updated", "person", parentID, map[string]interface{}{
+			"honesty_score": aggregate,
+			"own_score":     ownScore,
+			"members_score": membersScore,
+		}); err != nil {
+			return fmt.Errorf("failed to emit person_updated event for entity %d: %w", parentID, err)
+		}
+
+		log.Info().Int64("entity_id", parentID).Float64("own_score", ownScore).Interface("members_score", membersScore).Float64("aggregate", aggregate).Msg("Recomputed parent entity scores")
+	}
+
 	return nil
 }
 
@@ -1862,11 +1962,11 @@ func (s *PostgresStorer) getPersonContradictionsCount(ctx context.Context, tx pg
 	return count, nil
 }
 
-// updatePersonHonestyScore updates the honesty score for a person
-func (s *PostgresStorer) updatePersonHonestyScore(ctx context.Context, tx pgx.Tx, personID int64, score float64) error {
-	query := `UPDATE persons SET honesty_score = $1 WHERE id = $2`
+// updatePersonHonestyScore updates own_score, members_score, and aggregate honesty_score for a person
+func (s *PostgresStorer) updatePersonHonestyScore(ctx context.Context, tx pgx.Tx, personID int64, ownScore float64, membersScore *float64, aggregate float64) error {
+	query := `UPDATE persons SET own_score = $1, members_score = $2, honesty_score = $3 WHERE id = $4`
 
-	_, err := tx.Exec(ctx, query, score, personID)
+	_, err := tx.Exec(ctx, query, ownScore, membersScore, aggregate, personID)
 	if err != nil {
 		return fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
 	}
@@ -1893,12 +1993,14 @@ func (s *PostgresStorer) insertEvent(ctx context.Context, tx pgx.Tx, topic strin
 
 // PersonSummary represents a summary of a person for the API
 type PersonSummary struct {
-	ID           int64   `json:"id"`
-	Name         string  `json:"name"`
-	EntityType   *string `json:"entity_type,omitempty"`
-	HonestyScore float64 `json:"honesty_score"`
-	ImageURL     *string `json:"image_url,omitempty"`
-	FactCount    int     `json:"fact_count"`
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	EntityType   *string  `json:"entity_type,omitempty"`
+	HonestyScore float64  `json:"honesty_score"`
+	OwnScore     *float64 `json:"own_score,omitempty"`
+	MembersScore *float64 `json:"members_score,omitempty"`
+	ImageURL     *string  `json:"image_url,omitempty"`
+	FactCount    int      `json:"fact_count"`
 }
 
 // GetPersonsRankedByScore returns persons ranked by fact count (descending), then honesty score (descending)
@@ -1911,6 +2013,8 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 			p.name,
 			p.entity_type,
 			p.honesty_score,
+			p.own_score,
+			p.members_score,
 			p.image_url,
 			COUNT(DISTINCT fs.fact_id) FILTER (
 				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
@@ -1920,7 +2024,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
 		WHERE ($3 = '' OR p.entity_type = $3)
 		  AND ($4 = '' OR p.name ILIKE '%' || $4 || '%')
-		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.image_url
+		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url
 		ORDER BY fact_count DESC, p.honesty_score DESC, p.name ASC
 		LIMIT $1 OFFSET $2`
 
@@ -1933,7 +2037,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	var persons []PersonSummary
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.ImageURL, &person.FactCount)
+		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.FactCount)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
@@ -1950,12 +2054,12 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 // GetPersonByID returns a single person by ID
 func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*PersonSummary, error) {
 	query := `
-		SELECT id, name, entity_type, honesty_score, image_url
+		SELECT id, name, entity_type, honesty_score, own_score, members_score, image_url
 		FROM persons
 		WHERE id = $1`
 
 	var person PersonSummary
-	err := s.pool.QueryRow(ctx, query, personID).Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.ImageURL)
+	err := s.pool.QueryRow(ctx, query, personID).Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -2159,7 +2263,7 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 
 		honestyScore := ComputeHonestyScore(factsCount, 0)
 
-		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore); err != nil {
+		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore, nil, honestyScore); err != nil {
 			return 0, fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
 		}
 
@@ -2243,7 +2347,7 @@ func (s *PostgresStorer) DeleteFactsForPerson(ctx context.Context, personID int6
 	deletedCount := result.RowsAffected()
 
 	// Reset honesty score to 1.0
-	if err := s.updatePersonHonestyScore(ctx, tx, personID, 1.0); err != nil {
+	if err := s.updatePersonHonestyScore(ctx, tx, personID, 1.0, nil, 1.0); err != nil {
 		return 0, fmt.Errorf("failed to reset honesty score: %w", err)
 	}
 
@@ -2290,7 +2394,7 @@ func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit
 			LIMIT 1
 		)
 		SELECT DISTINCT
-			p.id, p.name, p.entity_type, p.honesty_score, p.image_url
+			p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url
 		FROM target_fact tf
 		JOIN fact_sources fs ON fs.fact_id = tf.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -2307,7 +2411,7 @@ func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit
 	persons := make([]PersonSummary, 0)
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.ImageURL)
+		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
@@ -3119,7 +3223,7 @@ func (s *PostgresStorer) SetPersonImageURL(ctx context.Context, personID int64, 
 // GetPersonsWithoutImage returns all persons that don't have an image_url set.
 func (s *PostgresStorer) GetPersonsWithoutImage(ctx context.Context) ([]PersonSummary, error) {
 	query := `
-		SELECT id, name, entity_type, honesty_score, image_url
+		SELECT id, name, entity_type, honesty_score, own_score, members_score, image_url
 		FROM persons
 		WHERE image_url IS NULL
 		ORDER BY name ASC`
@@ -3133,7 +3237,7 @@ func (s *PostgresStorer) GetPersonsWithoutImage(ctx context.Context) ([]PersonSu
 	var persons []PersonSummary
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.ImageURL)
+		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
@@ -3181,19 +3285,23 @@ func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetr
 
 // ScoreUpdate holds old and new honesty scores for a person, used by RecomputeAllHonestyScores.
 type ScoreUpdate struct {
-	PersonID      int64
-	PersonName    string
-	OldScore      float64
-	NewScore      float64
-	Facts         int
+	PersonID       int64
+	PersonName     string
+	EntityType     *string
+	OldScore       float64
+	NewScore       float64
+	OwnScore       float64
+	MembersScore   *float64
+	Facts          int
 	Contradictions int
 }
 
 // RecomputeAllHonestyScores recalculates honesty scores for every person
 // using ComputeHonestyScore. If dryRun is true, scores are not written.
+// Two-pass approach: pass 1 computes own_score for all, pass 2 computes members_score + aggregate for non-human entities.
 func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun bool) ([]ScoreUpdate, error) {
 	query := `
-		SELECT p.id, p.name, p.honesty_score,
+		SELECT p.id, p.name, p.entity_type, p.honesty_score,
 		       COALESCE(fc.cnt, 0) AS facts_count,
 		       COALESCE(cc.cnt, 0) AS contradictions_count
 		FROM persons p
@@ -3220,34 +3328,67 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 	var updates []ScoreUpdate
 	for rows.Next() {
 		var u ScoreUpdate
-		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.OldScore, &u.Facts, &u.Contradictions); err != nil {
+		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.EntityType, &u.OldScore, &u.Facts, &u.Contradictions); err != nil {
 			return nil, fmt.Errorf("failed to scan person row: %w", err)
 		}
-		u.NewScore = ComputeHonestyScore(u.Facts, u.Contradictions)
+		u.OwnScore = ComputeHonestyScore(u.Facts, u.Contradictions)
+		u.NewScore = u.OwnScore // default for humans
 		updates = append(updates, u)
 	}
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
 	}
 
-	if dryRun {
-		return updates, nil
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	for _, u := range updates {
-		if _, err := tx.Exec(ctx, `UPDATE persons SET honesty_score = $1 WHERE id = $2`, u.NewScore, u.PersonID); err != nil {
-			return nil, fmt.Errorf("failed to update score for person %d: %w", u.PersonID, err)
+	if !dryRun {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to begin transaction: %w", err)
 		}
-	}
+		defer tx.Rollback(ctx)
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("failed to commit score updates: %w", err)
+		// Pass 1: write all own_scores so members_score queries can use them
+		for _, u := range updates {
+			if _, err := tx.Exec(ctx, `UPDATE persons SET own_score = $1, honesty_score = $2 WHERE id = $3`, u.OwnScore, u.OwnScore, u.PersonID); err != nil {
+				return nil, fmt.Errorf("failed to update own_score for person %d: %w", u.PersonID, err)
+			}
+		}
+
+		// Pass 2: compute members_score for non-human entities
+		for i, u := range updates {
+			if u.EntityType != nil && *u.EntityType != "human" {
+				membersScore, err := s.computeMembersScore(ctx, tx, u.PersonID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to compute members score for entity %d: %w", u.PersonID, err)
+				}
+				updates[i].MembersScore = membersScore
+				updates[i].NewScore = ComputeAggregateScore(u.OwnScore, membersScore)
+
+				if _, err := tx.Exec(ctx, `UPDATE persons SET members_score = $1, honesty_score = $2 WHERE id = $3`, membersScore, updates[i].NewScore, u.PersonID); err != nil {
+					return nil, fmt.Errorf("failed to update aggregate score for entity %d: %w", u.PersonID, err)
+				}
+			}
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("failed to commit score updates: %w", err)
+		}
+	} else {
+		// Dry run: compute members_score for display based on current DB state
+		for i, u := range updates {
+			if u.EntityType != nil && *u.EntityType != "human" {
+				var avg *float64
+				err := s.pool.QueryRow(ctx, `
+					SELECT AVG(p.honesty_score) FROM persons p
+					JOIN person_links pl ON p.id = pl.src_person_id
+					WHERE pl.dst_person_id = $1
+					  AND (pl.valid_to IS NULL OR pl.valid_to >= CURRENT_DATE)`, u.PersonID).Scan(&avg)
+				if err != nil {
+					return nil, fmt.Errorf("failed to compute members score for entity %d: %w", u.PersonID, err)
+				}
+				updates[i].MembersScore = avg
+				updates[i].NewScore = ComputeAggregateScore(u.OwnScore, avg)
+			}
+		}
 	}
 
 	return updates, nil

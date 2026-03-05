@@ -65,8 +65,14 @@ func runScoresRecompute(cmd *cobra.Command, args []string) error {
 			changed++
 			marker = fmt.Sprintf(" (%+.1f%%)", delta)
 		}
-		fmt.Printf("%-30s  facts=%-4d contradictions=%-4d  %.1f%% → %.1f%%%s\n",
-			u.PersonName, u.Facts, u.Contradictions, oldPct, newPct, marker)
+
+		if u.MembersScore != nil {
+			fmt.Printf("%-30s  facts=%-4d contradictions=%-4d  own=%.1f%% members=%.1f%% agg=%.1f%% → %.1f%%%s\n",
+				u.PersonName, u.Facts, u.Contradictions, u.OwnScore*100, *u.MembersScore*100, oldPct, newPct, marker)
+		} else {
+			fmt.Printf("%-30s  facts=%-4d contradictions=%-4d  %.1f%% → %.1f%%%s\n",
+				u.PersonName, u.Facts, u.Contradictions, oldPct, newPct, marker)
+		}
 	}
 
 	fmt.Printf("\n%d person(s) total, %d score(s) changed.\n", len(updates), changed)

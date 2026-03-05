@@ -2,6 +2,20 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-05: Hybrid Entity Honesty Scoring
+
+### What was done
+- **New columns**: `own_score` (entity's own honesty) and `members_score` (average of active members' scores) on `persons` table.
+- **Aggregate formula**: `honesty_score = 0.5 * own_score + 0.5 * members_score` for non-human entities. Humans use `own_score` directly.
+- **Cascade**: When a person's score changes, all parent entities (via `person_links`) are recomputed automatically.
+- **Two-pass recompute**: `RecomputeAllHonestyScores` first writes all `own_score` values, then computes `members_score` for non-human entities using the updated values.
+- **API**: `PersonSummary` now includes `own_score` and `members_score` in all endpoints.
+
+### Key design decisions
+- `ComputeAggregateScore` is a pure function for testability, separate from DB logic.
+- `computeMembersScore` uses `person_links` with `valid_to` filter for temporal correctness.
+- All queries returning `PersonSummary` updated (GetPersonsRankedByScore, GetPersonByID, GetFactPersons, GetPersonsWithoutImage).
+
 ## 2026-03-04: Fix Fact Deduplication Pipeline
 
 ### What was done
