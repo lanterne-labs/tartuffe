@@ -46,6 +46,15 @@ var (
 		[]string{"status"},
 	)
 
+	// FactsSkippedDedupTotal counts facts skipped as duplicates at insertion time
+	FactsSkippedDedupTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "facts_skipped_dedup_total",
+			Help:      "Total number of facts skipped as duplicates at insertion time",
+		},
+	)
+
 	// ContentExtractionDuration tracks content scraping latency by extractor
 	ContentExtractionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -105,6 +114,11 @@ func IncrementNewsArticles(status string) {
 // IncrementTweets increments the tweet counter
 func IncrementTweets(status string) {
 	TweetsProcessedTotal.WithLabelValues(status).Inc()
+}
+
+// IncrementFactsSkippedDedup increments the dedup skip counter by n
+func IncrementFactsSkippedDedup(n int) {
+	FactsSkippedDedupTotal.Add(float64(n))
 }
 
 // ObserveContentExtraction records content extraction duration

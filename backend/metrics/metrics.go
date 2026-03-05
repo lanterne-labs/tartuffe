@@ -51,6 +51,7 @@ func init() {
 	// Register business metrics
 	Registry.MustRegister(
 		FactsExtractedTotal,
+		FactsSkippedDedupTotal,
 		ContradictionsDetectedTotal,
 		ContradictionChecksTotal,
 		NewsArticlesProcessedTotal,

@@ -13,6 +13,7 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/plugins/news"
 	"digital-mirror/backend/search"
@@ -281,16 +282,18 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 
 	// Search news for each target
 	type targetResult struct {
-		name                   string
-		articlesFound          int
-		articlesParsed         int
-		factsExtracted         int
+		name                    string
+		articlesFound           int
+		articlesParsed          int
+		factsExtracted          int
+		factsSkippedDedup       int
 		skippedAlreadyProcessed int
-		errorCount             int
+		errorCount              int
 	}
 	var allTargetResults []targetResult
 
 	totalFacts := 0
+	totalSkippedDedup := 0
 	totalSkipped := 0
 	for i, target := range prioritizedTargets {
 		log.Info().
@@ -357,19 +360,30 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			articlesFound:           result.ArticlesFound,
 			articlesParsed:          result.ArticlesParsed,
 			factsExtracted:          result.FactsExtracted,
+			factsSkippedDedup:       result.FactsSkippedDedup,
 			skippedAlreadyProcessed: result.SkippedAlreadyProcessed,
 			errorCount:              len(result.Errors),
 		})
 
 		totalFacts += result.FactsExtracted
+		totalSkippedDedup += result.FactsSkippedDedup
 		totalSkipped += result.SkippedAlreadyProcessed
 	}
 
+	totalRaw := totalFacts + totalSkippedDedup
+	dedupRate := 0.0
+	if totalRaw > 0 {
+		dedupRate = float64(totalSkippedDedup) / float64(totalRaw) * 100
+	}
 	log.Info().
 		Int("total_targets", len(prioritizedTargets)).
-		Int("total_facts", totalFacts).
+		Int("total_facts_stored", totalFacts).
+		Int("total_facts_skipped_dedup", totalSkippedDedup).
+		Float64("dedup_rate_pct", dedupRate).
 		Int("total_skipped_already_processed", totalSkipped).
 		Msg("News search completed successfully")
+
+	metrics.IncrementFactsSkippedDedup(totalSkippedDedup)
 
 	// Record job metrics (skip in dry-run mode)
 	if !dryRun {
@@ -379,6 +393,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "articles_found", Value: float64(tr.articlesFound)},
 				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "articles_parsed", Value: float64(tr.articlesParsed)},
 				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "facts_extracted", Value: float64(tr.factsExtracted)},
+				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "facts_skipped_dedup", Value: float64(tr.factsSkippedDedup)},
 				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "skipped_already_processed", Value: float64(tr.skippedAlreadyProcessed)},
 				storage.JobMetric{JobType: "news-search", Target: tr.name, Metric: "errors", Value: float64(tr.errorCount)},
 			)
@@ -573,6 +588,7 @@ func runCacheOnlyExtraction(
 
 	factInserter := core.NewFactInserter(storer)
 	totalFacts := 0
+	totalSkippedDedup := 0
 	totalFiles := 0
 
 	for i, target := range targets {
@@ -605,6 +621,7 @@ func runCacheOnlyExtraction(
 			Msg("Loaded cached content")
 
 		targetFacts := 0
+		targetSkippedDedup := 0
 		for _, content := range cachedContents {
 			if content == nil || strings.TrimSpace(content.Content) == "" {
 				log.Debug().Str("url", content.URL).Msg("Skipping empty cached content")
@@ -664,24 +681,42 @@ func runCacheOnlyExtraction(
 				}
 
 				targetFacts += insertResult.Inserted
+				targetSkippedDedup += insertResult.Skipped
 			}
 
 			totalFiles++
 		}
 
+		dedupRate := 0.0
+		if targetFacts+targetSkippedDedup > 0 {
+			dedupRate = float64(targetSkippedDedup) / float64(targetFacts+targetSkippedDedup) * 100
+		}
+
 		log.Info().
 			Str("target", target.Name).
 			Int("files_processed", len(cachedContents)).
-			Int("facts_extracted", targetFacts).
+			Int("facts_stored", targetFacts).
+			Int("facts_skipped_dedup", targetSkippedDedup).
+			Float64("dedup_rate_pct", dedupRate).
 			Msg("Completed cache-only extraction for target")
 
 		totalFacts += targetFacts
+		totalSkippedDedup += targetSkippedDedup
 	}
+
+	totalDedupRate := 0.0
+	if totalFacts+totalSkippedDedup > 0 {
+		totalDedupRate = float64(totalSkippedDedup) / float64(totalFacts+totalSkippedDedup) * 100
+	}
+
+	metrics.IncrementFactsSkippedDedup(totalSkippedDedup)
 
 	log.Info().
 		Int("total_targets", len(targets)).
 		Int("total_files", totalFiles).
-		Int("total_facts", totalFacts).
+		Int("total_facts_stored", totalFacts).
+		Int("total_facts_skipped_dedup", totalSkippedDedup).
+		Float64("dedup_rate_pct", totalDedupRate).
 		Msg("Cache-only extraction completed")
 
 	return nil

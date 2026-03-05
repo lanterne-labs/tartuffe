@@ -84,8 +84,10 @@ type Result struct {
 	ArticlesParsed int
 	// ArticlesParsedNoFacts is the number of articles parsed that yielded zero facts.
 	ArticlesParsedNoFacts int
-	// FactsExtracted is the number of facts extracted from the articles.
+	// FactsExtracted is the number of facts successfully inserted (after dedup).
 	FactsExtracted int
+	// FactsSkippedDedup is the number of facts skipped as duplicates at insertion time.
+	FactsSkippedDedup int
 	// SkippedAlreadyProcessed is the number of URLs skipped because already in database.
 	SkippedAlreadyProcessed int
 	// SkippedEmptyURL is the number of articles skipped due to empty URLs.
@@ -425,6 +427,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 			}
 
 			result.FactsExtracted += insertResult.Inserted
+			result.FactsSkippedDedup += insertResult.Skipped
 		}
 
 		log.Debug().
@@ -440,11 +443,18 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 		}
 	}
 
+	totalRaw := result.FactsExtracted + result.FactsSkippedDedup
+	dedupRate := 0.0
+	if totalRaw > 0 {
+		dedupRate = float64(result.FactsSkippedDedup) / float64(totalRaw) * 100
+	}
 	log.Info().
 		Str("target", target.Name).
 		Int("articles_parsed", result.ArticlesParsed).
 		Int("articles_no_facts", result.ArticlesParsedNoFacts).
-		Int("facts_extracted", result.FactsExtracted).
+		Int("facts_stored", result.FactsExtracted).
+		Int("facts_skipped_dedup", result.FactsSkippedDedup).
+		Float64("dedup_rate_pct", dedupRate).
 		Int("skipped_already_processed", result.SkippedAlreadyProcessed).
 		Int("skipped_story_cap", result.SkippedStoryCap).
 		Int("errors", len(result.Errors)).
@@ -610,6 +620,7 @@ func aggregateResult(dst *Result, src *Result) {
 	dst.ArticlesParsed += src.ArticlesParsed
 	dst.ArticlesParsedNoFacts += src.ArticlesParsedNoFacts
 	dst.FactsExtracted += src.FactsExtracted
+	dst.FactsSkippedDedup += src.FactsSkippedDedup
 	dst.SkippedAlreadyProcessed += src.SkippedAlreadyProcessed
 	dst.SkippedEmptyURL += src.SkippedEmptyURL
 	dst.SkippedStoryCap += src.SkippedStoryCap
