@@ -16,6 +16,17 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - `computeMembersScore` uses `person_links` with `valid_to` filter for temporal correctness.
 - All queries returning `PersonSummary` updated (GetPersonsRankedByScore, GetPersonByID, GetFactPersons, GetPersonsWithoutImage).
 
+## 2026-03-05: Filter External-Only Pairs in Contradiction Detection
+
+### What was done
+- **Verb classification**: Added `IsDirectClaimVerb()` in `categorizer/fact_parser.go`. Splits 20 canonical verbs into direct (15: DENIED, CLAIMED, etc.) vs external (5: WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS). Empty/unknown verbs treated as external.
+- **CLI filter** (`cmd/contradictions_detect.go`): After pair dedup, skips pairs where neither fact has a direct claim verb. Uses existing `CanonicalVerb` from `FactWithEmbedding`.
+- **Listener filter** (`backend/contradiction/listener.go`): Same logic in the real-time path, after the same-verb skip check.
+
+### Key design decisions
+- Rule: at least ONE fact in a pair must be a direct claim/action by the person. Two external attributions (e.g., court ruling vs journalist characterization) don't reflect the person's own dishonesty.
+- Motivated by false positive: RN scored as dishonest because a journalist and a court disagreed on an embezzlement amount — neither was RN's own claim.
+
 ## 2026-03-04: Fix Fact Deduplication Pipeline
 
 ### What was done

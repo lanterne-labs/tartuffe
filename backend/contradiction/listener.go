@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"time"
@@ -131,6 +132,17 @@ func (l *Listener) processFact(ctx context.Context, newFactID int64) error {
 					Str("verb", newVerb).
 					Float64("similarity", 1.0-nb.Distance).
 					Msg("Skipping same-verb pair in listener")
+				continue
+			}
+
+			// Skip pairs where neither fact has a direct claim verb
+			if !categorizer.IsDirectClaimVerb(newVerb) && !categorizer.IsDirectClaimVerb(nb.CanonicalVerb) {
+				log.Debug().
+					Int64("new_fact", newFactID).
+					Int64("neighbor", nb.ID).
+					Str("new_verb", newVerb).
+					Str("neighbor_verb", nb.CanonicalVerb).
+					Msg("Skipping external-only pair in listener")
 				continue
 			}
 

@@ -143,6 +143,22 @@ func isKnownVerb(verb string) bool {
 	return knownVerbs[strings.ToUpper(verb)]
 }
 
+// directClaimVerbs are verbs where the person is the speaker/actor (not a third-party attribution).
+var directClaimVerbs = map[string]bool{
+	"DENIED": true, "CLAIMED": true, "PROMISED": true, "SUPPORTED": true,
+	"OPPOSED": true, "VOTED_FOR": true, "VOTED_AGAINST": true, "PROPOSED": true,
+	"CONFIRMED": true, "ADMITTED": true, "REFUSED": true, "DEMANDED": true,
+	"THREATENED": true, "ANNOUNCED": true, "CHANGED_POSITION": true,
+}
+
+// IsDirectClaimVerb returns true if the verb represents a direct claim or action
+// by the person (as opposed to an external attribution like a court ruling).
+// Returns false for empty strings, unknown verbs, and external verbs
+// (WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS).
+func IsDirectClaimVerb(verb string) bool {
+	return directClaimVerbs[strings.ToUpper(verb)]
+}
+
 // ParseVerbFromEmbeddingText attempts to extract a canonical verb prefix from an embedding_text string.
 // Returns (verb, remainingTopic, true) if a known verb is found as the first word.
 // Returns ("", "", false) if no known verb is found.

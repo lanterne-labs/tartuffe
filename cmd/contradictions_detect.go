@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
@@ -264,6 +265,30 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 					Msg("Cleaned up pairs from ancestor walking")
 			}
 			allPairs = dedupedPairs
+		}
+
+		// Filter out pairs where neither fact has a direct claim verb
+		// (both are external attributions like court rulings — not the person's own dishonesty)
+		{
+			factVerbMap := make(map[int64]string, len(facts))
+			for _, f := range facts {
+				factVerbMap[f.ID] = f.CanonicalVerb
+			}
+			var directPairs []pairInfo
+			externalPairsSkipped := 0
+			for _, pair := range allPairs {
+				verbA := factVerbMap[pair.factAID]
+				verbB := factVerbMap[pair.factBID]
+				if !categorizer.IsDirectClaimVerb(verbA) && !categorizer.IsDirectClaimVerb(verbB) {
+					externalPairsSkipped++
+					continue
+				}
+				directPairs = append(directPairs, pair)
+			}
+			if externalPairsSkipped > 0 {
+				log.Info().Str("person", person.Name).Int("skipped", externalPairsSkipped).Msg("Skipped external-only pairs (no direct claim verb)")
+			}
+			allPairs = directPairs
 		}
 
 		// Get ALL checked pairs to avoid re-checking
