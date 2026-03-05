@@ -964,3 +964,29 @@ func TestComputeHonestyScore(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeAggregateScore(t *testing.T) {
+	tests := []struct {
+		name         string
+		ownScore     float64
+		membersScore *float64
+		expected     float64
+	}{
+		{"nil members returns own", 0.8, nil, 0.8},
+		{"50/50 blend", 0.8, ptrFloat64(0.6), 0.7},
+		{"both perfect", 1.0, ptrFloat64(1.0), 1.0},
+		{"both zero", 0.0, ptrFloat64(0.0), 0.0},
+		{"own high members low", 1.0, ptrFloat64(0.0), 0.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComputeAggregateScore(tt.ownScore, tt.membersScore)
+			assert.InDelta(t, tt.expected, got, 0.001)
+		})
+	}
+}
+
+func ptrFloat64(v float64) *float64 {
+	return &v
+}

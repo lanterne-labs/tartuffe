@@ -304,6 +304,53 @@
 			</div>
 		</div>
 
+		{#if person.entity_type !== 'human' && person.members_score != null}
+			<div class="score-breakdown">
+				<div class="mini-gauge">
+					<svg viewBox="0 0 36 36" class="mini-gauge-svg">
+						<circle cx="18" cy="18" r="14" fill="none" stroke="var(--bg-secondary)" stroke-width="2.5" />
+						<circle cx="18" cy="18" r="14" fill="none"
+							stroke={getHonestyColor(person.own_score ?? person.honesty_score)}
+							stroke-width="2.5" stroke-linecap="round"
+							stroke-dasharray="{(person.own_score ?? person.honesty_score) * SCORE_CIRCUMFERENCE} {SCORE_CIRCUMFERENCE}"
+							transform="rotate(-90 18 18)" />
+						<text x="18" y="18" text-anchor="middle" dominant-baseline="central" class="mini-gauge-text">
+							{((person.own_score ?? person.honesty_score) * 100).toFixed(0)}
+						</text>
+					</svg>
+					<span class="mini-gauge-label">Own Score</span>
+				</div>
+				<div class="mini-gauge">
+					<svg viewBox="0 0 36 36" class="mini-gauge-svg">
+						<circle cx="18" cy="18" r="14" fill="none" stroke="var(--bg-secondary)" stroke-width="2.5" />
+						<circle cx="18" cy="18" r="14" fill="none"
+							stroke={getHonestyColor(person.members_score)}
+							stroke-width="2.5" stroke-linecap="round"
+							stroke-dasharray="{person.members_score * SCORE_CIRCUMFERENCE} {SCORE_CIRCUMFERENCE}"
+							transform="rotate(-90 18 18)" />
+						<text x="18" y="18" text-anchor="middle" dominant-baseline="central" class="mini-gauge-text">
+							{(person.members_score * 100).toFixed(0)}
+						</text>
+					</svg>
+					<span class="mini-gauge-label">Members Score</span>
+				</div>
+				<div class="mini-gauge">
+					<svg viewBox="0 0 36 36" class="mini-gauge-svg">
+						<circle cx="18" cy="18" r="14" fill="none" stroke="var(--bg-secondary)" stroke-width="2.5" />
+						<circle cx="18" cy="18" r="14" fill="none"
+							stroke={getHonestyColor(person.honesty_score)}
+							stroke-width="2.5" stroke-linecap="round"
+							stroke-dasharray="{person.honesty_score * SCORE_CIRCUMFERENCE} {SCORE_CIRCUMFERENCE}"
+							transform="rotate(-90 18 18)" />
+						<text x="18" y="18" text-anchor="middle" dominant-baseline="central" class="mini-gauge-text">
+							{(person.honesty_score * 100).toFixed(0)}
+						</text>
+					</svg>
+					<span class="mini-gauge-label">Aggregate</span>
+				</div>
+			</div>
+		{/if}
+
 		{#if person.entity_type === 'party' && members.length > 0}
 			<div class="members-section">
 				<button class="members-toggle" onclick={() => membersExpanded = !membersExpanded}>
@@ -585,6 +632,44 @@
 
 	.gauge-label {
 		font-size: 0.688rem;
+		color: var(--text-muted);
+		font-weight: 500;
+	}
+
+	/* Score Breakdown */
+	.score-breakdown {
+		display: flex;
+		justify-content: center;
+		gap: 2rem;
+		margin-bottom: 1.5rem;
+		padding: 1rem 1.5rem;
+		background: var(--bg-card);
+		backdrop-filter: var(--glass-blur);
+		-webkit-backdrop-filter: var(--glass-blur);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+	}
+
+	.mini-gauge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.mini-gauge-svg {
+		width: 56px;
+		height: 56px;
+	}
+
+	.mini-gauge-text {
+		font-size: 9px;
+		font-weight: 700;
+		fill: var(--text-primary);
+	}
+
+	.mini-gauge-label {
+		font-size: 0.625rem;
 		color: var(--text-muted);
 		font-weight: 500;
 	}

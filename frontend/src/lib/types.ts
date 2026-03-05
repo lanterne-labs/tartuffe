@@ -5,6 +5,8 @@ export interface PersonSummary {
 	name: string;
 	entity_type?: string;
 	honesty_score: number;
+	own_score?: number;
+	members_score?: number;
 	fact_count: number;
 	image_url?: string;
 }
