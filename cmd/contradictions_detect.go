@@ -223,6 +223,27 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 			_ = readTx.Rollback(ctx)
 		}
 
+		// Deduplicate pairs (ancestor walking can map multiple neighbors to the same ancestor)
+		{
+			seen := make(map[string]struct{}, len(allPairs))
+			dedupedPairs := make([]pairInfo, 0, len(allPairs))
+			for _, pair := range allPairs {
+				idA, idB := pair.factAID, pair.factBID
+				if idA > idB {
+					idA, idB = idB, idA
+				}
+				key := fmt.Sprintf("%d-%d", idA, idB)
+				if _, exists := seen[key]; !exists {
+					seen[key] = struct{}{}
+					dedupedPairs = append(dedupedPairs, pair)
+				}
+			}
+			if dupes := len(allPairs) - len(dedupedPairs); dupes > 0 {
+				log.Info().Str("person", person.Name).Int("duplicate_pairs_removed", dupes).Msg("Deduplicated pairs from ancestor walking")
+			}
+			allPairs = dedupedPairs
+		}
+
 		// Get ALL checked pairs to avoid re-checking
 		checkedPairs, err := storer.GetCheckedPairs(ctx, person.ID)
 		if err != nil {
