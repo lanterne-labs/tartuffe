@@ -223,11 +223,17 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 			_ = readTx.Rollback(ctx)
 		}
 
-		// Deduplicate pairs (ancestor walking can map multiple neighbors to the same ancestor)
+		// Deduplicate pairs and remove self-pairs (ancestor walking can map
+		// multiple neighbors to the same ancestor, or both sides to the same fact)
 		{
 			seen := make(map[string]struct{}, len(allPairs))
 			dedupedPairs := make([]pairInfo, 0, len(allPairs))
+			selfPairs := 0
 			for _, pair := range allPairs {
+				if pair.factAID == pair.factBID {
+					selfPairs++
+					continue
+				}
 				idA, idB := pair.factAID, pair.factBID
 				if idA > idB {
 					idA, idB = idB, idA
@@ -238,8 +244,12 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 					dedupedPairs = append(dedupedPairs, pair)
 				}
 			}
-			if dupes := len(allPairs) - len(dedupedPairs); dupes > 0 {
-				log.Info().Str("person", person.Name).Int("duplicate_pairs_removed", dupes).Msg("Deduplicated pairs from ancestor walking")
+			removed := len(allPairs) - len(dedupedPairs)
+			if removed > 0 {
+				log.Info().Str("person", person.Name).
+					Int("duplicate_pairs_removed", removed-selfPairs).
+					Int("self_pairs_removed", selfPairs).
+					Msg("Cleaned up pairs from ancestor walking")
 			}
 			allPairs = dedupedPairs
 		}
