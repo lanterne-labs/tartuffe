@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	detectPersonFlag string
-	detectDryRun     bool
-	detectCheckAll   bool
-	detectDebug      bool
+	detectPersonFlag  string
+	detectExcludeFlag []string
+	detectDryRun      bool
+	detectCheckAll    bool
+	detectDebug       bool
 )
 
 // pairInfo holds information about a fact pair to check
@@ -45,6 +46,7 @@ without recording to the database.`,
 func init() {
 	contradictionsCmd.AddCommand(contradictionsDetectCmd)
 	contradictionsDetectCmd.Flags().StringVarP(&detectPersonFlag, "person", "p", "", "Specific person name to process (optional)")
+	contradictionsDetectCmd.Flags().StringSliceVar(&detectExcludeFlag, "exclude", nil, "Person names to skip (comma-separated)")
 	contradictionsDetectCmd.Flags().BoolVar(&detectDryRun, "dry-run", false, "Show detected contradictions without recording to database")
 	contradictionsDetectCmd.Flags().BoolVar(&detectCheckAll, "check-all", false, "Check all fact pairs, not just semantically similar ones")
 	contradictionsDetectCmd.Flags().BoolVar(&detectDebug, "debug", false, "Print LLM reasoning and verdict for every pair")
@@ -88,10 +90,20 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 		log.Info().Int("count", len(persons)).Msg("Processing all persons")
 	}
 
+	// Build exclude set
+	excludeSet := make(map[string]struct{}, len(detectExcludeFlag))
+	for _, name := range detectExcludeFlag {
+		excludeSet[util.NormalizeString(name)] = struct{}{}
+	}
+
 	totalContradictions := 0
 	totalPairsChecked := 0
 
 	for _, person := range persons {
+		if _, excluded := excludeSet[person.Name]; excluded {
+			log.Info().Str("person", person.Name).Msg("Skipping excluded person")
+			continue
+		}
 		// Get all active (non-duplicate) facts for this person with embeddings
 		facts, err := storer.GetFactsWithEmbeddingsForPerson(ctx, person.ID)
 		if err != nil {
