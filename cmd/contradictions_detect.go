@@ -162,19 +162,24 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				}
 				for _, neighbor := range neighbors {
 					if neighbor.ID > fact.ID {
-						// Skip same-verb pairs with high similarity (>0.85) —
+						// Skip same-verb or both-external pairs with high similarity (>0.85) —
 						// these are paraphrases, not contradictions
 						if fact.CanonicalVerb != "" && neighbor.CanonicalVerb != "" &&
-							fact.CanonicalVerb == neighbor.CanonicalVerb &&
 							(1.0-neighbor.Distance) > 0.85 {
-							sameVerbSkipped++
-							log.Debug().
-								Int64("fact_a", fact.ID).
-								Int64("fact_b", neighbor.ID).
-								Str("verb", fact.CanonicalVerb).
-								Float64("similarity", 1.0-neighbor.Distance).
-								Msg("Skipping same-verb pair")
-							continue
+							sameVerb := fact.CanonicalVerb == neighbor.CanonicalVerb
+							bothExternal := !categorizer.IsDirectClaimVerb(fact.CanonicalVerb) && !categorizer.IsDirectClaimVerb(neighbor.CanonicalVerb)
+							if sameVerb || bothExternal {
+								sameVerbSkipped++
+								log.Debug().
+									Int64("fact_a", fact.ID).
+									Int64("fact_b", neighbor.ID).
+									Str("verb_a", fact.CanonicalVerb).
+									Str("verb_b", neighbor.CanonicalVerb).
+									Bool("both_external", bothExternal).
+									Float64("similarity", 1.0-neighbor.Distance).
+									Msg("Skipping paraphrase pair")
+								continue
+							}
 						}
 						pairsToCheck = append(pairsToCheck, struct {
 							ID          int64

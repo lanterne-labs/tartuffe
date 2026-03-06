@@ -11,6 +11,3 @@ CREATE TABLE job_metrics (
 CREATE INDEX idx_job_metrics_job_type ON job_metrics (job_type);
 CREATE INDEX idx_job_metrics_created_at ON job_metrics (created_at);
 CREATE INDEX idx_job_metrics_metric ON job_metrics (metric);
-
--- +goose Down
-DROP TABLE IF EXISTS job_metrics;

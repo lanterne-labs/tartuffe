@@ -190,14 +190,20 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 					log.Debug().Err(verbErr).Int64("fact_id", sf.ID).Msg("Failed to get canonical verb for similar fact")
 					continue
 				}
-				// Only auto-dedup if same verb (or both empty)
-				if existingVerb == input.CanonicalVerb {
+				// Dedup if same verb, OR if both are external (non-direct-claim) verbs.
+				// Direct claim verbs (DENIED, CLAIMED, etc.) with different verbs must coexist
+				// to preserve opposing stances. But external verbs (WAS_SENTENCED, WAS_CONVICTED, etc.)
+				// often describe the same event with different wording.
+				bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
+				if existingVerb == input.CanonicalVerb || bothExternal {
 					log.Info().
 						Int64("existing_fact_id", sf.ID).
 						Float64("distance", sf.Distance).
-						Str("verb", input.CanonicalVerb).
+						Str("new_verb", input.CanonicalVerb).
+						Str("existing_verb", existingVerb).
+						Bool("both_external", bothExternal).
 						Str("fact", truncate(input.NormalizedFactText, 80)).
-						Msg("Skipping duplicate fact (same verb + high similarity)")
+						Msg("Skipping duplicate fact (same verb or both external + high similarity)")
 					return false, nil
 				}
 				log.Debug().
@@ -205,7 +211,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 					Float64("distance", sf.Distance).
 					Str("new_verb", input.CanonicalVerb).
 					Str("existing_verb", existingVerb).
-					Msg("High similarity but different verb, NOT deduping")
+					Msg("High similarity but different direct-claim verbs, NOT deduping")
 			}
 		}
 	}
@@ -372,4 +378,19 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// isDirectClaimVerb returns true if the verb represents a direct claim or action
+// by the person (as opposed to an external attribution like a court ruling).
+// Duplicated from categorizer.IsDirectClaimVerb to avoid import cycle.
+func isDirectClaimVerb(verb string) bool {
+	switch verb {
+	case "DENIED", "CLAIMED", "PROMISED", "SUPPORTED",
+		"OPPOSED", "VOTED_FOR", "VOTED_AGAINST", "PROPOSED",
+		"CONFIRMED", "ADMITTED", "REFUSED", "DEMANDED",
+		"THREATENED", "ANNOUNCED", "CHANGED_POSITION":
+		return true
+	default:
+		return false
+	}
 }

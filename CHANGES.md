@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-06: Allow Dedup Across External Verbs + Fix Goose Migration Down Blocks
+
+### What was done
+- **Relaxed verb-aware dedup for external verbs**: Facts with different external verbs (WAS_SENTENCED, WAS_CONVICTED, WAS_FINED, WAS_ACQUITTED, RECEIVED_FUNDS) on the same topic are now deduped at insertion time if similarity > 0.85. Previously "different verb = never skip" preserved all of them, causing 6 copies of the same conviction event.
+- **Same filter in contradiction detection**: Both CLI (`contradictions_detect.go`) and real-time listener (`listener.go`) now skip both-external pairs with >0.85 similarity before LLM call.
+- **Fixed goose Down blocks in Supabase migrations**: 6 migration files had `-- +goose Down` sections that Supabase executed as plain SQL (it doesn't understand goose annotations), undoing the Up changes. Removed Down blocks from all affected files. This was causing `canonical_verb`, `image_url`, and other columns to be missing after `supabase db reset`.
+
+### Key design decisions
+- `isDirectClaimVerb()` duplicated as a local helper in `core/fact_inserter.go` to avoid import cycle (`core` ↔ `categorizer`). Uses a switch statement instead of a map for simplicity.
+- Direct claim verb pairs (DENIED vs CLAIMED) remain untouched — "never skip" still applies for opposing stances.
+- Supabase migrations should NEVER include `-- +goose Down` blocks, since Supabase runs the entire file top-to-bottom.
+
 ## 2026-03-05: Hybrid Entity Honesty Scoring
 
 ### What was done

@@ -19,7 +19,3 @@ CREATE TABLE IF NOT EXISTS twitter_fetch_log (
     fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_twitter_fetch_log_handle_id ON twitter_fetch_log(handle_id);
-
--- +goose Down
-DROP TABLE IF EXISTS twitter_fetch_log;
-DROP TABLE IF EXISTS twitter_handles;

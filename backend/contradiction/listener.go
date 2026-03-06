@@ -122,17 +122,22 @@ func (l *Listener) processFact(ctx context.Context, newFactID int64) error {
 		var pairs []candidatePair
 
 		for _, nb := range neighbors {
-			// Skip same-verb pairs with high similarity (>0.85) — paraphrases, not contradictions
+			// Skip same-verb or both-external pairs with high similarity (>0.85) — paraphrases, not contradictions
 			if newVerb != "" && nb.CanonicalVerb != "" &&
-				newVerb == nb.CanonicalVerb &&
 				(1.0-nb.Distance) > 0.85 {
-				log.Debug().
-					Int64("new_fact", newFactID).
-					Int64("neighbor", nb.ID).
-					Str("verb", newVerb).
-					Float64("similarity", 1.0-nb.Distance).
-					Msg("Skipping same-verb pair in listener")
-				continue
+				sameVerb := newVerb == nb.CanonicalVerb
+				bothExternal := !categorizer.IsDirectClaimVerb(newVerb) && !categorizer.IsDirectClaimVerb(nb.CanonicalVerb)
+				if sameVerb || bothExternal {
+					log.Debug().
+						Int64("new_fact", newFactID).
+						Int64("neighbor", nb.ID).
+						Str("new_verb", newVerb).
+						Str("neighbor_verb", nb.CanonicalVerb).
+						Bool("both_external", bothExternal).
+						Float64("similarity", 1.0-nb.Distance).
+						Msg("Skipping paraphrase pair in listener")
+					continue
+				}
 			}
 
 			// Skip pairs where neither fact has a direct claim verb

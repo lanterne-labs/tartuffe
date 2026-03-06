@@ -8,6 +8,3 @@ CREATE TABLE IF NOT EXISTS rss_feeds (
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- +goose Down
-DROP TABLE IF EXISTS rss_feeds;
