@@ -24,12 +24,14 @@ var personsAffiliateCmd = &cobra.Command{
 
 func init() {
 	personsAffiliateCmd.Flags().Bool("dry-run", false, "Preview affiliations without creating them")
+	personsAffiliateCmd.Flags().Bool("allow-new-party", false, "Create new party entities in DB when Wikidata returns a party not yet tracked")
 	personsCmd.AddCommand(personsAffiliateCmd)
 }
 
 func affiliatePersons(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	allowNewParty, _ := cmd.Flags().GetBool("allow-new-party")
 
 	if err := godotenv.Load(); err != nil {
 		log.Debug().Msg(".env file not found or error loading.")
@@ -60,7 +62,7 @@ func affiliatePersons(cmd *cobra.Command, args []string) {
 	log.Info().Int("humans", len(humans)).Int("parties", len(parties)).Msg("Starting Wikidata affiliation lookup")
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	var created, skipped, noMatch, noParty int
+	var created, skipped, noMatch, noParty, partiesCreated int
 
 	for i, human := range humans {
 		if i > 0 {
@@ -102,8 +104,33 @@ func affiliatePersons(cmd *cobra.Command, args []string) {
 			}
 
 			if matchedTarget == nil || matchedTarget.PersonID == nil {
-				log.Info().Str("person", human.Name).Str("wikidata_party", partyName).Msg("Party not in DB")
-				continue
+				if !allowNewParty {
+					log.Info().Str("person", human.Name).Str("wikidata_party", partyName).Msg("Party not in DB")
+					continue
+				}
+				// Create new party
+				if dryRun {
+					fmt.Printf("[dry-run] would create party: %s\n", partyName)
+					fmt.Printf("[dry-run] %s → %s\n", human.Name, partyName)
+					partiesCreated++
+					created++
+					continue
+				} else {
+					partyID, inserted, err := storer.AddPersonWithType(ctx, partyName, "party")
+					if err != nil {
+						log.Error().Err(err).Str("party", partyName).Msg("Failed to create party")
+						continue
+					}
+					if inserted {
+						fmt.Printf("Created party: %s (id=%d)\n", partyName, partyID)
+						partiesCreated++
+					}
+					matchedTarget = &core.ResolvedTarget{
+						Name:       partyName,
+						EntityType: "party",
+						PersonID:   &partyID,
+					}
+				}
 			}
 
 			if matchedTarget.EntityType == "human" {
@@ -137,8 +164,8 @@ func affiliatePersons(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	fmt.Printf("\nSummary: %d affiliations %s, %d lookup errors, %d not found on Wikidata, %d no party data\n",
-		created, actionLabel(dryRun), skipped, noMatch, noParty)
+	fmt.Printf("\nSummary: %d affiliations %s, %d parties %s, %d lookup errors, %d not found on Wikidata, %d no party data\n",
+		created, actionLabel(dryRun), partiesCreated, actionLabel(dryRun), skipped, noMatch, noParty)
 
 	if !dryRun && created > 0 {
 		log.Info().Msg("Recomputing all honesty scores...")
