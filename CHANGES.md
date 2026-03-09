@@ -2,17 +2,35 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
-## 2026-03-06: Allow Dedup Across External Verbs + Fix Goose Migration Down Blocks
+## 2026-03-09: Auto-discover Party Affiliations via Wikidata
+
+### What was done
+- **`dm persons affiliate [--dry-run]`**: New CLI command that looks up each human person on Wikidata (property P102 = member of political party) and creates `person_links` affiliations with matching parties in the DB.
+- **`backend/search/wikidata.go`**: Wikidata API client — searches entity by name (language=fr), fetches P102 statements, filters out ended affiliations (P582 qualifier), gets French labels for party matching.
+- After creating affiliations, automatically calls `RecomputeAllHonestyScores` to propagate to party `members_score`.
+
+### Key design decisions
+- No new env vars — Wikidata API is free and keyless.
+- 1-second delay between lookups to respect Wikidata rate limits.
+- Fuzzy matching via `ResolveTargetName` with 0.7 threshold for party name matching.
+- Idempotent via `FindOrCreateAffiliation` (ON CONFLICT upsert).
+
+## 2026-03-06: Allow Dedup Across External Verbs + Fix Batch Deduplicator
 
 ### What was done
 - **Relaxed verb-aware dedup for external verbs**: Facts with different external verbs (WAS_SENTENCED, WAS_CONVICTED, WAS_FINED, WAS_ACQUITTED, RECEIVED_FUNDS) on the same topic are now deduped at insertion time if similarity > 0.85. Previously "different verb = never skip" preserved all of them, causing 6 copies of the same conviction event.
 - **Same filter in contradiction detection**: Both CLI (`contradictions_detect.go`) and real-time listener (`listener.go`) now skip both-external pairs with >0.85 similarity before LLM call.
-- **Fixed goose Down blocks in Supabase migrations**: 6 migration files had `-- +goose Down` sections that Supabase executed as plain SQL (it doesn't understand goose annotations), undoing the Up changes. Removed Down blocks from all affected files. This was causing `canonical_verb`, `image_url`, and other columns to be missing after `supabase db reset`.
+- **Fixed batch deduplicator** (`core/fact_deduplicator.go`): Added verb-aware logic to Tier 1 auto-dedup (same verb OR both-external → dedup, different direct-claim → skip). Added `SetThresholds()` method so CLI `--auto-threshold` flag actually works (was being ignored, reading from env var only).
+- **Fixed goose Down blocks in Supabase migrations**: 6 migration files had `-- +goose Down` sections that Supabase executed as plain SQL (it doesn't understand goose annotations), undoing the Up changes. Removed Down blocks.
+
+### Results
+- MLP: 25 facts deduped (all both_external=true), active facts 442→246, contradictions 41→28
+- Total contradictions across all persons: 36 (down from ~50+)
 
 ### Key design decisions
-- `isDirectClaimVerb()` duplicated as a local helper in `core/fact_inserter.go` to avoid import cycle (`core` ↔ `categorizer`). Uses a switch statement instead of a map for simplicity.
-- Direct claim verb pairs (DENIED vs CLAIMED) remain untouched — "never skip" still applies for opposing stances.
-- Supabase migrations should NEVER include `-- +goose Down` blocks, since Supabase runs the entire file top-to-bottom.
+- `isDirectClaimVerb()` duplicated as a local helper in `core/fact_inserter.go` AND `core/fact_deduplicator.go` to avoid import cycle (`core` ↔ `categorizer`).
+- Direct claim verb pairs (DENIED vs CLAIMED) remain untouched — "never skip" still applies.
+- Supabase migrations should NEVER include `-- +goose Down` blocks.
 
 ## 2026-03-05: Hybrid Entity Honesty Scoring
 
