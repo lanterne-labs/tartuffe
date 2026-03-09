@@ -150,6 +150,16 @@ func (d *FactDeduplicator) SetEmbedder(embedder EmbeddingGenerator) {
 	d.embedder = embedder
 }
 
+// SetThresholds overrides the thresholds loaded from environment variables.
+func (d *FactDeduplicator) SetThresholds(autoDedupeThreshold, uncertainLowThreshold float64) {
+	d.autoDedupeThreshold = autoDedupeThreshold
+	d.uncertainLowThreshold = uncertainLowThreshold
+	log.Info().
+		Float64("auto_threshold", autoDedupeThreshold).
+		Float64("uncertain_threshold", uncertainLowThreshold).
+		Msg("Overrode FactDeduplicator thresholds from CLI flags")
+}
+
 // DedupeAll runs deduplication on all facts in the database.
 func (d *FactDeduplicator) DedupeAll(ctx context.Context, opts DedupeOptions) (*DedupeResult, error) {
 	persons, err := d.storer.GetAllPersons(ctx)
@@ -259,11 +269,27 @@ func (d *FactDeduplicator) dedupeForPersonID(ctx context.Context, personID int64
 			}
 
 			// Tier 1: Auto-dedupe for high similarity
+			// Verb-aware: only dedup if same verb OR both external (non-direct-claim).
+			// Different direct-claim verbs (DENIED vs CLAIMED) must coexist.
 			if similarity >= d.autoDedupeThreshold {
+				sameVerb := fact.CanonicalVerb == similarFact.CanonicalVerb
+				bothExternal := !isDirectClaimVerb(fact.CanonicalVerb) && !isDirectClaimVerb(similarFact.CanonicalVerb)
+				if !sameVerb && !bothExternal {
+					log.Debug().
+						Int64("fact_a", fact.ID).
+						Int64("fact_b", similar.ID).
+						Str("verb_a", fact.CanonicalVerb).
+						Str("verb_b", similarFact.CanonicalVerb).
+						Float64("similarity", similarity).
+						Msg("High similarity but different direct-claim verbs, NOT deduping")
+					continue
+				}
+
 				log.Info().
 					Int64("canonical", fact.ID).
 					Int64("duplicate", similar.ID).
 					Float64("similarity", similarity).
+					Bool("both_external", bothExternal).
 					Msg("Auto-deduping high-similarity fact")
 
 				if !opts.DryRun {

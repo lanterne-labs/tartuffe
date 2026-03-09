@@ -91,6 +91,11 @@ func runDedupe(cmd *cobra.Command, args []string) error {
 	// Create deduplicator
 	deduplicator := core.NewFactDeduplicator(dedupeStorer, llmVerifier)
 
+	// Override thresholds from CLI flags if provided
+	if cmd.Flags().Changed("auto-threshold") || cmd.Flags().Changed("uncertain-threshold") {
+		deduplicator.SetThresholds(dedupeAutoThreshold, dedupeUncertainThreshold)
+	}
+
 	// Initialize embedder for regenerating embeddings after improvements
 	if llmVerifier != nil {
 		embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
