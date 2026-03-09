@@ -35,6 +35,13 @@ type qualifierEntry struct {
 	Property struct {
 		ID string `json:"id"`
 	} `json:"property"`
+	Value struct {
+		Content json.RawMessage `json:"content"`
+	} `json:"value"`
+}
+
+type qualifierTimeContent struct {
+	Time string `json:"time"` // e.g. "+2017-00-00T00:00:00Z"
 }
 
 type statementValue struct {
@@ -103,6 +110,11 @@ func searchEntity(ctx context.Context, httpClient *http.Client, name string) (st
 	return resp.Search[0].ID, nil
 }
 
+type parsedStatement struct {
+	partyID string
+	endTime string // P582 value, empty if no end_time
+}
+
 func fetchP102Statements(ctx context.Context, httpClient *http.Client, entityID string) ([]string, error) {
 	u := fmt.Sprintf("https://www.wikidata.org/w/rest.php/wikibase/v1/entities/items/%s/statements?property=P102", entityID)
 
@@ -122,7 +134,7 @@ func fetchP102Statements(ctx context.Context, httpClient *http.Client, entityID 
 		return nil, nil
 	}
 
-	var currentPartyIDs []string
+	var parsed []parsedStatement
 	for _, raw := range rawStatements {
 		var stmt p102Statement
 		if err := json.Unmarshal(raw, &stmt); err != nil {
@@ -130,26 +142,48 @@ func fetchP102Statements(ctx context.Context, httpClient *http.Client, entityID 
 			continue
 		}
 
-		// Skip if the statement has an end_time qualifier (P582)
-		hasEndTime := false
-		for _, q := range stmt.Qualifiers {
-			if q.Property.ID == "P582" {
-				hasEndTime = true
-				break
-			}
-		}
-		if hasEndTime {
+		partyID := extractEntityID(stmt.Value)
+		if partyID == "" {
 			continue
 		}
 
-		// Extract entity ID from the value content
-		partyID := extractEntityID(stmt.Value)
-		if partyID != "" {
-			currentPartyIDs = append(currentPartyIDs, partyID)
+		ps := parsedStatement{partyID: partyID}
+		for _, q := range stmt.Qualifiers {
+			if q.Property.ID == "P582" {
+				var tc qualifierTimeContent
+				if err := json.Unmarshal(q.Value.Content, &tc); err == nil {
+					ps.endTime = tc.Time
+				}
+				break
+			}
 		}
+		parsed = append(parsed, ps)
 	}
 
-	return currentPartyIDs, nil
+	// Prefer current affiliations (no end_time)
+	var currentIDs []string
+	for _, p := range parsed {
+		if p.endTime == "" {
+			currentIDs = append(currentIDs, p.partyID)
+		}
+	}
+	if len(currentIDs) > 0 {
+		return currentIDs, nil
+	}
+
+	// Fallback: all affiliations have end_time, pick the most recent one
+	var latest parsedStatement
+	for _, p := range parsed {
+		if p.endTime > latest.endTime {
+			latest = p
+		}
+	}
+	if latest.partyID != "" {
+		log.Debug().Str("entity", entityID).Str("end_time", latest.endTime).Msg("No current affiliation, using most recent ended one")
+		return []string{latest.partyID}, nil
+	}
+
+	return nil, nil
 }
 
 func extractEntityID(v statementValue) string {
