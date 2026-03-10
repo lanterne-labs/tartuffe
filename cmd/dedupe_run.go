@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/core"
-	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"fmt"
@@ -96,16 +95,6 @@ func runDedupe(cmd *cobra.Command, args []string) error {
 		deduplicator.SetThresholds(dedupeAutoThreshold, dedupeUncertainThreshold)
 	}
 
-	// Initialize embedder for regenerating embeddings after improvements
-	if llmVerifier != nil {
-		embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-		if err != nil {
-			log.Warn().Err(err).Msg("Failed to create embedder, fact improvements won't regenerate embeddings")
-		} else {
-			deduplicator.SetEmbedder(embedder)
-		}
-	}
-
 	// Build options
 	opts := core.DedupeOptions{
 		TargetName: dedupeTargetFlag,
@@ -141,10 +130,9 @@ func printDedupeResults(result *core.DedupeResult, dryRun bool) {
 	fmt.Println()
 	fmt.Println("=== DEDUPLICATION RESULTS ===")
 	fmt.Printf("Total facts checked:    %d\n", result.TotalFactsChecked)
-	fmt.Printf("Auto-deduped (>92%%):    %d\n", result.AutoDeduped)
+	fmt.Printf("Auto-deduped (>90%%):    %d\n", result.AutoDeduped)
 	fmt.Printf("LLM verified dupes:     %d\n", result.LLMVerified)
 	fmt.Printf("LLM kept separate:      %d\n", result.LLMKept)
-	fmt.Printf("Facts improved:         %d\n", result.FactsImproved)
 	fmt.Printf("Invalid facts deleted:  %d\n", result.FactsDeleted)
 
 	if dryRun {
@@ -166,21 +154,6 @@ func printDedupeResults(result *core.DedupeResult, dryRun bool) {
 			if group.Similarity > 0 {
 				fmt.Printf("  Similarity: %.2f%%\n", group.Similarity*100)
 			}
-		}
-	}
-
-	// Print improvements if any
-	if len(result.Improvements) > 0 {
-		fmt.Println("\n--- Fact Improvements ---")
-		for i, imp := range result.Improvements {
-			if i >= 10 {
-				fmt.Printf("\n... and %d more improvements\n", len(result.Improvements)-10)
-				break
-			}
-			fmt.Printf("\nImprovement %d (Fact ID: %d):\n", i+1, imp.ID)
-			fmt.Printf("  Before: %s\n", truncateForDisplay(imp.OldText, 80))
-			fmt.Printf("  After:  %s\n", truncateForDisplay(imp.NewText, 80))
-			fmt.Printf("  Reason: %s\n", imp.Reason)
 		}
 	}
 

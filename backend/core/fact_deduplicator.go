@@ -33,12 +33,6 @@ type DedupeStorer interface {
 	// FindOrInsertPersons resolves person names to person IDs.
 	FindOrInsertPersons(ctx context.Context, names []string) ([]int64, error)
 
-	// UpdateFactText updates a fact's normalized text and embedding text.
-	UpdateFactText(ctx context.Context, factID int64, normalizedFact string, embeddingText string) error
-
-	// UpdateFactEmbedding updates a fact's embedding vector.
-	UpdateFactEmbedding(ctx context.Context, factID int64, embedding []float32) error
-
 	// DeleteFact deletes a fact that has been determined to be invalid.
 	DeleteFact(ctx context.Context, factID int64) error
 }
@@ -74,8 +68,6 @@ type SimilarFactResult struct {
 type FactDeduplicator struct {
 	storer      DedupeStorer
 	llmVerifier *DedupLLMVerifier
-	embedder    EmbeddingGenerator // Optional: for regenerating embeddings after fact improvements
-
 	// Configurable thresholds
 	autoDedupeThreshold   float64 // Cosine similarity above which to auto-dedupe (default: 0.92)
 	uncertainLowThreshold float64 // Cosine similarity below which to keep separate (default: 0.75)
@@ -95,19 +87,9 @@ type DedupeResult struct {
 	AutoDeduped       int // Tier 1 (>0.90 similarity)
 	LLMVerified       int // Tier 3 (LLM confirmed duplicate)
 	LLMKept           int // Tier 3 (LLM said not duplicate)
-	FactsImproved     int // Facts that were normalized/improved
-	FactsDeleted      int // Invalid facts that were deleted
-	DuplicateGroups   []DuplicateGroup
-	Improvements      []FactImprovementResult
-	Deletions         []FactDeletionResult
-}
-
-// FactImprovementResult records a fact that was improved.
-type FactImprovementResult struct {
-	ID      int64
-	OldText string
-	NewText string
-	Reason  string
+	FactsDeleted    int // Invalid facts that were deleted
+	DuplicateGroups []DuplicateGroup
+	Deletions       []FactDeletionResult
 }
 
 // FactDeletionResult records a fact that was deleted as invalid.
@@ -143,11 +125,6 @@ func NewFactDeduplicator(storer DedupeStorer, llmVerifier *DedupLLMVerifier) *Fa
 		autoDedupeThreshold:   autoDedupeThreshold,
 		uncertainLowThreshold: uncertainLowThreshold,
 	}
-}
-
-// SetEmbedder sets the embedding generator for regenerating embeddings after fact improvements.
-func (d *FactDeduplicator) SetEmbedder(embedder EmbeddingGenerator) {
-	d.embedder = embedder
 }
 
 // SetThresholds overrides the thresholds loaded from environment variables.
@@ -334,10 +311,8 @@ func (d *FactDeduplicator) dedupeForPersonID(ctx context.Context, personID int64
 		} else {
 			result.LLMVerified += llmResult.verified
 			result.LLMKept += llmResult.kept
-			result.FactsImproved += llmResult.improved
 			result.FactsDeleted += llmResult.deleted
 			result.DuplicateGroups = append(result.DuplicateGroups, llmResult.groups...)
-			result.Improvements = append(result.Improvements, llmResult.improvements...)
 			result.Deletions = append(result.Deletions, llmResult.deletions...)
 		}
 	} else if len(uncertainPairs) > 0 && opts.SkipLLM {
@@ -356,13 +331,11 @@ type uncertainPair struct {
 
 // llmProcessResult contains results from LLM verification.
 type llmProcessResult struct {
-	verified     int
-	kept         int
-	improved     int
-	deleted      int
-	groups       []DuplicateGroup
-	improvements []FactImprovementResult
-	deletions    []FactDeletionResult
+	verified  int
+	kept      int
+	deleted   int
+	groups    []DuplicateGroup
+	deletions []FactDeletionResult
 }
 
 // processUncertainPairs processes uncertain pairs using LLM verification.
@@ -458,48 +431,7 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 			})
 		}
 
-		// Process fact improvements
-		for _, improvement := range llmResponse.FactImprovements {
-			fact, exists := factMap[improvement.ID]
-			if !exists {
-				continue
-			}
-
-			log.Info().
-				Int64("fact_id", improvement.ID).
-				Str("reason", improvement.Reason).
-				Msg("LLM suggested fact improvement")
-
-			if !opts.DryRun {
-				// Update fact text
-				if err := d.storer.UpdateFactText(ctx, improvement.ID, improvement.ImprovedNormalizedFact, improvement.ImprovedEmbeddingText); err != nil {
-					log.Error().Err(err).Int64("fact_id", improvement.ID).Msg("Failed to update fact text")
-					continue
-				}
-
-				// Regenerate embedding if embedder is available
-				if d.embedder != nil {
-					embeddings, err := d.embedder.GenerateEmbeddings(ctx, []string{improvement.ImprovedEmbeddingText})
-					if err != nil || len(embeddings) == 0 {
-						log.Warn().Err(err).Int64("fact_id", improvement.ID).Msg("Failed to regenerate embedding")
-					} else {
-						if err := d.storer.UpdateFactEmbedding(ctx, improvement.ID, embeddings[0]); err != nil {
-							log.Error().Err(err).Int64("fact_id", improvement.ID).Msg("Failed to update embedding")
-						}
-					}
-				}
-			}
-
-			result.improved++
-			result.improvements = append(result.improvements, FactImprovementResult{
-				ID:      improvement.ID,
-				OldText: fact.NormalizedFactText,
-				NewText: improvement.ImprovedNormalizedFact,
-				Reason:  improvement.Reason,
-			})
-		}
-
-		// Count facts kept separate (not in any group, not deleted, not improved)
+		// Count facts kept separate (not in any group, not deleted)
 		processedIDs := make(map[int64]bool)
 		for _, group := range llmResponse.UniqueGroups {
 			processedIDs[group.KeepID] = true
@@ -509,9 +441,6 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 		}
 		for _, invalid := range llmResponse.InvalidFacts {
 			processedIDs[invalid.ID] = true
-		}
-		for _, improvement := range llmResponse.FactImprovements {
-			processedIDs[improvement.ID] = true
 		}
 		for _, fact := range factsForLLM {
 			if !processedIDs[fact.ID] {

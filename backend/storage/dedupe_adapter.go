@@ -107,16 +107,6 @@ func (a *DedupeStorerAdapter) FindOrInsertPersons(ctx context.Context, names []s
 	return a.storer.FindOrInsertPersons(ctx, names)
 }
 
-// UpdateFactText updates a fact's normalized text and embedding text.
-func (a *DedupeStorerAdapter) UpdateFactText(ctx context.Context, factID int64, normalizedFact string, embeddingText string) error {
-	return a.storer.UpdateFactText(ctx, factID, normalizedFact, embeddingText)
-}
-
-// UpdateFactEmbedding updates a fact's embedding vector.
-func (a *DedupeStorerAdapter) UpdateFactEmbedding(ctx context.Context, factID int64, embedding []float32) error {
-	return a.storer.UpdateFactEmbedding(ctx, factID, embedding)
-}
-
 // DeleteFact deletes a fact that has been determined to be invalid.
 func (a *DedupeStorerAdapter) DeleteFact(ctx context.Context, factID int64) error {
 	return a.storer.DeleteFact(ctx, factID)

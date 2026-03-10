@@ -27,10 +27,9 @@ type LLMDedupeAnalysisEntry struct {
 
 // LLMDedupeResponse is the expected JSON response from the LLM.
 type LLMDedupeResponse struct {
-	Analysis         []LLMDedupeAnalysisEntry `json:"analysis"`          // Pairwise reasoning (logged, not acted on)
-	UniqueGroups     []UniqueGroup            `json:"unique_groups"`
-	FactImprovements []FactImprovement        `json:"fact_improvements"`
-	InvalidFacts     []InvalidFact            `json:"invalid_facts"`
+	Analysis     []LLMDedupeAnalysisEntry `json:"analysis"` // Pairwise reasoning (logged, not acted on)
+	UniqueGroups []UniqueGroup            `json:"unique_groups"`
+	InvalidFacts []InvalidFact            `json:"invalid_facts"`
 }
 
 // UniqueGroup represents a group of facts where one is kept and others are duplicates.
@@ -38,14 +37,6 @@ type UniqueGroup struct {
 	KeepID       int64   `json:"keep_id"`
 	DuplicateIDs []int64 `json:"duplicate_ids"`
 	Reason       string  `json:"reason"`
-}
-
-// FactImprovement represents a suggested improvement to a fact's text.
-type FactImprovement struct {
-	ID                     int64  `json:"id"`
-	ImprovedNormalizedFact string `json:"improved_normalized_fact"`
-	ImprovedEmbeddingText  string `json:"improved_embedding_text"`
-	Reason                 string `json:"reason"`
 }
 
 // InvalidFact represents a fact that should be deleted (not a real fact about the person).
@@ -191,9 +182,6 @@ For each potential duplicate pair, reason briefly: same topic AND same stance? O
 DUPLICATE means: same statement in different languages, minor wording differences, or one is a subset of another.
 NOT duplicates: same person but different actions/dates/claims. CRITICAL: Two facts with DIFFERENT canonical_verbs are almost NEVER duplicates (e.g., DENIED vs WAS_CONVICTED are opposing stances on the same topic).
 
-### IMPROVEMENTS
-Suggest when embedding_text is too generic or the fact mixes action with opinion.
-
 INPUT FACTS:
 %s
 
@@ -207,21 +195,13 @@ Return JSON:
   ],
   "invalid_facts": [
     {"id": 3, "reason": "Opinion, not a verifiable fact"}
-  ],
-  "fact_improvements": [
-    {
-      "id": 4,
-      "improved_normalized_fact": "Marine Le Pen a déclaré n'avoir eu aucun sentiment d'avoir commis un délit.",
-      "improved_embedding_text": "wrongdoing parliamentary-assistants-case",
-      "reason": "Made more specific"
-    }
   ]
 }
 
 Rules:
 - analysis is for your reasoning only — it does not affect the output structure
-- A fact can appear in only ONE of: unique_groups, invalid_facts, or fact_improvements
-- Return {"unique_groups": [], "invalid_facts": [], "fact_improvements": []} if everything is fine
+- A fact can appear in only ONE of: unique_groups or invalid_facts
+- Return {"unique_groups": [], "invalid_facts": []} if everything is fine
 
 IMPORTANT: Return ONLY valid JSON.`, string(factsJSON))
 
