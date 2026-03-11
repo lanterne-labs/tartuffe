@@ -1373,8 +1373,8 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	timer := metrics.NewQueryTimer("find_neighbor_facts")
 	start := time.Now()
 
-	// Query returns ALL active (non-duplicate) facts within the similarity threshold (no LIMIT)
-	// This ensures we check all pairs of semantically similar facts
+	// Query returns active (non-duplicate) facts within the similarity threshold (LIMIT 30)
+	// This caps KNN results to prevent unbounded cost growth as facts accumulate
 	query := `
         WITH PersonFacts AS (
             -- Select distinct active fact IDs associated with the person
@@ -1401,13 +1401,14 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
         WHERE
             f.id <> $3 -- Exclude the fact itself
         AND
-            f.embedding <-> $2 <= $4 -- Similarity threshold (no LIMIT - check ALL similar pairs)
+            f.embedding <-> $2 <= $4 -- Similarity threshold
         AND NOT EXISTS (
             SELECT 1 FROM fact_relations fr
             WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
         )
         ORDER BY
-            distance`
+            distance
+        LIMIT 30`
 
 	rows, err := queryer.Query(ctx, query,
 		personID,                      // $1
@@ -3392,4 +3393,216 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 	}
 
 	return updates, nil
+}
+
+// --- Stance Document Storage ---
+
+// StanceDocument represents a stored stance document.
+type StanceDocument struct {
+	ID               int64
+	PersonID         int64
+	ClusterLabel     string
+	ClusterEmbedding []float32
+	Summary          string
+	KeyFactIDs       []int64
+	FactCount        int
+	LastUpdatedAt    time.Time
+	CreatedAt        time.Time
+}
+
+// StanceMatch represents a stance document found via embedding similarity search.
+type StanceMatch struct {
+	StanceDocument
+	Distance float64
+}
+
+// StanceFactInfo holds basic info about a fact associated with a stance document.
+type StanceFactInfo struct {
+	ID                 int64
+	NormalizedFactText string
+	EmbeddingText      string
+	CanonicalVerb      string
+}
+
+// FindMatchingStance finds the closest stance document for a person within a distance threshold.
+// Returns nil, nil if no matching stance is found.
+func (s *PostgresStorer) FindMatchingStance(ctx context.Context, personID int64, embedding []float32, threshold float64) (*StanceMatch, error) {
+	query := `
+		SELECT id, person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count,
+		       last_updated_at, created_at, cluster_embedding <-> $2 AS distance
+		FROM stance_documents
+		WHERE person_id = $1
+		  AND cluster_embedding <-> $2 <= $3
+		ORDER BY cluster_embedding <-> $2
+		LIMIT 1`
+
+	var match StanceMatch
+	var vec pgvector.Vector
+	err := s.pool.QueryRow(ctx, query, personID, pgvector.NewVector(embedding), threshold).Scan(
+		&match.ID,
+		&match.PersonID,
+		&match.ClusterLabel,
+		&vec,
+		&match.Summary,
+		&match.KeyFactIDs,
+		&match.FactCount,
+		&match.LastUpdatedAt,
+		&match.CreatedAt,
+		&match.Distance,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("finding matching stance for person %d: %w", personID, err)
+	}
+
+	match.ClusterEmbedding = vec.Slice()
+	return &match, nil
+}
+
+// InsertStanceDocument inserts a new stance document and returns its ID.
+func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error) {
+	query := `
+		INSERT INTO stance_documents (person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		RETURNING id`
+
+	var id int64
+	err := s.pool.QueryRow(ctx, query,
+		doc.PersonID,
+		doc.ClusterLabel,
+		pgvector.NewVector(doc.ClusterEmbedding),
+		doc.Summary,
+		doc.KeyFactIDs,
+		doc.FactCount,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("inserting stance document: %w", err)
+	}
+
+	return id, nil
+}
+
+// UpdateStanceDocument updates an existing stance document's summary, embedding, key facts, and count.
+func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error {
+	query := `
+		UPDATE stance_documents
+		SET summary = $1, cluster_embedding = $2, key_fact_ids = $3, fact_count = $4, last_updated_at = NOW()
+		WHERE id = $5`
+
+	_, err := s.pool.Exec(ctx, query, summary, pgvector.NewVector(embedding), keyFactIDs, factCount, id)
+	if err != nil {
+		return fmt.Errorf("updating stance document %d: %w", id, err)
+	}
+
+	return nil
+}
+
+// AddFactToStance adds a fact to the stance document join table. No-op if already linked.
+func (s *PostgresStorer) AddFactToStance(ctx context.Context, stanceID int64, factID int64) error {
+	query := `INSERT INTO stance_document_facts (stance_document_id, fact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`
+
+	_, err := s.pool.Exec(ctx, query, stanceID, factID)
+	if err != nil {
+		return fmt.Errorf("adding fact %d to stance %d: %w", factID, stanceID, err)
+	}
+
+	return nil
+}
+
+// GetStanceDocumentsForPerson lists all stance documents for a person, ordered by fact count descending.
+func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error) {
+	query := `
+		SELECT id, person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at, created_at
+		FROM stance_documents
+		WHERE person_id = $1
+		ORDER BY fact_count DESC`
+
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("querying stance documents for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	var docs []StanceDocument
+	for rows.Next() {
+		var doc StanceDocument
+		var vec pgvector.Vector
+		if err := rows.Scan(
+			&doc.ID,
+			&doc.PersonID,
+			&doc.ClusterLabel,
+			&vec,
+			&doc.Summary,
+			&doc.KeyFactIDs,
+			&doc.FactCount,
+			&doc.LastUpdatedAt,
+			&doc.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scanning stance document: %w", err)
+		}
+		doc.ClusterEmbedding = vec.Slice()
+		docs = append(docs, doc)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating stance documents for person %d: %w", personID, err)
+	}
+
+	return docs, nil
+}
+
+// GetFactsForStance retrieves all facts associated with a stance document.
+func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
+	query := `
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, '')
+		FROM facts f
+		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
+		WHERE sdf.stance_document_id = $1
+		ORDER BY f.id`
+
+	rows, err := s.pool.Query(ctx, query, stanceID)
+	if err != nil {
+		return nil, fmt.Errorf("querying facts for stance %d: %w", stanceID, err)
+	}
+	defer rows.Close()
+
+	var facts []StanceFactInfo
+	for rows.Next() {
+		var f StanceFactInfo
+		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb); err != nil {
+			return nil, fmt.Errorf("scanning stance fact: %w", err)
+		}
+		facts = append(facts, f)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating facts for stance %d: %w", stanceID, err)
+	}
+
+	return facts, nil
+}
+
+// GetStanceDocumentCounts returns aggregate stats: total stance documents and total facts linked.
+func (s *PostgresStorer) GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error) {
+	query := `SELECT COUNT(*), COALESCE(SUM(fact_count), 0) FROM stance_documents`
+
+	err = s.pool.QueryRow(ctx, query).Scan(&totalStances, &totalFactsLinked)
+	if err != nil {
+		return 0, 0, fmt.Errorf("querying stance document counts: %w", err)
+	}
+
+	return totalStances, totalFactsLinked, nil
+}
+
+// DeleteStanceDocumentsForPerson deletes all stance documents for a person.
+// The CASCADE on stance_document_facts handles the join table cleanup.
+func (s *PostgresStorer) DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM stance_documents WHERE person_id = $1`, personID)
+	if err != nil {
+		return fmt.Errorf("deleting stance documents for person %d: %w", personID, err)
+	}
+
+	return nil
 }

@@ -32,6 +32,7 @@ type InsertResult struct {
 type FactInserter struct {
 	storer               Storer
 	classifier           *RelationClassifier
+	stanceManager        *StanceManager
 	similarityThreshold  float64 // Cosine distance threshold for relation candidate search
 	autoDedupeThreshold  float64 // Cosine similarity above which to skip as duplicate
 }
@@ -122,6 +123,11 @@ func NewFactInserter(storer Storer) *FactInserter {
 		similarityThreshold: cosineDistance,
 		autoDedupeThreshold: autoDedupeThreshold,
 	}
+}
+
+// SetStanceManager sets the optional stance manager for stance-based contradiction detection.
+func (fi *FactInserter) SetStanceManager(sm *StanceManager) {
+	fi.stanceManager = sm
 }
 
 // InsertFacts processes a batch of facts, inserting each and classifying relations.
@@ -240,6 +246,23 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Link subject entity to this source mention
 	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
 		return false, fmt.Errorf("failed to link subject entity: %w", err)
+	}
+
+	// Stance-based processing (replaces classifyRelations when enabled)
+	if fi.stanceManager != nil {
+		result, err := fi.stanceManager.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
+		if err != nil {
+			log.Warn().Err(err).Int64("fact_id", factID).Msg("Stance processing failed, falling back to relation classification")
+			// Fall through to classifyRelations below
+		} else {
+			log.Info().
+				Int64("fact_id", factID).
+				Str("verdict", result.Verdict).
+				Int64("stance_id", result.StanceID).
+				Msg("Stance processing complete")
+			// Skip classifyRelations - stance manager handles contradiction detection
+			return true, nil
+		}
 	}
 
 	// Classify relations with similar facts (non-blocking - fact is already inserted)
