@@ -114,6 +114,8 @@ type Provider struct {
 	Embedder *embedding.OpenAIEmbeddingGenerator
 	// Storer persists facts to the database.
 	Storer *storage.PostgresStorer
+	// StanceManager is the optional stance manager for incremental stance processing.
+	StanceManager *core.StanceManager
 }
 
 // NewProvider creates a new news Provider with all dependencies.
@@ -416,6 +418,9 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 			}
 
 			inserter := core.NewFactInserter(p.Storer)
+			if p.StanceManager != nil {
+				inserter.SetStanceManager(p.StanceManager)
+			}
 			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).

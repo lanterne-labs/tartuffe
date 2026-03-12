@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse, StanceDocument } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 
@@ -19,9 +19,10 @@
 	let facts: FactWithSource[] = $state([]);
 	let contradictions: ContradictionWithFacts[] = $state([]);
 	let members: MemberInfo[] = $state([]);
+	let stances: StanceDocument[] = $state([]);
 	let loading = $state(true);
 	let error: string | null = $state(null);
-	let activeTab: 'facts' | 'contradictions' = $state('facts');
+	let activeTab: 'facts' | 'contradictions' | 'stances' = $state('facts');
 	let membersExpanded = $state(false);
 
 	let factsPage = $state(0);
@@ -122,11 +123,23 @@
 		}
 	}
 
+	async function loadStances() {
+		try {
+			const response = await fetch(`${API_BASE}/api/person/${personId}/stances`);
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+			stances = await response.json();
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = null;
 
-		await Promise.all([loadPerson(), loadFacts(), loadContradictions()]);
+		await Promise.all([loadPerson(), loadFacts(), loadContradictions(), loadStances()]);
 
 		if (person?.entity_type === 'party') {
 			await loadMembers();
@@ -395,6 +408,9 @@
 			<button class="tab" class:active={activeTab === 'contradictions'} onclick={() => activeTab = 'contradictions'}>
 				Contradictions ({totalContradictions})
 			</button>
+			<button class="tab" class:active={activeTab === 'stances'} onclick={() => activeTab = 'stances'}>
+				Stances ({stances.length})
+			</button>
 		</div>
 
 		<div class="tab-content">
@@ -519,6 +535,25 @@
 							</button>
 						</div>
 					{/if}
+				{/if}
+			{:else if activeTab === 'stances'}
+				{#if stances.length === 0 && !loading}
+					<p class="empty-state">No stances found for this person.</p>
+				{:else}
+					<div class="items-list">
+						{#each stances as stance (stance.id)}
+							<div class="card stance-card">
+								<div class="stance-header">
+									<span class="stance-label">{stance.label}</span>
+									<span class="stance-badge">{stance.fact_count} facts</span>
+								</div>
+								<div class="stance-summary">{stance.summary}</div>
+								<div class="stance-meta">
+									Updated {formatDate(stance.updated_at)}
+								</div>
+							</div>
+						{/each}
+					</div>
 				{/if}
 			{/if}
 		</div>
@@ -985,6 +1020,45 @@
 		color: var(--text-muted);
 		font-size: 0.75rem;
 		padding: 0.5rem;
+	}
+
+	/* Stance Card */
+	.stance-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.75rem;
+		gap: 0.75rem;
+	}
+
+	.stance-label {
+		font-size: 0.938rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		text-transform: capitalize;
+	}
+
+	.stance-badge {
+		font-size: 0.688rem;
+		font-weight: 500;
+		color: var(--accent);
+		background: rgba(59, 130, 246, 0.12);
+		padding: 0.188rem 0.625rem;
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.stance-summary {
+		font-size: 0.875rem;
+		line-height: 1.6;
+		color: var(--text-secondary);
+		margin-bottom: 0.5rem;
+	}
+
+	.stance-meta {
+		font-size: 0.75rem;
+		color: var(--text-muted);
 	}
 
 	/* Contradiction Card */

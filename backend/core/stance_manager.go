@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -15,7 +14,6 @@ import (
 
 // StanceStorer defines the storage interface for stance operations.
 type StanceStorer interface {
-	FindMatchingStance(ctx context.Context, personID int64, embedding []float32, threshold float64) (*StanceMatch, error)
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
 	UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
@@ -67,6 +65,24 @@ type stanceLLMResponse struct {
 	ContradictingFactID int64  `json:"contradicting_key_fact_id"`
 }
 
+// topicAssignmentResponse is the expected JSON response from the topic assignment LLM call.
+type topicAssignmentResponse struct {
+	Reasoning     string `json:"reasoning"`
+	AssignedIndex int    `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
+	NewTopicLabel string `json:"new_topic_label"`      // only set when AssignedIndex == 0
+}
+
+// TopicGroupingResponse is the expected JSON response from the topic grouping LLM call (used by backfill).
+type TopicGroupingResponse struct {
+	Groups []TopicGroup `json:"groups"`
+}
+
+// TopicGroup represents a group of related topic labels merged into one.
+type TopicGroup struct {
+	GroupName string   `json:"group_name"`
+	Labels    []string `json:"labels"`
+}
+
 // summaryLLMResponse is the expected JSON response from the summary generation LLM call.
 type summaryLLMResponse struct {
 	Summary    string  `json:"summary"`
@@ -80,8 +96,7 @@ type StanceManager struct {
 	apiKey    string
 	apiURL    string
 	model     string
-	client    *llm.BaseLLMClient
-	threshold float64 // Distance threshold for matching stances (default 0.35)
+	client *llm.BaseLLMClient
 }
 
 // NewStanceManagerFromEnv creates a new StanceManager using OPEN_AI_* environment variables.
@@ -105,89 +120,120 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 	base = strings.TrimRight(base, "/")
 	apiURL := base + "/chat/completions"
 
-	threshold := 0.35
-	if env := os.Getenv("STANCE_MATCH_THRESHOLD"); env != "" {
-		if t, err := strconv.ParseFloat(env, 64); err == nil {
-			threshold = t
-			log.Info().Float64("threshold", threshold).Msg("Loaded STANCE_MATCH_THRESHOLD from environment")
-		} else {
-			log.Warn().Str("value", env).Err(err).Msg("Invalid STANCE_MATCH_THRESHOLD, using default 0.35")
-		}
-	}
-
 	return &StanceManager{
-		storer:    storer,
-		apiKey:    apiKey,
-		apiURL:    apiURL,
-		model:     model,
-		client:    llm.NewBaseLLMClient(),
-		threshold: threshold,
+		storer: storer,
+		apiKey: apiKey,
+		apiURL: apiURL,
+		model:  model,
+		client: llm.NewBaseLLMClient(),
 	}, nil
 }
 
 // ProcessNewFact analyzes a new fact against existing stances for the given person.
-// It either creates a new stance or updates an existing one, potentially detecting contradictions.
+// It uses LLM-based topic assignment to find the right stance, then analyzes the relationship.
 func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
-	match, err := sm.storer.FindMatchingStance(ctx, personID, embedding, sm.threshold)
+	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
-		return nil, fmt.Errorf("finding matching stance: %w", err)
+		return nil, fmt.Errorf("getting stances for person: %w", err)
 	}
 
-	// No match: create a new stance document
-	if match == nil {
-		label := factText
-		if len(label) > 100 {
-			label = label[:100]
-		}
+	// Ask LLM which topic this fact belongs to (works with 0 existing stances too — returns new label)
+	assignment, err := sm.assignTopic(ctx, stances, factText)
+	if err != nil {
+		return nil, fmt.Errorf("topic assignment: %w", err)
+	}
 
-		doc := StanceDocument{
-			PersonID:         personID,
-			ClusterLabel:     strings.TrimSpace(label),
-			ClusterEmbedding: embedding,
-			Summary:          factText,
-			KeyFactIDs:       []int64{factID},
-			FactCount:        1,
-		}
-
-		stanceID, err := sm.storer.InsertStanceDocument(ctx, doc)
-		if err != nil {
-			return nil, fmt.Errorf("inserting new stance document: %w", err)
-		}
-
-		if err := sm.storer.AddFactToStance(ctx, stanceID, factID); err != nil {
-			return nil, fmt.Errorf("adding fact to new stance: %w", err)
-		}
-
+	// New topic: create a new stance
+	if assignment.AssignedIndex == 0 {
+		label := assignment.NewTopicLabel
 		log.Info().
-			Int64("stance_id", stanceID).
+			Str("new_topic", label).
 			Int64("fact_id", factID).
-			Int64("person_id", personID).
-			Msg("Created new stance document")
-
-		return &StanceProcessResult{
-			Verdict:  "NEW_STANCE",
-			StanceID: stanceID,
-		}, nil
+			Str("reasoning", assignment.Reasoning).
+			Msg("LLM assigned fact to new topic")
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
 	}
 
-	// Match found: call LLM to determine relationship
-	keyFacts, err := sm.storer.GetFactsForStance(ctx, match.ID)
+	// Find the matched stance by index (1-indexed)
+	if assignment.AssignedIndex < 1 || assignment.AssignedIndex > len(stances) {
+		log.Warn().
+			Int("assigned_index", assignment.AssignedIndex).
+			Int("total_stances", len(stances)).
+			Msg("LLM returned out-of-range topic index, creating new stance")
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, "")
+	}
+	matched := &stances[assignment.AssignedIndex-1]
+
+	log.Info().
+		Int64("stance_id", matched.ID).
+		Str("topic", matched.ClusterLabel).
+		Int64("fact_id", factID).
+		Str("reasoning", assignment.Reasoning).
+		Msg("LLM assigned fact to existing topic")
+
+	// Get key facts for the matched stance and analyze relationship
+	keyFacts, err := sm.storer.GetFactsForStance(ctx, matched.ID)
 	if err != nil {
-		return nil, fmt.Errorf("getting facts for stance %d: %w", match.ID, err)
+		return nil, fmt.Errorf("getting facts for stance %d: %w", matched.ID, err)
 	}
 
-	llmResp, err := sm.callLLM(ctx, match.Summary, keyFacts, factText)
+	llmResp, err := sm.callLLM(ctx, matched.Summary, keyFacts, factText)
 	if err != nil {
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
 	}
 
 	// Add the fact to the stance join table regardless of verdict
-	if err := sm.storer.AddFactToStance(ctx, match.ID, factID); err != nil {
-		return nil, fmt.Errorf("adding fact to stance %d: %w", match.ID, err)
+	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
+		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
 	}
 
+	return sm.handleVerdict(ctx, matched, personID, factID, embedding, llmResp)
+}
+
+// createNewStance creates a new stance document for a fact. If label is empty, uses the fact text.
+func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label string) (*StanceProcessResult, error) {
+	if label == "" {
+		label = factText
+	}
+	if len(label) > 120 {
+		label = label[:120]
+	}
+
+	doc := StanceDocument{
+		PersonID:         personID,
+		ClusterLabel:     strings.TrimSpace(label),
+		ClusterEmbedding: embedding,
+		Summary:          factText,
+		KeyFactIDs:       []int64{factID},
+		FactCount:        1,
+	}
+
+	stanceID, err := sm.storer.InsertStanceDocument(ctx, doc)
+	if err != nil {
+		return nil, fmt.Errorf("inserting new stance document: %w", err)
+	}
+
+	if err := sm.storer.AddFactToStance(ctx, stanceID, factID); err != nil {
+		return nil, fmt.Errorf("adding fact to new stance: %w", err)
+	}
+
+	log.Info().
+		Int64("stance_id", stanceID).
+		Int64("fact_id", factID).
+		Int64("person_id", personID).
+		Str("label", doc.ClusterLabel).
+		Msg("Created new stance document")
+
+	return &StanceProcessResult{
+		Verdict:  "NEW_STANCE",
+		StanceID: stanceID,
+	}, nil
+}
+
+// handleVerdict processes the LLM analysis verdict and updates the stance accordingly.
+func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, embedding []float32, llmResp *stanceLLMResponse) (*StanceProcessResult, error) {
 	result := &StanceProcessResult{
-		StanceID:  match.ID,
+		StanceID:  matched.ID,
 		Reasoning: llmResp.Reasoning,
 	}
 
@@ -195,31 +241,28 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	case "DUPLICATE":
 		result.Verdict = "DUPLICATE"
 		log.Info().
-			Int64("stance_id", match.ID).
+			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Float64("distance", match.Distance).
 			Str("reasoning", llmResp.Reasoning).
 			Msg("Fact is duplicate of existing stance")
 
 	case "NEW_INFO":
 		result.Verdict = "NEW_INFO"
-		newCentroid := updateCentroid(match.ClusterEmbedding, embedding, match.FactCount)
-		newFactCount := match.FactCount + 1
+		newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
+		newFactCount := matched.FactCount + 1
 
-		// Keep existing key facts, potentially add new one if list is short
-		keyFactIDs := match.KeyFactIDs
+		keyFactIDs := matched.KeyFactIDs
 		if len(keyFactIDs) < 10 {
 			keyFactIDs = append(keyFactIDs, factID)
 		}
 
-		if err := sm.storer.UpdateStanceDocument(ctx, match.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
-			return nil, fmt.Errorf("updating stance document %d: %w", match.ID, err)
+		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
+			return nil, fmt.Errorf("updating stance document %d: %w", matched.ID, err)
 		}
 
 		log.Info().
-			Int64("stance_id", match.ID).
+			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Float64("distance", match.Distance).
 			Int("new_fact_count", newFactCount).
 			Msg("Added new info to existing stance")
 
@@ -227,36 +270,33 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		result.Verdict = "CONTRADICTION"
 		result.ContradictedFactID = llmResp.ContradictingFactID
 
-		// Record the contradiction
 		if llmResp.ContradictingFactID > 0 {
 			if err := sm.storer.RecordContradiction(ctx, personID, factID, llmResp.ContradictingFactID, llmResp.Reasoning); err != nil {
 				return nil, fmt.Errorf("recording contradiction: %w", err)
 			}
 		} else {
 			log.Warn().
-				Int64("stance_id", match.ID).
+				Int64("stance_id", matched.ID).
 				Int64("fact_id", factID).
 				Msg("LLM detected contradiction but could not identify specific contradicted fact")
 		}
 
-		// Update stance with new summary and centroid
-		newCentroid := updateCentroid(match.ClusterEmbedding, embedding, match.FactCount)
-		newFactCount := match.FactCount + 1
+		newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
+		newFactCount := matched.FactCount + 1
 
-		keyFactIDs := match.KeyFactIDs
+		keyFactIDs := matched.KeyFactIDs
 		if len(keyFactIDs) < 10 {
 			keyFactIDs = append(keyFactIDs, factID)
 		}
 
-		if err := sm.storer.UpdateStanceDocument(ctx, match.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
-			return nil, fmt.Errorf("updating stance document %d after contradiction: %w", match.ID, err)
+		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
+			return nil, fmt.Errorf("updating stance document %d after contradiction: %w", matched.ID, err)
 		}
 
 		log.Warn().
-			Int64("stance_id", match.ID).
+			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
 			Int64("contradicted_fact_id", llmResp.ContradictingFactID).
-			Float64("distance", match.Distance).
 			Str("reasoning", llmResp.Reasoning).
 			Msg("Contradiction detected in stance")
 
@@ -393,22 +433,196 @@ For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
 	return resp, nil
 }
 
-// parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.
-func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
-	content = strings.TrimSpace(content)
+// assignTopic asks the LLM to assign a new fact to one of the existing stance topics or declare it new.
+func (sm *StanceManager) assignTopic(ctx context.Context, stances []StanceDocument, factText string) (*topicAssignmentResponse, error) {
+	var topicsBuilder strings.Builder
+	for i, s := range stances {
+		topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
+			i+1, s.ClusterLabel, s.FactCount, truncate(s.Summary, 150)))
+	}
+
+	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to.
+
+EXISTING TOPICS:
+%s
+NEW FACT:
+%s
+
+RULES:
+- Assign the fact to an existing topic if it is about the SAME subject matter, even if it adds new details or uses different wording.
+- Topics about the same legal case, event, policy area, or political issue should be consolidated.
+- Example: a fact about "sentencing in the parliamentary assistants case" belongs to the same topic as "conviction in the parliamentary assistants case" — they are the same legal proceeding.
+- Example: a fact about "presidential candidacy after conviction" belongs with other "presidential candidacy" facts.
+- Only create a NEW topic if the fact is about a genuinely different subject that does not fit any existing topic.
+- When in doubt, assign to the closest existing topic rather than creating a new one.
+- Prefer broader topic matches over narrow distinctions.
+
+LABEL RULES (for new_topic_label when creating a new topic):
+- Include the SPECIFIC case, event, or policy name (e.g., "parliamentary assistants case", "2027 presidential election")
+- Include a TEMPORAL ANCHOR when relevant: trial year, election cycle, date range (e.g., "2025 appeal trial", "Jan 2026 ruling")
+- The label must be specific enough that a DIFFERENT event on the same broad theme would clearly NOT match
+- Do NOT include the person's name (labels are already per-person)
+- Bad: "justice politique" / "presidential candidacy" / "party funding"
+- Good: "denial of wrongdoing -- PA case 2025 appeal" / "presidential candidacy post-ineligibility 2027" / "EU fund embezzlement allegations 2024"
+
+Return ONLY valid JSON:
+{
+  "reasoning": "Brief explanation of your choice",
+  "assigned_topic_index": 0,
+  "new_topic_label": "specific descriptive label, max 120 chars (only if assigned_topic_index is 0)"
+}
+
+Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(stances))
+
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: "You are a political fact topic classifier. Return only valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling topic assignment request: %w", err)
+	}
+
+	log.Debug().
+		Int("existing_topics", len(stances)).
+		Str("new_fact", truncate(factText, 100)).
+		Msg("Sending topic assignment to LLM")
+
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("LLM topic assignment request failed: %w", err)
+	}
+
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return nil, fmt.Errorf("decoding topic assignment response: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("topic assignment LLM returned no content")
+	}
+
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+
+	var resp topicAssignmentResponse
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic assignment response")
+		return nil, fmt.Errorf("parsing topic assignment response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// GroupTopicLabels asks the LLM to group related topic labels into broader themes.
+// Used by backfill to merge fragmented topic labels before creating stances.
+func (sm *StanceManager) GroupTopicLabels(ctx context.Context, labels []string) (*TopicGroupingResponse, error) {
+	if len(labels) == 0 {
+		return &TopicGroupingResponse{}, nil
+	}
+
+	var labelsBuilder strings.Builder
+	for i, l := range labels {
+		labelsBuilder.WriteString(fmt.Sprintf("%d. %s\n", i+1, l))
+	}
+
+	prompt := fmt.Sprintf(`You are grouping topic labels about a political figure into broader themes. Many labels refer to the SAME subject matter but are worded differently.
+
+LABELS:
+%s
+RULES:
+- Group labels that are about the SAME subject, case, event, or policy area into one group.
+- Example: "fund-embezzlement generalized-system", "fund-embezzlement instructions", "embezzlement European-funds", "embezzlement public-funds parliamentary-assistants-case" should ALL be in one group about embezzlement.
+- Example: "ineligibility sentence democratic", "ineligibility decision contestation", "ineligibility first-instance conviction" should ALL be in one group about ineligibility.
+- Example: "presidential election candidacy", "presidential-candidacy future-conviction", "presidential candidacy succession" should ALL be in one group about presidential candidacy.
+- Choose a clear, specific group name (max 120 chars) with enough context to distinguish it from similar topics in different time periods.
+- Include the SPECIFIC case name, event, or policy (e.g., "parliamentary assistants case", "2027 presidential election").
+- Include a TEMPORAL ANCHOR when relevant: year, trial phase, election cycle.
+- Bad: "embezzlement" / "presidential candidacy"
+- Good: "embezzlement -- parliamentary assistants case (2024-2025 trial)" / "presidential candidacy 2027 post-conviction"
+- Every label MUST appear in exactly one group. No label should be left out.
+- Keep truly distinct topics separate (e.g., "acquittal public-insult case" is different from "parliamentary assistants case conviction").
+- Err on the side of merging: if two labels could plausibly be about the same subject, merge them.
+
+Return ONLY valid JSON:
+{
+  "groups": [
+    {"group_name": "descriptive name", "labels": ["label1", "label2"]},
+    {"group_name": "another topic", "labels": ["label3"]}
+  ]
+}`, labelsBuilder.String())
+
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: "You are a topic grouping assistant for political facts. Return only valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling topic grouping request: %w", err)
+	}
+
+	log.Debug().Int("label_count", len(labels)).Msg("Sending topic labels to LLM for grouping")
+
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("LLM topic grouping request failed: %w", err)
+	}
+
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return nil, fmt.Errorf("decoding topic grouping response: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("topic grouping LLM returned no content")
+	}
+
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+
+	var resp TopicGroupingResponse
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic grouping response")
+		return nil, fmt.Errorf("parsing topic grouping response: %w", err)
+	}
+
+	log.Info().Int("groups", len(resp.Groups)).Int("input_labels", len(labels)).Msg("LLM grouped topic labels")
+
+	return &resp, nil
+}
+
+// stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.
+func stripMarkdownCodeBlock(content string) string {
 	if strings.HasPrefix(content, "```json") {
 		content = strings.TrimPrefix(content, "```json")
 		if idx := strings.LastIndex(content, "```"); idx != -1 {
 			content = content[:idx]
 		}
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
+		return strings.TrimSpace(content)
+	}
+	if strings.HasPrefix(content, "```") {
 		content = strings.TrimPrefix(content, "```")
 		if idx := strings.LastIndex(content, "```"); idx != -1 {
 			content = content[:idx]
 		}
-		content = strings.TrimSpace(content)
+		return strings.TrimSpace(content)
 	}
+	return content
+}
+
+// parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.
+func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
+	content = stripMarkdownCodeBlock(strings.TrimSpace(content))
 
 	var resp stanceLLMResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
@@ -482,22 +696,7 @@ Return ONLY valid JSON:
 		return "", nil, fmt.Errorf("summary LLM returned no content")
 	}
 
-	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-
-	// Strip markdown code blocks if present
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	}
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 
 	var resp summaryLLMResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {

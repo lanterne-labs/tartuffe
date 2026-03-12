@@ -29,42 +29,6 @@ func newMockStanceStorer() *mockStanceStorer {
 	}
 }
 
-func mockCosineDistance(a, b []float32) float64 {
-	if len(a) != len(b) {
-		return 2.0
-	}
-	var dot, na, nb float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		na += float64(a[i]) * float64(a[i])
-		nb += float64(b[i]) * float64(b[i])
-	}
-	if na == 0 || nb == 0 {
-		return 2.0
-	}
-	return 1.0 - dot/(math.Sqrt(na)*math.Sqrt(nb))
-}
-
-func (m *mockStanceStorer) FindMatchingStance(ctx context.Context, personID int64, embedding []float32, threshold float64) (*StanceMatch, error) {
-	var best *StanceMatch
-	for _, s := range m.stances {
-		if s.PersonID != personID {
-			continue
-		}
-		dist := mockCosineDistance(embedding, s.ClusterEmbedding)
-		if dist > threshold {
-			continue
-		}
-		if best == nil || dist < best.Distance {
-			best = &StanceMatch{
-				StanceDocument: s,
-				Distance:       dist,
-			}
-		}
-	}
-	return best, nil
-}
-
 func (m *mockStanceStorer) InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error) {
 	id := m.nextID
 	m.nextID++
@@ -136,8 +100,7 @@ func (m *mockStanceStorer) RecordContradiction(ctx context.Context, personID int
 func TestProcessNewFact_NewStance(t *testing.T) {
 	mock := newMockStanceStorer()
 	sm := &StanceManager{
-		storer:    mock,
-		threshold: 0.35,
+		storer: mock,
 	}
 
 	embedding := []float32{1, 0, 0}

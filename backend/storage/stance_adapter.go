@@ -15,30 +15,6 @@ func NewStanceStorerAdapter(storer *PostgresStorer) *StanceStorerAdapter {
 	return &StanceStorerAdapter{storer: storer}
 }
 
-// FindMatchingStance finds the closest stance document for a person within a distance threshold.
-func (a *StanceStorerAdapter) FindMatchingStance(ctx context.Context, personID int64, embedding []float32, threshold float64) (*core.StanceMatch, error) {
-	match, err := a.storer.FindMatchingStance(ctx, personID, embedding, threshold)
-	if err != nil {
-		return nil, err
-	}
-	if match == nil {
-		return nil, nil
-	}
-
-	return &core.StanceMatch{
-		StanceDocument: core.StanceDocument{
-			ID:               match.ID,
-			PersonID:         match.PersonID,
-			ClusterLabel:     match.ClusterLabel,
-			ClusterEmbedding: match.ClusterEmbedding,
-			Summary:          match.Summary,
-			KeyFactIDs:       match.KeyFactIDs,
-			FactCount:        match.FactCount,
-		},
-		Distance: match.Distance,
-	}, nil
-}
-
 // InsertStanceDocument inserts a new stance document and returns its ID.
 func (a *StanceStorerAdapter) InsertStanceDocument(ctx context.Context, doc core.StanceDocument) (int64, error) {
 	storageDoc := StanceDocument{

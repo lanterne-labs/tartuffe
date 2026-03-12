@@ -154,6 +154,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/person/{id}/contradictions", ws.handleGetPersonContradictions)
 		r.Get("/person/{id}/members", ws.handleGetPersonMembers)
 		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
+		r.Get("/person/{id}/stances", ws.handleGetPersonStances)
 		r.Get("/events", ws.handleEventsSSE)
 	})
 }
@@ -367,6 +368,47 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(members)
+}
+
+// StanceResponse is the API response for a stance document (no embedding or key_fact_ids).
+type StanceResponse struct {
+	ID        int64     `json:"id"`
+	Label     string    `json:"label"`
+	Summary   string    `json:"summary"`
+	FactCount int       `json:"fact_count"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// handleGetPersonStances returns stance documents for a specific person.
+func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personIDStr := chi.URLParam(r, "id")
+
+	personID, err := strconv.ParseInt(personIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	docs, err := ws.storer.GetStanceDocumentsForPerson(ctx, personID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get stances: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]StanceResponse, len(docs))
+	for i, d := range docs {
+		result[i] = StanceResponse{
+			ID:        d.ID,
+			Label:     d.ClusterLabel,
+			Summary:   d.Summary,
+			FactCount: d.FactCount,
+			UpdatedAt: d.LastUpdatedAt,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // handleGetFactPersons returns persons who have a fact related to the given fact

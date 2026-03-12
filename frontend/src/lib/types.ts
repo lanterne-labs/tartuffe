@@ -38,6 +38,14 @@ export interface PaginatedResponse<T> {
 	total: number;
 }
 
+export interface StanceDocument {
+	id: number;
+	label: string;
+	summary: string;
+	fact_count: number;
+	updated_at: string;
+}
+
 export interface EventData {
 	id: number;
 	topic: string;

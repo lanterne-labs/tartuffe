@@ -326,12 +326,20 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			// Wrap with batch extractor for concurrency control
 			batchExtractor := core.NewBatchExtractorFromEnv(contentExt)
 
+			// Create stance manager for incremental stance processing
+			stanceAdapter := storage.NewStanceStorerAdapter(storer)
+			stanceMgr, smErr := core.NewStanceManagerFromEnv(stanceAdapter)
+			if smErr != nil {
+				log.Warn().Err(smErr).Msg("Stance manager not available, stances will not be updated during insertion")
+			}
+
 			newsProvider = &news.Provider{
 				NewsSearch:       serpAPI,
 				ContentExtractor: batchExtractor,
 				FactExtractor:    factExtractor,
 				Embedder:         embedder,
 				Storer:           storer,
+				StanceManager:    stanceMgr,
 			}
 		}
 
@@ -587,6 +595,15 @@ func runCacheOnlyExtraction(
 		Msg("Starting cache-only extraction (no news search)")
 
 	factInserter := core.NewFactInserter(storer)
+
+	// Wire stance manager for incremental stance processing
+	stanceAdapter := storage.NewStanceStorerAdapter(storer)
+	stanceMgr, smErr := core.NewStanceManagerFromEnv(stanceAdapter)
+	if smErr != nil {
+		log.Warn().Err(smErr).Msg("Stance manager not available, stances will not be updated during insertion")
+	} else {
+		factInserter.SetStanceManager(stanceMgr)
+	}
 	totalFacts := 0
 	totalSkippedDedup := 0
 	totalFiles := 0

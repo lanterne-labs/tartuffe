@@ -5,7 +5,6 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 	"fmt"
-	"math"
 	"strings"
 
 	pgvector "github.com/pgvector/pgvector-go"
@@ -21,14 +20,15 @@ var (
 var stancesBackfillCmd = &cobra.Command{
 	Use:   "backfill",
 	Short: "Backfill stance documents from existing facts",
-	Long: `Groups existing facts by embedding similarity and creates stance documents.
+	Long: `Groups existing facts by topic and creates stance documents using LLM-based topic grouping.
 
 For each person (or specified person):
 1. Loads all active facts with embeddings
-2. Groups facts by embedding_text similarity (exact match first, then cosine distance < 0.2)
-3. For multi-fact clusters: generates LLM summary
-4. For single-fact clusters: uses fact text as summary
-5. Inserts stance documents and links facts
+2. Groups facts by exact embedding_text match (initial clusters)
+3. Uses LLM to merge related topic labels into broader themes
+4. For multi-fact clusters: generates LLM summary
+5. For single-fact clusters: uses fact text as summary
+6. Inserts stance documents and links facts
 
 Examples:
   # Backfill all persons
@@ -160,9 +160,42 @@ func backfillStancesForPerson(
 
 	log.Info().Str("person", personName).Int("facts", len(facts)).Msg("Loaded facts for clustering")
 
-	// Cluster facts by embedding similarity
-	clusters := clusterFacts(facts)
-	log.Info().Str("person", personName).Int("clusters", len(clusters)).Msg("Clustered facts")
+	// Step 1: Group facts by exact embedding_text match
+	initialClusters := clusterFactsByExactLabel(facts)
+	log.Info().Str("person", personName).Int("initial_clusters", len(initialClusters)).Msg("Grouped facts by exact embedding_text")
+
+	// Step 2: Use LLM to group related labels into broader themes
+	labels := make([]string, 0, len(initialClusters))
+	for label := range initialClusters {
+		labels = append(labels, label)
+	}
+
+	var mergedClusters []factCluster
+	if dryRun || stanceManager == nil {
+		// In dry-run mode, use initial clusters as-is
+		for label, clusterFacts := range initialClusters {
+			mergedClusters = append(mergedClusters, factCluster{
+				facts:    clusterFacts,
+				centroid: computeCentroid(clusterFacts),
+				label:    label,
+			})
+		}
+	} else {
+		grouping, err := stanceManager.GroupTopicLabels(ctx, labels)
+		if err != nil {
+			log.Error().Err(err).Msg("LLM topic grouping failed, falling back to exact-match clusters")
+			for label, clusterFacts := range initialClusters {
+				mergedClusters = append(mergedClusters, factCluster{
+					facts:    clusterFacts,
+					centroid: computeCentroid(clusterFacts),
+					label:    label,
+				})
+			}
+		} else {
+			mergedClusters = applyTopicGrouping(initialClusters, grouping)
+			log.Info().Str("person", personName).Int("merged_clusters", len(mergedClusters)).Msg("Merged clusters via LLM grouping")
+		}
+	}
 
 	// Check existing stances to skip duplicates
 	existingStances, err := adapter.GetStanceDocumentsForPerson(ctx, personID)
@@ -174,7 +207,7 @@ func backfillStancesForPerson(
 		existingLabels[s.ClusterLabel] = true
 	}
 
-	for _, cluster := range clusters {
+	for _, cluster := range mergedClusters {
 		label := cluster.label
 		if existingLabels[label] {
 			log.Debug().Str("label", label).Str("person", personName).Msg("Stance already exists, skipping")
@@ -196,7 +229,6 @@ func backfillStancesForPerson(
 			summary = cluster.facts[0].FactText
 			keyFactIDs = []int64{cluster.facts[0].ID}
 		} else {
-			// Build StanceFactInfo list for LLM
 			stanceFactInfos := make([]core.StanceFactInfo, len(cluster.facts))
 			for i, f := range cluster.facts {
 				stanceFactInfos[i] = core.StanceFactInfo{
@@ -215,10 +247,9 @@ func backfillStancesForPerson(
 			}
 		}
 
-		// Truncate label to 100 chars
 		clusterLabel := strings.TrimSpace(label)
-		if len(clusterLabel) > 100 {
-			clusterLabel = clusterLabel[:100]
+		if len(clusterLabel) > 120 {
+			clusterLabel = clusterLabel[:120]
 		}
 
 		doc := core.StanceDocument{
@@ -236,7 +267,6 @@ func backfillStancesForPerson(
 			continue
 		}
 
-		// Link all facts to the stance
 		for _, f := range cluster.facts {
 			if err := adapter.AddFactToStance(ctx, stanceID, f.ID); err != nil {
 				log.Error().Err(err).Int64("stance_id", stanceID).Int64("fact_id", f.ID).Msg("Failed to link fact to stance")
@@ -294,67 +324,113 @@ func loadFactsForBackfill(ctx context.Context, storer *storage.PostgresStorer, p
 	return facts, nil
 }
 
-func clusterFacts(facts []backfillFact) []factCluster {
-	var clusters []factCluster
-
+// clusterFactsByExactLabel groups facts by exact embedding_text match.
+func clusterFactsByExactLabel(facts []backfillFact) map[string][]backfillFact {
+	clusters := make(map[string][]backfillFact)
 	for _, fact := range facts {
-		matched := false
-		for i := range clusters {
-			// Check exact embedding_text match first
-			if clusters[i].label == fact.EmbeddingText {
-				addToCluster(&clusters[i], fact)
-				matched = true
-				break
-			}
-			// Then check cosine distance
-			if cosineDistance(clusters[i].centroid, fact.Embedding) < 0.2 {
-				addToCluster(&clusters[i], fact)
-				matched = true
-				break
-			}
+		label := fact.EmbeddingText
+		if label == "" {
+			label = fmt.Sprintf("unnamed-fact-%d", fact.ID)
 		}
+		clusters[label] = append(clusters[label], fact)
+	}
+	return clusters
+}
 
-		if !matched {
-			clusters = append(clusters, factCluster{
-				facts:    []backfillFact{fact},
-				centroid: copyEmbedding(fact.Embedding),
-				label:    fact.EmbeddingText,
-			})
+// applyTopicGrouping merges initial clusters based on LLM grouping results.
+// Any labels not assigned by the LLM are added to the most closely named group or kept standalone.
+func applyTopicGrouping(initialClusters map[string][]backfillFact, grouping *core.TopicGroupingResponse) []factCluster {
+	// Build reverse map: original label → group name
+	labelToGroup := make(map[string]string)
+	for _, g := range grouping.Groups {
+		for _, label := range g.Labels {
+			labelToGroup[label] = g.GroupName
 		}
+	}
+
+	// Collect group names for matching unassigned labels
+	groupNames := make([]string, 0, len(grouping.Groups))
+	for _, g := range grouping.Groups {
+		groupNames = append(groupNames, g.GroupName)
+	}
+
+	// Merge facts into groups
+	groupFacts := make(map[string][]backfillFact)
+	for label, facts := range initialClusters {
+		groupName, ok := labelToGroup[label]
+		if !ok {
+			// Try to match unassigned label to an existing group by substring overlap
+			groupName = findBestGroupMatch(label, groupNames)
+			if groupName != "" {
+				log.Info().Str("label", label).Str("matched_group", groupName).Msg("Matched unassigned label to group by keyword overlap")
+			} else {
+				groupName = label
+				log.Warn().Str("label", label).Msg("Label not assigned to any group by LLM, keeping standalone")
+			}
+		}
+		groupFacts[groupName] = append(groupFacts[groupName], facts...)
+	}
+
+	// Build final clusters
+	clusters := make([]factCluster, 0, len(groupFacts))
+	for groupName, facts := range groupFacts {
+		clusters = append(clusters, factCluster{
+			facts:    facts,
+			centroid: computeCentroid(facts),
+			label:    groupName,
+		})
 	}
 
 	return clusters
 }
 
-func addToCluster(c *factCluster, fact backfillFact) {
-	oldCount := len(c.facts)
-	c.facts = append(c.facts, fact)
+// findBestGroupMatch finds the best group name for an unassigned label by checking
+// if the label shares significant keywords with any group name.
+func findBestGroupMatch(label string, groupNames []string) string {
+	labelLower := strings.ToLower(label)
+	labelWords := strings.FieldsFunc(labelLower, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' '
+	})
 
-	// Update centroid as weighted average
-	newCount := float32(oldCount + 1)
-	for i := range c.centroid {
-		c.centroid[i] = (c.centroid[i]*float32(oldCount) + fact.Embedding[i]) / newCount
+	bestGroup := ""
+	bestOverlap := 0
+
+	for _, group := range groupNames {
+		groupLower := strings.ToLower(group)
+		overlap := 0
+		for _, word := range labelWords {
+			if len(word) >= 4 && strings.Contains(groupLower, word) {
+				overlap++
+			}
+		}
+		if overlap > bestOverlap {
+			bestOverlap = overlap
+			bestGroup = group
+		}
 	}
+
+	// Require at least 2 keyword matches to avoid false positives
+	if bestOverlap >= 2 {
+		return bestGroup
+	}
+	return ""
 }
 
-func copyEmbedding(emb []float32) []float32 {
-	cp := make([]float32, len(emb))
-	copy(cp, emb)
-	return cp
-}
-
-func cosineDistance(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 2.0 // max distance
+// computeCentroid calculates the average embedding of a set of facts.
+func computeCentroid(facts []backfillFact) []float32 {
+	if len(facts) == 0 {
+		return nil
 	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
+	dim := len(facts[0].Embedding)
+	centroid := make([]float32, dim)
+	for _, f := range facts {
+		for i, v := range f.Embedding {
+			centroid[i] += v
+		}
 	}
-	if normA == 0 || normB == 0 {
-		return 2.0
+	n := float32(len(facts))
+	for i := range centroid {
+		centroid[i] /= n
 	}
-	return 1.0 - dot/(math.Sqrt(normA)*math.Sqrt(normB))
+	return centroid
 }

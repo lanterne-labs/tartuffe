@@ -2,6 +2,23 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-10: Stance Document System for O(1) Contradiction Detection
+
+### What was done
+- **Stance documents**: New `stance_documents` + `stance_document_facts` tables that compress all facts on a topic into a single summary per person. Each stance has a centroid embedding, summary text, key fact IDs, and fact count.
+- **StanceManager** (`backend/core/stance_manager.go`): Core logic — `ProcessNewFact` finds the closest stance by embedding similarity (threshold 0.35), then either creates a new stance (no LLM) or makes ONE LLM call that returns DUPLICATE/NEW_INFO/CONTRADICTION verdict with updated summary.
+- **Fact inserter integration**: Optional `StanceManager` wired into `FactInserter` — when set, replaces `classifyRelations` for contradiction detection. Falls back to old behavior if stance manager is nil or fails.
+- **KNN cap**: `LIMIT 30` on `FindNeighborFactsForPerson` as immediate safety net independent of stance system.
+- **CLI**: `dm stances {backfill, list, stats, rebuild}` — backfill clusters existing facts by embedding_text similarity, calls LLM for multi-fact summaries. Rebuild deletes + re-backfills.
+- **Removed**: Fact improvement feature from dedup pipeline (unused complexity).
+
+### Key design decisions
+- Stance matching uses cosine distance 0.35 (tunable via `STANCE_MATCH_THRESHOLD` env var) — tight enough to avoid merging unrelated topics, loose enough to catch same-topic paraphrases.
+- Single LLM prompt handles dedup + contradiction + summary update — one call per new fact instead of O(N) pairwise comparisons.
+- Centroid updated via weighted average `(old * count + new) / (count + 1)` with unit normalization — drifts toward the topic center as facts accumulate.
+- Backfill clusters by exact `embedding_text` match first, then merges clusters within cosine distance 0.2.
+- No new env vars required (reuses OPEN_AI_* vars). Optional `STANCE_MATCH_THRESHOLD` for tuning.
+
 ## 2026-03-09: Auto-discover Party Affiliations via Wikidata
 
 ### What was done
