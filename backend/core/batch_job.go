@@ -538,7 +538,7 @@ func StartBatchPoller(ctx context.Context, orchestrator *BatchJobOrchestrator, i
 }
 
 func pollBatches(ctx context.Context, o *BatchJobOrchestrator) {
-	// Check pending and in-progress batches
+	// Poll pending and in-progress batches for status updates
 	for _, state := range []string{"pending", "in_progress"} {
 		batches, err := o.storer.ListBatches(ctx, state)
 		if err != nil {
@@ -559,18 +559,35 @@ func pollBatches(ctx context.Context, o *BatchJobOrchestrator) {
 				Msg("Batch poller: checked status")
 
 			if status.State == llm.BatchStateCompleted {
-				result, err := o.RetrieveAndProcess(ctx, b.ID)
-				if err != nil {
-					log.Error().Err(err).Int64("batch_id", b.ID).Msg("Batch poller: failed to retrieve batch")
-					continue
-				}
-				log.Info().
-					Int64("batch_id", b.ID).
-					Int("inserted", result.Inserted).
-					Int("skipped", result.Skipped).
-					Int("errors", result.Errors).
-					Msg("Batch poller: auto-retrieved batch")
+				retrieveBatch(ctx, o, b.ID)
 			}
 		}
 	}
+
+	// Retrieve any completed batches that haven't been retrieved yet
+	// (e.g. status was updated by a manual CLI call or a previous cycle that crashed mid-retrieve)
+	completed, err := o.storer.ListBatches(ctx, "completed")
+	if err != nil {
+		log.Error().Err(err).Msg("Batch poller: failed to list completed batches")
+		return
+	}
+	for _, b := range completed {
+		if b.RetrievedAt == nil {
+			retrieveBatch(ctx, o, b.ID)
+		}
+	}
+}
+
+func retrieveBatch(ctx context.Context, o *BatchJobOrchestrator, batchID int64) {
+	result, err := o.RetrieveAndProcess(ctx, batchID)
+	if err != nil {
+		log.Error().Err(err).Int64("batch_id", batchID).Msg("Batch poller: failed to retrieve batch")
+		return
+	}
+	log.Info().
+		Int64("batch_id", batchID).
+		Int("inserted", result.Inserted).
+		Int("skipped", result.Skipped).
+		Int("errors", result.Errors).
+		Msg("Batch poller: auto-retrieved batch")
 }
