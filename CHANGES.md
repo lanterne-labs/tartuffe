@@ -2,6 +2,23 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-13: Batch Processing Interface for LLM Fact Extraction
+
+### What was done
+- **`BatchProvider` interface** (`backend/llm/batch.go`): Provider-agnostic batch API abstraction (Submit/Status/Retrieve). Types: `BatchRequest`, `BatchSubmitResult`, `BatchStatus`, `BatchResponseItem`.
+- **Gemini provider** (`backend/llm/batch_gemini.go`): First implementation using Gemini's `batchGenerateContent` endpoint with inline requests. Handles state mapping (JOB_STATE_* → our BatchState), inline + file-based result retrieval.
+- **DB tables** (`llm_batches` + `llm_batch_requests`): Persist batch state, per-request metadata (source_url, target, chunk_index), and response JSON. Survives the host redeploys.
+- **Storage layer** (`backend/storage/batch.go`): CRUD for batches/requests — Create, Get, Update, List, MarkProcessed.
+- **`BatchJobOrchestrator`** (`backend/core/batch_job.go`): Prepares prompts from cached content (with chunking), submits via provider, retrieves results and processes through existing `ParseFactJSON` → embedding → `FactInserter` pipeline.
+- **CLI** (`cmd/batch.go`): `dm batch {submit, status, retrieve, list}` commands with `--dry-run` support.
+- **Exported `ParseFactJSON`**: Renamed from `parseFactJSON` in categorizer for reuse by batch pipeline. Injected via `FactParser` func type to avoid core↔categorizer import cycle.
+
+### Key design decisions
+- `FactParser` function injection instead of direct import breaks core↔categorizer cycle.
+- DB over files for batch state: multiple workers, survives deploys, integrates with `job_metrics`.
+- `batchStorerAdapter` in cmd layer bridges storage↔core types (same pattern as stance adapter).
+- Env vars: `BATCH_PROVIDER` (gemini|empty), `GEMINI_API_KEY`, `GEMINI_BATCH_MODEL` (default: gemini-2.5-flash).
+
 ## 2026-03-10: Stance Document System for O(1) Contradiction Detection
 
 ### What was done

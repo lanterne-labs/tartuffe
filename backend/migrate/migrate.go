@@ -119,10 +119,13 @@ func migrationAlreadyApplied(ctx context.Context, db *sql.DB, version int64) boo
 		20260109121000: "event_log",
 		20260112000000: "news_search_log",
 		20260114000002: "processed_laws",
-		20260115000000: "news_queue",
+		20260115000000: "search_queue", // originally news_queue, renamed by 20260207
 		20260201000000: "rss_feeds",
 		20260206000000: "twitter_handles",
 		20260207000000: "search_queue",
+		20260211000000: "job_metrics",
+		20260310000000: "stance_documents",
+		20260312000000: "llm_batches",
 	}
 
 	tableName, hasCheck := tableChecks[version]

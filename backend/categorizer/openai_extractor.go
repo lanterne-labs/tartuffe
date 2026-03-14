@@ -255,7 +255,7 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 	}
 
 	jsonContent := chatResp.Choices[0].Message.Content
-	chunkFacts, err := parseFactJSON([]byte(jsonContent), sourceURL, nil)
+	chunkFacts, err := ParseFactJSON([]byte(jsonContent), sourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse facts from chat response content: %w", err)
 	}

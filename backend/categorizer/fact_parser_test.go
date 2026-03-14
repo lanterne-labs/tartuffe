@@ -11,7 +11,7 @@ func TestParseFactJSON(t *testing.T) {
 
 	t.Run("valid JSON array with new format", func(t *testing.T) {
 		input := []byte(`[{"reasoning":"Type 2: official vote record","subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","canonical_verb":"VOTED_AGAINST","embedding_text":"bill-X","original_quote":"voted against","involved_people":[]}]`)
-		facts, err := parseFactJSON(input, sourceURL, &now)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -31,7 +31,7 @@ func TestParseFactJSON(t *testing.T) {
 
 	t.Run("backward compat: verb parsed from embedding_text", func(t *testing.T) {
 		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","embedding_text":"VOTED_AGAINST bill-X","original_quote":"voted against","involved_people":[]}]`)
-		facts, err := parseFactJSON(input, sourceURL, &now)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -50,7 +50,7 @@ func TestParseFactJSON(t *testing.T) {
 
 	t.Run("empty array with trailing text", func(t *testing.T) {
 		input := []byte("[]\nNo verifiable facts are found in the given article because the content is editorial commentary.")
-		facts, err := parseFactJSON(input, sourceURL, &now)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestParseFactJSON(t *testing.T) {
 	t.Run("facts array with trailing text", func(t *testing.T) {
 		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen voted against bill X","canonical_verb":"VOTED_AGAINST","embedding_text":"bill-X","original_quote":"voted against","involved_people":[]}]
 Here are the facts I extracted from the article.`)
-		facts, err := parseFactJSON(input, sourceURL, &now)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -76,7 +76,7 @@ Here are the facts I extracted from the article.`)
 
 	t.Run("completely invalid JSON", func(t *testing.T) {
 		input := []byte("this is not json at all")
-		_, err := parseFactJSON(input, sourceURL, &now)
+		_, err := ParseFactJSON(input, sourceURL, &now)
 		if err == nil {
 			t.Fatal("expected error for invalid JSON, got nil")
 		}
@@ -84,7 +84,7 @@ Here are the facts I extracted from the article.`)
 
 	t.Run("empty array no trailing text", func(t *testing.T) {
 		input := []byte("[]")
-		facts, err := parseFactJSON(input, sourceURL, &now)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

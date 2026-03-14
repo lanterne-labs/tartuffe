@@ -11,11 +11,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// parseFactJSON takes the raw JSON string content returned by an LLM (expected to be a JSON array
+// ParseFactJSON takes the raw JSON string content returned by an LLM (expected to be a JSON array
 // of objects matching the Fact structure defined in the prompt) and parses it into a slice of Fact structs.
 // It handles potential wrapping in markdown code blocks (```json ... ```).
 // It also performs basic validation on the parsed facts.
-func parseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) { // Use backend.Fact type
+func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) {
 	// Temporary struct mirroring the expected JSON output fields from the LLM prompt
 	var extractedFactsRaw []struct {
 		Reasoning         string   `json:"reasoning"`           // LLM reasoning (logged, not stored)
