@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 
@@ -673,6 +675,16 @@ func executeServe(cmd *cobra.Command, args []string) error {
 				go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
 			}
 		}
+	}
+
+	// Start balance alert poller if Telegram is configured
+	if alerterInstance := buildAlerter(); alerterInstance != nil {
+		interval := getBalanceCheckInterval()
+		go alerting.StartBalancePoller(ctx, alerterInstance, interval)
+		llm.OnCreditError = func(provider, errMsg string) {
+			alerterInstance.AlertCreditError(context.Background(), provider, errMsg)
+		}
+		log.Info().Msg("Balance alerting enabled (Telegram + poller)")
 	}
 
 	addr := ":" + port

@@ -520,9 +520,14 @@ const (
 
 // StartBatchPoller runs a background loop that polls pending/in-progress batches,
 // updates their status, and auto-retrieves completed ones.
-// Blocks until ctx is cancelled. Caller should run this in a goroutine.
+// Runs immediately on startup (to catch batches that completed during downtime),
+// then repeats on the given interval. Blocks until ctx is cancelled.
 func StartBatchPoller(ctx context.Context, orchestrator *BatchJobOrchestrator, interval time.Duration) {
 	log.Info().Dur("interval", interval).Msg("Starting batch poller")
+
+	// Run immediately on startup to catch batches that completed while server was down
+	pollBatches(ctx, orchestrator)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

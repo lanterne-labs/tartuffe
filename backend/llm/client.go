@@ -9,11 +9,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/rs/zerolog/log"
 )
+
+// OnCreditError is called when an LLM request fails due to credit/quota exhaustion.
+// Set at startup by the alerting system. Safe to leave nil.
+var OnCreditError func(provider, errMsg string)
 
 // BaseLLMClient provides common HTTP request logic for LLM API clients.
 type BaseLLMClient struct {
@@ -89,6 +94,10 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		}
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			// Detect credit/quota exhaustion errors and fire callback
+			if OnCreditError != nil && isCreditError(resp.StatusCode, bodyStr) {
+				OnCreditError("openrouter", bodyStr)
+			}
 			log.Error().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API request failed with client error")
 			return backoff.Permanent(fmt.Errorf("LLM API client error: %s (%s)", resp.Status, bodyStr))
 		}
@@ -123,6 +132,20 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 	metrics.ObserveLLMRequest("chat", "", duration, nil)
 	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Dur("duration", duration).Msg("LLM API request completed")
 	return respBodyBytes, nil
+}
+
+// isCreditError returns true if the HTTP status and body indicate credit/quota exhaustion.
+func isCreditError(statusCode int, body string) bool {
+	if statusCode == 402 {
+		return true
+	}
+	lower := strings.ToLower(body)
+	if statusCode == 429 && strings.Contains(lower, "resource_exhausted") {
+		return true
+	}
+	return strings.Contains(lower, "insufficient credits") ||
+		strings.Contains(lower, "insufficient_quota") ||
+		strings.Contains(lower, "payment required")
 }
 
 // ChatMessage represents a single message in a chat conversation.

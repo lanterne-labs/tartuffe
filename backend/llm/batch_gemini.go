@@ -221,7 +221,11 @@ func (g *GeminiBatchProvider) doRequest(ctx context.Context, method, url string,
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBytes(respBody, 500))
+		bodyStr := string(truncateBytes(respBody, 500))
+		if OnCreditError != nil && isCreditError(resp.StatusCode, bodyStr) {
+			OnCreditError("gemini", bodyStr)
+		}
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	return respBody, nil

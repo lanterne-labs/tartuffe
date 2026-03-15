@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-15: Telegram Alerts for LLM Credit/Balance Warnings
+
+### What was done
+- **`backend/alerting/` package**: Interfaces (`BalanceChecker`, `Notifier`), `TelegramNotifier` (HTML parse mode), `OpenRouterChecker` (GET `/auth/key`), `Alerter` orchestrator with per-provider cooldown dedup.
+- **Proactive monitoring**: `StartBalancePoller` runs periodic balance checks (default 60min). Alerts via Telegram when balance < threshold (default $2).
+- **Reactive detection**: `OnCreditError` callback in `llm/client.go` and `llm/batch_gemini.go` fires on 402, `insufficient_credits`, `RESOURCE_EXHAUSTED`, etc. Wired to Telegram via the same cooldown-aware alerter.
+- **CLI**: `dm balance check [--alert]` prints balance table, optionally sends Telegram alert.
+- **Prometheus gauge**: `digital_mirror_llm_balance_usd` by provider, updated on each check.
+- **Env vars**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `BALANCE_ALERT_THRESHOLD_USD`, `BALANCE_CHECK_INTERVAL_MIN`, `BALANCE_ALERT_COOLDOWN_HOURS`.
+
+### Key design decisions
+- Cooldown is per-key (provider + alert type), so low-balance and credit-error alerts have independent dedup windows.
+- Failed Telegram sends don't update cooldown — retries on next cycle.
+- Free tier and unlimited (limit=0) accounts skip alerting.
+- `IsCreditError` is both in `alerting` package (for tests) and as `isCreditError` in `llm` package (to avoid import cycle).
+
 ## 2026-03-13: Batch Processing Interface for LLM Fact Extraction
 
 ### What was done
