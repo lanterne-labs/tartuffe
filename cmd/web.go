@@ -678,14 +678,19 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Start balance alert poller if Telegram is configured
+	var telegramNotifier *alerting.TelegramNotifier
 	if alerterInstance := buildAlerter(); alerterInstance != nil {
 		interval := getBalanceCheckInterval()
 		go alerting.StartBalancePoller(ctx, alerterInstance, interval)
 		llm.OnCreditError = func(provider, errMsg string) {
 			alerterInstance.AlertCreditError(context.Background(), provider, errMsg)
 		}
+		telegramNotifier = alerting.NewTelegramNotifierFromEnv()
 		log.Info().Msg("Balance alerting enabled (Telegram + poller)")
 	}
+
+	// Start pipeline scheduler (daily news + contradiction detection, periodic frpolitics)
+	startPipelineScheduler(ctx, storer, telegramNotifier)
 
 	addr := ":" + port
 	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")

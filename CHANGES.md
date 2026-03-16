@@ -2,6 +2,23 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-16: Pipeline Scheduler + Seed Script for MVP
+
+### What was done
+- **Pipeline scheduler** (`cmd/pipeline.go`): Background goroutines started alongside the web server, same pattern as `StartBatchPoller`. Two independent schedules:
+  - **Daily pipeline** (`PIPELINE_INTERVAL_HOURS`, default 0=disabled): Runs `queue process --plugins news` then `contradictions detect` as a catch-up pass.
+  - **Frpolitics pipeline** (`FRPOLITICS_INTERVAL_DAYS`, default 0=disabled): Runs `frpolitics --mode both` (votes + news for deputies).
+- **Extracted reusable functions**: `executeQueueProcess(ctx, storer, opts)` and `executeContradictionDetection(ctx, storer, opts)` extracted from CLI handlers into standalone functions. Both CLI commands and scheduler call the same code path.
+- **Atomic skip-if-running**: Each pipeline uses `atomic.Bool` to skip the tick if the previous run is still in progress.
+- **Telegram notifications**: Pipeline completion/errors optionally sent via Telegram (reuses existing `TelegramNotifier`).
+- **Seed script** (`scripts/seed.sh`): One-time setup for MVP — adds 7 politicians + 3 parties, queues humans for news search, auto-affiliates via Wikidata, fetches photos.
+- **Env vars**: `PIPELINE_INTERVAL_HOURS` (set to 24 for daily), `FRPOLITICS_INTERVAL_DAYS` (set to 15 for biweekly).
+
+### Key design decisions
+- Frpolitics already has `frpolitics.Run(ctx, storer, opts)` as a standalone function — scheduler calls it directly with default options.
+- Queue process and contradiction detect needed extraction from cobra command handlers into `QueueProcessOpts`/`ContradictionDetectOpts` structs.
+- Errors are logged, not fatal — next tick retries automatically.
+
 ## 2026-03-15: Telegram Alerts for LLM Credit/Balance Warnings
 
 ### What was done

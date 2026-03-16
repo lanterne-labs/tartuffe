@@ -53,6 +53,7 @@ func init() {
 	contradictionsDetectCmd.Flags().BoolVar(&detectDebug, "debug", false, "Print LLM reasoning and verdict for every pair")
 }
 
+// runContradictionDetection is the CLI wrapper that delegates to executeContradictionDetection.
 func runContradictionDetection(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -60,13 +61,35 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	// Initialize storage
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
+	opts := ContradictionDetectOpts{
+		Person:   detectPersonFlag,
+		Exclude:  detectExcludeFlag,
+		DryRun:   detectDryRun,
+		CheckAll: detectCheckAll,
+		Debug:    detectDebug,
+	}
+
+	return executeContradictionDetection(ctx, storer, opts)
+}
+
+// ContradictionDetectOpts configures contradiction detection, used by both CLI and pipeline scheduler.
+type ContradictionDetectOpts struct {
+	Person   string   // specific person name (empty = all)
+	Exclude  []string // person names to skip
+	DryRun   bool
+	CheckAll bool // check all pairs, not just semantically similar
+	Debug    bool // print LLM reasoning for every pair
+}
+
+// executeContradictionDetection runs contradiction detection with the given options.
+// Called by both the CLI command and the pipeline scheduler.
+func executeContradictionDetection(ctx context.Context, storer *storage.PostgresStorer, opts ContradictionDetectOpts) error {
 	// Initialize contradiction detector
 	detector, err := contradiction.NewOpenAIContradictionDetectorFromEnv()
 	if err != nil {
@@ -75,11 +98,11 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 
 	// Get persons to process
 	var persons []storage.PersonInfo
-	if detectPersonFlag != "" {
-		normalizedName := util.NormalizeString(detectPersonFlag)
+	if opts.Person != "" {
+		normalizedName := util.NormalizeString(opts.Person)
 		personID, err := storer.GetPersonIDByName(ctx, normalizedName)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", detectPersonFlag, err)
+			return fmt.Errorf("failed to find person %q: %w", opts.Person, err)
 		}
 		persons = []storage.PersonInfo{{ID: personID, Name: normalizedName}}
 		log.Info().Str("person", normalizedName).Int64("id", personID).Msg("Processing single person")
@@ -92,8 +115,8 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build exclude set
-	excludeSet := make(map[string]struct{}, len(detectExcludeFlag))
-	for _, name := range detectExcludeFlag {
+	excludeSet := make(map[string]struct{}, len(opts.Exclude))
+	for _, name := range opts.Exclude {
 		excludeSet[util.NormalizeString(name)] = struct{}{}
 	}
 
@@ -124,7 +147,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 
 		// Use a read-only transaction for neighbor queries (if not using check-all mode)
 		var readTx pgx.Tx
-		if !detectCheckAll {
+		if !opts.CheckAll {
 			var txErr error
 			readTx, txErr = storer.Pool().Begin(ctx)
 			if txErr != nil {
@@ -142,7 +165,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				PublishedAt *time.Time
 			}
 
-			if detectCheckAll {
+			if opts.CheckAll {
 				// Check all pairs - compare with every fact that has higher ID
 				for _, other := range facts {
 					if other.ID > fact.ID {
@@ -364,7 +387,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 				}
 
 				// Print debug info for every pair when --debug is set
-				if detectDebug {
+				if opts.Debug {
 					fmt.Printf("\n[DEBUG] Fact A [%d]: %q\n", batch[j].factAID, batch[j].factAText)
 					fmt.Printf("[DEBUG] Fact B [%d]: %q\n", batch[j].factBID, batch[j].factBText)
 					reasoning := result.Reasoning
@@ -403,7 +426,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 					fmt.Printf("Fact B [%d]: %s\n", batch[j].factBID, batch[j].factBText)
 					fmt.Printf("Reason: %s\n", result.Reason)
 
-					if !detectDryRun {
+					if !opts.DryRun {
 						if err := storer.RecordContradictionImmediate(ctx, person.ID, batch[j].factAID, batch[j].factBID, result.Reason); err != nil {
 							log.Error().Err(err).Msg("Failed to record contradiction")
 						} else {
@@ -414,7 +437,7 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 			}
 
 			// Record all pair checks (both contradictions and non-contradictions)
-			if !detectDryRun && len(pairResults) > 0 {
+			if !opts.DryRun && len(pairResults) > 0 {
 				if err := storer.RecordPairChecksBatch(ctx, person.ID, pairResults); err != nil {
 					log.Error().Err(err).Str("person", person.Name).Msg("Failed to record pair checks")
 				}
@@ -438,12 +461,12 @@ func runContradictionDetection(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n=== SUMMARY ===\n")
 	fmt.Printf("Total pairs checked: %d\n", totalPairsChecked)
 	fmt.Printf("Total contradictions found: %d\n", totalContradictions)
-	if detectDryRun {
+	if opts.DryRun {
 		fmt.Printf("(Dry run - nothing recorded to database)\n")
 	}
 
 	// Record job metrics (skip in dry-run mode)
-	if !detectDryRun {
+	if !opts.DryRun {
 		jobMetrics := []storage.JobMetric{
 			{JobType: "contradictions-detect", Target: "", Metric: "pairs_checked", Value: float64(totalPairsChecked)},
 			{JobType: "contradictions-detect", Target: "", Metric: "contradictions_found", Value: float64(totalContradictions)},

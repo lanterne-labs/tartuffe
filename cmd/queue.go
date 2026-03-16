@@ -291,6 +291,7 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runQueueProcess is the CLI wrapper that parses cobra flags and delegates to executeQueueProcess.
 func runQueueProcess(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
@@ -301,54 +302,27 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 	}
 	defer storer.Close()
 
-	// Parse shared flags
+	// Parse flags
 	limit, _ := cmd.Flags().GetInt("limit")
 	sinceStr, _ := cmd.Flags().GetString("since")
 	days, _ := cmd.Flags().GetInt("days")
 	windowDays, _ := cmd.Flags().GetInt("window-days")
-	pluginsStr, _ := cmd.Flags().GetString("plugins")
-
-	// Debugging flags
-	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
-
-	// News-specific flags
+	plugins, _ := cmd.Flags().GetString("plugins")
 	newsMaxParse, _ := cmd.Flags().GetInt("news-max-parse")
-	newsExtractorType, _ := cmd.Flags().GetString("news-extractor")
+	newsExtractor, _ := cmd.Flags().GetString("news-extractor")
 	newsCacheDir, _ := cmd.Flags().GetString("news-cache-dir")
 	newsCacheOnly, _ := cmd.Flags().GetBool("news-cache-only")
 	newsMaxPerStory, _ := cmd.Flags().GetInt("news-max-per-story")
 	newsLocation, _ := cmd.Flags().GetString("news-location")
-
-	// Twitter-specific flags
+	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
 	twitterMaxTweets, _ := cmd.Flags().GetInt("twitter-max-tweets")
 	twitterBatchSize, _ := cmd.Flags().GetInt("twitter-batch-size")
 	twitterForce, _ := cmd.Flags().GetBool("twitter-force")
 	twitterDryRun, _ := cmd.Flags().GetBool("twitter-dry-run")
 
-	// Parse plugin selection
-	selectedPlugins := make(map[string]bool)
-	for _, p := range strings.Split(pluginsStr, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			selectedPlugins[p] = true
-		}
-	}
-	runNews := selectedPlugins["news"]
-	runTwitter := selectedPlugins["twitter"]
-
-	if !runNews && !runTwitter {
-		return fmt.Errorf("no valid plugins selected (available: news, twitter)")
-	}
-
-	// Validate flags
-	if newsCacheOnly && newsCacheDir == "" {
-		return fmt.Errorf("--news-cache-only requires --news-cache-dir to be set")
-	}
+	// Validate mutually exclusive flags
 	if sinceStr != "" && days > 0 {
 		return fmt.Errorf("--since and --days are mutually exclusive, use only one")
-	}
-	if windowDays > 0 && sinceStr == "" && days == 0 {
-		return fmt.Errorf("--window-days requires --since or --days to be set")
 	}
 
 	// Parse since date
@@ -365,6 +339,72 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 		log.Info().Int("days", days).Time("since", t).Msg("Calculated since date from --days flag")
 	}
 
+	opts := QueueProcessOpts{
+		Limit:            limit,
+		Since:            since,
+		WindowDays:       windowDays,
+		Plugins:          plugins,
+		NewsMaxParse:     newsMaxParse,
+		NewsExtractor:    newsExtractor,
+		NewsCacheDir:     newsCacheDir,
+		NewsCacheOnly:    newsCacheOnly,
+		NewsMaxPerStory:  newsMaxPerStory,
+		NewsLocation:     newsLocation,
+		KeepSourceDir:    keepSourceDir,
+		TwitterMaxTweets: twitterMaxTweets,
+		TwitterBatchSize: twitterBatchSize,
+		TwitterForce:     twitterForce,
+		TwitterDryRun:    twitterDryRun,
+	}
+
+	return executeQueueProcess(ctx, storer, opts)
+}
+
+// QueueProcessOpts configures queue processing, used by both CLI and pipeline scheduler.
+type QueueProcessOpts struct {
+	Limit            int
+	Since            *time.Time
+	WindowDays       int
+	Plugins          string // comma-separated: "news", "twitter", "news,twitter"
+	NewsMaxParse     int
+	NewsExtractor    string
+	NewsCacheDir     string
+	NewsCacheOnly    bool
+	NewsMaxPerStory  int
+	NewsLocation     string
+	KeepSourceDir    string
+	TwitterMaxTweets int
+	TwitterBatchSize int
+	TwitterForce     bool
+	TwitterDryRun    bool
+}
+
+// executeQueueProcess runs queue processing with the given options.
+// Called by both the CLI command and the pipeline scheduler.
+func executeQueueProcess(ctx context.Context, storer *storage.PostgresStorer, opts QueueProcessOpts) error {
+	// Parse plugin selection
+	selectedPlugins := make(map[string]bool)
+	for _, p := range strings.Split(opts.Plugins, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			selectedPlugins[p] = true
+		}
+	}
+	runNews := selectedPlugins["news"]
+	runTwitter := selectedPlugins["twitter"]
+
+	if !runNews && !runTwitter {
+		return fmt.Errorf("no valid plugins selected (available: news, twitter)")
+	}
+
+	// Validate
+	if opts.NewsCacheOnly && opts.NewsCacheDir == "" {
+		return fmt.Errorf("--news-cache-only requires --news-cache-dir to be set")
+	}
+	if opts.WindowDays > 0 && opts.Since == nil {
+		return fmt.Errorf("--window-days requires --since or --days to be set")
+	}
+
 	// Get queue
 	queue, err := storer.GetSearchQueue(ctx)
 	if err != nil {
@@ -373,16 +413,15 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 
 	if len(queue) == 0 {
 		log.Info().Msg("Search queue is empty")
-		fmt.Println("Search queue is empty")
 		return nil
 	}
 
 	log.Info().Int("queue_size", len(queue)).Msg("Loaded search queue")
 
 	// Apply limit
-	if limit > 0 && len(queue) > limit {
-		queue = queue[:limit]
-		log.Info().Int("limited_to", limit).Msg("Applied limit to queue")
+	if opts.Limit > 0 && len(queue) > opts.Limit {
+		queue = queue[:opts.Limit]
+		log.Info().Int("limited_to", opts.Limit).Msg("Applied limit to queue")
 	}
 
 	// Initialize shared components
@@ -405,8 +444,8 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to initialize SerpAPI: %w", err)
 		}
 
-		if !newsCacheOnly {
-			rawExtractor, err = extractor.NewExtractorFromType(newsExtractorType)
+		if !opts.NewsCacheOnly {
+			rawExtractor, err = extractor.NewExtractorFromType(opts.NewsExtractor)
 			if err != nil {
 				return fmt.Errorf("failed to initialize content extractor: %w", err)
 			}
@@ -466,11 +505,11 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 
 			// Create content extractor with target-specific caching
 			var contentExt extractor.ContentExtractor
-			if newsCacheOnly {
-				targetCacheDir := queueTargetCacheDir(newsCacheDir, target.Name)
+			if opts.NewsCacheOnly {
+				targetCacheDir := queueTargetCacheDir(opts.NewsCacheDir, target.Name)
 				contentExt = extractor.NewCacheOnlyExtractor(targetCacheDir)
-			} else if newsCacheDir != "" {
-				targetCacheDir := queueTargetCacheDir(newsCacheDir, target.Name)
+			} else if opts.NewsCacheDir != "" {
+				targetCacheDir := queueTargetCacheDir(opts.NewsCacheDir, target.Name)
 				contentExt = extractor.NewCacheExtractor(rawExtractor, targetCacheDir, true, true)
 			} else {
 				contentExt = rawExtractor
@@ -487,17 +526,17 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 			}
 
 			newsOpts := news.Options{
-				DateFrom:      since,
-				MaxParse:      newsMaxParse,
-				Location:      newsLocation,
+				DateFrom:      opts.Since,
+				MaxParse:      opts.NewsMaxParse,
+				Location:      opts.NewsLocation,
 				RevisitHours:  24 * 365 * 10,
-				MaxPerStory:   newsMaxPerStory,
-				KeepSourceDir: keepSourceDir,
+				MaxPerStory:   opts.NewsMaxPerStory,
+				KeepSourceDir: opts.KeepSourceDir,
 			}
 
 			var newsResult *news.Result
-			if windowDays > 0 {
-				newsOpts.WindowDays = windowDays
+			if opts.WindowDays > 0 {
+				newsOpts.WindowDays = opts.WindowDays
 				newsResult, err = newsProvider.CollectFactsWithDateWindows(ctx, target, newsOpts)
 			} else {
 				newsResult, err = newsProvider.CollectFacts(ctx, target, newsOpts)
@@ -530,17 +569,17 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 				}
 
 				twitterOpts := twitter.Options{
-					MaxTweets:  twitterMaxTweets,
-					BatchSize:  twitterBatchSize,
-					Force:      twitterForce,
-					DryRun:     twitterDryRun,
-					WindowDays: windowDays,
-					DateFrom:   since,
+					MaxTweets:  opts.TwitterMaxTweets,
+					BatchSize:  opts.TwitterBatchSize,
+					Force:      opts.TwitterForce,
+					DryRun:     opts.TwitterDryRun,
+					WindowDays: opts.WindowDays,
+					DateFrom:   opts.Since,
 				}
 
 				for _, handle := range handles {
 					var twitterResult *twitter.Result
-					if windowDays > 0 {
+					if opts.WindowDays > 0 {
 						twitterResult, err = twitterProvider.CollectFactsWithDateWindows(ctx, handle, twitterOpts)
 					} else {
 						twitterResult, err = twitterProvider.CollectFacts(ctx, handle, twitterOpts)
