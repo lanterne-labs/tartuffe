@@ -204,7 +204,7 @@ func (e *WebcrawlerAPIExtractor) pollForCompletion(jobID, url string) (*webcrawl
 		}
 
 		// Check for failure status
-		if scrapeResp.Status != "pending" && scrapeResp.Status != "in_progress" && scrapeResp.Status != "running" {
+		if scrapeResp.Status != "new" && scrapeResp.Status != "pending" && scrapeResp.Status != "in_progress" && scrapeResp.Status != "running" {
 			return nil, fmt.Errorf("job failed with status: %s, message: %s", scrapeResp.Status, scrapeResp.Message)
 		}
 
