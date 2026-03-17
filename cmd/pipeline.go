@@ -36,6 +36,10 @@ func startPipelineScheduler(ctx context.Context, storer *storage.PostgresStorer,
 		interval := time.Duration(dailyHours) * time.Hour
 		go func() {
 			log.Info().Int("hours", dailyHours).Msg("Daily pipeline scheduler started")
+
+			// Run immediately on startup, then repeat on interval
+			runDailyPipeline(ctx, storer, notifier)
+
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
@@ -60,6 +64,10 @@ func startPipelineScheduler(ctx context.Context, storer *storage.PostgresStorer,
 		interval := time.Duration(frpoliticsDays) * 24 * time.Hour
 		go func() {
 			log.Info().Int("days", frpoliticsDays).Msg("Frpolitics pipeline scheduler started")
+
+			// Run immediately on startup, then repeat on interval
+			runFrpoliticsPipeline(ctx, storer, notifier)
+
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
