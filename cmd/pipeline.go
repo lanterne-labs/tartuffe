@@ -10,7 +10,13 @@ import (
 	"time"
 
 	"digital-mirror/backend/alerting"
+	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/plugins/frpolitics"
+	"digital-mirror/backend/plugins/news"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
@@ -18,7 +24,7 @@ import (
 
 // startPipelineScheduler launches background goroutines for periodic pipeline runs.
 // Two independent schedules:
-//   - Daily pipeline (PIPELINE_INTERVAL_HOURS): queue process (news) + contradiction detection
+//   - Daily pipeline (PIPELINE_INTERVAL_HOURS): news content collection + batch LLM submission + contradiction detection
 //   - Frpolitics pipeline (FRPOLITICS_INTERVAL_DAYS): French politics votes + news
 func startPipelineScheduler(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) {
 	dailyHours := envInt("PIPELINE_INTERVAL_HOURS", 0)
@@ -89,24 +95,20 @@ func startPipelineScheduler(ctx context.Context, storer *storage.PostgresStorer,
 	}
 }
 
-// runDailyPipeline executes the daily pipeline: queue process (news) then contradiction detection.
+// runDailyPipeline collects news content for all queued persons, submits to batch LLM,
+// then runs contradiction detection. The batch poller (already running) handles
+// retrieving results and inserting facts asynchronously.
 func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) {
 	start := time.Now()
 	log.Info().Msg("Daily pipeline started")
 
-	// Step 1: Queue process — news search + fact extraction
-	queueOpts := QueueProcessOpts{
-		Plugins:       "news",
-		NewsMaxParse:  5,
-		NewsLocation:  "France",
-		NewsExtractor: "webcrawler",
-	}
-	queueErr := executeQueueProcess(ctx, storer, queueOpts)
-	if queueErr != nil {
-		log.Error().Err(queueErr).Msg("Daily pipeline: queue process failed")
+	// Step 1: Collect news content and submit to batch LLM
+	batchErr := collectAndSubmitBatch(ctx, storer)
+	if batchErr != nil {
+		log.Error().Err(batchErr).Msg("Daily pipeline: batch submission failed")
 	}
 
-	// Step 2: Contradiction detection (catch-up pass)
+	// Step 2: Contradiction detection (catch-up pass for existing facts)
 	detectOpts := ContradictionDetectOpts{}
 	detectErr := executeContradictionDetection(ctx, storer, detectOpts)
 	if detectErr != nil {
@@ -118,10 +120,10 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// Notify via Telegram
 	if notifier != nil {
 		var msg string
-		if queueErr != nil || detectErr != nil {
+		if batchErr != nil || detectErr != nil {
 			var parts []string
-			if queueErr != nil {
-				parts = append(parts, "queue: "+queueErr.Error())
+			if batchErr != nil {
+				parts = append(parts, "batch: "+batchErr.Error())
 			}
 			if detectErr != nil {
 				parts = append(parts, "detect: "+detectErr.Error())
@@ -138,6 +140,123 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	}
 
 	log.Info().Dur("elapsed", elapsed).Msg("Daily pipeline finished")
+}
+
+// collectAndSubmitBatch searches news for all queued persons, extracts article content,
+// and submits everything as a single Gemini batch job. Returns immediately —
+// the batch poller handles retrieval and fact insertion asynchronously.
+func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) error {
+	// Get queue
+	queue, err := storer.GetSearchQueue(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get search queue: %w", err)
+	}
+	if len(queue) == 0 {
+		log.Info().Msg("Search queue is empty, skipping batch submission")
+		return nil
+	}
+
+	// Initialize components for content extraction (no LLM needed here)
+	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+	}
+
+	rawExtractor, err := extractor.NewExtractorFromType("webcrawler")
+	if err != nil {
+		return fmt.Errorf("failed to initialize webcrawler: %w", err)
+	}
+	batchExtractor := core.NewBatchExtractorFromEnv(rawExtractor)
+
+	// News provider — only needs search + content extraction (no FactExtractor/Embedder)
+	newsProvider := &news.Provider{
+		NewsSearch:       serpAPI,
+		ContentExtractor: batchExtractor,
+		Storer:           storer,
+	}
+
+	newsOpts := news.Options{
+		MaxParse:     5,
+		Location:     "France",
+		RevisitHours: 24 * 365 * 10,
+	}
+
+	// Collect content from all queued persons
+	var allItems []core.BatchContentItem
+	for i, entry := range queue {
+		log.Info().Int("progress", i+1).Int("total", len(queue)).Str("person", entry.Name).Msg("Collecting news content")
+
+		targetType := news.TargetPerson
+		if entry.EntityType == "party" {
+			targetType = news.TargetParty
+		}
+		target := news.SearchTarget{
+			Name:     entry.Name,
+			Type:     targetType,
+			PersonID: &entry.PersonID,
+		}
+
+		items, result, err := newsProvider.CollectContent(ctx, target, newsOpts)
+		if err != nil {
+			log.Error().Err(err).Str("person", entry.Name).Msg("Failed to collect content")
+			continue
+		}
+
+		if result != nil {
+			log.Info().
+				Str("person", entry.Name).
+				Int("articles_found", result.ArticlesFound).
+				Int("articles_parsed", result.ArticlesParsed).
+				Int("content_items", len(items)).
+				Msg("Content collection completed")
+		}
+
+		// Convert news ContentItems to batch BatchContentItems
+		for _, item := range items {
+			allItems = append(allItems, core.BatchContentItem{
+				SourceURL:   item.SourceURL,
+				Content:     item.Content,
+				TargetName:  item.TargetName,
+				TargetType:  item.TargetType,
+				PublishedAt: item.PublishedAt,
+			})
+		}
+	}
+
+	if len(allItems) == 0 {
+		log.Info().Msg("No content collected, skipping batch submission")
+		return nil
+	}
+
+	// Initialize batch provider and submit
+	provider, err := newBatchProvider()
+	if err != nil {
+		return fmt.Errorf("failed to create batch provider: %w", err)
+	}
+
+	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to create embedder: %w", err)
+	}
+
+	inserter := core.NewFactInserter(storer)
+	adapter := newBatchStorerAdapter(storer)
+	orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
+
+	batchID, err := orchestrator.PrepareAndSubmit(ctx, allItems, map[string]any{
+		"source":    "daily-pipeline",
+		"submitted": time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("batch submission failed: %w", err)
+	}
+
+	log.Info().
+		Int64("batch_id", batchID).
+		Int("content_items", len(allItems)).
+		Msg("Batch submitted — poller will process results")
+
+	return nil
 }
 
 // runFrpoliticsPipeline executes the frpolitics pipeline: votes + news for deputies.
