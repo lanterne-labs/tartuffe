@@ -41,7 +41,7 @@ func init() {
 	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD")
 	frpoliticsCmd.Flags().Int("max-laws", 10, "maximum laws to process")
 	frpoliticsCmd.Flags().Float64("party-threshold", 0.8, "majority threshold for party-level facts (0..1)")
-	frpoliticsCmd.Flags().String("legislatures", "16", "comma-separated legislature numbers to fetch")
+	frpoliticsCmd.Flags().String("legislatures", "", "comma-separated legislature numbers to fetch (default: auto-detect current)")
 
 	// News search flags
 	frpoliticsCmd.Flags().String("news-since", "", "only search news articles published after YYYY-MM-DD")

@@ -115,6 +115,10 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	}
 
 	if len(keywordFilteredLaws) == 0 {
+		log.Info().Msg("frpolitics: all votes already extracted or filtered out")
+		if opts.Mode == "both" {
+			return runNewsSearchStandalone(ctx, storer, opts)
+		}
 		return nil
 	}
 
@@ -176,6 +180,10 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	}
 
 	if len(aiFilteredLaws) == 0 {
+		log.Info().Msg("frpolitics: no laws passed AI confidence filter")
+		if opts.Mode == "both" {
+			return runNewsSearchStandalone(ctx, storer, opts)
+		}
 		return nil
 	}
 
@@ -532,7 +540,7 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 	// We read a larger set here; upper layers can limit summarization later.
 	legislatures := opts.Legislatures
 	if len(legislatures) == 0 {
-		legislatures = []int{16}
+		legislatures = []int{currentLegislature()}
 	}
 	var sincePtr *time.Time
 	if opts.Since != nil {
@@ -569,11 +577,12 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 			}
 		}
 		if err != nil {
-			// If we can't download scrutins for this legislature, skip quietly
+			log.Warn().Err(err).Int("legislature", leg).Msg("frpolitics: failed to download scrutins, skipping legislature")
 			return nil
 		}
 		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
 		if err != nil {
+			log.Warn().Err(err).Int("legislature", leg).Msg("frpolitics: failed to read scrutins zip, skipping legislature")
 			return nil
 		}
 		for _, f := range zr.File {
@@ -972,6 +981,35 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 		Msg("frpolitics: news-only mode completed")
 
 	return nil
+}
+
+// legislatureStart maps legislature numbers to their start dates (newest first).
+// To add a new legislature, insert one entry at the top.
+var legislatureStarts = []struct {
+	Number int
+	Start  time.Time
+}{
+	{17, time.Date(2024, 7, 18, 0, 0, 0, 0, time.UTC)},
+	{16, time.Date(2022, 6, 28, 0, 0, 0, 0, time.UTC)},
+	{15, time.Date(2017, 6, 27, 0, 0, 0, 0, time.UTC)},
+	{14, time.Date(2012, 6, 20, 0, 0, 0, 0, time.UTC)},
+}
+
+// currentLegislatureAt returns the legislature number that is active at time t.
+// Falls back to the oldest known legislature if t predates all entries.
+func currentLegislatureAt(t time.Time) int {
+	for _, entry := range legislatureStarts {
+		if !t.Before(entry.Start) {
+			return entry.Number
+		}
+	}
+	// Before all known legislatures — return the oldest
+	return legislatureStarts[len(legislatureStarts)-1].Number
+}
+
+// currentLegislature returns the legislature number active right now.
+func currentLegislature() int {
+	return currentLegislatureAt(time.Now())
 }
 
 // min returns the minimum of two integers
