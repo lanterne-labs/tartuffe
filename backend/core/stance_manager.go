@@ -137,7 +137,17 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return nil, fmt.Errorf("getting stances for person: %w", err)
 	}
 
-	// Ask LLM which topic this fact belongs to (works with 0 existing stances too — returns new label)
+	// No existing stances: skip LLM call, create new stance directly
+	if len(stances) == 0 {
+		label := truncate(factText, 120)
+		log.Info().
+			Int64("fact_id", factID).
+			Str("label", label).
+			Msg("No existing stances for person, creating first stance")
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
+	}
+
+	// Ask LLM which topic this fact belongs to
 	assignment, err := sm.assignTopic(ctx, stances, factText)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,9 +78,32 @@ type llmClassificationResponse struct {
 }
 
 type llmClassification struct {
-	ExistingFactID int64  `json:"existing_fact_id"`
-	Relation       string `json:"relation"`
-	Reason         string `json:"reason"`
+	ExistingFactID flexInt64 `json:"existing_fact_id"`
+	Relation       string    `json:"relation"`
+	Reason         string    `json:"reason"`
+}
+
+// flexInt64 unmarshals both JSON numbers and JSON strings into int64.
+type flexInt64 int64
+
+func (f *flexInt64) UnmarshalJSON(data []byte) error {
+	// Try number first
+	var n int64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*f = flexInt64(n)
+		return nil
+	}
+	// Try string
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("existing_fact_id must be a number or numeric string, got: %s", string(data))
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("existing_fact_id string not a valid integer: %q", s)
+	}
+	*f = flexInt64(n)
+	return nil
 }
 
 const classificationPrompt = `You are analyzing how a NEW fact relates to EXISTING facts about the same person/entity.
@@ -192,7 +216,7 @@ func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, 
 	for _, c := range classResp.Classifications {
 		if !validRelations[c.Relation] {
 			log.Warn().
-				Int64("existing_fact_id", c.ExistingFactID).
+				Int64("existing_fact_id", int64(c.ExistingFactID)).
 				Str("relation", c.Relation).
 				Msg("Invalid relation type from LLM, treating as unrelated")
 			continue
@@ -201,7 +225,7 @@ func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, 
 			continue // No relation to record
 		}
 		results = append(results, ClassificationResult{
-			ExistingFactID: c.ExistingFactID,
+			ExistingFactID: int64(c.ExistingFactID),
 			Relation:       c.Relation,
 			Reason:         c.Reason,
 		})

@@ -153,7 +153,7 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 			continue
 		}
 
-		urlHash := shortHash(item.SourceURL)
+		urlHash := shortHash(item.SourceURL + "|" + item.TargetName)
 		targetType := item.TargetType
 		if targetType == "" {
 			targetType = "person"
