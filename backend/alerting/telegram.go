@@ -40,7 +40,7 @@ func (t *TelegramNotifier) Send(ctx context.Context, message string) error {
 
 	params := url.Values{}
 	params.Set("chat_id", t.chatID)
-	params.Set("text", message)
+	params.Set("text", "mirror: "+message)
 	params.Set("parse_mode", "HTML")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint+"?"+params.Encode(), nil)
