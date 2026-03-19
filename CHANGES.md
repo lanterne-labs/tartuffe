@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-19: Twitter in Daily Pipeline + Auto-Discovery
+
+### What was done
+- **Twitter step in daily pipeline** (`cmd/pipeline.go`): `runTwitterCollection()` added between batch news submission and contradiction detection. Gracefully skips if `TWITTER_API_IO_KEY` is not set or no handles exist. Errors included in Telegram notification.
+- **`dm plugin twitter discover`** (`cmd/twitter.go`): Auto-discovers Twitter handles for persons without one. Searches via Brave/SerpAPI, extracts candidate @handles from URLs and snippets, confirms with LLM. Supports `--dry-run` and `--person`.
+- **Seed script**: Added 7 hardcoded Twitter handles as idempotent fallback for fresh deployments.
+
+### Key design decisions
+- Twitter collection is synchronous in the pipeline (lightweight compared to batch news). No new env vars needed.
+- Discovery uses news search (not web search) to find handles mentioned in news articles, with LLM confirmation (temperature 0.1) to filter false positives.
+- Handle extraction parses both x.com/twitter.com URLs and @mention patterns from search results.
+
 ## 2026-03-16: Pipeline Scheduler + Seed Script for MVP
 
 ### What was done

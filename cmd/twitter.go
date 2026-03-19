@@ -2,14 +2,20 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"regexp"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins/twitter"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/joho/godotenv"
@@ -60,6 +66,14 @@ var twitterFetchCmd = &cobra.Command{
 	RunE:        runTwitterFetch,
 }
 
+// twitterDiscoverCmd auto-discovers Twitter handles for persons
+var twitterDiscoverCmd = &cobra.Command{
+	Use:         "discover",
+	Short:       "Auto-discover Twitter handles for persons",
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runTwitterDiscover,
+}
+
 // twitterFactsCmd lists facts extracted from twitter
 var twitterFactsCmd = &cobra.Command{
 	Use:         "facts",
@@ -76,6 +90,12 @@ func init() {
 	twitterCmd.AddCommand(twitterListCmd)
 	twitterCmd.AddCommand(twitterFetchCmd)
 	twitterCmd.AddCommand(twitterFactsCmd)
+	twitterCmd.AddCommand(twitterDiscoverCmd)
+
+	// discover flags
+	twitterDiscoverCmd.Flags().Bool("dry-run", false, "show discovered handles without saving")
+	twitterDiscoverCmd.Flags().String("person", "", "discover handle for a specific person only")
+	twitterDiscoverCmd.Flags().Bool("all", true, "discover handles for all persons without handles (default)")
 
 	// add flags
 	twitterAddCmd.Flags().String("person", "", "person name to link the handle to (required)")
@@ -398,6 +418,237 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 		}
 		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
 			log.Error().Err(err).Msg("Failed to record job metrics")
+		}
+	}
+
+	return nil
+}
+
+func extractTwitterHandles(results []search.NewsResult) []string {
+	seen := make(map[string]bool)
+	var handles []string
+
+	// Pattern for x.com/username or twitter.com/username URLs
+	urlRe := regexp.MustCompile(`(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,15})(?:[/?#]|$)`)
+	// Pattern for @handle mentions
+	atRe := regexp.MustCompile(`@([A-Za-z0-9_]{1,15})\b`)
+
+	// Common paths to exclude
+	excludePaths := map[string]bool{
+		"search": true, "i": true, "hashtag": true, "intent": true,
+		"home": true, "explore": true, "settings": true,
+	}
+
+	for _, r := range results {
+		// Check URLs
+		for _, text := range []string{r.Link, r.Title, r.Snippet} {
+			for _, match := range urlRe.FindAllStringSubmatch(text, -1) {
+				handle := strings.ToLower(match[1])
+				if !excludePaths[handle] && !seen[handle] {
+					seen[handle] = true
+					handles = append(handles, handle)
+				}
+			}
+		}
+		// Check @mentions in title and snippet
+		for _, text := range []string{r.Title, r.Snippet} {
+			for _, match := range atRe.FindAllStringSubmatch(text, -1) {
+				handle := strings.ToLower(match[1])
+				if !seen[handle] {
+					seen[handle] = true
+					handles = append(handles, handle)
+				}
+			}
+		}
+	}
+
+	return handles
+}
+
+func runTwitterDiscover(cmd *cobra.Command, args []string) error {
+	_ = godotenv.Load()
+	ctx := context.Background()
+
+	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	personFilter, _ := cmd.Flags().GetString("person")
+
+	// Get all person records
+	allPersons, err := storer.GetAllPersonRecords(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get person records: %w", err)
+	}
+
+	// Filter to specific person if requested
+	var persons []core.PersonRecord
+	if personFilter != "" {
+		result := core.ResolveTargetName(ctx, storer, personFilter)
+		if result.Error != nil {
+			return fmt.Errorf("failed to resolve person: %w", result.Error)
+		}
+		if result.IsExactMatch {
+			for _, p := range allPersons {
+				if p.ID == *result.ExactMatch.PersonID {
+					persons = append(persons, p)
+					break
+				}
+			}
+		} else if len(result.FuzzyMatches) > 0 && result.FuzzyMatches[0].Score >= 0.8 {
+			for _, p := range allPersons {
+				if p.ID == *result.FuzzyMatches[0].Target.PersonID {
+					persons = append(persons, p)
+					break
+				}
+			}
+		} else {
+			return fmt.Errorf("person %q not found in database", personFilter)
+		}
+	} else {
+		persons = allPersons
+	}
+
+	if len(persons) == 0 {
+		log.Info().Msg("No persons to process")
+		return nil
+	}
+
+	// Initialize search provider
+	searcher, err := search.NewNewsSearcherFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to initialize search provider: %w", err)
+	}
+
+	// Initialize LLM client
+	client := llm.NewBaseLLMClient()
+	apiURL := os.Getenv("OPEN_AI_API")
+	if apiURL == "" {
+		apiURL = "https://api.openai.com/v1"
+	}
+	apiURL = apiURL + "/chat/completions"
+	apiKey := os.Getenv("OPEN_AI_KEY")
+	model := os.Getenv("OPEN_AI_CHAT_MODEL")
+	if model == "" {
+		model = "gpt-4o-mini"
+	}
+
+	for i, person := range persons {
+		// Check if person already has handles (skip unless --person forces it)
+		existingHandles, err := storer.GetTwitterHandlesByPersonID(ctx, person.ID)
+		if err != nil {
+			log.Error().Err(err).Str("person", person.Name).Msg("Failed to check existing handles")
+			continue
+		}
+		if len(existingHandles) > 0 && personFilter == "" {
+			log.Debug().Str("person", person.Name).Int("handles", len(existingHandles)).Msg("Skipping person with existing handles")
+			continue
+		}
+
+		log.Info().
+			Int("progress", i+1).
+			Int("total", len(persons)).
+			Str("person", person.Name).
+			Msg("Searching for Twitter handle")
+
+		// Search for the person's Twitter
+		query := fmt.Sprintf(`"%s" twitter @`, person.Name)
+		results, err := searcher.SearchNews(query, search.NewsSearchOptions{Limit: 10})
+		if err != nil {
+			log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
+			continue
+		}
+
+		// Extract candidate handles
+		candidates := extractTwitterHandles(results)
+		if len(candidates) == 0 {
+			log.Info().Str("person", person.Name).Msg("No candidate handles found")
+			if i < len(persons)-1 {
+				time.Sleep(1 * time.Second)
+			}
+			continue
+		}
+
+		log.Info().Str("person", person.Name).Strs("candidates", candidates).Msg("Found candidate handles")
+
+		// Format search results for LLM
+		var resultsText strings.Builder
+		for j, r := range results {
+			fmt.Fprintf(&resultsText, "%d. Title: %s\n   Snippet: %s\n   Link: %s\n", j+1, r.Title, r.Snippet, r.Link)
+		}
+
+		// Build LLM request to confirm the handle
+		userPrompt := fmt.Sprintf(
+			"Given these search results for \"%s twitter\":\n%s\nCandidate handles found: %s\n\nWhich Twitter/X handle is the official account of %s?\nReply with EXACTLY one line: HANDLE: @username\nOr if none found: HANDLE: NONE",
+			person.Name, resultsText.String(), strings.Join(candidates, ", "), person.Name,
+		)
+
+		chatReq := llm.ChatRequest{
+			Model:       model,
+			Temperature: 0.1,
+			Messages: []llm.ChatMessage{
+				{Role: "system", Content: "You are a Twitter handle verification assistant."},
+				{Role: "user", Content: userPrompt},
+			},
+		}
+
+		payloadBytes, err := json.Marshal(chatReq)
+		if err != nil {
+			log.Error().Err(err).Str("person", person.Name).Msg("Failed to marshal LLM request")
+			continue
+		}
+
+		respBytes, err := client.DoRequest(ctx, apiURL, apiKey, payloadBytes)
+		if err != nil {
+			log.Error().Err(err).Str("person", person.Name).Msg("LLM request failed")
+			continue
+		}
+
+		var chatResp llm.ChatResponse
+		if err := json.Unmarshal(respBytes, &chatResp); err != nil {
+			log.Error().Err(err).Str("person", person.Name).Msg("Failed to parse LLM response")
+			continue
+		}
+
+		if chatResp.Error != nil {
+			log.Error().Str("person", person.Name).Str("error", chatResp.Error.Message).Msg("LLM API returned error")
+			continue
+		}
+
+		if len(chatResp.Choices) == 0 {
+			log.Error().Str("person", person.Name).Msg("LLM returned no choices")
+			continue
+		}
+
+		content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+		handleRe := regexp.MustCompile(`(?i)HANDLE:\s*@(\S+)`)
+		match := handleRe.FindStringSubmatch(content)
+
+		if match == nil || strings.EqualFold(match[1], "NONE") {
+			log.Info().Str("person", person.Name).Str("llm_response", content).Msg("No confirmed handle")
+			if i < len(persons)-1 {
+				time.Sleep(1 * time.Second)
+			}
+			continue
+		}
+
+		confirmedHandle := strings.ToLower(match[1])
+		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", dryRun).Msg("Confirmed Twitter handle")
+
+		if !dryRun {
+			if err := storer.AddTwitterHandle(ctx, person.ID, confirmedHandle); err != nil {
+				log.Error().Err(err).Str("person", person.Name).Str("handle", confirmedHandle).Msg("Failed to save handle")
+				continue
+			}
+			log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Msg("Saved Twitter handle")
+		}
+
+		// Rate limit between persons
+		if i < len(persons)-1 {
+			time.Sleep(1 * time.Second)
 		}
 	}
 

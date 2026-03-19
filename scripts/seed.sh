@@ -37,5 +37,15 @@ echo "=== Fetching photos ==="
 $DM plugin photos search --all
 
 echo ""
+echo "=== Linking Twitter handles ==="
+$DM plugin twitter add --person "Marine Le Pen" --handle "MLP_officiel"
+$DM plugin twitter add --person "Emmanuel Macron" --handle "EmmanuelMacron"
+$DM plugin twitter add --person "Jean-Luc Mélenchon" --handle "JLMelenchon"
+$DM plugin twitter add --person "Jordan Bardella" --handle "J_Bardella"
+$DM plugin twitter add --person "Gabriel Attal" --handle "GabrielAttal"
+$DM plugin twitter add --person "François Bayrou" --handle "bayabordeaux"
+$DM plugin twitter add --person "Éric Ciotti" --handle "ECiotti"
+
+echo ""
 echo "=== Seed complete ==="
 $DM queue list
