@@ -32,6 +32,11 @@ type NewsSearcher interface {
 	PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error)
 }
 
+// WebSearcher is the interface for general web search providers.
+type WebSearcher interface {
+	SearchWeb(query string, limit int) ([]SearchResult, error)
+}
+
 // ImageSearcher is the interface for image search providers.
 type ImageSearcher interface {
 	SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error)
@@ -49,6 +54,15 @@ func NewNewsSearcherFromEnv() (NewsSearcher, error) {
 		return NewSerpAPINewsProvider(key)
 	}
 	return nil, fmt.Errorf("no search API key configured: set BRAVE_SEARCH_API_KEY or SERPAPI_KEY")
+}
+
+// NewWebSearcherFromEnv creates a WebSearcher based on available environment variables.
+func NewWebSearcherFromEnv() (WebSearcher, error) {
+	if key := os.Getenv("BRAVE_SEARCH_API_KEY"); key != "" {
+		log.Info().Msg("Using Brave Search API for web search")
+		return NewBraveSearchProvider(key), nil
+	}
+	return nil, fmt.Errorf("no web search API key configured: set BRAVE_SEARCH_API_KEY")
 }
 
 // NewImageSearcherFromEnv creates an ImageSearcher based on available environment variables.

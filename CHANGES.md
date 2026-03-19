@@ -5,14 +5,19 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 ## 2026-03-19: Twitter in Daily Pipeline + Auto-Discovery
 
 ### What was done
-- **Twitter step in daily pipeline** (`cmd/pipeline.go`): `runTwitterCollection()` added between batch news submission and contradiction detection. Gracefully skips if `TWITTER_API_IO_KEY` is not set or no handles exist. Errors included in Telegram notification.
-- **`dm plugin twitter discover`** (`cmd/twitter.go`): Auto-discovers Twitter handles for persons without one. Searches via Brave/SerpAPI, extracts candidate @handles from URLs and snippets, confirms with LLM. Supports `--dry-run` and `--person`.
-- **Seed script**: Added 7 hardcoded Twitter handles as idempotent fallback for fresh deployments.
+- **Twitter in daily pipeline** (`cmd/pipeline.go`): Two new steps between batch news and contradiction detection:
+  - Step 1.5: `runTwitterDiscovery()` — auto-discovers handles for persons without one
+  - Step 1.6: `runTwitterCollection()` — fetches tweets for all linked handles
+  Both skip gracefully if API keys are missing. Errors included in Telegram notification.
+- **`dm plugin twitter discover`** (`cmd/twitter.go`): Auto-discovers Twitter handles. Uses Brave Web Search API (`/res/v1/web/search`) with `site:x.com` queries, extracts candidate @handles from URLs and snippets, confirms with LLM. Supports `--dry-run` and `--person`.
+- **`SearchWeb` on BraveSearchProvider** (`backend/search/brave.go`): New method + `WebSearcher` interface for general web search (vs news-only). News search was useless for finding profile pages.
+- **Seed script**: Uses `dm plugin twitter discover` instead of hardcoded handles — works for any person set.
+- **Extracted `executeTwitterDiscovery()`**: Shared function called by both CLI and pipeline. `TwitterDiscoveryOpts` struct for configuration.
 
 ### Key design decisions
-- Twitter collection is synchronous in the pipeline (lightweight compared to batch news). No new env vars needed.
-- Discovery uses news search (not web search) to find handles mentioned in news articles, with LLM confirmation (temperature 0.1) to filter false positives.
-- Handle extraction parses both x.com/twitter.com URLs and @mention patterns from search results.
+- Web search over news search: `site:x.com` queries find actual profile URLs. News search only found handles incidentally mentioned in articles (tested: returned 1 wrong candidate vs 4 correct ones with web search).
+- Discovery runs before collection in the pipeline so newly discovered handles get tweets fetched in the same run.
+- LLM confirmation (temperature 0.1) correctly rejects false positives (tested: rejected `@rafaelsereti` for Marine Le Pen, confirmed `@MLP_officiel`).
 
 ## 2026-03-16: Pipeline Scheduler + Seed Script for MVP
 

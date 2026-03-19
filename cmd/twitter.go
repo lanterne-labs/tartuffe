@@ -424,7 +424,7 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func extractTwitterHandles(results []search.NewsResult) []string {
+func extractTwitterHandlesFromWeb(results []search.SearchResult) []string {
 	seen := make(map[string]bool)
 	var handles []string
 
@@ -436,12 +436,12 @@ func extractTwitterHandles(results []search.NewsResult) []string {
 	// Common paths to exclude
 	excludePaths := map[string]bool{
 		"search": true, "i": true, "hashtag": true, "intent": true,
-		"home": true, "explore": true, "settings": true,
+		"home": true, "explore": true, "settings": true, "status": true,
 	}
 
 	for _, r := range results {
 		// Check URLs
-		for _, text := range []string{r.Link, r.Title, r.Snippet} {
+		for _, text := range []string{r.URL, r.Title, r.Snippet} {
 			for _, match := range urlRe.FindAllStringSubmatch(text, -1) {
 				handle := strings.ToLower(match[1])
 				if !excludePaths[handle] && !seen[handle] {
@@ -478,6 +478,21 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	personFilter, _ := cmd.Flags().GetString("person")
 
+	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{
+		DryRun:       dryRun,
+		PersonFilter: personFilter,
+	})
+}
+
+// TwitterDiscoveryOpts configures the Twitter handle auto-discovery.
+type TwitterDiscoveryOpts struct {
+	DryRun       bool
+	PersonFilter string // if set, only discover for this person
+}
+
+// executeTwitterDiscovery searches for and links Twitter handles for persons who don't have one.
+// Used by both the CLI command and the daily pipeline.
+func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer, opts TwitterDiscoveryOpts) error {
 	// Get all person records
 	allPersons, err := storer.GetAllPersonRecords(ctx)
 	if err != nil {
@@ -486,8 +501,8 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 
 	// Filter to specific person if requested
 	var persons []core.PersonRecord
-	if personFilter != "" {
-		result := core.ResolveTargetName(ctx, storer, personFilter)
+	if opts.PersonFilter != "" {
+		result := core.ResolveTargetName(ctx, storer, opts.PersonFilter)
 		if result.Error != nil {
 			return fmt.Errorf("failed to resolve person: %w", result.Error)
 		}
@@ -506,7 +521,7 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 				}
 			}
 		} else {
-			return fmt.Errorf("person %q not found in database", personFilter)
+			return fmt.Errorf("person %q not found in database", opts.PersonFilter)
 		}
 	} else {
 		persons = allPersons
@@ -517,8 +532,8 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Initialize search provider
-	searcher, err := search.NewNewsSearcherFromEnv()
+	// Initialize web search provider
+	searcher, err := search.NewWebSearcherFromEnv()
 	if err != nil {
 		return fmt.Errorf("failed to initialize search provider: %w", err)
 	}
@@ -536,6 +551,7 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 		model = "gpt-4o-mini"
 	}
 
+	var discovered int
 	for i, person := range persons {
 		// Check if person already has handles (skip unless --person forces it)
 		existingHandles, err := storer.GetTwitterHandlesByPersonID(ctx, person.ID)
@@ -543,7 +559,7 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 			log.Error().Err(err).Str("person", person.Name).Msg("Failed to check existing handles")
 			continue
 		}
-		if len(existingHandles) > 0 && personFilter == "" {
+		if len(existingHandles) > 0 && opts.PersonFilter == "" {
 			log.Debug().Str("person", person.Name).Int("handles", len(existingHandles)).Msg("Skipping person with existing handles")
 			continue
 		}
@@ -555,15 +571,15 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 			Msg("Searching for Twitter handle")
 
 		// Search for the person's Twitter
-		query := fmt.Sprintf(`"%s" twitter @`, person.Name)
-		results, err := searcher.SearchNews(query, search.NewsSearchOptions{Limit: 10})
+		query := fmt.Sprintf(`"%s" twitter site:x.com`, person.Name)
+		results, err := searcher.SearchWeb(query, 10)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
 			continue
 		}
 
 		// Extract candidate handles
-		candidates := extractTwitterHandles(results)
+		candidates := extractTwitterHandlesFromWeb(results)
 		if len(candidates) == 0 {
 			log.Info().Str("person", person.Name).Msg("No candidate handles found")
 			if i < len(persons)-1 {
@@ -577,7 +593,7 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 		// Format search results for LLM
 		var resultsText strings.Builder
 		for j, r := range results {
-			fmt.Fprintf(&resultsText, "%d. Title: %s\n   Snippet: %s\n   Link: %s\n", j+1, r.Title, r.Snippet, r.Link)
+			fmt.Fprintf(&resultsText, "%d. Title: %s\n   Snippet: %s\n   URL: %s\n", j+1, r.Title, r.Snippet, r.URL)
 		}
 
 		// Build LLM request to confirm the handle
@@ -636,9 +652,9 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 		}
 
 		confirmedHandle := strings.ToLower(match[1])
-		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", dryRun).Msg("Confirmed Twitter handle")
+		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", opts.DryRun).Msg("Confirmed Twitter handle")
 
-		if !dryRun {
+		if !opts.DryRun {
 			if err := storer.AddTwitterHandle(ctx, person.ID, confirmedHandle); err != nil {
 				log.Error().Err(err).Str("person", person.Name).Str("handle", confirmedHandle).Msg("Failed to save handle")
 				continue
@@ -646,12 +662,15 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 			log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Msg("Saved Twitter handle")
 		}
 
+		discovered++
+
 		// Rate limit between persons
 		if i < len(persons)-1 {
 			time.Sleep(1 * time.Second)
 		}
 	}
 
+	log.Info().Int("discovered", discovered).Int("total_persons", len(persons)).Msg("Twitter discovery completed")
 	return nil
 }
 

@@ -109,7 +109,13 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(batchErr).Msg("Daily pipeline: batch submission failed")
 	}
 
-	// Step 1.5: Twitter collection (synchronous, lightweight)
+	// Step 1.5: Twitter handle discovery (find handles for persons without one)
+	discoverErr := runTwitterDiscovery(ctx, storer)
+	if discoverErr != nil {
+		log.Error().Err(discoverErr).Msg("Daily pipeline: Twitter discovery failed")
+	}
+
+	// Step 1.6: Twitter collection (fetch tweets for all handles)
 	twitterErr := runTwitterCollection(ctx, storer)
 	if twitterErr != nil {
 		log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
@@ -126,7 +132,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := batchErr != nil || twitterErr != nil || detectErr != nil
+		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil || detectErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 
 		var msg string
@@ -134,6 +140,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			var parts []string
 			if batchErr != nil {
 				parts = append(parts, "batch: "+batchErr.Error())
+			}
+			if discoverErr != nil {
+				parts = append(parts, "twitter-discover: "+discoverErr.Error())
 			}
 			if twitterErr != nil {
 				parts = append(parts, "twitter: "+twitterErr.Error())
@@ -420,6 +429,12 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer) e
 		Msg("Twitter collection completed")
 
 	return firstErr
+}
+
+// runTwitterDiscovery auto-discovers Twitter handles for persons who don't have one yet.
+// Gracefully skips if web search or LLM is not configured.
+func runTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer) error {
+	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{})
 }
 
 // envInt reads an integer from an environment variable, returning defaultVal on missing/invalid.

@@ -289,6 +289,65 @@ func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions
 	return results, nil
 }
 
+// SearchWeb performs a general web search using the Brave Web Search API.
+func (b *BraveSearchProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	params := url.Values{}
+	params.Add("q", query)
+	params.Add("count", fmt.Sprintf("%d", limit))
+
+	reqURL := "https://api.search.brave.com/res/v1/web/search?" + params.Encode()
+
+	log.Debug().Str("query", query).Int("limit", limit).Msg("Brave web search request")
+
+	braveRateLimit()
+
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Brave web request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Subscription-Token", b.apiKey)
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Brave web request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Brave web API returned status %s", resp.Status)
+	}
+
+	var braveResp struct {
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
+		return nil, fmt.Errorf("failed to decode Brave web response: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(braveResp.Web.Results))
+	for _, item := range braveResp.Web.Results {
+		results = append(results, SearchResult{
+			URL:     item.URL,
+			Title:   item.Title,
+			Snippet: item.Description,
+		})
+	}
+
+	log.Debug().Int("count", len(results)).Str("query", query).Msg("Brave web search completed")
+	return results, nil
+}
+
 // Search implements the SearchProvider interface.
 func (b *BraveSearchProvider) Search(personName string) ([]SearchResult, error) {
 	newsResults, err := b.SearchNews(personName, NewsSearchOptions{})
