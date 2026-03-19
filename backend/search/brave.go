@@ -11,14 +11,28 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// braveRateLimiter is a package-level rate limiter shared across all BraveSearchProvider
+// instances. Brave free tier allows 1 req/sec globally (not per-instance).
+var (
+	braveRateMu   sync.Mutex
+	braveLastCall time.Time
+)
+
+// braveRateLimit ensures at least 1 second between Brave API calls across all instances.
+func braveRateLimit() {
+	braveRateMu.Lock()
+	defer braveRateMu.Unlock()
+	if elapsed := time.Since(braveLastCall); elapsed < time.Second {
+		time.Sleep(time.Second - elapsed)
+	}
+	braveLastCall = time.Now()
+}
+
 // BraveSearchProvider implements NewsSearcher, ImageSearcher, and SearchProvider
 // using the Brave Search API.
 type BraveSearchProvider struct {
 	apiKey     string
 	httpClient *http.Client
-	// Rate limiting: Brave free tier allows 1 req/sec
-	rateMu   sync.Mutex
-	lastCall time.Time
 }
 
 // NewBraveSearchProvider creates a new BraveSearchProvider instance.
@@ -27,16 +41,6 @@ func NewBraveSearchProvider(apiKey string) *BraveSearchProvider {
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
-}
-
-// rateLimit ensures at least 1 second between Brave API calls.
-func (b *BraveSearchProvider) rateLimit() {
-	b.rateMu.Lock()
-	defer b.rateMu.Unlock()
-	if elapsed := time.Since(b.lastCall); elapsed < time.Second {
-		time.Sleep(time.Second - elapsed)
-	}
-	b.lastCall = time.Now()
 }
 
 const braveMaxPerPage = 20
@@ -114,7 +118,7 @@ func (b *BraveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions
 
 	log.Debug().Str("query", query).Int("count", count).Int("offset", offset).Msg("Brave news search request")
 
-	b.rateLimit()
+	braveRateLimit()
 
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -239,7 +243,7 @@ func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions
 
 	log.Debug().Str("query", query).Int("limit", limit).Msg("Brave image search request")
 
-	b.rateLimit()
+	braveRateLimit()
 
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
