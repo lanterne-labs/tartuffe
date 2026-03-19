@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -15,6 +16,9 @@ import (
 type BraveSearchProvider struct {
 	apiKey     string
 	httpClient *http.Client
+	// Rate limiting: Brave free tier allows 1 req/sec
+	rateMu   sync.Mutex
+	lastCall time.Time
 }
 
 // NewBraveSearchProvider creates a new BraveSearchProvider instance.
@@ -23,6 +27,16 @@ func NewBraveSearchProvider(apiKey string) *BraveSearchProvider {
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// rateLimit ensures at least 1 second between Brave API calls.
+func (b *BraveSearchProvider) rateLimit() {
+	b.rateMu.Lock()
+	defer b.rateMu.Unlock()
+	if elapsed := time.Since(b.lastCall); elapsed < time.Second {
+		time.Sleep(time.Second - elapsed)
+	}
+	b.lastCall = time.Now()
 }
 
 const braveMaxPerPage = 20
@@ -100,12 +114,13 @@ func (b *BraveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions
 
 	log.Debug().Str("query", query).Int("count", count).Int("offset", offset).Msg("Brave news search request")
 
+	b.rateLimit()
+
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Brave news request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("X-Subscription-Token", b.apiKey)
 
 	resp, err := b.httpClient.Do(req)
@@ -224,12 +239,13 @@ func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions
 
 	log.Debug().Str("query", query).Int("limit", limit).Msg("Brave image search request")
 
+	b.rateLimit()
+
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Brave image request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("X-Subscription-Token", b.apiKey)
 
 	resp, err := b.httpClient.Do(req)
