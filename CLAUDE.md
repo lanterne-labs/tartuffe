@@ -126,6 +126,7 @@ GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
 PIPELINE_INTERVAL_HOURS=24       # Daily pipeline: queue process + contradiction detect (0=disabled)
 FRPOLITICS_INTERVAL_DAYS=15      # Frpolitics pipeline: votes + news for deputies (0=disabled)
+FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
 ```
 
 ## Development Status

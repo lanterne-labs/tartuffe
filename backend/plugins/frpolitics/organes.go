@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // loadOrganeCacheForLegislature loads organe name mappings from the official static dataset.
@@ -16,7 +17,7 @@ import (
 func loadOrganeCacheForLegislature(ctx context.Context, legislature int) map[string]OrganeInfo {
 	out := make(map[string]OrganeInfo)
 	url := fmt.Sprintf("https://data.assemblee-nationale.fr/static/openData/repository/%d/organes/Organes.json.zip", legislature)
-	body, err := downloadCached(ctx, url, getCacheDir())
+	body, err := downloadCached(ctx, url, getCacheDir(), 7*24*time.Hour)
 	if err != nil {
 		return out
 	}

@@ -571,7 +571,7 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 		var body []byte
 		var err error
 		for _, url := range candidates {
-			body, err = downloadCached(ctx, url, getCacheDir())
+			body, err = downloadCached(ctx, url, getCacheDir(), 24*time.Hour)
 			if err == nil && len(body) > 0 {
 				break
 			}

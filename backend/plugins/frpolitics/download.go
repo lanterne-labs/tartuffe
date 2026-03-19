@@ -14,11 +14,18 @@ import (
 	"runtime"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
-// getCacheDir returns the cache directory path, checking multiple locations.
-// It first checks package-relative path, then common project layouts.
+// getCacheDir returns the cache directory path.
+// It checks FRPOLITICS_CACHE_DIR env var first, then falls back to source-relative paths.
 func getCacheDir() string {
+	// Check env var first (used on the host with a persistent volume)
+	if dir := os.Getenv("FRPOLITICS_CACHE_DIR"); dir != "" {
+		return dir
+	}
+
 	// First try package-relative path using runtime caller (works when source files exist)
 	_, currentFile, _, ok := runtime.Caller(0)
 	if ok {
@@ -55,29 +62,51 @@ func getCacheDir() string {
 }
 
 
-// downloadCached downloads the content at srcURL using a simple file cache.
-// If a file already exists in cacheDir with the URL's basename, it is returned.
-// Otherwise, the content is fetched, atomically written to the cache, and returned.
-func downloadCached(ctx context.Context, srcURL string, cacheDir string) ([]byte, error) {
-	parsed, err := url.Parse(srcURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid url %q: %w", srcURL, err)
-	}
-	filename := path.Base(parsed.Path)
-	if filename == "" || filename == "." || filename == "/" {
-		// Fall back to a stable hash-based filename when no basename is present
+// cacheFilename returns a cache-key-safe filename for a URL.
+// It prefixes the URL basename with the first 8 chars of SHA1(full URL)
+// to disambiguate URLs with the same basename (e.g. different legislature paths).
+func cacheFilename(srcURL string) string {
+	parsed, _ := url.Parse(srcURL)
+	basename := path.Base(parsed.Path)
+	if basename == "" || basename == "." || basename == "/" {
 		sum := sha1.Sum([]byte(srcURL))
-		filename = "download_" + hex.EncodeToString(sum[:]) + ".bin"
+		return "download_" + hex.EncodeToString(sum[:]) + ".bin"
 	}
+	sum := sha1.Sum([]byte(srcURL))
+	prefix := hex.EncodeToString(sum[:])[:8]
+	return prefix + "_" + basename
+}
+
+// downloadCached downloads the content at srcURL using a file cache with TTL.
+// If maxAge > 0, cached files older than maxAge are considered stale and re-downloaded.
+// If maxAge == 0, cached files are returned regardless of age (no expiry).
+// If re-download fails but a stale cache exists, the stale content is returned with a warning.
+func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge time.Duration) ([]byte, error) {
+	filename := cacheFilename(srcURL)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return nil, fmt.Errorf("ensure cache dir: %w", err)
 	}
 	cachePath := filepath.Join(cacheDir, filename)
-	// Return cached content if present
-	if f, err := os.Open(cachePath); err == nil {
-		defer f.Close()
-		return io.ReadAll(f)
+
+	// Check if cached file exists and is fresh enough
+	var staleData []byte
+	if info, err := os.Stat(cachePath); err == nil {
+		isFresh := maxAge == 0 || time.Since(info.ModTime()) < maxAge
+		if isFresh {
+			if data, err := os.ReadFile(cachePath); err == nil {
+				return data, nil
+			}
+		} else {
+			// Stale — read it as fallback in case download fails
+			staleData, _ = os.ReadFile(cachePath)
+			log.Debug().
+				Str("file", filename).
+				Dur("age", time.Since(info.ModTime())).
+				Dur("max_age", maxAge).
+				Msg("frpolitics: cache expired, re-downloading")
+		}
 	}
+
 	// Download with simple retry/backoff for 429/5xx
 	var data []byte
 	var lastErr error
@@ -129,6 +158,11 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string) ([]byte
 		}
 	}
 	if lastErr != nil {
+		// Fall back to stale cache if download failed
+		if len(staleData) > 0 {
+			log.Warn().Err(lastErr).Str("file", filename).Msg("frpolitics: download failed, using stale cache")
+			return staleData, nil
+		}
 		return nil, lastErr
 	}
 	// Atomic write

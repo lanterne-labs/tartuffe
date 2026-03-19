@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Note: getCacheDir() is defined in download.go
@@ -40,7 +41,7 @@ func loadActorNameMap(ctx context.Context) map[string]string {
 	blob = tryLocal()
 	if blob == nil {
 		for _, u := range sources {
-			b, err := downloadCached(ctx, u, getCacheDir())
+			b, err := downloadCached(ctx, u, getCacheDir(), 7*24*time.Hour)
 			if err == nil && len(b) > 0 {
 				blob = b
 				break

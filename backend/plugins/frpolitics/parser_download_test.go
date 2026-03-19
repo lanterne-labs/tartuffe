@@ -19,7 +19,7 @@ func TestDownloadAndParseScrutins(t *testing.T) {
 	url := fmt.Sprintf("https://data.assemblee-nationale.fr/static/openData/repository/%d/scrutins/Scrutins.json.zip", legislature)
 
 	// Download (or use cached) the zip file
-	body, err := downloadCached(ctx, url, "asset/cache")
+	body, err := downloadCached(ctx, url, "asset/cache", 0)
 	if err != nil {
 		t.Fatalf("failed to download scrutins zip: %v", err)
 	}
