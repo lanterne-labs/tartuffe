@@ -26,11 +26,6 @@ const (
 	maxFallbacks    = 5
 )
 
-// ImageSearcher is the interface for searching images (satisfied by SerpAPINewsProvider).
-type ImageSearcher interface {
-	SearchImages(query string, opts search.ImageSearchOptions) ([]search.ImageResult, error)
-}
-
 // Storer is the interface for database operations needed by the photos plugin.
 type Storer interface {
 	SetPersonImageURL(ctx context.Context, personID int64, url string) error
@@ -39,7 +34,7 @@ type Storer interface {
 
 // Provider orchestrates image search, download, upload, and storage.
 type Provider struct {
-	ImageSearch ImageSearcher
+	ImageSearch search.ImageSearcher
 	R2          objectstore.ObjectStore
 	Storer      Storer
 	HTTPClient  *http.Client
@@ -223,9 +218,11 @@ func scoreImages(images []search.ImageResult, minWidth, minHeight int) []ScoredI
 	var scored []ScoredImage
 
 	for _, img := range images {
-		// Filter out images below minimum size
-		if img.OriginalWidth < minWidth || img.OriginalHeight < minHeight {
-			continue
+		// Filter out images below minimum size (skip filter if dimensions unknown)
+		if img.OriginalWidth > 0 && img.OriginalHeight > 0 {
+			if img.OriginalWidth < minWidth || img.OriginalHeight < minHeight {
+				continue
+			}
 		}
 
 		// Filter out URLs from domains that never serve images directly
@@ -265,24 +262,30 @@ func computeScore(img search.ImageResult) (float64, string) {
 	var total float64
 	var parts []string
 
-	// Resolution score (40 pts): larger is better, caps at 1000px
-	resPx := math.Min(float64(img.OriginalWidth), float64(img.OriginalHeight))
-	resScore := math.Min(resPx/1000.0, 1.0) * 40
-	total += resScore
-	parts = append(parts, fmt.Sprintf("res=%.1f", resScore))
+	var resScore, aspectScore float64
 
-	// Aspect ratio score (20 pts): closer to 1:1 (square) is better for portraits
-	ratio := float64(img.OriginalWidth) / math.Max(float64(img.OriginalHeight), 1)
-	// Ideal ratio range: 0.6 to 1.4 (portrait to slightly landscape)
-	aspectScore := 0.0
-	if ratio >= 0.6 && ratio <= 1.4 {
-		// Perfect square (1.0) gets full points; edges get less
-		deviation := math.Abs(ratio - 1.0)
-		aspectScore = (1.0 - deviation/0.4) * 20
-		if aspectScore < 0 {
-			aspectScore = 0
+	if img.OriginalWidth == 0 && img.OriginalHeight == 0 {
+		// Unknown dimensions (e.g. Brave Search): assign neutral scores
+		resScore = 20  // 50% of max 40
+		aspectScore = 10 // 50% of max 20
+	} else {
+		// Resolution score (40 pts): larger is better, caps at 1000px
+		resPx := math.Min(float64(img.OriginalWidth), float64(img.OriginalHeight))
+		resScore = math.Min(resPx/1000.0, 1.0) * 40
+
+		// Aspect ratio score (20 pts): closer to 1:1 (square) is better for portraits
+		ratio := float64(img.OriginalWidth) / math.Max(float64(img.OriginalHeight), 1)
+		if ratio >= 0.6 && ratio <= 1.4 {
+			deviation := math.Abs(ratio - 1.0)
+			aspectScore = (1.0 - deviation/0.4) * 20
+			if aspectScore < 0 {
+				aspectScore = 0
+			}
 		}
 	}
+
+	total += resScore
+	parts = append(parts, fmt.Sprintf("res=%.1f", resScore))
 	total += aspectScore
 	parts = append(parts, fmt.Sprintf("aspect=%.1f", aspectScore))
 

@@ -436,12 +436,12 @@ func executeQueueProcess(ctx context.Context, storer *storage.PostgresStorer, op
 	}
 
 	// Initialize news-specific components if needed
-	var serpAPI *search.SerpAPINewsProvider
+	var newsSearcher search.NewsSearcher
 	var rawExtractor extractor.ContentExtractor
 	if runNews {
-		serpAPI, err = search.NewSerpAPINewsProviderFromEnv()
+		newsSearcher, err = search.NewNewsSearcherFromEnv()
 		if err != nil {
-			return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+			return fmt.Errorf("failed to initialize news search: %w", err)
 		}
 
 		if !opts.NewsCacheOnly {
@@ -518,7 +518,7 @@ func executeQueueProcess(ctx context.Context, storer *storage.PostgresStorer, op
 			batchExtractor := core.NewBatchExtractorFromEnv(contentExt)
 
 			newsProvider := &news.Provider{
-				NewsSearch:       serpAPI,
+				NewsSearch:       newsSearcher,
 				ContentExtractor: batchExtractor,
 				FactExtractor:    factExtractor,
 				Embedder:         embedder,

@@ -671,10 +671,10 @@ func runNewsSearch(ctx context.Context, storer *storage.PostgresStorer, deputySe
 		Int("parties", len(partySeed)).
 		Msg("frpolitics: starting news search")
 
-	// Initialize SerpAPI provider
-	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	// Initialize news search provider
+	newsSearcher, err := search.NewNewsSearcherFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+		return fmt.Errorf("failed to initialize news search: %w", err)
 	}
 
 	// Initialize content extractor based on option (default to webcrawler)
@@ -714,7 +714,7 @@ func runNewsSearch(ctx context.Context, storer *storage.PostgresStorer, deputySe
 	}
 
 	// Create news provider
-	newsProvider := news.NewProvider(serpAPI, contentExtractor, factExtractor, embedder, storer)
+	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer)
 
 	// Build targets from deputies and parties
 	targets := make([]news.SearchTarget, 0, len(deputySeed)+len(partySeed))
@@ -891,10 +891,10 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 		return nil
 	}
 
-	// Initialize SerpAPI provider
-	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	// Initialize news search provider
+	newsSearcher, err := search.NewNewsSearcherFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+		return fmt.Errorf("failed to initialize news search: %w", err)
 	}
 
 	// Initialize content extractor based on option (default to webcrawler)
@@ -934,7 +934,7 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 	}
 
 	// Create news provider
-	newsProvider := news.NewProvider(serpAPI, contentExtractor, factExtractor, embedder, storer)
+	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer)
 
 	// Prioritize targets
 	prioritizedTargets, err := news.PrioritizeTargets(ctx, storer, targets, news.PrioritizationOptions{

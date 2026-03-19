@@ -104,8 +104,8 @@ type Result struct {
 
 // Provider orchestrates news search and fact extraction for any entity.
 type Provider struct {
-	// NewsSearch is the news search provider (SerpAPI).
-	NewsSearch *search.SerpAPINewsProvider
+	// NewsSearch is the news search provider (SerpAPI, Brave, etc.).
+	NewsSearch search.NewsSearcher
 	// ContentExtractor extracts content from news article URLs (Firecrawl/Apify).
 	ContentExtractor extractor.ContentExtractor
 	// FactExtractor extracts facts from article content using LLM.
@@ -120,7 +120,7 @@ type Provider struct {
 
 // NewProvider creates a new news Provider with all dependencies.
 func NewProvider(
-	newsSearch *search.SerpAPINewsProvider,
+	newsSearch search.NewsSearcher,
 	contentExtractor extractor.ContentExtractor,
 	factExtractor *categorizer.OpenAIExtractor,
 	embedder *embedding.OpenAIEmbeddingGenerator,

@@ -217,10 +217,10 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Initialize SerpAPI provider
-	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	// Initialize news search provider
+	newsSearcher, err := search.NewNewsSearcherFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+		return fmt.Errorf("failed to initialize news search: %w", err)
 	}
 
 	// Initialize shared components (not needed in dry-run mode)
@@ -307,7 +307,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 		var newsProvider *news.Provider
 		if dryRun {
 			newsProvider = &news.Provider{
-				NewsSearch: serpAPI,
+				NewsSearch: newsSearcher,
 				Storer:     storer,
 			}
 		} else {
@@ -334,7 +334,7 @@ func runNewsSearch(cmd *cobra.Command, args []string) error {
 			}
 
 			newsProvider = &news.Provider{
-				NewsSearch:       serpAPI,
+				NewsSearch:       newsSearcher,
 				ContentExtractor: batchExtractor,
 				FactExtractor:    factExtractor,
 				Embedder:         embedder,

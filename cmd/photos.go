@@ -138,10 +138,10 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 		Bool("dry_run", dryRun).
 		Msg("Starting photo search")
 
-	// Initialize SerpAPI
-	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	// Initialize image search provider
+	imageSearcher, err := search.NewImageSearcherFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+		return fmt.Errorf("failed to initialize image search: %w", err)
 	}
 
 	// Initialize R2 (not needed for dry-run)
@@ -154,7 +154,7 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 	}
 
 	provider := &photos.Provider{
-		ImageSearch: serpAPI,
+		ImageSearch: imageSearcher,
 		R2:          r2,
 		Storer:      storer,
 	}

@@ -157,9 +157,9 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 	}
 
 	// Initialize components for content extraction (no LLM needed here)
-	serpAPI, err := search.NewSerpAPINewsProviderFromEnv()
+	newsSearcher, err := search.NewNewsSearcherFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to initialize SerpAPI: %w", err)
+		return fmt.Errorf("failed to initialize news search: %w", err)
 	}
 
 	rawExtractor, err := extractor.NewExtractorFromType("webcrawler")
@@ -170,7 +170,7 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 
 	// News provider — only needs search + content extraction (no FactExtractor/Embedder)
 	newsProvider := &news.Provider{
-		NewsSearch:       serpAPI,
+		NewsSearch:       newsSearcher,
 		ContentExtractor: batchExtractor,
 		Storer:           storer,
 	}
