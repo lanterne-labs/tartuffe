@@ -28,6 +28,50 @@ func braveRateLimit() {
 	braveLastCall = time.Now()
 }
 
+const braveMaxRetries = 4
+
+// doBraveRequest executes an HTTP request against the Brave API with rate limiting
+// and exponential backoff on 429 responses. Returns the response body on success.
+func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Response, error) {
+	backoff := 2 * time.Second
+
+	for attempt := range braveMaxRetries {
+		braveRateLimit()
+
+		req, err := http.NewRequest("GET", reqURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Brave %s request: %w", apiType, err)
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("X-Subscription-Token", b.apiKey)
+
+		resp, err := b.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("Brave %s request failed: %w", apiType, err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			if attempt < braveMaxRetries-1 {
+				log.Warn().Str("api", apiType).Int("attempt", attempt+1).Dur("backoff", backoff).Msg("Brave API 429, backing off")
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return nil, fmt.Errorf("Brave %s API returned status 429 Too Many Requests after %d retries", apiType, braveMaxRetries)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("Brave %s API returned status %s", apiType, resp.Status)
+		}
+
+		return resp, nil
+	}
+
+	return nil, fmt.Errorf("Brave %s API: exhausted retries", apiType)
+}
+
 // BraveSearchProvider implements NewsSearcher, ImageSearcher, and SearchProvider
 // using the Brave Search API.
 type BraveSearchProvider struct {
@@ -118,24 +162,11 @@ func (b *BraveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions
 
 	log.Debug().Str("query", query).Int("count", count).Int("offset", offset).Msg("Brave news search request")
 
-	braveRateLimit()
-
-	req, err := http.NewRequest("GET", reqURL, nil)
+	resp, err := b.doBraveRequest(reqURL, "news")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Brave news request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", b.apiKey)
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("Brave news request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Brave news API returned status %s", resp.Status)
-	}
 
 	var braveResp braveNewsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
@@ -243,24 +274,11 @@ func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions
 
 	log.Debug().Str("query", query).Int("limit", limit).Msg("Brave image search request")
 
-	braveRateLimit()
-
-	req, err := http.NewRequest("GET", reqURL, nil)
+	resp, err := b.doBraveRequest(reqURL, "image")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Brave image request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", b.apiKey)
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("Brave image request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Brave image API returned status %s", resp.Status)
-	}
 
 	var braveResp braveImageResponse
 	if err := json.NewDecoder(resp.Body).Decode(&braveResp); err != nil {
@@ -303,24 +321,11 @@ func (b *BraveSearchProvider) SearchWeb(query string, limit int) ([]SearchResult
 
 	log.Debug().Str("query", query).Int("limit", limit).Msg("Brave web search request")
 
-	braveRateLimit()
-
-	req, err := http.NewRequest("GET", reqURL, nil)
+	resp, err := b.doBraveRequest(reqURL, "web")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Brave web request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-Subscription-Token", b.apiKey)
-
-	resp, err := b.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("Brave web request failed: %w", err)
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Brave web API returned status %s", resp.Status)
-	}
 
 	var braveResp struct {
 		Web struct {
