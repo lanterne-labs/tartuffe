@@ -168,6 +168,7 @@ func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, 
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.0,
+		MaxTokens:      16384,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 

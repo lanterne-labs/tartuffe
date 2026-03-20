@@ -605,6 +605,7 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		chatReq := llm.ChatRequest{
 			Model:       model,
 			Temperature: 0.1,
+			MaxTokens:   16384,
 			Messages: []llm.ChatMessage{
 				{Role: "system", Content: "You are a Twitter handle verification assistant."},
 				{Role: "user", Content: userPrompt},

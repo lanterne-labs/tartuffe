@@ -217,6 +217,7 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 			{Role: "system", Content: systemPrompt},
 		},
 		Temperature:    0.1,
+		MaxTokens:      16384,
 		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
 

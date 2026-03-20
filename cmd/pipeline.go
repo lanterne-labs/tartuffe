@@ -116,9 +116,16 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	}
 
 	// Step 1.6: Twitter collection (fetch tweets for all handles)
-	twitterErr := runTwitterCollection(ctx, storer)
-	if twitterErr != nil {
-		log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
+	// Skip sync Twitter collection when batch provider is available —
+	// tweets are already included in the batch submission above.
+	var twitterErr error
+	if os.Getenv("BATCH_PROVIDER") == "" {
+		twitterErr = runTwitterCollection(ctx, storer)
+		if twitterErr != nil {
+			log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
+		}
+	} else {
+		log.Info().Msg("Twitter collection handled via batch submission, skipping sync path")
 	}
 
 	// Step 2: Contradiction detection (catch-up pass for existing facts)
@@ -281,6 +288,16 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 		}
 	}
 
+	// Also collect Twitter content for batch submission
+	twitterItems, twitterErr := collectTwitterContentForBatch(ctx, storer)
+	if twitterErr != nil {
+		log.Warn().Err(twitterErr).Msg("Twitter content collection for batch failed")
+		stats.CollectErrors = append(stats.CollectErrors, "twitter: "+twitterErr.Error())
+	} else if len(twitterItems) > 0 {
+		allItems = append(allItems, twitterItems...)
+		log.Info().Int("twitter_items", len(twitterItems)).Msg("Added Twitter content to batch")
+	}
+
 	stats.ContentItems = len(allItems)
 
 	if len(allItems) == 0 {
@@ -300,6 +317,7 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 	}
 
 	inserter := core.NewFactInserter(storer)
+	inserter.DisableClassifier() // Batch facts: skip sync LLM relation classification
 	adapter := newBatchStorerAdapter(storer)
 	orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
 
@@ -317,6 +335,47 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 		Msg("Batch submitted — poller will process results")
 
 	return stats, nil
+}
+
+// collectTwitterContentForBatch fetches tweets for all active handles and returns
+// BatchContentItems for batch LLM submission. No LLM calls are made.
+func collectTwitterContentForBatch(ctx context.Context, storer *storage.PostgresStorer) ([]core.BatchContentItem, error) {
+	handles, err := storer.GetActiveTwitterHandles(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active Twitter handles: %w", err)
+	}
+	if len(handles) == 0 {
+		log.Info().Msg("No active Twitter handles, skipping Twitter batch collection")
+		return nil, nil
+	}
+
+	fetcher, err := twitter.NewTwitterAPIIOFetcherFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("Twitter API key not configured, skipping Twitter batch collection")
+		return nil, nil
+	}
+
+	provider := &twitter.Provider{
+		Fetcher: fetcher,
+		Storer:  storer,
+	}
+
+	opts := twitter.Options{
+		MaxTweets: 50,
+		BatchSize: 20,
+	}
+
+	var allItems []core.BatchContentItem
+	for _, handle := range handles {
+		items, err := provider.CollectContent(ctx, handle, opts)
+		if err != nil {
+			log.Error().Err(err).Str("handle", handle.Handle).Msg("Failed to collect Twitter content for batch")
+			continue
+		}
+		allItems = append(allItems, items...)
+	}
+
+	return allItems, nil
 }
 
 // runFrpoliticsPipeline executes the frpolitics pipeline: votes + news for deputies.

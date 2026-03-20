@@ -95,11 +95,12 @@ type BatchStatusUpdateInput struct {
 
 // BatchContentItem represents a piece of content to be submitted for batch extraction.
 type BatchContentItem struct {
-	SourceURL   string
-	Content     string
-	TargetName  string
-	TargetType  string
-	PublishedAt *time.Time
+	SourceURL          string
+	Content            string
+	TargetName         string
+	TargetType         string
+	PublishedAt        *time.Time
+	PluginInstructions string // Optional plugin-specific instructions for the LLM prompt
 }
 
 // RetrieveResult contains the outcome of retrieving and processing batch results.
@@ -110,13 +111,18 @@ type RetrieveResult struct {
 	Errors    int
 }
 
+// ContradictionResultHandler processes contradiction batch results.
+// Called for each request in a "contradiction" job type batch.
+type ContradictionResultHandler func(ctx context.Context, customID string, llmResponse string) error
+
 // BatchJobOrchestrator prepares batch requests, persists state, and processes results.
 type BatchJobOrchestrator struct {
-	provider   llm.BatchProvider
-	storer     BatchStorer
-	embedder   EmbeddingGenerator
-	inserter   *FactInserter
-	factParser FactParser
+	provider              llm.BatchProvider
+	storer                BatchStorer
+	embedder              EmbeddingGenerator
+	inserter              *FactInserter
+	factParser            FactParser
+	contradictionHandler  ContradictionResultHandler
 }
 
 // NewBatchJobOrchestrator creates a new orchestrator.
@@ -135,6 +141,11 @@ func NewBatchJobOrchestrator(
 		inserter:   inserter,
 		factParser: factParser,
 	}
+}
+
+// SetContradictionHandler sets the handler for processing contradiction batch results.
+func (o *BatchJobOrchestrator) SetContradictionHandler(h ContradictionResultHandler) {
+	o.contradictionHandler = h
 }
 
 // PrepareAndSubmit reads content items, builds prompts, chunks large content,
@@ -160,8 +171,9 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 		}
 
 		cfg := FactExtractorConfig{
-			TargetName: item.TargetName,
-			SourceURL:  item.SourceURL,
+			TargetName:         item.TargetName,
+			SourceURL:          item.SourceURL,
+			PluginInstructions: item.PluginInstructions,
 		}
 
 		var chunks []string
@@ -234,6 +246,54 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 	return batchID, nil
 }
 
+// SubmitContradictionBatch submits pre-built contradiction batch requests to the provider.
+// Returns the DB batch ID for tracking.
+func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any) (int64, error) {
+	if len(requests) == 0 {
+		return 0, fmt.Errorf("no contradiction requests to submit")
+	}
+
+	log.Info().Int("requests", len(requests)).Msg("Submitting contradiction batch to provider")
+
+	submitResult, err := o.provider.Submit(ctx, requests)
+	if err != nil {
+		return 0, fmt.Errorf("provider submit failed: %w", err)
+	}
+
+	// Build DB request records from the batch requests
+	var dbRequests []BatchCreateRequestInput
+	for _, req := range requests {
+		dbRequests = append(dbRequests, BatchCreateRequestInput{
+			CustomID:   req.CustomID,
+			TargetName: "contradiction",
+			TargetType: "system",
+		})
+	}
+
+	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
+		Provider:        o.provider.ProviderName(),
+		ProviderBatchID: submitResult.ProviderBatchID,
+		JobType:         "contradiction",
+		RequestCount:    submitResult.RequestCount,
+		Metadata:        metadata,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to persist batch: %w", err)
+	}
+
+	if err := o.storer.CreateBatchRequests(ctx, batchID, dbRequests); err != nil {
+		return 0, fmt.Errorf("failed to persist batch requests: %w", err)
+	}
+
+	log.Info().
+		Int64("batch_id", batchID).
+		Str("provider_batch_id", submitResult.ProviderBatchID).
+		Int("requests", submitResult.RequestCount).
+		Msg("Contradiction batch submitted and persisted")
+
+	return batchID, nil
+}
+
 // CheckStatus polls the provider for batch status and updates the DB.
 func (o *BatchJobOrchestrator) CheckStatus(ctx context.Context, batchDBID int64) (*llm.BatchStatus, error) {
 	batch, err := o.storer.GetBatch(ctx, batchDBID)
@@ -302,86 +362,14 @@ func (o *BatchJobOrchestrator) RetrieveAndProcess(ctx context.Context, batchDBID
 
 	result := &RetrieveResult{}
 
-	for _, req := range unprocessed {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		respItem, ok := responseMap[req.CustomID]
-		if !ok {
-			errMsg := "no response found for request"
-			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
-				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
-			}
-			result.Errors++
-			continue
-		}
-
-		if respItem.Error != "" {
-			errMsg := respItem.Error
-			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
-				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
-			}
-			result.Errors++
-			continue
-		}
-
-		if respItem.Response == nil || len(respItem.Response.Choices) == 0 {
-			errMsg := "empty response"
-			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
-				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
-			}
-			result.Errors++
-			continue
-		}
-
-		jsonContent := respItem.Response.Choices[0].Message.Content
-
-		// Parse facts from the LLM response
-		sourceURL := ""
-		if req.SourceURL != nil {
-			sourceURL = *req.SourceURL
-		}
-		facts, err := o.factParser([]byte(jsonContent), sourceURL, req.PublishedAt)
+	// Dispatch based on job type
+	if batch.JobType == "contradiction" {
+		result, err = o.processContradictionBatch(ctx, unprocessed, responseMap)
 		if err != nil {
-			errMsg := fmt.Sprintf("failed to parse facts: %v", err)
-			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to parse facts from batch response")
-			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, &errMsg); markErr != nil {
-				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
-			}
-			result.Errors++
-			continue
+			return result, err
 		}
-
-		// Generate embeddings and insert facts
-		inserted, skipped, err := o.insertFactsFromBatch(ctx, facts, req)
-		if err != nil {
-			errMsg := fmt.Sprintf("failed to insert facts: %v", err)
-			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to insert facts from batch response")
-			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, &errMsg); markErr != nil {
-				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
-			}
-			result.Errors++
-			continue
-		}
-
-		// Mark as successfully processed
-		if err := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, nil); err != nil {
-			log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as processed")
-		}
-
-		result.Processed++
-		result.Inserted += inserted
-		result.Skipped += skipped
-
-		log.Debug().
-			Str("custom_id", req.CustomID).
-			Int("facts_parsed", len(facts)).
-			Int("inserted", inserted).
-			Int("skipped", skipped).
-			Msg("Processed batch response")
+	} else {
+		result = o.processFactExtractionBatch(ctx, unprocessed, responseMap)
 	}
 
 	// Update batch as retrieved
@@ -444,6 +432,158 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 	}
 
 	return inserted, skipped, nil
+}
+
+// processFactExtractionBatch handles retrieval for fact_extraction job type batches.
+func (o *BatchJobOrchestrator) processFactExtractionBatch(ctx context.Context, unprocessed []BatchRequestRecord, responseMap map[string]*llm.BatchResponseItem) *RetrieveResult {
+	result := &RetrieveResult{}
+
+	for _, req := range unprocessed {
+		select {
+		case <-ctx.Done():
+			return result
+		default:
+		}
+
+		respItem, ok := responseMap[req.CustomID]
+		if !ok {
+			errMsg := "no response found for request"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Error != "" {
+			errMsg := respItem.Error
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Response == nil || len(respItem.Response.Choices) == 0 {
+			errMsg := "empty response"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		jsonContent := respItem.Response.Choices[0].Message.Content
+
+		sourceURL := ""
+		if req.SourceURL != nil {
+			sourceURL = *req.SourceURL
+		}
+		facts, err := o.factParser([]byte(jsonContent), sourceURL, req.PublishedAt)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to parse facts: %v", err)
+			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to parse facts from batch response")
+			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, &errMsg); markErr != nil {
+				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		inserted, skipped, err := o.insertFactsFromBatch(ctx, facts, req)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to insert facts: %v", err)
+			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to insert facts from batch response")
+			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, &errMsg); markErr != nil {
+				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if err := o.storer.MarkRequestProcessed(ctx, req.ID, &jsonContent, nil); err != nil {
+			log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as processed")
+		}
+
+		result.Processed++
+		result.Inserted += inserted
+		result.Skipped += skipped
+
+		log.Debug().
+			Str("custom_id", req.CustomID).
+			Int("facts_parsed", len(facts)).
+			Int("inserted", inserted).
+			Int("skipped", skipped).
+			Msg("Processed batch response")
+	}
+
+	return result
+}
+
+// processContradictionBatch handles retrieval for contradiction job type batches.
+func (o *BatchJobOrchestrator) processContradictionBatch(ctx context.Context, unprocessed []BatchRequestRecord, responseMap map[string]*llm.BatchResponseItem) (*RetrieveResult, error) {
+	result := &RetrieveResult{}
+
+	if o.contradictionHandler == nil {
+		return result, fmt.Errorf("no contradiction handler configured")
+	}
+
+	for _, req := range unprocessed {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
+		}
+
+		respItem, ok := responseMap[req.CustomID]
+		if !ok {
+			errMsg := "no response found for request"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Error != "" {
+			errMsg := respItem.Error
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Response == nil || len(respItem.Response.Choices) == 0 {
+			errMsg := "empty response"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		llmContent := respItem.Response.Choices[0].Message.Content
+
+		if err := o.contradictionHandler(ctx, req.CustomID, llmContent); err != nil {
+			errMsg := fmt.Sprintf("contradiction handler failed: %v", err)
+			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to process contradiction batch response")
+			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &llmContent, &errMsg); markErr != nil {
+				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if err := o.storer.MarkRequestProcessed(ctx, req.ID, &llmContent, nil); err != nil {
+			log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as processed")
+		}
+
+		result.Processed++
+		log.Debug().Str("custom_id", req.CustomID).Msg("Processed contradiction batch response")
+	}
+
+	return result, nil
 }
 
 // LoadBatchContentFromDir reads cached JSON files from a directory and returns BatchContentItems.

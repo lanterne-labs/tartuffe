@@ -93,6 +93,7 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
+		MaxTokens:      16384,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 

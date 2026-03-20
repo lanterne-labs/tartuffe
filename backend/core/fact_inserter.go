@@ -35,6 +35,7 @@ type FactInserter struct {
 	stanceManager        *StanceManager
 	similarityThreshold  float64 // Cosine distance threshold for relation candidate search
 	autoDedupeThreshold  float64 // Cosine similarity above which to skip as duplicate
+	skipClassification   bool    // When true, skip relation classification entirely (for batch contexts)
 }
 
 // Storer defines the interface for storage operations needed by FactInserter.
@@ -128,6 +129,13 @@ func NewFactInserter(storer Storer) *FactInserter {
 // SetStanceManager sets the optional stance manager for stance-based contradiction detection.
 func (fi *FactInserter) SetStanceManager(sm *StanceManager) {
 	fi.stanceManager = sm
+}
+
+// DisableClassifier disables the relation classifier for this inserter.
+// Use this for batch contexts where sync LLM calls per fact are wasteful —
+// contradiction detection is handled separately via batch jobs.
+func (fi *FactInserter) DisableClassifier() {
+	fi.skipClassification = true
 }
 
 // InsertFacts processes a batch of facts, inserting each and classifying relations.
@@ -266,7 +274,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	}
 
 	// Classify relations with similar facts (non-blocking - fact is already inserted)
-	if fi.classifier != nil {
+	if fi.classifier != nil && !fi.skipClassification {
 		fi.classifyRelations(ctx, factID, input, subjectID)
 	}
 

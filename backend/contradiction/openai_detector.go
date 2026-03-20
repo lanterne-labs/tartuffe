@@ -72,6 +72,8 @@ A breaker does NOT invalidate a promise when:
 - EXPLORATORY POSTURE: Claiming to "seek to understand," "be in the discovery of," or "try to learn about" a situation is COMPATIBLE with specific instances of not knowing details — the exploration EXPLAINS the ignorance. "I was trying to understand" + "I didn't know X" = consistent. Only contradictory if the person simultaneously claims EXPERT KNOWLEDGE of the thing they claim to be discovering
 - LEGAL PROCESS STAGES: Accusation, indictment, trial, and conviction are sequential stages of the SAME legal process — they do NOT contradict each other. Being accused AND later convicted is normal progression, not a contradiction. Only the person's OWN contradictory statements count
 - CONVICTION SCOPE: A general conviction (e.g., "found guilty of embezzlement") does NOT automatically contradict every specific factual claim the person made about individual details within the case. Only flag if the conviction SPECIFICALLY disproves the particular claim being paired with it
+- ANNOUNCEMENT FOLLOWED BY ACTION: Announcing, promising, or planning to do something and then DOING it is the OPPOSITE of a contradiction — it is a FULFILLED commitment. "X announced they would support Y" + "X came to support Y" = consistent. Only contradictory if the person announced one thing and then did the OPPOSITE
+- GEOGRAPHIC/JURISDICTIONAL SCOPE: A fact about a specific region, département, or city does NOT contradict a fact about national-level data. "Only 3 communes in Vienne" does not contradict "425 lists nationwide." Always check if facts refer to different geographic scopes before flagging
 
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
@@ -204,6 +206,18 @@ Statement A (dated January 20, 2024): "Marine Le Pen stated she was not aware of
 Statement B (dated January 22, 2024): "Marine Le Pen rejected responsibility for the salaries paid to relatives in the parliamentary assistants case."
 PAIR 24: NO: Not knowing a specific salary and rejecting responsibility for relatives' salaries are both part of the same defense — distancing herself from relatives' employment terms. Two denials about the same topic reinforce each other.
 
+PAIR 26 (Geographic/Jurisdictional Scope - NOT Contradictory):
+Statement A (dated March 10, 2024): "Seulement 3 communes en Vienne ont déposé des listes pour les élections municipales."
+Statement B (dated March 10, 2024): "425 listes ont été déposées sur l'ensemble du territoire national pour les élections municipales."
+PAIR 26: REASONING: Statement A is about a specific département (Vienne) while Statement B is about the entire national territory. Different geographic scopes — a small local number is fully compatible with a large national total.
+PAIR 26: NO: Facts refer to different geographic scopes (one département vs nationwide) — local data does not contradict national aggregates.
+
+PAIR 25 (Announcement Followed by Action - NOT Contradictory):
+Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
+Statement B (dated March 18, 2024): "Jean-Luc Mélenchon came to support the candidacy of Lahouaria Addouche in Lille."
+PAIR 25: REASONING: Statement A is an announcement of intent to support, Statement B describes the actual support happening. This is a fulfilled commitment — the person did what they announced. Past vs future tense about the same action is NOT a contradiction.
+PAIR 25: NO: Announcing support and then providing that support is a fulfilled commitment, not a contradiction.
+
 **PAIRS TO ANALYZE:**
 %s
 
@@ -335,6 +349,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.1,
+		MaxTokens:   16384,
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

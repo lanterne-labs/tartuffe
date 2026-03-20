@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-19: Reduce LLM Costs — Batch Everything
+
+### What was done
+- **Phase 1: Disable relation classifier for batch facts**: Added `DisableClassifier()` method to `FactInserter`. Called in batch poller (`cmd/web.go`) and pipeline inserter (`cmd/pipeline.go`). Eliminates 1 sync LLM call per batch-retrieved fact (~$8-9 savings per run).
+- **Phase 2: Twitter to batch Gemini**: Added `CollectContent()` method to Twitter `Provider` — fetches tweets without LLM calls, returns `BatchContentItem` slices. Pipeline's `collectAndSubmitBatch` now also collects Twitter content and includes it in the Gemini batch. Sync Twitter collection (`runTwitterCollection`) skipped when `BATCH_PROVIDER` is set.
+- **Phase 3: Contradiction detection to batch Gemini**: New `contradiction/batch_detector.go` with `PrepareContradictionBatch`, `ParseContradictionCustomID`, `ProcessContradictionResponse`. Extended `BatchJobOrchestrator` with `SubmitContradictionBatch` method, `SetContradictionHandler`, and job-type dispatch in `RetrieveAndProcess`. Refactored `contradictions_detect.go`: extracted `collectPairsForPerson`, added `submitContradictionBatch` (batch path) vs `processSyncContradictions` (sync fallback). Batch mode auto-selected when `BATCH_PROVIDER` is set (and not --debug/--dry-run).
+- **Phase 4: Prompt fix + false positive cleanup**: Added `GEOGRAPHIC/JURISDICTIONAL SCOPE` rule + PAIR 26 example to contradiction prompt. Migration deletes 18 false positive contradiction IDs.
+- **`BatchContentItem.PluginInstructions`**: New field passed through to `FactExtractorConfig` in batch job preparation, enabling plugin-specific prompts (used by Twitter).
+
+### Key design decisions
+- `DisableClassifier` is opt-in per inserter instance — doesn't affect non-batch callers.
+- Twitter `CollectContent` reuses the same tweet filtering/dedup logic as `CollectFacts` but stops before LLM calls. Batches tweets by `BatchSize` (default 20) into content items.
+- Contradiction batch custom ID encodes `c:{personID}:{factA}:{factB},...` for stateless result processing by the poller.
+- `RetrieveAndProcess` dispatches on `batch.JobType` ("fact_extraction" vs "contradiction") — the two result handlers are structurally different (fact parsing vs verdict parsing).
+- Sync contradiction path remains as fallback for --debug and --dry-run modes where immediate output is needed.
+
 ## 2026-03-19: Twitter in Daily Pipeline + Auto-Discovery
 
 ### What was done

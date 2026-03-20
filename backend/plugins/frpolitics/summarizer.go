@@ -139,6 +139,7 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 		Model:          model,
 		Messages:       []categorizer.ChatMessage{{Role: "system", Content: prompt}},
 		Temperature:    0.1,
+		MaxTokens:      16384,
 		ResponseFormat: &categorizer.ResponseFormat{Type: "json_object"},
 	}
 	payload, _ := json.Marshal(req)

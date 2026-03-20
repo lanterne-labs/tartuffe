@@ -670,8 +670,10 @@ func executeServe(cmd *cobra.Command, args []string) error {
 				log.Error().Err(err).Msg("Failed to create embedder, batch poller disabled")
 			} else {
 				inserter := core.NewFactInserter(storer)
+				inserter.DisableClassifier() // Batch facts: skip sync LLM relation classification
 				adapter := newBatchStorerAdapter(storer)
 				orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
+				orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
 				go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
 			}
 		}

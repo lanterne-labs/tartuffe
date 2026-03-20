@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
@@ -415,5 +416,56 @@ func convertBatch(b *storage.LLMBatch) *core.BatchRecord {
 		CompletedAt:     b.CompletedAt,
 		RetrievedAt:     b.RetrievedAt,
 		Metadata:        b.Metadata,
+	}
+}
+
+// buildContradictionHandler creates a handler that processes contradiction batch results.
+// It parses the custom ID to extract person/fact IDs, parses the LLM response for verdicts,
+// and records contradictions and pair checks in the database.
+func buildContradictionHandler(storer *storage.PostgresStorer) core.ContradictionResultHandler {
+	return func(ctx context.Context, customID string, llmResponse string) error {
+		personID, factAIDs, factBIDs, err := contradiction.ParseContradictionCustomID(customID)
+		if err != nil {
+			return fmt.Errorf("failed to parse custom ID: %w", err)
+		}
+
+		results := contradiction.ProcessContradictionResponse(llmResponse, len(factAIDs))
+
+		var pairResults []storage.PairCheckResult
+		for i, result := range results {
+			if result.Error != nil {
+				log.Warn().Err(result.Error).
+					Int64("fact_a", factAIDs[i]).Int64("fact_b", factBIDs[i]).
+					Msg("Contradiction batch: pair parse error")
+				continue
+			}
+
+			pairResults = append(pairResults, storage.PairCheckResult{
+				FactAID:         factAIDs[i],
+				FactBID:         factBIDs[i],
+				IsContradiction: result.IsContradictory,
+			})
+
+			if result.IsContradictory {
+				log.Warn().
+					Int64("person_id", personID).
+					Int64("fact_a", factAIDs[i]).
+					Int64("fact_b", factBIDs[i]).
+					Str("reason", result.Reason).
+					Msg("Contradiction detected (batch)")
+
+				if err := storer.RecordContradictionImmediate(ctx, personID, factAIDs[i], factBIDs[i], result.Reason); err != nil {
+					log.Error().Err(err).Msg("Failed to record contradiction from batch")
+				}
+			}
+		}
+
+		if len(pairResults) > 0 {
+			if err := storer.RecordPairChecksBatch(ctx, personID, pairResults); err != nil {
+				log.Error().Err(err).Int64("person_id", personID).Msg("Failed to record pair checks from batch")
+			}
+		}
+
+		return nil
 	}
 }

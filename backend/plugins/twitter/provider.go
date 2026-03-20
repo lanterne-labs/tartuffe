@@ -263,6 +263,133 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 	return result, nil
 }
 
+// CollectContent fetches tweets for a handle and returns them as BatchContentItems
+// without calling any LLM. Each tweet becomes its own content item with PluginInstructions set.
+// Use this to submit tweets to the Gemini batch API instead of sync extraction.
+func (p *Provider) CollectContent(ctx context.Context, handle storage.TwitterHandle, opts Options) ([]core.BatchContentItem, error) {
+	maxTweets := opts.MaxTweets
+	if maxTweets <= 0 {
+		maxTweets = defaultMaxTweets
+	}
+	revisitHours := opts.RevisitHours
+	if revisitHours <= 0 {
+		revisitHours = defaultRevisitHours
+	}
+
+	dateFrom, dateTo := determineDateRange(handle, opts)
+
+	// Check fetch log (API-level dedup) unless --force
+	if !opts.Force {
+		alreadyFetched, err := p.Storer.IsTwitterRangeFetched(ctx, handle.ID, dateFrom, dateTo)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check fetch log: %w", err)
+		}
+		if alreadyFetched {
+			log.Info().
+				Str("handle", handle.Handle).
+				Str("from", dateFrom.Format("2006-01-02")).
+				Str("to", dateTo.Format("2006-01-02")).
+				Msg("twitter: range already fetched, skipping")
+			return nil, nil
+		}
+	}
+
+	// Fetch tweets
+	fetchOpts := FetchOptions{
+		MaxTweets: maxTweets,
+		DateFrom:  &dateFrom,
+		DateTo:    &dateTo,
+	}
+
+	query := "from:" + handle.Handle
+	tweets, err := p.Fetcher.FetchTweets(ctx, query, fetchOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch tweets for @%s: %w", handle.Handle, err)
+	}
+
+	log.Info().
+		Str("handle", handle.Handle).
+		Int("tweets_fetched", len(tweets)).
+		Msg("twitter: fetch completed (batch mode)")
+
+	if len(tweets) == 0 {
+		if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, 0); err != nil {
+			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+		}
+		return nil, nil
+	}
+
+	// Filter: skip retweets and already-processed tweets
+	var toProcess []Tweet
+	for _, tw := range tweets {
+		if tw.IsRetweet {
+			continue
+		}
+		if tw.URL != "" && !opts.Force {
+			visitable, _, err := p.Storer.IsURLVisitable(ctx, tw.URL, revisitHours)
+			if err != nil {
+				log.Warn().Err(err).Str("url", tw.URL).Msg("Failed to check URL visitability")
+				continue
+			}
+			if !visitable {
+				continue
+			}
+		}
+		toProcess = append(toProcess, tw)
+	}
+
+	if len(toProcess) == 0 {
+		if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, len(tweets)); err != nil {
+			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+		}
+		return nil, nil
+	}
+
+	// Convert each tweet to a BatchContentItem
+	var items []core.BatchContentItem
+	batchSize := opts.BatchSize
+	if batchSize <= 0 {
+		batchSize = defaultBatchSize
+	}
+
+	for i := 0; i < len(toProcess); i += batchSize {
+		end := i + batchSize
+		if end > len(toProcess) {
+			end = len(toProcess)
+		}
+		batch := toProcess[i:end]
+		content := formatTweetBatch(batch)
+
+		// Use the first tweet's URL as source; individual tweet URLs are in the content
+		sourceURL := fmt.Sprintf("https://x.com/%s", handle.Handle)
+
+		items = append(items, core.BatchContentItem{
+			SourceURL:          sourceURL,
+			Content:            content,
+			TargetName:         handle.PersonName,
+			TargetType:         "person",
+			PublishedAt:        batch[0].CreatedAt,
+			PluginInstructions: PluginInstructions,
+		})
+	}
+
+	// Log the fetch
+	if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, len(tweets)); err != nil {
+		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+	}
+	if err := p.Storer.UpdateTwitterHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
+		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
+	}
+
+	log.Info().
+		Str("handle", handle.Handle).
+		Int("tweets", len(toProcess)).
+		Int("batch_items", len(items)).
+		Msg("twitter: content collected for batch submission")
+
+	return items, nil
+}
+
 // CollectFactsWithDateWindows breaks the date range into N-day windows
 // and calls CollectFacts for each, skipping already-fetched windows.
 func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle storage.TwitterHandle, opts Options) (*Result, error) {
