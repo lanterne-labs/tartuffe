@@ -551,6 +551,8 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		model = "gpt-4o-mini"
 	}
 
+	const twitterSearchCooldown = 7 * 24 * time.Hour // Don't re-search for 7 days
+
 	var discovered int
 	for i, person := range persons {
 		// Check if person already has handles (skip unless --person forces it)
@@ -564,6 +566,19 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 			continue
 		}
 
+		// Skip persons searched recently (unless --person forces it)
+		if opts.PersonFilter == "" {
+			searchedAt, err := storer.GetTwitterSearchedAt(ctx, person.ID)
+			if err != nil {
+				log.Error().Err(err).Str("person", person.Name).Msg("Failed to check twitter_searched_at")
+				continue
+			}
+			if searchedAt != nil && time.Since(*searchedAt) < twitterSearchCooldown {
+				log.Debug().Str("person", person.Name).Time("searched_at", *searchedAt).Msg("Skipping recently searched person")
+				continue
+			}
+		}
+
 		log.Info().
 			Int("progress", i+1).
 			Int("total", len(persons)).
@@ -575,8 +590,13 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		results, err := searcher.SearchWeb(query, 10)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
+			// Mark as searched even on error to avoid hammering the API
+			_ = storer.MarkTwitterSearched(ctx, person.ID)
 			continue
 		}
+
+		// Mark as searched regardless of outcome
+		_ = storer.MarkTwitterSearched(ctx, person.ID)
 
 		// Extract candidate handles
 		candidates := extractTwitterHandlesFromWeb(results)

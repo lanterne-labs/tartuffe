@@ -3172,6 +3172,26 @@ func (s *PostgresStorer) GetTwitterHandlesByPersonID(ctx context.Context, person
 	return handles, nil
 }
 
+// MarkTwitterSearched sets twitter_searched_at to now for a person,
+// so that discovery won't re-search them until the cooldown expires.
+func (s *PostgresStorer) MarkTwitterSearched(ctx context.Context, personID int64) error {
+	_, err := s.pool.Exec(ctx, `UPDATE persons SET twitter_searched_at = NOW() WHERE id = $1`, personID)
+	if err != nil {
+		return fmt.Errorf("failed to mark twitter searched for person %d: %w", personID, err)
+	}
+	return nil
+}
+
+// GetTwitterSearchedAt returns the last time Twitter discovery was attempted for a person.
+func (s *PostgresStorer) GetTwitterSearchedAt(ctx context.Context, personID int64) (*time.Time, error) {
+	var t *time.Time
+	err := s.pool.QueryRow(ctx, `SELECT twitter_searched_at FROM persons WHERE id = $1`, personID).Scan(&t)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get twitter_searched_at for person %d: %w", personID, err)
+	}
+	return t, nil
+}
+
 // UpdateTwitterHandleLastFetched updates the last_fetched_at timestamp for a handle.
 func (s *PostgresStorer) UpdateTwitterHandleLastFetched(ctx context.Context, handleID int64, t time.Time) error {
 	stmt := `UPDATE twitter_handles SET last_fetched_at = $2 WHERE id = $1`
