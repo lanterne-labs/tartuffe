@@ -112,6 +112,13 @@ type mockBatchStorer struct {
 	// ListBatches
 	listBatchesResult []BatchRecord
 	listBatchesErr    error
+
+	// CountUnfinishedBatchesByMetadata
+	countUnfinishedResult int
+	countUnfinishedErr    error
+	countUnfinishedCalls  []struct {
+		jobType, metaKey, metaValue string
+	}
 }
 
 func (m *mockBatchStorer) CreateBatch(ctx context.Context, input BatchCreateInput) (int64, error) {
@@ -159,6 +166,13 @@ func (m *mockBatchStorer) ListBatches(ctx context.Context, stateFilter string) (
 	return m.listBatchesResult, m.listBatchesErr
 }
 
+func (m *mockBatchStorer) CountUnfinishedBatchesByMetadata(ctx context.Context, jobType, metaKey, metaValue string) (int, error) {
+	m.countUnfinishedCalls = append(m.countUnfinishedCalls, struct {
+		jobType, metaKey, metaValue string
+	}{jobType, metaKey, metaValue})
+	return m.countUnfinishedResult, m.countUnfinishedErr
+}
+
 // ---------------------------------------------------------------------------
 // Mock: core.EmbeddingGenerator
 // ---------------------------------------------------------------------------
@@ -189,7 +203,12 @@ func (m *mockEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts [
 // Mock: core.Storer (minimal, for FactInserter)
 // ---------------------------------------------------------------------------
 
-type mockStorer struct{}
+type mockStorer struct {
+	nextFactID     int64                // Auto-incrementing fact ID
+	similarFacts   []SimilarFact        // What FindSimilarActiveFacts returns
+	verbsByFactID  map[int64]string     // GetFactCanonicalVerb lookup
+	insertedRelations []FactRelationInput // Track InsertFactRelationsBatch calls
+}
 
 func (m *mockStorer) FindOrInsertPersons(ctx context.Context, names []string) ([]int64, error) {
 	ids := make([]int64, len(names))
@@ -204,14 +223,16 @@ func (m *mockStorer) FindOrInsertPersonWithType(ctx context.Context, name string
 }
 
 func (m *mockStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]SimilarFact, error) {
-	return nil, nil
+	return m.similarFacts, nil
 }
 
 func (m *mockStorer) InsertFact(ctx context.Context, input StoreFactInput) (int64, error) {
-	return 1, nil
+	m.nextFactID++
+	return m.nextFactID, nil
 }
 
 func (m *mockStorer) InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error {
+	m.insertedRelations = append(m.insertedRelations, inputs...)
 	return nil
 }
 
@@ -228,6 +249,11 @@ func (m *mockStorer) LinkPersonsToSourceMention(ctx context.Context, sourceID in
 }
 
 func (m *mockStorer) GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error) {
+	if m.verbsByFactID != nil {
+		if v, ok := m.verbsByFactID[factID]; ok {
+			return v, nil
+		}
+	}
 	return "CLAIMED", nil
 }
 
@@ -253,11 +279,16 @@ func mockFactParser(jsonData []byte, sourceURL string, publishedAt *time.Time) (
 // ---------------------------------------------------------------------------
 
 func newTestFactInserter() *FactInserter {
+	return newTestFactInserterWithStorer(&mockStorer{})
+}
+
+func newTestFactInserterWithStorer(s Storer) *FactInserter {
 	return &FactInserter{
-		storer:              &mockStorer{},
+		storer:              s,
 		classifier:          nil,
 		similarityThreshold: 0.40,
 		autoDedupeThreshold: 0.85,
+		skipClassification:  true,
 	}
 }
 
@@ -827,6 +858,354 @@ func TestShortHash(t *testing.T) {
 		}
 		if len(h) != 12 {
 			t.Errorf("expected 12 character hash, got %d", len(h))
+		}
+	})
+}
+
+// ===========================================================================
+// Tests: Batch Chain (fact_extraction → classification → contradiction)
+// ===========================================================================
+
+func TestChain_FactExtractionTriggersClassification(t *testing.T) {
+	// Simulate: a fact_extraction batch completes, the poller retrieves it,
+	// and the chain should auto-submit a classification batch.
+
+	ctx := context.Background()
+
+	// Mock storer with similar facts for classification
+	factStorer := &mockStorer{
+		similarFacts: []SimilarFact{
+			{ID: 100, Text: "Existing fact about topic X", Distance: 0.15},
+			{ID: 200, Text: "Another existing fact about topic X", Distance: 0.25},
+		},
+		verbsByFactID: map[int64]string{
+			100: "CLAIMED",
+			200: "DENIED",
+		},
+	}
+	inserter := newTestFactInserterWithStorer(factStorer)
+
+	provider := &mockBatchProvider{name: "test"}
+	batchStorer := &mockBatchStorer{
+		createBatchID: 99, // ID assigned to new classification batch
+		getBatchRecord: &BatchRecord{
+			ID:              1,
+			ProviderBatchID: "provider-batch-1",
+			State:           "completed",
+			JobType:         "fact_extraction",
+			Metadata:        map[string]any{},
+		},
+	}
+
+	embedder := &mockEmbeddingGenerator{}
+
+	orch := NewBatchJobOrchestrator(provider, batchStorer, embedder, inserter, mockFactParser)
+
+	// Simulate: 2 facts were inserted from this batch
+	insertedFacts := []InsertedFactInfo{
+		{
+			FactID:    1,
+			Text:      "New fact A about topic X",
+			Verb:      "CLAIMED",
+			Embedding: []float32{0.1, 0.2, 0.3},
+			PersonIDs: []int64{10},
+		},
+		{
+			FactID:    2,
+			Text:      "New fact B about topic Y",
+			Verb:      "DENIED",
+			Embedding: []float32{0.4, 0.5, 0.6},
+			PersonIDs: []int64{10},
+		},
+	}
+
+	// Call SubmitClassificationBatch directly
+	batchID, err := orch.SubmitClassificationBatch(ctx, insertedFacts, 1)
+	if err != nil {
+		t.Fatalf("SubmitClassificationBatch failed: %v", err)
+	}
+	if batchID != 99 {
+		t.Errorf("expected batch ID 99, got %d", batchID)
+	}
+
+	// Verify: provider received batch requests
+	if len(provider.submitCalls) != 1 {
+		t.Fatalf("expected 1 provider submit call, got %d", len(provider.submitCalls))
+	}
+	requests := provider.submitCalls[0]
+	if len(requests) != 2 {
+		t.Fatalf("expected 2 classification requests (one per fact), got %d", len(requests))
+	}
+
+	// Verify custom IDs encode fact IDs
+	if requests[0].CustomID != "cl:1" {
+		t.Errorf("expected custom ID 'cl:1', got %q", requests[0].CustomID)
+	}
+	if requests[1].CustomID != "cl:2" {
+		t.Errorf("expected custom ID 'cl:2', got %q", requests[1].CustomID)
+	}
+
+	// Verify: batch was created with correct job type and metadata
+	if len(batchStorer.createBatchLog) != 1 {
+		t.Fatalf("expected 1 CreateBatch call, got %d", len(batchStorer.createBatchLog))
+	}
+	created := batchStorer.createBatchLog[0]
+	if created.JobType != "classification" {
+		t.Errorf("expected job type 'classification', got %q", created.JobType)
+	}
+	parentID, ok := created.Metadata["parent_extraction_batch_id"]
+	if !ok {
+		t.Fatal("expected parent_extraction_batch_id in metadata")
+	}
+	if parentID != int64(1) {
+		t.Errorf("expected parent_extraction_batch_id=1, got %v", parentID)
+	}
+
+	// Verify: prompts contain the classification prompt structure
+	for _, req := range requests {
+		if len(req.Messages) == 0 {
+			t.Fatal("expected messages in request")
+		}
+		prompt := req.Messages[0].Content
+		if !strings.Contains(prompt, "NEW FACT:") {
+			t.Errorf("prompt missing 'NEW FACT:' section")
+		}
+		if !strings.Contains(prompt, "EXISTING FACTS:") {
+			t.Errorf("prompt missing 'EXISTING FACTS:' section")
+		}
+		if !strings.Contains(prompt, "duplicate") {
+			t.Errorf("prompt missing 'duplicate' classification option")
+		}
+	}
+}
+
+func TestChain_ClassificationResultsWriteRelations(t *testing.T) {
+	// Simulate: a classification batch completes and the LLM identified a duplicate.
+
+	ctx := context.Background()
+
+	factStorer := &mockStorer{}
+	inserter := newTestFactInserterWithStorer(factStorer)
+
+	provider := &mockBatchProvider{name: "test"}
+	batchStorer := &mockBatchStorer{
+		getBatchRecord: &BatchRecord{
+			ID:              5,
+			ProviderBatchID: "provider-cls-batch",
+			State:           "completed",
+			JobType:         "classification",
+			Metadata:        map[string]any{"parent_extraction_batch_id": float64(1)},
+		},
+		unprocessedReqs: []BatchRequestRecord{
+			{
+				ID:       10,
+				BatchID:  5,
+				CustomID: "cl:42", // fact ID 42
+			},
+		},
+	}
+
+	// LLM response: fact 42 is a duplicate of fact 100
+	classificationJSON := `{"classifications": [{"existing_fact_id": 100, "relation": "duplicate", "reason": "Same claim from different source"}]}`
+	provider.retrieveResult = []llm.BatchResponseItem{
+		{
+			CustomID: "cl:42",
+			Response: &llm.ChatResponse{
+				Choices: []llm.ChatChoice{
+					{Message: llm.ChatMessage{Content: classificationJSON}},
+				},
+			},
+		},
+	}
+
+	orch := NewBatchJobOrchestrator(provider, batchStorer, nil, inserter, nil)
+
+	result, err := orch.RetrieveAndProcess(ctx, 5)
+	if err != nil {
+		t.Fatalf("RetrieveAndProcess failed: %v", err)
+	}
+
+	if result.Processed != 1 {
+		t.Errorf("expected 1 processed, got %d", result.Processed)
+	}
+
+	// Verify: fact_relations were written
+	if len(factStorer.insertedRelations) != 1 {
+		t.Fatalf("expected 1 relation inserted, got %d", len(factStorer.insertedRelations))
+	}
+	rel := factStorer.insertedRelations[0]
+	if rel.GeneralFactID != 100 {
+		t.Errorf("expected general fact ID 100 (existing), got %d", rel.GeneralFactID)
+	}
+	if rel.SpecificFactID != 42 {
+		t.Errorf("expected specific fact ID 42 (new), got %d", rel.SpecificFactID)
+	}
+	if rel.RelationType != "duplicate" {
+		t.Errorf("expected relation type 'duplicate', got %q", rel.RelationType)
+	}
+}
+
+func TestChain_ClassificationCompletionTriggersContradiction(t *testing.T) {
+	// Simulate: last classification batch completes (no siblings pending),
+	// should trigger contradictionSubmitter.
+
+	ctx := context.Background()
+
+	factStorer := &mockStorer{}
+	inserter := newTestFactInserterWithStorer(factStorer)
+
+	batchStorer := &mockBatchStorer{
+		countUnfinishedResult: 0, // No pending classification batches
+	}
+
+	orch := NewBatchJobOrchestrator(nil, batchStorer, nil, inserter, nil)
+
+	// Track if contradictionSubmitter was called
+	contradictionCalled := false
+	orch.SetContradictionSubmitter(func(ctx context.Context) error {
+		contradictionCalled = true
+		return nil
+	})
+
+	batch := &BatchRecord{
+		ID:       5,
+		JobType:  "classification",
+		Metadata: map[string]any{"parent_extraction_batch_id": float64(1)},
+	}
+
+	orch.maybeSubmitContradictionBatch(ctx, batch)
+
+	if !contradictionCalled {
+		t.Error("expected contradictionSubmitter to be called when no pending classification batches")
+	}
+
+	// Verify the right metadata was queried
+	if len(batchStorer.countUnfinishedCalls) != 1 {
+		t.Fatalf("expected 1 CountUnfinished call, got %d", len(batchStorer.countUnfinishedCalls))
+	}
+	call := batchStorer.countUnfinishedCalls[0]
+	if call.jobType != "classification" {
+		t.Errorf("expected jobType 'classification', got %q", call.jobType)
+	}
+	if call.metaKey != "parent_extraction_batch_id" {
+		t.Errorf("expected metaKey 'parent_extraction_batch_id', got %q", call.metaKey)
+	}
+}
+
+func TestChain_ClassificationDeferredWhenSiblingsPending(t *testing.T) {
+	// Simulate: classification batch completes but siblings are still pending.
+	// Should NOT trigger contradictionSubmitter.
+
+	ctx := context.Background()
+
+	batchStorer := &mockBatchStorer{
+		countUnfinishedResult: 2, // 2 sibling classification batches still running
+	}
+
+	orch := NewBatchJobOrchestrator(nil, batchStorer, nil, newTestFactInserter(), nil)
+
+	contradictionCalled := false
+	orch.SetContradictionSubmitter(func(ctx context.Context) error {
+		contradictionCalled = true
+		return nil
+	})
+
+	batch := &BatchRecord{
+		ID:       5,
+		JobType:  "classification",
+		Metadata: map[string]any{"parent_extraction_batch_id": float64(1)},
+	}
+
+	orch.maybeSubmitContradictionBatch(ctx, batch)
+
+	if contradictionCalled {
+		t.Error("contradictionSubmitter should NOT be called when siblings are pending")
+	}
+}
+
+func TestChain_NoClassificationWhenNoSimilarFacts(t *testing.T) {
+	// If inserted facts have no similar existing facts, no classification batch
+	// should be submitted (returns 0, nil).
+
+	ctx := context.Background()
+
+	factStorer := &mockStorer{
+		similarFacts: nil, // No similar facts
+	}
+	inserter := newTestFactInserterWithStorer(factStorer)
+
+	provider := &mockBatchProvider{name: "test"}
+	batchStorer := &mockBatchStorer{createBatchID: 99}
+
+	orch := NewBatchJobOrchestrator(provider, batchStorer, nil, inserter, nil)
+
+	facts := []InsertedFactInfo{
+		{FactID: 1, Text: "Unique fact", Verb: "CLAIMED", Embedding: []float32{0.1}, PersonIDs: []int64{10}},
+	}
+
+	batchID, err := orch.SubmitClassificationBatch(ctx, facts, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if batchID != 0 {
+		t.Errorf("expected batch ID 0 (no requests needed), got %d", batchID)
+	}
+
+	// Provider should NOT have been called
+	if len(provider.submitCalls) != 0 {
+		t.Errorf("expected 0 provider calls, got %d", len(provider.submitCalls))
+	}
+}
+
+func TestParseClassificationResponse(t *testing.T) {
+	t.Run("duplicate and unrelated", func(t *testing.T) {
+		json := `{"classifications": [
+			{"existing_fact_id": 100, "relation": "duplicate", "reason": "Same claim"},
+			{"existing_fact_id": 200, "relation": "unrelated", "reason": "Different topic"},
+			{"existing_fact_id": 300, "relation": "implication_new_is_specific", "reason": "More specific"}
+		]}`
+
+		results, err := ParseClassificationResponse(json)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// "unrelated" should be filtered out
+		if len(results) != 2 {
+			t.Fatalf("expected 2 results (unrelated filtered), got %d", len(results))
+		}
+		if results[0].ExistingFactID != 100 || results[0].Relation != "duplicate" {
+			t.Errorf("unexpected first result: %+v", results[0])
+		}
+		if results[1].ExistingFactID != 300 || results[1].Relation != "implication_new_is_specific" {
+			t.Errorf("unexpected second result: %+v", results[1])
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		_, err := ParseClassificationResponse("not json")
+		if err == nil {
+			t.Fatal("expected error for invalid JSON")
+		}
+	})
+
+	t.Run("empty classifications", func(t *testing.T) {
+		results, err := ParseClassificationResponse(`{"classifications": []}`)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results, got %d", len(results))
+		}
+	})
+
+	t.Run("string fact IDs", func(t *testing.T) {
+		json := `{"classifications": [{"existing_fact_id": "42", "relation": "duplicate", "reason": "Same"}]}`
+		results, err := ParseClassificationResponse(json)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(results) != 1 || results[0].ExistingFactID != 42 {
+			t.Errorf("expected fact ID 42, got %+v", results)
 		}
 	})
 }

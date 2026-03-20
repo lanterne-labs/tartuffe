@@ -256,3 +256,21 @@ func (s *PostgresStorer) ListBatches(ctx context.Context, stateFilter string) ([
 	}
 	return batches, rows.Err()
 }
+
+// CountUnfinishedBatchesByMetadata counts batches of a given job type that are not yet
+// fully processed, filtered by a metadata key-value pair. Used for batch chaining:
+// "are there any pending classification batches for this parent extraction batch?"
+func (s *PostgresStorer) CountUnfinishedBatchesByMetadata(ctx context.Context, jobType, metaKey, metaValue string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM llm_batches
+		 WHERE job_type = $1
+		   AND metadata->>$2 = $3
+		   AND (state IN ('pending', 'in_progress') OR (state = 'completed' AND retrieved_at IS NULL))`,
+		jobType, metaKey, metaValue,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count unfinished batches: %w", err)
+	}
+	return count, nil
+}

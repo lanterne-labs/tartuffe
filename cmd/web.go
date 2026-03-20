@@ -674,6 +674,9 @@ func executeServe(cmd *cobra.Command, args []string) error {
 				adapter := newBatchStorerAdapter(storer)
 				orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
 				orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
+				orchestrator.SetContradictionSubmitter(func(ctx context.Context) error {
+					return executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
+				})
 				go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
 			}
 		}

@@ -30,6 +30,7 @@ type BatchStorer interface {
 	GetUnprocessedRequests(ctx context.Context, batchID int64) ([]BatchRequestRecord, error)
 	MarkRequestProcessed(ctx context.Context, reqID int64, responseJSON *string, errMsg *string) error
 	ListBatches(ctx context.Context, stateFilter string) ([]BatchRecord, error)
+	CountUnfinishedBatchesByMetadata(ctx context.Context, jobType, metaKey, metaValue string) (int, error)
 }
 
 // BatchCreateInput mirrors storage.CreateBatchInput to avoid import cycle.
@@ -103,12 +104,24 @@ type BatchContentItem struct {
 	PluginInstructions string // Optional plugin-specific instructions for the LLM prompt
 }
 
+// InsertedFactInfo holds metadata about a fact inserted from a batch.
+// Used to chain classification batch after fact extraction.
+type InsertedFactInfo struct {
+	FactID      int64
+	Text        string // NormalizedFactText
+	Verb        string // CanonicalVerb
+	Embedding   []float32
+	PersonIDs   []int64
+	PublishedAt *time.Time
+}
+
 // RetrieveResult contains the outcome of retrieving and processing batch results.
 type RetrieveResult struct {
-	Processed int
-	Inserted  int
-	Skipped   int
-	Errors    int
+	Processed     int
+	Inserted      int
+	Skipped       int
+	Errors        int
+	InsertedFacts []InsertedFactInfo // Populated by fact_extraction batches for classification chaining
 }
 
 // ContradictionResultHandler processes contradiction batch results.
@@ -117,12 +130,13 @@ type ContradictionResultHandler func(ctx context.Context, customID string, llmRe
 
 // BatchJobOrchestrator prepares batch requests, persists state, and processes results.
 type BatchJobOrchestrator struct {
-	provider              llm.BatchProvider
-	storer                BatchStorer
-	embedder              EmbeddingGenerator
-	inserter              *FactInserter
-	factParser            FactParser
-	contradictionHandler  ContradictionResultHandler
+	provider               llm.BatchProvider
+	storer                 BatchStorer
+	embedder               EmbeddingGenerator
+	inserter               *FactInserter
+	factParser             FactParser
+	contradictionHandler   ContradictionResultHandler
+	contradictionSubmitter func(ctx context.Context) error // Submits contradiction batch after classification completes
 }
 
 // NewBatchJobOrchestrator creates a new orchestrator.
@@ -146,6 +160,12 @@ func NewBatchJobOrchestrator(
 // SetContradictionHandler sets the handler for processing contradiction batch results.
 func (o *BatchJobOrchestrator) SetContradictionHandler(h ContradictionResultHandler) {
 	o.contradictionHandler = h
+}
+
+// SetContradictionSubmitter sets the function that submits contradiction detection
+// after all classification batches for a pipeline run have completed.
+func (o *BatchJobOrchestrator) SetContradictionSubmitter(fn func(ctx context.Context) error) {
+	o.contradictionSubmitter = fn
 }
 
 // PrepareAndSubmit reads content items, builds prompts, chunks large content,
@@ -363,12 +383,18 @@ func (o *BatchJobOrchestrator) RetrieveAndProcess(ctx context.Context, batchDBID
 	result := &RetrieveResult{}
 
 	// Dispatch based on job type
-	if batch.JobType == "contradiction" {
+	switch batch.JobType {
+	case "contradiction":
 		result, err = o.processContradictionBatch(ctx, unprocessed, responseMap)
 		if err != nil {
 			return result, err
 		}
-	} else {
+	case "classification":
+		result, err = o.processClassificationBatch(ctx, unprocessed, responseMap)
+		if err != nil {
+			return result, err
+		}
+	default:
 		result = o.processFactExtractionBatch(ctx, unprocessed, responseMap)
 	}
 
@@ -392,7 +418,8 @@ func (o *BatchJobOrchestrator) RetrieveAndProcess(ctx context.Context, batchDBID
 }
 
 // insertFactsFromBatch generates embeddings and inserts facts through the FactInserter pipeline.
-func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts []backend.Fact, req BatchRequestRecord) (inserted, skipped int, err error) {
+// Returns counts and metadata about inserted facts (for classification chaining).
+func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts []backend.Fact, req BatchRequestRecord) (inserted, skipped int, insertedFacts []InsertedFactInfo, err error) {
 	for _, fact := range facts {
 		// Generate embedding from EmbeddingText
 		embeddings, err := o.embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
@@ -429,9 +456,21 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 
 		inserted += insertResult.Inserted
 		skipped += insertResult.Skipped
+
+		// Collect metadata for classification chaining
+		for _, meta := range insertResult.InsertedMeta {
+			insertedFacts = append(insertedFacts, InsertedFactInfo{
+				FactID:      meta.FactID,
+				Text:        fact.NormalizedFactText,
+				Verb:        fact.CanonicalVerb,
+				Embedding:   embeddings[0],
+				PersonIDs:   []int64{meta.PersonID},
+				PublishedAt: fact.PublishedAt,
+			})
+		}
 	}
 
-	return inserted, skipped, nil
+	return inserted, skipped, insertedFacts, nil
 }
 
 // processFactExtractionBatch handles retrieval for fact_extraction job type batches.
@@ -490,7 +529,7 @@ func (o *BatchJobOrchestrator) processFactExtractionBatch(ctx context.Context, u
 			continue
 		}
 
-		inserted, skipped, err := o.insertFactsFromBatch(ctx, facts, req)
+		inserted, skipped, batchFacts, err := o.insertFactsFromBatch(ctx, facts, req)
 		if err != nil {
 			errMsg := fmt.Sprintf("failed to insert facts: %v", err)
 			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to insert facts from batch response")
@@ -508,6 +547,7 @@ func (o *BatchJobOrchestrator) processFactExtractionBatch(ctx context.Context, u
 		result.Processed++
 		result.Inserted += inserted
 		result.Skipped += skipped
+		result.InsertedFacts = append(result.InsertedFacts, batchFacts...)
 
 		log.Debug().
 			Str("custom_id", req.CustomID).
@@ -584,6 +624,249 @@ func (o *BatchJobOrchestrator) processContradictionBatch(ctx context.Context, un
 	}
 
 	return result, nil
+}
+
+// SubmitClassificationBatch builds and submits a classification batch for newly inserted facts.
+// For each fact, finds similar existing facts and builds a classification prompt.
+func (o *BatchJobOrchestrator) SubmitClassificationBatch(ctx context.Context, facts []InsertedFactInfo, parentBatchID int64) (int64, error) {
+	if len(facts) == 0 {
+		return 0, fmt.Errorf("no facts to classify")
+	}
+
+	// Access storer through inserter (same package)
+	storer := o.inserter.storer
+
+	// Similarity threshold for classification candidates (default 0.40 distance = 60% similarity)
+	distanceThreshold := 0.40
+
+	var batchRequests []llm.BatchRequest
+	var dbRequests []BatchCreateRequestInput
+
+	for _, fact := range facts {
+		// Find similar existing facts
+		similar, err := storer.FindSimilarActiveFacts(ctx, fact.PersonIDs, fact.Embedding, distanceThreshold, 20)
+		if err != nil {
+			log.Warn().Err(err).Int64("fact_id", fact.FactID).Msg("Classification: failed to find similar facts, skipping")
+			continue
+		}
+
+		// Build classification inputs (exclude the new fact itself)
+		var factsSection strings.Builder
+		hasInputs := false
+		for _, sf := range similar {
+			if sf.ID == fact.FactID {
+				continue
+			}
+			existingVerb, _ := storer.GetFactCanonicalVerb(ctx, sf.ID)
+			fmt.Fprintf(&factsSection, "- ID: %d | Verb: %s | Text: %s | Published: unknown date\n",
+				sf.ID, existingVerb, sf.Text)
+			hasInputs = true
+		}
+
+		if !hasInputs {
+			continue
+		}
+
+		pubDate := "unknown date"
+		if fact.PublishedAt != nil {
+			pubDate = fact.PublishedAt.Format("January 2, 2006")
+		}
+
+		prompt := fmt.Sprintf(classificationPrompt, fact.Verb, fact.Text, pubDate, factsSection.String())
+		customID := fmt.Sprintf("cl:%d", fact.FactID)
+
+		batchRequests = append(batchRequests, llm.BatchRequest{
+			CustomID: customID,
+			Messages: []llm.ChatMessage{
+				{Role: "user", Content: prompt},
+			},
+			Temperature:    0.0,
+			ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		})
+
+		dbRequests = append(dbRequests, BatchCreateRequestInput{
+			CustomID:   customID,
+			TargetName: "classification",
+			TargetType: "system",
+		})
+	}
+
+	if len(batchRequests) == 0 {
+		log.Info().Int("facts", len(facts)).Msg("No classification requests needed (no similar facts found)")
+		return 0, nil
+	}
+
+	log.Info().Int("requests", len(batchRequests)).Msg("Submitting classification batch to provider")
+
+	submitResult, err := o.provider.Submit(ctx, batchRequests)
+	if err != nil {
+		return 0, fmt.Errorf("provider submit failed: %w", err)
+	}
+
+	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
+		Provider:        o.provider.ProviderName(),
+		ProviderBatchID: submitResult.ProviderBatchID,
+		JobType:         "classification",
+		RequestCount:    submitResult.RequestCount,
+		Metadata: map[string]any{
+			"parent_extraction_batch_id": parentBatchID,
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to persist batch: %w", err)
+	}
+
+	if err := o.storer.CreateBatchRequests(ctx, batchID, dbRequests); err != nil {
+		return 0, fmt.Errorf("failed to persist batch requests: %w", err)
+	}
+
+	log.Info().
+		Int64("batch_id", batchID).
+		Int64("parent_batch_id", parentBatchID).
+		Int("requests", submitResult.RequestCount).
+		Msg("Classification batch submitted and persisted")
+
+	return batchID, nil
+}
+
+// processClassificationBatch handles retrieval for classification job type batches.
+// Parses LLM classification responses and writes fact_relations rows.
+func (o *BatchJobOrchestrator) processClassificationBatch(ctx context.Context, unprocessed []BatchRequestRecord, responseMap map[string]*llm.BatchResponseItem) (*RetrieveResult, error) {
+	result := &RetrieveResult{}
+	storer := o.inserter.storer
+
+	for _, req := range unprocessed {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
+		}
+
+		respItem, ok := responseMap[req.CustomID]
+		if !ok {
+			errMsg := "no response found for request"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Error != "" {
+			errMsg := respItem.Error
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		if respItem.Response == nil || len(respItem.Response.Choices) == 0 {
+			errMsg := "empty response"
+			if err := o.storer.MarkRequestProcessed(ctx, req.ID, nil, &errMsg); err != nil {
+				log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		llmContent := respItem.Response.Choices[0].Message.Content
+
+		// Parse newFactID from custom ID: "cl:{factID}"
+		var newFactID int64
+		if _, err := fmt.Sscanf(req.CustomID, "cl:%d", &newFactID); err != nil {
+			errMsg := fmt.Sprintf("failed to parse custom ID: %v", err)
+			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &llmContent, &errMsg); markErr != nil {
+				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		// Parse classification results
+		classResults, err := ParseClassificationResponse(llmContent)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to parse classification: %v", err)
+			log.Warn().Err(err).Str("custom_id", req.CustomID).Msg("Failed to parse classification response")
+			if markErr := o.storer.MarkRequestProcessed(ctx, req.ID, &llmContent, &errMsg); markErr != nil {
+				log.Warn().Err(markErr).Int64("req_id", req.ID).Msg("Failed to mark request as errored")
+			}
+			result.Errors++
+			continue
+		}
+
+		// Convert to FactRelationInputs
+		var relations []FactRelationInput
+		for _, r := range classResults {
+			var rel FactRelationInput
+			rel.Reason = r.Reason
+
+			switch r.Relation {
+			case "duplicate":
+				rel.GeneralFactID = r.ExistingFactID
+				rel.SpecificFactID = newFactID
+				rel.RelationType = "duplicate"
+			case "implication_new_is_general":
+				rel.GeneralFactID = newFactID
+				rel.SpecificFactID = r.ExistingFactID
+				rel.RelationType = "implication"
+			case "implication_new_is_specific":
+				rel.GeneralFactID = r.ExistingFactID
+				rel.SpecificFactID = newFactID
+				rel.RelationType = "implication"
+			default:
+				continue
+			}
+
+			relations = append(relations, rel)
+		}
+
+		if len(relations) > 0 {
+			if err := storer.InsertFactRelationsBatch(ctx, relations); err != nil {
+				log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Failed to insert classification relations")
+			} else {
+				log.Info().Int64("fact_id", newFactID).Int("relations", len(relations)).Msg("Recorded classification relations from batch")
+			}
+		}
+
+		if err := o.storer.MarkRequestProcessed(ctx, req.ID, &llmContent, nil); err != nil {
+			log.Warn().Err(err).Int64("req_id", req.ID).Msg("Failed to mark request as processed")
+		}
+
+		result.Processed++
+		result.Inserted += len(relations) // Reuse Inserted for relation count
+	}
+
+	return result, nil
+}
+
+// maybeSubmitContradictionBatch checks if all classification batches for a parent
+// extraction batch are done. If so, triggers contradiction detection.
+func (o *BatchJobOrchestrator) maybeSubmitContradictionBatch(ctx context.Context, batch *BatchRecord) {
+	if o.contradictionSubmitter == nil {
+		return
+	}
+
+	parentIDRaw, ok := batch.Metadata["parent_extraction_batch_id"]
+	if !ok {
+		return
+	}
+	parentID := fmt.Sprintf("%v", parentIDRaw)
+
+	count, err := o.storer.CountUnfinishedBatchesByMetadata(ctx, "classification", "parent_extraction_batch_id", parentID)
+	if err != nil {
+		log.Error().Err(err).Str("parent_id", parentID).Msg("Failed to check pending classification batches")
+		return
+	}
+	if count > 0 {
+		log.Info().Int("pending", count).Str("parent_id", parentID).Msg("Classification batches still pending, deferring contradiction submission")
+		return
+	}
+
+	log.Info().Str("parent_id", parentID).Msg("All classification batches done, submitting contradiction detection")
+	if err := o.contradictionSubmitter(ctx); err != nil {
+		log.Error().Err(err).Msg("Failed to submit contradiction detection after classification")
+	}
 }
 
 // LoadBatchContentFromDir reads cached JSON files from a directory and returns BatchContentItems.
@@ -724,6 +1007,13 @@ func pollBatches(ctx context.Context, o *BatchJobOrchestrator) {
 }
 
 func retrieveBatch(ctx context.Context, o *BatchJobOrchestrator, batchID int64) {
+	// Get batch info before processing (for chain logic)
+	batch, err := o.storer.GetBatch(ctx, batchID)
+	if err != nil {
+		log.Error().Err(err).Int64("batch_id", batchID).Msg("Batch poller: failed to get batch info")
+		return
+	}
+
 	result, err := o.RetrieveAndProcess(ctx, batchID)
 	if err != nil {
 		log.Error().Err(err).Int64("batch_id", batchID).Msg("Batch poller: failed to retrieve batch")
@@ -731,8 +1021,24 @@ func retrieveBatch(ctx context.Context, o *BatchJobOrchestrator, batchID int64) 
 	}
 	log.Info().
 		Int64("batch_id", batchID).
+		Str("job_type", batch.JobType).
 		Int("inserted", result.Inserted).
 		Int("skipped", result.Skipped).
 		Int("errors", result.Errors).
 		Msg("Batch poller: auto-retrieved batch")
+
+	// Chain: fact_extraction → classification
+	if batch.JobType == "fact_extraction" && len(result.InsertedFacts) > 0 {
+		clsBatchID, err := o.SubmitClassificationBatch(ctx, result.InsertedFacts, batchID)
+		if err != nil {
+			log.Error().Err(err).Int64("parent_batch_id", batchID).Msg("Failed to submit classification batch")
+		} else if clsBatchID > 0 {
+			log.Info().Int64("classification_batch_id", clsBatchID).Int64("parent_batch_id", batchID).Int("facts", len(result.InsertedFacts)).Msg("Classification batch submitted")
+		}
+	}
+
+	// Chain: classification → contradiction
+	if batch.JobType == "classification" {
+		o.maybeSubmitContradictionBatch(ctx, batch)
+	}
 }

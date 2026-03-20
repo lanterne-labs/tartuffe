@@ -389,6 +389,10 @@ func (a *batchStorerAdapter) MarkRequestProcessed(ctx context.Context, reqID int
 	return a.s.MarkRequestProcessed(ctx, reqID, responseJSON, errMsg)
 }
 
+func (a *batchStorerAdapter) CountUnfinishedBatchesByMetadata(ctx context.Context, jobType, metaKey, metaValue string) (int, error) {
+	return a.s.CountUnfinishedBatchesByMetadata(ctx, jobType, metaKey, metaValue)
+}
+
 func (a *batchStorerAdapter) ListBatches(ctx context.Context, stateFilter string) ([]core.BatchRecord, error) {
 	batches, err := a.s.ListBatches(ctx, stateFilter)
 	if err != nil {

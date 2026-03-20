@@ -2,6 +2,24 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-20: Batch Chain — fact_extraction → classification → contradiction
+
+### What was done
+- **Batch classification**: After batch poller processes a `fact_extraction` batch, it auto-submits a `classification` batch for all newly inserted facts. Uses existing `classificationPrompt` from `relation_classifier.go`. Results write `fact_relations` rows (duplicate/implication).
+- **Batch chain**: When a `classification` batch completes, checks if any sibling classification batches (same parent extraction batch) are still pending. If none, auto-triggers contradiction detection via `contradictionSubmitter` callback.
+- **Removed contradiction detection from daily pipeline**: No longer needed — the chain handles it: fact_extraction → classification → contradiction, triggered sequentially by the batch poller.
+- **Deleted realtime listener** (`contradiction/listener.go`): Was dead code — never started anywhere in cmd/. Removed file + test.
+- **InsertResult now returns fact metadata**: `InsertedMeta []InsertedFactMeta{FactID, PersonID}` propagated from `insertSingleFact` up through `InsertFacts` → `insertFactsFromBatch` → `processFactExtractionBatch` → `RetrieveResult.InsertedFacts`.
+- **ParseClassificationResponse** exported from `relation_classifier.go` for reuse by batch classification processing.
+- **CountUnfinishedBatchesByMetadata** on storage: queries `llm_batches` by job_type + metadata JSONB key-value, used for chain coordination.
+
+### Key design decisions
+- Classification uses `parent_extraction_batch_id` in batch metadata to track which extraction batch spawned it. Chain completion check queries this.
+- `contradictionSubmitter` callback on orchestrator bridges core→cmd: the orchestrator (in `core`) triggers `executeContradictionDetection` (in `cmd`) without import cycle.
+- Cycle prevention (`IsAncestorOf`) skipped in batch classification — implications are rare and can be cleaned up post-hoc.
+- `SubmitClassificationBatch` returns 0 (not error) when no similar facts found — chain simply stops, which is correct (no new facts to classify = no contradictions to find).
+- Sync classifier path (`classifyRelations`) kept for non-batch inserters (CLI commands).
+
 ## 2026-03-19: Reduce LLM Costs — Batch Everything
 
 ### What was done

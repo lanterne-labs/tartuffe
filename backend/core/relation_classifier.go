@@ -135,6 +135,37 @@ Respond ONLY with a JSON object in this exact format:
 {"classifications": [{"existing_fact_id": <id>, "relation": "<type>", "reason": "<brief explanation>"}]}
 `
 
+// ParseClassificationResponse parses an LLM JSON response into ClassificationResults.
+// Filters out "unrelated" and invalid relation types.
+// Used by both the sync Classify method and batch classification processing.
+func ParseClassificationResponse(jsonContent string) ([]ClassificationResult, error) {
+	var classResp llmClassificationResponse
+	if err := json.Unmarshal([]byte(jsonContent), &classResp); err != nil {
+		return nil, fmt.Errorf("failed to parse classification JSON: %w", err)
+	}
+
+	validRelations := map[string]bool{
+		"duplicate": true, "implication_new_is_general": true,
+		"implication_new_is_specific": true, "unrelated": true,
+	}
+
+	var results []ClassificationResult
+	for _, c := range classResp.Classifications {
+		if !validRelations[c.Relation] {
+			continue
+		}
+		if c.Relation == "unrelated" {
+			continue
+		}
+		results = append(results, ClassificationResult{
+			ExistingFactID: int64(c.ExistingFactID),
+			Relation:       c.Relation,
+			Reason:         c.Reason,
+		})
+	}
+	return results, nil
+}
+
 // Classify classifies the relationship between a new fact and a set of similar existing facts.
 // Returns classification results for each existing fact.
 func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, newFactText string, newFactPublishedAt *time.Time, existingFacts []ClassificationInput) ([]ClassificationResult, error) {

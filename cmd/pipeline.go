@@ -128,18 +128,14 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Info().Msg("Twitter collection handled via batch submission, skipping sync path")
 	}
 
-	// Step 2: Contradiction detection (catch-up pass for existing facts)
-	detectOpts := ContradictionDetectOpts{}
-	detectErr := executeContradictionDetection(ctx, storer, detectOpts)
-	if detectErr != nil {
-		log.Error().Err(detectErr).Msg("Daily pipeline: contradiction detection failed")
-	}
+	// Contradiction detection is now handled by the batch chain:
+	// fact_extraction → classification → contradiction (triggered by batch poller)
 
 	elapsed := time.Since(start)
 
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil || detectErr != nil
+		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 
 		var msg string
@@ -153,9 +149,6 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			}
 			if twitterErr != nil {
 				parts = append(parts, "twitter: "+twitterErr.Error())
-			}
-			if detectErr != nil {
-				parts = append(parts, "detect: "+detectErr.Error())
 			}
 			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
 				elapsed.Round(time.Second), strings.Join(parts, "\n"))

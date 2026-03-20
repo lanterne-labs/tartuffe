@@ -20,10 +20,18 @@ type FactRelationInput struct {
 	Reason         string
 }
 
+// InsertedFactMeta holds metadata about a successfully inserted fact.
+// Used by batch processing to chain classification after fact extraction.
+type InsertedFactMeta struct {
+	FactID   int64
+	PersonID int64 // Resolved subject entity person ID
+}
+
 // InsertResult contains the outcome of a batch InsertFacts call.
 type InsertResult struct {
-	Inserted int // Number of facts successfully inserted
-	Skipped  int // Number of facts skipped as duplicates
+	Inserted     int // Number of facts successfully inserted
+	Skipped      int // Number of facts skipped as duplicates
+	InsertedMeta []InsertedFactMeta // Metadata for each successfully inserted fact
 }
 
 // FactInserter handles intelligent fact insertion with relation classification.
@@ -149,12 +157,16 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 			Str("fact_text", truncate(fact.NormalizedFactText, 100)).
 			Msg("Processing fact for insertion")
 
-		inserted, err := fi.insertSingleFact(ctx, fact)
+		factID, personID, inserted, err := fi.insertSingleFact(ctx, fact)
 		if err != nil {
 			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
 		}
 		if inserted {
 			result.Inserted++
+			result.InsertedMeta = append(result.InsertedMeta, InsertedFactMeta{
+				FactID:   factID,
+				PersonID: personID,
+			})
 		} else {
 			result.Skipped++
 		}
@@ -163,10 +175,10 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 }
 
 // insertSingleFact handles insertion of a single fact with relation classification.
-// Returns (true, nil) if the fact was inserted, (false, nil) if it was skipped as a duplicate.
-func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (bool, error) {
+// Returns (factID, personID, inserted, error). factID/personID are 0 when skipped.
+func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (int64, int64, bool, error) {
 	if input.SubjectEntity == "" {
-		return false, fmt.Errorf("subject_entity is required")
+		return 0, 0, false, fmt.Errorf("subject_entity is required")
 	}
 
 	// Resolve subject entity to person ID
@@ -175,15 +187,15 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	if input.SubjectEntityType != "" {
 		subjectID, err = fi.storer.FindOrInsertPersonWithType(ctx, input.SubjectEntity, input.SubjectEntityType)
 		if err != nil {
-			return false, fmt.Errorf("failed to find/insert subject entity with type: %w", err)
+			return 0, 0, false, fmt.Errorf("failed to find/insert subject entity with type: %w", err)
 		}
 	} else {
 		subjectIDs, err := fi.storer.FindOrInsertPersons(ctx, []string{input.SubjectEntity})
 		if err != nil {
-			return false, fmt.Errorf("failed to find/insert subject entity: %w", err)
+			return 0, 0, false, fmt.Errorf("failed to find/insert subject entity: %w", err)
 		}
 		if len(subjectIDs) == 0 {
-			return false, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
+			return 0, 0, false, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
 		}
 		subjectID = subjectIDs[0]
 	}
@@ -218,7 +230,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 						Bool("both_external", bothExternal).
 						Str("fact", truncate(input.NormalizedFactText, 80)).
 						Msg("Skipping duplicate fact (same verb or both external + high similarity)")
-					return false, nil
+					return 0, 0, false, nil
 				}
 				log.Debug().
 					Int64("existing_fact_id", sf.ID).
@@ -233,7 +245,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Insert the fact
 	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {
-		return false, fmt.Errorf("failed to insert fact: %w", err)
+		return 0, 0, false, fmt.Errorf("failed to insert fact: %w", err)
 	}
 	metrics.IncrementFactsExtracted(input.SourceType, true)
 
@@ -248,12 +260,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		input.Metadata,
 	)
 	if err != nil {
-		return false, fmt.Errorf("failed to link source: %w", err)
+		return 0, 0, false, fmt.Errorf("failed to link source: %w", err)
 	}
 
 	// Link subject entity to this source mention
 	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
-		return false, fmt.Errorf("failed to link subject entity: %w", err)
+		return 0, 0, false, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
 	// Stance-based processing (replaces classifyRelations when enabled)
@@ -269,7 +281,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				Int64("stance_id", result.StanceID).
 				Msg("Stance processing complete")
 			// Skip classifyRelations - stance manager handles contradiction detection
-			return true, nil
+			return factID, subjectID, true, nil
 		}
 	}
 
@@ -284,7 +296,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Str("subject_entity", input.SubjectEntity).
 		Msg("Successfully inserted fact with source and person links")
 
-	return true, nil
+	return factID, subjectID, true, nil
 }
 
 // classifyRelations finds similar active facts and classifies their relationships.
