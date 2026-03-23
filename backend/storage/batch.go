@@ -191,6 +191,29 @@ func (s *PostgresStorer) UpdateBatchProviderID(ctx context.Context, batchID int6
 	return nil
 }
 
+// CountBatchRequests returns the total number of request records for a batch (processed or not).
+func (s *PostgresStorer) CountBatchRequests(ctx context.Context, batchID int64) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM llm_batch_requests WHERE batch_id = $1`, batchID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count batch requests for batch %d: %w", batchID, err)
+	}
+	return count, nil
+}
+
+// DeleteBatchRequests deletes all request records for a batch. Used for recovery cleanup.
+func (s *PostgresStorer) DeleteBatchRequests(ctx context.Context, batchID int64) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM llm_batch_requests WHERE batch_id = $1`, batchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete batch requests for batch %d: %w", batchID, err)
+	}
+	return nil
+}
+
 // GetUnprocessedRequests retrieves all unprocessed requests for a batch.
 func (s *PostgresStorer) GetUnprocessedRequests(ctx context.Context, batchID int64) ([]LLMBatchRequest, error) {
 	rows, err := s.pool.Query(ctx,

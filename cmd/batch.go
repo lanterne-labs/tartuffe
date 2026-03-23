@@ -357,18 +357,32 @@ var batchRecoverCmd = &cobra.Command{
 			}
 		}
 
-		// Step 3: Check if request records exist
+		// Step 3: Reset request records — delete any partial/stale records and recreate from provider response
 		adapter := newBatchStorerAdapter(storer)
-		existingRequests, err := adapter.GetUnprocessedRequests(ctx, batchID)
+		existingCount, err := storer.CountBatchRequests(ctx, batchID)
 		if err != nil {
-			return fmt.Errorf("failed to check existing requests: %w", err)
+			return fmt.Errorf("failed to count existing requests: %w", err)
 		}
 
-		if len(existingRequests) == 0 {
-			// Create request records from response items
-			log.Info().Int("count", len(responseItems)).Msg("Creating request records from response items")
+		if existingCount > 0 && existingCount < len(responseItems) {
+			// Partial state from a previous failed attempt — clean up
+			log.Warn().Int("existing", existingCount).Int("expected", len(responseItems)).Msg("Partial request records found, deleting for clean recovery")
+			if err := storer.DeleteBatchRequests(ctx, batchID); err != nil {
+				return fmt.Errorf("failed to delete partial request records: %w", err)
+			}
+			existingCount = 0
+		}
+
+		if existingCount == 0 {
+			// Dedup response items by customID (same fix as PrepareAndSubmit)
+			seen := make(map[string]bool, len(responseItems))
 			var reqInputs []core.BatchCreateRequestInput
 			for _, item := range responseItems {
+				if seen[item.CustomID] {
+					log.Warn().Str("custom_id", item.CustomID).Msg("Duplicate response item skipped during recovery")
+					continue
+				}
+				seen[item.CustomID] = true
 				reqInputs = append(reqInputs, core.BatchCreateRequestInput{
 					CustomID:   item.CustomID,
 					TargetName: "recovered",
@@ -376,12 +390,13 @@ var batchRecoverCmd = &cobra.Command{
 					ChunkIndex: 0,
 				})
 			}
+			log.Info().Int("count", len(reqInputs)).Int("deduped_from", len(responseItems)).Msg("Creating request records from response items")
 			if err := adapter.CreateBatchRequests(ctx, batchID, reqInputs); err != nil {
 				return fmt.Errorf("failed to create request records: %w", err)
 			}
 			log.Info().Int("count", len(reqInputs)).Msg("Created request records")
 		} else {
-			log.Info().Int("count", len(existingRequests)).Msg("Request records already exist, skipping creation")
+			log.Info().Int("count", existingCount).Msg("Request records already exist, skipping creation")
 		}
 
 		// Step 4: Set up the full orchestrator and process
