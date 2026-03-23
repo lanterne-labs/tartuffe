@@ -97,6 +97,13 @@ type mockBatchStorer struct {
 	}
 	updateStatusErr error
 
+	// UpdateBatchProviderID
+	updateProviderIDLog []struct {
+		batchID         int64
+		providerBatchID string
+	}
+	updateProviderIDErr error
+
 	// GetUnprocessedRequests
 	unprocessedReqs []BatchRequestRecord
 	unprocessedErr  error
@@ -147,6 +154,14 @@ func (m *mockBatchStorer) UpdateBatchStatus(ctx context.Context, batchID int64, 
 		update  BatchStatusUpdateInput
 	}{batchID, update})
 	return m.updateStatusErr
+}
+
+func (m *mockBatchStorer) UpdateBatchProviderID(ctx context.Context, batchID int64, providerBatchID string) error {
+	m.updateProviderIDLog = append(m.updateProviderIDLog, struct {
+		batchID         int64
+		providerBatchID string
+	}{batchID, providerBatchID})
+	return m.updateProviderIDErr
 }
 
 func (m *mockBatchStorer) GetUnprocessedRequests(ctx context.Context, batchID int64) ([]BatchRequestRecord, error) {
@@ -328,15 +343,29 @@ func TestPrepareAndSubmit(t *testing.T) {
 			t.Fatalf("expected 1 batch request, got %d", len(provider.submitCalls[0]))
 		}
 
-		// DB batch should have been created
+		// DB batch should have been created with "pending" provider ID before submit
 		if len(storer.createBatchLog) != 1 {
 			t.Fatalf("expected 1 CreateBatch call, got %d", len(storer.createBatchLog))
 		}
 		if storer.createBatchLog[0].Provider != "test-provider" {
 			t.Errorf("expected provider 'test-provider', got %q", storer.createBatchLog[0].Provider)
 		}
+		if storer.createBatchLog[0].ProviderBatchID != "pending" {
+			t.Errorf("expected initial provider batch ID 'pending', got %q", storer.createBatchLog[0].ProviderBatchID)
+		}
 		if storer.createBatchLog[0].JobType != "fact_extraction" {
 			t.Errorf("expected job type 'fact_extraction', got %q", storer.createBatchLog[0].JobType)
+		}
+
+		// Provider batch ID should have been updated after submit
+		if len(storer.updateProviderIDLog) != 1 {
+			t.Fatalf("expected 1 UpdateBatchProviderID call, got %d", len(storer.updateProviderIDLog))
+		}
+		if storer.updateProviderIDLog[0].batchID != 42 {
+			t.Errorf("expected batchID=42 in provider ID update, got %d", storer.updateProviderIDLog[0].batchID)
+		}
+		if storer.updateProviderIDLog[0].providerBatchID != "provider-batch-123" {
+			t.Errorf("expected provider batch ID 'provider-batch-123', got %q", storer.updateProviderIDLog[0].providerBatchID)
 		}
 
 		// DB requests should have been created
@@ -510,6 +539,155 @@ func TestPrepareAndSubmit(t *testing.T) {
 			t.Errorf("expected default target type 'person', got %q", dbReqs[0].TargetType)
 		}
 	})
+}
+
+func TestPrepareAndSubmit_DeduplicatesByCustomID(t *testing.T) {
+	// When the same URL+target appears multiple times (e.g., from overlapping content collections),
+	// the resulting batch requests should be deduplicated by customID.
+	provider := &mockBatchProvider{name: "test"}
+	storer := &mockBatchStorer{createBatchID: 1}
+
+	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
+
+	// Two items with identical URL+target produce the same customID
+	items := []BatchContentItem{
+		{SourceURL: "https://example.com/article", Content: "Content A", TargetName: "Person A"},
+		{SourceURL: "https://example.com/article", Content: "Content A copy", TargetName: "Person A"},
+	}
+
+	_, err := orch.PrepareAndSubmit(context.Background(), items, nil)
+	if err != nil {
+		t.Fatalf("PrepareAndSubmit returned error: %v", err)
+	}
+
+	// Provider should receive only 1 request (deduped)
+	if len(provider.submitCalls) != 1 {
+		t.Fatalf("expected 1 submit call, got %d", len(provider.submitCalls))
+	}
+	if len(provider.submitCalls[0]) != 1 {
+		t.Fatalf("expected 1 batch request after dedup, got %d", len(provider.submitCalls[0]))
+	}
+
+	// DB should also receive only 1 request
+	if len(storer.createReqsLog) != 1 {
+		t.Fatalf("expected 1 CreateBatchRequests call, got %d", len(storer.createReqsLog))
+	}
+	if len(storer.createReqsLog[0].inputs) != 1 {
+		t.Fatalf("expected 1 DB request after dedup, got %d", len(storer.createReqsLog[0].inputs))
+	}
+}
+
+func TestPrepareAndSubmit_DifferentTargetsSameURL_NotDeduped(t *testing.T) {
+	// Same URL but different targets should produce different customIDs and NOT be deduped.
+	provider := &mockBatchProvider{name: "test"}
+	storer := &mockBatchStorer{createBatchID: 1}
+
+	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
+
+	items := []BatchContentItem{
+		{SourceURL: "https://example.com/article", Content: "Content", TargetName: "Person A"},
+		{SourceURL: "https://example.com/article", Content: "Content", TargetName: "Person B"},
+	}
+
+	_, err := orch.PrepareAndSubmit(context.Background(), items, nil)
+	if err != nil {
+		t.Fatalf("PrepareAndSubmit returned error: %v", err)
+	}
+
+	if len(provider.submitCalls[0]) != 2 {
+		t.Fatalf("expected 2 batch requests (different targets), got %d", len(provider.submitCalls[0]))
+	}
+}
+
+func TestPrepareAndSubmit_SubmitFailureMarksBatchFailed(t *testing.T) {
+	// When provider.Submit fails, the batch should already be persisted in DB and marked as "failed".
+	provider := &mockBatchProvider{
+		name:      "test",
+		submitErr: fmt.Errorf("provider API error"),
+	}
+	storer := &mockBatchStorer{createBatchID: 7}
+
+	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
+
+	items := []BatchContentItem{
+		{SourceURL: "https://example.com/article", Content: "Some content", TargetName: "Person"},
+	}
+
+	_, err := orch.PrepareAndSubmit(context.Background(), items, nil)
+	if err == nil {
+		t.Fatal("expected error from PrepareAndSubmit, got nil")
+	}
+	if !strings.Contains(err.Error(), "provider submit failed") {
+		t.Errorf("expected 'provider submit failed' error, got: %v", err)
+	}
+
+	// Batch should have been created in DB (persist-before-submit)
+	if len(storer.createBatchLog) != 1 {
+		t.Fatalf("expected 1 CreateBatch call, got %d", len(storer.createBatchLog))
+	}
+	if storer.createBatchLog[0].ProviderBatchID != "pending" {
+		t.Errorf("expected provider batch ID 'pending', got %q", storer.createBatchLog[0].ProviderBatchID)
+	}
+
+	// Batch requests should have been created in DB
+	if len(storer.createReqsLog) != 1 {
+		t.Fatalf("expected 1 CreateBatchRequests call, got %d", len(storer.createReqsLog))
+	}
+
+	// Batch should have been marked as failed via UpdateBatchStatus
+	if len(storer.updateStatusLog) != 1 {
+		t.Fatalf("expected 1 UpdateBatchStatus call (marking failed), got %d", len(storer.updateStatusLog))
+	}
+	update := storer.updateStatusLog[0]
+	if update.batchID != 7 {
+		t.Errorf("expected batchID=7 in failed update, got %d", update.batchID)
+	}
+	if update.update.State != "failed" {
+		t.Errorf("expected state 'failed', got %q", update.update.State)
+	}
+	if update.update.ErrorMessage == nil || !strings.Contains(*update.update.ErrorMessage, "provider API error") {
+		t.Errorf("expected error message containing 'provider API error', got %v", update.update.ErrorMessage)
+	}
+
+	// Provider ID should NOT have been updated (submit failed)
+	if len(storer.updateProviderIDLog) != 0 {
+		t.Errorf("expected 0 UpdateBatchProviderID calls, got %d", len(storer.updateProviderIDLog))
+	}
+}
+
+func TestSubmitContradictionBatch_SubmitFailureMarksBatchFailed(t *testing.T) {
+	provider := &mockBatchProvider{
+		name:      "test",
+		submitErr: fmt.Errorf("contradiction provider error"),
+	}
+	storer := &mockBatchStorer{createBatchID: 15}
+
+	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
+
+	requests := []llm.BatchRequest{
+		{CustomID: "c:1:10:20", Messages: []llm.ChatMessage{{Role: "user", Content: "test"}}},
+	}
+
+	_, err := orch.SubmitContradictionBatch(context.Background(), requests, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// Batch should have been persisted before submit attempt
+	if len(storer.createBatchLog) != 1 {
+		t.Fatalf("expected 1 CreateBatch call, got %d", len(storer.createBatchLog))
+	}
+	if storer.createBatchLog[0].ProviderBatchID != "pending" {
+		t.Errorf("expected 'pending' provider batch ID, got %q", storer.createBatchLog[0].ProviderBatchID)
+	}
+
+	// Should be marked as failed
+	if len(storer.updateStatusLog) != 1 {
+		t.Fatalf("expected 1 UpdateBatchStatus call, got %d", len(storer.updateStatusLog))
+	}
+	if storer.updateStatusLog[0].update.State != "failed" {
+		t.Errorf("expected state 'failed', got %q", storer.updateStatusLog[0].update.State)
+	}
 }
 
 func TestCheckStatus(t *testing.T) {

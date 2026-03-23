@@ -272,6 +272,75 @@ func (s *SerpAPINewsProvider) Search(personName string) ([]SearchResult, error) 
 	return results, nil
 }
 
+// serpAPIWebResponse defines the structure for the JSON response from SerpAPI Google Search (organic results).
+type serpAPIWebResponse struct {
+	SearchMetadata struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	} `json:"search_metadata"`
+	OrganicResults []struct {
+		Position int    `json:"position"`
+		Title    string `json:"title"`
+		Link     string `json:"link"`
+		Snippet  string `json:"snippet"`
+	} `json:"organic_results"`
+	Error string `json:"error"`
+}
+
+// SearchWeb performs a general web search using SerpAPI's Google Search engine.
+func (s *SerpAPINewsProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	baseURL := "https://serpapi.com/search.json"
+	params := url.Values{}
+	params.Add("api_key", s.apiKey)
+	params.Add("engine", "google")
+	params.Add("q", query)
+	params.Add("num", fmt.Sprintf("%d", limit))
+
+	searchURL := baseURL + "?" + params.Encode()
+
+	log.Debug().Str("query", query).Int("limit", limit).Msg("Performing SerpAPI web search")
+
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SerpAPI web search request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute SerpAPI web search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("SerpAPI web search request failed with status: %s", resp.Status)
+	}
+
+	var searchResp serpAPIWebResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode SerpAPI web search response: %w", err)
+	}
+
+	if searchResp.Error != "" {
+		return nil, fmt.Errorf("SerpAPI web search error: %s", searchResp.Error)
+	}
+
+	results := make([]SearchResult, 0, len(searchResp.OrganicResults))
+	for _, item := range searchResp.OrganicResults {
+		results = append(results, SearchResult{
+			URL:     item.Link,
+			Title:   item.Title,
+			Snippet: item.Snippet,
+		})
+	}
+
+	log.Debug().Int("count", len(results)).Str("query", query).Msg("SerpAPI web search completed")
+	return results, nil
+}
+
 // ImageSearchOptions configures an image search query.
 type ImageSearchOptions struct {
 	// Query is the search query string. If empty, the query parameter passed to SearchImages is used instead.

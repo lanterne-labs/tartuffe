@@ -57,12 +57,17 @@ func NewNewsSearcherFromEnv() (NewsSearcher, error) {
 }
 
 // NewWebSearcherFromEnv creates a WebSearcher based on available environment variables.
+// Priority: BRAVE_SEARCH_API_KEY > SERPAPI_KEY.
 func NewWebSearcherFromEnv() (WebSearcher, error) {
 	if key := os.Getenv("BRAVE_SEARCH_API_KEY"); key != "" {
 		log.Info().Msg("Using Brave Search API for web search")
 		return NewBraveSearchProvider(key), nil
 	}
-	return nil, fmt.Errorf("no web search API key configured: set BRAVE_SEARCH_API_KEY")
+	if key := os.Getenv("SERPAPI_KEY"); key != "" {
+		log.Info().Msg("Using SerpAPI for web search")
+		return NewSerpAPINewsProvider(key)
+	}
+	return nil, fmt.Errorf("no web search API key configured: set BRAVE_SEARCH_API_KEY or SERPAPI_KEY")
 }
 
 // NewImageSearcherFromEnv creates an ImageSearcher based on available environment variables.

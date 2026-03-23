@@ -2,6 +2,21 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-03-23: Fix the host Pipeline — Batch Dedup, Circuit Breaker, Observability
+
+### What was done
+- **Batch dedup + persist-before-submit**: `PrepareAndSubmit`, `SubmitContradictionBatch`, `SubmitClassificationBatch` now (1) dedup by customID before submission, (2) persist batch + requests to DB *before* submitting to provider. On submit failure, batch is marked `"failed"` in DB instead of orphaned. New `UpdateBatchProviderID` method updates the real provider ID after successful submit. Poller skips batches with `provider_batch_id = "pending"`.
+- **Brave API circuit breaker**: After 3 consecutive 429s, circuit opens for 1 hour — all subsequent Brave calls return immediately instead of burning 30s in retries. Resets on first successful response.
+- **SerpAPI web search fallback**: `NewWebSearcherFromEnv()` falls back to SerpAPI (engine=google) when Brave key is missing. New `SearchWeb()` method on `SerpAPINewsProvider`.
+- **Pipeline zero-content warning**: Telegram notification shows ⚠️ when targets were processed but 0 content items collected (instead of misleading ✅).
+- **Balance log noise**: Free-tier/limit-0 accounts now log at DEBUG instead of INFO (eliminates 22 lines/day of OpenRouter noise).
+- **Batch recovery CLI**: `dm batch recover <provider-batch-id>` recovers orphaned batches — creates missing DB records, then processes through normal pipeline.
+
+### Key design decisions
+- Persist-before-submit eliminates orphaned batches: if provider submit fails, the batch is tracked in DB as `"failed"` and can be retried. The `"pending"` provider_batch_id sentinel is skipped by the poller.
+- Circuit breaker is package-level (shared across all BraveSearchProvider instances), same pattern as the existing rate limiter.
+- SerpAPI `SearchWeb` uses `engine=google` (organic_results), not `google_news`.
+
 ## 2026-03-20: Batch Chain — fact_extraction → classification → contradiction
 
 ### What was done

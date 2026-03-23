@@ -137,6 +137,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	if notifier != nil {
 		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
+		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
 
 		var msg string
 		if hasErrors {
@@ -152,6 +153,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			}
 			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
 				elapsed.Round(time.Second), strings.Join(parts, "\n"))
+		} else if noContent {
+			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with no content</b> (%s)",
+				elapsed.Round(time.Second))
 		} else if hasWarnings {
 			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with warnings</b> (%s)",
 				elapsed.Round(time.Second))

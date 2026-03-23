@@ -179,6 +179,18 @@ func (s *PostgresStorer) UpdateBatchStatus(ctx context.Context, batchID int64, u
 	return nil
 }
 
+// UpdateBatchProviderID updates the provider_batch_id of a batch after successful provider submission.
+func (s *PostgresStorer) UpdateBatchProviderID(ctx context.Context, batchID int64, providerBatchID string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE llm_batches SET provider_batch_id = $2 WHERE id = $1`,
+		batchID, providerBatchID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update provider batch ID for batch %d: %w", batchID, err)
+	}
+	return nil
+}
+
 // GetUnprocessedRequests retrieves all unprocessed requests for a batch.
 func (s *PostgresStorer) GetUnprocessedRequests(ctx context.Context, batchID int64) ([]LLMBatchRequest, error) {
 	rows, err := s.pool.Query(ctx,

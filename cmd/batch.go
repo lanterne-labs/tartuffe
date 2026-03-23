@@ -8,12 +8,14 @@ import (
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"text/tabwriter"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
@@ -276,6 +278,138 @@ var batchListCmd = &cobra.Command{
 	},
 }
 
+var batchRecoverCmd = &cobra.Command{
+	Use:   "recover [provider-batch-id]",
+	Short: "Recover an orphaned batch that completed on the provider but has no DB records",
+	Args:  cobra.ExactArgs(1),
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		providerBatchID := args[0]
+		ctx := context.Background()
+
+		provider, err := newBatchProvider()
+		if err != nil {
+			return err
+		}
+
+		storer, err := storage.NewPostgresStorerFromEnv(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to connect to database: %w", err)
+		}
+		defer storer.Close()
+
+		// Step 1: Retrieve response items from the provider
+		log.Info().Str("provider_batch_id", providerBatchID).Msg("Retrieving batch results from provider")
+		responseItems, err := provider.Retrieve(ctx, providerBatchID)
+		if err != nil {
+			return fmt.Errorf("failed to retrieve batch from provider: %w", err)
+		}
+		log.Info().Int("response_items", len(responseItems)).Msg("Retrieved response items from provider")
+
+		// Step 2: Check if a DB batch record already exists
+		var batchID int64
+		existingBatch, err := storer.GetBatchByProviderID(ctx, providerBatchID)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("failed to look up batch in DB: %w", err)
+			}
+
+			// No DB record — create one
+			log.Info().Msg("No DB batch record found, creating one")
+			adapter := newBatchStorerAdapter(storer)
+			batchID, err = adapter.CreateBatch(ctx, core.BatchCreateInput{
+				Provider:        provider.ProviderName(),
+				ProviderBatchID: providerBatchID,
+				JobType:         "fact_extraction",
+				RequestCount:    len(responseItems),
+				Metadata: map[string]any{
+					"recovered": true,
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create batch record: %w", err)
+			}
+
+			// Set state to completed so RetrieveAndProcess accepts it
+			now := time.Now()
+			if err := storer.UpdateBatchStatus(ctx, batchID, storage.BatchStatusUpdate{
+				State:          "completed",
+				CompletedAt:    &now,
+			}); err != nil {
+				return fmt.Errorf("failed to update batch state to completed: %w", err)
+			}
+
+			log.Info().Int64("batch_id", batchID).Msg("Created batch record with state=completed")
+		} else {
+			batchID = existingBatch.ID
+			log.Info().Int64("batch_id", batchID).Str("state", existingBatch.State).Msg("Found existing batch record in DB")
+
+			// If batch is not in completed state, update it
+			if existingBatch.State != "completed" {
+				now := time.Now()
+				if err := storer.UpdateBatchStatus(ctx, batchID, storage.BatchStatusUpdate{
+					State:       "completed",
+					CompletedAt: &now,
+				}); err != nil {
+					return fmt.Errorf("failed to update batch state to completed: %w", err)
+				}
+				log.Info().Int64("batch_id", batchID).Msg("Updated batch state to completed")
+			}
+		}
+
+		// Step 3: Check if request records exist
+		adapter := newBatchStorerAdapter(storer)
+		existingRequests, err := adapter.GetUnprocessedRequests(ctx, batchID)
+		if err != nil {
+			return fmt.Errorf("failed to check existing requests: %w", err)
+		}
+
+		if len(existingRequests) == 0 {
+			// Create request records from response items
+			log.Info().Int("count", len(responseItems)).Msg("Creating request records from response items")
+			var reqInputs []core.BatchCreateRequestInput
+			for _, item := range responseItems {
+				reqInputs = append(reqInputs, core.BatchCreateRequestInput{
+					CustomID:   item.CustomID,
+					TargetName: "recovered",
+					TargetType: "person",
+					ChunkIndex: 0,
+				})
+			}
+			if err := adapter.CreateBatchRequests(ctx, batchID, reqInputs); err != nil {
+				return fmt.Errorf("failed to create request records: %w", err)
+			}
+			log.Info().Int("count", len(reqInputs)).Msg("Created request records")
+		} else {
+			log.Info().Int("count", len(existingRequests)).Msg("Request records already exist, skipping creation")
+		}
+
+		// Step 4: Set up the full orchestrator and process
+		embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
+		if err != nil {
+			return fmt.Errorf("failed to create embedder: %w", err)
+		}
+
+		inserter := core.NewFactInserter(storer)
+		orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
+		orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
+
+		fmt.Printf("Processing recovered batch %d (%d response items)...\n", batchID, len(responseItems))
+		result, err := orchestrator.RetrieveAndProcess(ctx, batchID)
+		if err != nil {
+			return fmt.Errorf("failed to process batch: %w", err)
+		}
+
+		fmt.Printf("Recovery complete:\n")
+		fmt.Printf("  Batch ID:  %d\n", batchID)
+		fmt.Printf("  Processed: %d\n", result.Processed)
+		fmt.Printf("  Inserted:  %d\n", result.Inserted)
+		fmt.Printf("  Skipped:   %d\n", result.Skipped)
+		fmt.Printf("  Errors:    %d\n", result.Errors)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(batchCmd)
 
@@ -288,6 +422,7 @@ func init() {
 	batchCmd.AddCommand(batchStatusCmd)
 	batchCmd.AddCommand(batchRetrieveCmd)
 	batchCmd.AddCommand(batchListCmd)
+	batchCmd.AddCommand(batchRecoverCmd)
 }
 
 // newBatchProvider creates a BatchProvider from environment variables.
@@ -359,6 +494,10 @@ func (a *batchStorerAdapter) UpdateBatchStatus(ctx context.Context, batchID int6
 		CompletedAt:    update.CompletedAt,
 		RetrievedAt:    update.RetrievedAt,
 	})
+}
+
+func (a *batchStorerAdapter) UpdateBatchProviderID(ctx context.Context, batchID int64, providerBatchID string) error {
+	return a.s.UpdateBatchProviderID(ctx, batchID, providerBatchID)
 }
 
 func (a *batchStorerAdapter) GetUnprocessedRequests(ctx context.Context, batchID int64) ([]core.BatchRequestRecord, error) {

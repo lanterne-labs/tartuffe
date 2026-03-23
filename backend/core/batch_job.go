@@ -27,6 +27,7 @@ type BatchStorer interface {
 	CreateBatchRequests(ctx context.Context, batchID int64, inputs []BatchCreateRequestInput) error
 	GetBatch(ctx context.Context, batchID int64) (*BatchRecord, error)
 	UpdateBatchStatus(ctx context.Context, batchID int64, update BatchStatusUpdateInput) error
+	UpdateBatchProviderID(ctx context.Context, batchID int64, providerBatchID string) error
 	GetUnprocessedRequests(ctx context.Context, batchID int64) ([]BatchRequestRecord, error)
 	MarkRequestProcessed(ctx context.Context, reqID int64, responseJSON *string, errMsg *string) error
 	ListBatches(ctx context.Context, stateFilter string) ([]BatchRecord, error)
@@ -169,7 +170,7 @@ func (o *BatchJobOrchestrator) SetContradictionSubmitter(fn func(ctx context.Con
 }
 
 // PrepareAndSubmit reads content items, builds prompts, chunks large content,
-// submits to the batch provider, and persists state to the database.
+// persists state to the database, then submits to the batch provider.
 func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []BatchContentItem, metadata map[string]any) (int64, error) {
 	if len(items) == 0 {
 		return 0, fmt.Errorf("no content items to submit")
@@ -233,28 +234,58 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 		return 0, fmt.Errorf("no valid requests after processing content items")
 	}
 
+	// Deduplicate by customID — identical URL+target+chunk produces identical LLM output
+	seen := make(map[string]bool, len(batchRequests))
+	dedupedBatchRequests := make([]llm.BatchRequest, 0, len(batchRequests))
+	dedupedDBRequests := make([]BatchCreateRequestInput, 0, len(dbRequests))
+	for i, req := range batchRequests {
+		if seen[req.CustomID] {
+			log.Warn().Str("custom_id", req.CustomID).Msg("Duplicate batch request skipped")
+			continue
+		}
+		seen[req.CustomID] = true
+		dedupedBatchRequests = append(dedupedBatchRequests, req)
+		dedupedDBRequests = append(dedupedDBRequests, dbRequests[i])
+	}
+	batchRequests = dedupedBatchRequests
+	dbRequests = dedupedDBRequests
+
 	log.Info().Int("requests", len(batchRequests)).Msg("Submitting batch to provider")
 
-	// Submit to provider
-	submitResult, err := o.provider.Submit(ctx, batchRequests)
-	if err != nil {
-		return 0, fmt.Errorf("provider submit failed: %w", err)
-	}
-
-	// Persist to DB
+	// Step 1: Persist batch to DB with pending provider ID
 	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
 		Provider:        o.provider.ProviderName(),
-		ProviderBatchID: submitResult.ProviderBatchID,
+		ProviderBatchID: "pending",
 		JobType:         "fact_extraction",
-		RequestCount:    submitResult.RequestCount,
+		RequestCount:    len(batchRequests),
 		Metadata:        metadata,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to persist batch: %w", err)
 	}
 
+	// Step 2: Persist batch requests to DB
 	if err := o.storer.CreateBatchRequests(ctx, batchID, dbRequests); err != nil {
 		return 0, fmt.Errorf("failed to persist batch requests: %w", err)
+	}
+
+	// Step 3: Submit to provider
+	submitResult, err := o.provider.Submit(ctx, batchRequests)
+	if err != nil {
+		// Mark batch as failed in DB
+		errMsg := fmt.Sprintf("provider submit failed: %v", err)
+		if updateErr := o.storer.UpdateBatchStatus(ctx, batchID, BatchStatusUpdateInput{
+			State:        "failed",
+			ErrorMessage: &errMsg,
+		}); updateErr != nil {
+			log.Error().Err(updateErr).Int64("batch_id", batchID).Msg("Failed to mark batch as failed after provider submit error")
+		}
+		return 0, fmt.Errorf("provider submit failed: %w", err)
+	}
+
+	// Step 4: Update batch with real provider batch ID
+	if err := o.storer.UpdateBatchProviderID(ctx, batchID, submitResult.ProviderBatchID); err != nil {
+		log.Error().Err(err).Int64("batch_id", batchID).Msg("Failed to update provider batch ID")
 	}
 
 	log.Info().
@@ -275,11 +306,6 @@ func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, req
 
 	log.Info().Int("requests", len(requests)).Msg("Submitting contradiction batch to provider")
 
-	submitResult, err := o.provider.Submit(ctx, requests)
-	if err != nil {
-		return 0, fmt.Errorf("provider submit failed: %w", err)
-	}
-
 	// Build DB request records from the batch requests
 	var dbRequests []BatchCreateRequestInput
 	for _, req := range requests {
@@ -290,25 +316,46 @@ func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, req
 		})
 	}
 
+	// Step 1: Persist batch to DB with pending provider ID
 	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
 		Provider:        o.provider.ProviderName(),
-		ProviderBatchID: submitResult.ProviderBatchID,
+		ProviderBatchID: "pending",
 		JobType:         "contradiction",
-		RequestCount:    submitResult.RequestCount,
+		RequestCount:    len(requests),
 		Metadata:        metadata,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to persist batch: %w", err)
 	}
 
+	// Step 2: Persist batch requests to DB
 	if err := o.storer.CreateBatchRequests(ctx, batchID, dbRequests); err != nil {
 		return 0, fmt.Errorf("failed to persist batch requests: %w", err)
+	}
+
+	// Step 3: Submit to provider
+	submitResult, err := o.provider.Submit(ctx, requests)
+	if err != nil {
+		// Mark batch as failed in DB
+		errMsg := fmt.Sprintf("provider submit failed: %v", err)
+		if updateErr := o.storer.UpdateBatchStatus(ctx, batchID, BatchStatusUpdateInput{
+			State:        "failed",
+			ErrorMessage: &errMsg,
+		}); updateErr != nil {
+			log.Error().Err(updateErr).Int64("batch_id", batchID).Msg("Failed to mark batch as failed after provider submit error")
+		}
+		return 0, fmt.Errorf("provider submit failed: %w", err)
+	}
+
+	// Step 4: Update batch with real provider batch ID
+	if err := o.storer.UpdateBatchProviderID(ctx, batchID, submitResult.ProviderBatchID); err != nil {
+		log.Error().Err(err).Int64("batch_id", batchID).Msg("Failed to update provider batch ID")
 	}
 
 	log.Info().
 		Int64("batch_id", batchID).
 		Str("provider_batch_id", submitResult.ProviderBatchID).
-		Int("requests", submitResult.RequestCount).
+		Int("requests", len(requests)).
 		Msg("Contradiction batch submitted and persisted")
 
 	return batchID, nil
@@ -698,16 +745,12 @@ func (o *BatchJobOrchestrator) SubmitClassificationBatch(ctx context.Context, fa
 
 	log.Info().Int("requests", len(batchRequests)).Msg("Submitting classification batch to provider")
 
-	submitResult, err := o.provider.Submit(ctx, batchRequests)
-	if err != nil {
-		return 0, fmt.Errorf("provider submit failed: %w", err)
-	}
-
+	// Step 1: Persist batch to DB with pending provider ID
 	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
 		Provider:        o.provider.ProviderName(),
-		ProviderBatchID: submitResult.ProviderBatchID,
+		ProviderBatchID: "pending",
 		JobType:         "classification",
-		RequestCount:    submitResult.RequestCount,
+		RequestCount:    len(batchRequests),
 		Metadata: map[string]any{
 			"parent_extraction_batch_id": parentBatchID,
 		},
@@ -716,8 +759,28 @@ func (o *BatchJobOrchestrator) SubmitClassificationBatch(ctx context.Context, fa
 		return 0, fmt.Errorf("failed to persist batch: %w", err)
 	}
 
+	// Step 2: Persist batch requests to DB
 	if err := o.storer.CreateBatchRequests(ctx, batchID, dbRequests); err != nil {
 		return 0, fmt.Errorf("failed to persist batch requests: %w", err)
+	}
+
+	// Step 3: Submit to provider
+	submitResult, err := o.provider.Submit(ctx, batchRequests)
+	if err != nil {
+		// Mark batch as failed in DB
+		errMsg := fmt.Sprintf("provider submit failed: %v", err)
+		if updateErr := o.storer.UpdateBatchStatus(ctx, batchID, BatchStatusUpdateInput{
+			State:        "failed",
+			ErrorMessage: &errMsg,
+		}); updateErr != nil {
+			log.Error().Err(updateErr).Int64("batch_id", batchID).Msg("Failed to mark batch as failed after provider submit error")
+		}
+		return 0, fmt.Errorf("provider submit failed: %w", err)
+	}
+
+	// Step 4: Update batch with real provider batch ID
+	if err := o.storer.UpdateBatchProviderID(ctx, batchID, submitResult.ProviderBatchID); err != nil {
+		log.Error().Err(err).Int64("batch_id", batchID).Msg("Failed to update provider batch ID")
 	}
 
 	log.Info().
@@ -975,6 +1038,12 @@ func pollBatches(ctx context.Context, o *BatchJobOrchestrator) {
 		}
 
 		for _, b := range batches {
+			// Skip batches that haven't been submitted to the provider yet
+			if b.ProviderBatchID == "pending" {
+				log.Debug().Int64("batch_id", b.ID).Msg("Batch poller: skipping batch with pending provider ID")
+				continue
+			}
+
 			status, err := o.CheckStatus(ctx, b.ID)
 			if err != nil {
 				log.Error().Err(err).Int64("batch_id", b.ID).Msg("Batch poller: failed to check status")

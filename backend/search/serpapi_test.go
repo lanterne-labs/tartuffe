@@ -248,6 +248,120 @@ func TestSerpAPINewsProvider_ErrorHandling(t *testing.T) {
 	}
 }
 
+// TestSerpAPINewsProvider_SearchWebParsing tests parsing of SerpAPI Google Search organic results.
+func TestSerpAPINewsProvider_SearchWebParsing(t *testing.T) {
+	mockResponse := `{
+		"search_metadata": {
+			"id": "test-web-search-id",
+			"status": "Success"
+		},
+		"organic_results": [
+			{
+				"position": 1,
+				"title": "Emmanuel Macron - Wikipedia",
+				"link": "https://en.wikipedia.org/wiki/Emmanuel_Macron",
+				"snippet": "Emmanuel Jean-Michel Frederic Macron is a French politician."
+			},
+			{
+				"position": 2,
+				"title": "Macron Official Site",
+				"link": "https://www.elysee.fr/emmanuel-macron",
+				"snippet": "Official page of the President of France."
+			},
+			{
+				"position": 3,
+				"title": "Macron on X",
+				"link": "https://x.com/EmmanuelMacron",
+				"snippet": "The latest posts from Emmanuel Macron."
+			}
+		]
+	}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify engine=google is set (not google_news)
+		if engine := r.URL.Query().Get("engine"); engine != "google" {
+			t.Errorf("expected engine=google, got %q", engine)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(mockResponse))
+	}))
+	defer server.Close()
+
+	provider := &SerpAPINewsProvider{
+		apiKey:     "test-key",
+		httpClient: server.Client(),
+	}
+	// Override URL to point to mock server
+	provider.httpClient.Transport = roundTripFuncSerp(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(req)
+	})
+
+	results, err := provider.SearchWeb("Emmanuel Macron", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	// Verify first result
+	if results[0].Title != "Emmanuel Macron - Wikipedia" {
+		t.Errorf("expected title 'Emmanuel Macron - Wikipedia', got %q", results[0].Title)
+	}
+	if results[0].URL != "https://en.wikipedia.org/wiki/Emmanuel_Macron" {
+		t.Errorf("expected URL 'https://en.wikipedia.org/wiki/Emmanuel_Macron', got %q", results[0].URL)
+	}
+	if results[0].Snippet != "Emmanuel Jean-Michel Frederic Macron is a French politician." {
+		t.Errorf("expected snippet about French politician, got %q", results[0].Snippet)
+	}
+
+	// Verify third result (X/Twitter profile)
+	if results[2].URL != "https://x.com/EmmanuelMacron" {
+		t.Errorf("expected URL 'https://x.com/EmmanuelMacron', got %q", results[2].URL)
+	}
+}
+
+// TestSerpAPINewsProvider_SearchWebError tests error handling for web search.
+func TestSerpAPINewsProvider_SearchWebError(t *testing.T) {
+	mockResponse := `{"error": "Rate limit exceeded"}`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(mockResponse))
+	}))
+	defer server.Close()
+
+	provider := &SerpAPINewsProvider{
+		apiKey:     "test-key",
+		httpClient: server.Client(),
+	}
+	provider.httpClient.Transport = roundTripFuncSerp(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(req)
+	})
+
+	_, err := provider.SearchWeb("test", 10)
+	if err == nil {
+		t.Fatal("expected error from SerpAPI error response")
+	}
+	if !strings.Contains(err.Error(), "Rate limit exceeded") {
+		t.Errorf("expected rate limit error, got: %s", err.Error())
+	}
+}
+
+// roundTripFuncSerp allows using a function as an http.RoundTripper in serpapi tests.
+type roundTripFuncSerp func(*http.Request) (*http.Response, error)
+
+func (f roundTripFuncSerp) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 // TestSerpAPINewsProvider_Integration is an integration test that requires SERPAPI_KEY.
 // It's skipped if the environment variable is not set.
 func TestSerpAPINewsProvider_Integration(t *testing.T) {

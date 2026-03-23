@@ -18,6 +18,18 @@ var (
 	braveLastCall time.Time
 )
 
+// braveCircuitBreaker is a package-level circuit breaker for Brave API 429 responses.
+// After braveCircuitThreshold consecutive 429s, the circuit opens and all requests
+// are rejected immediately until the cooldown expires.
+var (
+	braveCircuitMu        sync.Mutex
+	braveConsecutive429   int
+	braveCircuitOpenUntil time.Time
+)
+
+const braveCircuitThreshold = 3          // open after 3 consecutive 429s
+const braveCircuitCooldown = 1 * time.Hour // cooldown period before retrying
+
 // braveRateLimit ensures at least 1 second between Brave API calls across all instances.
 func braveRateLimit() {
 	braveRateMu.Lock()
@@ -33,6 +45,15 @@ const braveMaxRetries = 4
 // doBraveRequest executes an HTTP request against the Brave API with rate limiting
 // and exponential backoff on 429 responses. Returns the response body on success.
 func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Response, error) {
+	// Check circuit breaker before entering the retry loop
+	braveCircuitMu.Lock()
+	if time.Now().Before(braveCircuitOpenUntil) {
+		retryAfter := braveCircuitOpenUntil
+		braveCircuitMu.Unlock()
+		return nil, fmt.Errorf("Brave API circuit breaker open (quota exhausted), retry after %s", retryAfter.Format(time.RFC3339))
+	}
+	braveCircuitMu.Unlock()
+
 	backoff := 2 * time.Second
 
 	for attempt := range braveMaxRetries {
@@ -52,6 +73,19 @@ func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Resp
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
+
+			// Update circuit breaker state
+			braveCircuitMu.Lock()
+			braveConsecutive429++
+			if braveConsecutive429 >= braveCircuitThreshold {
+				braveCircuitOpenUntil = time.Now().Add(braveCircuitCooldown)
+				log.Warn().
+					Int("consecutive_429s", braveConsecutive429).
+					Time("circuit_open_until", braveCircuitOpenUntil).
+					Msg("Brave API circuit breaker opened (quota exhausted)")
+			}
+			braveCircuitMu.Unlock()
+
 			if attempt < braveMaxRetries-1 {
 				log.Warn().Str("api", apiType).Int("attempt", attempt+1).Dur("backoff", backoff).Msg("Brave API 429, backing off")
 				time.Sleep(backoff)
@@ -65,6 +99,11 @@ func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Resp
 			resp.Body.Close()
 			return nil, fmt.Errorf("Brave %s API returned status %s", apiType, resp.Status)
 		}
+
+		// Success: reset circuit breaker counter
+		braveCircuitMu.Lock()
+		braveConsecutive429 = 0
+		braveCircuitMu.Unlock()
 
 		return resp, nil
 	}

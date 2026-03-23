@@ -45,6 +45,13 @@ func (a *Alerter) CheckAndAlert(ctx context.Context) {
 			continue
 		}
 
+		// Skip alerting for free tier or unlimited accounts (limit=0)
+		if info.IsFreeTier || info.Limit == 0 {
+			log.Debug().Str("provider", info.Provider).Float64("balance", info.Balance).Msg("Balance check skipped (free tier or no limit)")
+			metrics.SetLLMBalance(info.Provider, info.Balance)
+			continue
+		}
+
 		log.Info().
 			Str("provider", info.Provider).
 			Float64("balance", info.Balance).
@@ -54,11 +61,6 @@ func (a *Alerter) CheckAndAlert(ctx context.Context) {
 
 		// Update Prometheus gauge
 		metrics.SetLLMBalance(info.Provider, info.Balance)
-
-		// Skip alerting for free tier or unlimited accounts (limit=0)
-		if info.IsFreeTier || info.Limit == 0 {
-			continue
-		}
 
 		if info.Balance < a.thresholdUSD {
 			a.sendAlert(ctx, info.Provider, fmt.Sprintf(

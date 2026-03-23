@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -283,6 +284,145 @@ func TestFactoryEnvPriority(t *testing.T) {
 	}
 	if _, ok := imgSearcher.(*BraveSearchProvider); !ok {
 		t.Errorf("expected BraveSearchProvider for images, got %T", imgSearcher)
+	}
+}
+
+func resetBraveCircuitBreaker() {
+	braveCircuitMu.Lock()
+	braveConsecutive429 = 0
+	braveCircuitOpenUntil = time.Time{}
+	braveCircuitMu.Unlock()
+}
+
+func TestBraveCircuitBreakerOpensAfterThreshold(t *testing.T) {
+	resetBraveCircuitBreaker()
+	defer resetBraveCircuitBreaker()
+
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	provider := NewBraveSearchProvider("test-key")
+	provider.httpClient = server.Client()
+	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(req)
+	})
+
+	// First call: hits the server (4 retries), gets 429s, should increment counter
+	_, err := provider.SearchWeb("test", 1)
+	if err == nil {
+		t.Fatal("expected error from 429 response")
+	}
+
+	// The 4 retries should have pushed consecutive429 >= threshold (3)
+	braveCircuitMu.Lock()
+	count := braveConsecutive429
+	isOpen := time.Now().Before(braveCircuitOpenUntil)
+	braveCircuitMu.Unlock()
+
+	if count < braveCircuitThreshold {
+		t.Errorf("expected consecutive 429 count >= %d, got %d", braveCircuitThreshold, count)
+	}
+	if !isOpen {
+		t.Error("expected circuit breaker to be open")
+	}
+
+	// Second call should be rejected immediately without hitting the server
+	prevCount := requestCount
+	_, err = provider.SearchWeb("test2", 1)
+	if err == nil {
+		t.Fatal("expected error from circuit breaker")
+	}
+	if requestCount != prevCount {
+		t.Errorf("expected no new server requests when circuit is open, got %d new requests", requestCount-prevCount)
+	}
+	if !strings.Contains(err.Error(), "circuit breaker open") {
+		t.Errorf("expected circuit breaker error message, got: %s", err.Error())
+	}
+}
+
+func TestBraveCircuitBreakerResetsOnSuccess(t *testing.T) {
+	resetBraveCircuitBreaker()
+	defer resetBraveCircuitBreaker()
+
+	// Manually set circuit state to near threshold
+	braveCircuitMu.Lock()
+	braveConsecutive429 = braveCircuitThreshold - 1
+	braveCircuitMu.Unlock()
+
+	// Server returns 200
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Web struct {
+				Results []struct{} `json:"results"`
+			} `json:"web"`
+		}{})
+	}))
+	defer server.Close()
+
+	provider := NewBraveSearchProvider("test-key")
+	provider.httpClient = server.Client()
+	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = server.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(req)
+	})
+
+	_, err := provider.SearchWeb("test", 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Counter should be reset to 0
+	braveCircuitMu.Lock()
+	count := braveConsecutive429
+	braveCircuitMu.Unlock()
+
+	if count != 0 {
+		t.Errorf("expected consecutive 429 count to be reset to 0, got %d", count)
+	}
+}
+
+func TestWebSearcherFromEnvFallback(t *testing.T) {
+	origBrave := os.Getenv("BRAVE_SEARCH_API_KEY")
+	origSerp := os.Getenv("SERPAPI_KEY")
+	defer func() {
+		os.Setenv("BRAVE_SEARCH_API_KEY", origBrave)
+		os.Setenv("SERPAPI_KEY", origSerp)
+	}()
+
+	// Neither set -> error
+	os.Setenv("BRAVE_SEARCH_API_KEY", "")
+	os.Setenv("SERPAPI_KEY", "")
+	_, err := NewWebSearcherFromEnv()
+	if err == nil {
+		t.Error("expected error when no API keys set")
+	}
+
+	// Only SERPAPI_KEY -> SerpAPI
+	os.Setenv("SERPAPI_KEY", "serp-key")
+	searcher, err := NewWebSearcherFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := searcher.(*SerpAPINewsProvider); !ok {
+		t.Errorf("expected SerpAPINewsProvider for web search fallback, got %T", searcher)
+	}
+
+	// Both set -> Brave wins
+	os.Setenv("BRAVE_SEARCH_API_KEY", "brave-key")
+	searcher, err = NewWebSearcherFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := searcher.(*BraveSearchProvider); !ok {
+		t.Errorf("expected BraveSearchProvider, got %T", searcher)
 	}
 }
 
