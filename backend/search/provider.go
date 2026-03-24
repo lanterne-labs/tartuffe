@@ -3,6 +3,7 @@ package search
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -43,31 +44,105 @@ type ImageSearcher interface {
 }
 
 // NewNewsSearcherFromEnv creates a NewsSearcher based on available environment variables.
-// Priority: BRAVE_SEARCH_API_KEY > SERPAPI_KEY.
+// When both BRAVE_SEARCH_API_KEY and SERPAPI_KEY are set, returns a fallback searcher
+// that tries Brave first and falls back to SerpAPI on circuit breaker errors.
 func NewNewsSearcherFromEnv() (NewsSearcher, error) {
-	if key := os.Getenv("BRAVE_SEARCH_API_KEY"); key != "" {
-		log.Info().Msg("Using Brave Search API for news search")
-		return NewBraveSearchProvider(key), nil
+	braveKey := os.Getenv("BRAVE_SEARCH_API_KEY")
+	serpKey := os.Getenv("SERPAPI_KEY")
+
+	if braveKey != "" && serpKey != "" {
+		log.Info().Msg("Using Brave Search API for news search (SerpAPI fallback)")
+		serpapi, err := NewSerpAPINewsProvider(serpKey)
+		if err != nil {
+			return nil, err
+		}
+		return &fallbackNewsSearcher{
+			primary:  NewBraveSearchProvider(braveKey),
+			fallback: serpapi,
+		}, nil
 	}
-	if key := os.Getenv("SERPAPI_KEY"); key != "" {
+	if braveKey != "" {
+		log.Info().Msg("Using Brave Search API for news search")
+		return NewBraveSearchProvider(braveKey), nil
+	}
+	if serpKey != "" {
 		log.Info().Msg("Using SerpAPI for news search")
-		return NewSerpAPINewsProvider(key)
+		return NewSerpAPINewsProvider(serpKey)
 	}
 	return nil, fmt.Errorf("no search API key configured: set BRAVE_SEARCH_API_KEY or SERPAPI_KEY")
 }
 
-// NewWebSearcherFromEnv creates a WebSearcher based on available environment variables.
-// Priority: BRAVE_SEARCH_API_KEY > SERPAPI_KEY.
-func NewWebSearcherFromEnv() (WebSearcher, error) {
-	if key := os.Getenv("BRAVE_SEARCH_API_KEY"); key != "" {
-		log.Info().Msg("Using Brave Search API for web search")
-		return NewBraveSearchProvider(key), nil
+// fallbackNewsSearcher tries the primary NewsSearcher first, falling back to the
+// secondary on circuit breaker or quota errors.
+type fallbackNewsSearcher struct {
+	primary  NewsSearcher
+	fallback NewsSearcher
+}
+
+func (f *fallbackNewsSearcher) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
+	results, err := f.primary.SearchNews(query, opts)
+	if err != nil && isCircuitBreakerError(err) {
+		log.Warn().Str("query", query).Msg("Primary news search failed (circuit breaker), falling back to SerpAPI")
+		return f.fallback.SearchNews(query, opts)
 	}
-	if key := os.Getenv("SERPAPI_KEY"); key != "" {
+	return results, err
+}
+
+func (f *fallbackNewsSearcher) PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error) {
+	result, err := f.primary.PreviewSearch(query, opts)
+	if err != nil && isCircuitBreakerError(err) {
+		return f.fallback.PreviewSearch(query, opts)
+	}
+	return result, err
+}
+
+// isCircuitBreakerError checks if an error is from the Brave circuit breaker or a 429.
+func isCircuitBreakerError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "circuit breaker open") || strings.Contains(msg, "429 Too Many Requests")
+}
+
+// NewWebSearcherFromEnv creates a WebSearcher based on available environment variables.
+// When both keys are set, returns a fallback searcher (Brave primary, SerpAPI fallback).
+func NewWebSearcherFromEnv() (WebSearcher, error) {
+	braveKey := os.Getenv("BRAVE_SEARCH_API_KEY")
+	serpKey := os.Getenv("SERPAPI_KEY")
+
+	if braveKey != "" && serpKey != "" {
+		log.Info().Msg("Using Brave Search API for web search (SerpAPI fallback)")
+		serpapi, err := NewSerpAPINewsProvider(serpKey)
+		if err != nil {
+			return nil, err
+		}
+		return &fallbackWebSearcher{
+			primary:  NewBraveSearchProvider(braveKey),
+			fallback: serpapi,
+		}, nil
+	}
+	if braveKey != "" {
+		log.Info().Msg("Using Brave Search API for web search")
+		return NewBraveSearchProvider(braveKey), nil
+	}
+	if serpKey != "" {
 		log.Info().Msg("Using SerpAPI for web search")
-		return NewSerpAPINewsProvider(key)
+		return NewSerpAPINewsProvider(serpKey)
 	}
 	return nil, fmt.Errorf("no web search API key configured: set BRAVE_SEARCH_API_KEY or SERPAPI_KEY")
+}
+
+// fallbackWebSearcher tries Brave first, falls back to SerpAPI on circuit breaker errors.
+type fallbackWebSearcher struct {
+	primary  WebSearcher
+	fallback WebSearcher
+}
+
+func (f *fallbackWebSearcher) SearchWeb(query string, limit int) ([]SearchResult, error) {
+	results, err := f.primary.SearchWeb(query, limit)
+	if err != nil && isCircuitBreakerError(err) {
+		log.Warn().Str("query", query).Msg("Primary web search failed (circuit breaker), falling back to SerpAPI")
+		return f.fallback.SearchWeb(query, limit)
+	}
+	return results, err
 }
 
 // NewImageSearcherFromEnv creates an ImageSearcher based on available environment variables.
