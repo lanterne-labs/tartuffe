@@ -421,7 +421,7 @@ func submitContradictionBatch(ctx context.Context, storer *storage.PostgresStore
 		return nil
 	}
 
-	batchID, err := orchestrator.SubmitContradictionBatch(ctx, allRequests, map[string]any{
+	firstBatchID, err := orchestrator.SubmitContradictionBatch(ctx, allRequests, map[string]any{
 		"source":      "contradictions-detect",
 		"total_pairs": totalPairs,
 		"submitted":   time.Now().UTC().Format(time.RFC3339),
@@ -430,10 +430,11 @@ func submitContradictionBatch(ctx context.Context, storer *storage.PostgresStore
 		return fmt.Errorf("failed to submit contradiction batch: %w", err)
 	}
 
+	numChunks := (len(allRequests) + core.MaxRequestsPerContradictionBatch - 1) / core.MaxRequestsPerContradictionBatch
 	fmt.Printf("\n=== BATCH SUBMITTED ===\n")
-	fmt.Printf("Batch ID: %d\n", batchID)
+	fmt.Printf("First batch ID: %d\n", firstBatchID)
 	fmt.Printf("Total pairs: %d\n", totalPairs)
-	fmt.Printf("LLM requests: %d\n", len(allRequests))
+	fmt.Printf("LLM requests: %d (in %d batch(es))\n", len(allRequests), numChunks)
 	fmt.Printf("Results will be processed by the batch poller.\n")
 
 	return nil

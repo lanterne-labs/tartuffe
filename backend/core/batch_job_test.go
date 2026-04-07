@@ -690,6 +690,50 @@ func TestSubmitContradictionBatch_SubmitFailureMarksBatchFailed(t *testing.T) {
 	}
 }
 
+func TestSubmitContradictionBatch_SplitsLargeBatches(t *testing.T) {
+	provider := &mockBatchProvider{name: "test"}
+	storer := &mockBatchStorer{createBatchID: 100}
+
+	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
+
+	// Create MaxRequestsPerContradictionBatch + 50 requests to force 2 chunks
+	numRequests := MaxRequestsPerContradictionBatch + 50
+	requests := make([]llm.BatchRequest, numRequests)
+	for i := range requests {
+		requests[i] = llm.BatchRequest{
+			CustomID: fmt.Sprintf("c:1:%d:%d", i, i+1000),
+			Messages: []llm.ChatMessage{{Role: "user", Content: "test"}},
+		}
+	}
+
+	_, err := orch.SubmitContradictionBatch(context.Background(), requests, map[string]any{"source": "test"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have created 2 DB batches
+	if len(storer.createBatchLog) != 2 {
+		t.Fatalf("expected 2 CreateBatch calls, got %d", len(storer.createBatchLog))
+	}
+	if storer.createBatchLog[0].RequestCount != MaxRequestsPerContradictionBatch {
+		t.Errorf("first chunk: expected %d requests, got %d", MaxRequestsPerContradictionBatch, storer.createBatchLog[0].RequestCount)
+	}
+	if storer.createBatchLog[1].RequestCount != 50 {
+		t.Errorf("second chunk: expected 50 requests, got %d", storer.createBatchLog[1].RequestCount)
+	}
+
+	// Should have submitted 2 provider batches
+	if len(provider.submitCalls) != 2 {
+		t.Fatalf("expected 2 Submit calls, got %d", len(provider.submitCalls))
+	}
+	if len(provider.submitCalls[0]) != MaxRequestsPerContradictionBatch {
+		t.Errorf("first submit: expected %d requests, got %d", MaxRequestsPerContradictionBatch, len(provider.submitCalls[0]))
+	}
+	if len(provider.submitCalls[1]) != 50 {
+		t.Errorf("second submit: expected 50, got %d", len(provider.submitCalls[1]))
+	}
+}
+
 func TestCheckStatus(t *testing.T) {
 	t.Run("completed batch", func(t *testing.T) {
 		provider := &mockBatchProvider{

@@ -297,16 +297,54 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 	return batchID, nil
 }
 
+// MaxRequestsPerContradictionBatch is the maximum number of LLM requests per
+// contradiction batch submitted to the provider. Gemini free/tier-1 has a 3M
+// enqueued-token limit; contradiction prompts are heavy (~3-4K tokens each),
+// so we cap at 400 requests per batch to stay well under the limit.
+const MaxRequestsPerContradictionBatch = 400
+
 // SubmitContradictionBatch submits pre-built contradiction batch requests to the provider.
-// Returns the DB batch ID for tracking.
+// Large request sets are automatically split into chunks of MaxRequestsPerContradictionBatch
+// to avoid hitting provider token-enqueue limits.
+// Returns the first DB batch ID for tracking and the total number of batches created.
 func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any) (int64, error) {
 	if len(requests) == 0 {
 		return 0, fmt.Errorf("no contradiction requests to submit")
 	}
 
-	log.Info().Int("requests", len(requests)).Msg("Submitting contradiction batch to provider")
+	// Split requests into chunks
+	var chunks [][]llm.BatchRequest
+	for i := 0; i < len(requests); i += MaxRequestsPerContradictionBatch {
+		end := i + MaxRequestsPerContradictionBatch
+		if end > len(requests) {
+			end = len(requests)
+		}
+		chunks = append(chunks, requests[i:end])
+	}
 
-	// Build DB request records from the batch requests
+	log.Info().
+		Int("total_requests", len(requests)).
+		Int("chunks", len(chunks)).
+		Int("max_per_chunk", MaxRequestsPerContradictionBatch).
+		Msg("Submitting contradiction batch(es) to provider")
+
+	var firstBatchID int64
+	for chunkIdx, chunk := range chunks {
+		batchID, err := o.submitSingleContradictionBatch(ctx, chunk, metadata, chunkIdx+1, len(chunks))
+		if err != nil {
+			return firstBatchID, fmt.Errorf("chunk %d/%d failed: %w", chunkIdx+1, len(chunks), err)
+		}
+		if chunkIdx == 0 {
+			firstBatchID = batchID
+		}
+	}
+
+	return firstBatchID, nil
+}
+
+// submitSingleContradictionBatch submits one chunk of contradiction requests.
+func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any, chunkNum, totalChunks int) (int64, error) {
+	// Build DB request records
 	var dbRequests []BatchCreateRequestInput
 	for _, req := range requests {
 		dbRequests = append(dbRequests, BatchCreateRequestInput{
@@ -316,13 +354,20 @@ func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, req
 		})
 	}
 
+	// Add chunk info to metadata
+	chunkMeta := make(map[string]any)
+	for k, v := range metadata {
+		chunkMeta[k] = v
+	}
+	chunkMeta["chunk"] = fmt.Sprintf("%d/%d", chunkNum, totalChunks)
+
 	// Step 1: Persist batch to DB with pending provider ID
 	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
 		Provider:        o.provider.ProviderName(),
 		ProviderBatchID: "pending",
 		JobType:         "contradiction",
 		RequestCount:    len(requests),
-		Metadata:        metadata,
+		Metadata:        chunkMeta,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to persist batch: %w", err)
@@ -336,7 +381,6 @@ func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, req
 	// Step 3: Submit to provider
 	submitResult, err := o.provider.Submit(ctx, requests)
 	if err != nil {
-		// Mark batch as failed in DB
 		errMsg := fmt.Sprintf("provider submit failed: %v", err)
 		if updateErr := o.storer.UpdateBatchStatus(ctx, batchID, BatchStatusUpdateInput{
 			State:        "failed",
@@ -356,7 +400,9 @@ func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, req
 		Int64("batch_id", batchID).
 		Str("provider_batch_id", submitResult.ProviderBatchID).
 		Int("requests", len(requests)).
-		Msg("Contradiction batch submitted and persisted")
+		Int("chunk", chunkNum).
+		Int("total_chunks", totalChunks).
+		Msg("Contradiction batch chunk submitted and persisted")
 
 	return batchID, nil
 }
