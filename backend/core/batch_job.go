@@ -304,46 +304,33 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 const MaxRequestsPerContradictionBatch = 400
 
 // SubmitContradictionBatch submits pre-built contradiction batch requests to the provider.
-// Large request sets are automatically split into chunks of MaxRequestsPerContradictionBatch
-// to avoid hitting provider token-enqueue limits.
-// Returns the first DB batch ID for tracking and the total number of batches created.
+// If there are more than MaxRequestsPerContradictionBatch requests, only the first chunk
+// is submitted immediately. The batch chain will re-trigger contradiction detection after
+// completion, picking up remaining unchecked pairs via fact_pair_checks.
+// Returns the DB batch ID for tracking.
 func (o *BatchJobOrchestrator) SubmitContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any) (int64, error) {
 	if len(requests) == 0 {
 		return 0, fmt.Errorf("no contradiction requests to submit")
 	}
 
-	// Split requests into chunks
-	var chunks [][]llm.BatchRequest
-	for i := 0; i < len(requests); i += MaxRequestsPerContradictionBatch {
-		end := i + MaxRequestsPerContradictionBatch
-		if end > len(requests) {
-			end = len(requests)
-		}
-		chunks = append(chunks, requests[i:end])
+	// Cap at MaxRequestsPerContradictionBatch to stay under Gemini's enqueued-token limit.
+	// Remaining pairs will be picked up on the next chain-triggered contradiction run.
+	chunk := requests
+	totalRequests := len(requests)
+	if len(requests) > MaxRequestsPerContradictionBatch {
+		chunk = requests[:MaxRequestsPerContradictionBatch]
+		log.Info().
+			Int("total_requests", totalRequests).
+			Int("submitting", len(chunk)).
+			Int("deferred", totalRequests-len(chunk)).
+			Msg("Capping contradiction batch; remaining pairs will be picked up on next chain cycle")
 	}
 
-	log.Info().
-		Int("total_requests", len(requests)).
-		Int("chunks", len(chunks)).
-		Int("max_per_chunk", MaxRequestsPerContradictionBatch).
-		Msg("Submitting contradiction batch(es) to provider")
-
-	var firstBatchID int64
-	for chunkIdx, chunk := range chunks {
-		batchID, err := o.submitSingleContradictionBatch(ctx, chunk, metadata, chunkIdx+1, len(chunks))
-		if err != nil {
-			return firstBatchID, fmt.Errorf("chunk %d/%d failed: %w", chunkIdx+1, len(chunks), err)
-		}
-		if chunkIdx == 0 {
-			firstBatchID = batchID
-		}
-	}
-
-	return firstBatchID, nil
+	return o.submitSingleContradictionBatch(ctx, chunk, metadata, totalRequests)
 }
 
-// submitSingleContradictionBatch submits one chunk of contradiction requests.
-func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any, chunkNum, totalChunks int) (int64, error) {
+// submitSingleContradictionBatch submits one batch of contradiction requests to the provider.
+func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Context, requests []llm.BatchRequest, metadata map[string]any, totalRequests int) (int64, error) {
 	// Build DB request records
 	var dbRequests []BatchCreateRequestInput
 	for _, req := range requests {
@@ -354,12 +341,12 @@ func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Contex
 		})
 	}
 
-	// Add chunk info to metadata
-	chunkMeta := make(map[string]any)
+	// Copy metadata and add total info
+	batchMeta := make(map[string]any)
 	for k, v := range metadata {
-		chunkMeta[k] = v
+		batchMeta[k] = v
 	}
-	chunkMeta["chunk"] = fmt.Sprintf("%d/%d", chunkNum, totalChunks)
+	batchMeta["total_requests"] = totalRequests
 
 	// Step 1: Persist batch to DB with pending provider ID
 	batchID, err := o.storer.CreateBatch(ctx, BatchCreateInput{
@@ -367,7 +354,7 @@ func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Contex
 		ProviderBatchID: "pending",
 		JobType:         "contradiction",
 		RequestCount:    len(requests),
-		Metadata:        chunkMeta,
+		Metadata:        batchMeta,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to persist batch: %w", err)
@@ -400,9 +387,8 @@ func (o *BatchJobOrchestrator) submitSingleContradictionBatch(ctx context.Contex
 		Int64("batch_id", batchID).
 		Str("provider_batch_id", submitResult.ProviderBatchID).
 		Int("requests", len(requests)).
-		Int("chunk", chunkNum).
-		Int("total_chunks", totalChunks).
-		Msg("Contradiction batch chunk submitted and persisted")
+		Int("total_requests", totalRequests).
+		Msg("Contradiction batch submitted and persisted")
 
 	return batchID, nil
 }
@@ -1155,5 +1141,23 @@ func retrieveBatch(ctx context.Context, o *BatchJobOrchestrator, batchID int64) 
 	// Chain: classification → contradiction
 	if batch.JobType == "classification" {
 		o.maybeSubmitContradictionBatch(ctx, batch)
+	}
+
+	// Chain: contradiction → contradiction (continue if pairs were deferred due to batch size cap)
+	if batch.JobType == "contradiction" && o.contradictionSubmitter != nil {
+		totalRaw, ok := batch.Metadata["total_requests"]
+		if ok {
+			// total_requests is stored as float64 when unmarshalled from JSON
+			total, _ := totalRaw.(float64)
+			if int(total) > batch.RequestCount {
+				log.Info().
+					Int("submitted", batch.RequestCount).
+					Int("total", int(total)).
+					Msg("Contradiction batch had deferred pairs, re-triggering detection")
+				if err := o.contradictionSubmitter(ctx); err != nil {
+					log.Error().Err(err).Msg("Failed to re-trigger contradiction detection after partial batch")
+				}
+			}
+		}
 	}
 }

@@ -690,13 +690,13 @@ func TestSubmitContradictionBatch_SubmitFailureMarksBatchFailed(t *testing.T) {
 	}
 }
 
-func TestSubmitContradictionBatch_SplitsLargeBatches(t *testing.T) {
+func TestSubmitContradictionBatch_CapsLargeBatches(t *testing.T) {
 	provider := &mockBatchProvider{name: "test"}
 	storer := &mockBatchStorer{createBatchID: 100}
 
 	orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
 
-	// Create MaxRequestsPerContradictionBatch + 50 requests to force 2 chunks
+	// Create MaxRequestsPerContradictionBatch + 50 requests
 	numRequests := MaxRequestsPerContradictionBatch + 50
 	requests := make([]llm.BatchRequest, numRequests)
 	for i := range requests {
@@ -711,26 +711,26 @@ func TestSubmitContradictionBatch_SplitsLargeBatches(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have created 2 DB batches
-	if len(storer.createBatchLog) != 2 {
-		t.Fatalf("expected 2 CreateBatch calls, got %d", len(storer.createBatchLog))
+	// Should have created exactly 1 DB batch (capped, not split)
+	if len(storer.createBatchLog) != 1 {
+		t.Fatalf("expected 1 CreateBatch call, got %d", len(storer.createBatchLog))
 	}
 	if storer.createBatchLog[0].RequestCount != MaxRequestsPerContradictionBatch {
-		t.Errorf("first chunk: expected %d requests, got %d", MaxRequestsPerContradictionBatch, storer.createBatchLog[0].RequestCount)
-	}
-	if storer.createBatchLog[1].RequestCount != 50 {
-		t.Errorf("second chunk: expected 50 requests, got %d", storer.createBatchLog[1].RequestCount)
+		t.Errorf("expected %d requests, got %d", MaxRequestsPerContradictionBatch, storer.createBatchLog[0].RequestCount)
 	}
 
-	// Should have submitted 2 provider batches
-	if len(provider.submitCalls) != 2 {
-		t.Fatalf("expected 2 Submit calls, got %d", len(provider.submitCalls))
+	// Metadata should record total_requests for chain re-trigger
+	totalRaw := storer.createBatchLog[0].Metadata["total_requests"]
+	if total, ok := totalRaw.(int); !ok || total != numRequests {
+		t.Errorf("expected total_requests=%d in metadata, got %v", numRequests, totalRaw)
+	}
+
+	// Should have submitted exactly 1 provider batch
+	if len(provider.submitCalls) != 1 {
+		t.Fatalf("expected 1 Submit call, got %d", len(provider.submitCalls))
 	}
 	if len(provider.submitCalls[0]) != MaxRequestsPerContradictionBatch {
-		t.Errorf("first submit: expected %d requests, got %d", MaxRequestsPerContradictionBatch, len(provider.submitCalls[0]))
-	}
-	if len(provider.submitCalls[1]) != 50 {
-		t.Errorf("second submit: expected 50, got %d", len(provider.submitCalls[1]))
+		t.Errorf("expected %d requests in submit, got %d", MaxRequestsPerContradictionBatch, len(provider.submitCalls[0]))
 	}
 }
 
