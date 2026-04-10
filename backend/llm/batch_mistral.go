@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	mistralBaseURL      = "https://api.mistral.ai"
-	mistralDefaultModel = "mistral-small-latest"
+	mistralBaseURL = "https://api.mistral.ai"
+	// Pinned to Mistral Small 4 (released 2026-03-16). We intentionally do NOT
+	// use the "mistral-small-latest" alias because it currently points to
+	// Devstral Small 2 (a coding-focused variant), not Mistral Small 4.
+	mistralDefaultModel = "mistral-small-2603"
 	mistralChatEndpoint = "/v1/chat/completions"
 )
 

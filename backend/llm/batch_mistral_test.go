@@ -17,7 +17,7 @@ import (
 func newTestMistralBatchProvider(serverURL string) *MistralBatchProvider {
 	return &MistralBatchProvider{
 		apiKey:     "test-api-key",
-		model:      "mistral-small-latest",
+		model:      "mistral-small-2603",
 		baseURL:    serverURL,
 		httpClient: http.DefaultClient,
 	}
@@ -67,7 +67,7 @@ func TestMistralBatchSubmit(t *testing.T) {
 
 			assert.Equal(t, []string{"file-abc"}, req.InputFiles)
 			assert.Equal(t, "/v1/chat/completions", req.Endpoint)
-			assert.Equal(t, "mistral-small-latest", req.Model)
+			assert.Equal(t, "mistral-small-2603", req.Model)
 			assert.Contains(t, req.Metadata["display_name"], "dm-batch-")
 
 			w.Header().Set("Content-Type", "application/json")
@@ -113,7 +113,7 @@ func TestMistralBatchSubmit(t *testing.T) {
 	require.NoError(t, json.Unmarshal(lines[1], &line2))
 
 	assert.Equal(t, "req-1", line1.CustomID)
-	assert.Equal(t, "mistral-small-latest", line1.Body.Model)
+	assert.Equal(t, "mistral-small-2603", line1.Body.Model)
 	assert.Equal(t, "Hello", line1.Body.Messages[0].Content)
 	assert.Equal(t, 0.7, line1.Body.Temperature)
 	assert.Nil(t, line1.Body.ResponseFormat)

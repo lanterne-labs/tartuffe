@@ -6,7 +6,7 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 
 ### What was done
 - New `llm.MistralBatchProvider` implementing `llm.BatchProvider` alongside the existing `GeminiBatchProvider`. Uses Mistral's file-based batch flow: upload JSONL to `/v1/files` (purpose=batch) → create job via `/v1/batch/jobs` → poll → download output JSONL from `/v1/files/{id}/content`.
-- Default model `mistral-small-latest`. Reuses `ChatMessage`/`ResponseFormat`/`ChatResponse` directly (OpenAI-compatible schema), so no custom converter is needed unlike the Gemini path.
+- Default model pinned to `mistral-small-2603` (Mistral Small 4, released 2026-03-16). We do **not** use the `mistral-small-latest` alias because it currently aliases to Devstral Small 2, a coding-focused variant. Override via `MISTRAL_BATCH_MODEL` if needed. Reuses `ChatMessage`/`ResponseFormat`/`ChatResponse` directly (OpenAI-compatible schema), so no custom converter is needed unlike the Gemini path.
 - Provider selection: `BATCH_PROVIDER=mistral` picks Mistral, `BATCH_PROVIDER=gemini` picks Gemini. Both `GEMINI_API_KEY` and `MISTRAL_API_KEY` can coexist in the environment — only the one matching `BATCH_PROVIDER` is read. Switching providers on the host is a one-variable change; no commenting, no deletions, no startup panics.
 - New env vars: `MISTRAL_API_KEY` (required when selected), `MISTRAL_BATCH_MODEL` (optional override).
 
