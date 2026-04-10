@@ -2,6 +2,19 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-04-10: Mistral BatchProvider (alternative to Gemini)
+
+### What was done
+- New `llm.MistralBatchProvider` implementing `llm.BatchProvider` alongside the existing `GeminiBatchProvider`. Uses Mistral's file-based batch flow: upload JSONL to `/v1/files` (purpose=batch) → create job via `/v1/batch/jobs` → poll → download output JSONL from `/v1/files/{id}/content`.
+- Default model `mistral-small-latest`. Reuses `ChatMessage`/`ResponseFormat`/`ChatResponse` directly (OpenAI-compatible schema), so no custom converter is needed unlike the Gemini path.
+- Provider selection: `BATCH_PROVIDER=mistral` picks Mistral, `BATCH_PROVIDER=gemini` picks Gemini. Both `GEMINI_API_KEY` and `MISTRAL_API_KEY` can coexist in the environment — only the one matching `BATCH_PROVIDER` is read. Switching providers on the host is a one-variable change; no commenting, no deletions, no startup panics.
+- New env vars: `MISTRAL_API_KEY` (required when selected), `MISTRAL_BATCH_MODEL` (optional override).
+
+### Key design decisions
+- **File-based over inline batching**: Mistral supports both, but file-based is the primary documented flow and scales past the 10k inline cap. The extra upload/download round-trips are fine for our daily batch cadence.
+- **Error file merge**: `Retrieve` downloads `error_file` (if present) in addition to `output_file` and merges errored items by `custom_id`, keeping failure detail visible to the orchestrator rather than silently dropping them.
+- **No orchestrator changes**: `BatchJobOrchestrator`, the poller, the recovery CLI, and contradiction detection all depend only on `llm.BatchProvider`, so they pick up Mistral for free.
+
 ## 2026-03-23: Fix the host Pipeline — Batch Dedup, Circuit Breaker, Observability
 
 ### What was done

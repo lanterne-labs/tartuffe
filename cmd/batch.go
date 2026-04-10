@@ -451,10 +451,17 @@ func newBatchProvider() (llm.BatchProvider, error) {
 		}
 		model := os.Getenv("GEMINI_BATCH_MODEL")
 		return llm.NewGeminiBatchProvider(apiKey, model), nil
+	case "mistral":
+		apiKey := os.Getenv("MISTRAL_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("MISTRAL_API_KEY is required when BATCH_PROVIDER=mistral")
+		}
+		model := os.Getenv("MISTRAL_BATCH_MODEL")
+		return llm.NewMistralBatchProvider(apiKey, model), nil
 	case "":
-		return nil, fmt.Errorf("BATCH_PROVIDER env var not set (supported: gemini)")
+		return nil, fmt.Errorf("BATCH_PROVIDER env var not set (supported: gemini, mistral)")
 	default:
-		return nil, fmt.Errorf("unsupported BATCH_PROVIDER: %s (supported: gemini)", providerName)
+		return nil, fmt.Errorf("unsupported BATCH_PROVIDER: %s (supported: gemini, mistral)", providerName)
 	}
 }
 
