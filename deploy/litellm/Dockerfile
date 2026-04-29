@@ -24,7 +24,9 @@ COPY --from=tsbuilder /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 # SOCKS5 proxy. The HTTP CONNECT proxy works for short responses but
 # tailscaled's userspace netstack drops larger payloads (e.g. embedding
 # vectors) on the return path; SOCKS5 is a raw byte stream and avoids it.
-RUN uv pip install --no-cache-dir --python /app/.venv/bin/python 'httpx[socks]'
+RUN /app/.venv/bin/python -m pip install --no-cache-dir 'httpx[socks]' \
+    || /app/.venv/bin/python -m ensurepip --upgrade \
+        && /app/.venv/bin/python -m pip install --no-cache-dir 'httpx[socks]'
 
 COPY start.sh /start.sh
 COPY config.yaml /app/config.yaml
