@@ -39,7 +39,7 @@ func TestOpenAIEmbeddingGenerator_GenerateEmbeddings(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	embeddings, err := generator.GenerateEmbeddings(ctx, testTexts)
+	embeddings, err := generator.GenerateEmbeddings(ctx, PurposeFactStorage, testTexts)
 
 	require.NoError(t, err, "GenerateEmbeddings failed")
 	require.Len(t, embeddings, len(testTexts), "Incorrect number of embeddings returned")
@@ -64,7 +64,7 @@ func TestOpenAIEmbeddingGenerator_GenerateEmbeddings_EmptyInput(t *testing.T) {
 	generator, err := NewOpenAIEmbeddingGeneratorFromEnv()
 	require.NoError(t, err)
 
-	embeddings, err := generator.GenerateEmbeddings(context.Background(), []string{})
+	embeddings, err := generator.GenerateEmbeddings(context.Background(), PurposeFactStorage, []string{})
 	require.NoError(t, err)
 	assert.Empty(t, embeddings, "Should return empty slice for empty input")
 }

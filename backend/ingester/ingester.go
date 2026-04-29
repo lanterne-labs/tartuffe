@@ -24,7 +24,7 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 	for idx, it := range items {
 		texts[idx] = it.NormalizedFactText
 	}
-	vecs, err := i.Embedder.GenerateEmbeddings(ctx, texts)
+	vecs, err := i.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, texts)
 	if err != nil {
 		return err
 	}

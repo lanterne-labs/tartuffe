@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend"
+	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
 	"encoding/json"
 	"fmt"
@@ -24,8 +25,8 @@ type FactExtractor interface {
 // EmbeddingGenerator defines the interface for generating vector embeddings.
 // This is implemented by embedding.OpenAIEmbeddingGenerator.
 type EmbeddingGenerator interface {
-	// GenerateEmbeddings generates embeddings for the given texts.
-	GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
+	// GenerateEmbeddings generates embeddings for the given texts under the stated purpose.
+	GenerateEmbeddings(ctx context.Context, purpose embedding.Purpose, texts []string) ([][]float32, error)
 }
 
 // FileIngester handles ingestion of facts from local JSON files.
@@ -246,7 +247,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 
 	for _, fact := range facts {
 		// Generate embedding from EmbeddingText
-		embeddings, err := fi.embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
+		embeddings, err := fi.embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 		if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 			log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
 			continue

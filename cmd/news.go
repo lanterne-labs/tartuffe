@@ -666,7 +666,7 @@ func runCacheOnlyExtraction(
 
 			// Generate embeddings and store facts
 			for _, fact := range facts {
-				embeddings, err := embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
+				embeddings, err := embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 				if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 					log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
 					continue

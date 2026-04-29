@@ -203,7 +203,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 		for _, fact := range facts {
 			sourceURL := matchFactToTweetURL(fact, batch)
 
-			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
+			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 				log.Warn().Err(err).Str("fact", truncate(fact.NormalizedFactText, 80)).Msg("twitter: failed to generate embedding")
 				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))

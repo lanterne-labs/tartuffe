@@ -116,7 +116,7 @@ func runEmbeddingsRegenerate(cmd *cobra.Command, args []string) error {
 
 		batchNum++
 
-		vecs, err := embGen.GenerateEmbeddings(ctx, texts)
+		vecs, err := embGen.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, texts)
 		if err != nil {
 			log.Error().Err(err).Int("batch", batchNum).Int("size", len(ids)).Msg("Failed to generate embeddings for batch, aborting")
 			return fmt.Errorf("generate embeddings (batch %d): %w", batchNum, err)

@@ -88,7 +88,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		}
 
 		batchTexts := embeddingTexts[i:end]
-		embs, err := embGen.GenerateEmbeddings(ctx, batchTexts)
+		embs, err := embGen.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, batchTexts)
 		if err != nil {
 			return fmt.Errorf("failed to generate embeddings for batch %d-%d: %w", i, end, err)
 		}

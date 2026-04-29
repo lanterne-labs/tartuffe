@@ -2,10 +2,29 @@ package embedding
 
 import "context"
 
-// EmbeddingGenerator defines the interface for generating vector embeddings for text.
+// Purpose identifies what an embedding is being computed for.
+//
+// Different purposes can map to different instruction prefixes (Qwen-style
+// "Instruct: ...\nQuery: ..." prompts). Today every callsite is storage-side
+// (the resulting vector is written to facts.embedding and later used as both
+// query and document side of symmetric KNN searches), so a single Purpose is
+// sufficient. Adding query-time re-embedding would justify additional
+// purposes.
+type Purpose string
+
+const (
+	// PurposeFactStorage tags embeddings of political claims that are stored
+	// in facts.embedding and later searched for similarity, contradiction, or
+	// stance clustering. All KNN comparisons in this codebase happen between
+	// vectors produced under this purpose, so swapping its instruction
+	// requires a full re-embed (see `dm embeddings invalidate` +
+	// `dm embeddings regenerate`).
+	PurposeFactStorage Purpose = "fact_storage"
+)
+
+// EmbeddingGenerator generates vector embeddings for text under a stated Purpose.
 type EmbeddingGenerator interface {
-	// GenerateEmbeddings takes a slice of texts and returns a corresponding slice of embeddings.
-	// Each inner slice ([]float32) represents the vector embedding for the text at the same index.
-	// Returns an error if the generation process fails for any text.
-	GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
+	// GenerateEmbeddings embeds each text with the instruction associated with
+	// purpose. The returned slice has the same length and order as texts.
+	GenerateEmbeddings(ctx context.Context, purpose Purpose, texts []string) ([][]float32, error)
 }

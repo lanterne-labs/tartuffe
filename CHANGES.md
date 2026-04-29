@@ -20,6 +20,11 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - `dm embeddings invalidate --confirm` — single transaction: nulls every `facts.embedding` and deletes every `stance_documents` row. Refuses to run without `--confirm` and then asks for an interactive `yes`. Cascade on `stance_document_facts` cleans up the join rows.
 - `dm embeddings regenerate [--batch-size=50]` — walks `WHERE embedding IS NULL` ordered by id, batches through `embedding.GenerateEmbeddings`, writes per-row via `storer.UpdateFactEmbedding`. Idempotent and resumable. Source text per fact is `COALESCE(NULLIF(embedding_text, ''), fact_text)`. After it completes, run `dm stances rebuild --all` to rebuild stance documents from the new vectors.
 
+### Embedding interface now requires a Purpose
+- `EmbeddingGenerator.GenerateEmbeddings(ctx, purpose, texts)` — added `embedding.Purpose` argument. The OpenAI generator looks up an instruction string per purpose and prepends Qwen's `Instruct: ...\nQuery: ...` format to every input. text-embedding-3-small ignores the prefix harmlessly during the cutover.
+- One purpose for now: `PurposeFactStorage`. Every callsite stores the resulting vector in `facts.embedding` and KNN searches reuse those stored vectors as queries (symmetric retrieval). All ingestion paths and re-embed CLIs were updated to pass it.
+- Stance cluster vectors are not affected: `stance_documents.cluster_embedding` is the running centroid of fact embeddings (`updateCentroid` in `backend/core/stance_manager.go`), so it inherits whatever instruction the underlying facts were embedded with.
+
 ## 2026-04-10: Mistral BatchProvider (alternative to Gemini)
 
 ### What was done

@@ -140,7 +140,7 @@ func TestPersonSimilarity(t *testing.T) {
 		t.Fatal("No valid entries found in the corpus to process.")
 	}
 
-	embeddings, err := embedder.GenerateEmbeddings(ctx, texts)
+	embeddings, err := embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, texts)
 	require.NoError(t, err, "Failed to generate embeddings")
 	require.Equal(t, len(validCorpusEntries), len(embeddings), "Mismatch between valid corpus size and embeddings count")
 

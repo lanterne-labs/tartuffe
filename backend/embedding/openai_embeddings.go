@@ -116,10 +116,29 @@ type embedResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// purposeInstructions maps each Purpose to the instruction prefix prepended
+// to every input. Qwen3-Embedding consumes "Instruct: ...\nQuery: ..." and
+// produces a representation tuned to the stated task; OpenAI's
+// text-embedding-* models ignore the prefix harmlessly, so the same code path
+// works during the cutover.
+var purposeInstructions = map[Purpose]string{
+	PurposeFactStorage: "Represent this political claim by a public figure so that semantically related or contradicting claims by the same or other figures can be retrieved.",
+}
+
 // GenerateEmbeddings implements the EmbeddingGenerator interface for OpenAI-compatible APIs, supporting batching.
-func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpose Purpose, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return [][]float32{}, nil // Return empty slice if no input
+	}
+
+	instruction, ok := purposeInstructions[purpose]
+	if !ok {
+		return nil, fmt.Errorf("unknown embedding purpose %q", purpose)
+	}
+
+	prefixed := make([]string, len(texts))
+	for i, t := range texts {
+		prefixed[i] = "Instruct: " + instruction + "\nQuery: " + t
 	}
 
 	// Record batch size for metrics
@@ -128,7 +147,7 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts
 
 	reqPayload := embedRequest{
 		Model: m.model,
-		Input: texts,
+		Input: prefixed,
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

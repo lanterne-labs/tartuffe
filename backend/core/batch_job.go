@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"digital-mirror/backend"
+	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
 	"encoding/json"
@@ -501,7 +502,7 @@ func (o *BatchJobOrchestrator) RetrieveAndProcess(ctx context.Context, batchDBID
 func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts []backend.Fact, req BatchRequestRecord) (inserted, skipped int, insertedFacts []InsertedFactInfo, err error) {
 	for _, fact := range facts {
 		// Generate embedding from EmbeddingText
-		embeddings, err := o.embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
+		embeddings, err := o.embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 		if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 			log.Warn().Err(err).Str("fact", truncate(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
 			continue

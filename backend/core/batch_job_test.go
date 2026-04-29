@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend"
+	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
 	"encoding/json"
 	"fmt"
@@ -198,7 +199,7 @@ type mockEmbeddingGenerator struct {
 	calls      [][]string
 }
 
-func (m *mockEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+func (m *mockEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, _ embedding.Purpose, texts []string) ([][]float32, error) {
 	m.calls = append(m.calls, texts)
 	if m.err != nil {
 		return nil, m.err

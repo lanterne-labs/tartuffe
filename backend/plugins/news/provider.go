@@ -388,7 +388,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 		// Generate embeddings and store each fact
 		for _, fact := range facts {
 			// Generate embedding from EmbeddingText (name-free version) to cluster by topic, not person
-			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, []string{fact.EmbeddingText})
+			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 				log.Warn().Err(err).Str("fact", fact.NormalizedFactText).Msg("Failed to generate embedding")
 				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))

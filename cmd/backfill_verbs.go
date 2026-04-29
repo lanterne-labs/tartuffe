@@ -138,7 +138,7 @@ func runBackfillVerbs(cmd *cobra.Command, args []string) error {
 		}
 
 		// Generate embeddings
-		embeddings, err := embGen.GenerateEmbeddings(ctx, texts)
+		embeddings, err := embGen.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, texts)
 		if err != nil {
 			log.Error().Err(err).Int("batch_start", i).Msg("Failed to generate embeddings for batch, skipping")
 			continue
