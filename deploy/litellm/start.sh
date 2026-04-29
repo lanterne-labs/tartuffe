@@ -7,10 +7,14 @@ LITELLM_PORT="${PORT:-4000}"
 
 mkdir -p /var/run/tailscale /var/cache/tailscale /var/lib/tailscale
 
+# Persist tailscale state on a host volume mounted at /var/lib/tailscale.
+# Without persistence (e.g. --state=mem:) every container restart generates a
+# new machine key and tailscale auto-numbers the hostname (host-...-1, -2,
+# -3, ...), polluting the tailnet admin.
 tailscaled \
     --tun=userspace-networking \
     --outbound-http-proxy-listen=localhost:1055 \
-    --state=mem: &
+    --statedir=/var/lib/tailscale &
 
 until tailscale up \
     --authkey="${TS_AUTHKEY}" \
