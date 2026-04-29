@@ -1,0 +1,46 @@
+model_list:
+  # Chat: primary route on home box, fallback to OpenRouter (different model intentionally).
+  - model_name: chat
+    litellm_params:
+      model: os.environ/OPEN_AI_CHAT_MODEL
+      custom_llm_provider: openai
+      api_base: os.environ/OPEN_AI_API
+      api_key: os.environ/OPEN_AI_KEY
+  - model_name: chat
+    litellm_params:
+      model: os.environ/FALLBACK_CHAT_MODEL
+      custom_llm_provider: openai
+      api_base: os.environ/FALLBACK_URL
+      api_key: os.environ/FALLBACK_KEY
+
+  # Embedding: primary route on home box, fallback to OpenRouter.
+  # Both routes intentionally reference the SAME OPEN_AI_EMBED_MODEL env var so the
+  # vector space is identical on primary and fallback (drift-impossible by construction).
+  - model_name: embedding
+    litellm_params:
+      model: os.environ/OPEN_AI_EMBED_MODEL
+      custom_llm_provider: openai
+      api_base: os.environ/OPEN_AI_API
+      api_key: os.environ/OPEN_AI_KEY
+  - model_name: embedding
+    litellm_params:
+      model: os.environ/OPEN_AI_EMBED_MODEL
+      custom_llm_provider: openai
+      api_base: os.environ/FALLBACK_URL
+      api_key: os.environ/FALLBACK_KEY
+
+router_settings:
+  fallbacks:
+    - chat: ["chat"]
+    - embedding: ["embedding"]
+  retry_policy:
+    BadRequestErrorRetries: 0
+    AuthenticationErrorRetries: 0
+    TimeoutErrorRetries: 1
+    InternalServerErrorRetries: 1
+    ContentPolicyViolationErrorRetries: 0
+  cooldown_time: 30
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120

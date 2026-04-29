@@ -2,6 +2,24 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-04-29: LiteLLM proxy + Tailscale on the host for home AI box failover
+
+### What was done
+- New host service `litellm` (under `deploy/litellm/`) running LiteLLM proxy with a Tailscale userspace sidecar in the same container. Routes LLM and embedding traffic from `dm` to a home AI box via tailnet, with automatic fallback to OpenRouter when the home box is unreachable.
+- **Backend Go code is unchanged** — `dm` still reads `OPEN_AI_API` and behaves identically. On the host, that variable now points at `http://litellm.host.internal:4000/v1`; locally it still points at the cloud provider directly. No new branches, no new dependencies.
+- New env vars on the `litellm` service only (5 total): `TS_AUTHKEY`, `TS_HOSTNAME`, `FALLBACK_URL`, `FALLBACK_KEY`, `FALLBACK_CHAT_MODEL`. Embedding fallback intentionally reuses `OPEN_AI_EMBED_MODEL` so the same model name resolves on both providers — drift is structurally impossible.
+
+### Key design decisions
+- **LiteLLM over hand-rolled Go failover**: replaces ~175 lines of Go (circuit breaker + retry + dispatch) with a Python sidecar configured via YAML. Failover, retries, cooldown, and per-provider auth all live in `deploy/litellm/config.yaml`.
+- **Tailscale lives only in the LiteLLM container**, not on `dm`. Userspace mode (`--tun=userspace-networking`) because the host containers can't access `/dev/net/tun`. The container's outbound HTTP routes through tailscaled's HTTP proxy on `localhost:1055`, which forwards public traffic transparently — so OpenRouter fallback works through the same proxy without special-casing.
+- **No public domain on the LiteLLM service** + no `LITELLM_MASTER_KEY`: the host's private network is project-scoped, so the proxy is unreachable from outside the project. Documented as a hard deploy-time requirement.
+- **Single source of truth for embedding model name**: both primary and fallback YAML routes reference `os.environ/OPEN_AI_EMBED_MODEL` (not separate env vars), making vector-space drift between providers impossible. Operationally requires `ollama cp <tag> qwen/qwen3-embedding-8b` on the home box once so the same string resolves on both Ollama and OpenRouter.
+- **Embedding model swap requires pgvector reindex**: switching from OpenAI's `text-embedding-3-small` to a Qwen embedding produces incompatible vectors. Existing index must be cleared and re-ingested when this change rolls out.
+
+### New CLI commands for the embedding swap
+- `dm embeddings invalidate --confirm` — single transaction: nulls every `facts.embedding` and deletes every `stance_documents` row. Refuses to run without `--confirm` and then asks for an interactive `yes`. Cascade on `stance_document_facts` cleans up the join rows.
+- `dm embeddings regenerate [--batch-size=50]` — walks `WHERE embedding IS NULL` ordered by id, batches through `embedding.GenerateEmbeddings`, writes per-row via `storer.UpdateFactEmbedding`. Idempotent and resumable. Source text per fact is `COALESCE(NULLIF(embedding_text, ''), fact_text)`. After it completes, run `dm stances rebuild --all` to rebuild stance documents from the new vectors.
+
 ## 2026-04-10: Mistral BatchProvider (alternative to Gemini)
 
 ### What was done
