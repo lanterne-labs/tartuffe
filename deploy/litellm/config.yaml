@@ -28,6 +28,10 @@ model_list:
       custom_llm_provider: openai
       api_base: os.environ/FALLBACK_URL
       api_key: os.environ/FALLBACK_KEY
+      # OpenRouter's Zod schema rejects encoding_format unless it is exactly
+      # "float" or "base64"; LiteLLM sometimes forwards it as None which fails
+      # validation. Strip it on the fallback path.
+      additional_drop_params: ["encoding_format"]
 
 router_settings:
   fallbacks:
@@ -43,4 +47,7 @@ router_settings:
 
 litellm_settings:
   drop_params: true
-  request_timeout: 120
+  # Long enough to absorb llama-swap cold-loads (the primary provider
+  # loads/unloads models on demand; a fresh load of a 26B chat model
+  # can easily take 30-60s, embedding less but still tens of seconds).
+  request_timeout: 600
