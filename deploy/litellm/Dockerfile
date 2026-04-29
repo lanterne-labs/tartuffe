@@ -20,6 +20,12 @@ USER root
 COPY --from=tsbuilder /usr/local/bin/tailscale  /usr/local/bin/tailscale
 COPY --from=tsbuilder /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 
+# Install the SOCKS extra for httpx so litellm can dial via tailscaled's
+# SOCKS5 proxy. The HTTP CONNECT proxy works for short responses but
+# tailscaled's userspace netstack drops larger payloads (e.g. embedding
+# vectors) on the return path; SOCKS5 is a raw byte stream and avoids it.
+RUN pip install --no-cache-dir 'httpx[socks]'
+
 COPY start.sh /start.sh
 COPY config.yaml /app/config.yaml
 RUN chmod +x /start.sh
