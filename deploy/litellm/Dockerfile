@@ -3,7 +3,7 @@
 # we can rely on, so we pull tailscale + tailscaled directly and copy them in.
 FROM debian:bookworm-slim AS tsbuilder
 
-ARG TS_VERSION=1.78.1
+ARG TS_VERSION=1.96.4
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates && \
     curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TS_VERSION}_amd64.tgz" -o /tmp/ts.tgz && \
