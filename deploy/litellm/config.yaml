@@ -20,18 +20,20 @@ model_list:
       api_key: os.environ/FALLBACK_KEY
 
   # Embedding: primary route via Cloudflare Tunnel to home box.
-  # Drop encoding_format because LiteLLM forwards it as null when unset, which
-  # both llama.cpp (json type error) and OpenRouter (Zod) reject.
+  # Pin encoding_format to "float" because LiteLLM otherwise forwards it as
+  # null, which llama.cpp (json type error) and OpenRouter (Zod) both reject.
+  # additional_drop_params alone does not take effect for embeddings in
+  # current LiteLLM versions, so set the value explicitly.
   - model_name: embedding
     litellm_params:
       model: os.environ/OPEN_AI_EMBED_MODEL
       custom_llm_provider: openai
       api_base: os.environ/OPEN_AI_API
       api_key: os.environ/OPEN_AI_KEY
+      encoding_format: float
       extra_headers:
         CF-Access-Client-Id: os.environ/CF_ACCESS_CLIENT_ID
         CF-Access-Client-Secret: os.environ/CF_ACCESS_CLIENT_SECRET
-      additional_drop_params: ["encoding_format"]
   # Embedding fallback: OpenRouter. Same OPEN_AI_EMBED_MODEL by design so the
   # vector space is identical on primary and fallback (drift-impossible by
   # construction).
@@ -41,7 +43,7 @@ model_list:
       custom_llm_provider: openai
       api_base: os.environ/FALLBACK_URL
       api_key: os.environ/FALLBACK_KEY
-      additional_drop_params: ["encoding_format"]
+      encoding_format: float
 
 router_settings:
   fallbacks:
