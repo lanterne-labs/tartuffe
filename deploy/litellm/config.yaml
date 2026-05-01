@@ -1,11 +1,15 @@
 model_list:
-  # Chat: primary route on home box, fallback to OpenRouter (different model intentionally).
+  # Chat: primary route via Cloudflare Tunnel to home box, fallback to OpenRouter
+  # (different model intentionally).
   - model_name: chat
     litellm_params:
       model: os.environ/OPEN_AI_CHAT_MODEL
       custom_llm_provider: openai
       api_base: os.environ/OPEN_AI_API
       api_key: os.environ/OPEN_AI_KEY
+      extra_headers:
+        CF-Access-Client-Id: os.environ/CF_ACCESS_CLIENT_ID
+        CF-Access-Client-Secret: os.environ/CF_ACCESS_CLIENT_SECRET
   - model_name: chat
     litellm_params:
       model: os.environ/FALLBACK_CHAT_MODEL
@@ -13,7 +17,7 @@ model_list:
       api_base: os.environ/FALLBACK_URL
       api_key: os.environ/FALLBACK_KEY
 
-  # Embedding: primary route on home box, fallback to OpenRouter.
+  # Embedding: primary route via Cloudflare Tunnel to home box, fallback to OpenRouter.
   # Both routes intentionally reference the SAME OPEN_AI_EMBED_MODEL env var so the
   # vector space is identical on primary and fallback (drift-impossible by construction).
   - model_name: embedding
@@ -22,6 +26,9 @@ model_list:
       custom_llm_provider: openai
       api_base: os.environ/OPEN_AI_API
       api_key: os.environ/OPEN_AI_KEY
+      extra_headers:
+        CF-Access-Client-Id: os.environ/CF_ACCESS_CLIENT_ID
+        CF-Access-Client-Secret: os.environ/CF_ACCESS_CLIENT_SECRET
   - model_name: embedding
     litellm_params:
       model: os.environ/OPEN_AI_EMBED_MODEL

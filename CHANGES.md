@@ -2,6 +2,23 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-01: LiteLLM transport switched from Tailscale to Cloudflare Tunnel
+
+### What was done
+- Stripped Tailscale (userspace tailscaled + SOCKS5/HTTP-CONNECT proxy + state volume) from the host `lite-llm` container. The Dockerfile is now just `ghcr.io/berriai/litellm:main-stable` + `start.sh` + `config.yaml`; `start.sh` is a 4-line `exec litellm`.
+- Reach to the home AI box now goes the host → Cloudflare edge → Cloudflare Tunnel (cloudflared on cachy) → `localhost:8080` (llama-swap). cloudflared runs as a host systemd service on cachy, no Docker.
+- Auth at the Cloudflare edge via Access service token: LiteLLM sends `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers, declared once per primary route in `config.yaml` via `extra_headers`. Fallback (OpenRouter) routes do not carry these headers.
+- New env vars on the `lite-llm` the host service: `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`. `OPEN_AI_API` flipped from the tailnet hostname to the public Cloudflare hostname (e.g. `https://cachy-llm.<domain>/v1`). `TS_AUTHKEY` / `TS_HOSTNAME` and the `/var/lib/tailscale` volume are removed.
+
+### Why
+- Tailscale userspace networking on the host is structurally unable to transport TCP responses larger than ~1KB regardless of proxy type or whether the path is direct UDP or DERP — gVisor netstack throughput limit, confirmed via tailscale#9802 and reproduced across `--tun=userspace-networking`, `tsnet` (railtail), SOCKS5, and HTTP CONNECT. Embedding payloads (~6KB) and >50-token chat completions all timed out. The data path had to leave Tailscale.
+- Cloudflare Tunnel is outbound-initiated from the home box, so it traverses NAT without router config, terminates TLS at CF edge with a free cert, and lets us put auth at the edge with Access. Cost: a domain on CF Registrar (~$10/yr) — the only realistic alternatives required either a port-forward + reverse-proxy auth shim on cachy (Caddy/nginx) or a paid VPS as a subnet router.
+
+### Operational notes
+- cloudflared logs `dial tcp [::1]:8080: connect: connection refused` if the tunnel route is configured as `localhost:8080` and the origin only binds IPv4. Use `127.0.0.1:8080` in the route to force IPv4.
+- The Access app must use **Service Auth** policy action (not Allow) — Service Auth gates by service token only, no human login redirect, which is what a server-to-server call needs.
+- Rotating the Access service token: regenerate it in Zero Trust → Service Tokens, update both the host env vars, and re-bind the new token in the Access policy. The hostname and tunnel itself don't change.
+
 ## 2026-04-29: LiteLLM proxy + Tailscale on the host for home AI box failover
 
 ### What was done
