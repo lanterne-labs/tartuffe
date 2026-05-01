@@ -1,6 +1,5 @@
 model_list:
-  # Chat: primary route via Cloudflare Tunnel to home box, fallback to OpenRouter
-  # (different model intentionally).
+  # Chat: primary route via Cloudflare Tunnel to home box.
   - model_name: chat
     litellm_params:
       model: os.environ/OPEN_AI_CHAT_MODEL
@@ -10,16 +9,17 @@ model_list:
       extra_headers:
         CF-Access-Client-Id: os.environ/CF_ACCESS_CLIENT_ID
         CF-Access-Client-Secret: os.environ/CF_ACCESS_CLIENT_SECRET
-  - model_name: chat
+  # Chat fallback: OpenRouter (different model intentionally).
+  # Distinct model_name so it is NOT load-balanced with primary; only invoked
+  # via the explicit fallbacks map below when primary fails.
+  - model_name: chat-fallback
     litellm_params:
       model: os.environ/FALLBACK_CHAT_MODEL
       custom_llm_provider: openai
       api_base: os.environ/FALLBACK_URL
       api_key: os.environ/FALLBACK_KEY
 
-  # Embedding: primary route via Cloudflare Tunnel to home box, fallback to OpenRouter.
-  # Both routes intentionally reference the SAME OPEN_AI_EMBED_MODEL env var so the
-  # vector space is identical on primary and fallback (drift-impossible by construction).
+  # Embedding: primary route via Cloudflare Tunnel to home box.
   - model_name: embedding
     litellm_params:
       model: os.environ/OPEN_AI_EMBED_MODEL
@@ -29,7 +29,10 @@ model_list:
       extra_headers:
         CF-Access-Client-Id: os.environ/CF_ACCESS_CLIENT_ID
         CF-Access-Client-Secret: os.environ/CF_ACCESS_CLIENT_SECRET
-  - model_name: embedding
+  # Embedding fallback: OpenRouter. Same OPEN_AI_EMBED_MODEL by design so the
+  # vector space is identical on primary and fallback (drift-impossible by
+  # construction).
+  - model_name: embedding-fallback
     litellm_params:
       model: os.environ/OPEN_AI_EMBED_MODEL
       custom_llm_provider: openai
@@ -42,8 +45,8 @@ model_list:
 
 router_settings:
   fallbacks:
-    - chat: ["chat"]
-    - embedding: ["embedding"]
+    - chat: ["chat-fallback"]
+    - embedding: ["embedding-fallback"]
   retry_policy:
     BadRequestErrorRetries: 0
     AuthenticationErrorRetries: 0
