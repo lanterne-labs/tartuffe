@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -22,6 +23,11 @@ const (
 	initialBackoff    = 1 * time.Second // Initial wait time for backoff
 	backoffMultiplier = 2.0             // Factor to multiply backoff by each retry
 	maxJitter         = 0.2             // Max jitter factor (e.g., 0.2 = +/- 20%)
+	// targetEmbeddingDim is the dimension we store in pgvector. Models that emit
+	// larger vectors (e.g. Qwen3-Embedding-8B at 4096) are Matryoshka-truncated
+	// to this prefix and L2-renormalized — Qwen3 was trained with nested MRL
+	// loss so the leading prefix is a valid lower-dim embedding.
+	targetEmbeddingDim = 1536
 )
 
 // openAIEmbedModelDefault uses text-embedding-3-small (1536 dimensions) by default
@@ -123,6 +129,30 @@ type embedResponse struct {
 // works during the cutover.
 var purposeInstructions = map[Purpose]string{
 	PurposeFactStorage: "Represent this political claim by a public figure so that semantically related or contradicting claims by the same or other figures can be retrieved.",
+}
+
+// matryoshkaTruncate keeps the first targetEmbeddingDim values of v and
+// re-L2-normalizes; if v is already <= targetEmbeddingDim it is returned as-is
+// (callers downstream will fail loudly if the dim doesn't match the storage
+// column, which is the correct behavior).
+func matryoshkaTruncate(v []float32) []float32 {
+	if len(v) <= targetEmbeddingDim {
+		return v
+	}
+	out := make([]float32, targetEmbeddingDim)
+	copy(out, v[:targetEmbeddingDim])
+	var sumsq float64
+	for _, x := range out {
+		sumsq += float64(x) * float64(x)
+	}
+	if sumsq == 0 {
+		return out
+	}
+	inv := float32(1.0 / math.Sqrt(sumsq))
+	for i := range out {
+		out[i] *= inv
+	}
+	return out
 }
 
 // GenerateEmbeddings implements the EmbeddingGenerator interface for OpenAI-compatible APIs, supporting batching.
@@ -278,7 +308,7 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 	results := make([][]float32, len(texts))
 	for _, data := range embResp.Data {
 		if data.Index >= 0 && data.Index < len(results) {
-			results[data.Index] = data.Embedding
+			results[data.Index] = matryoshkaTruncate(data.Embedding)
 		} else {
 			// This case should ideally not happen if API guarantees order and index correctness
 			log.Warn().Int("invalid_index", data.Index).Int("expected_max_index", len(results)-1).Msg("Received embedding with out-of-bounds index from embeddings API")

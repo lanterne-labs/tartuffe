@@ -2,6 +2,17 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-02: Matryoshka-truncate Qwen3-Embedding-8B to 1536 dims client-side
+
+### What was done
+- `backend/embedding/openai_embeddings.go` now truncates any embedding longer than `targetEmbeddingDim` (1536) to the leading-1536 prefix and L2-renormalizes. Qwen3-Embedding-8B was trained with nested Matryoshka loss, so the prefix is a valid lower-dim embedding.
+- pgvector storage stays at `vector(1536)` — same column type that was used with `text-embedding-3-small`, no reindex / no schema rewrite when swapping the upstream model.
+- New migration drops `NOT NULL` on `facts.embedding` so future model swaps can use the `embeddings invalidate` → `embeddings regenerate` flow without first having to alter the column.
+
+### Why
+- The OpenAI `dimensions` request parameter is silently ignored by llama.cpp (cachy returns 4096-dim regardless), so server-side truncation isn't an option. Doing it client-side keeps the wire format vanilla OpenAI and works against any upstream — OpenRouter fallback included, since OpenRouter also serves the full 4096-dim Qwen output.
+- Storing 1536 vs 4096 dims is a ~2.7× saving in row size, HNSW index memory, and KNN scan cost — cheap, and avoids a full schema rewrite of every embedding-bearing table.
+
 ## 2026-05-01: LiteLLM transport switched from Tailscale to Cloudflare Tunnel
 
 ### What was done
