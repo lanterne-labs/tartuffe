@@ -2055,12 +2055,25 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 // GetPersonByID returns a single person by ID
 func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*PersonSummary, error) {
 	query := `
-		SELECT id, name, entity_type, honesty_score, own_score, members_score, image_url
-		FROM persons
-		WHERE id = $1`
+		SELECT
+			p.id,
+			p.name,
+			p.entity_type,
+			p.honesty_score,
+			p.own_score,
+			p.members_score,
+			p.image_url,
+			COUNT(DISTINCT fs.fact_id) FILTER (
+				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
+			) AS fact_count
+		FROM persons p
+		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
+		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
+		WHERE p.id = $1
+		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url`
 
 	var person PersonSummary
-	err := s.pool.QueryRow(ctx, query, personID).Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
+	err := s.pool.QueryRow(ctx, query, personID).Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.FactCount)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
