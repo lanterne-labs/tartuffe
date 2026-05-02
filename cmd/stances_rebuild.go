@@ -13,6 +13,7 @@ import (
 var (
 	stancesRebuildPerson string
 	stancesRebuildDryRun bool
+	stancesRebuildResume bool
 )
 
 var stancesRebuildCmd = &cobra.Command{
@@ -41,6 +42,7 @@ func init() {
 	stancesCmd.AddCommand(stancesRebuildCmd)
 	stancesRebuildCmd.Flags().StringVar(&stancesRebuildPerson, "person", "", "Specific person name to rebuild (optional)")
 	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildDryRun, "dry-run", false, "Show what would be done without writing to database")
+	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildResume, "resume", false, "Skip persons that already have at least one stance document (for resuming an interrupted rebuild)")
 }
 
 func runStancesRebuild(cmd *cobra.Command, args []string) error {
@@ -73,11 +75,17 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	totalDeleted := 0
 	totalCreated := 0
 
+	skipped := 0
 	for _, p := range persons {
 		// Count existing stances before deletion
 		existing, err := adapter.GetStanceDocumentsForPerson(ctx, p.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to get existing stances")
+			continue
+		}
+
+		if stancesRebuildResume && len(existing) > 0 {
+			skipped++
 			continue
 		}
 
@@ -105,7 +113,8 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Println("=== STANCE REBUILD RESULTS ===")
-	fmt.Printf("Persons processed:     %d\n", len(persons))
+	fmt.Printf("Persons processed:     %d\n", len(persons)-skipped)
+	fmt.Printf("Persons skipped (resume): %d\n", skipped)
 	fmt.Printf("Stances deleted:       %d\n", totalDeleted)
 	fmt.Printf("Stances created:       %d\n", totalCreated)
 	if stancesRebuildDryRun {
