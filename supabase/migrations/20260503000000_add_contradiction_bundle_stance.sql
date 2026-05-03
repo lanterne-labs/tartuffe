@@ -1,3 +1,4 @@
+-- +goose Up
 -- Stance-bundled contradictions
 --
 -- A contradiction's "bundle" is the stance its facts belong to. When fact_a and fact_b
