@@ -3970,6 +3970,93 @@ func (s *PostgresStorer) FindTopStancesForPerson(ctx context.Context, personID i
 	return out, rows.Err()
 }
 
+// SoloContradictionForBundling is the minimal payload the Bundler needs to retroactively
+// resolve a contradiction whose bundle_stance_id is NULL.
+type SoloContradictionForBundling struct {
+	ID        int64
+	PersonID  int64
+	FactAID   int64
+	FactBID   int64
+	FactAText string
+	FactBText string
+	Reason    string
+}
+
+// BundleBackfillFastPath sets bundle_stance_id on every contradiction whose two facts now
+// share a stance via stance_document_facts, but where the column is currently NULL. Returns
+// the number of rows updated. Mirrors the SQL in migration 20260503000000 — used by the
+// `dm contradictions bundle-backfill` CLI to re-run after a `stances rebuild` pass since
+// the migration ran before stances were retroactively populated.
+func (s *PostgresStorer) BundleBackfillFastPath(ctx context.Context, personID *int64) (int64, error) {
+	args := []any{}
+	personFilter := ""
+	if personID != nil {
+		args = append(args, *personID)
+		personFilter = "AND c.person_id = $1"
+	}
+	query := fmt.Sprintf(`
+		WITH shared AS (
+			SELECT c.id AS contradiction_id, sa.stance_document_id
+			FROM contradictions c
+			JOIN stance_document_facts sa ON sa.fact_id = c.fact_a_id
+			JOIN stance_document_facts sb ON sb.fact_id = c.fact_b_id
+			                              AND sb.stance_document_id = sa.stance_document_id
+			WHERE c.bundle_stance_id IS NULL
+			%s
+		)
+		UPDATE contradictions c
+		SET bundle_stance_id = shared.stance_document_id
+		FROM shared
+		WHERE shared.contradiction_id = c.id
+		  AND c.bundle_stance_id IS NULL`, personFilter)
+	tag, err := s.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("bundle backfill fast path: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ListSoloContradictionsForBundling returns contradictions with bundle_stance_id IS NULL
+// joined to fact text + reason, ready for the Bundler. Optionally scoped to a person and
+// capped at limit (limit <= 0 means no cap).
+func (s *PostgresStorer) ListSoloContradictionsForBundling(ctx context.Context, personID *int64, limit int) ([]SoloContradictionForBundling, error) {
+	args := []any{}
+	whereExtra := ""
+	if personID != nil {
+		args = append(args, *personID)
+		whereExtra = fmt.Sprintf("AND c.person_id = $%d", len(args))
+	}
+	limitClause := ""
+	if limit > 0 {
+		args = append(args, limit)
+		limitClause = fmt.Sprintf("LIMIT $%d", len(args))
+	}
+	query := fmt.Sprintf(`
+		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
+		       fa.fact_text, fb.fact_text, COALESCE(c.reason, '')
+		FROM contradictions c
+		JOIN facts fa ON fa.id = c.fact_a_id
+		JOIN facts fb ON fb.id = c.fact_b_id
+		WHERE c.bundle_stance_id IS NULL
+		%s
+		ORDER BY c.person_id, c.id
+		%s`, whereExtra, limitClause)
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list solo contradictions: %w", err)
+	}
+	defer rows.Close()
+	out := make([]SoloContradictionForBundling, 0)
+	for rows.Next() {
+		var r SoloContradictionForBundling
+		if err := rows.Scan(&r.ID, &r.PersonID, &r.FactAID, &r.FactBID, &r.FactAText, &r.FactBText, &r.Reason); err != nil {
+			return nil, fmt.Errorf("scan solo contradiction: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // SetContradictionBundleStance assigns a bundle stance to a contradiction and recomputes the
 // person's honesty score (since the bundle count may have changed). No-op if the contradiction
 // already had the same bundle_stance_id. Used by the Bundler after an LLM-verified resolution.

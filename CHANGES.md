@@ -18,6 +18,15 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - Any caller that previously constructed `NewFactInserter(storer)` without LLM credentials now panics with a clear message. This is intentional: there is no "ingest without stance" mode anymore.
 - Old facts predating this change may still have no `stance_document_facts` row. Run `./dm stances rebuild --resume` once per environment to backfill — the inserter only enforces the invariant going forward.
 
+## 2026-05-03: `dm contradictions bundle-backfill`
+
+### What was done
+- New CLI subcommand to retroactively populate `bundle_stance_id` on existing contradictions. Two phases: (1) SQL fast path (mirrors the migration) — set `bundle_stance_id` where both facts now share a stance via `stance_document_facts`; (2) LLM Bundler pass — for remaining solos, embed the contradiction summary, retrieve top-K candidate stances per person, ask the LLM YES/NO. Flags: `--person`, `--person-id`, `--max`, `--no-llm`, `--dry-run`.
+- New storage helpers `BundleBackfillFastPath(personID *int64)` and `ListSoloContradictionsForBundling(personID *int64, limit int)`.
+
+### Why
+- The migration's UPDATE only ran once at deploy time; it could only bundle contradictions whose facts already had stances. Older facts that predated the stance system stayed stance-less, so their contradictions stuck as solo bundles. After running `./dm stances rebuild --resume` to backfill stances, this command picks up the rest in one auditable pass instead of a one-off psql session.
+
 ## 2026-05-03: Stance-bundled contradictions
 
 ### What was done
