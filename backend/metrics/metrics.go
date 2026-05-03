@@ -59,4 +59,9 @@ func init() {
 		ContentExtractionDuration,
 		HonestyScoreUpdates,
 	)
+
+	// Register invariant gauges
+	Registry.MustRegister(
+		FactsWithoutStance,
+	)
 }

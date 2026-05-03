@@ -2,6 +2,39 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-03: Stance is mandatory on every fact (single ingest path)
+
+### What was done
+- `core.NewFactInserter(storer, stance)` now requires a non-nil `StanceProcessor`. The optional `SetStanceManager` setter, the `DisableClassifier` toggle, and the silent fallback that ran `classifyRelations` when stance processing failed are all gone. Stance failure now triggers a compensating `DeleteFact` so the "every fact has a stance" invariant cannot be broken from this code path.
+- `StanceProcessor` is a small interface (`ProcessNewFact`) implemented by `*core.StanceManager`. Tests can supply a stub that creates one stance per fact without an LLM round-trip — see `stubStanceProcessor` in `backend/storage/postgres_test.go`.
+- All 11 `NewFactInserter` callsites (`cmd/{web,batch×3,pipeline,contradictions_detect,ingest_files,news}`, `plugins/{news,twitter,frpolitics}`, `ingester`) now construct a `core.StanceManagerFromEnv` and fail loudly with a clear error if `OPEN_AI_KEY`/`OPEN_AI_API` aren't configured. Previously they would silently fall through to the deleted relation-classifier path.
+- `RelationClassifier` (the per-fact LLM call) and `classifyRelations` are deleted. The classification-prompt + JSON-parsing helpers (`ParseClassificationResponse`, `ClassificationInput`, `ClassificationResult`, `classificationPrompt`) stay because the OpenAI batch-API path in `backend/core/batch_job.go` still uses them. That batch path is now redundant with stance-based clustering and is queued for removal in a follow-up.
+
+### Why
+- A fact with no stance is a data-quality bug: contradiction bundling, the honesty score, and the topic UI all assume every fact lives in exactly one stance. The pre-existing code accepted facts via three different routes (FactInserter w/ stance, FactInserter w/o stance + classifyRelations, batch path), and the silent fallback meant any LLM hiccup produced stance-less rows. Collapsing to one path makes the invariant inspectable in a single function.
+- Compensating delete on stance failure is the saga-pattern equivalent of a transaction. The storage layer doesn't expose a tx that spans LLM calls, so wrapping the fact-insert + stance-route in a Postgres `BEGIN/COMMIT` would mean holding a connection open across multiple seconds of LLM round-trips — not viable. End state is the same: partial inserts get rolled back.
+
+### Operational notes
+- Any caller that previously constructed `NewFactInserter(storer)` without LLM credentials now panics with a clear message. This is intentional: there is no "ingest without stance" mode anymore.
+- Old facts predating this change may still have no `stance_document_facts` row. Run `./dm stances rebuild --resume` once per environment to backfill — the inserter only enforces the invariant going forward.
+
+## 2026-05-03: Stance-bundled contradictions
+
+### What was done
+- A contradiction's "bundle" is now the stance its facts share. New column `contradictions.bundle_stance_id` (migration `20260503000000_add_contradiction_bundle_stance.sql`) is filled at insert time via a CTE: when both facts of a contradiction belong to the same `stance_documents` row, that stance becomes the bundle id. Cross-stance and unstanced pairs are left NULL and treated as singleton "solo" bundles.
+- `ComputeHonestyScore` signature is now `(factsCount int, stats ContradictionStats)` where `ContradictionStats{Bundles, Total}`. Formula adds a `0.05·ln(1+extras)` log penalty for repeats inside the same bundle, replacing the legacy linear `0.02·N` charge per pair. Effect: 10 contradictions sharing a stance count as ~1.135 instead of ~10 in penalty terms.
+- `GetPersonContradictions` returns `bundle_id`, `bundle_label`, `bundle_summary`, `bundle_size`. It also returns `fact_a_stance_id/label` and `fact_b_stance_id/label` so cross-stance solos render with a "topic A ↔ topic B" header and a `Cross-topic` badge in the frontend; missing stance labels (a `facts_without_stance_total > 0` situation) show a red `Data quality` badge. Frontend (`person/[id]`) now groups contradictions by bundle, showing one card per bundle with the stance label/summary and an expander listing the underlying pairs. Solo rows render inline.
+- New `backend/contradiction/bundler.go` + `embedding.PurposeContradictionBundle`: when a fact-level shared stance isn't found at insert (cross-stance or unstanced), the Bundler embeds the contradiction summary under a tailored "underlying inconsistency" instruction, retrieves top-K stances for the person via pgvector, and asks the LLM YES/NO whether each is the bundle. Wired into both sync (`cmd/contradictions_detect.go`) and batch (`cmd/batch.go`) paths. Best-effort: no LLM/embedder → row stays solo.
+- SSE `contradiction_added` payload now carries `bundle_id`, `bundle_size`.
+
+### Why
+- Honesty was being penalised proportionally to *how many times the same broken promise was restated*, not to *how many distinct lies*. One subject (parliamentary-assistants on /person/28) produced ~10 contradiction pairs from the same underlying inconsistency, dragging the score with it. Bundling makes the score reflect distinct disagreements while still keeping all raw pairs as audit trail.
+- Reusing stances rather than introducing a parallel "contradiction_groups" entity avoids duplicating per-person topic clustering that already runs at ingest. The Bundler+LLM fallback covers the legitimate case where contradicted facts genuinely live in different stances ("promise" vs. "retraction"), without false-merging unrelated topics.
+
+### Operational notes
+- Existing facts predating the stance backfill have no `stance_document_facts` row → their contradictions land as solo bundles. Run `./dm stances rebuild --parallel 8 --resume` once per environment to retroactively classify, or rely on the Bundler to upgrade rows lazily on next detection.
+- The Bundler instructs the embedding model to project on the *underlying inconsistency* (broken promise / reversal / topical conflict) rather than the topic of either claim — this is a different `Purpose` from `fact_storage` and would need its own re-embed if its instruction changes.
+
 ## 2026-05-03: `dm contradictions check` audit tool
 
 ### What was done

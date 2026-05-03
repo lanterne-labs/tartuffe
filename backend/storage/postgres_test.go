@@ -73,6 +73,35 @@ func mockEmbedding() []float32 {
 	return embedding
 }
 
+// stubStanceProcessor is a minimal StanceProcessor for tests: every fact gets
+// its own stance row so the "every fact has a stance" invariant holds without
+// invoking the real LLM-based clustering.
+type stubStanceProcessor struct {
+	storer *PostgresStorer
+}
+
+func (s *stubStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string) (*core.StanceProcessResult, error) {
+	label := factText
+	if len(label) > 120 {
+		label = label[:120]
+	}
+	stanceID, err := s.storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID:         personID,
+		ClusterLabel:     label,
+		ClusterEmbedding: embedding,
+		Summary:          factText,
+		KeyFactIDs:       []int64{factID},
+		FactCount:        1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stub stance: insert stance: %w", err)
+	}
+	if err := s.storer.AddFactToStance(ctx, stanceID, factID); err != nil {
+		return nil, fmt.Errorf("stub stance: link fact: %w", err)
+	}
+	return &core.StanceProcessResult{Verdict: "NEW_STANCE", StanceID: stanceID}, nil
+}
+
 // Helper function to insert a fact using core.FactInserter (replaces old StoreFact for tests)
 // Returns the canonical fact ID and fact_source ID that was inserted
 func insertFactForTest(ctx context.Context, t *testing.T, storer *PostgresStorer, input StoreFactInput) (factID int64, factSourceID int64, err error) {
@@ -92,8 +121,8 @@ func insertFactForTest(ctx context.Context, t *testing.T, storer *PostgresStorer
 		Metadata:           input.Metadata,
 	}
 
-	// Use core.FactInserter to insert
-	inserter := core.NewFactInserter(storer)
+	// Use core.FactInserter to insert (with a stub stance processor for tests)
+	inserter := core.NewFactInserter(storer, &stubStanceProcessor{storer: storer})
 	_, err = inserter.InsertFacts(ctx, []core.StoreFactInput{coreInput})
 	if err != nil {
 		return 0, 0, err
@@ -937,31 +966,44 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 }
 
 func TestComputeHonestyScore(t *testing.T) {
+	// Each test fully bundles: bundles == total, so the extras penalty is zero and the
+	// formula reduces to the legacy exp(-4*ratio - 0.02*contradictions).
 	tests := []struct {
-		name               string
-		facts              int
-		contradictions     int
-		expectedMin        float64
-		expectedMax        float64
+		name        string
+		facts       int
+		bundles     int
+		total       int
+		expectedMin float64
+		expectedMax float64
 	}{
-		// Hybrid formula: exp(-4*ratio - 0.02*contradictions)
-		{"zero facts returns 1.0", 0, 0, 1.0, 1.0},
-		{"zero contradictions returns 1.0", 200, 0, 1.0, 1.0},
-		{"5/200 ~ 82%", 200, 5, 0.81, 0.83},   // exp(-0.1 - 0.1) = exp(-0.2)
-		{"14/200 ~ 57%", 200, 14, 0.56, 0.58},  // exp(-0.28 - 0.28) = exp(-0.56)
-		{"20/200 ~ 45%", 200, 20, 0.44, 0.46},  // exp(-0.4 - 0.4) = exp(-0.8)
-		{"50/200 ~ 14%", 200, 50, 0.13, 0.15},  // exp(-1.0 - 1.0) = exp(-2.0)
-		{"100/200 ~ 2%", 200, 100, 0.01, 0.03}, // exp(-2.0 - 2.0) = exp(-4.0)
-		{"ratio > 1 still works", 10, 20, 0.0, 0.001},
-		{"all contradicted approaches zero", 10, 10, 0.01, 0.02},
+		{"zero facts returns 1.0", 0, 0, 0, 1.0, 1.0},
+		{"zero contradictions returns 1.0", 200, 0, 0, 1.0, 1.0},
+		{"5/200 ~ 82%", 200, 5, 5, 0.81, 0.83},
+		{"14/200 ~ 57%", 200, 14, 14, 0.56, 0.58},
+		{"20/200 ~ 45%", 200, 20, 20, 0.44, 0.46},
+		{"50/200 ~ 14%", 200, 50, 50, 0.13, 0.15},
+		{"100/200 ~ 2%", 200, 100, 100, 0.01, 0.03},
+		{"ratio > 1 still works", 10, 20, 20, 0.0, 0.001},
+		{"all contradicted approaches zero", 10, 10, 10, 0.01, 0.02},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			score := ComputeHonestyScore(tt.facts, tt.contradictions)
+			score := ComputeHonestyScore(tt.facts, ContradictionStats{Bundles: tt.bundles, Total: tt.total})
 			assert.GreaterOrEqual(t, score, tt.expectedMin, "score too low")
 			assert.LessOrEqual(t, score, tt.expectedMax, "score too high")
 		})
+	}
+}
+
+// TestComputeHonestyScore_BundlingReducesPenalty asserts the core property of bundling:
+// for any N >= 2, replacing N independent pairs with one bundle of size N strictly raises
+// the score (i.e. the penalty 0.02 + 0.05*ln(N) is strictly less than the legacy 0.02*N).
+func TestComputeHonestyScore_BundlingReducesPenalty(t *testing.T) {
+	const facts = 200
+	for _, n := range []int{2, 3, 5, 10, 20, 40} {
+		flat := ComputeHonestyScore(facts, ContradictionStats{Bundles: n, Total: n})
+		bundled := ComputeHonestyScore(facts, ContradictionStats{Bundles: 1, Total: n})
+		assert.Greater(t, bundled, flat, "bundling N=%d pairs should improve the score", n)
 	}
 }
 
@@ -989,4 +1031,125 @@ func TestComputeAggregateScore(t *testing.T) {
 
 func ptrFloat64(v float64) *float64 {
 	return &v
+}
+
+// TestStanceBundledContradictions exercises the bundling layer end-to-end: facts are placed
+// into stances, contradictions are recorded between them, and the stats / list endpoints are
+// expected to count distinct bundles (not raw pairs). Cross-stance and unstanced rows behave
+// as singleton solo bundles.
+func TestStanceBundledContradictions(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	// One person, six facts. We bypass FactInserter (LLM dedup) and insert directly via SQL,
+	// because this test only cares about contradiction-bundle behavior, not the ingestion
+	// pipeline. Direct inserts also avoid flakiness from mock-embedding similarity dedup.
+	var personID int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO persons (name, entity_type) VALUES ('person bundle', 'human') RETURNING id`,
+	).Scan(&personID))
+
+	insertFact := func(text string) int64 {
+		t.Helper()
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
+			text, pgvector.NewVector(mockEmbedding()),
+		).Scan(&id))
+		_, err := storer.pool.Exec(ctx,
+			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, $2, $3, 'test')`,
+			id, fmt.Sprintf("http://ex/%d", id), text)
+		require.NoError(t, err)
+		_, err = storer.pool.Exec(ctx,
+			`INSERT INTO fact_mentions (fact_source_id, person_id) SELECT id, $2 FROM fact_sources WHERE fact_id = $1 ORDER BY id DESC LIMIT 1`,
+			id, personID)
+		require.NoError(t, err)
+		return id
+	}
+	f1 := insertFact("F1: promised X.")
+	f2 := insertFact("F2: admitted X failed.")
+	f3 := insertFact("F3: said X impossible.")
+	f4 := insertFact("F4: separate topic Y position.")
+	f5 := insertFact("F5: separate topic Y reversal.")
+	f6 := insertFact("F6: orphan claim no stance.")
+
+	// Two stances. f1/f2/f3 -> stance A (the "promise X" cluster); f4/f5 -> stance B; f6 unlinked.
+	stanceA, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID: personID, ClusterLabel: "Promise about X",
+		ClusterEmbedding: mockEmbedding(),
+		Summary:          "Person Bundle's promise on X and how it played out.",
+		KeyFactIDs:       []int64{f1}, FactCount: 3,
+	})
+	require.NoError(t, err)
+	stanceB, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID: personID, ClusterLabel: "Topic Y stance",
+		ClusterEmbedding: mockEmbedding(),
+		Summary:          "Position on Y.",
+		KeyFactIDs:       []int64{f4}, FactCount: 2,
+	})
+	require.NoError(t, err)
+	for _, fid := range []int64{f1, f2, f3} {
+		require.NoError(t, storer.AddFactToStance(ctx, stanceA, fid))
+	}
+	for _, fid := range []int64{f4, f5} {
+		require.NoError(t, storer.AddFactToStance(ctx, stanceB, fid))
+	}
+
+	// Record three same-stance pairs in stance A (should all bundle to stanceA),
+	// one cross-stance pair (f1 in A vs f4 in B → solo),
+	// and one half-unstanced pair (f1 in A vs f6 → solo).
+	rec := func(a, b int64) (int64, bool) {
+		t.Helper()
+		id, needsBundler, err := storer.RecordContradictionImmediate(ctx, personID, a, b, fmt.Sprintf("clash %d/%d", a, b))
+		require.NoError(t, err)
+		return id, needsBundler
+	}
+	_, n12 := rec(f1, f2)
+	_, n13 := rec(f1, f3)
+	_, n23 := rec(f2, f3)
+	_, n14 := rec(f1, f4)
+	_, n16 := rec(f1, f6)
+
+	assert.False(t, n12, "f1/f2 share stance A — fast path should set bundle")
+	assert.False(t, n13, "f1/f3 share stance A — fast path should set bundle")
+	assert.False(t, n23, "f2/f3 share stance A — fast path should set bundle")
+	assert.True(t, n14, "f1 (A) vs f4 (B) cross-stance — bundler should be invoked")
+	assert.True(t, n16, "f1 (A) vs f6 (no stance) — bundler should be invoked")
+
+	tx, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	stats, err := storer.getPersonContradictionStats(ctx, tx, personID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 5, stats.Total, "raw contradiction count")
+	// Bundles: stanceA (the 3 stance-A pairs collapse) + 2 solo rows = 3.
+	assert.Equal(t, 3, stats.Bundles, "should collapse 3 stance-A pairs into one bundle, plus 2 solo")
+
+	// Score sanity: bundled (3 bundles, 5 total) must beat the legacy flat (5 bundles, 5 total).
+	factsCount, err := storer.getPersonFactsCount(ctx, tx, personID)
+	require.NoError(t, err)
+	bundled := ComputeHonestyScore(factsCount, stats)
+	flat := ComputeHonestyScore(factsCount, ContradictionStats{Bundles: 5, Total: 5})
+	assert.Greater(t, bundled, flat, "bundling should improve the score vs. counting each pair")
+
+	// GetPersonContradictions: bundle fields populated and bundle_size accurate.
+	page, err := storer.GetPersonContradictions(ctx, personID, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 5)
+
+	stanceASize := 0
+	for _, c := range page.Items {
+		if c.BundleID != nil && *c.BundleID == stanceA {
+			stanceASize++
+			require.NotNil(t, c.BundleLabel)
+			assert.Equal(t, "Promise about X", *c.BundleLabel)
+			assert.Equal(t, 3, c.BundleSize, "stance-A bundle should report size=3")
+		} else {
+			assert.Equal(t, 1, c.BundleSize, "solo row reports size=1")
+			assert.Nil(t, c.BundleID, "non-stance-A rows have no bundle_id")
+		}
+	}
+	assert.Equal(t, 3, stanceASize, "exactly three rows in stance-A bundle")
 }

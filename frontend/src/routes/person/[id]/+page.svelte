@@ -35,6 +35,41 @@
 	let totalContradictions = $state(0);
 
 	let expandedFacts: Record<number, boolean> = $state({});
+	// Per-bundle expander state. Key is the bundle key (string for stable null/solo handling).
+	let expandedBundles: Record<string, boolean> = $state({});
+
+	// Group contradictions by bundle_id. Solo rows (bundle_id = null) each become their own
+	// group, keyed by the contradiction id under "solo:<id>". Order: largest bundles first.
+	type ContradictionBundle = {
+		key: string;
+		bundle_id: number | null;
+		label: string | null;
+		summary: string | null;
+		size: number;
+		items: ContradictionWithFacts[];
+	};
+	let contradictionBundles: ContradictionBundle[] = $derived.by(() => {
+		const map = new Map<string, ContradictionBundle>();
+		for (const c of contradictions) {
+			const key = c.bundle_id !== null ? `b:${c.bundle_id}` : `solo:${c.id}`;
+			let bundle = map.get(key);
+			if (!bundle) {
+				bundle = {
+					key,
+					bundle_id: c.bundle_id,
+					label: c.bundle_label,
+					summary: c.bundle_summary,
+					// bundle_size is the *server-side* count for this person; the loaded items list
+					// may be smaller if pagination hasn't pulled them all yet.
+					size: c.bundle_size > 0 ? c.bundle_size : 1,
+					items: []
+				};
+				map.set(key, bundle);
+			}
+			bundle.items.push(c);
+		}
+		return Array.from(map.values()).sort((a, b) => b.size - a.size || a.key.localeCompare(b.key));
+	});
 	let factPersons: Record<number, PersonSummary[]> = $state({});
 	let factPersonsPage: Record<number, number> = $state({});
 	let factPersonsHasMore: Record<number, boolean> = $state({});
@@ -485,45 +520,129 @@
 					<p class="empty-state">No contradictions found for this person.</p>
 				{:else}
 					<div class="items-list">
-						{#each contradictions as contradiction (contradiction.id)}
+						{#each contradictionBundles as bundle (bundle.key)}
 							<div class="card contradiction-card">
-								<div class="contradiction-header">
-									<span class="contradiction-id">#{contradiction.id}</span>
-									<span class="contradiction-date">{formatDate(contradiction.detected_at)}</span>
-								</div>
-								<div class="contradiction-reason">{contradiction.reason}</div>
-								<div class="facts-comparison">
-									<div class="comp-fact comp-a">
-										<div class="comp-label">
-											<strong>Statement A</strong>
-											{#if contradiction.fact_a_date}
-												<span class="comp-date">{formatDateWithTime(contradiction.fact_a_date)}</span>
+								<div class="bundle-header">
+									{#if bundle.bundle_id !== null}
+										<div class="bundle-title">
+											<strong>{bundle.label ?? 'Topic'}</strong>
+											<span class="bundle-badge">{bundle.size} contradiction{bundle.size === 1 ? '' : 's'}</span>
+										</div>
+										{#if bundle.summary}
+											<div class="bundle-summary">{bundle.summary}</div>
+										{/if}
+									{:else}
+										{@const solo = bundle.items[0]}
+										{@const aLabel = solo.fact_a_stance_label}
+										{@const bLabel = solo.fact_b_stance_label}
+										{@const missingStance = aLabel === null || bLabel === null}
+										{@const crossTopic = !missingStance && solo.fact_a_stance_id !== solo.fact_b_stance_id}
+										<div class="bundle-title">
+											{#if missingStance}
+												<strong>Standalone contradiction</strong>
+												<span class="bundle-badge bundle-badge-warn" title="One or both facts are missing a stance — expected to be 0 post-migration.">Data quality</span>
+											{:else if crossTopic}
+												<strong>{aLabel} <span class="cross-topic-arrow">↔</span> {bLabel}</strong>
+												<span class="bundle-badge bundle-badge-cross" title="The two facts contradict across different topic stances.">Cross-topic</span>
+											{:else}
+												<strong>{aLabel ?? 'Standalone contradiction'}</strong>
 											{/if}
 										</div>
-										<div class="comp-text"><span class="fact-id">[{contradiction.fact_a_id}]</span> {contradiction.fact_a_text}</div>
-										<div class="comp-links">
-											<button class="link-btn" onclick={() => goToFact(contradiction.fact_a_id)}>View in Facts</button>
-											{#each contradiction.fact_a_source_urls as url, i}
-												<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{contradiction.fact_a_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
-											{/each}
-										</div>
-									</div>
-									<div class="comp-fact comp-b">
-										<div class="comp-label">
-											<strong>Statement B</strong>
-											{#if contradiction.fact_b_date}
-												<span class="comp-date">{formatDateWithTime(contradiction.fact_b_date)}</span>
-											{/if}
-										</div>
-										<div class="comp-text"><span class="fact-id">[{contradiction.fact_b_id}]</span> {contradiction.fact_b_text}</div>
-										<div class="comp-links">
-											<button class="link-btn" onclick={() => goToFact(contradiction.fact_b_id)}>View in Facts</button>
-											{#each contradiction.fact_b_source_urls as url, i}
-												<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{contradiction.fact_b_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
-											{/each}
-										</div>
-									</div>
+									{/if}
 								</div>
+
+								{#if bundle.items.length > 1 || (bundle.bundle_id !== null && bundle.size > 1)}
+									<button
+										class="link-btn bundle-toggle"
+										onclick={() => (expandedBundles[bundle.key] = !expandedBundles[bundle.key])}
+									>
+										{expandedBundles[bundle.key] ? 'Hide details' : `Show ${bundle.items.length} pair${bundle.items.length === 1 ? '' : 's'}`}
+									</button>
+								{/if}
+
+								{#if bundle.items.length === 1 && bundle.bundle_id === null}
+									<!-- Solo row: render its detail inline (no expander needed). -->
+									{@const c = bundle.items[0]}
+									<div class="contradiction-header">
+										<span class="contradiction-id">#{c.id}</span>
+										<span class="contradiction-date">{formatDate(c.detected_at)}</span>
+									</div>
+									<div class="contradiction-reason">{c.reason}</div>
+									<div class="facts-comparison">
+										<div class="comp-fact comp-a">
+											<div class="comp-label">
+												<strong>Statement A</strong>
+												{#if c.fact_a_date}
+													<span class="comp-date">{formatDateWithTime(c.fact_a_date)}</span>
+												{/if}
+											</div>
+											<div class="comp-text"><span class="fact-id">[{c.fact_a_id}]</span> {c.fact_a_text}</div>
+											<div class="comp-links">
+												<button class="link-btn" onclick={() => goToFact(c.fact_a_id)}>View in Facts</button>
+												{#each c.fact_a_source_urls as url, i}
+													<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_a_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+												{/each}
+											</div>
+										</div>
+										<div class="comp-fact comp-b">
+											<div class="comp-label">
+												<strong>Statement B</strong>
+												{#if c.fact_b_date}
+													<span class="comp-date">{formatDateWithTime(c.fact_b_date)}</span>
+												{/if}
+											</div>
+											<div class="comp-text"><span class="fact-id">[{c.fact_b_id}]</span> {c.fact_b_text}</div>
+											<div class="comp-links">
+												<button class="link-btn" onclick={() => goToFact(c.fact_b_id)}>View in Facts</button>
+												{#each c.fact_b_source_urls as url, i}
+													<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_b_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+												{/each}
+											</div>
+										</div>
+									</div>
+								{:else if expandedBundles[bundle.key]}
+									{#each bundle.items as c (c.id)}
+										<div class="bundle-pair">
+											<div class="contradiction-header">
+												<span class="contradiction-id">#{c.id}</span>
+												<span class="contradiction-date">{formatDate(c.detected_at)}</span>
+											</div>
+											<div class="contradiction-reason">{c.reason}</div>
+											<div class="facts-comparison">
+												<div class="comp-fact comp-a">
+													<div class="comp-label">
+														<strong>Statement A</strong>
+														{#if c.fact_a_date}
+															<span class="comp-date">{formatDateWithTime(c.fact_a_date)}</span>
+														{/if}
+													</div>
+													<div class="comp-text"><span class="fact-id">[{c.fact_a_id}]</span> {c.fact_a_text}</div>
+													<div class="comp-links">
+														<button class="link-btn" onclick={() => goToFact(c.fact_a_id)}>View in Facts</button>
+														{#each c.fact_a_source_urls as url, i}
+															<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_a_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+														{/each}
+													</div>
+												</div>
+												<div class="comp-fact comp-b">
+													<div class="comp-label">
+														<strong>Statement B</strong>
+														{#if c.fact_b_date}
+															<span class="comp-date">{formatDateWithTime(c.fact_b_date)}</span>
+														{/if}
+													</div>
+													<div class="comp-text"><span class="fact-id">[{c.fact_b_id}]</span> {c.fact_b_text}</div>
+													<div class="comp-links">
+														<button class="link-btn" onclick={() => goToFact(c.fact_b_id)}>View in Facts</button>
+														{#each c.fact_b_source_urls as url, i}
+															<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_b_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+														{/each}
+													</div>
+												</div>
+											</div>
+										</div>
+									{/each}
+								{/if}
 							</div>
 						{/each}
 					</div>
@@ -1059,6 +1178,68 @@
 	.stance-meta {
 		font-size: 0.75rem;
 		color: var(--text-muted);
+	}
+
+	/* Bundle (stance-grouped contradictions) */
+	.bundle-header {
+		margin-bottom: 0.625rem;
+	}
+
+	.bundle-title {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		font-size: 0.938rem;
+		color: var(--text-primary);
+		margin-bottom: 0.25rem;
+	}
+
+	.bundle-badge {
+		font-size: 0.688rem;
+		font-weight: 600;
+		color: var(--accent);
+		background: rgba(59, 130, 246, 0.12);
+		padding: 0.188rem 0.625rem;
+		border-radius: var(--radius-full);
+		white-space: nowrap;
+	}
+
+	.bundle-badge-cross {
+		color: #b794f4;
+		background: rgba(183, 148, 244, 0.14);
+	}
+
+	.bundle-badge-warn {
+		color: #f87171;
+		background: rgba(248, 113, 113, 0.14);
+	}
+
+	.cross-topic-arrow {
+		color: var(--text-secondary);
+		margin: 0 0.25rem;
+		font-weight: 500;
+	}
+
+	.bundle-summary {
+		font-size: 0.875rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
+	}
+
+	.bundle-toggle {
+		margin-bottom: 0.625rem;
+	}
+
+	.bundle-pair {
+		border-top: 1px dashed var(--border-color, #2a2a2a);
+		padding-top: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.bundle-pair:first-of-type {
+		border-top: none;
+		padding-top: 0;
+		margin-top: 0;
 	}
 
 	/* Contradiction Card */

@@ -678,15 +678,19 @@ func executeServe(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				log.Error().Err(err).Msg("Failed to create embedder, batch poller disabled")
 			} else {
-				inserter := core.NewFactInserter(storer)
-				inserter.DisableClassifier() // Batch facts: skip sync LLM relation classification
-				adapter := newBatchStorerAdapter(storer)
-				orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
-				orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
-				orchestrator.SetContradictionSubmitter(func(ctx context.Context) error {
-					return executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
-				})
-				go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
+				stanceMgr, smErr := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+				if smErr != nil {
+					log.Error().Err(smErr).Msg("Failed to create stance manager, batch poller disabled")
+				} else {
+					inserter := core.NewFactInserter(storer, stanceMgr)
+					adapter := newBatchStorerAdapter(storer)
+					orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
+					orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
+					orchestrator.SetContradictionSubmitter(func(ctx context.Context) error {
+						return executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
+					})
+					go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
+				}
 			}
 		}
 	}

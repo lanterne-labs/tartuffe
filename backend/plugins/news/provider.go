@@ -114,7 +114,9 @@ type Provider struct {
 	Embedder *embedding.OpenAIEmbeddingGenerator
 	// Storer persists facts to the database.
 	Storer *storage.PostgresStorer
-	// StanceManager is the optional stance manager for incremental stance processing.
+	// StanceManager routes every newly inserted fact through stance processing.
+	// It is required (every fact must have a stance) — callers must set it
+	// before invoking the provider.
 	StanceManager *core.StanceManager
 }
 
@@ -417,10 +419,10 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 				},
 			}
 
-			inserter := core.NewFactInserter(p.Storer)
-			if p.StanceManager != nil {
-				inserter.SetStanceManager(p.StanceManager)
+			if p.StanceManager == nil {
+				return result, fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
 			}
+			inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).

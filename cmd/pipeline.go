@@ -313,8 +313,11 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 		return stats, fmt.Errorf("failed to create embedder: %w", err)
 	}
 
-	inserter := core.NewFactInserter(storer)
-	inserter.DisableClassifier() // Batch facts: skip sync LLM relation classification
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return stats, fmt.Errorf("stance manager required: %w", err)
+	}
+	inserter := core.NewFactInserter(storer, stanceMgr)
 	adapter := newBatchStorerAdapter(storer)
 	orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
 

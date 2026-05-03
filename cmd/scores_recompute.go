@@ -67,11 +67,11 @@ func runScoresRecompute(cmd *cobra.Command, args []string) error {
 		}
 
 		if u.MembersScore != nil {
-			fmt.Printf("%-30s  facts=%-4d contradictions=%-4d  own=%.1f%% members=%.1f%% agg=%.1f%% → %.1f%%%s\n",
-				u.PersonName, u.Facts, u.Contradictions, u.OwnScore*100, *u.MembersScore*100, oldPct, newPct, marker)
+			fmt.Printf("%-30s  facts=%-4d bundles=%-3d (raw=%-3d)  own=%.1f%% members=%.1f%% agg=%.1f%% → %.1f%%%s\n",
+				u.PersonName, u.Facts, u.Bundles, u.Total, u.OwnScore*100, *u.MembersScore*100, oldPct, newPct, marker)
 		} else {
-			fmt.Printf("%-30s  facts=%-4d contradictions=%-4d  %.1f%% → %.1f%%%s\n",
-				u.PersonName, u.Facts, u.Contradictions, oldPct, newPct, marker)
+			fmt.Printf("%-30s  facts=%-4d bundles=%-3d (raw=%-3d)  %.1f%% → %.1f%%%s\n",
+				u.PersonName, u.Facts, u.Bundles, u.Total, oldPct, newPct, marker)
 		}
 	}
 

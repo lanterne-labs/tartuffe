@@ -113,6 +113,10 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	// Start pool stats collector for Prometheus metrics (every 15 seconds)
 	metrics.StartPoolStatsCollector(ctx, pool, 15*time.Second)
 
+	// Backstop for the "every fact has a stance" invariant — code-enforced at
+	// insertion, but a periodic gauge surfaces any historical drift.
+	metrics.StartStanceInvariantCollector(ctx, pool, 5*time.Minute)
+
 	return &PostgresStorer{
 		pool: pool,
 		// embedder: embedder, // REMOVED
@@ -1567,29 +1571,39 @@ func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int
 
 // RecordContradictionImmediate records a contradiction and commits immediately.
 // Use this when you want each contradiction saved right away (e.g., in CLI commands).
-func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
+//
+// Returns:
+//   - contradictionID: the row id (whether newly inserted or pre-existing)
+//   - needsBundler: true iff this insert produced a NULL bundle_stance_id (cross-stance
+//     or unstanced facts) — callers should pass this row to the contradiction Bundler
+//     for LLM-driven stance assignment. False for same-stance fast-path bundles and for
+//     pre-existing rows (which already had a chance to be bundled).
+func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) (contradictionID int64, needsBundler bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return 0, false, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.RecordContradiction(ctx, tx, personID, factAID, factBID, reason); err != nil {
-		return err
+	id, wasInserted, bundleStanceID, err := s.RecordContradiction(ctx, tx, personID, factAID, factBID, reason)
+	if err != nil {
+		return 0, false, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit contradiction: %w", err)
+		return 0, false, fmt.Errorf("failed to commit contradiction: %w", err)
 	}
 
-	return nil
+	return id, wasInserted && bundleStanceID == nil, nil
 }
 
 // RecordContradiction inserts a record indicating that two facts for a person are contradictory.
 // Ensures that factAID < factBID to avoid duplicate pairs in different orders.
 // Now includes a reason for the contradiction.
 // On new contradiction insertion, recomputes the person's honesty score and emits events.
-func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string) error {
+// Returns the contradiction id, whether it was newly inserted, and the bundle_stance_id
+// (nil = needs bundler resolution).
+func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string) (int64, bool, *int64, error) {
 	timer := metrics.NewQueryTimer("record_contradiction")
 
 	// Ensure consistent ordering of fact IDs to prevent duplicates like (1,2) and (2,1)
@@ -1597,34 +1611,54 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 		factAID, factBID = factBID, factAID
 	}
 
+	// Fast-path bundle resolution: bundle_stance_id is set to the stance shared by both
+	// facts (if any). Cross-stance and unstanced pairs get NULL and behave as singleton
+	// solo bundles in the score until an LLM-driven Bundler pass upgrades them.
 	query := `
-        INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason)
-        VALUES ($1, $2, $3, $4)
+        WITH shared AS (
+            SELECT sa.stance_document_id
+            FROM stance_document_facts sa
+            JOIN stance_document_facts sb ON sb.fact_id = $3
+                                          AND sb.stance_document_id = sa.stance_document_id
+            WHERE sa.fact_id = $2
+            LIMIT 1
+        )
+        INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, bundle_stance_id)
+        VALUES ($1, $2, $3, $4, (SELECT stance_document_id FROM shared))
         ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
-        SET reason = EXCLUDED.reason, -- Update reason if the pair is reported again
-            detected_at = CURRENT_TIMESTAMP
-        RETURNING id, (xmax = 0) AS was_inserted`
+        SET reason = EXCLUDED.reason,
+            detected_at = CURRENT_TIMESTAMP,
+            -- Only fill in bundle_stance_id if it's still NULL; never clobber an
+            -- LLM-resolved override on re-detection.
+            bundle_stance_id = COALESCE(contradictions.bundle_stance_id, EXCLUDED.bundle_stance_id)
+        RETURNING id, (xmax = 0) AS was_inserted, bundle_stance_id`
 
 	var contradictionID int64
 	var wasInserted bool
-	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason).Scan(&contradictionID, &wasInserted)
+	var bundleStanceID *int64
+	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason).Scan(&contradictionID, &wasInserted, &bundleStanceID)
 	timer.ObserveDuration(err)
 
 	if err != nil {
-		return fmt.Errorf("failed to insert/update contradiction for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
+		return 0, false, nil, fmt.Errorf("failed to insert/update contradiction for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
 	}
 
-	log.Info().Int64("person_id", personID).Int64("fact_a_id", factAID).Int64("fact_b_id", factBID).Bool("was_new_contradiction", wasInserted).Msg("Recorded/updated contradiction")
+	if wasInserted && bundleStanceID == nil {
+		log.Warn().Int64("person_id", personID).Int64("fact_a_id", factAID).Int64("fact_b_id", factBID).
+			Msg("Contradiction recorded with no bundle_stance_id (facts cross-stance or unstanced) — run dm stances rebuild and the Bundler to group it")
+	}
+
+	log.Info().Int64("person_id", personID).Int64("fact_a_id", factAID).Int64("fact_b_id", factBID).Bool("was_new_contradiction", wasInserted).Interface("bundle_stance_id", bundleStanceID).Msg("Recorded/updated contradiction")
 
 	// If this was a new contradiction, recompute honesty score and emit events
 	if wasInserted {
 		metrics.IncrementContradictionsDetected()
 		if err := s.recomputeHonestyScoreAndEmitEvents(ctx, tx, personID, contradictionID); err != nil {
-			return fmt.Errorf("failed to recompute honesty score and emit events: %w", err)
+			return 0, false, nil, fmt.Errorf("failed to recompute honesty score and emit events: %w", err)
 		}
 	}
 
-	return nil
+	return contradictionID, wasInserted, bundleStanceID, nil
 }
 
 // GetFactTextByID retrieves the normalized text of a specific fact by its ID.
@@ -1641,6 +1675,30 @@ func (s *PostgresStorer) GetFactTextByID(ctx context.Context, tx pgx.Tx, factID 
 		return "", fmt.Errorf("failed to query fact text for ID %d: %w", factID, err)
 	}
 	return factText, nil
+}
+
+// GetFactTextsByIDs returns fact_text for each id, keyed by id. Missing facts are absent
+// from the map. Used by the batch contradiction poller to feed the Bundler with claim text
+// when only ids are available from the parsed custom-id payload.
+func (s *PostgresStorer) GetFactTextsByIDs(ctx context.Context, ids []int64) (map[int64]string, error) {
+	if len(ids) == 0 {
+		return map[int64]string{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, fact_text FROM facts WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("querying fact texts: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]string, len(ids))
+	for rows.Next() {
+		var id int64
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
+			return nil, fmt.Errorf("scanning fact text row: %w", err)
+		}
+		out[id] = text
+	}
+	return out, rows.Err()
 }
 
 // GetFactDateByID retrieves the earliest publication date for a fact from its sources.
@@ -1773,23 +1831,45 @@ func (s *PostgresStorer) StoreSkippedLaw(ctx context.Context, lawKey, title stri
 	return nil
 }
 
-// HonestyScoreRatioDecay controls the exponential penalty based on contradiction ratio.
+// HonestyScoreRatioDecay controls the exponential penalty based on the bundle/facts ratio.
 const HonestyScoreRatioDecay = 4.0
 
-// HonestyScoreAbsoluteDecay controls the exponential penalty per absolute contradiction.
-// Each contradiction contributes an additional fixed penalty regardless of fact count.
+// HonestyScoreAbsoluteDecay controls the exponential penalty per distinct contradiction bundle.
+// Each bundle contributes one full penalty regardless of how many raw pairs it contains.
 const HonestyScoreAbsoluteDecay = 0.02
 
-// ComputeHonestyScore returns exp(-k * contradictions/facts - j * contradictions).
-// The hybrid formula penalizes both the ratio and the absolute count of contradictions,
-// preventing high fact counts from diluting the impact of many contradictions.
+// HonestyScoreBundleExtraDecay controls the (logarithmic) penalty for repeated contradictions
+// inside the same bundle. extras = total raw pairs - distinct bundles. The constant 0.05 is
+// chosen so that any bundle of size N >= 2 strictly reduces the penalty vs. counting each pair
+// independently (need 0.02 + alpha*ln(N) < 0.02*N; alpha=0.05 satisfies this through N ~ 40).
+const HonestyScoreBundleExtraDecay = 0.05
+
+// ContradictionStats summarises a person's contradictions after stance bundling.
+// Bundles is the number of distinct stance-grouped contradictions; Total is the raw pair count.
+// Total >= Bundles always; extras := Total - Bundles is the repetition penalty input.
+type ContradictionStats struct {
+	Bundles int
+	Total   int
+}
+
+// ComputeHonestyScore returns exp(-k * bundles/facts - j * bundles - alpha * ln(1 + extras)).
+// Bundling collapses raw pairs that share an underlying stance (topic) into one underlying
+// inconsistency, so 10 paraphrase pairs about the same broken promise count as one bundle
+// plus a small repetition penalty rather than 10 independent contradictions.
 // If factsCount is 0, returns 1.0 (benefit of the doubt).
-func ComputeHonestyScore(factsCount, contradictionsCount int) float64 {
+func ComputeHonestyScore(factsCount int, stats ContradictionStats) float64 {
 	if factsCount == 0 {
 		return 1.0
 	}
-	ratio := float64(contradictionsCount) / float64(factsCount)
-	return math.Exp(-HonestyScoreRatioDecay*ratio - HonestyScoreAbsoluteDecay*float64(contradictionsCount))
+	extras := stats.Total - stats.Bundles
+	if extras < 0 {
+		extras = 0
+	}
+	ratio := float64(stats.Bundles) / float64(factsCount)
+	return math.Exp(
+		-HonestyScoreRatioDecay*ratio -
+			HonestyScoreAbsoluteDecay*float64(stats.Bundles) -
+			HonestyScoreBundleExtraDecay*math.Log1p(float64(extras)))
 }
 
 // ComputeAggregateScore returns the aggregate honesty score for an entity.
@@ -1809,12 +1889,12 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
 	}
 
-	contradictionsCount, err := s.getPersonContradictionsCount(ctx, tx, personID)
+	stats, err := s.getPersonContradictionStats(ctx, tx, personID)
 	if err != nil {
-		return fmt.Errorf("failed to get contradictions count for person %d: %w", personID, err)
+		return fmt.Errorf("failed to get contradiction stats for person %d: %w", personID, err)
 	}
 
-	ownScore := ComputeHonestyScore(factsCount, contradictionsCount)
+	ownScore := ComputeHonestyScore(factsCount, stats)
 
 	// Check entity type to determine if we need members_score
 	var entityType *string
@@ -1839,9 +1919,16 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 
 	metrics.ObserveHonestyScore(aggregate)
 
+	bundleID, bundleSize, err := s.getContradictionBundleInfo(ctx, tx, personID, contradictionID)
+	if err != nil {
+		return fmt.Errorf("failed to read bundle info for contradiction %d: %w", contradictionID, err)
+	}
+
 	payload := map[string]interface{}{
 		"contradiction_id": contradictionID,
 		"honesty_score":    aggregate,
+		"bundle_id":        bundleID,
+		"bundle_size":      bundleSize,
 	}
 
 	if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
@@ -1852,7 +1939,7 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to emit contradiction_added event: %w", err)
 	}
 
-	log.Info().Int64("person_id", personID).Float64("own_score", ownScore).Interface("members_score", membersScore).Float64("aggregate", aggregate).Int("facts_count", factsCount).Int("contradictions_count", contradictionsCount).Msg("Recomputed honesty score and emitted events")
+	log.Info().Int64("person_id", personID).Float64("own_score", ownScore).Interface("members_score", membersScore).Float64("aggregate", aggregate).Int("facts_count", factsCount).Int("bundles", stats.Bundles).Int("contradictions_total", stats.Total).Msg("Recomputed honesty score and emitted events")
 
 	// Cascade: recompute parent entity scores
 	if err := s.recomputeParentEntityScores(ctx, tx, personID); err != nil {
@@ -1951,16 +2038,47 @@ func (s *PostgresStorer) getPersonFactsCount(ctx context.Context, tx pgx.Tx, per
 	return count, nil
 }
 
-// getPersonContradictionsCount returns the number of contradictions for a person
-func (s *PostgresStorer) getPersonContradictionsCount(ctx context.Context, tx pgx.Tx, personID int64) (int, error) {
-	query := `SELECT COUNT(*) FROM contradictions WHERE person_id = $1`
-
-	var count int
-	err := tx.QueryRow(ctx, query, personID).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count contradictions for person %d: %w", personID, err)
+// getContradictionBundleInfo returns (bundleID, bundleSize) for a contradiction id.
+// bundleID is *int64 — nil for solo (no bundle_stance_id). bundleSize counts pairs in the
+// bundle (1 for solo). Used to enrich SSE payloads with bundle context.
+func (s *PostgresStorer) getContradictionBundleInfo(ctx context.Context, tx pgx.Tx, personID int64, contradictionID int64) (*int64, int, error) {
+	query := `
+		WITH target AS (
+			SELECT bundle_stance_id FROM contradictions WHERE id = $1
+		)
+		SELECT
+			(SELECT bundle_stance_id FROM target),
+			CASE WHEN (SELECT bundle_stance_id FROM target) IS NULL THEN 1
+				 ELSE (SELECT COUNT(*) FROM contradictions
+					   WHERE person_id = $2
+						 AND bundle_stance_id = (SELECT bundle_stance_id FROM target))
+			END AS bundle_size`
+	var bundleID *int64
+	var bundleSize int
+	if err := tx.QueryRow(ctx, query, contradictionID, personID).Scan(&bundleID, &bundleSize); err != nil {
+		return nil, 0, fmt.Errorf("failed to query bundle info for contradiction %d: %w", contradictionID, err)
 	}
-	return count, nil
+	return bundleID, bundleSize, nil
+}
+
+// getPersonContradictionStats returns (bundles, total) for a person, where bundles is the
+// number of distinct stance-grouped clusters of contradictions and total is the raw pair count.
+// Rows whose bundle_stance_id is NULL (cross-stance, or facts predating stance backfill)
+// are each their own singleton bundle. See ComputeHonestyScore for how these feed the score.
+func (s *PostgresStorer) getPersonContradictionStats(ctx context.Context, tx pgx.Tx, personID int64) (ContradictionStats, error) {
+	query := `
+		SELECT
+			COUNT(DISTINCT COALESCE(bundle_stance_id::text, 'solo:'||id::text)) AS bundles,
+			COUNT(*) AS total
+		FROM contradictions
+		WHERE person_id = $1`
+
+	var stats ContradictionStats
+	err := tx.QueryRow(ctx, query, personID).Scan(&stats.Bundles, &stats.Total)
+	if err != nil {
+		return ContradictionStats{}, fmt.Errorf("failed to compute contradiction stats for person %d: %w", personID, err)
+	}
+	return stats, nil
 }
 
 // updatePersonHonestyScore updates own_score, members_score, and aggregate honesty_score for a person
@@ -2174,20 +2292,34 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	return result, nil
 }
 
-// ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates
+// ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates.
+// Bundle fields (BundleID/BundleLabel/BundleSummary/BundleSize) describe the stance bundle
+// this contradiction belongs to, used by the frontend to group paraphrase pairs under one card.
+// BundleID is nil for "solo" rows (cross-stance or unstanced).
+// FactAStanceLabel/FactBStanceLabel surface each fact's own stance label so the frontend can
+// render a "topic A ↔ topic B" header on cross-stance solos and a data-quality badge if either
+// is nil (which means a fact is missing its stance row — should never happen post-migration).
 type ContradictionWithFacts struct {
-	ID              int64      `json:"id"`
-	PersonID        int64      `json:"person_id"`
-	FactAID         int64      `json:"fact_a_id"`
-	FactBID         int64      `json:"fact_b_id"`
-	FactAText       string     `json:"fact_a_text"`
-	FactBText       string     `json:"fact_b_text"`
-	FactASourceURLs []string   `json:"fact_a_source_urls"`
-	FactBSourceURLs []string   `json:"fact_b_source_urls"`
-	FactADate       *time.Time `json:"fact_a_date"`
-	FactBDate       *time.Time `json:"fact_b_date"`
-	Reason          string     `json:"reason"`
-	DetectedAt      time.Time  `json:"detected_at"`
+	ID               int64      `json:"id"`
+	PersonID         int64      `json:"person_id"`
+	FactAID          int64      `json:"fact_a_id"`
+	FactBID          int64      `json:"fact_b_id"`
+	FactAText        string     `json:"fact_a_text"`
+	FactBText        string     `json:"fact_b_text"`
+	FactASourceURLs  []string   `json:"fact_a_source_urls"`
+	FactBSourceURLs  []string   `json:"fact_b_source_urls"`
+	FactADate        *time.Time `json:"fact_a_date"`
+	FactBDate        *time.Time `json:"fact_b_date"`
+	Reason           string     `json:"reason"`
+	DetectedAt       time.Time  `json:"detected_at"`
+	BundleID         *int64     `json:"bundle_id"`
+	BundleLabel      *string    `json:"bundle_label"`
+	BundleSummary    *string    `json:"bundle_summary"`
+	BundleSize       int        `json:"bundle_size"`
+	FactAStanceID    *int64     `json:"fact_a_stance_id"`
+	FactBStanceID    *int64     `json:"fact_b_stance_id"`
+	FactAStanceLabel *string    `json:"fact_a_stance_label"`
+	FactBStanceLabel *string    `json:"fact_b_stance_label"`
 }
 
 // ContradictionAuditRow is a contradiction enriched with the person name,
@@ -2275,6 +2407,14 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 
 // GetPersonContradictions returns a page of contradictions for a person together with the total count.
 func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*PaginatedContradictions, error) {
+	// Bundle key is the contradiction's bundle_stance_id (set at insert by the fast path
+	// or upgraded later by the Bundler). Solo rows (NULL) become singleton bundles via the
+	// 'solo:'||id key. bundle_size counts pairs sharing the same bundle key for this person,
+	// so the frontend can render one card per bundle with a "N contradictions" badge.
+	// Per-fact stance is pulled via stance_document_facts → stance_documents so the frontend
+	// can render "topic A ↔ topic B" headers on cross-stance solos (bundle_id NULL but both
+	// fact stance ids non-null) and a data-quality badge when either is NULL (post-migration
+	// invariant violation: a fact landed without a stance).
 	query := `
 		WITH contradiction_rows AS (
 			SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
@@ -2282,10 +2422,23 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
 				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
 				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-				   c.reason, c.detected_at
+				   c.reason, c.detected_at,
+				   c.bundle_stance_id,
+				   sd.cluster_label AS bundle_label,
+				   sd.summary       AS bundle_summary,
+				   sda.id           AS fact_a_stance_id,
+				   sda.cluster_label AS fact_a_stance_label,
+				   sdb.id           AS fact_b_stance_id,
+				   sdb.cluster_label AS fact_b_stance_label,
+				   COALESCE(c.bundle_stance_id::text, 'solo:'||c.id::text) AS bundle_key
 			FROM contradictions c
 			JOIN facts fa ON fa.id = c.fact_a_id
 			JOIN facts fb ON fb.id = c.fact_b_id
+			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
+			LEFT JOIN stance_document_facts sdfa ON sdfa.fact_id = c.fact_a_id
+			LEFT JOIN stance_documents sda ON sda.id = sdfa.stance_document_id
+			LEFT JOIN stance_document_facts sdfb ON sdfb.fact_id = c.fact_b_id
+			LEFT JOIN stance_documents sdb ON sdb.id = sdfb.stance_document_id
 			LEFT JOIN LATERAL (
 				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
 				       MIN(published_at) AS earliest
@@ -2297,15 +2450,23 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 				FROM fact_sources WHERE fact_id = fb.id
 			) fsb ON true
 			WHERE c.person_id = $1
+		),
+		ranked AS (
+			SELECT *,
+			       COUNT(*) OVER (PARTITION BY bundle_key) AS bundle_size
+			FROM contradiction_rows
 		)
 		SELECT id, person_id, fact_a_id, fact_b_id,
 		       fact_a_text, fact_b_text,
 		       fact_a_urls, fact_b_urls,
 		       fact_a_date, fact_b_date,
 		       reason, detected_at,
+		       bundle_stance_id, bundle_label, bundle_summary, bundle_size,
+		       fact_a_stance_id, fact_a_stance_label,
+		       fact_b_stance_id, fact_b_stance_label,
 		       (SELECT COUNT(*) FROM contradiction_rows) AS total_count
-		FROM contradiction_rows
-		ORDER BY detected_at DESC
+		FROM ranked
+		ORDER BY bundle_size DESC, bundle_stance_id NULLS LAST, detected_at DESC
 		LIMIT $2 OFFSET $3`
 
 	rows, err := s.pool.Query(ctx, query, personID, limit, offset)
@@ -2321,7 +2482,11 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 			&c.FactAText, &c.FactBText,
 			&c.FactASourceURLs, &c.FactBSourceURLs,
 			&c.FactADate, &c.FactBDate,
-			&c.Reason, &c.DetectedAt, &result.Total)
+			&c.Reason, &c.DetectedAt,
+			&c.BundleID, &c.BundleLabel, &c.BundleSummary, &c.BundleSize,
+			&c.FactAStanceID, &c.FactAStanceLabel,
+			&c.FactBStanceID, &c.FactBStanceLabel,
+			&result.Total)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan contradiction: %w", err)
 		}
@@ -2374,7 +2539,7 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 			return 0, fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
 		}
 
-		honestyScore := ComputeHonestyScore(factsCount, 0)
+		honestyScore := ComputeHonestyScore(factsCount, ContradictionStats{})
 
 		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore, nil, honestyScore); err != nil {
 			return 0, fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
@@ -3417,16 +3582,19 @@ func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetr
 }
 
 // ScoreUpdate holds old and new honesty scores for a person, used by RecomputeAllHonestyScores.
+// Bundles is the count of distinct stance-grouped contradiction bundles; Total is the raw pair
+// count (Bundles <= Total always).
 type ScoreUpdate struct {
-	PersonID       int64
-	PersonName     string
-	EntityType     *string
-	OldScore       float64
-	NewScore       float64
-	OwnScore       float64
-	MembersScore   *float64
-	Facts          int
-	Contradictions int
+	PersonID     int64
+	PersonName   string
+	EntityType   *string
+	OldScore     float64
+	NewScore     float64
+	OwnScore     float64
+	MembersScore *float64
+	Facts        int
+	Bundles      int
+	Total        int
 }
 
 // RecomputeAllHonestyScores recalculates honesty scores for every person
@@ -3435,8 +3603,9 @@ type ScoreUpdate struct {
 func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun bool) ([]ScoreUpdate, error) {
 	query := `
 		SELECT p.id, p.name, p.entity_type, p.honesty_score,
-		       COALESCE(fc.cnt, 0) AS facts_count,
-		       COALESCE(cc.cnt, 0) AS contradictions_count
+		       COALESCE(fc.cnt, 0)     AS facts_count,
+		       COALESCE(cc.bundles, 0) AS bundles,
+		       COALESCE(cc.total, 0)   AS total
 		FROM persons p
 		LEFT JOIN (
 			SELECT fm.person_id, COUNT(DISTINCT f.id) AS cnt
@@ -3446,7 +3615,9 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 			GROUP BY fm.person_id
 		) fc ON fc.person_id = p.id
 		LEFT JOIN (
-			SELECT person_id, COUNT(*) AS cnt
+			SELECT person_id,
+			       COUNT(DISTINCT COALESCE(bundle_stance_id::text, 'solo:'||id::text)) AS bundles,
+			       COUNT(*) AS total
 			FROM contradictions
 			GROUP BY person_id
 		) cc ON cc.person_id = p.id
@@ -3461,10 +3632,10 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 	var updates []ScoreUpdate
 	for rows.Next() {
 		var u ScoreUpdate
-		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.EntityType, &u.OldScore, &u.Facts, &u.Contradictions); err != nil {
+		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.EntityType, &u.OldScore, &u.Facts, &u.Bundles, &u.Total); err != nil {
 			return nil, fmt.Errorf("failed to scan person row: %w", err)
 		}
-		u.OwnScore = ComputeHonestyScore(u.Facts, u.Contradictions)
+		u.OwnScore = ComputeHonestyScore(u.Facts, ContradictionStats{Bundles: u.Bundles, Total: u.Total})
 		u.NewScore = u.OwnScore // default for humans
 		updates = append(updates, u)
 	}
@@ -3736,5 +3907,98 @@ func (s *PostgresStorer) DeleteStanceDocumentsForPerson(ctx context.Context, per
 		return fmt.Errorf("deleting stance documents for person %d: %w", personID, err)
 	}
 
+	return nil
+}
+
+// GetFactStanceMap returns a map fact_id -> stance_document_id for the given facts.
+// Facts without a stance row are simply absent from the map.
+func (s *PostgresStorer) GetFactStanceMap(ctx context.Context, factIDs []int64) (map[int64]int64, error) {
+	if len(factIDs) == 0 {
+		return map[int64]int64{}, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT fact_id, stance_document_id FROM stance_document_facts WHERE fact_id = ANY($1)`,
+		factIDs)
+	if err != nil {
+		return nil, fmt.Errorf("querying fact stances: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int64, len(factIDs))
+	for rows.Next() {
+		var fid, sid int64
+		if err := rows.Scan(&fid, &sid); err != nil {
+			return nil, fmt.Errorf("scanning fact stance row: %w", err)
+		}
+		out[fid] = sid
+	}
+	return out, rows.Err()
+}
+
+// StanceCandidate is a stance returned by FindTopStancesForPerson.
+type StanceCandidate struct {
+	ID           int64
+	ClusterLabel string
+	Summary      string
+	Distance     float64
+}
+
+// FindTopStancesForPerson returns up to `limit` stances for the person, ranked by cosine
+// distance from the given embedding (lowest distance first). Used by the Bundler to pick
+// LLM candidates when fact-level stance lookups don't agree.
+func (s *PostgresStorer) FindTopStancesForPerson(ctx context.Context, personID int64, embedding []float32, limit int) ([]StanceCandidate, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, cluster_label, summary, cluster_embedding <-> $2 AS distance
+		FROM stance_documents
+		WHERE person_id = $1
+		ORDER BY cluster_embedding <-> $2
+		LIMIT $3`, personID, pgvector.NewVector(embedding), limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying top stances for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+	var out []StanceCandidate
+	for rows.Next() {
+		var c StanceCandidate
+		if err := rows.Scan(&c.ID, &c.ClusterLabel, &c.Summary, &c.Distance); err != nil {
+			return nil, fmt.Errorf("scanning stance candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetContradictionBundleStance assigns a bundle stance to a contradiction and recomputes the
+// person's honesty score (since the bundle count may have changed). No-op if the contradiction
+// already had the same bundle_stance_id. Used by the Bundler after an LLM-verified resolution.
+func (s *PostgresStorer) SetContradictionBundleStance(ctx context.Context, contradictionID int64, bundleStanceID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var personID int64
+	var prev *int64
+	err = tx.QueryRow(ctx,
+		`UPDATE contradictions SET bundle_stance_id = $1 WHERE id = $2 AND (bundle_stance_id IS DISTINCT FROM $1)
+		 RETURNING person_id, bundle_stance_id`, bundleStanceID, contradictionID).Scan(&personID, &prev)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// Already had that bundle — nothing to do.
+			return nil
+		}
+		return fmt.Errorf("updating contradiction %d bundle: %w", contradictionID, err)
+	}
+
+	if err := s.recomputeHonestyScoreAndEmitEvents(ctx, tx, personID, contradictionID); err != nil {
+		return fmt.Errorf("recompute after bundle update: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit bundle update: %w", err)
+	}
 	return nil
 }

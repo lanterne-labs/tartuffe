@@ -169,8 +169,11 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		inputs = append(inputs, input)
 	}
 
-	// Use the core fact inserter to intelligently insert facts with similarity detection
-	inserter := core.NewFactInserter(storer)
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
+	}
+	inserter := core.NewFactInserter(storer, stanceMgr)
 
 	log.Info().
 		Int("total_facts", len(inputs)).

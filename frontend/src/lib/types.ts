@@ -31,6 +31,19 @@ export interface ContradictionWithFacts {
 	fact_b_date: string | null;
 	reason: string;
 	detected_at: string;
+	// Bundle (stance-based grouping). bundle_id is the stance id; null = solo.
+	// bundle_size counts contradictions in the same bundle for this person.
+	bundle_id: number | null;
+	bundle_label: string | null;
+	bundle_summary: string | null;
+	bundle_size: number;
+	// Per-fact stance labels — both non-null + bundle_id null means cross-topic
+	// (the two facts contradict across different topic stances). Either one null
+	// is a data-quality flag: a fact is missing its stance row.
+	fact_a_stance_id: number | null;
+	fact_b_stance_id: number | null;
+	fact_a_stance_label: string | null;
+	fact_b_stance_label: string | null;
 }
 
 export interface PaginatedResponse<T> {

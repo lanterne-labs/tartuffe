@@ -132,8 +132,12 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 
-	// Initialize fact inserter
-	factInserter := core.NewFactInserter(storer)
+	// Initialize stance manager (mandatory) and fact inserter
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
+	}
+	factInserter := core.NewFactInserter(storer, stanceMgr)
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)

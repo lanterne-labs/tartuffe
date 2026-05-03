@@ -92,7 +92,11 @@ var batchSubmitCmd = &cobra.Command{
 			return fmt.Errorf("failed to create embedder: %w", err)
 		}
 
-		inserter := core.NewFactInserter(storer)
+		stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+		if err != nil {
+			return fmt.Errorf("stance manager required: %w", err)
+		}
+		inserter := core.NewFactInserter(storer, stanceMgr)
 		orchestrator := core.NewBatchJobOrchestrator(provider, newBatchStorerAdapter(storer), embedder, inserter, categorizer.ParseFactJSON)
 
 		metadata := map[string]any{
@@ -194,7 +198,11 @@ var batchRetrieveCmd = &cobra.Command{
 			return fmt.Errorf("failed to create embedder: %w", err)
 		}
 
-		inserter := core.NewFactInserter(storer)
+		stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+		if err != nil {
+			return fmt.Errorf("stance manager required: %w", err)
+		}
+		inserter := core.NewFactInserter(storer, stanceMgr)
 		adapter := newBatchStorerAdapter(storer)
 		orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
 
@@ -405,7 +413,11 @@ var batchRecoverCmd = &cobra.Command{
 			return fmt.Errorf("failed to create embedder: %w", err)
 		}
 
-		inserter := core.NewFactInserter(storer)
+		stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+		if err != nil {
+			return fmt.Errorf("stance manager required: %w", err)
+		}
+		inserter := core.NewFactInserter(storer, stanceMgr)
 		orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
 		orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
 
@@ -587,7 +599,19 @@ func convertBatch(b *storage.LLMBatch) *core.BatchRecord {
 // buildContradictionHandler creates a handler that processes contradiction batch results.
 // It parses the custom ID to extract person/fact IDs, parses the LLM response for verdicts,
 // and records contradictions and pair checks in the database.
+//
+// The bundler is best-effort: if it can't be constructed (missing env), recorded
+// contradictions just stay as solo bundles until a later run resolves them.
 func buildContradictionHandler(storer *storage.PostgresStorer) core.ContradictionResultHandler {
+	var bundler *contradiction.Bundler
+	if embedder, embErr := embedding.NewOpenAIEmbeddingGeneratorFromEnv(); embErr != nil {
+		log.Warn().Err(embErr).Msg("Embedding generator unavailable; batch contradictions will not be bundled by LLM fallback")
+	} else if b, bErr := contradiction.NewBundlerFromEnv(storer, embedder); bErr != nil {
+		log.Warn().Err(bErr).Msg("Failed to construct contradiction Bundler for batch path; rows will not be LLM-bundled")
+	} else {
+		bundler = b
+	}
+
 	return func(ctx context.Context, customID string, llmResponse string) error {
 		personID, factAIDs, factBIDs, err := contradiction.ParseContradictionCustomID(customID)
 		if err != nil {
@@ -619,8 +643,23 @@ func buildContradictionHandler(storer *storage.PostgresStorer) core.Contradictio
 					Str("reason", result.Reason).
 					Msg("Contradiction detected (batch)")
 
-				if err := storer.RecordContradictionImmediate(ctx, personID, factAIDs[i], factBIDs[i], result.Reason); err != nil {
-					log.Error().Err(err).Msg("Failed to record contradiction from batch")
+				contradictionID, needsBundler, recErr := storer.RecordContradictionImmediate(ctx, personID, factAIDs[i], factBIDs[i], result.Reason)
+				if recErr != nil {
+					log.Error().Err(recErr).Msg("Failed to record contradiction from batch")
+					continue
+				}
+				if needsBundler && bundler != nil {
+					texts, txtErr := storer.GetFactTextsByIDs(ctx, []int64{factAIDs[i], factBIDs[i]})
+					if txtErr != nil {
+						log.Warn().Err(txtErr).Int64("contradiction_id", contradictionID).
+							Msg("Could not fetch fact texts for bundler; row remains a solo bundle")
+						continue
+					}
+					if bErr := bundler.Resolve(ctx, personID, contradictionID,
+						factAIDs[i], factBIDs[i], texts[factAIDs[i]], texts[factBIDs[i]], result.Reason); bErr != nil {
+						log.Warn().Err(bErr).Int64("contradiction_id", contradictionID).
+							Msg("Bundler resolution failed for batch contradiction; row remains a solo bundle")
+					}
 				}
 			}
 		}

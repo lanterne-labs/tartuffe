@@ -4,8 +4,6 @@ import (
 	"context"
 	"digital-mirror/backend/metrics"
 	"fmt"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -29,21 +27,28 @@ type InsertedFactMeta struct {
 
 // InsertResult contains the outcome of a batch InsertFacts call.
 type InsertResult struct {
-	Inserted     int // Number of facts successfully inserted
-	Skipped      int // Number of facts skipped as duplicates
+	Inserted     int                 // Number of facts successfully inserted
+	Skipped      int                 // Number of facts skipped as duplicates
 	InsertedMeta []InsertedFactMeta // Metadata for each successfully inserted fact
 }
 
-// FactInserter handles intelligent fact insertion with relation classification.
-// It always inserts facts, then classifies their relationships to existing similar facts
-// (duplicate, implication, or unrelated) via an LLM call.
+// StanceProcessor routes a newly inserted fact to its (existing or new) stance.
+// The production implementation is *StanceManager (LLM-backed); tests may
+// supply a stub that satisfies the invariant without an LLM round-trip.
+type StanceProcessor interface {
+	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error)
+}
+
+// FactInserter handles fact insertion with mandatory stance-based processing.
+// Every inserted fact is routed through StanceProcessor.ProcessNewFact, which
+// classifies it against existing stances (DUPLICATE / NEW_INFO / CONTRADICTION /
+// NEW_STANCE) and updates the per-person stance documents accordingly. This is
+// the single ingestion path: there is no fallback, no skip flag, and no other
+// way to land a fact in the database.
 type FactInserter struct {
-	storer               Storer
-	classifier           *RelationClassifier
-	stanceManager        *StanceManager
-	similarityThreshold  float64 // Cosine distance threshold for relation candidate search
-	autoDedupeThreshold  float64 // Cosine similarity above which to skip as duplicate
-	skipClassification   bool    // When true, skip relation classification entirely (for batch contexts)
+	storer              Storer
+	stanceProcessor     StanceProcessor
+	autoDedupeThreshold float64 // Cosine similarity above which to skip as duplicate
 }
 
 // Storer defines the interface for storage operations needed by FactInserter.
@@ -61,11 +66,9 @@ type Storer interface {
 	// InsertFact inserts a new fact into the database.
 	InsertFact(ctx context.Context, input StoreFactInput) (factID int64, err error)
 
-	// InsertFactRelationsBatch inserts multiple fact relations efficiently.
-	InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error
-
-	// IsAncestorOf checks if ancestorID is an ancestor of descendantID via implication chain.
-	IsAncestorOf(ctx context.Context, ancestorID int64, descendantID int64) (bool, error)
+	// DeleteFact removes a fact and its dependent rows. Used as a compensating
+	// action when stance processing fails after the fact was already written.
+	DeleteFact(ctx context.Context, factID int64) error
 
 	// LinkSourceToFact links a source URL to a fact, creating a fact_sources record.
 	LinkSourceToFact(ctx context.Context, factID int64, sourceURL string, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (sourceID int64, err error)
@@ -75,6 +78,11 @@ type Storer interface {
 
 	// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
 	GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error)
+
+	// InsertFactRelationsBatch inserts duplicate/implication relations. Still used
+	// by the OpenAI-batch classification flow in batch_job.go; that path is now
+	// redundant with stance-based clustering and queued for removal.
+	InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error
 }
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
@@ -100,54 +108,31 @@ type SimilarFact struct {
 	Distance float64 // Cosine distance (1 - cosine_similarity) from query embedding
 }
 
-// NewFactInserter creates a new FactInserter with the given storer.
-// The relation classifier is self-initialized from OPEN_AI_* env vars.
-// If env vars are missing (tests, no LLM configured), the classifier is nil (graceful degradation).
-// The similarity threshold for relation candidate search is loaded from IMPLICATION_SIMILARITY_THRESHOLD
-// env var, defaulting to 0.60 (60% cosine similarity).
-func NewFactInserter(storer Storer) *FactInserter {
-	var classifier *RelationClassifier
-	c, err := NewRelationClassifierFromEnv()
-	if err != nil {
-		log.Warn().Err(err).Msg("Relation classifier not available, skipping relation classification")
-	} else {
-		classifier = c
+// NewFactInserter creates a new FactInserter. The StanceProcessor is REQUIRED:
+// every fact must be routed through stance processing so that the
+// "every fact has a stance" invariant holds for the whole codebase. Callers
+// without a StanceProcessor cannot insert facts — this is intentional.
+func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
+	if storer == nil {
+		panic("NewFactInserter: storer is nil")
 	}
-	cosineSimilarity := 0.60 // default: 60% similar (broader search for relation candidates)
-	if env := os.Getenv("IMPLICATION_SIMILARITY_THRESHOLD"); env != "" {
-		if t, err := strconv.ParseFloat(env, 64); err == nil {
-			cosineSimilarity = t
-			log.Info().Float64("cosine_similarity", cosineSimilarity).Msg("Loaded IMPLICATION_SIMILARITY_THRESHOLD from environment")
-		} else {
-			log.Warn().Str("value", env).Err(err).Msg("Invalid IMPLICATION_SIMILARITY_THRESHOLD, using default 0.60")
-		}
+	if stance == nil {
+		panic("NewFactInserter: stance processor is nil — every fact must be routed through a stance, no exceptions")
 	}
 
-	cosineDistance := 1.0 - cosineSimilarity
 	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.85)
 
 	return &FactInserter{
 		storer:              storer,
-		classifier:          classifier,
-		similarityThreshold: cosineDistance,
+		stanceProcessor:     stance,
 		autoDedupeThreshold: autoDedupeThreshold,
 	}
 }
 
-// SetStanceManager sets the optional stance manager for stance-based contradiction detection.
-func (fi *FactInserter) SetStanceManager(sm *StanceManager) {
-	fi.stanceManager = sm
-}
-
-// DisableClassifier disables the relation classifier for this inserter.
-// Use this for batch contexts where sync LLM calls per fact are wasteful —
-// contradiction detection is handled separately via batch jobs.
-func (fi *FactInserter) DisableClassifier() {
-	fi.skipClassification = true
-}
-
-// InsertFacts processes a batch of facts, inserting each and classifying relations.
-// Facts that are near-duplicates of existing active facts (above autoDedupeThreshold) are skipped.
+// InsertFacts processes a batch of facts. Each fact goes through verb-aware
+// near-duplicate dedup, then is inserted, then is routed through the stance
+// manager. If stance processing fails for any fact, the fact (and its source/
+// mention rows) is deleted and the batch fails — there is no silent fallback.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
 	result := &InsertResult{}
 	for i, fact := range facts {
@@ -174,8 +159,9 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 	return result, nil
 }
 
-// insertSingleFact handles insertion of a single fact with relation classification.
-// Returns (factID, personID, inserted, error). factID/personID are 0 when skipped.
+// insertSingleFact handles insertion of a single fact and its mandatory stance
+// routing. Returns (factID, personID, inserted, error). factID/personID are 0
+// when the fact was skipped as a near-duplicate.
 func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (int64, int64, bool, error) {
 	if input.SubjectEntity == "" {
 		return 0, 0, false, fmt.Errorf("subject_entity is required")
@@ -200,9 +186,9 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
-	// Verb-aware near-duplicate check before inserting
-	// Same verb + high similarity → auto-dedup (skip)
-	// Different verb → NEVER auto-dedup (opposing stances on same topic must coexist)
+	// Verb-aware near-duplicate check before inserting.
+	// Same verb (or both external verbs) + high similarity → skip.
+	// Different direct-claim verbs MUST coexist to preserve opposing stances.
 	if len(input.Embedding) > 0 {
 		distanceThreshold := 1.0 - fi.autoDedupeThreshold
 		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, distanceThreshold, 5)
@@ -216,10 +202,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 					log.Debug().Err(verbErr).Int64("fact_id", sf.ID).Msg("Failed to get canonical verb for similar fact")
 					continue
 				}
-				// Dedup if same verb, OR if both are external (non-direct-claim) verbs.
-				// Direct claim verbs (DENIED, CLAIMED, etc.) with different verbs must coexist
-				// to preserve opposing stances. But external verbs (WAS_SENTENCED, WAS_CONVICTED, etc.)
-				// often describe the same event with different wording.
 				bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
 				if existingVerb == input.CanonicalVerb || bothExternal {
 					log.Info().
@@ -232,12 +214,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 						Msg("Skipping duplicate fact (same verb or both external + high similarity)")
 					return 0, 0, false, nil
 				}
-				log.Debug().
-					Int64("existing_fact_id", sf.ID).
-					Float64("distance", sf.Distance).
-					Str("new_verb", input.CanonicalVerb).
-					Str("existing_verb", existingVerb).
-					Msg("High similarity but different direct-claim verbs, NOT deduping")
 			}
 		}
 	}
@@ -260,158 +236,50 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		input.Metadata,
 	)
 	if err != nil {
+		fi.compensateDelete(ctx, factID, "linking source")
 		return 0, 0, false, fmt.Errorf("failed to link source: %w", err)
 	}
 
 	// Link subject entity to this source mention
 	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
+		fi.compensateDelete(ctx, factID, "linking subject entity")
 		return 0, 0, false, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
-	// Stance-based processing (replaces classifyRelations when enabled)
-	if fi.stanceManager != nil {
-		result, err := fi.stanceManager.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
-		if err != nil {
-			log.Warn().Err(err).Int64("fact_id", factID).Msg("Stance processing failed, falling back to relation classification")
-			// Fall through to classifyRelations below
-		} else {
-			log.Info().
-				Int64("fact_id", factID).
-				Str("verdict", result.Verdict).
-				Int64("stance_id", result.StanceID).
-				Msg("Stance processing complete")
-			// Skip classifyRelations - stance manager handles contradiction detection
-			return factID, subjectID, true, nil
-		}
+	// Mandatory stance processing. Failure rolls back the fact via compensating
+	// delete so that the "every fact has a stance" invariant holds.
+	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
+	if err != nil {
+		fi.compensateDelete(ctx, factID, "stance processing")
+		return 0, 0, false, fmt.Errorf("stance processing failed for fact %d: %w", factID, err)
 	}
 
-	// Classify relations with similar facts (non-blocking - fact is already inserted)
-	if fi.classifier != nil && !fi.skipClassification {
-		fi.classifyRelations(ctx, factID, input, subjectID)
-	}
-
-	log.Debug().
+	log.Info().
 		Int64("fact_id", factID).
 		Int64("source_id", sourceID).
 		Str("subject_entity", input.SubjectEntity).
-		Msg("Successfully inserted fact with source and person links")
+		Str("verdict", stanceResult.Verdict).
+		Int64("stance_id", stanceResult.StanceID).
+		Msg("Inserted fact and routed through stance")
 
 	return factID, subjectID, true, nil
 }
 
-// classifyRelations finds similar active facts and classifies their relationships.
-// This is non-blocking: errors are logged but don't prevent fact insertion.
-func (fi *FactInserter) classifyRelations(ctx context.Context, newFactID int64, input StoreFactInput, subjectID int64) {
-	similarFacts, err := fi.storer.FindSimilarActiveFacts(
-		ctx,
-		[]int64{subjectID},
-		input.Embedding,
-		fi.similarityThreshold,
-		20,
-	)
-	if err != nil {
-		log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Failed to find similar facts for relation classification")
-		return
-	}
-
-	if len(similarFacts) == 0 {
-		return
-	}
-
-	// Build classification inputs (exclude the new fact itself)
-	var classInputs []ClassificationInput
-	for _, sf := range similarFacts {
-		if sf.ID == newFactID {
-			continue
-		}
-		existingVerb, _ := fi.storer.GetFactCanonicalVerb(ctx, sf.ID)
-		classInputs = append(classInputs, ClassificationInput{
-			ExistingFactID:   sf.ID,
-			ExistingFactText: sf.Text,
-			CanonicalVerb:    existingVerb,
-			// PublishedAt not available from SimilarFact; nil is acceptable
-		})
-	}
-
-	if len(classInputs) == 0 {
-		return
-	}
-
-	results, err := fi.classifier.Classify(ctx, input.CanonicalVerb, input.NormalizedFactText, input.PublishedAt, classInputs)
-	if err != nil {
-		log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Relation classification failed, fact already inserted")
-		return
-	}
-
-	if len(results) == 0 {
-		return
-	}
-
-	// Convert classification results to fact relation inputs
-	var relations []FactRelationInput
-	for _, r := range results {
-		var rel FactRelationInput
-		rel.Reason = r.Reason
-
-		switch r.Relation {
-		case "duplicate":
-			// For duplicates: the older fact is general, the newer is specific
-			// Since we just inserted newFact, it's the newer one
-			rel.GeneralFactID = r.ExistingFactID
-			rel.SpecificFactID = newFactID
-			rel.RelationType = "duplicate"
-
-		case "implication_new_is_general":
-			// New fact is more general, existing is more specific
-			rel.GeneralFactID = newFactID
-			rel.SpecificFactID = r.ExistingFactID
-			rel.RelationType = "implication"
-
-			// Cycle prevention: check that existing fact is not already an ancestor of new fact
-			isAnc, err := fi.storer.IsAncestorOf(ctx, r.ExistingFactID, newFactID)
-			if err != nil {
-				log.Warn().Err(err).Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
-					Msg("Failed to check ancestry, skipping relation")
-				continue
-			}
-			if isAnc {
-				log.Warn().Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
-					Msg("Skipping implication relation: would create cycle")
-				continue
-			}
-
-		case "implication_new_is_specific":
-			// New fact is more specific, existing is more general
-			rel.GeneralFactID = r.ExistingFactID
-			rel.SpecificFactID = newFactID
-			rel.RelationType = "implication"
-
-			// Cycle prevention: check that new fact is not already an ancestor of existing
-			isAnc, err := fi.storer.IsAncestorOf(ctx, newFactID, r.ExistingFactID)
-			if err != nil {
-				log.Warn().Err(err).Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
-					Msg("Failed to check ancestry, skipping relation")
-				continue
-			}
-			if isAnc {
-				log.Warn().Int64("fact_id", newFactID).Int64("existing", r.ExistingFactID).
-					Msg("Skipping implication relation: would create cycle")
-				continue
-			}
-
-		default:
-			continue
-		}
-
-		relations = append(relations, rel)
-	}
-
-	if len(relations) > 0 {
-		if err := fi.storer.InsertFactRelationsBatch(ctx, relations); err != nil {
-			log.Warn().Err(err).Int64("fact_id", newFactID).Msg("Failed to insert fact relations")
-		} else {
-			log.Info().Int64("fact_id", newFactID).Int("relations", len(relations)).Msg("Recorded fact relations")
-		}
+// compensateDelete rolls back a partially inserted fact. Errors here are logged
+// but cannot be propagated (we are already in the error path). A separate audit
+// metric flags any orphan facts that slip through.
+func (fi *FactInserter) compensateDelete(ctx context.Context, factID int64, stage string) {
+	if delErr := fi.storer.DeleteFact(ctx, factID); delErr != nil {
+		log.Error().
+			Err(delErr).
+			Int64("fact_id", factID).
+			Str("stage", stage).
+			Msg("Compensating delete failed — fact may be orphaned without a stance")
+	} else {
+		log.Warn().
+			Int64("fact_id", factID).
+			Str("stage", stage).
+			Msg("Rolled back fact after failure during ingestion")
 	}
 }
 

@@ -20,6 +20,16 @@ const (
 	// requires a full re-embed (see `dm embeddings invalidate` +
 	// `dm embeddings regenerate`).
 	PurposeFactStorage Purpose = "fact_storage"
+
+	// PurposeContradictionBundle tags ad-hoc query embeddings used by the
+	// contradiction Bundler (backend/contradiction/bundler.go). The text being
+	// embedded is a contradiction summary ("claim A vs. claim B — reason"), and
+	// the vector is compared against per-person stance centroids to find which
+	// existing bundle (if any) this new contradiction extends. The instruction
+	// asks the model to project on the *underlying inconsistency* rather than
+	// the topic of either claim, which differs from PurposeFactStorage where a
+	// single claim is being represented for "find related claims" retrieval.
+	PurposeContradictionBundle Purpose = "contradiction_bundle"
 )
 
 // EmbeddingGenerator generates vector embeddings for text under a stated Purpose.

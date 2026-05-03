@@ -89,7 +89,10 @@ func (a *StanceStorerAdapter) DeleteStanceDocumentsForPerson(ctx context.Context
 	return a.storer.DeleteStanceDocumentsForPerson(ctx, personID)
 }
 
-// RecordContradiction records a contradiction between two facts.
+// RecordContradiction records a contradiction between two facts. Drops the bundler-needed
+// signal because in this code path (StanceManager.ProcessNewFact) both facts are guaranteed
+// to be in the same stance, so the SQL fast path will always set bundle_stance_id directly.
 func (a *StanceStorerAdapter) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
-	return a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason)
+	_, _, err := a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason)
+	return err
 }

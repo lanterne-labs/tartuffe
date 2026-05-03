@@ -594,16 +594,11 @@ func runCacheOnlyExtraction(
 		Str("cache_dir", cacheDir).
 		Msg("Starting cache-only extraction (no news search)")
 
-	factInserter := core.NewFactInserter(storer)
-
-	// Wire stance manager for incremental stance processing
-	stanceAdapter := storage.NewStanceStorerAdapter(storer)
-	stanceMgr, smErr := core.NewStanceManagerFromEnv(stanceAdapter)
+	stanceMgr, smErr := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
 	if smErr != nil {
-		log.Warn().Err(smErr).Msg("Stance manager not available, stances will not be updated during insertion")
-	} else {
-		factInserter.SetStanceManager(stanceMgr)
+		return fmt.Errorf("stance manager required for fact ingestion: %w", smErr)
 	}
+	factInserter := core.NewFactInserter(storer, stanceMgr)
 	totalFacts := 0
 	totalSkippedDedup := 0
 	totalFiles := 0

@@ -1,61 +1,17 @@
 package core
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
-
-	"digital-mirror/backend/llm"
-	"digital-mirror/backend/metrics"
-
-	"github.com/rs/zerolog/log"
 )
 
-// RelationClassifier uses an LLM to classify the relationship between a new fact
-// and existing similar facts as: duplicate, implication, or unrelated.
-type RelationClassifier struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
-}
-
-// NewRelationClassifierFromEnv creates a RelationClassifier using OPEN_AI_ env vars.
-func NewRelationClassifierFromEnv() (*RelationClassifier, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
-	}
-
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	baseClient := llm.NewBaseLLMClient()
-
-	base = strings.TrimRight(base, "/")
-	apiURL := base
-	if !strings.HasSuffix(base, "/chat/completions") {
-		apiURL = base + "/chat/completions"
-	}
-
-	return &RelationClassifier{
-		apiKey:     apiKey,
-		apiURL:     apiURL,
-		model:      model,
-		baseClient: baseClient,
-	}, nil
-}
+// Classification primitives shared with the OpenAI batch-API classification flow
+// in batch_job.go. The synchronous per-fact classifier was removed when stance
+// processing became the single ingest path; only the batch-side helpers remain
+// because the batch flow still ships classification requests through OpenAI's
+// batch endpoint and parses the responses here.
 
 // ClassificationInput represents a similar fact to classify against the new fact.
 type ClassificationInput struct {
@@ -87,13 +43,11 @@ type llmClassification struct {
 type flexInt64 int64
 
 func (f *flexInt64) UnmarshalJSON(data []byte) error {
-	// Try number first
 	var n int64
 	if err := json.Unmarshal(data, &n); err == nil {
 		*f = flexInt64(n)
 		return nil
 	}
-	// Try string
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
 		return fmt.Errorf("existing_fact_id must be a number or numeric string, got: %s", string(data))
@@ -137,7 +91,6 @@ Respond ONLY with a JSON object in this exact format:
 
 // ParseClassificationResponse parses an LLM JSON response into ClassificationResults.
 // Filters out "unrelated" and invalid relation types.
-// Used by both the sync Classify method and batch classification processing.
 func ParseClassificationResponse(jsonContent string) ([]ClassificationResult, error) {
 	var classResp llmClassificationResponse
 	if err := json.Unmarshal([]byte(jsonContent), &classResp); err != nil {
@@ -163,110 +116,5 @@ func ParseClassificationResponse(jsonContent string) ([]ClassificationResult, er
 			Reason:         c.Reason,
 		})
 	}
-	return results, nil
-}
-
-// Classify classifies the relationship between a new fact and a set of similar existing facts.
-// Returns classification results for each existing fact.
-func (rc *RelationClassifier) Classify(ctx context.Context, newFactVerb string, newFactText string, newFactPublishedAt *time.Time, existingFacts []ClassificationInput) ([]ClassificationResult, error) {
-	if len(existingFacts) == 0 {
-		return nil, nil
-	}
-
-	timer := metrics.NewLLMTimer("chat", rc.model)
-
-	// Format existing facts for the prompt
-	var factsSection strings.Builder
-	for _, f := range existingFacts {
-		pubDate := "unknown date"
-		if f.PublishedAt != nil {
-			pubDate = f.PublishedAt.Format("January 2, 2006")
-		}
-		fmt.Fprintf(&factsSection, "- ID: %d | Verb: %s | Text: %s | Published: %s\n", f.ExistingFactID, f.CanonicalVerb, f.ExistingFactText, pubDate)
-	}
-
-	newPubDate := "unknown date"
-	if newFactPublishedAt != nil {
-		newPubDate = newFactPublishedAt.Format("January 2, 2006")
-	}
-
-	prompt := fmt.Sprintf(classificationPrompt, newFactVerb, newFactText, newPubDate, factsSection.String())
-
-	// Build request
-	reqBody := llm.ChatRequest{
-		Model: rc.model,
-		Messages: []llm.ChatMessage{
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.0,
-		MaxTokens:      16384,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal classification request: %w", err)
-	}
-
-	respBytes, err := rc.baseClient.DoRequest(ctx, rc.apiURL, rc.apiKey, payloadBytes)
-	timer.ObserveDuration(err)
-	if err != nil {
-		return nil, fmt.Errorf("classification LLM call failed: %w", err)
-	}
-
-	// Parse response
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(respBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
-	}
-
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
-	}
-
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("empty LLM response")
-	}
-
-	content := chatResp.Choices[0].Message.Content
-
-	var classResp llmClassificationResponse
-	if err := json.Unmarshal([]byte(content), &classResp); err != nil {
-		log.Warn().Str("content", content).Err(err).Msg("Failed to parse classification JSON from LLM")
-		return nil, fmt.Errorf("failed to parse classification response JSON: %w", err)
-	}
-
-	// Convert to results, filtering invalid relations
-	validRelations := map[string]bool{
-		"duplicate":                     true,
-		"implication_new_is_general":    true,
-		"implication_new_is_specific":   true,
-		"unrelated":                     true,
-	}
-
-	var results []ClassificationResult
-	for _, c := range classResp.Classifications {
-		if !validRelations[c.Relation] {
-			log.Warn().
-				Int64("existing_fact_id", int64(c.ExistingFactID)).
-				Str("relation", c.Relation).
-				Msg("Invalid relation type from LLM, treating as unrelated")
-			continue
-		}
-		if c.Relation == "unrelated" {
-			continue // No relation to record
-		}
-		results = append(results, ClassificationResult{
-			ExistingFactID: int64(c.ExistingFactID),
-			Relation:       c.Relation,
-			Reason:         c.Reason,
-		})
-	}
-
-	log.Info().
-		Int("total_classified", len(classResp.Classifications)).
-		Int("relations_found", len(results)).
-		Msg("Relation classification complete")
-
 	return results, nil
 }

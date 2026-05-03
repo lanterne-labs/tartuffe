@@ -128,7 +128,8 @@ type embedResponse struct {
 // text-embedding-* models ignore the prefix harmlessly, so the same code path
 // works during the cutover.
 var purposeInstructions = map[Purpose]string{
-	PurposeFactStorage: "Represent this political claim by a public figure so that semantically related or contradicting claims by the same or other figures can be retrieved.",
+	PurposeFactStorage:         "Represent this political claim by a public figure so that semantically related or contradicting claims by the same or other figures can be retrieved.",
+	PurposeContradictionBundle: "Represent the underlying inconsistency between two political claims (claim A versus claim B and the reason they conflict) so that other contradictions involving the same broken promise, reversal, or topical inconsistency can be retrieved — not merely other claims on the same topic.",
 }
 
 // matryoshkaTruncate keeps the first targetEmbeddingDim values of v and

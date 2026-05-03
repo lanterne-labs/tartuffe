@@ -247,6 +247,10 @@ func (m *mockStorer) InsertFact(ctx context.Context, input StoreFactInput) (int6
 	return m.nextFactID, nil
 }
 
+func (m *mockStorer) DeleteFact(ctx context.Context, factID int64) error {
+	return nil
+}
+
 func (m *mockStorer) InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error {
 	m.insertedRelations = append(m.insertedRelations, inputs...)
 	return nil
@@ -301,11 +305,18 @@ func newTestFactInserter() *FactInserter {
 func newTestFactInserterWithStorer(s Storer) *FactInserter {
 	return &FactInserter{
 		storer:              s,
-		classifier:          nil,
-		similarityThreshold: 0.40,
+		stanceProcessor:     &noopStanceProcessor{},
 		autoDedupeThreshold: 0.85,
-		skipClassification:  true,
 	}
+}
+
+// noopStanceProcessor satisfies StanceProcessor for tests that don't care about
+// stance routing (batch-job tests). It returns a fake NEW_STANCE result without
+// touching storage.
+type noopStanceProcessor struct{}
+
+func (noopStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, _ string, _ []float32, _ string) (*StanceProcessResult, error) {
+	return &StanceProcessResult{Verdict: "NEW_STANCE", StanceID: factID}, nil
 }
 
 // ===========================================================================

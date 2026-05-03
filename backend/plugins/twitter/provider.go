@@ -160,7 +160,11 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 	}
 
 	// Process in batches
-	factInserter := core.NewFactInserter(p.Storer)
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(p.Storer))
+	if err != nil {
+		return result, fmt.Errorf("stance manager required for fact ingestion: %w", err)
+	}
+	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
 
 	for i := 0; i < len(toProcess); i += batchSize {
 		end := i + batchSize
