@@ -192,6 +192,8 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	offsetStr := r.URL.Query().Get("offset")
 	entityType := r.URL.Query().Get("entity_type") // "party", "human", or empty for all
 	search := r.URL.Query().Get("search")          // case-insensitive partial match on name
+	sort := r.URL.Query().Get("sort")              // "honesty_desc", "honesty_asc", or empty for default (fact_count)
+	minFactsStr := r.URL.Query().Get("min_facts")  // minimum fact_count to include
 
 	limit := 50 // default
 	if limitStr != "" {
@@ -207,7 +209,14 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset, entityType, search)
+	minFacts := 0
+	if minFactsStr != "" {
+		if parsed, err := strconv.Atoi(minFactsStr); err == nil && parsed >= 0 {
+			minFacts = parsed
+		}
+	}
+
+	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get persons: %v", err), http.StatusInternalServerError)
 		return

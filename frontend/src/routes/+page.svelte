@@ -5,6 +5,9 @@
 	import { API_BASE } from '$lib/config';
 
 	let persons: PersonSummary[] = $state([]);
+	let topHonest: PersonSummary[] = $state([]);
+	let topDishonest: PersonSummary[] = $state([]);
+	let panelsLoading = $state(true);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let currentPage = $state(0);
@@ -14,6 +17,8 @@
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+	const PANEL_SIZE = 3;
+	const PANEL_MIN_FACTS = 3;
 	const SCORE_CIRCUMFERENCE = 2 * Math.PI * 14;
 
 	function handleSearchInput(event: Event) {
@@ -25,7 +30,18 @@
 		}
 		debounceTimer = setTimeout(() => {
 			loadPersons(0);
+			loadPanels();
 		}, 300);
+	}
+
+	function buildQuery(extra: Record<string, string | number>): string {
+		const params = new URLSearchParams();
+		if (entityFilter) params.set('entity_type', entityFilter);
+		if (searchQuery) params.set('search', searchQuery);
+		for (const [k, v] of Object.entries(extra)) {
+			params.set(k, String(v));
+		}
+		return params.toString();
 	}
 
 	async function loadPersons(page = 0) {
@@ -33,9 +49,8 @@
 		try {
 			loading = true;
 			const offset = page * pageSize;
-			const entityParam = entityFilter ? `&entity_type=${entityFilter}` : '';
-			const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
-			const response = await fetch(`${API_BASE}/api/persons?limit=${pageSize}&offset=${offset}${entityParam}${searchParam}`);
+			const qs = buildQuery({ limit: pageSize, offset });
+			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
 
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
@@ -52,13 +67,32 @@
 		}
 	}
 
+	async function loadPanels() {
+		try {
+			panelsLoading = true;
+			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS });
+			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS });
+			const [bestRes, worstRes] = await Promise.all([
+				fetch(`${API_BASE}/api/persons?${bestQs}`),
+				fetch(`${API_BASE}/api/persons?${worstQs}`)
+			]);
+			if (bestRes.ok) topHonest = await bestRes.json();
+			if (worstRes.ok) topDishonest = await worstRes.json();
+		} catch (err) {
+			// Panel errors are non-fatal; main list error banner covers retries.
+		} finally {
+			panelsLoading = false;
+		}
+	}
+
 	function setFilter(filter: '' | 'party' | 'human') {
 		entityFilter = filter;
 		loadPersons(0);
+		loadPanels();
 	}
 
-	async function refreshPersons() {
-		await loadPersons(0);
+	async function refreshAll() {
+		await Promise.all([loadPersons(0), loadPanels()]);
 	}
 
 	function loadMore() {
@@ -77,14 +111,15 @@
 		return 'var(--red)';
 	}
 
-	function handleRealtimeEvent(event: any) {
-		refreshPersons();
+	function handleRealtimeEvent(_event: any) {
+		refreshAll();
 	}
 
 	let unsubscribe: (() => void) | null = null;
 
 	onMount(() => {
 		loadPersons();
+		loadPanels();
 		realtimeManager.connect();
 		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
 	});
@@ -133,24 +168,115 @@
 			/>
 		</div>
 
-		<div class="filter-pills">
+		<div class="filter-pills" role="group" aria-label="Filter by entity type">
 			<button
 				class="pill"
 				class:active={entityFilter === ''}
 				onclick={() => setFilter('')}
-			>All</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'party'}
-				onclick={() => setFilter('party')}
-			>Parties</button>
+				aria-pressed={entityFilter === ''}
+			>Both</button>
 			<button
 				class="pill"
 				class:active={entityFilter === 'human'}
 				onclick={() => setFilter('human')}
-			>Persons</button>
+				aria-pressed={entityFilter === 'human'}
+			>People</button>
+			<button
+				class="pill"
+				class:active={entityFilter === 'party'}
+				onclick={() => setFilter('party')}
+				aria-pressed={entityFilter === 'party'}
+			>Parties</button>
 		</div>
 	</div>
+
+	<div class="ranking-panels">
+		<section class="rank-panel rank-panel--best">
+			<header class="rank-panel-header">
+				<h2>Most Honest</h2>
+				<span class="rank-panel-sub">Top {PANEL_SIZE} by score</span>
+			</header>
+			{#if panelsLoading && topHonest.length === 0}
+				<ul class="rank-list">
+					{#each Array(PANEL_SIZE) as _}
+						<li class="rank-row skeleton-row">
+							<div class="skeleton skeleton-rank-avatar"></div>
+							<div class="skeleton skeleton-rank-name"></div>
+							<div class="skeleton skeleton-rank-score"></div>
+						</li>
+					{/each}
+				</ul>
+			{:else if topHonest.length === 0}
+				<p class="empty">No data yet.</p>
+			{:else}
+				<ol class="rank-list">
+					{#each topHonest as person, i (person.id)}
+						<li>
+							<a href="/person/{person.id}" class="rank-row">
+								<span class="rank-pos">{i + 1}</span>
+								{#if person.image_url}
+									<img src={person.image_url} alt={person.name} class="rank-avatar" />
+								{:else}
+									<div class="rank-avatar rank-avatar-placeholder">
+										{person.name.charAt(0).toUpperCase()}
+									</div>
+								{/if}
+								<div class="rank-info">
+									<div class="rank-name">{person.name}</div>
+									<div class="rank-meta">{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}</div>
+								</div>
+								<div class="rank-score rank-score--good">{(person.honesty_score * 100).toFixed(0)}</div>
+							</a>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+		</section>
+
+		<section class="rank-panel rank-panel--worst">
+			<header class="rank-panel-header">
+				<h2>Least Honest</h2>
+				<span class="rank-panel-sub">Bottom {PANEL_SIZE} by score</span>
+			</header>
+			{#if panelsLoading && topDishonest.length === 0}
+				<ul class="rank-list">
+					{#each Array(PANEL_SIZE) as _}
+						<li class="rank-row skeleton-row">
+							<div class="skeleton skeleton-rank-avatar"></div>
+							<div class="skeleton skeleton-rank-name"></div>
+							<div class="skeleton skeleton-rank-score"></div>
+						</li>
+					{/each}
+				</ul>
+			{:else if topDishonest.length === 0}
+				<p class="empty">No data yet.</p>
+			{:else}
+				<ol class="rank-list">
+					{#each topDishonest as person, i (person.id)}
+						<li>
+							<a href="/person/{person.id}" class="rank-row">
+								<span class="rank-pos">{i + 1}</span>
+								{#if person.image_url}
+									<img src={person.image_url} alt={person.name} class="rank-avatar" />
+								{:else}
+									<div class="rank-avatar rank-avatar-placeholder">
+										{person.name.charAt(0).toUpperCase()}
+									</div>
+								{/if}
+								<div class="rank-info">
+									<div class="rank-name">{person.name}</div>
+									<div class="rank-meta">{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}</div>
+								</div>
+								<div class="rank-score rank-score--bad">{(person.honesty_score * 100).toFixed(0)}</div>
+							</a>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+		</section>
+	</div>
+
+	<h2 class="section-title">All entities</h2>
 
 	{#if loading && persons.length === 0}
 		<div class="persons-grid">
@@ -338,18 +464,22 @@
 	}
 
 	.filter-pills {
-		display: flex;
-		gap: 0.375rem;
+		display: inline-flex;
+		gap: 0;
+		background: var(--bg-secondary);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-full);
+		padding: 0.25rem;
 	}
 
 	.pill {
-		background: var(--bg-secondary);
+		background: transparent;
 		color: var(--text-secondary);
-		border: 1px solid var(--border-card);
-		padding: 0.5rem 1rem;
+		border: none;
+		padding: 0.5rem 1.1rem;
 		border-radius: var(--radius-full);
-		font-size: 0.813rem;
-		font-weight: 500;
+		font-size: 0.875rem;
+		font-weight: 600;
 		font-family: var(--font-family);
 		cursor: pointer;
 		transition: all var(--transition-fast);
@@ -357,20 +487,191 @@
 
 	.pill:hover {
 		color: var(--text-primary);
-		border-color: var(--border-card-hover);
 	}
 
 	.pill.active {
 		background: var(--accent);
 		color: white;
-		border-color: var(--accent);
 		box-shadow: 0 0 12px var(--accent-glow);
+	}
+
+	/* Ranking panels */
+	.ranking-panels {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+		margin-bottom: 2rem;
+	}
+
+	@media (max-width: 720px) {
+		.ranking-panels {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	.rank-panel {
+		border-radius: var(--radius-md);
+		padding: 1.25rem;
+		backdrop-filter: var(--glass-blur);
+		-webkit-backdrop-filter: var(--glass-blur);
+		box-shadow: var(--shadow-card);
+	}
+
+	.rank-panel--best {
+		background: linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.04));
+		border: 1px solid rgba(34, 197, 94, 0.35);
+	}
+
+	.rank-panel--worst {
+		background: linear-gradient(180deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
+		border: 1px solid rgba(239, 68, 68, 0.35);
+	}
+
+	.rank-panel-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 0.75rem;
+	}
+
+	.rank-panel-header h2 {
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+	}
+
+	.rank-panel--best .rank-panel-header h2 { color: var(--green); }
+	.rank-panel--worst .rank-panel-header h2 { color: var(--red); }
+
+	.rank-panel-sub {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.rank-list {
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+	}
+
+	.rank-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 0.625rem;
+		border-radius: var(--radius-sm);
+		text-decoration: none;
+		color: inherit;
+		transition: background var(--transition-fast);
+	}
+
+	.rank-row:hover {
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.rank-pos {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--text-muted);
+		width: 1rem;
+		text-align: center;
+		flex-shrink: 0;
+	}
+
+	.rank-avatar {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+		border: 1px solid var(--border-card);
+	}
+
+	.rank-avatar-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-weight: 600;
+		font-size: 1.25rem;
+	}
+
+	.rank-info {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.rank-name {
+		font-weight: 600;
+		font-size: 0.938rem;
+		text-transform: capitalize;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		color: var(--text-primary);
+	}
+
+	.rank-meta {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		margin-top: 0.125rem;
+	}
+
+	.rank-score {
+		font-size: 1.125rem;
+		font-weight: 700;
+		flex-shrink: 0;
+		min-width: 2.25rem;
+		text-align: right;
+	}
+
+	.rank-score--good { color: var(--green); }
+	.rank-score--bad { color: var(--red); }
+
+	.skeleton-row {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 0.625rem;
+	}
+
+	.skeleton-rank-avatar {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+
+	.skeleton-rank-name {
+		flex: 1;
+		height: 14px;
+	}
+
+	.skeleton-rank-score {
+		width: 2.25rem;
+		height: 18px;
+	}
+
+	.empty {
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		padding: 0.5rem 0.625rem;
+	}
+
+	.section-title {
+		font-size: 1.1rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		margin-bottom: 1rem;
+		color: var(--text-primary);
 	}
 
 	/* Grid */
 	.persons-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
 		gap: 1rem;
 	}
 
@@ -405,14 +706,14 @@
 	.card-left {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 0.875rem;
 		flex: 1;
 		min-width: 0;
 	}
 
 	.avatar {
-		width: 44px;
-		height: 44px;
+		width: 64px;
+		height: 64px;
 		border-radius: 50%;
 		object-fit: cover;
 		flex-shrink: 0;
@@ -425,7 +726,7 @@
 		background: var(--bg-secondary);
 		color: var(--text-secondary);
 		font-weight: 600;
-		font-size: 1.125rem;
+		font-size: 1.5rem;
 		border: 1px solid var(--border-card);
 	}
 
@@ -478,8 +779,8 @@
 	}
 
 	.score-ring {
-		width: 44px;
-		height: 44px;
+		width: 52px;
+		height: 52px;
 	}
 
 	.ring-text {
@@ -496,12 +797,12 @@
 	.skeleton-header {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
+		gap: 0.875rem;
 	}
 
 	.skeleton-avatar {
-		width: 44px;
-		height: 44px;
+		width: 64px;
+		height: 64px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
@@ -524,8 +825,8 @@
 	}
 
 	.skeleton-ring {
-		width: 44px;
-		height: 44px;
+		width: 52px;
+		height: 52px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}

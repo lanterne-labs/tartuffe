@@ -2004,11 +2004,24 @@ type PersonSummary struct {
 	FactCount    int      `json:"fact_count"`
 }
 
-// GetPersonsRankedByScore returns persons ranked by fact count (descending), then honesty score (descending)
-// entityType can be empty (all), "party", or "human" to filter results
-// search performs case-insensitive partial match on name
-func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string) ([]PersonSummary, error) {
-	query := `
+// GetPersonsRankedByScore returns persons ranked by the chosen sort order.
+// entityType can be empty (all), "party", or "human" to filter results.
+// search performs case-insensitive partial match on name.
+// sort can be "honesty_desc" (highest score first), "honesty_asc" (lowest first),
+// or empty for the default (fact count desc, then honesty desc).
+// minFacts filters out persons with fewer than minFacts (deduped) facts.
+func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int) ([]PersonSummary, error) {
+	var orderBy string
+	switch sort {
+	case "honesty_desc":
+		orderBy = "p.honesty_score DESC, fact_count DESC, p.name ASC"
+	case "honesty_asc":
+		orderBy = "p.honesty_score ASC, fact_count DESC, p.name ASC"
+	default:
+		orderBy = "fact_count DESC, p.honesty_score DESC, p.name ASC"
+	}
+
+	query := fmt.Sprintf(`
 		SELECT
 			p.id,
 			p.name,
@@ -2024,12 +2037,15 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
 		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
 		WHERE ($3 = '' OR p.entity_type = $3)
-		  AND ($4 = '' OR p.name ILIKE '%' || $4 || '%')
+		  AND ($4 = '' OR p.name ILIKE '%%' || $4 || '%%')
 		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url
-		ORDER BY fact_count DESC, p.honesty_score DESC, p.name ASC
-		LIMIT $1 OFFSET $2`
+		HAVING COUNT(DISTINCT fs.fact_id) FILTER (
+			WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
+		) >= $5
+		ORDER BY %s
+		LIMIT $1 OFFSET $2`, orderBy)
 
-	rows, err := s.pool.Query(ctx, query, limit, offset, entityType, search)
+	rows, err := s.pool.Query(ctx, query, limit, offset, entityType, search, minFacts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons: %w", err)
 	}
