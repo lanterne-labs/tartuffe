@@ -124,7 +124,7 @@ func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB str
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.1,
-		MaxTokens:   1024,
+		MaxTokens:   8192,
 	}
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {

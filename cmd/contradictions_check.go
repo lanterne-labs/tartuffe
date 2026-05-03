@@ -17,10 +17,11 @@ import (
 )
 
 var (
-	checkPersonFlag string
-	checkMaxFlag    int
-	checkRandomFlag bool
-	checkFormatFlag string
+	checkPersonFlag   string
+	checkPersonIDFlag int64
+	checkMaxFlag      int
+	checkRandomFlag   bool
+	checkFormatFlag   string
 )
 
 var contradictionsCheckCmd = &cobra.Command{
@@ -39,7 +40,8 @@ summary is printed to stderr so stdout stays clean for piping.`,
 
 func init() {
 	contradictionsCmd.AddCommand(contradictionsCheckCmd)
-	contradictionsCheckCmd.Flags().StringVarP(&checkPersonFlag, "person", "p", "", "Restrict audit to a single person (optional)")
+	contradictionsCheckCmd.Flags().StringVarP(&checkPersonFlag, "person", "p", "", "Restrict audit to a single person by name (optional)")
+	contradictionsCheckCmd.Flags().Int64Var(&checkPersonIDFlag, "person-id", 0, "Restrict audit to a single person by numeric ID (overrides --person; useful for environments where shell quoting drops spaces in names)")
 	contradictionsCheckCmd.Flags().IntVar(&checkMaxFlag, "max", 0, "Maximum number of contradictions to audit (0 = no cap)")
 	contradictionsCheckCmd.Flags().BoolVar(&checkRandomFlag, "random", false, "Sample contradictions in random order (instead of newest-first)")
 	contradictionsCheckCmd.Flags().StringVar(&checkFormatFlag, "format", "jsonl", "Output format: jsonl or text")
@@ -84,7 +86,11 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 	defer storer.Close()
 
 	var personIDPtr *int64
-	if checkPersonFlag != "" {
+	switch {
+	case checkPersonIDFlag > 0:
+		id := checkPersonIDFlag
+		personIDPtr = &id
+	case checkPersonFlag != "":
 		normalizedName := util.NormalizeString(checkPersonFlag)
 		personID, err := storer.GetPersonIDByName(ctx, normalizedName)
 		if err != nil {
