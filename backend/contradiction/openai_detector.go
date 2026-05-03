@@ -39,9 +39,11 @@ func formatDateForLLM(t *time.Time) string {
 	return t.Format("January 2, 2006")
 }
 
-const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
-
-**CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
+// ContradictionRulesAndExamples is the shared rule body used by both the
+// detector prompt and the auditor prompt. Keeping a single source of truth
+// prevents the two prompts from drifting in their definition of what counts
+// as a contradiction.
+const ContradictionRulesAndExamples = `**CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
 A contradiction must be about the SAME SUBJECT - specifically about the person's own knowledge, beliefs, actions, or positions.
 
 **PROMISE-BASED REASONING (core framework):**
@@ -216,7 +218,11 @@ PAIR 25 (Announcement Followed by Action - NOT Contradictory):
 Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
 Statement B (dated March 18, 2024): "Jean-Luc Mélenchon came to support the candidacy of Lahouaria Addouche in Lille."
 PAIR 25: REASONING: Statement A is an announcement of intent to support, Statement B describes the actual support happening. This is a fulfilled commitment — the person did what they announced. Past vs future tense about the same action is NOT a contradiction.
-PAIR 25: NO: Announcing support and then providing that support is a fulfilled commitment, not a contradiction.
+PAIR 25: NO: Announcing support and then providing that support is a fulfilled commitment, not a contradiction.`
+
+const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
+
+` + ContradictionRulesAndExamples + `
 
 **PAIRS TO ANALYZE:**
 %s

@@ -2190,6 +2190,89 @@ type ContradictionWithFacts struct {
 	DetectedAt      time.Time  `json:"detected_at"`
 }
 
+// ContradictionAuditRow is a contradiction enriched with the person name,
+// used by the audit tool which may span all persons in the DB.
+type ContradictionAuditRow struct {
+	ContradictionWithFacts
+	PersonName string `json:"person_name"`
+}
+
+// ListContradictions returns recorded contradictions, optionally filtered to a
+// single person, optionally ordered randomly (for sampled audits), optionally
+// capped at `limit` rows (limit <= 0 means no cap). It joins facts +
+// fact_sources + persons in a single query to avoid N round-trips.
+func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64, random bool, limit int) ([]ContradictionAuditRow, error) {
+	var (
+		whereClause string
+		orderClause string
+		args        []any
+	)
+	if personID != nil {
+		whereClause = "WHERE c.person_id = $1"
+		args = append(args, *personID)
+	}
+	if random {
+		orderClause = "ORDER BY RANDOM()"
+	} else {
+		orderClause = "ORDER BY c.detected_at DESC"
+	}
+	if limit > 0 {
+		args = append(args, limit)
+		orderClause += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT c.id, c.person_id, p.name AS person_name,
+		       c.fact_a_id, c.fact_b_id,
+		       fa.fact_text AS fact_a_text, fb.fact_text AS fact_b_text,
+		       COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
+		       COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
+		       COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
+		       c.reason, c.detected_at
+		FROM contradictions c
+		JOIN persons p ON p.id = c.person_id
+		JOIN facts fa ON fa.id = c.fact_a_id
+		JOIN facts fb ON fb.id = c.fact_b_id
+		LEFT JOIN LATERAL (
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fa.id
+		) fsa ON true
+		LEFT JOIN LATERAL (
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fb.id
+		) fsb ON true
+		%s
+		%s`, whereClause, orderClause)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query contradictions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]ContradictionAuditRow, 0)
+	for rows.Next() {
+		var r ContradictionAuditRow
+		if err := rows.Scan(
+			&r.ID, &r.PersonID, &r.PersonName,
+			&r.FactAID, &r.FactBID,
+			&r.FactAText, &r.FactBText,
+			&r.FactASourceURLs, &r.FactBSourceURLs,
+			&r.FactADate, &r.FactBDate,
+			&r.Reason, &r.DetectedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan contradiction row: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating contradictions: %w", err)
+	}
+	return out, nil
+}
+
 // GetPersonContradictions returns a page of contradictions for a person together with the total count.
 func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*PaginatedContradictions, error) {
 	query := `

@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-03: `dm contradictions check` audit tool
+
+### What was done
+- New CLI subcommand `./dm contradictions check` that re-judges already-recorded contradictions with the LLM and emits a per-row verdict (`keep` / `remove` / `ambiguous`). Read-only — never writes to the DB.
+- Flags: `-p/--person`, `--max N`, `--random` (`ORDER BY RANDOM()` for sampled audits), `--format jsonl|text`.
+- JSONL goes to stdout (jq-friendly), the summary block goes to stderr so pipes stay clean.
+- Refactor: extracted the rule body + 26 examples from `contradictionPromptTpl` into a public `contradiction.ContradictionRulesAndExamples` constant, now consumed by both the detector prompt and the new auditor prompt — single source of truth for contradiction rules.
+- New `backend/storage.ListContradictions(ctx, *personID, random, limit)` to walk contradictions across the whole DB (or scoped to one person) in a single query joining `contradictions` + `persons` + `facts` + `fact_sources`.
+
+### Why
+- The detector misses cases like accusations-vs-findings, paraphrase-same-position, and geographic-scope, so false positives accumulate in the `contradictions` table and pollute honesty scores. We needed a second-pass auditor to surface them, but writing verdicts back to the DB would bias future detection — keeping the tool diagnostic-only is the right scope. JSONL stdout makes it trivial to pipe into `jq` or feed back into Claude Code for follow-up triage.
+
 ## 2026-05-02: Matryoshka-truncate Qwen3-Embedding-8B to 1536 dims client-side
 
 ### What was done
