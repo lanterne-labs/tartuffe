@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -2644,6 +2645,318 @@ func (s *PostgresStorer) DeleteFactsForPerson(ctx context.Context, personID int6
 
 	log.Info().Int64("person_id", personID).Int64("deleted", deletedCount).Msg("Deleted facts for person")
 	return deletedCount, nil
+}
+
+// FactAuditRow is one fact returned by ListFactsForAudit. Persons mentioning
+// the fact are aggregated into Persons (a fact may belong to several people via
+// fact_mentions). FirstSourceURL / FirstOriginalQuote are picked from the
+// earliest-published source so the auditor sees a representative snippet.
+type FactAuditRow struct {
+	ID                 int64
+	FactText           string
+	EmbeddingText      string
+	CanonicalVerb      string
+	Persons            []FactAuditPerson
+	FirstSourceURL     string
+	FirstOriginalQuote string
+	// FirstSourcePublishedAt is the earliest non-null published_at across the
+	// fact's sources; nil if none of the sources carry a publication date.
+	FirstSourcePublishedAt *time.Time
+	// FactCreatedAt is when we ingested this fact. Always set.
+	FactCreatedAt time.Time
+}
+
+// FactAuditPerson is the small shape returned alongside a FactAuditRow.
+type FactAuditPerson struct {
+	ID   int64
+	Name string
+}
+
+// ListFactsForAudit returns facts for the auditor, optionally filtered to a
+// single person and/or to a specific fact id. Order is newest-first by
+// default; pass random=true for a uniform sample. limit=0 means no cap.
+func (s *PostgresStorer) ListFactsForAudit(ctx context.Context, personID *int64, factID *int64, random bool, limit int) ([]FactAuditRow, error) {
+	var (
+		conds []string
+		args  []any
+	)
+	if personID != nil {
+		args = append(args, *personID)
+		conds = append(conds, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM fact_sources fs
+			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			WHERE fs.fact_id = f.id AND fm.person_id = $%d
+		)`, len(args)))
+	}
+	if factID != nil {
+		args = append(args, *factID)
+		conds = append(conds, fmt.Sprintf("f.id = $%d", len(args)))
+	}
+	whereClause := ""
+	if len(conds) > 0 {
+		whereClause = "WHERE " + strings.Join(conds, " AND ")
+	}
+	var orderClause string
+	switch {
+	case factID != nil:
+		// Single-fact lookup: ordering is meaningless.
+		orderClause = ""
+	case random:
+		orderClause = "ORDER BY RANDOM()"
+	default:
+		orderClause = "ORDER BY f.created_at DESC"
+	}
+	if limit > 0 {
+		args = append(args, limit)
+		orderClause += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			f.id,
+			f.fact_text,
+			COALESCE(f.embedding_text, ''),
+			COALESCE(f.canonical_verb, ''),
+			f.created_at,
+			COALESCE(first_src.source_url, '')      AS first_source_url,
+			COALESCE(first_src.original_quote, '')  AS first_original_quote,
+			first_src.published_at                  AS first_source_published_at,
+			COALESCE(persons_agg.persons_json, '[]'::jsonb) AS persons
+		FROM facts f
+		LEFT JOIN LATERAL (
+			SELECT fs.source_url, fs.original_quote, fs.published_at
+			FROM fact_sources fs
+			WHERE fs.fact_id = f.id
+			ORDER BY fs.published_at ASC NULLS LAST, fs.id ASC
+			LIMIT 1
+		) first_src ON true
+		LEFT JOIN LATERAL (
+			SELECT jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name) ORDER BY p.name) AS persons_json
+			FROM (
+				SELECT DISTINCT fm.person_id
+				FROM fact_sources fs
+				JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+				WHERE fs.fact_id = f.id
+			) ids
+			JOIN persons p ON p.id = ids.person_id
+		) persons_agg ON true
+		%s
+		%s`, whereClause, orderClause)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query facts for audit: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]FactAuditRow, 0)
+	for rows.Next() {
+		var r FactAuditRow
+		var personsJSON []byte
+		if err := rows.Scan(
+			&r.ID,
+			&r.FactText,
+			&r.EmbeddingText,
+			&r.CanonicalVerb,
+			&r.FactCreatedAt,
+			&r.FirstSourceURL,
+			&r.FirstOriginalQuote,
+			&r.FirstSourcePublishedAt,
+			&personsJSON,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan fact audit row: %w", err)
+		}
+		if len(personsJSON) > 0 {
+			if err := json.Unmarshal(personsJSON, &r.Persons); err != nil {
+				return nil, fmt.Errorf("failed to decode persons array for fact %d: %w", r.ID, err)
+			}
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating facts for audit: %w", err)
+	}
+	return out, nil
+}
+
+// FactDeletionCleanupResult summarises what DeleteFactsAndCleanup did.
+type FactDeletionCleanupResult struct {
+	FactsDeleted    int   // rows removed from facts
+	StancesDeleted  int   // stance_documents that became empty after the cascade and were dropped
+	PersonsAffected []int64 // persons whose honesty score was recomputed
+}
+
+// DeleteFactsAndCleanup removes a set of facts and cascades the cleanup the
+// schema's ON DELETE CASCADE rules already partially handle (contradictions,
+// stance_document_facts, fact_sources, fact_mentions, fact_relations,
+// fact_pair_checks). It then:
+//
+//   - drops any stance_documents that became empty after the cascade (so we
+//     don't leave dangling label/summary rows whose centroid no longer
+//     describes anything),
+//   - recomputes the honesty score for every person mentioned by any of the
+//     deleted facts (the cascade dropped contradictions and shifted bundle
+//     counts, so the score is stale otherwise).
+//
+// All work happens in a single transaction.
+func (s *PostgresStorer) DeleteFactsAndCleanup(ctx context.Context, factIDs []int64) (FactDeletionCleanupResult, error) {
+	var res FactDeletionCleanupResult
+	if len(factIDs) == 0 {
+		return res, nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return res, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Snapshot affected persons and stances BEFORE the cascade fires, since
+	//    the joins disappear when the rows are deleted.
+	affectedPersons, err := scanInt64Set(ctx, tx, `
+		SELECT DISTINCT fm.person_id
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fs.fact_id = ANY($1)`, factIDs)
+	if err != nil {
+		return res, fmt.Errorf("failed to collect affected persons: %w", err)
+	}
+
+	affectedStances, err := scanInt64Set(ctx, tx, `
+		SELECT DISTINCT stance_document_id
+		FROM stance_document_facts
+		WHERE fact_id = ANY($1)`, factIDs)
+	if err != nil {
+		return res, fmt.Errorf("failed to collect affected stances: %w", err)
+	}
+
+	// 2. Delete the facts. CASCADE handles:
+	//      - contradictions (fact_a_id / fact_b_id REFERENCES facts ON DELETE CASCADE)
+	//      - stance_document_facts (fact_id REFERENCES facts ON DELETE CASCADE)
+	//      - fact_sources -> fact_mentions (CASCADE chain)
+	//      - fact_relations, fact_pair_checks (CASCADE)
+	tag, err := tx.Exec(ctx, `DELETE FROM facts WHERE id = ANY($1)`, factIDs)
+	if err != nil {
+		return res, fmt.Errorf("failed to delete facts: %w", err)
+	}
+	res.FactsDeleted = int(tag.RowsAffected())
+
+	// 3. Drop stance_documents that became empty as a side-effect of the cascade.
+	//    A stance with zero facts has no meaningful label/summary/centroid and
+	//    will pollute future stance routing if left in place.
+	if len(affectedStances) > 0 {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM stance_documents
+			WHERE id = ANY($1)
+			  AND NOT EXISTS (
+				SELECT 1 FROM stance_document_facts sdf WHERE sdf.stance_document_id = stance_documents.id
+			  )`, affectedStances)
+		if err != nil {
+			return res, fmt.Errorf("failed to delete now-empty stances: %w", err)
+		}
+		res.StancesDeleted = int(tag.RowsAffected())
+	}
+
+	// 4. Recompute honesty score for each affected person. The cascade may have
+	//    deleted contradictions, so bundle counts and the absolute-decay term
+	//    have shifted. We emit a person_updated event but NOT a contradiction
+	//    event — none was added.
+	for _, pid := range affectedPersons {
+		if err := s.recomputeScoreAfterFactDeletion(ctx, tx, pid, res.FactsDeleted); err != nil {
+			return res, fmt.Errorf("failed to recompute honesty score for person %d: %w", pid, err)
+		}
+	}
+	res.PersonsAffected = affectedPersons
+
+	if err := tx.Commit(ctx); err != nil {
+		return res, fmt.Errorf("failed to commit fact deletion: %w", err)
+	}
+
+	log.Info().
+		Int("facts_deleted", res.FactsDeleted).
+		Int("stances_deleted", res.StancesDeleted).
+		Int("persons_recomputed", len(res.PersonsAffected)).
+		Msg("DeleteFactsAndCleanup complete")
+	return res, nil
+}
+
+// recomputeScoreAfterFactDeletion is the equivalent of
+// recomputeHonestyScoreAndEmitEvents but tailored for the post-delete path:
+// no contradiction-specific event payload, since deletion did not add one.
+// The parent-entity rollup is still run so non-human entities reflect the
+// updated member scores.
+func (s *PostgresStorer) recomputeScoreAfterFactDeletion(ctx context.Context, tx pgx.Tx, personID int64, factsDeletedTotal int) error {
+	factsCount, err := s.getPersonFactsCount(ctx, tx, personID)
+	if err != nil {
+		return err
+	}
+	stats, err := s.getPersonContradictionStats(ctx, tx, personID)
+	if err != nil {
+		return err
+	}
+	ownScore := ComputeHonestyScore(factsCount, stats)
+
+	var entityType *string
+	if err := tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType); err != nil {
+		return fmt.Errorf("failed to get entity_type: %w", err)
+	}
+
+	var membersScore *float64
+	if entityType != nil && *entityType != "human" {
+		membersScore, err = s.computeMembersScore(ctx, tx, personID)
+		if err != nil {
+			return err
+		}
+	}
+	aggregate := ComputeAggregateScore(ownScore, membersScore)
+
+	if err := s.updatePersonHonestyScore(ctx, tx, personID, ownScore, membersScore, aggregate); err != nil {
+		return err
+	}
+
+	payload := map[string]interface{}{
+		"honesty_score":  aggregate,
+		"own_score":      ownScore,
+		"members_score":  membersScore,
+		"facts_count":    factsCount,
+		"contradictions": stats.Total,
+		"bundles":        stats.Bundles,
+		"reason":         "fact_audit_deletion",
+	}
+	if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
+		return fmt.Errorf("failed to emit person_updated event: %w", err)
+	}
+
+	if err := s.recomputeParentEntityScores(ctx, tx, personID); err != nil {
+		return fmt.Errorf("failed to recompute parent entity scores: %w", err)
+	}
+
+	log.Info().
+		Int64("person_id", personID).
+		Float64("own_score", ownScore).
+		Float64("aggregate", aggregate).
+		Int("facts_count", factsCount).
+		Int("bundles", stats.Bundles).
+		Int("contradictions_total", stats.Total).
+		Msg("Recomputed score after fact deletion")
+	return nil
+}
+
+func scanInt64Set(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]int64, error) {
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]int64, 0)
+	for rows.Next() {
+		var v int64
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // GetFactPersons returns persons who have a fact related to the given fact.

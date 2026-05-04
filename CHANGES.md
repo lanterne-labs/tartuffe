@@ -2,6 +2,24 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-04: `dm facts audit` — LLM-guided fact auditor with cascade cleanup
+
+### What was done
+- New CLI `./dm facts audit [--person … | --person-id … | --fact-id …] [--max N] [--random] [--apply] [--endpoint URL] [--model M] [--apikey K]`.
+- New auditor `backend/core/fact_auditor.go::OpenAIFactAuditor`. The audit prompt embeds the WHOLE `CoreFactExtractionPrompt` verbatim (rendered via `BuildFactExtractionPrompt` with audit-mode placeholders), wrapped with a frame that says "evaluate THIS existing fact, do not extract new ones; verdicts: keep / delete / unsure". This guarantees the audit rules cannot drift from the extractor rules — when the extractor prompt is updated, the audit picks up the new rules on the next call.
+- Audit prompt threads `source_published_at` and `fact_created_at` into the fact-under-audit block, and clarifies rule 6 ("vague"): a fact lacking an inline date is NOT vague when the audit context already provides a publication / insertion date. This avoids spurious "vague" deletes on facts like "Trump waived US shipping law for oil and gas" that have a known source date in `fact_sources.published_at`.
+- New storage helpers: `ListFactsForAudit(personID, factID, random, limit)` aggregates persons and source metadata into one row per fact; `DeleteFactsAndCleanup(factIDs)` runs the destructive path in a single tx — `DELETE FROM facts WHERE id = ANY($1)` (FK CASCADE handles `contradictions`, `stance_document_facts`, `fact_sources`/`fact_mentions`, `fact_relations`, `fact_pair_checks`), then drops `stance_documents` that became empty as a result, then recomputes own_score / members_score / aggregate for each affected person and emits `person_updated` events with `reason: fact_audit_deletion`.
+- `--endpoint` / `--model` / `--apikey` overrides exist explicitly so the auditor can point at a local LLM gateway (e.g. `http://cachy:8080/v1` over Tailscale) for cheap experimentation against multiple models without touching the live `OPEN_AI_*` env vars.
+
+### Why
+- The 2026-05-04 magnet-stance incident on Trump revealed that historically-extracted facts contain a long tail of rule-violators (meta-observations, journalist characterisations, conditional threats incorrectly normalised, …). Re-running the extractor over each source article would require re-scraping and would not converge — the same prompt that produced the bad fact would just produce it again. An LLM auditor that reads the EXISTING facts under the CURRENT rules separates "what we have" from "what we should have" without any re-scrape.
+- Default = read-only JSONL: keep / delete / unsure verdicts plus reasoning per row, summary on stderr. `--apply` is gated by an interactive confirm (skip with `--yes`). This makes the tool safe to run repeatedly with different models / sample sizes for calibration before touching the database.
+
+### Operational notes
+- On gemma-4-26b-a4b-it (cachy llama-swap, 8k ctx) a 50-fact Trump sample takes ~6 min and reports ~25-33% delete rate, suggesting a wide gap between historical and current rules. Several borderline cases vary run-to-run at temp=0.1 — for a real bulk apply, sample 2-3 times and majority-vote, or use a stronger model (Sonnet/Opus) for the final pass before deletion.
+- Known false-positive class: gemma sometimes flags the entity's own *conditional threats* (e.g. "Trump said he would strike if X by 20:00") as `speculative` (rule 3). Conditional promises ARE Type 1 — worth tightening rule 3 in the extractor with an explicit carve-out before relying on the audit verdict.
+- Cascade is "delete cleanly" by design: every contradiction touching a deleted fact disappears, every stance that becomes empty is dropped, every affected person's honesty score is recomputed in the same tx. Re-running `dm stances rebuild --resume` after a bulk apply is still recommended to absorb facts that were already orphaned (the 2,673 stance-less Trump facts pre-existing this work).
+
 ## 2026-05-04: Reject meta / pattern-of-behavior facts and stance labels
 
 ### What was done
