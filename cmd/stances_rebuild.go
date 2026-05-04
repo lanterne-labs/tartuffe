@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"sync"
@@ -64,10 +66,25 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	adapter := storage.NewStanceStorerAdapter(storer)
 
 	var stanceManager *core.StanceManager
+	var bundler *contradiction.Bundler
 	if !stancesRebuildDryRun {
 		stanceManager, err = core.NewStanceManagerFromEnv(adapter)
 		if err != nil {
 			return fmt.Errorf("failed to create stance manager: %w", err)
+		}
+
+		// Bundler is required so that after rebuilding stances we can immediately
+		// rebundle the contradictions whose bundle_stance_id was wiped by the FK
+		// ON DELETE SET NULL when stances were dropped. Without this, a rebuild
+		// would leave the system in an inconsistent state (correct stances, all
+		// contradictions solo) until a separate command was run.
+		embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
+		if err != nil {
+			return fmt.Errorf("failed to create embedding generator (required for per-person bundle phase): %w", err)
+		}
+		bundler, err = contradiction.NewBundlerFromEnv(storer, embedder)
+		if err != nil {
+			return fmt.Errorf("failed to create bundler (required for per-person bundle phase): %w", err)
 		}
 	}
 
@@ -87,6 +104,7 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 		Msg("Starting stance rebuild")
 
 	var totalDeleted, totalCreated, skipped int64
+	var totalRebundledFast, totalRebundledLLM, totalBundleFailed int64
 
 	processOne := func(p storage.PersonInfo) {
 		existing, err := adapter.GetStanceDocumentsForPerson(ctx, p.ID)
@@ -119,6 +137,15 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 			return
 		}
 		atomic.AddInt64(&totalCreated, int64(created))
+
+		if stancesRebuildDryRun {
+			return
+		}
+
+		fast, llm, failed := rebundleContradictionsForPerson(ctx, storer, bundler, p)
+		atomic.AddInt64(&totalRebundledFast, fast)
+		atomic.AddInt64(&totalRebundledLLM, llm)
+		atomic.AddInt64(&totalBundleFailed, failed)
 	}
 
 	jobs := make(chan storage.PersonInfo)
@@ -141,13 +168,70 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	processed := int64(len(persons)) - skipped
 	fmt.Println()
 	fmt.Println("=== STANCE REBUILD RESULTS ===")
-	fmt.Printf("Persons processed:        %d\n", processed)
-	fmt.Printf("Persons skipped (resume): %d\n", skipped)
-	fmt.Printf("Stances deleted:          %d\n", totalDeleted)
-	fmt.Printf("Stances created:          %d\n", totalCreated)
+	fmt.Printf("Persons processed:               %d\n", processed)
+	fmt.Printf("Persons skipped (resume):        %d\n", skipped)
+	fmt.Printf("Stances deleted:                 %d\n", totalDeleted)
+	fmt.Printf("Stances created:                 %d\n", totalCreated)
+	if !stancesRebuildDryRun {
+		fmt.Printf("Contradictions rebundled (SQL):  %d\n", totalRebundledFast)
+		fmt.Printf("Contradictions rebundled (LLM):  %d\n", totalRebundledLLM)
+		if totalBundleFailed > 0 {
+			fmt.Printf("Contradictions left solo:        %d (LLM bundler declined or failed)\n", totalBundleFailed)
+		}
+	}
 	if stancesRebuildDryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
 	}
 
 	return nil
+}
+
+// rebundleContradictionsForPerson re-runs the two-phase bundling logic for a single
+// person right after their stances have been rebuilt. Phase 1 is the SQL fast path
+// (free) that catches contradictions whose two facts now share a stance. Phase 2 is
+// the LLM Bundler over remaining solos (cross-stance contradictions). Returns
+// (rebundled_via_sql, rebundled_via_llm, left_solo_after_llm). All errors are logged
+// and counted as failures rather than aborting the rebuild — bundling is recoverable
+// later, and a single person's failure should not block the rest of the run.
+func rebundleContradictionsForPerson(
+	ctx context.Context,
+	storer *storage.PostgresStorer,
+	bundler *contradiction.Bundler,
+	p storage.PersonInfo,
+) (fast, llm, failed int64) {
+	pid := p.ID
+
+	updated, err := storer.BundleBackfillFastPath(ctx, &pid)
+	if err != nil {
+		log.Error().Err(err).Str("person", p.Name).Msg("Bundle phase 1 (SQL fast path) failed")
+		return 0, 0, 0
+	}
+
+	solos, err := storer.ListSoloContradictionsForBundling(ctx, &pid, 0)
+	if err != nil {
+		log.Error().Err(err).Str("person", p.Name).Msg("Bundle phase 2 prep: list solos failed")
+		return updated, 0, 0
+	}
+	if len(solos) == 0 {
+		return updated, 0, 0
+	}
+
+	for _, row := range solos {
+		if err := bundler.Resolve(ctx, row.PersonID, row.ID, row.FactAID, row.FactBID, row.FactAText, row.FactBText, row.Reason); err != nil {
+			log.Warn().Err(err).Str("person", p.Name).Int64("contradiction_id", row.ID).Msg("Bundle phase 2 (LLM) failed; row stays solo")
+			failed++
+			continue
+		}
+		llm++
+	}
+
+	if updated > 0 || llm > 0 || failed > 0 {
+		log.Info().
+			Str("person", p.Name).
+			Int64("rebundled_sql", updated).
+			Int64("rebundled_llm", llm).
+			Int64("left_solo", failed).
+			Msg("Rebundled contradictions after stance rebuild")
+	}
+	return updated, llm, failed
 }

@@ -2,6 +2,32 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-03: `stances rebuild` is now atomic (rebuild + rebundle in one pass)
+
+### What was done
+- `./dm stances rebuild` now performs all three steps per person in a single run: (a) delete existing stances, (b) re-cluster facts into fresh stances, (c) Phase 1 SQL fast-path bundle (`BundleBackfillFastPath`) over that person's contradictions, (d) Phase 2 LLM Bundler over remaining solo contradictions. Both phases are scoped to the person being rebuilt — the `personID *int64` argument plumbed through `BundleBackfillFastPath` / `ListSoloContradictionsForBundling` is now always set during a rebuild.
+- The standalone `./dm contradictions bundle-backfill` subcommand is removed. Its body lived in `cmd/contradictions_bundle_backfill.go`; the file is deleted. All bundling is now triggered either inline at insert (sync/batch contradiction detection) or as part of `stances rebuild`.
+- Summary printout gained `Contradictions rebundled (SQL)` / `Contradictions rebundled (LLM)` / `Contradictions left solo` lines so a rebuild's bundling effect is visible without a separate audit.
+
+### Why
+- Deleting and re-creating stances wipes `contradictions.bundle_stance_id` (FK has `ON DELETE SET NULL`), leaving every contradiction as a solo bundle until something re-bundles. Forcing the operator to remember a second command was a footgun: a half-completed rebuild left the DB in a worse state than before — correct stances, but every honesty score temporarily inflated by the un-bundled contradictions. Doing it per-person inline means a `^C` mid-run leaves earlier persons fully consistent, and the never-touched persons untouched.
+- Per-person scoping of Phase 1/2 (vs. running them globally at the end) keeps a single person's blast radius isolated and parallelises naturally with `--parallel N`.
+
+### Operational notes
+- `--dry-run` skips both bundling phases (no DB writes anywhere). `--resume` still skips persons with existing stances; bundling for those persons is not re-run by `stances rebuild` — use a real rebuild if their bundles need to be recomputed.
+- Running `stances rebuild` now requires `OPEN_AI_KEY`/`OPEN_AI_API` to be set even if no new facts are ingested, because the LLM Bundler is constructed up-front.
+
+## 2026-05-03: Stance topic-grouping prefers subject over rhetorical method
+
+### What was done
+- Tightened the LLM prompt in `core.StanceManager.GroupTopicLabels` (`backend/core/stance_manager.go`) with explicit subject-vs-method rules. Bad group names like "policy announcements", "campaign promises", "denials and reversals" are now called out as forms (HOW the figure communicates) and rejected. Good group names ("US tariffs on Chinese goods", "NATO Article 5 commitment", "parliamentary assistants case") describe WHAT the labels are about. Default leans toward splitting by subject; merging only when subjects truly match.
+
+### Why
+- A rebuild on Donald Trump produced a single "policy announcements contradictions" bundle of 26 pairs spanning tariffs, NATO, immigration, and healthcare — the model had grouped by *speech act* rather than *topic*. That collapses unrelated disagreements into one bundle, defeating the point of the bundling layer (under-counting distinct lies). The fix is at the topic-clustering boundary, not at bundling: once stances are subject-scoped, contradictions naturally bundle along the right axis.
+
+### Operational notes
+- Existing stance documents created before this change are unaffected until rebuilt. Run `./dm stances rebuild --person "Donald Trump"` to validate, then `./dm stances rebuild --parallel 8` for full re-clustering once the per-person test looks right.
+
 ## 2026-05-03: Stance is mandatory on every fact (single ingest path)
 
 ### What was done

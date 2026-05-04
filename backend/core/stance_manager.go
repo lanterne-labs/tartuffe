@@ -548,18 +548,21 @@ func (sm *StanceManager) GroupTopicLabels(ctx context.Context, labels []string) 
 LABELS:
 %s
 RULES:
-- Group labels that are about the SAME subject, case, event, or policy area into one group.
-- Example: "fund-embezzlement generalized-system", "fund-embezzlement instructions", "embezzlement European-funds", "embezzlement public-funds parliamentary-assistants-case" should ALL be in one group about embezzlement.
-- Example: "ineligibility sentence democratic", "ineligibility decision contestation", "ineligibility first-instance conviction" should ALL be in one group about ineligibility.
-- Example: "presidential election candidacy", "presidential-candidacy future-conviction", "presidential candidacy succession" should ALL be in one group about presidential candidacy.
-- Choose a clear, specific group name (max 120 chars) with enough context to distinguish it from similar topics in different time periods.
-- Include the SPECIFIC case name, event, or policy (e.g., "parliamentary assistants case", "2027 presidential election").
+- A "topic" is a SUBJECT (a specific policy area, case, event, person, or institution) — NOT a rhetorical pattern, behavioural trait, or speech act.
+- NEVER group by HOW the figure communicates (announcements, denials, flip-flops, exaggerations, promises, accusations). These are forms, not topics.
+- ALWAYS group by WHAT the labels are about (tariffs, NATO membership, parliamentary assistants case, immigration policy, healthcare reform).
+- Bad group name: "policy announcements" / "campaign promises" / "denials and reversals" / "controversial statements" — these describe form, not subject.
+- Good group name: "US tariffs on Chinese goods (2025)" / "NATO Article 5 commitment" / "embezzlement -- parliamentary assistants case (2024-2025 trial)" / "border wall construction policy".
+- If two labels share a subject but disagree (one supports, one opposes; one announces, one reverses), MERGE them — that disagreement is exactly what the bundle is meant to capture.
+- If two labels share a form (both are "announcements", both are "denials") but concern DIFFERENT subjects (announcement about tariffs vs. announcement about troop withdrawal), KEEP them separate.
+- Example: "fund-embezzlement generalized-system", "fund-embezzlement instructions", "embezzlement European-funds", "embezzlement public-funds parliamentary-assistants-case" should ALL be in one group about embezzlement (same subject).
+- Example: "ineligibility sentence democratic", "ineligibility decision contestation", "ineligibility first-instance conviction" should ALL be in one group about ineligibility (same subject).
+- Example: "tariff policy China", "tariff policy steel imports", "tariff policy Mexico", "tariff policy reversal" should be split BY COUNTRY/SECTOR, NOT lumped under "tariff announcements".
+- Choose a clear, specific group name (max 120 chars) with enough subject context to distinguish it from sibling topics.
 - Include a TEMPORAL ANCHOR when relevant: year, trial phase, election cycle.
-- Bad: "embezzlement" / "presidential candidacy"
-- Good: "embezzlement -- parliamentary assistants case (2024-2025 trial)" / "presidential candidacy 2027 post-conviction"
 - Every label MUST appear in exactly one group. No label should be left out.
-- Keep truly distinct topics separate (e.g., "acquittal public-insult case" is different from "parliamentary assistants case conviction").
-- Err on the side of merging: if two labels could plausibly be about the same subject, merge them.
+- Keep truly distinct subjects separate (e.g., "acquittal public-insult case" is different from "parliamentary assistants case conviction").
+- Err on the side of SPLITTING when subjects differ; err on the side of MERGING only when subjects truly match.
 
 Return ONLY valid JSON:
 {
