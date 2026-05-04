@@ -2,6 +2,19 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-04: Reject meta / pattern-of-behavior facts and stance labels
+
+### What was done
+- Fact extractor (`backend/core/fact_extractor.go`): added REJECT rule 5b that explicitly bans pattern-of-behavior / meta-observation inputs ("X has repeatedly contradicted his announcements", "X has a long history of denying climate change"). Listed RED FLAG phrasings ("repeatedly", "régulièrement", "multiplié", "tends to", "has long claimed", "is known for", "pattern of", "every time"). Also tightened the `embedding_text` rule to forbid form-words ("announcements", "contradictions", "denials", "rhetoric", "pattern") as the topic fingerprint — the embedding must point at a SUBJECT.
+- StanceManager `assignTopic` (`backend/core/stance_manager.go`): tightened the `new_topic_label` LABEL RULES with the same subject-vs-form distinction and an explicit list of bad meta labels ("policy announcements contradictions", "campaign promises", "denials and reversals", "flip-flops on foreign policy", …). Pairs with the earlier prompt fix in `GroupTopicLabels`.
+
+### Why
+- The Trump rebuild produced a single-fact stance "policy announcements contradictions" anchored on a journalist commentary fact ("Donald Trump a multiplié les annonces grandiloquentes qu'il a régulièrement contredites"). The stance summary then literally described the meta-pattern of "promises he reverses", so the LLM Bundler happily attached 26 unrelated subject-specific contradictions (Iran war, Strait of Hormuz, Venezuela, Iran negotiations, …) into it. Two distinct mistakes were chained: (a) ingesting a meta-observation as if it were a fact; (b) labelling its stance with a meta name that then magnetises other contradictions.
+- The fix is at both layers: refuse the meta-fact at extraction (root cause), AND refuse the meta-label at stance creation (defence in depth, in case extraction lets one slip through).
+
+### Operational notes
+- Existing meta-facts and meta-stances stay until cleaned up. The user-facing impact is limited (one or two magnet stances per person), but they should be deleted via SQL or a future audit pass before the next full rebuild.
+
 ## 2026-05-03: `stances rebuild` is now atomic (rebuild + rebundle in one pass)
 
 ### What was done

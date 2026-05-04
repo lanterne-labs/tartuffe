@@ -70,6 +70,16 @@ A journalist's interpretation or narrative framing is NOT a valid fact. However,
 - ✅ "X a déclaré soutenir Donald Trump" — X's own statement
 - ✅ "An investigation revealed X received €50,000 from Y" — documented finding with specifics
 
+**5b. Pattern-of-behavior / meta-observation about the entity**
+A summary statement describing the entity's HABITUAL behavior, RHETORICAL PATTERN, or repeated tendency is NEVER a valid fact, even when phrased as "X did Y", because no single subject/quote/event/date can be attached to it. A fact must point to ONE concrete claim, action, or outcome — not a pattern across many.
+- ❌ "X has repeatedly made grand announcements he later contradicts" — describes a pattern, not a single act
+- ❌ "X a multiplié les annonces grandiloquentes qu'il a régulièrement contredites" — pattern phrasing ("a multiplié", "régulièrement"), no specific subject or quote
+- ❌ "Y change frequently of position on immigration" — habit, not an event
+- ❌ "Z has a long history of denying climate change" — meta-summary
+- ✅ "Z stated on April 5 that climate change is a hoax" — single dated claim
+- ✅ "Y voted against the immigration bill on March 12" — single concrete vote
+RED FLAGS that almost always mean PATTERN: "repeatedly", "has a history of", "multiplié", "régulièrement", "tends to", "has long claimed", "is known for", "pattern of", "every time".
+
 **6. Vague or not concrete**
 Facts MUST contain specific information: numbers, dates, named actions, precise claims. No vague qualifiers.
 - ❌ "Party X pays its leaders generously" — no numbers
@@ -110,6 +120,9 @@ Return a JSON array. Each object has 8 fields (in this order):
    - Topic abstraction: use the BROADEST policy domain. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
    - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
    - Keep it SHORT: 2-5 words total
+   - ⚠️ MUST be a SUBJECT (policy area, case, event, institution), NOT a rhetorical pattern or speech act. Words like "announcements", "contradictions", "promises", "denials", "flip-flops", "rhetoric", "pattern" describe FORM and are forbidden as the topic label. If the fact has no specific subject, you should have rejected it via REJECT rule 5b.
+   - ❌ Bad: "policy announcements contradictions" / "campaign promises" / "rhetoric threats" / "denials reversals"
+   - ✅ Good: "tariffs china 2025" / "strait-of-hormuz coalition" / "iran nuclear-deal" / "NATO article-5"
    - Examples:
      "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → wrongdoing parliamentary-assistants-case
      "a promis de baisser l'impôt sur le revenu de 15%%" → tax-cut income-tax

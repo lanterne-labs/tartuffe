@@ -476,6 +476,12 @@ LABEL RULES (for new_topic_label when creating a new topic):
 - Bad: "justice politique" / "presidential candidacy" / "party funding"
 - Good: "denial of wrongdoing -- PA case 2025 appeal" / "presidential candidacy post-ineligibility 2027" / "EU fund embezzlement allegations 2024"
 
+⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT (a specific case, policy area, event, person, institution), NOT a way of speaking or a behavioural trait. If the only thing the fact has in common with future facts is "they are all promises he later reversed" or "they are all accusations", that is a FORM, not a topic — go down to the actual SUBJECT instead.
+- ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "controversial statements" / "rhetoric and threats" — these describe HOW he speaks, not WHAT about
+- ❌ "flip-flops on foreign policy" / "pattern of exaggeration" — meta-summaries
+- ✅ "US tariffs on Chinese goods 2025" / "NATO Article 5 commitment 2026" / "Strait of Hormuz coalition" / "Iran nuclear deal negotiations 2026"
+- If the fact is itself a journalist's META observation about the entity (e.g. "X has repeatedly contradicted himself"), the upstream extractor should have rejected it; mark it as NEW_STANCE only if a specific subject is identifiable, otherwise pick the closest existing subject-bound topic.
+
 Return ONLY valid JSON:
 {
   "reasoning": "Brief explanation of your choice",
