@@ -55,6 +55,15 @@ Anything that hasn't happened yet or is uncertain: "risque", "pourrait", "could"
 - ❌ "X risks ineligibility" — speculative
 - ❌ "X will learn her verdict on July 7" — future scheduling
 
+⚠️ EXCEPTION — the entity's own conditional promise/threat IS a valid Type 1 fact.
+The decisive test is **who controls the action that follows the condition**:
+- If the action AFTER the "if" is performed BY THE SUBJECT, the statement is a contradictable commitment (the subject either acts as promised or does not — that is exactly the kind of flip-flop we track). KEEP it.
+- If the action AFTER the "if" is performed by SOMEONE ELSE or by impersonal forces ("the regime will fall", "the markets will collapse", "Iran will surrender"), the statement is a PREDICTION about a third party. REJECT it.
+- ✅ "Trump said he will strike Iranian power stations IF Iran doesn't reopen Hormuz by 20:00" — the action ("strike") is HIS to perform; he can later strike or not. Type 1 conditional threat.
+- ✅ "X promised to resign IF the bill passes" — the action ("resign") is HIS to perform. Type 1 conditional promise.
+- ❌ "Trump claimed Iran can fall in one night IF pressure continues" — the action ("fall") is performed by Iran, not by Trump. Pure prediction.
+- ❌ "X said the economy will crash IF the law is repealed" — the action ("crash") is performed by impersonal markets, not by X. Prediction.
+
 **4. Not contradictable**
 If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - Hopes, wishes, preferences, feelings, trust

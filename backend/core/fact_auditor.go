@@ -72,7 +72,7 @@ DECISION POLICY (read carefully):
     * pattern_of_behavior (rule 5b): "X has repeatedly", "a multiplié", "régulièrement", "tends to", habits/patterns/meta-summaries
     * journalist_characterization (rule 5): subjective narrative framing without evidence
     * not_contradictable (rule 4): hopes, feelings, travel, biography, courtroom procedure
-    * speculative (rule 3): "could", "may", "risks", future scheduling
+    * speculative (rule 3): "could", "may", "risks", future scheduling, OR a prediction whose action is performed by a third party / impersonal force ("Iran will fall", "the markets will crash"). EXCEPTION: a conditional whose post-"if" action is performed BY THE SUBJECT ("Trump said he will strike if Iran refuses") is a Type 1 commitment — KEEP it.
     * vague (rule 6): no numbers, no concrete action. NOTE: if the fact lacks a date IN THE TEXT but the audit block below provides "source_published_at" or "fact_created_at", the fact IS anchored in time — do NOT flag it vague for missing an inline date. Only flag vague when the action/claim itself is fuzzy ("pays generously", "supports the policy") with no specifics.
     * lawyers_as_subject (rule 2): defense team / Me / Maître as subject_entity
     * not_about_entity (rule 1): third-party opinion, opponents' claims, organisation the entity does not lead
