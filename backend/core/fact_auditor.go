@@ -9,7 +9,55 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
+
+// factAuditAllowedRules is the closed set of RULE tokens the auditor prompt
+// asks the model to return. Anything outside this set is treated as a parse
+// error and triggers a strict retry — we deliberately do NOT normalise variants
+// like "vague_or_not_concrete" or "rule_6_vague", because tolerant matching
+// hides extraction bugs and produces silently-wrong rule frequencies in the
+// dashboards. Strict-or-retry is the contract.
+var factAuditAllowedRules = map[string]bool{
+	"none":                        true,
+	"not_about_entity":            true,
+	"lawyers_as_subject":          true,
+	"speculative":                 true,
+	"not_contradictable":          true,
+	"journalist_characterization": true,
+	"pattern_of_behavior":         true,
+	"vague":                       true,
+	"polls_or_surveys":            true,
+}
+
+// factAuditAllowedRulesList is the prompt-friendly rendering of the closed
+// rule enum, kept in alphabetical order so retries quote a stable list.
+var factAuditAllowedRulesList = []string{
+	"none",
+	"journalist_characterization",
+	"lawyers_as_subject",
+	"not_about_entity",
+	"not_contradictable",
+	"pattern_of_behavior",
+	"polls_or_surveys",
+	"speculative",
+	"vague",
+}
+
+// validateFactAuditRule checks that `raw` (after lower/trim) is in the closed
+// enum. Returns the canonical token on success, or an error describing what
+// the LLM violated so the caller can issue a corrective retry.
+func validateFactAuditRule(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", fmt.Errorf("RULE field is empty (must be one of: %s)", strings.Join(factAuditAllowedRulesList, ", "))
+	}
+	if !factAuditAllowedRules[s] {
+		return "", fmt.Errorf("RULE %q is not in the closed enum (must be one of: %s)", raw, strings.Join(factAuditAllowedRulesList, ", "))
+	}
+	return s, nil
+}
 
 // FactAuditVerdict is the auditor's judgement on an existing fact row.
 type FactAuditVerdict string
@@ -83,10 +131,21 @@ DECISION POLICY (read carefully):
 RESPONSE FORMAT — respond with EXACTLY three lines, in this order:
 
 REASONING: [1-2 sentences identifying which rule(s) apply and why]
-RULE: [snake_case rule label from the list above, or "none" if VERDICT is keep]
+RULE: [exactly one token, no spaces, no quotes — see closed list below]
 VERDICT: [keep|delete|unsure]
 
-Your verdict MUST follow logically from your reasoning.`
+⚠️ STRICT FORMATTING — the RULE field MUST be EXACTLY ONE of these tokens (lowercase snake_case, no extra words, no parentheses, no rule numbers, no spaces):
+  none
+  not_about_entity
+  lawyers_as_subject
+  speculative
+  not_contradictable
+  journalist_characterization
+  pattern_of_behavior
+  vague
+  polls_or_surveys
+
+If VERDICT is "keep", RULE MUST be "none". If VERDICT is "delete" or "unsure", RULE MUST be one of the eight rule tokens above. Do NOT invent variants like "vague_or_not_concrete", "rule_6_vague", "vague (rule 6)" — return EXACTLY the token from the list. Your verdict MUST follow logically from your reasoning.`
 
 var (
 	factAuditReasoningRegex = regexp.MustCompile(`(?i)^\s*REASONING\s*:\s*(.*)$`)
@@ -151,47 +210,94 @@ func (a *OpenAIFactAuditor) Model() string { return a.model }
 // Endpoint returns the chat-completions URL the auditor will hit (for logging).
 func (a *OpenAIFactAuditor) Endpoint() string { return a.apiURL }
 
-// Audit evaluates a single fact row and returns the verdict.
+// Audit evaluates a single fact row and returns the verdict. If the LLM's
+// first response is malformed (missing VERDICT line, RULE outside the closed
+// enum), the auditor sends ONE strict corrective follow-up and re-parses. If
+// the second response is still bad, the result surfaces the parse error so
+// the caller can log / mark the fact rather than swallow garbage.
 func (a *OpenAIFactAuditor) Audit(ctx context.Context, in FactAuditInput) FactAuditResult {
 	prompt := buildFactAuditPrompt(in)
+	messages := []llm.ChatMessage{{Role: "user", Content: prompt}}
 
+	llmText, err := a.callChat(ctx, messages)
+	if err != nil {
+		return FactAuditResult{Err: err}
+	}
+	res := parseFactAuditResponse(llmText)
+	res.RawResp = llmText
+	if res.Err == nil {
+		return res
+	}
+
+	// Strict retry: tell the model EXACTLY what was wrong with its first
+	// reply and ask for a fresh response in the required format. We append
+	// the previous (bad) reply to the conversation so the model can see it
+	// and avoid repeating the same mistake.
+	log.Warn().Err(res.Err).Str("raw_response", llmText).
+		Msg("Fact audit: first response failed strict parse; issuing corrective retry")
+	corrective := fmt.Sprintf(
+		`Your previous reply was rejected: %s.
+
+Reply ONCE MORE with EXACTLY three lines, in this order, and nothing else:
+
+REASONING: <1-2 sentences>
+RULE: <one token from this list ONLY: %s>
+VERDICT: <keep|delete|unsure>
+
+If VERDICT is "keep", RULE MUST be "none". Do NOT add commentary, headers, code fences, or any text outside the three required lines.`,
+		res.Err.Error(), strings.Join(factAuditAllowedRulesList, " | "),
+	)
+	messages = append(messages,
+		llm.ChatMessage{Role: "assistant", Content: llmText},
+		llm.ChatMessage{Role: "user", Content: corrective},
+	)
+	llmText2, err := a.callChat(ctx, messages)
+	if err != nil {
+		return FactAuditResult{
+			RawResp: llmText,
+			Err:     fmt.Errorf("strict retry failed: %w (first reply: %q)", err, llmText),
+		}
+	}
+	res2 := parseFactAuditResponse(llmText2)
+	res2.RawResp = llmText + "\n---RETRY---\n" + llmText2
+	if res2.Err != nil {
+		res2.Err = fmt.Errorf("LLM returned malformed response twice (strict): %w (first reply: %q, second reply: %q)", res2.Err, llmText, llmText2)
+	}
+	return res2
+}
+
+// callChat marshals + executes a chat-completion request and returns the
+// content of the first choice. Shared between the initial call and the strict
+// corrective retry.
+func (a *OpenAIFactAuditor) callChat(ctx context.Context, messages []llm.ChatMessage) (string, error) {
 	reqPayload := llm.ChatRequest{
-		Model: a.model,
-		Messages: []llm.ChatMessage{
-			{Role: "user", Content: prompt},
-		},
+		Model:       a.model,
+		Messages:    messages,
 		Temperature: 0.1,
-		// The audit response is three short lines (REASONING/RULE/VERDICT), well
-		// under 200 tokens in practice. We cap at 1024 to leave generous headroom
-		// for unusually long reasoning while still fitting comfortably in an 8k
-		// ctx window alongside the verbatim extraction prompt (~3.5k tokens).
+		// 3-line response is ~150 tokens. 1024 leaves headroom for longer
+		// REASONING and stays comfortably under an 8k ctx window alongside
+		// the ~3.5k-token verbatim extraction prompt.
 		MaxTokens: 1024,
 	}
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {
-		return FactAuditResult{Err: fmt.Errorf("marshal audit request: %w", err)}
+		return "", fmt.Errorf("marshal audit request: %w", err)
 	}
-
 	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
 	if err != nil {
-		return FactAuditResult{Err: fmt.Errorf("audit API call failed: %w", err)}
+		return "", fmt.Errorf("audit API call failed: %w", err)
 	}
-
 	var chatResp llm.ChatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return FactAuditResult{Err: fmt.Errorf("decode audit response: %w (raw: %s)", err, string(bodyBytes))}
+		return "", fmt.Errorf("decode audit response: %w (raw: %s)", err, string(bodyBytes))
 	}
 	if chatResp.Error != nil {
-		return FactAuditResult{Err: fmt.Errorf("audit API error: %s", chatResp.Error.Message)}
+		return "", fmt.Errorf("audit API error: %s", chatResp.Error.Message)
 	}
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return FactAuditResult{Err: fmt.Errorf("audit API returned no content (raw: %s)", string(bodyBytes))}
+		return "", fmt.Errorf("audit API returned no content (raw: %s)", string(bodyBytes))
 	}
-
-	llmText := chatResp.Choices[0].Message.Content
-	res := parseFactAuditResponse(llmText)
-	res.RawResp = llmText
-	return res
+	return chatResp.Choices[0].Message.Content, nil
 }
 
 // buildFactAuditPrompt fills the audit template with (a) the verbatim extraction
@@ -266,9 +372,35 @@ func parseFactAuditResponse(response string) FactAuditResult {
 			Err:       fmt.Errorf("could not parse VERDICT line from audit response: %q", response),
 		}
 	}
+	canonRule, ruleErr := validateFactAuditRule(rule)
+	if ruleErr != nil {
+		return FactAuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      rule, // surface the bad value so the retry prompt can quote it
+			Err:       ruleErr,
+		}
+	}
+	// Cross-check: keep verdicts MUST pair with rule "none".
+	if verdict == FactVerdictKeep && canonRule != "none" {
+		return FactAuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      canonRule,
+			Err:       fmt.Errorf("VERDICT=keep requires RULE=none (got %q)", canonRule),
+		}
+	}
+	if verdict != FactVerdictKeep && canonRule == "none" {
+		return FactAuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      canonRule,
+			Err:       fmt.Errorf("VERDICT=%s requires a non-'none' RULE", verdict),
+		}
+	}
 	return FactAuditResult{
 		Verdict:   verdict,
 		Reasoning: reasoning,
-		Rule:      rule,
+		Rule:      canonRule,
 	}
 }

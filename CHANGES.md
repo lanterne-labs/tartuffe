@@ -2,6 +2,30 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-05: Strict closed-enum LLM contracts + 16k-safe contradiction batching
+
+### What was done
+- Tightened the structured-output contracts on three LLM call sites so model responses are validated against a closed enum and **rejected (with one strict retry) when out-of-spec**, instead of silently normalised:
+  - `backend/core/fact_auditor.go` — `RULE` must be one of 9 tokens (`none | not_about_entity | lawyers_as_subject | speculative | not_contradictable | journalist_characterization | pattern_of_behavior | vague | polls_or_surveys`). Added cross-check: `VERDICT=keep ↔ RULE=none`.
+  - `backend/contradiction/auditor.go` — `RULE` must be one of 15 tokens (`none | accusation_not_finding | learning_over_time | …`). Same retry + cross-check semantics.
+  - `backend/core/fact_extractor.go` — `canonical_verb` and `subject_entity_type` are declared as MUST-be-exactly-one-of lists in the prompt. `categorizer/fact_parser.go` now drops the entire fact (with WARN) when `canonical_verb` is empty or outside the 20-verb enum, and normalises `subject_entity_type` to `"human"` (lower stakes — only metadata) when out-of-enum.
+  - `backend/core/relation_classifier.go` — unknown `relation` values were silently dropped; now logged as WARN before drop.
+- Added strict retry path on both auditors: on first malformed reply, the auditor sends ONE corrective follow-up (`"Your previous reply was rejected: <reason>. Reply with EXACTLY: …"`) appending the bad reply to the conversation so the model sees what it got wrong. If the second reply is still bad, the result surfaces an error rather than producing a fake-canonical verdict.
+- Reduced contradiction-detector context footprint to keep prompt + max_tokens reservation under 16k:
+  - `MaxPairsPerBatch` reverted from 5 → **3** (the comment had already flagged "monitor for cross-pair confusion at 5").
+  - Live detector `MaxTokens` lowered from 16,384 → **2,048** (realistic 3-pair output is ~600 tok; 2k leaves headroom).
+  - Contradiction auditor `MaxTokens` lowered from 8,192 → **1,024** (3-line response).
+  - Fact auditor was already at 1,024.
+
+### Why
+- A 200-fact gemma audit run emitted four spellings of the same RULE (`vague` / `vague_or_not_concrete` / `rule_6_vague_or_not_concrete` / `vague (rule 6)`), fragmenting the rule-frequency view. The first reflex — substring-match the variants back to the canonical token — would silently hide cases where the model is reasoning OUTSIDE our enum entirely. The strict-with-retry path forces the model to either produce a token we recognise or fail loudly so the bad fact gets logged and skipped instead of mislabelled.
+- The 16k cap matters because we may want to point the contradiction detector at smaller-context models (e.g. local llama-swap) for cheap pre-filtering. With prompt ~2.5k tokens + max_tokens 16,384, the live detector reserved ~19k of context. 3 pairs × 2k max_tokens reserves ~4.5k, comfortably fitting an 8k window.
+
+### Operational notes
+- The strict retry costs at most one extra LLM call per malformed first reply.
+- If the second reply is still bad, the audit JSONL row carries `error: "LLM returned malformed response twice (strict): …"` — these should be inspected manually rather than acted on.
+- The `relation_classifier` change is observable: pipeline runs that previously silently dropped unknown relations now emit a WARN log, surfacing previously-hidden classifier drift.
+
 ## 2026-05-04: `dm facts audit` — LLM-guided fact auditor with cascade cleanup
 
 ### What was done

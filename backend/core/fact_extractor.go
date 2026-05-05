@@ -117,12 +117,14 @@ Return a JSON array. Each object has 8 fields (in this order):
    This is NOT the person being talked about — it's the ACTOR/SPEAKER. Use full canonical name.
    Example: "Trump criticized Le Pen" → subject_entity = "Donald Trump" (he speaks), involved_people = ["Marine Le Pen"]
    Example: "Marine Le Pen denied wrongdoing" → subject_entity = "Marine Le Pen" (she denies)
-3. 'subject_entity_type': One of "human", "party", or "organization"
+3. 'subject_entity_type': MUST be EXACTLY one of these three lowercase strings (no other values are accepted; facts with any other value will be rejected):
+   "human" | "party" | "organization"
 4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
    ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
    ⚠️ NO CANONICAL VERBS: NEVER use DENIED, CLAIMED, PROMISED, WAS_CONVICTED, etc. in this field. Use natural language only. Write "a nié", "a affirmé", "a promis" — NOT "a DENIED" or "a CLAIMED".
-5. 'canonical_verb': One of these 20 verbs that best captures the entity's STANCE:
-   DENIED, CLAIMED, PROMISED, SUPPORTED, OPPOSED, VOTED_FOR, VOTED_AGAINST, PROPOSED, CONFIRMED, ADMITTED, REFUSED, DEMANDED, THREATENED, WAS_SENTENCED, WAS_CONVICTED, WAS_ACQUITTED, WAS_FINED, RECEIVED_FUNDS, CHANGED_POSITION, ANNOUNCED
+5. 'canonical_verb': MUST be EXACTLY one of these 20 UPPERCASE tokens (no synonyms, no inflections, no lowercase, no spaces — facts with any other value will be rejected):
+   DENIED | CLAIMED | PROMISED | SUPPORTED | OPPOSED | VOTED_FOR | VOTED_AGAINST | PROPOSED | CONFIRMED | ADMITTED | REFUSED | DEMANDED | THREATENED | WAS_SENTENCED | WAS_CONVICTED | WAS_ACQUITTED | WAS_FINED | RECEIVED_FUNDS | CHANGED_POSITION | ANNOUNCED
+   Pick the closest token; do NOT invent new ones (e.g. NEVER return "WAIVED", "SIGNED", "CONVICTED" — use the closest match like ANNOUNCED, PROPOSED, WAS_CONVICTED).
 6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. ALWAYS in English. NO VERB PREFIX.
    GOAL: Two facts about the same topic MUST produce identical or near-identical embedding_text, REGARDLESS of the entity's stance. The canonical_verb field already captures the stance separately.
    - Format: [broad policy domain] [one specific detail only if needed]

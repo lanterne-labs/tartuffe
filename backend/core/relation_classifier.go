@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Classification primitives shared with the OpenAI batch-API classification flow
@@ -64,7 +67,7 @@ const classificationPrompt = `You are analyzing how a NEW fact relates to EXISTI
 
 Each fact has a canonical_verb (the stance/action: DENIED, CLAIMED, VOTED_FOR, etc.) and text describing the topic.
 
-For each existing fact, classify its relationship to the new fact as one of:
+For each existing fact, classify its relationship to the new fact. The "relation" field MUST be EXACTLY one of these four lowercase tokens (no other values are accepted; any other value will be discarded with a warning):
 - "duplicate": The new fact and existing fact express the same information (possibly with different wording). Same stance on the same topic from different articles = duplicate.
 - "implication_new_is_general": The new fact is MORE GENERAL - the existing fact is a specific instance or subset of the new fact.
 - "implication_new_is_specific": The new fact is MORE SPECIFIC - it's a specific instance of the existing fact.
@@ -104,15 +107,21 @@ func ParseClassificationResponse(jsonContent string) ([]ClassificationResult, er
 
 	var results []ClassificationResult
 	for _, c := range classResp.Classifications {
-		if !validRelations[c.Relation] {
+		rel := strings.ToLower(strings.TrimSpace(c.Relation))
+		if !validRelations[rel] {
+			log.Warn().
+				Int64("existing_fact_id", int64(c.ExistingFactID)).
+				Str("raw_relation", c.Relation).
+				Str("reason", c.Reason).
+				Msg("Classifier returned a relation outside the closed enum; dropping")
 			continue
 		}
-		if c.Relation == "unrelated" {
+		if rel == "unrelated" {
 			continue
 		}
 		results = append(results, ClassificationResult{
 			ExistingFactID: int64(c.ExistingFactID),
-			Relation:       c.Relation,
+			Relation:       rel,
 			Reason:         c.Reason,
 		})
 	}

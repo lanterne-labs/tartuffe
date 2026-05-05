@@ -9,7 +9,66 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
+
+// contradictionAuditAllowedRules is the closed set of RULE tokens the
+// contradiction-auditor prompt asks the model to return. We are deliberately
+// strict — anything outside this set triggers a corrective retry; we do NOT
+// fuzzy-match variants because that would silently hide cases where the LLM
+// is not actually reasoning under our enum.
+var contradictionAuditAllowedRules = map[string]bool{
+	"none":                         true,
+	"accusation_not_finding":       true,
+	"learning_over_time":           true,
+	"paraphrase_same_position":     true,
+	"geographic_scope":             true,
+	"coherent_defense":             true,
+	"conviction_vs_acknowledgment": true,
+	"announcement_then_action":     true,
+	"different_subjects":           true,
+	"different_events":             true,
+	"subjective_vs_objective":      true,
+	"consistent_ignorance":         true,
+	"legal_process_stages":         true,
+	"complementary_facts":          true,
+	"vague_vs_specific":            true,
+}
+
+// contradictionAuditAllowedRulesList is the alphabetised version used in the
+// strict-retry prompt, so the model sees a stable, ordered list.
+var contradictionAuditAllowedRulesList = []string{
+	"none",
+	"accusation_not_finding",
+	"announcement_then_action",
+	"coherent_defense",
+	"complementary_facts",
+	"consistent_ignorance",
+	"conviction_vs_acknowledgment",
+	"different_events",
+	"different_subjects",
+	"geographic_scope",
+	"learning_over_time",
+	"legal_process_stages",
+	"paraphrase_same_position",
+	"subjective_vs_objective",
+	"vague_vs_specific",
+}
+
+// validateContradictionAuditRule strictly checks that `raw` is in the closed
+// enum (after lower/trim). Returns the canonical token on success or an error
+// describing the violation so the caller can issue a corrective retry.
+func validateContradictionAuditRule(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", fmt.Errorf("RULE field is empty (must be one of: %s)", strings.Join(contradictionAuditAllowedRulesList, ", "))
+	}
+	if !contradictionAuditAllowedRules[s] {
+		return "", fmt.Errorf("RULE %q is not in the closed enum (must be one of: %s)", raw, strings.Join(contradictionAuditAllowedRulesList, ", "))
+	}
+	return s, nil
+}
 
 // AuditVerdict is the auditor's judgement on an existing contradiction record.
 type AuditVerdict string
@@ -48,10 +107,27 @@ Be CONSERVATIVE: when in doubt, return "ambiguous" rather than "keep". Only retu
 Respond with EXACTLY three lines, in this order:
 
 REASONING: [1-2 sentences identifying the core claims and which rule(s) apply]
-RULE: [short snake_case label of the rule that drove your verdict — e.g. accusation_not_finding, learning_over_time, paraphrase_same_position, geographic_scope, coherent_defense, conviction_vs_acknowledgment, announcement_then_action, none]
+RULE: [exactly one token, no spaces, no quotes — see closed list below]
 VERDICT: [keep|remove|ambiguous]
 
-Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".`
+⚠️ STRICT FORMATTING — the RULE field MUST be EXACTLY ONE of these tokens (lowercase snake_case, no extra words, no parentheses, no rule numbers):
+  none
+  accusation_not_finding
+  learning_over_time
+  paraphrase_same_position
+  geographic_scope
+  coherent_defense
+  conviction_vs_acknowledgment
+  announcement_then_action
+  different_subjects
+  different_events
+  subjective_vs_objective
+  consistent_ignorance
+  legal_process_stages
+  complementary_facts
+  vague_vs_specific
+
+If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token from the list above. Do NOT invent variants. Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".`
 
 var (
 	auditReasoningRegex = regexp.MustCompile(`(?i)^\s*REASONING\s*:\s*(.*)$`)
@@ -117,40 +193,83 @@ func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB str
 		originalReason,
 	)
 	prompt := fmt.Sprintf(auditPromptTpl, auditBlock)
+	messages := []llm.ChatMessage{{Role: "user", Content: prompt}}
 
+	llmText, err := a.callChat(ctx, messages)
+	if err != nil {
+		return AuditResult{Err: err}
+	}
+	res := parseAuditResponse(llmText)
+	res.RawResp = llmText
+	if res.Err == nil {
+		return res
+	}
+
+	// Strict retry: surface what was wrong so the model can correct itself.
+	log.Warn().Err(res.Err).Str("raw_response", llmText).
+		Msg("Contradiction audit: first response failed strict parse; issuing corrective retry")
+	corrective := fmt.Sprintf(
+		`Your previous reply was rejected: %s.
+
+Reply ONCE MORE with EXACTLY three lines, in this order, and nothing else:
+
+REASONING: <1-2 sentences>
+RULE: <one token from this list ONLY: %s>
+VERDICT: <keep|remove|ambiguous>
+
+If VERDICT is "keep", RULE MUST be "none". Do NOT add commentary, headers, code fences, or any text outside the three required lines.`,
+		res.Err.Error(), strings.Join(contradictionAuditAllowedRulesList, " | "),
+	)
+	messages = append(messages,
+		llm.ChatMessage{Role: "assistant", Content: llmText},
+		llm.ChatMessage{Role: "user", Content: corrective},
+	)
+	llmText2, err := a.callChat(ctx, messages)
+	if err != nil {
+		return AuditResult{
+			RawResp: llmText,
+			Err:     fmt.Errorf("strict retry failed: %w (first reply: %q)", err, llmText),
+		}
+	}
+	res2 := parseAuditResponse(llmText2)
+	res2.RawResp = llmText + "\n---RETRY---\n" + llmText2
+	if res2.Err != nil {
+		res2.Err = fmt.Errorf("LLM returned malformed response twice (strict): %w (first reply: %q, second reply: %q)", res2.Err, llmText, llmText2)
+	}
+	return res2
+}
+
+// callChat marshals + executes a single chat-completion call and returns the
+// content of the first choice. Shared between the initial call and the strict
+// corrective retry.
+func (a *OpenAIContradictionAuditor) callChat(ctx context.Context, messages []llm.ChatMessage) (string, error) {
 	reqPayload := llm.ChatRequest{
-		Model: a.model,
-		Messages: []llm.ChatMessage{
-			{Role: "user", Content: prompt},
-		},
+		Model:       a.model,
+		Messages:    messages,
 		Temperature: 0.1,
-		MaxTokens:   8192,
+		// 3-line response (REASONING/RULE/VERDICT) is ~150 tokens. 1024 leaves
+		// headroom and keeps prompt+reservation well under any 8k ctx.
+		MaxTokens: 1024,
 	}
 	payloadBytes, err := json.Marshal(reqPayload)
 	if err != nil {
-		return AuditResult{Err: fmt.Errorf("marshal audit request: %w", err)}
+		return "", fmt.Errorf("marshal audit request: %w", err)
 	}
-
 	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
 	if err != nil {
-		return AuditResult{Err: fmt.Errorf("audit API call failed: %w", err)}
+		return "", fmt.Errorf("audit API call failed: %w", err)
 	}
-
 	var chatResp llm.ChatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return AuditResult{Err: fmt.Errorf("decode audit response: %w (raw: %s)", err, string(bodyBytes))}
+		return "", fmt.Errorf("decode audit response: %w (raw: %s)", err, string(bodyBytes))
 	}
 	if chatResp.Error != nil {
-		return AuditResult{Err: fmt.Errorf("audit API error: %s", chatResp.Error.Message)}
+		return "", fmt.Errorf("audit API error: %s", chatResp.Error.Message)
 	}
 	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return AuditResult{Err: fmt.Errorf("audit API returned no content (raw: %s)", string(bodyBytes))}
+		return "", fmt.Errorf("audit API returned no content (raw: %s)", string(bodyBytes))
 	}
-
-	llmText := chatResp.Choices[0].Message.Content
-	res := parseAuditResponse(llmText)
-	res.RawResp = llmText
-	return res
+	return chatResp.Choices[0].Message.Content, nil
 }
 
 // parseAuditResponse extracts REASONING / RULE / VERDICT lines.
@@ -180,9 +299,34 @@ func parseAuditResponse(response string) AuditResult {
 			Err:       fmt.Errorf("could not parse VERDICT line from audit response: %q", response),
 		}
 	}
+	canonRule, ruleErr := validateContradictionAuditRule(rule)
+	if ruleErr != nil {
+		return AuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      rule,
+			Err:       ruleErr,
+		}
+	}
+	if verdict == VerdictKeep && canonRule != "none" {
+		return AuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      canonRule,
+			Err:       fmt.Errorf("VERDICT=keep requires RULE=none (got %q)", canonRule),
+		}
+	}
+	if verdict != VerdictKeep && canonRule == "none" {
+		return AuditResult{
+			Verdict:   verdict,
+			Reasoning: reasoning,
+			Rule:      canonRule,
+			Err:       fmt.Errorf("VERDICT=%s requires a non-'none' RULE", verdict),
+		}
+	}
 	return AuditResult{
 		Verdict:   verdict,
 		Reasoning: reasoning,
-		Rule:      rule,
+		Rule:      canonRule,
 	}
 }

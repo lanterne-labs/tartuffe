@@ -16,9 +16,16 @@ import (
 
 const (
 	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call.
-	// Set to 5 as a tradeoff between cost (~40% fewer calls than batch=3) and accuracy.
-	// Monitor with --debug flag to check for cross-pair confusion.
-	MaxPairsPerBatch = 5
+	// Sized so the prompt + the contradictionMaxTokens reservation stays well
+	// under a 16k context window: ContradictionRulesAndExamples + 3 pairs ~=
+	// 2.6k tokens, plus contradictionMaxTokens=2048 = ~4.7k total reservation.
+	// 3 pairs is the historical accuracy baseline (we briefly raised to 5 for
+	// cost; cross-pair confusion observed at 5, reverted).
+	MaxPairsPerBatch = 3
+	// contradictionMaxTokens caps the LLM response budget. A 3-pair response
+	// is ~600 tokens realistically (REASONING + verdict per pair, ~200 tok
+	// each). 2048 leaves headroom while keeping prompt+reservation under 5k.
+	contradictionMaxTokens = 2048
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
 	DelayBetweenBatches = 1 * time.Second
@@ -355,7 +362,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.1,
-		MaxTokens:   16384,
+		MaxTokens:   contradictionMaxTokens,
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

@@ -91,16 +91,12 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			rawFact.EmbeddingText = rawFact.NormalizedFact
 		}
 
-		// Validate canonical_verb is one of the 20 known verbs
-		if rawFact.CanonicalVerb != "" {
-			if !isKnownVerb(rawFact.CanonicalVerb) {
-				log.Warn().Int("fact_index", i).
-					Str("canonical_verb", rawFact.CanonicalVerb).
-					Str("source_url", sourceURL).
-					Msg("LLM returned unknown canonical_verb, keeping as-is")
-			}
-		} else {
-			// Fallback: try to parse verb from embedding_text first word (backward compat)
+		// Validate canonical_verb is one of the 20 known verbs.
+		// Unknown verbs corrupt downstream contradiction matching and stance
+		// clustering, so we drop the fact entirely (the prompt declares the
+		// closed list as MUST). Empty verb falls back to the legacy
+		// embedding_text prefix path before failing.
+		if rawFact.CanonicalVerb == "" {
 			verb, topic, ok := ParseVerbFromEmbeddingText(rawFact.EmbeddingText)
 			if ok {
 				rawFact.CanonicalVerb = verb
@@ -110,6 +106,33 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 					Str("topic", topic).
 					Msg("Parsed canonical_verb from embedding_text (backward compat)")
 			}
+		}
+		if rawFact.CanonicalVerb == "" || !isKnownVerb(rawFact.CanonicalVerb) {
+			log.Warn().Int("fact_index", i).
+				Str("canonical_verb", rawFact.CanonicalVerb).
+				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
+				Str("source_url", sourceURL).
+				Msg("Skipping fact: canonical_verb is empty or outside the closed enum")
+			continue
+		}
+		// Normalise to upper-case so downstream comparisons are stable.
+		rawFact.CanonicalVerb = strings.ToUpper(rawFact.CanonicalVerb)
+
+		// Validate subject_entity_type. The prompt declares a closed enum of
+		// three lowercase strings; unknown values are normalised to "human"
+		// with a WARN — lower stakes than canonical_verb (which drives
+		// contradiction matching), so we don't drop the whole fact.
+		if rawFact.SubjectEntityType == "" {
+			rawFact.SubjectEntityType = "human"
+		} else if !isKnownEntityType(rawFact.SubjectEntityType) {
+			log.Warn().Int("fact_index", i).
+				Str("raw_entity_type", rawFact.SubjectEntityType).
+				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
+				Str("source_url", sourceURL).
+				Msg("LLM returned unknown subject_entity_type; normalising to 'human'")
+			rawFact.SubjectEntityType = "human"
+		} else {
+			rawFact.SubjectEntityType = strings.ToLower(strings.TrimSpace(rawFact.SubjectEntityType))
 		}
 
 		finalFacts = append(finalFacts, backend.Fact{
@@ -141,6 +164,17 @@ var knownVerbs = map[string]bool{
 // isKnownVerb checks if a verb is one of the 20 canonical verbs.
 func isKnownVerb(verb string) bool {
 	return knownVerbs[strings.ToUpper(verb)]
+}
+
+// knownEntityTypes is the closed set of accepted subject_entity_type values.
+var knownEntityTypes = map[string]bool{
+	"human": true, "party": true, "organization": true,
+}
+
+// isKnownEntityType checks if a subject_entity_type matches the closed enum
+// declared in the extraction prompt.
+func isKnownEntityType(t string) bool {
+	return knownEntityTypes[strings.ToLower(strings.TrimSpace(t))]
 }
 
 // directClaimVerbs are verbs where the person is the speaker/actor (not a third-party attribution).

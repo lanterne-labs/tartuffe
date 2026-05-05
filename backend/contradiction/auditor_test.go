@@ -36,7 +36,7 @@ func TestParseAuditResponse_Remove(t *testing.T) {
 func TestParseAuditResponse_Ambiguous(t *testing.T) {
 	resp := strings.Join([]string{
 		"REASONING: Both dates unknown; cannot determine temporal ordering.",
-		"RULE: unknown_dates",
+		"RULE: different_events",
 		"VERDICT: ambiguous",
 	}, "\n")
 	res := parseAuditResponse(resp)
@@ -82,10 +82,54 @@ func TestParseAuditResponse_MissingVerdictReturnsError(t *testing.T) {
 	assert.Equal(t, AuditVerdict(""), res.Verdict)
 }
 
+// Strict-mode contract: a RULE token outside the closed enum is rejected with
+// an error so the auditor can issue a corrective retry. We deliberately do NOT
+// fuzzy-match variants — silent normalisation hid extraction bugs in earlier
+// runs and produced unstable rule frequencies in metrics.
+func TestParseAuditResponse_RejectsUnknownRule(t *testing.T) {
+	resp := strings.Join([]string{
+		"REASONING: not in our enum.",
+		"RULE: vague_or_not_concrete (rule 6)",
+		"VERDICT: remove",
+	}, "\n")
+	res := parseAuditResponse(resp)
+	require.Error(t, res.Err)
+	assert.Contains(t, res.Err.Error(), "closed enum")
+	// Verdict is still parsed; rule surfaces the bad raw value so the retry
+	// prompt can quote it.
+	assert.Equal(t, VerdictRemove, res.Verdict)
+}
+
+// Trailing prose on the RULE line ("geographic_scope (the fact about ...)") is
+// also rejected — the prompt asks for EXACTLY one token.
+func TestParseAuditResponse_RejectsRuleWithTrailingProse(t *testing.T) {
+	resp := strings.Join([]string{
+		"REASONING: different geographic scope.",
+		"RULE: geographic_scope (the fact about Vienne is not national)",
+		"VERDICT: remove",
+	}, "\n")
+	res := parseAuditResponse(resp)
+	require.Error(t, res.Err)
+	assert.Contains(t, res.Err.Error(), "closed enum")
+}
+
+// Cross-check: keep requires none; otherwise it's a contradiction we can't
+// resolve and the caller should retry.
+func TestParseAuditResponse_KeepRequiresNone(t *testing.T) {
+	resp := strings.Join([]string{
+		"REASONING: actually contradictory.",
+		"RULE: learning_over_time",
+		"VERDICT: keep",
+	}, "\n")
+	res := parseAuditResponse(resp)
+	require.Error(t, res.Err)
+	assert.Contains(t, res.Err.Error(), "VERDICT=keep requires RULE=none")
+}
+
 func TestParseAuditResponse_OnlyFirstVerdictWins(t *testing.T) {
 	resp := strings.Join([]string{
 		"REASONING: First reasoning.",
-		"RULE: first_rule",
+		"RULE: none",
 		"VERDICT: keep",
 		"REASONING: Second reasoning.",
 		"VERDICT: remove",
@@ -94,5 +138,5 @@ func TestParseAuditResponse_OnlyFirstVerdictWins(t *testing.T) {
 	require.NoError(t, res.Err)
 	assert.Equal(t, VerdictKeep, res.Verdict)
 	assert.Equal(t, "First reasoning.", res.Reasoning)
-	assert.Equal(t, "first_rule", res.Rule)
+	assert.Equal(t, "none", res.Rule)
 }
