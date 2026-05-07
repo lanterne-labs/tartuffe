@@ -2565,6 +2565,159 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 	return deletedCount, nil
 }
 
+// GetFactSourceURLs returns all distinct source URLs registered for a fact,
+// ordered by published_at ascending. Empty slice if none are recorded.
+func (s *PostgresStorer) GetFactSourceURLs(ctx context.Context, factID int64) ([]string, error) {
+	query := `
+		SELECT source_url FROM fact_sources
+		WHERE fact_id = $1
+		ORDER BY published_at ASC NULLS LAST`
+	rows, err := s.pool.Query(ctx, query, factID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sources for fact %d: %w", factID, err)
+	}
+	defer rows.Close()
+
+	var urls []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("failed to scan source url: %w", err)
+		}
+		if u != "" {
+			urls = append(urls, u)
+		}
+	}
+	return urls, rows.Err()
+}
+
+// GetContradictionByID retrieves a single contradiction enriched with both fact texts,
+// source URLs and earliest dates. Returns pgx.ErrNoRows if not found.
+func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*ContradictionWithFacts, error) {
+	query := `
+		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
+		       fa.fact_text, fb.fact_text,
+		       COALESCE(fsa.urls, '{}'), COALESCE(fsb.urls, '{}'),
+		       COALESCE(fsa.earliest, fa.created_at), COALESCE(fsb.earliest, fb.created_at),
+		       c.reason, c.detected_at
+		FROM contradictions c
+		JOIN facts fa ON fa.id = c.fact_a_id
+		JOIN facts fb ON fb.id = c.fact_b_id
+		LEFT JOIN LATERAL (
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fa.id
+		) fsa ON true
+		LEFT JOIN LATERAL (
+			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       MIN(published_at) AS earliest
+			FROM fact_sources WHERE fact_id = fb.id
+		) fsb ON true
+		WHERE c.id = $1`
+
+	var r ContradictionWithFacts
+	err := s.pool.QueryRow(ctx, query, id).Scan(
+		&r.ID, &r.PersonID, &r.FactAID, &r.FactBID,
+		&r.FactAText, &r.FactBText,
+		&r.FactASourceURLs, &r.FactBSourceURLs,
+		&r.FactADate, &r.FactBDate,
+		&r.Reason, &r.DetectedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("failed to get contradiction %d: %w", id, err)
+	}
+	return &r, nil
+}
+
+// DeleteContradiction removes a single contradiction by ID, resets the corresponding
+// fact_pair_checks row so the pair can be re-analyzed, and recomputes the owner's
+// honesty score. Returns pgx.ErrNoRows if the contradiction does not exist.
+func (s *PostgresStorer) DeleteContradiction(ctx context.Context, id int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var personID, factAID, factBID int64
+	err = tx.QueryRow(ctx,
+		`SELECT person_id, fact_a_id, fact_b_id FROM contradictions WHERE id = $1`, id,
+	).Scan(&personID, &factAID, &factBID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return pgx.ErrNoRows
+		}
+		return fmt.Errorf("failed to load contradiction %d: %w", id, err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM contradictions WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("failed to delete contradiction %d: %w", id, err)
+	}
+
+	// fact_pair_checks enforces fact_a_id < fact_b_id; check both orderings to be safe.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM fact_pair_checks
+		 WHERE person_id = $1
+		   AND ((fact_a_id = $2 AND fact_b_id = $3) OR (fact_a_id = $3 AND fact_b_id = $2))`,
+		personID, factAID, factBID); err != nil {
+		return fmt.Errorf("failed to reset pair check: %w", err)
+	}
+
+	factsCount, err := s.getPersonFactsCount(ctx, tx, personID)
+	if err != nil {
+		return fmt.Errorf("failed to get facts count: %w", err)
+	}
+	stats, err := s.getPersonContradictionStats(ctx, tx, personID)
+	if err != nil {
+		return fmt.Errorf("failed to compute contradiction stats: %w", err)
+	}
+	ownScore := ComputeHonestyScore(factsCount, stats)
+
+	var entityType *string
+	if err := tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType); err != nil {
+		return fmt.Errorf("failed to get entity_type for person %d: %w", personID, err)
+	}
+	var membersScore *float64
+	if entityType != nil && *entityType != "human" {
+		membersScore, err = s.computeMembersScore(ctx, tx, personID)
+		if err != nil {
+			return fmt.Errorf("failed to compute members score: %w", err)
+		}
+	}
+	aggregate := ComputeAggregateScore(ownScore, membersScore)
+
+	if err := s.updatePersonHonestyScore(ctx, tx, personID, ownScore, membersScore, aggregate); err != nil {
+		return fmt.Errorf("failed to update honesty score: %w", err)
+	}
+
+	payload := map[string]interface{}{
+		"honesty_score":          aggregate,
+		"contradiction_id":       id,
+		"contradictions_deleted": 1,
+	}
+	if err := s.insertEvent(ctx, tx, "person_updated", "person", personID, payload); err != nil {
+		return fmt.Errorf("failed to emit person_updated event: %w", err)
+	}
+
+	if err := s.recomputeParentEntityScores(ctx, tx, personID); err != nil {
+		return fmt.Errorf("failed to recompute parent entity scores: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit deletion: %w", err)
+	}
+
+	log.Info().
+		Int64("contradiction_id", id).
+		Int64("person_id", personID).
+		Float64("honesty_score", aggregate).
+		Msg("Deleted single contradiction")
+	return nil
+}
+
 // CountFactsForPerson returns the number of facts for a person.
 // Facts are linked via fact_mentions -> fact_sources -> facts.
 func (s *PostgresStorer) CountFactsForPerson(ctx context.Context, personID int64) (int64, error) {
@@ -4220,6 +4373,46 @@ func (s *PostgresStorer) DeleteStanceDocumentsForPerson(ctx context.Context, per
 		return fmt.Errorf("deleting stance documents for person %d: %w", personID, err)
 	}
 
+	return nil
+}
+
+// GetStanceDocumentByID retrieves a single stance document by ID.
+// Returns pgx.ErrNoRows if not found.
+func (s *PostgresStorer) GetStanceDocumentByID(ctx context.Context, id int64) (*StanceDocument, error) {
+	query := `
+		SELECT id, person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at, created_at
+		FROM stance_documents
+		WHERE id = $1`
+
+	var doc StanceDocument
+	var vec pgvector.Vector
+	err := s.pool.QueryRow(ctx, query, id).Scan(
+		&doc.ID, &doc.PersonID, &doc.ClusterLabel, &vec,
+		&doc.Summary, &doc.KeyFactIDs, &doc.FactCount,
+		&doc.LastUpdatedAt, &doc.CreatedAt,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("failed to get stance document %d: %w", id, err)
+	}
+	doc.ClusterEmbedding = vec.Slice()
+	return &doc, nil
+}
+
+// DeleteStanceDocument deletes a single stance document by ID.
+// The CASCADE on stance_document_facts handles join table cleanup.
+// Returns pgx.ErrNoRows if not found.
+func (s *PostgresStorer) DeleteStanceDocument(ctx context.Context, id int64) error {
+	result, err := s.pool.Exec(ctx, `DELETE FROM stance_documents WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete stance document %d: %w", id, err)
+	}
+	if result.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	log.Info().Int64("stance_id", id).Msg("Deleted stance document")
 	return nil
 }
 

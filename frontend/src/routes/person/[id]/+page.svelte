@@ -3,7 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse, StanceDocument } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
-	import { API_BASE } from '$lib/config';
+	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
 
 	interface MemberInfo {
 		id: number;
@@ -253,6 +253,64 @@
 		});
 	}
 
+	// --- User-complaints (Tally) ---
+	// One helper per kind so call sites read as `reportFact(fact)` etc., with no
+	// string-typed kind parameter to get wrong. The Tally popup carries the kind +
+	// the relevant id as hidden fields; the triage CLI reads them back via the API.
+	function openTally(hiddenFields: Record<string, string | number>) {
+		if (!TALLY_FORM_ID) {
+			console.warn('VITE_TALLY_FORM_ID is not set; report button is a no-op.');
+			return;
+		}
+		// Tally embed.js is loaded async from app.html; the global may not exist yet
+		// on a very early click. Bail gracefully — the user can re-click.
+		const tally = (window as any).Tally;
+		if (!tally?.openPopup) {
+			console.warn('Tally widget is still loading; please retry in a moment.');
+			return;
+		}
+		tally.openPopup(TALLY_FORM_ID, {
+			layout: 'modal',
+			width: 460,
+			hiddenFields
+		});
+	}
+
+	function reportFact(fact: FactWithSource) {
+		const preview = fact.fact_text.length > 80 ? fact.fact_text.slice(0, 80) + '…' : fact.fact_text;
+		openTally({
+			target_kind: 'fact',
+			fact_id: fact.fact_id,
+			contradiction_id: '',
+			stance_id: '',
+			target_label: `Fact #${fact.fact_id}: ${preview}`,
+			source_url: typeof location !== 'undefined' ? location.href : ''
+		});
+	}
+
+	function reportContradiction(c: ContradictionWithFacts) {
+		openTally({
+			target_kind: 'contradiction',
+			contradiction_id: c.id,
+			fact_id: '',
+			stance_id: '',
+			target_label: `Contradiction #${c.id} (facts #${c.fact_a_id} ↔ #${c.fact_b_id})`,
+			source_url: typeof location !== 'undefined' ? location.href : ''
+		});
+	}
+
+	function reportStance(s: StanceDocument) {
+		const preview = s.label.length > 60 ? s.label.slice(0, 60) + '…' : s.label;
+		openTally({
+			target_kind: 'stance',
+			stance_id: s.id,
+			fact_id: '',
+			contradiction_id: '',
+			target_label: `Stance #${s.id}: ${preview}`,
+			source_url: typeof location !== 'undefined' ? location.href : ''
+		});
+	}
+
 	function handleRealtimeEvent(_event: any) {
 		loadPerson();
 		if (activeTab === 'facts') {
@@ -456,6 +514,15 @@
 					<div class="items-list">
 						{#each facts as fact (fact.fact_id)}
 							<div id="fact-{fact.fact_id}" class="card fact-card" class:highlighted={highlightedFactId === fact.fact_id}>
+								{#if TALLY_FORM_ID}
+									<button class="report-btn" title="Report this fact" aria-label="Report this fact" onclick={() => reportFact(fact)}>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+											<line x1="12" y1="9" x2="12" y2="13"/>
+											<line x1="12" y1="17" x2="12.01" y2="17"/>
+										</svg>
+									</button>
+								{/if}
 								<div class="fact-text">
 									<span class="fact-id">[{fact.fact_id}]</span>
 									{fact.fact_text}
@@ -566,6 +633,15 @@
 									<div class="contradiction-header">
 										<span class="contradiction-id">#{c.id}</span>
 										<span class="contradiction-date">{formatDate(c.detected_at)}</span>
+										{#if TALLY_FORM_ID}
+											<button class="report-btn report-btn-inline" title="Report this contradiction" aria-label="Report this contradiction" onclick={() => reportContradiction(c)}>
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+													<line x1="12" y1="9" x2="12" y2="13"/>
+													<line x1="12" y1="17" x2="12.01" y2="17"/>
+												</svg>
+											</button>
+										{/if}
 									</div>
 									<div class="contradiction-reason">{c.reason}</div>
 									<div class="facts-comparison">
@@ -606,6 +682,15 @@
 											<div class="contradiction-header">
 												<span class="contradiction-id">#{c.id}</span>
 												<span class="contradiction-date">{formatDate(c.detected_at)}</span>
+												{#if TALLY_FORM_ID}
+													<button class="report-btn report-btn-inline" title="Report this contradiction" aria-label="Report this contradiction" onclick={() => reportContradiction(c)}>
+														<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+															<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+															<line x1="12" y1="9" x2="12" y2="13"/>
+															<line x1="12" y1="17" x2="12.01" y2="17"/>
+														</svg>
+													</button>
+												{/if}
 											</div>
 											<div class="contradiction-reason">{c.reason}</div>
 											<div class="facts-comparison">
@@ -662,6 +747,15 @@
 					<div class="items-list">
 						{#each stances as stance (stance.id)}
 							<div class="card stance-card">
+								{#if TALLY_FORM_ID}
+									<button class="report-btn" title="Report this stance" aria-label="Report this stance" onclick={() => reportStance(stance)}>
+										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+											<line x1="12" y1="9" x2="12" y2="13"/>
+											<line x1="12" y1="17" x2="12.01" y2="17"/>
+										</svg>
+									</button>
+								{/if}
 								<div class="stance-header">
 									<span class="stance-label">{stance.label}</span>
 									<span class="stance-badge">{stance.fact_count} facts</span>
@@ -1014,6 +1108,39 @@
 		border-radius: var(--radius-md);
 		padding: 1.25rem;
 		transition: border-color var(--transition-fast), box-shadow var(--transition-normal);
+		position: relative;
+	}
+
+	/* Report-issue affordance: a small warning icon on every fact / contradiction
+	   / stance card that opens the Tally complaint popup. */
+	.report-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--text-secondary);
+		opacity: 0.5;
+		cursor: pointer;
+		transition: color var(--transition-fast), opacity var(--transition-fast), background var(--transition-fast);
+	}
+	.report-btn:hover,
+	.report-btn:focus-visible {
+		color: var(--red);
+		opacity: 1;
+		background: rgba(255, 255, 255, 0.05);
+		outline: none;
+	}
+	/* Inline variant used inside contradiction-header (which has its own flex layout). */
+	.report-btn-inline {
+		position: static;
 	}
 
 	/* Fact Card */
@@ -1245,9 +1372,12 @@
 	/* Contradiction Card */
 	.contradiction-header {
 		display: flex;
-		justify-content: space-between;
 		align-items: center;
+		gap: 0.5rem;
 		margin-bottom: 0.5rem;
+	}
+	.contradiction-header .contradiction-date {
+		margin-left: auto;
 	}
 
 	.contradiction-id {
