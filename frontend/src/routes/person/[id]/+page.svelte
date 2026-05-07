@@ -30,6 +30,12 @@
 	let expandedStances: Record<number, boolean> = $state({});
 	let stanceContradictions: Record<number, ContradictionWithFacts[]> = $state({});
 	let stanceLoading: Record<number, boolean> = $state({});
+	// How many contradictions to render per expanded stance. Starts small so a stance with
+	// 30+ paraphrase pairs doesn't dump the whole list at once; "Show N more" / "Show all"
+	// buttons grow it from there.
+	let stanceContradictionsShown: Record<number, number> = $state({});
+	const INITIAL_CONTRADICTIONS_SHOWN = 3;
+	const CONTRADICTIONS_MORE_STEP = 5;
 
 	// Facts disclosure (de-emphasized — full list hidden behind a toggle).
 	let factsExpanded = $state(false);
@@ -132,9 +138,30 @@
 	async function toggleStance(stanceId: number) {
 		const wasOpen = expandedStances[stanceId];
 		expandedStances[stanceId] = !wasOpen;
-		if (!wasOpen && stanceContradictions[stanceId] === undefined) {
-			await loadStanceContradictions(stanceId);
+		if (!wasOpen) {
+			if (stanceContradictionsShown[stanceId] === undefined) {
+				stanceContradictionsShown[stanceId] = INITIAL_CONTRADICTIONS_SHOWN;
+			}
+			if (stanceContradictions[stanceId] === undefined) {
+				await loadStanceContradictions(stanceId);
+			}
 		}
+	}
+
+	function onStanceCardKeydown(e: KeyboardEvent, stanceId: number) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			toggleStance(stanceId);
+		}
+	}
+
+	function showMoreInStance(stanceId: number, total: number) {
+		const current = stanceContradictionsShown[stanceId] ?? INITIAL_CONTRADICTIONS_SHOWN;
+		stanceContradictionsShown[stanceId] = Math.min(total, current + CONTRADICTIONS_MORE_STEP);
+	}
+
+	function showAllInStance(stanceId: number, total: number) {
+		stanceContradictionsShown[stanceId] = total;
 	}
 
 	function toggleFacts() {
@@ -471,55 +498,95 @@
 			{:else}
 				<div class="items-list">
 					{#each sortedStances as stance (stance.id)}
-						<div class="card stance-card">
-							<div class="stance-top">
-								<div class="stance-main">
-									<div class="stance-label">{stance.label}</div>
-									{#if stance.summary}
-										<div class="stance-summary">{stance.summary}</div>
-									{/if}
-									<div class="stance-meta">
-										<span>{stance.fact_count} fact{stance.fact_count === 1 ? '' : 's'}</span>
-										<span class="dot">·</span>
-										<span>{stance.contradiction_count} contradiction{stance.contradiction_count === 1 ? '' : 's'}</span>
-										<span class="dot">·</span>
-										<span class="muted">Updated {formatDate(stance.updated_at)}</span>
-										{#if TALLY_FORM_ID}
-											<button class="meta-report-btn" title="Report this stance" aria-label="Report this stance" onclick={() => reportStance(stance)}>
-												<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-													<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-													<line x1="12" y1="9" x2="12" y2="13"/>
-													<line x1="12" y1="17" x2="12.01" y2="17"/>
+						{@const hasContradictions = stance.contradiction_count > 0}
+						{@const isOpen = !!expandedStances[stance.id]}
+						{@const items = stanceContradictions[stance.id] ?? []}
+						{@const shown = stanceContradictionsShown[stance.id] ?? INITIAL_CONTRADICTIONS_SHOWN}
+						{@const remaining = Math.max(0, items.length - shown)}
+						<div class="card stance-card" class:open={isOpen}>
+							<!-- The whole header is one click target — tap anywhere on the card top to
+							     toggle. Interactive children inside (the report button) stop propagation
+							     so they don't also flip the toggle. The contradictions panel below sits
+							     outside this clickable area, so clicking sources/links inside it never
+							     toggles either. The Svelte a11y check can't tell that role+tabindex are
+							     paired conditionally, so it warns even though the runtime behaviour is
+							     correct (tabindex is only set when role="button" is also set). -->
+							<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+							<div
+								class="stance-clickable"
+								class:disabled={!hasContradictions}
+								role={hasContradictions ? 'button' : undefined}
+								tabindex={hasContradictions ? 0 : undefined}
+								aria-expanded={hasContradictions ? isOpen : undefined}
+								onclick={() => hasContradictions && toggleStance(stance.id)}
+								onkeydown={(e) => hasContradictions && onStanceCardKeydown(e, stance.id)}
+							>
+								<div class="stance-top">
+									<div class="stance-main">
+										<div class="stance-label-row">
+											<span class="stance-label">{stance.label}</span>
+											{#if hasContradictions}
+												<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+													<path d="m6 9 6 6 6-6"/>
 												</svg>
-											</button>
+											{/if}
+										</div>
+										{#if stance.summary}
+											<div class="stance-summary">{stance.summary}</div>
 										{/if}
+										<div class="stance-meta">
+											<span>{stance.fact_count} fact{stance.fact_count === 1 ? '' : 's'}</span>
+											<span class="dot">·</span>
+											<span>{stance.contradiction_count} contradiction{stance.contradiction_count === 1 ? '' : 's'}</span>
+											<span class="dot">·</span>
+											<span class="muted">Updated {formatDate(stance.updated_at)}</span>
+											{#if !hasContradictions}
+												<span class="no-contradictions-chip">No contradictions yet</span>
+											{/if}
+											{#if TALLY_FORM_ID}
+												<button
+													class="meta-report-btn"
+													title="Report this stance"
+													aria-label="Report this stance"
+													onclick={(e) => { e.stopPropagation(); reportStance(stance); }}
+												>
+													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+														<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+														<line x1="12" y1="9" x2="12" y2="13"/>
+														<line x1="12" y1="17" x2="12.01" y2="17"/>
+													</svg>
+												</button>
+											{/if}
+										</div>
 									</div>
+									<ScoreGauge score={stance.score} size={56} />
 								</div>
-								<ScoreGauge score={stance.score} size={56} />
 							</div>
 
-							{#if stance.contradiction_count > 0}
-								<button class="link-btn stance-toggle" onclick={() => toggleStance(stance.id)}>
-									{expandedStances[stance.id]
-										? 'Hide contradictions'
-										: `Show ${stance.contradiction_count} contradiction${stance.contradiction_count === 1 ? '' : 's'}`}
-								</button>
-
-								{#if expandedStances[stance.id]}
-									<div class="stance-contradictions">
-										{#if stanceLoading[stance.id]}
-											<p class="empty-mini">Loading…</p>
-										{:else if stanceContradictions[stance.id]?.length > 0}
-											{#each stanceContradictions[stance.id] as c (c.id)}
-												<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
-											{/each}
-										{:else}
-											<p class="empty-mini">No contradictions to show.</p>
+							{#if hasContradictions && isOpen}
+								<div class="stance-contradictions">
+									{#if stanceLoading[stance.id]}
+										<p class="empty-mini">Loading…</p>
+									{:else if items.length > 0}
+										{#each items.slice(0, shown) as c (c.id)}
+											<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
+										{/each}
+										{#if remaining > 0}
+											<div class="stance-more-row">
+												<button class="link-btn" onclick={() => showMoreInStance(stance.id, items.length)}>
+													Show {Math.min(remaining, CONTRADICTIONS_MORE_STEP)} more
+												</button>
+												{#if remaining > CONTRADICTIONS_MORE_STEP}
+													<button class="link-btn link-btn-muted" onclick={() => showAllInStance(stance.id, items.length)}>
+														Show all {items.length}
+													</button>
+												{/if}
+											</div>
 										{/if}
-									</div>
-								{/if}
-							{:else}
-								<span class="no-contradictions-chip">No contradictions yet</span>
+									{:else}
+										<p class="empty-mini">No contradictions to show.</p>
+									{/if}
+								</div>
 							{/if}
 						</div>
 					{/each}
@@ -978,7 +1045,39 @@
 
 	/* Stance card */
 	.stance-card {
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.stance-card.open {
+		border-color: var(--border-card-hover, var(--accent));
+		box-shadow: 0 0 0 1px var(--accent-glow, transparent);
+	}
+
+	/* Whole-card click target: clicking anywhere in this region toggles the stance.
+	   Children that should not toggle (the report button) call stopPropagation. */
+	.stance-clickable {
+		display: block;
 		padding: 1rem 1.25rem;
+		cursor: pointer;
+		transition: background var(--transition-fast);
+	}
+
+	.stance-clickable:hover {
+		background: rgba(255, 255, 255, 0.02);
+	}
+
+	.stance-clickable:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+
+	.stance-clickable.disabled {
+		cursor: default;
+	}
+
+	.stance-clickable.disabled:hover {
+		background: transparent;
 	}
 
 	.stance-top {
@@ -993,11 +1092,28 @@
 		min-width: 0;
 	}
 
+	.stance-label-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
 	.stance-label {
 		font-size: 0.938rem;
 		font-weight: 600;
 		color: var(--text-primary);
 		text-transform: capitalize;
+	}
+
+	.stance-chevron {
+		flex-shrink: 0;
+		color: var(--text-muted);
+		transition: transform var(--transition-fast), color var(--transition-fast);
+	}
+
+	.stance-chevron.expanded {
+		transform: rotate(180deg);
+		color: var(--text-secondary);
 	}
 
 	.stance-summary {
@@ -1016,21 +1132,32 @@
 		margin-top: 0.5rem;
 	}
 
-	.stance-toggle {
-		margin-top: 0.625rem;
+	.stance-contradictions {
+		margin: 0 1.25rem 1rem;
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--border-card);
 	}
 
-	.stance-contradictions {
-		margin-top: 0.5rem;
+	.stance-more-row {
+		display: flex;
+		gap: 1rem;
+		align-items: center;
 		padding-top: 0.5rem;
-		border-top: 1px solid var(--border-card);
+		border-top: 1px dashed var(--border-card);
+	}
+
+	.link-btn-muted {
+		color: var(--text-muted);
+	}
+
+	.link-btn-muted:hover {
+		color: var(--text-secondary);
 	}
 
 	.no-contradictions-chip {
 		display: inline-block;
-		margin-top: 0.625rem;
-		padding: 0.188rem 0.625rem;
-		font-size: 0.688rem;
+		padding: 0.125rem 0.5rem;
+		font-size: 0.625rem;
 		color: var(--green);
 		background: rgba(34, 197, 94, 0.1);
 		border-radius: var(--radius-full);
