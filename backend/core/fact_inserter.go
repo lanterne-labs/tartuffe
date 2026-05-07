@@ -283,12 +283,15 @@ func (fi *FactInserter) compensateDelete(ctx context.Context, factID int64, stag
 	}
 }
 
-// truncate truncates a string to maxLen characters, appending "..." if truncated.
+// truncate truncates a string to maxLen runes, appending "..." if truncated.
+// Operates on runes (not bytes) so it never splits a multi-byte UTF-8 codepoint
+// — Postgres rejects invalid UTF-8 with SQLSTATE 22021.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	r := []rune(s)
+	if len(r) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(r[:maxLen]) + "..."
 }
 
 // isDirectClaimVerb returns true if the verb represents a direct claim or action
