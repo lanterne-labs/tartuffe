@@ -160,6 +160,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/person/{id}/members", ws.handleGetPersonMembers)
 		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
 		r.Get("/person/{id}/stances", ws.handleGetPersonStances)
+		r.Get("/stances/{id}/contradictions", ws.handleGetStanceContradictions)
 		r.Get("/events", ws.handleEventsSSE)
 	})
 }
@@ -385,15 +386,43 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 }
 
 // StanceResponse is the API response for a stance document (no embedding or key_fact_ids).
+// ContradictionCount is the raw number of contradictions whose bundle_stance_id is this stance;
+// Score reuses the global ComputeHonestyScore formula scoped to this stance, so it lives on the
+// same 0..1 scale as the headline person score.
 type StanceResponse struct {
-	ID        int64     `json:"id"`
-	Label     string    `json:"label"`
-	Summary   string    `json:"summary"`
-	FactCount int       `json:"fact_count"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                 int64     `json:"id"`
+	Label              string    `json:"label"`
+	Summary            string    `json:"summary"`
+	FactCount          int       `json:"fact_count"`
+	ContradictionCount int       `json:"contradiction_count"`
+	Score              float64   `json:"score"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
-// handleGetPersonStances returns stance documents for a specific person.
+// handleGetStanceContradictions returns the contradictions inside a single stance bundle
+// (rows whose bundle_stance_id matches). Used by the profile UI when a stance card is expanded.
+func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stanceIDStr := chi.URLParam(r, "id")
+
+	stanceID, err := strconv.ParseInt(stanceIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid stance ID", http.StatusBadRequest)
+		return
+	}
+
+	items, err := ws.storer.GetStanceContradictions(ctx, stanceID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get stance contradictions: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// handleGetPersonStances returns stance documents for a specific person, with a per-stance
+// honesty score and contradiction count attached.
 func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
@@ -410,14 +439,28 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	counts, err := ws.storer.GetStanceContradictionCounts(ctx, personID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get stance contradiction counts: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	result := make([]StanceResponse, len(docs))
 	for i, d := range docs {
+		total := counts[d.ID]
+		bundles := 0
+		if total > 0 {
+			bundles = 1
+		}
+		score := storage.ComputeHonestyScore(d.FactCount, storage.ContradictionStats{Bundles: bundles, Total: total})
 		result[i] = StanceResponse{
-			ID:        d.ID,
-			Label:     d.ClusterLabel,
-			Summary:   d.Summary,
-			FactCount: d.FactCount,
-			UpdatedAt: d.LastUpdatedAt,
+			ID:                 d.ID,
+			Label:              d.ClusterLabel,
+			Summary:            d.Summary,
+			FactCount:          d.FactCount,
+			ContradictionCount: total,
+			Score:              score,
+			UpdatedAt:          d.LastUpdatedAt,
 		}
 	}
 

@@ -8,6 +8,8 @@ export interface PersonSummary {
 	own_score?: number;
 	members_score?: number;
 	fact_count: number;
+	stance_count: number;
+	contradiction_count: number;
 	image_url?: string;
 }
 
@@ -56,6 +58,8 @@ export interface StanceDocument {
 	label: string;
 	summary: string;
 	fact_count: number;
+	contradiction_count: number;
+	score: number;
 	updated_at: string;
 }
 

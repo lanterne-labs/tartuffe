@@ -2,6 +2,24 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-07: Stance-first profile page
+
+### What was done
+- Profile page (`frontend/src/routes/person/[id]/+page.svelte`) is now stance-first: the old Facts / Contradictions / Stances tab strip is gone. Stances are the headline content, each rendered with a small circular gauge for a per-stance honesty score, expandable to lazy-load that stance's contradictions inline. Facts moved behind a single de-emphasized "Show all N facts" disclosure. The Contradictions tab is removed entirely (contradictions are revealed *inside* their stance).
+- Hero gets a one-line summary under the name: `X stances · Y contradictions over Z facts`.
+- Stance list has a client-side sort selector: worst-first (default), most-recent, most-facts.
+- Reusable `ScoreGauge.svelte` and `ContradictionPair.svelte` components extracted; the hero gauge, score-breakdown gauges, and per-stance gauges all use the same component.
+
+### API changes
+- `GET /api/person/{id}/stances` now also returns `score` (0..1, same scale as the global honesty score) and `contradiction_count` per stance.
+- `GET /api/person/{id}` now also returns `stance_count` and `contradiction_count` (used for the hero summary line so it doesn't need to wait for the stances list).
+- New endpoint `GET /api/stances/{id}/contradictions` returns the contradictions whose `bundle_stance_id` matches the stance — used to lazy-fill a stance card on expand. No pagination (stance bundles are small by construction).
+- New storer methods: `GetStanceContradictionCounts(personID)` (map[stanceID]count) and `GetStanceContradictions(stanceID)`.
+
+### Why
+- Stances bundle related facts and the contradictions among them, so they carry far more signal per pixel than a flat fact or contradiction list. Leading the page with stances surfaces the highest-signal information first.
+- Per-stance score reuses `ComputeHonestyScore()` with stance-scoped inputs (`facts = stance.fact_count`, `bundles = 1 if any contradictions else 0`, `total = raw count`) so each stance's gauge reads on the same 0..1 scale as the headline score — no bespoke formula to explain.
+
 ## 2026-05-07: Orphan-fact stance assignment (`dm facts assign-stances`)
 
 ### What was done

@@ -1152,4 +1152,27 @@ func TestStanceBundledContradictions(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, stanceASize, "exactly three rows in stance-A bundle")
+
+	// GetStanceContradictionCounts: only stance A should appear (3 same-stance pairs).
+	// The cross-stance and unstanced solos have NULL bundle_stance_id and are excluded.
+	counts, err := storer.GetStanceContradictionCounts(ctx, personID)
+	require.NoError(t, err)
+	assert.Equal(t, 3, counts[stanceA], "stance A has 3 bundled contradictions")
+	_, hasB := counts[stanceB]
+	assert.False(t, hasB, "stance B has no bundled contradictions (the only B-side pair is cross-stance solo)")
+
+	// GetStanceContradictions: stance A returns its 3 rows, stance B returns none.
+	stanceAItems, err := storer.GetStanceContradictions(ctx, stanceA)
+	require.NoError(t, err)
+	assert.Len(t, stanceAItems, 3, "stance A has 3 contradictions")
+	for _, c := range stanceAItems {
+		require.NotNil(t, c.BundleID)
+		assert.Equal(t, stanceA, *c.BundleID)
+		require.NotNil(t, c.BundleLabel)
+		assert.Equal(t, "Promise about X", *c.BundleLabel)
+		assert.Equal(t, 3, c.BundleSize)
+	}
+	stanceBItems, err := storer.GetStanceContradictions(ctx, stanceB)
+	require.NoError(t, err)
+	assert.Empty(t, stanceBItems, "stance B has no contradictions")
 }

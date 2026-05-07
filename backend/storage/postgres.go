@@ -2082,6 +2082,38 @@ func (s *PostgresStorer) getPersonContradictionStats(ctx context.Context, tx pgx
 	return stats, nil
 }
 
+// GetStanceContradictionCounts returns per-stance contradiction totals for a person,
+// keyed by stance_documents.id. Stances with zero contradictions are omitted (callers
+// should treat missing keys as zero). Used by the stance-first profile UI to compute
+// per-stance honesty scores that match the global formula.
+func (s *PostgresStorer) GetStanceContradictionCounts(ctx context.Context, personID int64) (map[int64]int, error) {
+	query := `
+		SELECT bundle_stance_id, COUNT(*)
+		FROM contradictions
+		WHERE person_id = $1 AND bundle_stance_id IS NOT NULL
+		GROUP BY bundle_stance_id`
+
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query stance contradiction counts for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	counts := make(map[int64]int)
+	for rows.Next() {
+		var stanceID int64
+		var n int
+		if err := rows.Scan(&stanceID, &n); err != nil {
+			return nil, fmt.Errorf("failed to scan stance contradiction count: %w", err)
+		}
+		counts[stanceID] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating stance contradiction counts: %w", err)
+	}
+	return counts, nil
+}
+
 // updatePersonHonestyScore updates own_score, members_score, and aggregate honesty_score for a person
 func (s *PostgresStorer) updatePersonHonestyScore(ctx context.Context, tx pgx.Tx, personID int64, ownScore float64, membersScore *float64, aggregate float64) error {
 	query := `UPDATE persons SET own_score = $1, members_score = $2, honesty_score = $3 WHERE id = $4`
@@ -2113,14 +2145,16 @@ func (s *PostgresStorer) insertEvent(ctx context.Context, tx pgx.Tx, topic strin
 
 // PersonSummary represents a summary of a person for the API
 type PersonSummary struct {
-	ID           int64    `json:"id"`
-	Name         string   `json:"name"`
-	EntityType   *string  `json:"entity_type,omitempty"`
-	HonestyScore float64  `json:"honesty_score"`
-	OwnScore     *float64 `json:"own_score,omitempty"`
-	MembersScore *float64 `json:"members_score,omitempty"`
-	ImageURL     *string  `json:"image_url,omitempty"`
-	FactCount    int      `json:"fact_count"`
+	ID                 int64    `json:"id"`
+	Name               string   `json:"name"`
+	EntityType         *string  `json:"entity_type,omitempty"`
+	HonestyScore       float64  `json:"honesty_score"`
+	OwnScore           *float64 `json:"own_score,omitempty"`
+	MembersScore       *float64 `json:"members_score,omitempty"`
+	ImageURL           *string  `json:"image_url,omitempty"`
+	FactCount          int      `json:"fact_count"`
+	StanceCount        int      `json:"stance_count"`
+	ContradictionCount int      `json:"contradiction_count"`
 }
 
 // GetPersonsRankedByScore returns persons ranked by the chosen sort order.
@@ -2187,7 +2221,8 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	return persons, nil
 }
 
-// GetPersonByID returns a single person by ID
+// GetPersonByID returns a single person by ID, including stance and contradiction
+// counts used for the profile-page summary line.
 func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*PersonSummary, error) {
 	query := `
 		SELECT
@@ -2200,7 +2235,9 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 			p.image_url,
 			COUNT(DISTINCT fs.fact_id) FILTER (
 				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
-			) AS fact_count
+			) AS fact_count,
+			COALESCE((SELECT COUNT(*) FROM stance_documents WHERE person_id = p.id), 0) AS stance_count,
+			COALESCE((SELECT COUNT(*) FROM contradictions  WHERE person_id = p.id), 0) AS contradiction_count
 		FROM persons p
 		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
 		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
@@ -2208,7 +2245,10 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url`
 
 	var person PersonSummary
-	err := s.pool.QueryRow(ctx, query, personID).Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.FactCount)
+	err := s.pool.QueryRow(ctx, query, personID).Scan(
+		&person.ID, &person.Name, &person.EntityType, &person.HonestyScore,
+		&person.OwnScore, &person.MembersScore, &person.ImageURL,
+		&person.FactCount, &person.StanceCount, &person.ContradictionCount)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -2507,6 +2547,85 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 
 	return result, nil
+}
+
+// GetStanceContradictions returns all contradictions whose bundle_stance_id matches the given
+// stance, hydrated with the same fields as GetPersonContradictions. Used by the profile UI to
+// show the contradictions inside a single stance card without paginating (stance bundles are
+// small by construction). bundle_size is set to the count of rows in the same stance.
+func (s *PostgresStorer) GetStanceContradictions(ctx context.Context, stanceID int64) ([]ContradictionWithFacts, error) {
+	query := `
+		WITH contradiction_rows AS (
+			SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
+				   fa.fact_text AS fact_a_text, fb.fact_text AS fact_b_text,
+				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
+				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
+				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
+				   c.reason, c.detected_at,
+				   c.bundle_stance_id,
+				   sd.cluster_label  AS bundle_label,
+				   sd.summary        AS bundle_summary,
+				   sda.id            AS fact_a_stance_id,
+				   sda.cluster_label AS fact_a_stance_label,
+				   sdb.id            AS fact_b_stance_id,
+				   sdb.cluster_label AS fact_b_stance_label
+			FROM contradictions c
+			JOIN facts fa ON fa.id = c.fact_a_id
+			JOIN facts fb ON fb.id = c.fact_b_id
+			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
+			LEFT JOIN stance_document_facts sdfa ON sdfa.fact_id = c.fact_a_id
+			LEFT JOIN stance_documents sda ON sda.id = sdfa.stance_document_id
+			LEFT JOIN stance_document_facts sdfb ON sdfb.fact_id = c.fact_b_id
+			LEFT JOIN stance_documents sdb ON sdb.id = sdfb.stance_document_id
+			LEFT JOIN LATERAL (
+				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+				       MIN(published_at) AS earliest
+				FROM fact_sources WHERE fact_id = fa.id
+			) fsa ON true
+			LEFT JOIN LATERAL (
+				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+				       MIN(published_at) AS earliest
+				FROM fact_sources WHERE fact_id = fb.id
+			) fsb ON true
+			WHERE c.bundle_stance_id = $1
+		)
+		SELECT id, person_id, fact_a_id, fact_b_id,
+		       fact_a_text, fact_b_text,
+		       fact_a_urls, fact_b_urls,
+		       fact_a_date, fact_b_date,
+		       reason, detected_at,
+		       bundle_stance_id, bundle_label, bundle_summary,
+		       (SELECT COUNT(*) FROM contradiction_rows) AS bundle_size,
+		       fact_a_stance_id, fact_a_stance_label,
+		       fact_b_stance_id, fact_b_stance_label
+		FROM contradiction_rows
+		ORDER BY detected_at DESC`
+
+	rows, err := s.pool.Query(ctx, query, stanceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query contradictions for stance %d: %w", stanceID, err)
+	}
+	defer rows.Close()
+
+	out := make([]ContradictionWithFacts, 0)
+	for rows.Next() {
+		var c ContradictionWithFacts
+		if err := rows.Scan(&c.ID, &c.PersonID, &c.FactAID, &c.FactBID,
+			&c.FactAText, &c.FactBText,
+			&c.FactASourceURLs, &c.FactBSourceURLs,
+			&c.FactADate, &c.FactBDate,
+			&c.Reason, &c.DetectedAt,
+			&c.BundleID, &c.BundleLabel, &c.BundleSummary, &c.BundleSize,
+			&c.FactAStanceID, &c.FactAStanceLabel,
+			&c.FactBStanceID, &c.FactBStanceLabel); err != nil {
+			return nil, fmt.Errorf("failed to scan stance contradiction: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating stance contradictions: %w", err)
+	}
+	return out, nil
 }
 
 // DeleteContradictionsForPerson deletes all contradictions for a person and recalculates their honesty score.
