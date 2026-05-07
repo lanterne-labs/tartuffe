@@ -72,23 +72,6 @@ type topicAssignmentResponse struct {
 	NewTopicLabel string `json:"new_topic_label"`      // only set when AssignedIndex == 0
 }
 
-// TopicGroupingResponse is the expected JSON response from the topic grouping LLM call (used by backfill).
-type TopicGroupingResponse struct {
-	Groups []TopicGroup `json:"groups"`
-}
-
-// TopicGroup represents a group of related topic labels merged into one.
-type TopicGroup struct {
-	GroupName string   `json:"group_name"`
-	Labels    []string `json:"labels"`
-}
-
-// summaryLLMResponse is the expected JSON response from the summary generation LLM call.
-type summaryLLMResponse struct {
-	Summary    string  `json:"summary"`
-	KeyFactIDs []int64 `json:"key_fact_ids"`
-}
-
 // StanceManager handles the core stance document logic: matching new facts to existing
 // stances, creating new stances, and detecting contradictions via LLM analysis.
 type StanceManager struct {
@@ -205,8 +188,8 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 	if label == "" {
 		label = factText
 	}
-	if len(label) > 120 {
-		label = label[:120]
+	if r := []rune(label); len(r) > 120 {
+		label = string(r[:120])
 	}
 
 	doc := StanceDocument{
@@ -404,7 +387,7 @@ For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.2,
-		MaxTokens:      16384,
+		MaxTokens:      4000,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
@@ -498,7 +481,7 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
-		MaxTokens:      16384,
+		MaxTokens:      4000,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
@@ -533,92 +516,6 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic assignment response")
 		return nil, fmt.Errorf("parsing topic assignment response: %w", err)
 	}
-
-	return &resp, nil
-}
-
-// GroupTopicLabels asks the LLM to group related topic labels into broader themes.
-// Used by backfill to merge fragmented topic labels before creating stances.
-func (sm *StanceManager) GroupTopicLabels(ctx context.Context, labels []string) (*TopicGroupingResponse, error) {
-	if len(labels) == 0 {
-		return &TopicGroupingResponse{}, nil
-	}
-
-	var labelsBuilder strings.Builder
-	for i, l := range labels {
-		labelsBuilder.WriteString(fmt.Sprintf("%d. %s\n", i+1, l))
-	}
-
-	prompt := fmt.Sprintf(`You are grouping topic labels about a political figure into broader themes. Many labels refer to the SAME subject matter but are worded differently.
-
-LABELS:
-%s
-RULES:
-- A "topic" is a SUBJECT (a specific policy area, case, event, person, or institution) — NOT a rhetorical pattern, behavioural trait, or speech act.
-- NEVER group by HOW the figure communicates (announcements, denials, flip-flops, exaggerations, promises, accusations). These are forms, not topics.
-- ALWAYS group by WHAT the labels are about (tariffs, NATO membership, parliamentary assistants case, immigration policy, healthcare reform).
-- Bad group name: "policy announcements" / "campaign promises" / "denials and reversals" / "controversial statements" — these describe form, not subject.
-- Good group name: "US tariffs on Chinese goods (2025)" / "NATO Article 5 commitment" / "embezzlement -- parliamentary assistants case (2024-2025 trial)" / "border wall construction policy".
-- If two labels share a subject but disagree (one supports, one opposes; one announces, one reverses), MERGE them — that disagreement is exactly what the bundle is meant to capture.
-- If two labels share a form (both are "announcements", both are "denials") but concern DIFFERENT subjects (announcement about tariffs vs. announcement about troop withdrawal), KEEP them separate.
-- Example: "fund-embezzlement generalized-system", "fund-embezzlement instructions", "embezzlement European-funds", "embezzlement public-funds parliamentary-assistants-case" should ALL be in one group about embezzlement (same subject).
-- Example: "ineligibility sentence democratic", "ineligibility decision contestation", "ineligibility first-instance conviction" should ALL be in one group about ineligibility (same subject).
-- Example: "tariff policy China", "tariff policy steel imports", "tariff policy Mexico", "tariff policy reversal" should be split BY COUNTRY/SECTOR, NOT lumped under "tariff announcements".
-- Choose a clear, specific group name (max 120 chars) with enough subject context to distinguish it from sibling topics.
-- Include a TEMPORAL ANCHOR when relevant: year, trial phase, election cycle.
-- Every label MUST appear in exactly one group. No label should be left out.
-- Keep truly distinct subjects separate (e.g., "acquittal public-insult case" is different from "parliamentary assistants case conviction").
-- Err on the side of SPLITTING when subjects differ; err on the side of MERGING only when subjects truly match.
-
-Return ONLY valid JSON:
-{
-  "groups": [
-    {"group_name": "descriptive name", "labels": ["label1", "label2"]},
-    {"group_name": "another topic", "labels": ["label3"]}
-  ]
-}`, labelsBuilder.String())
-
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You are a topic grouping assistant for political facts. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.1,
-		MaxTokens:      16384,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling topic grouping request: %w", err)
-	}
-
-	log.Debug().Int("label_count", len(labels)).Msg("Sending topic labels to LLM for grouping")
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("LLM topic grouping request failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("decoding topic grouping response: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("topic grouping LLM returned no content")
-	}
-
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
-
-	var resp TopicGroupingResponse
-	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic grouping response")
-		return nil, fmt.Errorf("parsing topic grouping response: %w", err)
-	}
-
-	log.Info().Int("groups", len(resp.Groups)).Int("input_labels", len(labels)).Msg("LLM grouped topic labels")
 
 	return &resp, nil
 }
@@ -660,83 +557,6 @@ func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
 	}
 
 	return &resp, nil
-}
-
-// GenerateSummary takes a list of facts and generates a summary paragraph plus up to 10 key fact IDs.
-// This is intended for backfilling stance documents from existing fact clusters.
-func (sm *StanceManager) GenerateSummary(ctx context.Context, facts []StanceFactInfo) (string, []int64, error) {
-	if len(facts) == 0 {
-		return "", nil, fmt.Errorf("no facts provided for summary generation")
-	}
-
-	// Format facts for the prompt
-	var factsBuilder strings.Builder
-	for _, f := range facts {
-		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
-	}
-
-	prompt := fmt.Sprintf(`Summarize the following facts about a political figure into a concise stance paragraph (2-4 sentences). Also select up to 10 key facts that best represent this stance (by ID).
-
-FACTS:
-%s
-
-Return ONLY valid JSON:
-{
-  "summary": "Concise summary paragraph...",
-  "key_fact_ids": [1, 2, 3]
-}`, factsBuilder.String())
-
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You are a political fact summarization assistant. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.2,
-		MaxTokens:      16384,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", nil, fmt.Errorf("marshaling summary LLM request: %w", err)
-	}
-
-	log.Debug().Int("fact_count", len(facts)).Msg("Sending facts to LLM for summary generation")
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return "", nil, fmt.Errorf("LLM summary request failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode summary chat response")
-		return "", nil, fmt.Errorf("decoding summary chat response: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", nil, fmt.Errorf("summary LLM returned no content")
-	}
-
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
-
-	var resp summaryLLMResponse
-	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse summary LLM response")
-		return "", nil, fmt.Errorf("parsing summary LLM response: %w", err)
-	}
-
-	if resp.Summary == "" {
-		return "", nil, fmt.Errorf("LLM returned empty summary")
-	}
-
-	log.Info().
-		Int("fact_count", len(facts)).
-		Int("key_facts_selected", len(resp.KeyFactIDs)).
-		Msg("Generated stance summary")
-
-	return resp.Summary, resp.KeyFactIDs, nil
 }
 
 // updateCentroid computes a weighted average of the old centroid and a new embedding,

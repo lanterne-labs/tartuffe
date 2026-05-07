@@ -4223,6 +4223,59 @@ func (s *PostgresStorer) DeleteStanceDocumentsForPerson(ctx context.Context, per
 	return nil
 }
 
+// MergeStancesForPerson merges src into dst in a single transaction. Fact memberships
+// are moved to dst (duplicates dropped via ON CONFLICT), contradictions whose bundle
+// pointed at src are repointed to dst BEFORE the row is dropped (the FK is ON DELETE
+// SET NULL, so a naive delete would silently null them), then dst's centroid and
+// fact_count are updated and src is deleted. The new centroid is pre-computed by the
+// caller (weighted normalised mean over members); summary and key_fact_ids on dst are
+// preserved intentionally — dst is the larger stance.
+func (s *PostgresStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID int64, newDstCentroid []float32) error {
+	if srcID == dstID {
+		return fmt.Errorf("MergeStancesForPerson: src and dst are the same (%d)", srcID)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin merge tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO stance_document_facts (stance_document_id, fact_id, added_at)
+		SELECT $1, fact_id, added_at FROM stance_document_facts
+		WHERE stance_document_id = $2
+		ON CONFLICT (stance_document_id, fact_id) DO NOTHING`, dstID, srcID); err != nil {
+		return fmt.Errorf("moving fact memberships %d->%d: %w", srcID, dstID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM stance_document_facts WHERE stance_document_id = $1`, srcID); err != nil {
+		return fmt.Errorf("clearing src memberships %d: %w", srcID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE contradictions SET bundle_stance_id = $1 WHERE bundle_stance_id = $2`, dstID, srcID); err != nil {
+		return fmt.Errorf("repointing contradictions %d->%d: %w", srcID, dstID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE stance_documents
+		SET cluster_embedding = $1,
+		    fact_count = (SELECT count(*) FROM stance_document_facts WHERE stance_document_id = $2),
+		    last_updated_at = NOW()
+		WHERE id = $2`, pgvector.NewVector(newDstCentroid), dstID); err != nil {
+		return fmt.Errorf("updating dst stance %d: %w", dstID, err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM stance_documents WHERE id = $1`, srcID); err != nil {
+		return fmt.Errorf("deleting src stance %d: %w", srcID, err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit merge %d->%d: %w", srcID, dstID, err)
+	}
+	return nil
+}
+
 // GetFactStanceMap returns a map fact_id -> stance_document_id for the given facts.
 // Facts without a stance row are simply absent from the map.
 func (s *PostgresStorer) GetFactStanceMap(ctx context.Context, factIDs []int64) (map[int64]int64, error) {

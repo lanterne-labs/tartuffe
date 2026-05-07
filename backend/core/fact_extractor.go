@@ -69,8 +69,13 @@ If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - Hopes, wishes, preferences, feelings, trust
 - Travel, logistics, sightings
 - Courtroom behavior/procedure (listening, appearing, being called to the stand)
-- Biographical facts, role descriptions, titles, historical election results
+- Pure biographical facts: birth date, party-founding year, role titles, lifetime events (retirement, marriage)
 - Personal purchases, truisms, reactions to scheduling
+
+⚠️ DO NOT reject under rule 4 (these LOOK biographical/historical but ARE contradictable):
+- A specific recorded legislative vote — Type 2 outcome. KEEP even when from a prior parliament. ✅ "X voted AGAINST the Sondervermögen in the previous Bundestag" → KEEP.
+- The entity's own stated past or present POSITION — even framed as biography. The entity can later flip. ✅ "X stated she has long opposed primaries" → KEEP (she could later support primaries).
+- An election result where THE SUBJECT was a candidate — the subject could later claim a different number. ✅ "X obtained 49.79%% at Harfleur" → KEEP.
 
 **5. Journalist characterization without evidence**
 A journalist's interpretation or narrative framing is NOT a valid fact. However, a journalist reporting a concrete, documented finding WITH evidence IS valid (Type 2).

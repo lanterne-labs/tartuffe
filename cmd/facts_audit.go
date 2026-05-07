@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -29,6 +31,7 @@ var (
 	factsAuditEndpoint string
 	factsAuditModel    string
 	factsAuditAPIKey   string
+	factsAuditParallel int
 )
 
 var factsAuditCmd = &cobra.Command{
@@ -81,6 +84,7 @@ func init() {
 	factsAuditCmd.Flags().StringVar(&factsAuditEndpoint, "endpoint", "", "Override OPEN_AI_API for this run (e.g. http://cachy:4000/v1)")
 	factsAuditCmd.Flags().StringVar(&factsAuditModel, "model", "", "Override OPEN_AI_CHAT_MODEL for this run")
 	factsAuditCmd.Flags().StringVar(&factsAuditAPIKey, "apikey", "", "Override OPEN_AI_KEY for this run (some local gateways use a fixed token)")
+	factsAuditCmd.Flags().IntVar(&factsAuditParallel, "parallel", 1, "Number of facts to audit concurrently (1 = sequential). Local LLM gateways like vLLM/llama-swap usually handle 16+ in parallel.")
 }
 
 // factAuditPerson is the JSON shape of one mentioned person in the audit row.
@@ -157,6 +161,11 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 
+	parallelism := factsAuditParallel
+	if parallelism < 1 {
+		parallelism = 1
+	}
+
 	var counts struct {
 		keep, del, unsure, errors int
 	}
@@ -165,6 +174,7 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 	startedAt := time.Now()
 	log.Info().
 		Int("total", len(rows)).
+		Int("parallel", parallelism).
 		Bool("random", factsAuditRandom).
 		Str("scope", factsAuditScopeDescription()).
 		Str("model", auditor.Model()).
@@ -172,59 +182,100 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		Bool("apply", factsAuditApply).
 		Msg("Starting fact audit")
 
-	for i, row := range rows {
-		subject := factsAuditSubjectLabel(row.Persons)
-		factCreatedAt := row.FactCreatedAt
-		result := auditor.Audit(ctx, core.FactAuditInput{
-			NormalizedFact:    row.FactText,
-			CanonicalVerb:     row.CanonicalVerb,
-			EmbeddingText:     row.EmbeddingText,
-			SubjectEntity:     subject,
-			OriginalQuote:     row.FirstOriginalQuote,
-			SourceURL:         row.FirstSourceURL,
-			SourcePublishedAt: row.FirstSourcePublishedAt,
-			FactCreatedAt:     &factCreatedAt,
-		})
+	type auditJob struct {
+		idx int
+		row storage.FactAuditRow
+	}
+	type auditResult struct {
+		line    factAuditOutputLine
+		verdict core.FactAuditVerdict
+		factID  int64
+		hasErr  bool
+	}
 
-		line := factAuditOutputLine{
-			FactID:         row.ID,
-			Persons:        toAuditInputPersons(row.Persons),
-			FactText:       row.FactText,
-			EmbeddingText:  row.EmbeddingText,
-			CanonicalVerb:  row.CanonicalVerb,
-			OriginalQuote:  row.FirstOriginalQuote,
-			SourceURL:      row.FirstSourceURL,
-			Verdict:        string(result.Verdict),
-			Rule:           result.Rule,
-			AuditReasoning: result.Reasoning,
+	jobs := make(chan auditJob)
+	results := make(chan auditResult, parallelism*2)
+
+	var wg sync.WaitGroup
+	for w := 0; w < parallelism; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				row := j.row
+				subject := factsAuditSubjectLabel(row.Persons)
+				factCreatedAt := row.FactCreatedAt
+				result := auditor.Audit(ctx, core.FactAuditInput{
+					NormalizedFact:    row.FactText,
+					CanonicalVerb:     row.CanonicalVerb,
+					EmbeddingText:     row.EmbeddingText,
+					SubjectEntity:     subject,
+					OriginalQuote:     row.FirstOriginalQuote,
+					SourceURL:         row.FirstSourceURL,
+					SourcePublishedAt: row.FirstSourcePublishedAt,
+					FactCreatedAt:     &factCreatedAt,
+				})
+				line := factAuditOutputLine{
+					FactID:         row.ID,
+					Persons:        toAuditInputPersons(row.Persons),
+					FactText:       row.FactText,
+					EmbeddingText:  row.EmbeddingText,
+					CanonicalVerb:  row.CanonicalVerb,
+					OriginalQuote:  row.FirstOriginalQuote,
+					SourceURL:      row.FirstSourceURL,
+					Verdict:        string(result.Verdict),
+					Rule:           result.Rule,
+					AuditReasoning: result.Reasoning,
+				}
+				out := auditResult{line: line, verdict: result.Verdict, factID: row.ID}
+				if result.Err != nil {
+					line.Error = result.Err.Error()
+					out.line = line
+					out.hasErr = true
+					log.Error().Err(result.Err).Int64("fact_id", row.ID).Msg("Fact audit error")
+				}
+				results <- out
+			}
+		}()
+	}
+
+	go func() {
+		for i, row := range rows {
+			jobs <- auditJob{idx: i, row: row}
 		}
-		if result.Err != nil {
+		close(jobs)
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var done atomic.Int64
+	for r := range results {
+		if r.hasErr {
 			counts.errors++
-			line.Error = result.Err.Error()
-			log.Error().Err(result.Err).Int64("fact_id", row.ID).Msg("Fact audit error")
 		} else {
-			switch result.Verdict {
+			switch r.verdict {
 			case core.FactVerdictKeep:
 				counts.keep++
 			case core.FactVerdictDelete:
 				counts.del++
-				deleteIDs = append(deleteIDs, row.ID)
+				deleteIDs = append(deleteIDs, r.factID)
 			case core.FactVerdictUnsure:
 				counts.unsure++
 			}
 		}
-
 		if format == "jsonl" {
-			if err := enc.Encode(line); err != nil {
+			if err := enc.Encode(r.line); err != nil {
 				return fmt.Errorf("failed to encode JSONL line: %w", err)
 			}
 		} else {
-			printFactAuditTextRow(os.Stdout, line)
+			printFactAuditTextRow(os.Stdout, r.line)
 		}
-
-		if (i+1)%10 == 0 {
+		n := done.Add(1)
+		if n%50 == 0 {
 			log.Info().
-				Int("audited", i+1).
+				Int64("audited", n).
 				Int("total", len(rows)).
 				Int("keep", counts.keep).
 				Int("delete", counts.del).

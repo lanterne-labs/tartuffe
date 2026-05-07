@@ -2,6 +2,27 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-07: Per-fact stance rebuild + centroid merge
+
+### What was done
+- Replaced the batched LLM topic-grouping step in `dm stances backfill` / `dm stances rebuild` with a per-fact loop that reuses the production-ingest path (`StanceManager.ProcessNewFact`). Facts sharing an exact `embedding_text` still pay only one LLM call (the rest are joined via `AddFactToStance`).
+- Added a post-pass that merges a person's stances whose normalised `cluster_embedding` centroids exceed `--merge-threshold` (default 0.85) cosine similarity. UnionFind handles transitivity. The representative is the largest-fact-count stance; the new centroid is the weighted normalised mean of all members.
+- New transactional storer method `MergeStancesForPerson(srcID, dstID, newCentroid)` moves fact memberships, repoints contradictions whose `bundle_stance_id` was src **before** the row is dropped (FK is `ON DELETE SET NULL`), recomputes `fact_count`, and deletes src.
+- Deleted now-unused code: `StanceManager.GroupTopicLabels` + `TopicGroupingResponse` + `TopicGroup`, `GenerateSummary` + `summaryLLMResponse`, the `applyTopicGrouping` / `findBestGroupMatch` / `factCluster` helpers in `cmd/stances_backfill.go`.
+- New flag `--merge-threshold` on both `stances backfill` and `stances rebuild`. Rebuild summary printout gains `Stances merged (centroid)` and `Contradictions detected (new)` lines.
+
+### Why
+- The batched `GroupTopicLabels` LLM call packed every unique label for a person into one prompt that easily exceeded 8K tokens for politicians with hundreds of facts. Local vLLM (`gemma-4-26b-a4b-it` on cachy, RTX 5080 16GB) is launched with `--max-model-len 8192` and is already CPU-offloading 8GB — bumping the context cap is not safe. Chunking the call would have produced fragmented groupings unstable across runs.
+- Per-fact assignment fits trivially: the prompt is ~`200 chars × N existing stances`, not `N labels × full label text`. Centroid-based merge after the fact recovers the across-group consolidation that the batched call was supposed to provide, but using the embedding signal we already trust (the LLM was redundant with it).
+
+### Operational notes
+- Re-running `stances rebuild` will re-record contradictions; `RecordContradiction` is idempotent on `(fact_a_id, fact_b_id)`. Newly-discovered contradictions WILL fire SSE events and trigger honesty-score recomputation — this is consistent with normal ingest behaviour and arguably catches contradictions the prior coarse grouping missed.
+- `--resume` skips persons that already have stances and therefore also skips the merge pass for those persons. Use without `--resume` for a clean rebuild, or run merge-only later if/when needed.
+- New flag `--persons-file` on `stances rebuild` accepts one person name per line, resolved via `core.ResolveTargetName` (exact match only; fuzzy matches are skipped with a warning). Mutually exclusive with `--person`. Useful for targeted retries / mop-ups.
+
+### Bug fix in this batch
+- `StanceManager.createNewStance` was byte-truncating the topic label at 120 (`label[:120]`), which cut multi-byte UTF-8 codepoints in half (French é/à/ü, German Umlauts, Arabic, Cyrillic) and surfaced as `ERROR: invalid byte sequence for encoding "UTF8"` (SQLSTATE 22021) on the INSERT. Switched to rune-aware truncation. Lesson: any `s[:N]` on text that could contain non-ASCII must go through `[]rune` first.
+
 ## 2026-05-05: Strict closed-enum LLM contracts + 16k-safe contradiction batching
 
 ### What was done

@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 	"fmt"
+	"math"
+	"os"
+	"sort"
 	"strings"
 
 	pgvector "github.com/pgvector/pgvector-go"
@@ -13,22 +17,29 @@ import (
 )
 
 var (
-	stancesBackfillPerson string
-	stancesBackfillDryRun bool
+	stancesBackfillPerson         string
+	stancesBackfillDryRun         bool
+	stancesBackfillMergeThreshold float64
 )
 
 var stancesBackfillCmd = &cobra.Command{
 	Use:   "backfill",
 	Short: "Backfill stance documents from existing facts",
-	Long: `Groups existing facts by topic and creates stance documents using LLM-based topic grouping.
+	Long: `Assigns each existing fact to a stance (creating new stances as needed) using
+the same per-fact LLM topic-assignment path as production ingest, then merges
+stance pairs whose normalised cluster_embedding centroids are cosine-similar
+above --merge-threshold (default 0.85).
 
 For each person (or specified person):
-1. Loads all active facts with embeddings
-2. Groups facts by exact embedding_text match (initial clusters)
-3. Uses LLM to merge related topic labels into broader themes
-4. For multi-fact clusters: generates LLM summary
-5. For single-fact clusters: uses fact text as summary
-6. Inserts stance documents and links facts
+1. Loads all active facts with embeddings.
+2. Deduplicates by exact embedding_text so identical-label facts share one
+   ProcessNewFact call (representative + cheap join inserts for duplicates).
+3. For each unique label group, calls StanceManager.ProcessNewFact on the
+   representative — this runs assignTopic + (when matched) the analyze-vs-stance
+   call, mirroring ingest behaviour.
+4. After all facts are placed, merges stances whose centroids exceed the cosine
+   threshold via UnionFind; the largest stance in each group keeps its summary
+   and key facts; centroids are recomputed as a weighted normalised mean.
 
 Examples:
   # Backfill all persons
@@ -36,6 +47,9 @@ Examples:
 
   # Backfill specific person
   ./dm stances backfill --person "Marine Le Pen"
+
+  # Tighter merge (fewer collapses)
+  ./dm stances backfill --merge-threshold 0.92
 
   # Dry run
   ./dm stances backfill --person "Marine Le Pen" --dry-run`,
@@ -47,9 +61,10 @@ func init() {
 	stancesCmd.AddCommand(stancesBackfillCmd)
 	stancesBackfillCmd.Flags().StringVar(&stancesBackfillPerson, "person", "", "Specific person name to backfill (optional)")
 	stancesBackfillCmd.Flags().BoolVar(&stancesBackfillDryRun, "dry-run", false, "Show what would be created without writing to database")
+	stancesBackfillCmd.Flags().Float64Var(&stancesBackfillMergeThreshold, "merge-threshold", 0.85, "Cosine similarity threshold (0-1) for the post-pass centroid merge")
 }
 
-// backfillFact holds the data needed for clustering.
+// backfillFact holds the data needed for the per-fact ingest loop.
 type backfillFact struct {
 	ID            int64
 	FactText      string
@@ -58,11 +73,11 @@ type backfillFact struct {
 	Embedding     []float32
 }
 
-// factCluster represents a group of similar facts.
-type factCluster struct {
-	facts    []backfillFact
-	centroid []float32
-	label    string // embedding_text of first fact
+// backfillStats accumulates per-person counters for the rebuild/backfill summary.
+type backfillStats struct {
+	StancesCreated         int
+	StancesMerged          int
+	ContradictionsDetected int
 }
 
 func runStancesBackfill(cmd *cobra.Command, args []string) error {
@@ -84,7 +99,6 @@ func runStancesBackfill(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Determine which persons to process
 	persons, err := getPersonsForBackfill(ctx, storer, stancesBackfillPerson)
 	if err != nil {
 		return err
@@ -92,24 +106,27 @@ func runStancesBackfill(cmd *cobra.Command, args []string) error {
 
 	log.Info().Int("person_count", len(persons)).Bool("dry_run", stancesBackfillDryRun).Msg("Starting stance backfill")
 
-	totalCreated := 0
-	totalSkipped := 0
+	var totalCreated, totalMerged, totalContradictions int
 
 	for _, p := range persons {
-		created, skipped, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesBackfillDryRun)
+		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesBackfillDryRun, stancesBackfillMergeThreshold)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to backfill stances")
 			continue
 		}
-		totalCreated += created
-		totalSkipped += skipped
+		totalCreated += stats.StancesCreated
+		totalMerged += stats.StancesMerged
+		totalContradictions += stats.ContradictionsDetected
 	}
 
 	fmt.Println()
 	fmt.Println("=== STANCE BACKFILL RESULTS ===")
-	fmt.Printf("Persons processed:     %d\n", len(persons))
-	fmt.Printf("Stances created:       %d\n", totalCreated)
-	fmt.Printf("Stances skipped:       %d (already exist)\n", totalSkipped)
+	fmt.Printf("Persons processed:               %d\n", len(persons))
+	fmt.Printf("Stances created:                 %d\n", totalCreated)
+	if !stancesBackfillDryRun {
+		fmt.Printf("Stances merged (centroid):       %d\n", totalMerged)
+		fmt.Printf("Contradictions detected (new):   %d\n", totalContradictions)
+	}
 	if stancesBackfillDryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
 	}
@@ -138,6 +155,50 @@ func getPersonsForBackfill(ctx context.Context, storer *storage.PostgresStorer, 
 	return storer.GetAllPersons(ctx)
 }
 
+func resolvePersonsFromFile(ctx context.Context, storer *storage.PostgresStorer, path string) ([]storage.PersonInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open persons-file: %w", err)
+	}
+	defer f.Close()
+
+	var out []storage.PersonInfo
+	var unresolved []string
+	seen := make(map[int64]bool)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		name := strings.TrimSpace(scanner.Text())
+		if name == "" {
+			continue
+		}
+		result := core.ResolveTargetName(ctx, storer, name)
+		if result.Error != nil {
+			return nil, fmt.Errorf("resolving %q: %w", name, result.Error)
+		}
+		if result.ExactMatch == nil || result.ExactMatch.PersonID == nil {
+			unresolved = append(unresolved, name)
+			continue
+		}
+		pid := *result.ExactMatch.PersonID
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+		out = append(out, storage.PersonInfo{
+			ID:         pid,
+			Name:       result.ExactMatch.Name,
+			EntityType: result.ExactMatch.EntityType,
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan persons-file: %w", err)
+	}
+	if len(unresolved) > 0 {
+		log.Warn().Strs("unresolved", unresolved).Int("count", len(unresolved)).Msg("persons-file: some names did not resolve to an exact match; skipping them")
+	}
+	return out, nil
+}
+
 func backfillStancesForPerson(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
@@ -146,144 +207,98 @@ func backfillStancesForPerson(
 	personID int64,
 	personName string,
 	dryRun bool,
-) (created int, skipped int, err error) {
-	// Load all active facts with embeddings
+	mergeThreshold float64,
+) (backfillStats, error) {
+	var stats backfillStats
+
 	facts, err := loadFactsForBackfill(ctx, storer, personID)
 	if err != nil {
-		return 0, 0, fmt.Errorf("loading facts: %w", err)
+		return stats, fmt.Errorf("loading facts: %w", err)
 	}
 
 	if len(facts) == 0 {
 		log.Info().Str("person", personName).Msg("No facts with embeddings found, skipping")
-		return 0, 0, nil
+		return stats, nil
 	}
 
-	log.Info().Str("person", personName).Int("facts", len(facts)).Msg("Loaded facts for clustering")
+	log.Info().Str("person", personName).Int("facts", len(facts)).Msg("Loaded facts for per-fact stance assignment")
 
-	// Step 1: Group facts by exact embedding_text match
-	initialClusters := clusterFactsByExactLabel(facts)
-	log.Info().Str("person", personName).Int("initial_clusters", len(initialClusters)).Msg("Grouped facts by exact embedding_text")
+	// Group facts by exact embedding_text so identical labels share one LLM call.
+	// The first fact in each group is the representative passed to ProcessNewFact;
+	// the rest are joined to the assigned stance via cheap ON CONFLICT inserts.
+	groups := clusterFactsByExactLabel(facts)
 
-	// Step 2: Use LLM to group related labels into broader themes
-	labels := make([]string, 0, len(initialClusters))
-	for label := range initialClusters {
-		labels = append(labels, label)
+	// Deterministic order: process groups by the smallest fact ID inside them so
+	// semantically related facts surfaced earlier (e.g. clustered by ingest time)
+	// have a chance to seed the topic before later contradictions arrive.
+	type groupEntry struct {
+		label string
+		facts []backfillFact
+		minID int64
 	}
+	entries := make([]groupEntry, 0, len(groups))
+	for label, gFacts := range groups {
+		minID := gFacts[0].ID
+		for _, f := range gFacts[1:] {
+			if f.ID < minID {
+				minID = f.ID
+			}
+		}
+		entries = append(entries, groupEntry{label: label, facts: gFacts, minID: minID})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].minID < entries[j].minID })
 
-	var mergedClusters []factCluster
 	if dryRun || stanceManager == nil {
-		// In dry-run mode, use initial clusters as-is
-		for label, clusterFacts := range initialClusters {
-			mergedClusters = append(mergedClusters, factCluster{
-				facts:    clusterFacts,
-				centroid: computeCentroid(clusterFacts),
-				label:    label,
-			})
+		for _, e := range entries {
+			fmt.Printf("  [DRY-RUN] Would process group %q (%d facts, rep ID=%d)\n", truncateForDisplay(e.label, 80), len(e.facts), e.facts[0].ID)
+			stats.StancesCreated++
 		}
-	} else {
-		grouping, err := stanceManager.GroupTopicLabels(ctx, labels)
+		return stats, nil
+	}
+
+	stanceIDsSeen := make(map[int64]struct{})
+
+	for _, e := range entries {
+		rep := e.facts[0]
+		res, err := stanceManager.ProcessNewFact(ctx, personID, rep.ID, rep.FactText, rep.Embedding, rep.CanonicalVerb)
 		if err != nil {
-			log.Error().Err(err).Msg("LLM topic grouping failed, falling back to exact-match clusters")
-			for label, clusterFacts := range initialClusters {
-				mergedClusters = append(mergedClusters, factCluster{
-					facts:    clusterFacts,
-					centroid: computeCentroid(clusterFacts),
-					label:    label,
-				})
+			log.Error().Err(err).Str("person", personName).Int64("fact_id", rep.ID).Msg("ProcessNewFact failed; skipping group")
+			continue
+		}
+		if res.Verdict == "NEW_STANCE" {
+			stats.StancesCreated++
+		}
+		if res.Verdict == "CONTRADICTION" {
+			stats.ContradictionsDetected++
+		}
+		stanceIDsSeen[res.StanceID] = struct{}{}
+
+		// Attach remaining facts in the exact-label group directly to the assigned
+		// stance. We deliberately skip the LLM-analyse path for these — the rep has
+		// already established the verdict for this label, and AddFactToStance is
+		// idempotent via ON CONFLICT.
+		for _, f := range e.facts[1:] {
+			if err := adapter.AddFactToStance(ctx, res.StanceID, f.ID); err != nil {
+				log.Warn().Err(err).Int64("fact_id", f.ID).Int64("stance_id", res.StanceID).Msg("Failed to attach exact-label dup to stance")
 			}
-		} else {
-			mergedClusters = applyTopicGrouping(initialClusters, grouping)
-			log.Info().Str("person", personName).Int("merged_clusters", len(mergedClusters)).Msg("Merged clusters via LLM grouping")
 		}
 	}
 
-	// Check existing stances to skip duplicates
-	existingStances, err := adapter.GetStanceDocumentsForPerson(ctx, personID)
+	merged, err := mergeStancesForPersonByCentroid(ctx, storer, personID, mergeThreshold)
 	if err != nil {
-		return 0, 0, fmt.Errorf("getting existing stances: %w", err)
-	}
-	existingLabels := make(map[string]bool, len(existingStances))
-	for _, s := range existingStances {
-		existingLabels[s.ClusterLabel] = true
+		log.Error().Err(err).Str("person", personName).Msg("Centroid merge phase failed (stances kept as-is)")
+	} else {
+		stats.StancesMerged = merged
 	}
 
-	for _, cluster := range mergedClusters {
-		label := cluster.label
-		if existingLabels[label] {
-			log.Debug().Str("label", label).Str("person", personName).Msg("Stance already exists, skipping")
-			skipped++
-			continue
-		}
+	log.Info().
+		Str("person", personName).
+		Int("stances_created", stats.StancesCreated).
+		Int("stances_merged", stats.StancesMerged).
+		Int("contradictions_detected", stats.ContradictionsDetected).
+		Msg("Backfill done for person")
 
-		if dryRun {
-			fmt.Printf("  [DRY-RUN] Would create stance: %q (%d facts)\n", truncateForDisplay(label, 80), len(cluster.facts))
-			created++
-			continue
-		}
-
-		// Generate summary
-		var summary string
-		var keyFactIDs []int64
-
-		if len(cluster.facts) == 1 {
-			summary = cluster.facts[0].FactText
-			keyFactIDs = []int64{cluster.facts[0].ID}
-		} else {
-			stanceFactInfos := make([]core.StanceFactInfo, len(cluster.facts))
-			for i, f := range cluster.facts {
-				stanceFactInfos[i] = core.StanceFactInfo{
-					ID:                 f.ID,
-					NormalizedFactText: f.FactText,
-					EmbeddingText:      f.EmbeddingText,
-					CanonicalVerb:      f.CanonicalVerb,
-				}
-			}
-
-			summary, keyFactIDs, err = stanceManager.GenerateSummary(ctx, stanceFactInfos)
-			if err != nil {
-				log.Error().Err(err).Str("label", label).Msg("Failed to generate summary, using first fact text")
-				summary = cluster.facts[0].FactText
-				keyFactIDs = []int64{cluster.facts[0].ID}
-			}
-		}
-
-		clusterLabel := strings.TrimSpace(label)
-		if len(clusterLabel) > 120 {
-			clusterLabel = clusterLabel[:120]
-		}
-
-		doc := core.StanceDocument{
-			PersonID:         personID,
-			ClusterLabel:     clusterLabel,
-			ClusterEmbedding: cluster.centroid,
-			Summary:          summary,
-			KeyFactIDs:       keyFactIDs,
-			FactCount:        len(cluster.facts),
-		}
-
-		stanceID, err := adapter.InsertStanceDocument(ctx, doc)
-		if err != nil {
-			log.Error().Err(err).Str("label", label).Msg("Failed to insert stance document")
-			continue
-		}
-
-		for _, f := range cluster.facts {
-			if err := adapter.AddFactToStance(ctx, stanceID, f.ID); err != nil {
-				log.Error().Err(err).Int64("stance_id", stanceID).Int64("fact_id", f.ID).Msg("Failed to link fact to stance")
-			}
-		}
-
-		log.Info().
-			Int64("stance_id", stanceID).
-			Str("label", truncateForDisplay(clusterLabel, 60)).
-			Int("fact_count", len(cluster.facts)).
-			Str("person", personName).
-			Msg("Created stance document")
-
-		created++
-	}
-
-	return created, skipped, nil
+	return stats, nil
 }
 
 func loadFactsForBackfill(ctx context.Context, storer *storage.PostgresStorer, personID int64) ([]backfillFact, error) {
@@ -313,7 +328,7 @@ func loadFactsForBackfill(ctx context.Context, storer *storage.PostgresStorer, p
 		}
 		f.Embedding = vec.Slice()
 		if len(f.Embedding) == 0 {
-			continue // skip facts without embeddings
+			continue
 		}
 		facts = append(facts, f)
 	}
@@ -337,100 +352,196 @@ func clusterFactsByExactLabel(facts []backfillFact) map[string][]backfillFact {
 	return clusters
 }
 
-// applyTopicGrouping merges initial clusters based on LLM grouping results.
-// Any labels not assigned by the LLM are added to the most closely named group or kept standalone.
-func applyTopicGrouping(initialClusters map[string][]backfillFact, grouping *core.TopicGroupingResponse) []factCluster {
-	// Build reverse map: original label → group name
-	labelToGroup := make(map[string]string)
-	for _, g := range grouping.Groups {
-		for _, label := range g.Labels {
-			labelToGroup[label] = g.GroupName
-		}
-	}
-
-	// Collect group names for matching unassigned labels
-	groupNames := make([]string, 0, len(grouping.Groups))
-	for _, g := range grouping.Groups {
-		groupNames = append(groupNames, g.GroupName)
-	}
-
-	// Merge facts into groups
-	groupFacts := make(map[string][]backfillFact)
-	for label, facts := range initialClusters {
-		groupName, ok := labelToGroup[label]
-		if !ok {
-			// Try to match unassigned label to an existing group by substring overlap
-			groupName = findBestGroupMatch(label, groupNames)
-			if groupName != "" {
-				log.Info().Str("label", label).Str("matched_group", groupName).Msg("Matched unassigned label to group by keyword overlap")
-			} else {
-				groupName = label
-				log.Warn().Str("label", label).Msg("Label not assigned to any group by LLM, keeping standalone")
-			}
-		}
-		groupFacts[groupName] = append(groupFacts[groupName], facts...)
-	}
-
-	// Build final clusters
-	clusters := make([]factCluster, 0, len(groupFacts))
-	for groupName, facts := range groupFacts {
-		clusters = append(clusters, factCluster{
-			facts:    facts,
-			centroid: computeCentroid(facts),
-			label:    groupName,
-		})
-	}
-
-	return clusters
+// stanceMergeInput is the minimal view of a stance the merge logic needs.
+// Defined separately from core.StanceDocument so computeMergeGroups can be
+// unit-tested without touching the DB or pgvector types.
+type stanceMergeInput struct {
+	ID        int64
+	FactCount int
+	Centroid  []float32
 }
 
-// findBestGroupMatch finds the best group name for an unassigned label by checking
-// if the label shares significant keywords with any group name.
-func findBestGroupMatch(label string, groupNames []string) string {
-	labelLower := strings.ToLower(label)
-	labelWords := strings.FieldsFunc(labelLower, func(r rune) bool {
-		return r == '-' || r == '_' || r == ' '
-	})
-
-	bestGroup := ""
-	bestOverlap := 0
-
-	for _, group := range groupNames {
-		groupLower := strings.ToLower(group)
-		overlap := 0
-		for _, word := range labelWords {
-			if len(word) >= 4 && strings.Contains(groupLower, word) {
-				overlap++
-			}
-		}
-		if overlap > bestOverlap {
-			bestOverlap = overlap
-			bestGroup = group
-		}
-	}
-
-	// Require at least 2 keyword matches to avoid false positives
-	if bestOverlap >= 2 {
-		return bestGroup
-	}
-	return ""
+// mergeStep is one ordered merge produced by computeMergeGroups: src is folded
+// into dst, dst's new centroid is the weighted normalised mean of all members.
+type mergeStep struct {
+	SrcID       int64
+	DstID       int64
+	NewCentroid []float32
 }
 
-// computeCentroid calculates the average embedding of a set of facts.
-func computeCentroid(facts []backfillFact) []float32 {
-	if len(facts) == 0 {
+// computeMergeGroups produces the set of merges to apply for a person's stances.
+// Centroids are assumed L2-normalised so dot product == cosine similarity. Pairs
+// with similarity ≥ threshold are unioned (transitive). Within each multi-member
+// group the representative is the stance with the largest FactCount (ties broken
+// by smallest ID); the new centroid for the representative is the weighted
+// normalised mean over all group members.
+func computeMergeGroups(stances []stanceMergeInput, threshold float64) []mergeStep {
+	n := len(stances)
+	if n < 2 {
 		return nil
 	}
-	dim := len(facts[0].Embedding)
-	centroid := make([]float32, dim)
-	for _, f := range facts {
-		for i, v := range f.Embedding {
-			centroid[i] += v
+
+	parent := make([]int, n)
+	rank := make([]int, n)
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		if parent[i] != i {
+			parent[i] = find(parent[i])
+		}
+		return parent[i]
+	}
+	union := func(i, j int) {
+		ri, rj := find(i), find(j)
+		if ri == rj {
+			return
+		}
+		if rank[ri] < rank[rj] {
+			ri, rj = rj, ri
+		}
+		parent[rj] = ri
+		if rank[ri] == rank[rj] {
+			rank[ri]++
 		}
 	}
-	n := float32(len(facts))
-	for i := range centroid {
-		centroid[i] /= n
+
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			sim := dotProduct(stances[i].Centroid, stances[j].Centroid)
+			if sim >= threshold {
+				union(i, j)
+			}
+		}
 	}
-	return centroid
+
+	groups := make(map[int][]int)
+	for i := 0; i < n; i++ {
+		r := find(i)
+		groups[r] = append(groups[r], i)
+	}
+
+	var steps []mergeStep
+	// Order groups by their representative's stance ID for deterministic output.
+	groupKeys := make([]int, 0, len(groups))
+	for k := range groups {
+		groupKeys = append(groupKeys, k)
+	}
+	sort.Ints(groupKeys)
+
+	for _, k := range groupKeys {
+		members := groups[k]
+		if len(members) < 2 {
+			continue
+		}
+		// Pick representative: largest FactCount, ties broken by smallest ID.
+		repIdx := members[0]
+		for _, idx := range members[1:] {
+			if stances[idx].FactCount > stances[repIdx].FactCount ||
+				(stances[idx].FactCount == stances[repIdx].FactCount && stances[idx].ID < stances[repIdx].ID) {
+				repIdx = idx
+			}
+		}
+		newCentroid := weightedNormalisedCentroid(stances, members)
+		// Emit one merge step per non-rep member, sorted by ID for determinism.
+		others := make([]int, 0, len(members)-1)
+		for _, idx := range members {
+			if idx != repIdx {
+				others = append(others, idx)
+			}
+		}
+		sort.Slice(others, func(i, j int) bool { return stances[others[i]].ID < stances[others[j]].ID })
+		for _, idx := range others {
+			steps = append(steps, mergeStep{
+				SrcID:       stances[idx].ID,
+				DstID:       stances[repIdx].ID,
+				NewCentroid: newCentroid,
+			})
+		}
+	}
+	return steps
+}
+
+func dotProduct(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var s float64
+	for i := range a {
+		s += float64(a[i]) * float64(b[i])
+	}
+	return s
+}
+
+// weightedNormalisedCentroid returns Σ(centroid_i × fact_count_i) / Σfact_count_i,
+// then L2-normalised. Used as the new centroid for the merge representative.
+func weightedNormalisedCentroid(stances []stanceMergeInput, indices []int) []float32 {
+	if len(indices) == 0 {
+		return nil
+	}
+	dim := len(stances[indices[0]].Centroid)
+	acc := make([]float64, dim)
+	var totalWeight float64
+	for _, idx := range indices {
+		w := float64(stances[idx].FactCount)
+		if w <= 0 {
+			w = 1
+		}
+		for i, v := range stances[idx].Centroid {
+			acc[i] += float64(v) * w
+		}
+		totalWeight += w
+	}
+	if totalWeight == 0 {
+		totalWeight = 1
+	}
+	out := make([]float32, dim)
+	var sumSq float64
+	for i := range acc {
+		v := acc[i] / totalWeight
+		out[i] = float32(v)
+		sumSq += v * v
+	}
+	norm := math.Sqrt(sumSq)
+	if norm > 0 {
+		for i := range out {
+			out[i] = float32(float64(out[i]) / norm)
+		}
+	}
+	return out
+}
+
+// mergeStancesForPersonByCentroid loads the person's stances, computes which
+// pairs cross the cosine threshold, and applies each merge through the storer.
+// Returns the number of stances that were merged away (== the number of merge
+// steps, since each step removes exactly one src).
+func mergeStancesForPersonByCentroid(ctx context.Context, storer *storage.PostgresStorer, personID int64, threshold float64) (int, error) {
+	docs, err := storer.GetStanceDocumentsForPerson(ctx, personID)
+	if err != nil {
+		return 0, fmt.Errorf("loading stances for merge: %w", err)
+	}
+	if len(docs) < 2 {
+		return 0, nil
+	}
+
+	inputs := make([]stanceMergeInput, len(docs))
+	for i, d := range docs {
+		inputs[i] = stanceMergeInput{ID: d.ID, FactCount: d.FactCount, Centroid: d.ClusterEmbedding}
+	}
+
+	steps := computeMergeGroups(inputs, threshold)
+	if len(steps) == 0 {
+		return 0, nil
+	}
+
+	merged := 0
+	for _, step := range steps {
+		if err := storer.MergeStancesForPerson(ctx, step.SrcID, step.DstID, step.NewCentroid); err != nil {
+			log.Warn().Err(err).Int64("src", step.SrcID).Int64("dst", step.DstID).Msg("Centroid merge step failed")
+			continue
+		}
+		merged++
+	}
+	return merged, nil
 }

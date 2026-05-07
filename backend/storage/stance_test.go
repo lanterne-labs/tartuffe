@@ -215,6 +215,103 @@ func TestStanceDocumentFactsJoinTable(t *testing.T) {
 	}
 }
 
+// TestMergeStancesForPerson covers the transactional merge path used by the
+// per-person centroid post-pass: facts move (with dedup), contradictions
+// re-pin BEFORE the src row is dropped, dst's centroid+fact_count are rewritten,
+// and the src row disappears.
+func TestMergeStancesForPerson(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+
+	ctx := context.Background()
+
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents, contradictions, facts RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	personID, _, err := storer.AddPerson(ctx, "Merge Test Person")
+	require.NoError(t, err)
+
+	// Two facts that will live on src and dst respectively, plus a third already
+	// on dst so we can verify ON CONFLICT doesn't choke when src has the same
+	// fact attached (we add fact 200 to both stances).
+	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
+		200, "Fact on both src and dst", pgvector.NewVector(makeUnitEmbedding(0)))
+	require.NoError(t, err)
+	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
+		201, "Fact only on src", pgvector.NewVector(makeUnitEmbedding(1)))
+	require.NoError(t, err)
+	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
+		202, "Fact only on dst", pgvector.NewVector(makeUnitEmbedding(2)))
+	require.NoError(t, err)
+
+	srcID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID:         personID,
+		ClusterLabel:     "src-stance",
+		ClusterEmbedding: makeUnitEmbedding(0),
+		Summary:          "Source",
+		KeyFactIDs:       []int64{200, 201},
+		FactCount:        2,
+	})
+	require.NoError(t, err)
+	dstID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID:         personID,
+		ClusterLabel:     "dst-stance",
+		ClusterEmbedding: makeUnitEmbedding(1),
+		Summary:          "Destination",
+		KeyFactIDs:       []int64{200, 202},
+		FactCount:        2,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, storer.AddFactToStance(ctx, srcID, 200))
+	require.NoError(t, storer.AddFactToStance(ctx, srcID, 201))
+	require.NoError(t, storer.AddFactToStance(ctx, dstID, 200))
+	require.NoError(t, storer.AddFactToStance(ctx, dstID, 202))
+
+	// A contradiction whose bundle is currently src — the merge must repoint it
+	// to dst. We bypass RecordContradiction's tx requirement by inserting raw.
+	var cid int64
+	err = storer.pool.QueryRow(ctx, `
+		INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, bundle_stance_id)
+		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		personID, int64(200), int64(201), "test contradiction", srcID).Scan(&cid)
+	require.NoError(t, err)
+
+	newCentroid := makeMixedEmbedding(0, 1, 0.6, 0.4)
+	require.NoError(t, storer.MergeStancesForPerson(ctx, srcID, dstID, newCentroid))
+
+	// src row gone
+	stances, err := storer.GetStanceDocumentsForPerson(ctx, personID)
+	require.NoError(t, err)
+	require.Len(t, stances, 1)
+	assert.Equal(t, dstID, stances[0].ID)
+	assert.Equal(t, 3, stances[0].FactCount, "dst should now have 3 unique facts (200,201,202)")
+	assert.InDeltaSlice(t, newCentroid, stances[0].ClusterEmbedding, 1e-5)
+
+	// All three facts on dst
+	facts, err := storer.GetFactsForStance(ctx, dstID)
+	require.NoError(t, err)
+	gotIDs := map[int64]bool{}
+	for _, f := range facts {
+		gotIDs[f.ID] = true
+	}
+	assert.True(t, gotIDs[200])
+	assert.True(t, gotIDs[201])
+	assert.True(t, gotIDs[202])
+
+	// src has nothing left
+	srcFacts, err := storer.GetFactsForStance(ctx, srcID)
+	require.NoError(t, err)
+	assert.Empty(t, srcFacts)
+
+	// Contradiction now bundles dst
+	var bundle *int64
+	err = storer.pool.QueryRow(ctx, `SELECT bundle_stance_id FROM contradictions WHERE id = $1`, cid).Scan(&bundle)
+	require.NoError(t, err)
+	require.NotNil(t, bundle)
+	assert.Equal(t, dstID, *bundle)
+}
+
 func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
