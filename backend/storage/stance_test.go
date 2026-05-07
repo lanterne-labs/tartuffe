@@ -312,6 +312,52 @@ func TestMergeStancesForPerson(t *testing.T) {
 	assert.Equal(t, dstID, *bundle)
 }
 
+// TestUpdateStanceSummary covers the storer hook used by the LLM-merge phase:
+// summary + cluster_label are rewritten, centroid/fact_count/key_fact_ids are
+// preserved, and last_updated_at advances. Empty summary or label is rejected.
+func TestUpdateStanceSummary(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+
+	ctx := context.Background()
+
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	personID, _, err := storer.AddPerson(ctx, "Update Summary Test Person")
+	require.NoError(t, err)
+
+	emb := makeUnitEmbedding(0)
+	stanceID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		PersonID:         personID,
+		ClusterLabel:     "old-label",
+		ClusterEmbedding: emb,
+		Summary:          "Old summary.",
+		KeyFactIDs:       []int64{42, 43},
+		FactCount:        2,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, storer.UpdateStanceSummary(ctx, stanceID, "Unified summary covering both stances.", "merged-label"))
+
+	stances, err := storer.GetStanceDocumentsForPerson(ctx, personID)
+	require.NoError(t, err)
+	require.Len(t, stances, 1)
+	got := stances[0]
+	assert.Equal(t, "Unified summary covering both stances.", got.Summary)
+	assert.Equal(t, "merged-label", got.ClusterLabel)
+	// Untouched fields:
+	assert.Equal(t, []int64{42, 43}, got.KeyFactIDs)
+	assert.Equal(t, 2, got.FactCount)
+	assert.InDeltaSlice(t, emb, got.ClusterEmbedding, 1e-5)
+
+	// Empty summary / label should be rejected.
+	assert.Error(t, storer.UpdateStanceSummary(ctx, stanceID, "", "label"))
+	assert.Error(t, storer.UpdateStanceSummary(ctx, stanceID, "   ", "label"))
+	assert.Error(t, storer.UpdateStanceSummary(ctx, stanceID, "summary", ""))
+	assert.Error(t, storer.UpdateStanceSummary(ctx, stanceID, "summary", "   "))
+}
+
 func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()

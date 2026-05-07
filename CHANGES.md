@@ -2,6 +2,30 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-07: Stance LLM-merge phase (`dm stances merge`)
+
+### What was done
+- New subcommand `dm stances merge` runs a **two-phase per-person merge**:
+  - **Phase A** (in-Go, no LLM): agglomerative average-linkage clustering on the stance centroids (cosine distance). Cut at `--recall-threshold` (default `0.65` similarity / `0.35` distance). Lance-Williams update keeps it O(N² log N). Singletons dropped, oversized clusters (> `--max-cluster`, default 30) sub-clustered at a stricter `--subcluster-threshold` (default 0.75 sim).
+  - **Phase B** (LLM): for each multi-stance candidate cluster, one prompt asks the model whether subsets actually represent the same stance and to emit a unified summary + label per merge subgroup. Each subgroup is then folded via `MergeStancesForPerson` (largest fact-count wins as dst; weighted normalised centroid) and the LLM-returned summary/label is written through the new `UpdateStanceSummary` storer method.
+- Flags: `--person` / `--persons-file` (mutually exclusive), `--parallel`, `--dry-run`, `--recall-threshold`, `--subcluster-threshold`, `--max-cluster`.
+- Storage: added `PostgresStorer.UpdateStanceSummary(ctx, id, summary, clusterLabel)` (only the merge phase needs it; the storer method intentionally does **not** know about LLM concepts beyond text).
+- Core: added `StanceManager.MergeClusterDecision` + `StanceForMerge` / `MergeDecision` / `MergeSubgroup` types. Validates each subgroup (≥ 2 known IDs, non-empty summary/label) before applying.
+
+### Why
+- The 0.85 cosine-similarity centroid post-pass added in the rebuild commit catches almost nothing (5 / 1737 in round 1) because two stances both about e.g. "AfD on immigration" with different framings sit at cosine ~0.7-0.8 — under the cutoff but semantically the same stance.
+- Lowering the centroid threshold uniformly was rejected: at 0.78 you start merging genuinely-distinct stances (X on immigration policy vs X on border security) and damage contradiction detection.
+- Splitting the decision into two phases lets us be loose where it's cheap (recall via clustering) and tight where it matters (precision via LLM). The LLM never sees the full stance list — only one small candidate cluster at a time — so the 8K vLLM context is never an issue, regardless of how many stances a heavy political figure has.
+
+### Why average linkage (not single-link / UnionFind)
+- Single-link causes "chaining": A close to B, B close to C → all merged transitively even if A-C is far. Snowballs into mega-clusters at loose thresholds.
+- Average linkage uses the mean distance to all cluster members, so a cluster only absorbs new members that are reasonably close to the *whole* cluster. This is the property we want when the threshold is intentionally loose.
+
+### Operational notes
+- The merge is idempotent — safe to re-run. `MergeStancesForPerson` is transactional, fact memberships move with `ON CONFLICT DO NOTHING`, contradictions repoint before the src row drops.
+- Sub-clustering chunks (when even the sub-pass produces > `--max-cluster`) fall back to deterministic by-index slicing with a warning. Should be rare in practice.
+- LLM failures on a single cluster are logged and counted; they don't abort the person.
+
 ## 2026-05-07: Per-fact stance rebuild + centroid merge
 
 ### What was done

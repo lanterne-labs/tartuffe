@@ -4223,6 +4223,27 @@ func (s *PostgresStorer) DeleteStanceDocumentsForPerson(ctx context.Context, per
 	return nil
 }
 
+// UpdateStanceSummary rewrites a stance document's summary and cluster_label
+// (used by the LLM-merge phase, which produces a new unified summary/label for
+// the merged group). Centroid, key facts, and fact_count are left untouched —
+// those are managed by the merge tx itself.
+func (s *PostgresStorer) UpdateStanceSummary(ctx context.Context, stanceID int64, summary, clusterLabel string) error {
+	if strings.TrimSpace(summary) == "" {
+		return fmt.Errorf("UpdateStanceSummary: summary must not be empty")
+	}
+	if strings.TrimSpace(clusterLabel) == "" {
+		return fmt.Errorf("UpdateStanceSummary: cluster_label must not be empty")
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE stance_documents
+		SET summary = $1, cluster_label = $2, last_updated_at = NOW()
+		WHERE id = $3`, summary, clusterLabel, stanceID)
+	if err != nil {
+		return fmt.Errorf("updating stance summary/label for %d: %w", stanceID, err)
+	}
+	return nil
+}
+
 // MergeStancesForPerson merges src into dst in a single transaction. Fact memberships
 // are moved to dst (duplicates dropped via ON CONFLICT), contradictions whose bundle
 // pointed at src are repointed to dst BEFORE the row is dropped (the FK is ON DELETE

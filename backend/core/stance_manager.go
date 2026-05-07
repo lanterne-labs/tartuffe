@@ -559,6 +559,165 @@ func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
 	return &resp, nil
 }
 
+// StanceForMerge is the minimal view of a candidate stance the LLM needs to
+// decide whether merges are warranted within an in-Go-clustered group.
+type StanceForMerge struct {
+	ID      int64
+	Label   string
+	Summary string
+}
+
+// MergeDecision is the LLM's decision for a candidate cluster: zero or more
+// merge subgroups, each with a unified summary/label and the IDs of stances to
+// fold together. Stances not appearing in any subgroup stay as-is.
+type MergeDecision struct {
+	Merges []MergeSubgroup `json:"merges"`
+}
+
+// MergeSubgroup is one subset of stances within a candidate cluster that the
+// LLM has declared a single stance. StanceIDs lists the IDs to merge (must be
+// ≥ 2); Summary and Label are the unified text/label for the resulting stance.
+type MergeSubgroup struct {
+	StanceIDs []int64 `json:"stance_ids"`
+	Summary   string  `json:"summary"`
+	Label     string  `json:"label"`
+}
+
+// MergeClusterDecision asks the LLM whether the supplied candidate cluster of
+// stances should be merged (in whole or in subsets), and, for each merge it
+// proposes, returns a unified summary + label. The cluster has already been
+// produced by Phase-A average-linkage clustering, so all stances here are
+// embedding-similar; the LLM's job is to filter false positives (different
+// temporal context, polarity, scope) and write the new unified text.
+//
+// The caller is responsible for picking the destination stance (largest
+// fact_count) and applying the merge through the storer.
+func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName string, cluster []StanceForMerge) (*MergeDecision, error) {
+	if len(cluster) < 2 {
+		return &MergeDecision{}, nil
+	}
+
+	var stancesBuilder strings.Builder
+	for i, s := range cluster {
+		stancesBuilder.WriteString(fmt.Sprintf("[%d] id=%d, label=%q, summary=%q\n",
+			i+1, s.ID, s.Label, truncate(s.Summary, 400)))
+	}
+
+	prompt := fmt.Sprintf(`You are deciding whether several stance documents about %s represent the SAME stance and should be merged, or are genuinely distinct stances.
+
+RULES:
+- Merge ONLY if all stances are about the exact same claim/topic by the same person.
+- Do NOT merge stances that differ in temporal context (e.g. "in 2024" vs "in 2025"), geographic context, or polarity (supporting vs opposing).
+- Do NOT merge stances that describe different events even if they share a broad theme (e.g. two separate legal cases, two separate elections).
+- It is fine to leave the cluster as-is if you're unsure — false negatives are cheap, false positives are expensive.
+- Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
+
+For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
+
+STANCES IN THIS CANDIDATE CLUSTER:
+%s
+
+Return ONLY valid JSON:
+{
+  "reasoning": "1-3 sentences explaining your decision",
+  "merges": [
+    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
+  ]
+}
+
+If nothing should be merged, return {"reasoning": "...", "merges": []}.
+Stances not listed in any merge group will be left as-is.`,
+		personName, stancesBuilder.String())
+
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: "You are a political fact stance-merge classifier. Return only valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.1,
+		MaxTokens:      4000,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling merge-decision request: %w", err)
+	}
+
+	log.Debug().
+		Str("person", personName).
+		Int("cluster_size", len(cluster)).
+		Msg("Sending stance-merge candidate cluster to LLM")
+
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("LLM merge-decision request failed: %w", err)
+	}
+
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return nil, fmt.Errorf("decoding merge-decision response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return nil, fmt.Errorf("merge-decision LLM returned no content")
+	}
+
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+
+	// Parse leniently: we only care about the merges array; the reasoning field
+	// is informational.
+	var raw struct {
+		Reasoning string          `json:"reasoning"`
+		Merges    []MergeSubgroup `json:"merges"`
+	}
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse merge-decision response")
+		return nil, fmt.Errorf("parsing merge-decision response: %w", err)
+	}
+
+	// Validate every subgroup: must reference ≥ 2 known IDs, summary/label non-empty.
+	idSet := make(map[int64]bool, len(cluster))
+	for _, s := range cluster {
+		idSet[s.ID] = true
+	}
+	var clean []MergeSubgroup
+	for _, sg := range raw.Merges {
+		if len(sg.StanceIDs) < 2 {
+			log.Warn().Interface("subgroup", sg).Msg("Merge-decision: skipping subgroup with <2 stance IDs")
+			continue
+		}
+		seen := make(map[int64]bool, len(sg.StanceIDs))
+		valid := true
+		for _, id := range sg.StanceIDs {
+			if !idSet[id] {
+				log.Warn().Int64("unknown_id", id).Interface("subgroup", sg).Msg("Merge-decision: subgroup references stance ID not in cluster")
+				valid = false
+				break
+			}
+			if seen[id] {
+				log.Warn().Int64("dup_id", id).Interface("subgroup", sg).Msg("Merge-decision: subgroup has duplicate stance ID")
+				valid = false
+				break
+			}
+			seen[id] = true
+		}
+		if !valid {
+			continue
+		}
+		if strings.TrimSpace(sg.Summary) == "" || strings.TrimSpace(sg.Label) == "" {
+			log.Warn().Interface("subgroup", sg).Msg("Merge-decision: skipping subgroup with empty summary or label")
+			continue
+		}
+		clean = append(clean, sg)
+	}
+
+	if raw.Reasoning != "" {
+		log.Info().Str("person", personName).Int("cluster_size", len(cluster)).Int("subgroups", len(clean)).Str("reasoning", raw.Reasoning).Msg("Merge-decision LLM result")
+	}
+	return &MergeDecision{Merges: clean}, nil
+}
+
 // updateCentroid computes a weighted average of the old centroid and a new embedding,
 // then normalizes the result to unit length.
 func updateCentroid(oldCentroid []float32, newEmbedding []float32, oldCount int) []float32 {
