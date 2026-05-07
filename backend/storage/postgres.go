@@ -4680,10 +4680,17 @@ type OrphanFact struct {
 	Embedding     []float32
 }
 
-// ListPersonsWithOrphanFacts returns every person who has at least one fact
-// not linked to any stance_document. Drives the per-person worker loop in
-// `dm facts assign-stances`. Persons without orphans are skipped — no work,
-// no LLM cost.
+// ListPersonsWithOrphanFacts returns every person who has at least one
+// non-duplicate fact not linked to any stance_document. Drives the
+// per-person worker loop in `dm facts assign-stances`.
+//
+// Symmetric with ListOrphanFactsForPerson: facts marked as
+// `fact_relations.relation_type = 'duplicate'` are excluded — duplicate
+// facts are pointers to a canonical fact and do not get their own stance
+// link by design. Without this filter, persons whose only orphans are
+// duplicates loop forever in the assign-stances worker (the per-person
+// orphan list comes back empty, the person is "skipped", but they still
+// show up next iteration).
 func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]PersonInfo, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT p.id, p.name, COALESCE(p.entity_type, 'person')
@@ -4693,6 +4700,10 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]Pers
 		JOIN facts f ON f.id = fs.fact_id
 		WHERE NOT EXISTS (
 		    SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		)
+		AND NOT EXISTS (
+		    SELECT 1 FROM fact_relations fr
+		    WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 		)
 		ORDER BY p.name`)
 	if err != nil {

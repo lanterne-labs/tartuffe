@@ -50,12 +50,19 @@ func collectStanceInvariant(ctx context.Context, pool *pgxpool.Pool) {
 	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	// Excludes facts marked as duplicates of another fact via
+	// fact_relations.relation_type = 'duplicate' — those are pointers to a
+	// canonical fact and do not get their own stance link by design.
 	var count int64
 	err := pool.QueryRow(queryCtx, `
 		SELECT COUNT(*)
 		FROM facts f
 		WHERE NOT EXISTS (
 			SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM fact_relations fr
+			WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 		)`).Scan(&count)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to compute facts_without_stance gauge")
