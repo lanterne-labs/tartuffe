@@ -203,52 +203,14 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// rebundleContradictionsForPerson re-runs the two-phase bundling logic for a single
-// person right after their stances have been rebuilt. Phase 1 is the SQL fast path
-// (free) that catches contradictions whose two facts now share a stance. Phase 2 is
-// the LLM Bundler over remaining solos (cross-stance contradictions). Returns
-// (rebundled_via_sql, rebundled_via_llm, left_solo_after_llm). All errors are logged
-// and counted as failures rather than aborting the rebuild — bundling is recoverable
-// later, and a single person's failure should not block the rest of the run.
+// rebundleContradictionsForPerson is a thin wrapper around the shared
+// rebundlePerson helper, kept for callsite clarity inside the rebuild flow.
+// See cmd/stances_rebundle.go for the implementation.
 func rebundleContradictionsForPerson(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
 	bundler *contradiction.Bundler,
 	p storage.PersonInfo,
 ) (fast, llm, failed int64) {
-	pid := p.ID
-
-	updated, err := storer.BundleBackfillFastPath(ctx, &pid)
-	if err != nil {
-		log.Error().Err(err).Str("person", p.Name).Msg("Bundle phase 1 (SQL fast path) failed")
-		return 0, 0, 0
-	}
-
-	solos, err := storer.ListSoloContradictionsForBundling(ctx, &pid, 0)
-	if err != nil {
-		log.Error().Err(err).Str("person", p.Name).Msg("Bundle phase 2 prep: list solos failed")
-		return updated, 0, 0
-	}
-	if len(solos) == 0 {
-		return updated, 0, 0
-	}
-
-	for _, row := range solos {
-		if err := bundler.Resolve(ctx, row.PersonID, row.ID, row.FactAID, row.FactBID, row.FactAText, row.FactBText, row.Reason); err != nil {
-			log.Warn().Err(err).Str("person", p.Name).Int64("contradiction_id", row.ID).Msg("Bundle phase 2 (LLM) failed; row stays solo")
-			failed++
-			continue
-		}
-		llm++
-	}
-
-	if updated > 0 || llm > 0 || failed > 0 {
-		log.Info().
-			Str("person", p.Name).
-			Int64("rebundled_sql", updated).
-			Int64("rebundled_llm", llm).
-			Int64("left_solo", failed).
-			Msg("Rebundled contradictions after stance rebuild")
-	}
-	return updated, llm, failed
+	return rebundlePerson(ctx, storer, bundler, p)
 }

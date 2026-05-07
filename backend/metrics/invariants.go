@@ -66,6 +66,6 @@ func collectStanceInvariant(ctx context.Context, pool *pgxpool.Pool) {
 	if count > 0 {
 		log.Warn().
 			Int64("count", count).
-			Msg("Facts without a stance detected — invariant violation; run `dm stances rebuild --resume`")
+			Msg("Facts without a stance detected — invariant violation; run `dm facts assign-stances`")
 	}
 }

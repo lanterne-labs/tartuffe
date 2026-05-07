@@ -2,6 +2,30 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-07: Orphan-fact stance assignment (`dm facts assign-stances`)
+
+### What was done
+- New CLI subcommand `dm facts assign-stances` finds every fact not linked to any `stance_document` (the `facts_without_stance_total` invariant) and routes each one through `StanceManager.ProcessNewFact` — the same path production ingest uses. Per-person flow:
+  1. `ListOrphanFactsForPerson` (new storer method) → list of orphans for the person.
+  2. `ProcessNewFact` per orphan → assigned to existing stance via LLM topic-classifier, or new stance created.
+  3. `rebundlePerson` (refactored shared helper) → SQL fast path + LLM Bundler over remaining solos for that person.
+- After all in-scope persons are done: a DB-wide `rebundleAll` pass (`BundleBackfillFastPath` + LLM Bundler over every solo). `--skip-final-rebundle` opts out.
+- Two new storer methods on `PostgresStorer`:
+  - `ListPersonsWithOrphanFacts(ctx)` — drives the per-person worker loop.
+  - `ListOrphanFactsForPerson(ctx, personID)` — loads orphans only, dedup-filtered like `loadFactsForBackfill`.
+- Refactored `cmd/stances_rebuild.go::rebundleContradictionsForPerson` into `cmd/stances_rebundle.go::rebundlePerson` so the same logic is shared between `stances rebuild` and `facts assign-stances`. No behavior change.
+- Updated the invariant warning in `metrics/invariants.go` to point at `dm facts assign-stances` (the correct remediation; `stances rebuild --resume` skips persons with ≥1 stance and so cannot fix orphans for them).
+
+### Why
+- `dm stances rebuild --resume` skips any person who already has at least one stance, so orphan facts inserted *into a person who already has stances* never get processed by the rebuild path. Today's session left ~1,359 such orphans on prod.
+- The fix isn't to change rebuild's resume semantics (those make sense for "rebuild from scratch") — it's a separate, targeted command that operates only on orphans and reuses the live ingest path verbatim.
+- Atomicity is **idempotent per-fact**: `AddFactToStance` is `ON CONFLICT DO NOTHING`, `RecordContradiction` is unique-constrained on `(fact_a_id, fact_b_id)`. A crash mid-run leaves a self-consistent partial state and re-running picks up exactly the still-orphan facts. Per-person tx wrapping was considered but rejected as over-engineering for an idempotent batch operation.
+
+### Operational notes
+- Run `--dry-run` first to confirm the orphan count matches the `FactsWithoutStance` gauge.
+- Re-running after success should report 0 persons in scope.
+- The DB-wide rebundle at the end catches contradictions whose two facts now live in *different* stances (cross-stance) — only the LLM Bundler can pick a home for those. Anything still solo after this is genuinely declined by the Bundler.
+
 ## 2026-05-07: Stance LLM-merge phase (`dm stances merge`)
 
 ### What was done

@@ -4550,6 +4550,90 @@ func (s *PostgresStorer) FindTopStancesForPerson(ctx context.Context, personID i
 	return out, rows.Err()
 }
 
+// OrphanFact carries the fields ProcessNewFact needs to assign an orphan
+// (no stance link) to a stance: id, person-scoped fact text, embedding,
+// and metadata used by topic assignment.
+type OrphanFact struct {
+	ID            int64
+	FactText      string
+	EmbeddingText string
+	CanonicalVerb string
+	Embedding     []float32
+}
+
+// ListPersonsWithOrphanFacts returns every person who has at least one fact
+// not linked to any stance_document. Drives the per-person worker loop in
+// `dm facts assign-stances`. Persons without orphans are skipped — no work,
+// no LLM cost.
+func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]PersonInfo, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT p.id, p.name, COALESCE(p.entity_type, 'person')
+		FROM persons p
+		JOIN fact_mentions fm ON fm.person_id = p.id
+		JOIN fact_sources fs ON fs.id = fm.fact_source_id
+		JOIN facts f ON f.id = fs.fact_id
+		WHERE NOT EXISTS (
+		    SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		)
+		ORDER BY p.name`)
+	if err != nil {
+		return nil, fmt.Errorf("listing persons with orphan facts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []PersonInfo
+	for rows.Next() {
+		var p PersonInfo
+		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
+			return nil, fmt.Errorf("scanning person row: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListOrphanFactsForPerson returns every active fact mentioning the person
+// that is not linked to any stance_document. Skips facts marked as duplicates
+// via fact_relations (mirrors the filter in cmd/stances_backfill.go's
+// loadFactsForBackfill so we never try to assign a stance to a known dup).
+func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID int64) ([]OrphanFact, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
+		       COALESCE(f.canonical_verb, ''), f.embedding
+		FROM facts f
+		JOIN fact_sources fs ON f.id = fs.fact_id
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fm.person_id = $1
+		AND NOT EXISTS (
+		    SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		)
+		AND NOT EXISTS (
+		    SELECT 1 FROM fact_relations fr
+		    WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+		)
+		GROUP BY f.id
+		ORDER BY f.id`, personID)
+	if err != nil {
+		return nil, fmt.Errorf("listing orphan facts for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	var out []OrphanFact
+	for rows.Next() {
+		var f OrphanFact
+		var vec pgvector.Vector
+		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec); err != nil {
+			return nil, fmt.Errorf("scanning orphan fact: %w", err)
+		}
+		f.Embedding = vec.Slice()
+		if len(f.Embedding) == 0 {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // SoloContradictionForBundling is the minimal payload the Bundler needs to retroactively
 // resolve a contradiction whose bundle_stance_id is NULL.
 type SoloContradictionForBundling struct {
