@@ -1,0 +1,294 @@
+name: Claude Cron
+
+# Runs once a day to (1) resolve merge conflicts on open Claude PRs,
+# (2) reply to reviewer comments on Claude PRs, (3) pick 3-4 open issues
+# and open a PR fixing each.
+#
+# Time: midnight Europe/Paris. Cron is UTC, so the value assumes CEST
+# (UTC+2). It drifts to 23:00 Paris during CET (winter); good enough.
+
+on:
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: claude-cron-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+env:
+  CLAUDE_BOT_LABEL: claude-bot
+  CLAUDE_BRANCH_PREFIX: claude/
+  # Slug of the GitHub App that owns CLAUDE_BOT_APP_ID / CLAUDE_BOT_APP_PRIVATE_KEY.
+  # Used to derive the bot's noreply git-commit identity (<id>+<slug>[bot]@users.noreply.github.com).
+  CLAUDE_BOT_APP_SLUG: mirror-claude-bot
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_BOT_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_BOT_APP_PRIVATE_KEY }}
+          owner: lanterne-labs
+      - name: Ensure claude-bot label exists
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh label create "$CLAUDE_BOT_LABEL" \
+            --repo "${{ github.repository }}" \
+            --color "5319e7" \
+            --description "PR opened or maintained by the Claude cron workflow" \
+            2>/dev/null || true
+          gh label create "claude-review" \
+            --repo "${{ github.repository }}" \
+            --color "1d76db" \
+            --description "Add to a PR to trigger an opt-in Claude code review" \
+            2>/dev/null || true
+
+  resolve-conflicts:
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_BOT_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_BOT_APP_PRIVATE_KEY }}
+          owner: lanterne-labs
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure git
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          USER_ID=$(gh api "/users/${CLAUDE_BOT_APP_SLUG}[bot]" --jq .id)
+          git config user.name  "${CLAUDE_BOT_APP_SLUG}[bot]"
+          git config user.email "${USER_ID}+${CLAUDE_BOT_APP_SLUG}[bot]@users.noreply.github.com"
+      - name: Resolve conflicts on open Claude PRs
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          claude_args: '--allowed-tools "Bash(gh *),Bash(git *),Read,Edit,Write,Grep,Glob,LS"'
+          prompt: |
+            You are maintaining the GitHub repository ${{ github.repository }} on autopilot.
+
+            RULES (read these BEFORE doing anything; they are authoritative):
+              - .github/claude/rules.md  (global rules for this bot)
+              - CLAUDE.md                (project root, if it exists)
+              - any nested CLAUDE.md     (e.g. backend/CLAUDE.md, frontend/CLAUDE.md)
+
+            TASK: Rebase and resolve merge conflicts on every OPEN PR labeled "${{ env.CLAUDE_BOT_LABEL }}".
+
+            STEPS:
+            1. List candidate PRs:
+               gh pr list --repo ${{ github.repository }} --state open --label "${{ env.CLAUDE_BOT_LABEL }}" \
+                 --json number,headRefName,baseRefName,mergeable,title,url
+            2. For each PR with mergeable == "CONFLICTING":
+               a. git fetch origin
+               b. git checkout <headRefName>
+               c. git rebase origin/<baseRefName>
+               d. Resolve conflicts. Default to keeping the PR branch's logic
+                  (that's the new work). Only prefer the base branch when its
+                  change has clearly invalidated the PR's intent.
+               e. git push --force-with-lease origin <headRefName>
+               f. Comment on the PR (gh pr comment) summarizing what conflicts
+                  you resolved and which side you kept and why.
+            3. If a conflict cannot be resolved without losing the PR's intent,
+               OR if main has obsoleted the PR entirely, post a comment
+               explaining and close the PR with --reason.
+
+            VOICE: technical, direct. No apologies, no filler. State decisions.
+            If a base-branch change makes the PR's premise wrong, say so plainly.
+
+            If no PRs are conflicting, say so and exit. Do nothing else.
+
+  reply-to-comments:
+    needs: resolve-conflicts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_BOT_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_BOT_APP_PRIVATE_KEY }}
+          owner: lanterne-labs
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure git
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          USER_ID=$(gh api "/users/${CLAUDE_BOT_APP_SLUG}[bot]" --jq .id)
+          git config user.name  "${CLAUDE_BOT_APP_SLUG}[bot]"
+          git config user.email "${USER_ID}+${CLAUDE_BOT_APP_SLUG}[bot]@users.noreply.github.com"
+      - name: Reply to reviewer comments on Claude PRs
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          claude_args: '--allowed-tools "Bash(gh *),Bash(git *),Read,Edit,Write,Grep,Glob,LS"'
+          prompt: |
+            You are maintaining the GitHub repository ${{ github.repository }} on autopilot.
+
+            RULES (read these BEFORE doing anything; they are authoritative):
+              - .github/claude/rules.md  (global rules for this bot)
+              - CLAUDE.md                (project root, if it exists)
+              - any nested CLAUDE.md     (e.g. backend/CLAUDE.md, frontend/CLAUDE.md)
+
+            TASK: For every OPEN PR labeled "${{ env.CLAUDE_BOT_LABEL }}", read the most recent
+            reviewer comments since the last claude-bot reply, and either:
+              - reply with a technical answer, OR
+              - update the code and push, then reply summarizing the change.
+
+            STEPS:
+            1. List PRs:
+               gh pr list --repo ${{ github.repository }} --state open --label "${{ env.CLAUDE_BOT_LABEL }}" \
+                 --json number,headRefName,baseRefName,title,url,author
+            2. For each PR, fetch comments:
+               gh api repos/${{ github.repository }}/issues/<n>/comments
+               gh api repos/${{ github.repository }}/pulls/<n>/comments  (review comments)
+               gh pr view <n> --json reviews
+            3. Determine which comments are NEW since claude-bot's last reply
+               (look at timestamps and authors; ignore your own previous comments).
+            4. For each new substantive comment, respond:
+               - If you agree and a code change is warranted: check out the
+                 branch, edit, run any project tests if cheap, commit, push,
+                 then reply with one line linking the new commit.
+               - If you disagree: PUSH BACK. Explain technically why the
+                 suggestion is wrong, would introduce a bug, contradicts a
+                 codebase rule (read CLAUDE.md if present), or is otherwise
+                 a bad idea. Propose a concrete alternative if there is one.
+                 Do not comply silently with broken specs.
+               - If the comment is a question, answer concisely.
+
+            CONSTRAINTS:
+            - Read CLAUDE.md (root and any subdirectory CLAUDE.md) to follow
+              project rules and code style. Do not violate them just because
+              a reviewer asks you to.
+            - One commit per PR per run, max. Squash multiple changes locally.
+            - If you push code, force-with-lease (you may have rebased earlier).
+
+            VOICE: like a senior engineer reviewing with another senior engineer.
+            Direct, terse, willing to disagree. No "I'll take a look", no
+            "great point". State conclusions and reasoning. If pushing back,
+            be respectful but unambiguous.
+
+            If no PRs have new comments, say so and exit.
+
+  fix-issues:
+    needs: reply-to-comments
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.CLAUDE_BOT_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_BOT_APP_PRIVATE_KEY }}
+          owner: lanterne-labs
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure git
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          USER_ID=$(gh api "/users/${CLAUDE_BOT_APP_SLUG}[bot]" --jq .id)
+          git config user.name  "${CLAUDE_BOT_APP_SLUG}[bot]"
+          git config user.email "${USER_ID}+${CLAUDE_BOT_APP_SLUG}[bot]@users.noreply.github.com"
+      - name: Pick open issues and open PRs
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          claude_args: '--allowed-tools "Bash(gh *),Bash(git *),Read,Edit,Write,Grep,Glob,LS"'
+          prompt: |
+            You are maintaining the GitHub repository ${{ github.repository }} on autopilot.
+
+            RULES (read these BEFORE doing anything; they are authoritative):
+              - .github/claude/rules.md  (global rules for this bot)
+              - CLAUDE.md                (project root, if it exists)
+              - any nested CLAUDE.md     (e.g. backend/CLAUDE.md, frontend/CLAUDE.md)
+
+            TASK: Pick between 3 and 4 open issues and open ONE PR per issue
+            that fixes (or attempts to fix) the issue.
+
+            SELECTION RULES:
+            1. List candidates:
+               gh issue list --repo ${{ github.repository }} --state open \
+                 --json number,title,body,labels,assignees,url --limit 100
+            2. Exclude issues that:
+               - already have a linked PR (gh issue view <n> --json closedByPullRequestsReferences)
+               - already have an open branch named "${{ env.CLAUDE_BRANCH_PREFIX }}issue-<n>-*"
+               - have a label like "wontfix", "blocked", "needs-design", "duplicate"
+               - look like pure design / discussion threads (no concrete
+                 actionable ask)
+            3. From the remaining, prefer issues that:
+               - have clear acceptance criteria
+               - touch a small surface area
+               - have labels suggesting bug or chore
+            4. Choose 3 issues. Add a 4th only if at least one of the three is
+               clearly trivial (e.g. typo, obvious bug). Never fewer than 3
+               and never more than 4 unless there are literally fewer than 3
+               actionable issues — in which case do as many as exist and stop.
+
+            FOR EACH SELECTED ISSUE:
+            1. Read CLAUDE.md (root and any nested CLAUDE.md) before writing code.
+               Follow project rules: code style, test requirements, no env vars
+               without permission, no silent error swallowing, etc.
+            2. Create a branch: ${{ env.CLAUDE_BRANCH_PREFIX }}issue-<n>-<short-slug>
+            3. Implement the fix following existing patterns. Do not add files
+               or refactor beyond the issue.
+            4. If the project has tests for the area, run them locally if cheap
+               (timeout 5 min). If they fail, fix or report.
+            5. Commit with a message like:
+                  fix(<area>): <one-line summary>
+
+                  Closes #<n>
+            6. Push the branch.
+            7. Open a PR:
+               gh pr create --title "..." --body "..." \
+                 --label "${{ env.CLAUDE_BOT_LABEL }}" \
+                 --repo ${{ github.repository }}
+               PR body must include "Closes #<n>" and a short rationale.
+
+            EXCEPTION HANDLING:
+            - If after reading the issue you conclude it is genuinely a bad
+              idea (will introduce bugs, contradicts the architecture, is
+              based on a wrong premise), DO NOT open a PR. Comment on the
+              issue with a clear technical objection and a proposed
+              alternative. That issue counts toward your 3-4.
+            - If the issue is too vague to action, comment asking the one
+              specific question whose answer would unblock you. That counts.
+            - Never silently bypass an issue with a no-op or stub.
+
+            VOICE: senior engineer. Direct. Push back when warranted. PR bodies
+            and issue comments should be terse and technically grounded.
+
+            At the end, post a single summary comment on no issue and no PR;
+            instead, output a short markdown report in your final message:
+              - issues picked and link to each PR
+              - issues declined and why
+              - any merge conflicts or comment replies handled earlier in the run
