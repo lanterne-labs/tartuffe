@@ -426,9 +426,17 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func extractTwitterHandlesFromWeb(results []search.SearchResult) []string {
+// twitterCandidate is a potential Twitter handle found in search results.
+type twitterCandidate struct {
+	Handle     string
+	Direct     bool   // true when the SERP result URL is itself a twitter.com/x.com profile page
+	Bio        string // snippet from the SERP result; for direct links this is often profile bio text
+	ProfileURL string // the twitter.com/x.com URL when Direct is true
+}
+
+func extractTwitterHandlesFromWeb(results []search.SearchResult) []twitterCandidate {
 	seen := make(map[string]bool)
-	var handles []string
+	var candidates []twitterCandidate
 
 	// Pattern for x.com/username or twitter.com/username URLs
 	urlRe := regexp.MustCompile(`(?:x\.com|twitter\.com)/([A-Za-z0-9_]{1,15})(?:[/?#]|$)`)
@@ -442,29 +450,44 @@ func extractTwitterHandlesFromWeb(results []search.SearchResult) []string {
 	}
 
 	for _, r := range results {
-		// Check URLs
-		for _, text := range []string{r.URL, r.Title, r.Snippet} {
+		// Check if the result URL itself is a direct Twitter/X profile link (highest confidence).
+		if match := urlRe.FindStringSubmatch(r.URL); match != nil {
+			handle := strings.ToLower(match[1])
+			if !excludePaths[handle] && !seen[handle] {
+				seen[handle] = true
+				candidates = append(candidates, twitterCandidate{
+					Handle:     handle,
+					Direct:     true,
+					Bio:        r.Snippet,
+					ProfileURL: r.URL,
+				})
+				continue
+			}
+		}
+
+		// Check URLs mentioned in title and snippet (lower confidence).
+		for _, text := range []string{r.Title, r.Snippet} {
 			for _, match := range urlRe.FindAllStringSubmatch(text, -1) {
 				handle := strings.ToLower(match[1])
 				if !excludePaths[handle] && !seen[handle] {
 					seen[handle] = true
-					handles = append(handles, handle)
+					candidates = append(candidates, twitterCandidate{Handle: handle})
 				}
 			}
 		}
-		// Check @mentions in title and snippet
+		// Check @mentions in title and snippet.
 		for _, text := range []string{r.Title, r.Snippet} {
 			for _, match := range atRe.FindAllStringSubmatch(text, -1) {
 				handle := strings.ToLower(match[1])
 				if !seen[handle] {
 					seen[handle] = true
-					handles = append(handles, handle)
+					candidates = append(candidates, twitterCandidate{Handle: handle})
 				}
 			}
 		}
 	}
 
-	return handles
+	return candidates
 }
 
 func runTwitterDiscover(cmd *cobra.Command, args []string) error {
@@ -620,7 +643,19 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		}
 
 		if len(candidates) > 0 {
-			log.Info().Str("person", person.Name).Strs("candidates", candidates).Msg("Found candidate handles")
+			var directHandles, otherHandles []string
+			for _, c := range candidates {
+				if c.Direct {
+					directHandles = append(directHandles, c.Handle)
+				} else {
+					otherHandles = append(otherHandles, c.Handle)
+				}
+			}
+			log.Info().
+				Str("person", person.Name).
+				Strs("direct_hits", directHandles).
+				Strs("mentioned", otherHandles).
+				Msg("Found candidate handles")
 		}
 		if wikiSummary != nil {
 			log.Debug().Str("person", person.Name).Str("wiki_title", wikiSummary.Title).Str("lang", wikiSummary.Lang).Msg("Got Wikipedia bio")
@@ -710,7 +745,7 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 // buildTwitterDiscoveryPrompt constructs the LLM prompt for Twitter handle verification.
 // It includes Google search results, extracted handle candidates, and (when available) the
 // Wikipedia bio so the model can cross-reference identity signals.
-func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResult, candidates []string, wiki *search.WikipediaSummary) string {
+func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResult, candidates []twitterCandidate, wiki *search.WikipediaSummary) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "Identify the official Twitter/X handle for: **%s**\n\n", personName)
@@ -723,18 +758,48 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 		fmt.Fprintf(&b, "Bio: %s\n\n", wiki.Extract)
 	}
 
-	if len(results) > 0 {
-		fmt.Fprintf(&b, "## Google Search Results (query: \"%s twitter\")\n", personName)
-		for i, r := range results {
-			fmt.Fprintf(&b, "%d. Title: %s\n   Snippet: %s\n   URL: %s\n", i+1, r.Title, r.Snippet, r.URL)
+	// Separate direct profile hits from other candidates.
+	var directHits, others []twitterCandidate
+	for _, c := range candidates {
+		if c.Direct {
+			directHits = append(directHits, c)
+		} else {
+			others = append(others, c)
+		}
+	}
+
+	// Direct hits: Google returned a twitter.com/x.com profile URL — highest confidence.
+	if len(directHits) > 0 {
+		fmt.Fprintln(&b, "## HIGH-CONFIDENCE CANDIDATES (Google returned direct Twitter/X profile URLs)")
+		fmt.Fprintln(&b, "These profiles were directly listed by Google — treat them as very strong candidates.\n")
+		for i, c := range directHits {
+			fmt.Fprintf(&b, "%d. Handle: @%s\n   Profile URL: %s\n", i+1, c.Handle, c.ProfileURL)
+			if c.Bio != "" {
+				fmt.Fprintf(&b, "   Google snippet (profile bio): %s\n", c.Bio)
+			}
 		}
 		fmt.Fprintln(&b)
 	}
 
-	if len(candidates) > 0 {
-		fmt.Fprintf(&b, "## Candidate handles extracted from search results\n%s\n\n", strings.Join(candidates, ", "))
-	} else {
+	// Other candidates: handles found in snippets/titles.
+	if len(others) > 0 {
+		var otherHandles []string
+		for _, c := range others {
+			otherHandles = append(otherHandles, "@"+c.Handle)
+		}
+		fmt.Fprintf(&b, "## OTHER CANDIDATE HANDLES (mentioned in search snippets)\n%s\n\n", strings.Join(otherHandles, ", "))
+	}
+
+	if len(candidates) == 0 {
 		fmt.Fprintln(&b, "## Candidate handles\nNone extracted directly — use Wikipedia bio and search snippets only.\n")
+	}
+
+	if len(results) > 0 {
+		fmt.Fprintf(&b, "## Full Google Search Results (query: \"%s twitter\")\n", personName)
+		for i, r := range results {
+			fmt.Fprintf(&b, "%d. Title: %s\n   Snippet: %s\n   URL: %s\n", i+1, r.Title, r.Snippet, r.URL)
+		}
+		fmt.Fprintln(&b)
 	}
 
 	b.WriteString(
@@ -742,6 +807,7 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 			"Using all the evidence above, determine the official Twitter/X handle for " + personName + ".\n" +
 			"Rules:\n" +
 			"- The account must belong to the exact person (not a homonym, parody, or fan account).\n" +
+			"- HIGH-CONFIDENCE CANDIDATES (direct Google hits) are very likely correct — verify using the Google snippet bio and Wikipedia profile.\n" +
 			"- Cross-check the Wikipedia description (occupation, country, political party) with the account description or search snippets.\n" +
 			"- If you are not confident (e.g. ambiguous results, generic name), reply NONE.\n\n" +
 			"Reply in EXACTLY this format (two lines):\n" +
