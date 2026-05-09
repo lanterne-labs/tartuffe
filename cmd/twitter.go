@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -96,6 +97,7 @@ func init() {
 	twitterDiscoverCmd.Flags().Bool("dry-run", false, "show discovered handles without saving")
 	twitterDiscoverCmd.Flags().String("person", "", "discover handle for a specific person only")
 	twitterDiscoverCmd.Flags().Bool("all", true, "discover handles for all persons without handles (default)")
+	twitterDiscoverCmd.Flags().Bool("force", false, "re-search even persons searched recently or who already have handles")
 
 	// add flags
 	twitterAddCmd.Flags().String("person", "", "person name to link the handle to (required)")
@@ -477,10 +479,12 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	personFilter, _ := cmd.Flags().GetString("person")
+	force, _ := cmd.Flags().GetBool("force")
 
 	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{
 		DryRun:       dryRun,
 		PersonFilter: personFilter,
+		Force:        force,
 	})
 }
 
@@ -488,6 +492,7 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 type TwitterDiscoveryOpts struct {
 	DryRun       bool
 	PersonFilter string // if set, only discover for this person
+	Force        bool   // bypass cooldown and existing-handle checks
 }
 
 // executeTwitterDiscovery searches for and links Twitter handles for persons who don't have one.
@@ -538,6 +543,9 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		return fmt.Errorf("failed to initialize search provider: %w", err)
 	}
 
+	// Shared HTTP client for Wikipedia calls
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+
 	// Initialize LLM client
 	client := llm.NewBaseLLMClient()
 	apiURL := os.Getenv("OPEN_AI_API")
@@ -555,19 +563,19 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 
 	var discovered int
 	for i, person := range persons {
-		// Check if person already has handles (skip unless --person forces it)
+		// Check if person already has handles
 		existingHandles, err := storer.GetTwitterHandlesByPersonID(ctx, person.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Failed to check existing handles")
 			continue
 		}
-		if len(existingHandles) > 0 && opts.PersonFilter == "" {
+		if len(existingHandles) > 0 && opts.PersonFilter == "" && !opts.Force {
 			log.Debug().Str("person", person.Name).Int("handles", len(existingHandles)).Msg("Skipping person with existing handles")
 			continue
 		}
 
-		// Skip persons searched recently (unless --person forces it)
-		if opts.PersonFilter == "" {
+		// Skip persons searched recently
+		if opts.PersonFilter == "" && !opts.Force {
 			searchedAt, err := storer.GetTwitterSearchedAt(ctx, person.ID)
 			if err != nil {
 				log.Error().Err(err).Str("person", person.Name).Msg("Failed to check twitter_searched_at")
@@ -585,49 +593,53 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 			Str("person", person.Name).
 			Msg("Searching for Twitter handle")
 
-		// Search for the person's Twitter
-		query := fmt.Sprintf(`"%s" twitter site:x.com`, person.Name)
+		// --- Google/Brave web search ---
+		query := fmt.Sprintf(`"%s" twitter site:x.com OR site:twitter.com`, person.Name)
 		results, err := searcher.SearchWeb(query, 10)
 		if err != nil {
 			log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
-			// Mark as searched even on error to avoid hammering the API
 			_ = storer.MarkTwitterSearched(ctx, person.ID)
 			continue
 		}
-
-		// Mark as searched regardless of outcome
 		_ = storer.MarkTwitterSearched(ctx, person.ID)
 
-		// Extract candidate handles
+		// --- Wikipedia bio ---
+		wikiSummary, wikiErr := search.FetchWikipediaSummary(ctx, httpClient, person.Name)
+		if wikiErr != nil {
+			log.Warn().Err(wikiErr).Str("person", person.Name).Msg("Wikipedia lookup failed (continuing without it)")
+		}
+
+		// Extract candidate handles from search results
 		candidates := extractTwitterHandlesFromWeb(results)
-		if len(candidates) == 0 {
-			log.Info().Str("person", person.Name).Msg("No candidate handles found")
+		if len(candidates) == 0 && wikiSummary == nil {
+			log.Info().Str("person", person.Name).Msg("No candidate handles found and no Wikipedia bio")
 			if i < len(persons)-1 {
 				time.Sleep(1 * time.Second)
 			}
 			continue
 		}
 
-		log.Info().Str("person", person.Name).Strs("candidates", candidates).Msg("Found candidate handles")
-
-		// Format search results for LLM
-		var resultsText strings.Builder
-		for j, r := range results {
-			fmt.Fprintf(&resultsText, "%d. Title: %s\n   Snippet: %s\n   URL: %s\n", j+1, r.Title, r.Snippet, r.URL)
+		if len(candidates) > 0 {
+			log.Info().Str("person", person.Name).Strs("candidates", candidates).Msg("Found candidate handles")
+		}
+		if wikiSummary != nil {
+			log.Debug().Str("person", person.Name).Str("wiki_title", wikiSummary.Title).Str("lang", wikiSummary.Lang).Msg("Got Wikipedia bio")
 		}
 
-		// Build LLM request to confirm the handle
-		userPrompt := fmt.Sprintf(
-			"Given these search results for \"%s twitter\":\n%s\nCandidate handles found: %s\n\nWhich Twitter/X handle is the official account of %s?\nReply with EXACTLY one line: HANDLE: @username\nOr if none found: HANDLE: NONE",
-			person.Name, resultsText.String(), strings.Join(candidates, ", "), person.Name,
-		)
+		// --- Build LLM prompt ---
+		userPrompt := buildTwitterDiscoveryPrompt(person.Name, results, candidates, wikiSummary)
 
 		chatReq := llm.ChatRequest{
 			Model:       model,
 			Temperature: 0.1,
-			MaxTokens:   16384,
+			MaxTokens:   512,
 			Messages: []llm.ChatMessage{
-				{Role: "system", Content: "You are a Twitter handle verification assistant."},
+				{
+					Role: "system",
+					Content: "You are an expert at identifying official Twitter/X accounts for public figures. " +
+						"You cross-reference multiple sources to confirm the handle belongs to the exact person, " +
+						"not a homonym, parody, or fan account.",
+				},
 				{Role: "user", Content: userPrompt},
 			},
 		}
@@ -661,10 +673,10 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		}
 
 		content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-		handleRe := regexp.MustCompile(`(?i)HANDLE:\s*@(\S+)`)
+		handleRe := regexp.MustCompile(`(?i)HANDLE:\s*@?(\S+)`)
 		match := handleRe.FindStringSubmatch(content)
 
-		if match == nil || strings.EqualFold(match[1], "NONE") {
+		if match == nil || strings.EqualFold(strings.TrimRight(match[1], ".,;"), "NONE") {
 			log.Info().Str("person", person.Name).Str("llm_response", content).Msg("No confirmed handle")
 			if i < len(persons)-1 {
 				time.Sleep(1 * time.Second)
@@ -672,7 +684,7 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 			continue
 		}
 
-		confirmedHandle := strings.ToLower(match[1])
+		confirmedHandle := strings.ToLower(strings.TrimRight(match[1], ".,;"))
 		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", opts.DryRun).Msg("Confirmed Twitter handle")
 
 		if !opts.DryRun {
@@ -693,6 +705,54 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 
 	log.Info().Int("discovered", discovered).Int("total_persons", len(persons)).Msg("Twitter discovery completed")
 	return nil
+}
+
+// buildTwitterDiscoveryPrompt constructs the LLM prompt for Twitter handle verification.
+// It includes Google search results, extracted handle candidates, and (when available) the
+// Wikipedia bio so the model can cross-reference identity signals.
+func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResult, candidates []string, wiki *search.WikipediaSummary) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "Identify the official Twitter/X handle for: **%s**\n\n", personName)
+
+	if wiki != nil {
+		fmt.Fprintf(&b, "## Wikipedia Profile\n")
+		if wiki.Description != "" {
+			fmt.Fprintf(&b, "Short description: %s\n", wiki.Description)
+		}
+		fmt.Fprintf(&b, "Bio: %s\n\n", wiki.Extract)
+	}
+
+	if len(results) > 0 {
+		fmt.Fprintf(&b, "## Google Search Results (query: \"%s twitter\")\n", personName)
+		for i, r := range results {
+			fmt.Fprintf(&b, "%d. Title: %s\n   Snippet: %s\n   URL: %s\n", i+1, r.Title, r.Snippet, r.URL)
+		}
+		fmt.Fprintln(&b)
+	}
+
+	if len(candidates) > 0 {
+		fmt.Fprintf(&b, "## Candidate handles extracted from search results\n%s\n\n", strings.Join(candidates, ", "))
+	} else {
+		fmt.Fprintln(&b, "## Candidate handles\nNone extracted directly — use Wikipedia bio and search snippets only.\n")
+	}
+
+	b.WriteString(
+		"## Task\n" +
+			"Using all the evidence above, determine the official Twitter/X handle for " + personName + ".\n" +
+			"Rules:\n" +
+			"- The account must belong to the exact person (not a homonym, parody, or fan account).\n" +
+			"- Cross-check the Wikipedia description (occupation, country, political party) with the account description or search snippets.\n" +
+			"- If you are not confident (e.g. ambiguous results, generic name), reply NONE.\n\n" +
+			"Reply in EXACTLY this format (two lines):\n" +
+			"REASONING: <one sentence explaining your choice>\n" +
+			"HANDLE: @username\n" +
+			"or:\n" +
+			"REASONING: <why not found or uncertain>\n" +
+			"HANDLE: NONE",
+	)
+
+	return b.String()
 }
 
 func runTwitterFacts(cmd *cobra.Command, args []string) error {
