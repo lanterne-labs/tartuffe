@@ -19,9 +19,9 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
-      issues: read
+      contents: write       # push the implementation branch
+      pull-requests: write  # open the PR automatically
+      issues: write         # comment back with the PR link
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
@@ -51,10 +51,8 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          # When invoked from an issue, finish by opening a real PR (not just
+          # the pre-filled compare-link comment that the action posts by default).
+          claude_args: >-
+            --allowed-tools "Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr edit:*),Bash(git push:*)"
+            --append-system-prompt "When triggered from a GitHub issue, after pushing your implementation branch you MUST open the pull request yourself by running: gh pr create --base main --head <branch> --title <title> --body <body>. The body must include 'Closes #<issue-number>' so the PR links back to the issue. Do NOT stop at posting a 'Create PR' link — actually create the PR."
