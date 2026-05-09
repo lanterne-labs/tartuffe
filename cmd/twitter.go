@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -426,12 +428,71 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// twitterUserInfo holds live profile data fetched from twitterapi.io.
+type twitterUserInfo struct {
+	Name        string
+	Description string
+	IsVerified  bool
+	Followers   int
+}
+
+// fetchTwitterUserInfo calls twitterapi.io to get live profile info for a handle.
+// Returns nil (no error) if the API key is absent or the handle doesn't exist.
+func fetchTwitterUserInfo(ctx context.Context, apiKey, handle string) (*twitterUserInfo, error) {
+	if apiKey == "" {
+		return nil, nil
+	}
+
+	reqURL := "https://api.twitterapi.io/twitter/user/info?userName=" + url.QueryEscape(handle)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("X-API-Key", apiKey)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API status %d: %s", resp.StatusCode, body)
+	}
+
+	var apiResp struct {
+		Data struct {
+			Name           string `json:"name"`
+			Description    string `json:"description"`
+			IsVerified     bool   `json:"isVerified"`
+			IsBlueVerified bool   `json:"isBlueVerified"`
+			Followers      int    `json:"followers"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	return &twitterUserInfo{
+		Name:        apiResp.Data.Name,
+		Description: apiResp.Data.Description,
+		IsVerified:  apiResp.Data.IsVerified || apiResp.Data.IsBlueVerified,
+		Followers:   apiResp.Data.Followers,
+	}, nil
+}
+
 // twitterCandidate is a potential Twitter handle found in search results.
 type twitterCandidate struct {
 	Handle     string
-	Direct     bool   // true when the SERP result URL is itself a twitter.com/x.com profile page
-	Bio        string // snippet from the SERP result; for direct links this is often profile bio text
-	ProfileURL string // the twitter.com/x.com URL when Direct is true
+	Direct     bool             // true when the SERP result URL is itself a twitter.com/x.com profile page
+	Bio        string           // SERP snippet; used as fallback when UserInfo is nil
+	ProfileURL string           // the twitter.com/x.com URL when Direct is true
+	UserInfo   *twitterUserInfo // live profile data from twitterapi.io (nil if unavailable)
 }
 
 func extractTwitterHandlesFromWeb(results []search.SearchResult) []twitterCandidate {
@@ -634,6 +695,24 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 
 		// Extract candidate handles from search results
 		candidates := extractTwitterHandlesFromWeb(results)
+
+		// Enrich direct SERP hits with live profile data from twitterapi.io.
+		twitterAPIKey := os.Getenv("TWITTER_API_IO_KEY")
+		for idx, c := range candidates {
+			if !c.Direct {
+				continue
+			}
+			info, err := fetchTwitterUserInfo(ctx, twitterAPIKey, c.Handle)
+			if err != nil {
+				log.Warn().Err(err).Str("handle", c.Handle).Msg("Failed to fetch Twitter user info")
+				continue
+			}
+			if info != nil {
+				candidates[idx].UserInfo = info
+				log.Debug().Str("handle", c.Handle).Str("name", info.Name).Int("followers", info.Followers).Msg("Fetched Twitter user info")
+			}
+		}
+
 		if len(candidates) == 0 && wikiSummary == nil {
 			log.Info().Str("person", person.Name).Msg("No candidate handles found and no Wikipedia bio")
 			if i < len(persons)-1 {
@@ -774,8 +853,21 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 		fmt.Fprintln(&b, "These profiles were directly listed by Google — treat them as very strong candidates.\n")
 		for i, c := range directHits {
 			fmt.Fprintf(&b, "%d. Handle: @%s\n   Profile URL: %s\n", i+1, c.Handle, c.ProfileURL)
-			if c.Bio != "" {
-				fmt.Fprintf(&b, "   Google snippet (profile bio): %s\n", c.Bio)
+			if c.UserInfo != nil {
+				if c.UserInfo.Name != "" {
+					fmt.Fprintf(&b, "   Display name: %s\n", c.UserInfo.Name)
+				}
+				if c.UserInfo.Description != "" {
+					fmt.Fprintf(&b, "   Twitter bio: %s\n", c.UserInfo.Description)
+				}
+				if c.UserInfo.IsVerified {
+					fmt.Fprintf(&b, "   Verified: yes\n")
+				}
+				if c.UserInfo.Followers > 0 {
+					fmt.Fprintf(&b, "   Followers: %d\n", c.UserInfo.Followers)
+				}
+			} else if c.Bio != "" {
+				fmt.Fprintf(&b, "   Google snippet: %s\n", c.Bio)
 			}
 		}
 		fmt.Fprintln(&b)
@@ -806,10 +898,12 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 		"## Task\n" +
 			"Using all the evidence above, determine the official Twitter/X handle for " + personName + ".\n" +
 			"Rules:\n" +
-			"- The account must belong to the exact person (not a homonym, parody, or fan account).\n" +
-			"- HIGH-CONFIDENCE CANDIDATES (direct Google hits) are very likely correct — verify using the Google snippet bio and Wikipedia profile.\n" +
-			"- Cross-check the Wikipedia description (occupation, country, political party) with the account description or search snippets.\n" +
-			"- If you are not confident (e.g. ambiguous results, generic name), reply NONE.\n\n" +
+			"- The account must unambiguously belong to the exact person (not a homonym, parody, or fan account).\n" +
+			"- HIGH-CONFIDENCE CANDIDATES (direct Google hits) are strong signals — verify using the Twitter bio and Wikipedia profile.\n" +
+			"- Cross-check name, occupation, country, and political party across all sources.\n" +
+			"- **When in doubt, reply NONE.** It is far better to return nothing than to link the wrong account.\n" +
+			"- If the bio/description does not clearly match the person's known occupation or affiliation, reply NONE.\n" +
+			"- A generic name or incomplete evidence is not enough — require clear confirmation.\n\n" +
 			"Reply in EXACTLY this format (two lines):\n" +
 			"REASONING: <one sentence explaining your choice>\n" +
 			"HANDLE: @username\n" +
