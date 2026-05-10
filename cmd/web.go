@@ -224,6 +224,7 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
 	json.NewEncoder(w).Encode(persons)
 }
 

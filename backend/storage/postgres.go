@@ -798,6 +798,13 @@ func (s *PostgresStorer) linkPersonsToSourceMention(ctx context.Context, tx pgx.
 		return fmt.Errorf("failed to close batch results for mentions insert: %w", err)
 	}
 
+	// Refresh materialized fact_count for each affected person
+	for _, personID := range personIDs {
+		if err := s.refreshPersonFactCount(ctx, tx, personID); err != nil {
+			return err
+		}
+	}
+
 	// Suppress per-item debug log to keep CLI output concise
 	return nil // Success
 }
@@ -1918,6 +1925,10 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
 	}
 
+	if err := s.refreshPersonFactCount(ctx, tx, personID); err != nil {
+		return fmt.Errorf("failed to refresh fact_count for person %d: %w", personID, err)
+	}
+
 	metrics.ObserveHonestyScore(aggregate)
 
 	bundleID, bundleSize, err := s.getContradictionBundleInfo(ctx, tx, personID, contradictionID)
@@ -2114,6 +2125,30 @@ func (s *PostgresStorer) GetStanceContradictionCounts(ctx context.Context, perso
 	return counts, nil
 }
 
+// refreshPersonFactCount recomputes and stores the deduped fact count for a person.
+// Must be called within a transaction. This keeps persons.fact_count in sync after
+// fact insertions, deletions, or dedup relation changes.
+func (s *PostgresStorer) refreshPersonFactCount(ctx context.Context, tx pgx.Tx, personID int64) error {
+	query := `
+		UPDATE persons SET fact_count = (
+			SELECT COUNT(DISTINCT fs.fact_id) FILTER (
+				WHERE NOT EXISTS (
+					SELECT 1 FROM fact_relations fr
+					WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate'
+				)
+			)
+			FROM fact_mentions fm
+			JOIN fact_sources fs ON fm.fact_source_id = fs.id
+			WHERE fm.person_id = $1
+		)
+		WHERE id = $1`
+	_, err := tx.Exec(ctx, query, personID)
+	if err != nil {
+		return fmt.Errorf("failed to refresh fact_count for person %d: %w", personID, err)
+	}
+	return nil
+}
+
 // updatePersonHonestyScore updates own_score, members_score, and aggregate honesty_score for a person
 func (s *PostgresStorer) updatePersonHonestyScore(ctx context.Context, tx pgx.Tx, personID int64, ownScore float64, membersScore *float64, aggregate float64) error {
 	query := `UPDATE persons SET own_score = $1, members_score = $2, honesty_score = $3 WHERE id = $4`
@@ -2183,18 +2218,11 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 			p.own_score,
 			p.members_score,
 			p.image_url,
-			COUNT(DISTINCT fs.fact_id) FILTER (
-				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
-			) as fact_count
+			p.fact_count
 		FROM persons p
-		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
-		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
 		WHERE ($3 = '' OR p.entity_type = $3)
 		  AND ($4 = '' OR p.name ILIKE '%%' || $4 || '%%')
-		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url
-		HAVING COUNT(DISTINCT fs.fact_id) FILTER (
-			WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
-		) >= $5
+		  AND p.fact_count >= $5
 		ORDER BY %s
 		LIMIT $1 OFFSET $2`, orderBy)
 
@@ -2897,9 +2925,12 @@ func (s *PostgresStorer) DeleteFactsForPerson(ctx context.Context, personID int6
 
 	deletedCount := result.RowsAffected()
 
-	// Reset honesty score to 1.0
+	// Reset honesty score to 1.0 and fact_count to 0
 	if err := s.updatePersonHonestyScore(ctx, tx, personID, 1.0, nil, 1.0); err != nil {
 		return 0, fmt.Errorf("failed to reset honesty score: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE persons SET fact_count = 0 WHERE id = $1`, personID); err != nil {
+		return 0, fmt.Errorf("failed to reset fact_count: %w", err)
 	}
 
 	// Emit person_updated event
@@ -3183,6 +3214,10 @@ func (s *PostgresStorer) recomputeScoreAfterFactDeletion(ctx context.Context, tx
 	aggregate := ComputeAggregateScore(ownScore, membersScore)
 
 	if err := s.updatePersonHonestyScore(ctx, tx, personID, ownScore, membersScore, aggregate); err != nil {
+		return err
+	}
+
+	if err := s.refreshPersonFactCount(ctx, tx, personID); err != nil {
 		return err
 	}
 
