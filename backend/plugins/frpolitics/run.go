@@ -524,6 +524,28 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	return nil
 }
 
+// LegislaturesForDateRange returns all legislature numbers whose period overlaps with [since, now].
+// Legislature periods are derived from legislatureStarts (newest-first); each legislature ends
+// when the next one begins, and the current legislature extends to now.
+func LegislaturesForDateRange(since time.Time) []int {
+	now := time.Now()
+	var result []int
+	for i, entry := range legislatureStarts {
+		// End of this legislature is the next (newer) entry's start, or now for the current one.
+		var end time.Time
+		if i == 0 {
+			end = now
+		} else {
+			end = legislatureStarts[i-1].Start
+		}
+		// Overlap with [since, now]: legislature started before now AND ended after since.
+		if !entry.Start.After(now) && end.After(since) {
+			result = append(result, entry.Number)
+		}
+	}
+	return result
+}
+
 // discoverAndParse lists recent scrutins and parses them into:
 // - laws: minimal law info per scrutin
 // - groupStats: per-law map of party majority stats
@@ -540,7 +562,13 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 	// We read a larger set here; upper layers can limit summarization later.
 	legislatures := opts.Legislatures
 	if len(legislatures) == 0 {
-		legislatures = []int{currentLegislature()}
+		if opts.Since != nil {
+			// Auto-derive all legislatures that overlap with [since, now].
+			legislatures = LegislaturesForDateRange(*opts.Since)
+			log.Info().Ints("legislatures", legislatures).Msg("frpolitics: auto-derived legislatures for date range")
+		} else {
+			legislatures = []int{currentLegislature()}
+		}
 	}
 	var sincePtr *time.Time
 	if opts.Since != nil {

@@ -38,10 +38,12 @@ func init() {
 
 	// Flags for frpolitics
 	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), or 'both' (votes then news)")
-	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD")
+	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD (auto-derives legislatures)")
+	frpoliticsCmd.Flags().Int("last-years", 0, "process votes from the last N years, e.g. --last-years 2 (auto-derives since date and legislatures)")
+	frpoliticsCmd.Flags().Int("from-year", 0, "process votes starting from Jan 1 of this year, e.g. --from-year 2022 (auto-derives legislatures)")
 	frpoliticsCmd.Flags().Int("max-laws", 10, "maximum laws to process")
 	frpoliticsCmd.Flags().Float64("party-threshold", 0.8, "majority threshold for party-level facts (0..1)")
-	frpoliticsCmd.Flags().String("legislatures", "", "comma-separated legislature numbers to fetch (default: auto-detect current)")
+	frpoliticsCmd.Flags().String("legislatures", "", "comma-separated legislature numbers to fetch (default: auto-detect from date range or current)")
 
 	// News search flags
 	frpoliticsCmd.Flags().String("news-since", "", "only search news articles published after YYYY-MM-DD")
@@ -73,6 +75,8 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	// Parse flags
 	mode, _ := cmd.Flags().GetString("mode")
 	sinceStr, _ := cmd.Flags().GetString("since")
+	lastYears, _ := cmd.Flags().GetInt("last-years")
+	fromYear, _ := cmd.Flags().GetInt("from-year")
 	maxLaws, _ := cmd.Flags().GetInt("max-laws")
 	threshold, _ := cmd.Flags().GetFloat64("party-threshold")
 	legsStr, _ := cmd.Flags().GetString("legislatures")
@@ -97,7 +101,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid mode %q: must be 'votes', 'news', or 'both'", mode)
 	}
 
-	// Parse since date
+	// Parse since date (--since takes priority; --last-years and --from-year are convenience shorthands)
 	var since *time.Time
 	if sinceStr != "" {
 		if t, err := time.Parse("2006-01-02", sinceStr); err == nil {
@@ -105,6 +109,14 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		} else {
 			log.Warn().Str("since", sinceStr).Msg("invalid --since format, expected YYYY-MM-DD")
 		}
+	} else if lastYears > 0 {
+		t := time.Now().AddDate(-lastYears, 0, 0)
+		since = &t
+		log.Info().Int("last_years", lastYears).Str("since", t.Format("2006-01-02")).Msg("derived --since from --last-years")
+	} else if fromYear > 0 {
+		t := time.Date(fromYear, time.January, 1, 0, 0, 0, 0, time.UTC)
+		since = &t
+		log.Info().Int("from_year", fromYear).Str("since", t.Format("2006-01-02")).Msg("derived --since from --from-year")
 	}
 
 	// Parse news-since date
@@ -153,8 +165,13 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		CacheOnly:        cacheOnly,
 	}
 
+	sinceLog := ""
+	if since != nil {
+		sinceLog = since.Format("2006-01-02")
+	}
 	log.Info().
 		Str("mode", mode).
+		Str("since", sinceLog).
 		Int("max_laws", maxLaws).
 		Float64("party_threshold", threshold).
 		Ints("legislatures", legs).
