@@ -267,14 +267,14 @@ func TestFactoryEnvPriority(t *testing.T) {
 		t.Errorf("expected SerpAPINewsProvider, got %T", searcher)
 	}
 
-	// Both set → Brave wins
+	// Both set → fallback wrapper (Brave primary, SerpAPI fallback)
 	os.Setenv("BRAVE_SEARCH_API_KEY", "brave-key")
 	searcher, err = NewNewsSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := searcher.(*BraveSearchProvider); !ok {
-		t.Errorf("expected BraveSearchProvider, got %T", searcher)
+	if _, ok := searcher.(*fallbackNewsSearcher); !ok {
+		t.Errorf("expected fallbackNewsSearcher, got %T", searcher)
 	}
 
 	// Image searcher same priority

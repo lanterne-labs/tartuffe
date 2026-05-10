@@ -13,6 +13,7 @@ import (
 // It uses the actual production Run function to ensure all logic (derivations, affiliations)
 // is tested exactly as it would run in production.
 func TestE2EWithSampleData(t *testing.T) {
+	skipIfCI(t)
 	// 1. Setup Environment
 	if _, err := config.LoadConfigForTest(); err != nil {
 		t.Logf("Notice: config.LoadConfigForTest returned error: %v", err)

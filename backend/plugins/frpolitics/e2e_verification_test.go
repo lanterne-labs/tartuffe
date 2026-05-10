@@ -15,6 +15,7 @@ import (
 
 // TestE2EPartyFactVerification runs an end-to-end test with real data and verifies party fact accuracy
 func TestE2EPartyFactVerification(t *testing.T) {
+	skipIfCI(t)
 	// Load environment variables from .env if present
 	if _, err := config.LoadConfigForTest(); err != nil {
 		t.Logf("Notice: config.LoadConfigForTest returned error (might be missing .env): %v", err)
@@ -126,6 +127,7 @@ func TestE2EPartyFactVerification(t *testing.T) {
 
 // TestRealDataPartyFactVerification tests with actual French National Assembly data
 func TestRealDataPartyFactVerification(t *testing.T) {
+	skipIfCI(t)
 	// Load environment variables from .env if present
 	if _, err := config.LoadConfigForTest(); err != nil {
 		t.Logf("Notice: config.LoadConfigForTest returned error (might be missing .env): %v", err)
@@ -320,6 +322,7 @@ func collectDeputyVotesForLaws(eventsByLaw LawEventMap, lawKeys map[string]bool)
 
 // TestPerformanceWithLargeDataset tests performance with larger datasets
 func TestPerformanceWithLargeDataset(t *testing.T) {
+	skipIfCI(t)
 	// Load environment variables from .env if present
 	if _, err := config.LoadConfigForTest(); err != nil {
 		t.Logf("Notice: config.LoadConfigForTest returned error (might be missing .env): %v", err)

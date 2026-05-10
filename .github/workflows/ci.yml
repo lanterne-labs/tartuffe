@@ -1,0 +1,102 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-progress runs on the same ref when a new push lands —
+# saves minutes when force-pushing a PR branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-go caches BOTH ~/go/pkg/mod (modules) and
+      # ~/.cache/go-build (compile + test cache), keyed on go.sum.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Apply migrations
+        run: |
+          for f in supabase/migrations/*.sql; do
+            echo "Applying $f"
+            psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -timeout 10m ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # setup-node caches ~/.npm (registry tarballs) — speeds up
+      # `npm ci` even on cold node_modules.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Cache node_modules itself so we can skip `npm ci` entirely on a hit.
+      - name: Cache node_modules
+        id: node_modules_cache
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: node-modules-${{ runner.os }}-node22-${{ hashFiles('frontend/package-lock.json') }}
+
+      - name: Install deps
+        if: steps.node_modules_cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      # Cache SvelteKit + Vite build artefacts. restore-keys lets us partially
+      # hit when only source files change but the lockfile is unchanged.
+      - name: Cache SvelteKit / Vite build state
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/.svelte-kit
+            frontend/node_modules/.vite
+          key: sveltekit-vite-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**', 'frontend/svelte.config.js', 'frontend/vite.config.*') }}
+          restore-keys: |
+            sveltekit-vite-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}-
+
+      - run: npm run check
+      - run: npm run build

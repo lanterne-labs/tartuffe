@@ -14,6 +14,7 @@ import (
 // TestDownloadAndParseScrutins downloads Scrutins.json.zip and parses scrutin JSON files from it.
 // The file is cached so it won't download again if already present.
 func TestDownloadAndParseScrutins(t *testing.T) {
+	skipIfCI(t)
 	ctx := context.Background()
 	legislature := 16 // Test with legislature 16
 	url := fmt.Sprintf("https://data.assemblee-nationale.fr/static/openData/repository/%d/scrutins/Scrutins.json.zip", legislature)

@@ -35,13 +35,12 @@ func loadEnv(t *testing.T) {
 func setupTestDB(t *testing.T) (*PostgresStorer, func()) {
 	loadEnv(t)
 	dbURL := os.Getenv("DATABASE_URL")
-	require.NotEmpty(t, dbURL, "DATABASE_URL must be set for storage tests")
-	key := os.Getenv("OPEN_AI_KEY")
-	require.NotEmpty(t, key, "OPEN_AI_KEY must be set for storage tests") // Needed for embedder
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping storage tests")
+	}
 
 	ctx := context.Background()
 
-	// Storer no longer needs embedder
 	storer, err := NewPostgresStorerFromEnv(ctx)
 	if err != nil {
 		t.Fatalf("Failed to connect to test database: %v", err)

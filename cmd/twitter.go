@@ -850,7 +850,8 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 	// Direct hits: Google returned a twitter.com/x.com profile URL — highest confidence.
 	if len(directHits) > 0 {
 		fmt.Fprintln(&b, "## HIGH-CONFIDENCE CANDIDATES (Google returned direct Twitter/X profile URLs)")
-		fmt.Fprintln(&b, "These profiles were directly listed by Google — treat them as very strong candidates.\n")
+		fmt.Fprintln(&b, "These profiles were directly listed by Google — treat them as very strong candidates.")
+		fmt.Fprintln(&b)
 		for i, c := range directHits {
 			fmt.Fprintf(&b, "%d. Handle: @%s\n   Profile URL: %s\n", i+1, c.Handle, c.ProfileURL)
 			if c.UserInfo != nil {
@@ -883,7 +884,8 @@ func buildTwitterDiscoveryPrompt(personName string, results []search.SearchResul
 	}
 
 	if len(candidates) == 0 {
-		fmt.Fprintln(&b, "## Candidate handles\nNone extracted directly — use Wikipedia bio and search snippets only.\n")
+		fmt.Fprintln(&b, "## Candidate handles\nNone extracted directly — use Wikipedia bio and search snippets only.")
+		fmt.Fprintln(&b)
 	}
 
 	if len(results) > 0 {

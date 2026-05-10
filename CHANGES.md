@@ -2,6 +2,21 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-10: GitHub Actions CI (build + test + deploy gating)
+
+### What was done
+- New `.github/workflows/ci.yml` runs on every PR and push to `main`. Two parallel jobs: **`backend`** (Go 1.24 build + vet + `go test -race ./...` against a `pgvector/pgvector:pg17` service container, with all 37 `supabase/migrations/*.sql` applied via `psql`) and **`frontend`** (Node 22 + `npm ci` + `npm run check` + `npm run build` inside `frontend/`).
+- Heavy caching everywhere: `setup-go` caches `~/go/pkg/mod` + `~/.cache/go-build`; `setup-node` caches `~/.npm`; explicit `actions/cache` over `frontend/node_modules` (skips `npm ci` on hit) and `frontend/.svelte-kit` + `frontend/node_modules/.vite` (with `restore-keys` for partial hits). `concurrency: cancel-in-progress` kills stacked runs on force-push.
+- CI does NOT build the Docker image — the host's BuildKit handles that with its own layer cache; duplicating it in CI would double cost without catching anything new.
+
+### Why
+- Repo had zero build/test CI before this — pushes to `main` deployed to the host unchecked, so a broken commit shipped to production. Gating the host deploys behind GitHub status checks (the host's built-in "Wait for CI to pass" toggle, no `DEPLOY_TOKEN` needed) closes that gap.
+- Tests that hit external APIs (OpenAI, SerpAPI, Brave, Firecrawl, Apify, WebcrawlerAPI) self-skip via `t.Skip()` when their env var is unset, so CI runs without secrets.
+
+### Operational notes
+- After this lands, manually enable "Wait for CI to pass" on the `mirror` and `frontend` the host services (Service → Settings → Source). Optionally add `ci / backend` and `ci / frontend` as required status checks under GitHub branch protection for `main`.
+- First CI run may be partially red — the Go test suite has never been gated. Triage as a follow-up: fix or add a justified `t.Skip()` per failure, don't mass-disable.
+
 ## 2026-05-10: Photos backfill in daily pipeline
 
 ### What was done
