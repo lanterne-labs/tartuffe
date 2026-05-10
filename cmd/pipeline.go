@@ -14,8 +14,10 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
+	"digital-mirror/backend/objectstore"
 	"digital-mirror/backend/plugins/frpolitics"
 	"digital-mirror/backend/plugins/news"
+	"digital-mirror/backend/plugins/photos"
 	"digital-mirror/backend/plugins/twitter"
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
@@ -131,11 +133,17 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// Contradiction detection is now handled by the batch chain:
 	// fact_extraction → classification → contradiction (triggered by batch poller)
 
+	// Step 2: Photos backfill (find missing portraits for persons/parties without one)
+	photosErr := runPhotosBackfill(ctx, storer)
+	if photosErr != nil {
+		log.Error().Err(photosErr).Msg("Daily pipeline: photos backfill failed")
+	}
+
 	elapsed := time.Since(start)
 
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil
+		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil || photosErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
 
@@ -150,6 +158,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			}
 			if twitterErr != nil {
 				parts = append(parts, "twitter: "+twitterErr.Error())
+			}
+			if photosErr != nil {
+				parts = append(parts, "photos: "+photosErr.Error())
 			}
 			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
 				elapsed.Round(time.Second), strings.Join(parts, "\n"))
@@ -494,6 +505,89 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer) e
 // Gracefully skips if web search or LLM is not configured.
 func runTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer) error {
 	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{})
+}
+
+// runPhotosBackfill searches and uploads profile photos for every person/party
+// that doesn't have one yet. Gracefully no-ops if image search or R2 is not
+// configured (treated as a degraded but non-fatal state for the daily pipeline).
+func runPhotosBackfill(ctx context.Context, storer *storage.PostgresStorer) error {
+	persons, err := storer.GetPersonsWithoutImage(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get persons without image: %w", err)
+	}
+	if len(persons) == 0 {
+		log.Info().Msg("All persons have photos, skipping photos backfill")
+		return nil
+	}
+
+	imageSearcher, err := search.NewImageSearcherFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("Image search not configured, skipping photos backfill")
+		return nil
+	}
+
+	r2, err := objectstore.NewR2ClientFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("R2 not configured, skipping photos backfill")
+		return nil
+	}
+
+	provider := &photos.Provider{
+		ImageSearch: imageSearcher,
+		R2:          r2,
+		Storer:      storer,
+	}
+
+	opts := photos.Options{
+		MaxResults: 10,
+		MinWidth:   200,
+		MinHeight:  200,
+	}
+
+	log.Info().Int("persons", len(persons)).Msg("Photos backfill started")
+
+	uploaded, skipped, errs := 0, 0, 0
+	for i, person := range persons {
+		log.Info().
+			Int("progress", i+1).
+			Int("total", len(persons)).
+			Str("person", person.Name).
+			Msg("Photos backfill: processing person")
+
+		result := provider.SearchAndUpload(ctx, person, opts)
+		if result.Error != nil {
+			log.Error().Err(result.Error).Str("person", person.Name).Msg("Photo search failed")
+			errs++
+			continue
+		}
+		if result.Skipped {
+			log.Info().Str("person", person.Name).Str("reason", result.SkipReason).Msg("Photos backfill: skipped")
+			skipped++
+			continue
+		}
+		if result.Uploaded {
+			log.Info().Str("person", person.Name).Str("url", result.ImageURL).Msg("Photo uploaded")
+			uploaded++
+		}
+	}
+
+	log.Info().
+		Int("total", len(persons)).
+		Int("uploaded", uploaded).
+		Int("skipped", skipped).
+		Int("errors", errs).
+		Msg("Photos backfill completed")
+
+	jobMetrics := []storage.JobMetric{
+		{JobType: "photos-backfill", Target: "", Metric: "uploaded", Value: float64(uploaded)},
+		{JobType: "photos-backfill", Target: "", Metric: "skipped", Value: float64(skipped)},
+		{JobType: "photos-backfill", Target: "", Metric: "errors", Value: float64(errs)},
+	}
+	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+		log.Error().Err(err).Msg("Failed to record photos backfill job metrics")
+	}
+
+	return nil
 }
 
 // envInt reads an integer from an environment variable, returning defaultVal on missing/invalid.

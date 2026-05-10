@@ -2,6 +2,16 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-10: Photos backfill in daily pipeline
+
+### What was done
+- Added `runPhotosBackfill` to `cmd/pipeline.go`. It runs as the final step of `runDailyPipeline` (driven by the in-process `PIPELINE_INTERVAL_HOURS` scheduler in the `mirror` the host service), so every cycle picks up any persons/parties still missing an `image_url` via SerpAPI image search → R2 upload → DB write. No new env var, no host dashboard config needed — relies on the same scheduler that runs news + Twitter collection.
+- Gracefully no-ops (warn-log) if `OPEN_AI_KEY`/SerpAPI or R2 is not configured, mirroring how `runTwitterCollection` degrades. Errors bubble up into the daily pipeline's Telegram error notification under a `photos:` prefix and are recorded as `photos-backfill` job metrics (uploaded/skipped/errors).
+
+### Why
+- We had no automated way to fill in photos for newly-added persons (deputies imported by frpolitics, persons mentioned in news). The CLI `dm plugin photos search --all` existed but had to be triggered manually. Making it a pipeline step means the photo coverage converges to 100% on its own.
+- Chose the in-process scheduler over a separate the host cron service to stay consistent with the existing pattern (Twitter discovery, news collection, frpolitics all live inside `runDailyPipeline`/`runFrpoliticsPipeline`) and to avoid the host dashboard/service-creation steps.
+
 ## 2026-05-07: Stance-first profile page
 
 ### What was done
