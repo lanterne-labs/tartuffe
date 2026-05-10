@@ -1,3 +1,4 @@
+-- +goose Up
 -- Materialize deduped fact_count on persons for O(1) list queries (no JOIN/GROUP BY)
 ALTER TABLE persons ADD COLUMN IF NOT EXISTS fact_count INTEGER NOT NULL DEFAULT 0;
 

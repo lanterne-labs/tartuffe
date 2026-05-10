@@ -2,11 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"digital-mirror/backend/alerting"
@@ -23,106 +22,64 @@ import (
 	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
 )
 
-// startPipelineScheduler launches background goroutines for periodic pipeline runs.
-// Two independent schedules:
-//   - Daily pipeline (PIPELINE_INTERVAL_HOURS): news content collection + batch LLM submission + contradiction detection
-//   - Frpolitics pipeline (FRPOLITICS_INTERVAL_DAYS): French politics votes + news
-func startPipelineScheduler(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) {
-	dailyHours := envInt("PIPELINE_INTERVAL_HOURS", 0)
-	frpoliticsDays := envInt("FRPOLITICS_INTERVAL_DAYS", 0)
-
-	if dailyHours <= 0 && frpoliticsDays <= 0 {
-		log.Info().Msg("Pipeline scheduler disabled (both intervals are 0)")
-		return
-	}
-
-	var dailyRunning atomic.Bool
-	var frpoliticsRunning atomic.Bool
-
-	if dailyHours > 0 {
-		interval := time.Duration(dailyHours) * time.Hour
-		go func() {
-			log.Info().Int("hours", dailyHours).Msg("Daily pipeline scheduler started")
-
-			// Run immediately on startup, then repeat on interval
-			runDailyPipeline(ctx, storer, notifier)
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					log.Info().Msg("Daily pipeline scheduler stopped")
-					return
-				case <-ticker.C:
-					if !dailyRunning.CompareAndSwap(false, true) {
-						log.Warn().Msg("Daily pipeline still running, skipping tick")
-						continue
-					}
-					runDailyPipeline(ctx, storer, notifier)
-					dailyRunning.Store(false)
-				}
-			}
-		}()
-	}
-
-	if frpoliticsDays > 0 {
-		interval := time.Duration(frpoliticsDays) * 24 * time.Hour
-		go func() {
-			log.Info().Int("days", frpoliticsDays).Msg("Frpolitics pipeline scheduler started")
-
-			// Run immediately on startup, then repeat on interval
-			runFrpoliticsPipeline(ctx, storer, notifier)
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					log.Info().Msg("Frpolitics pipeline scheduler stopped")
-					return
-				case <-ticker.C:
-					if !frpoliticsRunning.CompareAndSwap(false, true) {
-						log.Warn().Msg("Frpolitics pipeline still running, skipping tick")
-						continue
-					}
-					runFrpoliticsPipeline(ctx, storer, notifier)
-					frpoliticsRunning.Store(false)
-				}
-			}
-		}()
-	}
+// pipelineCmd is the parent group for pipeline-related CLI commands. Subcommands
+// live in their own files (e.g. cmd/pipeline_daily.go).
+var pipelineCmd = &cobra.Command{
+	Use:   "pipeline",
+	Short: "Commands for the daily ingestion pipeline.",
+	Long:  `Manually trigger the daily pipeline that's normally driven by the host cron.`,
 }
 
-// runDailyPipeline collects news content for all queued persons, submits to batch LLM,
-// then runs contradiction detection. The batch poller (already running) handles
-// retrieving results and inserting facts asynchronously.
-func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) {
-	start := time.Now()
-	log.Info().Msg("Daily pipeline started")
+func init() {
+	rootCmd.AddCommand(pipelineCmd)
+}
 
-	// Step 1: Collect news content and submit to batch LLM
-	stats, batchErr := collectAndSubmitBatch(ctx, storer)
+// runDailyPipeline executes the unified daily pipeline once and returns an
+// aggregated error if any step failed. Designed to be invoked by the
+// `dm pipeline daily` CLI command (which the host cron triggers).
+//
+// Steps in order:
+//  1. news fact extraction      — queue-scoped, or all persons if DAILY_FOR_ALL=1
+//  2. twitter fact extraction   — discovery (all) + collection (queue-scoped, or all if DAILY_FOR_ALL=1)
+//  3. frpolitics                — votes + news for French deputies
+//  4. contradiction detection   — over all persons with new pairs
+//  5. photo backfill            — persons + parties missing an image
+func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) error {
+	start := time.Now()
+	allPersons := os.Getenv("DAILY_FOR_ALL") == "1"
+	log.Info().Bool("daily_for_all", allPersons).Msg("Daily pipeline started")
+
+	// Resolve target persons for fact-extraction steps (news, twitter).
+	targets, targetsErr := dailyTargets(ctx, storer)
+	if targetsErr != nil {
+		log.Error().Err(targetsErr).Msg("Daily pipeline: failed to resolve target persons")
+	}
+	targetIDs := make(map[int64]bool, len(targets))
+	for _, t := range targets {
+		targetIDs[t.PersonID] = true
+	}
+	log.Info().Int("targets", len(targets)).Msg("Daily pipeline: target persons resolved")
+
+	// Step 1: News fact extraction. In batch mode, this also bundles tweets for the
+	// same target set so they go through the same batch LLM job.
+	stats, batchErr := collectAndSubmitBatch(ctx, storer, targets, targetIDs)
 	if batchErr != nil {
-		log.Error().Err(batchErr).Msg("Daily pipeline: batch submission failed")
+		log.Error().Err(batchErr).Msg("Daily pipeline: news/batch submission failed")
 	}
 
-	// Step 1.5: Twitter handle discovery (find handles for persons without one)
+	// Step 2: Twitter — discovery (always all persons missing a handle) +
+	// fact collection (queue-scoped, or all if DAILY_FOR_ALL=1).
 	discoverErr := runTwitterDiscovery(ctx, storer)
 	if discoverErr != nil {
 		log.Error().Err(discoverErr).Msg("Daily pipeline: Twitter discovery failed")
 	}
 
-	// Step 1.6: Twitter collection (fetch tweets for all handles)
-	// Skip sync Twitter collection when batch provider is available —
-	// tweets are already included in the batch submission above.
 	var twitterErr error
 	if os.Getenv("BATCH_PROVIDER") == "" {
-		twitterErr = runTwitterCollection(ctx, storer)
+		twitterErr = runTwitterCollection(ctx, storer, targetIDs)
 		if twitterErr != nil {
 			log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
 		}
@@ -130,10 +87,21 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Info().Msg("Twitter collection handled via batch submission, skipping sync path")
 	}
 
-	// Contradiction detection is now handled by the batch chain:
-	// fact_extraction → classification → contradiction (triggered by batch poller)
+	// Step 3: frpolitics (votes + news for deputies). Independent target set.
+	fpErr := runFrpoliticsStep(ctx, storer)
+	if fpErr != nil {
+		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
+	}
 
-	// Step 2: Photos backfill (find missing portraits for persons/parties without one)
+	// Step 4: Contradiction detection. Always run over unchecked pairs across
+	// all persons. In batch mode this submits a contradiction batch and returns;
+	// the batch poller eventually finalizes results.
+	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
+	if contraErr != nil {
+		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")
+	}
+
+	// Step 5: Photos backfill (persons + parties missing an image).
 	photosErr := runPhotosBackfill(ctx, storer)
 	if photosErr != nil {
 		log.Error().Err(photosErr).Msg("Daily pipeline: photos backfill failed")
@@ -143,21 +111,31 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := batchErr != nil || discoverErr != nil || twitterErr != nil || photosErr != nil
+		hasErrors := targetsErr != nil || batchErr != nil || discoverErr != nil ||
+			twitterErr != nil || fpErr != nil || contraErr != nil || photosErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
 
 		var msg string
 		if hasErrors {
 			var parts []string
+			if targetsErr != nil {
+				parts = append(parts, "targets: "+targetsErr.Error())
+			}
 			if batchErr != nil {
-				parts = append(parts, "batch: "+batchErr.Error())
+				parts = append(parts, "news/batch: "+batchErr.Error())
 			}
 			if discoverErr != nil {
 				parts = append(parts, "twitter-discover: "+discoverErr.Error())
 			}
 			if twitterErr != nil {
 				parts = append(parts, "twitter: "+twitterErr.Error())
+			}
+			if fpErr != nil {
+				parts = append(parts, "frpolitics: "+fpErr.Error())
+			}
+			if contraErr != nil {
+				parts = append(parts, "contradictions: "+contraErr.Error())
 			}
 			if photosErr != nil {
 				parts = append(parts, "photos: "+photosErr.Error())
@@ -184,7 +162,43 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		}
 	}
 
-	log.Info().Dur("elapsed", elapsed).Msg("Daily pipeline finished")
+	// Aggregate step errors so the caller (the host cron) can exit non-zero.
+	var stepErrs []error
+	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, contraErr, photosErr} {
+		if e != nil {
+			stepErrs = append(stepErrs, e)
+		}
+	}
+
+	log.Info().
+		Dur("elapsed", elapsed).
+		Int("step_errors", len(stepErrs)).
+		Msg("Daily pipeline finished")
+
+	return errors.Join(stepErrs...)
+}
+
+// dailyTargets returns the persons that fact-extraction steps (news, twitter)
+// should iterate over. Defaults to the search_queue contents (the "main persons
+// queue"); when DAILY_FOR_ALL=1 is set, returns every person in the DB instead.
+// Photos + frpolitics + contradictions ignore this filter — they have their own scope.
+func dailyTargets(ctx context.Context, storer *storage.PostgresStorer) ([]storage.QueueEntry, error) {
+	if os.Getenv("DAILY_FOR_ALL") == "1" {
+		all, err := storer.GetAllPersons(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list all persons: %w", err)
+		}
+		out := make([]storage.QueueEntry, len(all))
+		for i, p := range all {
+			out[i] = storage.QueueEntry{
+				PersonID:   p.ID,
+				Name:       p.Name,
+				EntityType: p.EntityType,
+			}
+		}
+		return out, nil
+	}
+	return storer.GetSearchQueue(ctx)
 }
 
 // pipelineStats tracks aggregate stats across all targets in a pipeline run.
@@ -208,19 +222,15 @@ func (s pipelineStats) summary() string {
 	return msg
 }
 
-// collectAndSubmitBatch searches news for all queued persons, extracts article content,
-// and submits everything as a single Gemini batch job. Returns immediately —
-// the batch poller handles retrieval and fact insertion asynchronously.
-func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) (*pipelineStats, error) {
+// collectAndSubmitBatch searches news for the given target persons, extracts
+// article content, and submits everything (plus tweets for the same targets)
+// as a single Gemini batch job. Returns immediately — the batch poller handles
+// retrieval and fact insertion asynchronously.
+func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry, targetIDs map[int64]bool) (*pipelineStats, error) {
 	stats := &pipelineStats{}
 
-	// Get queue
-	queue, err := storer.GetSearchQueue(ctx)
-	if err != nil {
-		return stats, fmt.Errorf("failed to get search queue: %w", err)
-	}
-	if len(queue) == 0 {
-		log.Info().Msg("Search queue is empty, skipping batch submission")
+	if len(targets) == 0 {
+		log.Info().Msg("No target persons for fact extraction, skipping batch submission")
 		return stats, nil
 	}
 
@@ -249,10 +259,10 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 		RevisitHours: 24 * 365 * 10,
 	}
 
-	// Collect content from all queued persons
+	// Collect content from all target persons
 	var allItems []core.BatchContentItem
-	for i, entry := range queue {
-		log.Info().Int("progress", i+1).Int("total", len(queue)).Str("person", entry.Name).Msg("Collecting news content")
+	for i, entry := range targets {
+		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", entry.Name).Msg("Collecting news content")
 
 		targetType := news.TargetPerson
 		if entry.EntityType == "party" {
@@ -296,8 +306,8 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 		}
 	}
 
-	// Also collect Twitter content for batch submission
-	twitterItems, twitterErr := collectTwitterContentForBatch(ctx, storer)
+	// Also collect Twitter content for batch submission (filtered to same target set)
+	twitterItems, twitterErr := collectTwitterContentForBatch(ctx, storer, targetIDs)
 	if twitterErr != nil {
 		log.Warn().Err(twitterErr).Msg("Twitter content collection for batch failed")
 		stats.CollectErrors = append(stats.CollectErrors, "twitter: "+twitterErr.Error())
@@ -348,9 +358,10 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer) 
 	return stats, nil
 }
 
-// collectTwitterContentForBatch fetches tweets for all active handles and returns
-// BatchContentItems for batch LLM submission. No LLM calls are made.
-func collectTwitterContentForBatch(ctx context.Context, storer *storage.PostgresStorer) ([]core.BatchContentItem, error) {
+// collectTwitterContentForBatch fetches tweets for active handles whose person is
+// in targetIDs and returns BatchContentItems for batch LLM submission. No LLM
+// calls are made.
+func collectTwitterContentForBatch(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool) ([]core.BatchContentItem, error) {
 	handles, err := storer.GetActiveTwitterHandles(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active Twitter handles: %w", err)
@@ -377,7 +388,12 @@ func collectTwitterContentForBatch(ctx context.Context, storer *storage.Postgres
 	}
 
 	var allItems []core.BatchContentItem
+	skipped := 0
 	for _, handle := range handles {
+		if !targetIDs[handle.PersonID] {
+			skipped++
+			continue
+		}
 		items, err := provider.CollectContent(ctx, handle, opts)
 		if err != nil {
 			log.Error().Err(err).Str("handle", handle.Handle).Msg("Failed to collect Twitter content for batch")
@@ -386,13 +402,19 @@ func collectTwitterContentForBatch(ctx context.Context, storer *storage.Postgres
 		allItems = append(allItems, items...)
 	}
 
+	if skipped > 0 {
+		log.Info().Int("skipped_handles", skipped).Msg("Twitter batch collection: skipped handles outside target set")
+	}
+
 	return allItems, nil
 }
 
-// runFrpoliticsPipeline executes the frpolitics pipeline: votes + news for deputies.
-func runFrpoliticsPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) {
+// runFrpoliticsStep executes the frpolitics step of the daily pipeline:
+// votes + news for French deputies. Uses the same defaults as the legacy
+// standalone scheduler (now removed).
+func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) error {
 	start := time.Now()
-	log.Info().Msg("Frpolitics pipeline started")
+	log.Info().Msg("Frpolitics step started")
 
 	opts := frpolitics.Options{
 		Mode:             "both",
@@ -403,34 +425,15 @@ func runFrpoliticsPipeline(ctx context.Context, storer *storage.PostgresStorer, 
 		ContentExtractor: "webcrawler",
 	}
 
-	runErr := frpolitics.Run(ctx, storer, opts)
-	if runErr != nil {
-		log.Error().Err(runErr).Msg("Frpolitics pipeline failed")
-	}
-
-	elapsed := time.Since(start)
-
-	// Notify via Telegram
-	if notifier != nil {
-		var msg string
-		if runErr != nil {
-			msg = fmt.Sprintf("⚠️ <b>Frpolitics pipeline failed</b> (%s)\n%s",
-				elapsed.Round(time.Second), runErr.Error())
-		} else {
-			msg = fmt.Sprintf("✅ <b>Frpolitics pipeline completed</b> (%s)",
-				elapsed.Round(time.Second))
-		}
-		if err := notifier.Send(ctx, msg); err != nil {
-			log.Error().Err(err).Msg("Failed to send frpolitics Telegram notification")
-		}
-	}
-
-	log.Info().Dur("elapsed", elapsed).Msg("Frpolitics pipeline finished")
+	err := frpolitics.Run(ctx, storer, opts)
+	log.Info().Dur("elapsed", time.Since(start)).Err(err).Msg("Frpolitics step finished")
+	return err
 }
 
-// runTwitterCollection fetches tweets for all active Twitter handles and extracts facts.
-// Gracefully skips if no handles exist or if the Twitter API key is not configured.
-func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer) error {
+// runTwitterCollection fetches tweets for active Twitter handles whose person is
+// in targetIDs and extracts facts. Gracefully skips if no handles exist or if
+// the Twitter API key is not configured.
+func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool) error {
 	handles, err := storer.GetActiveTwitterHandles(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get active Twitter handles: %w", err)
@@ -469,13 +472,20 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer) e
 	}
 
 	var (
-		firstErr    error
-		totalTweets int
-		totalFacts  int
-		handlesOK   int
+		firstErr     error
+		totalTweets  int
+		totalFacts   int
+		handlesOK    int
+		handlesUsed  int
+		handlesSkipd int
 	)
 
 	for _, handle := range handles {
+		if !targetIDs[handle.PersonID] {
+			handlesSkipd++
+			continue
+		}
+		handlesUsed++
 		result, err := provider.CollectFacts(ctx, handle, opts)
 		if err != nil {
 			log.Error().Err(err).Str("handle", handle.Handle).Msg("Twitter collection failed for handle")
@@ -493,6 +503,8 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer) e
 
 	log.Info().
 		Int("handles_total", len(handles)).
+		Int("handles_used", handlesUsed).
+		Int("handles_skipped", handlesSkipd).
 		Int("handles_ok", handlesOK).
 		Int("tweets_fetched", totalTweets).
 		Int("facts_extracted", totalFacts).
@@ -588,17 +600,4 @@ func runPhotosBackfill(ctx context.Context, storer *storage.PostgresStorer) erro
 	}
 
 	return nil
-}
-
-// envInt reads an integer from an environment variable, returning defaultVal on missing/invalid.
-func envInt(key string, defaultVal int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return defaultVal
-	}
-	return n
 }

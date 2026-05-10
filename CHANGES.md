@@ -2,6 +2,35 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-10: Daily pipeline → the host cron service (no more in-process scheduler)
+
+### What was done
+- New `dm pipeline daily` CLI command (`cmd/pipeline_daily.go`) runs the daily pipeline once and exits non-zero on any step failure. `runDailyPipeline` now returns `error` (aggregated step errors via `errors.Join`).
+- Deleted `startPipelineScheduler` entirely + its call site in `cmd/web.go`. Dropped the `PIPELINE_INTERVAL_HOURS` env var and the `envInt` helper. `dm web serve` no longer runs the pipeline on startup — solving the "every push to main re-runs the daily pipeline" footgun.
+- `cmd/web.go` no longer constructs a top-level Telegram notifier (the scheduler was its only consumer; the balance alerter uses `alerterInstance` directly).
+
+### Why
+- the host's cron model requires the service to terminate, so a single service can't be both an always-on web server and a cron job. Splitting the daily pipeline into its own cron-scheduled the host service (`mirror-cron`, same image, start command `dm pipeline daily`) gives a real cron schedule and makes deploys idempotent (no pipeline side effect on restart).
+- Exit-code-on-failure means the host's UI flags failed runs at a glance — Telegram remains for the detailed message.
+
+### Operational notes
+- Required host dashboard work (manual): create the new cron service (Empty Service → same repo, Settings → Cron Schedule + Start Command `dm pipeline daily`, copy env vars from `mirror` minus HTTP-only ones). Remove `PIPELINE_INTERVAL_HOURS` from `mirror` (now dead). See CLAUDE.md → Deployment.
+
+## 2026-05-10: Daily pipeline consolidation (single ordered run)
+
+### What was done
+- Collapsed the two in-process schedulers (`PIPELINE_INTERVAL_HOURS` + `FRPOLITICS_INTERVAL_DAYS`) into a single daily run driven by `PIPELINE_INTERVAL_HOURS`. The standalone `runFrpoliticsPipeline` function and its ticker branch in `startPipelineScheduler` are gone; frpolitics now runs as step 3 inside `runDailyPipeline` via `runFrpoliticsStep`. `FRPOLITICS_INTERVAL_DAYS` is now a no-op (must be removed from the host env).
+- `runDailyPipeline` runs in fixed order: (1) news fact extraction, (2) Twitter discovery + fact extraction, (3) frpolitics, (4) contradiction detection (`executeContradictionDetection` is now an explicit step, not just an implicit batch-chain side effect), (5) photo backfill.
+- New `DAILY_FOR_ALL` env var: when unset/`0`, news + Twitter fact extraction iterate the `search_queue` (the "main persons queue"). When `1`, they iterate every person in the DB. `collectAndSubmitBatch`, `collectTwitterContentForBatch`, and `runTwitterCollection` now take an explicit target set built from `dailyTargets`. Twitter handle *discovery* still runs for all persons missing one (cheap, idempotent infra).
+
+### Why
+- Two schedulers + an implicit batch chain made it ambiguous what actually ran each day, and Twitter steps silently iterated every person regardless of the queue. Consolidating to one ordered pipeline + an explicit `DAILY_FOR_ALL` flag makes the daily contract obvious and matches the `search_queue` table's intent.
+- All CLIs (`dm plugin frpolitics`, `dm contradictions detect`, `dm photos search`, `dm queue process`, `dm twitter fetch`) remain intact — only auto-schedulers changed.
+
+### Operational notes
+- Remove `FRPOLITICS_INTERVAL_DAYS` from the host env vars on the `mirror` service (it's a no-op now).
+- Set `DAILY_FOR_ALL=1` if/when you want the daily run to cover every person; otherwise it stays scoped to `search_queue`.
+
 ## 2026-05-10: GitHub Actions CI (build + test + deploy gating)
 
 ### What was done

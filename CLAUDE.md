@@ -124,10 +124,18 @@ OPEN_AI_CHAT_MODEL=gpt-4o-mini
 OPEN_AI_EMBED_MODEL=text-embedding-3-small
 GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
-PIPELINE_INTERVAL_HOURS=24       # Daily pipeline: queue process + contradiction detect (0=disabled)
-FRPOLITICS_INTERVAL_DAYS=15      # Frpolitics pipeline: votes + news for deputies (0=disabled)
+DAILY_FOR_ALL=0                  # If 1, news+twitter fact extraction iterate ALL persons (default: only search_queue)
 FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
 ```
+
+## Deployment (the host)
+
+Two services on the host, both built from this repo's Dockerfile:
+
+- **`mirror`** — long-lived `dm web serve`. Hosts the HTTP API, the batch poller (5 min), the balance alerter, Prometheus metrics, and the metrics-export goroutine. No pipeline scheduler runs here.
+- **`mirror-cron`** — cron-scheduled service. Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. Shares the same env vars as `mirror` (DB URL, OpenAI/batch provider keys, Telegram, R2, etc.) except no HTTP `PORT`/`METRICS_PORT`/`PROMETHEUS_REMOTE_WRITE_*`.
+
+To trigger the pipeline manually (locally or on the cron service): `./dm pipeline daily`.
 
 ## Development Status
 
