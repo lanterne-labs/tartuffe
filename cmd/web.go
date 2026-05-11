@@ -128,6 +128,13 @@ func corsOriginFunc() func(r *http.Request, origin string) bool {
 	}
 }
 
+// httpInternalError logs err server-side and returns a generic 500 to the client,
+// preventing internal details (e.g. DB connection strings) from leaking.
+func httpInternalError(w http.ResponseWriter, err error, msg string) {
+	log.Error().Err(err).Msg(msg)
+	http.Error(w, "Internal server error", http.StatusInternalServerError)
+}
+
 // securityHeaders adds standard security headers to all responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -171,10 +178,10 @@ func (ws *WebServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if err := ws.storer.Pool().Ping(ctx); err != nil {
+		log.Error().Err(err).Msg("health check: db ping failed")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{
 			"status": "error",
-			"error":  err.Error(),
 		})
 		return
 	}
@@ -219,7 +226,7 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 
 	persons, err := ws.storer.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get persons: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get persons")
 		return
 	}
 
@@ -241,7 +248,7 @@ func (ws *WebServer) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 
 	person, err := ws.storer.GetPersonByID(ctx, personID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get person: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get person")
 		return
 	}
 
@@ -285,7 +292,7 @@ func (ws *WebServer) handleGetPersonFacts(w http.ResponseWriter, r *http.Request
 
 	result, err := ws.storer.GetPersonFacts(ctx, personID, limit, offset)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get facts: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get facts")
 		return
 	}
 
@@ -324,7 +331,7 @@ func (ws *WebServer) handleGetPersonContradictions(w http.ResponseWriter, r *htt
 
 	result, err := ws.storer.GetPersonContradictions(ctx, personID, limit, offset)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get contradictions: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get contradictions")
 		return
 	}
 
@@ -362,7 +369,7 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 
 	rows, err := ws.storer.Pool().Query(ctx, query, personID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get members: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get members")
 		return
 	}
 	defer rows.Close()
@@ -371,14 +378,14 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var m MemberInfo
 		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.HonestyScore, &m.ImageURL); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to scan member: %v", err), http.StatusInternalServerError)
+			httpInternalError(w, err, "failed to scan member")
 			return
 		}
 		members = append(members, m)
 	}
 
 	if rows.Err() != nil {
-		http.Error(w, fmt.Sprintf("Error iterating members: %v", rows.Err()), http.StatusInternalServerError)
+		httpInternalError(w, rows.Err(), "error iterating members")
 		return
 	}
 
@@ -414,7 +421,7 @@ func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *htt
 
 	items, err := ws.storer.GetStanceContradictions(ctx, stanceID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get stance contradictions: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get stance contradictions")
 		return
 	}
 
@@ -436,13 +443,13 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 
 	docs, err := ws.storer.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get stances: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get stances")
 		return
 	}
 
 	counts, err := ws.storer.GetStanceContradictionCounts(ctx, personID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get stance contradiction counts: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get stance contradiction counts")
 		return
 	}
 
@@ -504,7 +511,7 @@ func (ws *WebServer) handleGetFactPersons(w http.ResponseWriter, r *http.Request
 
 	persons, err := ws.storer.GetFactPersons(ctx, factID, limit, offset)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get persons for fact: %v", err), http.StatusInternalServerError)
+		httpInternalError(w, err, "failed to get persons for fact")
 		return
 	}
 
@@ -541,8 +548,6 @@ func (ws *WebServer) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
 
 	// Ensure we can flush
 	flusher, ok := w.(http.Flusher)
@@ -676,10 +681,10 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	metricsMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := storer.Pool().Ping(r.Context()); err != nil {
+			log.Error().Err(err).Msg("metrics health check: db ping failed")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]string{
 				"status": "error",
-				"error":  err.Error(),
 			})
 			return
 		}
@@ -689,7 +694,7 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	})
 
 	go func() {
-		metricsAddr := ":" + metricsPort
+		metricsAddr := "127.0.0.1:" + metricsPort
 		log.Info().Str("port", metricsPort).Msg("Starting internal metrics server")
 		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
 			log.Error().Err(err).Msg("Metrics server failed")
