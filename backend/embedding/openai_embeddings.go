@@ -23,11 +23,15 @@ const (
 	initialBackoff    = 1 * time.Second // Initial wait time for backoff
 	backoffMultiplier = 2.0             // Factor to multiply backoff by each retry
 	maxJitter         = 0.2             // Max jitter factor (e.g., 0.2 = +/- 20%)
-	// targetEmbeddingDim is the dimension we store in pgvector. Models that emit
-	// larger vectors (e.g. Qwen3-Embedding-8B at 4096) are Matryoshka-truncated
-	// to this prefix and L2-renormalized — Qwen3 was trained with nested MRL
-	// loss so the leading prefix is a valid lower-dim embedding.
-	targetEmbeddingDim = 1536
+	// targetEmbeddingDim MUST equal the dimension of facts.embedding /
+	// stance_documents.cluster_embedding in the schema. If the embedder returns a
+	// larger vector (e.g. Qwen3-Embedding-8B at 4096 vs an old 1536-d schema), it
+	// is Matryoshka-truncated to this prefix and L2-renormalized — Qwen3 was
+	// trained with nested MRL loss so the leading prefix is a valid lower-dim
+	// embedding. When you swap the embedding model AND the column dimension via a
+	// migration, update this constant in the same change — otherwise pgvector
+	// rejects every insert with "expected N dimensions, not M".
+	targetEmbeddingDim = 4096
 )
 
 // openAIEmbedModelDefault uses text-embedding-3-small (1536 dimensions) by default
