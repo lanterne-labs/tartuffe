@@ -130,20 +130,20 @@ Return a JSON array. Each object has 8 fields (in this order):
 5. 'canonical_verb': MUST be EXACTLY one of these 20 UPPERCASE tokens (no synonyms, no inflections, no lowercase, no spaces — facts with any other value will be rejected):
    DENIED | CLAIMED | PROMISED | SUPPORTED | OPPOSED | VOTED_FOR | VOTED_AGAINST | PROPOSED | CONFIRMED | ADMITTED | REFUSED | DEMANDED | THREATENED | WAS_SENTENCED | WAS_CONVICTED | WAS_ACQUITTED | WAS_FINED | RECEIVED_FUNDS | CHANGED_POSITION | ANNOUNCED
    Pick the closest token; do NOT invent new ones (e.g. NEVER return "WAIVED", "SIGNED", "CONVICTED" — use the closest match like ANNOUNCED, PROPOSED, WAS_CONVICTED).
-6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. ALWAYS in English. NO VERB PREFIX.
+6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. In the SAME language as the input facts. NO VERB PREFIX.
    GOAL: Two facts about the same topic MUST produce identical or near-identical embedding_text, REGARDLESS of the entity's stance. The canonical_verb field already captures the stance separately.
    - Format: [broad policy domain] [one specific detail only if needed]
    - Topic abstraction: use the BROADEST policy domain. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
-   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
+   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, specific numbers/percentages/amounts
    - Keep it SHORT: 2-5 words total
    - ⚠️ MUST be a SUBJECT (policy area, case, event, institution), NOT a rhetorical pattern or speech act. Words like "announcements", "contradictions", "promises", "denials", "flip-flops", "rhetoric", "pattern" describe FORM and are forbidden as the topic label. If the fact has no specific subject, you should have rejected it via REJECT rule 5b.
    - ❌ Bad: "policy announcements contradictions" / "campaign promises" / "rhetoric threats" / "denials reversals"
-   - ✅ Good: "tariffs china 2025" / "strait-of-hormuz coalition" / "iran nuclear-deal" / "NATO article-5"
-   - Examples:
-     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → wrongdoing parliamentary-assistants-case
-     "a promis de baisser l'impôt sur le revenu de 15%%" → tax-cut income-tax
-     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → tax-increase income-tax
-     "a été condamnée à 4 ans de prison" → prison parliamentary-assistants-case
+   - ✅ Good (French): "droits-douane chine" / "coalition détroit-hormuz" / "accord-nucléaire iran" / "article-5 OTAN"
+   - Examples (French input → French embedding_text):
+     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → délits affaire-assistants-parlementaires
+     "a promis de baisser l'impôt sur le revenu de 15%%" → baisse-impôts impôt-revenu
+     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → hausse-impôts impôt-revenu
+     "a été condamnée à 4 ans de prison" → prison affaire-assistants-parlementaires
 7. 'original_quote': Exact snippet (max ~250 chars) from the source text
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
@@ -167,7 +167,7 @@ Example:
     "subject_entity_type": "human",
     "normalized_fact": "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès en appel le 13 janvier 2026.",
     "canonical_verb": "DENIED",
-    "embedding_text": "wrongdoing parliamentary-assistants-case",
+    "embedding_text": "délits affaire-assistants-parlementaires",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
     "involved_people": []
   }
