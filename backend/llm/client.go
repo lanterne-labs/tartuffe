@@ -28,7 +28,7 @@ type BaseLLMClient struct {
 // NewBaseLLMClient creates a new base client with a default timeout.
 func NewBaseLLMClient() *BaseLLMClient {
 	return &BaseLLMClient{
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{Timeout: 300 * time.Second},
 	}
 }
 

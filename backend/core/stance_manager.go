@@ -66,10 +66,36 @@ type stanceLLMResponse struct {
 }
 
 // topicAssignmentResponse is the expected JSON response from the topic assignment LLM call.
+// NewTopicLabel uses flexibleString because some LLMs (notably gemma-4) occasionally
+// emit a number (e.g. 0) for this field when AssignedIndex != 0 (i.e. when no new
+// topic is being created). A strict string parse would fail the whole call.
 type topicAssignmentResponse struct {
-	Reasoning     string `json:"reasoning"`
-	AssignedIndex int    `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
-	NewTopicLabel string `json:"new_topic_label"`      // only set when AssignedIndex == 0
+	Reasoning     string         `json:"reasoning"`
+	AssignedIndex int            `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
+	NewTopicLabel flexibleString `json:"new_topic_label"`      // only set when AssignedIndex == 0
+}
+
+// flexibleString accepts string, number, bool, or null in JSON and stores the
+// canonical string form. Used for LLM-emitted fields where the model occasionally
+// returns a non-string scalar despite the schema asking for a string.
+type flexibleString string
+
+func (s *flexibleString) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*s = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		*s = flexibleString(v)
+		return nil
+	}
+	// number / bool / object / array — store the raw JSON text, trimmed.
+	*s = flexibleString(strings.TrimSpace(string(data)))
+	return nil
 }
 
 // StanceManager handles the core stance document logic: matching new facts to existing
@@ -138,7 +164,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 
 	// New topic: create a new stance
 	if assignment.AssignedIndex == 0 {
-		label := assignment.NewTopicLabel
+		label := string(assignment.NewTopicLabel)
 		log.Info().
 			Str("new_topic", label).
 			Int64("fact_id", factID).
