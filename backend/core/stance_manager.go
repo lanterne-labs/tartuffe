@@ -367,6 +367,8 @@ New fact: "Marine Le Pen was charged with embezzlement in the parliamentary assi
 **RESPONSE FORMAT:**
 You MUST write your reasoning BEFORE committing to a verdict. Analyze the facts, check which rules apply, then decide.
 
+**LANGUAGE RULE:** Write `updated_summary` in the same language as the KEY FACTS and NEW FACT provided. Do not translate to English unless the facts themselves are in English. If facts span multiple languages, use French.
+
 Return ONLY valid JSON:
 {
   "reasoning": "1-3 sentences: identify core claims, check which rules apply, then state your conclusion",
@@ -456,6 +458,7 @@ LABEL RULES (for new_topic_label when creating a new topic):
 - Include a TEMPORAL ANCHOR when relevant: trial year, election cycle, date range (e.g., "2025 appeal trial", "Jan 2026 ruling")
 - The label must be specific enough that a DIFFERENT event on the same broad theme would clearly NOT match
 - Do NOT include the person's name (labels are already per-person)
+- **LANGUAGE:** Write `new_topic_label` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
 - Bad: "justice politique" / "presidential candidacy" / "party funding"
 - Good: "denial of wrongdoing -- PA case 2025 appeal" / "presidential candidacy post-ineligibility 2027" / "EU fund embezzlement allegations 2024"
 
@@ -613,6 +616,8 @@ RULES:
 - Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
 
 For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
+
+**LANGUAGE RULE:** Write the unified `summary` and `label` in the same language as the stances provided. If stances span multiple languages, use French.
 
 STANCES IN THIS CANDIDATE CLUSTER:
 %s

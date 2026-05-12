@@ -127,7 +127,9 @@ VERDICT: [keep|remove|ambiguous]
   complementary_facts
   vague_vs_specific
 
-If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token from the list above. Do NOT invent variants. Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".`
+If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token from the list above. Do NOT invent variants. Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".
+
+**LANGUAGE RULE:** Write your REASONING in the same language as the statements being audited. If statements span multiple languages, write in French.`
 
 var (
 	auditReasoningRegex = regexp.MustCompile(`(?i)^\s*REASONING\s*:\s*(.*)$`)

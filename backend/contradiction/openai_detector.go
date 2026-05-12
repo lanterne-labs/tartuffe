@@ -242,7 +242,9 @@ Line 2 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
 
 You MUST write your REASONING line BEFORE your verdict line. Analyze before committing.
 If your reasoning concludes the statements are compatible, supplementary, or not contradictory, your verdict MUST be NO.
-CRITICAL: Never output YES when your own analysis shows the facts don't contradict.`
+CRITICAL: Never output YES when your own analysis shows the facts don't contradict.
+
+**LANGUAGE RULE:** Write your REASONING and YES/NO explanations in the same language as the statements being analyzed. If statements span multiple languages, write in French.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
