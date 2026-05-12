@@ -20,8 +20,10 @@ func (a *StanceStorerAdapter) InsertStanceDocument(ctx context.Context, doc core
 	storageDoc := StanceDocument{
 		PersonID:         doc.PersonID,
 		ClusterLabel:     doc.ClusterLabel,
+		LabelEn:          doc.LabelEn,
 		ClusterEmbedding: doc.ClusterEmbedding,
 		Summary:          doc.Summary,
+		SummaryEn:        doc.SummaryEn,
 		KeyFactIDs:       doc.KeyFactIDs,
 		FactCount:        doc.FactCount,
 	}
@@ -29,8 +31,8 @@ func (a *StanceStorerAdapter) InsertStanceDocument(ctx context.Context, doc core
 }
 
 // UpdateStanceDocument updates an existing stance document.
-func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error {
-	return a.storer.UpdateStanceDocument(ctx, id, summary, embedding, keyFactIDs, factCount)
+func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
+	return a.storer.UpdateStanceDocument(ctx, id, summary, summaryEn, embedding, keyFactIDs, factCount)
 }
 
 // AddFactToStance adds a fact to the stance document join table.
@@ -51,8 +53,10 @@ func (a *StanceStorerAdapter) GetStanceDocumentsForPerson(ctx context.Context, p
 			ID:               d.ID,
 			PersonID:         d.PersonID,
 			ClusterLabel:     d.ClusterLabel,
+			LabelEn:          d.LabelEn,
 			ClusterEmbedding: d.ClusterEmbedding,
 			Summary:          d.Summary,
+			SummaryEn:        d.SummaryEn,
 			KeyFactIDs:       d.KeyFactIDs,
 			FactCount:        d.FactCount,
 		}
@@ -93,7 +97,7 @@ func (a *StanceStorerAdapter) DeleteStanceDocumentsForPerson(ctx context.Context
 // RecordContradiction records a contradiction between two facts. Drops the bundler-needed
 // signal because in this code path (StanceManager.ProcessNewFact) both facts are guaranteed
 // to be in the same stance, so the SQL fast path will always set bundle_stance_id directly.
-func (a *StanceStorerAdapter) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
-	_, _, err := a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason)
+func (a *StanceStorerAdapter) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string, reasonEn string) error {
+	_, _, err := a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason, reasonEn)
 	return err
 }

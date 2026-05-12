@@ -37,6 +37,9 @@ var pairRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*(YES|NO)\s*:\s*(.*)`)
 // reasoningRegex matches "PAIR N: REASONING: ..." lines in LLM batch responses.
 var reasoningRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*REASONING\s*:\s*(.*)`)
 
+// enReasonRegex matches "PAIR N: EN: ..." lines — the English translation of the verdict reason.
+var enReasonRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*EN\s*:\s*(.*)`)
+
 // formatDateForLLM formats a time pointer for display in the LLM prompt.
 // Returns "unknown date" if the time is nil.
 func formatDateForLLM(t *time.Time) string {
@@ -235,16 +238,17 @@ const contradictionPromptTpl = `You are analyzing pairs of statements for contra
 %s
 
 **RESPONSE FORMAT:**
-For each pair, respond with EXACTLY two lines:
+For each pair, respond with EXACTLY two or three lines:
 
 Line 1 (mandatory): PAIR N: REASONING: [Identify core claims in each statement, check which rules apply, 1-2 sentences of analysis]
 Line 2 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
+Line 3 (optional, only when statements are not in English): PAIR N: EN: [one-sentence reason in English]
 
 You MUST write your REASONING line BEFORE your verdict line. Analyze before committing.
 If your reasoning concludes the statements are compatible, supplementary, or not contradictory, your verdict MUST be NO.
 CRITICAL: Never output YES when your own analysis shows the facts don't contradict.
 
-**LANGUAGE RULE:** Write your REASONING and YES/NO explanations in the same language as the statements being analyzed. If statements span multiple languages, write in English.`
+**LANGUAGE RULE:** Write your REASONING and YES/NO explanations in the same language as the statements being analyzed. If statements span multiple languages, write in English. If the statements are NOT in English, also write Line 3 with an English translation of your YES/NO reason.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
@@ -329,6 +333,7 @@ type BatchResult struct {
 	PairIndex       int // Index in the input slice
 	IsContradictory bool
 	Reason          string
+	ReasonEn        string // English translation of Reason; empty if Reason is already in English
 	Reasoning       string // Parsed REASONING line from LLM (analysis before verdict)
 	RawResponse     string // Full LLM response text for inspection
 	Error           error
@@ -467,6 +472,17 @@ func parseBatchResponse(response string, results []BatchResult) {
 			pairIdx := pairNum - 1
 			if pairIdx >= 0 && pairIdx < len(results) {
 				results[pairIdx].Reasoning = strings.TrimSpace(rm[2])
+			}
+			continue
+		}
+
+		// Try EN translation line
+		if em := enReasonRegex.FindStringSubmatch(line); em != nil {
+			var pairNum int
+			fmt.Sscanf(em[1], "%d", &pairNum)
+			pairIdx := pairNum - 1
+			if pairIdx >= 0 && pairIdx < len(results) {
+				results[pairIdx].ReasonEn = strings.TrimSpace(em[2])
 			}
 			continue
 		}

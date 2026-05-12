@@ -15,13 +15,13 @@ import (
 // StanceStorer defines the storage interface for stance operations.
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
-	UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error
+	UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error)
 	DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error
-	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error
+	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string, reasonEn string) error
 }
 
 // StanceDocument is the core type for stance documents.
@@ -29,8 +29,10 @@ type StanceDocument struct {
 	ID               int64
 	PersonID         int64
 	ClusterLabel     string
+	LabelEn          string // English translation of ClusterLabel; empty if already English
 	ClusterEmbedding []float32
 	Summary          string
+	SummaryEn        string // English translation of Summary; empty if already English
 	KeyFactIDs       []int64
 	FactCount        int
 }
@@ -61,16 +63,19 @@ type StanceProcessResult struct {
 // stanceLLMResponse is the expected JSON response from the stance analysis LLM call.
 type stanceLLMResponse struct {
 	Reasoning           string `json:"reasoning"`
+	ReasoningEn         string `json:"reasoning_en,omitempty"`
 	Verdict             string `json:"verdict"`
 	UpdatedSummary      string `json:"updated_summary"`
+	UpdatedSummaryEn    string `json:"updated_summary_en,omitempty"`
 	ContradictingFactID int64  `json:"contradicting_key_fact_id"`
 }
 
 // topicAssignmentResponse is the expected JSON response from the topic assignment LLM call.
 type topicAssignmentResponse struct {
-	Reasoning     string `json:"reasoning"`
-	AssignedIndex int    `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
-	NewTopicLabel string `json:"new_topic_label"`      // only set when AssignedIndex == 0
+	Reasoning       string `json:"reasoning"`
+	AssignedIndex   int    `json:"assigned_topic_index"`    // 1-indexed, 0 means new topic
+	NewTopicLabel   string `json:"new_topic_label"`         // only set when AssignedIndex == 0
+	NewTopicLabelEn string `json:"new_topic_label_en"`      // English translation; empty if label is already in English
 }
 
 // StanceManager handles the core stance document logic: matching new facts to existing
@@ -128,7 +133,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 			Int64("fact_id", factID).
 			Str("label", label).
 			Msg("No existing stances for person, creating first stance")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, "")
 	}
 
 	// Ask LLM which topic this fact belongs to
@@ -145,7 +150,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 			Int64("fact_id", factID).
 			Str("reasoning", assignment.Reasoning).
 			Msg("LLM assigned fact to new topic")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, assignment.NewTopicLabelEn)
 	}
 
 	// Find the matched stance by index (1-indexed)
@@ -154,7 +159,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 			Int("assigned_index", assignment.AssignedIndex).
 			Int("total_stances", len(stances)).
 			Msg("LLM returned out-of-range topic index, creating new stance")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, "")
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, "", "")
 	}
 	matched := &stances[assignment.AssignedIndex-1]
 
@@ -185,7 +190,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 }
 
 // createNewStance creates a new stance document for a fact. If label is empty, uses the fact text.
-func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label string) (*StanceProcessResult, error) {
+func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label, labelEn string) (*StanceProcessResult, error) {
 	if label == "" {
 		label = factText
 	}
@@ -196,6 +201,7 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 	doc := StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     strings.TrimSpace(label),
+		LabelEn:          strings.TrimSpace(labelEn),
 		ClusterEmbedding: embedding,
 		Summary:          factText,
 		KeyFactIDs:       []int64{factID},
@@ -250,7 +256,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			keyFactIDs = append(keyFactIDs, factID)
 		}
 
-		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
+		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, llmResp.UpdatedSummaryEn, newCentroid, keyFactIDs, newFactCount); err != nil {
 			return nil, fmt.Errorf("updating stance document %d: %w", matched.ID, err)
 		}
 
@@ -265,7 +271,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		result.ContradictedFactID = llmResp.ContradictingFactID
 
 		if llmResp.ContradictingFactID > 0 {
-			if err := sm.storer.RecordContradiction(ctx, personID, factID, llmResp.ContradictingFactID, llmResp.Reasoning); err != nil {
+			if err := sm.storer.RecordContradiction(ctx, personID, factID, llmResp.ContradictingFactID, llmResp.Reasoning, llmResp.ReasoningEn); err != nil {
 				return nil, fmt.Errorf("recording contradiction: %w", err)
 			}
 		} else {
@@ -283,7 +289,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			keyFactIDs = append(keyFactIDs, factID)
 		}
 
-		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
+		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, llmResp.UpdatedSummaryEn, newCentroid, keyFactIDs, newFactCount); err != nil {
 			return nil, fmt.Errorf("updating stance document %d after contradiction: %w", matched.ID, err)
 		}
 
@@ -299,6 +305,11 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	}
 
 	return result, nil
+}
+
+// isEnglish returns true when the lang code indicates English output (so no translation needed).
+func isEnglish(lang string) bool {
+	return strings.EqualFold(lang, "en") || strings.EqualFold(lang, "english")
 }
 
 // majorityLanguage returns the most frequent non-empty Lang among facts.
@@ -326,11 +337,21 @@ func majorityLanguage(facts []StanceFactInfo) string {
 func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
 	// Derive the output language from the majority language of the key facts.
 	lang := majorityLanguage(keyFacts)
+	needsEnTranslation := !isEnglish(lang)
 
 	// Format key facts for the prompt
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
 		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
+	}
+
+	enLangNote := ""
+	enFields := ""
+	if needsEnTranslation {
+		enLangNote = ` If the input is not in English, also provide English translations in "updated_summary_en" and (for CONTRADICTION) "reasoning_en".`
+		enFields = `
+  "updated_summary_en": "English translation of updated_summary (empty if DUPLICATE)",
+  "reasoning_en": "English translation of reasoning (only when verdict is CONTRADICTION, otherwise empty)",`
 	}
 
 	prompt := fmt.Sprintf(`You are analyzing whether a new fact about a political figure updates, duplicates, or contradicts their known stance on a topic.
@@ -392,11 +413,11 @@ New fact: "Marine Le Pen was charged with embezzlement in the parliamentary assi
 **RESPONSE FORMAT:**
 You MUST write your reasoning BEFORE committing to a verdict. Analyze the facts, check which rules apply, then decide.
 
-**LANGUAGE RULE:** Write "updated_summary" in %s (the language of the majority of the key facts). Do not translate unless necessary.
+**LANGUAGE RULE:** Write "updated_summary" in %s (the language of the majority of the key facts). Do not translate unless necessary.%s
 
 Return ONLY valid JSON:
 {
-  "reasoning": "1-3 sentences: identify core claims, check which rules apply, then state your conclusion",
+  "reasoning": "1-3 sentences: identify core claims, check which rules apply, then state your conclusion",%s
   "verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
   "updated_summary": "If NEW_INFO or CONTRADICTION: updated 2-4 sentence summary incorporating the new fact. If DUPLICATE: empty string.",
   "contradicting_key_fact_id": 0
@@ -405,7 +426,7 @@ Return ONLY valid JSON:
 CRITICAL: If your reasoning concludes the facts are compatible, supplementary, or not contradictory, your verdict MUST NOT be CONTRADICTION.
 For CONTRADICTION: set contradicting_key_fact_id to the ID of the specific key fact that is contradicted. If you cannot identify one, use 0.
 For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
-		stanceSummary, factsBuilder.String(), newFactText, lang)
+		stanceSummary, factsBuilder.String(), newFactText, lang, enLangNote, enFields)
 
 	reqPayload := llm.ChatRequest{
 		Model: sm.model,
@@ -497,7 +518,8 @@ Return ONLY valid JSON:
 {
   "reasoning": "Brief explanation of your choice",
   "assigned_topic_index": 0,
-  "new_topic_label": "specific descriptive label, max 120 chars (only if assigned_topic_index is 0)"
+  "new_topic_label": "specific descriptive label, max 120 chars (only if assigned_topic_index is 0)",
+  "new_topic_label_en": "English translation of new_topic_label (empty if new_topic_label is already in English)"
 }
 
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(stances))
@@ -608,7 +630,9 @@ type MergeDecision struct {
 type MergeSubgroup struct {
 	StanceIDs []int64 `json:"stance_ids"`
 	Summary   string  `json:"summary"`
+	SummaryEn string  `json:"summary_en"` // English translation; empty if already in English
 	Label     string  `json:"label"`
+	LabelEn   string  `json:"label_en"`   // English translation; empty if already in English
 }
 
 // MergeClusterDecision asks the LLM whether the supplied candidate cluster of
@@ -642,7 +666,7 @@ RULES:
 
 For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
 
-**LANGUAGE RULE:** Write the unified "summary" and "label" in the same language as the stances provided. If stances span multiple languages, use English.
+**LANGUAGE RULE:** Write the unified "summary" and "label" in the same language as the stances provided. If stances span multiple languages, use English. Also provide "summary_en" and "label_en" as English translations (leave empty if the text is already in English).
 
 STANCES IN THIS CANDIDATE CLUSTER:
 %s
@@ -651,7 +675,7 @@ Return ONLY valid JSON:
 {
   "reasoning": "1-3 sentences explaining your decision",
   "merges": [
-    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
+    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "summary_en": "English translation (empty if already English)", "label": "specific subject label", "label_en": "English translation (empty if already English)"}
   ]
 }
 

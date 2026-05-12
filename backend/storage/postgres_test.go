@@ -1100,7 +1100,7 @@ func TestStanceBundledContradictions(t *testing.T) {
 	// and one half-unstanced pair (f1 in A vs f6 → solo).
 	rec := func(a, b int64) (int64, bool) {
 		t.Helper()
-		id, needsBundler, err := storer.RecordContradictionImmediate(ctx, personID, a, b, fmt.Sprintf("clash %d/%d", a, b))
+		id, needsBundler, err := storer.RecordContradictionImmediate(ctx, personID, a, b, fmt.Sprintf("clash %d/%d", a, b), "")
 		require.NoError(t, err)
 		return id, needsBundler
 	}

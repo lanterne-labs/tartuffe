@@ -544,7 +544,7 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 					fmt.Printf("Reason: %s\n", result.Reason)
 
 					if !opts.DryRun {
-						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(ctx, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason)
+						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(ctx, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason, result.ReasonEn)
 						if err != nil {
 							log.Error().Err(err).Msg("Failed to record contradiction")
 						} else {

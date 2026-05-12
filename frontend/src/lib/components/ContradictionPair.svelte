@@ -4,11 +4,14 @@
 
 	interface Props {
 		c: ContradictionWithFacts;
+		lang?: 'native' | 'en';
 		onGoToFact: (id: number) => void;
 		onReport: (c: ContradictionWithFacts) => void;
 	}
 
-	let { c, onGoToFact, onReport }: Props = $props();
+	let { c, lang = 'native', onGoToFact, onReport }: Props = $props();
+
+	const reason = $derived(lang === 'en' && c.reason_en ? c.reason_en : c.reason);
 
 	function formatDate(s: string): string {
 		return new Date(s).toLocaleDateString();
@@ -39,7 +42,7 @@
 			</button>
 		{/if}
 	</div>
-	<div class="contradiction-reason">{c.reason}</div>
+	<div class="contradiction-reason">{reason}</div>
 	<div class="facts-comparison">
 		<div class="comp-fact comp-a">
 			<div class="comp-label">

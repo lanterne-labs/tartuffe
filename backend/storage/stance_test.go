@@ -69,7 +69,7 @@ func TestStanceDocumentCRUD(t *testing.T) {
 
 	// Update the stance
 	newEmb := makeMixedEmbedding(0, 1, 0.9, 0.1)
-	err = storer.UpdateStanceDocument(ctx, stanceID, "Updated summary.", newEmb, []int64{1, 2, 3, 4}, 4)
+	err = storer.UpdateStanceDocument(ctx, stanceID, "Updated summary.", "", newEmb, []int64{1, 2, 3, 4}, 4)
 	require.NoError(t, err)
 
 	// Verify update

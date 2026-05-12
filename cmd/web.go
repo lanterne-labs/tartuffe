@@ -400,7 +400,9 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 type StanceResponse struct {
 	ID                 int64     `json:"id"`
 	Label              string    `json:"label"`
+	LabelEn            string    `json:"label_en"` // English translation; empty if already English
 	Summary            string    `json:"summary"`
+	SummaryEn          string    `json:"summary_en"` // English translation; empty if already English
 	FactCount          int       `json:"fact_count"`
 	ContradictionCount int       `json:"contradiction_count"`
 	Score              float64   `json:"score"`
@@ -464,7 +466,9 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 		result[i] = StanceResponse{
 			ID:                 d.ID,
 			Label:              d.ClusterLabel,
+			LabelEn:            d.LabelEn,
 			Summary:            d.Summary,
+			SummaryEn:          d.SummaryEn,
 			FactCount:          d.FactCount,
 			ContradictionCount: total,
 			Score:              score,

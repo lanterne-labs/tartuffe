@@ -1589,14 +1589,14 @@ func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int
 //     or unstanced facts) — callers should pass this row to the contradiction Bundler
 //     for LLM-driven stance assignment. False for same-stance fast-path bundles and for
 //     pre-existing rows (which already had a chance to be bundled).
-func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) (contradictionID int64, needsBundler bool, err error) {
+func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason string, reasonEn string) (contradictionID int64, needsBundler bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, false, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	id, wasInserted, bundleStanceID, err := s.RecordContradiction(ctx, tx, personID, factAID, factBID, reason)
+	id, wasInserted, bundleStanceID, err := s.RecordContradiction(ctx, tx, personID, factAID, factBID, reason, reasonEn)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1614,7 +1614,7 @@ func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, perso
 // On new contradiction insertion, recomputes the person's honesty score and emits events.
 // Returns the contradiction id, whether it was newly inserted, and the bundle_stance_id
 // (nil = needs bundler resolution).
-func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string) (int64, bool, *int64, error) {
+func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string, reasonEn string) (int64, bool, *int64, error) {
 	timer := metrics.NewQueryTimer("record_contradiction")
 
 	// Ensure consistent ordering of fact IDs to prevent duplicates like (1,2) and (2,1)
@@ -1634,10 +1634,11 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
             WHERE sa.fact_id = $2
             LIMIT 1
         )
-        INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, bundle_stance_id)
-        VALUES ($1, $2, $3, $4, (SELECT stance_document_id FROM shared))
+        INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, reason_en, bundle_stance_id)
+        VALUES ($1, $2, $3, $4, NULLIF($5,''), (SELECT stance_document_id FROM shared))
         ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
         SET reason = EXCLUDED.reason,
+            reason_en = EXCLUDED.reason_en,
             detected_at = CURRENT_TIMESTAMP,
             -- Only fill in bundle_stance_id if it's still NULL; never clobber an
             -- LLM-resolved override on re-detection.
@@ -1647,7 +1648,7 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	var contradictionID int64
 	var wasInserted bool
 	var bundleStanceID *int64
-	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason).Scan(&contradictionID, &wasInserted, &bundleStanceID)
+	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason, reasonEn).Scan(&contradictionID, &wasInserted, &bundleStanceID)
 	timer.ObserveDuration(err)
 
 	if err != nil {
@@ -2383,10 +2384,13 @@ type ContradictionWithFacts struct {
 	FactADate        *time.Time `json:"fact_a_date"`
 	FactBDate        *time.Time `json:"fact_b_date"`
 	Reason           string     `json:"reason"`
+	ReasonEn         string     `json:"reason_en"` // English translation; empty if reason is already English
 	DetectedAt       time.Time  `json:"detected_at"`
 	BundleID         *int64     `json:"bundle_id"`
 	BundleLabel      *string    `json:"bundle_label"`
+	BundleLabelEn    *string    `json:"bundle_label_en"`
 	BundleSummary    *string    `json:"bundle_summary"`
+	BundleSummaryEn  *string    `json:"bundle_summary_en"`
 	BundleSize       int        `json:"bundle_size"`
 	FactAStanceID    *int64     `json:"fact_a_stance_id"`
 	FactBStanceID    *int64     `json:"fact_b_stance_id"`
@@ -2494,10 +2498,12 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
 				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
 				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-				   c.reason, c.detected_at,
+				   c.reason, COALESCE(c.reason_en,'') AS reason_en, c.detected_at,
 				   c.bundle_stance_id,
 				   sd.cluster_label AS bundle_label,
+				   sd.label_en      AS bundle_label_en,
 				   sd.summary       AS bundle_summary,
+				   sd.summary_en    AS bundle_summary_en,
 				   sda.id           AS fact_a_stance_id,
 				   sda.cluster_label AS fact_a_stance_label,
 				   sdb.id           AS fact_b_stance_id,
@@ -2532,8 +2538,8 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 		       fact_a_text, fact_b_text,
 		       fact_a_urls, fact_b_urls,
 		       fact_a_date, fact_b_date,
-		       reason, detected_at,
-		       bundle_stance_id, bundle_label, bundle_summary, bundle_size,
+		       reason, reason_en, detected_at,
+		       bundle_stance_id, bundle_label, bundle_label_en, bundle_summary, bundle_summary_en, bundle_size,
 		       fact_a_stance_id, fact_a_stance_label,
 		       fact_b_stance_id, fact_b_stance_label,
 		       (SELECT COUNT(*) FROM contradiction_rows) AS total_count
@@ -2554,8 +2560,8 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 			&c.FactAText, &c.FactBText,
 			&c.FactASourceURLs, &c.FactBSourceURLs,
 			&c.FactADate, &c.FactBDate,
-			&c.Reason, &c.DetectedAt,
-			&c.BundleID, &c.BundleLabel, &c.BundleSummary, &c.BundleSize,
+			&c.Reason, &c.ReasonEn, &c.DetectedAt,
+			&c.BundleID, &c.BundleLabel, &c.BundleLabelEn, &c.BundleSummary, &c.BundleSummaryEn, &c.BundleSize,
 			&c.FactAStanceID, &c.FactAStanceLabel,
 			&c.FactBStanceID, &c.FactBStanceLabel,
 			&result.Total)
@@ -2592,10 +2598,12 @@ func (s *PostgresStorer) GetStanceContradictions(ctx context.Context, stanceID i
 				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
 				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
 				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-				   c.reason, c.detected_at,
+				   c.reason, COALESCE(c.reason_en,'') AS reason_en, c.detected_at,
 				   c.bundle_stance_id,
 				   sd.cluster_label  AS bundle_label,
+				   sd.label_en       AS bundle_label_en,
 				   sd.summary        AS bundle_summary,
+				   sd.summary_en     AS bundle_summary_en,
 				   sda.id            AS fact_a_stance_id,
 				   sda.cluster_label AS fact_a_stance_label,
 				   sdb.id            AS fact_b_stance_id,
@@ -2624,8 +2632,8 @@ func (s *PostgresStorer) GetStanceContradictions(ctx context.Context, stanceID i
 		       fact_a_text, fact_b_text,
 		       fact_a_urls, fact_b_urls,
 		       fact_a_date, fact_b_date,
-		       reason, detected_at,
-		       bundle_stance_id, bundle_label, bundle_summary,
+		       reason, reason_en, detected_at,
+		       bundle_stance_id, bundle_label, bundle_label_en, bundle_summary, bundle_summary_en,
 		       (SELECT COUNT(*) FROM contradiction_rows) AS bundle_size,
 		       fact_a_stance_id, fact_a_stance_label,
 		       fact_b_stance_id, fact_b_stance_label
@@ -2645,8 +2653,8 @@ func (s *PostgresStorer) GetStanceContradictions(ctx context.Context, stanceID i
 			&c.FactAText, &c.FactBText,
 			&c.FactASourceURLs, &c.FactBSourceURLs,
 			&c.FactADate, &c.FactBDate,
-			&c.Reason, &c.DetectedAt,
-			&c.BundleID, &c.BundleLabel, &c.BundleSummary, &c.BundleSize,
+			&c.Reason, &c.ReasonEn, &c.DetectedAt,
+			&c.BundleID, &c.BundleLabel, &c.BundleLabelEn, &c.BundleSummary, &c.BundleSummaryEn, &c.BundleSize,
 			&c.FactAStanceID, &c.FactAStanceLabel,
 			&c.FactBStanceID, &c.FactBStanceLabel); err != nil {
 			return nil, fmt.Errorf("failed to scan stance contradiction: %w", err)
@@ -4328,8 +4336,10 @@ type StanceDocument struct {
 	ID               int64
 	PersonID         int64
 	ClusterLabel     string
+	LabelEn          string // English translation; empty if already English
 	ClusterEmbedding []float32
 	Summary          string
+	SummaryEn        string // English translation; empty if already English
 	KeyFactIDs       []int64
 	FactCount        int
 	LastUpdatedAt    time.Time
@@ -4391,14 +4401,15 @@ func (s *PostgresStorer) FindMatchingStance(ctx context.Context, personID int64,
 // InsertStanceDocument inserts a new stance document and returns its ID.
 func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error) {
 	query := `
-		INSERT INTO stance_documents (person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		INSERT INTO stance_documents (person_id, cluster_label, label_en, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at)
+		VALUES ($1, $2, NULLIF($3,''), $4, $5, $6, $7, NOW())
 		RETURNING id`
 
 	var id int64
 	err := s.pool.QueryRow(ctx, query,
 		doc.PersonID,
 		doc.ClusterLabel,
+		doc.LabelEn,
 		pgvector.NewVector(doc.ClusterEmbedding),
 		doc.Summary,
 		doc.KeyFactIDs,
@@ -4412,13 +4423,13 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc StanceDoc
 }
 
 // UpdateStanceDocument updates an existing stance document's summary, embedding, key facts, and count.
-func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error {
+func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
 	query := `
 		UPDATE stance_documents
-		SET summary = $1, cluster_embedding = $2, key_fact_ids = $3, fact_count = $4, last_updated_at = NOW()
-		WHERE id = $5`
+		SET summary = $1, summary_en = NULLIF($2,''), cluster_embedding = $3, key_fact_ids = $4, fact_count = $5, last_updated_at = NOW()
+		WHERE id = $6`
 
-	_, err := s.pool.Exec(ctx, query, summary, pgvector.NewVector(embedding), keyFactIDs, factCount, id)
+	_, err := s.pool.Exec(ctx, query, summary, summaryEn, pgvector.NewVector(embedding), keyFactIDs, factCount, id)
 	if err != nil {
 		return fmt.Errorf("updating stance document %d: %w", id, err)
 	}
@@ -4441,7 +4452,7 @@ func (s *PostgresStorer) AddFactToStance(ctx context.Context, stanceID int64, fa
 // GetStanceDocumentsForPerson lists all stance documents for a person, ordered by fact count descending.
 func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error) {
 	query := `
-		SELECT id, person_id, cluster_label, cluster_embedding, summary, key_fact_ids, fact_count, last_updated_at, created_at
+		SELECT id, person_id, cluster_label, COALESCE(label_en,''), cluster_embedding, summary, COALESCE(summary_en,''), key_fact_ids, fact_count, last_updated_at, created_at
 		FROM stance_documents
 		WHERE person_id = $1
 		ORDER BY fact_count DESC`
@@ -4460,8 +4471,10 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 			&doc.ID,
 			&doc.PersonID,
 			&doc.ClusterLabel,
+			&doc.LabelEn,
 			&vec,
 			&doc.Summary,
+			&doc.SummaryEn,
 			&doc.KeyFactIDs,
 			&doc.FactCount,
 			&doc.LastUpdatedAt,
@@ -4578,7 +4591,7 @@ func (s *PostgresStorer) DeleteStanceDocument(ctx context.Context, id int64) err
 // (used by the LLM-merge phase, which produces a new unified summary/label for
 // the merged group). Centroid, key facts, and fact_count are left untouched —
 // those are managed by the merge tx itself.
-func (s *PostgresStorer) UpdateStanceSummary(ctx context.Context, stanceID int64, summary, clusterLabel string) error {
+func (s *PostgresStorer) UpdateStanceSummary(ctx context.Context, stanceID int64, summary, clusterLabel, summaryEn, labelEn string) error {
 	if strings.TrimSpace(summary) == "" {
 		return fmt.Errorf("UpdateStanceSummary: summary must not be empty")
 	}
@@ -4587,8 +4600,8 @@ func (s *PostgresStorer) UpdateStanceSummary(ctx context.Context, stanceID int64
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE stance_documents
-		SET summary = $1, cluster_label = $2, last_updated_at = NOW()
-		WHERE id = $3`, summary, clusterLabel, stanceID)
+		SET summary = $1, cluster_label = $2, summary_en = NULLIF($3,''), label_en = NULLIF($4,''), last_updated_at = NOW()
+		WHERE id = $5`, summary, clusterLabel, summaryEn, labelEn, stanceID)
 	if err != nil {
 		return fmt.Errorf("updating stance summary/label for %d: %w", stanceID, err)
 	}

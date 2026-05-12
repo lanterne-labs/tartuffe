@@ -19,6 +19,7 @@ type mockContradiction struct {
 	factAID  int64
 	factBID  int64
 	reason   string
+	reasonEn string
 }
 
 func newMockStanceStorer() *mockStanceStorer {
@@ -37,12 +38,13 @@ func (m *mockStanceStorer) InsertStanceDocument(ctx context.Context, doc StanceD
 	return id, nil
 }
 
-func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error {
+func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
 	doc, ok := m.stances[id]
 	if !ok {
 		return nil
 	}
 	doc.Summary = summary
+	doc.SummaryEn = summaryEn
 	doc.ClusterEmbedding = embedding
 	doc.KeyFactIDs = keyFactIDs
 	doc.FactCount = factCount
@@ -87,12 +89,13 @@ func (m *mockStanceStorer) DeleteStanceDocumentsForPerson(ctx context.Context, p
 	return nil
 }
 
-func (m *mockStanceStorer) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
+func (m *mockStanceStorer) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string, reasonEn string) error {
 	m.contradictions = append(m.contradictions, mockContradiction{
 		personID: personID,
 		factAID:  factAID,
 		factBID:  factBID,
 		reason:   reason,
+		reasonEn: reasonEn,
 	})
 	return nil
 }

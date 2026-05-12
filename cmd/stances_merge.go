@@ -430,13 +430,15 @@ func applyMergeSubgroup(
 
 	if merged > 0 {
 		// Write the unified summary + label to the dst once at the end.
-		if err := storer.UpdateStanceSummary(ctx, dst.ID, sub.Summary, sub.Label); err != nil {
+		if err := storer.UpdateStanceSummary(ctx, dst.ID, sub.Summary, sub.Label, sub.SummaryEn, sub.LabelEn); err != nil {
 			log.Warn().Err(err).Int64("dst", dst.ID).Msg("UpdateStanceSummary failed (merge applied; dst keeps old summary/label)")
 		} else {
 			// Refresh the local view of dst to keep the in-memory map consistent.
 			updated := dst
 			updated.Summary = sub.Summary
+			updated.SummaryEn = sub.SummaryEn
 			updated.ClusterLabel = sub.Label
+			updated.LabelEn = sub.LabelEn
 			currentByID[dst.ID] = updated
 		}
 	}

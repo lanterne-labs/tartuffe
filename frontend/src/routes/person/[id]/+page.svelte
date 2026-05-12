@@ -25,6 +25,9 @@
 	let error: string | null = $state(null);
 	let membersExpanded = $state(false);
 
+	// Language toggle: 'native' shows the original language, 'en' shows English translations.
+	let lang: 'native' | 'en' = $state('native');
+
 	// Stance-first profile state.
 	let stanceSort: StanceSort = $state('worst');
 	let expandedStances: Record<number, boolean> = $state({});
@@ -481,16 +484,32 @@
 		<section class="stances-section">
 			<div class="stances-toolbar">
 				<h2 class="section-heading">Stances</h2>
-				{#if stances.length > 1}
-					<div class="sort-control">
-						<label for="stance-sort">Sort by</label>
-						<select id="stance-sort" bind:value={stanceSort}>
-							<option value="worst">Worst first</option>
-							<option value="recent">Most recent</option>
-							<option value="most_facts">Most facts</option>
-						</select>
+				<div class="toolbar-right">
+					<div class="lang-toggle" role="group" aria-label="Language">
+						<button
+							class="lang-btn"
+							class:active={lang === 'native'}
+							onclick={() => lang = 'native'}
+							title="Show original language"
+						>🌐</button>
+						<button
+							class="lang-btn"
+							class:active={lang === 'en'}
+							onclick={() => lang = 'en'}
+							title="Show English translation"
+						>🇬🇧</button>
 					</div>
-				{/if}
+					{#if stances.length > 1}
+						<div class="sort-control">
+							<label for="stance-sort">Sort by</label>
+							<select id="stance-sort" bind:value={stanceSort}>
+								<option value="worst">Worst first</option>
+								<option value="recent">Most recent</option>
+								<option value="most_facts">Most facts</option>
+							</select>
+						</div>
+					{/if}
+				</div>
 			</div>
 
 			{#if stances.length === 0 && !loading}
@@ -523,16 +542,18 @@
 							>
 								<div class="stance-top">
 									<div class="stance-main">
-										<div class="stance-label-row">
-											<span class="stance-label">{stance.label}</span>
+										{@const displayLabel = lang === 'en' && stance.label_en ? stance.label_en : stance.label}
+									{@const displaySummary = lang === 'en' && stance.summary_en ? stance.summary_en : stance.summary}
+									<div class="stance-label-row">
+											<span class="stance-label">{displayLabel}</span>
 											{#if hasContradictions}
 												<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 													<path d="m6 9 6 6 6-6"/>
 												</svg>
 											{/if}
 										</div>
-										{#if stance.summary}
-											<div class="stance-summary">{stance.summary}</div>
+										{#if displaySummary}
+											<div class="stance-summary">{displaySummary}</div>
 										{/if}
 										<div class="stance-meta">
 											<span>{stance.fact_count} fact{stance.fact_count === 1 ? '' : 's'}</span>
@@ -569,7 +590,7 @@
 										<p class="empty-mini">Loading…</p>
 									{:else if items.length > 0}
 										{#each items.slice(0, shown) as c (c.id)}
-											<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
+											<ContradictionPair {c} {lang} onGoToFact={goToFact} onReport={reportContradiction} />
 										{/each}
 										{#if remaining > 0}
 											<div class="stance-more-row">
@@ -946,7 +967,7 @@
 
 	.stances-toolbar {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
 		margin-bottom: 0.75rem;
@@ -957,6 +978,39 @@
 		font-weight: 600;
 		color: var(--text-primary);
 		letter-spacing: -0.01em;
+	}
+
+	.toolbar-right {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.lang-toggle {
+		display: flex;
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+	}
+
+	.lang-btn {
+		background: transparent;
+		border: none;
+		padding: 0.25rem 0.5rem;
+		font-size: 1rem;
+		cursor: pointer;
+		line-height: 1;
+		opacity: 0.4;
+		transition: opacity var(--transition-fast), background var(--transition-fast);
+	}
+
+	.lang-btn:hover {
+		opacity: 0.7;
+	}
+
+	.lang-btn.active {
+		opacity: 1;
+		background: var(--bg-secondary);
 	}
 
 	.sort-control {
