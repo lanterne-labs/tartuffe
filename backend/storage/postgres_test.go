@@ -17,7 +17,7 @@ import (
 )
 
 // embeddingDimension defines the dimension for mock embeddings
-const embeddingDimension = 1536
+const embeddingDimension = 4096
 
 // Helper function to load .env for tests
 func loadEnv(t *testing.T) {

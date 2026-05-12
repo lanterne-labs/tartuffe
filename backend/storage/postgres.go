@@ -61,6 +61,8 @@ type StoreFactInput struct {
 	SourceType string
 	// Metadata is optional JSON-encoded plugin-specific data about the source (e.g., tweet_id).
 	Metadata map[string]any
+	// Lang is the BCP-47 language code of the fact (e.g., "fr", "en"). Empty means unknown.
+	Lang string
 }
 
 // PostgresStorer implements the storage logic using PostgreSQL.
@@ -472,8 +474,8 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 	timer := metrics.NewQueryTimer("insert_fact")
 
 	query := `
-		INSERT INTO facts (fact_text, embedding_text, embedding, canonical_verb)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO facts (fact_text, embedding_text, embedding, canonical_verb, lang)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
 	`
 	var factID int64
@@ -482,6 +484,7 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		input.EmbeddingText,
 		pgvector.NewVector(input.Embedding),
 		input.CanonicalVerb,
+		input.Lang,
 	).Scan(&factID)
 
 	timer.ObserveDuration(err)
@@ -4345,6 +4348,7 @@ type StanceFactInfo struct {
 	NormalizedFactText string
 	EmbeddingText      string
 	CanonicalVerb      string
+	Lang               string
 }
 
 // FindMatchingStance finds the closest stance document for a person within a distance threshold.
@@ -4479,7 +4483,7 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 // GetFactsForStance retrieves all facts associated with a stance document.
 func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
 	query := `
-		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, '')
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, '')
 		FROM facts f
 		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
 		WHERE sdf.stance_document_id = $1
@@ -4494,7 +4498,7 @@ func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) 
 	var facts []StanceFactInfo
 	for rows.Next() {
 		var f StanceFactInfo
-		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb); err != nil {
+		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang); err != nil {
 			return nil, fmt.Errorf("scanning stance fact: %w", err)
 		}
 		facts = append(facts, f)

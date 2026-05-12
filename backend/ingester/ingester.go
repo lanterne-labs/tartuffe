@@ -46,6 +46,7 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 			PublishedAt:        it.PublishedAt,
 			SourceType:         it.SourceType,
 			Metadata:           it.Metadata,
+			Lang:               it.Lang,
 		}
 	}
 

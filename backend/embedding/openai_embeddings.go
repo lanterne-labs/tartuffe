@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"digital-mirror/backend/metrics"
 
@@ -136,6 +137,21 @@ var purposeInstructions = map[Purpose]string{
 	PurposeContradictionBundle: "Represent the underlying inconsistency between two political claims (claim A versus claim B and the reason they conflict) so that other contradictions involving the same broken promise, reversal, or topical inconsistency can be retrieved — not merely other claims on the same topic.",
 }
 
+// sanitizeForEmbedding removes control characters that carry no semantic meaning
+// and could confuse the tokenizer or API. Keeps all printable Unicode (letters,
+// digits, punctuation, symbols from all scripts including accented chars, CJK, Arabic, etc.)
+// plus whitespace (space, tab, newline, carriage-return).
+func sanitizeForEmbedding(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	for _, r := range text {
+		if r == '\t' || r == '\n' || r == '\r' || unicode.IsGraphic(r) {
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // matryoshkaTruncate keeps the first targetEmbeddingDim values of v and
 // re-L2-normalizes; if v is already <= targetEmbeddingDim it is returned as-is
 // (callers downstream will fail loudly if the dim doesn't match the storage
@@ -173,7 +189,7 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 
 	prefixed := make([]string, len(texts))
 	for i, t := range texts {
-		prefixed[i] = "Instruct: " + instruction + "\nQuery: " + t
+		prefixed[i] = "Instruct: " + instruction + "\nQuery: " + sanitizeForEmbedding(t)
 	}
 
 	// Record batch size for metrics

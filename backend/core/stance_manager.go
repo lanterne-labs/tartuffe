@@ -47,6 +47,7 @@ type StanceFactInfo struct {
 	NormalizedFactText string
 	EmbeddingText      string
 	CanonicalVerb      string
+	Lang               string // BCP-47 language code (e.g. "fr", "en"). Empty means unknown.
 }
 
 // StanceProcessResult holds the outcome of processing a new fact against existing stances.
@@ -300,8 +301,32 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	return result, nil
 }
 
+// majorityLanguage returns the most frequent non-empty Lang among facts.
+// Returns "English" if there is no majority or all langs are empty.
+func majorityLanguage(facts []StanceFactInfo) string {
+	counts := make(map[string]int)
+	for _, f := range facts {
+		if f.Lang != "" {
+			counts[f.Lang]++
+		}
+	}
+	best, bestN := "", 0
+	for lang, n := range counts {
+		if n > bestN {
+			best, bestN = lang, n
+		}
+	}
+	if best == "" {
+		return "English"
+	}
+	return best
+}
+
 // callLLM sends the stance analysis prompt to the LLM and parses the response.
 func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
+	// Derive the output language from the majority language of the key facts.
+	lang := majorityLanguage(keyFacts)
+
 	// Format key facts for the prompt
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
@@ -367,7 +392,7 @@ New fact: "Marine Le Pen was charged with embezzlement in the parliamentary assi
 **RESPONSE FORMAT:**
 You MUST write your reasoning BEFORE committing to a verdict. Analyze the facts, check which rules apply, then decide.
 
-**LANGUAGE RULE:** Write "updated_summary" in the same language as the KEY FACTS and NEW FACT provided. Do not translate to English unless the facts themselves are in English. If facts span multiple languages, use French.
+**LANGUAGE RULE:** Write "updated_summary" in %s (the language of the majority of the key facts). Do not translate unless necessary.
 
 Return ONLY valid JSON:
 {
@@ -380,7 +405,7 @@ Return ONLY valid JSON:
 CRITICAL: If your reasoning concludes the facts are compatible, supplementary, or not contradictory, your verdict MUST NOT be CONTRADICTION.
 For CONTRADICTION: set contradicting_key_fact_id to the ID of the specific key fact that is contradicted. If you cannot identify one, use 0.
 For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
-		stanceSummary, factsBuilder.String(), newFactText)
+		stanceSummary, factsBuilder.String(), newFactText, lang)
 
 	reqPayload := llm.ChatRequest{
 		Model: sm.model,
@@ -458,7 +483,7 @@ LABEL RULES (for new_topic_label when creating a new topic):
 - Include a TEMPORAL ANCHOR when relevant: trial year, election cycle, date range (e.g., "2025 appeal trial", "Jan 2026 ruling")
 - The label must be specific enough that a DIFFERENT event on the same broad theme would clearly NOT match
 - Do NOT include the person's name (labels are already per-person)
-- **LANGUAGE:** Write "new_topic_label" in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
+- **LANGUAGE:** Write "new_topic_label" in the same language as the NEW FACT provided. Do not translate unless necessary. If facts span multiple languages, use English.
 - Bad: "justice politique" / "presidential candidacy" / "party funding"
 - Good: "denial of wrongdoing -- PA case 2025 appeal" / "presidential candidacy post-ineligibility 2027" / "EU fund embezzlement allegations 2024"
 
@@ -617,7 +642,7 @@ RULES:
 
 For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
 
-**LANGUAGE RULE:** Write the unified "summary" and "label" in the same language as the stances provided. If stances span multiple languages, use French.
+**LANGUAGE RULE:** Write the unified "summary" and "label" in the same language as the stances provided. If stances span multiple languages, use English.
 
 STANCES IN THIS CANDIDATE CLUSTER:
 %s

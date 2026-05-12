@@ -99,6 +99,7 @@ type StoreFactInput struct {
 	PublishedAt        *time.Time
 	SourceType         string
 	Metadata           map[string]any
+	Lang               string // BCP-47 language code (e.g. "fr", "en"). Empty means unknown.
 }
 
 // SimilarFact represents a fact that is similar to a given embedding.

@@ -74,6 +74,7 @@ func (a *StanceStorerAdapter) GetFactsForStance(ctx context.Context, stanceID in
 			NormalizedFactText: f.NormalizedFactText,
 			EmbeddingText:      f.EmbeddingText,
 			CanonicalVerb:      f.CanonicalVerb,
+			Lang:               f.Lang,
 		}
 	}
 	return result, nil
