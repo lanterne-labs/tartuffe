@@ -378,7 +378,7 @@ For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.2,
-		MaxTokens:      4000,
+		MaxTokens:      800,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
@@ -472,7 +472,7 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
-		MaxTokens:      4000,
+		MaxTokens:      800,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
@@ -627,7 +627,7 @@ Stances not listed in any merge group will be left as-is.`,
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
-		MaxTokens:      4000,
+		MaxTokens:      800,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
