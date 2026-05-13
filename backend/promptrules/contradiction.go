@@ -1,0 +1,184 @@
+// Package promptrules holds prompt fragments shared across packages that would
+// otherwise create import cycles. Keep this package dependency-free — it only
+// exports string constants.
+package promptrules
+
+// ContradictionRules is the single source of truth for the contradiction
+// detection rule body. It is embedded by:
+//   - backend/contradiction/openai_detector.go (pair-wise detector prompt)
+//   - backend/contradiction/auditor.go (false-positive auditor prompt)
+//   - backend/core/stance_manager.go (per-fact analyze-vs-stance prompt)
+//
+// Keeping a single source prevents the prompts from drifting in their
+// definition of what counts as a contradiction. When you change this, every
+// caller picks it up automatically — that's the point.
+//
+// Format note: the prompt is consumed by fmt.Sprintf in some call sites, so
+// any literal `%` MUST appear as `%%`.
+const ContradictionRules = `**WHAT COUNTS AS A CONTRADICTION**
+A contradiction is about the SAME SUBJECT — the person's own knowledge, beliefs, statements, commitments, or actions conflicting with each other (or with an authoritative finding about them).
+
+**PROMISE-BASED REASONING (core framework):**
+For every pair, identify which fact is the "promise" (a claim, denial, commitment, stated condition, stated objective, or position) and which is the potential "breaker". Either fact can be the promise — it is NOT necessarily the chronologically first one.
+
+A breaker invalidates a promise when:
+- The person's OWN later or earlier statement directly contradicts their promise (e.g., "I knew X" vs "I never knew X")
+- The person's OWN ACTION contradicts their stated commitment, position, or condition
+- An AUTHORITATIVE FINDING (conviction, court ruling, official investigation conclusion) contradicts the person's denial or claim
+
+A breaker does NOT invalidate a promise when:
+- An ACCUSATION, CHARGE, INDICTMENT, TRIAL or open INVESTIGATION (procedural steps) is paired with a denial — these are NOT findings of guilt
+- An EXTERNAL PARTY'S action is the alleged breaker — only the person's own statements/actions or authoritative findings about them count
+
+**POSITIVE PATTERNS — these ARE contradictions** (each is a flavor of the person's own statements/actions conflicting):
+- STATED-CONDITION WALK-BACK: "I will not do X if Y happens" + later they act/talk as if X is happening despite Y. The condition was stated, the condition occurred, the stated outcome was abandoned.
+- STATED-OBJECTIVE vs STATED-ACTION: The person claims a goal (e.g. "X is not our objective") and simultaneously claims an action whose stated effect IS X. The action negates the stated objective.
+- BEHAVIORAL INCONSISTENCY: A public stated position vs an action by the SAME PERSON that runs counter to that position. (NOT third-party actions, NOT different contexts that legitimately allow different choices.)
+- SAME-CONCRETE-PROPOSAL POSITION SHIFT: An explicit rejection of a SPECIFIC concrete proposal in one statement, paired with endorsement / openness / support for the SAME concrete proposal in another. Generic "not my priority" → "I support" on the same identifiable measure IS a walk-back.
+- CLAIM ↔ AUTHORITATIVE FINDING: The person denied / claimed X, and a court ruling / official investigation conclusion found the opposite specifically about X.
+
+**NEGATIVE PATTERNS — these are NOT contradictions** (consolidated):
+- DIFFERENT SUBJECTS / SCOPES: similar topics but different actors, different events, different bills, different geographies, or different levels of involvement. Similar keywords ≠ same subject.
+- VAGUE vs SPECIFIC: one statement is generic, the other names specific people/dates/items, and there is no clear indication they refer to the same thing. (If context proves they refer to the same thing, it IS a contradiction — see PAIR 14.)
+- SUBJECTIVE AWARENESS vs OBJECTIVE FACT: "I wasn't aware of X" + "X did/didn't happen" are compatible — denying X happened doesn't imply prior knowledge. An exploratory posture ("trying to understand") is also compatible with admitting ignorance of specifics.
+- DOWNPLAYING / ACKNOWLEDGING IMPERFECTIONS: admitting an administrative error, negligence, "things could have been better" or "good faith mistakes" does NOT contradict a denial of criminal intent. Only an explicit denial of the SAME specific fact the person elsewhere ADMITS is contradictory.
+- COHERENT DEFENSE / CONSISTENT IGNORANCE: multiple denials about DIFFERENT aspects of the same case, or multiple "I didn't know X / didn't know Y" claims, REINFORCE each other. They are not contradictions among themselves.
+- SAME POSITION IN DIFFERENT WORDS: paraphrases, translations, and reformulations of the same claim cannot contradict each other.
+- COMPLEMENTARY FACTS / SAME EVENT: different aspects of the same ruling, sentence, or event (prison + ineligibility, first-instance + appeal sentencing) are supplementary, not contradictory.
+- LEGAL PROCESS STAGES: accusation → trial → conviction is sequential progression of the same case, not a contradiction.
+- CONVICTION SCOPE: a general conviction does not automatically disprove every specific factual claim the person made about details of the case — only those the conviction specifically addresses.
+- ANNOUNCEMENT THEN ACTION: announcing X and then doing X is a FULFILLED commitment, the OPPOSITE of a contradiction.
+
+**TEMPORAL REASONING:**
+1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
+2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
+3. Same date conflicts: analyze carefully for direct logical contradiction
+4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
+
+**EXAMPLES (positive = YES contradiction, negative = NO):**
+
+PAIR 1 (Learning Over Time - NO):
+Statement A (dated January 15, 2024): "Marine Le Pen said she didn't know about the mutualization scheme."
+Statement B (dated March 20, 2024): "Marine Le Pen claimed the EU Parliament knew about mutualization and it was normal practice."
+PAIR 1: REASONING: She denied knowledge in January, then discussed mutualization as normal in March. Earlier "didn't know" followed by later familiarity is the LEARNING OVER TIME temporal rule — not a contradiction.
+PAIR 1: NO: The later statement reflects knowledge gained after the earlier denial.
+
+PAIR 2 (Denial After Claim - YES):
+Statement A (dated January 15, 2024): "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice."
+Statement B (dated March 20, 2024): "Marine Le Pen claimed she never knew about any mutualization scheme."
+PAIR 2: REASONING: She claimed full awareness in January, then denied any knowledge in March. Earlier "claimed X" followed by later "denied X" IS a contradiction — you cannot unknow.
+PAIR 2: YES: She claimed personal knowledge of the mutualization on Jan 15, then denied that knowledge on Mar 20.
+
+PAIR 3 (Stated-Condition Walk-Back - YES):
+Statement A (dated October 15, 2025): "Marine Le Pen a affirmé qu'elle ne se présenterait pas à l'élection présidentielle de 2027 si elle était condamnée à porter un bracelet électronique."
+Statement B (dated November 5, 2025): "Marine Le Pen a déclaré qu'elle n'avait pas renoncé à sa candidature pour l'élection présidentielle de 2027, malgré sa condamnation à un bracelet électronique en première instance."
+PAIR 3: REASONING: She stated the explicit condition "won't run if I get a bracelet". The bracelet sentence was then handed down (Statement B's "malgré sa condamnation à un bracelet"). She is now asserting she has NOT given up her candidacy. The stated condition was met but the stated outcome was abandoned — STATED-CONDITION WALK-BACK.
+PAIR 3: YES: She set the bracelet sentence as the trigger to drop her candidacy and is now keeping the candidacy after the bracelet sentence was handed down.
+
+PAIR 4 (Stated-Objective vs Stated-Action - YES):
+Statement A (dated June 20, 2025): "Donald Trump claimed regime change in Iran was not the US goal."
+Statement B (dated June 22, 2025): "Donald Trump claimed the objectives for Operation Epic Fury were to systematically dismantle the Iranian regime's ability to threaten America or project power outside its borders."
+PAIR 4: REASONING: He stated the OBJECTIVE "regime change is not our goal", and simultaneously stated the ACTION's objective is to "systematically dismantle the regime's ability to project power outside its borders". Dismantling a regime's projection ability is regime change in substance — the stated action negates the stated objective. STATED-OBJECTIVE vs STATED-ACTION.
+PAIR 4: YES: Stating regime change is not the goal while stating the operation aims to systematically dismantle the regime's power projection contradicts the stated objective.
+
+PAIR 5 (Same-Concrete-Proposal Position Shift - YES):
+Statement A (dated April 1, 2026): "Jordan Bardella a déclaré que la taxation des superprofits n'était pas sa priorité, estimant que créer de nouvelles taxes dans un pays avec 46%% de prélèvements obligatoires n'était pas souhaitable."
+Statement B (dated May 8, 2026): "Jordan Bardella n'est pas contre l'idée d'une taxation des superprofits liés à la crise."
+PAIR 5: REASONING: Both statements address the SAME concrete proposal — taxing superprofits. In A he frames it as not desirable / not a priority; in B he is "not against" it. Same identifiable measure, explicit rejection then openness — SAME-CONCRETE-PROPOSAL POSITION SHIFT.
+PAIR 5: YES: Same concrete proposal (superprofits tax) — moved from "not desirable" to "not against".
+
+PAIR 6 (Same Date Conflict - YES):
+Statement A (dated February 1, 2024): "Alice stated the project budget is $5 million."
+Statement B (dated February 1, 2024): "Alice confirmed the project budget was approved at $7 million."
+PAIR 6: YES: Conflicting monetary values for the same project on the same date.
+
+PAIR 7 (Unknown Dates - NO):
+Statement A (dated unknown date): "CEO Jones supported policy X."
+Statement B (dated unknown date): "CEO Jones opposed policy X."
+PAIR 7: REASONING: Both dates unknown. UNKNOWN DATES rule: be skeptical, these could represent a legitimate change of position over time.
+PAIR 7: NO: Without dates, these could represent a legitimate change of position over time.
+
+PAIR 8 (Different Events - NO):
+Statement A (dated March 2022): "Senator Smith voted against bill H.R. 123."
+Statement B (dated June 2024): "Senator Smith sponsored bill H.R. 789."
+PAIR 8: NO: Different actions on different bills at different times.
+
+PAIR 9 (Person's Acknowledgment vs External Party's Action - NO):
+Statement A (dated January 20, 2024): "Marine Le Pen acknowledged that reproaches can be made to her party regarding parliamentary assistants."
+Statement B (dated January 20, 2024): "Marine Le Pen said the EU Parliament never advised or criticized her party about assistants."
+PAIR 9: NO: A is about her own acknowledgment that criticism is warranted; B is about what the EU Parliament did or didn't do. Different subjects.
+
+PAIR 10 (Person's Claim vs Authoritative Finding - YES):
+Statement A (dated January 20, 2024): "Marine Le Pen claimed she was unaware of the fund misappropriation scheme."
+Statement B (dated January 21, 2024): "Marine Le Pen ordered and supervised the fund misappropriation scheme according to court investigators."
+PAIR 10: YES: Her claim of ignorance is directly contradicted by an authoritative finding that she knew and supervised the scheme.
+
+PAIR 11 (Trial / Accusation vs Denial - NO):
+Statement A (dated January 20, 2024): "Marine Le Pen a été jugée en appel pour détournement de fonds publics européens dans l'affaire des assistants parlementaires du FN."
+Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations."
+PAIR 11: NO: Being tried (a procedural step) is NOT a finding of guilt — it does not break her denial. Only a conviction or court finding would.
+
+PAIR 12 (Conviction vs Denial - YES):
+Statement A (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics par la cour d'appel de Paris."
+Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics."
+PAIR 12: YES: An authoritative court finding of guilt directly breaks her denial.
+
+PAIR 13 (Vague vs Specific - NO):
+Statement A (dated January 20, 2024): "Marine Le Pen said she discovered emails she wasn't the recipient of."
+Statement B (dated January 20, 2024): "Marine Le Pen claimed she had no knowledge of the damaging emails between Schaffhauser and Saint-Just."
+PAIR 13: NO: A refers to "some emails" vaguely; B refers to specific emails between two named people. We cannot confirm they refer to the same emails.
+
+PAIR 14 (Same Specific Reference - YES):
+Statement A (dated January 20, 2024): "Marine Le Pen said she discovered the emails between Schaffhauser and Saint-Just."
+Statement B (dated January 20, 2024): "Marine Le Pen claimed she had no knowledge of the emails between Schaffhauser and Saint-Just."
+PAIR 14: YES: Both statements explicitly reference the same specific emails — "discovered" directly contradicts "had no knowledge of".
+
+PAIR 15 (Subjective Awareness vs Objective Fact - NO):
+Statement A (dated January 20, 2024): "Marine Le Pen declared she had 'no consciousness' of any potential offense in the parliamentary assistants affair."
+Statement B (dated January 20, 2024): "Marine Le Pen stated the Rassemblement national committed no irregularity regarding the employment of Thierry Légier."
+PAIR 15: NO: A is her subjective past awareness, B is an objective factual claim. They reinforce each other; denying wrongdoing does NOT imply prior knowledge of wrongdoing.
+
+PAIR 16 (Admitting Error vs Denying Crime - NO):
+Statement A: "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit'."
+Statement B: "Marine Le Pen a admis que les assistants parlementaires ont travaillé au siège du parti, ce qu'elle considère comme une erreur."
+PAIR 16: NO: Admitting an administrative error does NOT contradict denying criminal intent.
+
+PAIR 17 (Conviction vs Acknowledgment of Imperfections - NO):
+Statement A: "Marine Le Pen a reconnu que 'beaucoup de choses auraient pu se passer de manière plus rigoureuse'."
+Statement B: "Marine Le Pen a été condamnée pour détournement de fonds publics."
+PAIR 17: NO: The conviction exceeds her acknowledgment but doesn't contradict it. Only an explicit denial of wrongdoing + conviction = contradiction.
+
+PAIR 18 (Coherent Defense - NO):
+Statement A: "Marine Le Pen a nié avoir donné des instructions d'embauche fictive."
+Statement B: "Marine Le Pen a rejeté les accusations de faute lourde dans la gestion des fonds européens."
+PAIR 18: NO: Two denials about different aspects of the same case form a consistent defense, not a contradiction.
+
+PAIR 19 (Consistent Ignorance - NO):
+Statement A: "Marine Le Pen a déclaré ignorer que 80%% du budget des assistants parlementaires était reversé au parti."
+Statement B: "Marine Le Pen a affirmé ne pas savoir que Julien Odoul avait été embauché comme assistant parlementaire fictif."
+PAIR 19: NO: Two ignorance claims about DIFFERENT aspects reinforce each other; they don't contradict.
+
+PAIR 20 (Paraphrase - NO):
+Statement A: "Marine Le Pen a affirmé que le RN n'a jamais dissimulé les détails de l'emploi de ses assistants parlementaires."
+Statement B: "Marine Le Pen a déclaré que le Rassemblement national n'avait rien caché concernant les pratiques d'emploi de ses assistants."
+PAIR 20: NO: Paraphrases of the same claim cannot contradict each other.
+
+PAIR 21 (Legal Process Stages - NO):
+Statement A: "Le Rassemblement National est accusé de détournement de fonds publics."
+Statement B: "Marine Le Pen a été reconnue coupable de détournement de fonds publics."
+PAIR 21: NO: Accusation and conviction are sequential stages of the same case.
+
+PAIR 22 (Different Descriptions of Same Sentence - NO):
+Statement A: "Marine Le Pen a été condamnée à quatre ans de prison, 100 000 euros d'amende et cinq ans d'inéligibilité."
+Statement B: "Marine Le Pen a été condamnée à cinq ans d'inéligibilité avec exécution immédiate."
+PAIR 22: NO: Both describe the same first-instance sentence at different levels of detail. Supplementary, not contradictory.
+
+PAIR 23 (Geographic Scope - NO):
+Statement A: "Seulement 3 communes en Vienne ont déposé des listes pour les élections municipales."
+Statement B: "425 listes ont été déposées sur l'ensemble du territoire national."
+PAIR 23: NO: Different geographic scopes — local data does not contradict national aggregates.
+
+PAIR 24 (Announcement Followed by Action - NO):
+Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
+Statement B (dated March 18, 2024): "Jean-Luc Mélenchon came to support the candidacy of Lahouaria Addouche in Lille."
+PAIR 24: NO: Announcing support and then providing it is a fulfilled commitment, not a contradiction.`

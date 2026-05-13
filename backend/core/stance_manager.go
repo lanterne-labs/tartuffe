@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/promptrules"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -339,70 +340,34 @@ func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyF
 EXISTING STANCE SUMMARY:
 %s
 
-KEY FACTS IN THIS STANCE:
+KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
 
 NEW FACT:
 %s
 
-Determine the relationship between the new fact and the existing stance:
+Decide ONE of:
+1. DUPLICATE — the new fact says essentially the same thing as something already in the stance (paraphrase / same claim, different source).
+2. NEW_INFO — the new fact adds new information to this topic without contradicting the stance.
+3. CONTRADICTION — the new fact contradicts a specific KEY FACT (or the summary) per the rules below. Compare the NEW FACT against EACH key fact, not just the summary — the summary may have smoothed earlier tensions.
 
-1. DUPLICATE - The new fact says essentially the same thing as the existing stance (paraphrase, same claim from different source)
-2. NEW_INFO - The new fact adds new information to this topic without contradicting the stance (additional detail, update, new development)
-3. CONTRADICTION - The new fact directly contradicts a specific claim in the existing stance
+`+promptrules.ContradictionRules+`
 
-**CONTRADICTION RULES (apply strictly):**
-- A contradiction requires the SAME SUBJECT's own statements/actions to conflict
-- Promise-breaker framework: identify which fact is the "promise" and which is the potential "breaker"
-- Authoritative findings (conviction, court ruling) CAN contradict a person's denial
-- Accusations, charges, investigations do NOT contradict denials (procedural steps, not findings)
-- Earlier "didn't know" → later "knew" is NOT a contradiction (learning over time)
-- Earlier "claimed X" → later "denied X" IS a contradiction (cannot unknow)
-- Downplaying ≠ contradicting (admitting imperfections doesn't contradict denying criminal intent)
-- Same position in different words = DUPLICATE, not contradiction
-- Complementary facts about the same event (different aspects of same ruling/sentence) = NEW_INFO, not contradiction
-- Coherent defense (multiple denials about different aspects of same case) = DUPLICATE or NEW_INFO
-- Legal process stages (accusation → trial → conviction) are sequential progression, not contradictions
-
-**WORKED EXAMPLES:**
-
-Example 1 (DUPLICATE):
-Stance: "Marine Le Pen denied any wrongdoing in the parliamentary assistants case."
-New fact: "Marine Le Pen rejected accusations of fund misappropriation in the assistants affair."
-→ reasoning: Both express the same denial of wrongdoing in the same case, just different wording.
-→ verdict: DUPLICATE
-
-Example 2 (NEW_INFO):
-Stance: "Marine Le Pen was convicted of embezzlement in the parliamentary assistants case."
-New fact: "Marine Le Pen was sentenced to five years of ineligibility with immediate effect."
-→ reasoning: The new fact adds sentencing details to the known conviction. These are supplementary details about the same event, not a contradiction.
-→ verdict: NEW_INFO
-
-Example 3 (CONTRADICTION):
-Stance: "Marine Le Pen claimed she was fully aware of and approved the mutualization scheme."
-New fact: "Marine Le Pen stated she never knew about any mutualization scheme."
-→ reasoning: She previously claimed full awareness, now denies any knowledge. Per temporal rules, earlier "claimed X" followed by later "denied X" IS a contradiction — you cannot unknow something.
-→ verdict: CONTRADICTION
-
-Example 4 (NOT a contradiction — accusation vs denial):
-Stance: "Marine Le Pen denied any involvement in fictitious employment."
-New fact: "Marine Le Pen was charged with embezzlement in the parliamentary assistants case."
-→ reasoning: Being charged is a procedural step, NOT an authoritative finding. Per contradiction rules, accusations/charges do NOT contradict denials. Only a conviction or court finding would.
-→ verdict: NEW_INFO
+**HOW TO MAP THE PAIR-WISE EXAMPLES TO THIS TASK:**
+The examples above are framed as "PAIR N: YES/NO". Treat YES as your CONTRADICTION verdict, NO as your DUPLICATE or NEW_INFO verdict (DUPLICATE if the two statements are paraphrases of the SAME position; NEW_INFO if they're compatible-but-distinct).
 
 **RESPONSE FORMAT:**
-You MUST write your reasoning BEFORE committing to a verdict. Analyze the facts, check which rules apply, then decide.
+Write your reasoning BEFORE the verdict. If your reasoning concludes the facts are compatible, supplementary, or paraphrastic, your verdict MUST NOT be CONTRADICTION.
 
 Return ONLY valid JSON:
 {
-  "reasoning": "1-3 sentences: identify core claims, check which rules apply, then state your conclusion",
+  "reasoning": "1-3 sentences: identify core claims, check which positive/negative pattern applies, then state your conclusion",
   "verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
-  "updated_summary": "If NEW_INFO or CONTRADICTION: updated 2-4 sentence summary incorporating the new fact. If DUPLICATE: empty string.",
+  "updated_summary": "If NEW_INFO or CONTRADICTION: updated 2-4 sentence summary that PRESERVES the tension when there is one (do not smooth a contradiction into a unified narrative). If DUPLICATE: empty string.",
   "contradicting_key_fact_id": 0
 }
 
-CRITICAL: If your reasoning concludes the facts are compatible, supplementary, or not contradictory, your verdict MUST NOT be CONTRADICTION.
-For CONTRADICTION: set contradicting_key_fact_id to the ID of the specific key fact that is contradicted. If you cannot identify one, use 0.
+For CONTRADICTION: set contradicting_key_fact_id to the ID of the specific key fact that is contradicted (use the [ID N] from the KEY FACTS list). If you cannot identify one, use 0.
 For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
 		stanceSummary, factsBuilder.String(), newFactText)
 
