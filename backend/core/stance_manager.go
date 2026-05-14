@@ -600,6 +600,53 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 	return nil
 }
 
+// callJSONLLM is the shared boilerplate for sending a JSON-output chat request
+// to the LLM. Returns the assistant's response content with markdown code-block
+// fences stripped. Callers json.Unmarshal the returned content into their own
+// response type.
+//
+// Used by callLLM, assignTopic, generateGeneralLabel, refreshStanceMetadata,
+// and MergeClusterDecision — five sites that share the same request envelope
+// (system + user message, JSON response format, configurable temperature +
+// max tokens) and the same response shape (first chat choice → strip fences).
+func (sm *StanceManager) callJSONLLM(
+	ctx context.Context,
+	systemMsg, userPrompt string,
+	temperature float64,
+	maxTokens int,
+) (string, error) {
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: systemMsg},
+			{Role: "user", Content: userPrompt},
+		},
+		Temperature:    temperature,
+		MaxTokens:      maxTokens,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return "", fmt.Errorf("marshaling LLM request: %w", err)
+	}
+
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return "", fmt.Errorf("LLM request failed: %w", err)
+	}
+
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return "", fmt.Errorf("decoding chat response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return "", fmt.Errorf("LLM returned no content")
+	}
+
+	return stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content)), nil
+}
+
 // callLLM sends the stance analysis prompt for ONE batch of key facts to the LLM
 // and parses the response. Callers split into batches via chunkKeyFacts; this
 // function handles a single batch and returns whatever contradictions the LLM
@@ -649,50 +696,15 @@ For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
 For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
 		stanceSummary, factsBuilder.String(), newFactText)
 
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You are a political fact analysis assistant. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.2,
-		MaxTokens:      800,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	content, err := sm.callJSONLLM(ctx, "You are a political fact analysis assistant. Return only valid JSON.", prompt, 0.2, 800)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling stance LLM request: %w", err)
+		return nil, fmt.Errorf("stance analysis: %w", err)
 	}
-
-	log.Debug().
-		Int("key_facts", len(keyFacts)).
-		Str("new_fact", truncate(newFactText, 100)).
-		Msg("Sending stance analysis to LLM")
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("LLM stance request failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode stance chat response")
-		return nil, fmt.Errorf("decoding stance chat response: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		log.Warn().Str("raw_response", string(bodyBytes)).Msg("Stance LLM returned no content")
-		return nil, fmt.Errorf("stance LLM returned no content")
-	}
-
-	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
 	resp, err := parseStanceLLMResponse(content)
 	if err != nil {
 		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse stance LLM response")
 		return nil, fmt.Errorf("parsing stance LLM response: %w", err)
 	}
-
 	return resp, nil
 }
 
@@ -765,42 +777,10 @@ Return ONLY valid JSON:
 
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(shortlist))
 
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You are a political fact topic classifier. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.1,
-		MaxTokens:      800,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	content, err := sm.callJSONLLM(ctx, "You are a political fact topic classifier. Return only valid JSON.", prompt, 0.1, 800)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling topic assignment request: %w", err)
+		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
-
-	log.Debug().
-		Int("existing_topics", len(stances)).
-		Str("new_fact", truncate(factText, 100)).
-		Msg("Sending topic assignment to LLM")
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("LLM topic assignment request failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("decoding topic assignment response: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("topic assignment LLM returned no content")
-	}
-
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 
 	var resp topicAssignmentResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
@@ -889,33 +869,10 @@ LABEL RULES:
 Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
 
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You generate broad topic labels for political facts. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.1,
-		MaxTokens:      200,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	content, err := sm.callJSONLLM(ctx, "You generate broad topic labels for political facts. Return only valid JSON.", prompt, 0.1, 200)
 	if err != nil {
-		return "", fmt.Errorf("marshaling label request: %w", err)
+		return "", fmt.Errorf("label generation: %w", err)
 	}
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return "", fmt.Errorf("label LLM request failed: %w", err)
-	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("decoding label response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("label LLM returned no content")
-	}
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 	var resp generalLabelResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return "", fmt.Errorf("parsing label response: %w", err)
@@ -966,33 +923,10 @@ SUMMARY RULES:
 Return ONLY valid JSON:
 {"label": "subject-area label", "summary": "2-4 sentence summary"}`, factsBuilder.String())
 
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You regenerate stance metadata for political facts. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.2,
-		MaxTokens:      400,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 400)
 	if err != nil {
-		return "", "", fmt.Errorf("marshaling refresh request: %w", err)
+		return "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return "", "", fmt.Errorf("refresh LLM request failed: %w", err)
-	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", "", fmt.Errorf("decoding refresh response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", "", fmt.Errorf("refresh LLM returned no content")
-	}
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 	var resp stanceMetadataResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return "", "", fmt.Errorf("parsing refresh response: %w", err)
@@ -1118,41 +1052,10 @@ If nothing should be merged, return {"reasoning": "...", "merges": []}.
 Stances not listed in any merge group will be left as-is.`,
 		personName, stancesBuilder.String())
 
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: "You are a political fact stance-merge classifier. Return only valid JSON."},
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.1,
-		MaxTokens:      800,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling merge-decision request: %w", err)
+		return nil, fmt.Errorf("merge decision: %w", err)
 	}
-
-	log.Debug().
-		Str("person", personName).
-		Int("cluster_size", len(cluster)).
-		Msg("Sending stance-merge candidate cluster to LLM")
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("LLM merge-decision request failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("decoding merge-decision response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return nil, fmt.Errorf("merge-decision LLM returned no content")
-	}
-
-	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 
 	var raw struct {
 		Reasoning string          `json:"reasoning"`

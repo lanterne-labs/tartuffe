@@ -457,19 +457,16 @@ func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) er
 		return fmt.Errorf("stance manager required for merge sweep: %w", err)
 	}
 
-	persons, err := storer.GetAllPersons(ctx)
+	// SQL pre-filter: only consider persons with >= 2 stances (the rest can't
+	// possibly merge). Cuts a 3849-person DB-query loop down to ~100-300.
+	persons, err := storer.GetPersonsWithMultipleStances(ctx)
 	if err != nil {
-		return fmt.Errorf("listing persons for merge sweep: %w", err)
+		return fmt.Errorf("listing merge-candidate persons: %w", err)
 	}
 
-	opts := mergeOptions{
-		RecallSim:     0.65, // matches `dm stances merge` default
-		SubclusterSim: 0.75,
-		MaxCluster:    30,
-		DryRun:        false,
-	}
+	opts := defaultMergeOptions
 
-	var personsProcessed, personsSkipped, mergedAway, contradictionsFound, analyzeFailures int64
+	var personsProcessed, mergedAway, contradictionsFound, analyzeFailures int64
 	for _, p := range persons {
 		ps, perr := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, p, opts)
 		if perr != nil {
@@ -477,9 +474,6 @@ func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) er
 			continue
 		}
 		personsProcessed++
-		if ps.skipped {
-			personsSkipped++
-		}
 		mergedAway += ps.stancesMerged
 		contradictionsFound += ps.postMergeContradictions
 		analyzeFailures += ps.postMergeAnalyzeFailures
@@ -488,7 +482,6 @@ func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) er
 	log.Info().
 		Dur("elapsed", time.Since(start)).
 		Int64("persons_processed", personsProcessed).
-		Int64("persons_skipped", personsSkipped).
 		Int64("stances_merged", mergedAway).
 		Int64("post_merge_contradictions", contradictionsFound).
 		Int64("post_merge_analyze_failures", analyzeFailures).

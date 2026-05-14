@@ -283,15 +283,9 @@ func backfillStancesForPerson(
 	// LLM-vetted merge sweep — same code path the daily pipeline + `dm stances
 	// merge` use. Phase A agglomerative clustering of centroids, Phase B
 	// per-cluster LLM verification, then post-merge contradiction re-detection
-	// across previously-fragmented facts. Defaults match runStancesMergeStep.
-	mergeOpts := mergeOptions{
-		RecallSim:     0.65,
-		SubclusterSim: 0.75,
-		MaxCluster:    30,
-		DryRun:        false,
-	}
+	// across previously-fragmented facts.
 	personInfo := storage.PersonInfo{ID: personID, Name: personName}
-	ps, err := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, personInfo, mergeOpts)
+	ps, err := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, personInfo, defaultMergeOptions)
 	if err != nil {
 		log.Error().Err(err).Str("person", personName).Msg("LLM-vetted merge phase failed (stances kept as-is)")
 	} else {

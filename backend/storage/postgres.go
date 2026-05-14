@@ -1055,6 +1055,39 @@ func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error
 	return persons, nil
 }
 
+// GetPersonsWithMultipleStances returns only the persons who have at least 2
+// stance documents. Used by the daily merge sweep to avoid the cost of
+// inspecting the thousands of single-stance / no-stance persons that can't
+// possibly produce a merge candidate.
+func (s *PostgresStorer) GetPersonsWithMultipleStances(ctx context.Context) ([]PersonInfo, error) {
+	query := `
+		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
+		FROM persons p
+		JOIN (
+			SELECT person_id FROM stance_documents
+			GROUP BY person_id HAVING COUNT(*) >= 2
+		) s ON s.person_id = p.id
+		ORDER BY p.name`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query persons with multiple stances: %w", err)
+	}
+	defer rows.Close()
+
+	var persons []PersonInfo
+	for rows.Next() {
+		var p PersonInfo
+		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
+			return nil, fmt.Errorf("failed to scan person: %w", err)
+		}
+		persons = append(persons, p)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
+	}
+	return persons, nil
+}
+
 // AddPerson inserts a new person into the persons table if they don't already exist.
 // It uses the normalized version of the name.
 func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, inserted bool, err error) {

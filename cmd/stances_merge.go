@@ -50,9 +50,9 @@ func init() {
 	stancesCmd.AddCommand(stancesMergeCmd)
 	stancesMergeCmd.Flags().StringVar(&stancesMergePerson, "person", "", "Specific person name to merge (mutually exclusive with --persons-file)")
 	stancesMergeCmd.Flags().StringVar(&stancesMergePersonsFile, "persons-file", "", "Path to a file with one person name per line")
-	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", 0.65, "Cosine-similarity floor for Phase-A candidate clustering (default 0.65)")
-	stancesMergeCmd.Flags().Float64Var(&stancesMergeSubclusterSim, "subcluster-threshold", 0.75, "Cosine-similarity floor for the sub-clustering pass when a Phase-A cluster exceeds --max-cluster")
-	stancesMergeCmd.Flags().IntVar(&stancesMergeMaxCluster, "max-cluster", 30, "Phase-A cluster size cap before the sub-clustering pass kicks in")
+	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", defaultMergeOptions.RecallSim, "Cosine-similarity floor for Phase-A candidate clustering")
+	stancesMergeCmd.Flags().Float64Var(&stancesMergeSubclusterSim, "subcluster-threshold", defaultMergeOptions.SubclusterSim, "Cosine-similarity floor for the sub-clustering pass when a Phase-A cluster exceeds --max-cluster")
+	stancesMergeCmd.Flags().IntVar(&stancesMergeMaxCluster, "max-cluster", defaultMergeOptions.MaxCluster, "Phase-A cluster size cap before the sub-clustering pass kicks in")
 	stancesMergeCmd.Flags().IntVar(&stancesMergeParallel, "parallel", 1, "Number of persons to merge concurrently")
 	stancesMergeCmd.Flags().BoolVar(&stancesMergeDryRun, "dry-run", false, "Log proposed merges without writing to the database")
 }
@@ -192,6 +192,18 @@ type mergeOptions struct {
 	SubclusterSim float64 // tighter sim floor for sub-clustering oversize clusters
 	MaxCluster    int     // size cap before sub-clustering kicks in
 	DryRun        bool
+}
+
+// defaultMergeOptions is the single source of truth for merge thresholds used
+// by the daily pipeline (runStancesMergeStep), the standalone CLI flags
+// (`dm stances merge`), and the per-person rebuild merge inside
+// backfillStancesForPerson. Changing these defaults in one place propagates
+// everywhere.
+var defaultMergeOptions = mergeOptions{
+	RecallSim:     0.65,
+	SubclusterSim: 0.75,
+	MaxCluster:    30,
+	DryRun:        false,
 }
 
 type personMergeStats struct {
