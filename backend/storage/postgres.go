@@ -4422,6 +4422,23 @@ func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, sum
 	return nil
 }
 
+// UpdateStanceMetadata updates only the cluster_label and summary of a stance.
+// Used by the per-fact stance refresh path (StanceManager.triggerStanceRefresh)
+// to keep the stance's title and description in sync with its accumulating
+// fact set without touching the centroid / fact_count / key_fact_ids.
+func (s *PostgresStorer) UpdateStanceMetadata(ctx context.Context, id int64, label string, summary string) error {
+	query := `
+		UPDATE stance_documents
+		SET cluster_label = $1, summary = $2, last_updated_at = NOW()
+		WHERE id = $3`
+
+	_, err := s.pool.Exec(ctx, query, label, summary, id)
+	if err != nil {
+		return fmt.Errorf("updating stance metadata %d: %w", id, err)
+	}
+	return nil
+}
+
 // AddFactToStance adds a fact to the stance document join table. No-op if already linked.
 func (s *PostgresStorer) AddFactToStance(ctx context.Context, stanceID int64, factID int64) error {
 	query := `INSERT INTO stance_document_facts (stance_document_id, fact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`

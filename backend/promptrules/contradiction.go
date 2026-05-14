@@ -30,22 +30,24 @@ A breaker does NOT invalidate a promise when:
 - An ACCUSATION, CHARGE, INDICTMENT, TRIAL or open INVESTIGATION (procedural steps) is paired with a denial — these are NOT findings of guilt
 - An EXTERNAL PARTY'S action is the alleged breaker — only the person's own statements/actions or authoritative findings about them count
 
-**POSITIVE PATTERNS — these ARE contradictions** (each is a flavor of the person's own statements/actions conflicting):
-- STATED-CONDITION WALK-BACK: "I will not do X if Y happens" + later they act/talk as if X is happening despite Y. The condition was stated, the condition occurred, the stated outcome was abandoned.
+**POSITIVE PATTERNS — these ARE contradictions** (each is a flavor of the person's own statements/actions conflicting). When in doubt between a positive pattern and a negative one, FLAG the contradiction — the user prefers a sharper signal over a quiet one:
+- STATED-CONDITION WALK-BACK: "I will not do X if Y happens" + later they act/talk as if X is happening despite Y. The breaker doesn't need to mention the original condition explicitly — if the condition has clearly occurred (e.g., the sentence was handed down) and the person now claims they will still do X, that IS the walk-back.
 - STATED-OBJECTIVE vs STATED-ACTION: The person claims a goal (e.g. "X is not our objective") and simultaneously claims an action whose stated effect IS X. The action negates the stated objective.
 - BEHAVIORAL INCONSISTENCY: A public stated position vs an action by the SAME PERSON that runs counter to that position. (NOT third-party actions, NOT different contexts that legitimately allow different choices.)
-- SAME-CONCRETE-PROPOSAL POSITION SHIFT: An explicit rejection of a SPECIFIC concrete proposal in one statement, paired with endorsement / openness / support for the SAME concrete proposal in another. Generic "not my priority" → "I support" on the same identifiable measure IS a walk-back.
+- POSITION SHIFT ON THE SAME ISSUE: A clear rejection / refusal / negative framing of an issue in one statement, paired with endorsement / openness / support / advocacy for the SAME issue in another. The two statements don't have to use identical wording — "not my priority / not desirable" → "I'm not against / I support" on the same identifiable subject IS a walk-back. Includes positions on policy proposals, candidacies, alliances, willingness to act, willingness to participate.
 - CLAIM ↔ AUTHORITATIVE FINDING: The person denied / claimed X, and a court ruling / official investigation conclusion found the opposite specifically about X.
+- COMMITMENT vs CARVE-OUT: A blanket commitment in one statement (e.g. "I will campaign with X regardless of any outcome") combined with a separately stated condition that would prevent that very commitment (e.g. "I refuse to do the very activity that campaigning would require") IS a contradiction even when each statement individually sounds reasonable.
 
-**NEGATIVE PATTERNS — these are NOT contradictions** (consolidated):
-- DIFFERENT SUBJECTS / SCOPES: similar topics but different actors, different events, different bills, different geographies, or different levels of involvement. Similar keywords ≠ same subject.
+**NEGATIVE PATTERNS — these are NOT contradictions** (apply NARROWLY — these rules block real contradictions when over-applied):
+- DIFFERENT SUBJECTS: the two statements are about genuinely different actors, events, bills, or geographic regions. Same person + same topic + different aspects is NOT this rule — it's just same subject with two facets, which CAN contradict.
 - VAGUE vs SPECIFIC: one statement is generic, the other names specific people/dates/items, and there is no clear indication they refer to the same thing. (If context proves they refer to the same thing, it IS a contradiction — see PAIR 14.)
-- SUBJECTIVE AWARENESS vs OBJECTIVE FACT: "I wasn't aware of X" + "X did/didn't happen" are compatible — denying X happened doesn't imply prior knowledge. An exploratory posture ("trying to understand") is also compatible with admitting ignorance of specifics.
-- DOWNPLAYING / ACKNOWLEDGING IMPERFECTIONS: admitting an administrative error, negligence, "things could have been better" or "good faith mistakes" does NOT contradict a denial of criminal intent. Only an explicit denial of the SAME specific fact the person elsewhere ADMITS is contradictory.
-- COHERENT DEFENSE / CONSISTENT IGNORANCE: multiple denials about DIFFERENT aspects of the same case, or multiple "I didn't know X / didn't know Y" claims, REINFORCE each other. They are not contradictions among themselves.
-- SAME POSITION IN DIFFERENT WORDS: paraphrases, translations, and reformulations of the same claim cannot contradict each other.
+- SUBJECTIVE AWARENESS vs OBJECTIVE FACT: "I wasn't aware of X happened" + "X did/didn't happen as fact" are compatible — denying X happened doesn't imply prior knowledge. THIS RULE COVERS ONLY past-awareness vs past-event. It does NOT excuse policy shifts, position shifts, or stated-condition walk-backs.
+- ADMINISTRATIVE ERROR vs CRIMINAL INTENT: admitting "things could have been more rigorous" / "an administrative error was made" / "I acted in good faith despite negligence" does NOT contradict denying a specific criminal charge. Only triggers when one statement admits an administrative shortcoming and the other denies CRIMINAL intent on the same matter — does NOT excuse softening of stated political positions.
+- COHERENT DEFENSE — strict version: two statements both deny the SAME SPECIFIC ALLEGATION (e.g. "I didn't order the fictitious hires" + "I didn't approve the fictitious hires") REINFORCE each other. Two statements that deny DIFFERENT specific allegations within the same case are also coherent. This rule does NOT cover statements about future conduct, candidacy, or political commitments — those can contradict freely.
+- CONSISTENT IGNORANCE: multiple "I didn't know X" / "I didn't know Y" claims about different facts of the same situation reinforce each other. Only fires when both statements are EXPLICIT claims of ignorance.
+- SAME POSITION IN DIFFERENT WORDS: paraphrases / translations of the same claim cannot contradict each other. Note: paraphrase requires that they make the same assertion — not just that they're about the same topic.
 - COMPLEMENTARY FACTS / SAME EVENT: different aspects of the same ruling, sentence, or event (prison + ineligibility, first-instance + appeal sentencing) are supplementary, not contradictory.
-- LEGAL PROCESS STAGES: accusation → trial → conviction is sequential progression of the same case, not a contradiction.
+- LEGAL PROCESS STAGES: accusation → trial → conviction is sequential progression of the same case, not a contradiction (between THOSE stages — the person's own denials within still can contradict findings).
 - CONVICTION SCOPE: a general conviction does not automatically disprove every specific factual claim the person made about details of the case — only those the conviction specifically addresses.
 - ANNOUNCEMENT THEN ACTION: announcing X and then doing X is a FULFILLED commitment, the OPPOSITE of a contradiction.
 
@@ -86,6 +88,25 @@ Statement A (dated April 1, 2026): "Jordan Bardella a déclaré que la taxation 
 Statement B (dated May 8, 2026): "Jordan Bardella n'est pas contre l'idée d'une taxation des superprofits liés à la crise."
 PAIR 5: REASONING: Both statements address the SAME concrete proposal — taxing superprofits. In A he frames it as not desirable / not a priority; in B he is "not against" it. Same identifiable measure, explicit rejection then openness — SAME-CONCRETE-PROPOSAL POSITION SHIFT.
 PAIR 5: YES: Same concrete proposal (superprofits tax) — moved from "not desirable" to "not against".
+
+PAIR 5b (Commitment vs Carve-Out - YES):
+Statement A (dated October 15, 2025): "Marine Le Pen a refusé d'envisager de mener campagne en portant un bracelet électronique."
+Statement B (dated November 8, 2025): "Marine Le Pen a assuré qu'elle ferait campagne avec Jordan Bardella quel que soit le résultat de son jugement en appel."
+Context: Le Pen has been sentenced in first instance to wearing an electronic bracelet — the very condition she said would prevent her campaigning.
+PAIR 5b: REASONING: A is a stated CARVE-OUT — she will not campaign under bracelet conditions. B is a blanket COMMITMENT — she will campaign with Bardella regardless of the appeal's outcome. The two statements are individually reasonable but jointly inconsistent: campaigning with Bardella (B) requires campaigning at all (which A excludes given the first-instance bracelet). COMMITMENT vs CARVE-OUT.
+PAIR 5b: YES: Blanket "I will campaign regardless" combined with separately stated refusal to campaign under the actual conditions she now faces.
+
+PAIR 5c (Behavioral Inconsistency - YES):
+Statement A (dated March 2026): "Jordan Bardella n'a pas voté pour le Rassemblement national aux élections municipales de 2026 dans sa propre commune de Garches."
+Statement B (dated March 2026): "Jordan Bardella a publiquement soutenu le candidat du Rassemblement national Franck Allisio à Marseille."
+PAIR 5c: REASONING: Both are concurrent actions by the same person regarding the same election cycle. Publicly endorsing one's party's candidate elsewhere while not voting for the party's candidate in one's own town is an inconsistency between stated political support and personal voting behaviour. BEHAVIORAL INCONSISTENCY.
+PAIR 5c: YES: Public party support + concurrent failure to vote for the same party in his own municipality.
+
+PAIR 5d (Stated-Objective vs Stated-Action variant - YES):
+Statement A (dated June 18, 2025): "Donald Trump claimed regime change in Iran was not the US goal."
+Statement B (dated June 22, 2025): "Donald Trump a affirmé que les États-Unis avaient « décimé » le régime iranien « en deux semaines »."
+PAIR 5d: REASONING: A states the OBJECTIVE: not regime change. B claims the ACHIEVEMENT: the regime has been decimated by US action. Decimating the regime IS regime change in substance. The stated achievement contradicts the stated objective. STATED-OBJECTIVE vs STATED-ACTION (second variant — same shape as PAIR 4).
+PAIR 5d: YES: Claiming "regime change isn't the goal" alongside claiming "we have decimated the regime" cannot both be true.
 
 PAIR 6 (Same Date Conflict - YES):
 Statement A (dated February 1, 2024): "Alice stated the project budget is $5 million."
@@ -153,11 +174,6 @@ Statement A: "Marine Le Pen a nié avoir donné des instructions d'embauche fict
 Statement B: "Marine Le Pen a rejeté les accusations de faute lourde dans la gestion des fonds européens."
 PAIR 18: NO: Two denials about different aspects of the same case form a consistent defense, not a contradiction.
 
-PAIR 19 (Consistent Ignorance - NO):
-Statement A: "Marine Le Pen a déclaré ignorer que 80%% du budget des assistants parlementaires était reversé au parti."
-Statement B: "Marine Le Pen a affirmé ne pas savoir que Julien Odoul avait été embauché comme assistant parlementaire fictif."
-PAIR 19: NO: Two ignorance claims about DIFFERENT aspects reinforce each other; they don't contradict.
-
 PAIR 20 (Paraphrase - NO):
 Statement A: "Marine Le Pen a affirmé que le RN n'a jamais dissimulé les détails de l'emploi de ses assistants parlementaires."
 Statement B: "Marine Le Pen a déclaré que le Rassemblement national n'avait rien caché concernant les pratiques d'emploi de ses assistants."
@@ -167,11 +183,6 @@ PAIR 21 (Legal Process Stages - NO):
 Statement A: "Le Rassemblement National est accusé de détournement de fonds publics."
 Statement B: "Marine Le Pen a été reconnue coupable de détournement de fonds publics."
 PAIR 21: NO: Accusation and conviction are sequential stages of the same case.
-
-PAIR 22 (Different Descriptions of Same Sentence - NO):
-Statement A: "Marine Le Pen a été condamnée à quatre ans de prison, 100 000 euros d'amende et cinq ans d'inéligibilité."
-Statement B: "Marine Le Pen a été condamnée à cinq ans d'inéligibilité avec exécution immédiate."
-PAIR 22: NO: Both describe the same first-instance sentence at different levels of detail. Supplementary, not contradictory.
 
 PAIR 23 (Geographic Scope - NO):
 Statement A: "Seulement 3 communes en Vienne ont déposé des listes pour les élections municipales."

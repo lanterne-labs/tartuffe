@@ -28,7 +28,7 @@ var stancesBackfillCmd = &cobra.Command{
 	Long: `Assigns each existing fact to a stance (creating new stances as needed) using
 the same per-fact LLM topic-assignment path as production ingest, then merges
 stance pairs whose normalised cluster_embedding centroids are cosine-similar
-above --merge-threshold (default 0.85).
+above --merge-threshold (default 0.80).
 
 For each person (or specified person):
 1. Loads all active facts with embeddings.
@@ -61,7 +61,7 @@ func init() {
 	stancesCmd.AddCommand(stancesBackfillCmd)
 	stancesBackfillCmd.Flags().StringVar(&stancesBackfillPerson, "person", "", "Specific person name to backfill (optional)")
 	stancesBackfillCmd.Flags().BoolVar(&stancesBackfillDryRun, "dry-run", false, "Show what would be created without writing to database")
-	stancesBackfillCmd.Flags().Float64Var(&stancesBackfillMergeThreshold, "merge-threshold", 0.85, "Cosine similarity threshold (0-1) for the post-pass centroid merge")
+	stancesBackfillCmd.Flags().Float64Var(&stancesBackfillMergeThreshold, "merge-threshold", 0.80, "Cosine similarity threshold (0-1) for the post-pass centroid merge")
 }
 
 // backfillFact holds the data needed for the per-fact ingest loop.

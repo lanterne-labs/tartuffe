@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -17,6 +18,7 @@ import (
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
 	UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error
+	UpdateStanceMetadata(ctx context.Context, id int64, label string, summary string) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
@@ -50,20 +52,34 @@ type StanceFactInfo struct {
 	CanonicalVerb      string
 }
 
+// StanceContradictionEntry is one (new_fact, key_fact) contradiction the LLM
+// flagged inside the analyze call. A single ProcessNewFact invocation may
+// produce zero or many of these — when many key facts each conflict with the
+// new fact in different ways, every pair gets its own entry.
+type StanceContradictionEntry struct {
+	KeyFactID int64  `json:"key_fact_id"`
+	Reason    string `json:"reason"`
+}
+
 // StanceProcessResult holds the outcome of processing a new fact against existing stances.
 type StanceProcessResult struct {
-	Verdict            string // "NEW_STANCE", "DUPLICATE", "NEW_INFO", "CONTRADICTION"
-	StanceID           int64
-	Reasoning          string
-	ContradictedFactID int64 // Only set for CONTRADICTION
+	Verdict        string // "NEW_STANCE", "DUPLICATE", "NEW_INFO", "CONTRADICTION"
+	StanceID       int64
+	Reasoning      string
+	Contradictions []StanceContradictionEntry // empty unless Verdict==CONTRADICTION
 }
 
 // stanceLLMResponse is the expected JSON response from the stance analysis LLM call.
+// The schema returns ONE primary verdict for the new fact's relationship to the
+// stance as a whole, plus a LIST of zero-to-many contradictions (one per key
+// fact the new fact conflicts with). The summary is regenerated separately by
+// refreshStanceMetadata, not in this call — that keeps the analyze prompt
+// focused on classification + contradiction enumeration.
 type stanceLLMResponse struct {
-	Reasoning           string `json:"reasoning"`
-	Verdict             string `json:"verdict"`
-	UpdatedSummary      string `json:"updated_summary"`
-	ContradictingFactID int64  `json:"contradicting_key_fact_id"`
+	Reasoning      string                     `json:"reasoning"`
+	PrimaryVerdict string                     `json:"primary_verdict"` // DUPLICATE | NEW_INFO | CONTRADICTION
+	DuplicateOf    int64                      `json:"duplicate_of_key_fact_id"`
+	Contradictions []StanceContradictionEntry `json:"contradictions"`
 }
 
 // topicAssignmentResponse is the expected JSON response from the topic assignment LLM call.
@@ -74,6 +90,21 @@ type topicAssignmentResponse struct {
 	Reasoning     string         `json:"reasoning"`
 	AssignedIndex int            `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
 	NewTopicLabel flexibleString `json:"new_topic_label"`      // only set when AssignedIndex == 0
+}
+
+// generalLabelResponse is the response from generateGeneralLabel — a thin
+// helper used to recover from cases where assignTopic somehow returned an
+// empty NewTopicLabel.
+type generalLabelResponse struct {
+	Label flexibleString `json:"label"`
+}
+
+// stanceMetadataResponse is the response from refreshStanceMetadata — a fresh
+// general topic label and a 2-4 sentence summary regenerated from the FULL
+// fact list of the stance.
+type stanceMetadataResponse struct {
+	Label   flexibleString `json:"label"`
+	Summary string         `json:"summary"`
 }
 
 // flexibleString accepts string, number, bool, or null in JSON and stores the
@@ -99,13 +130,28 @@ func (s *flexibleString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// keyFactBatchSize caps the number of key facts the analyze call handles per
+// LLM invocation. With gemma-4's 12K context, ~3.5K tokens for the rules,
+// ~500 tokens for summary + new fact, and an 800-token output cap, we have
+// headroom for ~40 facts × ~80 tokens each. Stances larger than this are
+// processed across multiple sequential analyze calls; contradictions are
+// unioned across batches.
+const keyFactBatchSize = 40
+
+// stanceShortlistSize caps the number of existing stances sent to assignTopic
+// in a single LLM call. When a person has more than this many stances, we
+// pre-filter via embedding cosine similarity (fact embedding vs each stance's
+// cluster_embedding) and pass only the top-K closest to the LLM. Embeddings
+// are recon; the LLM makes the final assignment decision.
+const stanceShortlistSize = 15
+
 // StanceManager handles the core stance document logic: matching new facts to existing
 // stances, creating new stances, and detecting contradictions via LLM analysis.
 type StanceManager struct {
-	storer    StanceStorer
-	apiKey    string
-	apiURL    string
-	model     string
+	storer StanceStorer
+	apiKey string
+	apiURL string
+	model  string
 	client *llm.BaseLLMClient
 }
 
@@ -140,32 +186,36 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 }
 
 // ProcessNewFact analyzes a new fact against existing stances for the given person.
-// It uses LLM-based topic assignment to find the right stance, then analyzes the relationship.
+// It uses LLM-based topic assignment to find the right stance (or to generate a
+// general topic label when no existing stance fits), then analyzes the new fact
+// pair-wise against all key facts in the matched stance. After a non-duplicate
+// verdict, the stance's label + summary are regenerated from the full fact list.
 func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
 	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
 		return nil, fmt.Errorf("getting stances for person: %w", err)
 	}
 
-	// No existing stances: skip LLM call, create new stance directly
-	if len(stances) == 0 {
-		label := truncate(factText, 120)
-		log.Info().
-			Int64("fact_id", factID).
-			Str("label", label).
-			Msg("No existing stances for person, creating first stance")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
-	}
-
-	// Ask LLM which topic this fact belongs to
-	assignment, err := sm.assignTopic(ctx, stances, factText)
+	// Always go through assignTopic — even when no stances exist, the LLM emits a
+	// general topic label per the LABEL RULES instead of falling back to fact text.
+	// When the person has many stances, assignTopic uses an embedding-based
+	// shortlist so the LLM only sees the top-K closest candidates.
+	assignment, err := sm.assignTopic(ctx, stances, factText, embedding)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
 
-	// New topic: create a new stance
+	// New topic: create a new stance with the LLM-generated general label
 	if assignment.AssignedIndex == 0 {
-		label := string(assignment.NewTopicLabel)
+		label := strings.TrimSpace(string(assignment.NewTopicLabel))
+		if label == "" {
+			// Defensive: assignTopic didn't emit a usable label. Ask explicitly via
+			// generateGeneralLabel so we never store fact text as a stance label.
+			label, err = sm.generateGeneralLabel(ctx, factText)
+			if err != nil {
+				return nil, fmt.Errorf("generating fallback general label: %w", err)
+			}
+		}
 		log.Info().
 			Str("new_topic", label).
 			Int64("fact_id", factID).
@@ -180,7 +230,11 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 			Int("assigned_index", assignment.AssignedIndex).
 			Int("total_stances", len(stances)).
 			Msg("LLM returned out-of-range topic index, creating new stance")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, "")
+		label, err := sm.generateGeneralLabel(ctx, factText)
+		if err != nil {
+			return nil, fmt.Errorf("generating fallback general label: %w", err)
+		}
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
 	}
 	matched := &stances[assignment.AssignedIndex-1]
 
@@ -191,29 +245,137 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		Str("reasoning", assignment.Reasoning).
 		Msg("LLM assigned fact to existing topic")
 
-	// Get key facts for the matched stance and analyze relationship
+	// Get key facts for the matched stance and analyze relationship.
 	keyFacts, err := sm.storer.GetFactsForStance(ctx, matched.ID)
 	if err != nil {
 		return nil, fmt.Errorf("getting facts for stance %d: %w", matched.ID, err)
 	}
 
-	llmResp, err := sm.callLLM(ctx, matched.Summary, keyFacts, factText)
-	if err != nil {
-		return nil, fmt.Errorf("LLM stance analysis: %w", err)
-	}
-
-	// Add the fact to the stance join table regardless of verdict
+	// Add the fact to the stance join table BEFORE analysis. AddFactToStance is
+	// idempotent (ON CONFLICT) so a partial/retried call leaves the join row in
+	// place; we want the fact to belong to its stance even if a downstream LLM
+	// call errors.
 	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
 		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
 	}
 
-	return sm.handleVerdict(ctx, matched, personID, factID, embedding, llmResp)
+	// Analyze the new fact against the stance's key facts. When there are too
+	// many key facts to fit in one prompt, batch the call and union the
+	// contradictions across batches.
+	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText)
+	if err != nil {
+		return nil, fmt.Errorf("LLM stance analysis: %w", err)
+	}
+
+	return sm.handleVerdict(ctx, matched, personID, factID, embedding, agg)
 }
 
-// createNewStance creates a new stance document for a fact. If label is empty, uses the fact text.
+// aggregatedAnalysis is the cross-batch result of analyzeAcrossBatches.
+type aggregatedAnalysis struct {
+	Reasoning      string                     // concatenation of per-batch reasoning lines
+	PrimaryVerdict string                     // DUPLICATE | NEW_INFO | CONTRADICTION
+	DuplicateOf    int64                      // first non-zero duplicate_of_key_fact_id seen
+	Contradictions []StanceContradictionEntry // deduped by key_fact_id
+}
+
+// analyzeAcrossBatches splits keyFacts into batches of at most keyFactBatchSize
+// and calls callLLM once per batch with the same summary + new fact. Across all
+// batches the contradictions list is unioned (deduped by KeyFactID). The
+// primary verdict is CONTRADICTION if any batch returned contradictions, else
+// DUPLICATE if any batch returned DUPLICATE, else NEW_INFO.
+func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
+	batches := chunkKeyFacts(keyFacts, keyFactBatchSize)
+	if len(batches) == 0 {
+		// No key facts at all — degenerate but possible. Treat the new fact as
+		// NEW_INFO so the stance gets the new fact attached without a contradiction
+		// claim. The refresh call will produce a label/summary from the now-1 fact.
+		return &aggregatedAnalysis{PrimaryVerdict: "NEW_INFO"}, nil
+	}
+
+	agg := &aggregatedAnalysis{}
+	seen := make(map[int64]bool)
+	var hasDuplicate, hasNewInfo bool
+	var reasoningParts []string
+
+	for batchIdx, batch := range batches {
+		resp, err := sm.callLLM(ctx, stanceSummary, batch, newFactText)
+		if err != nil {
+			return nil, fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
+		}
+		if resp.Reasoning != "" {
+			reasoningParts = append(reasoningParts, resp.Reasoning)
+		}
+		switch resp.PrimaryVerdict {
+		case "DUPLICATE":
+			hasDuplicate = true
+			if agg.DuplicateOf == 0 && resp.DuplicateOf > 0 {
+				agg.DuplicateOf = resp.DuplicateOf
+			}
+		case "NEW_INFO":
+			hasNewInfo = true
+		case "CONTRADICTION":
+			// fall through to contradiction collection
+		}
+		for _, c := range resp.Contradictions {
+			if c.KeyFactID <= 0 || seen[c.KeyFactID] {
+				continue
+			}
+			seen[c.KeyFactID] = true
+			agg.Contradictions = append(agg.Contradictions, c)
+		}
+	}
+
+	switch {
+	case len(agg.Contradictions) > 0:
+		agg.PrimaryVerdict = "CONTRADICTION"
+	case hasDuplicate:
+		agg.PrimaryVerdict = "DUPLICATE"
+	case hasNewInfo:
+		agg.PrimaryVerdict = "NEW_INFO"
+	default:
+		// All batches returned something unexpected. Default to NEW_INFO so the
+		// fact still gets attached without a spurious contradiction.
+		agg.PrimaryVerdict = "NEW_INFO"
+	}
+	agg.Reasoning = strings.Join(reasoningParts, " | ")
+	return agg, nil
+}
+
+// chunkKeyFacts splits the key-facts slice into batches of at most size each.
+// Returns nil if the input is empty.
+func chunkKeyFacts(facts []StanceFactInfo, size int) [][]StanceFactInfo {
+	if size <= 0 {
+		size = keyFactBatchSize
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	var out [][]StanceFactInfo
+	for i := 0; i < len(facts); i += size {
+		end := i + size
+		if end > len(facts) {
+			end = len(facts)
+		}
+		out = append(out, facts[i:end])
+	}
+	return out
+}
+
+// createNewStance creates a new stance document for a fact. The label MUST be
+// non-empty — callers route through assignTopic / generateGeneralLabel to
+// obtain a general topic label. If the supplied label is empty we error rather
+// than falling back to fact text (which historically produced quoted-statement
+// labels that fragmented stances).
 func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label string) (*StanceProcessResult, error) {
+	label = strings.TrimSpace(label)
 	if label == "" {
-		label = factText
+		// Last-ditch defensive call — shouldn't happen given ProcessNewFact's flow,
+		// but if it does, generate a label rather than store fact text.
+		generated, err := sm.generateGeneralLabel(ctx, factText)
+		if err != nil {
+			return nil, fmt.Errorf("createNewStance: missing label and generateGeneralLabel failed: %w", err)
+		}
+		label = generated
 	}
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
@@ -221,7 +383,7 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 
 	doc := StanceDocument{
 		PersonID:         personID,
-		ClusterLabel:     strings.TrimSpace(label),
+		ClusterLabel:     label,
 		ClusterEmbedding: embedding,
 		Summary:          factText,
 		KeyFactIDs:       []int64{factID},
@@ -250,86 +412,139 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 	}, nil
 }
 
-// handleVerdict processes the LLM analysis verdict and updates the stance accordingly.
-func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, embedding []float32, llmResp *stanceLLMResponse) (*StanceProcessResult, error) {
+// handleVerdict processes the aggregated analyze result, updates the stance
+// counters/centroid/key_facts as appropriate, records every contradiction the
+// LLM flagged, and triggers a label+summary refresh for non-duplicate verdicts.
+func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
 	result := &StanceProcessResult{
 		StanceID:  matched.ID,
-		Reasoning: llmResp.Reasoning,
+		Reasoning: agg.Reasoning,
 	}
 
-	switch llmResp.Verdict {
+	switch agg.PrimaryVerdict {
 	case "DUPLICATE":
 		result.Verdict = "DUPLICATE"
 		log.Info().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Str("reasoning", llmResp.Reasoning).
+			Int64("duplicate_of", agg.DuplicateOf).
+			Str("reasoning", agg.Reasoning).
 			Msg("Fact is duplicate of existing stance")
 
 	case "NEW_INFO":
 		result.Verdict = "NEW_INFO"
-		newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
-		newFactCount := matched.FactCount + 1
-
-		keyFactIDs := matched.KeyFactIDs
-		if len(keyFactIDs) < 10 {
-			keyFactIDs = append(keyFactIDs, factID)
+		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
+			return nil, err
 		}
-
-		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
-			return nil, fmt.Errorf("updating stance document %d: %w", matched.ID, err)
-		}
-
 		log.Info().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Int("new_fact_count", newFactCount).
+			Int("new_fact_count", matched.FactCount+1).
 			Msg("Added new info to existing stance")
 
 	case "CONTRADICTION":
 		result.Verdict = "CONTRADICTION"
-		result.ContradictedFactID = llmResp.ContradictingFactID
+		result.Contradictions = agg.Contradictions
 
-		if llmResp.ContradictingFactID > 0 {
-			if err := sm.storer.RecordContradiction(ctx, personID, factID, llmResp.ContradictingFactID, llmResp.Reasoning); err != nil {
-				return nil, fmt.Errorf("recording contradiction: %w", err)
+		recorded := 0
+		for _, c := range agg.Contradictions {
+			if c.KeyFactID <= 0 {
+				log.Warn().
+					Int64("stance_id", matched.ID).
+					Int64("fact_id", factID).
+					Msg("Contradiction entry with invalid key_fact_id, skipping")
+				continue
 			}
-		} else {
-			log.Warn().
-				Int64("stance_id", matched.ID).
-				Int64("fact_id", factID).
-				Msg("LLM detected contradiction but could not identify specific contradicted fact")
+			if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason); err != nil {
+				log.Error().Err(err).
+					Int64("stance_id", matched.ID).
+					Int64("fact_a", factID).
+					Int64("fact_b", c.KeyFactID).
+					Msg("Failed to record contradiction; continuing with rest")
+				continue
+			}
+			recorded++
 		}
 
-		newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
-		newFactCount := matched.FactCount + 1
-
-		keyFactIDs := matched.KeyFactIDs
-		if len(keyFactIDs) < 10 {
-			keyFactIDs = append(keyFactIDs, factID)
-		}
-
-		if err := sm.storer.UpdateStanceDocument(ctx, matched.ID, llmResp.UpdatedSummary, newCentroid, keyFactIDs, newFactCount); err != nil {
-			return nil, fmt.Errorf("updating stance document %d after contradiction: %w", matched.ID, err)
+		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
+			return nil, err
 		}
 
 		log.Warn().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Int64("contradicted_fact_id", llmResp.ContradictingFactID).
-			Str("reasoning", llmResp.Reasoning).
-			Msg("Contradiction detected in stance")
+			Int("contradictions_recorded", recorded).
+			Int("contradictions_total", len(agg.Contradictions)).
+			Str("reasoning", agg.Reasoning).
+			Msg("Contradictions detected in stance")
 
 	default:
-		return nil, fmt.Errorf("unexpected LLM verdict: %q", llmResp.Verdict)
+		return nil, fmt.Errorf("unexpected LLM verdict: %q", agg.PrimaryVerdict)
+	}
+
+	// For non-duplicate verdicts the stance content has materially changed —
+	// regenerate label + summary from the full fact list. Failures here are
+	// logged but do not fail the verdict (the stance is still correct, just
+	// using its prior label/summary until the next refresh).
+	if result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION" {
+		if err := sm.triggerStanceRefresh(ctx, matched.ID); err != nil {
+			log.Warn().Err(err).
+				Int64("stance_id", matched.ID).
+				Msg("Stance metadata refresh failed; stance kept with previous label/summary")
+		}
 	}
 
 	return result, nil
 }
 
-// callLLM sends the stance analysis prompt to the LLM and parses the response.
+// applyStanceUpdate writes the centroid + fact count + key fact IDs for a
+// stance after a fact has joined. Summary is left as the existing one — the
+// refresh call (triggerStanceRefresh) is responsible for regenerating it.
+func (sm *StanceManager) applyStanceUpdate(ctx context.Context, matched *StanceDocument, factID int64, embedding []float32) error {
+	newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
+	newFactCount := matched.FactCount + 1
+	keyFactIDs := matched.KeyFactIDs
+	if len(keyFactIDs) < 10 {
+		keyFactIDs = append(keyFactIDs, factID)
+	}
+	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, newCentroid, keyFactIDs, newFactCount)
+}
+
+// triggerStanceRefresh loads the current full fact set for the stance, calls
+// the LLM to regenerate a general label + 2-4 sentence summary, and persists
+// both via UpdateStanceMetadata.
+func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int64) error {
+	facts, err := sm.storer.GetFactsForStance(ctx, stanceID)
+	if err != nil {
+		return fmt.Errorf("loading facts for refresh: %w", err)
+	}
+	if len(facts) == 0 {
+		return nil // nothing to refresh from
+	}
+
+	label, summary, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
+	if err != nil {
+		return fmt.Errorf("regenerating metadata: %w", err)
+	}
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return fmt.Errorf("refresh returned empty label for stance %d", stanceID)
+	}
+	if r := []rune(label); len(r) > 120 {
+		label = string(r[:120])
+	}
+	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, summary); err != nil {
+		return fmt.Errorf("persisting refreshed metadata: %w", err)
+	}
+	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("facts", len(facts)).Msg("Refreshed stance metadata")
+	return nil
+}
+
+// callLLM sends the stance analysis prompt for ONE batch of key facts to the LLM
+// and parses the response. Callers split into batches via chunkKeyFacts; this
+// function handles a single batch and returns whatever contradictions the LLM
+// found within it.
 func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
-	// Format key facts for the prompt
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
 		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
@@ -346,29 +561,32 @@ KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 NEW FACT:
 %s
 
-Decide ONE of:
-1. DUPLICATE — the new fact says essentially the same thing as something already in the stance (paraphrase / same claim, different source).
-2. NEW_INFO — the new fact adds new information to this topic without contradicting the stance.
-3. CONTRADICTION — the new fact contradicts a specific KEY FACT (or the summary) per the rules below. Compare the NEW FACT against EACH key fact, not just the summary — the summary may have smoothed earlier tensions.
+Decide ONE primary_verdict for the NEW FACT vs the stance:
+1. DUPLICATE — the new fact says essentially the same thing as one of the key facts (paraphrase / same claim, different source). Set duplicate_of_key_fact_id to that key fact's [ID N].
+2. NEW_INFO — the new fact adds new information to this topic without contradicting any key fact.
+3. CONTRADICTION — the new fact contradicts ONE OR MORE specific key facts per the rules below. List EVERY contradicting key fact in the contradictions array — not just one. If the new fact contradicts both key fact 123 AND key fact 456 in different ways, return two entries.
 
 `+promptrules.ContradictionRules+`
 
 **HOW TO MAP THE PAIR-WISE EXAMPLES TO THIS TASK:**
-The examples above are framed as "PAIR N: YES/NO". Treat YES as your CONTRADICTION verdict, NO as your DUPLICATE or NEW_INFO verdict (DUPLICATE if the two statements are paraphrases of the SAME position; NEW_INFO if they're compatible-but-distinct).
+The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction entry (one per contradicted key fact). Treat NO as either DUPLICATE (same position, different words — set duplicate_of_key_fact_id) or NEW_INFO (compatible-but-distinct).
 
 **RESPONSE FORMAT:**
-Write your reasoning BEFORE the verdict. If your reasoning concludes the facts are compatible, supplementary, or paraphrastic, your verdict MUST NOT be CONTRADICTION.
+Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. Write your reasoning BEFORE listing contradictions.
 
 Return ONLY valid JSON:
 {
-  "reasoning": "1-3 sentences: identify core claims, check which positive/negative pattern applies, then state your conclusion",
-  "verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
-  "updated_summary": "If NEW_INFO or CONTRADICTION: updated 2-4 sentence summary that PRESERVES the tension when there is one (do not smooth a contradiction into a unified narrative). If DUPLICATE: empty string.",
-  "contradicting_key_fact_id": 0
+  "reasoning": "1-3 sentences: identify the new fact's core claim, list each key fact it conflicts with (and why), then state the primary verdict",
+  "primary_verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
+  "duplicate_of_key_fact_id": 0,
+  "contradictions": [
+    {"key_fact_id": <id>, "reason": "1-2 sentences explaining the contradiction"}
+  ]
 }
 
-For CONTRADICTION: set contradicting_key_fact_id to the ID of the specific key fact that is contradicted (use the [ID N] from the KEY FACTS list). If you cannot identify one, use 0.
-For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
+For DUPLICATE: contradictions MUST be []. Set duplicate_of_key_fact_id to the [ID N] of the key fact the new fact paraphrases.
+For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
+For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
 		stanceSummary, factsBuilder.String(), newFactText)
 
 	reqPayload := llm.ChatRequest{
@@ -418,12 +636,27 @@ For DUPLICATE and NEW_INFO: set contradicting_key_fact_id to 0.`,
 	return resp, nil
 }
 
-// assignTopic asks the LLM to assign a new fact to one of the existing stance topics or declare it new.
-func (sm *StanceManager) assignTopic(ctx context.Context, stances []StanceDocument, factText string) (*topicAssignmentResponse, error) {
+// assignTopic asks the LLM to assign a new fact to one of the existing stance
+// topics or declare it new. Even with an empty stances list the LLM is forced
+// to AssignedIndex=0 and emits a general topic label per the LABEL RULES — that
+// path replaces the old "use truncated fact text as label" shortcut.
+//
+// When the person has more than stanceShortlistSize stances, we pre-filter via
+// embedding cosine similarity (fact embedding vs each stance's centroid) and
+// pass only the top-K closest stances to the LLM. The LLM still makes the
+// final decision; embeddings are recon. Returned AssignedIndex is mapped back
+// to the original stances slice's 1-indexed positions.
+func (sm *StanceManager) assignTopic(ctx context.Context, stances []StanceDocument, factText string, factEmbedding []float32) (*topicAssignmentResponse, error) {
+	shortlist, indexMap := shortlistStancesByEmbedding(stances, factEmbedding, stanceShortlistSize)
+
 	var topicsBuilder strings.Builder
-	for i, s := range stances {
-		topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
-			i+1, s.ClusterLabel, s.FactCount, truncate(s.Summary, 150)))
+	if len(shortlist) == 0 {
+		topicsBuilder.WriteString("(no existing topics — you MUST return assigned_topic_index=0 and emit a general new_topic_label per the LABEL RULES below)\n")
+	} else {
+		for i, s := range shortlist {
+			topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
+				i+1, s.ClusterLabel, s.FactCount, truncate(s.Summary, 150)))
+		}
 	}
 
 	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to.
@@ -433,37 +666,44 @@ EXISTING TOPICS:
 NEW FACT:
 %s
 
-RULES:
-- Assign the fact to an existing topic if it is about the SAME subject matter, even if it adds new details or uses different wording.
-- Topics about the same legal case, event, policy area, or political issue should be consolidated.
-- Example: a fact about "sentencing in the parliamentary assistants case" belongs to the same topic as "conviction in the parliamentary assistants case" — they are the same legal proceeding.
-- Example: a fact about "presidential candidacy after conviction" belongs with other "presidential candidacy" facts.
-- Only create a NEW topic if the fact is about a genuinely different subject that does not fit any existing topic.
-- When in doubt, assign to the closest existing topic rather than creating a new one.
-- Prefer broader topic matches over narrow distinctions.
+ASSIGNMENT RULES (lean toward consolidation, not fragmentation):
+- A topic is a SUBJECT AREA, not a specific event. "Trump on Iran" covers the Iran coalition, the pilot rescue, Operation Epic Fury, and Iran-related media remarks — they are all the same topic.
+- Assign the fact to an existing topic if it shares the SAME subject area. Different events / different details / different aspects of the same subject area all belong together.
+- Examples that should consolidate:
+  * "sentencing in PA case" + "denial of wrongdoing in PA case" + "comments on bracelet condition" → all one "presidential candidacy and PA case" topic.
+  * "Iran sanctions threats" + "Iran nuclear talks" + "Iran-Saudi attack confirmation" → all one "Iran policy" topic.
+  * "EU debt criticism" + "euro inadapté" + "demanding to leave the EU" → all one "EU economic policy" topic.
+- Only create a NEW topic when the fact is about a genuinely different SUBJECT AREA that is not represented at all by any existing topic.
+- When in doubt, ALWAYS prefer assigning to the closest existing topic over creating a new one.
 
 LABEL RULES (for new_topic_label when creating a new topic):
-- Include the SPECIFIC case, event, or policy name (e.g., "parliamentary assistants case", "2027 presidential election")
-- Include a TEMPORAL ANCHOR when relevant: trial year, election cycle, date range (e.g., "2025 appeal trial", "Jan 2026 ruling")
-- The label must be specific enough that a DIFFERENT event on the same broad theme would clearly NOT match
-- Do NOT include the person's name (labels are already per-person)
-- Bad: "justice politique" / "presidential candidacy" / "party funding"
-- Good: "denial of wrongdoing -- PA case 2025 appeal" / "presidential candidacy post-ineligibility 2027" / "EU fund embezzlement allegations 2024"
-
-⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT (a specific case, policy area, event, person, institution), NOT a way of speaking or a behavioural trait. If the only thing the fact has in common with future facts is "they are all promises he later reversed" or "they are all accusations", that is a FORM, not a topic — go down to the actual SUBJECT instead.
-- ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "controversial statements" / "rhetoric and threats" — these describe HOW he speaks, not WHAT about
-- ❌ "flip-flops on foreign policy" / "pattern of exaggeration" — meta-summaries
-- ✅ "US tariffs on Chinese goods 2025" / "NATO Article 5 commitment 2026" / "Strait of Hormuz coalition" / "Iran nuclear deal negotiations 2026"
-- If the fact is itself a journalist's META observation about the entity (e.g. "X has repeatedly contradicted himself"), the upstream extractor should have rejected it; mark it as NEW_STANCE only if a specific subject is identifiable, otherwise pick the closest existing subject-bound topic.
+- Describe the SUBJECT AREA broadly enough that 5-20 related facts could naturally fit under this label.
+- Format: "{subject area}{ optional temporal scope}". Examples:
+  * "Iran policy and military operations"
+  * "presidential candidacy 2027"
+  * "EU economic and trade policy"
+  * "nuclear deterrence policy"
+  * "parliamentary assistants case"
+  * "municipal elections 2026"
+- Do NOT include the person's name (labels are already per-person).
+- ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
+  * ❌ "Donald Trump a posté « FREE LEPEN »" — quoting an action
+  * ❌ "Marine Le Pen a affirmé qu'elle ne se présenterait pas..." — quoting a statement
+  * ❌ "denied bracelet candidacy" — quoting a verb + claim
+- ⚠️ Do NOT pack event-detail into the label. The label should NOT name a specific ruling, date, or instance.
+  * ❌ "presidential candidacy eligibility and legal sentencing 2027 first-instance bracelet ruling"
+  * ✅ "presidential candidacy 2027"
+- ⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT, not a way of speaking. ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "flip-flops on foreign policy". ✅ "US tariffs on Chinese goods" / "Strait of Hormuz coalition".
+- If the fact is itself a journalist's META observation about the entity, the upstream extractor should have rejected it; either pick the closest existing subject-bound topic or, if truly no fit, emit a SUBJECT-bound new label (never the meta phrasing).
 
 Return ONLY valid JSON:
 {
   "reasoning": "Brief explanation of your choice",
   "assigned_topic_index": 0,
-  "new_topic_label": "specific descriptive label, max 120 chars (only if assigned_topic_index is 0)"
+  "new_topic_label": "broad subject-area label, max 120 chars (only if assigned_topic_index is 0)"
 }
 
-Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(stances))
+Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(shortlist))
 
 	reqPayload := llm.ChatRequest{
 		Model: sm.model,
@@ -508,7 +748,198 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 		return nil, fmt.Errorf("parsing topic assignment response: %w", err)
 	}
 
+	// Translate the LLM's shortlist-relative index back to the original
+	// stances-slice index so callers can subscript stances[AssignedIndex-1]
+	// transparently.
+	if indexMap != nil && resp.AssignedIndex >= 1 && resp.AssignedIndex <= len(shortlist) {
+		resp.AssignedIndex = indexMap[resp.AssignedIndex-1] + 1
+	}
+
 	return &resp, nil
+}
+
+// shortlistStancesByEmbedding pre-filters a stances slice down to the top-K
+// closest stances by cosine similarity (fact embedding vs stance centroid).
+// Returns the shortlist plus an indexMap such that indexMap[i] is the original
+// position in stances of shortlist[i]. When stances has ≤ K entries (or the
+// fact has no embedding), returns the input unchanged with indexMap=nil
+// (signaling "no remapping needed").
+//
+// All embeddings are L2-normalised so dot product == cosine similarity.
+func shortlistStancesByEmbedding(stances []StanceDocument, factEmbedding []float32, k int) ([]StanceDocument, []int) {
+	if k <= 0 || len(stances) <= k || len(factEmbedding) == 0 {
+		return stances, nil
+	}
+	type entry struct {
+		origIdx int
+		sim     float64
+	}
+	scored := make([]entry, 0, len(stances))
+	for i, s := range stances {
+		if len(s.ClusterEmbedding) != len(factEmbedding) {
+			// Mismatched dimensions — exclude rather than crash.
+			continue
+		}
+		var sim float64
+		for j := range factEmbedding {
+			sim += float64(factEmbedding[j]) * float64(s.ClusterEmbedding[j])
+		}
+		scored = append(scored, entry{origIdx: i, sim: sim})
+	}
+	if len(scored) <= k {
+		// Nothing usable was filtered out; if scored < stances we'd lose the
+		// excluded ones, but in practice all centroids share the embedding dim
+		// so this is fine.
+		shortlist := make([]StanceDocument, len(scored))
+		idxMap := make([]int, len(scored))
+		for i, e := range scored {
+			shortlist[i] = stances[e.origIdx]
+			idxMap[i] = e.origIdx
+		}
+		return shortlist, idxMap
+	}
+	sort.Slice(scored, func(i, j int) bool { return scored[i].sim > scored[j].sim })
+	scored = scored[:k]
+	shortlist := make([]StanceDocument, k)
+	idxMap := make([]int, k)
+	for i, e := range scored {
+		shortlist[i] = stances[e.origIdx]
+		idxMap[i] = e.origIdx
+	}
+	return shortlist, idxMap
+}
+
+// generateGeneralLabel produces a general subject-area label for a single fact.
+// Used as a defensive fallback in createNewStance and ProcessNewFact when
+// assignTopic somehow returns an empty NewTopicLabel — keeps the system from
+// ever falling back to the fact text as a stance label.
+func (sm *StanceManager) generateGeneralLabel(ctx context.Context, factText string) (string, error) {
+	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label describes the SUBJECT AREA broadly enough that 5-20 related future facts could naturally fit under it.
+
+FACT:
+%s
+
+LABEL RULES:
+- Format: "{subject area}{ optional temporal scope}". Examples: "Iran policy", "presidential candidacy 2027", "EU economic policy", "nuclear deterrence policy", "parliamentary assistants case".
+- Do NOT include the person's name.
+- ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from the fact. Describe the topic, not the statement.
+- Do NOT pack event-detail into the label.
+- NEVER use a meta / pattern-of-behavior / rhetorical label.
+
+Return ONLY valid JSON:
+{"label": "subject-area label, max 120 chars"}`, factText)
+
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: "You generate broad topic labels for political facts. Return only valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.1,
+		MaxTokens:      200,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return "", fmt.Errorf("marshaling label request: %w", err)
+	}
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return "", fmt.Errorf("label LLM request failed: %w", err)
+	}
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return "", fmt.Errorf("decoding label response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return "", fmt.Errorf("label LLM returned no content")
+	}
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	var resp generalLabelResponse
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		return "", fmt.Errorf("parsing label response: %w", err)
+	}
+	label := strings.TrimSpace(string(resp.Label))
+	if label == "" {
+		return "", fmt.Errorf("label LLM returned empty label")
+	}
+	return label, nil
+}
+
+// refreshStanceMetadata regenerates a stance's cluster_label AND summary from
+// the FULL set of facts currently attached to it. Called from triggerStanceRefresh
+// after every non-duplicate verdict so the stance metadata stays in sync with
+// its fact set.
+//
+// The prompt asks the LLM to:
+//   - Re-derive the broadest accurate subject-area label per the LABEL RULES.
+//   - Write a 2-4 sentence summary that PRESERVES tensions if any pair of key
+//     facts conflict — do not smooth contradictions into one narrative.
+func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int64, facts []StanceFactInfo) (string, string, error) {
+	if len(facts) == 0 {
+		return "", "", fmt.Errorf("refreshStanceMetadata: stance %d has no facts", stanceID)
+	}
+	var factsBuilder strings.Builder
+	for _, f := range facts {
+		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
+	}
+
+	prompt := fmt.Sprintf(`You are regenerating the topic label and summary for a stance document about a political figure. The stance contains the facts below; produce a fresh broad subject-area label and a 2-4 sentence summary that accurately reflects what's in the stance NOW.
+
+FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
+%s
+
+LABEL RULES:
+- The label describes the SUBJECT AREA broadly enough that all listed facts naturally fit under it. Examples: "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "nuclear deterrence policy", "parliamentary assistants case".
+- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
+- Do NOT include the person's name.
+- ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from any fact.
+- Do NOT pack event-detail into the label.
+- NEVER use a meta / pattern-of-behavior / rhetorical label ("denials and reversals", "flip-flops", etc.).
+
+SUMMARY RULES:
+- 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
+- If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
+- Do not add facts or claims beyond what's in the listed facts.
+
+Return ONLY valid JSON:
+{"label": "subject-area label", "summary": "2-4 sentence summary"}`, factsBuilder.String())
+
+	reqPayload := llm.ChatRequest{
+		Model: sm.model,
+		Messages: []llm.ChatMessage{
+			{Role: "system", Content: "You regenerate stance metadata for political facts. Return only valid JSON."},
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.2,
+		MaxTokens:      400,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return "", "", fmt.Errorf("marshaling refresh request: %w", err)
+	}
+	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	if err != nil {
+		return "", "", fmt.Errorf("refresh LLM request failed: %w", err)
+	}
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return "", "", fmt.Errorf("decoding refresh response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return "", "", fmt.Errorf("refresh LLM returned no content")
+	}
+	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	var resp stanceMetadataResponse
+	if err := json.Unmarshal([]byte(content), &resp); err != nil {
+		return "", "", fmt.Errorf("parsing refresh response: %w", err)
+	}
+	label := strings.TrimSpace(string(resp.Label))
+	summary := strings.TrimSpace(resp.Summary)
+	return label, summary, nil
 }
 
 // stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.
@@ -539,12 +970,19 @@ func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
 		return nil, fmt.Errorf("invalid JSON in stance response: %w", err)
 	}
 
-	// Validate verdict
-	switch resp.Verdict {
+	switch resp.PrimaryVerdict {
 	case "DUPLICATE", "NEW_INFO", "CONTRADICTION":
 		// valid
 	default:
-		return nil, fmt.Errorf("invalid verdict %q: must be DUPLICATE, NEW_INFO, or CONTRADICTION", resp.Verdict)
+		return nil, fmt.Errorf("invalid primary_verdict %q: must be DUPLICATE, NEW_INFO, or CONTRADICTION", resp.PrimaryVerdict)
+	}
+
+	// CONTRADICTION must have at least one entry; if not, downgrade to NEW_INFO
+	// (the LLM said "contradiction" but listed no specifics — the safer call is
+	// to attach the fact as new info rather than record a contradiction with no
+	// counterpart).
+	if resp.PrimaryVerdict == "CONTRADICTION" && len(resp.Contradictions) == 0 {
+		resp.PrimaryVerdict = "NEW_INFO"
 	}
 
 	return &resp, nil
@@ -656,8 +1094,6 @@ Stances not listed in any merge group will be left as-is.`,
 
 	content := stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content))
 
-	// Parse leniently: we only care about the merges array; the reasoning field
-	// is informational.
 	var raw struct {
 		Reasoning string          `json:"reasoning"`
 		Merges    []MergeSubgroup `json:"merges"`
@@ -667,7 +1103,6 @@ Stances not listed in any merge group will be left as-is.`,
 		return nil, fmt.Errorf("parsing merge-decision response: %w", err)
 	}
 
-	// Validate every subgroup: must reference ≥ 2 known IDs, summary/label non-empty.
 	idSet := make(map[int64]bool, len(cluster))
 	for _, s := range cluster {
 		idSet[s.ID] = true
