@@ -16,8 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// embeddingDimension defines the dimension for mock embeddings
-const embeddingDimension = 1536
+// embeddingDimension defines the dimension for mock embeddings.
+// Must match the current pgvector column dimension (see
+// supabase/migrations/20260510000000_resize_embedding_to_4096.sql) and the
+// targetEmbeddingDim constant in backend/embedding/openai_embeddings.go.
+const embeddingDimension = 4096
 
 // Helper function to load .env for tests
 func loadEnv(t *testing.T) {
