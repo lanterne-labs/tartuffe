@@ -59,13 +59,15 @@ func init() {
 
 // mergeStats are the per-run aggregated counters printed at the end.
 type mergeStats struct {
-	PersonsProcessed   int64
-	PersonsSkipped     int64
-	CandidateClusters  int64
-	LLMCalls           int64
-	LLMFailures        int64
-	StancesMerged      int64 // number of src stances folded away
-	SubgroupsApplied   int64 // number of merge subgroups actually applied
+	PersonsProcessed         int64
+	PersonsSkipped           int64
+	CandidateClusters        int64
+	LLMCalls                 int64
+	LLMFailures              int64
+	StancesMerged            int64 // number of src stances folded away
+	SubgroupsApplied         int64 // number of merge subgroups actually applied
+	PostMergeContradictions  int64 // contradictions found between previously-fragmented facts
+	PostMergeAnalyzeFailures int64 // per-fact analyze failures in the post-merge re-detection pass
 }
 
 func runStancesMerge(cmd *cobra.Command, args []string) error {
@@ -142,6 +144,8 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 		atomic.AddInt64(&stats.LLMFailures, ps.llmFailures)
 		atomic.AddInt64(&stats.StancesMerged, ps.stancesMerged)
 		atomic.AddInt64(&stats.SubgroupsApplied, ps.subgroupsApplied)
+		atomic.AddInt64(&stats.PostMergeContradictions, ps.postMergeContradictions)
+		atomic.AddInt64(&stats.PostMergeAnalyzeFailures, ps.postMergeAnalyzeFailures)
 		if ps.skipped {
 			atomic.AddInt64(&stats.PersonsSkipped, 1)
 		}
@@ -173,6 +177,10 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 	fmt.Printf("LLM failures:                    %d\n", stats.LLMFailures)
 	fmt.Printf("Merge subgroups applied:         %d\n", stats.SubgroupsApplied)
 	fmt.Printf("Stances merged away (src→dst):   %d\n", stats.StancesMerged)
+	fmt.Printf("Post-merge contradictions found: %d\n", stats.PostMergeContradictions)
+	if stats.PostMergeAnalyzeFailures > 0 {
+		fmt.Printf("Post-merge analyze failures:     %d\n", stats.PostMergeAnalyzeFailures)
+	}
 	if stancesMergeDryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
 	}
@@ -187,12 +195,14 @@ type mergeOptions struct {
 }
 
 type personMergeStats struct {
-	skipped           bool
-	candidateClusters int64
-	llmCalls          int64
-	llmFailures       int64
-	stancesMerged     int64
-	subgroupsApplied  int64
+	skipped                  bool
+	candidateClusters        int64
+	llmCalls                 int64
+	llmFailures              int64
+	stancesMerged            int64
+	subgroupsApplied         int64
+	postMergeContradictions  int64
+	postMergeAnalyzeFailures int64
 }
 
 // mergeStancesForPersonViaLLM runs Phase A clustering + Phase B LLM verification
@@ -294,7 +304,7 @@ func mergeStancesForPersonViaLLM(
 		}
 
 		for _, sub := range decision.Merges {
-			merged, err := applyMergeSubgroup(ctx, storer, byID, sub)
+			merged, contradictions, analyzeFailures, err := applyMergeSubgroup(ctx, storer, stanceManager, p.ID, byID, sub)
 			if err != nil {
 				log.Warn().Err(err).Str("person", p.Name).Interface("subgroup", sub).Msg("Apply merge subgroup failed; skipped")
 				continue
@@ -303,6 +313,8 @@ func mergeStancesForPersonViaLLM(
 				ps.subgroupsApplied++
 				ps.stancesMerged += int64(merged)
 			}
+			ps.postMergeContradictions += int64(contradictions)
+			ps.postMergeAnalyzeFailures += int64(analyzeFailures)
 		}
 	}
 
@@ -313,6 +325,8 @@ func mergeStancesForPersonViaLLM(
 		Int64("llm_failures", ps.llmFailures).
 		Int64("subgroups_applied", ps.subgroupsApplied).
 		Int64("stances_merged", ps.stancesMerged).
+		Int64("post_merge_contradictions", ps.postMergeContradictions).
+		Int64("post_merge_analyze_failures", ps.postMergeAnalyzeFailures).
 		Msg("LLM-merge done for person")
 
 	return ps, nil
@@ -362,17 +376,27 @@ func subClusterIfNeeded(centroids [][]float32, originalCluster []int, distanceCu
 
 // applyMergeSubgroup picks the destination stance (largest fact_count, ties by
 // smallest ID), recomputes the weighted-normalised centroid across all
-// members, calls MergeStancesForPerson once per src, then writes the LLM's
-// unified summary + label to the dst. Returns the number of srcs successfully
-// merged.
+// members, calls MergeStancesForPerson once per src, then re-runs contradiction
+// analysis on each absorbed fact (the previously-fragmented facts that just
+// became co-located in the destination stance), and finally regenerates the
+// destination's label + summary from the now-merged fact set.
+//
+// Returns:
+//   merged         — number of source stances successfully folded into dst.
+//   contradictions — number of new contradictions recorded by the post-merge
+//                    re-analysis (these are cross-stance pairs that the
+//                    per-fact assignTopic missed by splitting them).
+//   analyzeFailures — non-fatal AnalyzeFactInStance errors (per absorbed fact).
 func applyMergeSubgroup(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
+	stanceManager *core.StanceManager,
+	personID int64,
 	currentByID map[int64]storage.StanceDocument,
 	sub core.MergeSubgroup,
-) (int, error) {
+) (merged int, contradictions int, analyzeFailures int, err error) {
 	if len(sub.StanceIDs) < 2 {
-		return 0, nil
+		return 0, 0, 0, nil
 	}
 
 	// Resolve: drop IDs that no longer exist (already merged).
@@ -383,7 +407,7 @@ func applyMergeSubgroup(
 		}
 	}
 	if len(live) < 2 {
-		return 0, nil
+		return 0, 0, 0, nil
 	}
 
 	// Pick dst: largest fact_count, ties by smallest ID.
@@ -416,10 +440,26 @@ func applyMergeSubgroup(
 	}
 	sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID < srcs[j].ID })
 
-	merged := 0
+	// Snapshot src facts BEFORE the merge so we know which facts are "absorbed"
+	// (i.e., previously in a separate stance). After MergeStancesForPerson the
+	// dst stance contains both its original facts and the absorbed ones, but we
+	// need the IDs of the absorbed ones to re-analyze them against the dst's
+	// other facts.
+	absorbedFactIDs := make(map[int64]bool)
 	for _, src := range srcs {
-		if err := storer.MergeStancesForPerson(ctx, src.ID, dst.ID, newCentroid); err != nil {
-			log.Warn().Err(err).Int64("src", src.ID).Int64("dst", dst.ID).Msg("MergeStancesForPerson failed; subgroup partial")
+		facts, ferr := storer.GetFactsForStance(ctx, src.ID)
+		if ferr != nil {
+			log.Warn().Err(ferr).Int64("src", src.ID).Msg("Snapshot src facts failed; absorbed facts from this src won't be re-analyzed")
+			continue
+		}
+		for _, f := range facts {
+			absorbedFactIDs[f.ID] = true
+		}
+	}
+
+	for _, src := range srcs {
+		if mErr := storer.MergeStancesForPerson(ctx, src.ID, dst.ID, newCentroid); mErr != nil {
+			log.Warn().Err(mErr).Int64("src", src.ID).Int64("dst", dst.ID).Msg("MergeStancesForPerson failed; subgroup partial")
 			continue
 		}
 		merged++
@@ -428,18 +468,86 @@ func applyMergeSubgroup(
 		delete(currentByID, src.ID)
 	}
 
-	if merged > 0 {
-		// Write the unified summary + label to the dst once at the end.
-		if err := storer.UpdateStanceSummary(ctx, dst.ID, sub.Summary, sub.Label); err != nil {
-			log.Warn().Err(err).Int64("dst", dst.ID).Msg("UpdateStanceSummary failed (merge applied; dst keeps old summary/label)")
-		} else {
-			// Refresh the local view of dst to keep the in-memory map consistent.
-			updated := dst
-			updated.Summary = sub.Summary
-			updated.ClusterLabel = sub.Label
-			currentByID[dst.ID] = updated
+	if merged == 0 {
+		return 0, 0, 0, nil
+	}
+
+	// Refresh dst's in-memory view: centroid is updated by MergeStancesForPerson,
+	// fact_count grows. Use the LLM's proposed summary as a placeholder; we
+	// regenerate it via RefreshStanceMetadata at the end (which sees the actual
+	// merged fact list and preserves any tensions the LLM didn't notice when
+	// it only had label+summary inputs).
+	updatedDst := dst
+	updatedDst.Summary = sub.Summary
+	updatedDst.ClusterLabel = sub.Label
+
+	// Re-detect contradictions: for each absorbed fact, analyze it against the
+	// merged stance's other facts. RecordContradiction is idempotent on
+	// (fact_a_id, fact_b_id) so re-analyzing a fact whose pair was already
+	// detected within its original stance is safe.
+	allFacts, fErr := storer.GetFactsForStance(ctx, dst.ID)
+	if fErr != nil {
+		log.Warn().Err(fErr).Int64("dst", dst.ID).Msg("Loading merged-stance facts failed; skipping post-merge re-detection")
+	} else {
+		for absorbedID := range absorbedFactIDs {
+			var thisFact core.StanceFactInfo
+			var found bool
+			others := make([]core.StanceFactInfo, 0, len(allFacts)-1)
+			for _, f := range allFacts {
+				cf := core.StanceFactInfo{
+					ID:                 f.ID,
+					NormalizedFactText: f.NormalizedFactText,
+					EmbeddingText:      f.EmbeddingText,
+					CanonicalVerb:      f.CanonicalVerb,
+				}
+				if f.ID == absorbedID {
+					thisFact = cf
+					found = true
+					continue
+				}
+				others = append(others, cf)
+			}
+			if !found {
+				// Absorbed fact isn't in dst — race or unrelated state. Skip.
+				continue
+			}
+			coreDst := core.StanceDocument{
+				ID:           updatedDst.ID,
+				PersonID:     updatedDst.PersonID,
+				ClusterLabel: updatedDst.ClusterLabel,
+				Summary:      updatedDst.Summary,
+			}
+			n, aErr := stanceManager.AnalyzeFactInStance(ctx, personID, coreDst, thisFact, others)
+			if aErr != nil {
+				log.Warn().Err(aErr).Int64("dst", dst.ID).Int64("fact_id", absorbedID).Msg("Post-merge AnalyzeFactInStance failed")
+				analyzeFailures++
+				continue
+			}
+			contradictions += n
 		}
 	}
 
-	return merged, nil
+	// Regenerate label + summary from the now-merged fact set. Supersedes the
+	// LLM's MergeClusterDecision label/summary because refresh sees ALL facts
+	// including any contradictions just detected, and is instructed to preserve
+	// tensions in the summary.
+	if rErr := stanceManager.RefreshStanceMetadata(ctx, dst.ID); rErr != nil {
+		log.Warn().Err(rErr).Int64("dst", dst.ID).Msg("RefreshStanceMetadata failed; dst keeps the merge-decision label/summary")
+		// Fall back: persist the merge-decision label/summary so dst isn't left
+		// stale (UpdateStanceSummary is the historical behavior).
+		if uErr := storer.UpdateStanceSummary(ctx, dst.ID, sub.Summary, sub.Label); uErr != nil {
+			log.Warn().Err(uErr).Int64("dst", dst.ID).Msg("UpdateStanceSummary fallback also failed")
+		} else {
+			currentByID[dst.ID] = updatedDst
+		}
+	} else {
+		// Refresh succeeded; we don't know the new label/summary text, so
+		// invalidate the local cache for dst (subsequent reads in this run will
+		// re-fetch from DB if needed).
+		updatedDst.Summary = ""
+		updatedDst.ClusterLabel = ""
+		currentByID[dst.ID] = updatedDst
+	}
+
+	return merged, contradictions, analyzeFailures, nil
 }

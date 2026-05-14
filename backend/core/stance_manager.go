@@ -446,25 +446,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		result.Verdict = "CONTRADICTION"
 		result.Contradictions = agg.Contradictions
 
-		recorded := 0
-		for _, c := range agg.Contradictions {
-			if c.KeyFactID <= 0 {
-				log.Warn().
-					Int64("stance_id", matched.ID).
-					Int64("fact_id", factID).
-					Msg("Contradiction entry with invalid key_fact_id, skipping")
-				continue
-			}
-			if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason); err != nil {
-				log.Error().Err(err).
-					Int64("stance_id", matched.ID).
-					Int64("fact_a", factID).
-					Int64("fact_b", c.KeyFactID).
-					Msg("Failed to record contradiction; continuing with rest")
-				continue
-			}
-			recorded++
-		}
+		recorded := sm.recordStanceContradictions(ctx, personID, factID, matched.ID, agg.Contradictions)
 
 		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
 			return nil, err
@@ -508,6 +490,84 @@ func (sm *StanceManager) applyStanceUpdate(ctx context.Context, matched *StanceD
 		keyFactIDs = append(keyFactIDs, factID)
 	}
 	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, newCentroid, keyFactIDs, newFactCount)
+}
+
+// AnalyzeFactInStance treats `fact` as if it just arrived in `stance` and runs
+// the analyze + multi-verdict + contradiction-recording path against
+// `otherFacts`. Used by the post-merge sweep to detect contradictions between
+// facts that were previously separated across different stances. Returns the
+// number of contradictions recorded.
+//
+// Unlike ProcessNewFact this skips assignTopic (we already KNOW the stance the
+// fact belongs to — no need to re-classify) and skips the centroid / fact_count
+// / key_fact_ids update (the merge already handled that). It does NOT trigger a
+// metadata refresh — callers should call RefreshStanceMetadata once after all
+// per-fact analysis is done, to avoid N redundant refresh calls.
+func (sm *StanceManager) AnalyzeFactInStance(
+	ctx context.Context,
+	personID int64,
+	stance StanceDocument,
+	fact StanceFactInfo,
+	otherFacts []StanceFactInfo,
+) (int, error) {
+	if len(otherFacts) == 0 {
+		return 0, nil
+	}
+	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText)
+	if err != nil {
+		return 0, fmt.Errorf("analyze: %w", err)
+	}
+	if agg.PrimaryVerdict != "CONTRADICTION" {
+		return 0, nil
+	}
+	return sm.recordStanceContradictions(ctx, personID, fact.ID, stance.ID, agg.Contradictions), nil
+}
+
+// recordStanceContradictions writes each contradiction entry to the store,
+// skipping invalid entries (KeyFactID <= 0) and self-pairs (KeyFactID == factID).
+// Per-entry RecordContradiction errors are logged but do not abort the loop.
+// Returns the number successfully recorded.
+//
+// Shared by handleVerdict (live ingest path) and AnalyzeFactInStance
+// (post-merge sweep) so both treat malformed LLM output the same way.
+func (sm *StanceManager) recordStanceContradictions(
+	ctx context.Context,
+	personID int64,
+	factID int64,
+	stanceID int64,
+	entries []StanceContradictionEntry,
+) int {
+	recorded := 0
+	for _, c := range entries {
+		if c.KeyFactID <= 0 {
+			log.Warn().
+				Int64("stance_id", stanceID).
+				Int64("fact_id", factID).
+				Msg("Contradiction entry with invalid key_fact_id, skipping")
+			continue
+		}
+		if c.KeyFactID == factID {
+			// Self-pair — should never come from the LLM but guard anyway.
+			continue
+		}
+		if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason); err != nil {
+			log.Warn().Err(err).
+				Int64("stance_id", stanceID).
+				Int64("fact_a", factID).
+				Int64("fact_b", c.KeyFactID).
+				Msg("Failed to record contradiction; continuing")
+			continue
+		}
+		recorded++
+	}
+	return recorded
+}
+
+// RefreshStanceMetadata is a public wrapper around triggerStanceRefresh, used
+// by code outside ProcessNewFact (e.g., the post-merge sweep) that needs to
+// regenerate a stance's label + summary from the full fact list.
+func (sm *StanceManager) RefreshStanceMetadata(ctx context.Context, stanceID int64) error {
+	return sm.triggerStanceRefresh(ctx, stanceID)
 }
 
 // triggerStanceRefresh loads the current full fact set for the stance, calls

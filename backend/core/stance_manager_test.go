@@ -118,6 +118,82 @@ func TestProcessNewFact_NewStance(t *testing.T) {
 	t.Skip("ProcessNewFact now always calls the LLM (no factText shortcut); needs LLM-client injection to test in unit form")
 }
 
+// TestRecordStanceContradictions covers the dispatch / skip logic shared by
+// handleVerdict (live ingest) and AnalyzeFactInStance (post-merge sweep).
+// Verifies invalid entries (KeyFactID <= 0) and self-pairs (KeyFactID == factID)
+// are dropped, and that valid entries reach the storer.
+func TestRecordStanceContradictions(t *testing.T) {
+	mk := func() (*StanceManager, *mockStanceStorer) {
+		mock := newMockStanceStorer()
+		return &StanceManager{storer: mock}, mock
+	}
+
+	t.Run("empty list records nothing", func(t *testing.T) {
+		sm, mock := mk()
+		got := sm.recordStanceContradictions(context.Background(), 42, 100, 7, nil)
+		if got != 0 {
+			t.Errorf("expected 0 recorded, got %d", got)
+		}
+		if len(mock.contradictions) != 0 {
+			t.Errorf("expected no DB writes, got %d", len(mock.contradictions))
+		}
+	})
+
+	t.Run("skips KeyFactID <= 0", func(t *testing.T) {
+		sm, mock := mk()
+		entries := []StanceContradictionEntry{
+			{KeyFactID: 0, Reason: "missing id"},
+			{KeyFactID: -3, Reason: "negative id"},
+		}
+		got := sm.recordStanceContradictions(context.Background(), 42, 100, 7, entries)
+		if got != 0 {
+			t.Errorf("expected 0 recorded, got %d", got)
+		}
+		if len(mock.contradictions) != 0 {
+			t.Errorf("expected no DB writes, got %d", len(mock.contradictions))
+		}
+	})
+
+	t.Run("skips self-pair", func(t *testing.T) {
+		sm, mock := mk()
+		entries := []StanceContradictionEntry{
+			{KeyFactID: 100, Reason: "self-pair (factID == 100)"},
+		}
+		got := sm.recordStanceContradictions(context.Background(), 42, 100, 7, entries)
+		if got != 0 {
+			t.Errorf("expected 0 recorded, got %d", got)
+		}
+		if len(mock.contradictions) != 0 {
+			t.Errorf("expected no DB writes, got %d", len(mock.contradictions))
+		}
+	})
+
+	t.Run("records valid entries and skips invalid in same call", func(t *testing.T) {
+		sm, mock := mk()
+		entries := []StanceContradictionEntry{
+			{KeyFactID: 200, Reason: "valid one"},
+			{KeyFactID: 100, Reason: "self-pair, drop"},
+			{KeyFactID: 0, Reason: "zero, drop"},
+			{KeyFactID: 300, Reason: "valid two"},
+		}
+		got := sm.recordStanceContradictions(context.Background(), 42, 100, 7, entries)
+		if got != 2 {
+			t.Errorf("expected 2 recorded, got %d", got)
+		}
+		if len(mock.contradictions) != 2 {
+			t.Fatalf("expected 2 DB writes, got %d", len(mock.contradictions))
+		}
+		if mock.contradictions[0].factBID != 200 || mock.contradictions[1].factBID != 300 {
+			t.Errorf("unexpected contradictions: %+v", mock.contradictions)
+		}
+		for _, c := range mock.contradictions {
+			if c.personID != 42 || c.factAID != 100 {
+				t.Errorf("unexpected ids on contradiction: %+v", c)
+			}
+		}
+	})
+}
+
 // TestChunkKeyFacts verifies that the analyze-batch chunker splits long key-fact
 // lists into batches of at most keyFactBatchSize, and handles the edge cases.
 func TestChunkKeyFacts(t *testing.T) {

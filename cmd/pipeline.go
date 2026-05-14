@@ -93,7 +93,16 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
 	}
 
-	// Step 4: Contradiction detection. Always run over unchecked pairs across
+	// Step 4: Stance merge sweep. Looks for stances that should be merged per
+	// LLM-vetted centroid clustering, applies the merges, and re-detects
+	// contradictions across previously-separated facts. Catches the cross-stance
+	// contradictions our per-fact assignTopic missed by mis-grouping.
+	mergeErr := runStancesMergeStep(ctx, storer)
+	if mergeErr != nil {
+		log.Error().Err(mergeErr).Msg("Daily pipeline: stance merge sweep failed")
+	}
+
+	// Step 5: Contradiction detection. Always run over unchecked pairs across
 	// all persons. In batch mode this submits a contradiction batch and returns;
 	// the batch poller eventually finalizes results.
 	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
@@ -101,7 +110,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")
 	}
 
-	// Step 5: Photos backfill (persons + parties missing an image).
+	// Step 6: Photos backfill (persons + parties missing an image).
 	photosErr := runPhotosBackfill(ctx, storer)
 	if photosErr != nil {
 		log.Error().Err(photosErr).Msg("Daily pipeline: photos backfill failed")
@@ -112,7 +121,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// Notify via Telegram
 	if notifier != nil {
 		hasErrors := targetsErr != nil || batchErr != nil || discoverErr != nil ||
-			twitterErr != nil || fpErr != nil || contraErr != nil || photosErr != nil
+			twitterErr != nil || fpErr != nil || mergeErr != nil || contraErr != nil || photosErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
 
@@ -133,6 +142,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			}
 			if fpErr != nil {
 				parts = append(parts, "frpolitics: "+fpErr.Error())
+			}
+			if mergeErr != nil {
+				parts = append(parts, "stance-merge: "+mergeErr.Error())
 			}
 			if contraErr != nil {
 				parts = append(parts, "contradictions: "+contraErr.Error())
@@ -164,7 +176,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Aggregate step errors so the caller (the host cron) can exit non-zero.
 	var stepErrs []error
-	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, contraErr, photosErr} {
+	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr} {
 		if e != nil {
 			stepErrs = append(stepErrs, e)
 		}
@@ -428,6 +440,60 @@ func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) erro
 	err := frpolitics.Run(ctx, storer, opts)
 	log.Info().Dur("elapsed", time.Since(start)).Err(err).Msg("Frpolitics step finished")
 	return err
+}
+
+// runStancesMergeStep executes the stance merge sweep step of the daily
+// pipeline: scans every person's stances for centroid-similar candidates,
+// LLM-vets each candidate cluster, applies merges, and re-detects
+// contradictions across the previously-fragmented facts. Uses the CLI's
+// default thresholds (Phase-A 0.65 sim recall + Phase-B LLM vetting).
+func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) error {
+	start := time.Now()
+	log.Info().Msg("Stance merge sweep started")
+
+	adapter := storage.NewStanceStorerAdapter(storer)
+	stanceManager, err := core.NewStanceManagerFromEnv(adapter)
+	if err != nil {
+		return fmt.Errorf("stance manager required for merge sweep: %w", err)
+	}
+
+	persons, err := storer.GetAllPersons(ctx)
+	if err != nil {
+		return fmt.Errorf("listing persons for merge sweep: %w", err)
+	}
+
+	opts := mergeOptions{
+		RecallSim:     0.65, // matches `dm stances merge` default
+		SubclusterSim: 0.75,
+		MaxCluster:    30,
+		DryRun:        false,
+	}
+
+	var personsProcessed, personsSkipped, mergedAway, contradictionsFound, analyzeFailures int64
+	for _, p := range persons {
+		ps, perr := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, p, opts)
+		if perr != nil {
+			log.Warn().Err(perr).Str("person", p.Name).Msg("Merge sweep: per-person failure (continuing)")
+			continue
+		}
+		personsProcessed++
+		if ps.skipped {
+			personsSkipped++
+		}
+		mergedAway += ps.stancesMerged
+		contradictionsFound += ps.postMergeContradictions
+		analyzeFailures += ps.postMergeAnalyzeFailures
+	}
+
+	log.Info().
+		Dur("elapsed", time.Since(start)).
+		Int64("persons_processed", personsProcessed).
+		Int64("persons_skipped", personsSkipped).
+		Int64("stances_merged", mergedAway).
+		Int64("post_merge_contradictions", contradictionsFound).
+		Int64("post_merge_analyze_failures", analyzeFailures).
+		Msg("Stance merge sweep finished")
+	return nil
 }
 
 // runTwitterCollection fetches tweets for active Twitter handles whose person is
