@@ -320,9 +320,13 @@ func collectDeputyVotesForLaws(eventsByLaw LawEventMap, lawKeys map[string]bool)
 	return allVotes
 }
 
-// TestPerformanceWithLargeDataset tests performance with larger datasets
+// TestPerformanceWithLargeDataset tests performance with larger datasets.
+// frpolitics.Run downloads scrutins from data.assemblee-nationale.fr, which
+// rate-limits aggressively (429) on both residential IPs and CI runners — so
+// the test is skipped by default everywhere. Set RUN_AN_TESTS=1 to run it
+// manually when the endpoint is responsive.
 func TestPerformanceWithLargeDataset(t *testing.T) {
-	skipIfCI(t)
+	skipANTests(t)
 	// Load environment variables from .env if present
 	if _, err := config.LoadConfigForTest(); err != nil {
 		t.Logf("Notice: config.LoadConfigForTest returned error (might be missing .env): %v", err)
