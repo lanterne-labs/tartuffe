@@ -19,16 +19,16 @@ import (
 var (
 	stancesBackfillPerson         string
 	stancesBackfillDryRun         bool
-	stancesBackfillMergeThreshold float64
 )
 
 var stancesBackfillCmd = &cobra.Command{
 	Use:   "backfill",
 	Short: "Backfill stance documents from existing facts",
 	Long: `Assigns each existing fact to a stance (creating new stances as needed) using
-the same per-fact LLM topic-assignment path as production ingest, then merges
-stance pairs whose normalised cluster_embedding centroids are cosine-similar
-above --merge-threshold (default 0.80).
+the same per-fact LLM topic-assignment path as production ingest, then runs the
+same LLM-vetted merge sweep the daily pipeline uses (Phase A agglomerative
+clustering of centroids + Phase B per-cluster LLM verification + post-merge
+contradiction re-detection).
 
 For each person (or specified person):
 1. Loads all active facts with embeddings.
@@ -37,9 +37,9 @@ For each person (or specified person):
 3. For each unique label group, calls StanceManager.ProcessNewFact on the
    representative — this runs assignTopic + (when matched) the analyze-vs-stance
    call, mirroring ingest behaviour.
-4. After all facts are placed, merges stances whose centroids exceed the cosine
-   threshold via UnionFind; the largest stance in each group keeps its summary
-   and key facts; centroids are recomputed as a weighted normalised mean.
+4. After all facts are placed, runs mergeStancesForPersonViaLLM — the same
+   merge logic the daily pipeline uses. To tune merge thresholds run
+   ` + "`dm stances merge --recall-threshold ...`" + ` afterwards.
 
 Examples:
   # Backfill all persons
@@ -47,9 +47,6 @@ Examples:
 
   # Backfill specific person
   ./dm stances backfill --person "Marine Le Pen"
-
-  # Tighter merge (fewer collapses)
-  ./dm stances backfill --merge-threshold 0.92
 
   # Dry run
   ./dm stances backfill --person "Marine Le Pen" --dry-run`,
@@ -61,7 +58,6 @@ func init() {
 	stancesCmd.AddCommand(stancesBackfillCmd)
 	stancesBackfillCmd.Flags().StringVar(&stancesBackfillPerson, "person", "", "Specific person name to backfill (optional)")
 	stancesBackfillCmd.Flags().BoolVar(&stancesBackfillDryRun, "dry-run", false, "Show what would be created without writing to database")
-	stancesBackfillCmd.Flags().Float64Var(&stancesBackfillMergeThreshold, "merge-threshold", 0.80, "Cosine similarity threshold (0-1) for the post-pass centroid merge")
 }
 
 // backfillFact holds the data needed for the per-fact ingest loop.
@@ -75,9 +71,10 @@ type backfillFact struct {
 
 // backfillStats accumulates per-person counters for the rebuild/backfill summary.
 type backfillStats struct {
-	StancesCreated         int
-	StancesMerged          int
-	ContradictionsDetected int
+	StancesCreated          int
+	StancesMerged           int
+	ContradictionsDetected  int // detected during per-fact ProcessNewFact
+	PostMergeContradictions int // detected during post-merge re-analysis (cross-stance pairs)
 }
 
 func runStancesBackfill(cmd *cobra.Command, args []string) error {
@@ -109,7 +106,7 @@ func runStancesBackfill(cmd *cobra.Command, args []string) error {
 	var totalCreated, totalMerged, totalContradictions int
 
 	for _, p := range persons {
-		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesBackfillDryRun, stancesBackfillMergeThreshold)
+		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesBackfillDryRun)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to backfill stances")
 			continue
@@ -207,7 +204,6 @@ func backfillStancesForPerson(
 	personID int64,
 	personName string,
 	dryRun bool,
-	mergeThreshold float64,
 ) (backfillStats, error) {
 	var stats backfillStats
 
@@ -284,11 +280,23 @@ func backfillStancesForPerson(
 		}
 	}
 
-	merged, err := mergeStancesForPersonByCentroid(ctx, storer, personID, mergeThreshold)
+	// LLM-vetted merge sweep — same code path the daily pipeline + `dm stances
+	// merge` use. Phase A agglomerative clustering of centroids, Phase B
+	// per-cluster LLM verification, then post-merge contradiction re-detection
+	// across previously-fragmented facts. Defaults match runStancesMergeStep.
+	mergeOpts := mergeOptions{
+		RecallSim:     0.65,
+		SubclusterSim: 0.75,
+		MaxCluster:    30,
+		DryRun:        false,
+	}
+	personInfo := storage.PersonInfo{ID: personID, Name: personName}
+	ps, err := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, personInfo, mergeOpts)
 	if err != nil {
-		log.Error().Err(err).Str("person", personName).Msg("Centroid merge phase failed (stances kept as-is)")
+		log.Error().Err(err).Str("person", personName).Msg("LLM-vetted merge phase failed (stances kept as-is)")
 	} else {
-		stats.StancesMerged = merged
+		stats.StancesMerged = int(ps.stancesMerged)
+		stats.PostMergeContradictions = int(ps.postMergeContradictions)
 	}
 
 	log.Info().
@@ -296,6 +304,7 @@ func backfillStancesForPerson(
 		Int("stances_created", stats.StancesCreated).
 		Int("stances_merged", stats.StancesMerged).
 		Int("contradictions_detected", stats.ContradictionsDetected).
+		Int("post_merge_contradictions", stats.PostMergeContradictions).
 		Msg("Backfill done for person")
 
 	return stats, nil
@@ -353,125 +362,12 @@ func clusterFactsByExactLabel(facts []backfillFact) map[string][]backfillFact {
 }
 
 // stanceMergeInput is the minimal view of a stance the merge logic needs.
-// Defined separately from core.StanceDocument so computeMergeGroups can be
-// unit-tested without touching the DB or pgvector types.
+// Used by applyMergeSubgroup (cmd/stances_merge.go) when recomputing the
+// destination centroid after a merge.
 type stanceMergeInput struct {
 	ID        int64
 	FactCount int
 	Centroid  []float32
-}
-
-// mergeStep is one ordered merge produced by computeMergeGroups: src is folded
-// into dst, dst's new centroid is the weighted normalised mean of all members.
-type mergeStep struct {
-	SrcID       int64
-	DstID       int64
-	NewCentroid []float32
-}
-
-// computeMergeGroups produces the set of merges to apply for a person's stances.
-// Centroids are assumed L2-normalised so dot product == cosine similarity. Pairs
-// with similarity ≥ threshold are unioned (transitive). Within each multi-member
-// group the representative is the stance with the largest FactCount (ties broken
-// by smallest ID); the new centroid for the representative is the weighted
-// normalised mean over all group members.
-func computeMergeGroups(stances []stanceMergeInput, threshold float64) []mergeStep {
-	n := len(stances)
-	if n < 2 {
-		return nil
-	}
-
-	parent := make([]int, n)
-	rank := make([]int, n)
-	for i := range parent {
-		parent[i] = i
-	}
-	var find func(int) int
-	find = func(i int) int {
-		if parent[i] != i {
-			parent[i] = find(parent[i])
-		}
-		return parent[i]
-	}
-	union := func(i, j int) {
-		ri, rj := find(i), find(j)
-		if ri == rj {
-			return
-		}
-		if rank[ri] < rank[rj] {
-			ri, rj = rj, ri
-		}
-		parent[rj] = ri
-		if rank[ri] == rank[rj] {
-			rank[ri]++
-		}
-	}
-
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			sim := dotProduct(stances[i].Centroid, stances[j].Centroid)
-			if sim >= threshold {
-				union(i, j)
-			}
-		}
-	}
-
-	groups := make(map[int][]int)
-	for i := 0; i < n; i++ {
-		r := find(i)
-		groups[r] = append(groups[r], i)
-	}
-
-	var steps []mergeStep
-	// Order groups by their representative's stance ID for deterministic output.
-	groupKeys := make([]int, 0, len(groups))
-	for k := range groups {
-		groupKeys = append(groupKeys, k)
-	}
-	sort.Ints(groupKeys)
-
-	for _, k := range groupKeys {
-		members := groups[k]
-		if len(members) < 2 {
-			continue
-		}
-		// Pick representative: largest FactCount, ties broken by smallest ID.
-		repIdx := members[0]
-		for _, idx := range members[1:] {
-			if stances[idx].FactCount > stances[repIdx].FactCount ||
-				(stances[idx].FactCount == stances[repIdx].FactCount && stances[idx].ID < stances[repIdx].ID) {
-				repIdx = idx
-			}
-		}
-		newCentroid := weightedNormalisedCentroid(stances, members)
-		// Emit one merge step per non-rep member, sorted by ID for determinism.
-		others := make([]int, 0, len(members)-1)
-		for _, idx := range members {
-			if idx != repIdx {
-				others = append(others, idx)
-			}
-		}
-		sort.Slice(others, func(i, j int) bool { return stances[others[i]].ID < stances[others[j]].ID })
-		for _, idx := range others {
-			steps = append(steps, mergeStep{
-				SrcID:       stances[idx].ID,
-				DstID:       stances[repIdx].ID,
-				NewCentroid: newCentroid,
-			})
-		}
-	}
-	return steps
-}
-
-func dotProduct(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-	var s float64
-	for i := range a {
-		s += float64(a[i]) * float64(b[i])
-	}
-	return s
 }
 
 // weightedNormalisedCentroid returns Σ(centroid_i × fact_count_i) / Σfact_count_i,
@@ -512,36 +408,3 @@ func weightedNormalisedCentroid(stances []stanceMergeInput, indices []int) []flo
 	return out
 }
 
-// mergeStancesForPersonByCentroid loads the person's stances, computes which
-// pairs cross the cosine threshold, and applies each merge through the storer.
-// Returns the number of stances that were merged away (== the number of merge
-// steps, since each step removes exactly one src).
-func mergeStancesForPersonByCentroid(ctx context.Context, storer *storage.PostgresStorer, personID int64, threshold float64) (int, error) {
-	docs, err := storer.GetStanceDocumentsForPerson(ctx, personID)
-	if err != nil {
-		return 0, fmt.Errorf("loading stances for merge: %w", err)
-	}
-	if len(docs) < 2 {
-		return 0, nil
-	}
-
-	inputs := make([]stanceMergeInput, len(docs))
-	for i, d := range docs {
-		inputs[i] = stanceMergeInput{ID: d.ID, FactCount: d.FactCount, Centroid: d.ClusterEmbedding}
-	}
-
-	steps := computeMergeGroups(inputs, threshold)
-	if len(steps) == 0 {
-		return 0, nil
-	}
-
-	merged := 0
-	for _, step := range steps {
-		if err := storer.MergeStancesForPerson(ctx, step.SrcID, step.DstID, step.NewCentroid); err != nil {
-			log.Warn().Err(err).Int64("src", step.SrcID).Int64("dst", step.DstID).Msg("Centroid merge step failed")
-			continue
-		}
-		merged++
-	}
-	return merged, nil
-}

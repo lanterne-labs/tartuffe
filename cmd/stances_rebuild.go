@@ -15,12 +15,11 @@ import (
 )
 
 var (
-	stancesRebuildPerson         string
-	stancesRebuildPersonsFile    string
-	stancesRebuildDryRun         bool
-	stancesRebuildResume         bool
-	stancesRebuildParallel       int
-	stancesRebuildMergeThreshold float64
+	stancesRebuildPerson      string
+	stancesRebuildPersonsFile string
+	stancesRebuildDryRun      bool
+	stancesRebuildResume      bool
+	stancesRebuildParallel    int
 )
 
 var stancesRebuildCmd = &cobra.Command{
@@ -55,7 +54,6 @@ func init() {
 	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildDryRun, "dry-run", false, "Show what would be done without writing to database")
 	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildResume, "resume", false, "Skip persons that already have at least one stance document (for resuming an interrupted rebuild)")
 	stancesRebuildCmd.Flags().IntVar(&stancesRebuildParallel, "parallel", 1, "Number of persons to rebuild concurrently (default 1, sequential). Each in-flight person consumes 1-2 chat-LLM slots.")
-	stancesRebuildCmd.Flags().Float64Var(&stancesRebuildMergeThreshold, "merge-threshold", 0.80, "Cosine similarity threshold (0-1) for the post-pass centroid merge")
 }
 
 func runStancesRebuild(cmd *cobra.Command, args []string) error {
@@ -144,7 +142,7 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 			atomic.AddInt64(&totalDeleted, int64(len(existing)))
 		}
 
-		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesRebuildDryRun, stancesRebuildMergeThreshold)
+		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesRebuildDryRun)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to rebuild stances")
 			return
