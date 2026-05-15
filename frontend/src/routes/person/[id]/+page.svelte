@@ -1328,9 +1328,25 @@
 		margin-right: 0.25rem;
 	}
 
+	.fact-source-links {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		flex-wrap: wrap;
+	}
+
 	.fact-source a {
 		color: var(--accent);
 		font-size: 0.813rem;
+	}
+
+	.source-sep {
+		color: var(--text-muted);
+		font-size: 0.813rem;
+	}
+
+	.archive-link {
+		opacity: 0.75;
 	}
 
 	.quote-block {

@@ -20,6 +20,7 @@ export interface FactWithSource {
 	lang?: string;         // BCP-47 source language
 	source_url: string;
 	original_quote: string;
+	archive_url?: string | null;
 }
 
 export interface ContradictionWithFacts {

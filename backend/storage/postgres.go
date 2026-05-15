@@ -2517,12 +2517,13 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 
 // FactWithSource represents a fact with its source information
 type FactWithSource struct {
-	FactID        int64  `json:"fact_id"`
-	FactText      string `json:"fact_text"`
-	FactTextEn    string `json:"fact_text_en,omitempty"` // English translation; empty if source is English
-	Lang          string `json:"lang,omitempty"`         // BCP-47 source language
-	SourceURL     string `json:"source_url"`
-	OriginalQuote string `json:"original_quote"`
+	FactID        int64   `json:"fact_id"`
+	FactText      string  `json:"fact_text"`
+	FactTextEn    string  `json:"fact_text_en,omitempty"` // English translation; empty if source is English
+	Lang          string  `json:"lang,omitempty"`         // BCP-47 source language
+	SourceURL     string  `json:"source_url"`
+	OriginalQuote string  `json:"original_quote"`
+	ArchiveURL    *string `json:"archive_url"`
 }
 
 // FactInStance is the projection returned by /api/stances/:id/facts. Carries
@@ -2586,14 +2587,14 @@ type PaginatedContradictions struct {
 func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*PaginatedFacts, error) {
 	query := `
 		WITH fact_rows AS (
-			SELECT DISTINCT f.id, f.fact_text, COALESCE(f.fact_text_en, '') AS fact_text_en, COALESCE(f.lang, '') AS lang, fs.source_url, fs.original_quote
+			SELECT DISTINCT f.id, f.fact_text, COALESCE(f.fact_text_en, '') AS fact_text_en, COALESCE(f.lang, '') AS lang, fs.source_url, fs.original_quote, fs.archive_url
 			FROM facts f
 			JOIN fact_sources fs ON fs.fact_id = f.id
 			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = $1
 			  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		)
-		SELECT id, fact_text, fact_text_en, lang, source_url, original_quote,
+		SELECT id, fact_text, fact_text_en, lang, source_url, original_quote, archive_url,
 		       (SELECT COUNT(DISTINCT id) FROM fact_rows) AS total_count
 		FROM fact_rows
 		ORDER BY id
@@ -2608,7 +2609,7 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	result := &PaginatedFacts{Items: make([]FactWithSource, 0)}
 	for rows.Next() {
 		var fact FactWithSource
-		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.FactTextEn, &fact.Lang, &fact.SourceURL, &fact.OriginalQuote, &result.Total)
+		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.FactTextEn, &fact.Lang, &fact.SourceURL, &fact.OriginalQuote, &fact.ArchiveURL, &result.Total)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan fact: %w", err)
 		}
@@ -2634,6 +2635,56 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	}
 
 	return result, nil
+}
+
+// SourceToArchive is a fact source record that needs an archive URL.
+type SourceToArchive struct {
+	ID        int64
+	SourceURL string
+}
+
+// GetSourcesWithoutArchiveURL returns up to limit fact_sources that have never been
+// submitted to archive.org or whose last attempt was more than 7 days ago.
+func (s *PostgresStorer) GetSourcesWithoutArchiveURL(ctx context.Context, limit int) ([]SourceToArchive, error) {
+	query := `
+		SELECT id, source_url
+		FROM fact_sources
+		WHERE source_url IS NOT NULL AND source_url <> ''
+		  AND archive_url IS NULL
+		  AND (archive_attempted_at IS NULL OR archive_attempted_at < NOW() - INTERVAL '7 days')
+		ORDER BY id
+		LIMIT $1`
+
+	rows, err := s.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query sources without archive URL: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SourceToArchive
+	for rows.Next() {
+		var r SourceToArchive
+		if err := rows.Scan(&r.ID, &r.SourceURL); err != nil {
+			return nil, fmt.Errorf("scan source row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateSourceArchiveURL records the result of an archiving attempt. archiveURL is nil
+// when the save request was submitted but the snapshot is not yet available; the
+// archive_attempted_at timestamp is always updated so we do not retry within 7 days.
+func (s *PostgresStorer) UpdateSourceArchiveURL(ctx context.Context, sourceID int64, archiveURL *string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE fact_sources
+		SET archive_url = $2, archive_attempted_at = NOW()
+		WHERE id = $1`,
+		sourceID, archiveURL)
+	if err != nil {
+		return fmt.Errorf("update archive url for source %d: %w", sourceID, err)
+	}
+	return nil
 }
 
 // ContradictionWithFacts represents a contradiction with both fact texts, sources, and dates.

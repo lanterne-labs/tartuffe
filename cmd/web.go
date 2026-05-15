@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/alerting"
+	"digital-mirror/backend/archiver"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -734,6 +735,10 @@ func executeServe(cmd *cobra.Command, args []string) error {
 
 	// Daily pipeline runs as a separate the host cron service (`dm pipeline daily`),
 	// not in-process. See CLAUDE.md → Deployment.
+
+	// Start background archiver: submits source URLs to archive.org politely.
+	arc := archiver.New(storer)
+	go arc.Run(ctx, 1*time.Hour)
 
 	addr := ":" + port
 	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")
