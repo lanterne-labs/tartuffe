@@ -3,6 +3,7 @@ package extractor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/joho/godotenv"
@@ -59,5 +60,73 @@ func TestWebcrawlerAPIExtractor_ExtractContent_Live(t *testing.T) {
 		assert.Equal(t, testURL, extractedContent.URL, "Extracted URL should match the input URL")
 		t.Logf("Successfully extracted title: %s", extractedContent.Title)
 		t.Logf("Successfully extracted content (first 100 chars): %.100s...", extractedContent.Content)
+	}
+}
+
+func TestStripTrailingSidebarSections(t *testing.T) {
+	// Authentic fixture: BFMTV video page returns content that is entirely
+	// the "## Sur le même sujet" related-videos block.
+	bfmtvSidebarOnly := strings.Join([]string{
+		"## Sur le même sujet",
+		"",
+		"[1:44](/lyon/replay-emissions/bonjour-lyon/video-x.html \"Title A\")",
+		"",
+		"### [Title A](/lyon/replay-emissions/bonjour-lyon/video-x.html \"Title A\")",
+		"",
+		"[0:44](/politique/video-y.html \"Title B\")",
+		"",
+		"### [Title B](/politique/video-y.html \"Title B\")",
+	}, "\n")
+
+	bodyThenSidebar := strings.Join([]string{
+		"# Article title",
+		"",
+		"Le président a déclaré quelque chose d'important aujourd'hui devant l'Assemblée.",
+		"",
+		"Le débat a duré plusieurs heures et plusieurs ministres ont pris la parole.",
+		"",
+		"## À lire aussi",
+		"",
+		"### [Other article](/other.html \"Other\")",
+	}, "\n")
+	bodyThenSidebarExpected := strings.Join([]string{
+		"# Article title",
+		"",
+		"Le président a déclaré quelque chose d'important aujourd'hui devant l'Assemblée.",
+		"",
+		"Le débat a duré plusieurs heures et plusieurs ministres ont pris la parole.",
+	}, "\n")
+
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"sidebar_only_bfmtv", bfmtvSidebarOnly, ""},
+		{"body_then_a_lire_aussi", bodyThenSidebar, bodyThenSidebarExpected},
+		{
+			name: "mid_body_h2_not_in_list_retained",
+			input: "# Title\n\nIntro paragraph.\n\n## Contexte\n\nContext paragraph that should survive intact.\n\n## Conséquences\n\nMore body content.",
+			want:  "# Title\n\nIntro paragraph.\n\n## Contexte\n\nContext paragraph that should survive intact.\n\n## Conséquences\n\nMore body content.",
+		},
+		{
+			name:  "case_insensitive_uppercase_marker",
+			input: "Some article body here.\n\n## SUR LE MÊME SUJET\n\n### [tile](/url)",
+			want:  "Some article body here.",
+		},
+		{
+			name:  "case_insensitive_accent_variant",
+			input: "Body.\n\n## A lire aussi\n\nLinks.",
+			want:  "Body.",
+		},
+		{"empty", "", ""},
+		{"no_markers_passthrough", "# Just a body\n\nA paragraph.\n", "# Just a body\n\nA paragraph.\n"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stripTrailingSidebarSections(tc.input)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }

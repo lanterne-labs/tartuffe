@@ -643,7 +643,7 @@ func buildContradictionHandler(storer *storage.PostgresStorer) core.Contradictio
 					Str("reason", result.Reason).
 					Msg("Contradiction detected (batch)")
 
-				contradictionID, needsBundler, recErr := storer.RecordContradictionImmediate(ctx, personID, factAIDs[i], factBIDs[i], result.Reason)
+				contradictionID, needsBundler, recErr := storer.RecordContradictionImmediate(ctx, personID, factAIDs[i], factBIDs[i], result.Reason, result.ReasonEn)
 				if recErr != nil {
 					log.Error().Err(recErr).Msg("Failed to record contradiction from batch")
 					continue

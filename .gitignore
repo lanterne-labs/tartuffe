@@ -28,3 +28,8 @@ scraped_content/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Runtime artifacts (audit/rebuild logs, scrape dumps, etc.)
+*.jsonl
+facts_audit_progress.json
+facts_rebuild_progress.json

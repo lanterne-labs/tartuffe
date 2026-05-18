@@ -3,6 +3,13 @@
 	import type { PersonSummary } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
+	import { lang, tr } from '$lib/i18n';
+
+	let currentLang = $state<'fr' | 'en'>('fr');
+	$effect(() => {
+		const unsub = lang.subscribe((v) => (currentLang = v));
+		return unsub;
+	});
 
 	let persons: PersonSummary[] = $state([]);
 	let topHonest: PersonSummary[] = $state([]);
@@ -76,8 +83,8 @@
 				fetch(`${API_BASE}/api/persons?${bestQs}`),
 				fetch(`${API_BASE}/api/persons?${worstQs}`)
 			]);
-			if (bestRes.ok) topHonest = await bestRes.json();
-			if (worstRes.ok) topDishonest = await worstRes.json();
+			if (bestRes.ok) topHonest = (await bestRes.json()) ?? [];
+			if (worstRes.ok) topDishonest = (await worstRes.json()) ?? [];
 		} catch (err) {
 			// Panel errors are non-fatal; main list error banner covers retries.
 		} finally {
@@ -137,19 +144,14 @@
 </script>
 
 <svelte:head>
-	<title>Digital Mirror - Dashboard</title>
+	<title>tartuffe.me — the honesty ledger</title>
 </svelte:head>
 
 <div class="dashboard">
-	<div class="dashboard-header">
-		<h1>Political Honesty Tracker</h1>
-		<p class="subtitle">Persons ranked by popularity and honesty score</p>
-	</div>
-
 	{#if error}
 		<div class="error-banner">
 			<p>{error}</p>
-			<button class="retry-btn" onclick={() => loadPersons(0)}>Retry</button>
+			<button class="retry-btn" onclick={() => loadPersons(0)}>{tr('home.retry', currentLang)}</button>
 		</div>
 	{/if}
 
@@ -161,7 +163,7 @@
 			</svg>
 			<input
 				type="text"
-				placeholder="Search by name..."
+				placeholder={tr('home.search_placeholder', currentLang)}
 				value={searchQuery}
 				oninput={handleSearchInput}
 				class="search-input"
@@ -174,27 +176,27 @@
 				class:active={entityFilter === ''}
 				onclick={() => setFilter('')}
 				aria-pressed={entityFilter === ''}
-			>Both</button>
+			>{tr('home.filter.all', currentLang)}</button>
 			<button
 				class="pill"
 				class:active={entityFilter === 'human'}
 				onclick={() => setFilter('human')}
 				aria-pressed={entityFilter === 'human'}
-			>People</button>
+			>{tr('home.filter.people', currentLang)}</button>
 			<button
 				class="pill"
 				class:active={entityFilter === 'party'}
 				onclick={() => setFilter('party')}
 				aria-pressed={entityFilter === 'party'}
-			>Parties</button>
+			>{tr('home.filter.parties', currentLang)}</button>
 		</div>
 	</div>
 
 	<div class="ranking-panels">
 		<section class="rank-panel rank-panel--best">
 			<header class="rank-panel-header">
-				<h2>Most Honest</h2>
-				<span class="rank-panel-sub">Top {PANEL_SIZE} by score</span>
+				<h2>{tr('home.most_honest', currentLang)}</h2>
+				<span class="rank-panel-sub">{tr('home.top_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
 			</header>
 			{#if panelsLoading && topHonest.length === 0}
 				<ul class="rank-list">
@@ -207,7 +209,7 @@
 					{/each}
 				</ul>
 			{:else if topHonest.length === 0}
-				<p class="empty">No data yet.</p>
+				<p class="empty">{tr('home.no_data', currentLang)}</p>
 			{:else}
 				<ol class="rank-list">
 					{#each topHonest as person, i (person.id)}
@@ -223,7 +225,7 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}</div>
+									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<div class="rank-score rank-score--good">{(person.honesty_score * 100).toFixed(0)}</div>
 							</a>
@@ -235,8 +237,8 @@
 
 		<section class="rank-panel rank-panel--worst">
 			<header class="rank-panel-header">
-				<h2>Least Honest</h2>
-				<span class="rank-panel-sub">Bottom {PANEL_SIZE} by score</span>
+				<h2>{tr('home.least_honest', currentLang)}</h2>
+				<span class="rank-panel-sub">{tr('home.bottom_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
 			</header>
 			{#if panelsLoading && topDishonest.length === 0}
 				<ul class="rank-list">
@@ -249,7 +251,7 @@
 					{/each}
 				</ul>
 			{:else if topDishonest.length === 0}
-				<p class="empty">No data yet.</p>
+				<p class="empty">{tr('home.no_data', currentLang)}</p>
 			{:else}
 				<ol class="rank-list">
 					{#each topDishonest as person, i (person.id)}
@@ -265,7 +267,7 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}</div>
+									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<div class="rank-score rank-score--bad">{(person.honesty_score * 100).toFixed(0)}</div>
 							</a>
@@ -276,7 +278,7 @@
 		</section>
 	</div>
 
-	<h2 class="section-title">All entities</h2>
+	<h2 class="section-title">{tr('home.all_entities', currentLang)}</h2>
 
 	{#if loading && persons.length === 0}
 		<div class="persons-grid">
@@ -310,7 +312,7 @@
 								<div class="card-name">
 									{person.name}
 									{#if person.entity_type === 'party'}
-										<span class="badge">Party</span>
+										<span class="badge">{tr('home.party_badge', currentLang)}</span>
 									{/if}
 								</div>
 								<div class="card-meta">
@@ -356,7 +358,7 @@
 
 	{#if hasMore && !loading}
 		<div class="load-more">
-			<button class="load-more-btn" onclick={loadMore}>Load More</button>
+			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
 		</div>
 	{/if}
 </div>
@@ -368,19 +370,36 @@
 	}
 
 	.dashboard-header {
-		margin-bottom: 2rem;
+		margin-bottom: 2.25rem;
+		padding-bottom: 1.25rem;
+		border-bottom: 1px solid var(--border-card);
+		position: relative;
+	}
+
+	.dashboard-header::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		bottom: -1px;
+		width: 3rem;
+		height: 1px;
+		background: var(--accent);
 	}
 
 	.dashboard-header h1 {
-		font-size: 1.75rem;
-		font-weight: 700;
-		letter-spacing: -0.025em;
-		margin-bottom: 0.25rem;
+		font-family: var(--font-serif);
+		font-size: 2.5rem;
+		font-weight: 600;
+		letter-spacing: 0.005em;
+		line-height: 1.1;
+		margin-bottom: 0.5rem;
 	}
 
 	.subtitle {
 		color: var(--text-secondary);
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
+		letter-spacing: 0.04em;
+		font-style: italic;
 	}
 
 	/* Error Banner */

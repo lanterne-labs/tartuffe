@@ -165,6 +165,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 			PublishedAt:        firstRec.PublishedAt,
 			SourceType:         "assemblee_law_page",
 			Metadata:           metadata,
+			Lang:               "fr",
 		}
 		inputs = append(inputs, input)
 	}

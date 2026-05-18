@@ -16,10 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// embeddingDimension defines the dimension for mock embeddings.
-// Must match the current pgvector column dimension (see
-// supabase/migrations/20260510000000_resize_embedding_to_4096.sql) and the
-// targetEmbeddingDim constant in backend/embedding/openai_embeddings.go.
+// embeddingDimension defines the dimension for mock embeddings
 const embeddingDimension = 4096
 
 // Helper function to load .env for tests
@@ -1103,7 +1100,7 @@ func TestStanceBundledContradictions(t *testing.T) {
 	// and one half-unstanced pair (f1 in A vs f6 → solo).
 	rec := func(a, b int64) (int64, bool) {
 		t.Helper()
-		id, needsBundler, err := storer.RecordContradictionImmediate(ctx, personID, a, b, fmt.Sprintf("clash %d/%d", a, b))
+		id, needsBundler, err := storer.RecordContradictionImmediate(ctx, personID, a, b, fmt.Sprintf("clash %d/%d", a, b), "")
 		require.NoError(t, err)
 		return id, needsBundler
 	}

@@ -17,14 +17,14 @@ import (
 // StanceStorer defines the storage interface for stance operations.
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
-	UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error
-	UpdateStanceMetadata(ctx context.Context, id int64, label string, summary string) error
+	UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error
+	UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error)
 	DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error
-	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error
+	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) error
 }
 
 // StanceDocument is the core type for stance documents.
@@ -32,8 +32,10 @@ type StanceDocument struct {
 	ID               int64
 	PersonID         int64
 	ClusterLabel     string
+	LabelEn          string // English translation of ClusterLabel; empty if already English
 	ClusterEmbedding []float32
 	Summary          string
+	SummaryEn        string // English translation of Summary; empty if already English
 	KeyFactIDs       []int64
 	FactCount        int
 }
@@ -50,6 +52,7 @@ type StanceFactInfo struct {
 	NormalizedFactText string
 	EmbeddingText      string
 	CanonicalVerb      string
+	Lang               string // BCP-47 source language ("fr", "en", ...); always set on new inserts.
 }
 
 // StanceContradictionEntry is one (new_fact, key_fact) contradiction the LLM
@@ -59,6 +62,7 @@ type StanceFactInfo struct {
 type StanceContradictionEntry struct {
 	KeyFactID int64  `json:"key_fact_id"`
 	Reason    string `json:"reason"`
+	ReasonEn  string `json:"reason_en,omitempty"` // English translation; empty when reason is already English
 }
 
 // StanceProcessResult holds the outcome of processing a new fact against existing stances.
@@ -87,9 +91,10 @@ type stanceLLMResponse struct {
 // emit a number (e.g. 0) for this field when AssignedIndex != 0 (i.e. when no new
 // topic is being created). A strict string parse would fail the whole call.
 type topicAssignmentResponse struct {
-	Reasoning     string         `json:"reasoning"`
-	AssignedIndex int            `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
-	NewTopicLabel flexibleString `json:"new_topic_label"`      // only set when AssignedIndex == 0
+	Reasoning       string         `json:"reasoning"`
+	AssignedIndex   int            `json:"assigned_topic_index"`     // 1-indexed, 0 means new topic
+	NewTopicLabel   flexibleString `json:"new_topic_label"`          // only set when AssignedIndex == 0
+	NewTopicLabelEn flexibleString `json:"new_topic_label_en"`       // English translation; empty when new_topic_label is already English
 }
 
 // generalLabelResponse is the response from generateGeneralLabel — a thin
@@ -103,8 +108,10 @@ type generalLabelResponse struct {
 // general topic label and a 2-4 sentence summary regenerated from the FULL
 // fact list of the stance.
 type stanceMetadataResponse struct {
-	Label   flexibleString `json:"label"`
-	Summary string         `json:"summary"`
+	Label     flexibleString `json:"label"`
+	LabelEn   flexibleString `json:"label_en"`   // English translation; empty when label is already English
+	Summary   string         `json:"summary"`
+	SummaryEn string         `json:"summary_en"` // English translation; empty when summary is already English
 }
 
 // flexibleString accepts string, number, bool, or null in JSON and stores the
@@ -208,6 +215,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	// New topic: create a new stance with the LLM-generated general label
 	if assignment.AssignedIndex == 0 {
 		label := strings.TrimSpace(string(assignment.NewTopicLabel))
+		labelEn := strings.TrimSpace(string(assignment.NewTopicLabelEn))
 		if label == "" {
 			// Defensive: assignTopic didn't emit a usable label. Ask explicitly via
 			// generateGeneralLabel so we never store fact text as a stance label.
@@ -221,7 +229,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 			Int64("fact_id", factID).
 			Str("reasoning", assignment.Reasoning).
 			Msg("LLM assigned fact to new topic")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, labelEn)
 	}
 
 	// Find the matched stance by index (1-indexed)
@@ -234,7 +242,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		if err != nil {
 			return nil, fmt.Errorf("generating fallback general label: %w", err)
 		}
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label)
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, "")
 	}
 	matched := &stances[assignment.AssignedIndex-1]
 
@@ -366,8 +374,9 @@ func chunkKeyFacts(facts []StanceFactInfo, size int) [][]StanceFactInfo {
 // obtain a general topic label. If the supplied label is empty we error rather
 // than falling back to fact text (which historically produced quoted-statement
 // labels that fragmented stances).
-func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label string) (*StanceProcessResult, error) {
+func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label, labelEn string) (*StanceProcessResult, error) {
 	label = strings.TrimSpace(label)
+	labelEn = strings.TrimSpace(labelEn)
 	if label == "" {
 		// Last-ditch defensive call — shouldn't happen given ProcessNewFact's flow,
 		// but if it does, generate a label rather than store fact text.
@@ -380,14 +389,21 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
 	}
+	if r := []rune(labelEn); len(r) > 120 {
+		labelEn = string(r[:120])
+	}
 
 	doc := StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     label,
+		LabelEn:          labelEn,
 		ClusterEmbedding: embedding,
 		Summary:          factText,
-		KeyFactIDs:       []int64{factID},
-		FactCount:        1,
+		// SummaryEn intentionally empty at creation — first triggerStanceRefresh
+		// (fired when the second fact joins this stance) regenerates both summary
+		// and summary_en bilingually. Until then the frontend falls back to native.
+		KeyFactIDs: []int64{factID},
+		FactCount:  1,
 	}
 
 	stanceID, err := sm.storer.InsertStanceDocument(ctx, doc)
@@ -489,7 +505,7 @@ func (sm *StanceManager) applyStanceUpdate(ctx context.Context, matched *StanceD
 	if len(keyFactIDs) < 10 {
 		keyFactIDs = append(keyFactIDs, factID)
 	}
-	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, newCentroid, keyFactIDs, newFactCount)
+	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, matched.SummaryEn, newCentroid, keyFactIDs, newFactCount)
 }
 
 // AnalyzeFactInStance treats `fact` as if it just arrived in `stance` and runs
@@ -550,7 +566,7 @@ func (sm *StanceManager) recordStanceContradictions(
 			// Self-pair — should never come from the LLM but guard anyway.
 			continue
 		}
-		if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason); err != nil {
+		if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason, c.ReasonEn); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", stanceID).
 				Int64("fact_a", factID).
@@ -582,7 +598,7 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 		return nil // nothing to refresh from
 	}
 
-	label, summary, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
+	label, labelEn, summary, summaryEn, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
 	if err != nil {
 		return fmt.Errorf("regenerating metadata: %w", err)
 	}
@@ -593,7 +609,10 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
 	}
-	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, summary); err != nil {
+	if r := []rune(labelEn); len(r) > 120 {
+		labelEn = string(r[:120])
+	}
+	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, labelEn, summary, summaryEn); err != nil {
 		return fmt.Errorf("persisting refreshed metadata: %w", err)
 	}
 	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("facts", len(facts)).Msg("Refreshed stance metadata")
@@ -681,13 +700,15 @@ The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction 
 **RESPONSE FORMAT:**
 Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. Write your reasoning BEFORE listing contradictions.
 
+**LANGUAGE RULE:** Write each contradiction's ` + "`reason`" + ` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose ` + "`reason`" + ` is NOT English, ALSO provide ` + "`reason_en`" + ` — a faithful English translation. OMIT ` + "`reason_en`" + ` when ` + "`reason`" + ` is already English. ` + "`reasoning`" + ` (the top-level analysis field) follows the same language rule.
+
 Return ONLY valid JSON:
 {
   "reasoning": "1-3 sentences: identify the new fact's core claim, list each key fact it conflicts with (and why), then state the primary verdict",
   "primary_verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
   "duplicate_of_key_fact_id": 0,
   "contradictions": [
-    {"key_fact_id": <id>, "reason": "1-2 sentences explaining the contradiction"}
+    {"key_fact_id": <id>, "reason": "1-2 sentences explaining the contradiction", "reason_en": "English translation (omit when reason is English)"}
   ]
 }
 
@@ -758,6 +779,7 @@ LABEL RULES (for new_topic_label when creating a new topic):
   * "parliamentary assistants case"
   * "municipal elections 2026"
 - Do NOT include the person's name (labels are already per-person).
+- **LANGUAGE:** Write ` + "`new_topic_label`" + ` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
 - ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
   * ❌ "Donald Trump a posté « FREE LEPEN »" — quoting an action
   * ❌ "Marine Le Pen a affirmé qu'elle ne se présenterait pas..." — quoting a statement
@@ -772,7 +794,8 @@ Return ONLY valid JSON:
 {
   "reasoning": "Brief explanation of your choice",
   "assigned_topic_index": 0,
-  "new_topic_label": "broad subject-area label, max 120 chars (only if assigned_topic_index is 0)"
+  "new_topic_label": "broad subject-area label, max 120 chars (only if assigned_topic_index is 0)",
+  "new_topic_label_en": "faithful English translation of new_topic_label — OMIT when new_topic_label is already English"
 }
 
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(shortlist))
@@ -893,9 +916,9 @@ Return ONLY valid JSON:
 //   - Re-derive the broadest accurate subject-area label per the LABEL RULES.
 //   - Write a 2-4 sentence summary that PRESERVES tensions if any pair of key
 //     facts conflict — do not smooth contradictions into one narrative.
-func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int64, facts []StanceFactInfo) (string, string, error) {
+func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int64, facts []StanceFactInfo) (string, string, string, string, error) {
 	if len(facts) == 0 {
-		return "", "", fmt.Errorf("refreshStanceMetadata: stance %d has no facts", stanceID)
+		return "", "", "", "", fmt.Errorf("refreshStanceMetadata: stance %d has no facts", stanceID)
 	}
 	var factsBuilder strings.Builder
 	for _, f := range facts {
@@ -920,20 +943,26 @@ SUMMARY RULES:
 - If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
 - Do not add facts or claims beyond what's in the listed facts.
 
-Return ONLY valid JSON:
-{"label": "subject-area label", "summary": "2-4 sentence summary"}`, factsBuilder.String())
+LANGUAGE RULES:
+- Write "label" and "summary" in the SAME LANGUAGE as the listed facts (if facts span multiple languages, use French).
+- ALSO provide "label_en" and "summary_en" — faithful English translations. OMIT both _en fields entirely when the native versions are already in English.
 
-	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 400)
+Return ONLY valid JSON:
+{"label": "subject-area label", "label_en": "English translation (omit if label is English)", "summary": "2-4 sentence summary", "summary_en": "English translation (omit if summary is English)"}`, factsBuilder.String())
+
+	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700)
 	if err != nil {
-		return "", "", fmt.Errorf("metadata refresh: %w", err)
+		return "", "", "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
 	var resp stanceMetadataResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		return "", "", fmt.Errorf("parsing refresh response: %w", err)
+		return "", "", "", "", fmt.Errorf("parsing refresh response: %w", err)
 	}
 	label := strings.TrimSpace(string(resp.Label))
+	labelEn := strings.TrimSpace(string(resp.LabelEn))
 	summary := strings.TrimSpace(resp.Summary)
-	return label, summary, nil
+	summaryEn := strings.TrimSpace(resp.SummaryEn)
+	return label, labelEn, summary, summaryEn, nil
 }
 
 // stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.
@@ -1036,6 +1065,8 @@ RULES:
 - Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
 
 For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
+
+**LANGUAGE RULE:** Write the unified ` + "`summary`" + ` and ` + "`label`" + ` in the same language as the stances provided. If stances span multiple languages, use French.
 
 STANCES IN THIS CANDIDATE CLUSTER:
 %s

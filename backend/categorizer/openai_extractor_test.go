@@ -161,14 +161,6 @@ pour l'industrie automobile.`
 		if len(words) > 15 {
 			t.Errorf("Fact %d: embedding_text has %d words (expected ≤15): %q", i+1, len(words), fact.EmbeddingText)
 		}
-		// Must be English (no accented French characters as a simple heuristic)
-		for _, frChar := range []string{"é", "è", "ê", "à", "ù", "ç", "ô", "î"} {
-			if strings.Contains(fact.EmbeddingText, frChar) {
-				t.Errorf("Fact %d: embedding_text contains French character %q — should be English: %q",
-					i+1, frChar, fact.EmbeddingText)
-				break
-			}
-		}
 	}
 
 	// --- Content assertions: things that should NOT be extracted ---

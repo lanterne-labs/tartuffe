@@ -74,15 +74,6 @@ func findPersonNameByFactDBID(factDBID int64, factDBIDToPersonDBID map[int64]int
 // TestPersonSimilarity evaluates the FindNeighborFactsForPerson performance
 // using the ground truth corpus adapted with person names.
 func TestPersonSimilarity(t *testing.T) {
-	// --- Logging and Environment Setup ---
-	log.Logger = log.Output(zerolog.ConsoleWriter{
-		Out:        os.Stderr,
-		TimeFormat: time.RFC3339,
-		NoColor:    false,
-	})
-	zerolog.SetGlobalLevel(zerolog.DebugLevel)
-	log.Debug().Msg("Console logger forced for TestPersonSimilarity")
-
 	err := godotenv.Overload(filepath.Join("..", "..", ".env"))
 	if err != nil {
 		t.Log("INFO: .env file not found or failed to load, relying on environment variables.")
@@ -95,6 +86,16 @@ func TestPersonSimilarity(t *testing.T) {
 	if dbURL == "" || openAIKey == "" {
 		t.Skip("Skipping similarity test: DATABASE_URL or OPEN_AI_KEY not set")
 	}
+
+	// Set up console logger only when the test will actually run (avoids data race
+	// with background goroutines spawned by other tests that read log.Logger).
+	log.Logger = log.Output(zerolog.ConsoleWriter{
+		Out:        os.Stderr,
+		TimeFormat: time.RFC3339,
+		NoColor:    false,
+	})
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	log.Debug().Msg("Console logger forced for TestPersonSimilarity")
 
 	// --- Test Dependencies Initialization ---
 	ctx := context.Background()

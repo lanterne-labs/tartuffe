@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -26,11 +27,32 @@ type WebcrawlerAPIExtractor struct {
 }
 
 // webcrawlerScrapeRequest defines the request body for the scrape endpoint.
+// Note: the /v2/scrape endpoint rejects unknown fields with "invalid_request".
+// In particular, `clean_selectors` is listed in the public docs but is NOT
+// accepted here (probed 2026-05-15). Sidebar removal is handled locally via
+// stripTrailingSidebarSections after the API responds.
 type webcrawlerScrapeRequest struct {
-	URL        string                   `json:"url"`
-	ScrapeType string                   `json:"scrape_type"`
-	ItemsLimit int                      `json:"items_limit,omitempty"`
-	Items      []webcrawlerRequestItems `json:"items,omitempty"`
+	URL             string                   `json:"url"`
+	ScrapeType      string                   `json:"scrape_type"`
+	MainContentOnly bool                     `json:"main_content_only,omitempty"`
+	ItemsLimit      int                      `json:"items_limit,omitempty"`
+	Items           []webcrawlerRequestItems `json:"items,omitempty"`
+}
+
+// sidebarSectionMarkers are H2 headings used by French news sites to introduce
+// non-article content (related videos, "à lire aussi", popular articles…). When any
+// of these appears in the markdown, everything from that point to the end is dropped.
+// These names are conventions; they don't appear inside legitimate article bodies.
+var sidebarSectionMarkers = []string{
+	"## Sur le même sujet",
+	"## Sur le sujet",
+	"## Sur le même thème",
+	"## À lire aussi",
+	"## A lire aussi",
+	"## À voir aussi",
+	"## Articles populaires",
+	"## Vidéos populaires",
+	"## Les plus lus",
 }
 
 type webcrawlerRequestItems struct {
@@ -100,11 +122,13 @@ func (e *WebcrawlerAPIExtractor) ExtractContent(url string) (*ExtractedContent, 
 		return nil, fmt.Errorf("webcrawlerapi extraction returned empty markdown for url %s", url)
 	}
 
+	cleaned := stripTrailingSidebarSections(result.Markdown)
+
 	extracted := &ExtractedContent{
 		URL:           url,
 		Title:         result.PageTitle,
 		DatePublished: nil, // WebcrawlerAPI doesn't provide publication date
-		Content:       result.Markdown,
+		Content:       cleaned,
 	}
 
 	log.Debug().Str("url", url).Str("title", extracted.Title).Msg("Successfully extracted content via WebcrawlerAPI")
@@ -114,8 +138,9 @@ func (e *WebcrawlerAPIExtractor) ExtractContent(url string) (*ExtractedContent, 
 // submitScrapeJob submits a scrape job to the WebcrawlerAPI and returns the job ID.
 func (e *WebcrawlerAPIExtractor) submitScrapeJob(url string) (string, error) {
 	requestPayload := webcrawlerScrapeRequest{
-		URL:        url,
-		ScrapeType: "markdown",
+		URL:             url,
+		ScrapeType:      "markdown",
+		MainContentOnly: true,
 	}
 
 	requestBody, err := json.Marshal(requestPayload)
@@ -213,4 +238,26 @@ func (e *WebcrawlerAPIExtractor) pollForCompletion(jobID, url string) (*webcrawl
 	}
 
 	return nil, fmt.Errorf("polling timed out after %d attempts for url %s", webcrawlerMaxPollAttempts, url)
+}
+
+// stripTrailingSidebarSections cuts the markdown at the first occurrence of any
+// known sidebar-section H2 heading (case-insensitive). These section names are
+// French-news conventions and always appear at the end of the article body when
+// present, so a tail-only cut is safe.
+func stripTrailingSidebarSections(md string) string {
+	if md == "" {
+		return md
+	}
+	lower := strings.ToLower(md)
+	idx := -1
+	for _, marker := range sidebarSectionMarkers {
+		i := strings.Index(lower, strings.ToLower(marker))
+		if i >= 0 && (idx == -1 || i < idx) {
+			idx = i
+		}
+	}
+	if idx == -1 {
+		return md
+	}
+	return strings.TrimSpace(md[:idx])
 }

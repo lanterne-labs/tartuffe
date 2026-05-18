@@ -35,18 +35,21 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 	coreInputs := make([]core.StoreFactInput, len(items))
 	for idx, it := range items {
 		coreInputs[idx] = core.StoreFactInput{
-			SubjectEntity:      it.SubjectEntity,
-			SubjectEntityType:  it.SubjectEntityType,
-			NormalizedFactText: it.NormalizedFactText,
-			Embedding:          vecs[idx],
-			OriginalQuote:      it.OriginalQuote,
-			CanonicalVerb:      it.CanonicalVerb,
-			InvolvedPeople:     it.InvolvedPeople,
-			SourceURL:          it.SourceURL,
-			PublishedAt:        it.PublishedAt,
-			SourceType:         it.SourceType,
-			Metadata:           it.Metadata,
+			SubjectEntity:        it.SubjectEntity,
+			SubjectEntityType:    it.SubjectEntityType,
+			NormalizedFactText:   it.NormalizedFactText,
+			NormalizedFactTextEn: it.NormalizedFactTextEn,
+			Embedding:            vecs[idx],
+			OriginalQuote:        it.OriginalQuote,
+			CanonicalVerb:        it.CanonicalVerb,
+			InvolvedPeople:       it.InvolvedPeople,
+			SourceURL:            it.SourceURL,
+			PublishedAt:          it.PublishedAt,
+			SourceType:           it.SourceType,
+			Metadata:             it.Metadata,
+			Lang:                 it.Lang,
 		}
+
 	}
 
 	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(i.Store))

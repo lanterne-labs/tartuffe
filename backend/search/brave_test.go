@@ -241,15 +241,18 @@ func TestBraveImageResponseParsing(t *testing.T) {
 }
 
 func TestFactoryEnvPriority(t *testing.T) {
-	// Save and restore env
+	// Save and restore env (including SERPER_API_KEY which the new chain reads first)
+	origSerper := os.Getenv("SERPER_API_KEY")
 	origBrave := os.Getenv("BRAVE_SEARCH_API_KEY")
 	origSerp := os.Getenv("SERPAPI_KEY")
 	defer func() {
+		os.Setenv("SERPER_API_KEY", origSerper)
 		os.Setenv("BRAVE_SEARCH_API_KEY", origBrave)
 		os.Setenv("SERPAPI_KEY", origSerp)
 	}()
 
 	// Neither set → error
+	os.Setenv("SERPER_API_KEY", "")
 	os.Setenv("BRAVE_SEARCH_API_KEY", "")
 	os.Setenv("SERPAPI_KEY", "")
 	_, err := NewNewsSearcherFromEnv()
@@ -257,33 +260,58 @@ func TestFactoryEnvPriority(t *testing.T) {
 		t.Error("expected error when no API keys set")
 	}
 
-	// Only SERPAPI_KEY → SerpAPI
+	// Only SERPAPI_KEY → single-entry chain
 	os.Setenv("SERPAPI_KEY", "serp-key")
 	searcher, err := NewNewsSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := searcher.(*SerpAPINewsProvider); !ok {
-		t.Errorf("expected SerpAPINewsProvider, got %T", searcher)
+	chain, ok := searcher.(*ChainedNewsSearcher)
+	if !ok {
+		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+	}
+	if chain.Len() != 1 {
+		t.Errorf("expected chain Len=1 with only SERPAPI_KEY set, got %d", chain.Len())
 	}
 
-	// Both set → fallback wrapper (Brave primary, SerpAPI fallback)
+	// Brave + SerpAPI set → chain of length 2 (Brave, SerpAPI), no Serper
 	os.Setenv("BRAVE_SEARCH_API_KEY", "brave-key")
 	searcher, err = NewNewsSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := searcher.(*fallbackNewsSearcher); !ok {
-		t.Errorf("expected fallbackNewsSearcher, got %T", searcher)
+	chain, ok = searcher.(*ChainedNewsSearcher)
+	if !ok {
+		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+	}
+	if chain.Len() != 2 {
+		t.Errorf("expected chain Len=2 with BRAVE+SERPAPI, got %d", chain.Len())
 	}
 
-	// Image searcher same priority
+	// All three set → Serper goes first, then Brave, then SerpAPI
+	os.Setenv("SERPER_API_KEY", "serper-key")
+	searcher, err = NewNewsSearcherFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	chain, ok = searcher.(*ChainedNewsSearcher)
+	if !ok {
+		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+	}
+	if chain.Len() != 3 {
+		t.Errorf("expected chain Len=3 with all keys, got %d", chain.Len())
+	}
+	if chain.entries[0].name != "serper" {
+		t.Errorf("expected serper first, got %q", chain.entries[0].name)
+	}
+
+	// Image searcher returns ChainedImageSearcher
 	imgSearcher, err := NewImageSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := imgSearcher.(*BraveSearchProvider); !ok {
-		t.Errorf("expected BraveSearchProvider for images, got %T", imgSearcher)
+	if _, ok := imgSearcher.(*ChainedImageSearcher); !ok {
+		t.Errorf("expected *ChainedImageSearcher, got %T", imgSearcher)
 	}
 }
 
@@ -390,14 +418,17 @@ func TestBraveCircuitBreakerResetsOnSuccess(t *testing.T) {
 }
 
 func TestWebSearcherFromEnvFallback(t *testing.T) {
+	origSerper := os.Getenv("SERPER_API_KEY")
 	origBrave := os.Getenv("BRAVE_SEARCH_API_KEY")
 	origSerp := os.Getenv("SERPAPI_KEY")
 	defer func() {
+		os.Setenv("SERPER_API_KEY", origSerper)
 		os.Setenv("BRAVE_SEARCH_API_KEY", origBrave)
 		os.Setenv("SERPAPI_KEY", origSerp)
 	}()
 
 	// Neither set -> error
+	os.Setenv("SERPER_API_KEY", "")
 	os.Setenv("BRAVE_SEARCH_API_KEY", "")
 	os.Setenv("SERPAPI_KEY", "")
 	_, err := NewWebSearcherFromEnv()
@@ -405,24 +436,32 @@ func TestWebSearcherFromEnvFallback(t *testing.T) {
 		t.Error("expected error when no API keys set")
 	}
 
-	// Only SERPAPI_KEY -> SerpAPI
+	// Only SERPAPI_KEY -> single-entry chain
 	os.Setenv("SERPAPI_KEY", "serp-key")
 	searcher, err := NewWebSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := searcher.(*SerpAPINewsProvider); !ok {
-		t.Errorf("expected SerpAPINewsProvider for web search fallback, got %T", searcher)
+	chain, ok := searcher.(*ChainedWebSearcher)
+	if !ok {
+		t.Fatalf("expected *ChainedWebSearcher, got %T", searcher)
+	}
+	if chain.Len() != 1 {
+		t.Errorf("expected chain Len=1, got %d", chain.Len())
 	}
 
-	// Both set -> fallback wrapper (Brave primary, SerpAPI fallback)
+	// Brave + SerpAPI -> chain of 2
 	os.Setenv("BRAVE_SEARCH_API_KEY", "brave-key")
 	searcher, err = NewWebSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := searcher.(*fallbackWebSearcher); !ok {
-		t.Errorf("expected fallbackWebSearcher, got %T", searcher)
+	chain, ok = searcher.(*ChainedWebSearcher)
+	if !ok {
+		t.Fatalf("expected *ChainedWebSearcher, got %T", searcher)
+	}
+	if chain.Len() != 2 {
+		t.Errorf("expected chain Len=2, got %d", chain.Len())
 	}
 }
 

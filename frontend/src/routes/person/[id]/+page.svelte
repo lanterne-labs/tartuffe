@@ -4,8 +4,37 @@
 	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse, StanceDocument } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
+	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
 	import ContradictionPair from '$lib/components/ContradictionPair.svelte';
+
+	let currentLang = $state<Lang>('fr');
+	$effect(() => {
+		const unsub = lang.subscribe((v) => (currentLang = v));
+		return unsub;
+	});
+
+	// Per-stance Facts cache, fetched lazily when the user opens the Facts tab on a stance.
+	interface StanceFact {
+		fact_id: number;
+		fact_text: string;
+		fact_text_en?: string;
+		lang?: string;
+		canonical_verb?: string;
+		source_url: string;
+		original_quote?: string;
+	}
+	let stanceFacts: Record<number, StanceFact[]> = $state({});
+	let stanceFactsLoading: Record<number, boolean> = $state({});
+	// Which tab is active inside each expanded stance card. Defaults to 'contradictions'
+	// (matches the user's request) and switches to 'facts' on tab click. Per-stance so
+	// different cards can be on different tabs at once.
+	type StanceTab = 'contradictions' | 'facts';
+	let stanceTab: Record<number, StanceTab> = $state({});
+
+	function pickFactText(f: StanceFact | FactWithSource): string {
+		return pickLang(f.fact_text, f.fact_text_en, currentLang);
+	}
 
 	interface MemberInfo {
 		id: number;
@@ -69,6 +98,26 @@
 	let highlightedFactId: number | null = $state(null);
 
 	let personId = $derived(Number($page.params.id));
+
+	async function loadStanceFacts(stanceId: number) {
+		stanceFactsLoading[stanceId] = true;
+		try {
+			const response = await fetch(`${API_BASE}/api/stances/${stanceId}/facts`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			stanceFacts[stanceId] = (await response.json()) ?? [];
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'An error occurred';
+		} finally {
+			stanceFactsLoading[stanceId] = false;
+		}
+	}
+
+	function setStanceTab(stanceId: number, tab: StanceTab) {
+		stanceTab[stanceId] = tab;
+		if (tab === 'facts' && stanceFacts[stanceId] === undefined) {
+			loadStanceFacts(stanceId);
+		}
+	}
 
 	async function goToFact(factId: number) {
 		factsExpanded = true;
@@ -251,10 +300,10 @@
 		await loadFactPersons(factId, nextPage);
 	}
 
-	function getHonestyLabel(score: number): string {
-		if (score >= 0.8) return 'Honest';
-		if (score >= 0.4) return 'Mixed';
-		return 'Dishonest';
+	function getHonestyLabel(score: number, l: Lang): string {
+		if (score >= 0.8) return tr('person.honest', l);
+		if (score >= 0.4) return tr('person.mixed', l);
+		return tr('person.dishonest', l);
 	}
 
 	function getHonestyColor(score: number): string {
@@ -302,7 +351,8 @@
 	}
 
 	function reportFact(fact: FactWithSource) {
-		const preview = fact.fact_text.length > 80 ? fact.fact_text.slice(0, 80) + '…' : fact.fact_text;
+		const previewSrc = pickFactText(fact);
+		const preview = previewSrc.length > 80 ? previewSrc.slice(0, 80) + '…' : previewSrc;
 		openTally({
 			target_kind: 'fact',
 			fact_id: fact.fact_id,
@@ -397,7 +447,7 @@
 	{:else if error && !person}
 		<div class="error-banner">
 			<p>{error}</p>
-			<button class="retry-btn" onclick={loadData}>Retry</button>
+			<button class="retry-btn" onclick={loadData}>{tr('person.retry', currentLang)}</button>
 		</div>
 	{:else if person}
 		<div class="person-hero">
@@ -413,19 +463,19 @@
 					<h1>
 						{person.name}
 						{#if person.entity_type === 'party'}
-							<span class="badge">Party</span>
+							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					<p class="hero-label">{getHonestyLabel(person.honesty_score)} — {(person.honesty_score * 100).toFixed(1)}%</p>
+					<p class="hero-label">{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</p>
 					<p class="hero-summary">
-						{person.stance_count} stance{person.stance_count === 1 ? '' : 's'}
+						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
-						{person.contradiction_count} contradiction{person.contradiction_count === 1 ? '' : 's'} over {person.fact_count} fact{person.fact_count === 1 ? '' : 's'}
+						{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
 					</p>
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<ScoreGauge score={person.honesty_score} size={80} showLabel label="Score" />
+				<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
 			</div>
 		</div>
 
@@ -480,21 +530,21 @@
 		     within that stance — that's where the contradictions live now (no separate tab). -->
 		<section class="stances-section">
 			<div class="stances-toolbar">
-				<h2 class="section-heading">Stances</h2>
+				<h2 class="section-heading">{tr('person.stances', currentLang)}</h2>
 				{#if stances.length > 1}
 					<div class="sort-control">
-						<label for="stance-sort">Sort by</label>
+						<label for="stance-sort">{tr('person.sort_by', currentLang)}</label>
 						<select id="stance-sort" bind:value={stanceSort}>
-							<option value="worst">Worst first</option>
-							<option value="recent">Most recent</option>
-							<option value="most_facts">Most facts</option>
+							<option value="worst">{tr('person.sort.worst', currentLang)}</option>
+							<option value="recent">{tr('person.sort.recent', currentLang)}</option>
+							<option value="most_facts">{tr('person.sort.most_facts', currentLang)}</option>
 						</select>
 					</div>
 				{/if}
 			</div>
 
 			{#if stances.length === 0 && !loading}
-				<p class="empty-state">No stances found for this person yet.</p>
+				<p class="empty-state">{tr('person.no_stances', currentLang)}</p>
 			{:else}
 				<div class="items-list">
 					{#each sortedStances as stance (stance.id)}
@@ -514,34 +564,31 @@
 							<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 							<div
 								class="stance-clickable"
-								class:disabled={!hasContradictions}
-								role={hasContradictions ? 'button' : undefined}
-								tabindex={hasContradictions ? 0 : undefined}
-								aria-expanded={hasContradictions ? isOpen : undefined}
-								onclick={() => hasContradictions && toggleStance(stance.id)}
-								onkeydown={(e) => hasContradictions && onStanceCardKeydown(e, stance.id)}
+								role="button"
+								tabindex={0}
+								aria-expanded={isOpen}
+								onclick={() => toggleStance(stance.id)}
+								onkeydown={(e) => onStanceCardKeydown(e, stance.id)}
 							>
 								<div class="stance-top">
 									<div class="stance-main">
 										<div class="stance-label-row">
-											<span class="stance-label">{stance.label}</span>
-											{#if hasContradictions}
-												<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-													<path d="m6 9 6 6 6-6"/>
-												</svg>
-											{/if}
+											<span class="stance-label">{pickLang(stance.label, stance.label_en, currentLang)}</span>
+											<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+												<path d="m6 9 6 6 6-6"/>
+											</svg>
 										</div>
 										{#if stance.summary}
-											<div class="stance-summary">{stance.summary}</div>
+											<div class="stance-summary">{pickLang(stance.summary, stance.summary_en, currentLang)}</div>
 										{/if}
 										<div class="stance-meta">
-											<span>{stance.fact_count} fact{stance.fact_count === 1 ? '' : 's'}</span>
+											<span>{stance.fact_count} {tr(stance.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
 											<span class="dot">·</span>
-											<span>{stance.contradiction_count} contradiction{stance.contradiction_count === 1 ? '' : 's'}</span>
+											<span>{stance.contradiction_count} {tr(stance.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)}</span>
 											<span class="dot">·</span>
-											<span class="muted">Updated {formatDate(stance.updated_at)}</span>
+											<span class="muted">{tr('person.updated', currentLang)} {formatDate(stance.updated_at)}</span>
 											{#if !hasContradictions}
-												<span class="no-contradictions-chip">No contradictions yet</span>
+												<span class="no-contradictions-chip">{tr('person.no_contradictions_chip', currentLang)}</span>
 											{/if}
 											{#if TALLY_FORM_ID}
 												<button
@@ -563,28 +610,70 @@
 								</div>
 							</div>
 
-							{#if hasContradictions && isOpen}
-								<div class="stance-contradictions">
-									{#if stanceLoading[stance.id]}
-										<p class="empty-mini">Loading…</p>
-									{:else if items.length > 0}
-										{#each items.slice(0, shown) as c (c.id)}
-											<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
-										{/each}
-										{#if remaining > 0}
-											<div class="stance-more-row">
-												<button class="link-btn" onclick={() => showMoreInStance(stance.id, items.length)}>
-													Show {Math.min(remaining, CONTRADICTIONS_MORE_STEP)} more
-												</button>
-												{#if remaining > CONTRADICTIONS_MORE_STEP}
-													<button class="link-btn link-btn-muted" onclick={() => showAllInStance(stance.id, items.length)}>
-														Show all {items.length}
+							{#if isOpen}
+								{@const tab = stanceTab[stance.id] ?? 'contradictions'}
+								<div class="stance-tabs" role="tablist">
+									<button
+										class="stance-tab"
+										class:active={tab === 'contradictions'}
+										role="tab"
+										aria-selected={tab === 'contradictions'}
+										onclick={(e) => { e.stopPropagation(); setStanceTab(stance.id, 'contradictions'); }}
+									>{tr('person.tab.contradictions', currentLang)} {#if stance.contradiction_count > 0}<span class="tab-count">{stance.contradiction_count}</span>{/if}</button>
+									<button
+										class="stance-tab"
+										class:active={tab === 'facts'}
+										role="tab"
+										aria-selected={tab === 'facts'}
+										onclick={(e) => { e.stopPropagation(); setStanceTab(stance.id, 'facts'); }}
+									>{tr('person.tab.facts', currentLang)} <span class="tab-count">{stance.fact_count}</span></button>
+								</div>
+								<div class="stance-tab-body" role="tabpanel">
+									{#if tab === 'contradictions'}
+										{#if stanceLoading[stance.id]}
+											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+										{:else if items.length > 0}
+											{#each items.slice(0, shown) as c (c.id)}
+												<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
+											{/each}
+											{#if remaining > 0}
+												<div class="stance-more-row">
+													<button class="link-btn" onclick={(e) => { e.stopPropagation(); showMoreInStance(stance.id, items.length); }}>
+														{tr('person.show_n_more', currentLang, { n: Math.min(remaining, CONTRADICTIONS_MORE_STEP) })}
 													</button>
-												{/if}
-											</div>
+													{#if remaining > CONTRADICTIONS_MORE_STEP}
+														<button class="link-btn link-btn-muted" onclick={(e) => { e.stopPropagation(); showAllInStance(stance.id, items.length); }}>
+															{tr('person.show_all_n', currentLang, { n: items.length })}
+														</button>
+													{/if}
+												</div>
+											{/if}
+										{:else}
+											<p class="empty-mini">{tr('person.tab.no_contradictions', currentLang)}</p>
 										{/if}
 									{:else}
-										<p class="empty-mini">No contradictions to show.</p>
+										{#if stanceFactsLoading[stance.id]}
+											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+										{:else if (stanceFacts[stance.id]?.length ?? 0) > 0}
+											<div class="stance-facts-list">
+												{#each stanceFacts[stance.id] as f (f.fact_id)}
+													<div class="stance-fact-row">
+														<div class="stance-fact-text">
+															<span class="fact-id">[{f.fact_id}]</span>
+															{pickFactText(f)}
+														</div>
+														{#if f.source_url}
+															<a class="stance-fact-source" href={f.source_url} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{f.source_url}</a>
+														{/if}
+														{#if f.original_quote}
+															<div class="quote-block">"{f.original_quote.length > 200 ? f.original_quote.slice(0, 200) + '…' : f.original_quote}"</div>
+														{/if}
+													</div>
+												{/each}
+											</div>
+										{:else}
+											<p class="empty-mini">{tr('person.tab.no_facts', currentLang)}</p>
+										{/if}
 									{/if}
 								</div>
 							{/if}
@@ -594,91 +683,8 @@
 			{/if}
 		</section>
 
-		<!-- Facts disclosure: de-emphasized. The full list isn't the headline anymore — most
-		     users want the stance-grouped narrative — but it's still here, one click away. -->
-		{#if person.fact_count > 0}
-			<section class="facts-disclosure">
-				<button class="facts-disclosure-toggle" onclick={toggleFacts}>
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="chevron" class:expanded={factsExpanded}>
-						<path d="m9 18 6-6-6-6"/>
-					</svg>
-					{factsExpanded ? 'Hide' : 'Show'} all {person.fact_count} fact{person.fact_count === 1 ? '' : 's'}
-				</button>
-
-				{#if factsExpanded}
-					<div class="items-list facts-list">
-						{#each facts as fact (fact.fact_id)}
-							<div id="fact-{fact.fact_id}" class="card fact-card" class:highlighted={highlightedFactId === fact.fact_id}>
-								{#if TALLY_FORM_ID}
-									<button class="report-btn" title="Report this fact" aria-label="Report this fact" onclick={() => reportFact(fact)}>
-										<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-											<line x1="12" y1="9" x2="12" y2="13"/>
-											<line x1="12" y1="17" x2="12.01" y2="17"/>
-										</svg>
-									</button>
-								{/if}
-								<div class="fact-text">
-									<span class="fact-id">[{fact.fact_id}]</span>
-									{fact.fact_text}
-								</div>
-								<div class="fact-source">
-									<a href={fact.source_url} target="_blank" rel="noopener noreferrer">{fact.source_url}</a>
-									{#if fact.original_quote}
-										<div class="quote-block">
-											"{fact.original_quote.length > 200 ? fact.original_quote.substring(0, 200) + '...' : fact.original_quote}"
-										</div>
-									{/if}
-								</div>
-
-								{#if person?.entity_type === 'party'}
-									<div class="fact-persons-section">
-										<button class="persons-toggle" onclick={() => toggleFactPersons(fact.fact_id)}>
-											<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="chevron" class:expanded={expandedFacts[fact.fact_id]}>
-												<path d="m9 18 6-6-6-6"/>
-											</svg>
-											{#if factPersons[fact.fact_id]}
-												{factPersons[fact.fact_id].length}+ persons
-											{:else}
-												Show persons
-											{/if}
-										</button>
-
-										{#if expandedFacts[fact.fact_id]}
-											<div class="fact-persons-grid">
-												{#if factPersons[fact.fact_id]?.length > 0}
-													{#each factPersons[fact.fact_id] as p (p.id)}
-														<a href="/person/{p.id}" class="person-chip">
-															<span class="person-chip-name">{p.name}</span>
-															<span class="person-chip-score">{p.honesty_score.toFixed(2)}</span>
-														</a>
-													{/each}
-													{#if factPersonsHasMore[fact.fact_id]}
-														<button class="load-more-inline" onclick={() => loadMorePersons(fact.fact_id)}>
-															Load More
-														</button>
-													{/if}
-												{:else}
-													<p class="empty-mini">No persons found</p>
-												{/if}
-											</div>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						{/each}
-					</div>
-
-					{#if hasMoreFacts}
-						<div class="load-more">
-							<button class="load-more-btn" onclick={loadMoreFacts} disabled={loading}>
-								{loading ? 'Loading...' : 'Load More Facts'}
-							</button>
-						</div>
-					{/if}
-				{/if}
-			</section>
-		{/if}
+		<!-- Facts disclosure removed: facts now live inside each stance card under a
+		     "Facts" tab next to "Contradictions". See stance card markup above. -->
 
 	{/if}
 </div>
@@ -786,6 +792,36 @@
 
 	.hero-gauge {
 		flex-shrink: 0;
+	}
+
+	.lang-toggle {
+		display: inline-flex;
+		gap: 2px;
+		padding: 2px;
+		background: var(--bg-card);
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		flex-shrink: 0;
+		margin-left: 0.5rem;
+	}
+	.lang-pill {
+		background: transparent;
+		border: none;
+		padding: 0.25rem 0.6rem;
+		border-radius: var(--radius-full);
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: all var(--transition-normal);
+	}
+	.lang-pill:hover {
+		color: var(--text-primary);
+	}
+	.lang-pill.active {
+		background: var(--accent);
+		color: white;
 	}
 
 	/* Score Breakdown */
@@ -1130,6 +1166,80 @@
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-top: 0.5rem;
+	}
+
+	.stance-tabs {
+		display: flex;
+		gap: 0.25rem;
+		padding: 0.5rem 1.25rem 0 1.25rem;
+		border-top: 1px solid var(--glass-border);
+		background: var(--bg-card);
+	}
+	.stance-tab {
+		background: transparent;
+		border: none;
+		border-bottom: 2px solid transparent;
+		padding: 0.5rem 0.9rem;
+		font-size: 0.85rem;
+		font-weight: 500;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color var(--transition-normal), border-color var(--transition-normal);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.stance-tab:hover {
+		color: var(--text-primary);
+	}
+	.stance-tab.active {
+		color: var(--accent);
+		border-bottom-color: var(--accent);
+	}
+	.tab-count {
+		display: inline-block;
+		min-width: 1.25rem;
+		padding: 0.05rem 0.4rem;
+		text-align: center;
+		font-size: 0.7rem;
+		font-weight: 600;
+		background: var(--bg-elevated);
+		color: var(--text-muted);
+		border-radius: var(--radius-full);
+	}
+	.stance-tab.active .tab-count {
+		background: var(--accent);
+		color: white;
+	}
+	.stance-tab-body {
+		padding: 0.75rem 1.25rem 1rem 1.25rem;
+		background: var(--bg-card);
+		border-bottom-left-radius: var(--radius-md);
+		border-bottom-right-radius: var(--radius-md);
+	}
+	.stance-facts-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.stance-fact-row {
+		padding: 0.6rem 0.75rem;
+		background: var(--bg-elevated);
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-sm);
+	}
+	.stance-fact-text {
+		font-size: 0.9rem;
+		line-height: 1.5;
+		color: var(--text-primary);
+		margin-bottom: 0.3rem;
+	}
+	.stance-fact-source {
+		display: block;
+		font-size: 0.75rem;
+		color: var(--accent);
+		word-break: break-all;
+		margin-bottom: 0.3rem;
 	}
 
 	.stance-contradictions {

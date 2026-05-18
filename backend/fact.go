@@ -17,10 +17,20 @@ type Fact struct {
 	// SubjectEntityType is the type of entity: "human", "party", or "organization".
 	// Used when creating new persons in the database.
 	SubjectEntityType string `json:"subject_entity_type,omitempty"`
-	// NormalizedFactText is the core factual claim extracted and normalized by the LLM.
-	// This version INCLUDES person names and is used for display and LLM contradiction comparison.
-	// Example: "Marine Le Pen plans to cut income taxes".
+	// NormalizedFactText is the core factual claim extracted and normalized by the LLM,
+	// written in the source's NATIVE LANGUAGE (e.g. French for French politicians).
+	// Includes person names; used for display and LLM contradiction comparison.
+	// Example: "Marine Le Pen veut baisser les impôts sur le revenu".
 	NormalizedFactText string `json:"normalized_fact"`
+	// NormalizedFactTextEn is the English translation of NormalizedFactText.
+	// Empty when the source is already English. Both versions are persisted so the
+	// frontend can offer a 🌐 toggle and so downstream consumers in other languages
+	// can read facts without re-translating.
+	NormalizedFactTextEn string `json:"normalized_fact_en,omitempty"`
+	// Lang is the BCP-47 source language of the normalized fact ("fr", "en", ...).
+	// REQUIRED on every extracted fact. The LLM detects it from the source content,
+	// not from the entity's nationality.
+	Lang string `json:"lang"`
 	// EmbeddingText is a canonical semantic fingerprint used ONLY for generating vector embeddings.
 	// Always English, using a fixed canonical verb + broad policy domain keywords.
 	// Example: "PROMISED 15-percent-tax-cut income-tax"

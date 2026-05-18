@@ -20,8 +20,10 @@ func (a *StanceStorerAdapter) InsertStanceDocument(ctx context.Context, doc core
 	storageDoc := StanceDocument{
 		PersonID:         doc.PersonID,
 		ClusterLabel:     doc.ClusterLabel,
+		LabelEn:          doc.LabelEn,
 		ClusterEmbedding: doc.ClusterEmbedding,
 		Summary:          doc.Summary,
+		SummaryEn:        doc.SummaryEn,
 		KeyFactIDs:       doc.KeyFactIDs,
 		FactCount:        doc.FactCount,
 	}
@@ -29,16 +31,16 @@ func (a *StanceStorerAdapter) InsertStanceDocument(ctx context.Context, doc core
 }
 
 // UpdateStanceDocument updates an existing stance document.
-func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64, summary string, embedding []float32, keyFactIDs []int64, factCount int) error {
-	return a.storer.UpdateStanceDocument(ctx, id, summary, embedding, keyFactIDs, factCount)
+func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
+	return a.storer.UpdateStanceDocument(ctx, id, summary, summaryEn, embedding, keyFactIDs, factCount)
 }
 
-// UpdateStanceMetadata updates ONLY the cluster_label and summary of a stance.
+// UpdateStanceMetadata updates ONLY the cluster_label/label_en and summary/summary_en of a stance.
 // Used by the per-fact stance-refresh path (ProcessNewFact → handleVerdict →
 // triggerStanceRefresh) to keep the stance's title and description in sync
 // with its accumulating fact set.
-func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label string, summary string) error {
-	return a.storer.UpdateStanceMetadata(ctx, id, label, summary)
+func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error {
+	return a.storer.UpdateStanceMetadata(ctx, id, label, labelEn, summary, summaryEn)
 }
 
 // AddFactToStance adds a fact to the stance document join table.
@@ -59,8 +61,10 @@ func (a *StanceStorerAdapter) GetStanceDocumentsForPerson(ctx context.Context, p
 			ID:               d.ID,
 			PersonID:         d.PersonID,
 			ClusterLabel:     d.ClusterLabel,
+			LabelEn:          d.LabelEn,
 			ClusterEmbedding: d.ClusterEmbedding,
 			Summary:          d.Summary,
+			SummaryEn:        d.SummaryEn,
 			KeyFactIDs:       d.KeyFactIDs,
 			FactCount:        d.FactCount,
 		}
@@ -82,6 +86,7 @@ func (a *StanceStorerAdapter) GetFactsForStance(ctx context.Context, stanceID in
 			NormalizedFactText: f.NormalizedFactText,
 			EmbeddingText:      f.EmbeddingText,
 			CanonicalVerb:      f.CanonicalVerb,
+			Lang:               f.Lang,
 		}
 	}
 	return result, nil
@@ -100,7 +105,7 @@ func (a *StanceStorerAdapter) DeleteStanceDocumentsForPerson(ctx context.Context
 // RecordContradiction records a contradiction between two facts. Drops the bundler-needed
 // signal because in this code path (StanceManager.ProcessNewFact) both facts are guaranteed
 // to be in the same stance, so the SQL fast path will always set bundle_stance_id directly.
-func (a *StanceStorerAdapter) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason string) error {
-	_, _, err := a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason)
+func (a *StanceStorerAdapter) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) error {
+	_, _, err := a.storer.RecordContradictionImmediate(ctx, personID, factAID, factBID, reason, reasonEn)
 	return err
 }

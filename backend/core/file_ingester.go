@@ -255,17 +255,19 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 
 		// Build store input
 		input := StoreFactInput{
-			SubjectEntity:      fact.SubjectEntity,     // Primary entity this fact is about
-			SubjectEntityType:  fact.SubjectEntityType, // Entity type for person creation (human/party/organization)
-			NormalizedFactText: fact.NormalizedFactText,
-			EmbeddingText:      fact.EmbeddingText,
-			Embedding:          embeddings[0],
-			OriginalQuote:      fact.OriginalQuote,
-			CanonicalVerb:      fact.CanonicalVerb,
-			InvolvedPeople:     fact.InvolvedPeople, // Secondary people mentioned
-			SourceURL:          fact.SourceURL,
-			PublishedAt:        fact.PublishedAt,
-			SourceType:         opts.SourceType,
+			SubjectEntity:        fact.SubjectEntity,     // Primary entity this fact is about
+			SubjectEntityType:    fact.SubjectEntityType, // Entity type for person creation (human/party/organization)
+			NormalizedFactText:   fact.NormalizedFactText,
+			NormalizedFactTextEn: fact.NormalizedFactTextEn,
+			Lang:                 fact.Lang,
+			EmbeddingText:        fact.EmbeddingText,
+			Embedding:            embeddings[0],
+			OriginalQuote:        fact.OriginalQuote,
+			CanonicalVerb:        fact.CanonicalVerb,
+			InvolvedPeople:       fact.InvolvedPeople, // Secondary people mentioned
+			SourceURL:            fact.SourceURL,
+			PublishedAt:          fact.PublishedAt,
+			SourceType:           opts.SourceType,
 			Metadata: map[string]any{
 				"target_name": opts.TargetName,
 				"target_type": opts.TargetType,

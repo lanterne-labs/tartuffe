@@ -87,18 +87,20 @@ type Storer interface {
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
 type StoreFactInput struct {
-	SubjectEntity      string    // Primary entity this fact is about (resolved to person ID for linking)
-	SubjectEntityType  string    // Entity type: "human", "party", or "organization" (used when creating new persons)
-	NormalizedFactText string    // Full fact text with names (for display and LLM comparison)
-	EmbeddingText      string    // Name-free version used ONLY for embedding generation
-	Embedding          []float32 // Vector embedding (generated from EmbeddingText)
-	OriginalQuote      string
-	CanonicalVerb      string
-	InvolvedPeople     []string // Secondary people mentioned in the fact (not the subject)
-	SourceURL          string
-	PublishedAt        *time.Time
-	SourceType         string
-	Metadata           map[string]any
+	SubjectEntity        string    // Primary entity this fact is about (resolved to person ID for linking)
+	SubjectEntityType    string    // Entity type: "human", "party", or "organization" (used when creating new persons)
+	NormalizedFactText   string    // Native-language fact text with names (for display and LLM comparison)
+	NormalizedFactTextEn string    // English translation; empty when source is already English
+	EmbeddingText        string    // Name-free version used ONLY for embedding generation
+	Embedding            []float32 // Vector embedding (generated from EmbeddingText)
+	OriginalQuote        string
+	CanonicalVerb        string
+	InvolvedPeople       []string // Secondary people mentioned in the fact (not the subject)
+	SourceURL            string
+	PublishedAt          *time.Time
+	SourceType           string
+	Metadata             map[string]any
+	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
 }
 
 // SimilarFact represents a fact that is similar to a given embedding.

@@ -2,6 +2,66 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-18: Multilingual support — `lang` on facts + bilingual fact text
+
+### What was done
+- **Native-language across LLM-generated text** (ports PR #14's first 3 commits): contradiction detector, contradiction auditor, and stance manager prompts now include a `LANGUAGE RULE` telling the LLM to write summaries / labels / reasons in the same language as the input facts. `embedding_text` switched from English-only to native language (qwen3-embedding-8b is multilingual, so cross-language clustering still works). New `lang TEXT` column on `facts` tracks the source language (BCP-47); plumbed through `StoreFactInput`, `StanceFactInfo`, ingester, frpolitics (hardcoded "fr"), twitter (from tweet metadata).
+- **Bilingual fact text** (new beyond PR #14): every extracted fact now carries both `fact_text` (native) AND `fact_text_en` (English translation). LLM prompt emits two new JSON fields: `lang` (REQUIRED, BCP-47) and `normalized_fact_en` (REQUIRED when lang≠en, OMITTED when lang=en). Parser drops facts with missing `lang` (matches the no-legacy stance). `fact_parser.go` updated with two new test cases (French-source-with-translation, English-source-omits-translation) plus a negative test for missing-lang rejection.
+- **Scrape sidebar cleanup** (session work, separate commit): webcrawlerapi now requests `main_content_only:true` + new `stripTrailingSidebarSections` strips French-news H2 markers (`## Sur le même sujet`, `## À lire aussi`, etc.). News provider skips articles whose cleaned content is <200 chars to avoid LLM hallucination on BFMTV-style video pages with no real body.
+- **Fact extractor prompt refinements**: Rule 3 carve-out clarifies CALLS/DEMANDS/ADVICE remain Type 1 stances even when a third party executes (vs FORECASTS, which are rejected). Anti-invention guard: don't fabricate facts about the primary subject if absent, but still extract facts about OTHER mentioned entities. `max_tokens` lowered 16384 → 2048 (typical extraction output ~1.5k tokens; keeps requests under gemma-4's 12k context).
+- **One-shot tooling** (kept for future use): `dm facts audit-attribution` (rescrape every fact_source, drop those whose `original_quote` no longer appears), `dm facts rebuild-from-urls --person ...` (rerun extraction on URLs that previously produced facts for a person; resumable; supports `--urls-from-log` recovery).
+
+### Why
+- Generated text (contradictions, stances) was English-only regardless of source language — visible in the UI as French facts grouped under English summaries. The native-language switch fixes the consumer experience without losing semantic clustering (multilingual embeddings handle that).
+- Bilingual fact text: future Twitter/cross-language analysis needs both versions; storing the English translation at extraction time is cheaper than re-translating on display.
+- Sidebar cleanup: discovered that BFMTV video pages return only their "Sur le même sujet" related-videos block as "main content", letting the LLM extract sidebar tile headlines as if they were article facts. The "thin content" floor + local section stripper plug the gap.
+
+### Operational notes
+- Two migrations land: `20260512000000_add_lang_to_facts.sql` (ports PR #14) and `20260518000000_add_fact_text_en.sql` (new). Apply both before running any extractor against an existing DB.
+- PR #14's 4th commit (`6af2ca3`) adding bilingual stance labels/summaries/contradiction-reasons + frontend 🌐 toggle is INTENTIONALLY NOT INCLUDED here — it goes beyond the stated ask ("stances/contradictions in NATIVE languages") and conflicts with main's evolved `stance_manager`. Can be added as a separate follow-up if you decide you want the dual-language frontend toggle.
+- This PR supersedes #14.
+
+## 2026-05-17: Serper.dev search provider + generic chained-provider abstraction
+
+### What was done
+- New `backend/search/serper.go` implementing `NewsSearcher`, `WebSearcher`, `ImageSearcher` against https://google.serper.dev. POST + JSON body, `X-API-KEY` header, supports SerpAPI-style `tbs=cdr:1,cd_min:M/D/YYYY,cd_max:M/D/YYYY` for historical news queries. Reads `SERPER_API_KEY`.
+- New `backend/search/chain.go` with `ChainedNewsSearcher` / `ChainedWebSearcher` / `ChainedImageSearcher`: a generic meta-provider that takes a slice of `(name, provider)` pairs and tries each in order until one returns nil error. Replaces the bespoke `fallbackNewsSearcher` / `fallbackWebSearcher` types (deleted).
+- `backend/search/provider.go` rewritten: `NewNewsSearcherFromEnv` / `NewWebSearcherFromEnv` / `NewImageSearcherFromEnv` now assemble a chain based on which keys are set, in priority order **Serper > Brave > SerpAPI**. Single-key configs still return a chain (1 entry) for uniformity. Logs the chain composition at startup so deploys are auditable.
+
+### Why
+- Switching news provider to Serper because it's cheaper than SerpAPI and crucially keeps `tbs` date-range filter support (Serpbase was the original candidate but lacks any historical-date parameter, breaking the daily pipeline's date-windowed queries). The chained abstraction was requested so adding/removing providers is just an env-var flip — no code change in callers.
+
+### Operational notes
+- To cut over: set `SERPER_API_KEY` on the host; existing `BRAVE_SEARCH_API_KEY` and `SERPAPI_KEY` remain valid as automatic fallbacks (clear them to remove from the chain). Boot log line "Configured news search chain" enumerates the active providers.
+- `TestSerpAPINewsProvider_Integration` is currently failing locally with HTTP 429 — SerpAPI key is out of credits. Unrelated to this change (it's why we're switching).
+
+## 2026-05-15: Sidebar pollution cleanup in news ingestion + audit-attribution one-shot
+
+### What was done
+- `backend/extractor/webcrawlerapi.go` now sends `main_content_only: true` on the `/v2/scrape` request and post-processes the markdown via `stripTrailingSidebarSections` to cut at the first French-news sidebar H2 (`## Sur le même sujet`, `## À lire aussi`, …). Note: `clean_selectors` is documented but rejected by `/v2/scrape` (probed 2026-05-15) — relying on `main_content_only` + local strip.
+- `backend/plugins/news/provider.go`: added a `minArticleContentLen` (200 chars) skip guard in both the sync and the content-collection loops; new `SkippedThinContent` counter and `skipped_thin_content` metric label.
+- New `dm facts audit-attribution` one-shot subcommand (`cmd/facts_audit_attribution.go`): re-scrapes every fact_source via the patched extractor, deletes rows whose stored `original_quote` is no longer a normalized substring of the cleaned content, and sweeps now-orphan facts through `DeleteFactsAndCleanup`. Resumable via `facts_audit_progress.json`; every action logged to `facts_audit_log.jsonl`. No dry-run mode — re-scraping is the expensive step, so the audit log IS the trail.
+
+### Why
+- BFMTV `video-*.html` pages have no real prose body. webcrawlerapi was returning the "## Sur le même sujet" related-videos sidebar as if it were the article — 14 tile-headlines per page. The LLM faithfully extracted each tile's quoted speaker line as a "fact" and the pipeline silently stamped the OUTER URL as the source on every one. Result: a Macron quote stored against a Le Pen URL, etc. The sidebar tiles also rotate, so the quote disappears from the page over time — leaving us with quoted facts we cannot verify.
+- Confirmed empirically (Macron / Le Pen / Trump samples on the host DB) before fix. webcrawlerapi calls aren't free, so no dry-run on cleanup — the JSONL audit log replaces it.
+
+### Operational notes
+- After deploy, run the one-shot cleanup once: `host run --service mirror -- ./dm facts audit-attribution --batch-size 50 --delay-ms 200`. Review `facts_audit_log.jsonl`; expect a small-but-meaningful number of `DELETE_SOURCE`/`DELETE_FACT_CASCADE` rows. The daily pipeline now prevents new pollution at the source.
+- `scripts/validate_extraction_cleaning.go` was a one-time fixture-validation harness — safe to delete after this lands.
+
+## 2026-05-11: Self-hosted observability service (replaces Grafana Cloud)
+
+### What was done
+- New `observability` the host service built from `deploy/observability/Dockerfile`: colocated Prometheus + Grafana, supervised by s6-overlay, sharing one host volume at `/data`. Grafana is exposed publicly on the host-issued domain; Prometheus is bound to `127.0.0.1:9090` (only Grafana inside the same container can reach it). Prometheus scrapes `mirror.host.internal:9090/metrics` every 15s, retains 180 days of TSDB (~1 GB at current cardinality, well within the 5 GB volume). The 5 dashboards (`api-overview`, `business-metrics`, `database`, `llm-operations`, `system-health`) are baked in via Grafana provisioning.
+- Deleted `backend/metrics/remotewrite.go` (~210 LoC of hand-rolled Prometheus remote_write protobuf encoding) and the remote_write goroutine in `cmd/web.go`. Removed the `PROMETHEUS_REMOTE_WRITE_URL/USER/PASSWORD` env vars. `go mod tidy` dropped `golang/snappy` and `protowire`.
+
+### Why
+- Grafana Cloud's free tier was slow to query and load — moving to self-hosted gives full control and snappy dashboards. Pull (scrape) over push (remote_write) is the standard model and lets us delete the custom protobuf encoder. Colocating Prometheus + Grafana into one container = one host service to manage instead of two.
+
+### Operational notes
+- Required host dashboard work (manual): create `observability` service from this repo with Dockerfile path `deploy/observability/Dockerfile`, attach a 5 GB volume at `/data`, set `GF_SECURITY_ADMIN_PASSWORD` + `GF_SERVER_ROOT_URL`, generate public domain. Remove the three `PROMETHEUS_REMOTE_WRITE_*` env vars from the `mirror` service. Local dev (`deploy/docker-compose.yml`) is unchanged — still runs separate Prometheus + Grafana containers, which is fine for development.
+
 ## 2026-05-10: Daily pipeline → the host cron service (no more in-process scheduler)
 
 ### What was done

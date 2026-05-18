@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ContradictionWithFacts } from '$lib/types';
 	import { TALLY_FORM_ID } from '$lib/config';
+	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 
 	interface Props {
 		c: ContradictionWithFacts;
@@ -9,6 +10,12 @@
 	}
 
 	let { c, onGoToFact, onReport }: Props = $props();
+
+	let currentLang = $state<Lang>('fr');
+	$effect(() => {
+		const unsub = lang.subscribe((v) => (currentLang = v));
+		return unsub;
+	});
 
 	function formatDate(s: string): string {
 		return new Date(s).toLocaleDateString();
@@ -39,18 +46,18 @@
 			</button>
 		{/if}
 	</div>
-	<div class="contradiction-reason">{c.reason}</div>
+	<div class="contradiction-reason">{pickLang(c.reason, c.reason_en, currentLang)}</div>
 	<div class="facts-comparison">
 		<div class="comp-fact comp-a">
 			<div class="comp-label">
-				<strong>Statement A</strong>
+				<strong>{tr('contradiction.statement_a', currentLang)}</strong>
 				{#if c.fact_a_date}
 					<span class="comp-date">{formatDateWithTime(c.fact_a_date)}</span>
 				{/if}
 			</div>
-			<div class="comp-text"><span class="fact-id">[{c.fact_a_id}]</span> {c.fact_a_text}</div>
+			<div class="comp-text"><span class="fact-id">[{c.fact_a_id}]</span> {pickLang(c.fact_a_text, c.fact_a_text_en, currentLang)}</div>
 			<div class="comp-links">
-				<button class="link-btn" onclick={() => onGoToFact(c.fact_a_id)}>View in Facts</button>
+				<button class="link-btn" onclick={() => onGoToFact(c.fact_a_id)}>{tr('contradiction.view_in_facts', currentLang)}</button>
 				{#each c.fact_a_source_urls as url, i}
 					<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_a_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
 				{/each}
@@ -58,14 +65,14 @@
 		</div>
 		<div class="comp-fact comp-b">
 			<div class="comp-label">
-				<strong>Statement B</strong>
+				<strong>{tr('contradiction.statement_b', currentLang)}</strong>
 				{#if c.fact_b_date}
 					<span class="comp-date">{formatDateWithTime(c.fact_b_date)}</span>
 				{/if}
 			</div>
-			<div class="comp-text"><span class="fact-id">[{c.fact_b_id}]</span> {c.fact_b_text}</div>
+			<div class="comp-text"><span class="fact-id">[{c.fact_b_id}]</span> {pickLang(c.fact_b_text, c.fact_b_text_en, currentLang)}</div>
 			<div class="comp-links">
-				<button class="link-btn" onclick={() => onGoToFact(c.fact_b_id)}>View in Facts</button>
+				<button class="link-btn" onclick={() => onGoToFact(c.fact_b_id)}>{tr('contradiction.view_in_facts', currentLang)}</button>
 				{#each c.fact_b_source_urls as url, i}
 					<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{c.fact_b_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
 				{/each}

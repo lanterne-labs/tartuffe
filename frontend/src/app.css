@@ -1,31 +1,32 @@
 /* Design Tokens */
 :root {
-  /* Colors */
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-card: rgba(30, 41, 59, 0.6);
-  --bg-card-hover: rgba(30, 41, 59, 0.8);
-  --border-card: rgba(148, 163, 184, 0.1);
-  --border-card-hover: rgba(148, 163, 184, 0.2);
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-glow: rgba(59, 130, 246, 0.3);
-  --green: #22c55e;
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --error-bg: rgba(239, 68, 68, 0.1);
-  --error-border: rgba(239, 68, 68, 0.3);
+  /* Colors — oxblood-on-near-black, theatrical */
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #15131a;
+  --bg-card: rgba(28, 22, 30, 0.6);
+  --bg-card-hover: rgba(36, 28, 38, 0.8);
+  --border-card: rgba(184, 160, 148, 0.08);
+  --border-card-hover: rgba(184, 160, 148, 0.18);
+  --text-primary: #f1ebe4;
+  --text-secondary: #a99c92;
+  --text-muted: #6c6058;
+  --accent: #9a2640;
+  --accent-hover: #b8324f;
+  --accent-glow: rgba(154, 38, 64, 0.35);
+  --green: #5fa56a;
+  --amber: #d4923a;
+  --red: #c2334a;
+  --error-bg: rgba(194, 51, 74, 0.1);
+  --error-border: rgba(194, 51, 74, 0.3);
 
   /* Glass morphism */
   --glass-blur: blur(12px);
-  --glass-bg: rgba(15, 23, 42, 0.8);
-  --glass-border: rgba(148, 163, 184, 0.15);
+  --glass-bg: rgba(10, 10, 15, 0.78);
+  --glass-border: rgba(184, 160, 148, 0.12);
 
   /* Typography */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Cormorant Garamond', 'EB Garamond', Georgia, serif;
 
   /* Spacing */
   --radius-sm: 0.375rem;
@@ -75,6 +76,31 @@ body {
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
+  position: relative;
+}
+
+/* Atmospheric vignette — soft burgundy glow at the top, deepening shadow at the bottom */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, rgba(154, 38, 64, 0.08), transparent 70%),
+    radial-gradient(ellipse 100% 70% at 50% 100%, rgba(0, 0, 0, 0.5), transparent 70%);
+}
+
+/* Subtle film grain — adds analog texture without competing with content */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
 a {

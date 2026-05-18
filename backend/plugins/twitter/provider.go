@@ -226,6 +226,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				SourceURL:          sourceURL,
 				PublishedAt:        fact.PublishedAt,
 				SourceType:         "twitter",
+				Lang:               matchFactToTweetLang(fact, batch),
 				Metadata: map[string]any{
 					"twitter_handle": handle.Handle,
 					"person_name":    handle.PersonName,
@@ -541,6 +542,22 @@ func matchFactToTweetURL(fact backend.Fact, batch []Tweet) string {
 	// Fallback: use the first tweet's URL
 	if len(batch) > 0 {
 		return batch[0].URL
+	}
+	return ""
+}
+
+// matchFactToTweetLang returns the lang of the tweet matching a fact's SourceURL.
+// Falls back to the first tweet's lang, or "" if none available.
+func matchFactToTweetLang(fact backend.Fact, batch []Tweet) string {
+	if fact.SourceURL != "" {
+		for _, tw := range batch {
+			if tw.URL == fact.SourceURL {
+				return tw.Lang
+			}
+		}
+	}
+	if len(batch) > 0 {
+		return batch[0].Lang
 	}
 	return ""
 }

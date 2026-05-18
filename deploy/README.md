@@ -34,48 +34,21 @@ docker-compose down
 
 ---
 
-## The host Deployment
+## Production: self-hosted observability on the host
 
-### Option 1: Use Grafana Cloud (Recommended - Free Tier)
+Prometheus + Grafana run colocated in a single host service (`observability`) built from `deploy/observability/Dockerfile`, supervised by s6-overlay, sharing one persistent volume at `/data`. Prometheus scrapes the `mirror` service over the host's private network; Grafana is exposed publicly on the host-issued domain.
 
-The simplest approach - no extra services to deploy:
+### One-time the host setup
+1. **New service** in the project: connect this repo, set Dockerfile path to `deploy/observability/Dockerfile`. Name it `observability`.
+2. **Volume**: 5 GB, mount path `/data`.
+3. **Env vars**:
+   - `GF_SECURITY_ADMIN_PASSWORD` — admin login password
+   - `GF_SERVER_ROOT_URL` — public URL of the service (set after generating the domain)
+4. **Networking**: Generate a public domain. The host routes it to Grafana on port 3000 automatically (Grafana listens on `$PORT`).
+5. **Cleanup on `mirror`**: remove `PROMETHEUS_REMOTE_WRITE_URL/USER/PASSWORD` env vars (no longer used).
 
-1. Sign up at https://grafana.com/products/cloud/ (free tier: 10k metrics)
-
-2. Get your Prometheus remote write URL from Grafana Cloud
-
-3. Add to your backend `.env`:
-   ```
-   PROMETHEUS_REMOTE_WRITE_URL=https://prometheus-xxx.grafana.net/api/prom/push
-   PROMETHEUS_REMOTE_WRITE_USER=your-user-id
-   PROMETHEUS_REMOTE_WRITE_PASSWORD=your-api-key
-   ```
-
-4. The metrics will be pushed to Grafana Cloud - import the dashboards from `grafana/dashboards/*.json`
-
-### Option 2: Self-hosted on the host
-
-Deploy 3 services:
-
-#### Backend Service
-Already deployed. Just ensure `/metrics` endpoint is accessible.
-
-#### Prometheus Service
-1. Create new host service
-2. Point to `deploy/prometheus` directory
-3. Set internal networking to connect to backend
-
-#### Grafana Service
-1. Create new host service
-2. Point to `deploy/grafana` directory
-3. Set `GF_SECURITY_ADMIN_PASSWORD` env var
-4. Expose port 3000
-
-Update `prometheus/prometheus.yml` with your host service URLs:
-```yaml
-static_configs:
-  - targets: ['your-backend-service.host.internal:8080']
-```
+### Service-name dependency
+`deploy/observability/prometheus.yml` scrapes `mirror.host.internal:9090`. If your host service is named differently, update that file.
 
 ---
 

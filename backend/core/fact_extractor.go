@@ -64,6 +64,16 @@ The decisive test is **who controls the action that follows the condition**:
 - ❌ "Trump claimed Iran can fall in one night IF pressure continues" — the action ("fall") is performed by Iran, not by Trump. Pure prediction.
 - ❌ "X said the economy will crash IF the law is repealed" — the action ("crash") is performed by impersonal markets, not by X. Prediction.
 
+⚠️ CALLS, DEMANDS, ADVICE and ULTIMATUMS are NEVER predictions even when the
+action falls to a third party — the entity TOOK A POSITION on what should happen,
+and that position is contradictable (the entity can later reverse, soften, drop, or
+deny it). KEEP them as Type 1 STANCES.
+- ✅ "X demanded the government scrap the immigration bill" — Type 1 demand (X holds a position; could later support the bill).
+- ✅ "X called for a coalition without Y" — Type 1 call.
+- ✅ "X advised the regulator DGCCRF to investigate Z" — Type 1 advice.
+- ✅ "X issued an ultimatum that Iran reopen Hormuz by 20:00" — Type 1 ultimatum (X's stance; he can later drop the deadline).
+The third-party-action rejection above applies ONLY to FORECASTS (X stated/predicted what someone else WILL do), NOT to STANCES (X demanded/called/advised what someone else SHOULD do).
+
 **4. Not contradictable**
 If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - Hopes, wishes, preferences, feelings, trust
@@ -115,7 +125,7 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - Quality over quantity: fewer correct facts is ALWAYS better than including invalid ones.
 
 ## JSON Output Format
-Return a JSON array. Each object has 8 fields (in this order):
+Return a JSON array. Each object has 10 fields (in this order):
 
 1. 'reasoning': Think step-by-step BEFORE committing to the other fields. Ask yourself: What type of fact is this (Type 1 or Type 2)? Which canonical verb best describes the stance? Is this truly contradictable? This field is for your analysis — be concise (1-2 sentences).
 2. 'subject_entity': The person/party WHO PERFORMS THE ACTION or MAKES THE STATEMENT described in the fact.
@@ -127,23 +137,25 @@ Return a JSON array. Each object has 8 fields (in this order):
 4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
    ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
    ⚠️ NO CANONICAL VERBS: NEVER use DENIED, CLAIMED, PROMISED, WAS_CONVICTED, etc. in this field. Use natural language only. Write "a nié", "a affirmé", "a promis" — NOT "a DENIED" or "a CLAIMED".
+4b. 'lang': REQUIRED. BCP-47 code of the language you wrote 'normalized_fact' in ("fr", "en", "de", "es", "it", "pt", ...). Detect it from the source content, NOT from the entity's nationality (a French speech reported in an English-language article is still "en" if the article is English; quote the source language). Facts with missing or non-BCP-47 'lang' are rejected at parse time.
+4c. 'normalized_fact_en': English translation of 'normalized_fact'. REQUIRED when 'lang' != "en"; OMIT this field entirely when 'lang' == "en" (no self-translation). The translation must preserve every concrete detail (numbers, dates, named entities, negations, conditional clauses) faithfully — DO NOT paraphrase.
 5. 'canonical_verb': MUST be EXACTLY one of these 20 UPPERCASE tokens (no synonyms, no inflections, no lowercase, no spaces — facts with any other value will be rejected):
    DENIED | CLAIMED | PROMISED | SUPPORTED | OPPOSED | VOTED_FOR | VOTED_AGAINST | PROPOSED | CONFIRMED | ADMITTED | REFUSED | DEMANDED | THREATENED | WAS_SENTENCED | WAS_CONVICTED | WAS_ACQUITTED | WAS_FINED | RECEIVED_FUNDS | CHANGED_POSITION | ANNOUNCED
    Pick the closest token; do NOT invent new ones (e.g. NEVER return "WAIVED", "SIGNED", "CONVICTED" — use the closest match like ANNOUNCED, PROPOSED, WAS_CONVICTED).
-6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. ALWAYS in English. NO VERB PREFIX.
+6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. In the SAME language as the input facts. NO VERB PREFIX.
    GOAL: Two facts about the same topic MUST produce identical or near-identical embedding_text, REGARDLESS of the entity's stance. The canonical_verb field already captures the stance separately.
    - Format: [broad policy domain] [one specific detail only if needed]
    - Topic abstraction: use the BROADEST policy domain. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
-   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, language-specific phrasing, specific numbers/percentages/amounts
+   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, specific numbers/percentages/amounts
    - Keep it SHORT: 2-5 words total
    - ⚠️ MUST be a SUBJECT (policy area, case, event, institution), NOT a rhetorical pattern or speech act. Words like "announcements", "contradictions", "promises", "denials", "flip-flops", "rhetoric", "pattern" describe FORM and are forbidden as the topic label. If the fact has no specific subject, you should have rejected it via REJECT rule 5b.
    - ❌ Bad: "policy announcements contradictions" / "campaign promises" / "rhetoric threats" / "denials reversals"
-   - ✅ Good: "tariffs china 2025" / "strait-of-hormuz coalition" / "iran nuclear-deal" / "NATO article-5"
-   - Examples:
-     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → wrongdoing parliamentary-assistants-case
-     "a promis de baisser l'impôt sur le revenu de 15%%" → tax-cut income-tax
-     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → tax-increase income-tax
-     "a été condamnée à 4 ans de prison" → prison parliamentary-assistants-case
+   - ✅ Good (French): "droits-douane chine" / "coalition détroit-hormuz" / "accord-nucléaire iran" / "article-5 OTAN"
+   - Examples (French input → French embedding_text):
+     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → délits affaire-assistants-parlementaires
+     "a promis de baisser l'impôt sur le revenu de 15%%" → baisse-impôts impôt-revenu
+     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → hausse-impôts impôt-revenu
+     "a été condamnée à 4 ans de prison" → prison affaire-assistants-parlementaires
 7. 'original_quote': Exact snippet (max ~250 chars) from the source text
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
@@ -157,18 +169,43 @@ Content:
 %s
 
 Return ONLY a valid JSON array — no commentary, no text before or after. Return [] if no verifiable facts found.
+⚠️ DO NOT INVENT FACTS ABOUT THE PRIMARY SUBJECT if the Content does not contain
+clear, attributable claims or actions by them. If the Primary Subject is barely
+mentioned or absent, still extract facts about OTHER entities that ARE present
+in the Content (the system stores facts under each fact's own subject_entity
+field, not under the Primary Subject). Only return [] when the Content contains
+NO verifiable facts about ANY entity. The Primary Subject being off-topic is NOT
+by itself a reason to return [] — extract whatever real facts are there about
+whoever is there.
 ⚠️ JSON VALIDITY: You MUST produce valid JSON. Inside string values, ESCAPE double quotes as \" or replace them with single quotes. NEVER put raw " inside a JSON string value — this breaks parsing.
 
-Example:
+Example (French source — note 'lang' = "fr" and 'normalized_fact_en' is present):
 [
   {
     "reasoning": "Type 1: Le Pen's own denial of wrongdoing. Contradictable: she could later admit guilt. Verb: DENIED.",
     "subject_entity": "Marine Le Pen",
     "subject_entity_type": "human",
     "normalized_fact": "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès en appel le 13 janvier 2026.",
+    "lang": "fr",
+    "normalized_fact_en": "Marine Le Pen stated she had 'no feeling whatsoever of having committed the slightest offense' during her appeal trial on 13 January 2026.",
     "canonical_verb": "DENIED",
-    "embedding_text": "wrongdoing parliamentary-assistants-case",
+    "embedding_text": "délits affaire-assistants-parlementaires",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
+    "involved_people": []
+  }
+]
+
+Example (English source — note 'lang' = "en" and 'normalized_fact_en' is OMITTED):
+[
+  {
+    "reasoning": "Type 1: Trump's own threat tied to a specific deadline.",
+    "subject_entity": "Donald Trump",
+    "subject_entity_type": "human",
+    "normalized_fact": "Donald Trump threatened to strike Iranian power plants if Iran did not reopen the Strait of Hormuz by 20:00 on 6 April 2026.",
+    "lang": "en",
+    "canonical_verb": "THREATENED",
+    "embedding_text": "strait-of-hormuz coalition iran",
+    "original_quote": "If they don't reopen the Strait by 8 p.m., we hit the power plants.",
     "involved_people": []
   }
 ]`

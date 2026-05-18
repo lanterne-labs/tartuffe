@@ -168,6 +168,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
 		r.Get("/person/{id}/stances", ws.handleGetPersonStances)
 		r.Get("/stances/{id}/contradictions", ws.handleGetStanceContradictions)
+		r.Get("/stances/{id}/facts", ws.handleGetStanceFacts)
 		r.Get("/events", ws.handleEventsSSE)
 	})
 }
@@ -400,11 +401,32 @@ func (ws *WebServer) handleGetPersonMembers(w http.ResponseWriter, r *http.Reque
 type StanceResponse struct {
 	ID                 int64     `json:"id"`
 	Label              string    `json:"label"`
+	LabelEn            string    `json:"label_en,omitempty"`
 	Summary            string    `json:"summary"`
+	SummaryEn          string    `json:"summary_en,omitempty"`
 	FactCount          int       `json:"fact_count"`
 	ContradictionCount int       `json:"contradiction_count"`
 	Score              float64   `json:"score"`
 	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// handleGetStanceFacts returns all facts attached to a stance, with both native and
+// English text so the frontend language toggle can swap per-fact without a second round trip.
+func (ws *WebServer) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stanceIDStr := chi.URLParam(r, "id")
+	stanceID, err := strconv.ParseInt(stanceIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid stance ID", http.StatusBadRequest)
+		return
+	}
+	items, err := ws.storer.GetFactsInStance(ctx, stanceID)
+	if err != nil {
+		httpInternalError(w, err, "failed to get stance facts")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(items)
 }
 
 // handleGetStanceContradictions returns the contradictions inside a single stance bundle
@@ -464,7 +486,9 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 		result[i] = StanceResponse{
 			ID:                 d.ID,
 			Label:              d.ClusterLabel,
+			LabelEn:            d.LabelEn,
 			Summary:            d.Summary,
+			SummaryEn:          d.SummaryEn,
 			FactCount:          d.FactCount,
 			ContradictionCount: total,
 			Score:              score,
@@ -700,22 +724,6 @@ func executeServe(cmd *cobra.Command, args []string) error {
 			log.Error().Err(err).Msg("Metrics server failed")
 		}
 	}()
-
-	// Start Prometheus remote write if configured (e.g. Grafana Cloud)
-	if rwURL := os.Getenv("PROMETHEUS_REMOTE_WRITE_URL"); rwURL != "" {
-		rwUser := os.Getenv("PROMETHEUS_REMOTE_WRITE_USER")
-		rwPass := os.Getenv("PROMETHEUS_REMOTE_WRITE_PASSWORD")
-		if rwUser == "" || rwPass == "" {
-			return fmt.Errorf("PROMETHEUS_REMOTE_WRITE_URL is set but PROMETHEUS_REMOTE_WRITE_USER or PROMETHEUS_REMOTE_WRITE_PASSWORD is missing")
-		}
-		rwCfg := metrics.RemoteWriteConfig{
-			URL:      rwURL,
-			Username: rwUser,
-			Password: rwPass,
-			Interval: 15 * time.Second,
-		}
-		go metrics.StartRemoteWrite(ctx, rwCfg)
-	}
 
 	// Start batch poller if BATCH_PROVIDER is configured
 	if providerName := os.Getenv("BATCH_PROVIDER"); providerName != "" {

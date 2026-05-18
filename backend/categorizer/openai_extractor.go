@@ -216,8 +216,13 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 		Messages: []ChatMessage{
 			{Role: "system", Content: systemPrompt},
 		},
-		Temperature:    0.1,
-		MaxTokens:      16384,
+		Temperature: 0.1,
+		// Fact-extraction outputs are typically <1.5k tokens (a small JSON array).
+		// Keeping max_tokens conservative so the request fits even on smaller-context
+		// local LLMs (e.g. self-hosted Gemma at ~12k total context). With chunk size
+		// at 20k chars (~5-6k tokens) + ~3-4k prompt, a 2k output budget keeps the
+		// total request under 12k.
+		MaxTokens:      2048,
 		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
 

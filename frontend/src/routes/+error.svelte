@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-	<title>Error {$page.status} - Digital Mirror</title>
+	<title>Error {$page.status} — tartuffe.me</title>
 </svelte:head>
 
 <div class="error-page">

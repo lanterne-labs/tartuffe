@@ -126,14 +126,21 @@ GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
 DAILY_FOR_ALL=0                  # If 1, news+twitter fact extraction iterate ALL persons (default: only search_queue)
 FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
+
+# Search providers — assembled into a chain (tried in this order; whichever key is set is added).
+# Priority: Serper > Brave > SerpAPI. Each is optional; at least one must be set.
+SERPER_API_KEY=...               # https://serper.dev — supports tbs date-range filter
+BRAVE_SEARCH_API_KEY=...         # https://brave.com/search/api
+SERPAPI_KEY=...                  # https://serpapi.com
 ```
 
 ## Deployment (the host)
 
-Two services on the host, both built from this repo's Dockerfile:
+Three services on the host:
 
-- **`mirror`** — long-lived `dm web serve`. Hosts the HTTP API, the batch poller (5 min), the balance alerter, Prometheus metrics, and the metrics-export goroutine. No pipeline scheduler runs here.
-- **`mirror-cron`** — cron-scheduled service. Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. Shares the same env vars as `mirror` (DB URL, OpenAI/batch provider keys, Telegram, R2, etc.) except no HTTP `PORT`/`METRICS_PORT`/`PROMETHEUS_REMOTE_WRITE_*`.
+- **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the batch poller (5 min), the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
+- **`mirror-cron`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. Shares the same env vars as `mirror` except no HTTP `PORT`/`METRICS_PORT`.
+- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` every 15s. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
 
 To trigger the pipeline manually (locally or on the cron service): `./dm pipeline daily`.
 
