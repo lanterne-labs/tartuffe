@@ -19,11 +19,9 @@ make db-stop           # Stop Supabase
 **`supabase db reset`**: You can run this when needed (e.g., to apply new migrations). It drops all data but nothing is in production yet. Note that another application also uses Supabase, but this should be fine.
 
 **Applying Migrations**:
-```bash
-# Preferred: Apply new migrations incrementally without data loss
-# TODO: Implement goose migration tool (github.com/pressly/goose) for incremental migrations
-# For now, new migrations are auto-applied by Supabase on restart
-```
+- Migrations are applied by **goose** at `dm web serve` startup (from `/migrations` in the container, `supabase/migrations/` locally).
+- **Every new migration MUST start with `-- +goose Up` and include a `-- +goose Down` block.** Without these annotations goose fails to parse the file and the server panics at boot (`unexpected state 0 on line ...`) — the container crash-loops and the deploy is marked FAILED on the host. Copy the format from any existing migration (e.g. `20260510000000_resize_embedding_to_4096.sql`).
+- Locally, `supabase db reset` re-applies everything from scratch and is fine to run.
 
 ### Backend
 ```bash
@@ -102,10 +100,10 @@ go test -v ./backend/storage -run TestSpecificName
 PostgreSQL with pgvector extension. Migrations in `supabase/migrations/` are idempotent (safe to re-run).
 
 **Migration Strategy**:
-- New migrations are auto-detected and applied by Supabase on next `make db-start`
-- Migrations should be incremental (ALTER TABLE, not DROP/CREATE)
-- **Never reset the database without user permission** - data loss is permanent
-- Consider implementing goose (github.com/pressly/goose) for better migration control
+- Migrations are run by **goose** on `dm web serve` startup (in prod) and applied locally by `supabase db reset` / `make db-start`.
+- **Every new migration MUST begin with `-- +goose Up` and include a `-- +goose Down` block** — without them goose throws a parse error at boot and the deploy fails.
+- Migrations should be incremental (ALTER TABLE, not DROP/CREATE).
+- **Never reset the database without user permission** - data loss is permanent.
 
 Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `news_queue` (queue for news search).
 
