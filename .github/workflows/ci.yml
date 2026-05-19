@@ -43,10 +43,16 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Apply migrations
+        # Migrations are goose-formatted (-- +goose Up / -- +goose Down) so the
+        # prod boot-time runner can apply them. psql treats those lines as
+        # plain comments, which means without filtering it would execute the
+        # Down block too — silently undoing every column add. Strip from
+        # `-- +goose Down` onwards before piping in.
         run: |
           for f in supabase/migrations/*.sql; do
             echo "Applying $f"
-            psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+            sed '/^-- +goose Down/,$d' "$f" | \
+              psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
           done
 
       - name: Build

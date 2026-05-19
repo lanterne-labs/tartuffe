@@ -146,6 +146,18 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 
 		factID, personID, inserted, err := fi.insertSingleFact(ctx, fact)
 		if err != nil {
+			// Entity-validator rejection means the subject isn't a real entity —
+			// not a pipeline failure, just a per-fact skip. Don't abort the batch.
+			if isEntityRejected(err) {
+				log.Info().
+					Err(err).
+					Str("subject", fact.SubjectEntity).
+					Str("subject_type", fact.SubjectEntityType).
+					Str("fact_text", truncate(fact.NormalizedFactText, 100)).
+					Msg("Skipping fact: subject entity rejected by validator")
+				result.Skipped++
+				continue
+			}
 			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
 		}
 		if inserted {

@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	// "digital-mirror/backend" // Removed unused import
 	// Assuming backend.Fact is no longer needed here directly
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/entityvalidator"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util" // Import the new util package
 	"fmt"
@@ -73,6 +75,9 @@ type StoreFactInput struct {
 // PostgresStorer implements the storage logic using PostgreSQL.
 type PostgresStorer struct {
 	pool *pgxpool.Pool
+	// validator is consulted before every NEW person INSERT (existing persons
+	// are never re-validated). nil ⇒ validation disabled. See entity_validator.go.
+	validator EntityValidator
 	// embedder embedding.EmbeddingGenerator // REMOVED
 	// contradictor contradiction.ContradictionDetector // REMOVED
 }
@@ -125,11 +130,18 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	// insertion, but a periodic gauge surfaces any historical drift.
 	metrics.StartStanceInvariantCollector(ctx, pool, 5*time.Minute)
 
-	return &PostgresStorer{
+	s := &PostgresStorer{
 		pool: pool,
 		// embedder: embedder, // REMOVED
 		// contradictor: contradictor, // REMOVED
-	}, nil
+	}
+	// Attach the default entity-validator chain (WikiFilter + LLMFilter if env
+	// permits). This is the single seam every new-person INSERT in the codebase
+	// flows through, so the daily pipeline and CLI both get the same policy.
+	// Tests / specialized callers may override via SetEntityValidator(nil) or
+	// a custom implementation.
+	s.validator = entityvalidator.BuildFromEnv()
+	return s, nil
 }
 
 // Close closes the underlying database connection pool.
@@ -348,6 +360,13 @@ func (s *PostgresStorer) FindOrInsertPersonWithType(ctx context.Context, name st
 	}
 	if err != pgx.ErrNoRows {
 		return 0, fmt.Errorf("failed to query person: %w", err)
+	}
+
+	// Person is NEW — run it through the validator before inserting. A rejection
+	// surfaces as *ErrEntityRejected so callers can soft-fail this fact and keep
+	// going on the next one.
+	if err := s.checkValidator(ctx, normalized, entityType); err != nil {
+		return 0, err
 	}
 
 	// Person doesn't exist, insert with entity type
@@ -649,14 +668,38 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 	}
 	rows.Close() // Explicit close after successful iteration
 
-	// 3. Determine which persons need insertion
+	// 3. Determine which persons need insertion. NEW candidates (not in existing
+	//    map) go through the validator; rejected ones are logged and dropped so
+	//    the rest of the batch keeps moving.
 	personsToInsert := make([][]any, 0)
 	finalPersonIDsMap := make(map[string]int64) // Store all IDs (existing + new) by normalized name
+	rejectedNames := make([]string, 0)
 	for _, normalizedName := range normalizedNamesList {
 		if id, exists := existingPersons[normalizedName]; exists {
 			finalPersonIDsMap[normalizedName] = id
-		} else {
-			personsToInsert = append(personsToInsert, []any{normalizedName})
+			continue
+		}
+		// New candidate — validate. Rejection drops it from this batch.
+		if err := s.checkValidator(ctx, normalizedName, ""); err != nil {
+			var rej *ErrEntityRejected
+			if errors.As(err, &rej) {
+				rejectedNames = append(rejectedNames, normalizedName)
+				continue
+			}
+			// Non-rejection error (e.g. context cancelled) — bubble up; the batch
+			// can't proceed safely if validation infrastructure itself is broken.
+			return nil, fmt.Errorf("validator failed for %q: %w", normalizedName, err)
+		}
+		personsToInsert = append(personsToInsert, []any{normalizedName})
+	}
+
+	// If every NEW candidate was rejected AND nothing pre-existed, surface a
+	// single typed error so callers can decide whether this fact still has a
+	// resolvable subject.
+	if len(personsToInsert) == 0 && len(finalPersonIDsMap) == 0 && len(rejectedNames) > 0 {
+		return nil, &ErrEntityRejected{
+			Name:   rejectedNames[0],
+			Reason: fmt.Sprintf("all %d candidate name(s) rejected by validator", len(rejectedNames)),
 		}
 	}
 
@@ -705,16 +748,25 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 		newRows.Close()
 	}
 
-	// 6. Collect final list of IDs in the original order of unique normalized names
+	// 6. Collect final list of IDs in the original order of unique normalized names.
+	// Validator-rejected names are silently omitted (already logged in step 3 and
+	// in checkValidator). The remaining missing-from-map case is a real bug.
+	rejectedSet := make(map[string]struct{}, len(rejectedNames))
+	for _, n := range rejectedNames {
+		rejectedSet[n] = struct{}{}
+	}
 	personIDs = make([]int64, 0, len(normalizedNamesList))
 	for _, normalizedName := range normalizedNamesList {
 		if id, ok := finalPersonIDsMap[normalizedName]; ok {
 			personIDs = append(personIDs, id)
-		} else {
-			// This should not happen if logic is correct
-			log.Error().Str("normalized_name", normalizedName).Msg("Could not find final ID for person after insert/query steps")
-			return nil, fmt.Errorf("internal error: could not find final ID for person '%s'", normalizedNameToOriginal[normalizedName])
+			continue
 		}
+		if _, isRejected := rejectedSet[normalizedName]; isRejected {
+			// Dropped on purpose — no id to return; caller sees a shorter slice.
+			continue
+		}
+		log.Error().Str("normalized_name", normalizedName).Msg("Could not find final ID for person after insert/query steps")
+		return nil, fmt.Errorf("internal error: could not find final ID for person '%s'", normalizedNameToOriginal[normalizedName])
 	}
 
 	return personIDs, nil
@@ -1098,11 +1150,22 @@ func (s *PostgresStorer) GetPersonsWithMultipleStances(ctx context.Context) ([]P
 }
 
 // AddPerson inserts a new person into the persons table if they don't already exist.
-// It uses the normalized version of the name.
+// It uses the normalized version of the name. New candidates (those not already
+// in the table) are run through the EntityValidator first; rejected candidates
+// surface as *ErrEntityRejected so callers can decide whether to skip them.
 func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, inserted bool, err error) {
 	normalizedName := util.NormalizeString(name)
 	if normalizedName == "" {
 		return 0, false, fmt.Errorf("cannot add empty person name")
+	}
+
+	// Fast path: if the person already exists, skip validation (they were validated
+	// when first inserted OR pre-date validation). Validate only NEW candidates.
+	if existing, lookupErr := s.findPersonIDByName(ctx, normalizedName); lookupErr == nil && existing > 0 {
+		return existing, false, nil
+	}
+	if err := s.checkValidator(ctx, normalizedName, ""); err != nil {
+		return 0, false, err
 	}
 
 	stmt := `
@@ -1145,6 +1208,14 @@ func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, ent
 	validTypes := map[string]bool{"human": true, "party": true, "company": true, "organization": true}
 	if !validTypes[entityType] {
 		return 0, false, fmt.Errorf("invalid entity_type '%s': must be one of 'human', 'party', 'company', 'organization'", entityType)
+	}
+
+	// Fast path: existing persons skip validation; only NEW candidates get checked.
+	if existing, lookupErr := s.findPersonIDByName(ctx, normalizedName); lookupErr == nil && existing > 0 {
+		return existing, false, nil
+	}
+	if err := s.checkValidator(ctx, normalizedName, entityType); err != nil {
+		return 0, false, err
 	}
 
 	stmt := `
