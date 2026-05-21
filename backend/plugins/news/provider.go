@@ -407,11 +407,6 @@ func (p *Provider) extractAndInsertFromArticles(
 			continue
 		}
 
-		publishedAt := content.DatePublished
-		if article.Date != nil {
-			publishedAt = article.Date
-		}
-
 		var facts []backend.Fact
 		var err error
 		if target.Type == TargetPerson && len(affiliatedParties) > 0 {
@@ -428,6 +423,19 @@ func (p *Provider) extractAndInsertFromArticles(
 			result.Errors = append(result.Errors, err)
 			continue
 		}
+
+		// Publication date — priority: LLM-from-body > webcrawlerapi <meta>
+		// > Serper SERP date. All facts in this batch came from the same
+		// article so they share the same article_published_at; take the first
+		// non-nil one the LLM emitted (if any).
+		var llmDate *time.Time
+		for _, f := range facts {
+			if f.ArticlePublishedAt != nil {
+				llmDate = f.ArticlePublishedAt
+				break
+			}
+		}
+		publishedAt := core.PickPublishedAt(llmDate, content.DatePublished, article.Date)
 
 		if opts.KeepSourceDir != "" {
 			if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, article.Link, content.Title, content.Content, publishedAt, facts); dumpErr != nil {
@@ -670,10 +678,11 @@ func (p *Provider) CollectContent(ctx context.Context, target SearchTarget, opts
 			continue
 		}
 
-		publishedAt := content.DatePublished
-		if article.Date != nil {
-			publishedAt = article.Date
-		}
+		// Pre-extraction structured-source pick. The batch consumer
+		// (backend/core/batch_job.go) overlays the LLM-extracted
+		// article_published_at when the LLM completes — see PickPublishedAt
+		// usage there.
+		publishedAt := core.PickPublishedAt(content.DatePublished, article.Date)
 
 		result.ArticlesParsed++
 		items = append(items, ContentItem{

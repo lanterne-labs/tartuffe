@@ -214,6 +214,15 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				continue
 			}
 
+			// Publication date — for Twitter the tweet API's CreatedAt is the
+			// authoritative source. The LLM may also have extracted a date from
+			// the tweet body (article_published_at), but that's only a fallback
+			// if CreatedAt is somehow missing. Before this fix every Twitter
+			// fact had PublishedAt = nil because fact.PublishedAt was never
+			// populated by the parser (see backend/categorizer/openai_extractor.go).
+			tweetCreatedAt := matchFactToTweetCreatedAt(fact, batch)
+			finalPubAt := core.PickPublishedAt(tweetCreatedAt, fact.ArticlePublishedAt, fact.PublishedAt)
+
 			input := core.StoreFactInput{
 				SubjectEntity:      fact.SubjectEntity,
 				SubjectEntityType:  fact.SubjectEntityType,
@@ -224,7 +233,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 				CanonicalVerb:      fact.CanonicalVerb,
 				InvolvedPeople:     fact.InvolvedPeople,
 				SourceURL:          sourceURL,
-				PublishedAt:        fact.PublishedAt,
+				PublishedAt:        finalPubAt,
 				SourceType:         "twitter",
 				Lang:               matchFactToTweetLang(fact, batch),
 				Metadata: map[string]any{
@@ -549,17 +558,38 @@ func matchFactToTweetURL(fact backend.Fact, batch []Tweet) string {
 // matchFactToTweetLang returns the lang of the tweet matching a fact's SourceURL.
 // Falls back to the first tweet's lang, or "" if none available.
 func matchFactToTweetLang(fact backend.Fact, batch []Tweet) string {
+	if tw := findMatchingTweet(fact, batch); tw != nil {
+		return tw.Lang
+	}
+	return ""
+}
+
+// matchFactToTweetCreatedAt returns the CreatedAt of the tweet matching a fact's
+// SourceURL. Falls back to the first tweet's CreatedAt. Returns nil only when
+// the batch is empty or the matched tweet has no timestamp. This is the
+// primary structured pub-date source for Twitter facts.
+func matchFactToTweetCreatedAt(fact backend.Fact, batch []Tweet) *time.Time {
+	if tw := findMatchingTweet(fact, batch); tw != nil {
+		return tw.CreatedAt
+	}
+	return nil
+}
+
+// findMatchingTweet returns the tweet whose URL matches the fact's SourceURL,
+// or the first tweet in the batch as a fallback. Returns nil only when the
+// batch itself is empty. Shared by the per-field matchFactToTweet* helpers.
+func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 	if fact.SourceURL != "" {
-		for _, tw := range batch {
-			if tw.URL == fact.SourceURL {
-				return tw.Lang
+		for i := range batch {
+			if batch[i].URL == fact.SourceURL {
+				return &batch[i]
 			}
 		}
 	}
 	if len(batch) > 0 {
-		return batch[0].Lang
+		return &batch[0]
 	}
-	return ""
+	return nil
 }
 
 // truncate truncates a string to maxLen characters, adding "..." if truncated.

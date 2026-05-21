@@ -508,6 +508,12 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 			continue
 		}
 
+		// Publication date — the LLM may have extracted one from the article
+		// body via article_published_at; let it win over the pre-extraction
+		// structured value (html meta + serper baked into req.PublishedAt at
+		// submission time, copied to fact.PublishedAt by the parser).
+		finalPubAt := PickPublishedAt(fact.ArticlePublishedAt, fact.PublishedAt)
+
 		input := StoreFactInput{
 			SubjectEntity:        fact.SubjectEntity,
 			SubjectEntityType:    fact.SubjectEntityType,
@@ -520,7 +526,7 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople,
 			SourceURL:            fact.SourceURL,
-			PublishedAt:          fact.PublishedAt,
+			PublishedAt:          finalPubAt,
 			SourceType:           "batch",
 			Metadata: map[string]any{
 				"batch_request_id": req.ID,
@@ -539,7 +545,8 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 		inserted += insertResult.Inserted
 		skipped += insertResult.Skipped
 
-		// Collect metadata for classification chaining
+		// Collect metadata for classification chaining (use the same finalPubAt
+		// so the downstream summary matches what we actually stored).
 		for _, meta := range insertResult.InsertedMeta {
 			insertedFacts = append(insertedFacts, InsertedFactInfo{
 				FactID:      meta.FactID,
@@ -547,7 +554,7 @@ func (o *BatchJobOrchestrator) insertFactsFromBatch(ctx context.Context, facts [
 				Verb:        fact.CanonicalVerb,
 				Embedding:   embeddings[0],
 				PersonIDs:   []int64{meta.PersonID},
-				PublishedAt: fact.PublishedAt,
+				PublishedAt: finalPubAt,
 			})
 		}
 	}

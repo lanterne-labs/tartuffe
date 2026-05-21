@@ -3,12 +3,15 @@ package core
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // CoreFactExtractionPrompt is THE single prompt template for fact extraction.
 // Extracts facts about ALL relevant entities mentioned in an article, not just a single target.
 // Plugins can optionally inject additional instructions via the {{PLUGIN_INSTRUCTIONS}} placeholder.
 const CoreFactExtractionPrompt = `You are an expert AI assistant specialized in extracting **verifiable factual statements** from news articles.
+
+TODAY'S DATE: %s (YYYY-MM-DD). Use this as the reference point for any relative date phrases ("2 days ago", "il y a 3 jours", "yesterday", "hier", "la semaine dernière") you encounter — convert each to an absolute YYYY-MM-DD value when populating date fields below.
 
 ## Task
 Extract facts about ALL relevant persons, parties, and organizations mentioned in the article.
@@ -159,6 +162,15 @@ Return a JSON array. Each object has 10 fields (in this order):
 7. 'original_quote': Exact snippet (max ~250 chars) from the source text
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
+9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published.
+   Use the most precise form the article supplies:
+     - date only:   "YYYY-MM-DD"                  (when only the date is known)
+     - date+time:   "YYYY-MM-DDTHH:MM:SS"         (when an hour is given, no timezone)
+     - full RFC3339: "YYYY-MM-DDTHH:MM:SSZ" or "YYYY-MM-DDTHH:MM:SS+02:00" (when a timezone is given)
+   Set this when the article body EITHER:
+     (a) explicitly states an absolute date/time — e.g. "Posted on May 19, 2026 at 14:30 CEST", "Publié le 19/05/2026 à 09h", a clearly-dated header byline — use the stated value directly, preserving whatever precision the article provides; OR
+     (b) explicitly states a relative date/time — e.g. "Posted 2 days ago", "Publié hier", "Il y a 3 heures", "Mis à jour il y a 30 minutes" — convert it to an absolute ISO 8601 value using TODAY'S DATE above. A relative phrase resolved this way IS a valid article_published_at; include the hour if the relative phrase implied one ("3 heures" → use the time component).
+   OMIT this field entirely when neither (a) nor (b) appears in the body. DO NOT guess from the article's content, topic, or named events.
 
 %s
 
@@ -179,7 +191,7 @@ by itself a reason to return [] — extract whatever real facts are there about
 whoever is there.
 ⚠️ JSON VALIDITY: You MUST produce valid JSON. Inside string values, ESCAPE double quotes as \" or replace them with single quotes. NEVER put raw " inside a JSON string value — this breaks parsing.
 
-Example (French source — note 'lang' = "fr" and 'normalized_fact_en' is present):
+Example (French source — note 'lang' = "fr", 'normalized_fact_en' present, 'article_published_at' from explicit "Publié le ..." byline):
 [
   {
     "reasoning": "Type 1: Le Pen's own denial of wrongdoing. Contradictable: she could later admit guilt. Verb: DENIED.",
@@ -191,11 +203,12 @@ Example (French source — note 'lang' = "fr" and 'normalized_fact_en' is presen
     "canonical_verb": "DENIED",
     "embedding_text": "délits affaire-assistants-parlementaires",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
-    "involved_people": []
+    "involved_people": [],
+    "article_published_at": "2026-01-14T09:00:00+01:00"
   }
 ]
 
-Example (English source — note 'lang' = "en" and 'normalized_fact_en' is OMITTED):
+Example (English source — note 'lang' = "en", 'normalized_fact_en' OMITTED, 'article_published_at' resolved from "Posted 2 days ago" using TODAY'S DATE — date-only when no hour was implied):
 [
   {
     "reasoning": "Type 1: Trump's own threat tied to a specific deadline.",
@@ -206,7 +219,8 @@ Example (English source — note 'lang' = "en" and 'normalized_fact_en' is OMITT
     "canonical_verb": "THREATENED",
     "embedding_text": "strait-of-hormuz coalition iran",
     "original_quote": "If they don't reopen the Strait by 8 p.m., we hit the power plants.",
-    "involved_people": []
+    "involved_people": [],
+    "article_published_at": "2026-04-07"
   }
 ]`
 
@@ -222,6 +236,10 @@ type FactExtractorConfig struct {
 	// These are injected into the prompt to customize extraction behavior.
 	// Leave empty for default behavior.
 	PluginInstructions string
+	// Now is the reference time the LLM uses to resolve relative date phrases
+	// it sees in the article body ("2 days ago", "il y a 3 jours"). Zero value
+	// falls back to time.Now() at prompt-build time — tests should pin it.
+	Now time.Time
 }
 
 // BuildFactExtractionPrompt combines the core prompt with optional plugin instructions.
@@ -232,12 +250,18 @@ func BuildFactExtractionPrompt(cfg FactExtractorConfig) string {
 		pluginSection = fmt.Sprintf("## Additional Context\n%s", cfg.PluginInstructions)
 	}
 
+	now := cfg.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
 	return fmt.Sprintf(CoreFactExtractionPrompt,
-		cfg.TargetName,     // First %s - target name in intro
-		pluginSection,      // Second %s - plugin instructions section
-		cfg.TargetName,     // Third %s - target name in input data
-		cfg.SourceURL,      // Fourth %s - source URL
-		cfg.Content,        // Fifth %s - content
+		now.Format("2006-01-02"), // First %s - TODAY'S DATE for relative-date resolution
+		cfg.TargetName,           // Second %s - target name in intro
+		pluginSection,            // Third %s - plugin instructions section
+		cfg.TargetName,           // Fourth %s - target name in input data
+		cfg.SourceURL,            // Fifth %s - source URL
+		cfg.Content,              // Sixth %s - content
 	)
 }
 

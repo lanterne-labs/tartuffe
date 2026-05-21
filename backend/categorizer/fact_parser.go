@@ -18,16 +18,17 @@ import (
 func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) {
 	// Temporary struct mirroring the expected JSON output fields from the LLM prompt
 	var extractedFactsRaw []struct {
-		Reasoning         string   `json:"reasoning"`               // LLM reasoning (logged, not stored)
-		SubjectEntity     string   `json:"subject_entity"`          // The entity this fact is about
-		SubjectEntityType string   `json:"subject_entity_type"`     // "human", "party", or "organization"
-		NormalizedFact    string   `json:"normalized_fact"`         // Native language fact text
-		NormalizedFactEn  string   `json:"normalized_fact_en"`      // English translation (omitted when source is English)
-		Lang              string   `json:"lang"`                    // BCP-47 source language (required)
-		CanonicalVerb     string   `json:"canonical_verb"`          // One of 20 canonical verbs
-		EmbeddingText     string   `json:"embedding_text"`          // Verb-free topic for embedding generation
-		OriginalQuote     string   `json:"original_quote"`          // Match the prompt's JSON key
-		InvolvedPeople    []string `json:"involved_people"`
+		Reasoning          string   `json:"reasoning"`             // LLM reasoning (logged, not stored)
+		SubjectEntity      string   `json:"subject_entity"`        // The entity this fact is about
+		SubjectEntityType  string   `json:"subject_entity_type"`   // "human", "party", or "organization"
+		NormalizedFact     string   `json:"normalized_fact"`       // Native language fact text
+		NormalizedFactEn   string   `json:"normalized_fact_en"`    // English translation (omitted when source is English)
+		Lang               string   `json:"lang"`                  // BCP-47 source language (required)
+		CanonicalVerb      string   `json:"canonical_verb"`        // One of 20 canonical verbs
+		EmbeddingText      string   `json:"embedding_text"`        // Verb-free topic for embedding generation
+		OriginalQuote      string   `json:"original_quote"`        // Match the prompt's JSON key
+		InvolvedPeople     []string `json:"involved_people"`
+		ArticlePublishedAt string   `json:"article_published_at"` // Optional YYYY-MM-DD when LLM found a pub date in the body
 	}
 
 	jsonContent := string(jsonData)
@@ -157,6 +158,23 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 				Msg("non-English fact missing normalized_fact_en — storing without English copy; frontend toggle will fall back to native")
 		}
 
+		// Parse the optional LLM-extracted article publication date. Accept the
+		// progressively-precise ISO 8601 forms the prompt asks for: date only,
+		// date+time without tz, or full RFC3339. Anything else is silently
+		// ignored so a malformed value doesn't poison the fact.
+		var llmArticleDate *time.Time
+		if raw := strings.TrimSpace(rawFact.ArticlePublishedAt); raw != "" {
+			if d, ok := parseFlexibleISO(raw); ok {
+				llmArticleDate = &d
+			} else {
+				log.Debug().
+					Int("fact_index", i).
+					Str("article_published_at", raw).
+					Str("source_url", sourceURL).
+					Msg("LLM article_published_at not a recognised ISO form — ignoring")
+			}
+		}
+
 		finalFacts = append(finalFacts, backend.Fact{
 			SubjectEntity:        rawFact.SubjectEntity,     // Primary entity this fact is about
 			SubjectEntityType:    rawFact.SubjectEntityType, // Entity type (human/party/organization)
@@ -168,7 +186,8 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			CanonicalVerb:        rawFact.CanonicalVerb,
 			InvolvedPeople:       rawFact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:            sourceURL,              // Add context passed from extractor
-			PublishedAt:          publishedAt,
+			PublishedAt:          publishedAt,            // Plugin-supplied default; plugin overrides via PickPublishedAt
+			ArticlePublishedAt:   llmArticleDate,         // Optional LLM signal; plugin chooses final
 		})
 	}
 
@@ -236,6 +255,26 @@ func ParseVerbFromEmbeddingText(embeddingText string) (verb string, topic string
 		return firstWord, remainder, true
 	}
 	return "", "", false
+}
+
+// parseFlexibleISO accepts the date-or-datetime ISO 8601 forms the LLM is asked
+// to emit for `article_published_at`: pure date, date+time without timezone,
+// or RFC3339. Returns (parsed, true) on the first match.
+func parseFlexibleISO(s string) (time.Time, bool) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // truncateStr truncates a string to maxLen characters.

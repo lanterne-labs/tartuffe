@@ -95,6 +95,14 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 		return []backend.Fact{}, nil
 	}
 
+	// Pin `now` once for the whole article so every chunk's prompt shows the
+	// SAME TODAY's-date — otherwise multi-chunk articles could resolve
+	// "yesterday" to different absolute dates across chunks if the call straddled
+	// midnight. Tests can override by setting cfg.Now before calling.
+	if cfg.Now.IsZero() {
+		cfg.Now = time.Now()
+	}
+
 	chunkParams := m.GetChunkingParameters()
 	var allExtractedFacts []backend.Fact
 
@@ -112,6 +120,7 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 				SourceURL:          cfg.SourceURL,
 				Content:            chunk,
 				PluginInstructions: cfg.PluginInstructions,
+				Now:                cfg.Now, // share the same TODAY across chunks
 			}
 			prompt := core.BuildFactExtractionPrompt(chunkCfg)
 			chunkFacts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)

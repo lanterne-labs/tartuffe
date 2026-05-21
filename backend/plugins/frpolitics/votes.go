@@ -1,6 +1,10 @@
 package frpolitics
 
-import "github.com/rs/zerolog/log"
+import (
+	"digital-mirror/backend/core"
+
+	"github.com/rs/zerolog/log"
+)
 
 // deriveDeputyFacts builds deputy-level vote facts for each VoteEvent
 func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary) []FactRecord {
@@ -25,7 +29,7 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary) []FactRe
 			CanonicalVerb: deriveVerbFromPosition(ev.Position),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
-			PublishedAt:   law.VoteDate,
+			PublishedAt:   core.PickPublishedAt(law.VoteDate),
 		})
 	}
 	return out
@@ -96,7 +100,7 @@ func derivePartyFactsFromEvents(law Law, events []VoteEvent, threshold float64, 
 			CanonicalVerb: deriveVerbFromPosition(maj),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
-			PublishedAt:   law.VoteDate,
+			PublishedAt:   core.PickPublishedAt(law.VoteDate),
 		})
 	}
 	return facts

@@ -1,6 +1,7 @@
 package frpolitics
 
 import (
+	"digital-mirror/backend/core"
 	"fmt"
 	"strings"
 
@@ -61,7 +62,7 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			CanonicalVerb: deriveCollectiveVerb(pos),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
-			PublishedAt:   law.VoteDate,
+			PublishedAt:   core.PickPublishedAt(law.VoteDate),
 		})
 	}
 	return facts

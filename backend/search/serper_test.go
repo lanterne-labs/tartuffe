@@ -261,3 +261,61 @@ func TestSerper_Integration(t *testing.T) {
 		t.Logf("  %d: %s — %s", i+1, r.Title, r.Link)
 	}
 }
+
+// --- parseSerperDate (relative + absolute formats) ---
+
+func TestParseSerperDate(t *testing.T) {
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		in    string
+		want  time.Time
+		ok    bool
+	}{
+		// Absolute (regression)
+		{"iso date", "2026-01-05", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), true},
+		{"jan-day-year", "Jan 5, 2026", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), true},
+		{"rfc3339", "2026-05-19T10:30:00Z", time.Date(2026, 5, 19, 10, 30, 0, 0, time.UTC), true},
+
+		// English relative
+		{"yesterday", "yesterday", now.AddDate(0, 0, -1), true},
+		{"today", "today", now, true},
+		{"2 days ago", "2 days ago", now.AddDate(0, 0, -2), true},
+		{"1 day ago", "1 day ago", now.AddDate(0, 0, -1), true},
+		{"an hour ago", "an hour ago", now.Add(-time.Hour), true},
+		{"a week ago", "a week ago", now.AddDate(0, 0, -7), true},
+		{"3 weeks ago", "3 weeks ago", now.AddDate(0, 0, -21), true},
+		{"1 month ago", "1 month ago", now.AddDate(0, -1, 0), true},
+		{"one year ago", "one year ago", now.AddDate(-1, 0, 0), true},
+		{"YESTERDAY upper", "YESTERDAY", now.AddDate(0, 0, -1), true},
+
+		// French relative
+		{"hier", "hier", now.AddDate(0, 0, -1), true},
+		{"aujourd'hui", "aujourd'hui", now, true},
+		{"aujourdhui no apostrophe", "aujourdhui", now, true},
+		{"il y a 2 jours", "il y a 2 jours", now.AddDate(0, 0, -2), true},
+		{"il y a 1 jour", "il y a 1 jour", now.AddDate(0, 0, -1), true},
+		{"il y a une heure", "il y a une heure", now.Add(-time.Hour), true},
+		{"il y a 3 semaines", "il y a 3 semaines", now.AddDate(0, 0, -21), true},
+		{"il y a 1 mois", "il y a 1 mois", now.AddDate(0, -1, 0), true},
+		{"il y a une année", "il y a une année", now.AddDate(-1, 0, 0), true},
+		{"il y a un an", "il y a un an", now.AddDate(-1, 0, 0), true},
+
+		// Garbage / unparseable
+		{"empty", "", time.Time{}, false},
+		{"random", "not a date", time.Time{}, false},
+		{"il y a 3 quelque chose", "il y a 3 quelque chose", time.Time{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseSerperDate(tc.in, now)
+			if ok != tc.ok {
+				t.Fatalf("ok=%v want %v (got=%v)", ok, tc.ok, got)
+			}
+			if ok && !got.Equal(tc.want) {
+				t.Fatalf("got %s want %s", got.Format(time.RFC3339), tc.want.Format(time.RFC3339))
+			}
+		})
+	}
+}

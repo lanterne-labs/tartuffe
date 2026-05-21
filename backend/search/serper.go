@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,7 +215,7 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 				Snippet: item.Snippet,
 				Source:  item.Source,
 			}
-			if t, ok := parseSerperDate(item.Date); ok {
+			if t, ok := parseSerperDate(item.Date, time.Now()); ok {
 				r.Date = &t
 			}
 			all = append(all, r)
@@ -359,15 +361,19 @@ func (s *SerperProvider) Search(personName string) ([]SearchResult, error) {
 	return out, nil
 }
 
-// parseSerperDate handles Serper's mixed date formats: it sometimes returns
-// "2 days ago" / "yesterday" (relative), and sometimes an ISO-like timestamp.
-// Returns the parsed time and true on success; (zero, false) otherwise so the
-// caller can simply leave NewsResult.Date as nil.
-func parseSerperDate(s string) (time.Time, bool) {
+// parseSerperDate parses Serper's mixed date formats — absolute (ISO,
+// "Jan 2, 2006"), English relative ("2 days ago", "yesterday"), and French
+// relative ("il y a 3 jours", "hier"). Returns (parsed_time, true) on success,
+// (zero, false) otherwise so callers leave NewsResult.Date as nil.
+//
+// `now` anchors all relative arithmetic. Tests pin a fixed `now` to keep
+// assertions deterministic.
+func parseSerperDate(s string, now time.Time) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Time{}, false
 	}
+	// Absolute formats first (cheap, common).
 	for _, layout := range []string{
 		time.RFC3339,
 		"2006-01-02T15:04:05Z",
@@ -379,5 +385,74 @@ func parseSerperDate(s string) (time.Time, bool) {
 			return t, true
 		}
 	}
+	// Relative formats — English + French. Returns the resolved time or
+	// (zero, false) if no relative pattern matched.
+	if t, ok := parseSerperRelativeDate(s, now); ok {
+		return t, true
+	}
 	return time.Time{}, false
+}
+
+// Relative-date regexes. All case-insensitive (compiled with (?i)).
+//
+// English: "yesterday", "today", "N (hour|day|week|month|year)s? ago",
+//          "an? (unit) ago", "one (unit) ago"
+// French:  "hier", "aujourd'hui", "il y a N (heure|jour|semaine|mois|an(née)?)s?",
+//          "il y a un[e]? (unit)"
+var (
+	serperRelEnNumeric = regexp.MustCompile(`(?i)^\s*(\d+)\s+(hour|day|week|month|year)s?\s+ago\s*$`)
+	serperRelEnArticle = regexp.MustCompile(`(?i)^\s*(?:an?|one)\s+(hour|day|week|month|year)\s+ago\s*$`)
+	serperRelFrNumeric = regexp.MustCompile(`(?i)^\s*il\s+y\s+a\s+(\d+)\s+(heure|jour|semaine|mois|année|an)s?\s*$`)
+	serperRelFrArticle = regexp.MustCompile(`(?i)^\s*il\s+y\s+a\s+une?\s+(heure|jour|semaine|mois|année|an)\s*$`)
+)
+
+func parseSerperRelativeDate(s string, now time.Time) (time.Time, bool) {
+	low := strings.ToLower(strings.TrimSpace(s))
+
+	// One-word forms.
+	switch low {
+	case "today", "aujourd'hui", "aujourdhui":
+		return now, true
+	case "yesterday", "hier":
+		return now.AddDate(0, 0, -1), true
+	}
+
+	// Numeric forms ("3 days ago", "il y a 3 jours").
+	if m := serperRelEnNumeric.FindStringSubmatch(s); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return subtractUnits(now, n, m[2]), true
+	}
+	if m := serperRelFrNumeric.FindStringSubmatch(s); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return subtractUnits(now, n, m[2]), true
+	}
+
+	// Singular-article forms ("an hour ago", "il y a une heure").
+	if m := serperRelEnArticle.FindStringSubmatch(s); m != nil {
+		return subtractUnits(now, 1, m[1]), true
+	}
+	if m := serperRelFrArticle.FindStringSubmatch(s); m != nil {
+		return subtractUnits(now, 1, m[1]), true
+	}
+
+	return time.Time{}, false
+}
+
+// subtractUnits applies "now - n×unit" using calendar-aware arithmetic for
+// week/month/year so day-of-month wrapping behaves correctly.
+func subtractUnits(now time.Time, n int, unit string) time.Time {
+	switch strings.ToLower(unit) {
+	case "hour", "heure":
+		return now.Add(-time.Duration(n) * time.Hour)
+	case "day", "jour":
+		return now.AddDate(0, 0, -n)
+	case "week", "semaine":
+		return now.AddDate(0, 0, -7*n)
+	case "month", "mois":
+		return now.AddDate(0, -n, 0)
+	case "year", "an", "année":
+		return now.AddDate(-n, 0, 0)
+	}
+	// Shouldn't reach here — the regexes constrain the unit set — but be safe.
+	return now
 }

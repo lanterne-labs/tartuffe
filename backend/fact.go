@@ -49,8 +49,17 @@ type Fact struct {
 	InvolvedPeople []string `json:"involved_people"`
 	// SourceURL is the URL where the statement was found.
 	SourceURL string `json:"source_url"`
-	// PublishedAt is the publication date of the source content, if available.
+	// PublishedAt is the FINAL publication date attached to this fact's source,
+	// resolved by the plugin from whatever sources it has (LLM-extracted body
+	// date, HTML <meta>, SERP date, tweet CreatedAt, vote date, ...) via
+	// core.PickPublishedAt. This is what eventually lands in fact_sources.published_at.
 	PublishedAt *time.Time `json:"published_at"`
+	// ArticlePublishedAt is the OPTIONAL date the LLM extracted from the
+	// article/tweet body itself (e.g. "Posted on 19 May 2026", "il y a 2 jours"
+	// resolved against the prompt's TODAY's date). One input among others to
+	// the plugin's PickPublishedAt call — not the final value. Nil when the LLM
+	// did not find an explicit date in the body.
+	ArticlePublishedAt *time.Time `json:"article_published_at,omitempty"`
 	// Embedding is the vector embedding of the EmbeddingText (optional, usually filled later).
 	Embedding []float32 `json:"embedding,omitempty"`
 }
