@@ -54,18 +54,16 @@ Lawyers acting in their professional capacity are NEVER valid subject_entity. Th
 - Exception: a lawyer making claims about THEMSELVES outside court would be valid.
 
 **3. Speculative or conditional**
-Anything that hasn't happened yet or is uncertain: "risque", "pourrait", "could", "may", "if convicted", future scheduling ("verdict on July 7"), conditional outcomes.
+Anything that hasn't happened yet or is uncertain: "risque" / "could" / "may" / "if convicted", future scheduling, conditional outcomes.
 - ❌ "X risks ineligibility" — speculative
 - ❌ "X will learn her verdict on July 7" — future scheduling
 
-⚠️ EXCEPTION — the entity's own conditional promise/threat IS a valid Type 1 fact.
-The decisive test is **who controls the action that follows the condition**:
-- If the action AFTER the "if" is performed BY THE SUBJECT, the statement is a contradictable commitment (the subject either acts as promised or does not — that is exactly the kind of flip-flop we track). KEEP it.
-- If the action AFTER the "if" is performed by SOMEONE ELSE or by impersonal forces ("the regime will fall", "the markets will collapse", "Iran will surrender"), the statement is a PREDICTION about a third party. REJECT it.
-- ✅ "Trump said he will strike Iranian power stations IF Iran doesn't reopen Hormuz by 20:00" — the action ("strike") is HIS to perform; he can later strike or not. Type 1 conditional threat.
-- ✅ "X promised to resign IF the bill passes" — the action ("resign") is HIS to perform. Type 1 conditional promise.
-- ❌ "Trump claimed Iran can fall in one night IF pressure continues" — the action ("fall") is performed by Iran, not by Trump. Pure prediction.
-- ❌ "X said the economy will crash IF the law is repealed" — the action ("crash") is performed by impersonal markets, not by X. Prediction.
+⚠️ EXCEPTION — the entity's own conditional promise/threat IS a valid Type 1 fact. Decisive test: **who controls the action AFTER the "if"**?
+- If the action is performed BY THE SUBJECT, it's a contradictable commitment — KEEP.
+- If the action is performed by SOMEONE ELSE or impersonal forces ("the regime will fall", "markets will collapse"), it's a PREDICTION — REJECT.
+- ✅ "Trump said he will strike Iranian power stations IF Iran doesn't reopen Hormuz by 20:00" — HE strikes. Type 1 threat.
+- ✅ "X promised to resign IF the bill passes" — HE resigns. Type 1 promise.
+- ❌ "Trump claimed Iran can fall in one night IF pressure continues" — Iran falls, not Trump. Prediction.
 
 ⚠️ CALLS, DEMANDS, ADVICE and ULTIMATUMS are NEVER predictions even when the
 action falls to a third party — the entity TOOK A POSITION on what should happen,
@@ -98,14 +96,12 @@ A journalist's interpretation or narrative framing is NOT a valid fact. However,
 - ✅ "An investigation revealed X received €50,000 from Y" — documented finding with specifics
 
 **5b. Pattern-of-behavior / meta-observation about the entity**
-A summary statement describing the entity's HABITUAL behavior, RHETORICAL PATTERN, or repeated tendency is NEVER a valid fact, even when phrased as "X did Y", because no single subject/quote/event/date can be attached to it. A fact must point to ONE concrete claim, action, or outcome — not a pattern across many.
-- ❌ "X has repeatedly made grand announcements he later contradicts" — describes a pattern, not a single act
-- ❌ "X a multiplié les annonces grandiloquentes qu'il a régulièrement contredites" — pattern phrasing ("a multiplié", "régulièrement"), no specific subject or quote
-- ❌ "Y change frequently of position on immigration" — habit, not an event
+A summary statement describing the entity's HABITUAL behavior, RHETORICAL PATTERN, or repeated tendency is NEVER a valid fact — no single subject/quote/event/date can attach to a pattern. A fact must point to ONE concrete claim, action, or outcome.
+- ❌ "X has repeatedly made grand announcements he later contradicts" — describes a pattern
 - ❌ "Z has a long history of denying climate change" — meta-summary
 - ✅ "Z stated on April 5 that climate change is a hoax" — single dated claim
 - ✅ "Y voted against the immigration bill on March 12" — single concrete vote
-RED FLAGS that almost always mean PATTERN: "repeatedly", "has a history of", "multiplié", "régulièrement", "tends to", "has long claimed", "is known for", "pattern of", "every time".
+RED FLAGS for PATTERN: "repeatedly" / "régulièrement", "has a history of" / "multiplié", "tends to", "is known for", "pattern of", "every time".
 
 **6. Vague or not concrete**
 Facts MUST contain specific information: numbers, dates, named actions, precise claims. No vague qualifiers.
@@ -137,40 +133,25 @@ Return a JSON array. Each object has 10 fields (in this order):
    Example: "Marine Le Pen denied wrongdoing" → subject_entity = "Marine Le Pen" (she denies)
 3. 'subject_entity_type': MUST be EXACTLY one of these three lowercase strings (no other values are accepted; facts with any other value will be rejected):
    "human" | "party" | "organization"
-4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities.
-   ⚠️ LANGUAGE: Write in the entity's NATIVE LANGUAGE (e.g., French for French politicians). NEVER in English.
-   ⚠️ NO CANONICAL VERBS: NEVER use DENIED, CLAIMED, PROMISED, WAS_CONVICTED, etc. in this field. Use natural language only. Write "a nié", "a affirmé", "a promis" — NOT "a DENIED" or "a CLAIMED".
-4b. 'lang': REQUIRED. BCP-47 code of the language you wrote 'normalized_fact' in ("fr", "en", "de", "es", "it", "pt", ...). Detect it from the source content, NOT from the entity's nationality (a French speech reported in an English-language article is still "en" if the article is English; quote the source language). Facts with missing or non-BCP-47 'lang' are rejected at parse time.
-4c. 'normalized_fact_en': English translation of 'normalized_fact'. REQUIRED when 'lang' != "en"; OMIT this field entirely when 'lang' == "en" (no self-translation). The translation must preserve every concrete detail (numbers, dates, named entities, negations, conditional clauses) faithfully — DO NOT paraphrase.
+4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities. Write in the SAME LANGUAGE as the SOURCE ARTICLE (not the entity's nationality — a French speech reported in English stays English). Use natural language, NEVER the canonical verbs ("a nié" / "denied", not "a DENIED").
+4b. 'lang': REQUIRED. BCP-47 code matching the language of 'normalized_fact' ("fr", "en", "de", "es", ...). Missing or non-BCP-47 values are rejected at parse time.
+4c. 'normalized_fact_en': English translation of 'normalized_fact'. REQUIRED when 'lang' != "en"; OMIT entirely when 'lang' == "en". Preserve every concrete detail (numbers, dates, named entities, negations, conditionals) faithfully — DO NOT paraphrase.
 5. 'canonical_verb': MUST be EXACTLY one of these 20 UPPERCASE tokens (no synonyms, no inflections, no lowercase, no spaces — facts with any other value will be rejected):
    DENIED | CLAIMED | PROMISED | SUPPORTED | OPPOSED | VOTED_FOR | VOTED_AGAINST | PROPOSED | CONFIRMED | ADMITTED | REFUSED | DEMANDED | THREATENED | WAS_SENTENCED | WAS_CONVICTED | WAS_ACQUITTED | WAS_FINED | RECEIVED_FUNDS | CHANGED_POSITION | ANNOUNCED
    Pick the closest token; do NOT invent new ones (e.g. NEVER return "WAIVED", "SIGNED", "CONVICTED" — use the closest match like ANNOUNCED, PROPOSED, WAS_CONVICTED).
-6. 'embedding_text': Topic-only semantic fingerprint for vector similarity. In the SAME language as the input facts. NO VERB PREFIX.
-   GOAL: Two facts about the same topic MUST produce identical or near-identical embedding_text, REGARDLESS of the entity's stance. The canonical_verb field already captures the stance separately.
-   - Format: [broad policy domain] [one specific detail only if needed]
-   - Topic abstraction: use the BROADEST policy domain. Related positions MUST cluster: "more financial freedom for workers" and "reduce holidays for workers" are both "workers-social-rights".
-   - REMOVE: all canonical verbs, person/party/organization names, dates, temporal context, specific numbers/percentages/amounts
-   - Keep it SHORT: 2-5 words total
-   - ⚠️ MUST be a SUBJECT (policy area, case, event, institution), NOT a rhetorical pattern or speech act. Words like "announcements", "contradictions", "promises", "denials", "flip-flops", "rhetoric", "pattern" describe FORM and are forbidden as the topic label. If the fact has no specific subject, you should have rejected it via REJECT rule 5b.
-   - ❌ Bad: "policy announcements contradictions" / "campaign promises" / "rhetoric threats" / "denials reversals"
-   - ✅ Good (French): "droits-douane chine" / "coalition détroit-hormuz" / "accord-nucléaire iran" / "article-5 OTAN"
-   - Examples (French input → French embedding_text):
-     "a déclaré n'avoir aucun sentiment d'avoir commis un délit" → délits affaire-assistants-parlementaires
-     "a promis de baisser l'impôt sur le revenu de 15%%" → baisse-impôts impôt-revenu
-     "a voté pour une hausse de 2%% de l'impôt sur le revenu" → hausse-impôts impôt-revenu
-     "a été condamnée à 4 ans de prison" → prison affaire-assistants-parlementaires
+6. 'embedding_text': Topic-only semantic fingerprint for vector similarity, in the SAME language as the fact. NO verb prefix.
+   GOAL: Two facts about the same topic MUST produce near-identical embedding_text REGARDLESS of stance (canonical_verb captures stance separately).
+   - Format: [broad policy domain] [one specific detail only if needed]. 2-5 words.
+   - Use the BROADEST policy domain so opposing positions cluster ("more financial freedom for workers" and "reduce holidays for workers" → both "workers-social-rights").
+   - REMOVE: canonical verbs, person/party names, dates, numbers/percentages.
+   - ⚠️ MUST be a SUBJECT (policy area, case, event), NOT a speech act. Words like "announcements", "promises", "denials", "rhetoric", "pattern" are FORBIDDEN — if the fact has no specific subject, reject it via rule 5b.
+   - ❌ "campaign promises" / "rhetoric threats" / "denials reversals"
+   - ✅ "droits-douane chine" / "coalition détroit-hormuz" / "accord-nucléaire iran"
+   - More French examples: "baisse-impôts impôt-revenu" (raise OR cut), "prison affaire-assistants-parlementaires"
 7. 'original_quote': Exact snippet (max ~250 chars) from the source text
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
-9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published.
-   Use the most precise form the article supplies:
-     - date only:   "YYYY-MM-DD"                  (when only the date is known)
-     - date+time:   "YYYY-MM-DDTHH:MM:SS"         (when an hour is given, no timezone)
-     - full RFC3339: "YYYY-MM-DDTHH:MM:SSZ" or "YYYY-MM-DDTHH:MM:SS+02:00" (when a timezone is given)
-   Set this when the article body EITHER:
-     (a) explicitly states an absolute date/time — e.g. "Posted on May 19, 2026 at 14:30 CEST", "Publié le 19/05/2026 à 09h", a clearly-dated header byline — use the stated value directly, preserving whatever precision the article provides; OR
-     (b) explicitly states a relative date/time — e.g. "Posted 2 days ago", "Publié hier", "Il y a 3 heures", "Mis à jour il y a 30 minutes" — convert it to an absolute ISO 8601 value using TODAY'S DATE above. A relative phrase resolved this way IS a valid article_published_at; include the hour if the relative phrase implied one ("3 heures" → use the time component).
-   OMIT this field entirely when neither (a) nor (b) appears in the body. DO NOT guess from the article's content, topic, or named events.
+9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published. Use the most precise form supplied ("YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full RFC3339 with timezone). Set this when the body explicitly states either (a) an absolute date/time in a byline ("Publié le 19/05/2026 à 09h", "Posted on May 19, 2026"), OR (b) a relative phrase ("Publié hier", "Posted 2 days ago", "il y a 3 heures") — resolve relative phrases to absolute values using TODAY'S DATE above, preserving the implied hour when given. OMIT this field entirely otherwise. DO NOT guess from article content, topic, or named events.
 
 %s
 
@@ -208,21 +189,7 @@ Example (French source — note 'lang' = "fr", 'normalized_fact_en' present, 'ar
   }
 ]
 
-Example (English source — note 'lang' = "en", 'normalized_fact_en' OMITTED, 'article_published_at' resolved from "Posted 2 days ago" using TODAY'S DATE — date-only when no hour was implied):
-[
-  {
-    "reasoning": "Type 1: Trump's own threat tied to a specific deadline.",
-    "subject_entity": "Donald Trump",
-    "subject_entity_type": "human",
-    "normalized_fact": "Donald Trump threatened to strike Iranian power plants if Iran did not reopen the Strait of Hormuz by 20:00 on 6 April 2026.",
-    "lang": "en",
-    "canonical_verb": "THREATENED",
-    "embedding_text": "strait-of-hormuz coalition iran",
-    "original_quote": "If they don't reopen the Strait by 8 p.m., we hit the power plants.",
-    "involved_people": [],
-    "article_published_at": "2026-04-07"
-  }
-]`
+For an English source: set 'lang': "en", OMIT 'normalized_fact_en', and write 'normalized_fact' / 'embedding_text' in English. All other rules are identical.`
 
 // FactExtractorConfig holds all parameters needed to build a fact extraction prompt.
 type FactExtractorConfig struct {

@@ -198,9 +198,26 @@ func (o *BatchJobOrchestrator) PrepareAndSubmit(ctx context.Context, items []Bat
 			PluginInstructions: item.PluginInstructions,
 		}
 
+		// Dynamic chunk sizing — keep (prompt + chunk + output budget) below the
+		// model context cap. Mirrors backend/categorizer/openai_extractor.go's
+		// dynamicChunkBudgetChars; we redo the math here to avoid the cross-package
+		// dependency (categorizer already imports core).
+		overheadCfg := cfg
+		overheadCfg.Content = ""
+		overheadChars := len(BuildFactExtractionPrompt(overheadCfg))
+		effChunkSize := chunkSize
+		effThreshold := chunkingThreshold
+		if dyn := batchDynamicChunkBudgetChars(overheadChars); dyn < effChunkSize {
+			effChunkSize = dyn
+			if effThreshold > dyn {
+				effThreshold = dyn
+			}
+			log.Debug().Str("url", item.SourceURL).Int("prompt_overhead_chars", overheadChars).Int("static_chunk", chunkSize).Int("dynamic_chunk", dyn).Msg("Batch: dynamic chunk budget binds — shrinking chunks to fit model context")
+		}
+
 		var chunks []string
-		if len(item.Content) > chunkingThreshold {
-			chunks = util.ChunkText(item.Content, chunkSize, chunkOverlap)
+		if len(item.Content) > effThreshold {
+			chunks = util.ChunkText(item.Content, effChunkSize, chunkOverlap)
 		} else {
 			chunks = []string{item.Content}
 		}
@@ -1039,12 +1056,32 @@ func shortHash(s string) string {
 	return fmt.Sprintf("%x", h[:6])
 }
 
-// Chunking parameters matching openai_extractor.go
+// Static chunk-sizing fallbacks. Mirrors backend/categorizer/openai_extractor.go
+// — both files chunk the same articles with the same prompt, so they MUST stay
+// in sync. The dynamic sizer in PrepareAndSubmit shrinks these further whenever
+// (prompt overhead + chunk + output budget) would overflow the model context.
 const (
-	chunkingThreshold = 25000
-	chunkSize         = 20000
+	chunkingThreshold = 18000
+	chunkSize         = 16000
 	chunkOverlap      = 500
+
+	// Model-context budgeting — see openai_extractor.go for the rationale.
+	batchMaxContextTokens    = 12000
+	batchOutputBudgetTokens  = 2048
+	batchContextSafetyTokens = 256
+	batchApproxCharsPerToken = 3
 )
+
+// batchDynamicChunkBudgetChars returns the largest chunk size (in chars) that
+// keeps (prompt overhead + chunk + output + safety) below the model context.
+func batchDynamicChunkBudgetChars(promptOverheadChars int) int {
+	overheadTokens := promptOverheadChars/batchApproxCharsPerToken + 1
+	available := batchMaxContextTokens - batchOutputBudgetTokens - batchContextSafetyTokens - overheadTokens
+	if available <= 0 {
+		return 512
+	}
+	return available * batchApproxCharsPerToken
+}
 
 // StartBatchPoller runs a background loop that polls pending/in-progress batches,
 // updates their status, and auto-retrieves completed ones.

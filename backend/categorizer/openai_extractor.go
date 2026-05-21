@@ -18,12 +18,40 @@ import (
 // --- OpenAI-compatible Chat Completion Implementation ---
 
 const (
-	// chunking parameters kept generic
-	// ~25k chars is a rough proxy for < 8k tokens to leave room for prompt/response
-	chunkingThresholdChars = 25000
-	chunkSizeChars         = 20000
+	// Static chunk-sizing fallbacks. The dynamic sizer in ExtractFactsWithConfig
+	// reduces these further whenever (prompt + chunk + output) would exceed the
+	// model's context window. Kept modest so even an "estimator off" case still
+	// fits in modern small-context models (~12k tokens).
+	chunkingThresholdChars = 18000
+	chunkSizeChars         = 16000
 	overlapChars           = 500
+
+	// Model-context budgeting. Matches the local self-hosted Gemma (~12k tokens).
+	// If you swap to a larger-context model, bump maxContextTokens to match —
+	// the dynamic sizer will let chunks grow back toward chunkSizeChars.
+	maxContextTokens    = 12000
+	outputBudgetTokens  = 2048 // mirrors MaxTokens in callChatAPIWithPrompt
+	contextSafetyTokens = 256  // headroom for system framing / role tokens
+	// Conservative chars-per-token ratio. French news typically lands at ~3.5;
+	// 3 over-estimates token cost slightly, which we want (better undershoot
+	// the budget than overflow). The reactive halve-and-retry in
+	// callChatAPIWithPrompt catches whatever still overflows.
+	approxCharsPerToken = 3
 )
+
+// dynamicChunkBudgetChars returns the largest chunk size in chars that keeps
+// (prompt + chunk + output_budget + safety) below the model context cap.
+// promptOverheadChars is the rendered prompt size with empty Content.
+func dynamicChunkBudgetChars(promptOverheadChars int) int {
+	overheadTokens := promptOverheadChars/approxCharsPerToken + 1
+	available := maxContextTokens - outputBudgetTokens - contextSafetyTokens - overheadTokens
+	if available <= 0 {
+		// Prompt alone already exceeds the budget — fall back to a minimal
+		// chunk so we still emit *something* and the LLM can flag the overflow.
+		return 512
+	}
+	return available * approxCharsPerToken
+}
 
 // openAIChatModelDefault is a sensible default, can be overridden via OPEN_AI_CHAT_MODEL
 const openAIChatModelDefault = "gpt-4o-mini"
@@ -78,12 +106,13 @@ func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
 // This allows shared usage across packages without import cycles.
 
 // GetChunkingParameters implements the FactExtractor interface.
-// Returns parameters suitable for the default configuration.
+// Returns the static fallbacks; callers that need to fit a known prompt within
+// the model context should use dynamicChunkBudgetChars() to shrink further.
 func (m *OpenAIExtractor) GetChunkingParameters() backend.ChunkingParameters {
 	return backend.ChunkingParameters{
-		ThresholdChars: 25000, // Start chunking above this size
-		ChunkSizeChars: 20000, // Aim for chunks of this size
-		OverlapChars:   500,   // Character overlap
+		ThresholdChars: chunkingThresholdChars,
+		ChunkSizeChars: chunkSizeChars,
+		OverlapChars:   overlapChars,
 	}
 }
 
@@ -104,10 +133,26 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 	}
 
 	chunkParams := m.GetChunkingParameters()
+
+	// Dynamic sizing: measure THIS call's prompt overhead (template + plugin
+	// instructions + target/url, but with empty Content) and shrink the chunk
+	// size whenever the static default would push us past the model context.
+	overheadCfg := cfg
+	overheadCfg.Content = ""
+	promptOverhead := core.BuildFactExtractionPrompt(overheadCfg)
+	dynBudget := dynamicChunkBudgetChars(len(promptOverhead))
+	if dynBudget < chunkParams.ChunkSizeChars {
+		log.Debug().Str("url", cfg.SourceURL).Int("prompt_overhead_chars", len(promptOverhead)).Int("static_chunk", chunkParams.ChunkSizeChars).Int("dynamic_chunk", dynBudget).Msg("Dynamic chunk budget binds — shrinking chunks to fit model context")
+		chunkParams.ChunkSizeChars = dynBudget
+		if chunkParams.ThresholdChars > dynBudget {
+			chunkParams.ThresholdChars = dynBudget
+		}
+	}
+
 	var allExtractedFacts []backend.Fact
 
 	if len(cfg.Content) > chunkParams.ThresholdChars {
-		log.Info().Str("url", cfg.SourceURL).Int("content_length", len(cfg.Content)).Int("threshold", chunkParams.ThresholdChars).Msg("Content exceeds threshold, applying chunking for fact extraction")
+		log.Info().Str("url", cfg.SourceURL).Int("content_length", len(cfg.Content)).Int("threshold", chunkParams.ThresholdChars).Int("chunk_size", chunkParams.ChunkSizeChars).Msg("Content exceeds threshold, applying chunking for fact extraction")
 		chunks := util.ChunkText(cfg.Content, chunkParams.ChunkSizeChars, chunkParams.OverlapChars)
 		log.Info().Str("url", cfg.SourceURL).Int("chunk_count", len(chunks)).Msg("Content split into chunks")
 
@@ -115,15 +160,7 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 			chunkNum := i + 1
 			log.Debug().Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("chunk_len", len(chunk)).Msg("Attempting fact extraction for chunk")
 
-			chunkCfg := core.FactExtractorConfig{
-				TargetName:         cfg.TargetName,
-				SourceURL:          cfg.SourceURL,
-				Content:            chunk,
-				PluginInstructions: cfg.PluginInstructions,
-				Now:                cfg.Now, // share the same TODAY across chunks
-			}
-			prompt := core.BuildFactExtractionPrompt(chunkCfg)
-			chunkFacts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
+			chunkFacts, err := m.extractChunkWithReactiveRetry(ctx, cfg, chunk)
 			if err != nil {
 				log.Error().Err(err).Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Msg("Failed to extract facts for chunk")
 				continue
@@ -134,12 +171,11 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 	} else {
 		log.Debug().Str("url", cfg.SourceURL).Int("content_length", len(cfg.Content)).Int("threshold", chunkParams.ThresholdChars).Msg("Content below threshold, processing directly without chunking")
 
-		prompt := core.BuildFactExtractionPrompt(cfg)
-		var err error
-		allExtractedFacts, err = m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
+		facts, err := m.extractChunkWithReactiveRetry(ctx, cfg, cfg.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract facts from content for url %s: %w", cfg.SourceURL, err)
 		}
+		allExtractedFacts = facts
 	}
 
 	// Consolidate: group by (CanonicalVerb, EmbeddingText), keep the most specific (longest NormalizedFactText)
@@ -218,6 +254,56 @@ func (m *OpenAIExtractor) ExtractFactsForPersonWithParties(ctx context.Context, 
 	return m.ExtractFactsWithConfig(ctx, cfg)
 }
 
+// extractChunkWithReactiveRetry builds the prompt for `chunk` and calls the
+// chat API. On a context-overflow 400 from the model (the only error the
+// static + dynamic sizers can still miss — typically when the tokenizer is
+// denser than our chars/token estimate), it halves the chunk and retries each
+// half once. Two recursion levels max; deeper overflows are returned as-is so
+// the caller logs the failure rather than spinning.
+func (m *OpenAIExtractor) extractChunkWithReactiveRetry(ctx context.Context, cfg core.FactExtractorConfig, chunk string) ([]backend.Fact, error) {
+	chunkCfg := core.FactExtractorConfig{
+		TargetName:         cfg.TargetName,
+		SourceURL:          cfg.SourceURL,
+		Content:            chunk,
+		PluginInstructions: cfg.PluginInstructions,
+		Now:                cfg.Now,
+	}
+	prompt := core.BuildFactExtractionPrompt(chunkCfg)
+	facts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
+	if err == nil {
+		return facts, nil
+	}
+	if !isContextOverflowError(err) || len(chunk) < 1024 {
+		return nil, err
+	}
+	mid := len(chunk) / 2
+	log.Warn().Str("url", cfg.SourceURL).Int("chunk_len", len(chunk)).Msg("Context overflow — splitting chunk in half and retrying")
+	leftFacts, leftErr := m.extractChunkWithReactiveRetry(ctx, cfg, chunk[:mid])
+	rightFacts, rightErr := m.extractChunkWithReactiveRetry(ctx, cfg, chunk[mid:])
+	// If both halves still fail, surface the original error so the operator
+	// sees the real cause (not "context overflow after split").
+	if leftErr != nil && rightErr != nil {
+		return nil, err
+	}
+	out := append([]backend.Fact{}, leftFacts...)
+	out = append(out, rightFacts...)
+	return out, nil
+}
+
+// isContextOverflowError detects the "maximum context length" 400 family that
+// every OpenAI-compatible backend emits when input + output exceeds the model
+// window. Substring match — wire format varies by provider but the phrase is
+// consistent across OpenAI / vLLM / llama.cpp / llama-swap / Together / etc.
+func isContextOverflowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "maximum context length") ||
+		strings.Contains(msg, "context length") && strings.Contains(msg, "exceed") ||
+		strings.Contains(msg, "context_length_exceeded")
+}
+
 // callChatAPIWithPrompt performs a single call to the Chat API with a pre-formatted prompt.
 func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPrompt string, sourceURL string) ([]backend.Fact, error) {
 	reqPayload := ChatRequest{
@@ -226,12 +312,10 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 			{Role: "system", Content: systemPrompt},
 		},
 		Temperature: 0.1,
-		// Fact-extraction outputs are typically <1.5k tokens (a small JSON array).
-		// Keeping max_tokens conservative so the request fits even on smaller-context
-		// local LLMs (e.g. self-hosted Gemma at ~12k total context). With chunk size
-		// at 20k chars (~5-6k tokens) + ~3-4k prompt, a 2k output budget keeps the
-		// total request under 12k.
-		MaxTokens:      2048,
+		// outputBudgetTokens (2048) — see the chunk-sizing constants block at the
+		// top of this file. Changing this value MUST also update outputBudgetTokens
+		// so the dynamic chunk sizer keeps reserving the right amount of headroom.
+		MaxTokens:      outputBudgetTokens,
 		ResponseFormat: &ResponseFormat{Type: "json_object"},
 	}
 

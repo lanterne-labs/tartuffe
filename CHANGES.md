@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-21: Fact-extraction prompt slimmed + dynamic chunk sizing
+
+### What was done
+- **Prompt trimmed 18 304 → 15 164 chars (-17%)**: dropped the second (English) JSON example, consolidated the 4/4b/4c language rules into one paragraph, compressed `article_published_at`, slimmed redundant FR+EN-paired REJECT examples down to one language per rule. No content rule removed — only redundancy / verbosity. Net token cost (R=3 worst case) drops from ~6 100 to ~5 050 tokens.
+- **Dynamic chunk sizing** in both `backend/categorizer/openai_extractor.go` (sync) and `backend/core/batch_job.go` (Gemini batch). At each call we render the prompt with empty Content, measure its size, and shrink the chunk so `prompt + chunk + 2 048 output + 256 safety ≤ 12 000` tokens. With today's prompt this caps chunks at ~13 600 chars; pre-trim it would have capped at ~10 800.
+- **Reactive halve-and-retry** in the sync path: any `"maximum context length"` 400 from the LLM triggers a single chunk-split retry. Belt-and-suspenders for content where the tokenizer is denser than our chars/token estimate.
+- **Static defaults lowered modestly**: `chunkSizeChars` 20 000 → 16 000, `chunkingThresholdChars` 25 000 → 18 000. The dynamic sizer almost always binds tighter; the new statics just stop us from blowing the budget if someone disables the dynamic path.
+
+### Why
+The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83ecf (pub-date: +1 732 chars) without anyone re-tuning the chunker. The author's comment in `openai_extractor.go` had been claiming "~3-4k prompt tokens" since the 9 564-char baseline (60a104f) and was 50% stale by today. Real-world hit: today's news scrape failed ~4 article extractions with `9953 input + 2048 output = 12001 tokens, max=12000` — one token over. Dynamic sizing makes this impossible by construction; the prompt trim recovers ~1 050 tokens of chunk budget per call.
+
+### Operational notes
+- Both extractor paths now log `"dynamic chunk budget binds"` at DEBUG when shrinking — flip log level to debug to verify the right size is being used after any prompt edit.
+- Constants live near the top of `openai_extractor.go` and `batch_job.go` (duplicated to avoid an import cycle). If you swap the local LLM for a larger-context model, bump `maxContextTokens` in BOTH files — the dynamic sizer will let chunks grow back toward `chunkSizeChars`.
+- No env var added (per user preference). Model-context cap is hardcoded at 12 000 — matches the current self-hosted Gemma.
+
 ## 2026-05-18: Multilingual support — `lang` on facts + bilingual fact text
 
 ### What was done
