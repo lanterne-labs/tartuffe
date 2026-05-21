@@ -130,13 +130,16 @@ type Provider struct {
 	StanceManager *core.StanceManager
 }
 
-// NewProvider creates a new news Provider with all dependencies.
+// NewProvider creates a news Provider. StanceManager is required at insert
+// time (CollectFacts returns "StanceManager is required" otherwise); making it
+// a positional arg here so the compiler catches drift in any new call site.
 func NewProvider(
 	newsSearch search.NewsSearcher,
 	contentExtractor extractor.ContentExtractor,
 	factExtractor *categorizer.OpenAIExtractor,
 	embedder *embedding.OpenAIEmbeddingGenerator,
 	storer *storage.PostgresStorer,
+	stanceManager *core.StanceManager,
 ) *Provider {
 	return &Provider{
 		NewsSearch:       newsSearch,
@@ -144,6 +147,7 @@ func NewProvider(
 		FactExtractor:    factExtractor,
 		Embedder:         embedder,
 		Storer:           storer,
+		StanceManager:    stanceManager,
 	}
 }
 

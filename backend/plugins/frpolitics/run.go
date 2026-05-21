@@ -741,8 +741,15 @@ func runNewsSearch(ctx context.Context, storer *storage.PostgresStorer, deputySe
 		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 
+	// Stance manager — required by the news provider so newly inserted facts
+	// get routed into stance documents. Without it, CollectFacts errors out.
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return fmt.Errorf("failed to initialize stance manager: %w", err)
+	}
+
 	// Create news provider
-	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer)
+	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer, stanceMgr)
 
 	// Build targets from deputies and parties
 	targets := make([]news.SearchTarget, 0, len(deputySeed)+len(partySeed))
@@ -961,8 +968,14 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 		return fmt.Errorf("failed to initialize embedder: %w", err)
 	}
 
+	// Stance manager — required by the news provider (same as above).
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return fmt.Errorf("failed to initialize stance manager: %w", err)
+	}
+
 	// Create news provider
-	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer)
+	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer, stanceMgr)
 
 	// Prioritize targets
 	prioritizedTargets, err := news.PrioritizeTargets(ctx, storer, targets, news.PrioritizationOptions{
