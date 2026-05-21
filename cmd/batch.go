@@ -205,6 +205,7 @@ var batchRetrieveCmd = &cobra.Command{
 		inserter := core.NewFactInserter(storer, stanceMgr)
 		adapter := newBatchStorerAdapter(storer)
 		orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
+		orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
 
 		var batchIDs []int64
 
