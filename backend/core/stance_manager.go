@@ -717,7 +717,14 @@ For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
 For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
 		stanceSummary, factsBuilder.String(), newFactText)
 
-	content, err := sm.callJSONLLM(ctx, "You are a political fact analysis assistant. Return only valid JSON.", prompt, 0.2, 800)
+	// temp=0.1 matches the rest of the codebase (every other contradiction /
+	// detector / auditor / dedup path uses 0.1 or lower); the 0.2 default that
+	// lived here was the lone outlier and the source of intermittent
+	// false-positive contradictions at stance-insert time. Repro at temp 0.0,
+	// 0.1, 0.2 × 10 trials each all returned NEW_INFO on the AfD-Saxony case
+	// that fired in prod, so the variance was the only factor and 0.1 keeps a
+	// tiny exploration margin without the misfires.
+	content, err := sm.callJSONLLM(ctx, "You are a political fact analysis assistant. Return only valid JSON.", prompt, 0.1, 800)
 	if err != nil {
 		return nil, fmt.Errorf("stance analysis: %w", err)
 	}

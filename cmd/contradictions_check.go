@@ -3,10 +3,12 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/contradiction"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -99,37 +101,102 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 		personIDPtr = &personID
 	}
 
-	rows, err := storer.ListContradictions(ctx, personIDPtr, checkRandomFlag, checkMaxFlag)
+	_, err = executeContradictionAudit(ctx, storer, ContradictionAuditOpts{
+		PersonID:     personIDPtr,
+		Max:          checkMaxFlag,
+		Random:       checkRandomFlag,
+		Output:       os.Stdout,
+		Format:       format,
+		Scope:        scopeDescription(checkPersonFlag),
+		RecordMetric: false, // CLI runs are ad-hoc; only the periodic pipeline pass records job_metrics
+	})
+	return err
+}
+
+// ContradictionAuditOpts configures executeContradictionAudit. The same code
+// path serves the `dm contradictions check` CLI and the daily-pipeline auditor
+// step — the differences are: who provides the storer, whether stdout output
+// is wanted, and whether the run gets recorded to job_metrics (which gates the
+// pipeline cadence).
+type ContradictionAuditOpts struct {
+	// PersonID restricts the audit to one person when set.
+	PersonID *int64
+	// Max caps the number of contradictions audited (0 = no cap).
+	Max int
+	// Random samples contradictions in random order instead of newest-first.
+	Random bool
+	// Output is where per-row results are written. Nil = silent (pipeline mode).
+	Output io.Writer
+	// Format is "jsonl" or "text"; only consulted when Output != nil.
+	Format string
+	// Scope is a human-readable label for the log line ("all persons", "Marine Le Pen", etc.).
+	Scope string
+	// RecordMetric — when true, a job_metrics row is inserted after the audit
+	// completes (job_type="contradiction-audit"). The daily pipeline gate
+	// reads this timestamp to decide whether enough time has passed since the
+	// last run; CLI invocations leave it false.
+	RecordMetric bool
+}
+
+// ContradictionAuditResult is the return value of executeContradictionAudit —
+// callers (especially the daily pipeline) use the counts for logging and
+// Telegram summaries. RemoveIDs is the actionable bit: each ID is a
+// contradiction the auditor flagged as a false positive (verdict=remove).
+type ContradictionAuditResult struct {
+	Total     int
+	Keep      int
+	Remove    int
+	Ambiguous int
+	Errors    int
+	RemoveIDs []int64
+	Elapsed   time.Duration
+}
+
+// executeContradictionAudit walks every recorded contradiction matching opts,
+// asks the LLM auditor to re-judge it against the current ContradictionRules,
+// and emits per-verdict Prometheus counters. Does NOT delete anything — when
+// the auditor flags a row as a false positive (VerdictRemove), the ID lands
+// in result.RemoveIDs so a downstream caller can act (today: a human, eventually:
+// `dm contradictions check --apply`).
+func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStorer, opts ContradictionAuditOpts) (*ContradictionAuditResult, error) {
+	rows, err := storer.ListContradictions(ctx, opts.PersonID, opts.Random, opts.Max)
 	if err != nil {
-		return fmt.Errorf("failed to list contradictions: %w", err)
+		return nil, fmt.Errorf("failed to list contradictions: %w", err)
 	}
 
+	result := &ContradictionAuditResult{Total: len(rows)}
 	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "No contradictions to audit.")
-		return nil
+		if opts.Output != nil {
+			fmt.Fprintln(os.Stderr, "No contradictions to audit.")
+		}
+		log.Info().Msg("Contradiction audit: no contradictions in scope, nothing to do")
+		if opts.RecordMetric {
+			recordAuditJobMetrics(ctx, storer, result)
+			metrics.IncrementContradictionAuditRuns()
+		}
+		return result, nil
 	}
 
 	auditor, err := contradiction.NewOpenAIContradictionAuditorFromEnv()
 	if err != nil {
-		return fmt.Errorf("failed to create auditor: %w", err)
+		return nil, fmt.Errorf("failed to create auditor: %w", err)
 	}
 
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetEscapeHTML(false)
-
-	var counts struct {
-		keep, remove, ambiguous, errors int
+	var enc *json.Encoder
+	if opts.Output != nil && opts.Format == "jsonl" {
+		enc = json.NewEncoder(opts.Output)
+		enc.SetEscapeHTML(false)
 	}
 
 	startedAt := time.Now()
 	log.Info().
 		Int("total", len(rows)).
-		Bool("random", checkRandomFlag).
-		Str("scope", scopeDescription(checkPersonFlag)).
+		Bool("random", opts.Random).
+		Str("scope", opts.Scope).
 		Msg("Starting contradiction audit")
 
 	for i, row := range rows {
-		result := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+		auditResult := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
 
 		line := auditOutputLine{
 			ContradictionID: row.ID,
@@ -142,52 +209,102 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 			DateA:           formatDateForOutput(row.FactADate),
 			DateB:           formatDateForOutput(row.FactBDate),
 			OriginalReason:  row.Reason,
-			Verdict:         string(result.Verdict),
-			Rule:            result.Rule,
-			AuditReasoning:  result.Reasoning,
+			Verdict:         string(auditResult.Verdict),
+			Rule:            auditResult.Rule,
+			AuditReasoning:  auditResult.Reasoning,
 			SourceURLsA:     row.FactASourceURLs,
 			SourceURLsB:     row.FactBSourceURLs,
 		}
-		if result.Err != nil {
-			counts.errors++
-			line.Error = result.Err.Error()
-			log.Error().Err(result.Err).
+		if auditResult.Err != nil {
+			result.Errors++
+			line.Error = auditResult.Err.Error()
+			metrics.IncrementContradictionAudits("error")
+			log.Error().Err(auditResult.Err).
 				Int64("contradiction_id", row.ID).
 				Str("person", row.PersonName).
 				Msg("Audit error")
 		} else {
-			switch result.Verdict {
+			switch auditResult.Verdict {
 			case contradiction.VerdictKeep:
-				counts.keep++
+				result.Keep++
+				metrics.IncrementContradictionAudits("keep")
 			case contradiction.VerdictRemove:
-				counts.remove++
+				result.Remove++
+				result.RemoveIDs = append(result.RemoveIDs, row.ID)
+				metrics.IncrementContradictionAudits("remove")
+				log.Warn().
+					Int64("contradiction_id", row.ID).
+					Str("person", row.PersonName).
+					Str("rule", auditResult.Rule).
+					Str("audit_reasoning", auditResult.Reasoning).
+					Msg("Auditor flagged contradiction as false positive (verdict=remove)")
 			case contradiction.VerdictAmbiguous:
-				counts.ambiguous++
+				result.Ambiguous++
+				metrics.IncrementContradictionAudits("ambiguous")
 			}
 		}
 
-		if format == "jsonl" {
-			if err := enc.Encode(line); err != nil {
-				return fmt.Errorf("failed to encode JSONL line: %w", err)
+		if opts.Output != nil {
+			if opts.Format == "jsonl" {
+				if err := enc.Encode(line); err != nil {
+					return result, fmt.Errorf("failed to encode JSONL line: %w", err)
+				}
+			} else {
+				printTextRow(os.Stdout, line)
 			}
-		} else {
-			printTextRow(os.Stdout, line)
 		}
 
 		if (i+1)%10 == 0 {
 			log.Info().
 				Int("audited", i+1).
 				Int("total", len(rows)).
-				Int("keep", counts.keep).
-				Int("remove", counts.remove).
-				Int("ambiguous", counts.ambiguous).
-				Int("errors", counts.errors).
+				Int("keep", result.Keep).
+				Int("remove", result.Remove).
+				Int("ambiguous", result.Ambiguous).
+				Int("errors", result.Errors).
 				Msg("Audit progress")
 		}
 	}
 
-	printSummary(os.Stderr, len(rows), counts.keep, counts.remove, counts.ambiguous, counts.errors, time.Since(startedAt))
-	return nil
+	result.Elapsed = time.Since(startedAt)
+
+	if opts.Output != nil {
+		printSummary(os.Stderr, result.Total, result.Keep, result.Remove, result.Ambiguous, result.Errors, result.Elapsed)
+	}
+
+	if opts.RecordMetric {
+		recordAuditJobMetrics(ctx, storer, result)
+		metrics.IncrementContradictionAuditRuns()
+	}
+
+	log.Info().
+		Int("total", result.Total).
+		Int("keep", result.Keep).
+		Int("remove", result.Remove).
+		Int("ambiguous", result.Ambiguous).
+		Int("errors", result.Errors).
+		Dur("elapsed", result.Elapsed).
+		Ints64("remove_ids", result.RemoveIDs).
+		Msg("Contradiction audit pass complete")
+
+	return result, nil
+}
+
+// recordAuditJobMetrics persists per-verdict counts so the next pipeline tick
+// can read GetLatestJobRunTime("contradiction-audit") and decide whether to
+// skip. Best-effort: a write failure logs but does not abort the caller —
+// missing the timestamp just means the next pipeline run will re-attempt.
+func recordAuditJobMetrics(ctx context.Context, storer *storage.PostgresStorer, r *ContradictionAuditResult) {
+	jobMetrics := []storage.JobMetric{
+		{JobType: "contradiction-audit", Target: "", Metric: "total", Value: float64(r.Total)},
+		{JobType: "contradiction-audit", Target: "", Metric: "keep", Value: float64(r.Keep)},
+		{JobType: "contradiction-audit", Target: "", Metric: "remove", Value: float64(r.Remove)},
+		{JobType: "contradiction-audit", Target: "", Metric: "ambiguous", Value: float64(r.Ambiguous)},
+		{JobType: "contradiction-audit", Target: "", Metric: "errors", Value: float64(r.Errors)},
+	}
+	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+		log.Error().Err(err).Msg("Failed to record contradiction-audit job metrics")
+	}
 }
 
 func scopeDescription(person string) string {

@@ -4524,6 +4524,20 @@ type JobMetric struct {
 	Value   float64
 }
 
+// GetLatestJobRunTime returns the timestamp of the most recent job_metrics
+// row for the given job_type. Returns (nil, nil) when the job has never run.
+// Used by cadence-gated pipeline steps (e.g. the contradiction auditor, which
+// runs every N days rather than every daily-pipeline tick).
+func (s *PostgresStorer) GetLatestJobRunTime(ctx context.Context, jobType string) (*time.Time, error) {
+	var t *time.Time
+	err := s.pool.QueryRow(ctx,
+		`SELECT MAX(created_at) FROM job_metrics WHERE job_type = $1`, jobType).Scan(&t)
+	if err != nil {
+		return nil, fmt.Errorf("get latest job run time for %q: %w", jobType, err)
+	}
+	return t, nil
+}
+
 // RecordJobMetrics inserts multiple job metrics in a single batch.
 func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetric) error {
 	if len(metrics) == 0 {

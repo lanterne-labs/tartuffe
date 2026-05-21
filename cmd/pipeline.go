@@ -116,12 +116,23 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(photosErr).Msg("Daily pipeline: photos backfill failed")
 	}
 
+	// Step 7: Contradiction auditor (5-day cadence). Re-judges previously
+	// recorded contradictions and flags false positives via the
+	// `contradiction_audits_total{verdict="remove"}` Prometheus counter.
+	// READ-ONLY today — it identifies but does not delete; act on its findings
+	// with `dm contradictions check --apply` once Grafana shows the pattern
+	// is reliable.
+	auditResult, auditErr := runContradictionAuditIfDue(ctx, storer, 5*24*time.Hour)
+	if auditErr != nil {
+		log.Error().Err(auditErr).Msg("Daily pipeline: contradiction audit failed")
+	}
+
 	elapsed := time.Since(start)
 
 	// Notify via Telegram
 	if notifier != nil {
 		hasErrors := targetsErr != nil || batchErr != nil || discoverErr != nil ||
-			twitterErr != nil || fpErr != nil || mergeErr != nil || contraErr != nil || photosErr != nil
+			twitterErr != nil || fpErr != nil || mergeErr != nil || contraErr != nil || photosErr != nil || auditErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
 
@@ -152,6 +163,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			if photosErr != nil {
 				parts = append(parts, "photos: "+photosErr.Error())
 			}
+			if auditErr != nil {
+				parts = append(parts, "contradiction-audit: "+auditErr.Error())
+			}
 			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
 				elapsed.Round(time.Second), strings.Join(parts, "\n"))
 		} else if noContent {
@@ -168,6 +182,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		if stats != nil {
 			msg += "\n" + stats.summary()
 		}
+		if auditResult != nil && auditResult.Total > 0 {
+			msg += fmt.Sprintf("\n🔍 audit: %d checked, %d flagged for removal", auditResult.Total, auditResult.Remove)
+		}
 
 		if err := notifier.Send(ctx, msg); err != nil {
 			log.Error().Err(err).Msg("Failed to send pipeline Telegram notification")
@@ -176,7 +193,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Aggregate step errors so the caller (the host cron) can exit non-zero.
 	var stepErrs []error
-	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr} {
+	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr, auditErr} {
 		if e != nil {
 			stepErrs = append(stepErrs, e)
 		}
@@ -659,4 +676,36 @@ func runPhotosBackfill(ctx context.Context, storer *storage.PostgresStorer) erro
 	}
 
 	return nil
+}
+
+// runContradictionAuditIfDue runs the contradiction auditor at most once per
+// `cadence` interval. The cadence is enforced via the job_metrics timestamp
+// for job_type="contradiction-audit" — last-run is read at the start, and
+// executeContradictionAudit (with RecordMetric=true) writes a new row at the end.
+// Returns the result (nil if skipped) so the caller can include audit stats in
+// the daily Telegram message.
+func runContradictionAuditIfDue(ctx context.Context, storer *storage.PostgresStorer, cadence time.Duration) (*ContradictionAuditResult, error) {
+	last, err := storer.GetLatestJobRunTime(ctx, "contradiction-audit")
+	if err != nil {
+		// Reading the timestamp failed — log and skip (don't keep retrying every
+		// daily tick; the next successful read will get the audit going again).
+		log.Error().Err(err).Msg("Contradiction audit: failed to read last-run timestamp, skipping this cycle")
+		return nil, nil
+	}
+	if last != nil && time.Since(*last) < cadence {
+		log.Info().
+			Time("last_run", *last).
+			Dur("cadence", cadence).
+			Dur("age", time.Since(*last)).
+			Msg("Contradiction audit: not due yet, skipping")
+		return nil, nil
+	}
+
+	log.Info().Dur("cadence", cadence).Msg("Contradiction audit: due, starting pass")
+	return executeContradictionAudit(ctx, storer, ContradictionAuditOpts{
+		Output:       nil,         // silent — pipeline mode, no per-row stdout
+		Format:       "",
+		Scope:        "all persons (periodic)",
+		RecordMetric: true,
+	})
 }

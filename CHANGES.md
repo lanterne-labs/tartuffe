@@ -2,6 +2,25 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-21: Stance contradiction temp 0.1 + periodic auditor pass + Grafana metrics
+
+### What was done
+- **Lowered stance-manager LLM temperature from 0.2 → 0.1** (`backend/core/stance_manager.go:720`). 0.2 was the lone outlier across 16+ JSON-classification call sites that all use 0.0 or 0.1; no commit message ever explained the choice. Verified on the AfD-Saxony-vs-Forsa-national false-positive case from today's prod run — 10 trials at each of temp 0.0 / 0.1 / 0.2 all returned NEW_INFO; live failure was a stochastic tail event.
+- **Added periodic contradiction-audit pipeline step** (`cmd/pipeline.go`) — runs once every 5 days, gated by `job_metrics.created_at` lookup via the new `storage.GetLatestJobRunTime(jobType)` helper. Refactored `cmd/contradictions_check.go` so the audit logic is callable both from the CLI and from the pipeline (`executeContradictionAudit(ctx, storer, opts)` with `ContradictionAuditOpts`/`ContradictionAuditResult`).
+- **Read-only by default**: the periodic pass identifies and logs false-positive contradictions but does NOT delete them. The intent is to watch the `contradiction_audits_total{verdict="remove"}` metric in Grafana for a few cycles before flipping on auto-delete. Each flagged row is logged at WARN with the contradiction ID, person, audit rule, and reasoning so operators can manually run `dm contradictions check --apply` (or eyeball the IDs) to clean up.
+- **Two new Prometheus counters**:
+  - `digital_mirror_contradiction_audits_total{verdict}` — labels: keep / remove / ambiguous / error
+  - `digital_mirror_contradiction_audit_runs_total` — increments once per completed periodic pass (alert on stale = no movement in >6 days)
+- Telegram daily-pipeline summary appends `🔍 audit: N checked, M flagged for removal` when the auditor ran.
+
+### Why
+A live frpolitics run today produced a false-positive contradiction (AfD reached 28% in a national Forsa poll vs AfD 42% record in Saxony — clearly different geographic scopes). Reproducing the exact LLM call against cachy 30×, the model never reproduced the false positive — so the prompt is correct and the failure is stochastic variance from the unjustified 0.2 temperature. With temp dropped to 0.1, false positives should become near-zero, but having the auditor sweep periodically gives recall coverage for whatever still slips through, plus a Grafana signal to watch quality drift over time.
+
+### Operational notes
+- The auditor pass uses the existing `OpenAIContradictionAuditor` + `ContradictionRulesAndExamples` — same rules as detection, so it's an apples-to-apples second read. LLM hits go to whatever `OPEN_AI_API` resolves to (cachy locally; nothing in prod yet because prod doesn't have OPEN_AI_API set — the periodic step will no-op there until that's wired).
+- 5-day cadence is hardcoded in `runContradictionAuditIfDue(ctx, storer, 5*24*time.Hour)` in `cmd/pipeline.go`. Tweak there if the volume of contradictions makes 5 days too sparse or too aggressive.
+- `job_metrics` rows for `job_type='contradiction-audit'` accumulate one row per metric per run — easy to historicize but should be kept in mind if you ever switch to upsert.
+
 ## 2026-05-21: Fact-extraction prompt slimmed + dynamic chunk sizing
 
 ### What was done
