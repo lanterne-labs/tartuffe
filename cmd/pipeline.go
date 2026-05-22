@@ -70,9 +70,12 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(batchErr).Msg("Daily pipeline: news/batch submission failed")
 	}
 
-	// Step 2: Twitter — discovery (always all persons missing a handle) +
-	// fact collection (queue-scoped, or all if DAILY_FOR_ALL=1).
-	discoverErr := runTwitterDiscovery(ctx, storer)
+	// Step 2: Twitter — discovery (queue-scoped, only persons we care about) +
+	// fact collection (queue-scoped, or all if DAILY_FOR_ALL=1). Discovery used
+	// to iterate every person in the DB (3000+ today); restricting it to the
+	// queue eliminates the long-tail false-handle problem we saw with
+	// @ambrusfrance → Alexey Meshkov and cuts the Serper bill on every cron.
+	discoverErr := runTwitterDiscovery(ctx, storer, targetIDs)
 	if discoverErr != nil {
 		log.Error().Err(discoverErr).Msg("Daily pipeline: Twitter discovery failed")
 	}
@@ -589,10 +592,22 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, t
 	return firstErr
 }
 
-// runTwitterDiscovery auto-discovers Twitter handles for persons who don't have one yet.
-// Gracefully skips if web search or LLM is not configured.
-func runTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer) error {
-	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{})
+// runTwitterDiscovery auto-discovers Twitter handles for persons in the search
+// queue who don't have one yet. Queue-scoped on purpose — we don't want to
+// auto-search Twitter for the long tail of secondary persons mentioned in
+// articles (3 000+ entries today, vs ~7 in the queue), and historically that
+// untargeted search produced false positives like @ambrusfrance →
+// Alexey Meshkov. Gracefully skips if web search or LLM is not configured.
+func runTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool) error {
+	ids := make([]int64, 0, len(targetIDs))
+	for id := range targetIDs {
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		log.Info().Msg("Twitter discovery: no queue targets, skipping")
+		return nil
+	}
+	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{TargetIDs: ids})
 }
 
 // runPhotosBackfill searches and uploads profile photos for every person/party

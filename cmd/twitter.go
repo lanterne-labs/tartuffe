@@ -575,8 +575,9 @@ func runTwitterDiscover(cmd *cobra.Command, args []string) error {
 // TwitterDiscoveryOpts configures the Twitter handle auto-discovery.
 type TwitterDiscoveryOpts struct {
 	DryRun       bool
-	PersonFilter string // if set, only discover for this person
-	Force        bool   // bypass cooldown and existing-handle checks
+	PersonFilter string  // if set, only discover for this person
+	Force        bool    // bypass cooldown and existing-handle checks
+	TargetIDs    []int64 // if non-empty, only discover for these person IDs (queue-scoped)
 }
 
 // executeTwitterDiscovery searches for and links Twitter handles for persons who don't have one.
@@ -590,7 +591,21 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 
 	// Filter to specific person if requested
 	var persons []core.PersonRecord
-	if opts.PersonFilter != "" {
+	if len(opts.TargetIDs) > 0 {
+		// Queue-scoped run: only discover handles for the listed person IDs.
+		// Used by the daily pipeline so we don't auto-search Twitter for every
+		// secondary person mentioned in articles — only for the targets we
+		// actually track.
+		idSet := make(map[int64]bool, len(opts.TargetIDs))
+		for _, id := range opts.TargetIDs {
+			idSet[id] = true
+		}
+		for _, p := range allPersons {
+			if idSet[p.ID] {
+				persons = append(persons, p)
+			}
+		}
+	} else if opts.PersonFilter != "" {
 		result := core.ResolveTargetName(ctx, storer, opts.PersonFilter)
 		if result.Error != nil {
 			return fmt.Errorf("failed to resolve person: %w", result.Error)
