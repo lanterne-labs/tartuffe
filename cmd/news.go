@@ -55,7 +55,7 @@ func init() {
 	newsSearchCmd.Flags().String("location", "France", "restrict news search to this country")
 	newsSearchCmd.Flags().Bool("skip-unknown", false, "skip targets with no prior news search results")
 	newsSearchCmd.Flags().Bool("dry-run", false, "show what URLs would be processed without actually fetching or storing")
-	newsSearchCmd.Flags().String("extractor", "webcrawler", "content extractor to use (webcrawler, firecrawl, apify)")
+	newsSearchCmd.Flags().String("extractor", "auto", "content extractor to use (auto, local, webcrawler, firecrawl, apify)")
 	newsSearchCmd.Flags().String("cache-dir", "", "directory to cache extracted content (enables caching)")
 	newsSearchCmd.Flags().Bool("cache-only", false, "only load from cache, don't scrape (requires --cache-dir)")
 	newsSearchCmd.Flags().Int("window-days", 0, "break date range into windows of N days (requires --since, 0=disabled)")

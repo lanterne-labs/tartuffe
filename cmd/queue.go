@@ -93,7 +93,7 @@ func init() {
 
 	// News-specific flags
 	queueProcessCmd.Flags().Int("news-max-parse", 5, "maximum news articles to parse per person")
-	queueProcessCmd.Flags().String("news-extractor", "webcrawler", "content extractor to use (webcrawler, firecrawl, apify)")
+	queueProcessCmd.Flags().String("news-extractor", "auto", "content extractor to use (auto, local, webcrawler, firecrawl, apify)")
 	queueProcessCmd.Flags().String("news-cache-dir", "", "directory to cache extracted content (enables caching)")
 	queueProcessCmd.Flags().Bool("news-cache-only", false, "only load from cache, don't scrape (requires --news-cache-dir)")
 	queueProcessCmd.Flags().Int("news-max-per-story", 0, "max articles per story_token (0=no cap)")

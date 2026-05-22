@@ -13,6 +13,13 @@ const (
 	ExtractorWebcrawler ExtractorType = "webcrawler"
 	ExtractorFirecrawl  ExtractorType = "firecrawl"
 	ExtractorApify      ExtractorType = "apify"
+	// ExtractorLocal runs in-process: plain HTTP GET + go-trafilatura. No API
+	// key, no per-scrape cost, but can't bypass paywalls / anti-bot.
+	ExtractorLocal ExtractorType = "local"
+	// ExtractorAuto chains LocalExtractor → WebcrawlerAPI (the latter only if
+	// WEBCRAWLERAPI_KEY is set). Use this everywhere unless a specific provider
+	// is required for debugging.
+	ExtractorAuto ExtractorType = "auto"
 )
 
 // NewExtractorFromType creates a ContentExtractor based on the specified type.
@@ -52,7 +59,33 @@ func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
 		log.Info().Msg("Using Apify for content extraction")
 		return ext, nil
 
+	case ExtractorLocal:
+		log.Info().Msg("Using LocalExtractor (HTTP + trafilatura) for content extraction")
+		return NewLocalExtractor(), nil
+
+	case ExtractorAuto:
+		local := NewLocalExtractor()
+		webcrawl, err := NewWebcrawlerAPIExtractorFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("auto extractor: failed to probe WebcrawlerAPI: %w", err)
+		}
+		// webcrawl may be nil if WEBCRAWLERAPI_KEY is unset — failover will
+		// skip nil entries, so we end up with just Local in that case.
+		failover, err := NewFailoverExtractor(
+			FailoverEntry{Name: "local", Extractor: local},
+			FailoverEntry{Name: "webcrawler", Extractor: webcrawl},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("auto extractor: %w", err)
+		}
+		if webcrawl == nil {
+			log.Warn().Msg("Using auto extractor (local only — WEBCRAWLERAPI_KEY not set, no fallback for paywalled/anti-bot sites)")
+		} else {
+			log.Info().Msg("Using auto extractor (local → webcrawler fallback)")
+		}
+		return failover, nil
+
 	default:
-		return nil, fmt.Errorf("unknown extractor type: %s (valid: webcrawler, firecrawl, apify)", extractorType)
+		return nil, fmt.Errorf("unknown extractor type: %s (valid: auto, local, webcrawler, firecrawl, apify)", extractorType)
 	}
 }

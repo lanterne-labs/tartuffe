@@ -724,7 +724,7 @@ func runNewsSearch(ctx context.Context, storer *storage.PostgresStorer, deputySe
 	} else {
 		extractorType := opts.ContentExtractor
 		if extractorType == "" {
-			extractorType = "webcrawler"
+			extractorType = "auto"
 		}
 		ext, err := extractor.NewExtractorFromType(extractorType)
 		if err != nil {
@@ -951,7 +951,7 @@ func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer
 	} else {
 		extractorType := opts.ContentExtractor
 		if extractorType == "" {
-			extractorType = "webcrawler"
+			extractorType = "auto"
 		}
 		ext, err := extractor.NewExtractorFromType(extractorType)
 		if err != nil {

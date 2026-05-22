@@ -315,8 +315,12 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 		// outputBudgetTokens (2048) — see the chunk-sizing constants block at the
 		// top of this file. Changing this value MUST also update outputBudgetTokens
 		// so the dynamic chunk sizer keeps reserving the right amount of headroom.
-		MaxTokens:      outputBudgetTokens,
-		ResponseFormat: &ResponseFormat{Type: "json_object"},
+		MaxTokens: outputBudgetTokens,
+		// Intentionally NO response_format. Local Gemma (llama.cpp) enforces
+		// {"type":"json_object"} strictly — the root must be a JSON object, not
+		// an array — and collapses the prompt's requested array of facts into a
+		// single object, capping yield at 1 fact per article. ParseFactJSON
+		// already tolerates ```json fences and array/object roots.
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

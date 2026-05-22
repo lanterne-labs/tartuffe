@@ -95,7 +95,7 @@ func runRebuildFromURLs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("embedder init: %w", err)
 	}
-	rawExtractor, err := extractor.NewExtractorFromType("webcrawler")
+	rawExtractor, err := extractor.NewExtractorFromType("auto")
 	if err != nil {
 		return fmt.Errorf("content extractor init: %w", err)
 	}

@@ -269,9 +269,9 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, 
 		return stats, fmt.Errorf("failed to initialize news search: %w", err)
 	}
 
-	rawExtractor, err := extractor.NewExtractorFromType("webcrawler")
+	rawExtractor, err := extractor.NewExtractorFromType("auto")
 	if err != nil {
-		return stats, fmt.Errorf("failed to initialize webcrawler: %w", err)
+		return stats, fmt.Errorf("failed to initialize content extractor: %w", err)
 	}
 	batchExtractor := core.NewBatchExtractorFromEnv(rawExtractor)
 

@@ -47,14 +47,6 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		jsonData = []byte(trimmedContent)
 	}
 
-	// Handle case where LLM returns a single object instead of an array
-	trimmedForCheck := strings.TrimSpace(string(jsonData))
-	if strings.HasPrefix(trimmedForCheck, "{") && !strings.HasPrefix(trimmedForCheck, "[") {
-		// Wrap single object in an array
-		jsonData = []byte("[" + trimmedForCheck + "]")
-		log.Debug().Msg("Wrapped single fact object in array")
-	}
-
 	jsonData = extractFirstJSON(jsonData)
 
 	if err := json.Unmarshal(jsonData, &extractedFactsRaw); err != nil {

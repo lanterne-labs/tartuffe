@@ -430,8 +430,8 @@ func TestPrepareAndSubmit(t *testing.T) {
 
 		orch := NewBatchJobOrchestrator(provider, storer, nil, nil, nil)
 
-		// Create content larger than chunkingThreshold (25000 chars)
-		// Use distinct paragraphs so ChunkText can split properly
+		// Create content well above chunkingThreshold so chunking is forced.
+		// Use distinct paragraphs so ChunkText can split properly.
 		var paragraphs []string
 		for i := 0; i < 30; i++ {
 			paragraphs = append(paragraphs, strings.Repeat(fmt.Sprintf("Paragraph %d content. ", i), 60))
