@@ -799,6 +799,24 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 		}
 
 		confirmedHandle := strings.ToLower(strings.TrimRight(match[1], ".,;"))
+
+		// Hard guardrail: never link a handle without a live Twitter bio
+		// confirming it. The LLM can be tricked by SERP-adjacent results
+		// when no bio is available (e.g. Alexey Meshkov → @ambrusfrance was
+		// linked when TwitterAPI.io was 402'd and UserInfo was nil for all
+		// candidates). Without a bio, prefer "no link" — the next discovery
+		// run will retry once the API is healthy.
+		if !handleNameMatches(person.Name, confirmedHandle, candidates) {
+			log.Warn().
+				Str("person", person.Name).
+				Str("rejected_handle", confirmedHandle).
+				Msg("Discovery guardrail: no live Twitter bio confirms the handle; refusing to link (will retry next run)")
+			if i < len(persons)-1 {
+				time.Sleep(1 * time.Second)
+			}
+			continue
+		}
+
 		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", opts.DryRun).Msg("Confirmed Twitter handle")
 
 		if !opts.DryRun {
@@ -819,6 +837,26 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 
 	log.Info().Int("discovered", discovered).Int("total_persons", len(persons)).Msg("Twitter discovery completed")
 	return nil
+}
+
+// handleNameMatches is the deterministic post-LLM guardrail. Refuses to link
+// any handle unless we got a live bio confirmation from TwitterAPI.io —
+// because the LLM's only way to falsify a SERP-adjacent false positive (real
+// example: Alexey Meshkov → @ambrusfrance) is to cross-check the actual bio.
+// No bio → no link, full stop. The handle stays unset and the next discovery
+// run will try again. This is a fail-closed guard by design: better to leave
+// a person unlinked than to attach the wrong handle.
+func handleNameMatches(personName, handle string, candidates []twitterCandidate) bool {
+	for _, c := range candidates {
+		if !strings.EqualFold(c.Handle, handle) {
+			continue
+		}
+		// Found the matching candidate; require a live bio.
+		return c.UserInfo != nil
+	}
+	// LLM picked a handle that isn't even in the candidate list (LLM
+	// hallucination) — definitely reject.
+	return false
 }
 
 // buildTwitterDiscoveryPrompt constructs the LLM prompt for Twitter handle verification.
