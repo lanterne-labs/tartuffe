@@ -603,6 +603,16 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 			if err == nil && len(body) > 0 {
 				break
 			}
+			// If the first URL exhausted its retry budget on a 429, the
+			// second candidate on the same host will too — short-circuit
+			// rather than burn another 7-attempt budget keeping the
+			// rate-limit hot. Falling-back across candidates only makes
+			// sense for 404 (different archive path layouts), not for
+			// rate-limit responses.
+			if err != nil && strings.Contains(err.Error(), "retryable status 429") {
+				log.Warn().Str("url", url).Int("legislature", leg).Msg("frpolitics: 429 after retry budget; skipping further fallback candidates this run")
+				break
+			}
 		}
 		if err != nil {
 			log.Warn().Err(err).Int("legislature", leg).Msg("frpolitics: failed to download scrutins, skipping legislature")

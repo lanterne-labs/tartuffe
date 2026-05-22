@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -107,19 +109,47 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 		}
 	}
 
-	// Download with simple retry/backoff for 429/5xx
+	// Retry/backoff for 429/5xx. Tuned for AN's open-data portal: the previous
+	// 300ms→4.8s budget was too tight (a 429 typically needs minutes to clear),
+	// and combined with the two-URL-fallback in run.go we were firing ~10
+	// requests in ~18s, which keeps re-triggering the limiter. Now: 7 attempts,
+	// exponential 2s → 4s → 8s → 16s → 32s → 60s → 60s (capped), with ±25%
+	// jitter so concurrent retries don't synchronise. Retry-After is still
+	// honoured when the server sends it.
+	const (
+		maxAttempts   = 7
+		initialBackoff = 2 * time.Second
+		maxBackoff     = 60 * time.Second
+	)
+	sleepWithJitter := func(ctx context.Context, base time.Duration) {
+		// ±25% jitter; bounded by maxBackoff.
+		if base > maxBackoff {
+			base = maxBackoff
+		}
+		jitter := time.Duration(float64(base) * (rand.Float64()*0.5 - 0.25))
+		d := base + jitter
+		if d < 100*time.Millisecond {
+			d = 100 * time.Millisecond
+		}
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+		}
+	}
+
 	var data []byte
 	var lastErr error
-	backoff := 300 * time.Millisecond
-	for attempt := 0; attempt < 5; attempt++ {
+	backoff := initialBackoff
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("new request: %w", err)
 		}
+		applyBrowserHeaders(req)
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("http get: %w", err)
-			time.Sleep(backoff)
+			sleepWithJitter(ctx, backoff)
 			backoff *= 2
 			continue
 		}
@@ -134,26 +164,34 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 				lastErr = nil
 				return
 			}
-			// Retry on 429/5xx with Retry-After if present
+			// Retry on 429/5xx — Retry-After takes precedence over our backoff.
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 				if ra := resp.Header.Get("Retry-After"); ra != "" {
 					if secs, convErr := strconv.Atoi(ra); convErr == nil && secs > 0 {
-						time.Sleep(time.Duration(secs) * time.Second)
+						wait := time.Duration(secs) * time.Second
+						if wait > maxBackoff {
+							wait = maxBackoff
+						}
+						sleepWithJitter(ctx, wait)
 					} else {
-						time.Sleep(backoff)
+						sleepWithJitter(ctx, backoff)
 						backoff *= 2
 					}
 				} else {
-					time.Sleep(backoff)
+					sleepWithJitter(ctx, backoff)
 					backoff *= 2
 				}
-				lastErr = fmt.Errorf("retryable status %d", resp.StatusCode)
+				lastErr = fmt.Errorf("retryable status %d (attempt %d/%d)", resp.StatusCode, attempt+1, maxAttempts)
 				return
 			}
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
 		}()
 		if lastErr == nil && len(data) > 0 {
+			break
+		}
+		// Don't burn the rest of the budget on non-retryable errors.
+		if lastErr != nil && !strings.HasPrefix(lastErr.Error(), "retryable status") && !strings.HasPrefix(lastErr.Error(), "http get") {
 			break
 		}
 	}
