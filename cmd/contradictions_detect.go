@@ -221,7 +221,7 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 			for _, neighbor := range neighbors {
 				if neighbor.ID > fact.ID {
 					if fact.CanonicalVerb != "" && neighbor.CanonicalVerb != "" &&
-						(1.0-neighbor.Distance) > 0.85 {
+						(1.0-neighbor.Distance) > 0.80 {
 						sameVerb := fact.CanonicalVerb == neighbor.CanonicalVerb
 						bothExternal := !categorizer.IsDirectClaimVerb(fact.CanonicalVerb) && !categorizer.IsDirectClaimVerb(neighbor.CanonicalVerb)
 						if sameVerb || bothExternal {

@@ -65,7 +65,7 @@ At least ONE of the two statements MUST be an utterance, claim, denial, position
 If the only difference between two statements is the DATE or TIMING of an event (e.g., "X happened on Monday" vs "X happened on Tuesday"), it is NOT a contradiction UNLESS one of the statements is a personal commitment about that timing that the other breaks (e.g., the person promised "I will do X by date Y" and the other statement shows they did X later, with clear intent to delay or hide). Pure factual date discrepancies between reports — without the person committing to a specific date — reflect source noise, not dishonesty. Default to NO for date-only conflicts.
 
 **PROMISE-BASED REASONING (core framework):**
-For every pair, identify which fact is the "promise" (a claim, denial, or commitment by the person) and which is the potential "breaker" (a fact that could invalidate it). Either fact can be the promise — it is NOT necessarily the chronologically first one.
+The framework only applies when a "promise" actually exists. Try to identify one fact as a "promise" (a claim, denial, or commitment by the person) and the other as a potential "breaker" (a fact that could invalidate it). Either fact can be the promise — it is NOT necessarily the chronologically first one. **If NEITHER fact is a personal claim, denial, or commitment by the person, there is no promise to break — the verdict is automatically NO. Do not manufacture a promise where the facts don't contain one.**
 
 A breaker genuinely invalidates a promise when:
 - The person's OWN later or earlier statement directly contradicts their promise (e.g., "I knew X" vs "I never knew X")
@@ -98,7 +98,7 @@ A breaker does NOT invalidate a promise when:
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
 2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
-3. Same date conflicts: analyze carefully for direct logical contradiction
+3. Same date conflicts: DEFAULT to NO. Only flag YES when BOTH facts are first-person claims by the same person about a fact they directly know (e.g., a number they stated themselves), and those personal claims are logically incompatible. A bare timing/numeric discrepancy between two third-party reports on the same date is NEVER a contradiction — that is the DATE-ONLY CONFLICTS / UTTERANCE-REQUIREMENT case.
 4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
 
 **EXAMPLES:**
@@ -121,10 +121,11 @@ Statement B (dated unknown date): "CEO Jones opposed policy X."
 PAIR 3: REASONING: Both dates are unknown. The statements appear opposite, but per the UNKNOWN DATES temporal rule, we must be skeptical — without dates, these could represent a legitimate change of position over time.
 PAIR 3: NO: Without dates, these could represent a legitimate change of position over time.
 
-PAIR 4 (Same Date Conflict - Contradictory):
-Statement A (dated February 1, 2024): "Alice stated the project budget is $5 million."
-Statement B (dated February 1, 2024): "Alice confirmed the project budget was approved at $7 million."
-PAIR 4: YES: The statements provide conflicting monetary values for the same project on the same date.
+PAIR 4 (Same Date Conflict, BOTH First-Person Claims - Contradictory):
+Statement A (dated February 1, 2024): "Alice, the project owner, stated 'our budget is $5 million.'"
+Statement B (dated February 1, 2024): "Alice, the project owner, confirmed 'we approved a budget of $7 million.'"
+PAIR 4: REASONING: Both statements are Alice's OWN first-person claims about a number she directly knows — she is the project owner asserting the budget she set. Same date, same fact, two incompatible personal claims by the same person. The HARD GATE is satisfied (Alice is the speaker in both), and the conflict is in her own claims, not in third-party reporting.
+PAIR 4: YES: Alice's own first-person budget claim of $5M directly contradicts her own confirmation of $7M for the same project on the same date.
 
 PAIR 5 (Different Events - NOT Contradictory):
 Statement A (dated March 2022): "Senator Smith voted against bill H.R. 123."

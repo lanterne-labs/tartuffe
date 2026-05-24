@@ -2,6 +2,17 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-24 (followup): Prompt cleanup + dedup threshold drop
+
+### What was done
+- **PAIR 4 rewritten**: the old "Alice budget" example was ambiguous about whether Alice was the speaker. Now explicitly anchors both statements as Alice's OWN first-person claims, with REASONING that explains why the HARD GATE is satisfied. Stops the model from pattern-matching same-date numeric conflicts in third-party reports onto PAIR 4 and emitting YES.
+- **Temporal rule 3 inverted**: was "analyze carefully for direct logical contradiction" (yellow light). Now defaults to NO; only flags YES when both facts are first-person claims by the same person about a fact they directly know.
+- **PROMISE-BASED REASONING gated**: added a sentence stating that if neither fact is a personal claim/denial/commitment, there is no promise to break — the verdict is automatically NO. Stops the model from manufacturing promise/breaker structure where the facts don't contain one.
+- **Insertion dedup threshold 0.85 → 0.80** in `backend/core/fact_inserter.go` (`DEDUPE_AUTO_THRESHOLD` env override). Same drop applied to the contradiction-detector's paraphrase-skip threshold in `cmd/contradictions_detect.go` for consistency. Safe because dedup is verb-aware: opposing-position pairs never dedup regardless of similarity.
+
+### Why
+Pair-of-pairs effect on the Macron case: even after adding the HARD GATE and DATE-ONLY rules, the prompt still contained PAIR 4 (training towards YES on same-date numeric conflicts) and a yellow-light Temporal rule 3 — those directly undercut the new gate. Lowering the dedup threshold addresses the upstream pipeline issue: the two Macron facts about the Stade de France finale were near-identical (verb-free, date-stripped embedding text) but sat just above the previous 0.85 cutoff. At 0.80 they would have collapsed at insertion and the contradiction layer would never have seen them.
+
 ## 2026-05-24: Stricter contradiction rules + smoothed honesty score
 
 ### What was done

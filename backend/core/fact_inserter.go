@@ -122,7 +122,12 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 		panic("NewFactInserter: stance processor is nil — every fact must be routed through a stance, no exceptions")
 	}
 
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.85)
+	// 0.80 (was 0.85): the embedding_text is verb-free and strips dates/numbers/names,
+	// so same-topic facts should embed very close. Dropping the threshold catches
+	// near-duplicate news reports of the same event that differ only in incidental
+	// details (an extra named player, a date string). Verb-aware: opposing positions
+	// never dedup regardless of similarity, so lowering is safe.
+	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.80)
 
 	return &FactInserter{
 		storer:              storer,
