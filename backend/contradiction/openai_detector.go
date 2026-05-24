@@ -58,6 +58,12 @@ func formatDateForLLM(t *time.Time) string {
 const ContradictionRulesAndExamples = `**CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
 A contradiction must be about the SAME SUBJECT - specifically about the person's own knowledge, beliefs, actions, or positions.
 
+**HARD GATE — UTTERANCE REQUIREMENT (check FIRST, before any other reasoning):**
+At least ONE of the two statements MUST be an utterance, claim, denial, position, commitment, or vote BY THE PERSON THEMSELVES. The only acceptable substitute is an AUTHORITATIVE FINDING about the person (a court conviction, official investigation conclusion, judicial ruling). If BOTH statements are third-party reports, journalistic narrations, or descriptions of events involving the person without any first-person claim or authoritative finding, the answer is automatically NO — even if the statements appear to disagree. Different reporters or sources giving slightly different versions of an event the person did not personally claim is a SOURCE DISAGREEMENT, not a personal contradiction.
+
+**DATE-ONLY CONFLICTS — NOT A CONTRADICTION:**
+If the only difference between two statements is the DATE or TIMING of an event (e.g., "X happened on Monday" vs "X happened on Tuesday"), it is NOT a contradiction UNLESS one of the statements is a personal commitment about that timing that the other breaks (e.g., the person promised "I will do X by date Y" and the other statement shows they did X later, with clear intent to delay or hide). Pure factual date discrepancies between reports — without the person committing to a specific date — reflect source noise, not dishonesty. Default to NO for date-only conflicts.
+
 **PROMISE-BASED REASONING (core framework):**
 For every pair, identify which fact is the "promise" (a claim, denial, or commitment by the person) and which is the potential "breaker" (a fact that could invalidate it). Either fact can be the promise — it is NOT necessarily the chronologically first one.
 
@@ -230,7 +236,25 @@ PAIR 25 (Announcement Followed by Action - NOT Contradictory):
 Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
 Statement B (dated March 18, 2024): "Jean-Luc Mélenchon came to support the candidacy of Lahouaria Addouche in Lille."
 PAIR 25: REASONING: Statement A is an announcement of intent to support, Statement B describes the actual support happening. This is a fulfilled commitment — the person did what they announced. Past vs future tense about the same action is NOT a contradiction.
-PAIR 25: NO: Announcing support and then providing that support is a fulfilled commitment, not a contradiction.`
+PAIR 25: NO: Announcing support and then providing that support is a fulfilled commitment, not a contradiction.
+
+PAIR 27 (Third-Party Narratives — Person Never Spoke - NOT Contradictory):
+Statement A (dated March 10, 2024): "Le Monde reported that Emmanuel Macron met with the German chancellor on March 5."
+Statement B (dated March 11, 2024): "Reuters reported that Emmanuel Macron met with the German chancellor on March 6."
+PAIR 27: REASONING: Neither statement is an utterance by Macron himself — both are third-party reports about an event. There is no personal claim or authoritative finding by/about Macron to contradict. The HARD GATE — UTTERANCE REQUIREMENT applies: this is a source disagreement, not a personal contradiction.
+PAIR 27: NO: Both statements are third-party narratives; neither is the person's own claim or an authoritative finding, so no personal contradiction can be established.
+
+PAIR 28 (Date-Only Conflict, No Personal Commitment - NOT Contradictory):
+Statement A (dated April 2, 2024): "Emmanuel Macron signed the climate decree on March 20."
+Statement B (dated April 3, 2024): "Emmanuel Macron signed the climate decree on March 22."
+PAIR 28: REASONING: The only difference between the two statements is the date of the same event — there is no personal commitment about timing being broken, no intent to delay or hide. Pure date discrepancies between sources reflect source noise, not dishonesty. The DATE-ONLY CONFLICTS rule applies.
+PAIR 28: NO: A bare date discrepancy with no broken commitment about timing is a source disagreement, not a contradiction.
+
+PAIR 29 (Date Conflict + Broken Personal Commitment - Contradictory):
+Statement A (dated January 5, 2024): "Emmanuel Macron promised the law would be signed before December 31, 2023."
+Statement B (dated February 2, 2024): "Emmanuel Macron signed the law on January 28, 2024."
+PAIR 29: REASONING: Statement A is Macron's own commitment about timing; Statement B is the actual action taken after the committed deadline. The date conflict here reflects a broken personal commitment — exactly the intent-of-misbehavior carve-out in the DATE-ONLY CONFLICTS rule.
+PAIR 29: YES: Macron committed to signing before a specific date and then signed after it — the timing conflict reflects a broken commitment.`
 
 const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 

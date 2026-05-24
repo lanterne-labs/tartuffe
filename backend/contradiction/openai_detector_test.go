@@ -77,13 +77,36 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 			expectedContradiction: false,
 		},
 		{
-			name:                    "Potential Contradiction - Conflicting Details (Same Date)",
-			factA:                   "The report indicates John was in Paris last week.",
+			// Third-party narratives (a report, eyewitness accounts) about John, with
+			// no first-person claim or authoritative finding — the HARD GATE makes
+			// this a source disagreement, not a personal contradiction.
+			name:                  "No Contradiction - Third-Party Narratives Only",
+			factA:                 "The report indicates John was in Paris last week.",
+			dateA:                 "2024-02-10",
+			factB:                 "Eyewitness accounts place John in Tokyo during the same period.",
+			dateB:                 "2024-02-10",
+			expectedContradiction: false,
+		},
+		{
+			// Same factual conflict, but now anchored to John's own claim — this IS
+			// a contradiction (his statement vs an authoritative finding about him).
+			name:                    "Contradiction - Own Claim vs Authoritative Finding",
+			factA:                   "John stated under oath he was in Paris last week.",
 			dateA:                   "2024-02-10",
-			factB:                   "Eyewitness accounts place John in Tokyo during the same period.",
+			factB:                   "Court records confirmed John was in Tokyo during the same period.",
 			dateB:                   "2024-02-10",
 			expectedContradiction:   true,
-			expectedReasonSubstring: "", // LLM may use different wording
+			expectedReasonSubstring: "",
+		},
+		{
+			// Date-only conflict with no broken personal commitment — under the
+			// DATE-ONLY CONFLICTS rule this is source noise, not a contradiction.
+			name:                  "No Contradiction - Date-Only Conflict, No Commitment",
+			factA:                 "Mayor Garcia signed the order on May 10.",
+			dateA:                 "2024-05-12",
+			factB:                 "Mayor Garcia signed the order on May 11.",
+			dateB:                 "2024-05-13",
+			expectedContradiction: false,
 		},
 		{
 			name:                  "No Contradiction - Compatible Information",

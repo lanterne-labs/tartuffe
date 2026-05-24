@@ -34,6 +34,8 @@ var contradictionAuditAllowedRules = map[string]bool{
 	"legal_process_stages":         true,
 	"complementary_facts":          true,
 	"vague_vs_specific":            true,
+	"third_party_narrative":        true,
+	"date_only_no_commitment":      true,
 }
 
 // contradictionAuditAllowedRulesList is the alphabetised version used in the
@@ -46,6 +48,7 @@ var contradictionAuditAllowedRulesList = []string{
 	"complementary_facts",
 	"consistent_ignorance",
 	"conviction_vs_acknowledgment",
+	"date_only_no_commitment",
 	"different_events",
 	"different_subjects",
 	"geographic_scope",
@@ -53,6 +56,7 @@ var contradictionAuditAllowedRulesList = []string{
 	"legal_process_stages",
 	"paraphrase_same_position",
 	"subjective_vs_objective",
+	"third_party_narrative",
 	"vague_vs_specific",
 }
 
@@ -126,6 +130,8 @@ VERDICT: [keep|remove|ambiguous]
   legal_process_stages
   complementary_facts
   vague_vs_specific
+  third_party_narrative
+  date_only_no_commitment
 
 If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token from the list above. Do NOT invent variants. Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".
 

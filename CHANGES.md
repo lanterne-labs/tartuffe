@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-24: Stricter contradiction rules + smoothed honesty score
+
+### What was done
+- **Two new contradiction rules** in `backend/contradiction/openai_detector.go` (shared `ContradictionRulesAndExamples`):
+  - **HARD GATE — UTTERANCE REQUIREMENT**: at least one statement must be uttered by the person themselves or be an authoritative finding about them. Pure third-party narratives on both sides are a SOURCE DISAGREEMENT, not a personal contradiction.
+  - **DATE-ONLY CONFLICTS**: a bare date/timing discrepancy is NOT a contradiction unless it breaks a personal commitment to that timing. Three new example pairs (PAIR 27/28/29) anchor the rule and its carve-out (broken commitment about timing = still contradictory).
+- **Two new auditor RULE tokens**: `third_party_narrative` and `date_only_no_commitment` added to the auditor enum and prompt.
+- **Honesty score formula** (`backend/storage/postgres.go`): introduced `HonestyScoreMinDenominator = 75` Bayesian smoothing floor (`ratio = bundles / max(facts, 75)`), reduced `HonestyScoreRatioDecay` 4 → 1.5 and bumped `HonestyScoreAbsoluteDecay` 0.02 → 0.03. One contradiction now leaves a score around 95% and decays exponentially as bundles accumulate, instead of crushing a low-fact-count person to ~13%.
+
+### Why
+Production case: Macron had a single flagged contradiction (a date discrepancy between two third-party reports — neither was Macron speaking himself) and was sitting at 13% honesty. Both layers were broken: the detector was flagging pairs that don't satisfy the first rule (must be the person themselves or an authoritative finding), and the score formula was over-penalising tiny sample sizes via the ratio term.
+
 ## 2026-05-21: Stance contradiction temp 0.1 + periodic auditor pass + Grafana metrics
 
 ### What was done

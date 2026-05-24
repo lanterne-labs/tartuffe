@@ -965,8 +965,9 @@ func TestPostgresStorer_DeletePartialLawData(t *testing.T) {
 }
 
 func TestComputeHonestyScore(t *testing.T) {
-	// Each test fully bundles: bundles == total, so the extras penalty is zero and the
-	// formula reduces to the legacy exp(-4*ratio - 0.02*contradictions).
+	// Each test fully bundles: bundles == total, so the extras penalty is zero. With the
+	// smoothed formula (RD=1.5, AD=0.03, floor=75), score = exp(-1.5*ratio - 0.03*bundles)
+	// where ratio = bundles / max(facts, 75).
 	tests := []struct {
 		name        string
 		facts       int
@@ -977,13 +978,17 @@ func TestComputeHonestyScore(t *testing.T) {
 	}{
 		{"zero facts returns 1.0", 0, 0, 0, 1.0, 1.0},
 		{"zero contradictions returns 1.0", 200, 0, 0, 1.0, 1.0},
-		{"5/200 ~ 82%", 200, 5, 5, 0.81, 0.83},
-		{"14/200 ~ 57%", 200, 14, 14, 0.56, 0.58},
-		{"20/200 ~ 45%", 200, 20, 20, 0.44, 0.46},
-		{"50/200 ~ 14%", 200, 50, 50, 0.13, 0.15},
-		{"100/200 ~ 2%", 200, 100, 100, 0.01, 0.03},
-		{"ratio > 1 still works", 10, 20, 20, 0.0, 0.001},
-		{"all contradicted approaches zero", 10, 10, 10, 0.01, 0.02},
+		// 1 contradiction in a tiny fact base must stay generous (>95%).
+		{"1/2 stays near 95%", 2, 1, 1, 0.94, 0.96},
+		{"1/200 ~ 96%", 200, 1, 1, 0.95, 0.97},
+		{"5/200 ~ 83%", 200, 5, 5, 0.82, 0.84},
+		{"14/200 ~ 59%", 200, 14, 14, 0.58, 0.60},
+		{"20/200 ~ 47%", 200, 20, 20, 0.46, 0.48},
+		{"50/200 ~ 15%", 200, 50, 50, 0.14, 0.16},
+		{"100/200 ~ 2%", 200, 100, 100, 0.02, 0.03},
+		// With the smoothing floor, extreme ratios at tiny fact counts stay above zero;
+		// the absolute decay still pulls them down as bundles grow.
+		{"10/10 with smoothing ~ 61%", 10, 10, 10, 0.60, 0.62},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -992,6 +997,27 @@ func TestComputeHonestyScore(t *testing.T) {
 			assert.LessOrEqual(t, score, tt.expectedMax, "score too high")
 		})
 	}
+}
+
+// TestComputeHonestyScore_LowFactSmoothing asserts that one contradiction against
+// a tiny fact base does not collapse the score: with the smoothing floor of 75,
+// 1 contradiction out of 2 facts should yield ~95%, and the score should decay
+// exponentially from there as bundles grow.
+func TestComputeHonestyScore_LowFactSmoothing(t *testing.T) {
+	score := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
+	assert.Greater(t, score, 0.94, "1 contradiction against 2 facts must stay above 94%%")
+	assert.Less(t, score, 0.96, "1 contradiction against 2 facts should still cost ~5%%")
+
+	// Decay should be exponential in bundles when fact count is below the smoothing floor.
+	s1 := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
+	s2 := ComputeHonestyScore(2, ContradictionStats{Bundles: 2, Total: 2})
+	s5 := ComputeHonestyScore(2, ContradictionStats{Bundles: 5, Total: 5})
+	assert.Greater(t, s1, s2, "more bundles must reduce score")
+	assert.Greater(t, s2, s5, "more bundles must reduce score")
+	// More facts at the same bundle count must improve the score once we're past the floor.
+	scoreLowFacts := ComputeHonestyScore(75, ContradictionStats{Bundles: 1, Total: 1})
+	scoreHighFacts := ComputeHonestyScore(500, ContradictionStats{Bundles: 1, Total: 1})
+	assert.Greater(t, scoreHighFacts, scoreLowFacts, "more facts with same contradiction count should improve score")
 }
 
 // TestComputeHonestyScore_BundlingReducesPenalty asserts the core property of bundling:

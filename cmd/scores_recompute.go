@@ -20,7 +20,7 @@ var scoresCmd = &cobra.Command{
 var scoresRecomputeCmd = &cobra.Command{
 	Use:   "recompute",
 	Short: "Recompute honesty scores for all persons using the exponential formula.",
-	Long:  `Recalculates honesty scores for every person using exp(-4 * contradictions/facts). Use --dry-run to preview changes without writing.`,
+	Long:  `Recalculates honesty scores for every person using the smoothed exponential formula (see storage.ComputeHonestyScore). Use --dry-run to preview changes without writing.`,
 	Annotations: map[string]string{
 		"needs_db": "true",
 	},
