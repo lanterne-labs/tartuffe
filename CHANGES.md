@@ -2,6 +2,20 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-25: Value-axis stances + values-based contradictions + dm scrape urls
+
+### What was done
+- **Values-based / directional contradiction rule** in `backend/contradiction/openai_detector.go`. A stated value/commitment ("rebuild artisanat") is contradicted by the person's own opposing action ("authorise offshoring") even when the two statements share no surface keywords. Worked examples: PAIR 30 (artisanat vs offshoring = YES), PAIR 31 (small symbolic counter-gesture = NO — requires material undermining). Narrowed the conflicting "different LEVELS of involvement" rule to apply only to CRIMINAL-EXECUTION cases.
+- **Value-axis stance clustering** in `backend/core/stance_manager.go`. Topic-assignment, generateGeneralLabel, and refreshStanceMetadata prompts now recognise VALUE AXES as valid topic labels (e.g. "souveraineté industrielle française", "transition écologique", "libertés civiles et sécurité") so facts about different sub-topics that share a directional commitment cluster together. The MergeClusterDecision prompt was relaxed to allow merging value-axis siblings with explicit examples; still hard-blocks merges across different temporal/geographic contexts.
+- **New CLI `dm scrape urls`** (`cmd/scrape.go`, `cmd/scrape_urls.go`, `storage.GetSourceURLsForPerson`). Reads URLs from a file (`--input`) or from an existing person's fact_sources (`--from-person`) and re-scrapes them into a content cache compatible with `dm ingest files`. Lets us refresh a person's corpus through new extraction prompts without paying for SerpAPI again.
+- **New auditor token** `symbolic_counter_gesture` for the contradiction auditor enum, used when a flagged pair is a values-vs-action case but the counter-action isn't material enough.
+
+### Why
+The previous fixes (HARD GATE, DATE-ONLY rule, smoothed honesty) addressed the surface-level Macron false positive but left the deeper question: can we detect *indirect* contradictions — a values commitment broken by an opposing action on the same axis, with no keyword overlap? Two structural gaps were identified: (1) the prompt actively pushed the model AWAY from such pairs via the broad "different levels of involvement" rule, and (2) stance clustering was purely topical, so cross-topic facts on the same value axis landed in separate stances and the KNN-based contradiction detector never paired them. This change closes (1) with the dedicated rule + counter-examples, and partially closes (2) by teaching stance assignment + merge to recognise value axes. A residual gap remains: stances that fragment can still be hard to merge via centroid clustering alone — the merge command needs a wider Phase-A recall threshold (or a different clustering strategy) to surface value-axis siblings whose stance descriptions aren't lexically close.
+
+### Validation on production
+Ran the full pipeline against Macron after deploy: deleted 27 facts → rescraped 19 existing URLs via `dm scrape urls` (no SerpAPI cost) → re-extracted with the new prompt → ran 10-window 3-day SerpAPI scrape since 2026-04-27 (--max-parse 5/window, ~45 new articles) → contradiction detection → stance merge at 0.65 then 0.50 recall thresholds. End state: 76 facts, 19 stances, 0 contradictions. The original Stade-de-France false-positive does not recur. Score 100%. No real values-vs-action contradictions surfaced in this 4-week window — plausibly because Macron has been consistent in the period, not because the detector missed anything: the new value-axis language IS visible in stance-assignment LLM rationales ("the value axis of balancing protection with freedom of expression/creation"). Validation of the synthetic artisanat/offshoring case was not done — would require either injecting test facts or scraping a wider corpus.
+
 ## 2026-05-24 (followup): Prompt cleanup + dedup threshold drop
 
 ### What was done
