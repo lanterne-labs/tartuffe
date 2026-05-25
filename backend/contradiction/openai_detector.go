@@ -64,6 +64,13 @@ At least ONE of the two statements MUST be an utterance, claim, denial, position
 **DATE-ONLY CONFLICTS — NOT A CONTRADICTION:**
 If the only difference between two statements is the DATE or TIMING of an event (e.g., "X happened on Monday" vs "X happened on Tuesday"), it is NOT a contradiction UNLESS one of the statements is a personal commitment about that timing that the other breaks (e.g., the person promised "I will do X by date Y" and the other statement shows they did X later, with clear intent to delay or hide). Pure factual date discrepancies between reports — without the person committing to a specific date — reflect source noise, not dishonesty. Default to NO for date-only conflicts.
 
+**VALUES-BASED / DIRECTIONAL CONTRADICTION — IS A CONTRADICTION (even without keyword overlap):**
+A stated value, principle, or directional commitment by the person (e.g., "I want to strengthen X", "we will protect Y", "I support Z") is broken by the person's own concrete action that moves in the OPPOSITE direction on the same underlying axis — EVEN WHEN the two statements have NO surface keyword overlap. To judge:
+1. Identify the underlying VALUE or DIRECTION embedded in the commitment ("rebuild artisanat" → strengthen domestic French manufacturing/employment).
+2. Identify the directional IMPACT of the action ("authorise offshoring of a French factory to China" → weaken domestic French manufacturing/employment).
+3. If the action moves in the OPPOSITE direction on the SAME underlying axis, it IS a contradiction. Different topics/keywords are NOT a reason to dismiss — the axis is what matters.
+Examples of underlying axes: economic sovereignty / globalisation; environmental protection / industrial expansion; civil liberties / surveillance; austerity / public spending; secularism / religious accommodation. Be conservative: only flag YES when the axis is unambiguous AND the action clearly moves in the opposite direction (a small or symbolic gesture in the other direction is NOT enough — the action must materially undermine the commitment).
+
 **PROMISE-BASED REASONING (core framework):**
 The framework only applies when a "promise" actually exists. Try to identify one fact as a "promise" (a claim, denial, or commitment by the person) and the other as a potential "breaker" (a fact that could invalidate it). Either fact can be the promise — it is NOT necessarily the chronologically first one. **If NEITHER fact is a personal claim, denial, or commitment by the person, there is no promise to break — the verdict is automatically NO. Do not manufacture a promise where the facts don't contain one.**
 
@@ -80,7 +87,7 @@ A breaker does NOT invalidate a promise when:
 **Is NOT a contradiction** when:
 - Statement A is about the person's own belief/acknowledgment, but Statement B is about what an EXTERNAL PARTY did or didn't do as their own action (different subjects)
 - Both statements mention similar TOPICS but are about DIFFERENT SUBJECTS (e.g., what Parliament did vs what she told her colleagues) — similar keywords do NOT make a contradiction
-- Statements are about different LEVELS of involvement — agreeing to a policy/system is NOT the same as personally executing it
+- Different LEVELS of involvement in CRIMINAL or FRAUDULENT EXECUTION — passively agreeing to a system that others then defraud is NOT the same as personally executing every fraud within it. This is a NARROW carve-out for criminal-execution defences; it does NOT apply when the person's own subsequent ACTION goes in the opposite direction of their stated VALUE or COMMITMENT (that case IS a values-based contradiction — see the dedicated rule below)
 - One statement is VAGUE/GENERAL while the other is SPECIFIC, and there is NO clear indication they refer to the same thing — BUT if context (names, dates, events) makes it clear they ARE about the same thing, it IS a contradiction
 - SUBJECTIVE AWARENESS vs OBJECTIVE FACTS: "I wasn't aware of X" (subjective) and "X didn't happen" (objective) are COMPATIBLE — denying X happened doesn't imply prior knowledge of X. ONLY contradictory if the person demonstrably knew about X earlier
 - DOWNPLAYING ≠ CONTRADICTING: Acknowledging an error, negligence, or that "things could have been better" does NOT contradict denying criminal intent or claiming good faith. A person can admit mistakes while genuinely believing they didn't commit a crime. "Bonne foi" (good faith) is COMPATIBLE with negligence. Only flag if the person explicitly DENIES the specific fact they elsewhere ADMITS
@@ -255,7 +262,19 @@ PAIR 29 (Date Conflict + Broken Personal Commitment - Contradictory):
 Statement A (dated January 5, 2024): "Emmanuel Macron promised the law would be signed before December 31, 2023."
 Statement B (dated February 2, 2024): "Emmanuel Macron signed the law on January 28, 2024."
 PAIR 29: REASONING: Statement A is Macron's own commitment about timing; Statement B is the actual action taken after the committed deadline. The date conflict here reflects a broken personal commitment — exactly the intent-of-misbehavior carve-out in the DATE-ONLY CONFLICTS rule.
-PAIR 29: YES: Macron committed to signing before a specific date and then signed after it — the timing conflict reflects a broken commitment.`
+PAIR 29: YES: Macron committed to signing before a specific date and then signed after it — the timing conflict reflects a broken commitment.
+
+PAIR 30 (Values-Based Contradiction, No Keyword Overlap - Contradictory):
+Statement A (dated March 1, 2024): "Emmanuel Macron a affirmé vouloir redonner du pouvoir d'achat aux Français en reconstruisant l'artisanat français."
+Statement B (dated June 15, 2024): "Emmanuel Macron a autorisé la délocalisation en Chine d'une usine française de 5 000 employés."
+PAIR 30: REASONING: A is Macron's own stated commitment — the underlying axis is "strengthen French domestic manufacturing and employment". B is Macron's own action (authorising offshoring), and its directional impact on that same axis is the opposite: it weakens domestic French manufacturing and employment. The two statements share no surface keywords (artisanat vs délocalisation/Chine), but the underlying axis is identical and the action materially undermines the commitment. The HARD GATE is satisfied (A is his own statement, B is his own action). The CRIMINAL-EXECUTION carve-out does NOT apply — this is a values-vs-action case, not an execution-of-fraud case. This is the VALUES-BASED / DIRECTIONAL CONTRADICTION rule.
+PAIR 30: YES: Macron's commitment to rebuild French artisanat is materially undermined by his own decision to authorise offshoring a 5,000-employee French factory to China — opposite directions on the same underlying axis of French industrial sovereignty.
+
+PAIR 31 (Symbolic / Small Counter-Gesture - NOT Contradictory):
+Statement A (dated March 1, 2024): "Macron a déclaré vouloir réindustrialiser la France."
+Statement B (dated June 15, 2024): "Macron a inauguré un partenariat industriel avec un fabricant allemand pour 50 emplois en Bavière."
+PAIR 31: REASONING: A is a stated commitment to French reindustrialisation. B is a small cross-border industrial partnership of 50 jobs — symbolic in scale and not clearly opposed to French reindustrialisation (industrial partnerships often complement domestic policy). The VALUES-BASED rule requires the action to MATERIALLY undermine the commitment; a 50-job partnership in Bavaria does not meet that bar.
+PAIR 31: NO: The 50-job German partnership does not materially undermine the French reindustrialisation commitment — small counter-gestures or unrelated cross-border collaborations are not contradictions.`
 
 const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 
