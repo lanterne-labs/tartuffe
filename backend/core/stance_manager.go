@@ -1076,13 +1076,18 @@ func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName st
 	prompt := fmt.Sprintf(`You are deciding whether several stance documents about %s represent the SAME stance and should be merged, or are genuinely distinct stances.
 
 RULES:
-- Merge ONLY if all stances are about the exact same claim/topic by the same person.
-- Do NOT merge stances that differ in temporal context (e.g. "in 2024" vs "in 2025"), geographic context, or polarity (supporting vs opposing).
-- Do NOT merge stances that describe different events even if they share a broad theme (e.g. two separate legal cases, two separate elections).
-- It is fine to leave the cluster as-is if you're unsure — false negatives are cheap, false positives are expensive.
+- Merge when all stances cover the SAME SUBJECT AREA or bear on the SAME UNDERLYING VALUE AXIS / directional commitment. Stances are the same when they represent the person's positions, promises, or actions on one coherent axis — even when sub-topics or wording differ.
+- Examples that SHOULD merge:
+  * "transition écologique et politique environnementale" + "transition écologique et soutien à la décarbonation" → same value axis (ecological transition).
+  * "politique étrangère et coopération de défense" + "politique étrangère et diplomatie internationale" + "politique de défense et modernisation militaire" → same broad axis (foreign policy & defense).
+  * "vie privée et communication présidentielle" + "comportement et vie sociale lors de déplacements" + "profil psychologique et mode de gouvernance" → same broad axis (personal profile & private life).
+  * Two labels that share a key phrase (e.g. both start with "transition écologique" or "souveraineté industrielle") almost always belong together — merge unless the summaries make clear they cover genuinely incompatible subject areas.
+- Do NOT merge stances that differ in temporal context (e.g. "in 2024" vs "in 2025"), geographic context, or polarity that's structural to the topic (e.g. "support for nuclear power" vs "opposition to coal" are different axes even if both are "energy policy").
+- Do NOT merge stances about clearly separate events that don't share a value axis (e.g. two unrelated legal cases, two unrelated elections in different jurisdictions).
+- When in doubt: PREFER to merge if labels share a key phrase or both summaries describe positions on the same broad value axis — fragmentation hurts contradiction detection because cross-topic facts never get paired by KNN.
 - Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
 
-For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label must name a SUBJECT (specific case, policy, event), not a behaviour or rhetorical pattern.
+For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label should name a SUBJECT AREA or VALUE AXIS, not a behaviour or rhetorical pattern. When merging value-axis stances, prefer the more abstract axis as the unified label.
 
 **LANGUAGE RULE:** Write the unified ` + "`summary`" + ` and ` + "`label`" + ` in the same language as the stances provided. If stances span multiple languages, use French.
 
