@@ -215,6 +215,32 @@ func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (in
 	return id, nil
 }
 
+// GetSourceURLsForPerson returns every distinct source_url found in fact_sources
+// for facts mentioning the given person. Used by `dm scrape urls --from-person`
+// to re-scrape an existing corpus without re-running paid web search.
+func (s *PostgresStorer) GetSourceURLsForPerson(ctx context.Context, personID int64) ([]string, error) {
+	query := `
+		SELECT DISTINCT fs.source_url
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fm.person_id = $1
+		ORDER BY fs.source_url`
+	rows, err := s.pool.Query(ctx, query, personID)
+	if err != nil {
+		return nil, fmt.Errorf("query source urls for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+	var urls []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("scan source url: %w", err)
+		}
+		urls = append(urls, u)
+	}
+	return urls, rows.Err()
+}
+
 // FindPersonsByFuzzyName finds persons matching the query using fuzzy matching.
 // Returns matches sorted by similarity score (highest first).
 // threshold is the minimum similarity score (0.0 to 1.0), recommended: 0.6
