@@ -767,24 +767,34 @@ NEW FACT:
 %s
 
 ASSIGNMENT RULES (lean toward consolidation, not fragmentation):
-- A topic is a SUBJECT AREA, not a specific event. "Trump on Iran" covers the Iran coalition, the pilot rescue, Operation Epic Fury, and Iran-related media remarks — they are all the same topic.
+- A topic is a SUBJECT AREA **or a shared VALUE AXIS**, not a specific event. "Trump on Iran" covers the Iran coalition, the pilot rescue, Operation Epic Fury, and Iran-related media remarks — they are all the same topic.
 - Assign the fact to an existing topic if it shares the SAME subject area. Different events / different details / different aspects of the same subject area all belong together.
-- Examples that should consolidate:
+- **VALUE-AXIS consolidation (important for contradiction detection):** if the new fact and an existing topic both bear on the SAME UNDERLYING DIRECTIONAL COMMITMENT — even with different surface keywords or sub-topics — assign to that existing topic. Examples of shared axes:
+  * Promise to "rebuild French artisanat" + action "authorise offshoring of French factory" + position on "tariffs on Chinese imports" → all share the axis of FRENCH INDUSTRIAL SOVEREIGNTY and belong under one topic like "souveraineté industrielle et économique française".
+  * Promise to "protect civil liberties" + action "expand surveillance cameras" + position on "encryption backdoors" → all share the axis of CIVIL LIBERTIES vs SECURITY.
+  * Promise to "fight climate change" + position on "new oil drilling" + action "delay EV mandate" → all share the axis of ECOLOGICAL TRANSITION.
+  Other axes worth recognising: austerity vs public spending; secularism vs religious accommodation; centralisation vs decentralisation; immigration restriction vs openness; sovereignty vs supranational integration.
+- Examples that should consolidate (subject-area):
   * "sentencing in PA case" + "denial of wrongdoing in PA case" + "comments on bracelet condition" → all one "presidential candidacy and PA case" topic.
   * "Iran sanctions threats" + "Iran nuclear talks" + "Iran-Saudi attack confirmation" → all one "Iran policy" topic.
   * "EU debt criticism" + "euro inadapté" + "demanding to leave the EU" → all one "EU economic policy" topic.
-- Only create a NEW topic when the fact is about a genuinely different SUBJECT AREA that is not represented at all by any existing topic.
-- When in doubt, ALWAYS prefer assigning to the closest existing topic over creating a new one.
+- Only create a NEW topic when the fact is about a genuinely different SUBJECT AREA AND does not bear on any value-axis already represented in existing topics.
+- When in doubt between two existing topics, prefer the one with a clearer VALUE AXIS the new fact also bears on, over the one that's only a surface-keyword match.
+- When in doubt between assigning vs creating new, ALWAYS prefer assigning to the closest existing topic over creating a new one.
 
 LABEL RULES (for new_topic_label when creating a new topic):
-- Describe the SUBJECT AREA broadly enough that 5-20 related facts could naturally fit under this label.
-- Format: "{subject area}{ optional temporal scope}". Examples:
+- Describe the SUBJECT AREA **or VALUE AXIS** broadly enough that 5-20 related facts could naturally fit under this label, INCLUDING facts about different sub-topics that share the same underlying directional commitment.
+- Format: "{subject area or value axis}{ optional temporal scope}". Examples:
   * "Iran policy and military operations"
   * "presidential candidacy 2027"
   * "EU economic and trade policy"
   * "nuclear deterrence policy"
   * "parliamentary assistants case"
   * "municipal elections 2026"
+  * "souveraineté industrielle française" (value axis covering industrial policy, offshoring, tariffs, subsidies)
+  * "libertés civiles et sécurité" (value axis covering surveillance, encryption, police powers)
+  * "transition écologique" (value axis covering renewables, fossil fuels, EV mandates, building standards)
+- Prefer a VALUE-AXIS label when the fact is a directional/value commitment that future facts about adjacent sub-topics would naturally fall under. Prefer a SUBJECT-AREA label when the fact is about a specific event, case, or narrow policy area.
 - Do NOT include the person's name (labels are already per-person).
 - **LANGUAGE:** Write ` + "`new_topic_label`" + ` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
 - ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
@@ -884,13 +894,14 @@ func shortlistStancesByEmbedding(stances []StanceDocument, factEmbedding []float
 // assignTopic somehow returns an empty NewTopicLabel — keeps the system from
 // ever falling back to the fact text as a stance label.
 func (sm *StanceManager) generateGeneralLabel(ctx context.Context, factText string) (string, error) {
-	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label describes the SUBJECT AREA broadly enough that 5-20 related future facts could naturally fit under it.
+	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label describes the SUBJECT AREA or VALUE AXIS broadly enough that 5-20 related future facts — possibly about different sub-topics that share the same underlying directional commitment — could naturally fit under it.
 
 FACT:
 %s
 
 LABEL RULES:
-- Format: "{subject area}{ optional temporal scope}". Examples: "Iran policy", "presidential candidacy 2027", "EU economic policy", "nuclear deterrence policy", "parliamentary assistants case".
+- Format: "{subject area or value axis}{ optional temporal scope}". Examples: "Iran policy", "presidential candidacy 2027", "EU economic policy", "nuclear deterrence policy", "parliamentary assistants case", "souveraineté industrielle française", "libertés civiles et sécurité", "transition écologique".
+- Prefer a VALUE-AXIS label (e.g. "souveraineté industrielle française") when the fact is a directional/value commitment whose contradictions would come from cross-topic actions on the same axis. Prefer a SUBJECT-AREA label when the fact is about a specific event/case/narrow policy.
 - Do NOT include the person's name.
 - ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from the fact. Describe the topic, not the statement.
 - Do NOT pack event-detail into the label.
@@ -938,8 +949,8 @@ FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
 
 LABEL RULES:
-- The label describes the SUBJECT AREA broadly enough that all listed facts naturally fit under it. Examples: "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "nuclear deterrence policy", "parliamentary assistants case".
-- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
+- The label describes the SUBJECT AREA or VALUE AXIS broadly enough that all listed facts naturally fit under it. If the facts span different sub-topics that share an underlying directional commitment (e.g., a promise + an opposing action on the same axis), prefer a VALUE-AXIS label that captures that axis. Examples: "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "nuclear deterrence policy", "parliamentary assistants case", "souveraineté industrielle française", "libertés civiles et sécurité", "transition écologique".
+- Format: "{subject area or value axis}{ optional temporal scope}". Max 120 chars.
 - Do NOT include the person's name.
 - ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from any fact.
 - Do NOT pack event-detail into the label.
