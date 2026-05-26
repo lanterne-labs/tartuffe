@@ -1,0 +1,521 @@
+# Digital Mirror — End-to-end contradiction detection eval corpus
+#
+# Three fictional politicians, three stances each, four facts per stance.
+# 3 × 3 × 4 = 36 facts. Plus an explicit list of pair expectations.
+#
+# All persons are FICTIONAL. Names, dates, factories, votes, court rulings
+# are invented. Do not reuse against real-person data — keep this corpus
+# isolated from production. Re-running this eval RESETS the test persons.
+#
+# Conventions:
+#   - id format: {person_prefix}-{stance_prefix}-{n}
+#   - source_url uses https://test.example.com/ to make it impossible to
+#     collide with a real production source.
+#   - lang is "fr" for all facts unless otherwise noted.
+#   - Any pair NOT listed in expected_pairs is implicitly expected to be
+#     NOT contradictory. If the detector flags such a pair, it's counted
+#     as a false positive.
+
+persons:
+  # ─── Person 1 ──────────────────────────────────────────────────────────
+  # Sophie Martin — fictional politician, focus on economic/social policy.
+  - name: "Sophie Martin"
+    entity_type: "human"
+    stances:
+
+      # Axis: French industrial sovereignty (promise vs opposing action).
+      - axis: "souveraineté industrielle française"
+        facts:
+          - id: "sm-indus-1"
+            text: "Sophie Martin a promis de reconstruire l'artisanat français pour redonner du pouvoir d'achat aux Français."
+            text_en: "Sophie Martin promised to rebuild French artisanal industry to restore purchasing power to the French."
+            verb: "PROMISED"
+            embedding_text: "souveraineté industrielle artisanat français"
+            quote: "Je veux reconstruire l'artisanat français pour redonner du pouvoir d'achat aux Français."
+            date: "2024-03-15"
+            source_url: "https://test.example.com/sm/indus/1"
+
+          - id: "sm-indus-2"
+            text: "Sophie Martin a voté en faveur de l'instauration de droits de douane sur les importations chinoises."
+            text_en: "Sophie Martin voted in favour of imposing tariffs on Chinese imports."
+            verb: "VOTED_FOR"
+            embedding_text: "droits de douane importations chinoises"
+            quote: "Vote enregistré: pour l'amendement n°412 sur les droits de douane chinois."
+            date: "2024-06-04"
+            source_url: "https://test.example.com/sm/indus/2"
+
+          - id: "sm-indus-3"
+            text: "Sophie Martin a déclaré lors d'un discours à Lille soutenir les emplois industriels français."
+            text_en: "Sophie Martin stated during a speech in Lille that she supports French industrial jobs."
+            verb: "CLAIMED"
+            embedding_text: "emplois industriels français"
+            quote: "Je serai toujours la voix des emplois industriels français."
+            date: "2024-09-12"
+            source_url: "https://test.example.com/sm/indus/3"
+
+          - id: "sm-indus-4"
+            text: "Sophie Martin a autorisé la délocalisation en Chine d'une usine française de 5 000 employés à Béthune."
+            text_en: "Sophie Martin authorised the offshoring to China of a 5,000-employee French factory in Béthune."
+            verb: "ANNOUNCED"
+            embedding_text: "délocalisation usine Chine"
+            quote: "La décision d'accompagner la relocalisation industrielle vers la Chine est nécessaire."
+            date: "2025-02-20"
+            source_url: "https://test.example.com/sm/indus/4"
+
+      # Axis: pension reform (direct promise vs opposing vote).
+      - axis: "réforme des retraites"
+        facts:
+          - id: "sm-retr-1"
+            text: "Sophie Martin a promis pendant la campagne de ramener l'âge de la retraite à 60 ans."
+            text_en: "Sophie Martin promised during the campaign to bring the retirement age back to 60."
+            verb: "PROMISED"
+            embedding_text: "retraite âge soixante ans"
+            quote: "Je m'engage à ramener l'âge de la retraite à 60 ans."
+            date: "2023-04-10"
+            source_url: "https://test.example.com/sm/retr/1"
+
+          - id: "sm-retr-2"
+            text: "Sophie Martin a voté pour la loi relevant l'âge légal de la retraite à 64 ans."
+            text_en: "Sophie Martin voted for the law raising the legal retirement age to 64."
+            verb: "VOTED_FOR"
+            embedding_text: "retraite âge soixante-quatre ans"
+            quote: "Vote enregistré: pour la loi de réforme des retraites."
+            date: "2024-03-20"
+            source_url: "https://test.example.com/sm/retr/2"
+
+          - id: "sm-retr-3"
+            text: "Sophie Martin a affirmé défendre les retraites des classes populaires."
+            text_en: "Sophie Martin stated she defends the retirements of the working class."
+            verb: "CLAIMED"
+            embedding_text: "défense retraites classes populaires"
+            quote: "Je défendrai toujours les retraites des classes populaires."
+            date: "2024-01-08"
+            source_url: "https://test.example.com/sm/retr/3"
+
+          - id: "sm-retr-4"
+            text: "Sophie Martin a reconnu pendant un entretien télévisé que la réforme aurait pu être mieux expliquée."
+            text_en: "Sophie Martin acknowledged during a TV interview that the reform could have been better explained."
+            verb: "ADMITTED"
+            embedding_text: "communication réforme retraites"
+            quote: "Nous aurions pu mieux expliquer cette réforme aux Français."
+            date: "2024-05-02"
+            source_url: "https://test.example.com/sm/retr/4"
+
+      # Axis: education (direct contradiction + third-party date noise).
+      - axis: "politique éducative"
+        facts:
+          - id: "sm-edu-1"
+            text: "Sophie Martin a promis d'augmenter le salaire des enseignants de 20% sur cinq ans."
+            text_en: "Sophie Martin promised to increase teacher salaries by 20% over five years."
+            verb: "PROMISED"
+            embedding_text: "augmentation salaires enseignants"
+            quote: "Nous augmenterons le salaire des enseignants de 20 % sur cinq ans."
+            date: "2024-02-14"
+            source_url: "https://test.example.com/sm/edu/1"
+
+          - id: "sm-edu-2"
+            text: "Sophie Martin a voté contre la proposition de loi augmentant le salaire des enseignants."
+            text_en: "Sophie Martin voted against the bill increasing teacher salaries."
+            verb: "VOTED_AGAINST"
+            embedding_text: "salaires enseignants vote loi"
+            quote: "Vote enregistré: contre la proposition de loi sur les rémunérations enseignantes."
+            date: "2024-11-18"
+            source_url: "https://test.example.com/sm/edu/2"
+
+          - id: "sm-edu-3"
+            text: "Selon Le Monde, Sophie Martin a signé le décret de réforme de l'éducation nationale le 10 mai 2026."
+            text_en: "According to Le Monde, Sophie Martin signed the national education reform decree on 10 May 2026."
+            verb: "ANNOUNCED"
+            embedding_text: "décret réforme éducation nationale"
+            quote: "Sophie Martin a signé le décret de réforme de l'éducation nationale le 10 mai 2026."
+            date: "2026-05-11"
+            source_url: "https://test.example.com/sm/edu/3"
+
+          - id: "sm-edu-4"
+            text: "Selon Libération, Sophie Martin a signé le décret de réforme de l'éducation nationale le 11 mai 2026."
+            text_en: "According to Libération, Sophie Martin signed the national education reform decree on 11 May 2026."
+            verb: "ANNOUNCED"
+            embedding_text: "décret réforme éducation nationale"
+            quote: "Sophie Martin a signé le décret de réforme de l'éducation nationale le 11 mai 2026."
+            date: "2026-05-12"
+            source_url: "https://test.example.com/sm/edu/4"
+
+  # ─── Person 2 ──────────────────────────────────────────────────────────
+  # Marc Dubois — fictional politician, focus on environment & foreign policy.
+  - name: "Marc Dubois"
+    entity_type: "human"
+    stances:
+
+      # Axis: ecological transition (values vs opposing actions/votes).
+      - axis: "transition écologique"
+        facts:
+          - id: "md-eco-1"
+            text: "Marc Dubois a promis que la France atteindrait la neutralité carbone en 2050."
+            text_en: "Marc Dubois promised that France would reach carbon neutrality by 2050."
+            verb: "PROMISED"
+            embedding_text: "neutralité carbone France 2050"
+            quote: "La France sera neutre en carbone d'ici 2050."
+            date: "2023-11-30"
+            source_url: "https://test.example.com/md/eco/1"
+
+          - id: "md-eco-2"
+            text: "Marc Dubois a autorisé l'ouverture d'une importante mine de charbon en Moselle."
+            text_en: "Marc Dubois authorised the opening of a major coal mine in Moselle."
+            verb: "ANNOUNCED"
+            embedding_text: "mine charbon Moselle"
+            quote: "J'ai signé l'autorisation d'exploitation pour la nouvelle mine de charbon en Moselle."
+            date: "2025-01-15"
+            source_url: "https://test.example.com/md/eco/2"
+
+          - id: "md-eco-3"
+            text: "Marc Dubois a déclaré soutenir massivement les énergies renouvelables."
+            text_en: "Marc Dubois stated he massively supports renewable energy."
+            verb: "CLAIMED"
+            embedding_text: "soutien énergies renouvelables"
+            quote: "Je soutiens massivement le déploiement des énergies renouvelables."
+            date: "2024-02-08"
+            source_url: "https://test.example.com/md/eco/3"
+
+          - id: "md-eco-4"
+            text: "Marc Dubois a voté contre la directive européenne imposant la fin des véhicules thermiques en 2035."
+            text_en: "Marc Dubois voted against the EU directive banning combustion-engine vehicles by 2035."
+            verb: "VOTED_AGAINST"
+            embedding_text: "directive véhicules thermiques 2035"
+            quote: "Vote enregistré: contre la directive 2035 fin des véhicules thermiques."
+            date: "2024-06-21"
+            source_url: "https://test.example.com/md/eco/4"
+
+      # Axis: foreign policy & defence (compatible diplomacy + direct vote contradiction).
+      - axis: "politique étrangère et défense"
+        facts:
+          - id: "md-fp-1"
+            text: "Marc Dubois a déclaré que la Russie représente la principale menace pour la sécurité européenne."
+            text_en: "Marc Dubois stated Russia represents the main threat to European security."
+            verb: "CLAIMED"
+            embedding_text: "Russie menace sécurité européenne"
+            quote: "La Russie est la principale menace pour la sécurité de notre continent."
+            date: "2024-03-04"
+            source_url: "https://test.example.com/md/fp/1"
+
+          - id: "md-fp-2"
+            text: "Marc Dubois a rencontré le ministre russe des Affaires étrangères à Genève et appelé au dialogue."
+            text_en: "Marc Dubois met the Russian Foreign Minister in Geneva and called for dialogue."
+            verb: "ANNOUNCED"
+            embedding_text: "rencontre ministre russe Genève"
+            quote: "J'ai rencontré mon homologue russe à Genève. Nous devons maintenir le dialogue."
+            date: "2024-04-22"
+            source_url: "https://test.example.com/md/fp/2"
+
+          - id: "md-fp-3"
+            text: "Marc Dubois a promis d'augmenter de 30% le budget de défense français pour atteindre l'objectif de l'OTAN."
+            text_en: "Marc Dubois promised to increase French defence budget by 30% to meet the NATO target."
+            verb: "PROMISED"
+            embedding_text: "budget défense OTAN augmentation"
+            quote: "Nous augmenterons le budget de défense de 30 % pour respecter notre engagement OTAN."
+            date: "2024-05-10"
+            source_url: "https://test.example.com/md/fp/3"
+
+          - id: "md-fp-4"
+            text: "Marc Dubois a voté contre la loi de programmation militaire augmentant le budget de défense."
+            text_en: "Marc Dubois voted against the military programming law increasing the defence budget."
+            verb: "VOTED_AGAINST"
+            embedding_text: "loi programmation militaire budget défense"
+            quote: "Vote enregistré: contre la LPM 2024-2030."
+            date: "2024-12-05"
+            source_url: "https://test.example.com/md/fp/4"
+
+      # Axis: public health (direct promise vs opposing action + third-party date noise).
+      - axis: "politique de santé publique"
+        facts:
+          - id: "md-sante-1"
+            text: "Marc Dubois a promis de maintenir tous les hôpitaux publics ouverts dans les territoires ruraux."
+            text_en: "Marc Dubois promised to keep all public hospitals open in rural territories."
+            verb: "PROMISED"
+            embedding_text: "hôpitaux publics territoires ruraux"
+            quote: "Aucun hôpital public ne fermera dans les territoires ruraux."
+            date: "2024-01-22"
+            source_url: "https://test.example.com/md/sante/1"
+
+          - id: "md-sante-2"
+            text: "Marc Dubois a autorisé la fermeture de 50 hôpitaux publics dans le cadre du plan d'austérité 2026."
+            text_en: "Marc Dubois authorised the closure of 50 public hospitals as part of the 2026 austerity plan."
+            verb: "ANNOUNCED"
+            embedding_text: "fermeture hôpitaux publics austérité"
+            quote: "Le plan d'austérité prévoit la fermeture de 50 hôpitaux publics."
+            date: "2026-03-08"
+            source_url: "https://test.example.com/md/sante/2"
+
+          - id: "md-sante-3"
+            text: "Selon TF1, Marc Dubois a présenté son plan santé le 10 mai 2026 lors d'une conférence à Matignon."
+            text_en: "According to TF1, Marc Dubois unveiled his health plan on 10 May 2026 at a Matignon press conference."
+            verb: "ANNOUNCED"
+            embedding_text: "présentation plan santé Matignon"
+            quote: "Marc Dubois a présenté son plan santé le 10 mai 2026."
+            date: "2026-05-11"
+            source_url: "https://test.example.com/md/sante/3"
+
+          - id: "md-sante-4"
+            text: "Selon BFM, Marc Dubois a présenté son plan santé le 11 mai 2026 lors d'une conférence à Matignon."
+            text_en: "According to BFM, Marc Dubois unveiled his health plan on 11 May 2026 at a Matignon press conference."
+            verb: "ANNOUNCED"
+            embedding_text: "présentation plan santé Matignon"
+            quote: "Marc Dubois a présenté son plan santé le 11 mai 2026."
+            date: "2026-05-12"
+            source_url: "https://test.example.com/md/sante/4"
+
+  # ─── Person 3 ──────────────────────────────────────────────────────────
+  # Anna Rousseau — fictional politician, focus on civil liberties & justice.
+  - name: "Anna Rousseau"
+    entity_type: "human"
+    stances:
+
+      # Axis: civil liberties vs surveillance (values vs opposing votes).
+      - axis: "libertés civiles et surveillance"
+        facts:
+          - id: "ar-civ-1"
+            text: "Anna Rousseau a promis de s'opposer à toute extension de la surveillance de masse."
+            text_en: "Anna Rousseau promised to oppose any extension of mass surveillance."
+            verb: "PROMISED"
+            embedding_text: "opposition surveillance de masse"
+            quote: "Je m'opposerai à toute extension de la surveillance de masse."
+            date: "2023-09-05"
+            source_url: "https://test.example.com/ar/civ/1"
+
+          - id: "ar-civ-2"
+            text: "Anna Rousseau a voté pour la loi étendant les pouvoirs de vidéosurveillance algorithmique de la police."
+            text_en: "Anna Rousseau voted for the law extending algorithmic video-surveillance powers for the police."
+            verb: "VOTED_FOR"
+            embedding_text: "vidéosurveillance algorithmique police"
+            quote: "Vote enregistré: pour la loi étendant la vidéosurveillance algorithmique."
+            date: "2024-07-11"
+            source_url: "https://test.example.com/ar/civ/2"
+
+          - id: "ar-civ-3"
+            text: "Anna Rousseau a déclaré lors d'une conférence à Sciences Po défendre la confidentialité du chiffrement bout-en-bout."
+            text_en: "Anna Rousseau stated during a Sciences Po conference she defends end-to-end encryption privacy."
+            verb: "CLAIMED"
+            embedding_text: "chiffrement bout-en-bout confidentialité"
+            quote: "Je défendrai toujours la confidentialité du chiffrement bout-en-bout."
+            date: "2024-02-19"
+            source_url: "https://test.example.com/ar/civ/3"
+
+          - id: "ar-civ-4"
+            text: "Anna Rousseau a cosigné une proposition de loi imposant des portes dérobées dans les messageries chiffrées."
+            text_en: "Anna Rousseau co-signed a bill mandating backdoors in encrypted messengers."
+            verb: "PROPOSED"
+            embedding_text: "portes dérobées messageries chiffrées"
+            quote: "Je cosigne cette proposition imposant des portes dérobées dans les messageries chiffrées."
+            date: "2024-10-30"
+            source_url: "https://test.example.com/ar/civ/4"
+
+      # Axis: LGBT+ rights (announcement→action = fulfilled commitment, learning over time).
+      - axis: "droits LGBT"
+        facts:
+          - id: "ar-lgbt-1"
+            text: "Anna Rousseau a promis de soutenir la légalisation de la coparentalité pour les couples de même sexe."
+            text_en: "Anna Rousseau promised to support legalisation of same-sex parental rights."
+            verb: "PROMISED"
+            embedding_text: "coparentalité couples de même sexe"
+            quote: "Je soutiendrai la légalisation de la coparentalité pour les couples de même sexe."
+            date: "2023-06-12"
+            source_url: "https://test.example.com/ar/lgbt/1"
+
+          - id: "ar-lgbt-2"
+            text: "Anna Rousseau a voté en faveur de la loi reconnaissant la coparentalité pour les couples de même sexe."
+            text_en: "Anna Rousseau voted in favour of the law recognising same-sex parental rights."
+            verb: "VOTED_FOR"
+            embedding_text: "loi coparentalité couples de même sexe"
+            quote: "Vote enregistré: pour la loi reconnaissant la coparentalité."
+            date: "2024-04-18"
+            source_url: "https://test.example.com/ar/lgbt/2"
+
+          - id: "ar-lgbt-3"
+            text: "Anna Rousseau a déclaré en 2018 ne pas avoir eu connaissance de tous les cas de discrimination subis par les couples homoparentaux."
+            text_en: "Anna Rousseau stated in 2018 she was not aware of all cases of discrimination faced by same-sex couples raising children."
+            verb: "ADMITTED"
+            embedding_text: "discriminations couples homoparentaux ignorance"
+            quote: "À l'époque, je n'avais pas connaissance de tous ces cas de discrimination."
+            date: "2018-10-04"
+            source_url: "https://test.example.com/ar/lgbt/3"
+
+          - id: "ar-lgbt-4"
+            text: "Anna Rousseau a affirmé en 2024 soutenir pleinement l'égalité des droits parentaux pour les couples de même sexe."
+            text_en: "Anna Rousseau stated in 2024 she fully supports equal parental rights for same-sex couples."
+            verb: "CLAIMED"
+            embedding_text: "égalité droits parentaux couples"
+            quote: "Je soutiens pleinement l'égalité des droits parentaux pour tous les couples."
+            date: "2024-05-25"
+            source_url: "https://test.example.com/ar/lgbt/4"
+
+      # Axis: personal legal affairs (court finding vs denial + accusation_not_finding +
+      # acknowledgement of imperfections).
+      - axis: "affaires judiciaires personnelles"
+        facts:
+          - id: "ar-jud-1"
+            text: "La cour d'appel de Paris a reconnu Anna Rousseau coupable de détournement de fonds publics dans l'affaire des collaborateurs parlementaires."
+            text_en: "The Paris Court of Appeal found Anna Rousseau guilty of misuse of public funds in the parliamentary collaborators case."
+            verb: "WAS_CONVICTED"
+            embedding_text: "détournement fonds collaborateurs parlementaires"
+            quote: "Anna Rousseau a été reconnue coupable de détournement de fonds publics."
+            date: "2026-03-28"
+            source_url: "https://test.example.com/ar/jud/1"
+
+          - id: "ar-jud-2"
+            text: "Anna Rousseau a nié toute forme de détournement de fonds publics dans l'affaire des collaborateurs parlementaires."
+            text_en: "Anna Rousseau denied any form of misuse of public funds in the parliamentary collaborators case."
+            verb: "DENIED"
+            embedding_text: "détournement fonds collaborateurs parlementaires"
+            quote: "Je nie absolument tout détournement de fonds publics."
+            date: "2025-11-20"
+            source_url: "https://test.example.com/ar/jud/2"
+
+          - id: "ar-jud-3"
+            text: "Anna Rousseau a reconnu que la gestion des collaborateurs parlementaires aurait pu être plus rigoureuse."
+            text_en: "Anna Rousseau acknowledged that the management of parliamentary collaborators could have been more rigorous."
+            verb: "ADMITTED"
+            embedding_text: "gestion collaborateurs parlementaires"
+            quote: "Beaucoup de choses auraient pu se passer de manière plus rigoureuse."
+            date: "2025-11-22"
+            source_url: "https://test.example.com/ar/jud/3"
+
+          - id: "ar-jud-4"
+            text: "Anna Rousseau est mise en examen pour soupçons de négligence dans la gestion des fonds parlementaires."
+            text_en: "Anna Rousseau is under formal investigation for alleged negligence in the management of parliamentary funds."
+            verb: "WAS_ACCUSED"
+            embedding_text: "mise en examen négligence fonds parlementaires"
+            quote: "Anna Rousseau est mise en examen pour soupçons de négligence."
+            date: "2024-09-14"
+            source_url: "https://test.example.com/ar/jud/4"
+
+# Expected pair verdicts.
+# Pairs not listed are implicitly expected NO (any positive flag on them is a false positive).
+expected_pairs:
+
+  # ── Sophie Martin: industrial sovereignty (values-based contradictions) ──
+  - a: "sm-indus-1"
+    b: "sm-indus-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Promise to rebuild French artisanat vs own action authorising offshoring of a French factory to China. Opposite directions on the same axis of French industrial sovereignty."
+
+  - a: "sm-indus-2"
+    b: "sm-indus-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Voted for tariffs protecting French industry vs authorised offshoring. Both on the industrial-sovereignty axis."
+
+  - a: "sm-indus-3"
+    b: "sm-indus-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Speech defending French industrial jobs vs authorising a 5,000-employee offshoring. Opposite directions on the same axis."
+
+  # ── Sophie Martin: pension (direct promise vs vote) ──
+  - a: "sm-retr-1"
+    b: "sm-retr-2"
+    expected: YES
+    rule: "denial_after_claim"
+    notes: "Promised to lower retirement age to 60, then voted to raise it to 64."
+
+  - a: "sm-retr-3"
+    b: "sm-retr-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Claimed to defend working-class retirements vs vote raising retirement age. Same axis, opposite direction."
+
+  # ── Sophie Martin: education (direct promise vs vote, plus third-party date noise) ──
+  - a: "sm-edu-1"
+    b: "sm-edu-2"
+    expected: YES
+    rule: "denial_after_claim"
+    notes: "Promised 20% salary increase vs voted against the salary-increase bill."
+
+  - a: "sm-edu-3"
+    b: "sm-edu-4"
+    expected: NO
+    rule: "third_party_narrative"
+    notes: "Both statements are third-party news reports of the same signing event with different dates (10 vs 11 May). Neither is Sophie Martin's own utterance. HARD GATE + DATE-ONLY CONFLICT both apply."
+
+  # ── Marc Dubois: ecology (values vs opposing actions/votes) ──
+  - a: "md-eco-1"
+    b: "md-eco-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Carbon-neutrality promise vs own action authorising a major coal mine. Opposite directions on the ecological-transition axis."
+
+  - a: "md-eco-3"
+    b: "md-eco-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Claim of supporting renewables vs vote against the EU 2035 EV directive. Same axis, opposite direction."
+
+  # ── Marc Dubois: foreign policy (compatible diplomacy + direct contradiction) ──
+  - a: "md-fp-1"
+    b: "md-fp-2"
+    expected: NO
+    rule: "consistent_position"
+    notes: "Calling Russia a threat AND meeting the Russian FM for dialogue are compatible — declaring a threat doesn't preclude maintaining diplomatic channels. Different acts on the same stance, not contradictory."
+
+  - a: "md-fp-3"
+    b: "md-fp-4"
+    expected: YES
+    rule: "denial_after_claim"
+    notes: "Promised to increase defence budget by 30%, then voted against the LPM that would have done so."
+
+  # ── Marc Dubois: health (direct promise vs action + third-party date noise) ──
+  - a: "md-sante-1"
+    b: "md-sante-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Promised to keep all public hospitals open vs own action authorising closure of 50. Opposite direction, materially undermines the commitment."
+
+  - a: "md-sante-3"
+    b: "md-sante-4"
+    expected: NO
+    rule: "third_party_narrative"
+    notes: "Two news reports of the same press conference with different dates. Neither is Marc Dubois's own utterance."
+
+  # ── Anna Rousseau: civil liberties (values vs opposing votes) ──
+  - a: "ar-civ-1"
+    b: "ar-civ-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Promise to oppose mass surveillance extension vs vote for expanded algorithmic surveillance. Opposite directions on the same axis."
+
+  - a: "ar-civ-3"
+    b: "ar-civ-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Claim of defending end-to-end encryption vs co-signing a bill mandating backdoors. Opposite directions on the privacy/security axis."
+
+  # ── Anna Rousseau: LGBT rights (fulfilled commitment + learning over time) ──
+  - a: "ar-lgbt-1"
+    b: "ar-lgbt-2"
+    expected: NO
+    rule: "announcement_then_action"
+    notes: "Promised to support same-sex parenting and then voted for the law that did so. Fulfilled commitment, opposite of a contradiction."
+
+  - a: "ar-lgbt-3"
+    b: "ar-lgbt-4"
+    expected: NO
+    rule: "learning_over_time"
+    notes: "Earlier admission of not knowing about discrimination cases (2018) followed by later support for equal rights (2024) is consistent learning, not a contradiction."
+
+  # ── Anna Rousseau: judicial affairs ──
+  - a: "ar-jud-1"
+    b: "ar-jud-2"
+    expected: YES
+    rule: "conviction_vs_denial"
+    notes: "Court of Appeal conviction for misuse of funds vs her own denial of any misuse. Authoritative finding directly breaks her denial."
+
+  - a: "ar-jud-1"
+    b: "ar-jud-3"
+    expected: NO
+    rule: "conviction_vs_acknowledgment"
+    notes: "Conviction does not contradict her acknowledgment that the management could have been more rigorous — the conviction exceeds the acknowledgment but does not logically contradict it."
+
+  - a: "ar-jud-2"
+    b: "ar-jud-4"
+    expected: NO
+    rule: "accusation_not_finding"
+    notes: "Denial of misuse vs being placed under formal investigation. Being investigated is a procedural step, not a finding of guilt; it does not break her denial."
