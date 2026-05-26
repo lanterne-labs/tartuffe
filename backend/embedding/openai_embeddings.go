@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 
 	"github.com/rs/zerolog/log"
@@ -221,6 +222,8 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Authorization", "Bearer "+m.apiKey)
+		req.Header.Set("X-Application", llm.AppName)
+		req.Header.Set("X-App-Component", "embedder")
 
 		log.Debug().Str("url", m.apiURL).Int("batch_size", len(texts)).Int("attempt", attempt+1).Msg("Sending request to embeddings API")
 

@@ -42,7 +42,7 @@ func NewLLMFilter() (*LLMFilter, error) {
 		model = "gpt-4o-mini"
 	}
 	return &LLMFilter{
-		client: llm.NewBaseLLMClient(),
+		client: llm.NewBaseLLMClient("entity-validator"),
 		apiURL: strings.TrimRight(base, "/") + "/chat/completions",
 		apiKey: os.Getenv("OPEN_AI_KEY"),
 		model:  model,

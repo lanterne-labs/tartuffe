@@ -2,6 +2,15 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-26: X-Application / X-App-Component headers on outbound LLM + embedding calls
+
+### What was done
+- `NewBaseLLMClient()` → `NewBaseLLMClient(component string)`. The `BaseLLMClient` in `backend/llm/client.go` (and the `backend/categorizer` re-export) now carries a per-instance `component` label, sent on every outbound request as `X-App-Component`. A constant `llm.AppName = "digital-mirror"` is sent as `X-Application` on every request. All 12 callsites pass a step name (e.g. `fact-extractor`, `stance-manager`, `contradiction-detector`, `twitter-discovery`, `embedder`). The embedding client (`backend/embedding/openai_embeddings.go`) also sets the same two headers directly.
+- This is an API change: the constructor signature changed and there is no zero-arg variant. Any new callsite must identify itself.
+
+### Why
+The cachy GPU box runs gpu-watcher which surfaces which app + step is hammering the local LLM. Without these headers every digital-mirror call shows up as anonymous traffic and you can't tell whether it's the fact extractor, the stance manager, or twitter discovery driving load. Making the component argument required (no default) forces every future callsite to identify itself at the compiler level.
+
 ## 2026-05-25: Value-axis stances + values-based contradictions + dm scrape urls
 
 ### What was done

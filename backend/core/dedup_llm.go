@@ -62,7 +62,7 @@ func NewDedupLLMVerifierFromEnv() (*DedupLLMVerifier, error) {
 		model = "gpt-4o-mini"
 	}
 
-	baseClient := llm.NewBaseLLMClient()
+	baseClient := llm.NewBaseLLMClient("dedup-filter")
 
 	// Build chat completions URL
 	base = strings.TrimRight(base, "/")

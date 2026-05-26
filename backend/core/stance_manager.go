@@ -188,7 +188,7 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 		apiKey: apiKey,
 		apiURL: apiURL,
 		model:  model,
-		client: llm.NewBaseLLMClient(),
+		client: llm.NewBaseLLMClient("stance-manager"),
 	}, nil
 }
 

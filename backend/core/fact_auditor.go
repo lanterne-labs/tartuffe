@@ -200,7 +200,7 @@ func NewOpenAIFactAuditor(apiKey, apiURL, model string) (*OpenAIFactAuditor, err
 		apiKey:     apiKey,
 		apiURL:     apiURL,
 		model:      model,
-		baseClient: llm.NewBaseLLMClient(),
+		baseClient: llm.NewBaseLLMClient("fact-auditor"),
 	}, nil
 }
 

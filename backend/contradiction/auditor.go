@@ -183,7 +183,7 @@ func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error)
 		apiKey:     apiKey,
 		apiURL:     apiURL,
 		model:      model,
-		baseClient: llm.NewBaseLLMClient(),
+		baseClient: llm.NewBaseLLMClient("contradiction-auditor"),
 	}, nil
 }
 

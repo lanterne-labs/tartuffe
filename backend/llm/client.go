@@ -20,15 +20,32 @@ import (
 // Set at startup by the alerting system. Safe to leave nil.
 var OnCreditError func(provider, errMsg string)
 
+// AppName is the X-Application header value sent on every outbound LLM call —
+// surfaced on cachy via gpu-watcher so the user can see who's hammering the
+// GPU. If we ever fork this codebase, override here (or expose via env).
+const AppName = "digital-mirror"
+
 // BaseLLMClient provides common HTTP request logic for LLM API clients.
+//
+// Every instance carries a `component` label (e.g. "fact-extractor",
+// "stance-manager") sent as the X-App-Component header. The label is set at
+// construction so the compiler enforces that every cachy-bound call site
+// identifies itself.
 type BaseLLMClient struct {
 	httpClient *http.Client
+	component  string
 }
 
-// NewBaseLLMClient creates a new base client with a default timeout.
-func NewBaseLLMClient() *BaseLLMClient {
+// NewBaseLLMClient creates a new base client tagged with the given component
+// label. The label is sent on every request as the X-App-Component header.
+// Pass the step name (e.g. "fact-extractor", "stance-manager", "twitter-discovery").
+func NewBaseLLMClient(component string) *BaseLLMClient {
+	if component == "" {
+		component = "unknown"
+	}
 	return &BaseLLMClient{
 		httpClient: &http.Client{Timeout: 300 * time.Second},
+		component:  component,
 	}
 }
 
@@ -58,6 +75,8 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("Accept", "application/json")
+		req.Header.Set("X-Application", AppName)
+		req.Header.Set("X-App-Component", c.component)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {

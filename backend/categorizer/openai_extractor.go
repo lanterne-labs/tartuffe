@@ -97,7 +97,7 @@ func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
 		apiKey:     apiKey,
 		apiURL:     buildChatAPIURL(base),
 		model:      model,
-		baseClient: NewBaseLLMClient(),
+		baseClient: NewBaseLLMClient("fact-extractor"),
 	}, nil
 }
 

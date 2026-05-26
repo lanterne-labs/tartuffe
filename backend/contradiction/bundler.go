@@ -102,7 +102,7 @@ func NewBundlerFromEnv(storer BundlerStorer, embedder embedding.EmbeddingGenerat
 	return &Bundler{
 		storer:    storer,
 		embedder:  embedder,
-		llm:       categorizer.NewBaseLLMClient(),
+		llm:       categorizer.NewBaseLLMClient("contradiction-bundler"),
 		apiKey:    apiKey,
 		apiURL:    apiURL,
 		model:     model,

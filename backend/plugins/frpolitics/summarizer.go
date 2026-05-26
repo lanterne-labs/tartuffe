@@ -143,7 +143,7 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 		ResponseFormat: &categorizer.ResponseFormat{Type: "json_object"},
 	}
 	payload, _ := json.Marshal(req)
-	baseClient := categorizer.NewBaseLLMClient()
+	baseClient := categorizer.NewBaseLLMClient("frpolitics-summarizer")
 	body, err := baseClient.DoRequest(ctx, base, apiKey, payload)
 	if err != nil {
 		return nil, err

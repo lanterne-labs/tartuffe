@@ -322,7 +322,7 @@ func NewOpenAIContradictionDetectorFromEnv() (*OpenAIContradictionDetector, erro
 		model = "gpt-4o-mini"
 	}
 
-	baseClient := categorizer.NewBaseLLMClient() // Use public constructor
+	baseClient := categorizer.NewBaseLLMClient("contradiction-detector")
 
 	// Build chat completions URL - check if already includes the path
 	base = strings.TrimRight(base, "/")

@@ -9,9 +9,11 @@ import (
 // This is a wrapper around llm.BaseLLMClient for backward compatibility.
 type BaseLLMClient = llm.BaseLLMClient
 
-// NewBaseLLMClient creates a new base client with a default timeout.
-func NewBaseLLMClient() *BaseLLMClient {
-	return llm.NewBaseLLMClient()
+// NewBaseLLMClient creates a new base client tagged with the given component
+// label (sent as X-App-Component header on every request). Pass the step name
+// e.g. "fact-extractor", "contradiction-detector".
+func NewBaseLLMClient(component string) *BaseLLMClient {
+	return llm.NewBaseLLMClient(component)
 }
 
 // ChatMessage represents a single message in a chat conversation.

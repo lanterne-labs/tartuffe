@@ -646,7 +646,7 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Initialize LLM client
-	client := llm.NewBaseLLMClient()
+	client := llm.NewBaseLLMClient("twitter-discovery")
 	apiURL := os.Getenv("OPEN_AI_API")
 	if apiURL == "" {
 		apiURL = "https://api.openai.com/v1"

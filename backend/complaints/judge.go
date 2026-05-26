@@ -64,7 +64,7 @@ func NewOpenAIJudgeFromEnv() (*OpenAIJudge, error) {
 		apiURL = base + "/chat/completions"
 	}
 	return &OpenAIJudge{
-		client: llm.NewBaseLLMClient(),
+		client: llm.NewBaseLLMClient("complaint-judge"),
 		apiURL: apiURL,
 		apiKey: key,
 		model:  model,
