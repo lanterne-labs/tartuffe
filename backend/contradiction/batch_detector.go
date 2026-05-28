@@ -50,7 +50,7 @@ func PrepareContradictionBatch(personID int64, pairs []FactPair, factAIDs, factB
 			Messages: []llm.ChatMessage{
 				{Role: "user", Content: prompt},
 			},
-			Temperature: 0.1,
+			Temperature: 0.0,
 		})
 	}
 

@@ -61,6 +61,7 @@ type StanceFactInfo struct {
 // new fact in different ways, every pair gets its own entry.
 type StanceContradictionEntry struct {
 	KeyFactID int64  `json:"key_fact_id"`
+	Reasoning string `json:"reasoning,omitempty"` // per-pair chain-of-thought: why these two specific facts are directly opposed (not user-facing; logged for debugging)
 	Reason    string `json:"reason"`
 	ReasonEn  string `json:"reason_en,omitempty"` // English translation; empty when reason is already English
 }
@@ -690,25 +691,58 @@ NEW FACT:
 Decide ONE primary_verdict for the NEW FACT vs the stance:
 1. DUPLICATE — the new fact says essentially the same thing as one of the key facts (paraphrase / same claim, different source). Set duplicate_of_key_fact_id to that key fact's [ID N].
 2. NEW_INFO — the new fact adds new information to this topic without contradicting any key fact.
-3. CONTRADICTION — the new fact contradicts ONE OR MORE specific key facts per the rules below. List EVERY contradicting key fact in the contradictions array — not just one. If the new fact contradicts both key fact 123 AND key fact 456 in different ways, return two entries.
+3. CONTRADICTION — the new fact DIRECTLY contradicts ONE OR MORE specific key facts per the rules below.
+
+**COMPLETENESS REQUIREMENT (THIS IS CRITICAL — read before anything else):**
+You MUST evaluate the NEW FACT against EVERY key fact in the stance, INDEPENDENTLY, and list EVERY key fact that is directly contradicted as a SEPARATE entry in the contradictions array. Do NOT deduplicate based on:
+- Similarity between key facts (if three key facts each separately contradict the new fact, return three entries)
+- Perceived "strength" of one contradiction over another (a weaker direct contradiction is still a contradiction; list it)
+- Same underlying axis or rule (multiple key facts on the same axis can each independently contradict the new fact)
+The downstream system builds a contradiction graph from these entries — missing edges silently corrupt the honesty score and hide patterns from users. Err on the side of listing more direct edges, never fewer.
+
+**COMPLETENESS DOES NOT OVERRIDE THE NEGATIVE-PATTERN CARVE-OUTS.** Completeness only fires on pairs that pass the contradiction rules below. If a pair falls under a NEGATIVE PATTERN (ADMINISTRATIVE ERROR vs CRIMINAL INTENT — PAIR 16/17 in the examples; COHERENT DEFENSE — PAIR 18; CONSISTENT IGNORANCE; SAME POSITION IN DIFFERENT WORDS; ANNOUNCEMENT FOLLOWED BY ACTION; etc.), DO NOT emit an entry for it — even if every other heuristic says "but they sound opposite". The carve-outs win.
+
+Specifically:
+- "Acknowledged things could have been more rigorous" / "an administrative error was made" / "acted in good faith despite negligence" + "denied any wrongdoing / denied criminal intent" → NOT a contradiction (PAIR 16/17). Do NOT add this edge under completeness.
+- Multiple "I didn't know X" / "I didn't know Y" denials about different aspects of the same case → NOT contradictory (CONSISTENT IGNORANCE / COHERENT DEFENSE — PAIR 17/18). Do NOT add edges between them.
+- A promise to do X + later actually doing X → fulfilled commitment, NOT contradictory (ANNOUNCEMENT THEN ACTION — PAIR 24).
+- Paraphrases of the same position → NOT contradictory (SAME POSITION IN DIFFERENT WORDS — PAIR 20).
+
+Example of correct multi-edge output: if the NEW FACT is "authorised offshoring of a French factory to China" and the stance contains three earlier key facts — [ID 12] "promised to rebuild French artisanat", [ID 17] "voted for tariffs on Chinese imports", [ID 23] "defending French industrial jobs in a Lille speech" — each of those three contradicts the new fact INDEPENDENTLY (each is its own direct opposition between two statements). Return THREE contradiction entries, one per pair.
+
+Counter-example (completeness with a carve-out): if the NEW FACT is "denied any criminal wrongdoing in the parliamentary assistants case" and the stance contains key facts — [ID 50] "acknowledged that the management could have been more rigorous", [ID 51] "court of appeal convicted her for the same case" — only [ID 51] is a contradiction (CLAIM ↔ AUTHORITATIVE FINDING). [ID 50] is NOT a contradiction (CONVICTION vs ACKNOWLEDGMENT OF IMPERFECTIONS carve-out, PAIR 17). Return ONE contradiction entry, not two. Completeness does not force you to add the carved-out pair.
+
+**DIRECT-EDGE REQUIREMENT (the precision brake — apply to each candidate entry):**
+Every contradiction entry MUST be a DIRECT logical opposition between the NEW FACT and the named key fact — the pair must be one you would flag as contradictory if you saw only those two statements side by side. Surrounding key facts may be used to verify that a stated CONDITION has been met or a TRIGGER has fired (PAIR 5b / Commitment vs Carve-Out style — the other facts establish that the condition is real, but the contradiction edge is still between the two named statements alone). They may NOT be used to bridge two facts that are themselves aligned. If the new fact and a key fact both move in the SAME DIRECTION on the same subject (both commit to outcome X, both deny outcome Y, both defend the same value), they CANNOT contradict each other — even if a third key fact in the stance moves in the opposite direction. In that case the third key fact contradicts each of them separately; the two aligned facts do not contradict each other.
+
+**Mandatory mental check before emitting each contradiction entry:** ask "If I only had the NEW FACT and this one key fact in front of me, with no other context, would I still flag them as contradictory?"
+- If YES → emit the entry (regardless of how many other entries you've already emitted; completeness wins).
+- If NO — if you only see the contradiction because of a third key fact — DROP the entry. The third key fact may be its own contradiction with the new fact (record THAT pair instead).
+
+The COMPLETENESS and DIRECT-EDGE rules are complementary: COMPLETENESS says "don't drop direct edges to avoid redundancy", DIRECT-EDGE says "don't add transitive edges to seem thorough". Both together: list every pair the mental check says YES on, no more, no less.
 
 `+promptrules.ContradictionRules+`
 
 **HOW TO MAP THE PAIR-WISE EXAMPLES TO THIS TASK:**
-The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction entry (one per contradicted key fact). Treat NO as either DUPLICATE (same position, different words — set duplicate_of_key_fact_id) or NEW_INFO (compatible-but-distinct).
+The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction entry (one per DIRECTLY contradicted key fact — see DIRECT-EDGE REQUIREMENT above). Treat NO as either DUPLICATE (same position, different words — set duplicate_of_key_fact_id) or NEW_INFO (compatible-but-distinct).
 
 **RESPONSE FORMAT:**
-Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. Write your reasoning BEFORE listing contradictions.
+Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
 
-**LANGUAGE RULE:** Write each contradiction's ` + "`reason`" + ` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose ` + "`reason`" + ` is NOT English, ALSO provide ` + "`reason_en`" + ` — a faithful English translation. OMIT ` + "`reason_en`" + ` when ` + "`reason`" + ` is already English. ` + "`reasoning`" + ` (the top-level analysis field) follows the same language rule.
+**LANGUAGE RULE:** Write each contradiction's ` + "`reason`" + ` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose ` + "`reason`" + ` is NOT English, ALSO provide ` + "`reason_en`" + ` — a faithful English translation. OMIT ` + "`reason_en`" + ` when ` + "`reason`" + ` is already English. ` + "`reasoning`" + ` fields (both top-level and per-contradiction) follow the same language rule.
 
 Return ONLY valid JSON:
 {
-  "reasoning": "1-3 sentences: identify the new fact's core claim, list each key fact it conflicts with (and why), then state the primary verdict",
+  "reasoning": "1-2 sentences justifying the PRIMARY VERDICT (DUPLICATE / NEW_INFO / CONTRADICTION) for this new fact against the stance as a whole — NOT a list of every contradiction (those have their own reasoning fields below)",
   "primary_verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
   "duplicate_of_key_fact_id": 0,
   "contradictions": [
-    {"key_fact_id": <id>, "reason": "1-2 sentences explaining the contradiction", "reason_en": "English translation (omit when reason is English)"}
+    {
+      "key_fact_id": <id>,
+      "reasoning": "1-2 sentences: restate the NEW FACT's core claim, restate THIS key fact's core claim, then explain why these two are directly opposed when considered in isolation. If you find yourself naming a third key fact's ID to explain the opposition, the DIRECT-EDGE REQUIREMENT fails — drop this entry.",
+      "reason": "1-sentence user-facing summary of why these two facts contradict",
+      "reason_en": "English translation (omit when reason is English)"
+    }
   ]
 }
 
@@ -724,16 +758,50 @@ For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate
 	// 0.1, 0.2 × 10 trials each all returned NEW_INFO on the AfD-Saxony case
 	// that fired in prod, so the variance was the only factor and 0.1 keeps a
 	// tiny exploration margin without the misfires.
-	content, err := sm.callJSONLLM(ctx, "You are a political fact analysis assistant. Return only valid JSON.", prompt, 0.1, 800)
+	// MaxTokens bumped from 800 → 2000: the per-contradiction `reasoning` field
+	// (added with the DIRECT-EDGE REQUIREMENT) makes JSON outputs longer when
+	// many key facts are involved. 800 was triggering mid-JSON truncation on
+	// Gemma when stances grew past ~15 facts (observed: response stopped at
+	// `{"reasoning:`).
+	// One retry on JSON-parse failure with a tiny temperature bump. Small models
+	// (notably gemma-4 26b) occasionally get stuck in a token-repetition loop on
+	// long prompts at low T, producing JSON that runs out of tokens mid-string
+	// (e.g. reasoning: "de l'intérêt de l'intérêt de l'intérêt..." until cutoff).
+	// A T=0.3 retry consistently breaks the loop because the alternative-token
+	// probability becomes non-negligible. If both attempts fail we surface the
+	// error to the caller — the fact is then rolled back upstream, which is the
+	// right behavior (better to lose one fact than write a corrupt stance edge).
+	resp, err := sm.callStanceJSONWithRetry(ctx, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("stance analysis: %w", err)
 	}
-	resp, err := parseStanceLLMResponse(content)
-	if err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse stance LLM response")
-		return nil, fmt.Errorf("parsing stance LLM response: %w", err)
-	}
 	return resp, nil
+}
+
+// callStanceJSONWithRetry runs the stance analyzer prompt with one retry on
+// JSON-parse failure. See the comment at the call site for the rationale.
+func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt string) (*stanceLLMResponse, error) {
+	const sys = "You are a political fact analysis assistant. Return only valid JSON."
+	temps := []float64{0.1, 0.3}
+	var lastErr error
+	for i, t := range temps {
+		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 2000)
+		if err != nil {
+			lastErr = fmt.Errorf("LLM call: %w", err)
+			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")
+			continue
+		}
+		resp, parseErr := parseStanceLLMResponse(content)
+		if parseErr == nil {
+			if i > 0 {
+				log.Info().Int("attempts", i+1).Float64("recovered_at_temperature", t).Msg("Stance LLM parse succeeded after retry")
+			}
+			return resp, nil
+		}
+		lastErr = fmt.Errorf("parsing stance LLM response: %w", parseErr)
+		log.Warn().Err(parseErr).Int("attempt", i+1).Float64("temperature", t).Str("llm_content_prefix", truncate(content, 200)).Msg("Stance LLM parse failed; retrying")
+	}
+	return nil, lastErr
 }
 
 // assignTopic asks the LLM to assign a new fact to one of the existing stance
@@ -766,35 +834,48 @@ EXISTING TOPICS:
 NEW FACT:
 %s
 
-ASSIGNMENT RULES (lean toward consolidation, not fragmentation):
-- A topic is a SUBJECT AREA **or a shared VALUE AXIS**, not a specific event. "Trump on Iran" covers the Iran coalition, the pilot rescue, Operation Epic Fury, and Iran-related media remarks — they are all the same topic.
-- Assign the fact to an existing topic if it shares the SAME subject area. Different events / different details / different aspects of the same subject area all belong together.
-- **VALUE-AXIS consolidation (important for contradiction detection):** if the new fact and an existing topic both bear on the SAME UNDERLYING DIRECTIONAL COMMITMENT — even with different surface keywords or sub-topics — assign to that existing topic. Examples of shared axes:
-  * Promise to "rebuild French artisanat" + action "authorise offshoring of French factory" + position on "tariffs on Chinese imports" → all share the axis of FRENCH INDUSTRIAL SOVEREIGNTY and belong under one topic like "souveraineté industrielle et économique française".
-  * Promise to "protect civil liberties" + action "expand surveillance cameras" + position on "encryption backdoors" → all share the axis of CIVIL LIBERTIES vs SECURITY.
-  * Promise to "fight climate change" + position on "new oil drilling" + action "delay EV mandate" → all share the axis of ECOLOGICAL TRANSITION.
-  Other axes worth recognising: austerity vs public spending; secularism vs religious accommodation; centralisation vs decentralisation; immigration restriction vs openness; sovereignty vs supranational integration.
-- Examples that should consolidate (subject-area):
+ASSIGNMENT RULES (lean HARD toward consolidation, not fragmentation):
+- A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
+- Assign the fact to an existing topic if it shares the SAME subject area, regardless of whether the new fact's direction agrees or disagrees with the existing topic's facts. Different events / different aspects / different positions on the same subject all belong together.
+- **Polarity within a subject is CONTRADICTION MATERIAL, not a reason to fragment.** If the new fact opposes existing facts in a topic on the same subject area, assign it to that topic anyway. The internal tension is precisely what the contradiction detector exists to surface downstream. NEVER create a new topic just because the new fact's direction differs from the existing facts.
+  * "promised to defend public hospitals" + later "voted for austerity cutting hospital subsidies" → SAME topic ("politique des dépenses publiques"), not two topics.
+  * "promised 10%% teacher raise" + later "voted against teacher raise" → SAME topic ("politique salariale des enseignants").
+  * "rebuild French artisanat" + "authorise offshoring of French factory" + "tariffs on Chinese imports" → SAME topic ("souveraineté industrielle française").
+  * "protect civil liberties" + "expand surveillance cameras" + "encryption backdoors" → SAME topic ("libertés civiles et surveillance numérique").
+  * "fight climate change" + "vote against carbon tax" + "delay EV mandate" → SAME topic ("politique climatique").
+- Examples that should consolidate (different aspects of the same subject):
   * "sentencing in PA case" + "denial of wrongdoing in PA case" + "comments on bracelet condition" → all one "presidential candidacy and PA case" topic.
   * "Iran sanctions threats" + "Iran nuclear talks" + "Iran-Saudi attack confirmation" → all one "Iran policy" topic.
   * "EU debt criticism" + "euro inadapté" + "demanding to leave the EU" → all one "EU economic policy" topic.
-- Only create a NEW topic when the fact is about a genuinely different SUBJECT AREA AND does not bear on any value-axis already represented in existing topics.
-- When in doubt between two existing topics, prefer the one with a clearer VALUE AXIS the new fact also bears on, over the one that's only a surface-keyword match.
-- When in doubt between assigning vs creating new, ALWAYS prefer assigning to the closest existing topic over creating a new one.
+- Only create a NEW topic when the fact is about a GENUINELY DIFFERENT SUBJECT AREA — not a different direction on the same subject. A "tax policy" fact and a "foreign policy" fact are different subjects. A "pro-environment" fact and an "anti-environment" fact are the SAME subject.
+- When in doubt between assigning vs creating new, ALWAYS prefer assigning to the closest existing topic over creating a new one. A slightly imperfect consolidation is far better than fragmentation: the contradiction detector tolerates broad topics; it cannot recover from fragmentation.
 
 LABEL RULES (for new_topic_label when creating a new topic):
-- Describe the SUBJECT AREA **or VALUE AXIS** broadly enough that 5-20 related facts could naturally fit under this label, INCLUDING facts about different sub-topics that share the same underlying directional commitment.
-- Format: "{subject area or value axis}{ optional temporal scope}". Examples:
+- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. Labels must name a noun-phrase subject area. They MUST NOT contain directional verbs, attitudinal adjectives, or polarity qualifiers. The same label must work whether the person is pro, anti, mixed, or evolving on the subject.
+- FORBIDDEN label vocabulary (non-exhaustive — apply the spirit, not just the list):
+  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "protection of", "support for", "fight against", "rejet de", "promotion de"
+  * Polarity prefixes: "pro-", "anti-"
+  * Attitudinal adjectives in the label: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
+  * Stance descriptors: "posture sur X", "position concernant Y", "vision de Z"
+- GOOD labels (neutral subject containers):
+  * "politique des dépenses publiques" (covers BOTH "defends hospitals" AND "voted for austerity cuts")
+  * "services publics et hôpitaux"
+  * "politique salariale des enseignants" (covers BOTH "promised raise" AND "voted against raise")
+  * "souveraineté industrielle française" (covers tariffs, offshoring, artisanat)
+  * "politique climatique" (covers renewables, fossil fuels, EV mandates, carbon tax)
+  * "libertés civiles et surveillance numérique"
   * "Iran policy and military operations"
   * "presidential candidacy 2027"
   * "EU economic and trade policy"
-  * "nuclear deterrence policy"
-  * "parliamentary assistants case"
-  * "municipal elections 2026"
-  * "souveraineté industrielle française" (value axis covering industrial policy, offshoring, tariffs, subsidies)
-  * "libertés civiles et sécurité" (value axis covering surveillance, encryption, police powers)
-  * "transition écologique" (value axis covering renewables, fossil fuels, EV mandates, building standards)
-- Prefer a VALUE-AXIS label when the fact is a directional/value commitment that future facts about adjacent sub-topics would naturally fall under. Prefer a SUBJECT-AREA label when the fact is about a specific event, case, or narrow policy area.
+  * "affaire des assistants parlementaires"
+- BAD labels (directional / position-laden) — translate to the neutral form:
+  * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
+  * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
+  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
+  * ❌ "engagement pour les droits LGBT" → ✅ "droits LGBT et coparentalité"
+  * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
+  * ❌ "opposition à la surveillance" → ✅ "surveillance et vie privée"
+- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
 - Do NOT include the person's name (labels are already per-person).
 - **LANGUAGE:** Write ` + "`new_topic_label`" + ` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
 - ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
@@ -894,14 +975,24 @@ func shortlistStancesByEmbedding(stances []StanceDocument, factEmbedding []float
 // assignTopic somehow returns an empty NewTopicLabel — keeps the system from
 // ever falling back to the fact text as a stance label.
 func (sm *StanceManager) generateGeneralLabel(ctx context.Context, factText string) (string, error) {
-	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label describes the SUBJECT AREA or VALUE AXIS broadly enough that 5-20 related future facts — possibly about different sub-topics that share the same underlying directional commitment — could naturally fit under it.
+	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label is a NEUTRAL SUBJECT AREA broad enough that 5-20 related future facts — including facts that take OPPOSITE positions on this subject — can all fit under it.
 
 FACT:
 %s
 
 LABEL RULES:
-- Format: "{subject area or value axis}{ optional temporal scope}". Examples: "Iran policy", "presidential candidacy 2027", "EU economic policy", "nuclear deterrence policy", "parliamentary assistants case", "souveraineté industrielle française", "libertés civiles et sécurité", "transition écologique".
-- Prefer a VALUE-AXIS label (e.g. "souveraineté industrielle française") when the fact is a directional/value commitment whose contradictions would come from cross-topic actions on the same axis. Prefer a SUBJECT-AREA label when the fact is about a specific event/case/narrow policy.
+- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. The same label must work whether future facts are pro, anti, mixed, or evolving on the subject.
+- FORBIDDEN label vocabulary (apply the spirit):
+  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "support for", "fight against", "rejet de", "promotion de"
+  * Polarity prefixes: "pro-", "anti-"
+  * Attitudinal adjectives: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
+- GOOD label examples (neutral subject containers): "Iran policy", "presidential candidacy 2027", "EU economic policy", "parliamentary assistants case", "souveraineté industrielle française", "politique climatique", "politique des dépenses publiques", "services publics et hôpitaux", "libertés civiles et surveillance numérique", "droits LGBT et coparentalité".
+- BAD label examples (translate to neutral):
+  * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
+  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
+  * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
+  * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
+- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
 - Do NOT include the person's name.
 - ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from the fact. Describe the topic, not the statement.
 - Do NOT pack event-detail into the label.
@@ -949,8 +1040,18 @@ FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
 
 LABEL RULES:
-- The label describes the SUBJECT AREA or VALUE AXIS broadly enough that all listed facts naturally fit under it. If the facts span different sub-topics that share an underlying directional commitment (e.g., a promise + an opposing action on the same axis), prefer a VALUE-AXIS label that captures that axis. Examples: "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "nuclear deterrence policy", "parliamentary assistants case", "souveraineté industrielle française", "libertés civiles et sécurité", "transition écologique".
-- Format: "{subject area or value axis}{ optional temporal scope}". Max 120 chars.
+- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. The label names the subject area broadly enough that all listed facts — including any that take opposite positions on the subject — fit under it. The same label must work whether the person is pro, anti, mixed, or evolving.
+- FORBIDDEN label vocabulary (apply the spirit):
+  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "support for", "fight against", "rejet de", "promotion de"
+  * Polarity prefixes: "pro-", "anti-"
+  * Attitudinal adjectives: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
+- GOOD label examples (neutral subject containers): "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "parliamentary assistants case", "souveraineté industrielle française", "politique climatique", "politique des dépenses publiques", "services publics et hôpitaux", "libertés civiles et surveillance numérique", "politique salariale des enseignants".
+- BAD label examples (translate to neutral):
+  * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
+  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
+  * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
+  * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
+- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
 - Do NOT include the person's name.
 - ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from any fact.
 - Do NOT pack event-detail into the label.
@@ -1055,10 +1156,12 @@ type MergeSubgroup struct {
 
 // MergeClusterDecision asks the LLM whether the supplied candidate cluster of
 // stances should be merged (in whole or in subsets), and, for each merge it
-// proposes, returns a unified summary + label. The cluster has already been
-// produced by Phase-A average-linkage clustering, so all stances here are
-// embedding-similar; the LLM's job is to filter false positives (different
-// temporal context, polarity, scope) and write the new unified text.
+// proposes, returns a unified summary + label. The caller is either Phase-A
+// average-linkage clustering (embedding-similar stances) or — under the
+// post-Framing-A regime — the all-stances-per-person path that hands the LLM
+// every stance the person has. Either way the LLM's job is to identify subsets
+// covering the SAME NEUTRAL SUBJECT AREA (regardless of polarity within) and
+// write the unified label + summary.
 //
 // The caller is responsible for picking the destination stance (largest
 // fact_count) and applying the merge through the storer.
@@ -1073,21 +1176,56 @@ func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName st
 			i+1, s.ID, s.Label, truncate(s.Summary, 400)))
 	}
 
-	prompt := fmt.Sprintf(`You are deciding whether several stance documents about %s represent the SAME stance and should be merged, or are genuinely distinct stances.
+	prompt := fmt.Sprintf(`You are deciding which subsets of the listed stance documents about %s should be merged because they cover the SAME NEUTRAL SUBJECT AREA. A stance is defined as a neutral subject container — both supportive and opposing facts on that subject belong inside it.
 
-RULES:
-- Merge when all stances cover the SAME SUBJECT AREA or bear on the SAME UNDERLYING VALUE AXIS / directional commitment. Stances are the same when they represent the person's positions, promises, or actions on one coherent axis — even when sub-topics or wording differ.
-- Examples that SHOULD merge:
-  * "transition écologique et politique environnementale" + "transition écologique et soutien à la décarbonation" → same value axis (ecological transition).
-  * "politique étrangère et coopération de défense" + "politique étrangère et diplomatie internationale" + "politique de défense et modernisation militaire" → same broad axis (foreign policy & defense).
-  * "vie privée et communication présidentielle" + "comportement et vie sociale lors de déplacements" + "profil psychologique et mode de gouvernance" → same broad axis (personal profile & private life).
-  * Two labels that share a key phrase (e.g. both start with "transition écologique" or "souveraineté industrielle") almost always belong together — merge unless the summaries make clear they cover genuinely incompatible subject areas.
-- Do NOT merge stances that differ in temporal context (e.g. "in 2024" vs "in 2025"), geographic context, or polarity that's structural to the topic (e.g. "support for nuclear power" vs "opposition to coal" are different axes even if both are "energy policy").
-- Do NOT merge stances about clearly separate events that don't share a value axis (e.g. two unrelated legal cases, two unrelated elections in different jurisdictions).
-- When in doubt: PREFER to merge if labels share a key phrase or both summaries describe positions on the same broad value axis — fragmentation hurts contradiction detection because cross-topic facts never get paired by KNN.
+MERGE RULES:
+
+**THINK IN TEXTBOOK SUBJECT CATEGORIES.** When deciding whether two stances cover the same subject, ask: "would a political science textbook, a national administration's policy index, or a journalist's beat description put these facts under the same heading?" If yes → MERGE. The canonical taxonomy (use these as the merge target when applicable):
+- DOMESTIC POLICY: politique économique, politique fiscale, politique sociale, politique de l'emploi, politique du logement, politique des retraites, politique de santé, politique de l'éducation, politique culturelle.
+- ECONOMIC & INDUSTRIAL: politique industrielle, politique commerciale, souveraineté économique, politique monétaire, politique de la concurrence, politique agricole.
+- ENVIRONMENTAL & ENERGY: politique climatique, politique énergétique, transition écologique.
+- SECURITY & JUSTICE: politique de sécurité intérieure, politique pénale, libertés civiles et surveillance, immigration et asile.
+- FOREIGN POLICY: politique étrangère, politique européenne, défense nationale, relations bilatérales (e.g. Iran policy, Russia policy).
+- INSTITUTIONS: réforme institutionnelle, décentralisation, fonction publique, laïcité.
+- PERSONAL / LEGAL: a specific legal case ("affaire des assistants parlementaires"), a specific candidacy ("présidentielle 2027").
+
+Fine-grained stances usually roll up into ONE of these textbook headings. If three stances each cover an aspect that a public administration would file under "politique industrielle française", they MUST merge into "politique industrielle française" (or a slightly more specific label like "souveraineté industrielle française"), regardless of which side of the policy they advocate.
+
+- **MERGE WHEN: stances cover the same textbook subject area, REGARDLESS OF POLARITY OR DIRECTION.** A stance whose facts express support for X and a stance whose facts express opposition to X cover the SAME subject (X) and MUST merge. The whole point of consolidation is to put all of the person's positions on one subject in one place so the contradiction detector can surface internal tension.
+
+- Worked examples that MUST merge (textbook-category framing):
+  * "artisanat et pouvoir d'achat" + "politique industrielle et délocalisation" + "politique commerciale et douanière" → unified label "souveraineté industrielle française" or "politique industrielle et commerciale" (all three fit under industrial/trade policy in any textbook)
+  * "défense des services publics" + "discipline budgétaire" + "politique salariale des enseignants" → unified label "politique des dépenses publiques" (all three are aspects of state-spending policy — even though one is teachers, one is hospitals, one is austerity, they all answer "how much does the state spend and on what")
+  * "transition écologique" + "taxe carbone" + "politique énergétique nucléaire" → "politique énergétique et climatique"
+  * "réforme des retraites" + "politique salariale des enseignants" + "fonction publique" → "politique sociale et fonction publique" (broader textbook category that covers all three)
+  * "politique étrangère et coopération de défense" + "diplomatie internationale" + "modernisation militaire" → "politique étrangère et de défense"
+  * "libertés civiles et surveillance" + "encryption et messageries chiffrées" + "vidéosurveillance algorithmique" → "libertés civiles et surveillance numérique"
+  * "droits des couples homoparentaux" + "mariage pour tous" + "lutte contre les discriminations LGBT" → "droits LGBT" or "droits civils et familiaux"
+  * Two labels that share a key phrase (e.g. both contain "transition écologique", "services publics", "industrie", "défense", "retraites") almost always belong together — merge unless the summaries make clear they're genuinely different subjects.
+
+- DO NOT MERGE when stances are about GENUINELY DIFFERENT SUBJECT AREAS at the textbook level:
+  * "politique étrangère" vs "politique fiscale" → different chapters of the textbook, keep separate
+  * "politique étrangère et de défense" vs "politique de sécurité intérieure" → different domains (external vs internal) even though both touch "security", keep separate
+  * Two unrelated specific legal cases involving different events → keep separate (e.g. "affaire des assistants parlementaires" vs "affaire Karachi" — same person but two distinct case files)
+  * Two elections in different jurisdictions / years that don't share a campaign theme → keep separate
+  * A specific case ("affaire des assistants parlementaires") vs a general policy stance ("politique judiciaire") → keep separate (case-level vs policy-level)
+
+- TEMPORAL CONTEXT alone is NOT a reason to keep separate if both bear on the same recurring subject (e.g. "budget 2024" vs "budget 2025" → MERGE under "politique budgétaire de l'État"). Distinct legal cases tied to different events are a separate-subject scenario; recurring policy themes are the same subject.
+
+- When in doubt: PREFER to merge AT THE TEXTBOOK LEVEL. Fragmentation hurts contradiction detection because contradictions only fire within a single stance. Over-merging at the textbook level tolerates broad subjects (the inline detector can still distinguish facts within); under-merging silently loses cross-fragment contradictions forever.
+
 - Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
 
-For each subset you decide to merge, return a UNIFIED summary (1-3 sentences) and a topic label (4-12 words) that covers all merged stances. The label should name a SUBJECT AREA or VALUE AXIS, not a behaviour or rhetorical pattern. When merging value-axis stances, prefer the more abstract axis as the unified label.
+UNIFIED LABEL RULES (for the ` + "`label`" + ` field of each merge):
+- The unified label MUST be a NEUTRAL SUBJECT, not a position. The same label must work for both pro and anti facts in the merged stance.
+- FORBIDDEN label vocabulary: directional verbs ("défense de", "lutte contre", "opposition à", "soutien à", "engagement pour", "discipline"), polarity prefixes ("pro-", "anti-"), attitudinal adjectives ("strict", "sacré", "ferme").
+- GOOD unified labels: "politique des dépenses publiques", "politique climatique", "services publics et hôpitaux", "souveraineté industrielle française", "Iran policy", "EU economic policy".
+- BAD unified labels: ❌ "défense de la transition écologique" → ✅ "politique climatique". ❌ "engagement pour les services publics" → ✅ "services publics et hôpitaux".
+- Length: 4-12 words. Max 120 chars.
+
+UNIFIED SUMMARY RULES (for the ` + "`summary`" + ` field):
+- 1-3 sentences describing what the person has said / done across all merged stances on this subject.
+- If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
 
 **LANGUAGE RULE:** Write the unified ` + "`summary`" + ` and ` + "`label`" + ` in the same language as the stances provided. If stances span multiple languages, use French.
 

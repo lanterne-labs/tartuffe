@@ -15,13 +15,21 @@ import (
 )
 
 const (
-	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single LLM call.
-	// Sized so the prompt + the contradictionMaxTokens reservation stays well
-	// under a 16k context window: ContradictionRulesAndExamples + 3 pairs ~=
-	// 2.6k tokens, plus contradictionMaxTokens=2048 = ~4.7k total reservation.
-	// 3 pairs is the historical accuracy baseline (we briefly raised to 5 for
-	// cost; cross-pair confusion observed at 5, reverted).
+	// MaxPairsPerBatch is the maximum number of fact pairs to analyze in a single
+	// LLM call on the Gemini BATCH path. Sized so the prompt + the
+	// contradictionMaxTokens reservation stays well under a 16k context window:
+	// ContradictionRulesAndExamples + 3 pairs ~= 2.6k tokens, plus
+	// contradictionMaxTokens=2048 = ~4.7k total reservation. 3 pairs is the
+	// historical accuracy baseline on Gemini (we briefly raised to 5 for cost;
+	// cross-pair confusion observed at 5, reverted).
 	MaxPairsPerBatch = 3
+	// MaxPairsPerBatchSync is the bundle size on the sync OpenAI-compatible path.
+	// Held at 1: smaller models (local Gemma) occasionally swap fact IDs across
+	// pairs when verdicts share a prompt — observed on the eval as a fabricated
+	// contradiction between an unrelated pair carrying another pair's reason.
+	// One pair per call eliminates the swap entirely. Per-call latency is higher
+	// but throughput on a local GPU is fine.
+	MaxPairsPerBatchSync = 1
 	// contradictionMaxTokens caps the LLM response budget. A 3-pair response
 	// is ~600 tokens realistically (REASONING + verdict per pair, ~200 tok
 	// each). 2048 leaves headroom while keeping prompt+reservation under 5k.
@@ -41,6 +49,12 @@ var reasoningRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*REASONING\s*:\s*
 // translation of the YES/NO explanation. Emitted by the LLM only when the
 // native verdict line is non-English.
 var reasonEnRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*REASON_EN\s*:\s*(.*)`)
+
+// axisRegex matches "PAIR N: AXIS: ..." lines — emitted by the LLM only when
+// the verdict is YES under the VALUES-BASED / DIRECTIONAL rule. Forces the
+// model to commit to a single named axis before flagging a values-based
+// contradiction. See the AXIS GATE in the response format.
+var axisRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*AXIS\s*:\s*(.*)`)
 
 // formatDateForLLM formats a time pointer for display in the LLM prompt.
 // Returns "unknown date" if the time is nil.
@@ -268,13 +282,20 @@ PAIR 30 (Values-Based Contradiction, No Keyword Overlap - Contradictory):
 Statement A (dated March 1, 2024): "Emmanuel Macron a affirmé vouloir redonner du pouvoir d'achat aux Français en reconstruisant l'artisanat français."
 Statement B (dated June 15, 2024): "Emmanuel Macron a autorisé la délocalisation en Chine d'une usine française de 5 000 employés."
 PAIR 30: REASONING: A is Macron's own stated commitment — the underlying axis is "strengthen French domestic manufacturing and employment". B is Macron's own action (authorising offshoring), and its directional impact on that same axis is the opposite: it weakens domestic French manufacturing and employment. The two statements share no surface keywords (artisanat vs délocalisation/Chine), but the underlying axis is identical and the action materially undermines the commitment. The HARD GATE is satisfied (A is his own statement, B is his own action). The CRIMINAL-EXECUTION carve-out does NOT apply — this is a values-vs-action case, not an execution-of-fraud case. This is the VALUES-BASED / DIRECTIONAL CONTRADICTION rule.
+PAIR 30: AXIS: souveraineté industrielle française
 PAIR 30: YES: Macron's commitment to rebuild French artisanat is materially undermined by his own decision to authorise offshoring a 5,000-employee French factory to China — opposite directions on the same underlying axis of French industrial sovereignty.
 
 PAIR 31 (Symbolic / Small Counter-Gesture - NOT Contradictory):
 Statement A (dated March 1, 2024): "Macron a déclaré vouloir réindustrialiser la France."
 Statement B (dated June 15, 2024): "Macron a inauguré un partenariat industriel avec un fabricant allemand pour 50 emplois en Bavière."
 PAIR 31: REASONING: A is a stated commitment to French reindustrialisation. B is a small cross-border industrial partnership of 50 jobs — symbolic in scale and not clearly opposed to French reindustrialisation (industrial partnerships often complement domestic policy). The VALUES-BASED rule requires the action to MATERIALLY undermine the commitment; a 50-job partnership in Bavaria does not meet that bar.
-PAIR 31: NO: The 50-job German partnership does not materially undermine the French reindustrialisation commitment — small counter-gestures or unrelated cross-border collaborations are not contradictions.`
+PAIR 31: NO: The 50-job German partnership does not materially undermine the French reindustrialisation commitment — small counter-gestures or unrelated cross-border collaborations are not contradictions.
+
+PAIR 32 (Imperative Rhetoric vs Personal Commitment - NOT Contradictory):
+Statement A (dated March 15, 2023): "Senator Smith déclare: « Nous devons agir avec détermination contre le changement climatique. »"
+Statement B (dated June 10, 2024): "Senator Smith a voté contre la proposition de loi instaurant une taxe carbone aux frontières."
+PAIR 32: REASONING: Statement A is imperative rhetoric ("nous devons agir" / "we must act") expressing a general aspiration in the third person. It is NOT a first-person commitment ("je m'engage", "I will", "I commit to"). Per the VAGUE/GENERAL rule, only a personal commitment can be broken by an opposing action. A vote against ONE specific tax mechanism is also a specific policy choice that does not necessarily contradict a broad aspirational direction (the senator could pursue the goal through other policy tools). Without a first-person commitment, there is no promise to break.
+PAIR 32: NO: Imperative aspirational rhetoric ("we must act") is not a first-person commitment that a specific policy vote can break — only "I will" / "je m'engage à" style statements create commitments that can be broken.`
 
 const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 
@@ -284,18 +305,20 @@ const contradictionPromptTpl = `You are analyzing pairs of statements for contra
 %s
 
 **RESPONSE FORMAT:**
-For each pair, respond with EXACTLY two lines (plus a third when the verdict line is non-English):
+For each pair, respond with these lines in order:
 
 Line 1 (mandatory): PAIR N: REASONING: [Identify core claims in each statement, check which rules apply, 1-2 sentences of analysis]
-Line 2 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
-Line 3 (mandatory iff Line 2 is NOT in English): PAIR N: REASON_EN: [faithful English translation of Line 2's reason]
+Line 2 (mandatory IFF your verdict will be YES under the VALUES-BASED / DIRECTIONAL rule; otherwise omit): PAIR N: AXIS: [≤5 words naming the single underlying value-axis on which the two facts move in opposite directions, e.g. "souveraineté industrielle française" or "civil liberties / surveillance"]
+Line 3 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
+Line 4 (mandatory IFF Line 3 is NOT in English): PAIR N: REASON_EN: [faithful English translation of Line 3's reason]
 
 You MUST write your REASONING line BEFORE your verdict line. Analyze before committing.
 If your reasoning concludes the statements are compatible, supplementary, or not contradictory, your verdict MUST be NO.
 CRITICAL: Never output YES when your own analysis shows the facts don't contradict.
+AXIS GATE: If you are about to answer YES on the basis of values/direction (no surface keyword overlap), you MUST first write an AXIS line naming the single shared axis in ≤5 words. If you cannot name a single concrete axis in ≤5 words, your verdict MUST be NO. The AXIS line is your commitment device — it forces you to ground a values-based YES in a specific, articulable axis rather than a vague "feels opposite" intuition.
 
 **LANGUAGE RULE:** Write your REASONING and YES/NO explanations in the same language as the statements being analyzed. If statements span multiple languages, write in French.
-When Line 2's reason is NOT in English, you MUST emit a Line 3 "PAIR N: REASON_EN: ..." with a faithful English translation. OMIT Line 3 only when Line 2 is already in English.`
+When Line 3's reason is NOT in English, you MUST emit a "PAIR N: REASON_EN: ..." line with a faithful English translation. OMIT it only when Line 3 is already in English.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
@@ -382,6 +405,7 @@ type BatchResult struct {
 	Reason          string
 	ReasonEn        string // English translation of Reason; empty when Reason is already English
 	Reasoning       string // Parsed REASONING line from LLM (analysis before verdict)
+	Axis            string // Parsed AXIS line — only present when the LLM identified a single named value-axis (values-based YES verdicts).
 	RawResponse     string // Full LLM response text for inspection
 	Error           error
 }
@@ -415,7 +439,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		Messages: []categorizer.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature: 0.1,
+		Temperature: 0.0,
 		MaxTokens:   contradictionMaxTokens,
 	}
 
@@ -530,6 +554,17 @@ func parseBatchResponse(response string, results []BatchResult) {
 			pairIdx := pairNum - 1
 			if pairIdx >= 0 && pairIdx < len(results) {
 				results[pairIdx].ReasonEn = strings.TrimSpace(rm[2])
+			}
+			continue
+		}
+
+		// Try AXIS line (named value-axis for VALUES-BASED YES verdicts)
+		if rm := axisRegex.FindStringSubmatch(line); rm != nil {
+			var pairNum int
+			fmt.Sscanf(rm[1], "%d", &pairNum)
+			pairIdx := pairNum - 1
+			if pairIdx >= 0 && pairIdx < len(results) {
+				results[pairIdx].Axis = strings.TrimSpace(rm[2])
 			}
 			continue
 		}

@@ -18,21 +18,25 @@ import (
 var (
 	evalRunCasesPath string
 	evalRunKeepData  bool
-	evalRunCheckAll  bool
 )
 
 var evalRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Ingest a synthetic corpus, run detection, print a precision/recall report.",
-	Long: `Steps:
+	Long: `Steps (mirror the daily pipeline as closely as possible):
   1. Load the YAML corpus and validate it.
   2. For each person in the corpus: delete prior facts + contradictions (unless --keep-data).
   3. Insert every fact through FactInserter (the same path used by the daily pipeline).
-     Each insert embeds the fact and routes it through the stance manager.
-  4. Run contradiction detection per test person (--check-all by default,
-     so we exercise the LLM prompt on EVERY pair regardless of KNN distance —
-     the eval is about prompt quality, not KNN recall).
-  5. Pull contradictions from the DB and compare to corpus.expected_pairs.
+     Each insert embeds the fact and routes it through the stance manager, which
+     runs the INLINE contradiction detector against the matched stance.
+  4. Run the STANCE MERGE SWEEP (same call as the daily pipeline's step 4). Merges
+     centroid-similar stances per LLM vetting and re-analyzes facts post-merge —
+     this is what catches cross-stance contradictions that fragmented at routing
+     time.
+  5. Run contradiction detection per test person with the SAME options as the daily
+     pipeline (KNN-filtered, NOT --check-all). Anything --check-all would catch but
+     KNN misses won't be flagged here — by design, we test the prod path.
+  6. Pull contradictions from the DB and compare to corpus.expected_pairs.
 
 The corpus is fictional. Run against a local Supabase, never production.`,
 	Annotations: map[string]string{"needs_db": "true"},
@@ -43,7 +47,6 @@ func init() {
 	evalCmd.AddCommand(evalRunCmd)
 	evalRunCmd.Flags().StringVar(&evalRunCasesPath, "cases", "eval/cases.yaml", "Path to the eval YAML file")
 	evalRunCmd.Flags().BoolVar(&evalRunKeepData, "keep-data", false, "Skip the per-person delete that happens at the start of every run")
-	evalRunCmd.Flags().BoolVar(&evalRunCheckAll, "check-all", true, "Force the detector to check every fact pair (bypasses the KNN similarity filter)")
 }
 
 func runEvalRun(cmd *cobra.Command, args []string) error {
@@ -86,17 +89,39 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Pre-seed corpus persons directly into the persons table, bypassing the
+	// EntityValidator. The validator's job is to reject generic names like
+	// "Claire Petit" that have no Wikipedia/Google evidence of a notable bearer
+	// — which is exactly what some of our fictional corpus people look like. In
+	// prod that gate is correct; in the eval it would silently drop the entire
+	// person's facts and break the test. AddPerson skips validation when the
+	// person already exists in the DB, so a direct INSERT here gets us past the
+	// gate for subsequent FactInserter calls.
+	if err := preseedEvalPersons(ctx, storer, corpus); err != nil {
+		return fmt.Errorf("pre-seed persons: %w", err)
+	}
+
 	idMap, err := ingestCorpus(ctx, embedder, inserter, corpus)
 	if err != nil {
 		return fmt.Errorf("ingest: %w", err)
 	}
 	log.Info().Int("inserted", len(idMap)).Msg("Corpus ingest complete")
 
+	// Step 4 in the daily pipeline: stance merge sweep. Looks for centroid-similar
+	// stances per person, LLM-vets each candidate cluster, merges, and re-analyzes
+	// facts in the merged stance — that's how cross-stance contradictions that
+	// fragmented at ingest time get caught. We run the same function the cron
+	// service runs (cmd/pipeline.go:runStancesMergeStep).
+	if err := runStancesMergeStep(ctx, storer); err != nil {
+		log.Warn().Err(err).Msg("Eval: stance merge sweep failed (continuing)")
+	}
+
+	// Step 5 in the daily pipeline: contradiction detection. Default options —
+	// KNN-filtered pair collection, no --check-all. We deliberately do NOT pass
+	// CheckAll: the eval is about measuring what the prod pipeline actually
+	// catches, not best-case prompt quality.
 	for _, p := range corpus.Persons {
-		opts := ContradictionDetectOpts{
-			Person:   p.Name,
-			CheckAll: evalRunCheckAll,
-		}
+		opts := ContradictionDetectOpts{Person: p.Name}
 		if err := executeContradictionDetection(ctx, storer, opts); err != nil {
 			log.Warn().Err(err).Str("person", p.Name).Msg("Detection step failed; continuing")
 		}
@@ -111,6 +136,24 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 	report := eval.Evaluate(corpus, idMap, detected)
 	fmt.Println()
 	fmt.Println(eval.FormatReport(report))
+	return nil
+}
+
+// preseedEvalPersons inserts every corpus person into the persons table if
+// they don't already exist, BYPASSING the EntityValidator. See the call-site
+// comment in runEvalRun for why this is necessary.
+func preseedEvalPersons(ctx context.Context, storer *storage.PostgresStorer, corpus *eval.Corpus) error {
+	for _, p := range corpus.Persons {
+		normalized := util.NormalizeString(p.Name)
+		if normalized == "" {
+			continue
+		}
+		_, err := storer.Pool().Exec(ctx, `INSERT INTO persons (name) VALUES ($1) ON CONFLICT (name) DO NOTHING`, normalized)
+		if err != nil {
+			return fmt.Errorf("pre-seed person %q: %w", p.Name, err)
+		}
+		log.Debug().Str("person", p.Name).Msg("Eval: person pre-seeded (validator bypassed)")
+	}
 	return nil
 }
 
@@ -177,7 +220,14 @@ func ingestCorpus(ctx context.Context, embedder embedding.EmbeddingGenerator, in
 				}
 				result, err := inserter.InsertFacts(ctx, []core.StoreFactInput{in})
 				if err != nil {
-					return idMap, fmt.Errorf("insert %s: %w", fact.ID, err)
+					// Tolerate per-fact ingest failures (e.g. stance-LLM JSON parse
+					// errors from Gemma getting stuck in a token-loop). The fact is
+					// rolled back upstream; we just log and continue so a one-off
+					// model hiccup doesn't waste the entire 20-min eval. Pairs that
+					// reference the missing fact ID will show as MAPPING_MISSING in
+					// the report — the same shape as deduped facts.
+					log.Error().Err(err).Str("corpus_id", fact.ID).Msg("Eval: fact ingest failed; skipping and continuing")
+					continue
 				}
 				if len(result.InsertedMeta) > 0 {
 					idMap[fact.ID] = result.InsertedMeta[0].FactID

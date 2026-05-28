@@ -387,6 +387,199 @@ persons:
             date: "2024-09-14"
             source_url: "https://test.example.com/ar/jud/4"
 
+  # ─── Person 4 ──────────────────────────────────────────────────────────
+  # Lucas Bernard — fictional politician. Designed for HARD edge cases:
+  # partial breaks, vague-vs-specific, symbolic gestures, fulfilled promises.
+  - name: "Lucas Bernard"
+    entity_type: "human"
+    stances:
+
+      # Axis: politique fiscale — specific promise + partial-break + consistent + vague.
+      - axis: "politique fiscale"
+        facts:
+          - id: "lb-fisc-1"
+            text: "Lucas Bernard a promis de ne jamais voter de hausse d'impôts touchant les classes moyennes."
+            text_en: "Lucas Bernard promised to never vote for a tax hike affecting the middle class."
+            verb: "PROMISED"
+            embedding_text: "promesse pas hausse impôts classes moyennes"
+            quote: "Je m'engage à ne jamais voter de hausse d'impôts pour les classes moyennes."
+            date: "2023-05-10"
+            source_url: "https://test.example.com/lb/fisc/1"
+
+          - id: "lb-fisc-2"
+            text: "Lucas Bernard a voté pour un amendement augmentant la CSG de 0,5 point sur tous les revenus, y compris ceux des classes moyennes."
+            text_en: "Lucas Bernard voted for an amendment raising the CSG by 0.5 points on all incomes, including middle-class earners."
+            verb: "VOTED_FOR"
+            embedding_text: "vote hausse CSG tous revenus"
+            quote: "Vote enregistré: pour l'amendement n°218 relevant la CSG de 0,5 point."
+            date: "2024-12-15"
+            source_url: "https://test.example.com/lb/fisc/2"
+
+          - id: "lb-fisc-3"
+            text: "Lucas Bernard a voté pour une loi de finance exonérant de la nouvelle taxe foncière les ménages gagnant moins de 30 000 € par an."
+            text_en: "Lucas Bernard voted for a finance bill exempting households earning under 30,000 € from the new property tax."
+            verb: "VOTED_FOR"
+            embedding_text: "exonération taxe foncière classes moyennes basses"
+            quote: "Vote enregistré: pour l'exonération des ménages sous 30 000 €."
+            date: "2024-12-18"
+            source_url: "https://test.example.com/lb/fisc/3"
+
+          - id: "lb-fisc-4"
+            text: "Lucas Bernard a déclaré qu'il fallait réfléchir à des moyens plus équitables de financer l'État-providence."
+            text_en: "Lucas Bernard stated that more equitable ways of funding the welfare state should be considered."
+            verb: "CLAIMED"
+            embedding_text: "réflexion financement État-providence équité"
+            quote: "Il faut réfléchir collectivement à des moyens plus équitables de financer l'État-providence."
+            date: "2024-08-10"
+            source_url: "https://test.example.com/lb/fisc/4"
+
+      # Axis: politique climatique — vague aspirational vs specific action, plus fulfilled commitment.
+      - axis: "politique climatique"
+        facts:
+          - id: "lb-clim-1"
+            text: "Lucas Bernard a déclaré qu'il fallait agir avec détermination contre le changement climatique."
+            text_en: "Lucas Bernard stated that we must act decisively against climate change."
+            verb: "CLAIMED"
+            embedding_text: "déclaration urgence climatique"
+            quote: "Nous devons agir avec détermination contre le changement climatique."
+            date: "2023-03-15"
+            source_url: "https://test.example.com/lb/clim/1"
+
+          - id: "lb-clim-2"
+            text: "Lucas Bernard a voté contre la proposition de loi instaurant une taxe carbone aux frontières de l'UE."
+            text_en: "Lucas Bernard voted against the bill instituting an EU border carbon tax."
+            verb: "VOTED_AGAINST"
+            embedding_text: "vote contre taxe carbone frontières UE"
+            quote: "Vote enregistré: contre la PPL n°1942 sur la taxe carbone aux frontières."
+            date: "2024-06-10"
+            source_url: "https://test.example.com/lb/clim/2"
+
+          - id: "lb-clim-3"
+            text: "Lucas Bernard a promis que la France atteindrait la neutralité carbone d'ici 2030."
+            text_en: "Lucas Bernard promised that France would achieve carbon neutrality by 2030."
+            verb: "PROMISED"
+            embedding_text: "promesse neutralité carbone 2030"
+            quote: "Je m'engage à ce que la France soit neutre en carbone en 2030."
+            date: "2023-11-08"
+            source_url: "https://test.example.com/lb/clim/3"
+
+          - id: "lb-clim-4"
+            text: "Lucas Bernard a voté pour le paquet climat européen imposant une réduction de 55% des émissions d'ici 2030."
+            text_en: "Lucas Bernard voted for the EU climate package mandating a 55% emissions reduction by 2030."
+            verb: "VOTED_FOR"
+            embedding_text: "vote paquet climat européen 55 pourcent"
+            quote: "Vote enregistré: pour le paquet climat européen 'Fit for 55'."
+            date: "2024-04-22"
+            source_url: "https://test.example.com/lb/clim/4"
+
+  # ─── Person 5 ──────────────────────────────────────────────────────────
+  # Claire Petit — designed specifically to test the STANCE MERGE SWEEP.
+  #
+  # Eight facts split across two themes that the stance manager is expected
+  # to fragment into TWO separate stances at ingest time:
+  #   - "Protection des services publics" (left-leaning framing: hospitals,
+  #     teachers, sécurité sociale, république)
+  #   - "Discipline budgétaire de l'État" (right-leaning framing: rigueur,
+  #     austérité, dette, viabilité)
+  # The two stances share the same underlying axis (public spending vs
+  # austerity) but use almost zero lexical overlap. The expectation:
+  #   1. At ingest, embeddings drift them into 2 stances.
+  #   2. The stance merge sweep's Phase-A centroid similarity flags them as
+  #      merge candidates; Phase-B LLM vet should agree they're the same
+  #      value axis and merge them.
+  #   3. Post-merge re-analysis catches the cross-stance contradictions
+  #      that the default KNN-filtered detector would have missed entirely
+  #      because intra-pair embeddings are too far apart.
+  #
+  # All four expected_pairs are CROSS-STANCE — none would be caught by
+  # daily-pipeline detection without the merge sweep firing.
+  - name: "Claire Petit"
+    entity_type: "human"
+    stances:
+
+      # Theme A — protection of public services. Designed to land in a
+      # "défense des services publics" stance via embedding routing.
+      - axis: "protection des services publics"
+        facts:
+          - id: "cp-prot-1"
+            text: "Claire Petit a promis de défendre l'accès inconditionnel aux hôpitaux publics français."
+            text_en: "Claire Petit promised to defend unconditional access to French public hospitals."
+            verb: "PROMISED"
+            embedding_text: "défense hôpitaux publics accès inconditionnel"
+            quote: "Je m'engage à défendre l'accès inconditionnel aux hôpitaux publics."
+            date: "2023-09-14"
+            source_url: "https://test.example.com/cp/prot/1"
+
+          - id: "cp-prot-2"
+            text: "Claire Petit a promis une augmentation de 10% du salaire des enseignants sur cinq ans."
+            text_en: "Claire Petit promised a 10% increase in teacher salaries over five years."
+            verb: "PROMISED"
+            embedding_text: "promesse augmentation salaire enseignants 10 pourcent"
+            quote: "Je m'engage à augmenter de 10% le salaire des enseignants sur cinq ans."
+            date: "2023-11-04"
+            source_url: "https://test.example.com/cp/prot/2"
+
+          - id: "cp-prot-3"
+            text: "Claire Petit a affirmé que les services publics hospitaliers sont un engagement républicain sacré."
+            text_en: "Claire Petit stated that public hospital services are a sacred republican commitment."
+            verb: "CLAIMED"
+            embedding_text: "services publics hospitaliers engagement républicain sacré"
+            quote: "Les services publics hospitaliers sont un engagement républicain sacré."
+            date: "2024-02-18"
+            source_url: "https://test.example.com/cp/prot/3"
+
+          - id: "cp-prot-4"
+            text: "Claire Petit a voté pour le maintien des dotations de fonctionnement des hôpitaux publics en 2024."
+            text_en: "Claire Petit voted to maintain hospital operating subsidies in 2024."
+            verb: "VOTED_FOR"
+            embedding_text: "vote maintien dotations hôpitaux 2024"
+            quote: "Vote enregistré: pour le maintien des dotations hospitalières."
+            date: "2024-06-20"
+            source_url: "https://test.example.com/cp/prot/4"
+
+      # Theme B — fiscal discipline / austerity. Designed to land in a
+      # SEPARATE "rigueur budgétaire" stance because of vocabulary drift
+      # (rigueur, discipline, dette, viabilité financière) even though the
+      # underlying axis is the same as Theme A. The merge sweep should
+      # recognise this and merge the two.
+      - axis: "discipline budgétaire"
+        facts:
+          - id: "cp-budg-1"
+            text: "Claire Petit a appelé à une rigueur budgétaire stricte et à une réduction de 5% des dépenses de l'État."
+            text_en: "Claire Petit called for strict fiscal discipline and a 5% reduction in state expenditure."
+            verb: "CLAIMED"
+            embedding_text: "appel rigueur budgétaire réduction dépenses État"
+            quote: "Il faut une rigueur budgétaire stricte et réduire de 5% les dépenses de l'État."
+            date: "2024-09-12"
+            source_url: "https://test.example.com/cp/budg/1"
+
+          - id: "cp-budg-2"
+            text: "Claire Petit a voté pour le budget d'austérité 2025 réduisant les dotations de fonctionnement des hôpitaux publics de 15%."
+            text_en: "Claire Petit voted for the 2025 austerity budget reducing public hospital operating subsidies by 15%."
+            verb: "VOTED_FOR"
+            embedding_text: "vote budget austérité réduction dotations hôpitaux 15"
+            quote: "Vote enregistré: pour le budget 2025 réduisant les dotations hospitalières de 15%."
+            date: "2024-12-15"
+            source_url: "https://test.example.com/cp/budg/2"
+
+          - id: "cp-budg-3"
+            text: "Claire Petit a voté contre la proposition d'augmentation des salaires enseignants présentée à l'Assemblée."
+            text_en: "Claire Petit voted against the teacher-salary-increase proposal in the National Assembly."
+            verb: "VOTED_AGAINST"
+            embedding_text: "vote contre augmentation salaires enseignants"
+            quote: "Vote enregistré: contre la proposition d'augmentation des salaires enseignants."
+            date: "2025-01-22"
+            source_url: "https://test.example.com/cp/budg/3"
+
+          - id: "cp-budg-4"
+            text: "Claire Petit a affirmé que l'État-providence est devenu un fardeau financier insoutenable pour les générations futures."
+            text_en: "Claire Petit stated that the welfare state has become an unsustainable financial burden for future generations."
+            verb: "CLAIMED"
+            embedding_text: "État-providence fardeau financier insoutenable générations futures"
+            quote: "L'État-providence est devenu un fardeau financier insoutenable pour les générations futures."
+            date: "2025-03-10"
+            source_url: "https://test.example.com/cp/budg/4"
+
 # Expected pair verdicts.
 # Pairs not listed are implicitly expected NO (any positive flag on them is a false positive).
 expected_pairs:
@@ -519,3 +712,98 @@ expected_pairs:
     expected: NO
     rule: "accusation_not_finding"
     notes: "Denial of misuse vs being placed under formal investigation. Being investigated is a procedural step, not a finding of guilt; it does not break her denial."
+
+  # ── Sibling pairs the original corpus missed (intra-stance, axis-violating). ──
+  # Added after observing the prompt correctly flags them with --check-all on
+  # a local LLM. Same-axis pair, same shape as the primary expected pair.
+  - a: "md-eco-1"
+    b: "md-eco-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Carbon-neutrality promise vs anti-EV-mandate vote. Different facts than md-eco-1↔md-eco-2 but the same axis-violation logic — opposite directions on ecological transition."
+
+  - a: "md-eco-2"
+    b: "md-eco-3"
+    expected: YES
+    rule: "values_based"
+    notes: "Coal-mine authorisation (action) vs renewable-energy support (claim). Same eco stance, axis-opposing pair within the stance."
+
+  - a: "ar-civ-1"
+    b: "ar-civ-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Anti-mass-surveillance promise vs cosigning a backdoor bill. Same civil-liberties axis — mass surveillance and encryption backdoors are the same erosion of privacy."
+
+  # ── Lucas Bernard: politique fiscale — edge cases the original corpus lacked. ──
+  - a: "lb-fisc-1"
+    b: "lb-fisc-2"
+    expected: YES
+    rule: "partial_break"
+    notes: "Specific promise (no tax hike on middle class) vs vote for a 0.5-point CSG hike that explicitly applies to all incomes including the middle class. This is a partial-scope break — the action materially undermines the commitment even though it is not the largest possible tax hike."
+
+  - a: "lb-fisc-1"
+    b: "lb-fisc-3"
+    expected: NO
+    rule: "consistent_position"
+    notes: "Promise not to raise taxes on middle class vs vote for a property-tax exemption covering lower-middle-class households. The two are aligned — a tax-relief vote is the OPPOSITE of breaking a no-tax-hike promise."
+
+  - a: "lb-fisc-4"
+    b: "lb-fisc-2"
+    expected: NO
+    rule: "vague_vs_specific"
+    notes: "Vague deliberative statement (we should think about how to fund the welfare state) is NOT a commitment that the specific CSG-hike vote can break. Per the prompt's VAGUE/SPECIFIC rule, exploratory wording does not lock in a position."
+
+  # ── Lucas Bernard: politique climatique — vague vs specific + fulfilled commitment. ──
+  - a: "lb-clim-1"
+    b: "lb-clim-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Broad climate-urgency stance ('il faut agir avec détermination') vs vote against a flagship climate mechanism (EU border carbon tax). Per the design choice to lean toward FLAG on broad-position-vs-opposing-action — even with grammatical 'il faut', the public position the politician staked is contradicted by their opposing vote. Score formula tolerates individual contradictions; surface the pattern."
+
+  - a: "lb-clim-3"
+    b: "lb-clim-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Specific carbon-neutrality-by-2030 commitment vs vote against the EU border carbon tax. Same climate-policy axis, material undermining of the commitment."
+
+  - a: "lb-clim-3"
+    b: "lb-clim-4"
+    expected: NO
+    rule: "announcement_then_action"
+    notes: "Carbon-neutrality-by-2030 promise + vote for the 'Fit for 55' EU climate package mandating 55% emissions cut by 2030. This is a fulfilled commitment, the OPPOSITE of a contradiction."
+
+  # ── Claire Petit: cross-stance contradictions (merge-sweep test). ──
+  # All four pairs cross the two stances we expect to fragment at ingest
+  # (protection services publics vs discipline budgétaire). The default
+  # KNN-filtered detector would not catch them because the two facts in
+  # each pair have low cosine similarity. Only after the stance merge
+  # sweep fires and re-analysis runs should these become TPs.
+  - a: "cp-prot-1"
+    b: "cp-budg-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Cross-stance. Promise to defend unconditional access to public hospitals (theme A) vs vote for an austerity budget cutting hospital operating subsidies by 15% (theme B). Same axis (public spending), opposite directions, material undermining."
+
+  - a: "cp-prot-2"
+    b: "cp-budg-3"
+    expected: YES
+    rule: "denial_after_claim"
+    notes: "Cross-stance. Specific 10% teacher-salary-raise promise (theme A) vs vote against the teacher-salary-increase proposal (theme B). Direct first-person commitment broken by direct opposing vote."
+
+  - a: "cp-prot-3"
+    b: "cp-budg-4"
+    expected: YES
+    rule: "values_based"
+    notes: "Cross-stance position shift. 'Public hospital services are a sacred republican commitment' (theme A) vs 'welfare state is an unsustainable financial burden' (theme B). Same underlying axis (role of the state in providing public services), opposite framings."
+
+  - a: "cp-prot-3"
+    b: "cp-budg-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Sibling of cp-prot-1↔cp-budg-2 and cp-prot-4↔cp-budg-2. Claim of public hospitals as 'engagement républicain sacré' is materially undermined by the austerity vote cutting hospital subsidies 15%. Added after the COMPLETENESS rule surfaced this edge in run v11."
+
+  - a: "cp-prot-4"
+    b: "cp-budg-2"
+    expected: YES
+    rule: "values_based"
+    notes: "Cross-stance. Voted to maintain 2024 hospital operating subsidies (theme A) vs voted for the 2025 austerity budget cutting the same operating subsidies by 15% (theme B). Same identified line item, opposite direction year-over-year."

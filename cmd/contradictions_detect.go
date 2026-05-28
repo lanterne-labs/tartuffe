@@ -474,7 +474,7 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 
 	for _, pp := range allPersonPairs {
 		personContradictions := 0
-		batchSize := contradiction.MaxPairsPerBatch
+		batchSize := contradiction.MaxPairsPerBatchSync
 
 		for i := 0; i < len(pp.pairs); i += batchSize {
 			end := i + batchSize

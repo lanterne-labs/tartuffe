@@ -206,6 +206,18 @@ var defaultMergeOptions = mergeOptions{
 	DryRun:        false,
 }
 
+// allStancesLLMCap is the per-person stance count at or below which we skip
+// Phase-A centroid clustering and just hand every stance to the merge LLM in
+// one call. Rationale: under Framing A (stance = neutral subject area), the
+// LLM's job is exactly to recognise that two directionally-framed stances
+// share a subject — but opposing-direction facts have distant embeddings, so
+// centroid similarity filters out the very pairs we need to merge. With
+// neutral subject labels each person typically has ≤15 stances; even 30 fits
+// comfortably in the merge LLM's 12k context. Above the cap, fall back to
+// centroid clustering as a safety net for the rare politician with decades
+// of fragmented stance data.
+const allStancesLLMCap = 30
+
 type personMergeStats struct {
 	skipped                  bool
 	candidateClusters        int64
@@ -239,26 +251,45 @@ func mergeStancesForPersonViaLLM(
 		return ps, nil
 	}
 
-	// Phase A: cluster centroids.
+	// Under Framing A (stance = neutral subject area, both pro and anti facts
+	// belong inside the same stance), the LLM merge prompt's job is exactly to
+	// recognise that two "directionally-framed" stances cover the same neutral
+	// subject. Centroid similarity is a poor proxy for this: opposing-direction
+	// facts have distant embeddings even when they share a subject, so Phase-A
+	// clustering can filter out exactly the merges we need. Skip clustering
+	// entirely for typical persons and hand all stances to the LLM in one call.
+	//
+	// Safety net for the rare prod edge case (politician with decades of data,
+	// >allStancesLLMCap stances): fall back to centroid clustering with the
+	// existing thresholds to keep the daily cron bounded.
 	centroids := make([][]float32, len(docs))
 	for i, d := range docs {
 		centroids[i] = d.ClusterEmbedding
 	}
-	distanceCutoff := 1.0 - opts.RecallSim
-	clusters := agglomerativeAverageLinkage(centroids, distanceCutoff)
 
-	// Drop singletons + sub-cluster anything oversized.
 	var candidateClusters [][]int
-	for _, cl := range clusters {
-		if len(cl) < 2 {
-			continue
+	if len(docs) <= allStancesLLMCap {
+		allIdx := make([]int, len(docs))
+		for i := range docs {
+			allIdx[i] = i
 		}
-		if len(cl) > opts.MaxCluster {
-			subs := subClusterIfNeeded(centroids, cl, 1.0-opts.SubclusterSim, opts.MaxCluster)
-			candidateClusters = append(candidateClusters, subs...)
-			continue
+		candidateClusters = [][]int{allIdx}
+	} else {
+		// Safety net: centroid clustering with existing thresholds.
+		distanceCutoff := 1.0 - opts.RecallSim
+		clusters := agglomerativeAverageLinkage(centroids, distanceCutoff)
+
+		for _, cl := range clusters {
+			if len(cl) < 2 {
+				continue
+			}
+			if len(cl) > opts.MaxCluster {
+				subs := subClusterIfNeeded(centroids, cl, 1.0-opts.SubclusterSim, opts.MaxCluster)
+				candidateClusters = append(candidateClusters, subs...)
+				continue
+			}
+			candidateClusters = append(candidateClusters, cl)
 		}
-		candidateClusters = append(candidateClusters, cl)
 	}
 
 	if len(candidateClusters) == 0 {
