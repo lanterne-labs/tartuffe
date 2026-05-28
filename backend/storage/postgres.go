@@ -1175,6 +1175,41 @@ func (s *PostgresStorer) GetPersonsWithMultipleStances(ctx context.Context) ([]P
 	return persons, nil
 }
 
+// GetPersonsWithFacts returns only persons that have at least one fact attached
+// via fact_mentions. Used by the stance rebuild/backfill/assign-stances paths to
+// skip the long tail of zero-fact persons (~2800/4000 in prod as of 2026-05),
+// which would otherwise eat per-person init time (DB connection, validator
+// state, logging) for no useful work — backfillStancesForPerson short-circuits
+// inside the loop when facts is empty, but the wrapper still pays the cost.
+// Filtering at SQL level removes that overhead.
+func (s *PostgresStorer) GetPersonsWithFacts(ctx context.Context) ([]PersonInfo, error) {
+	query := `
+		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
+		FROM persons p
+		WHERE EXISTS (
+			SELECT 1 FROM fact_mentions fm WHERE fm.person_id = p.id
+		)
+		ORDER BY p.name`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query persons with facts: %w", err)
+	}
+	defer rows.Close()
+
+	var persons []PersonInfo
+	for rows.Next() {
+		var p PersonInfo
+		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
+			return nil, fmt.Errorf("failed to scan person: %w", err)
+		}
+		persons = append(persons, p)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
+	}
+	return persons, nil
+}
+
 // AddPerson inserts a new person into the persons table if they don't already exist.
 // It uses the normalized version of the name. New candidates (those not already
 // in the table) are run through the EntityValidator first; rejected candidates

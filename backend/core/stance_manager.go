@@ -485,7 +485,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	// regenerate label + summary from the full fact list. Failures here are
 	// logged but do not fail the verdict (the stance is still correct, just
 	// using its prior label/summary until the next refresh).
-	if result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION" {
+	if (result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION") && !refreshDeferred(ctx) {
 		if err := sm.triggerStanceRefresh(ctx, matched.ID); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", matched.ID).
@@ -585,6 +585,32 @@ func (sm *StanceManager) recordStanceContradictions(
 // regenerate a stance's label + summary from the full fact list.
 func (sm *StanceManager) RefreshStanceMetadata(ctx context.Context, stanceID int64) error {
 	return sm.triggerStanceRefresh(ctx, stanceID)
+}
+
+// deferRefreshKey is the context key used by WithDeferRefresh to tell
+// handleVerdict to skip the per-fact refresh inside ProcessNewFact. Callers
+// processing many facts in a row (the rebuild/backfill loop) opt in so each
+// touched stance is refreshed ONCE at the end of the batch rather than after
+// every NEW_INFO / CONTRADICTION verdict — a typical heavy person with 40
+// facts in one stance goes from 40 refresh calls to 1.
+type deferRefreshKey struct{}
+
+// WithDeferRefresh returns a derived context that disables the inline
+// triggerStanceRefresh call inside handleVerdict. The caller becomes
+// responsible for calling RefreshStanceMetadata on every touched stance at
+// the end of the batch.
+//
+// Safe to call on a context already wrapped with WithDeferRefresh — idempotent.
+// Live ingest (FactInserter) does NOT wrap the context, so refresh remains
+// inline for new-fact-via-news/twitter/frpolitics flows.
+func WithDeferRefresh(ctx context.Context) context.Context {
+	return context.WithValue(ctx, deferRefreshKey{}, true)
+}
+
+// refreshDeferred returns true when the context was wrapped via WithDeferRefresh.
+func refreshDeferred(ctx context.Context) bool {
+	v, _ := ctx.Value(deferRefreshKey{}).(bool)
+	return v
 }
 
 // triggerStanceRefresh loads the current full fact set for the stance, calls

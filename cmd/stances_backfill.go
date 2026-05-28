@@ -149,7 +149,11 @@ func getPersonsForBackfill(ctx context.Context, storer *storage.PostgresStorer, 
 		}, nil
 	}
 
-	return storer.GetAllPersons(ctx)
+	// Filter to persons that actually have facts attached. Skipping zero-fact
+	// persons at SQL level avoids paying ~200-500ms of per-person setup (DB
+	// roundtrip, validator state, logging) for each of the ~2800 long-tail
+	// zero-fact persons in prod that have nothing to backfill anyway.
+	return storer.GetPersonsWithFacts(ctx)
 }
 
 func resolvePersonsFromFile(ctx context.Context, storer *storage.PostgresStorer, path string) ([]storage.PersonInfo, error) {
@@ -254,9 +258,22 @@ func backfillStancesForPerson(
 
 	stanceIDsSeen := make(map[int64]struct{})
 
+	// Defer per-fact triggerStanceRefresh — refresh each touched stance ONCE
+	// after the loop instead of after every NEW_INFO/CONTRADICTION verdict.
+	// For a heavy person (e.g. 40 facts in one stance) this turns 40 refresh
+	// LLM calls into 1. The final state is identical because the last refresh
+	// regenerates label + summary from the full final fact set.
+	ctxDefer := core.WithDeferRefresh(ctx)
+	// Track which stances need an end-of-loop refresh. Only NEW_INFO and
+	// CONTRADICTION verdicts would have triggered an inline refresh in the
+	// non-deferred path — match that selectively so we don't refresh stances
+	// whose only verdicts were NEW_STANCE or DUPLICATE (label is already
+	// authoritative).
+	stancesNeedingRefresh := make(map[int64]struct{})
+
 	for _, e := range entries {
 		rep := e.facts[0]
-		res, err := stanceManager.ProcessNewFact(ctx, personID, rep.ID, rep.FactText, rep.Embedding, rep.CanonicalVerb)
+		res, err := stanceManager.ProcessNewFact(ctxDefer, personID, rep.ID, rep.FactText, rep.Embedding, rep.CanonicalVerb)
 		if err != nil {
 			log.Error().Err(err).Str("person", personName).Int64("fact_id", rep.ID).Msg("ProcessNewFact failed; skipping group")
 			continue
@@ -266,6 +283,9 @@ func backfillStancesForPerson(
 		}
 		if res.Verdict == "CONTRADICTION" {
 			stats.ContradictionsDetected++
+		}
+		if res.Verdict == "NEW_INFO" || res.Verdict == "CONTRADICTION" {
+			stancesNeedingRefresh[res.StanceID] = struct{}{}
 		}
 		stanceIDsSeen[res.StanceID] = struct{}{}
 
@@ -277,6 +297,17 @@ func backfillStancesForPerson(
 			if err := adapter.AddFactToStance(ctx, res.StanceID, f.ID); err != nil {
 				log.Warn().Err(err).Int64("fact_id", f.ID).Int64("stance_id", res.StanceID).Msg("Failed to attach exact-label dup to stance")
 			}
+		}
+	}
+
+	// Now refresh each touched stance ONCE (we deferred during the loop). For
+	// stances that only saw NEW_STANCE / DUPLICATE verdicts this is a no-op
+	// per the verdict guard inside handleVerdict, but RefreshStanceMetadata
+	// is unconditional — so we only refresh stances that got a NEW_INFO or
+	// CONTRADICTION verdict (tracked via stancesNeedingRefresh).
+	for stanceID := range stancesNeedingRefresh {
+		if err := stanceManager.RefreshStanceMetadata(ctx, stanceID); err != nil {
+			log.Warn().Err(err).Int64("stance_id", stanceID).Str("person", personName).Msg("Backfill: end-of-loop refresh failed; stance keeps previous label/summary")
 		}
 	}
 
