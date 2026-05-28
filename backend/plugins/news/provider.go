@@ -169,8 +169,10 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 		searchOpts.DateTo = *opts.DateTo
 	}
 
-	// Search for news articles
-	newsResults, err := p.NewsSearch.SearchNews(target.Name, searchOpts)
+	// Search for news articles bilingually: native language of the person + en.
+	// Prevents random foreign-language articles (Korean, Thai, etc.) from being
+	// dragged in when search engines return globally-relevant matches.
+	newsResults, err := p.bilingualSearch(ctx, target, searchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("news search failed for %s: %w", target.Name, err)
 	}
@@ -353,8 +355,75 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 //
 // urlsToExtract and articlesToProcess are parallel slices: urlsToExtract[i] ==
 // articlesToProcess[i].Link. The caller is responsible for de-duplication and
-// for any visit-tracking decisions; this method does scrape → extract → insert
-// for every article it receives.
+// bilingualSearch calls the underlying news searcher once per target language
+// and merges results (dedup by URL, first occurrence wins). The languages are
+// derived from the target's person.lang in the DB plus an English pass:
+//   - person.lang = "fr" → ["fr", "en"]
+//   - person.lang = "de" → ["de", "en"]
+//   - person.lang = "en" → ["en"]
+//   - target has no PersonID (e.g. parties not yet linked, fresh ad-hoc queries)
+//     → ["fr", "en"] (legacy default — French-politics focus of the project)
+//
+// Each per-language call sets baseOpts.Language so the upstream search API
+// (Serper hl+gl, SerpAPI hl+gl, Brave search_lang+country) restricts results
+// to that language's media landscape. Without this filter, queries for
+// well-known politicians can pull articles in any language — observed before:
+// Korean Yonhap coverage of Norwegian elections leaking into French-politics
+// rebuild because the entity validator approved e.g. "노동당(노르웨이)" as a
+// real entity from Korean Wikipedia.
+//
+// Limit is preserved per-call (each language is allowed up to Limit results);
+// final merged slice may exceed Limit when both languages return results, by
+// design — the dedup cap is the user-visible limit, not the per-call one.
+func (p *Provider) bilingualSearch(ctx context.Context, target SearchTarget, baseOpts search.NewsSearchOptions) ([]search.NewsResult, error) {
+	langs := p.targetLanguages(ctx, target)
+
+	seen := make(map[string]bool)
+	var merged []search.NewsResult
+	for _, lang := range langs {
+		callOpts := baseOpts
+		callOpts.Language = lang
+		results, err := p.NewsSearch.SearchNews(target.Name, callOpts)
+		if err != nil {
+			// Don't fail the whole bilingual search if one language errors —
+			// surface the error only when ALL language passes failed.
+			log.Warn().Err(err).Str("target", target.Name).Str("lang", lang).Msg("news: per-language search failed; continuing with other languages")
+			continue
+		}
+		for _, r := range results {
+			if seen[r.Link] {
+				continue
+			}
+			seen[r.Link] = true
+			merged = append(merged, r)
+		}
+	}
+	if len(merged) == 0 && len(langs) > 0 {
+		// All language passes returned zero results (or errored). Surface as
+		// an empty result, not an error — matches the legacy SearchNews
+		// "no results" behaviour the callers already handle gracefully.
+		return nil, nil
+	}
+	return merged, nil
+}
+
+// targetLanguages returns the BCP-47 language tags to search for this target.
+// Always includes "en" exactly once. Falls back to ["fr", "en"] for legacy
+// callers that haven't populated PersonID — historical French-politics focus.
+func (p *Provider) targetLanguages(ctx context.Context, target SearchTarget) []string {
+	native := "fr"
+	if target.PersonID != nil {
+		got, err := p.Storer.GetPersonLang(ctx, *target.PersonID)
+		if err == nil && got != "" {
+			native = got
+		}
+	}
+	if native == "en" {
+		return []string{"en"}
+	}
+	return []string{native, "en"}
+}
+
 func (p *Provider) extractAndInsertFromArticles(
 	ctx context.Context,
 	target SearchTarget,
@@ -574,7 +643,7 @@ func (p *Provider) CollectContent(ctx context.Context, target SearchTarget, opts
 		searchOpts.DateTo = *opts.DateTo
 	}
 
-	newsResults, err := p.NewsSearch.SearchNews(target.Name, searchOpts)
+	newsResults, err := p.bilingualSearch(ctx, target, searchOpts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("news search failed for %s: %w", target.Name, err)
 	}

@@ -188,8 +188,21 @@ func (b *BraveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions
 	}
 
 	// Country filter
+	country := ""
 	if opts.Location != "" {
-		params.Add("country", mapLocationToGLCode(opts.Location))
+		country = mapLocationToGLCode(opts.Location)
+	}
+	if opts.Language != "" {
+		// Brave: search_lang (results in this language) + optional ui_lang
+		// (interface). search_lang is what actually constrains content.
+		params.Add("search_lang", opts.Language)
+		params.Add("ui_lang", opts.Language)
+		if country == "" {
+			country = langToCountryGL(opts.Language)
+		}
+	}
+	if country != "" {
+		params.Add("country", country)
 	}
 
 	// Freshness / date range

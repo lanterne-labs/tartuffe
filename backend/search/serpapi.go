@@ -21,6 +21,55 @@ type NewsSearchOptions struct {
 	Limit int
 	// Location restricts results to a specific country/region (e.g., "France", "United States").
 	Location string
+	// Language is a BCP-47 language code constraining results to that language
+	// (e.g. "fr", "en", "de"). Maps to the upstream API's host-language parameter
+	// (Serper/SerpAPI: hl; Brave: ui_lang) AND to the country code via langToCountryGL
+	// (Serper/SerpAPI: gl; Brave: country) when no explicit Location is provided.
+	// Empty = no language constraint (provider's default = global).
+	// Callers that want bilingual coverage (e.g. the news plugin's "native + en"
+	// pattern) should call SearchNews twice with different Language values and
+	// merge results, since each provider call constrains to one language.
+	Language string
+}
+
+// langToCountryGL returns the upper-case ISO-3166 country code that pairs
+// naturally with the given BCP-47 language tag, for use as Serper/SerpAPI's
+// `gl` parameter or Brave's `country`. Defaults to "" (no country pin) when
+// the language is unknown.
+//
+// Used by all three search providers when NewsSearchOptions.Language is set
+// but NewsSearchOptions.Location is empty: setting both hl and gl together
+// is what actually restricts results to a country's media landscape — hl
+// alone returns multi-country articles in that language.
+func langToCountryGL(lang string) string {
+	switch lang {
+	case "fr":
+		return "FR"
+	case "en":
+		return "US"
+	case "de":
+		return "DE"
+	case "es":
+		return "ES"
+	case "it":
+		return "IT"
+	case "pt":
+		return "PT"
+	case "nl":
+		return "NL"
+	case "pl":
+		return "PL"
+	case "sv":
+		return "SE"
+	case "da":
+		return "DK"
+	case "fi":
+		return "FI"
+	case "no":
+		return "NO"
+	default:
+		return ""
+	}
 }
 
 // NewsResult represents a single news article found by the search.
@@ -128,8 +177,18 @@ func (s *SerpAPINewsProvider) buildSearchURL(query string, opts NewsSearchOption
 	}
 
 	// Add location filter
+	gl := ""
 	if opts.Location != "" {
-		params.Add("gl", mapLocationToGLCode(opts.Location))
+		gl = mapLocationToGLCode(opts.Location)
+	}
+	if opts.Language != "" {
+		params.Add("hl", opts.Language)
+		if gl == "" {
+			gl = langToCountryGL(opts.Language)
+		}
+	}
+	if gl != "" {
+		params.Add("gl", gl)
 	}
 
 	// Add result limit

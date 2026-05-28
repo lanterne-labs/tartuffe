@@ -2405,6 +2405,26 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	return persons, nil
 }
 
+// GetPersonLang returns the person's BCP-47 source language ("fr", "en", "de", ...)
+// from persons.lang. Used by the news plugin to localise outbound search queries
+// — French politicians get fr-language searches, German get de-language, etc.,
+// with an en pass added in addition. Returns "fr" as a safe fallback if the
+// person doesn't exist or has no lang set (matches the column default).
+func (s *PostgresStorer) GetPersonLang(ctx context.Context, personID int64) (string, error) {
+	var lang string
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE(lang, 'fr') FROM persons WHERE id = $1`, personID).Scan(&lang)
+	if err == pgx.ErrNoRows {
+		return "fr", nil
+	}
+	if err != nil {
+		return "fr", fmt.Errorf("get person lang: %w", err)
+	}
+	if lang == "" {
+		return "fr", nil
+	}
+	return lang, nil
+}
+
 // GetPersonByID returns a single person by ID, including stance and contradiction
 // counts used for the profile-page summary line.
 func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*PersonSummary, error) {

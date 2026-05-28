@@ -190,6 +190,12 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 		if opts.Location != "" {
 			body.GL = mapLocationToGLCode(opts.Location)
 		}
+		if opts.Language != "" {
+			body.HL = opts.Language
+			if body.GL == "" {
+				body.GL = langToCountryGL(opts.Language)
+			}
+		}
 
 		raw, err := s.doPost("/news", body)
 		if err != nil {
