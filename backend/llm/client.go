@@ -193,6 +193,18 @@ type ChatRequest struct {
 	MaxTokens      int             `json:"max_tokens,omitempty"`
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 	Provider       *ProviderConfig `json:"provider,omitempty"`
+	// ChatTemplateKwargs forwards arbitrary kwargs to the upstream model's
+	// HuggingFace chat template (passed through by llama-server / vLLM via
+	// `chat_template_kwargs`). Used today to enable Gemma's thinking mode
+	// for judgment-heavy calls: set `{"enable_thinking": true}` and the
+	// upstream serves the chain-of-thought in the response's `reasoning`
+	// field, keeping `content` clean of the thinking preamble — so our
+	// JSON/regex parsers don't need to change.
+	//
+	// Default empty (no thinking) for fast paths like fact extraction and
+	// label generation. Enable explicitly on stance analyze + contradiction
+	// detection where the reasoning quality matters.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 // ChatChoice models a single choice in the completion response.

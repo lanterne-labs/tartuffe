@@ -660,6 +660,7 @@ func (sm *StanceManager) callJSONLLM(
 	systemMsg, userPrompt string,
 	temperature float64,
 	maxTokens int,
+	enableThinking bool,
 ) (string, error) {
 	reqPayload := llm.ChatRequest{
 		Model: sm.model,
@@ -670,6 +671,13 @@ func (sm *StanceManager) callJSONLLM(
 		Temperature:    temperature,
 		MaxTokens:      maxTokens,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+	if enableThinking {
+		// Gemma thinking mode: upstream returns the chain-of-thought in
+		// `message.reasoning`, leaves `message.content` clean. Our parsers
+		// only read content, so this is a drop-in quality boost for the
+		// judgment-heavy calls (stance analyze, merge decision).
+		reqPayload.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)
@@ -811,7 +819,11 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 	temps := []float64{0.1, 0.3}
 	var lastErr error
 	for i, t := range temps {
-		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 2000)
+		// Thinking ON: stance analyze is the most judgment-heavy LLM call in
+		// the pipeline (contradiction detection + DIRECT-EDGE + COMPLETENESS
+		// reasoning). Gemma's thinking mode lifts quality with no parser
+		// changes — reasoning lands in `reasoning`, content stays clean JSON.
+		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 2000, true)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call: %w", err)
 			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")
@@ -924,7 +936,7 @@ Return ONLY valid JSON:
 
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(shortlist))
 
-	content, err := sm.callJSONLLM(ctx, "You are a political fact topic classifier. Return only valid JSON.", prompt, 0.1, 800)
+	content, err := sm.callJSONLLM(ctx, "You are a political fact topic classifier. Return only valid JSON.", prompt, 0.1, 800, false)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
@@ -1027,7 +1039,7 @@ LABEL RULES:
 Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
 
-	content, err := sm.callJSONLLM(ctx, "You generate broad topic labels for political facts. Return only valid JSON.", prompt, 0.1, 200)
+	content, err := sm.callJSONLLM(ctx, "You generate broad topic labels for political facts. Return only valid JSON.", prompt, 0.1, 200, false)
 	if err != nil {
 		return "", fmt.Errorf("label generation: %w", err)
 	}
@@ -1095,7 +1107,7 @@ LANGUAGE RULES:
 Return ONLY valid JSON:
 {"label": "subject-area label", "label_en": "English translation (omit if label is English)", "summary": "2-4 sentence summary", "summary_en": "English translation (omit if summary is English)"}`, factsBuilder.String())
 
-	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700)
+	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700, false)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
@@ -1270,7 +1282,9 @@ If nothing should be merged, return {"reasoning": "...", "merges": []}.
 Stances not listed in any merge group will be left as-is.`,
 		personName, stancesBuilder.String())
 
-	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800)
+	// Thinking ON: merge decision is judgment-heavy (textbook-category
+	// matching, cross-polarity recognition) and benefits from chain-of-thought.
+	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800, true)
 	if err != nil {
 		return nil, fmt.Errorf("merge decision: %w", err)
 	}

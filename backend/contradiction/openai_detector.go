@@ -433,14 +433,19 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 
 	prompt := fmt.Sprintf(contradictionPromptTpl, pairsText.String())
 
-	// Build Chat Request
+	// Build Chat Request. Thinking ON: pair-wise contradiction detection is
+	// the precision-critical judgment call — every YES is a user-visible
+	// honesty hit. Gemma's thinking mode lifts quality at no parsing cost
+	// (reasoning lands in `message.reasoning`, content stays clean for the
+	// existing PAIR N: REASONING/YES/NO regex parser).
 	reqPayload := categorizer.ChatRequest{
 		Model: d.model,
 		Messages: []categorizer.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature: 0.0,
-		MaxTokens:   contradictionMaxTokens,
+		Temperature:        0.0,
+		MaxTokens:          contradictionMaxTokens,
+		ChatTemplateKwargs: map[string]any{"enable_thinking": true},
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)
