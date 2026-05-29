@@ -32,8 +32,10 @@ const (
 	MaxPairsPerBatchSync = 1
 	// contradictionMaxTokens caps the LLM response budget. A 3-pair response
 	// is ~600 tokens realistically (REASONING + verdict per pair, ~200 tok
-	// each). 2048 leaves headroom while keeping prompt+reservation under 5k.
-	contradictionMaxTokens = 2048
+	// each). 4096 leaves headroom for Gemma's thinking mode (chain-of-thought
+	// adds 500-1500 tokens before the answer starts) — was 2048 before
+	// thinking was enabled, but that caused empty content + truncated JSON.
+	contradictionMaxTokens = 4096
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
 	DelayBetweenBatches = 1 * time.Second
@@ -433,19 +435,15 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 
 	prompt := fmt.Sprintf(contradictionPromptTpl, pairsText.String())
 
-	// Build Chat Request. Thinking ON: pair-wise contradiction detection is
-	// the precision-critical judgment call — every YES is a user-visible
-	// honesty hit. Gemma's thinking mode lifts quality at no parsing cost
-	// (reasoning lands in `message.reasoning`, content stays clean for the
-	// existing PAIR N: REASONING/YES/NO regex parser).
+	// Build Chat Request. Thinking OFF — eval showed it regressed recall on
+	// values_based pairs that the COMPLETENESS rule otherwise catches.
 	reqPayload := categorizer.ChatRequest{
 		Model: d.model,
 		Messages: []categorizer.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature:        0.0,
-		MaxTokens:          contradictionMaxTokens,
-		ChatTemplateKwargs: map[string]any{"enable_thinking": true},
+		Temperature: 0.0,
+		MaxTokens:   contradictionMaxTokens,
 	}
 
 	payloadBytes, err := json.Marshal(reqPayload)

@@ -819,11 +819,13 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 	temps := []float64{0.1, 0.3}
 	var lastErr error
 	for i, t := range temps {
-		// Thinking ON: stance analyze is the most judgment-heavy LLM call in
-		// the pipeline (contradiction detection + DIRECT-EDGE + COMPLETENESS
-		// reasoning). Gemma's thinking mode lifts quality with no parser
-		// changes — reasoning lands in `reasoning`, content stays clean JSON.
-		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 2000, true)
+		// Thinking OFF: eval v17 vs v16 showed Gemma's thinking mode regressed
+		// recall (-0.14) on values_based pairs the COMPLETENESS rule otherwise
+		// catches — the model reasons through chains-of-thought and finds
+		// excuses to NOT flag direct contradictions. ChatTemplateKwargs field
+		// kept in ChatRequest for future selective use, and the 4000-token cap
+		// is kept as harmless headroom for the bigger COMPLETENESS responses.
+		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 4000, false)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call: %w", err)
 			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")
@@ -1282,9 +1284,9 @@ If nothing should be merged, return {"reasoning": "...", "merges": []}.
 Stances not listed in any merge group will be left as-is.`,
 		personName, stancesBuilder.String())
 
-	// Thinking ON: merge decision is judgment-heavy (textbook-category
-	// matching, cross-polarity recognition) and benefits from chain-of-thought.
-	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800, true)
+	// Thinking OFF (see callLLM comment): same regression pattern observed.
+	// Token cap restored to 800 — no thinking means no need for the headroom.
+	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800, false)
 	if err != nil {
 		return nil, fmt.Errorf("merge decision: %w", err)
 	}
