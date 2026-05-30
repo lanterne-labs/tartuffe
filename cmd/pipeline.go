@@ -63,11 +63,19 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	}
 	log.Info().Int("targets", len(targets)).Msg("Daily pipeline: target persons resolved")
 
-	// Step 1: News fact extraction. In batch mode, this also bundles tweets for the
-	// same target set so they go through the same batch LLM job.
-	stats, batchErr := collectAndSubmitBatch(ctx, storer, targets, targetIDs)
-	if batchErr != nil {
-		log.Error().Err(batchErr).Msg("Daily pipeline: news/batch submission failed")
+	// Step 1: News fact extraction. Batch mode only — requires BATCH_PROVIDER.
+	// When unset, skip gracefully; the Twitter sync path (step 2) still runs.
+	var (
+		stats    *pipelineStats
+		batchErr error
+	)
+	if os.Getenv("BATCH_PROVIDER") == "" {
+		log.Info().Msg("Daily pipeline: BATCH_PROVIDER not configured, skipping batch news/twitter submission")
+	} else {
+		stats, batchErr = collectAndSubmitBatch(ctx, storer, targets, targetIDs)
+		if batchErr != nil {
+			log.Error().Err(batchErr).Msg("Daily pipeline: news/batch submission failed")
+		}
 	}
 
 	// Step 2: Twitter — discovery (queue-scoped, only persons we care about) +
