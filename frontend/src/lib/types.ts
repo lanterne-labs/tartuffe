@@ -57,6 +57,31 @@ export interface ContradictionWithFacts {
 	fact_b_stance_label_en?: string | null;
 }
 
+export interface BundledContradictionFact {
+	id: number;
+	text: string;
+	text_en?: string;
+	source_urls: string[];
+	date: string | null;
+	stance_id: number | null;
+	stance_label: string | null;
+	stance_label_en?: string | null;
+}
+
+// One logical inconsistency, potentially backed by multiple pairwise DB rows.
+export interface BundledContradiction {
+	bundle_id: number | null;
+	bundle_label: string | null;
+	bundle_label_en?: string | null;
+	bundle_summary: string | null;
+	bundle_summary_en?: string | null;
+	pair_count: number;
+	reason: string;
+	reason_en?: string;
+	detected_at: string;
+	facts: BundledContradictionFact[];
+}
+
 export interface PaginatedResponse<T> {
 	items: T[];
 	total: number;

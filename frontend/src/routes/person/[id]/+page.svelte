@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse, StanceDocument } from '$lib/types';
+	import type { PersonSummary, FactWithSource, BundledContradiction, PaginatedResponse, StanceDocument } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
-	import ContradictionPair from '$lib/components/ContradictionPair.svelte';
+	import BundledContradictionCard from '$lib/components/BundledContradictionCard.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -57,7 +57,7 @@
 	// Stance-first profile state.
 	let stanceSort: StanceSort = $state('worst');
 	let expandedStances: Record<number, boolean> = $state({});
-	let stanceContradictions: Record<number, ContradictionWithFacts[]> = $state({});
+	let stanceContradictions: Record<number, BundledContradiction[]> = $state({});
 	let stanceLoading: Record<number, boolean> = $state({});
 	// How many contradictions to render per expanded stance. Starts small so a stance with
 	// 30+ paraphrase pairs doesn't dump the whole list at once; "Show N more" / "Show all"
@@ -175,7 +175,7 @@
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
-			const items: ContradictionWithFacts[] = await response.json();
+			const items: BundledContradiction[] = await response.json();
 			stanceContradictions[stanceId] = items;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
@@ -363,18 +363,7 @@
 		});
 	}
 
-	function reportContradiction(c: ContradictionWithFacts) {
-		openTally({
-			target_kind: 'contradiction',
-			contradiction_id: c.id,
-			fact_id: '',
-			stance_id: '',
-			target_label: `Contradiction #${c.id} (facts #${c.fact_a_id} ↔ #${c.fact_b_id})`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
-	function reportStance(s: StanceDocument) {
+function reportStance(s: StanceDocument) {
 		const preview = s.label.length > 60 ? s.label.slice(0, 60) + '…' : s.label;
 		openTally({
 			target_kind: 'stance',
@@ -633,8 +622,8 @@
 										{#if stanceLoading[stance.id]}
 											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
 										{:else if items.length > 0}
-											{#each items.slice(0, shown) as c (c.id)}
-												<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
+											{#each items.slice(0, shown) as b, i (b.bundle_id ?? `solo-${i}`)}
+												<BundledContradictionCard {b} onGoToFact={goToFact} />
 											{/each}
 											{#if remaining > 0}
 												<div class="stance-more-row">

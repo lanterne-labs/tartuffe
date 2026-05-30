@@ -426,8 +426,122 @@ func (ws *WebServer) handleGetStanceFacts(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(items)
 }
 
-// handleGetStanceContradictions returns the contradictions inside a single stance bundle
-// (rows whose bundle_stance_id matches). Used by the profile UI when a stance card is expanded.
+// BundledContradictionFact is one unique fact within a BundledContradiction.
+type BundledContradictionFact struct {
+	ID            int64      `json:"id"`
+	Text          string     `json:"text"`
+	TextEn        string     `json:"text_en,omitempty"`
+	SourceURLs    []string   `json:"source_urls"`
+	Date          *time.Time `json:"date"`
+	StanceID      *int64     `json:"stance_id"`
+	StanceLabel   *string    `json:"stance_label"`
+	StanceLabelEn *string    `json:"stance_label_en,omitempty"`
+}
+
+// BundledContradiction collapses N pairwise contradiction rows sharing the same
+// bundle_stance_id into a single card: one merged reason + all unique facts.
+// PairCount is the number of pairwise rows in the bundle; solo rows (NULL bundle)
+// become singleton bundles with PairCount=1.
+type BundledContradiction struct {
+	BundleID        *int64                     `json:"bundle_id"`
+	BundleLabel     *string                    `json:"bundle_label"`
+	BundleLabelEn   *string                    `json:"bundle_label_en,omitempty"`
+	BundleSummary   *string                    `json:"bundle_summary"`
+	BundleSummaryEn *string                    `json:"bundle_summary_en,omitempty"`
+	PairCount       int                        `json:"pair_count"`
+	Reason          string                     `json:"reason"`
+	ReasonEn        string                     `json:"reason_en,omitempty"`
+	DetectedAt      time.Time                  `json:"detected_at"`
+	Facts           []BundledContradictionFact `json:"facts"`
+}
+
+// bundleContradictions groups a flat list of pairwise contradiction rows into
+// bundles. Rows sharing a bundle_stance_id form one BundledContradiction with
+// the union of their distinct facts. NULL-bundle (solo) rows each become their
+// own singleton bundle.
+func bundleContradictions(items []storage.ContradictionWithFacts) []BundledContradiction {
+	if len(items) == 0 {
+		return []BundledContradiction{}
+	}
+
+	type bundleKey string
+	bundleMap := make(map[bundleKey]*BundledContradiction)
+	factSeen := make(map[bundleKey]map[int64]bool)
+	var order []bundleKey
+
+	for _, item := range items {
+		var key bundleKey
+		if item.BundleID != nil {
+			key = bundleKey(fmt.Sprintf("b:%d", *item.BundleID))
+		} else {
+			key = bundleKey(fmt.Sprintf("solo:%d", item.ID))
+		}
+
+		if _, exists := bundleMap[key]; !exists {
+			order = append(order, key)
+			bundleMap[key] = &BundledContradiction{
+				BundleID:        item.BundleID,
+				BundleLabel:     item.BundleLabel,
+				BundleLabelEn:   item.BundleLabelEn,
+				BundleSummary:   item.BundleSummary,
+				BundleSummaryEn: item.BundleSummaryEn,
+				Reason:          item.Reason,
+				ReasonEn:        item.ReasonEn,
+				DetectedAt:      item.DetectedAt,
+				Facts:           []BundledContradictionFact{},
+			}
+			factSeen[key] = make(map[int64]bool)
+		}
+
+		b := bundleMap[key]
+		b.PairCount++
+		if item.DetectedAt.After(b.DetectedAt) {
+			b.DetectedAt = item.DetectedAt
+		}
+		// Use the longest reason as most representative.
+		if len(item.Reason) > len(b.Reason) {
+			b.Reason = item.Reason
+			b.ReasonEn = item.ReasonEn
+		}
+
+		if !factSeen[key][item.FactAID] {
+			factSeen[key][item.FactAID] = true
+			b.Facts = append(b.Facts, BundledContradictionFact{
+				ID:            item.FactAID,
+				Text:          item.FactAText,
+				TextEn:        item.FactAtextEn,
+				SourceURLs:    item.FactASourceURLs,
+				Date:          item.FactADate,
+				StanceID:      item.FactAStanceID,
+				StanceLabel:   item.FactAStanceLabel,
+				StanceLabelEn: item.FactAStanceLabelEn,
+			})
+		}
+		if !factSeen[key][item.FactBID] {
+			factSeen[key][item.FactBID] = true
+			b.Facts = append(b.Facts, BundledContradictionFact{
+				ID:            item.FactBID,
+				Text:          item.FactBText,
+				TextEn:        item.FactBtextEn,
+				SourceURLs:    item.FactBSourceURLs,
+				Date:          item.FactBDate,
+				StanceID:      item.FactBStanceID,
+				StanceLabel:   item.FactBStanceLabel,
+				StanceLabelEn: item.FactBStanceLabelEn,
+			})
+		}
+	}
+
+	result := make([]BundledContradiction, len(order))
+	for i, k := range order {
+		result[i] = *bundleMap[k]
+	}
+	return result
+}
+
+// handleGetStanceContradictions returns contradictions inside a single stance bundle,
+// collapsed into one BundledContradiction per distinct inconsistency. Multiple pairwise
+// rows sharing a bundle_stance_id are merged into one card showing all unique facts.
 func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
@@ -445,7 +559,7 @@ func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *htt
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(bundleContradictions(items))
 }
 
 // handleGetPersonStances returns stance documents for a specific person, with a per-stance
