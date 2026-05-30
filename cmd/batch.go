@@ -45,8 +45,8 @@ Examples:
 }
 
 var batchSubmitCmd = &cobra.Command{
-	Use:   "submit",
-	Short: "Submit cached content for batch fact extraction",
+	Use:         "submit",
+	Short:       "Submit cached content for batch fact extraction",
 	Annotations: map[string]string{"needs_db": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir, _ := cmd.Flags().GetString("dir")
@@ -116,8 +116,8 @@ var batchSubmitCmd = &cobra.Command{
 }
 
 var batchStatusCmd = &cobra.Command{
-	Use:   "status [batch-id]",
-	Short: "Check batch status (no id = show all pending)",
+	Use:         "status [batch-id]",
+	Short:       "Check batch status (no id = show all pending)",
 	Annotations: map[string]string{"needs_db": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -176,8 +176,8 @@ var batchStatusCmd = &cobra.Command{
 }
 
 var batchRetrieveCmd = &cobra.Command{
-	Use:   "retrieve [batch-id]",
-	Short: "Retrieve and process batch results (no id = all completed)",
+	Use:         "retrieve [batch-id]",
+	Short:       "Retrieve and process batch results (no id = all completed)",
 	Annotations: map[string]string{"needs_db": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -248,8 +248,8 @@ var batchRetrieveCmd = &cobra.Command{
 }
 
 var batchListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all batches",
+	Use:         "list",
+	Short:       "List all batches",
 	Annotations: map[string]string{"needs_db": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -288,9 +288,9 @@ var batchListCmd = &cobra.Command{
 }
 
 var batchRecoverCmd = &cobra.Command{
-	Use:   "recover [provider-batch-id]",
-	Short: "Recover an orphaned batch that completed on the provider but has no DB records",
-	Args:  cobra.ExactArgs(1),
+	Use:         "recover [provider-batch-id]",
+	Short:       "Recover an orphaned batch that completed on the provider but has no DB records",
+	Args:        cobra.ExactArgs(1),
 	Annotations: map[string]string{"needs_db": "true"},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		providerBatchID := args[0]
@@ -342,8 +342,8 @@ var batchRecoverCmd = &cobra.Command{
 			// Set state to completed so RetrieveAndProcess accepts it
 			now := time.Now()
 			if err := storer.UpdateBatchStatus(ctx, batchID, storage.BatchStatusUpdate{
-				State:          "completed",
-				CompletedAt:    &now,
+				State:       "completed",
+				CompletedAt: &now,
 			}); err != nil {
 				return fmt.Errorf("failed to update batch state to completed: %w", err)
 			}
@@ -613,6 +613,16 @@ func buildContradictionHandler(storer *storage.PostgresStorer) core.Contradictio
 		bundler = b
 	}
 
+	// Adversarial verification pass: best-effort. If the detector can't be
+	// built (e.g. OPEN_AI_API unset), we fall open and record contradictions
+	// without the second-opinion refutation rather than blocking them.
+	var verifier *contradiction.OpenAIContradictionDetector
+	if d, dErr := contradiction.NewOpenAIContradictionDetectorFromEnv(); dErr != nil {
+		log.Warn().Err(dErr).Msg("Contradiction verifier unavailable; batch contradictions recorded WITHOUT the verification pass")
+	} else {
+		verifier = d
+	}
+
 	return func(ctx context.Context, customID string, llmResponse string) error {
 		personID, factAIDs, factBIDs, err := contradiction.ParseContradictionCustomID(customID)
 		if err != nil {
@@ -630,13 +640,49 @@ func buildContradictionHandler(storer *storage.PostgresStorer) core.Contradictio
 				continue
 			}
 
+			// Adversarial verification pass before recording. Fetch the fact
+			// texts once (reused for the bundler) and refute the claim; on
+			// verifier error we fall open (keep), on explicit refutation we drop.
+			isContra := result.IsContradictory
+			var factTexts map[int64]string
+			if isContra {
+				texts, txtErr := storer.GetFactTextsByIDs(ctx, []int64{factAIDs[i], factBIDs[i]})
+				if txtErr != nil {
+					log.Warn().Err(txtErr).
+						Int64("fact_a", factAIDs[i]).Int64("fact_b", factBIDs[i]).
+						Msg("Could not fetch fact texts; recording contradiction WITHOUT verification (fail-open)")
+				} else {
+					factTexts = texts
+					aText, bText := texts[factAIDs[i]], texts[factBIDs[i]]
+					// Skip verification when either text is missing (fact deleted
+					// mid-run); keep (fail-open) rather than feed an empty statement
+					// to the verifier, mirroring the stance path.
+					if verifier != nil && aText != "" && bText != "" {
+						keep, refutation, vErr := verifier.VerifyContradiction(ctx, aText, bText, result.Reason)
+						if vErr != nil {
+							log.Warn().Err(vErr).
+								Int64("fact_a", factAIDs[i]).Int64("fact_b", factBIDs[i]).
+								Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+						} else if !keep {
+							isContra = false
+							log.Info().
+								Int64("person_id", personID).
+								Int64("fact_a", factAIDs[i]).Int64("fact_b", factBIDs[i]).
+								Str("flagged_reason", result.Reason).
+								Str("refutation", refutation).
+								Msg("Contradiction refuted by verification pass; dropping (batch)")
+						}
+					}
+				}
+			}
+
 			pairResults = append(pairResults, storage.PairCheckResult{
 				FactAID:         factAIDs[i],
 				FactBID:         factBIDs[i],
-				IsContradiction: result.IsContradictory,
+				IsContradiction: isContra,
 			})
 
-			if result.IsContradictory {
+			if isContra {
 				log.Warn().
 					Int64("person_id", personID).
 					Int64("fact_a", factAIDs[i]).
@@ -650,11 +696,15 @@ func buildContradictionHandler(storer *storage.PostgresStorer) core.Contradictio
 					continue
 				}
 				if needsBundler && bundler != nil {
-					texts, txtErr := storer.GetFactTextsByIDs(ctx, []int64{factAIDs[i], factBIDs[i]})
-					if txtErr != nil {
-						log.Warn().Err(txtErr).Int64("contradiction_id", contradictionID).
-							Msg("Could not fetch fact texts for bundler; row remains a solo bundle")
-						continue
+					texts := factTexts
+					if texts == nil {
+						t, txtErr := storer.GetFactTextsByIDs(ctx, []int64{factAIDs[i], factBIDs[i]})
+						if txtErr != nil {
+							log.Warn().Err(txtErr).Int64("contradiction_id", contradictionID).
+								Msg("Could not fetch fact texts for bundler; row remains a solo bundle")
+							continue
+						}
+						texts = t
 					}
 					if bErr := bundler.Resolve(ctx, personID, contradictionID,
 						factAIDs[i], factBIDs[i], texts[factAIDs[i]], texts[factBIDs[i]], result.Reason); bErr != nil {

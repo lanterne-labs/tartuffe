@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-30: Adversarial verification pass before persisting contradictions (gh#23)
+
+### What was done
+- Every detector YES now passes through a second, independent **refutation** LLM call before it is recorded. If the refute pass returns NO the contradiction is dropped (never persisted, never dents the score). Single source of truth: the prompt lives in `backend/promptrules/verify.go` (`RefuteContradictionPrompt`, dependency-free) and the LLM call + parse in `backend/llm/verifier.go` (`VerifyContradiction`). Thin wrappers expose it on both `contradiction.OpenAIContradictionDetector` and `core.StanceManager` (the import graph `contradiction → categorizer → core` forbids the stance path from importing the detector, so the shared logic had to sit in the two dependency-free packages both can reach).
+- Wired at all three persist sites: the stance path (`handleVerdict` + `AnalyzeFactInStance` filter entries via `verifyEntries`; if every flagged pair is refuted the verdict downgrades CONTRADICTION→NEW_INFO), the sync batch path (`cmd/contradictions_detect.go`), and the async Gemini batch path (`cmd/batch.go`). The recorded pair-check reflects the post-verification verdict so a refuted pair is not re-detected.
+- **Fail-open on operational error**: a refute prompt that returns NO drops the pair; an LLM/parse *error* keeps it (logged WARN) — an infra hiccup must not silently delete a real contradiction. Model uncertainty resolves to NO via the prompt itself.
+- New read-only command `dm contradictions reverify` runs the refute pass over already-recorded rows and prints the ones it would drop. It never deletes — prod cleanup happens separately with explicit approval. (Distinct from `dm contradictions check`, which re-judges with the full detection rules; reverify uses the stricter FP-bucket refute prompt.)
+- New local-only golden test `TestVerifyGolden` (`backend/contradiction/verify_test.go`) loads real prod cases from `testdata/verify_cases.yaml` and asserts keep/drop per case. Skips unless `OPEN_AI_KEY` is set (never runs in CI; LLM is the free local GPU). Add a misbehaving prod pair to the YAML and re-run to tune the prompt — ~15s, no DB, unlike `dm eval run` which is end-to-end (~20min, can't isolate the verifier from the detector).
+
+### Why
+A production review of all 44 contradictions found ~18-20% clear false positives in four buckets: numeric/measurement mismatches, different procedural scopes of the same action, conditional statements whose condition later came true (logic inversion), and same-direction claims flagged as opposed. The detector is a single LLM judgment with no second opinion, so any over-eager YES sticks forever. The refute pass is the highest-leverage fix (LLM is free locally; it only fires on the rare YES). Tuning lesson: a "default to NO when unsure" refute prompt is too aggressive on its own — it also kills genuine reversals (motivation flips, denial-vs-conviction, warned-then-voted, broken commitments). The prompt needs explicit POSITIVE patterns for real contradictions alongside the hard-NO FP buckets; balanced, the golden set is 12/12 (8 FP dropped, 4 TP kept) and stable across runs at temp 0.
+
 ## 2026-05-26: X-Application / X-App-Component headers on outbound LLM + embedding calls
 
 ### What was done

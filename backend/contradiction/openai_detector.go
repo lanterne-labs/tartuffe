@@ -3,6 +3,7 @@ package contradiction
 import (
 	"context"
 	"digital-mirror/backend/categorizer" // Need access to baseLLMClient and potentially request/response structs
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"encoding/json"
 	"fmt"
@@ -388,6 +389,19 @@ func (d *OpenAIContradictionDetector) AreContradictory(ctx context.Context, text
 		return false, "", r.Error
 	}
 	return r.IsContradictory, r.Reason, nil
+}
+
+// VerifyContradiction runs the adversarial refutation pass over a single
+// claimed contradiction returned by AreContradictoryBatch, before it is
+// persisted. keep == true means the claim survived (record it); keep == false
+// means it was refuted as a false positive (drop it). A non-nil error is an
+// operational failure (LLM unreachable / unparseable) — callers should log and
+// fall open (keep the contradiction), never silently drop on error.
+//
+// Delegates to llm.VerifyContradiction so the detector path and the stance path
+// (core.StanceManager.VerifyContradiction) share identical refutation logic.
+func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
+	return llm.VerifyContradiction(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, factA, factB, claimedReason)
 }
 
 // FactPair represents a pair of facts to check for contradiction

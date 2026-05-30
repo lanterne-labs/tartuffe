@@ -520,13 +520,38 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 					fmt.Printf("[DEBUG] VERDICT: %s — %s\n", verdict, result.Reason)
 				}
 
+				// Adversarial verification pass: refute each YES before recording.
+				// On verifier error we fall open (keep the contradiction) and log;
+				// on an explicit refutation we drop it and record the pair as
+				// checked-and-not-contradictory so it is not re-detected.
+				isContra := result.IsContradictory
+				// Skip verification when either fact text is empty (e.g. a fact was
+				// deleted mid-run) — we can't refute what we can't read, so keep
+				// the contradiction (fail-open), mirroring the stance path.
+				if isContra && batch[j].factAText != "" && batch[j].factBText != "" {
+					keep, refutation, vErr := detector.VerifyContradiction(ctx, batch[j].factAText, batch[j].factBText, result.Reason)
+					if vErr != nil {
+						log.Warn().Err(vErr).
+							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+							Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+					} else if !keep {
+						isContra = false
+						log.Info().
+							Str("person", pp.personName).
+							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+							Str("flagged_reason", result.Reason).
+							Str("refutation", refutation).
+							Msg("Contradiction refuted by verification pass; dropping")
+					}
+				}
+
 				pairResults = append(pairResults, storage.PairCheckResult{
 					FactAID:         batch[j].factAID,
 					FactBID:         batch[j].factBID,
-					IsContradiction: result.IsContradictory,
+					IsContradiction: isContra,
 				})
 
-				if result.IsContradictory {
+				if isContra {
 					totalContradictions++
 					personContradictions++
 

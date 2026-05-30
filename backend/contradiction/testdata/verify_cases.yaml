@@ -1,0 +1,124 @@
+# Golden regression set for the adversarial verification (refute) pass.
+#
+# Each case is a *claimed* contradiction that the detector once produced. The
+# verification pass (OpenAIContradictionDetector.VerifyContradiction) must
+# either KEEP it (real contradiction) or DROP it (false positive).
+#
+# HOW TO USE
+#   - When you see a contradiction in prod that looks wrong (a false positive),
+#     add it here with `expect: drop`.
+#   - When you see a real contradiction the verifier wrongly killed, add it with
+#     `expect: keep`.
+#   - Re-run:  source .env; go test -v -run TestVerifyGolden ./backend/contradiction/
+#     (skips automatically when OPEN_AI_KEY is unset — local-only, no CI cost.)
+#   - Then tune backend/promptrules/verify.go until every case passes.
+#
+# Fields:
+#   name           short unique id (prod contradiction # is handy)
+#   fact_a/fact_b  the two fact texts
+#   claimed_reason the reason the detector gave when it flagged YES
+#   expect         keep | drop
+#   bucket         free-form tag for grouping (not enforced)
+#   notes          why; for humans
+
+cases:
+  # ---- Bucket 1: numeric / measurement mismatches (false positives) ----
+  - name: "FP_117_bernalicis_different_rounds"
+    fact_a: "Ugo Bernalicis a obtenu 22,49 % à l'élection municipale."
+    fact_b: "Ugo Bernalicis a obtenu 17,77 % au premier tour."
+    claimed_reason: "He claims two different vote percentages, which is inconsistent."
+    expect: drop
+    bucket: numeric
+    notes: "Two different rounds/measures, not dishonesty."
+
+  - name: "FP_77_afd_forecast_vs_regional_poll"
+    fact_a: "L'AfD est projetée comme premier parti aux élections fédérales de 2029."
+    fact_b: "L'AfD est actuellement à 41 % en Saxe-Anhalt."
+    claimed_reason: "A forecast of being strongest contradicts a 41% poll number."
+    expect: drop
+    bucket: forecast
+    notes: "Forecast vs current regional poll."
+
+  - name: "FP_107_panot_different_metrics"
+    fact_a: "Mathilde Panot affirme que Mélenchon a 250 000 soutiens."
+    fact_b: "La campagne a réuni 150 000 signatures."
+    claimed_reason: "250k supporters contradicts 150k signatures."
+    expect: drop
+    bucket: numeric
+    notes: "Different metrics at different times."
+
+  - name: "FP_84_bsw_same_figure_snapshots"
+    fact_a: "Le BSW a obtenu 6,2 % aux élections européennes de 2024."
+    fact_b: "Le BSW a obtenu 4,981 % aux élections européennes de 2024."
+    claimed_reason: "Two different percentages for the same election is a contradiction."
+    expect: drop
+    bucket: numeric
+    notes: "Different sources/snapshots of the same figure."
+
+  # ---- Bucket 2: different procedural scopes of the same action ----
+  - name: "FP_118_lecornu_49-3_scopes"
+    fact_a: "Sébastien Lecornu envisage d'utiliser le 49-3 sur la partie recettes du budget."
+    fact_b: "Sébastien Lecornu envisage d'utiliser le 49-3 sur la partie dépenses du budget."
+    claimed_reason: "Using 49-3 on revenue vs expenditure is inconsistent."
+    expect: drop
+    bucket: procedural_scope
+    notes: "Revenue part vs expenditure part — normal procedure."
+
+  - name: "FP_119_lecornu_49-3_overall"
+    fact_a: "Sébastien Lecornu a utilisé le 49-3 sur la partie dépenses du budget."
+    fact_b: "Sébastien Lecornu a utilisé le 49-3 pour adopter l'ensemble du budget."
+    claimed_reason: "49-3 on expenditure vs to adopt the overall budget is inconsistent."
+    expect: drop
+    bucket: procedural_scope
+    notes: "Different procedural scopes of the same action."
+
+  # ---- Bucket 3: conditional statement whose condition later came true ----
+  - name: "FP_104_lepen_condition_met"
+    fact_a: "Marine Le Pen a déclaré qu'elle ferait campagne pour Jordan Bardella si elle était déclarée inéligible."
+    fact_b: "Marine Le Pen a été condamnée à une peine d'inéligibilité."
+    claimed_reason: "She said she would campaign for Bardella but was ruled ineligible."
+    expect: drop
+    bucket: conditional_met
+    notes: "Condition was met, so it's consistent. The model inverted it."
+
+  # ---- Bucket 4: same-direction claims flagged as opposed ----
+  - name: "FP_96_macron_same_direction"
+    fact_a: "Emmanuel Macron s'est engagé à réinitialiser les relations avec l'Afrique."
+    fact_b: "Emmanuel Macron affirme avoir mis fin à la Françafrique."
+    claimed_reason: "Resetting relations with Africa contradicts ending la Françafrique."
+    expect: drop
+    bucket: same_direction
+    notes: "Same direction, not contradictory."
+
+  # ---- True positives that MUST be preserved ----
+  - name: "TP_99_nunez_warned_then_supported"
+    fact_a: "Laurent Nuñez a averti qu'un projet de loi affaiblirait les systèmes de sécurité existants et s'y est opposé."
+    fact_b: "Laurent Nuñez a finalement voté en faveur de ce même projet de loi."
+    claimed_reason: "He warned against the bill and opposed it, then voted for it."
+    expect: keep
+    bucket: warned_then_acted
+    notes: "Stated opposition/warning then opposing action — a real reversal."
+
+  - name: "TP_121_olive_denial_vs_conviction"
+    fact_a: "Karl Olive a affirmé n'avoir commis aucune malversation et n'avoir jamais tiré de profit personnel."
+    fact_b: "Karl Olive a été reconnu coupable et condamné pénalement pour prise illégale d'intérêts."
+    claimed_reason: "He denied any wrongdoing but was criminally convicted of illegal taking of interest."
+    expect: keep
+    bucket: denial_vs_finding
+    notes: "Personal denial of wrongdoing vs authoritative criminal conviction."
+
+  - name: "TP_112_christophe_motivation_reversal"
+    fact_a: "Paul Christophe s'est dit « très motivé » pour prendre ce poste ministériel."
+    fact_b: "Paul Christophe a déclaré ne pas être « particulièrement enthousiaste » à l'idée de prendre ce poste."
+    claimed_reason: "Very motivated vs not particularly enthusiastic about the same post is a reversal."
+    expect: keep
+    bucket: position_reversal
+    notes: "Attitude reversal in different words about the same thing."
+
+  - name: "TP_114_rn_retirement_promise"
+    fact_a: "Le Rassemblement national a promis de maintenir l'âge de départ à la retraite à 62 ans."
+    fact_b: "Le Rassemblement national a renoncé à abroger la réforme portant l'âge de la retraite à 64 ans."
+    claimed_reason: "Promised to keep retirement at 62 but dropped the repeal of the move to 64."
+    expect: keep
+    bucket: commitment_walkback
+    notes: "Promise to keep 62 vs abandoning repeal of 64 — a broken commitment."

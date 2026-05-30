@@ -93,9 +93,9 @@ type stanceLLMResponse struct {
 // topic is being created). A strict string parse would fail the whole call.
 type topicAssignmentResponse struct {
 	Reasoning       string         `json:"reasoning"`
-	AssignedIndex   int            `json:"assigned_topic_index"`     // 1-indexed, 0 means new topic
-	NewTopicLabel   flexibleString `json:"new_topic_label"`          // only set when AssignedIndex == 0
-	NewTopicLabelEn flexibleString `json:"new_topic_label_en"`       // English translation; empty when new_topic_label is already English
+	AssignedIndex   int            `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
+	NewTopicLabel   flexibleString `json:"new_topic_label"`      // only set when AssignedIndex == 0
+	NewTopicLabelEn flexibleString `json:"new_topic_label_en"`   // English translation; empty when new_topic_label is already English
 }
 
 // generalLabelResponse is the response from generateGeneralLabel — a thin
@@ -110,7 +110,7 @@ type generalLabelResponse struct {
 // fact list of the stance.
 type stanceMetadataResponse struct {
 	Label     flexibleString `json:"label"`
-	LabelEn   flexibleString `json:"label_en"`   // English translation; empty when label is already English
+	LabelEn   flexibleString `json:"label_en"` // English translation; empty when label is already English
 	Summary   string         `json:"summary"`
 	SummaryEn string         `json:"summary_en"` // English translation; empty when summary is already English
 }
@@ -276,7 +276,18 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
 	}
 
-	return sm.handleVerdict(ctx, matched, personID, factID, embedding, agg)
+	return sm.handleVerdict(ctx, matched, personID, factID, factText, keyFacts, embedding, agg)
+}
+
+// keyTextByID builds a lookup of fact ID → normalized fact text from a slice of
+// StanceFactInfo, used by verifyEntries to fetch the text of each candidate
+// key fact without an extra DB round-trip.
+func keyTextByID(facts []StanceFactInfo) map[int64]string {
+	m := make(map[int64]string, len(facts))
+	for _, f := range facts {
+		m[f.ID] = f.NormalizedFactText
+	}
+	return m
 }
 
 // aggregatedAnalysis is the cross-batch result of analyzeAcrossBatches.
@@ -432,7 +443,7 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 // handleVerdict processes the aggregated analyze result, updates the stance
 // counters/centroid/key_facts as appropriate, records every contradiction the
 // LLM flagged, and triggers a label+summary refresh for non-duplicate verdicts.
-func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
+func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
 	result := &StanceProcessResult{
 		StanceID:  matched.ID,
 		Reasoning: agg.Reasoning,
@@ -460,10 +471,21 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Msg("Added new info to existing stance")
 
 	case "CONTRADICTION":
-		result.Verdict = "CONTRADICTION"
-		result.Contradictions = agg.Contradictions
+		// Adversarial verification pass: refute each flagged pair before
+		// persisting. Survivors only — refuted pairs are dropped here and never
+		// recorded, so they never dent the honesty score. If every pair is
+		// refuted the fact is just new info for the stance, so relabel as
+		// NEW_INFO (the stance still absorbs the fact via applyStanceUpdate).
+		verified := sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		result.Contradictions = verified
 
-		recorded := sm.recordStanceContradictions(ctx, personID, factID, matched.ID, agg.Contradictions)
+		recorded := 0
+		if len(verified) > 0 {
+			result.Verdict = "CONTRADICTION"
+			recorded = sm.recordStanceContradictions(ctx, personID, factID, matched.ID, verified)
+		} else {
+			result.Verdict = "NEW_INFO"
+		}
 
 		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
 			return nil, err
@@ -473,7 +495,8 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
 			Int("contradictions_recorded", recorded).
-			Int("contradictions_total", len(agg.Contradictions)).
+			Int("contradictions_flagged", len(agg.Contradictions)).
+			Int("contradictions_verified", len(verified)).
 			Str("reasoning", agg.Reasoning).
 			Msg("Contradictions detected in stance")
 
@@ -537,7 +560,62 @@ func (sm *StanceManager) AnalyzeFactInStance(
 	if agg.PrimaryVerdict != "CONTRADICTION" {
 		return 0, nil
 	}
-	return sm.recordStanceContradictions(ctx, personID, fact.ID, stance.ID, agg.Contradictions), nil
+	// Adversarial verification pass before persisting (same gate as the live
+	// ingest path in handleVerdict).
+	verified := sm.verifyEntries(ctx, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
+	return sm.recordStanceContradictions(ctx, personID, fact.ID, stance.ID, verified), nil
+}
+
+// VerifyContradiction runs the adversarial refutation pass over a single
+// claimed contradiction before it is persisted. keep == true means the claim
+// survived (record it); keep == false means it was refuted as a false positive
+// (drop it). A non-nil error is an operational failure — callers fall open.
+//
+// Delegates to llm.VerifyContradiction so the stance path and the detector path
+// (contradiction.OpenAIContradictionDetector.VerifyContradiction) share
+// identical refutation logic.
+func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
+	return llm.VerifyContradiction(ctx, sm.client, sm.apiURL, sm.apiKey, sm.model, factA, factB, claimedReason)
+}
+
+// verifyEntries runs the adversarial refutation pass over each flagged
+// contradiction entry and returns only the survivors. newFactText is the text
+// of the fact being processed; keyTexts maps each candidate key-fact ID to
+// its text. An entry whose key-fact text is missing is kept unchecked (we
+// cannot verify what we cannot read). On verifier error the entry is kept
+// (fail-open) and logged; on an explicit refutation (keep=false) it is dropped
+// and logged at INFO.
+func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) []StanceContradictionEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	survivors := make([]StanceContradictionEntry, 0, len(entries))
+	for _, c := range entries {
+		keyText, ok := keyTexts[c.KeyFactID]
+		if !ok || strings.TrimSpace(keyText) == "" {
+			// No text to verify against — keep it; the recorder still guards on KeyFactID.
+			survivors = append(survivors, c)
+			continue
+		}
+		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
+		if err != nil {
+			log.Warn().Err(err).
+				Int64("key_fact_id", c.KeyFactID).
+				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+			survivors = append(survivors, c)
+			continue
+		}
+		if !keep {
+			log.Info().
+				Int64("key_fact_id", c.KeyFactID).
+				Str("flagged_reason", c.Reason).
+				Str("refutation", reason).
+				Msg("Contradiction refuted by verification pass; dropping (stance path)")
+			continue
+		}
+		survivors = append(survivors, c)
+	}
+	return survivors
 }
 
 // recordStanceContradictions writes each contradiction entry to the store,
@@ -763,7 +841,7 @@ The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction 
 **RESPONSE FORMAT:**
 Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
 
-**LANGUAGE RULE:** Write each contradiction's ` + "`reason`" + ` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose ` + "`reason`" + ` is NOT English, ALSO provide ` + "`reason_en`" + ` — a faithful English translation. OMIT ` + "`reason_en`" + ` when ` + "`reason`" + ` is already English. ` + "`reasoning`" + ` fields (both top-level and per-contradiction) follow the same language rule.
+**LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose `+"`reason`"+` is NOT English, ALSO provide `+"`reason_en`"+` — a faithful English translation. OMIT `+"`reason_en`"+` when `+"`reason`"+` is already English. `+"`reasoning`"+` fields (both top-level and per-contradiction) follow the same language rule.
 
 Return ONLY valid JSON:
 {
@@ -917,7 +995,7 @@ LABEL RULES (for new_topic_label when creating a new topic):
   * ❌ "opposition à la surveillance" → ✅ "surveillance et vie privée"
 - Format: "{subject area}{ optional temporal scope}". Max 120 chars.
 - Do NOT include the person's name (labels are already per-person).
-- **LANGUAGE:** Write ` + "`new_topic_label`" + ` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
+- **LANGUAGE:** Write `+"`new_topic_label`"+` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
 - ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
   * ❌ "Donald Trump a posté « FREE LEPEN »" — quoting an action
   * ❌ "Marine Le Pen a affirmé qu'elle ne se présenterait pas..." — quoting a statement
@@ -1256,18 +1334,18 @@ Fine-grained stances usually roll up into ONE of these textbook headings. If thr
 
 - Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
 
-UNIFIED LABEL RULES (for the ` + "`label`" + ` field of each merge):
+UNIFIED LABEL RULES (for the `+"`label`"+` field of each merge):
 - The unified label MUST be a NEUTRAL SUBJECT, not a position. The same label must work for both pro and anti facts in the merged stance.
 - FORBIDDEN label vocabulary: directional verbs ("défense de", "lutte contre", "opposition à", "soutien à", "engagement pour", "discipline"), polarity prefixes ("pro-", "anti-"), attitudinal adjectives ("strict", "sacré", "ferme").
 - GOOD unified labels: "politique des dépenses publiques", "politique climatique", "services publics et hôpitaux", "souveraineté industrielle française", "Iran policy", "EU economic policy".
 - BAD unified labels: ❌ "défense de la transition écologique" → ✅ "politique climatique". ❌ "engagement pour les services publics" → ✅ "services publics et hôpitaux".
 - Length: 4-12 words. Max 120 chars.
 
-UNIFIED SUMMARY RULES (for the ` + "`summary`" + ` field):
+UNIFIED SUMMARY RULES (for the `+"`summary`"+` field):
 - 1-3 sentences describing what the person has said / done across all merged stances on this subject.
 - If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
 
-**LANGUAGE RULE:** Write the unified ` + "`summary`" + ` and ` + "`label`" + ` in the same language as the stances provided. If stances span multiple languages, use French.
+**LANGUAGE RULE:** Write the unified `+"`summary`"+` and `+"`label`"+` in the same language as the stances provided. If stances span multiple languages, use French.
 
 STANCES IN THIS CANDIDATE CLUSTER:
 %s
