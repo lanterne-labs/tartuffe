@@ -25,8 +25,8 @@ func newTestMistralBatchProvider(serverURL string) *MistralBatchProvider {
 
 func TestMistralBatchSubmit(t *testing.T) {
 	var (
-		uploadCalled bool
-		createCalled bool
+		uploadCalled  bool
+		createCalled  bool
 		uploadedJSONL []byte
 	)
 
@@ -422,4 +422,3 @@ func TestMistralJSONLNoHTMLEscape(t *testing.T) {
 	assert.True(t, strings.Contains(string(data), "1 < 2 && 3 > 0"),
 		"json encoder should not HTML-escape content: %s", string(data))
 }
-

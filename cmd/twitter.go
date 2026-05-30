@@ -347,12 +347,12 @@ func runTwitterFetch(cmd *cobra.Command, args []string) error {
 	}
 
 	type handleResult struct {
-		handle           string
-		tweetsFetched    int
-		tweetsProcessed  int
-		factsExtracted   int
-		skippedRetweets  int
-		errorCount       int
+		handle          string
+		tweetsFetched   int
+		tweetsProcessed int
+		factsExtracted  int
+		skippedRetweets int
+		errorCount      int
 	}
 	var allHandleResults []handleResult
 

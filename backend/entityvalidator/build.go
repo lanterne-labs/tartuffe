@@ -15,8 +15,8 @@ import (
 //
 //   - SERPER_API_KEY unset    → GoogleFilter dropped, wiki + LLM only
 //   - OPEN_AI_API unset       → LLMFilter dropped; the validator's
-//                               DefaultDecision (Approve by default, safe for
-//                               extractor) decides anything wiki/google can't
+//     DefaultDecision (Approve by default, safe for
+//     extractor) decides anything wiki/google can't
 //
 // Returned Validator has DefaultDecision=Approve — CLI cleanup callers can
 // override to Reject for a more aggressive sweep.

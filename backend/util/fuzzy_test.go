@@ -77,12 +77,12 @@ func TestLevenshteinDistance(t *testing.T) {
 
 func TestSimilarityScore(t *testing.T) {
 	tests := []struct {
-		s1              string
-		s2              string
-		expectedMin     float64 // Minimum expected score
-		expectedExact   bool    // Should be exact match (1.0)?
-		expectedHigh    bool    // Should be high similarity (>0.8)?
-		expectedMedium  bool    // Should be medium similarity (>0.5)?
+		s1             string
+		s2             string
+		expectedMin    float64 // Minimum expected score
+		expectedExact  bool    // Should be exact match (1.0)?
+		expectedHigh   bool    // Should be high similarity (>0.8)?
+		expectedMedium bool    // Should be medium similarity (>0.5)?
 	}{
 		{"Marine Le Pen", "Marine Le Pen", 0.0, true, false, false},
 		{"Marine Le Pen", "marine le pen", 0.0, true, false, false},

@@ -18,7 +18,9 @@ func TestBraveNewsResponseParsing(t *testing.T) {
 				URL:         "https://example.com/article",
 				Description: "A test article snippet",
 				PageAge:     "2024-03-15T10:00:00Z",
-				MetaURL:     struct{ Hostname string `json:"hostname"` }{Hostname: "example.com"},
+				MetaURL: struct {
+					Hostname string `json:"hostname"`
+				}{Hostname: "example.com"},
 			},
 			{
 				Title:       "Second Article",

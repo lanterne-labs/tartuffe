@@ -276,7 +276,7 @@ func TestPartyFactAccuracyWithMockData(t *testing.T) {
 			LawKey:     "test-law-1",
 		},
 		{
-			PersonName: "la france insoumise", // Normalized
+			PersonName: "la france insoumise",                          // Normalized
 			FactText:   "La France Insoumise voted AGAINST a test law", // This should be FOR based on votes
 			LawKey:     "test-law-1",
 		},

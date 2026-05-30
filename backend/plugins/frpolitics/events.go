@@ -78,9 +78,3 @@ func isCodeLikeName(name string) bool {
 	}
 	return false
 }
-
-
-
-
-
-

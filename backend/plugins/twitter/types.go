@@ -51,16 +51,16 @@ type Options struct {
 
 // Result contains the outcome of a twitter collection for a single handle.
 type Result struct {
-	Handle                 string
-	PersonName             string
-	TweetsFetched          int
-	TweetsProcessed        int
-	TweetsProcessedNoFacts int
-	FactsExtracted         int
-	SkippedAlreadyProcessed int
-	SkippedRetweets        int
+	Handle                     string
+	PersonName                 string
+	TweetsFetched              int
+	TweetsProcessed            int
+	TweetsProcessedNoFacts     int
+	FactsExtracted             int
+	SkippedAlreadyProcessed    int
+	SkippedRetweets            int
 	SkippedAlreadyFetchedRange bool
-	Errors                 []error
+	Errors                     []error
 }
 
 // aggregateResult adds the counters from src into dst.

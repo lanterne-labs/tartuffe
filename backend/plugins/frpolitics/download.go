@@ -40,9 +40,9 @@ func getCacheDir() string {
 
 	// Try common project layouts
 	candidates := []string{
-		"asset/cache",                                 // from plugin directory
-		"backend/plugins/frpolitics/asset/cache",      // from project root
-		"../backend/plugins/frpolitics/asset/cache",   // from cmd directory
+		"asset/cache",                               // from plugin directory
+		"backend/plugins/frpolitics/asset/cache",    // from project root
+		"../backend/plugins/frpolitics/asset/cache", // from cmd directory
 	}
 	for _, candidate := range candidates {
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
@@ -62,7 +62,6 @@ func getCacheDir() string {
 	// Last resort: use project-root relative path
 	return "backend/plugins/frpolitics/asset/cache"
 }
-
 
 // cacheFilename returns a cache-key-safe filename for a URL.
 // It prefixes the URL basename with the first 8 chars of SHA1(full URL)
@@ -117,7 +116,7 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 	// jitter so concurrent retries don't synchronise. Retry-After is still
 	// honoured when the server sends it.
 	const (
-		maxAttempts   = 7
+		maxAttempts    = 7
 		initialBackoff = 2 * time.Second
 		maxBackoff     = 60 * time.Second
 	)

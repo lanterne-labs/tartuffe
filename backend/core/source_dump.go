@@ -16,19 +16,19 @@ import (
 
 // SourceDump represents the dumped content and extracted facts for a single article.
 type SourceDump struct {
-	SourceURL      string            `json:"source_url"`
-	Title          string            `json:"title"`
-	DatePublished  *time.Time        `json:"date_published,omitempty"`
-	Content        string            `json:"content"`
-	ExtractedFacts []SourceDumpFact  `json:"extracted_facts"`
+	SourceURL      string           `json:"source_url"`
+	Title          string           `json:"title"`
+	DatePublished  *time.Time       `json:"date_published,omitempty"`
+	Content        string           `json:"content"`
+	ExtractedFacts []SourceDumpFact `json:"extracted_facts"`
 }
 
 // SourceDumpFact is a simplified fact representation for the source dump.
 type SourceDumpFact struct {
-	SubjectEntity  string   `json:"subject_entity"`
-	NormalizedFact string   `json:"normalized_fact"`
-	OriginalQuote  string   `json:"original_quote"`
-	CanonicalVerb  string   `json:"canonical_verb,omitempty"`
+	SubjectEntity  string `json:"subject_entity"`
+	NormalizedFact string `json:"normalized_fact"`
+	OriginalQuote  string `json:"original_quote"`
+	CanonicalVerb  string `json:"canonical_verb,omitempty"`
 }
 
 // DumpSourceAndFacts writes a JSON file containing the article content and extracted facts.
@@ -43,10 +43,10 @@ func DumpSourceAndFacts(dir, targetName, sourceURL, title, content string, dateP
 
 	// Build dump struct
 	dump := SourceDump{
-		SourceURL:     sourceURL,
-		Title:         title,
-		DatePublished: datePublished,
-		Content:       content,
+		SourceURL:      sourceURL,
+		Title:          title,
+		DatePublished:  datePublished,
+		Content:        content,
 		ExtractedFacts: make([]SourceDumpFact, len(facts)),
 	}
 	for i, f := range facts {

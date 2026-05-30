@@ -33,5 +33,3 @@ func TestDownloadAndParseActors(t *testing.T) {
 		t.Fatalf("expected at least one 'PA' actor entry with a human name; map size=%d", len(m))
 	}
 }
-
-

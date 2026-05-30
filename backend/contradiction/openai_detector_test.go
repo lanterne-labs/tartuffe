@@ -156,7 +156,7 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 			factA:                 "The CEO supported policy X.",
 			dateA:                 "", // Unknown
 			factB:                 "The CEO opposed policy X.",
-			dateB:                 "", // Unknown
+			dateB:                 "",    // Unknown
 			expectedContradiction: false, // Without dates, could be change of position
 		},
 		{
@@ -164,7 +164,7 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 			factA:                 "Senator Smith voted for the bill.",
 			dateA:                 "2024-02-01",
 			factB:                 "Senator Smith voted against the bill.",
-			dateB:                 "", // Unknown
+			dateB:                 "",    // Unknown
 			expectedContradiction: false, // Could be different bills or changed vote
 		},
 		// --- Promise-Based Reasoning Test Cases ---

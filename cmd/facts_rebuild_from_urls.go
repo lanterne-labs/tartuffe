@@ -32,14 +32,14 @@ type rebuildCheckpoint struct {
 }
 
 type rebuildLogEntry struct {
-	Timestamp         string `json:"ts"`
-	Person            string `json:"person"`
-	URL               string `json:"url"`
-	DeletedSourceIDs  []int64 `json:"deleted_source_ids,omitempty"`
-	FactsExtracted    int    `json:"facts_extracted"`
-	FactsSkippedDedup int    `json:"facts_skipped_dedup"`
-	SkippedThin       int    `json:"skipped_thin"`
-	ErrorCount        int    `json:"error_count"`
+	Timestamp         string   `json:"ts"`
+	Person            string   `json:"person"`
+	URL               string   `json:"url"`
+	DeletedSourceIDs  []int64  `json:"deleted_source_ids,omitempty"`
+	FactsExtracted    int      `json:"facts_extracted"`
+	FactsSkippedDedup int      `json:"facts_skipped_dedup"`
+	SkippedThin       int      `json:"skipped_thin"`
+	ErrorCount        int      `json:"error_count"`
 	Errors            []string `json:"errors,omitempty"`
 }
 

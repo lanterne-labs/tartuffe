@@ -718,7 +718,7 @@ func runContradictionAuditIfDue(ctx context.Context, storer *storage.PostgresSto
 
 	log.Info().Dur("cadence", cadence).Msg("Contradiction audit: due, starting pass")
 	return executeContradictionAudit(ctx, storer, ContradictionAuditOpts{
-		Output:       nil,         // silent — pipeline mode, no per-row stdout
+		Output:       nil, // silent — pipeline mode, no per-row stdout
 		Format:       "",
 		Scope:        "all persons (periodic)",
 		RecordMetric: true,

@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	twitterAPIIOBaseURL    = "https://api.twitterapi.io/twitter/tweet/advanced_search"
-	httpTimeout            = 30 * time.Second
-	defaultQPSDelayMillis  = 5000 // 5 seconds for free tier (1 req per 5s)
+	twitterAPIIOBaseURL   = "https://api.twitterapi.io/twitter/tweet/advanced_search"
+	httpTimeout           = 30 * time.Second
+	defaultQPSDelayMillis = 5000 // 5 seconds for free tier (1 req per 5s)
 )
 
 // TwitterAPIIOFetcher fetches tweets from twitterapi.io.
@@ -62,13 +62,13 @@ type twitterAPIIOResponse struct {
 
 // twitterAPIIOTweet represents a single tweet from twitterapi.io.
 type twitterAPIIOTweet struct {
-	ID             string              `json:"id"`
-	Text           string              `json:"text"`
-	URL            string              `json:"url"`
-	CreatedAt      string              `json:"createdAt"`
-	Lang           string              `json:"lang"`
-	Author         twitterAPIIOAuthor  `json:"author"`
-	RetweetedTweet *json.RawMessage    `json:"retweeted_tweet"`
+	ID             string             `json:"id"`
+	Text           string             `json:"text"`
+	URL            string             `json:"url"`
+	CreatedAt      string             `json:"createdAt"`
+	Lang           string             `json:"lang"`
+	Author         twitterAPIIOAuthor `json:"author"`
+	RetweetedTweet *json.RawMessage   `json:"retweeted_tweet"`
 }
 
 // twitterAPIIOAuthor represents the tweet author from twitterapi.io.

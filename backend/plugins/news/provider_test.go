@@ -11,13 +11,13 @@ func date(year, month, day int) time.Time {
 
 func TestComputeReQueryWindow(t *testing.T) {
 	tests := []struct {
-		name       string
-		windowFrom time.Time
-		windowTo   time.Time
+		name        string
+		windowFrom  time.Time
+		windowTo    time.Time
 		cappedDates []time.Time
-		wantNil    bool
-		wantFrom   time.Time
-		wantTo     time.Time
+		wantNil     bool
+		wantFrom    time.Time
+		wantTo      time.Time
 	}{
 		{
 			name:        "empty capped dates returns nil",

@@ -67,12 +67,12 @@ func NewTallyClientFromEnv() (*TallyClient, error) {
 
 // tallySubmissionsPage matches the JSON returned by GET /forms/{id}/submissions.
 type tallySubmissionsPage struct {
-	Page                              int                `json:"page"`
-	Limit                             int                `json:"limit"`
-	HasMore                           bool               `json:"hasMore"`
-	TotalNumberOfSubmissionsPerFilter int                `json:"totalNumberOfSubmissionsPerFilter"`
-	Questions                         []tallyQuestion    `json:"questions"`
-	Submissions                       []tallySubmission  `json:"submissions"`
+	Page                              int               `json:"page"`
+	Limit                             int               `json:"limit"`
+	HasMore                           bool              `json:"hasMore"`
+	TotalNumberOfSubmissionsPerFilter int               `json:"totalNumberOfSubmissionsPerFilter"`
+	Questions                         []tallyQuestion   `json:"questions"`
+	Submissions                       []tallySubmission `json:"submissions"`
 }
 
 type tallyQuestion struct {
@@ -82,12 +82,12 @@ type tallyQuestion struct {
 }
 
 type tallySubmission struct {
-	ID            string          `json:"id"`
-	FormID        string          `json:"formId"`
-	RespondentID  string          `json:"respondentId"`
-	IsCompleted   bool            `json:"isCompleted"`
-	SubmittedAt   time.Time       `json:"submittedAt"`
-	Responses     []tallyResponse `json:"responses"`
+	ID           string          `json:"id"`
+	FormID       string          `json:"formId"`
+	RespondentID string          `json:"respondentId"`
+	IsCompleted  bool            `json:"isCompleted"`
+	SubmittedAt  time.Time       `json:"submittedAt"`
+	Responses    []tallyResponse `json:"responses"`
 }
 
 type tallyResponse struct {

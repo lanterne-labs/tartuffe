@@ -122,13 +122,13 @@ func runEntitiesValidate(cmd *cobra.Command, args []string) {
 	jobs := make(chan job)
 	results := make([]validateReportRow, len(persons))
 	var (
-		wg              sync.WaitGroup
-		nApproved       atomic.Int64
-		nRejected       atomic.Int64
-		nSkipped        atomic.Int64
-		nFiltered       atomic.Int64
-		nDeleted        atomic.Int64
-		nDeleteFailed   atomic.Int64
+		wg            sync.WaitGroup
+		nApproved     atomic.Int64
+		nRejected     atomic.Int64
+		nSkipped      atomic.Int64
+		nFiltered     atomic.Int64
+		nDeleted      atomic.Int64
+		nDeleteFailed atomic.Int64
 	)
 	for w := 0; w < concurrency; w++ {
 		wg.Add(1)

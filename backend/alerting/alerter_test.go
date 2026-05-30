@@ -10,9 +10,9 @@ import (
 
 // mockChecker is a test BalanceChecker.
 type mockChecker struct {
-	name    string
-	info    *BalanceInfo
-	err     error
+	name string
+	info *BalanceInfo
+	err  error
 }
 
 func (m *mockChecker) ProviderName() string { return m.name }

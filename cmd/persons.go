@@ -14,4 +14,4 @@ var personsCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(personsCmd)
 	// Add flags relevant to all person commands here if needed
-} 
+}

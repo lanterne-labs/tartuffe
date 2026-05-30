@@ -87,9 +87,9 @@ type DedupeResult struct {
 	AutoDeduped       int // Tier 1 (>0.90 similarity)
 	LLMVerified       int // Tier 3 (LLM confirmed duplicate)
 	LLMKept           int // Tier 3 (LLM said not duplicate)
-	FactsDeleted    int // Invalid facts that were deleted
-	DuplicateGroups []DuplicateGroup
-	Deletions       []FactDeletionResult
+	FactsDeleted      int // Invalid facts that were deleted
+	DuplicateGroups   []DuplicateGroup
+	Deletions         []FactDeletionResult
 }
 
 // FactDeletionResult records a fact that was deleted as invalid.

@@ -176,9 +176,9 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 		batchContent := formatTweetBatch(batch)
 
 		cfg := core.FactExtractorConfig{
-			TargetName:        handle.PersonName,
-			SourceURL:         fmt.Sprintf("https://x.com/%s", handle.Handle),
-			Content:           batchContent,
+			TargetName:         handle.PersonName,
+			SourceURL:          fmt.Sprintf("https://x.com/%s", handle.Handle),
+			Content:            batchContent,
 			PluginInstructions: PluginInstructions,
 		}
 

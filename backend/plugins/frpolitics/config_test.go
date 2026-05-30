@@ -179,8 +179,8 @@ func TestDifferentThresholdsWithConfig(t *testing.T) {
 			MaxLaws:              1,  // Small dataset
 			MaxVotes:             25, // Limited votes
 			PartyThreshold:       threshold,
-			DisableKeywordFilter: true, // Skip keyword filtering for tests
-			DisableAIFilter:      true, // Skip AI confidence filtering for tests
+			DisableKeywordFilter: true,      // Skip keyword filtering for tests
+			DisableAIFilter:      true,      // Skip AI confidence filtering for tests
 			Legislatures:         []int{16}, // 16th legislature
 			RevisitHours:         10000,
 		}

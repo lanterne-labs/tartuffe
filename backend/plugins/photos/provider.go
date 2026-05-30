@@ -266,7 +266,7 @@ func computeScore(img search.ImageResult) (float64, string) {
 
 	if img.OriginalWidth == 0 && img.OriginalHeight == 0 {
 		// Unknown dimensions (e.g. Brave Search): assign neutral scores
-		resScore = 20  // 50% of max 40
+		resScore = 20    // 50% of max 40
 		aspectScore = 10 // 50% of max 20
 	} else {
 		// Resolution score (40 pts): larger is better, caps at 1000px

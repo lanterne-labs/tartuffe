@@ -27,7 +27,7 @@ var (
 	braveCircuitOpenUntil time.Time
 )
 
-const braveCircuitThreshold = 3          // open after 3 consecutive 429s
+const braveCircuitThreshold = 3            // open after 3 consecutive 429s
 const braveCircuitCooldown = 1 * time.Hour // cooldown period before retrying
 
 // braveRateLimit ensures at least 1 second between Brave API calls across all instances.

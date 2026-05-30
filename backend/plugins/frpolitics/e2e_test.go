@@ -54,12 +54,12 @@ func TestE2EWithSampleData(t *testing.T) {
 	// Since we want to test with a specific local file, we'll use the Options to limit processing.
 
 	opts := Options{
-		MaxLaws:        10,        // Process more laws
-		MaxVotes:       5000,      // Process more votes
-		PartyThreshold: 0.7,       // Standard threshold
-		DisableKeywordFilter: true, // Skip keyword filtering for tests
-		DisableAIFilter:      true, // Skip AI confidence filtering for tests
-		Legislatures:   []int{17}, // 17th legislature for more recent data if available
+		MaxLaws:              10,        // Process more laws
+		MaxVotes:             5000,      // Process more votes
+		PartyThreshold:       0.7,       // Standard threshold
+		DisableKeywordFilter: true,      // Skip keyword filtering for tests
+		DisableAIFilter:      true,      // Skip AI confidence filtering for tests
+		Legislatures:         []int{17}, // 17th legislature for more recent data if available
 	}
 
 	// 4. Run Production Logic

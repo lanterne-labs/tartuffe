@@ -130,7 +130,7 @@ func (g *GoogleSearchProvider) SearchWithOptions(personName string, options map[
 func NewGoogleSearchProviderFromEnv() (*GoogleSearchProvider, error) {
 	apiKey := os.Getenv("GOOGLE_API_KEY")
 	cseID := os.Getenv("GOOGLE_CSE_ID")
-	
+
 	if apiKey == "" {
 		return nil, fmt.Errorf("GOOGLE_API_KEY environment variable not set")
 	}
@@ -139,4 +139,4 @@ func NewGoogleSearchProviderFromEnv() (*GoogleSearchProvider, error) {
 	}
 
 	return NewGoogleSearchProvider(apiKey, cseID)
-} 
+}

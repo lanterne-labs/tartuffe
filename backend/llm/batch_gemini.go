@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	geminiBaseURL     = "https://generativelanguage.googleapis.com"
-	geminiAPIVersion  = "v1beta"
+	geminiBaseURL      = "https://generativelanguage.googleapis.com"
+	geminiAPIVersion   = "v1beta"
 	geminiDefaultModel = "gemini-2.5-flash"
 )
 
@@ -296,7 +296,7 @@ type geminiBatchCreateRequest struct {
 }
 
 type geminiBatchSpec struct {
-	DisplayName string           `json:"display_name,omitempty"`
+	DisplayName string            `json:"display_name,omitempty"`
 	InputConfig geminiInputConfig `json:"input_config"`
 }
 
@@ -318,8 +318,8 @@ type geminiRequestMetadata struct {
 }
 
 type geminiGenerateContentRequest struct {
-	Contents         []geminiContent          `json:"contents"`
-	GenerationConfig *geminiGenerationConfig  `json:"generation_config,omitempty"`
+	Contents         []geminiContent         `json:"contents"`
+	GenerationConfig *geminiGenerationConfig `json:"generation_config,omitempty"`
 }
 
 type geminiContent struct {
@@ -397,4 +397,3 @@ type geminiErrorDetail struct {
 	Message string `json:"message"`
 	Status  string `json:"status"`
 }
-

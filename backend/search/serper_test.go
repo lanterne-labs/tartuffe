@@ -268,10 +268,10 @@ func TestParseSerperDate(t *testing.T) {
 	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name  string
-		in    string
-		want  time.Time
-		ok    bool
+		name string
+		in   string
+		want time.Time
+		ok   bool
 	}{
 		// Absolute (regression)
 		{"iso date", "2026-01-05", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), true},

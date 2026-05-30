@@ -6,4 +6,4 @@ import "strings"
 // Renamed from normalizePersonName for more general use.
 func NormalizeString(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
-} 
+}

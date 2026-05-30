@@ -15,8 +15,8 @@ const (
 
 // BatchRequest represents a single request within a batch.
 type BatchRequest struct {
-	CustomID       string         // "url-hash:chunk-index" for correlating results
-	Messages       []ChatMessage  // reuse existing type from client.go
+	CustomID       string        // "url-hash:chunk-index" for correlating results
+	Messages       []ChatMessage // reuse existing type from client.go
 	Temperature    float64
 	ResponseFormat *ResponseFormat
 }

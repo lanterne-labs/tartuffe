@@ -9,20 +9,20 @@ import (
 
 // Patterns indicating generic/procedural laws to skip
 var genericPatterns = []string{
-	"amendement n°",           // amendments lack standalone meaning
+	"amendement n°",             // amendments lack standalone meaning
 	"projet de loi de finances", // budget laws are too broad
-	"examen prioritaire",      // procedural motion
-	"sous-amendement",         // sub-amendment
-	"rappel au règlement",     // procedural recall
+	"examen prioritaire",        // procedural motion
+	"sous-amendement",           // sub-amendment
+	"rappel au règlement",       // procedural recall
 }
 
 // Patterns indicating specific/meaningful laws to KEEP
 var specificPatterns = []string{
-	"motion de censure",       // political action
-	"visant à",                // "aiming to" indicates purpose
-	"pour sortir",             // "to exit" (e.g., narcotraffic)
-	"lutter contre",           // "fight against"
-	"réforme",                 // "reform"
+	"motion de censure", // political action
+	"visant à",          // "aiming to" indicates purpose
+	"pour sortir",       // "to exit" (e.g., narcotraffic)
+	"lutter contre",     // "fight against"
+	"réforme",           // "reform"
 }
 
 // classifyLaw determines if a law should be skipped based on keyword heuristics

@@ -65,13 +65,13 @@ type serperRequestBody struct {
 // serperNewsResponse is the news endpoint response shape.
 type serperNewsResponse struct {
 	News []struct {
-		Title       string `json:"title"`
-		Link        string `json:"link"`
-		Snippet     string `json:"snippet"`
-		Date        string `json:"date"`
-		Source      string `json:"source"`
-		ImageURL    string `json:"imageUrl"`
-		Position    int    `json:"position"`
+		Title    string `json:"title"`
+		Link     string `json:"link"`
+		Snippet  string `json:"snippet"`
+		Date     string `json:"date"`
+		Source   string `json:"source"`
+		ImageURL string `json:"imageUrl"`
+		Position int    `json:"position"`
 	} `json:"news"`
 	Message string `json:"message,omitempty"` // populated on error
 }
@@ -91,17 +91,17 @@ type serperWebResponse struct {
 // serperImageResponse is the /images endpoint response shape.
 type serperImageResponse struct {
 	Images []struct {
-		Title         string `json:"title"`
-		ImageURL      string `json:"imageUrl"`
-		ImageWidth    int    `json:"imageWidth"`
-		ImageHeight   int    `json:"imageHeight"`
-		ThumbnailURL  string `json:"thumbnailUrl"`
-		ThumbnailW    int    `json:"thumbnailWidth"`
-		ThumbnailH    int    `json:"thumbnailHeight"`
-		Source        string `json:"source"`
-		Domain        string `json:"domain"`
-		Link          string `json:"link"`
-		Position      int    `json:"position"`
+		Title        string `json:"title"`
+		ImageURL     string `json:"imageUrl"`
+		ImageWidth   int    `json:"imageWidth"`
+		ImageHeight  int    `json:"imageHeight"`
+		ThumbnailURL string `json:"thumbnailUrl"`
+		ThumbnailW   int    `json:"thumbnailWidth"`
+		ThumbnailH   int    `json:"thumbnailHeight"`
+		Source       string `json:"source"`
+		Domain       string `json:"domain"`
+		Link         string `json:"link"`
+		Position     int    `json:"position"`
 	} `json:"images"`
 	Message string `json:"message,omitempty"`
 }
@@ -402,9 +402,12 @@ func parseSerperDate(s string, now time.Time) (time.Time, bool) {
 // Relative-date regexes. All case-insensitive (compiled with (?i)).
 //
 // English: "yesterday", "today", "N (hour|day|week|month|year)s? ago",
-//          "an? (unit) ago", "one (unit) ago"
+//
+//	"an? (unit) ago", "one (unit) ago"
+//
 // French:  "hier", "aujourd'hui", "il y a N (heure|jour|semaine|mois|an(née)?)s?",
-//          "il y a un[e]? (unit)"
+//
+//	"il y a un[e]? (unit)"
 var (
 	serperRelEnNumeric = regexp.MustCompile(`(?i)^\s*(\d+)\s+(hour|day|week|month|year)s?\s+ago\s*$`)
 	serperRelEnArticle = regexp.MustCompile(`(?i)^\s*(?:an?|one)\s+(hour|day|week|month|year)\s+ago\s*$`)

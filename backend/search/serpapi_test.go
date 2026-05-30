@@ -115,7 +115,7 @@ func TestSerpAPINewsProvider_LocationMapping(t *testing.T) {
 		{"United Kingdom", "uk"},
 		{"Spain", "es"},
 		{"Italy", "it"},
-		{"fr", "fr"}, // Already a code
+		{"fr", "fr"},                         // Already a code
 		{"UnknownCountry", "UnknownCountry"}, // Pass through
 	}
 

@@ -157,8 +157,8 @@ func TestParseVerbFromEmbeddingText(t *testing.T) {
 		{"THREATENED sanctions", "THREATENED", "sanctions", true},
 		// Edge cases
 		{"wrongdoing parliamentary-assistants-case", "", "", false}, // no verb prefix
-		{"", "", "", false},                  // empty string
-		{"DENIED", "DENIED", "", true},       // verb only, no topic
+		{"", "", "", false},                   // empty string
+		{"DENIED", "DENIED", "", true},        // verb only, no topic
 		{"notaverb something", "", "", false}, // unknown first word
 	}
 

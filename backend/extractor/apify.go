@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	apifyActorIDDefault   = "aYG0l9s7dbB7j3gbS" // ID for the "LLM Web Scraper" actor
-	apifyBaseURLDefault   = "https://api.apify.com/v2"
+	apifyActorIDDefault  = "aYG0l9s7dbB7j3gbS" // ID for the "LLM Web Scraper" actor
+	apifyBaseURLDefault  = "https://api.apify.com/v2"
 	apifyRunSyncEndpoint = "/acts/%s/run-sync-get-dataset-items?token=%s"
 )
 
@@ -43,7 +43,7 @@ func NewApifyExtractorFromEnv() (*ApifyExtractor, error) {
 
 // apifyRequest defines the input payload for the Apify actor.
 type apifyRequest struct {
-	StartURLs          []map[string]string `json:"startUrls"`
+	StartURLs         []map[string]string `json:"startUrls"`
 	MaxPagesPerDomain int                 `json:"maxPagesPerDomain"`
 	// Add other relevant actor input fields if needed
 }
@@ -51,9 +51,9 @@ type apifyRequest struct {
 // apifyResponseItem mirrors the expected output item structure from the LLM Web Scraper actor.
 // We only extract the fields relevant to ExtractedContent.
 type apifyResponseItem struct {
-	URL           string `json:"url"`
-	Title         string `json:"metadata_title"`
-	Content       string `json:"markdown"` // Using markdown field for cleaner text
+	URL     string `json:"url"`
+	Title   string `json:"metadata_title"`
+	Content string `json:"markdown"` // Using markdown field for cleaner text
 	// DatePublished string `json:"metadata_datePublished"` // Need to parse this
 }
 
@@ -62,7 +62,7 @@ func (a *ApifyExtractor) ExtractContent(targetURL string) (*ExtractedContent, er
 	apiEndpoint := fmt.Sprintf(a.baseURL+apifyRunSyncEndpoint, a.actorID, a.apiKey)
 
 	payload := apifyRequest{
-		StartURLs:          []map[string]string{{"url": targetURL}},
+		StartURLs:         []map[string]string{{"url": targetURL}},
 		MaxPagesPerDomain: 1, // Only process the starting URL
 	}
 
@@ -137,4 +137,4 @@ func (a *ApifyExtractor) ExtractContent(targetURL string) (*ExtractedContent, er
 		Content: firstItem.Content,
 		// DatePublished: // Add parsed date here if implemented
 	}, nil
-} 
+}

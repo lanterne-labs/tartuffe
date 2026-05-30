@@ -14,4 +14,4 @@ var factsCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(factsCmd)
 	// Add flags relevant to all fact commands here if needed
-} 
+}

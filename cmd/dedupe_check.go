@@ -103,11 +103,11 @@ func runDedupeCheck(cmd *cobra.Command, args []string) error {
 
 func outputCheckResultsJSON(result *core.DedupeResult, storer *storage.PostgresStorer, ctx context.Context) error {
 	type jsonGroup struct {
-		CanonicalID   int64    `json:"canonical_id"`
-		CanonicalText string   `json:"canonical_text,omitempty"`
-		DuplicateIDs  []int64  `json:"duplicate_ids"`
-		Reason        string   `json:"reason"`
-		Similarity    float64  `json:"similarity"`
+		CanonicalID   int64   `json:"canonical_id"`
+		CanonicalText string  `json:"canonical_text,omitempty"`
+		DuplicateIDs  []int64 `json:"duplicate_ids"`
+		Reason        string  `json:"reason"`
+		Similarity    float64 `json:"similarity"`
 	}
 
 	type jsonOutput struct {

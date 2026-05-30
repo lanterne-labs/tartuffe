@@ -64,8 +64,8 @@ type llmInput struct {
 		Name       string `json:"name"`
 		EntityType string `json:"entity_type"`
 	} `json:"candidate"`
-	WikiPages   []WikiPage  `json:"wiki_pages"`
-	GoogleHits  []GoogleHit `json:"google_hits"`
+	WikiPages  []WikiPage  `json:"wiki_pages"`
+	GoogleHits []GoogleHit `json:"google_hits"`
 }
 
 type llmVerdict struct {

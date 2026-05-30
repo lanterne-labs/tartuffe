@@ -36,7 +36,6 @@ const sampleArticleHTML = `<!DOCTYPE html>
 const tinyPageHTML = `<!DOCTYPE html>
 <html><head><title>Tiny</title></head><body><p>Only this.</p></body></html>`
 
-
 // TestLocalExtractor_HappyPath verifies that LocalExtractor returns a clean
 // ExtractedContent from a well-formed article — stripping nav/aside/footer
 // and surfacing the title from <meta og:title>.

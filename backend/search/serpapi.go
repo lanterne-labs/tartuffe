@@ -203,12 +203,12 @@ func (s *SerpAPINewsProvider) buildSearchURL(query string, opts NewsSearchOption
 func mapLocationToGLCode(location string) string {
 	// Common mappings - extend as needed
 	locationMap := map[string]string{
-		"France":        "fr",
-		"United States": "us",
-		"Germany":       "de",
+		"France":         "fr",
+		"United States":  "us",
+		"Germany":        "de",
 		"United Kingdom": "uk",
-		"Spain":         "es",
-		"Italy":         "it",
+		"Spain":          "es",
+		"Italy":          "it",
 	}
 	if code, ok := locationMap[location]; ok {
 		return code

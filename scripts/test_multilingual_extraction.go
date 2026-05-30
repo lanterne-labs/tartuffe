@@ -84,14 +84,14 @@ Concernant la guerre en Ukraine, la présidente du RN a déclaré qu'elle ne sou
 	allGood := true
 	for i, f := range facts {
 		out := map[string]any{
-			"#":                   i + 1,
-			"subject_entity":      f.SubjectEntity,
-			"lang":                f.Lang,
-			"normalized_fact":     f.NormalizedFactText,
-			"normalized_fact_en":  f.NormalizedFactTextEn,
-			"canonical_verb":      f.CanonicalVerb,
-			"embedding_text":      f.EmbeddingText,
-			"original_quote":      f.OriginalQuote,
+			"#":                  i + 1,
+			"subject_entity":     f.SubjectEntity,
+			"lang":               f.Lang,
+			"normalized_fact":    f.NormalizedFactText,
+			"normalized_fact_en": f.NormalizedFactTextEn,
+			"canonical_verb":     f.CanonicalVerb,
+			"embedding_text":     f.EmbeddingText,
+			"original_quote":     f.OriginalQuote,
 		}
 		b, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(b))

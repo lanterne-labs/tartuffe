@@ -8,13 +8,13 @@
 // for repetitions; this is the whole point of the bundling layer.
 //
 // Two cases need fallback handling:
-//   1. The two facts are in *different* stances (e.g. promise stance vs. retraction
-//      stance). The fact-level JOIN at insert time leaves bundle_stance_id NULL. But
-//      the contradiction itself has a topic — "broken promise about X" — which often
-//      maps to one of those stances or a third one. We want to assign that stance so
-//      the row joins the bundle.
-//   2. One or both facts have no stance row at all (predates the stance backfill, or
-//      ingestion bypassed ProcessNewFact). Same NULL outcome, same need for repair.
+//  1. The two facts are in *different* stances (e.g. promise stance vs. retraction
+//     stance). The fact-level JOIN at insert time leaves bundle_stance_id NULL. But
+//     the contradiction itself has a topic — "broken promise about X" — which often
+//     maps to one of those stances or a third one. We want to assign that stance so
+//     the row joins the bundle.
+//  2. One or both facts have no stance row at all (predates the stance backfill, or
+//     ingestion bypassed ProcessNewFact). Same NULL outcome, same need for repair.
 //
 // The Bundler resolves both cases the same way:
 //   - embed the contradiction summary ("claim A | claim B | reason") under
@@ -34,9 +34,9 @@ package contradiction
 import (
 	"context"
 	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/storage"
 	categorizer "digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/storage"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,13 +56,13 @@ type BundlerStorer interface {
 // Bundler upgrades a contradiction's bundle_stance_id when the fact-level shared-stance
 // fast path didn't find one. See package doc for the full rationale.
 type Bundler struct {
-	storer    BundlerStorer
-	embedder  embedding.EmbeddingGenerator
-	llm       *categorizer.BaseLLMClient
-	apiKey    string
-	apiURL    string
-	model     string
-	topK      int
+	storer     BundlerStorer
+	embedder   embedding.EmbeddingGenerator
+	llm        *categorizer.BaseLLMClient
+	apiKey     string
+	apiURL     string
+	model      string
+	topK       int
 	maxYesDist float64
 }
 
@@ -100,13 +100,13 @@ func NewBundlerFromEnv(storer BundlerStorer, embedder embedding.EmbeddingGenerat
 		apiURL = base + "/chat/completions"
 	}
 	return &Bundler{
-		storer:    storer,
-		embedder:  embedder,
-		llm:       categorizer.NewBaseLLMClient("contradiction-bundler"),
-		apiKey:    apiKey,
-		apiURL:    apiURL,
-		model:     model,
-		topK:      DefaultBundlerTopK,
+		storer:     storer,
+		embedder:   embedder,
+		llm:        categorizer.NewBaseLLMClient("contradiction-bundler"),
+		apiKey:     apiKey,
+		apiURL:     apiURL,
+		model:      model,
+		topK:       DefaultBundlerTopK,
 		maxYesDist: DefaultBundlerMaxDistance,
 	}, nil
 }

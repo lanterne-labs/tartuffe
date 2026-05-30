@@ -26,17 +26,17 @@ type DetectedContradiction struct {
 
 // PairOutcome is a single pair's eval verdict — expected vs detected.
 type PairOutcome struct {
-	SpecA       string // logical id from corpus
-	SpecB       string
-	FactAID     int64 // DB id, 0 if mapping missing
-	FactBID     int64
-	Expected    string // YES or NO
-	Detected    bool
-	Reason      string // detector's reason, empty if not detected
-	Rule        string // corpus rule slug
-	Notes       string // corpus notes
-	Outcome     string // "TP" | "FN" | "FP" | "TN"
-	Unexpected  bool   // true when detected but not in expected_pairs
+	SpecA      string // logical id from corpus
+	SpecB      string
+	FactAID    int64 // DB id, 0 if mapping missing
+	FactBID    int64
+	Expected   string // YES or NO
+	Detected   bool
+	Reason     string // detector's reason, empty if not detected
+	Rule       string // corpus rule slug
+	Notes      string // corpus notes
+	Outcome    string // "TP" | "FN" | "FP" | "TN"
+	Unexpected bool   // true when detected but not in expected_pairs
 }
 
 // Report aggregates per-pair outcomes into precision/recall and per-rule breakdowns.

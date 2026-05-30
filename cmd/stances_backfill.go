@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	stancesBackfillPerson         string
-	stancesBackfillDryRun         bool
+	stancesBackfillPerson string
+	stancesBackfillDryRun bool
 )
 
 var stancesBackfillCmd = &cobra.Command{
@@ -432,4 +432,3 @@ func weightedNormalisedCentroid(stances []stanceMergeInput, indices []int) []flo
 	}
 	return out
 }
-

@@ -27,8 +27,8 @@ type wbSearchResponse struct {
 
 // p102Statement represents a P102 statement from the Wikidata REST API.
 type p102Statement struct {
-	Value      statementValue    `json:"value"`
-	Qualifiers []qualifierEntry  `json:"qualifiers"`
+	Value      statementValue   `json:"value"`
+	Qualifiers []qualifierEntry `json:"qualifiers"`
 }
 
 type qualifierEntry struct {

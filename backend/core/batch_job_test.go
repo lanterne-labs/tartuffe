@@ -220,9 +220,9 @@ func (m *mockEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, _ embed
 // ---------------------------------------------------------------------------
 
 type mockStorer struct {
-	nextFactID     int64                // Auto-incrementing fact ID
-	similarFacts   []SimilarFact        // What FindSimilarActiveFacts returns
-	verbsByFactID  map[int64]string     // GetFactCanonicalVerb lookup
+	nextFactID        int64               // Auto-incrementing fact ID
+	similarFacts      []SimilarFact       // What FindSimilarActiveFacts returns
+	verbsByFactID     map[int64]string    // GetFactCanonicalVerb lookup
 	insertedRelations []FactRelationInput // Track InsertFactRelationsBatch calls
 }
 

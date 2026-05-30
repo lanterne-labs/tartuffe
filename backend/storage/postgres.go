@@ -98,11 +98,11 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	}
 
 	// Configure connection pool for long-running operations (like LLM calls)
-	config.MaxConnLifetime = 30 * time.Minute      // Recycle connections periodically
-	config.MaxConnIdleTime = 5 * time.Minute       // Close idle connections before server times them out
-	config.HealthCheckPeriod = 30 * time.Second    // Check connection health periodically
-	config.MaxConns = 10                           // Reasonable pool size
-	config.MinConns = 2                            // Keep some connections warm
+	config.MaxConnLifetime = 30 * time.Minute   // Recycle connections periodically
+	config.MaxConnIdleTime = 5 * time.Minute    // Close idle connections before server times them out
+	config.HealthCheckPeriod = 30 * time.Second // Check connection health periodically
+	config.MaxConns = 10                        // Reasonable pool size
+	config.MinConns = 2                         // Keep some connections warm
 
 	// Register pgvector types with the connection config
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
@@ -2562,7 +2562,7 @@ type PaginatedFacts struct {
 // PaginatedContradictions wraps a page of contradictions with the total count.
 type PaginatedContradictions struct {
 	Items []ContradictionWithFacts `json:"items"`
-	Total int                     `json:"total"`
+	Total int                      `json:"total"`
 }
 
 // GetPersonFacts returns a page of facts for a person together with the total count.
@@ -3359,8 +3359,8 @@ func (s *PostgresStorer) ListFactsForAudit(ctx context.Context, personID *int64,
 
 // FactDeletionCleanupResult summarises what DeleteFactsAndCleanup did.
 type FactDeletionCleanupResult struct {
-	FactsDeleted    int   // rows removed from facts
-	StancesDeleted  int   // stance_documents that became empty after the cascade and were dropped
+	FactsDeleted    int     // rows removed from facts
+	StancesDeleted  int     // stance_documents that became empty after the cascade and were dropped
 	PersonsAffected []int64 // persons whose honesty score was recomputed
 }
 

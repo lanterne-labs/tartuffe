@@ -247,7 +247,8 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	assert.Equal(t, 1, mentionCount, "Should have exactly 1 mention (subject entity only)")
 	mentionRows.Close()
 }
-// DISABLED: 
+
+// DISABLED:
 // DISABLED: // TestPostgresStorer_StoreFact_Idempotency_And_SourceUpdate tests:
 // DISABLED: // 1. Storing the exact same fact (same text) twice fails due to unique constraint on facts.fact_text.
 // DISABLED: // 2. Storing a *different* fact from an *existing source URL* creates a new fact_sources record.
@@ -256,10 +257,10 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 // DISABLED: 	storer, teardown := setupTestDB(t)
 // DISABLED: 	defer teardown()
 // DISABLED: 	ctx := context.Background()
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	commonSourceURL := "http://example.com/idempotent-and-update"
 // DISABLED: 	pubDate1 := time.Now().Add(-2 * time.Hour)
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	input1 := StoreFactInput{
 // DISABLED: 		NormalizedFactText: "Idempotency test fact one.",
 // DISABLED: 		Embedding:          mockEmbedding(),
@@ -269,13 +270,13 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 // DISABLED: 		SourceURL:          commonSourceURL,
 // DISABLED: 		PublishedAt:        &pubDate1,
 // DISABLED: 	}
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	// --- Action: Store the fact first time ---
 // DISABLED: 	factID1, factSourceID1, _, err := storer.StoreFact(ctx, input1)
 // DISABLED: 	require.NoError(t, err, "First StoreFact failed")
 // DISABLED: 	require.Positive(t, factID1)
 // DISABLED: 	require.Positive(t, factSourceID1)
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	// --- Part 1: Test Idempotency for exact same fact text ---
 // DISABLED: 	input1Attempt2 := input1 // Exact same input
 // DISABLED: 	input1Attempt2.OriginalQuote = "Slightly different quote, but same fact text."
@@ -488,7 +489,8 @@ func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
 	assert.True(t, found[depID], "deputy mention should be found")
 	assert.False(t, found[partyID], "party mention should NOT be found (no automatic cross-attachment)")
 }
-// DISABLED: 
+
+// DISABLED:
 // DISABLED: // TestPostgresStorer_StoreFact_DuplicateFact_DifferentSource tests that storing a fact
 // DISABLED: // with the same fact_text as an existing fact, but a different SourceURL, fails due to
 // DISABLED: // the unique constraint on facts.fact_text.
@@ -496,7 +498,7 @@ func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
 // DISABLED: 	storer, teardown := setupTestDB(t)
 // DISABLED: 	defer teardown()
 // DISABLED: 	ctx := context.Background()
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	commonFactText := "This fact text must be unique."
 // DISABLED: 	input1 := StoreFactInput{
 // DISABLED: 		NormalizedFactText: commonFactText,
@@ -507,12 +509,12 @@ func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
 // DISABLED: 		SourceURL:          "http://example.com/source1-unique-fact",
 // DISABLED: 		PublishedAt:        nil,
 // DISABLED: 	}
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	// --- Action: Store the fact first time ---
 // DISABLED: 	factID1, factSourceID1, err := insertFactForTest(ctx, t, storer, input1)
 // DISABLED: 	require.NoError(t, err, "First insertFactForTest failed")
 // DISABLED: 	require.Positive(t, factID1)
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	// --- Action: Store again with same fact_text, different SourceURL ---
 // DISABLED: 	input2 := StoreFactInput{
 // DISABLED: 		NormalizedFactText: commonFactText,  // Same fact text
@@ -523,7 +525,7 @@ func TestStoreFact_CrossAttachAffiliations(t *testing.T) {
 // DISABLED: 		SourceURL:          "http://example.com/source2-different-url", // Different SourceURL
 // DISABLED: 		PublishedAt:        nil,
 // DISABLED: 	}
-// DISABLED: 
+// DISABLED:
 // DISABLED: 	_, _, err = insertFactForTest(ctx, t, storer, input2)
 // DISABLED: 	require.Error(t, err, "Second StoreFact with same fact_text (different URL) should fail")
 // DISABLED:
@@ -845,7 +847,7 @@ func TestPostgresStorer_ProcessedLawsTracking(t *testing.T) {
 	assert.True(t, processed, "Second law should be processed")
 
 	// Case 8: Test upsert behavior (marking same law again updates timestamp)
-	time.Sleep(10 * time.Millisecond) // Small delay to ensure timestamp changes
+	time.Sleep(10 * time.Millisecond)                                      // Small delay to ensure timestamp changes
 	err = storer.MarkLawAsProcessed(ctx, lawKey1, 16, "Test Law 1234", 43) // Different facts_count
 	require.NoError(t, err, "MarkLawAsProcessed should succeed on upsert")
 

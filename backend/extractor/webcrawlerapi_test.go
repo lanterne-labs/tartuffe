@@ -105,7 +105,7 @@ func TestStripTrailingSidebarSections(t *testing.T) {
 		{"sidebar_only_bfmtv", bfmtvSidebarOnly, ""},
 		{"body_then_a_lire_aussi", bodyThenSidebar, bodyThenSidebarExpected},
 		{
-			name: "mid_body_h2_not_in_list_retained",
+			name:  "mid_body_h2_not_in_list_retained",
 			input: "# Title\n\nIntro paragraph.\n\n## Contexte\n\nContext paragraph that should survive intact.\n\n## Conséquences\n\nMore body content.",
 			want:  "# Title\n\nIntro paragraph.\n\n## Contexte\n\nContext paragraph that should survive intact.\n\n## Conséquences\n\nMore body content.",
 		},

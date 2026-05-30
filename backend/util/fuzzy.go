@@ -35,7 +35,7 @@ func NormalizeForFuzzy(s string) string {
 	commonWords := map[string]bool{
 		"le": true, "la": true, "les": true,
 		"de": true, "du": true, "des": true,
-		"d":  true, "l":  true,
+		"d": true, "l": true,
 	}
 
 	filtered := make([]string, 0, len(words))

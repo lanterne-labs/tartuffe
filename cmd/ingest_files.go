@@ -25,7 +25,7 @@ var ingestFilesCmd = &cobra.Command{
 	Use:         "files",
 	Short:       "Ingest facts from local JSON files",
 	Annotations: map[string]string{"needs_db": "true"},
-	Long:        `Ingest facts from local JSON files into the database.
+	Long: `Ingest facts from local JSON files into the database.
 
 Files must be in the cached content JSON format:
 {

@@ -14,13 +14,13 @@ import (
 )
 
 var (
-	stancesMergePerson         string
-	stancesMergePersonsFile    string
-	stancesMergeRecallSim      float64
-	stancesMergeMaxCluster     int
-	stancesMergeParallel       int
-	stancesMergeDryRun         bool
-	stancesMergeSubclusterSim  float64
+	stancesMergePerson        string
+	stancesMergePersonsFile   string
+	stancesMergeRecallSim     float64
+	stancesMergeMaxCluster    int
+	stancesMergeParallel      int
+	stancesMergeDryRun        bool
+	stancesMergeSubclusterSim float64
 )
 
 var stancesMergeCmd = &cobra.Command{
@@ -129,10 +129,10 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 
 	processOne := func(p storage.PersonInfo) {
 		ps, err := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, p, mergeOptions{
-			RecallSim:        stancesMergeRecallSim,
-			SubclusterSim:    stancesMergeSubclusterSim,
-			MaxCluster:       stancesMergeMaxCluster,
-			DryRun:           stancesMergeDryRun,
+			RecallSim:     stancesMergeRecallSim,
+			SubclusterSim: stancesMergeSubclusterSim,
+			MaxCluster:    stancesMergeMaxCluster,
+			DryRun:        stancesMergeDryRun,
 		})
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("LLM-merge failed for person")
@@ -425,11 +425,12 @@ func subClusterIfNeeded(centroids [][]float32, originalCluster []int, distanceCu
 // destination's label + summary from the now-merged fact set.
 //
 // Returns:
-//   merged         — number of source stances successfully folded into dst.
-//   contradictions — number of new contradictions recorded by the post-merge
-//                    re-analysis (these are cross-stance pairs that the
-//                    per-fact assignTopic missed by splitting them).
-//   analyzeFailures — non-fatal AnalyzeFactInStance errors (per absorbed fact).
+//
+//	merged         — number of source stances successfully folded into dst.
+//	contradictions — number of new contradictions recorded by the post-merge
+//	                 re-analysis (these are cross-stance pairs that the
+//	                 per-fact assignTopic missed by splitting them).
+//	analyzeFailures — non-fatal AnalyzeFactInStance errors (per absorbed fact).
 func applyMergeSubgroup(
 	ctx context.Context,
 	storer *storage.PostgresStorer,

@@ -23,4 +23,4 @@ type ContentExtractor interface {
 	// ExtractContent fetches the content from the given URL and returns it in a structured format.
 	// It returns an ExtractedContent struct or an error if extraction fails.
 	ExtractContent(url string) (*ExtractedContent, error)
-} 
+}

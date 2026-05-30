@@ -6,12 +6,15 @@ import (
 
 // TestEvaluate_BasicCases covers TP / FN / FP / TN counting and the unexpected-
 // pair handling. The corpus has 4 facts (a,b,c,d) and 3 expected pairs:
-//   (a,b)=YES   (a,c)=NO   (b,c)=YES
+//
+//	(a,b)=YES   (a,c)=NO   (b,c)=YES
+//
 // Detector flags (a,b) and (c,d).
-//   (a,b) → expected YES, detected → TP
-//   (a,c) → expected NO,  not detected → TN
-//   (b,c) → expected YES, not detected → FN
-//   (c,d) → not in expected_pairs, detected → FP (Unexpected=true)
+//
+//	(a,b) → expected YES, detected → TP
+//	(a,c) → expected NO,  not detected → TN
+//	(b,c) → expected YES, not detected → FN
+//	(c,d) → not in expected_pairs, detected → FP (Unexpected=true)
 func TestEvaluate_BasicCases(t *testing.T) {
 	corpus := &Corpus{
 		Persons: []Person{{

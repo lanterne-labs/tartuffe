@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	assignStancesPerson             string
-	assignStancesPersonsFile        string
-	assignStancesParallel           int
-	assignStancesDryRun             bool
-	assignStancesSkipFinalRebundle  bool
+	assignStancesPerson            string
+	assignStancesPersonsFile       string
+	assignStancesParallel          int
+	assignStancesDryRun            bool
+	assignStancesSkipFinalRebundle bool
 )
 
 var factsAssignStancesCmd = &cobra.Command{

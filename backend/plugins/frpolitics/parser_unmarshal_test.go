@@ -24,4 +24,3 @@ func TestUnmarshalSampleScrutin(t *testing.T) {
 		t.Fatalf("expected numero > 0")
 	}
 }
-

@@ -424,19 +424,19 @@ type mistralBatchCreateRequest struct {
 }
 
 type mistralBatchJob struct {
-	ID                string             `json:"id"`
-	Status            string             `json:"status"`
-	InputFiles        []string           `json:"input_files,omitempty"`
-	OutputFile        *string            `json:"output_file,omitempty"`
-	ErrorFile         *string            `json:"error_file,omitempty"`
-	Endpoint          string             `json:"endpoint,omitempty"`
-	Model             string             `json:"model,omitempty"`
-	TotalRequests     int                `json:"total_requests,omitempty"`
-	CompletedRequests int                `json:"completed_requests,omitempty"`
-	SucceededRequests int                `json:"succeeded_requests,omitempty"`
-	FailedRequests    int                `json:"failed_requests,omitempty"`
-	Errors            []mistralBatchErr  `json:"errors,omitempty"`
-	Metadata          map[string]string  `json:"metadata,omitempty"`
+	ID                string            `json:"id"`
+	Status            string            `json:"status"`
+	InputFiles        []string          `json:"input_files,omitempty"`
+	OutputFile        *string           `json:"output_file,omitempty"`
+	ErrorFile         *string           `json:"error_file,omitempty"`
+	Endpoint          string            `json:"endpoint,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	TotalRequests     int               `json:"total_requests,omitempty"`
+	CompletedRequests int               `json:"completed_requests,omitempty"`
+	SucceededRequests int               `json:"succeeded_requests,omitempty"`
+	FailedRequests    int               `json:"failed_requests,omitempty"`
+	Errors            []mistralBatchErr `json:"errors,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 type mistralBatchErr struct {

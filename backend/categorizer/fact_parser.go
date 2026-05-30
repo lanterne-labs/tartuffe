@@ -18,15 +18,15 @@ import (
 func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([]backend.Fact, error) {
 	// Temporary struct mirroring the expected JSON output fields from the LLM prompt
 	var extractedFactsRaw []struct {
-		Reasoning          string   `json:"reasoning"`             // LLM reasoning (logged, not stored)
-		SubjectEntity      string   `json:"subject_entity"`        // The entity this fact is about
-		SubjectEntityType  string   `json:"subject_entity_type"`   // "human", "party", or "organization"
-		NormalizedFact     string   `json:"normalized_fact"`       // Native language fact text
-		NormalizedFactEn   string   `json:"normalized_fact_en"`    // English translation (omitted when source is English)
-		Lang               string   `json:"lang"`                  // BCP-47 source language (required)
-		CanonicalVerb      string   `json:"canonical_verb"`        // One of 20 canonical verbs
-		EmbeddingText      string   `json:"embedding_text"`        // Verb-free topic for embedding generation
-		OriginalQuote      string   `json:"original_quote"`        // Match the prompt's JSON key
+		Reasoning          string   `json:"reasoning"`           // LLM reasoning (logged, not stored)
+		SubjectEntity      string   `json:"subject_entity"`      // The entity this fact is about
+		SubjectEntityType  string   `json:"subject_entity_type"` // "human", "party", or "organization"
+		NormalizedFact     string   `json:"normalized_fact"`     // Native language fact text
+		NormalizedFactEn   string   `json:"normalized_fact_en"`  // English translation (omitted when source is English)
+		Lang               string   `json:"lang"`                // BCP-47 source language (required)
+		CanonicalVerb      string   `json:"canonical_verb"`      // One of 20 canonical verbs
+		EmbeddingText      string   `json:"embedding_text"`      // Verb-free topic for embedding generation
+		OriginalQuote      string   `json:"original_quote"`      // Match the prompt's JSON key
 		InvolvedPeople     []string `json:"involved_people"`
 		ArticlePublishedAt string   `json:"article_published_at"` // Optional YYYY-MM-DD when LLM found a pub date in the body
 	}

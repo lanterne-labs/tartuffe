@@ -27,8 +27,8 @@ type InsertedFactMeta struct {
 
 // InsertResult contains the outcome of a batch InsertFacts call.
 type InsertResult struct {
-	Inserted     int                 // Number of facts successfully inserted
-	Skipped      int                 // Number of facts skipped as duplicates
+	Inserted     int                // Number of facts successfully inserted
+	Skipped      int                // Number of facts skipped as duplicates
 	InsertedMeta []InsertedFactMeta // Metadata for each successfully inserted fact
 }
 
