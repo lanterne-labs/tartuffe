@@ -396,3 +396,17 @@ func (s *Server) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(persons)
 }
+
+// handleGetStats returns aggregate site statistics for the transparency page.
+func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	stats, err := s.storer.GetSiteStats(ctx)
+	if err != nil {
+		httpInternalError(w, err, "failed to fetch stats")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		log.Error().Err(err).Msg("handleGetStats: failed to encode response")
+	}
+}

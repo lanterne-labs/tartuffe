@@ -49,6 +49,7 @@
 				>EN</button>
 			</div>
 			<a href="/" class="nav-link">{tr('nav.dashboard', currentLang)}</a>
+			<a href="/about" class="nav-link">{tr('nav.about', currentLang)}</a>
 		</div>
 	</div>
 </nav>

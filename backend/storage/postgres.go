@@ -107,3 +107,36 @@ func (s *PostgresStorer) StartMetricsCollectors(ctx context.Context) {
 	metrics.StartPoolStatsCollector(ctx, s.pool, 15*time.Second)
 	metrics.StartStanceInvariantCollector(ctx, s.pool, 5*time.Minute)
 }
+
+// SiteStats contains aggregate counts and the most recent data timestamps
+// for the public /api/stats endpoint.
+type SiteStats struct {
+	PersonCount      int        `json:"person_count"`
+	FactCount        int        `json:"fact_count"`
+	ContradictionCount int      `json:"contradiction_count"`
+	LastFactAt       *time.Time `json:"last_fact_at"`
+	LastContradictionAt *time.Time `json:"last_contradiction_at"`
+}
+
+// GetSiteStats returns aggregate counts and latest timestamps in one round-trip.
+func (s *PostgresStorer) GetSiteStats(ctx context.Context) (SiteStats, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM persons)                    AS person_count,
+			(SELECT COUNT(*) FROM facts WHERE active = true)  AS fact_count,
+			(SELECT COUNT(*) FROM contradictions)             AS contradiction_count,
+			(SELECT MAX(created_at) FROM facts WHERE active = true) AS last_fact_at,
+			(SELECT MAX(detected_at) FROM contradictions)     AS last_contradiction_at
+	`)
+	var stats SiteStats
+	if err := row.Scan(
+		&stats.PersonCount,
+		&stats.FactCount,
+		&stats.ContradictionCount,
+		&stats.LastFactAt,
+		&stats.LastContradictionAt,
+	); err != nil {
+		return SiteStats{}, fmt.Errorf("get site stats: %w", err)
+	}
+	return stats, nil
+}
