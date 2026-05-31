@@ -242,6 +242,80 @@ func TestChunkKeyFacts(t *testing.T) {
 	})
 }
 
+// TestChunkKeyFactsByBudget locks in the property that fixes the 12K-context
+// overflow: EVERY batch must fit base + facts + output + safety ≤ context, no
+// batch may be empty, and all facts are preserved in order.
+func TestChunkKeyFactsByBudget(t *testing.T) {
+	const summary = "The person's stance on pension reform and the legal retirement age."
+	const newFact = "Jordan Bardella a suggéré de supprimer tout âge légal de départ à la retraite."
+
+	mkFacts := func(n int, text string) []StanceFactInfo {
+		out := make([]StanceFactInfo, n)
+		for i := range out {
+			out[i] = StanceFactInfo{ID: int64(i + 1), CanonicalVerb: "CLAIMED", NormalizedFactText: text}
+		}
+		return out
+	}
+
+	// The invariant the fix guarantees for every batch.
+	assertFits := func(t *testing.T, batches [][]StanceFactInfo) {
+		t.Helper()
+		base := estimateStanceBaseTokens(summary, newFact)
+		for i, b := range batches {
+			if len(b) == 0 {
+				t.Fatalf("batch %d is empty", i)
+			}
+			factTokens := 0
+			for _, f := range b {
+				factTokens += estimateStanceTokens(formatKeyFactLine(f))
+			}
+			total := base + factTokens + stanceAnalyzeOutputTokens + stanceContextSafetyTokens
+			// Allow the single-fact degenerate case to exceed (nothing batching can
+			// do when one fact + base already overflows); otherwise must fit.
+			if total > stanceMaxContextTokens && len(b) > 1 {
+				t.Errorf("batch %d overflows: %d > %d (base=%d facts=%d)", i, total, stanceMaxContextTokens, base, factTokens)
+			}
+		}
+	}
+
+	t.Run("empty returns nil", func(t *testing.T) {
+		if got := chunkKeyFactsByBudget(summary, newFact, nil); got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("a few short facts fit in one batch", func(t *testing.T) {
+		got := chunkKeyFactsByBudget(summary, newFact, mkFacts(5, "short fact text"))
+		if len(got) != 1 || len(got[0]) != 5 {
+			t.Errorf("expected 1 batch of 5, got %v", batchSizes(got))
+		}
+		assertFits(t, got)
+	})
+
+	t.Run("many long facts split into multiple fitting batches", func(t *testing.T) {
+		long := "Jordan Bardella a déclaré que l'autorité de l'État doit être assurée partout face aux violences et dégradations qui se multiplient dans plusieurs villes françaises."
+		got := chunkKeyFactsByBudget(summary, newFact, mkFacts(120, long))
+		if len(got) < 2 {
+			t.Fatalf("expected multiple batches for 120 long facts, got %d", len(got))
+		}
+		assertFits(t, got)
+		// All facts preserved, in order.
+		total, prevID := 0, int64(0)
+		for _, b := range got {
+			for _, f := range b {
+				total++
+				if f.ID <= prevID {
+					t.Errorf("facts out of order: %d after %d", f.ID, prevID)
+				}
+				prevID = f.ID
+			}
+		}
+		if total != 120 {
+			t.Errorf("expected 120 facts preserved, got %d", total)
+		}
+	})
+}
+
 func batchSizes(batches [][]StanceFactInfo) []int {
 	out := make([]int, len(batches))
 	for i, b := range batches {

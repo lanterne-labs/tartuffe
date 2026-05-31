@@ -2,6 +2,15 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-31: Stance-analyze 12K-context overflow fix + local-extractor UA rotation
+
+### What was done
+- **Stance analyze no longer overflows the model context (was silently dropping facts).** The analyze LLM call reserved a fixed 4000 output tokens against a base prompt that had grown to ~8000 tokens (it embeds the full ~25KB `promptrules.ContradictionRules`); 8K + 4K = the 12K ceiling, leaving ZERO room for key facts, so any non-trivial stance hit `ContextWindowExceededError` and the fact was rolled back ("facts without a stance" invariant). Fix in `backend/core/stance_manager.go`: (1) lowered the analyze output reservation 4000 → `stanceAnalyzeOutputTokens=2048`; (2) replaced the fixed `keyFactBatchSize=40` count-batching with `chunkKeyFactsByBudget`, which sizes each batch against the MEASURED base (`estimateStanceBaseTokens` measures `ContradictionRules` directly) so `base + facts + output + safety ≤ 12000` always holds — and can't go stale when the rules grow again. `keyFactBatchSize` stays as a hard backstop.
+- **Local Go extractor now rotates User-Agents on failure** (`backend/extractor/local.go`). Was a single fixed Chrome UA; on a 403/anti-bot block it failed straight to the paid webcrawler fallback. Now tries Chrome → Firefox → Safari with a 1.5s pause between, returning on first success; 404/410 short-circuits the rotation. Recovers pages that block one fingerprint without spending webcrawler credits.
+
+### Why
+Surfaced by a live `dm plugin news search` run for Macron/Trump/Le Pen: the sync pipeline worked (a real Bardella retirement-age contradiction was detected, verified, and recorded), but ~5 facts were rolled back by the context overflow, and leparisien.fr 403'd the local scraper and fell through to webcrawler (which returned 402 = out of credits). Lesson (again): any fixed token budget against a prompt that embeds the shared rules will go stale as the rules grow — measure the dominant piece at runtime instead of hardcoding an assumption.
+
 ## 2026-05-31: Removed batch LLM processing entirely (gh#24)
 
 ### What was done

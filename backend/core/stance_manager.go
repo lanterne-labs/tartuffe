@@ -138,13 +138,34 @@ func (s *flexibleString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// keyFactBatchSize caps the number of key facts the analyze call handles per
-// LLM invocation. With gemma-4's 12K context, ~3.5K tokens for the rules,
-// ~500 tokens for summary + new fact, and an 800-token output cap, we have
-// headroom for ~40 facts × ~80 tokens each. Stances larger than this are
-// processed across multiple sequential analyze calls; contradictions are
-// unioned across batches.
+// keyFactBatchSize is a HARD BACKSTOP on the number of key facts per analyze
+// call. The real limit is the token budget (see chunkKeyFactsByBudget) — this
+// only guards against a pathological case where many tiny facts would otherwise
+// pack into one oversized batch. Stances larger than a batch are processed
+// across multiple sequential analyze calls; contradictions are unioned.
 const keyFactBatchSize = 40
+
+// Token budget for the stance-analyze LLM call. The analyze prompt is dominated
+// by the shared promptrules.ContradictionRules body (~6.3K tokens) plus the
+// template prose; with the model's 12K context that leaves little room, so the
+// key-fact batch is sized dynamically against the MEASURED base (see
+// estimateStanceBaseTokens). Measuring the rules directly means this can't go
+// stale when they grow — the regression that overflowed the context and rolled
+// back facts in prod (the old code reserved 4K output against an 8K base = 12K,
+// leaving zero room for facts).
+const (
+	stanceMaxContextTokens    = 12000 // gemma-4 via litellm
+	stanceAnalyzeOutputTokens = 2048  // was 4000; budget-batching bounds entries/output per call so this is ample
+	stanceContextSafetyTokens = 600   // absorbs token-estimate error
+	stanceCharsPerToken       = 4     // measured ~4.1 on the French analyze prompt; 4 is slightly conservative
+	// stanceTemplateProseTokens is the fixed analyze-template prose AROUND the
+	// shared rules (which are measured directly in estimateStanceBaseTokens).
+	// Bump only if you substantially edit the analyze template in callLLM.
+	stanceTemplateProseTokens = 2200
+	// stanceMinFactsBudget keeps batching making progress even if the base prompt
+	// is near the ceiling (signals the prompt needs trimming — logged at WARN).
+	stanceMinFactsBudget = 200
+)
 
 // stanceShortlistSize caps the number of existing stances sent to assignTopic
 // in a single LLM call. When a person has more than this many stances, we
@@ -304,7 +325,7 @@ type aggregatedAnalysis struct {
 // primary verdict is CONTRADICTION if any batch returned contradictions, else
 // DUPLICATE if any batch returned DUPLICATE, else NEW_INFO.
 func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
-	batches := chunkKeyFacts(keyFacts, keyFactBatchSize)
+	batches := chunkKeyFactsByBudget(stanceSummary, newFactText, keyFacts)
 	if len(batches) == 0 {
 		// No key facts at all — degenerate but possible. Treat the new fact as
 		// NEW_INFO so the stance gets the new fact attached without a contradiction
@@ -379,6 +400,68 @@ func chunkKeyFacts(facts []StanceFactInfo, size int) [][]StanceFactInfo {
 		out = append(out, facts[i:end])
 	}
 	return out
+}
+
+// estimateStanceTokens is a cheap, deliberately conservative token estimate
+// (bytes ÷ stanceCharsPerToken). Byte length over-counts multibyte French text
+// slightly, which biases batches smaller — the safe direction.
+func estimateStanceTokens(s string) int {
+	return len(s) / stanceCharsPerToken
+}
+
+// formatKeyFactLine renders one key fact as it appears in the analyze prompt.
+// Shared by the prompt builder and the budget estimator so the two never drift.
+func formatKeyFactLine(f StanceFactInfo) string {
+	return fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText)
+}
+
+// estimateStanceBaseTokens estimates the analyze prompt's fixed cost EXCLUDING
+// key facts: the shared ContradictionRules (measured directly so rule growth
+// can't silently overflow the context), the template prose, and the per-call
+// summary + new fact.
+func estimateStanceBaseTokens(stanceSummary, newFactText string) int {
+	return stanceTemplateProseTokens +
+		estimateStanceTokens(promptrules.ContradictionRules) +
+		estimateStanceTokens(stanceSummary) +
+		estimateStanceTokens(newFactText)
+}
+
+// chunkKeyFactsByBudget batches key facts so each analyze call fits the model's
+// context: base prompt + facts + output reservation + safety ≤ stanceMaxContextTokens.
+// Falls back to a minimal budget (with a WARN) if the base prompt alone is near
+// the ceiling — that signals the analyze template itself needs trimming. Never
+// emits an empty batch, so a single oversized fact is still attempted alone.
+func chunkKeyFactsByBudget(stanceSummary, newFactText string, facts []StanceFactInfo) [][]StanceFactInfo {
+	if len(facts) == 0 {
+		return nil
+	}
+	base := estimateStanceBaseTokens(stanceSummary, newFactText)
+	factsBudget := stanceMaxContextTokens - stanceAnalyzeOutputTokens - stanceContextSafetyTokens - base
+	if factsBudget < stanceMinFactsBudget {
+		log.Warn().
+			Int("base_tokens", base).
+			Int("facts_budget", factsBudget).
+			Msg("Stance analyze base prompt near context limit; using minimal fact batches (consider trimming the prompt)")
+		factsBudget = stanceMinFactsBudget
+	}
+
+	var batches [][]StanceFactInfo
+	var cur []StanceFactInfo
+	curTokens := 0
+	for _, f := range facts {
+		ft := estimateStanceTokens(formatKeyFactLine(f))
+		if len(cur) > 0 && (curTokens+ft > factsBudget || len(cur) >= keyFactBatchSize) {
+			batches = append(batches, cur)
+			cur = nil
+			curTokens = 0
+		}
+		cur = append(cur, f)
+		curTokens += ft
+	}
+	if len(cur) > 0 {
+		batches = append(batches, cur)
+	}
+	return batches
 }
 
 // createNewStance creates a new stance document for a fact. The label MUST be
@@ -786,7 +869,7 @@ func (sm *StanceManager) callJSONLLM(
 func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
-		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
+		factsBuilder.WriteString(formatKeyFactLine(f))
 	}
 
 	prompt := fmt.Sprintf(`You are analyzing whether a new fact about a political figure updates, duplicates, or contradicts their known stance on a topic.
@@ -901,9 +984,13 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 		// recall (-0.14) on values_based pairs the COMPLETENESS rule otherwise
 		// catches — the model reasons through chains-of-thought and finds
 		// excuses to NOT flag direct contradictions. ChatTemplateKwargs field
-		// kept in ChatRequest for future selective use, and the 4000-token cap
-		// is kept as harmless headroom for the bigger COMPLETENESS responses.
-		content, err := sm.callJSONLLM(ctx, sys, prompt, t, 4000, false)
+		// kept in ChatRequest for future selective use.
+		// Output reservation: stanceAnalyzeOutputTokens (2048). Lowered from 4000
+		// because the ~8K-token base prompt + 4K output exactly filled the 12K
+		// context, leaving no room for key facts and overflowing (facts were
+		// rolled back). chunkKeyFactsByBudget now bounds facts (and thus the
+		// contradiction-entry count) per call, so 2048 is ample.
+		content, err := sm.callJSONLLM(ctx, sys, prompt, t, stanceAnalyzeOutputTokens, false)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call: %w", err)
 			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -100,4 +102,46 @@ func TestLocalExtractor_InvalidURL(t *testing.T) {
 	ext := NewLocalExtractor()
 	_, err := ext.ExtractContent("not-a-valid-url")
 	require.Error(t, err)
+}
+
+// TestLocalExtractor_RotatesUserAgentOn403 verifies that when the first UA
+// (Chrome) is blocked with a 403 — the exact failure mode that sent leparisien
+// to the paid webcrawler — the extractor rotates to the next UA and succeeds.
+func TestLocalExtractor_RotatesUserAgentOn403(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		// Block the Chrome UA; serve the article to anything else (Firefox/Safari).
+		if strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, sampleArticleHTML)
+	}))
+	defer srv.Close()
+
+	ext := NewLocalExtractor()
+	out, err := ext.ExtractContent(srv.URL + "/article")
+	require.NoError(t, err, "should recover by rotating off the blocked Chrome UA")
+	require.NotNil(t, out)
+	assert.Contains(t, out.Content, "710 millions d'euros")
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&requests), int32(2), "expected at least one UA rotation")
+}
+
+// TestLocalExtractor_404ShortCircuits verifies a genuinely-gone page does not
+// waste retries across every UA.
+func TestLocalExtractor_404ShortCircuits(t *testing.T) {
+	var requests int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requests, 1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	ext := NewLocalExtractor()
+	_, err := ext.ExtractContent(srv.URL + "/gone")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 404")
+	assert.Equal(t, int32(1), atomic.LoadInt32(&requests), "404 should not rotate UAs")
 }
