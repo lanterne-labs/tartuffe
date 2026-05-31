@@ -22,6 +22,7 @@ var (
 	reverifyMaxFlag      int
 	reverifyRandomFlag   bool
 	reverifyFormatFlag   string
+	reverifyApplyFlag    bool
 )
 
 var contradictionsReverifyCmd = &cobra.Command{
@@ -34,9 +35,13 @@ detection rules), reverify uses the stricter refute prompt that encodes the
 known false-positive buckets (numeric/measurement mismatches, procedural-scope
 differences, conditional-met logic inversions, same-direction claims).
 
-READ-ONLY: this command never deletes anything. It prints every contradiction
-the verifier would now DROP (verdict=NO) so a human can review them before any
-deletion is performed separately and with explicit approval.
+By default READ-ONLY: prints every contradiction the verifier would now DROP
+(verdict=NO) without changing anything. Pass --apply to actually DELETE the
+dropped rows. To guard against the local model's run-to-run variance, --apply
+re-verifies each candidate a SECOND time and only deletes when BOTH passes
+agree it is a false positive (2-of-2 drop); an unstable row is kept. Deleting a
+contradiction also clears its fact-pair check, so the daily detector will
+re-examine the pair on a later run (self-correcting if a delete was wrong).
 
 By default prints one JSONL object per line to stdout (for jq); the summary
 goes to stderr.`,
@@ -51,6 +56,7 @@ func init() {
 	contradictionsReverifyCmd.Flags().IntVar(&reverifyMaxFlag, "max", 0, "Maximum number of contradictions to reverify (0 = no cap)")
 	contradictionsReverifyCmd.Flags().BoolVar(&reverifyRandomFlag, "random", false, "Sample in random order instead of newest-first")
 	contradictionsReverifyCmd.Flags().StringVar(&reverifyFormatFlag, "format", "jsonl", "Output format: jsonl or text")
+	contradictionsReverifyCmd.Flags().BoolVar(&reverifyApplyFlag, "apply", false, "DELETE dropped contradictions (requires a confirming 2nd verification pass per row). Default is read-only.")
 }
 
 // reverifyOutputLine is the per-row JSONL schema written to stdout.
@@ -65,6 +71,7 @@ type reverifyOutputLine struct {
 	OriginalReason  string `json:"original_reason"`
 	Verdict         string `json:"verdict"` // "keep" | "drop" | "error"
 	Refutation      string `json:"refutation,omitempty"`
+	Deleted         bool   `json:"deleted,omitempty"` // true when --apply removed this row (2-of-2 drop)
 	Error           string `json:"error,omitempty"`
 }
 
@@ -120,9 +127,13 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 		enc.SetEscapeHTML(false)
 	}
 
-	var keep, drop, errors int
+	if reverifyApplyFlag {
+		fmt.Fprintf(os.Stderr, "⚠️  --apply: dropped contradictions will be DELETED from the database (2-of-2 drop required per row).\n\n")
+	}
+
+	var keep, drop, deleted, unstable, errors int
 	startedAt := time.Now()
-	log.Info().Int("total", len(rows)).Bool("random", reverifyRandomFlag).Str("scope", scopeDescription(reverifyPersonFlag)).Msg("Starting contradiction reverify")
+	log.Info().Int("total", len(rows)).Bool("random", reverifyRandomFlag).Bool("apply", reverifyApplyFlag).Str("scope", scopeDescription(reverifyPersonFlag)).Msg("Starting contradiction reverify")
 
 	for i, row := range rows {
 		line := reverifyOutputLine{
@@ -157,6 +168,29 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 				Str("original_reason", row.Reason).
 				Str("refutation", refutation).
 				Msg("Verifier would DROP this contradiction (false positive)")
+
+			// --apply: confirm with a second independent pass before deleting,
+			// so the local model's run-to-run variance can't delete a row on a
+			// fluke. Only a 2-of-2 drop is removed; a disagreeing pass keeps it.
+			if reverifyApplyFlag {
+				confirmKeep, confirmReason, cErr := detector.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
+				switch {
+				case cErr != nil:
+					log.Warn().Err(cErr).Int64("contradiction_id", row.ID).Msg("Confirmation pass errored; keeping row (not deleted)")
+				case confirmKeep:
+					// Second pass disagrees (it would KEEP) — unstable, do not delete.
+					unstable++
+					log.Info().Int64("contradiction_id", row.ID).Str("confirm_reason", confirmReason).Msg("Confirmation pass disagreed (keep); row is unstable, NOT deleting")
+				default:
+					if err := storer.DeleteContradiction(ctx, row.ID); err != nil {
+						log.Error().Err(err).Int64("contradiction_id", row.ID).Msg("Failed to delete contradiction")
+					} else {
+						deleted++
+						line.Deleted = true
+						log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).Msg("Deleted contradiction (2-of-2 drop)")
+					}
+				}
+			}
 		}
 
 		if format == "jsonl" {
@@ -168,7 +202,7 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 		}
 
 		if (i+1)%10 == 0 {
-			log.Info().Int("done", i+1).Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("errors", errors).Msg("Reverify progress")
+			log.Info().Int("done", i+1).Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("deleted", deleted).Int("errors", errors).Msg("Reverify progress")
 		}
 	}
 
@@ -177,24 +211,34 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(os.Stderr, "=== REVERIFY SUMMARY ===")
 	fmt.Fprintf(os.Stderr, "Checked:  %d (in %s)\n", len(rows), elapsed.Round(time.Second))
 	fmt.Fprintf(os.Stderr, "Keep:     %d\n", keep)
-	fmt.Fprintf(os.Stderr, "Drop:     %d  (false positives — review before deleting)\n", drop)
+	if reverifyApplyFlag {
+		fmt.Fprintf(os.Stderr, "Drop:     %d  (flagged false positives)\n", drop)
+		fmt.Fprintf(os.Stderr, "Deleted:  %d  (2-of-2 drop — removed from DB)\n", deleted)
+		fmt.Fprintf(os.Stderr, "Unstable: %d  (passes disagreed — KEPT, not deleted)\n", unstable)
+	} else {
+		fmt.Fprintf(os.Stderr, "Drop:     %d  (false positives — re-run with --apply to delete)\n", drop)
+	}
 	fmt.Fprintf(os.Stderr, "Errors:   %d\n", errors)
 
-	log.Info().Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("errors", errors).Dur("elapsed", elapsed).Msg("Contradiction reverify complete")
+	log.Info().Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("deleted", deleted).Int("unstable", unstable).Int("errors", errors).Bool("apply", reverifyApplyFlag).Dur("elapsed", elapsed).Msg("Contradiction reverify complete")
 	return nil
 }
 
 func printReverifyRow(w *os.File, line reverifyOutputLine) {
 	color := ansiGray
+	label := strings.ToUpper(line.Verdict)
 	switch line.Verdict {
 	case "keep":
 		color = ansiGreen
 	case "drop":
 		color = ansiRed
+		if line.Deleted {
+			label = "DELETED"
+		}
 	case "error":
 		color = ansiYellow
 	}
-	fmt.Fprintf(w, "%s[%s]%s contradiction #%d — %s\n", color, strings.ToUpper(line.Verdict), ansiReset, line.ContradictionID, line.Person)
+	fmt.Fprintf(w, "%s[%s]%s contradiction #%d — %s\n", color, label, ansiReset, line.ContradictionID, line.Person)
 	fmt.Fprintf(w, "  Fact A (#%d): %s\n", line.FactAID, line.FactA)
 	fmt.Fprintf(w, "  Fact B (#%d): %s\n", line.FactBID, line.FactB)
 	fmt.Fprintf(w, "  Original: %s\n", line.OriginalReason)

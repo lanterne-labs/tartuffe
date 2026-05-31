@@ -122,3 +122,41 @@ cases:
     expect: keep
     bucket: commitment_walkback
     notes: "Promise to keep 62 vs abandoning repeal of 64 — a broken commitment."
+
+  # ---- Prod-sourced cases from the 2026-05-31 live reverify (gh#23) ----
+
+  # Denounce a named person, then formally ally with them = real reversal (KEEP).
+  - name: "TP_103_maximi_denounce_then_ally"
+    fact_a: "Marianne Maximi a affirmé que la responsabilité du basculement de Clermont-Ferrand à droite est dans le camp d'Olivier Bianchi."
+    fact_b: "Marianne Maximi et Olivier Bianchi ont annoncé la fusion de leurs listes pour le second tour des municipales à Clermont-Ferrand le 16 mars 2026."
+    claimed_reason: "L'annonce d'une fusion avec Olivier Bianchi contredit l'affirmation que la responsabilité du basculement de la ville à droite lui incombe."
+    expect: keep
+    bucket: denounce_then_ally
+    notes: "Publicly blamed Bianchi, then merged lists with him — a real public-position reversal toward a named person."
+
+  # Pro-nuclear + anti-renewables is a coherent policy COMBO, not self-contradiction (DROP).
+  - name: "FP_106_amblard_coherent_policy_combo"
+    fact_a: "Maxime Amblard a affirmé que le projet Cigéo incarne une vision de l'écologie pragmatique."
+    fact_b: "Le 28 avril 2025, Maxime Amblard a demandé, au nom du Rassemblement national, un moratoire sur les énergies renouvelables."
+    claimed_reason: "La demande d'un moratoire sur les énergies renouvelables contredit la position de soutien à une vision de l'écologie pragmatique."
+    expect: drop
+    bucket: coherent_policy_combo
+    notes: "Pro-nuclear (Cigéo) and anti-renewables is a deliberate, internally-consistent energy stance — not a reversal."
+
+  # Two different concepts ("counter Russian influence" vs colonial "ingérence") only seem opposed (DROP).
+  - name: "FP_120_fuchs_different_concepts"
+    fact_a: "Bruno Fuchs a conseillé à la France de mettre en place un gros focus avec beaucoup de moyens sur Madagascar pour contrer l'influence russe."
+    fact_b: "Bruno Fuchs a déclaré que l'ingérence française est maintenant clairement et définitivement arrêtée."
+    claimed_reason: "L'affirmation que l'ingérence française est arrêtée contredit la recommandation de renforcer massivement la présence française à Madagascar."
+    expect: drop
+    bucket: different_concepts
+    notes: "He distinguishes legitimate counter-influence from colonial 'ingérence' — two compatible concepts, not a contradiction."
+
+  # Double negative: "disagreed that climate is NOT covered" == "climate IS covered" == fact B (DROP — same position).
+  - name: "FP_92_potier_double_negative_same_position"
+    fact_a: "Dominique Potier a exprimé son désaccord avec l'interprétation du ministère public qui considère que le climat ne relève pas des enjeux environnementaux couverts par la loi sur le devoir de vigilance."
+    fact_b: "Dominique Potier a affirmé qu'un impact grave sur le climat relève nécessairement du champ d'application du devoir de vigilance."
+    claimed_reason: "Dominique Potier affirme désormais que le climat relève du devoir de vigilance, contredisant sa position antérieure de désaccord sur l'inclusion du climat dans ce champ."
+    expect: drop
+    bucket: same_position_double_negative
+    notes: "Disagreeing that climate is NOT covered = believing it IS covered = exactly fact B. Same position; detector tripped on the double negative."
