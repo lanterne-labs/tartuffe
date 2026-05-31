@@ -4,13 +4,10 @@ import (
 	"context"
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/contradiction"
-	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -99,9 +96,9 @@ type personPairs struct {
 }
 
 // executeContradictionDetection runs contradiction detection with the given options.
-// Called by both the CLI command and the pipeline scheduler.
-// When BATCH_PROVIDER is set (and not in debug/dry-run mode), submits pairs to Gemini batch API.
-// Otherwise, processes synchronously via OpenRouter.
+// Called by both the CLI command and the daily pipeline. Processes pairs
+// synchronously via the OPEN_AI_API LLM, with the inline verification pass
+// gating each YES before it is recorded.
 func executeContradictionDetection(ctx context.Context, storer *storage.PostgresStorer, opts ContradictionDetectOpts) error {
 	// Get persons to process
 	persons, err := getPersonsForDetection(ctx, storer, opts)
@@ -139,11 +136,6 @@ func executeContradictionDetection(ctx context.Context, storer *storage.Postgres
 		return nil
 	}
 
-	// Decide: batch (Gemini) or sync (OpenRouter)
-	useBatch := os.Getenv("BATCH_PROVIDER") != "" && !opts.Debug && !opts.DryRun
-	if useBatch {
-		return submitContradictionBatch(ctx, storer, allPersonPairs, totalPairs)
-	}
 	return processSyncContradictions(ctx, storer, allPersonPairs, opts)
 }
 
@@ -375,76 +367,6 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 
 	log.Info().Str("person", person.Name).Int("pairs_to_check", len(filteredPairs)).Msg("Collected pairs for processing")
 	return filteredPairs
-}
-
-// submitContradictionBatch submits all collected pairs to the Gemini batch API.
-// The batch poller will process results asynchronously.
-func submitContradictionBatch(ctx context.Context, storer *storage.PostgresStorer, allPersonPairs []personPairs, totalPairs int) error {
-	provider, err := newBatchProvider()
-	if err != nil {
-		return fmt.Errorf("failed to create batch provider: %w", err)
-	}
-
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to create embedder: %w", err)
-	}
-
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
-	if err != nil {
-		return fmt.Errorf("stance manager required: %w", err)
-	}
-	inserter := core.NewFactInserter(storer, stanceMgr)
-	adapter := newBatchStorerAdapter(storer)
-	orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
-
-	// Build all batch requests across all persons
-	var allRequests []llm.BatchRequest
-	for _, pp := range allPersonPairs {
-		// Convert pairInfo to contradiction.FactPair + ID slices
-		factPairs := make([]contradiction.FactPair, len(pp.pairs))
-		factAIDs := make([]int64, len(pp.pairs))
-		factBIDs := make([]int64, len(pp.pairs))
-		for i, p := range pp.pairs {
-			factPairs[i] = contradiction.FactPair{
-				TextA: p.factAText,
-				DateA: p.factADate,
-				TextB: p.factBText,
-				DateB: p.factBDate,
-			}
-			factAIDs[i] = p.factAID
-			factBIDs[i] = p.factBID
-		}
-
-		requests := contradiction.PrepareContradictionBatch(pp.personID, factPairs, factAIDs, factBIDs)
-		allRequests = append(allRequests, requests...)
-	}
-
-	if len(allRequests) == 0 {
-		fmt.Printf("\n=== SUMMARY ===\nNo requests generated.\n")
-		return nil
-	}
-
-	batchID, err := orchestrator.SubmitContradictionBatch(ctx, allRequests, map[string]any{
-		"source":      "contradictions-detect",
-		"total_pairs": totalPairs,
-		"submitted":   time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to submit contradiction batch: %w", err)
-	}
-
-	submitted := len(allRequests)
-	if submitted > core.MaxRequestsPerContradictionBatch {
-		submitted = core.MaxRequestsPerContradictionBatch
-	}
-	fmt.Printf("\n=== BATCH SUBMITTED ===\n")
-	fmt.Printf("Batch ID: %d\n", batchID)
-	fmt.Printf("Total pairs: %d\n", totalPairs)
-	fmt.Printf("LLM requests: %d submitted (of %d total; rest deferred to next cycle)\n", submitted, len(allRequests))
-	fmt.Printf("Results will be processed by the batch poller.\n")
-
-	return nil
 }
 
 // processSyncContradictions processes pairs synchronously via OpenRouter (original path).

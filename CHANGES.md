@@ -2,6 +2,16 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-05-31: Removed batch LLM processing entirely (gh#24)
+
+### What was done
+- Deleted the whole batch-LLM path: `cmd/batch.go` (the `dm batch` subcommands), `backend/llm/batch*.go` (BatchProvider + gemini/mistral impls), `backend/core/batch_job.go` (BatchJobOrchestrator), `backend/storage/batch.go` (batch storer), `backend/contradiction/batch_detector.go`, and all their tests. Removed the `web serve` batch poller and the `BATCH_PROVIDER`/`GEMINI_API_KEY`/`GEMINI_BATCH_MODEL` env vars.
+- **Daily pipeline is now fully synchronous.** Step 1 was a batch submit (`collectAndSubmitBatch`) that required `BATCH_PROVIDER`; it's replaced by `runNewsCollection`, which extracts+stores news facts inline via the news provider's `CollectFacts` (OPEN_AI_API → lite-llm → local GPU). Twitter collection now always runs the sync path (`runTwitterCollection`); the old "skip sync when BATCH_PROVIDER set" branch is gone. Contradiction detection dropped its batch branch — always `processSyncContradictions`.
+- Kept `backend/core/batch_extractor.go` — despite the name it's the content-scraping concurrency wrapper used by the SYNC news path, NOT batch-LLM. Removed `twitter.Provider.CollectContent` (returned `core.BatchContentItem`, only the batch path used it). Left the `llm_batches` migration/tables in place (goose history — dropping a migration file breaks boot); the unused tables are harmless.
+
+### Why
+The prod LLM endpoint is now a sync-only lite-llm proxy → local GPU (cachy), which has no batch API. `BATCH_PROVIDER` was therefore unset in prod, and the daily-pipeline cron called `newBatchProvider()` and crashed nightly with a FATAL (gh#24). Since batching can never work against this endpoint, the fix is removal, not a guard. News/Twitter ingestion is unaffected — it already ran through the sync extractors (that's why fresh facts existed despite the cron crashing); the pipeline now simply uses that working path directly.
+
 ## 2026-05-30: Adversarial verification pass before persisting contradictions (gh#23)
 
 ### What was done

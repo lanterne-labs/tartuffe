@@ -63,11 +63,12 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	}
 	log.Info().Int("targets", len(targets)).Msg("Daily pipeline: target persons resolved")
 
-	// Step 1: News fact extraction. In batch mode, this also bundles tweets for the
-	// same target set so they go through the same batch LLM job.
-	stats, batchErr := collectAndSubmitBatch(ctx, storer, targets, targetIDs)
-	if batchErr != nil {
-		log.Error().Err(batchErr).Msg("Daily pipeline: news/batch submission failed")
+	// Step 1: News fact extraction — synchronous via the OPEN_AI_API LLM
+	// (lite-llm → local GPU). Searches news per target, scrapes, extracts and
+	// inserts facts inline.
+	stats, newsErr := runNewsCollection(ctx, storer, targets)
+	if newsErr != nil {
+		log.Error().Err(newsErr).Msg("Daily pipeline: news fact extraction failed")
 	}
 
 	// Step 2: Twitter — discovery (queue-scoped, only persons we care about) +
@@ -80,14 +81,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(discoverErr).Msg("Daily pipeline: Twitter discovery failed")
 	}
 
-	var twitterErr error
-	if os.Getenv("BATCH_PROVIDER") == "" {
-		twitterErr = runTwitterCollection(ctx, storer, targetIDs)
-		if twitterErr != nil {
-			log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
-		}
-	} else {
-		log.Info().Msg("Twitter collection handled via batch submission, skipping sync path")
+	twitterErr := runTwitterCollection(ctx, storer, targetIDs)
+	if twitterErr != nil {
+		log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
 	}
 
 	// Step 3: frpolitics (votes + news for deputies). Independent target set.
@@ -105,9 +101,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(mergeErr).Msg("Daily pipeline: stance merge sweep failed")
 	}
 
-	// Step 5: Contradiction detection. Always run over unchecked pairs across
-	// all persons. In batch mode this submits a contradiction batch and returns;
-	// the batch poller eventually finalizes results.
+	// Step 5: Contradiction detection. Runs synchronously over unchecked pairs
+	// across all persons via the OPEN_AI_API LLM, with the inline verification
+	// pass gating each YES before it is recorded.
 	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
 	if contraErr != nil {
 		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")
@@ -134,7 +130,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := targetsErr != nil || batchErr != nil || discoverErr != nil ||
+		hasErrors := targetsErr != nil || newsErr != nil || discoverErr != nil ||
 			twitterErr != nil || fpErr != nil || mergeErr != nil || contraErr != nil || photosErr != nil || auditErr != nil
 		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
 		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
@@ -145,8 +141,8 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			if targetsErr != nil {
 				parts = append(parts, "targets: "+targetsErr.Error())
 			}
-			if batchErr != nil {
-				parts = append(parts, "news/batch: "+batchErr.Error())
+			if newsErr != nil {
+				parts = append(parts, "news: "+newsErr.Error())
 			}
 			if discoverErr != nil {
 				parts = append(parts, "twitter-discover: "+discoverErr.Error())
@@ -196,7 +192,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	// Aggregate step errors so the caller (the host cron) can exit non-zero.
 	var stepErrs []error
-	for _, e := range []error{targetsErr, batchErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr, auditErr} {
+	for _, e := range []error{targetsErr, newsErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr, auditErr} {
 		if e != nil {
 			stepErrs = append(stepErrs, e)
 		}
@@ -243,7 +239,7 @@ type pipelineStats struct {
 }
 
 func (s pipelineStats) summary() string {
-	msg := fmt.Sprintf("targets=%d articles=%d items=%d scrape_errors=%d",
+	msg := fmt.Sprintf("targets=%d articles=%d facts=%d scrape_errors=%d",
 		s.TargetsProcessed, s.ArticlesParsed, s.ContentItems, s.ScrapeErrors)
 	if len(s.CollectErrors) > 0 {
 		msg += fmt.Sprintf("\n⚠️ Collection errors (%d):", len(s.CollectErrors))
@@ -254,35 +250,47 @@ func (s pipelineStats) summary() string {
 	return msg
 }
 
-// collectAndSubmitBatch searches news for the given target persons, extracts
-// article content, and submits everything (plus tweets for the same targets)
-// as a single Gemini batch job. Returns immediately — the batch poller handles
-// retrieval and fact insertion asynchronously.
-func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry, targetIDs map[int64]bool) (*pipelineStats, error) {
+// runNewsCollection searches news for each target person/party and extracts +
+// stores facts synchronously via the OPEN_AI_API LLM (lite-llm → local GPU).
+// Replaces the former batch-submission path. Returns aggregate stats and the
+// first fatal setup error (per-target failures are collected, not returned).
+func runNewsCollection(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry) (*pipelineStats, error) {
 	stats := &pipelineStats{}
 
 	if len(targets) == 0 {
-		log.Info().Msg("No target persons for fact extraction, skipping batch submission")
+		log.Info().Msg("No target persons for news fact extraction, skipping")
 		return stats, nil
 	}
 
-	// Initialize components for content extraction (no LLM needed here)
 	newsSearcher, err := search.NewNewsSearcherFromEnv()
 	if err != nil {
 		return stats, fmt.Errorf("failed to initialize news search: %w", err)
 	}
-
 	rawExtractor, err := extractor.NewExtractorFromType("auto")
 	if err != nil {
 		return stats, fmt.Errorf("failed to initialize content extractor: %w", err)
 	}
-	batchExtractor := core.NewBatchExtractorFromEnv(rawExtractor)
+	contentExtractor := core.NewBatchExtractorFromEnv(rawExtractor)
+	factExtractor, err := categorizer.NewOpenAIExtractorFromEnv()
+	if err != nil {
+		return stats, fmt.Errorf("failed to initialize fact extractor: %w", err)
+	}
+	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
+	if err != nil {
+		return stats, fmt.Errorf("failed to initialize embedder: %w", err)
+	}
+	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	if err != nil {
+		return stats, fmt.Errorf("stance manager required: %w", err)
+	}
 
-	// News provider — only needs search + content extraction (no FactExtractor/Embedder)
 	newsProvider := &news.Provider{
 		NewsSearch:       newsSearcher,
-		ContentExtractor: batchExtractor,
+		ContentExtractor: contentExtractor,
+		FactExtractor:    factExtractor,
+		Embedder:         embedder,
 		Storer:           storer,
+		StanceManager:    stanceMgr,
 	}
 
 	newsOpts := news.Options{
@@ -291,10 +299,8 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, 
 		RevisitHours: 24 * 365 * 10,
 	}
 
-	// Collect content from all target persons
-	var allItems []core.BatchContentItem
 	for i, entry := range targets {
-		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", entry.Name).Msg("Collecting news content")
+		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", entry.Name).Msg("News fact extraction")
 
 		targetType := news.TargetPerson
 		if entry.EntityType == "party" {
@@ -306,9 +312,9 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, 
 			PersonID: &entry.PersonID,
 		}
 
-		items, result, err := newsProvider.CollectContent(ctx, target, newsOpts)
+		result, err := newsProvider.CollectFacts(ctx, target, newsOpts)
 		if err != nil {
-			log.Error().Err(err).Str("person", entry.Name).Msg("Failed to collect content")
+			log.Error().Err(err).Str("person", entry.Name).Msg("News fact extraction failed")
 			stats.CollectErrors = append(stats.CollectErrors, entry.Name+": "+err.Error())
 			continue
 		}
@@ -317,128 +323,18 @@ func collectAndSubmitBatch(ctx context.Context, storer *storage.PostgresStorer, 
 		if result != nil {
 			stats.ArticlesParsed += result.ArticlesParsed
 			stats.ScrapeErrors += len(result.Errors)
+			stats.ContentItems += result.FactsExtracted
 
 			log.Info().
 				Str("person", entry.Name).
 				Int("articles_found", result.ArticlesFound).
 				Int("articles_parsed", result.ArticlesParsed).
-				Int("content_items", len(items)).
-				Msg("Content collection completed")
-		}
-
-		// Convert news ContentItems to batch BatchContentItems
-		for _, item := range items {
-			allItems = append(allItems, core.BatchContentItem{
-				SourceURL:   item.SourceURL,
-				Content:     item.Content,
-				TargetName:  item.TargetName,
-				TargetType:  item.TargetType,
-				PublishedAt: item.PublishedAt,
-			})
+				Int("facts_extracted", result.FactsExtracted).
+				Msg("News fact extraction completed")
 		}
 	}
-
-	// Also collect Twitter content for batch submission (filtered to same target set)
-	twitterItems, twitterErr := collectTwitterContentForBatch(ctx, storer, targetIDs)
-	if twitterErr != nil {
-		log.Warn().Err(twitterErr).Msg("Twitter content collection for batch failed")
-		stats.CollectErrors = append(stats.CollectErrors, "twitter: "+twitterErr.Error())
-	} else if len(twitterItems) > 0 {
-		allItems = append(allItems, twitterItems...)
-		log.Info().Int("twitter_items", len(twitterItems)).Msg("Added Twitter content to batch")
-	}
-
-	stats.ContentItems = len(allItems)
-
-	if len(allItems) == 0 {
-		log.Info().Msg("No content collected, skipping batch submission")
-		return stats, nil
-	}
-
-	// Initialize batch provider and submit
-	provider, err := newBatchProvider()
-	if err != nil {
-		return stats, fmt.Errorf("failed to create batch provider: %w", err)
-	}
-
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return stats, fmt.Errorf("failed to create embedder: %w", err)
-	}
-
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
-	if err != nil {
-		return stats, fmt.Errorf("stance manager required: %w", err)
-	}
-	inserter := core.NewFactInserter(storer, stanceMgr)
-	adapter := newBatchStorerAdapter(storer)
-	orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
-
-	batchID, err := orchestrator.PrepareAndSubmit(ctx, allItems, map[string]any{
-		"source":    "daily-pipeline",
-		"submitted": time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		return stats, fmt.Errorf("batch submission failed: %w", err)
-	}
-
-	log.Info().
-		Int64("batch_id", batchID).
-		Int("content_items", len(allItems)).
-		Msg("Batch submitted — poller will process results")
 
 	return stats, nil
-}
-
-// collectTwitterContentForBatch fetches tweets for active handles whose person is
-// in targetIDs and returns BatchContentItems for batch LLM submission. No LLM
-// calls are made.
-func collectTwitterContentForBatch(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool) ([]core.BatchContentItem, error) {
-	handles, err := storer.GetActiveTwitterHandles(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get active Twitter handles: %w", err)
-	}
-	if len(handles) == 0 {
-		log.Info().Msg("No active Twitter handles, skipping Twitter batch collection")
-		return nil, nil
-	}
-
-	fetcher, err := twitter.NewTwitterAPIIOFetcherFromEnv()
-	if err != nil {
-		log.Warn().Err(err).Msg("Twitter API key not configured, skipping Twitter batch collection")
-		return nil, nil
-	}
-
-	provider := &twitter.Provider{
-		Fetcher: fetcher,
-		Storer:  storer,
-	}
-
-	opts := twitter.Options{
-		MaxTweets: 50,
-		BatchSize: 20,
-	}
-
-	var allItems []core.BatchContentItem
-	skipped := 0
-	for _, handle := range handles {
-		if !targetIDs[handle.PersonID] {
-			skipped++
-			continue
-		}
-		items, err := provider.CollectContent(ctx, handle, opts)
-		if err != nil {
-			log.Error().Err(err).Str("handle", handle.Handle).Msg("Failed to collect Twitter content for batch")
-			continue
-		}
-		allItems = append(allItems, items...)
-	}
-
-	if skipped > 0 {
-		log.Info().Int("skipped_handles", skipped).Msg("Twitter batch collection: skipped handles outside target set")
-	}
-
-	return allItems, nil
 }
 
 // runFrpoliticsStep executes the frpolitics step of the daily pipeline:

@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"digital-mirror/backend/alerting"
-	"digital-mirror/backend/categorizer"
-	"digital-mirror/backend/core"
-	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -724,33 +721,6 @@ func executeServe(cmd *cobra.Command, args []string) error {
 			log.Error().Err(err).Msg("Metrics server failed")
 		}
 	}()
-
-	// Start batch poller if BATCH_PROVIDER is configured
-	if providerName := os.Getenv("BATCH_PROVIDER"); providerName != "" {
-		provider, err := newBatchProvider()
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to create batch provider, batch poller disabled")
-		} else {
-			embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-			if err != nil {
-				log.Error().Err(err).Msg("Failed to create embedder, batch poller disabled")
-			} else {
-				stanceMgr, smErr := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
-				if smErr != nil {
-					log.Error().Err(smErr).Msg("Failed to create stance manager, batch poller disabled")
-				} else {
-					inserter := core.NewFactInserter(storer, stanceMgr)
-					adapter := newBatchStorerAdapter(storer)
-					orchestrator := core.NewBatchJobOrchestrator(provider, adapter, embedder, inserter, categorizer.ParseFactJSON)
-					orchestrator.SetContradictionHandler(buildContradictionHandler(storer))
-					orchestrator.SetContradictionSubmitter(func(ctx context.Context) error {
-						return executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
-					})
-					go core.StartBatchPoller(ctx, orchestrator, 5*time.Minute)
-				}
-			}
-		}
-	}
 
 	// Start balance alert poller if Telegram is configured
 	if alerterInstance := buildAlerter(); alerterInstance != nil {
