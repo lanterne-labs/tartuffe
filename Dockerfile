@@ -21,5 +21,10 @@ COPY --from=builder /app/supabase/migrations /migrations
 
 ENV MIGRATIONS_DIR=/migrations
 
-ENTRYPOINT ["dm"]
-CMD ["web", "serve"]
+# No ENTRYPOINT: a raw-binary entrypoint (["dm"]) makes the host's `host ssh`
+# shell-probe report "container does not have a shell" (it routes the probe
+# through the entrypoint). Putting the full command in CMD keeps `dm web serve`
+# as the default while letting `host ssh` find /bin/sh. The host service
+# "Start Command" overrides CMD entirely, so the cron (`dm pipeline daily`) and
+# any other service are unaffected.
+CMD ["dm", "web", "serve"]
