@@ -14,7 +14,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o dm .
 # Final stage
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates tzdata
+# bash: alpine ships only busybox /bin/sh, which the host's `host ssh`
+# shell-probe fails to detect (reports "no shell (bash or sh)"). Debian-based
+# service images like postgres have bash and ssh fine, so install it here.
+RUN apk add --no-cache ca-certificates tzdata bash
 
 COPY --from=builder /app/dm /usr/local/bin/dm
 COPY --from=builder /app/supabase/migrations /migrations
