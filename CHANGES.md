@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-02: Entity dedup adjudication redesigned (whole-cluster -> pairwise + rule-based canonical)
+
+- `dm persons dedupe` adjudication is now **pairwise**: the LLM is asked `{"same": bool}` per trigram candidate pair, and only CONFIRMED pairs are union-find clustered. The old flow clustered all trigram pairs first then asked ONE `same_entity` bool for the whole component — a prod dry-run on parties chained 88 unrelated entities (CA Democrats, Norway Centre Party, CDU, etc.) into one component and merged them all. Pairwise gating structurally prevents chaining through unconfirmed links.
+- Canonical selection is now **rule-based, not LLM** (`storage.ChooseCanonical`): exactly-one-curated member always wins (never merge a junk dup over a real curated Assemblée entity); 2+ curated members skip the cluster; otherwise highest fact_count, tie-break lowest id. Removed the LLM `canonical_id` path that could pick a junk row as survivor and delete the real entity.
+- Added a size cap (12) that skips any confirmed cluster larger than that with a `log.Warn` (defense-in-depth). Default `--threshold` bumped 0.4 -> 0.45.
+
 ## 2026-06-02: Daily pipeline scope fix — frpolitics votes-only, news/twitter queue-only
 
 ### What was done

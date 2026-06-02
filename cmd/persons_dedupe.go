@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
@@ -19,14 +18,24 @@ var (
 	personsDedupeApply     bool
 )
 
-// personsDedupeCmd finds trigram-similar persons, asks an LLM whether each
-// cluster is the same entity, and merges duplicates into a canonical survivor.
+// maxConfirmedClusterSize is a defense-in-depth cap: with pairwise adjudication
+// a confirmed cluster should stay tiny, so anything larger is suspicious and we
+// refuse to bulk-merge it silently.
+const maxConfirmedClusterSize = 12
+
+// personsDedupeCmd finds trigram-similar persons, asks an LLM pairwise whether
+// each candidate pair is the same entity, clusters the CONFIRMED pairs, and
+// merges duplicates into a rule-chosen canonical survivor.
 var personsDedupeCmd = &cobra.Command{
 	Use:   "dedupe",
-	Short: "Find and merge duplicate person rows (trigram + LLM adjudication).",
-	Long: `Generates fuzzy candidate pairs via pg_trgm, groups them into clusters,
-asks an LLM whether each cluster is the SAME real-world entity, and (with
---apply) merges non-canonical members into the canonical survivor.
+	Short: "Find and merge duplicate person rows (trigram + pairwise LLM adjudication).",
+	Long: `Generates fuzzy candidate pairs via pg_trgm, asks an LLM whether EACH PAIR is
+the SAME real-world entity, clusters only the confirmed pairs (union-find), and
+(with --apply) merges non-canonical members into a rule-chosen canonical survivor.
+
+Canonical selection is rule-based (not LLM): a curated French Assemblée entity
+always wins; a cluster with two curated entities is skipped; otherwise the
+highest fact_count (tie-break lowest id) wins.
 
 Dry-run by default — prints what WOULD merge. Pass --apply to mutate.
 
@@ -45,7 +54,7 @@ merge those manually with: dm persons merge --from <id> --into <id>`,
 func init() {
 	personsCmd.AddCommand(personsDedupeCmd)
 	personsDedupeCmd.Flags().StringVar(&personsDedupeType, "type", "", "Restrict to one entity_type: human|party|organization. Empty = all.")
-	personsDedupeCmd.Flags().Float64Var(&personsDedupeThreshold, "threshold", 0.4, "Minimum trigram similarity (0-1) for candidate pairs.")
+	personsDedupeCmd.Flags().Float64Var(&personsDedupeThreshold, "threshold", 0.45, "Minimum trigram similarity (0-1) for candidate pairs.")
 	personsDedupeCmd.Flags().BoolVar(&personsDedupeApply, "apply", false, "Actually merge duplicates. Default is dry-run.")
 }
 
@@ -83,25 +92,67 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	pairs := make([][2]int64, len(candidates))
-	for i, c := range candidates {
-		pairs[i] = [2]int64{c.IDA, c.IDB}
+	fmt.Printf("=== persons dedupe (threshold=%.2f, type=%q, %d candidate pairs) ===\n",
+		personsDedupeThreshold, personsDedupeType, len(candidates))
+
+	// 1. Adjudicate each candidate pair; keep only confirmed same-entity pairs.
+	var (
+		confirmedPairs [][2]int64
+		nConfirmed     int
+		nRejected      int
+		nPairErrored   int
+	)
+	for _, c := range candidates {
+		a := core.EntityRef{ID: c.IDA, Name: c.NameA, EntityType: c.EntityTypeA, FactCount: c.FactCountA}
+		b := core.EntityRef{ID: c.IDB, Name: c.NameB, EntityType: c.EntityTypeB, FactCount: c.FactCountB}
+		verdict, err := adjudicator.AdjudicatePair(ctx, a, b)
+		if err != nil {
+			nPairErrored++
+			log.Error().Err(err).
+				Int64("id_a", c.IDA).Str("name_a", c.NameA).
+				Int64("id_b", c.IDB).Str("name_b", c.NameB).
+				Msg("Pair adjudication failed; skipping pair")
+			continue
+		}
+		if !verdict.Same {
+			nRejected++
+			log.Debug().
+				Int64("id_a", c.IDA).Str("name_a", c.NameA).
+				Int64("id_b", c.IDB).Str("name_b", c.NameB).
+				Str("reasoning", verdict.Reasoning).
+				Msg("LLM judged pair as DIFFERENT entities; not merging")
+			continue
+		}
+		nConfirmed++
+		confirmedPairs = append(confirmedPairs, [2]int64{c.IDA, c.IDB})
 	}
-	clusters := core.ClusterPairs(pairs)
+
+	// 2. Cluster only the confirmed pairs — chaining through unconfirmed links is
+	//    structurally impossible.
+	clusters := core.ClusterPairs(confirmedPairs)
 
 	var (
 		nClusters       = len(clusters)
 		nWouldMerge     int
 		nMerged         int
 		nMergeFailed    int
-		nRejected       int
 		nClusterErrored int
+		nClusterSkipped int
 	)
 
-	fmt.Printf("=== persons dedupe (threshold=%.2f, type=%q, %d candidate pairs, %d clusters) ===\n",
-		personsDedupeThreshold, personsDedupeType, len(candidates), nClusters)
-
 	for _, ids := range clusters {
+		// Defense-in-depth: never bulk-merge a mega-cluster silently.
+		if len(ids) > maxConfirmedClusterSize {
+			nClusterSkipped++
+			log.Warn().
+				Ints64("ids", ids).
+				Int("size", len(ids)).
+				Int("cap", maxConfirmedClusterSize).
+				Msg("Confirmed cluster exceeds safety cap; skipping (will not bulk-merge)")
+			fmt.Printf("  [skip] cluster of %d members exceeds cap %d (ids=%v)\n", len(ids), maxConfirmedClusterSize, ids)
+			continue
+		}
+
 		members, err := storer.GetPersonsForDedup(ctx, ids)
 		if err != nil {
 			nClusterErrored++
@@ -112,30 +163,15 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		refs := make([]core.EntityRef, len(members))
-		for i, m := range members {
-			refs[i] = core.EntityRef{ID: m.ID, Name: m.Name, EntityType: m.EntityType, FactCount: m.FactCount}
-		}
-
-		verdict, err := adjudicator.AdjudicateCluster(ctx, refs)
-		if err != nil {
-			nClusterErrored++
-			log.Error().Err(err).Interface("members", refs).Msg("Adjudication failed; skipping cluster")
+		canonical, ok := storage.ChooseCanonical(members)
+		if !ok {
+			// Two or more curated members — ChooseCanonical already logged it.
+			nClusterSkipped++
+			fmt.Printf("  [skip] %s -- 2+ curated entities; refusing to merge real entities\n", memberNames(members))
 			continue
 		}
 
-		if !verdict.SameEntity {
-			nRejected++
-			log.Info().
-				Interface("members", refs).
-				Str("reasoning", verdict.Reasoning).
-				Msg("LLM judged cluster as DIFFERENT entities; not merging")
-			fmt.Printf("  [skip] %s -- LLM: not the same entity (%s)\n", memberNames(members), verdict.Reasoning)
-			continue
-		}
-
-		canonical := chooseCanonical(members, verdict.CanonicalID)
-		fmt.Printf("  [cluster] canonical=%d (%q)  reasoning=%q\n", canonical.ID, canonical.Name, verdict.Reasoning)
+		fmt.Printf("  [cluster] canonical=%d (%q)\n", canonical.ID, canonical.Name)
 		for _, m := range members {
 			if m.ID == canonical.ID {
 				continue
@@ -156,8 +192,12 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("\n=== summary ===")
+	fmt.Printf("  pairs evaluated:    %d\n", len(candidates))
+	fmt.Printf("  pairs confirmed:    %d\n", nConfirmed)
+	fmt.Printf("  pairs rejected:     %d\n", nRejected)
+	fmt.Printf("  pair errors:        %d\n", nPairErrored)
 	fmt.Printf("  clusters:           %d\n", nClusters)
-	fmt.Printf("  rejected by LLM:    %d\n", nRejected)
+	fmt.Printf("  clusters skipped:   %d\n", nClusterSkipped)
 	fmt.Printf("  cluster errors:     %d\n", nClusterErrored)
 	if personsDedupeApply {
 		fmt.Printf("  merged:             %d\n", nMerged)
@@ -169,43 +209,6 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 	fmt.Println("\nReminder: trigram only catches same-script variants. Cross-language")
 	fmt.Println("duplicates (e.g. AfD vs \"alternative pour l'allemagne\") need a manual")
 	fmt.Println("`dm persons merge --from <id> --into <id>`.")
-}
-
-// chooseCanonical picks the survivor of a same-entity cluster. Preference order:
-// the LLM's canonical_id (if it names a real member), else a curated French
-// entity, else the highest fact_count, else the lowest id.
-func chooseCanonical(members []storage.DedupMember, llmCanonicalID int64) storage.DedupMember {
-	byID := make(map[int64]storage.DedupMember, len(members))
-	ids := make([]int64, len(members))
-	for i, m := range members {
-		byID[m.ID] = m
-		ids[i] = m.ID
-	}
-	if m, ok := byID[llmCanonicalID]; ok {
-		return m
-	}
-
-	// LLM said same_entity but named a canonical_id that isn't a member of the
-	// cluster (or 0). Don't silently discard that — log it before falling back
-	// to the heuristic survivor.
-	log.Warn().
-		Int64("llm_canonical_id", llmCanonicalID).
-		Interface("cluster_ids", ids).
-		Msg("LLM canonical_id is not a cluster member; falling back to heuristic canonical")
-
-	sorted := make([]storage.DedupMember, len(members))
-	copy(sorted, members)
-	sort.Slice(sorted, func(i, j int) bool {
-		a, b := sorted[i], sorted[j]
-		if a.Curated != b.Curated {
-			return a.Curated // curated first
-		}
-		if a.FactCount != b.FactCount {
-			return a.FactCount > b.FactCount // more facts first
-		}
-		return a.ID < b.ID // lowest id first
-	})
-	return sorted[0]
 }
 
 func memberNames(members []storage.DedupMember) string {

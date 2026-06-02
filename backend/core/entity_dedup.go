@@ -19,15 +19,14 @@ type EntityRef struct {
 	FactCount  int    `json:"fact_count"`
 }
 
-// EntityDedupVerdict is the LLM's decision for one candidate cluster.
-type EntityDedupVerdict struct {
-	SameEntity  bool   `json:"same_entity"`
-	CanonicalID int64  `json:"canonical_id"`
-	Reasoning   string `json:"reasoning"`
+// PairVerdict is the LLM's decision for one candidate pair.
+type PairVerdict struct {
+	Same      bool   `json:"same"`
+	Reasoning string `json:"reasoning"`
 }
 
-// EntityDedupAdjudicator asks an LLM whether a small cluster of similarly-named
-// persons refer to the same real-world entity.
+// EntityDedupAdjudicator asks an LLM whether two similarly-named persons refer to
+// the same real-world entity.
 type EntityDedupAdjudicator struct {
 	apiKey     string
 	apiURL     string
@@ -61,15 +60,12 @@ func NewEntityDedupAdjudicatorFromEnv() (*EntityDedupAdjudicator, error) {
 	}, nil
 }
 
-// AdjudicateCluster decides whether the given candidate entities are the same
-// real-world entity, and which one to keep. Fewer than two names is trivially
-// "not same" (nothing to merge).
-func (a *EntityDedupAdjudicator) AdjudicateCluster(ctx context.Context, names []EntityRef) (*EntityDedupVerdict, error) {
-	if len(names) < 2 {
-		return &EntityDedupVerdict{SameEntity: false}, nil
-	}
-
-	prompt := a.buildPrompt(names)
+// AdjudicatePair decides whether two candidate entities are the SAME real-world
+// political entity. Spelling/punctuation/acronym/translation variants of one
+// entity are the same; a national party vs a regional/local branch is NOT; two
+// genuinely different parties are NOT.
+func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 EntityRef) (*PairVerdict, error) {
+	prompt := a.buildPrompt(b1, b2)
 
 	reqPayload := llm.ChatRequest{
 		Model: a.model,
@@ -77,7 +73,7 @@ func (a *EntityDedupAdjudicator) AdjudicateCluster(ctx context.Context, names []
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
-		MaxTokens:      512,
+		MaxTokens:      256,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
@@ -151,26 +147,27 @@ func ClusterPairs(pairs [][2]int64) [][]int64 {
 	return clusters
 }
 
-func (a *EntityDedupAdjudicator) buildPrompt(names []EntityRef) string {
-	entriesJSON, _ := json.MarshalIndent(names, "", "  ")
+func (a *EntityDedupAdjudicator) buildPrompt(b1, b2 EntityRef) string {
+	pairJSON, _ := json.MarshalIndent([]EntityRef{b1, b2}, "", "  ")
 
-	return fmt.Sprintf(`You decide whether a small set of candidate entities are the SAME real-world entity (a person, political party, or organization). They have similar names but may be spelling/accent variants of one entity, OR genuinely different entities that merely look alike.
+	return fmt.Sprintf(`You decide whether TWO candidate entities are the SAME real-world political entity (a person, party, or organization). They have similar names but may be variants of one entity OR genuinely different entities that merely look alike.
 
-SAME entity examples: "eric zemmour" vs "éric zemmour"; "rassemblement national" vs "rn"; a typo variant of the same person.
-DIFFERENT entity examples: two distinct people who share a surname; a parent organization vs one of its members; a party vs a politician in it.
+RULES:
+- SAME entity: spelling/accent/punctuation/acronym/translation variants of one entity.
+  e.g. "eric zemmour" vs "éric zemmour"; "rassemblement national" vs "rn".
+- NOT same: a national party vs a regional/local branch of it (e.g. "Parti Socialiste" vs a PS departmental federation).
+- NOT same: two genuinely different parties/people that share a generic token ("party", "democratic", "socialiste").
 
-CANDIDATES:
+PAIR:
 %s
 
-If they are the same entity, pick canonical_id = the id of the best name to KEEP (most complete / correct spelling; prefer the one with more facts when equal).
-
-Return ONLY JSON:
-{"same_entity": true, "canonical_id": <id>, "reasoning": "<one short sentence>"}
+Return ONLY strict JSON, nothing else:
+{"same": true, "reasoning": "<one short sentence>"}
 or
-{"same_entity": false, "canonical_id": 0, "reasoning": "<one short sentence>"}`, string(entriesJSON))
+{"same": false, "reasoning": "<one short sentence>"}`, string(pairJSON))
 }
 
-func (a *EntityDedupAdjudicator) parseResponse(content string) (*EntityDedupVerdict, error) {
+func (a *EntityDedupAdjudicator) parseResponse(content string) (*PairVerdict, error) {
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```json") {
 		content = strings.TrimPrefix(content, "```json")
@@ -186,7 +183,7 @@ func (a *EntityDedupAdjudicator) parseResponse(content string) (*EntityDedupVerd
 		content = strings.TrimSpace(content)
 	}
 
-	var v EntityDedupVerdict
+	var v PairVerdict
 	if err := json.Unmarshal([]byte(content), &v); err != nil {
 		return nil, fmt.Errorf("invalid JSON response: %w", err)
 	}

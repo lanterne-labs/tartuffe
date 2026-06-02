@@ -10,11 +10,15 @@ import (
 // DuplicateCandidate is a single trigram-similar pair of persons that may be
 // the same real-world entity.
 type DuplicateCandidate struct {
-	IDA        int64
-	IDB        int64
-	NameA      string
-	NameB      string
-	Similarity float64
+	IDA         int64
+	IDB         int64
+	NameA       string
+	NameB       string
+	EntityTypeA string
+	EntityTypeB string
+	FactCountA  int
+	FactCountB  int
+	Similarity  float64
 }
 
 // DedupMember is a person row enriched with the signals the dedup CLI needs to
@@ -27,6 +31,46 @@ type DedupMember struct {
 	// Curated is true when the row is a curated French Assemblée entity (has an
 	// organeRef or assemblee_id attribute) — such rows are preferred survivors.
 	Curated bool
+}
+
+// ChooseCanonical picks the survivor of a confirmed same-entity cluster using
+// curated-aware rules (defends against deleting real curated entities):
+//  1. exactly ONE curated member -> that member is canonical (merge the junk
+//     dup INTO the curated entity, never the reverse).
+//  2. TWO OR MORE curated members -> skip the whole cluster (never merge two
+//     real curated entities); returns ok=false.
+//  3. no curated member -> highest fact_count, tie-break lowest id.
+func ChooseCanonical(members []DedupMember) (DedupMember, bool) {
+	var curated []DedupMember
+	for _, m := range members {
+		if m.Curated {
+			curated = append(curated, m)
+		}
+	}
+	if len(curated) == 1 {
+		return curated[0], true
+	}
+	if len(curated) >= 2 {
+		ids := make([]int64, len(curated))
+		names := make([]string, len(curated))
+		for i, m := range curated {
+			ids[i] = m.ID
+			names[i] = m.Name
+		}
+		log.Warn().
+			Ints64("curated_ids", ids).
+			Strs("curated_names", names).
+			Msg("Cluster has 2+ curated members; refusing to merge real entities, skipping")
+		return DedupMember{}, false
+	}
+
+	best := members[0]
+	for _, m := range members[1:] {
+		if m.FactCount > best.FactCount || (m.FactCount == best.FactCount && m.ID < best.ID) {
+			best = m
+		}
+	}
+	return best, true
 }
 
 // GetPersonsForDedup fetches the dedup-relevant fields for the given person IDs
@@ -208,7 +252,9 @@ func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType
 	}
 
 	const query = `
-		SELECT a.id, a.name, b.id, b.name, similarity(a.name, b.name) AS sim
+		SELECT a.id, a.name, a.entity_type, a.fact_count,
+		       b.id, b.name, b.entity_type, b.fact_count,
+		       similarity(a.name, b.name) AS sim
 		FROM persons a JOIN persons b ON a.id < b.id
 		WHERE ($1 = '' OR a.entity_type = $1) AND ($1 = '' OR b.entity_type = $1)
 		  AND a.name % b.name
@@ -225,7 +271,8 @@ func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType
 	var candidates []DuplicateCandidate
 	for rows.Next() {
 		var c DuplicateCandidate
-		if err := rows.Scan(&c.IDA, &c.NameA, &c.IDB, &c.NameB, &c.Similarity); err != nil {
+		if err := rows.Scan(&c.IDA, &c.NameA, &c.EntityTypeA, &c.FactCountA,
+			&c.IDB, &c.NameB, &c.EntityTypeB, &c.FactCountB, &c.Similarity); err != nil {
 			return nil, fmt.Errorf("failed to scan duplicate candidate: %w", err)
 		}
 		candidates = append(candidates, c)

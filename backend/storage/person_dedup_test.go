@@ -182,3 +182,35 @@ func TestMergePersons_SameID(t *testing.T) {
 	err := storer.MergePersons(ctx, 5, 5)
 	assert.Error(t, err, "merging a person into itself should error")
 }
+
+func TestChooseCanonical(t *testing.T) {
+	t.Run("one curated wins regardless of fact_count", func(t *testing.T) {
+		members := []DedupMember{
+			{ID: 1, Name: "junk dup", FactCount: 100, Curated: false},
+			{ID: 2, Name: "real entity", FactCount: 3, Curated: true},
+		}
+		got, ok := ChooseCanonical(members)
+		require.True(t, ok)
+		assert.Equal(t, int64(2), got.ID, "curated member must be canonical even with fewer facts")
+	})
+
+	t.Run("two curated members skip the cluster", func(t *testing.T) {
+		members := []DedupMember{
+			{ID: 1, Name: "real a", FactCount: 5, Curated: true},
+			{ID: 2, Name: "real b", FactCount: 9, Curated: true},
+		}
+		_, ok := ChooseCanonical(members)
+		assert.False(t, ok, "two curated members must skip (never merge real entities)")
+	})
+
+	t.Run("no curated: highest fact_count, tie-break lowest id", func(t *testing.T) {
+		members := []DedupMember{
+			{ID: 5, Name: "a", FactCount: 2, Curated: false},
+			{ID: 3, Name: "b", FactCount: 7, Curated: false},
+			{ID: 9, Name: "c", FactCount: 7, Curated: false},
+		}
+		got, ok := ChooseCanonical(members)
+		require.True(t, ok)
+		assert.Equal(t, int64(3), got.ID, "highest fact_count wins, tie-break lowest id")
+	})
+}
