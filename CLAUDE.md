@@ -122,7 +122,6 @@ OPEN_AI_CHAT_MODEL=gpt-4o-mini
 OPEN_AI_EMBED_MODEL=text-embedding-3-small
 GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
-DAILY_FOR_ALL=0                  # If 1, news+twitter fact extraction iterate ALL persons (default: only search_queue)
 FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
 
 # Search providers — assembled into a chain (tried in this order; whichever key is set is added).

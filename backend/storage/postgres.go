@@ -378,9 +378,14 @@ func (s *PostgresStorer) FindOrInsertPersonWithType(ctx context.Context, name st
 		entityType = "human"
 	}
 
-	// Try to find existing person first
+	// Try to find existing person first. Match accent- and case-insensitively
+	// (via immutable_unaccent) so "éric zemmour" resolves to an existing
+	// "eric zemmour" row instead of inserting a near-duplicate.
 	var personID int64
-	err := s.pool.QueryRow(ctx, `SELECT id FROM persons WHERE name = $1`, normalized).Scan(&personID)
+	err := s.pool.QueryRow(ctx,
+		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
+		normalized,
+	).Scan(&personID)
 	if err == nil {
 		return personID, nil
 	}
@@ -671,9 +676,17 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 		return nil, fmt.Errorf("no valid persons associated with fact after normalization: '%s'", factTextForLogging)
 	}
 
-	// 2. Find existing persons
-	existingPersons := make(map[string]int64) // Map normalized name -> existing ID
-	findStmt := `SELECT id, name FROM persons WHERE name = ANY($1)`
+	// 2. Find existing persons. Match accent- and case-insensitively by folding
+	//    BOTH sides in SQL (lower(immutable_unaccent(...))) so accent/case
+	//    variants ("éric zemmour" vs "eric zemmour") — and unaccent-only folds
+	//    Postgres applies but a Go fold does not (ß→ss, æ→ae, œ→oe, ł→l, …) —
+	//    resolve to the same existing row. The lookup map is keyed by the
+	//    normalized input name (as found in normalizedNamesList).
+	existingPersons := make(map[string]int64) // Map normalized input name -> existing ID
+	findStmt := `
+		SELECT inp.n AS input_name, p.id
+		FROM unnest($1::text[]) AS inp(n)
+		JOIN persons p ON lower(immutable_unaccent(p.name)) = lower(immutable_unaccent(inp.n))`
 	rows, err := tx.Query(ctx, findStmt, normalizedNamesList)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query existing persons: %w", err)
@@ -682,12 +695,16 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 
 	for rows.Next() {
 		var id int64
-		var name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var inputName string
+		if err := rows.Scan(&inputName, &id); err != nil {
 			rows.Close() // Close immediately on error
 			return nil, fmt.Errorf("failed to scan existing person row: %w", err)
 		}
-		existingPersons[name] = id
+		// Keep the first match for a given input name (legacy dup rows that
+		// share a folded key should be merged via `dm persons dedupe`).
+		if _, seen := existingPersons[inputName]; !seen {
+			existingPersons[inputName] = id
+		}
 	}
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("error iterating existing person rows: %w", rows.Err())
@@ -697,7 +714,7 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 	// 3. Determine which persons need insertion. NEW candidates (not in existing
 	//    map) go through the validator; rejected ones are logged and dropped so
 	//    the rest of the batch keeps moving.
-	personsToInsert := make([][]any, 0)
+	namesToInsert := make([]string, 0)
 	finalPersonIDsMap := make(map[string]int64) // Store all IDs (existing + new) by normalized name
 	rejectedNames := make([]string, 0)
 	for _, normalizedName := range normalizedNamesList {
@@ -716,62 +733,49 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 			// can't proceed safely if validation infrastructure itself is broken.
 			return nil, fmt.Errorf("validator failed for %q: %w", normalizedName, err)
 		}
-		personsToInsert = append(personsToInsert, []any{normalizedName})
+		namesToInsert = append(namesToInsert, normalizedName)
 	}
 
 	// If every NEW candidate was rejected AND nothing pre-existed, surface a
 	// single typed error so callers can decide whether this fact still has a
 	// resolvable subject.
-	if len(personsToInsert) == 0 && len(finalPersonIDsMap) == 0 && len(rejectedNames) > 0 {
+	if len(namesToInsert) == 0 && len(finalPersonIDsMap) == 0 && len(rejectedNames) > 0 {
 		return nil, &ErrEntityRejected{
 			Name:   rejectedNames[0],
 			Reason: fmt.Sprintf("all %d candidate name(s) rejected by validator", len(rejectedNames)),
 		}
 	}
 
-	// 4. Batch insert missing persons using CopyFrom
-	if len(personsToInsert) > 0 {
-		copyCount, err := tx.CopyFrom(
-			ctx,
-			pgx.Identifier{"persons"},         // Table name
-			[]string{"name"},                  // Column names
-			pgx.CopyFromRows(personsToInsert), // Source data
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to batch insert new persons using CopyFrom: %w", err)
-		}
-		if int(copyCount) != len(personsToInsert) {
-			log.Warn().Int64("expected_inserts", int64(len(personsToInsert))).Int64("actual_inserts", copyCount).Msg("CopyFrom inserted unexpected number of person rows")
-			// This might happen if there's a race condition or unexpected DB state, but proceed cautiously.
-		}
-		log.Debug().Int64("insert_count", copyCount).Msg("Batch inserted new persons")
-
-		// 5. Get IDs of newly inserted persons
-		newlyInsertedNames := make([]string, len(personsToInsert))
-		for i, data := range personsToInsert {
-			newlyInsertedNames[i] = data[0].(string)
-		}
-
-		findNewStmt := `SELECT id, name FROM persons WHERE name = ANY($1)`
-		newRows, err := tx.Query(ctx, findNewStmt, newlyInsertedNames)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query newly inserted persons: %w", err)
-		}
-		defer newRows.Close()
-
-		for newRows.Next() {
-			var id int64
-			var name string
-			if err := newRows.Scan(&id, &name); err != nil {
-				newRows.Close()
-				return nil, fmt.Errorf("failed to scan newly inserted person row: %w", err)
+	// 4. Insert the new persons one row at a time with conflict-safe handling.
+	//    These lists are small (a few involved-people names per fact), so a
+	//    per-row INSERT ... ON CONFLICT DO NOTHING is cheap and tolerates both
+	//    exact-name races and within-batch fold collisions (e.g. "éric" and
+	//    "eric" present together). On conflict we resolve the id with the same
+	//    SQL fold used for lookup, unifying behavior with
+	//    FindOrInsertPersonWithType.
+	for _, name := range namesToInsert {
+		var id int64
+		err := tx.QueryRow(ctx,
+			`INSERT INTO persons (name, entity_type) VALUES ($1, 'human')
+			 ON CONFLICT (name) DO NOTHING
+			 RETURNING id`,
+			name,
+		).Scan(&id)
+		if err == pgx.ErrNoRows {
+			// Conflict (exact name, or a fold collision with a row inserted
+			// earlier in this same batch) — resolve the existing id by fold.
+			if err := tx.QueryRow(ctx,
+				`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
+				name,
+			).Scan(&id); err != nil {
+				return nil, fmt.Errorf("failed to resolve conflicting person %q: %w", name, err)
 			}
-			finalPersonIDsMap[name] = id // Add newly inserted IDs
+		} else if err != nil {
+			return nil, fmt.Errorf("failed to insert new person %q: %w", name, err)
+		} else {
+			log.Debug().Int64("person_id", id).Str("name", name).Msg("Inserted new person")
 		}
-		if newRows.Err() != nil {
-			return nil, fmt.Errorf("error iterating newly inserted person rows: %w", newRows.Err())
-		}
-		newRows.Close()
+		finalPersonIDsMap[name] = id
 	}
 
 	// 6. Collect final list of IDs in the original order of unique normalized names.

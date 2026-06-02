@@ -2,6 +2,17 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-02: Daily pipeline scope fix — frpolitics votes-only, news/twitter queue-only
+
+### What was done
+- `runFrpoliticsStep` now runs frpolitics in `Mode: "votes"` (was `"both"`). In `"both"` mode, when no new laws passed the AI filter (the common case), frpolitics fell through to `runNewsSearchStandalone`'s `GetAllPersons` branch and searched news for **every entity in the persons table** (4,270 rows, incl. ~3,880 junk/foreign/duplicate entities auto-created from past mention sweeps). `PrioritizeTargets(PartiesFirst:true, LookbackDays:30)` cycled through the whole table ~73/night, so a French-politics pipeline was fact-checking the Norwegian Labour Party, Nigeria's APC, AfD village chapters, etc. This was the bulk of the ~1,200 facts/night and a big webcrawler-credit drain.
+- Removed the `DAILY_FOR_ALL` env var and its branch in `dailyTargets`: news + twitter are now always queue-scoped (search_queue), matching the intended design.
+- Pipeline is now simply: (1) news on queue, (2) twitter on queue, (3) frpolitics votes only, (4) stance merge, (5) contradictions, (6) photos, (7) audit.
+
+### Lessons learned
+- The news/twitter steps were correctly queue-scoped all along (~24 people). The unbounded scope came entirely from frpolitics' `"both"` mode news fallback. When wiring a domain plugin into the daily cron, give it its **own** narrow scope — never let a no-op day fall back to a full-DB sweep.
+- `dm plugin fr-politics --mode news`/`both` (CLI) still has the `GetAllPersons` standalone path for manual full-DB runs; only the daily pipeline was changed.
+
 ## 2026-05-31: Stance-analyze 12K-context overflow fix + local-extractor UA rotation
 
 ### What was done
@@ -1009,3 +1020,28 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
 - **Symlinks do not work with `go:embed`**. The Go toolchain explicitly rejects symlinked directories in embed patterns (`cannot embed file X: in non-directory Y`). The solution is to place the `//go:embed` directive in a Go file that lives alongside the files to embed (in this case, `supabase/embed.go` next to `supabase/migrations/`).
 - Existing migrations (001_, 002_, 20250601...) do not have `-- +goose Up/Down` annotations. Goose will still run them as "up" migrations, but they won't support rollback. New migrations should include goose annotations.
 - The godotenv.Load() calls in individual commands are now redundant since PersistentPreRunE loads .env first, but they were left in place to avoid unnecessary churn.
+
+## Entity deduplication (persons merge + dedupe)
+
+- New API on `*PostgresStorer` (`backend/storage/person_dedup.go`): `MergePersons(from,into)` folds one
+  person into another in a single tx — conflict-safe FK repoints across all 10 referencing columns,
+  stance memberships moved BEFORE stance rows (preserves "every fact has a stance"), then survivor
+  score recompute via existing `recomputeScoreAfterFactDeletion`. `FindDuplicateCandidates` (pg_trgm)
+  and `GetPersonsForDedup`.
+- New CLIs: `dm persons merge --from --into` and `dm persons dedupe [--type --threshold --apply]`
+  (dry-run by default; clusters trgm pairs via union-find, LLM-adjudicates each cluster).
+- LLM adjudicator `core.EntityDedupAdjudicator` + reusable `core.ClusterPairs` union-find.
+- Migration `20260602000000_entity_dedup_trgm.sql`: pg_trgm + unaccent + IMMUTABLE `immutable_unaccent`
+  wrapper + functional index `lower(immutable_unaccent(name))`. Insert-time person lookups
+  (`FindOrInsertPersonWithType` and batch `findOrInsertPersons`) are now accent+case-insensitive, so
+  "éric zemmour" no longer creates a duplicate of "eric zemmour". Go-side fold key: `util.NormalizeKey`.
+
+### Lessons learned
+- The IMMUTABLE unaccent wrapper MUST use the 2-arg `unaccent('unaccent'::regdictionary, $1)` form
+  (1-arg unaccent is only STABLE) AND pin `SET search_path` on the function — otherwise the functional
+  index build fails with "text search dictionary unaccent does not exist" (index builds run with a
+  reset search_path). The `::regdictionary` cast is required; a bare string literal fails.
+- `supabase db reset` is INCOMPATIBLE with our goose-annotated migrations: it executes each file's
+  `-- +goose Down` block as raw SQL, so `ADD COLUMN ... ; DROP COLUMN ...` migrations net to nothing
+  and the persons-lang backfill then fails on a missing `facts.lang`. Use the goose path
+  (`migrate.Run`, what the app/`dm web serve` uses) for a clean local DB, not `supabase db reset`.

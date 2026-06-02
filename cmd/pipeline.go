@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -42,15 +41,14 @@ func init() {
 // `dm pipeline daily` CLI command (which the host cron triggers).
 //
 // Steps in order:
-//  1. news fact extraction      — queue-scoped, or all persons if DAILY_FOR_ALL=1
-//  2. twitter fact extraction   — discovery (all) + collection (queue-scoped, or all if DAILY_FOR_ALL=1)
-//  3. frpolitics                — votes + news for French deputies
+//  1. news fact extraction      — queue-scoped (search_queue)
+//  2. twitter fact extraction   — queue-scoped (discovery + collection)
+//  3. frpolitics                — French Assemblée votes only (own scope, no news)
 //  4. contradiction detection   — over all persons with new pairs
 //  5. photo backfill            — persons + parties missing an image
 func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) error {
 	start := time.Now()
-	allPersons := os.Getenv("DAILY_FOR_ALL") == "1"
-	log.Info().Bool("daily_for_all", allPersons).Msg("Daily pipeline started")
+	log.Info().Msg("Daily pipeline started")
 
 	// Resolve target persons for fact-extraction steps (news, twitter).
 	targets, targetsErr := dailyTargets(ctx, storer)
@@ -71,10 +69,8 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(newsErr).Msg("Daily pipeline: news fact extraction failed")
 	}
 
-	// Step 2: Twitter — discovery (queue-scoped, only persons we care about) +
-	// fact collection (queue-scoped, or all if DAILY_FOR_ALL=1). Discovery used
-	// to iterate every person in the DB (3000+ today); restricting it to the
-	// queue eliminates the long-tail false-handle problem we saw with
+	// Step 2: Twitter — discovery + fact collection, both queue-scoped. Scoping
+	// to the queue eliminates the long-tail false-handle problem we saw with
 	// @ambrusfrance → Alexey Meshkov and cuts the Serper bill on every cron.
 	discoverErr := runTwitterDiscovery(ctx, storer, targetIDs)
 	if discoverErr != nil {
@@ -86,7 +82,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
 	}
 
-	// Step 3: frpolitics (votes + news for deputies). Independent target set.
+	// Step 3: frpolitics — French Assemblée vote facts only. News is handled by
+	// step 1 (queue-scoped); frpolitics no longer sweeps news so it can't pull in
+	// the whole person table via its full-DB news fallback.
 	fpErr := runFrpoliticsStep(ctx, storer)
 	if fpErr != nil {
 		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
@@ -207,25 +205,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 }
 
 // dailyTargets returns the persons that fact-extraction steps (news, twitter)
-// should iterate over. Defaults to the search_queue contents (the "main persons
-// queue"); when DAILY_FOR_ALL=1 is set, returns every person in the DB instead.
+// iterate over: the search_queue contents (the "main persons queue").
 // Photos + frpolitics + contradictions ignore this filter — they have their own scope.
 func dailyTargets(ctx context.Context, storer *storage.PostgresStorer) ([]storage.QueueEntry, error) {
-	if os.Getenv("DAILY_FOR_ALL") == "1" {
-		all, err := storer.GetAllPersons(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list all persons: %w", err)
-		}
-		out := make([]storage.QueueEntry, len(all))
-		for i, p := range all {
-			out[i] = storage.QueueEntry{
-				PersonID:   p.ID,
-				Name:       p.Name,
-				EntityType: p.EntityType,
-			}
-		}
-		return out, nil
-	}
 	return storer.GetSearchQueue(ctx)
 }
 
@@ -344,13 +326,14 @@ func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) erro
 	start := time.Now()
 	log.Info().Msg("Frpolitics step started")
 
+	// Vote facts only. News for tracked persons is handled by the queue-scoped
+	// news step (step 1); running frpolitics in "both"/"news" mode here would
+	// fall through to its full-DB GetAllPersons news sweep and pull in the whole
+	// person table (foreign parties, junk duplicates) — the exact bug we removed.
 	opts := frpolitics.Options{
-		Mode:             "both",
-		MaxLaws:          10,
-		PartyThreshold:   0.8,
-		NewsLimit:        5,
-		NewsLocation:     "France",
-		ContentExtractor: "webcrawler",
+		Mode:           "votes",
+		MaxLaws:        10,
+		PartyThreshold: 0.8,
 	}
 
 	err := frpolitics.Run(ctx, storer, opts)
