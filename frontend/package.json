@@ -25,6 +25,9 @@
 		"node": ">=22"
 	},
 	"dependencies": {
-		"@sveltejs/adapter-node": "^5.0.0"
+		"@sveltejs/adapter-node": "^5.0.0",
+		"@types/dompurify": "^3.0.5",
+		"dompurify": "^3.4.7",
+		"marked": "^18.0.4"
 	}
 }
