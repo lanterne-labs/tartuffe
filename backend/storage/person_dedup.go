@@ -203,6 +203,19 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		}
 	}
 
+	// d2. Backfill the survivor's image from the dup when the survivor has none,
+	//     so a merge never loses an available photo. (Only image_url — attributes
+	//     are left untouched to avoid clobbering the survivor's curated organeRef/
+	//     assemblee_id.)
+	if _, err := tx.Exec(ctx, `
+		UPDATE persons p SET image_url = d.image_url
+		FROM persons d
+		WHERE p.id=$2 AND d.id=$1
+		  AND (p.image_url IS NULL OR p.image_url='')
+		  AND d.image_url IS NOT NULL AND d.image_url<>''`, fromID, intoID); err != nil {
+		return fmt.Errorf("failed to backfill survivor image_url: %w", err)
+	}
+
 	// e. Delete the source person row.
 	if _, err := tx.Exec(ctx, `DELETE FROM persons WHERE id=$1`, fromID); err != nil {
 		return fmt.Errorf("failed to delete merged person %d: %w", fromID, err)

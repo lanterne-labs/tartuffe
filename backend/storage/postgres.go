@@ -747,23 +747,36 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 	}
 
 	// 4. Insert the new persons one row at a time with conflict-safe handling.
-	//    These lists are small (a few involved-people names per fact), so a
-	//    per-row INSERT ... ON CONFLICT DO NOTHING is cheap and tolerates both
-	//    exact-name races and within-batch fold collisions (e.g. "éric" and
-	//    "eric" present together). On conflict we resolve the id with the same
-	//    SQL fold used for lookup, unifying behavior with
-	//    FindOrInsertPersonWithType.
+	//    These lists are small (a few involved-people names per fact). The
+	//    `name` UNIQUE constraint is on the EXACT name, so ON CONFLICT (name)
+	//    alone would NOT catch two new names in this same batch that differ only
+	//    by accent ("eric" + "éric"). To prevent that, re-check by fold first —
+	//    the lookup runs inside this tx, so it sees rows inserted earlier in this
+	//    loop — and only insert when no fold match exists.
 	for _, name := range namesToInsert {
 		var id int64
+		// Fold re-check: catches within-batch fold collisions (a row inserted
+		// earlier in this loop) that the exact-name ON CONFLICT below would miss.
 		err := tx.QueryRow(ctx,
+			`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
+			name,
+		).Scan(&id)
+		if err == nil {
+			finalPersonIDsMap[name] = id
+			continue
+		}
+		if err != pgx.ErrNoRows {
+			return nil, fmt.Errorf("failed to re-check person %q by fold: %w", name, err)
+		}
+
+		err = tx.QueryRow(ctx,
 			`INSERT INTO persons (name, entity_type) VALUES ($1, 'human')
 			 ON CONFLICT (name) DO NOTHING
 			 RETURNING id`,
 			name,
 		).Scan(&id)
 		if err == pgx.ErrNoRows {
-			// Conflict (exact name, or a fold collision with a row inserted
-			// earlier in this same batch) — resolve the existing id by fold.
+			// Exact-name race — resolve the existing id by fold.
 			if err := tx.QueryRow(ctx,
 				`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
 				name,

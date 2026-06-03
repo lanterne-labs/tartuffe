@@ -98,6 +98,11 @@ func TestMergePersons(t *testing.T) {
 		`INSERT INTO search_queue (person_id) VALUES ($1)`, fromID)
 	require.NoError(t, err, "insert search_queue on from")
 
+	// Image only on "from"; survivor "into" has none -> merge must backfill it.
+	_, err = storer.pool.Exec(ctx,
+		`UPDATE persons SET image_url=$2 WHERE id=$1`, fromID, "http://img/alicefrom.jpg")
+	require.NoError(t, err, "set image_url on from")
+
 	// Colliding stance: give BOTH persons a stance with the same cluster_label,
 	// each attached to its own fact. After merge the survivor's stance must hold
 	// both fact memberships, and the duplicate stance must be gone.
@@ -118,6 +123,12 @@ func TestMergePersons(t *testing.T) {
 	var intoExists bool
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE id=$1)`, intoID).Scan(&intoExists))
 	assert.True(t, intoExists, "into person should survive")
+
+	// Survivor inherited the dup's image since it had none.
+	var intoImage *string
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT image_url FROM persons WHERE id=$1`, intoID).Scan(&intoImage))
+	require.NotNil(t, intoImage, "survivor image_url should be backfilled from dup")
+	assert.Equal(t, "http://img/alicefrom.jpg", *intoImage, "survivor should inherit dup's image_url when it had none")
 
 	// No fact_mentions still point at from; the from fact's mention now points at into.
 	var mentionsForFrom int
