@@ -33,3 +33,6 @@ scraped_content/
 *.jsonl
 facts_audit_progress.json
 facts_rebuild_progress.json
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key
