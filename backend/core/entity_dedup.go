@@ -157,6 +157,9 @@ RULES:
   e.g. "eric zemmour" vs "éric zemmour"; "rassemblement national" vs "rn".
 - NOT same: a national party vs a regional/local branch of it (e.g. "Parti Socialiste" vs a PS departmental federation).
 - NOT same: two genuinely different parties/people that share a generic token ("party", "democratic", "socialiste").
+- NOT same: parties from DIFFERENT countries/regions, even if the name matches.
+  e.g. "UK Labour"/"the labour party" vs "Australian Labor Party"; "Les Patriotes" (France) vs "PASTEF – Les Patriotes" (Senegal). When in doubt about country, answer NOT same.
+- NOT same: a bare generic descriptor ("labour", "the greens", "socialists", "conservatives") vs a specific named national party — too vague to confirm as the same entity.
 
 PAIR:
 %s
