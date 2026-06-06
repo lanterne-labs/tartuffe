@@ -1118,3 +1118,13 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
   authority on contradict/agree/dedupe. Best-effort + gated on similarity to bound LLM calls; skipped
   under --dry-run. This is a second net behind ingestion-time tri-band dedup, catching pre-existing
   duplicates the contradiction pass encounters.
+
+## DEDUPE retro-repoint of contradictions (2026-06-06)
+
+- When a fact is marked a duplicate, contradictions it already anchored keep referencing it and keep
+  counting toward the score (getPersonFactsCount/contradiction stats don't exclude duplicates).
+  `storage.RepointFactDuplicate` moves those contradictions onto the canonical fact — dropping
+  fact-vs-own-duplicate self-pairs and pairs that become redundant — then recomputes affected scores.
+  Stance memberships of the hidden fact are left intact (preserves every-fact-has-a-stance; it's
+  already excluded from active queries). Exposed as `dm facts repoint-duplicates [--apply]` (read-only
+  by default) and run as a daily-pipeline step right after contradiction detection.

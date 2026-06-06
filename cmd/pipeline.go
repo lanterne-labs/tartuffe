@@ -117,6 +117,16 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")
 	}
 
+	// Step 5b: Repoint contradictions off any facts the contradiction-pass dedup
+	// just marked as duplicates, so the redundant rows stop inflating scores.
+	// Best-effort — failures are logged, never aborting the pipeline.
+	if processed, repointed, dropped, rErr := repointDuplicates(ctx, storer, true); rErr != nil {
+		log.Error().Err(rErr).Msg("Daily pipeline: repoint-duplicates failed")
+	} else if processed > 0 {
+		log.Info().Int("duplicates", processed).Int("repointed", repointed).Int("dropped", dropped).
+			Msg("Daily pipeline: repointed contradictions off duplicate facts")
+	}
+
 	// Step 6: Photos backfill (persons + parties missing an image).
 	photosErr := runPhotosBackfill(ctx, storer)
 	if photosErr != nil {
