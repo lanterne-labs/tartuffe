@@ -4676,6 +4676,127 @@ func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetr
 	return nil
 }
 
+// PipelineRunSummary is one daily-pipeline run's outcome. The scalar fields are
+// supplied by the caller (cmd/pipeline.go); facts_extracted, contradictions_found
+// and persons_updated are derived by RecordPipelineRun from the run window so the
+// caller does not have to thread counts through every step.
+type PipelineRunSummary struct {
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	Status       string // "success" | "warning" | "no_content" | "error"
+	Targets      int
+	NewsArticles int
+	ScrapeErrors int
+	AuditChecked int
+	AuditFlagged int
+	StepErrors   int
+	ErrorSummary string
+}
+
+// RecordPipelineRun persists one pipeline_runs row. facts_extracted,
+// contradictions_found and persons_updated are counted from the [StartedAt,
+// FinishedAt] window in the same statement (single round trip) rather than
+// passed in. Best-effort: callers should log a failure but not abort the run.
+func (s *PostgresStorer) RecordPipelineRun(ctx context.Context, sum PipelineRunSummary) error {
+	var errSummary *string
+	if sum.ErrorSummary != "" {
+		errSummary = &sum.ErrorSummary
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO pipeline_runs (
+			started_at, finished_at, duration_seconds, status,
+			targets, news_articles, scrape_errors,
+			facts_extracted, contradictions_found, persons_updated,
+			audit_checked, audit_flagged, step_errors, error_summary
+		) VALUES (
+			$1, $2, $3, $4,
+			$5, $6, $7,
+			(SELECT count(*) FROM facts WHERE created_at >= $1 AND created_at <= $2),
+			(SELECT count(*) FROM contradictions WHERE created_at >= $1 AND created_at <= $2),
+			(SELECT count(DISTINCT entity_id) FROM event_log WHERE topic = 'person_updated' AND created_at >= $1 AND created_at <= $2),
+			$8, $9, $10, $11
+		)`,
+		sum.StartedAt, sum.FinishedAt, int(sum.FinishedAt.Sub(sum.StartedAt).Seconds()), sum.Status,
+		sum.Targets, sum.NewsArticles, sum.ScrapeErrors,
+		sum.AuditChecked, sum.AuditFlagged, sum.StepErrors, errSummary,
+	)
+	if err != nil {
+		return fmt.Errorf("record pipeline run: %w", err)
+	}
+	return nil
+}
+
+// FactNeedingTranslation is a non-English fact whose English translation is
+// missing (fact_text_en IS NULL), returned by GetFactsMissingEnglish.
+type FactNeedingTranslation struct {
+	ID   int64
+	Text string
+	Lang string
+}
+
+// GetFactsMissingEnglish returns up to `limit` non-English facts with a NULL
+// fact_text_en, oldest first. These are the gaps the daily extraction left
+// behind (the model dropped the translation field); the repair pass fills them.
+func (s *PostgresStorer) GetFactsMissingEnglish(ctx context.Context, limit int) ([]FactNeedingTranslation, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, fact_text, lang
+		 FROM facts
+		 WHERE lang IS NOT NULL AND lang <> 'en'
+		   AND (fact_text_en IS NULL OR fact_text_en = '')
+		 ORDER BY id
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query facts missing english: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FactNeedingTranslation
+	for rows.Next() {
+		var f FactNeedingTranslation
+		if err := rows.Scan(&f.ID, &f.Text, &f.Lang); err != nil {
+			return nil, fmt.Errorf("scan fact missing english: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// MarkFactDuplicate records that two facts are duplicates by inserting a
+// 'duplicate' fact_relations row (keeping the lower id as the canonical/general
+// fact, hiding the higher id as the specific one — it is then excluded from
+// active-fact queries, dedup candidates, and future contradiction detection).
+// Non-destructive and reversible (delete the row to un-hide). Idempotent via the
+// uq_fact_relation constraint. Used by the contradiction-detection dedup net.
+func (s *PostgresStorer) MarkFactDuplicate(ctx context.Context, factID1, factID2 int64, reason string) error {
+	if factID1 == factID2 {
+		return fmt.Errorf("cannot mark a fact as a duplicate of itself: %d", factID1)
+	}
+	general, specific := factID1, factID2
+	if general > specific {
+		general, specific = specific, general
+	}
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type, reason)
+		 VALUES ($1, $2, 'duplicate', NULLIF($3, ''))
+		 ON CONFLICT (general_fact_id, specific_fact_id) DO NOTHING`,
+		general, specific, reason)
+	if err != nil {
+		return fmt.Errorf("mark fact %d duplicate of %d: %w", specific, general, err)
+	}
+	return nil
+}
+
+// SetFactEnglish writes the English translation for a single fact.
+func (s *PostgresStorer) SetFactEnglish(ctx context.Context, factID int64, english string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE facts SET fact_text_en = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		factID, english)
+	if err != nil {
+		return fmt.Errorf("set fact english for %d: %w", factID, err)
+	}
+	return nil
+}
+
 // ScoreUpdate holds old and new honesty scores for a person, used by RecomputeAllHonestyScores.
 // Bundles is the count of distinct stance-grouped contradiction bundles; Total is the raw pair
 // count (Bundles <= Total always).

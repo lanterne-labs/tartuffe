@@ -1,0 +1,23 @@
+apiVersion: 1
+
+# Durable pipeline-run history + live contradiction drill-down live in the
+# application Postgres (the daily cron is ephemeral, so Prometheus cannot scrape
+# it). Connection comes from env vars set on the observability the host service,
+# referencing the postgres service (e.g. PGHOST=${{postgres.HOST_PRIVATE_DOMAIN}},
+# PGPORT=5432, PGUSER/PGPASSWORD/PGDATABASE=${{postgres.PG*}}). Internal the host
+# traffic is unencrypted, so sslmode=disable.
+datasources:
+  - name: MirrorDB
+    uid: mirrordb
+    type: postgres
+    access: proxy
+    url: ${PGHOST}:${PGPORT}
+    user: ${PGUSER}
+    jsonData:
+      database: ${PGDATABASE}
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${PGPASSWORD}
+    editable: false

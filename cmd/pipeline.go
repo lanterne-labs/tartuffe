@@ -90,6 +90,16 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
 	}
 
+	// Step 3b: Translation repair. All fact-creating steps are done; fill any
+	// non-English facts whose extraction-time English translation came back empty
+	// (the model occasionally drops the field). Best-effort — failures are logged
+	// and retried next run, never aborting the pipeline.
+	if filled, failed, trErr := repairMissingTranslations(ctx, storer, 5000); trErr != nil {
+		log.Error().Err(trErr).Msg("Daily pipeline: translation repair failed")
+	} else if filled > 0 || failed > 0 {
+		log.Info().Int("filled", filled).Int("failed", failed).Msg("Daily pipeline: translation repair done")
+	}
+
 	// Step 4: Stance merge sweep. Looks for stances that should be merged per
 	// LLM-vetted centroid clustering, applies the merges, and re-detects
 	// contradictions across previously-separated facts. Catches the cross-stance
@@ -126,52 +136,52 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 
 	elapsed := time.Since(start)
 
+	// Classify the run once; both the Telegram message and the pipeline_runs row
+	// derive their status from these flags.
+	stepErrPairs := []struct {
+		step string
+		err  error
+	}{
+		{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
+		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-merge", mergeErr},
+		{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
+	}
+	var stepErrs []error
+	var errParts []string
+	for _, p := range stepErrPairs {
+		if p.err != nil {
+			stepErrs = append(stepErrs, p.err)
+			errParts = append(errParts, p.step+": "+p.err.Error())
+		}
+	}
+	hasErrors := len(stepErrs) > 0
+	hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
+	noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
+
+	status := "success"
+	switch {
+	case hasErrors:
+		status = "error"
+	case noContent:
+		status = "no_content"
+	case hasWarnings:
+		status = "warning"
+	}
+
 	// Notify via Telegram
 	if notifier != nil {
-		hasErrors := targetsErr != nil || newsErr != nil || discoverErr != nil ||
-			twitterErr != nil || fpErr != nil || mergeErr != nil || contraErr != nil || photosErr != nil || auditErr != nil
-		hasWarnings := stats != nil && (stats.ScrapeErrors > 0 || len(stats.CollectErrors) > 0)
-		noContent := stats != nil && stats.TargetsProcessed > 0 && stats.ContentItems == 0
-
 		var msg string
-		if hasErrors {
-			var parts []string
-			if targetsErr != nil {
-				parts = append(parts, "targets: "+targetsErr.Error())
-			}
-			if newsErr != nil {
-				parts = append(parts, "news: "+newsErr.Error())
-			}
-			if discoverErr != nil {
-				parts = append(parts, "twitter-discover: "+discoverErr.Error())
-			}
-			if twitterErr != nil {
-				parts = append(parts, "twitter: "+twitterErr.Error())
-			}
-			if fpErr != nil {
-				parts = append(parts, "frpolitics: "+fpErr.Error())
-			}
-			if mergeErr != nil {
-				parts = append(parts, "stance-merge: "+mergeErr.Error())
-			}
-			if contraErr != nil {
-				parts = append(parts, "contradictions: "+contraErr.Error())
-			}
-			if photosErr != nil {
-				parts = append(parts, "photos: "+photosErr.Error())
-			}
-			if auditErr != nil {
-				parts = append(parts, "contradiction-audit: "+auditErr.Error())
-			}
+		switch status {
+		case "error":
 			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
-				elapsed.Round(time.Second), strings.Join(parts, "\n"))
-		} else if noContent {
+				elapsed.Round(time.Second), strings.Join(errParts, "\n"))
+		case "no_content":
 			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with no content</b> (%s)",
 				elapsed.Round(time.Second))
-		} else if hasWarnings {
+		case "warning":
 			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with warnings</b> (%s)",
 				elapsed.Round(time.Second))
-		} else {
+		default:
 			msg = fmt.Sprintf("✅ <b>Daily pipeline completed</b> (%s)",
 				elapsed.Round(time.Second))
 		}
@@ -188,12 +198,29 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		}
 	}
 
-	// Aggregate step errors so the caller (the host cron) can exit non-zero.
-	var stepErrs []error
-	for _, e := range []error{targetsErr, newsErr, discoverErr, twitterErr, fpErr, mergeErr, contraErr, photosErr, auditErr} {
-		if e != nil {
-			stepErrs = append(stepErrs, e)
-		}
+	// Persist a durable per-run summary for Grafana (Postgres datasource). The
+	// cron process is ephemeral so Prometheus cannot scrape it; this row is the
+	// source of truth for pipeline-run history. Best-effort — a write failure is
+	// logged but never fails the run.
+	finishedAt := time.Now()
+	summary := storage.PipelineRunSummary{
+		StartedAt:    start,
+		FinishedAt:   finishedAt,
+		Status:       status,
+		StepErrors:   len(stepErrs),
+		ErrorSummary: strings.Join(errParts, "\n"),
+	}
+	if stats != nil {
+		summary.Targets = stats.TargetsProcessed
+		summary.NewsArticles = stats.ArticlesParsed
+		summary.ScrapeErrors = stats.ScrapeErrors
+	}
+	if auditResult != nil {
+		summary.AuditChecked = auditResult.Total
+		summary.AuditFlagged = auditResult.Remove
+	}
+	if err := storer.RecordPipelineRun(ctx, summary); err != nil {
+		log.Error().Err(err).Msg("Failed to record pipeline_runs summary")
 	}
 
 	log.Info().

@@ -138,6 +138,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	factInserter := core.NewFactInserter(storer, stanceMgr)
+	factInserter.EnableLLMDedupe()
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)

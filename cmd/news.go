@@ -599,6 +599,7 @@ func runCacheOnlyExtraction(
 		return fmt.Errorf("stance manager required for fact ingestion: %w", smErr)
 	}
 	factInserter := core.NewFactInserter(storer, stanceMgr)
+	factInserter.EnableLLMDedupe()
 	totalFacts := 0
 	totalSkippedDedup := 0
 	totalFiles := 0

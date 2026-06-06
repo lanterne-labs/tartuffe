@@ -1051,3 +1051,70 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
   `-- +goose Down` block as raw SQL, so `ADD COLUMN ... ; DROP COLUMN ...` migrations net to nothing
   and the persons-lang backfill then fails on a missing `facts.lang`. Use the goose path
   (`migrate.Run`, what the app/`dm web serve` uses) for a clean local DB, not `supabase db reset`.
+
+## Daily-pipeline observability + verifier FP rules (2026-06-04)
+
+- **`pipeline_runs` table + `RecordPipelineRun`**: `dm pipeline daily` now writes one
+  durable summary row per run (status, timing, news stats, audit counts, and
+  window-derived facts/contradictions/persons counts). Rationale: the cron service is
+  ephemeral, so Prometheus cannot scrape it — Postgres is the source of truth for
+  pipeline-run history. Grafana reads it via a new `MirrorDB` Postgres datasource and the
+  "Digital Mirror - Daily Pipeline" dashboard (incl. a last-run contradictions drill-down).
+- **Verifier (`promptrules/verify.go`)**: added two false-positive NO-rules —
+  (7) endorsing another person for office ≠ contradicting "I'm not a candidate", and an
+  extension to (5) that an action which *fulfills/advances* a stated goal/trend is
+  follow-through, not a reversal. Golden cases FP_144 / FP_147 added.
+
+## Observability service deployed + metrics bind fix (2026-06-05)
+
+- **Observability service is now live on the host** (Grafana + Prometheus, `deploy/observability/`),
+  with a `/data` volume and the `MirrorDB` Postgres + Prometheus datasources. Deploy from the subdir
+  via `host up deploy/observability --path-as-root --service observability`.
+- Fixed a latent crash: the `init-perms` s6 **oneshot** `up` file is parsed by *execline*, not
+  `/bin/sh`, so the old multi-line shell script mis-parsed (`mkdir` swallowed `chown -R`'s `-R`).
+  It's now a single execline line invoking `/bin/sh -c "..."`. Never caught before because the
+  service had never been deployed.
+- **Metrics server now binds `[::]:9090`, not `127.0.0.1`** (`cmd/web.go`). the host's private network
+  is IPv6-only, so loopback was unreachable from the observability service's Prometheus
+  (`up{job="mirror"}==0`). Requires a `mirror` redeploy to take effect.
+
+## LLM gray-zone fact dedup (2026-06-05)
+
+- **Fact dedup is now tri-band.** Embedding cosine similarity `>= 0.80` still auto-dedupes
+  (verb-aware); `< 0.70` is always kept; the **gray zone [0.70, 0.80)** — plus any
+  similar-but-different-verb pair — is handed to an LLM adjudicator (`core.FactDedupeAdjudicator`,
+  `IsSameClaim`) that answers "same claim?". Fixes the class where a genuine restatement with a
+  different reporting verb (PROMISED vs CLAIMED, sim 0.78) slipped under the auto line and produced a
+  duplicate contradiction (#145/#146). The adjudicator is **conservative by design** — a wrong "same"
+  deletes real info, so it defaults to distinct and explicitly never merges contradiction-shaped
+  pairs (promise vs contrary action, before/after, supports/opposes).
+- Enabled via `FactInserter.EnableLLMDedupe()` (best-effort; no-op if OPEN_AI env absent, so tests
+  stay deterministic on the embedding-only path). Wired into news, twitter, frpolitics, ingester, and
+  the `dm plugin news` / `dm ingest files` CLIs. Golden: `TestFactDedupeAdjudicatorGolden` (local-only).
+
+## Translation repair, public min-facts floor, complementary-cause rule (2026-06-06)
+
+- **English-translation gap fixed.** ~10-24% of non-English facts had a NULL `fact_text_en`
+  because the extraction LLM silently dropped `normalized_fact_en` (parser warned + inserted anyway,
+  no retry/backfill). Now: (1) extraction prompt makes English MANDATORY for non-English facts;
+  (2) new `core.Translator` (translate-only LLM call) + `dm facts backfill-translations` CLI +
+  `storage.GetFactsMissingEnglish`/`SetFactEnglish`; (3) a daily-pipeline repair step fills any gap
+  each run (self-healing — serves as the retry). Run the CLI once to clear the existing backlog.
+- **Public site shows only entities with >3 facts** (`publicMinFacts=4` floor in `handleGetPersons`).
+  Hides one-off mentions and junk entities (institutions, a bookstore, mis-extractions) the pipeline
+  incidentally creates — ~416 persons shown vs ~1576 before. Considered queue-only (24) — too tight.
+- **Contradiction detection: complementary causes are not contradictions.** Extended the
+  `COMPLEMENTARY FACTS` negative rule in `promptrules/contradiction.go` to cover two compatible
+  explanations/causes of the same problem ("it's bad organization" + "it's not a resource problem").
+  Fixes the #156 (Darmanin) FP class at the detection stage; the verifier golden also covers it.
+
+## Contradiction-pass dedup net + DEDUPE merge (2026-06-06)
+
+- The contradiction detector now doubles as a dedup net. When the LLM judge concludes a near-identical
+  pair (KNN cosine sim >= 0.80) is NOT a contradiction, it asks `FactDedupeAdjudicator.IsSameClaim`;
+  if they are the same claim restated, `storage.MarkFactDuplicate` records a reversible 'duplicate'
+  `fact_relations` row (lower id kept canonical, higher id hidden from active queries / future
+  detection). The embedding is stance-blind by design, so the judge — not the vector — is the
+  authority on contradict/agree/dedupe. Best-effort + gated on similarity to bound LLM calls; skipped
+  under --dry-run. This is a second net behind ingestion-time tri-band dedup, catching pre-existing
+  duplicates the contradiction pass encounters.

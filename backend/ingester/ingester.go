@@ -57,6 +57,7 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	inserter := core.NewFactInserter(i.Store, stanceMgr)
+	inserter.EnableLLMDedupe()
 	_, err = inserter.InsertFacts(ctx, coreInputs)
 	return err
 }

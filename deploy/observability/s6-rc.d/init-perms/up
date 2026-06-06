@@ -1,4 +1,1 @@
-#!/bin/sh
-mkdir -p /data/prometheus /data/grafana /data/grafana/log /data/grafana/plugins
-chown -R nobody:nobody /data/prometheus
-chown -R grafana:root  /data/grafana
+/bin/sh -c "mkdir -p /data/prometheus /data/grafana /data/grafana/log /data/grafana/plugins && chown -R nobody:nobody /data/prometheus && chown -R grafana:root /data/grafana"

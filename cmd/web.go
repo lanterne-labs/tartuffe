@@ -189,6 +189,11 @@ func (ws *WebServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// publicMinFacts is the floor on fact_count for entities shown on the public
+// site: only persons with MORE THAN 3 facts (>= 4) are surfaced, so one-off
+// mentions and incidentally-created junk entities never appear.
+const publicMinFacts = 4
+
 // handleGetPersons returns persons ranked by fact count and honesty score
 func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -215,9 +220,13 @@ func (ws *WebServer) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	minFacts := 0
+	// The public site only surfaces entities with a real track record: enforce a
+	// floor of >3 facts so one-off mentions and junk entities (institutions,
+	// bookstores, mis-extractions the pipeline incidentally created) never show.
+	// A caller may request a higher minimum, never a lower one.
+	minFacts := publicMinFacts
 	if minFactsStr != "" {
-		if parsed, err := strconv.Atoi(minFactsStr); err == nil && parsed >= 0 {
+		if parsed, err := strconv.Atoi(minFactsStr); err == nil && parsed > publicMinFacts {
 			minFacts = parsed
 		}
 	}
@@ -715,7 +724,13 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	})
 
 	go func() {
-		metricsAddr := "127.0.0.1:" + metricsPort
+		// Bind the IPv6 wildcard (dual-stack) rather than loopback: the
+		// observability service's Prometheus scrapes us at
+		// mirror.host.internal:9090, and the host's private network is
+		// IPv6-only (the *.host.internal DNS returns AAAA records). A
+		// 127.0.0.1 bind is unreachable cross-service. The port has no public
+		// domain, so it stays private to the host project network.
+		metricsAddr := "[::]:" + metricsPort
 		log.Info().Str("port", metricsPort).Msg("Starting internal metrics server")
 		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
 			log.Error().Err(err).Msg("Metrics server failed")

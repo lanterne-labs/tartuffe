@@ -561,6 +561,7 @@ func (p *Provider) extractAndInsertFromArticles(
 				return fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
 			}
 			inserter := core.NewFactInserter(p.Storer, p.StanceManager)
+			inserter.EnableLLMDedupe()
 			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).

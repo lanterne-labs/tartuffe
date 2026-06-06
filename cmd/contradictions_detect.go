@@ -4,6 +4,7 @@ import (
 	"context"
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/contradiction"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
@@ -32,6 +33,25 @@ type pairInfo struct {
 	factBID   int64
 	factBText string
 	factBDate *time.Time
+	// similarity is the cosine similarity (1 - distance) between the two facts
+	// from the KNN neighbor search, used to gate the dedup-merge check on the
+	// "not a contradiction" path. 0 when unknown (e.g. the --check-all path).
+	similarity float64
+}
+
+// contradictionDedupSimFloor is the minimum KNN cosine similarity for the
+// contradiction-pass dedup net to even ask the LLM "same claim?" on a
+// non-contradictory pair. Matches the paraphrase-skip threshold used above, so
+// we only spend an LLM call on pairs that are genuinely near-duplicate.
+const contradictionDedupSimFloor = 0.80
+
+// neighborCandidate is a fact paired against the current fact during detection,
+// carrying the KNN cosine similarity so the dedup-merge check can be gated on it.
+type neighborCandidate struct {
+	ID          int64
+	Text        string
+	PublishedAt *time.Time
+	Similarity  float64
 }
 
 var contradictionsDetectCmd = &cobra.Command{
@@ -188,20 +208,13 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	sameVerbSkipped := 0
 
 	for _, fact := range facts {
-		var pairsToCheck []struct {
-			ID          int64
-			Text        string
-			PublishedAt *time.Time
-		}
+		var pairsToCheck []neighborCandidate
 
 		if opts.CheckAll {
 			for _, other := range facts {
 				if other.ID > fact.ID {
-					pairsToCheck = append(pairsToCheck, struct {
-						ID          int64
-						Text        string
-						PublishedAt *time.Time
-					}{other.ID, other.Text, other.PublishedAt})
+					pairsToCheck = append(pairsToCheck, neighborCandidate{
+						ID: other.ID, Text: other.Text, PublishedAt: other.PublishedAt, Similarity: 0})
 				}
 			}
 		} else {
@@ -229,11 +242,9 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 							continue
 						}
 					}
-					pairsToCheck = append(pairsToCheck, struct {
-						ID          int64
-						Text        string
-						PublishedAt *time.Time
-					}{neighbor.ID, neighbor.Text, neighbor.PublishedAt})
+					pairsToCheck = append(pairsToCheck, neighborCandidate{
+						ID: neighbor.ID, Text: neighbor.Text, PublishedAt: neighbor.PublishedAt,
+						Similarity: 1.0 - neighbor.Distance})
 				}
 			}
 		}
@@ -271,12 +282,13 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 			}
 
 			allPairs = append(allPairs, pairInfo{
-				factAID:   fact.ID,
-				factAText: fact.Text,
-				factADate: fact.PublishedAt,
-				factBID:   targetID,
-				factBText: targetText,
-				factBDate: targetDate,
+				factAID:    fact.ID,
+				factAText:  fact.Text,
+				factADate:  fact.PublishedAt,
+				factBID:    targetID,
+				factBText:  targetText,
+				factBDate:  targetDate,
+				similarity: other.Similarity,
 			})
 		}
 	}
@@ -391,6 +403,17 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 		}
 	}
 
+	// Best-effort dedup net for the "not a contradiction" path: a highly similar
+	// non-contradictory pair may be the same claim restated (the embedding is
+	// stance-blind by design, so the judge is the authority). If the adjudicator
+	// confirms they are the same claim, we mark the pair a duplicate so it stops
+	// generating future pairs/contradictions. Nil = disabled (no LLM env).
+	dedupeJudge, err := core.NewFactDedupeAdjudicatorFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("Fact-dedupe adjudicator unavailable; contradiction-pass dedup disabled")
+		dedupeJudge = nil
+	}
+
 	totalContradictions := 0
 	totalPairsChecked := 0
 
@@ -472,6 +495,34 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 					FactBID:         batch[j].factBID,
 					IsContradiction: isContra,
 				})
+
+				// Dedup net: the judge said NOT a contradiction, but if the two
+				// facts are near-identical they may be the same claim restated.
+				// Ask the adjudicator and, if so, mark the pair a duplicate so the
+				// redundant fact stops surfacing in future detection/dedup.
+				if !isContra && dedupeJudge != nil && !opts.DryRun &&
+					batch[j].similarity >= contradictionDedupSimFloor &&
+					batch[j].factAText != "" && batch[j].factBText != "" {
+					same, dErr := dedupeJudge.IsSameClaim(ctx, pp.personName, batch[j].factAText, batch[j].factBText)
+					if dErr != nil {
+						log.Warn().Err(dErr).
+							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+							Msg("Contradiction-pass dedup adjudication failed")
+					} else if same {
+						reason := fmt.Sprintf("contradiction-pass dedup: same claim (sim=%.2f)", batch[j].similarity)
+						if mErr := storer.MarkFactDuplicate(ctx, batch[j].factAID, batch[j].factBID, reason); mErr != nil {
+							log.Error().Err(mErr).
+								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+								Msg("Failed to mark facts as duplicates")
+						} else {
+							log.Info().
+								Str("person", pp.personName).
+								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+								Float64("similarity", batch[j].similarity).
+								Msg("Marked facts as duplicates (contradiction-pass dedup)")
+						}
+					}
+				}
 
 				if isContra {
 					totalContradictions++

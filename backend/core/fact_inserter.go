@@ -48,8 +48,24 @@ type StanceProcessor interface {
 type FactInserter struct {
 	storer              Storer
 	stanceProcessor     StanceProcessor
-	autoDedupeThreshold float64 // Cosine similarity above which to skip as duplicate
+	autoDedupeThreshold float64         // Cosine similarity at/above which to auto-skip as duplicate (verb-aware)
+	llmDedupeFloor      float64         // Lower bound of the LLM "gray zone"; below this similarity, never dedup
+	dedupeJudge         factDedupeJudge // Optional; when set, the [floor, auto) band (and similar-but-different-verb pairs) are LLM-adjudicated
 }
+
+// factDedupeJudge adjudicates whether two same-subject statements are the same
+// claim (one a redundant restatement of the other). Implemented by
+// *FactDedupeAdjudicator. Optional: when nil, the gray-zone band is not consulted
+// and only the >= autoDedupeThreshold verb-aware auto-dedup runs.
+type factDedupeJudge interface {
+	IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error)
+}
+
+// defaultLLMDedupeFloor is the lower bound of the similarity band handed to the
+// LLM adjudicator. 0.70 catches genuine restatements that slip just under the
+// 0.80 auto-dedup line (e.g. the Retailleau "candidature jusqu'au bout" pair at
+// 0.78) while staying high enough to keep the per-run LLM call volume bounded.
+const defaultLLMDedupeFloor = 0.70
 
 // Storer defines the interface for storage operations needed by FactInserter.
 // This is typically implemented by storage.PostgresStorer.
@@ -133,7 +149,23 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 		storer:              storer,
 		stanceProcessor:     stance,
 		autoDedupeThreshold: autoDedupeThreshold,
+		llmDedupeFloor:      defaultLLMDedupeFloor,
 	}
+}
+
+// EnableLLMDedupe activates LLM adjudication of the gray-zone similarity band
+// ([llmDedupeFloor, autoDedupeThreshold)) and of similar-but-different-verb
+// pairs that the cheap verb heuristic leaves undecided. Best-effort: if the
+// OPEN_AI_ env is unconfigured it logs and leaves band-dedup off, so callers
+// keep working with the embedding-only path. Production ingestion paths call
+// this; tests that don't, retain the deterministic embedding-only behavior.
+func (fi *FactInserter) EnableLLMDedupe() {
+	judge, err := NewFactDedupeAdjudicatorFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("LLM fact-dedupe disabled (OPEN_AI env not configured); using embedding-only dedup")
+		return
+	}
+	fi.dedupeJudge = judge
 }
 
 // InsertFacts processes a batch of facts. Each fact goes through verb-aware
@@ -205,33 +237,69 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
-	// Verb-aware near-duplicate check before inserting.
-	// Same verb (or both external verbs) + high similarity → skip.
-	// Different direct-claim verbs MUST coexist to preserve opposing stances.
+	// Near-duplicate check before inserting, in two tiers:
+	//   1. High similarity (>= autoDedupeThreshold) + compatible verb (same verb
+	//      or both external) → cheap auto-skip, no LLM. Different direct-claim
+	//      verbs do NOT auto-dedup here, to preserve opposing stances.
+	//   2. Gray zone [llmDedupeFloor, autoDedupeThreshold), OR similar-but-
+	//      different-verb pairs: cosine + verb heuristics can't decide, so ask the
+	//      LLM "same claim?" when an adjudicator is configured. This catches
+	//      genuine restatements with different verbs (e.g. PROMISED vs CLAIMED of
+	//      the same thing) that sit just under the auto line.
 	if len(input.Embedding) > 0 {
-		distanceThreshold := 1.0 - fi.autoDedupeThreshold
-		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, distanceThreshold, 5)
+		// Only widen the candidate search to the gray-zone floor when we can
+		// actually adjudicate it; otherwise keep the original narrow search.
+		searchDistance := 1.0 - fi.autoDedupeThreshold
+		if fi.dedupeJudge != nil {
+			searchDistance = 1.0 - fi.llmDedupeFloor
+		}
+		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, searchDistance, 5)
 		if err != nil {
 			log.Warn().Err(err).Str("fact", truncate(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
 		} else {
+			autoDistance := 1.0 - fi.autoDedupeThreshold
 			for _, sf := range similar {
 				existingVerb, verbErr := fi.storer.GetFactCanonicalVerb(ctx, sf.ID)
 				if verbErr != nil {
 					log.Debug().Err(verbErr).Int64("fact_id", sf.ID).Msg("Failed to get canonical verb for similar fact")
 					continue
 				}
-				bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
-				if existingVerb == input.CanonicalVerb || bothExternal {
-					log.Info().
-						Int64("existing_fact_id", sf.ID).
-						Float64("distance", sf.Distance).
-						Str("new_verb", input.CanonicalVerb).
-						Str("existing_verb", existingVerb).
-						Bool("both_external", bothExternal).
-						Str("fact", truncate(input.NormalizedFactText, 80)).
-						Msg("Skipping duplicate fact (same verb or both external + high similarity)")
-					return 0, 0, false, nil
+
+				// Tier 1: cheap verb-aware auto-dedup for very-high-similarity pairs.
+				if sf.Distance <= autoDistance {
+					bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
+					if existingVerb == input.CanonicalVerb || bothExternal {
+						log.Info().
+							Int64("existing_fact_id", sf.ID).
+							Float64("distance", sf.Distance).
+							Str("new_verb", input.CanonicalVerb).
+							Str("existing_verb", existingVerb).
+							Bool("both_external", bothExternal).
+							Str("fact", truncate(input.NormalizedFactText, 80)).
+							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
+						return 0, 0, false, nil
+					}
+				}
+
+				// Tier 2: LLM gray-zone adjudication (and similar-but-different-verb).
+				if fi.dedupeJudge != nil {
+					same, jErr := fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
+					if jErr != nil {
+						log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
+							Msg("LLM fact-dedupe check failed, proceeding with insertion")
+						continue
+					}
+					if same {
+						log.Info().
+							Int64("existing_fact_id", sf.ID).
+							Float64("distance", sf.Distance).
+							Str("new_verb", input.CanonicalVerb).
+							Str("existing_verb", existingVerb).
+							Str("fact", truncate(input.NormalizedFactText, 80)).
+							Msg("Skipping duplicate fact (LLM gray-zone adjudication: same claim)")
+						return 0, 0, false, nil
+					}
 				}
 			}
 		}

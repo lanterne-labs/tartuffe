@@ -4,9 +4,10 @@ package promptrules
 // second-guess a *claimed* contradiction before it is persisted. It is a
 // deliberately STRICTER, refutation-first pass than the detection prompt: its
 // job is to kill false positives, not to find new contradictions. It encodes
-// the four false-positive buckets observed in production (numeric/measurement
+// the false-positive buckets observed in production (numeric/measurement
 // mismatches, different procedural scopes, conditional-met logic inversions,
-// and same-direction claims) as hard NO rules.
+// same-direction/follow-through claims, and endorsement-vs-own-candidacy) as
+// hard NO rules.
 //
 // It is rendered by llm.VerifyContradiction with three %s arguments in order:
 // factA, factB, claimedReason. Any literal `%` MUST be written `%%`.
@@ -33,8 +34,9 @@ It is NOT a contradiction (answer NO) when ANY of these false-positive patterns 
   2. FORECAST vs CURRENT: one is a projection/forecast about the future and the other is a current poll or regional figure (e.g. "projected strongest in the 2029 federal election" vs "currently at 41%% in Saxony-Anhalt").
   3. PROCEDURAL SCOPE: different procedural scopes or components of the SAME action (e.g. "49-3 on the revenue part" vs "49-3 on the expenditure part" vs "49-3 to adopt the overall budget"). Normal procedure is not inconsistency.
   4. CONDITION LATER MET: one fact is a CONDITIONAL statement ("I would do X IF Y happens") and the other shows the condition Y came true or X happening — that is CONSISTENT. Do NOT invert the logic into a contradiction.
-  5. SAME DIRECTION: both facts take the SAME side / point the SAME way, even in different words (e.g. "pledged to reset relations with Africa" vs "claims to have ended la Françafrique"). Same-direction claims cannot contradict.
+  5. SAME DIRECTION: both facts take the SAME side / point the SAME way, even in different words (e.g. "pledged to reset relations with Africa" vs "claims to have ended la Françafrique"). Same-direction claims cannot contradict. This INCLUDES follow-through: an action that FULFILLS, ADVANCES, IMPLEMENTS, or IS THE CONCRETE STEP toward a previously stated goal, value, or trend is CONSISTENT, not a reversal. If the flagged reason itself says B "fulfills", "advances", "implements", or "is the concrete action of" A, answer NO.
   6. DIFFERENT SUBJECTS / TOPICS / TIMES: the facts are about different events, different people, different geographic scopes, or unrelated topics; or both are third-party narratives with no first-person claim and no authoritative finding.
+  7. ENDORSEMENT vs OWN NON-CANDIDACY: the person endorses, supports, or backs ANOTHER named person for an office, and separately states that they themselves are not a candidate / have no personal candidacy ambition. These are different roles (backer vs candidate) and are fully compatible — backing someone else is a reason NOT to run yourself, not a contradiction.
 
 Decision procedure:
   - If the case clearly matches one of the NO patterns (1-6), answer NO.

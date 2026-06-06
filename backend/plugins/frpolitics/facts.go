@@ -175,6 +175,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	inserter := core.NewFactInserter(storer, stanceMgr)
+	inserter.EnableLLMDedupe()
 
 	log.Info().
 		Int("total_facts", len(inputs)).

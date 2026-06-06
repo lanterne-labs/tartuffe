@@ -165,6 +165,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 		return result, fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
+	factInserter.EnableLLMDedupe()
 
 	for i := 0; i < len(toProcess); i += batchSize {
 		end := i + batchSize

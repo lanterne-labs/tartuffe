@@ -160,3 +160,40 @@ cases:
     expect: drop
     bucket: same_position_double_negative
     notes: "Disagreeing that climate is NOT covered = believing it IS covered = exactly fact B. Same position; detector tripped on the double negative."
+
+  # ---- Prod-sourced cases from the 2026-06-03 daily run ----
+
+  # Endorsing ANOTHER person for office is fully compatible with not being a candidate yourself (DROP).
+  - name: "FP_144_nkm_endorse_vs_self_candidacy"
+    fact_a: "Nathalie Kosciusko-Morizet a annoncé, le 2 juin 2026, qu'elle allait soutenir Édouard Philippe pour la présidentielle de 2027."
+    fact_b: "Nathalie Kosciusko-Morizet a affirmé qu'elle n'avait aucune ambition personnelle de candidature : «Je ne suis candidate à rien»."
+    claimed_reason: "L'affirmation de n'avoir aucune ambition de candidature contredit l'annonce de son soutien à Édouard Philippe pour la présidentielle de 2027."
+    expect: drop
+    bucket: endorsement_vs_self_candidacy
+    notes: "Backing someone else for an office is consistent with declaring you are not a candidate yourself — different roles (endorser vs candidate)."
+
+  # An action that FULFILLS a previously stated goal/trend is follow-through, not a reversal (DROP).
+  - name: "FP_147_findlay_action_fulfills_trend"
+    fact_a: "Kerry-Lynne Findlay has focused on pushing back on Indigenous rights and ending SOGI."
+    fact_b: "Kerry-Lynne Findlay promised that a Conservative government would tear up the province's Declaration of the Rights of Indigenous Peoples Act."
+    claimed_reason: "The promise to tear up the Indigenous rights act is the concrete action that fulfills the trend of pushing back on Indigenous rights described in A."
+    expect: drop
+    bucket: action_fulfills_goal
+    notes: "Tearing up the act ADVANCES the stated anti-Indigenous-rights trend — same direction, follow-through. The flagged reason itself says it 'fulfills' A."
+
+  # ---- Prod-sourced cases from the 2026-06-06 daily run ----
+
+  # Two compatible explanations of the SAME problem ("it's bad organization" + "it's
+  # NOT a lack of resources") reinforce each other; they are not opposing claims (DROP).
+  - name: "FP_156_darmanin_complementary_cause"
+    fact_a: "Gérald Darmanin a admis un « dysfonctionnement » et a déclaré que ce dernier est « révélateur de notre mauvaise organisation » concernant le traitement des plaintes dans l'affaire de la disparition de Lyhanna."
+    fact_b: "Gérald Darmanin a affirmé que les dysfonctionnements dans l'affaire Lyhanna ne sont pas dus à un manque de moyens."
+    claimed_reason: "L'affirmation selon laquelle les dysfonctionnements ne sont pas dus à un manque de moyens contredit la reconnaissance d'un dysfonctionnement lié à la mauvaise organisation du ministère."
+    expect: drop
+    bucket: complementary_cause
+    notes: "'It's bad organization' and 'it's not a lack of resources' are two compatible diagnoses of the same failure (an organizational, not a budgetary, problem) — they agree, not contradict."
+
+  # NOTE: Ciotti #157 ("réinjecter dans le sport local" vs "supprimé les subventions à
+  # l'Ironman et l'Ultra-Trail") was considered but deliberately NOT added: it is a
+  # defensible commitment-vs-contrary-action read (same shape as TP_114), so asserting
+  # "drop" would force an exception that risks killing genuine broken-promise contradictions.
