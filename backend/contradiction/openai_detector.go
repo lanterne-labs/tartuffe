@@ -404,6 +404,13 @@ func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, f
 	return llm.VerifyContradiction(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, factA, factB, claimedReason)
 }
 
+// SynthesizeGroupSummary produces a merged "one inconsistency" sentence (native +
+// English) for a contradiction group — one base claim contradicted by N facts.
+// Used by the regroup pass. Delegates to llm.SynthesizeContradictionGroupSummary.
+func (d *OpenAIContradictionDetector) SynthesizeGroupSummary(ctx context.Context, baseFact string, spokes []llm.GroupSpoke) (summary, summaryEn string, err error) {
+	return llm.SynthesizeContradictionGroupSummary(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, baseFact, spokes)
+}
+
 // FactPair represents a pair of facts to check for contradiction
 type FactPair struct {
 	IndexA int

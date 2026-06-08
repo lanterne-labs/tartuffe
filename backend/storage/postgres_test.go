@@ -1188,18 +1188,20 @@ func TestStanceBundledContradictions(t *testing.T) {
 	_, hasB := counts[stanceB]
 	assert.False(t, hasB, "stance B has no bundled contradictions (the only B-side pair is cross-stance solo)")
 
-	// GetStanceContradictions: stance A returns its 3 rows, stance B returns none.
-	stanceAItems, err := storer.GetStanceContradictions(ctx, stanceA)
+	// GetStanceContradictionGroups: groups are keyed by base fact (fact_a_id). All
+	// rows here have fact_a_id in {f1,f2} (both stance A), so stance A returns the
+	// groups and stance B returns none. (Grouping by base fact's stance, not the
+	// bundle, is what surfaces cross-stance spokes under the base's card.)
+	groupsA, err := storer.GetStanceContradictionGroups(ctx, stanceA)
 	require.NoError(t, err)
-	assert.Len(t, stanceAItems, 3, "stance A has 3 contradictions")
-	for _, c := range stanceAItems {
-		require.NotNil(t, c.BundleID)
-		assert.Equal(t, stanceA, *c.BundleID)
-		require.NotNil(t, c.BundleLabel)
-		assert.Equal(t, "Promise about X", *c.BundleLabel)
-		assert.Equal(t, 3, c.BundleSize)
+	assert.NotEmpty(t, groupsA, "stance A surfaces its contradiction groups")
+	totalSpokesA := 0
+	for _, g := range groupsA {
+		totalSpokesA += len(g.ContradictingFacts)
 	}
-	stanceBItems, err := storer.GetStanceContradictions(ctx, stanceB)
+	assert.Equal(t, 5, totalSpokesA, "all five pairwise rows surface as spokes across stance-A groups")
+
+	groupsB, err := storer.GetStanceContradictionGroups(ctx, stanceB)
 	require.NoError(t, err)
-	assert.Empty(t, stanceBItems, "stance B has no contradictions")
+	assert.Empty(t, groupsB, "stance B has no group whose base fact is in stance B")
 }

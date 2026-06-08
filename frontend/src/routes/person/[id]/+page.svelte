@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionWithFacts, PaginatedResponse, StanceDocument } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
-	import ContradictionPair from '$lib/components/ContradictionPair.svelte';
+	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -23,6 +23,7 @@
 		canonical_verb?: string;
 		source_url: string;
 		original_quote?: string;
+		archive_url?: string | null;
 	}
 	let stanceFacts: Record<number, StanceFact[]> = $state({});
 	let stanceFactsLoading: Record<number, boolean> = $state({});
@@ -57,7 +58,7 @@
 	// Stance-first profile state.
 	let stanceSort: StanceSort = $state('worst');
 	let expandedStances: Record<number, boolean> = $state({});
-	let stanceContradictions: Record<number, ContradictionWithFacts[]> = $state({});
+	let stanceContradictions: Record<number, ContradictionGroup[]> = $state({});
 	let stanceLoading: Record<number, boolean> = $state({});
 	// How many contradictions to render per expanded stance. Starts small so a stance with
 	// 30+ paraphrase pairs doesn't dump the whole list at once; "Show N more" / "Show all"
@@ -175,7 +176,7 @@
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
-			const items: ContradictionWithFacts[] = await response.json();
+			const items: ContradictionGroup[] = await response.json();
 			stanceContradictions[stanceId] = items;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
@@ -363,13 +364,13 @@
 		});
 	}
 
-	function reportContradiction(c: ContradictionWithFacts) {
+	function reportContradiction(g: ContradictionGroup) {
 		openTally({
 			target_kind: 'contradiction',
-			contradiction_id: c.id,
+			contradiction_id: g.contradicting_facts[0]?.contradiction_id ?? '',
 			fact_id: '',
 			stance_id: '',
-			target_label: `Contradiction #${c.id} (facts #${c.fact_a_id} ↔ #${c.fact_b_id})`,
+			target_label: `Contradiction group (base fact #${g.base_fact_id}, ${g.contradicting_facts.length} conflicting)`,
 			source_url: typeof location !== 'undefined' ? location.href : ''
 		});
 	}
@@ -633,8 +634,8 @@
 										{#if stanceLoading[stance.id]}
 											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
 										{:else if items.length > 0}
-											{#each items.slice(0, shown) as c (c.id)}
-												<ContradictionPair {c} onGoToFact={goToFact} onReport={reportContradiction} />
+											{#each items.slice(0, shown) as g (g.base_fact_id)}
+												<ContradictionGroupCard {g} onGoToFact={goToFact} onReport={reportContradiction} />
 											{/each}
 											{#if remaining > 0}
 												<div class="stance-more-row">
@@ -663,7 +664,15 @@
 															{pickFactText(f)}
 														</div>
 														{#if f.source_url}
-															<a class="stance-fact-source" href={f.source_url} target="_blank" rel="noopener noreferrer" onclick={(e) => e.stopPropagation()}>{f.source_url}</a>
+															<details class="source-dropdown" onclick={(e) => e.stopPropagation()}>
+																<summary>{tr('person.source', currentLang)}</summary>
+																<div class="source-dropdown-menu">
+																	<a href={f.source_url} target="_blank" rel="noopener noreferrer">{tr('person.source.original', currentLang)}</a>
+																	{#if f.archive_url}
+																		<a class="archive-link" href={f.archive_url} target="_blank" rel="noopener noreferrer">{tr('person.source.archive', currentLang)}</a>
+																	{/if}
+																</div>
+															</details>
 														{/if}
 														{#if f.original_quote}
 															<div class="quote-block">"{f.original_quote.length > 200 ? f.original_quote.slice(0, 200) + '…' : f.original_quote}"</div>
@@ -1234,12 +1243,35 @@
 		color: var(--text-primary);
 		margin-bottom: 0.3rem;
 	}
-	.stance-fact-source {
-		display: block;
+	.source-dropdown {
 		font-size: 0.75rem;
+		margin-bottom: 0.3rem;
+	}
+	.source-dropdown > summary {
+		cursor: pointer;
+		color: var(--accent);
+		list-style: none;
+		width: fit-content;
+	}
+	.source-dropdown > summary::after {
+		content: ' ▾';
+		opacity: 0.6;
+	}
+	.source-dropdown[open] > summary::after {
+		content: ' ▴';
+	}
+	.source-dropdown-menu {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		padding: 0.3rem 0 0 0.5rem;
+	}
+	.source-dropdown-menu a {
 		color: var(--accent);
 		word-break: break-all;
-		margin-bottom: 0.3rem;
+	}
+	.source-dropdown-menu .archive-link {
+		opacity: 0.8;
 	}
 
 	.stance-contradictions {

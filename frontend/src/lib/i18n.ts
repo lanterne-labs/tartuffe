@@ -81,6 +81,9 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'person.tab.no_contradictions': { fr: 'Aucune contradiction dans cette position.', en: 'No contradictions in this stance.' },
 	'person.tab.no_facts': { fr: 'Aucun fait dans cette position.', en: 'No facts in this stance.' },
 	'person.loading': { fr: 'Chargement…', en: 'Loading…' },
+	'person.source': { fr: 'Source', en: 'Source' },
+	'person.source.original': { fr: 'Voir la source', en: 'Show source' },
+	'person.source.archive': { fr: 'Voir l’archive', en: 'Show archive' },
 	'person.show_n_more': { fr: 'Voir {n} de plus', en: 'Show {n} more' },
 	'person.show_all_n': { fr: 'Voir tout ({n})', en: 'Show all {n}' },
 	'person.retry': { fr: 'Réessayer', en: 'Retry' },
@@ -91,6 +94,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'contradiction.statement_a': { fr: 'Énoncé A', en: 'Statement A' },
 	'contradiction.statement_b': { fr: 'Énoncé B', en: 'Statement B' },
 	'contradiction.view_in_facts': { fr: 'Voir dans les faits', en: 'View in Facts' },
+	'contradiction.facts_in_tension': { fr: '{n} faits en tension', en: '{n} facts in tension' },
+	'contradiction.base_fact': { fr: 'Affirmation de base', en: 'Base claim' },
 
 	// Counts (singular/plural — caller picks the form, but we expose both)
 	'count.fact': { fr: 'fait', en: 'fact' },

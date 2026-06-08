@@ -20,6 +20,7 @@ export interface FactWithSource {
 	lang?: string;         // BCP-47 source language
 	source_url: string;
 	original_quote: string;
+	archive_url?: string | null; // Wayback snapshot URL; null until archived
 }
 
 export interface ContradictionWithFacts {
@@ -55,6 +56,33 @@ export interface ContradictionWithFacts {
 	fact_a_stance_label_en?: string | null;
 	fact_b_stance_label: string | null;
 	fact_b_stance_label_en?: string | null;
+}
+
+// One spoke of a contradiction group: a fact that conflicts with the group's base
+// fact, with the reason it conflicts.
+export interface ContradictingFact {
+	contradiction_id: number;
+	fact_id: number;
+	fact_text: string;
+	fact_text_en?: string;
+	fact_date: string | null;
+	source_urls: string[];
+	reason: string;
+	reason_en?: string;
+}
+
+// A distinct inconsistency: one base (anchor) fact contradicted by N facts. Returned
+// by GET /api/stances/{id}/contradictions, one card per group. `summary` is the
+// LLM-synthesized merged reason (null for a single-fact group — use the spoke reason).
+export interface ContradictionGroup {
+	base_fact_id: number;
+	base_fact_text: string;
+	base_fact_text_en?: string;
+	base_fact_date: string | null;
+	base_fact_source_urls: string[];
+	summary: string | null;
+	summary_en?: string | null;
+	contradicting_facts: ContradictingFact[];
 }
 
 export interface PaginatedResponse<T> {

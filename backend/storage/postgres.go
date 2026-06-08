@@ -2517,25 +2517,78 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 
 // FactWithSource represents a fact with its source information
 type FactWithSource struct {
-	FactID        int64  `json:"fact_id"`
-	FactText      string `json:"fact_text"`
-	FactTextEn    string `json:"fact_text_en,omitempty"` // English translation; empty if source is English
-	Lang          string `json:"lang,omitempty"`         // BCP-47 source language
-	SourceURL     string `json:"source_url"`
-	OriginalQuote string `json:"original_quote"`
+	FactID        int64   `json:"fact_id"`
+	FactText      string  `json:"fact_text"`
+	FactTextEn    string  `json:"fact_text_en,omitempty"` // English translation; empty if source is English
+	Lang          string  `json:"lang,omitempty"`         // BCP-47 source language
+	SourceURL     string  `json:"source_url"`
+	OriginalQuote string  `json:"original_quote"`
+	ArchiveURL    *string `json:"archive_url,omitempty"` // Wayback snapshot URL; nil until archived
+}
+
+// SourceToArchive is a fact source row that still needs a Wayback snapshot.
+type SourceToArchive struct {
+	ID        int64
+	SourceURL string
+}
+
+// GetSourcesWithoutArchiveURL returns up to limit fact_sources that have never been
+// archived (archive_url IS NULL) and whose last attempt is older than the cooldown,
+// so the background worker neither skips fresh sources nor retries failures too soon.
+func (s *PostgresStorer) GetSourcesWithoutArchiveURL(ctx context.Context, limit int) ([]SourceToArchive, error) {
+	query := `
+		SELECT id, source_url
+		FROM fact_sources
+		WHERE source_url IS NOT NULL AND source_url <> ''
+		  AND archive_url IS NULL
+		  AND (archive_attempted_at IS NULL OR archive_attempted_at < NOW() - INTERVAL '7 days')
+		ORDER BY id
+		LIMIT $1`
+
+	rows, err := s.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query sources without archive URL: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SourceToArchive
+	for rows.Next() {
+		var r SourceToArchive
+		if err := rows.Scan(&r.ID, &r.SourceURL); err != nil {
+			return nil, fmt.Errorf("scan source row: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// UpdateSourceArchiveURL records the result of an archiving attempt. archiveURL is nil
+// when the save request was submitted but the snapshot is not yet available; the
+// archive_attempted_at timestamp is always updated so we do not retry within the cooldown.
+func (s *PostgresStorer) UpdateSourceArchiveURL(ctx context.Context, sourceID int64, archiveURL *string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE fact_sources
+		SET archive_url = $2, archive_attempted_at = NOW()
+		WHERE id = $1`,
+		sourceID, archiveURL)
+	if err != nil {
+		return fmt.Errorf("update archive url for source %d: %w", sourceID, err)
+	}
+	return nil
 }
 
 // FactInStance is the projection returned by /api/stances/:id/facts. Carries
 // both the native + English versions so the frontend language toggle can swap
 // per-fact without a second round trip.
 type FactInStance struct {
-	FactID        int64  `json:"fact_id"`
-	FactText      string `json:"fact_text"`
-	FactTextEn    string `json:"fact_text_en,omitempty"`
-	Lang          string `json:"lang,omitempty"`
-	CanonicalVerb string `json:"canonical_verb,omitempty"`
-	SourceURL     string `json:"source_url"`
-	OriginalQuote string `json:"original_quote,omitempty"`
+	FactID        int64   `json:"fact_id"`
+	FactText      string  `json:"fact_text"`
+	FactTextEn    string  `json:"fact_text_en,omitempty"`
+	Lang          string  `json:"lang,omitempty"`
+	CanonicalVerb string  `json:"canonical_verb,omitempty"`
+	SourceURL     string  `json:"source_url"`
+	OriginalQuote string  `json:"original_quote,omitempty"`
+	ArchiveURL    *string `json:"archive_url,omitempty"` // Wayback snapshot URL; nil until archived
 }
 
 // GetFactsInStance returns the facts attached to a stance with both native and
@@ -2544,9 +2597,12 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.fact_text_en,'') AS fact_text_en,
 		       COALESCE(f.lang,'') AS lang, COALESCE(f.canonical_verb,'') AS canonical_verb,
-		       (SELECT fs.source_url FROM fact_sources fs WHERE fs.fact_id = f.id ORDER BY fs.id LIMIT 1) AS source_url,
-		       COALESCE((SELECT fs.original_quote FROM fact_sources fs WHERE fs.fact_id = f.id ORDER BY fs.id LIMIT 1),'') AS original_quote
+		       src.source_url, COALESCE(src.original_quote,'') AS original_quote, src.archive_url
 		FROM facts f
+		LEFT JOIN LATERAL (
+		    SELECT fs.source_url, fs.original_quote, fs.archive_url
+		    FROM fact_sources fs WHERE fs.fact_id = f.id ORDER BY fs.id LIMIT 1
+		) src ON true
 		JOIN stance_document_facts sdf ON sdf.fact_id = f.id
 		WHERE sdf.stance_document_id = $1
 		ORDER BY f.id`
@@ -2559,7 +2615,7 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 	for rows.Next() {
 		var f FactInStance
 		var src *string
-		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote); err != nil {
+		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote, &f.ArchiveURL); err != nil {
 			return nil, err
 		}
 		if src != nil {
@@ -2586,14 +2642,14 @@ type PaginatedContradictions struct {
 func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*PaginatedFacts, error) {
 	query := `
 		WITH fact_rows AS (
-			SELECT DISTINCT f.id, f.fact_text, COALESCE(f.fact_text_en, '') AS fact_text_en, COALESCE(f.lang, '') AS lang, fs.source_url, fs.original_quote
+			SELECT DISTINCT f.id, f.fact_text, COALESCE(f.fact_text_en, '') AS fact_text_en, COALESCE(f.lang, '') AS lang, fs.source_url, fs.original_quote, fs.archive_url
 			FROM facts f
 			JOIN fact_sources fs ON fs.fact_id = f.id
 			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = $1
 			  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		)
-		SELECT id, fact_text, fact_text_en, lang, source_url, original_quote,
+		SELECT id, fact_text, fact_text_en, lang, source_url, original_quote, archive_url,
 		       (SELECT COUNT(DISTINCT id) FROM fact_rows) AS total_count
 		FROM fact_rows
 		ORDER BY id
@@ -2608,7 +2664,7 @@ func (s *PostgresStorer) GetPersonFacts(ctx context.Context, personID int64, lim
 	result := &PaginatedFacts{Items: make([]FactWithSource, 0)}
 	for rows.Next() {
 		var fact FactWithSource
-		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.FactTextEn, &fact.Lang, &fact.SourceURL, &fact.OriginalQuote, &result.Total)
+		err := rows.Scan(&fact.FactID, &fact.FactText, &fact.FactTextEn, &fact.Lang, &fact.SourceURL, &fact.OriginalQuote, &fact.ArchiveURL, &result.Total)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan fact: %w", err)
 		}
@@ -2862,90 +2918,6 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 	}
 
 	return result, nil
-}
-
-// GetStanceContradictions returns all contradictions whose bundle_stance_id matches the given
-// stance, hydrated with the same fields as GetPersonContradictions. Used by the profile UI to
-// show the contradictions inside a single stance card without paginating (stance bundles are
-// small by construction). bundle_size is set to the count of rows in the same stance.
-func (s *PostgresStorer) GetStanceContradictions(ctx context.Context, stanceID int64) ([]ContradictionWithFacts, error) {
-	query := `
-		WITH contradiction_rows AS (
-			SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
-				   fa.fact_text AS fact_a_text, COALESCE(fa.fact_text_en,'') AS fact_a_text_en,
-				   fb.fact_text AS fact_b_text, COALESCE(fb.fact_text_en,'') AS fact_b_text_en,
-				   COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
-				   COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
-				   COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-				   c.reason, COALESCE(c.reason_en,'') AS reason_en, c.detected_at,
-				   c.bundle_stance_id,
-				   sd.cluster_label  AS bundle_label,
-				   sd.label_en       AS bundle_label_en,
-				   sd.summary        AS bundle_summary,
-				   sd.summary_en     AS bundle_summary_en,
-				   sda.id            AS fact_a_stance_id,
-				   sda.cluster_label AS fact_a_stance_label,
-				   sda.label_en      AS fact_a_stance_label_en,
-				   sdb.id            AS fact_b_stance_id,
-				   sdb.cluster_label AS fact_b_stance_label,
-				   sdb.label_en      AS fact_b_stance_label_en
-			FROM contradictions c
-			JOIN facts fa ON fa.id = c.fact_a_id
-			JOIN facts fb ON fb.id = c.fact_b_id
-			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
-			LEFT JOIN stance_document_facts sdfa ON sdfa.fact_id = c.fact_a_id
-			LEFT JOIN stance_documents sda ON sda.id = sdfa.stance_document_id
-			LEFT JOIN stance_document_facts sdfb ON sdfb.fact_id = c.fact_b_id
-			LEFT JOIN stance_documents sdb ON sdb.id = sdfb.stance_document_id
-			LEFT JOIN LATERAL (
-				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
-				       MIN(published_at) AS earliest
-				FROM fact_sources WHERE fact_id = fa.id
-			) fsa ON true
-			LEFT JOIN LATERAL (
-				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
-				       MIN(published_at) AS earliest
-				FROM fact_sources WHERE fact_id = fb.id
-			) fsb ON true
-			WHERE c.bundle_stance_id = $1
-		)
-		SELECT id, person_id, fact_a_id, fact_b_id,
-		       fact_a_text, fact_a_text_en, fact_b_text, fact_b_text_en,
-		       fact_a_urls, fact_b_urls,
-		       fact_a_date, fact_b_date,
-		       reason, reason_en, detected_at,
-		       bundle_stance_id, bundle_label, bundle_label_en, bundle_summary, bundle_summary_en,
-		       (SELECT COUNT(*) FROM contradiction_rows) AS bundle_size,
-		       fact_a_stance_id, fact_a_stance_label, fact_a_stance_label_en,
-		       fact_b_stance_id, fact_b_stance_label, fact_b_stance_label_en
-		FROM contradiction_rows
-		ORDER BY detected_at DESC`
-
-	rows, err := s.pool.Query(ctx, query, stanceID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query contradictions for stance %d: %w", stanceID, err)
-	}
-	defer rows.Close()
-
-	out := make([]ContradictionWithFacts, 0)
-	for rows.Next() {
-		var c ContradictionWithFacts
-		if err := rows.Scan(&c.ID, &c.PersonID, &c.FactAID, &c.FactBID,
-			&c.FactAText, &c.FactAtextEn, &c.FactBText, &c.FactBtextEn,
-			&c.FactASourceURLs, &c.FactBSourceURLs,
-			&c.FactADate, &c.FactBDate,
-			&c.Reason, &c.ReasonEn, &c.DetectedAt,
-			&c.BundleID, &c.BundleLabel, &c.BundleLabelEn, &c.BundleSummary, &c.BundleSummaryEn, &c.BundleSize,
-			&c.FactAStanceID, &c.FactAStanceLabel, &c.FactAStanceLabelEn,
-			&c.FactBStanceID, &c.FactBStanceLabel, &c.FactBStanceLabelEn); err != nil {
-			return nil, fmt.Errorf("failed to scan stance contradiction: %w", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating stance contradictions: %w", err)
-	}
-	return out, nil
 }
 
 // DeleteContradictionsForPerson deletes all contradictions for a person and recalculates their honesty score.

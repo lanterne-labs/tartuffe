@@ -127,6 +127,14 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			Msg("Daily pipeline: repointed contradictions off duplicate facts")
 	}
 
+	// Step 5c: Regroup contradictions into N-ary groups (one base fact + N
+	// contradicting facts) and (re)generate each group's merged summary. Runs
+	// after detection + duplicate-repointing so it sees the final pairwise set.
+	// Best-effort — failures are logged, never aborting the pipeline.
+	if regroupErr := runContradictionRegroupStep(ctx, storer); regroupErr != nil {
+		log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
+	}
+
 	// Step 6: Photos backfill (persons + parties missing an image).
 	photosErr := runPhotosBackfill(ctx, storer)
 	if photosErr != nil {

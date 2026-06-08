@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/alerting"
+	"digital-mirror/backend/archiver"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -435,8 +436,10 @@ func (ws *WebServer) handleGetStanceFacts(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(items)
 }
 
-// handleGetStanceContradictions returns the contradictions inside a single stance bundle
-// (rows whose bundle_stance_id matches). Used by the profile UI when a stance card is expanded.
+// handleGetStanceContradictions returns the distinct-inconsistency GROUPS whose base
+// fact belongs to this stance — one base fact + its N contradicting facts each, so the
+// UI shows one card per inconsistency instead of a wall of pairwise rows. Used by the
+// profile UI when a stance card is expanded.
 func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
@@ -447,9 +450,9 @@ func (ws *WebServer) handleGetStanceContradictions(w http.ResponseWriter, r *htt
 		return
 	}
 
-	items, err := ws.storer.GetStanceContradictions(ctx, stanceID)
+	items, err := ws.storer.GetStanceContradictionGroups(ctx, stanceID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stance contradictions")
+		httpInternalError(w, err, "failed to get stance contradiction groups")
 		return
 	}
 
@@ -475,9 +478,17 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Two per-stance numbers: the bundle-based total drives the honesty score (kept
+	// unchanged), while the group count (distinct base facts) is what the badge shows
+	// so users see one count per distinct inconsistency, not the inflated pairwise total.
 	counts, err := ws.storer.GetStanceContradictionCounts(ctx, personID)
 	if err != nil {
 		httpInternalError(w, err, "failed to get stance contradiction counts")
+		return
+	}
+	groupCounts, err := ws.storer.GetStanceGroupCounts(ctx, personID)
+	if err != nil {
+		httpInternalError(w, err, "failed to get stance group counts")
 		return
 	}
 
@@ -496,7 +507,7 @@ func (ws *WebServer) handleGetPersonStances(w http.ResponseWriter, r *http.Reque
 			Summary:            d.Summary,
 			SummaryEn:          d.SummaryEn,
 			FactCount:          d.FactCount,
-			ContradictionCount: total,
+			ContradictionCount: groupCounts[d.ID],
 			Score:              score,
 			UpdatedAt:          d.LastUpdatedAt,
 		}
@@ -749,6 +760,10 @@ func executeServe(cmd *cobra.Command, args []string) error {
 
 	// Daily pipeline runs as a separate the host cron service (`dm pipeline daily`),
 	// not in-process. See CLAUDE.md → Deployment.
+
+	// Background archiver: politely submits fact source URLs to the Wayback Machine
+	// so snapshots survive paywalls/deletions. Decoupled from ingestion.
+	go archiver.New(storer).Run(ctx, 1*time.Hour)
 
 	addr := ":" + port
 	log.Info().Str("port", port).Msg("Starting Digital Mirror web server")
