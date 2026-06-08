@@ -1128,3 +1128,18 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
   Stance memberships of the hidden fact are left intact (preserves every-fact-has-a-stance; it's
   already excluded from active queries). Exposed as `dm facts repoint-duplicates [--apply]` (read-only
   by default) and run as a daily-pipeline step right after contradiction detection.
+
+## Extraction precision: enforce poll + passive-event rejection (2026-06-07)
+
+- The 2026-06-07 run extracted 6 poll-statistic facts (approval/confidence/ranking %s attributed to
+  the politician as their own CLAIMED/ANNOUNCED/CONFIRMED statement — 4 literally said "selon le
+  sondage") and a few passive non-statements ("X invited to a banquet", "appeal outcome will be known
+  on [date]"). These violated EXISTING reject rules (7 polls, 3 scheduling, 4 logistics) — an
+  enforcement gap, not a design gap. Poll snapshots also manufacture numeric false-contradictions.
+- Strengthened the extraction prompt (`core/fact_extractor.go`): rule 7 promoted from a one-liner to
+  emphatic + examples (approval/popularity/confidence/ranking %s, "selon le sondage", "% des
+  Français"); rule 4 now names passive events (invitations, scheduled dates, "will be known");
+  Self-Consistency Check gained a final poll/passive gate. Extended the extraction golden test
+  (`TestRemoteLLMExtractor_ExtractFacts`) with poll + passive content asserted rejected — passes
+  (model now drops them). Design unchanged: keep the entity's own statements/actions + definitive
+  outcomes; reject poll snapshots (they're not the person's contradictable claim).

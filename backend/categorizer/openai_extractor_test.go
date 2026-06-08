@@ -72,6 +72,8 @@ func TestRemoteLLMExtractor_ExtractFacts(t *testing.T) {
 	//   - "Me Bosselut a plaidé l'innocence de sa cliente" (lawyer statement)
 	//   - "Le Pen risque l'inéligibilité" (speculative)
 	//   - "Le Pen est arrivée au tribunal à 9h" (not contradictable — logistics)
+	//   - "la cote de popularité de Le Pen a atteint 35%" (poll/rating — rule 7)
+	//   - "Le Pen est invitée à un banquet le 13 juin" (passive event — rule 4)
 	mockURL := "http://example.com/article-politique"
 	mockText := `Marine Le Pen : entre promesses fiscales et verdict judiciaire
 
@@ -91,6 +93,9 @@ Me Bosselut a plaidé l'innocence de sa cliente, affirmant que les assistants ef
 bien un travail parlementaire réel.
 
 Le parti traverse une période difficile selon plusieurs sources internes.
+
+Selon un sondage Elabe publié le 6 juin, la cote de popularité de Marine Le Pen a atteint 35% (+2 points).
+Par ailleurs, Marine Le Pen est invitée à un banquet organisé par ses soutiens le 13 juin à Lamontjoie.
 
 Au Parlement européen, Marine Le Pen a voté contre le règlement climatique européen
 EU-2025-847 le 12 février 2026, s'opposant aux nouvelles normes d'émissions carbone
@@ -170,6 +175,9 @@ pour l'industrie automobile.`
 		"Bosselut",             // lawyer statement
 		"période difficile",    // vague
 		"risque l'inéligibili", // speculative
+		"popularité",           // poll/rating snapshot (rule 7)
+		"35%",                  // poll number (rule 7) — distinct from the valid "15%" tax fact
+		"invitée à un banquet", // passive event the entity didn't act on (rule 4)
 	}
 	for _, phrase := range rejectedPhrases {
 		for i, fact := range facts {

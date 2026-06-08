@@ -79,6 +79,7 @@ The third-party-action rejection above applies ONLY to FORECASTS (X stated/predi
 If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - Hopes, wishes, preferences, feelings, trust
 - Travel, logistics, sightings
+- PASSIVE events the entity did not choose or act on: being invited/scheduled/expected, an event happening to or around them, a date being set. ❌ "X est invité à un banquet le 13 juin" ❌ "L'issue de l'appel de X sera connue le 7 juillet" — these are not the entity's statement or action.
 - Courtroom behavior/procedure (listening, appearing, being called to the stand)
 - Pure biographical facts: birth date, party-founding year, role titles, lifetime events (retirement, marriage)
 - Personal purchases, truisms, reactions to scheduling
@@ -108,11 +109,18 @@ Facts MUST contain specific information: numbers, dates, named actions, precise 
 - ❌ "Party X pays its leaders generously" — no numbers
 - ✅ "Party X paid its president €120,000 per year" — specific
 
-**7. Polls, surveys, editorial comparisons**
-Reject poll data, survey results, and journalist comparisons between entities.
+**7. Polls, surveys, ratings, rankings — ALWAYS reject (frequent error)**
+An approval rating, popularity or confidence score, voting-intention figure, candidate ranking, or any "%%" attributed to a poll/survey/opinion is a THIRD-PARTY MEASUREMENT, NOT the entity's own contradictable statement — reject it even when the entity is the subject of the number, and even when no source is named. The entity did not say it, and a snapshot percentage cannot self-contradict (two snapshots at different numbers are not a lie).
+- ❌ "L'opinion favorable pour Macron est tombée à 18%%" — poll snapshot (the entity did not claim it)
+- ❌ "La cote de popularité de Lecornu a atteint 26%% (+2 points)" — rating
+- ❌ "Bardella est en tête du classement des candidats avec 38%% selon le sondage" — ranking/poll
+- ❌ "Attal jouit d'une image positive auprès de 32%% des Français" — survey result
+- ✅ "Macron a affirmé que sa politique porte ses fruits" — the entity's OWN claim is fine (you do NOT need the poll number to record his statement)
 
 ## Self-Consistency Check
 Before finalizing each fact, re-read your normalized_fact and verify:
+- Is it a poll/rating/ranking number (rule 7) or a passive event the entity didn't act on — an invitation, a scheduled date, an outcome that "will be known" (rules 3, 4)? If so, DROP it. These are the two most common bad facts.
+- Is the subject_entity the one who actually MADE the statement or PERFORMED the action? A measurement or event ABOUT the entity is not the entity's own fact.
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
 - Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.
 - If you catch an internal contradiction, re-read the original_quote carefully and rewrite.
