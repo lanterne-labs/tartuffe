@@ -197,3 +197,17 @@ cases:
   # l'Ironman et l'Ultra-Trail") was considered but deliberately NOT added: it is a
   # defensible commitment-vs-contrary-action read (same shape as TP_114), so asserting
   # "drop" would force an exception that risks killing genuine broken-promise contradictions.
+
+  # ---- Prod-sourced case from the 2026-06-08 daily run ----
+
+  # Both statements want ministerial circulars APPLIED: A criticizes that the Darmanin
+  # circular was not enforced, B says the prosecution must respect such circulars. Same
+  # direction (pro-enforcement), not opposing — the "inutile/inefficaces" framing is about
+  # lack of enforcement, not opposition to circulars (DROP).
+  - name: "FP_161_retailleau_circulars_same_direction"
+    fact_a: "Bruno Retailleau a indiqué que la circulaire pénale émise par Gérald Darmanin en janvier dernier n'a pas été suivie d'effets, affirmant qu'il est inutile de multiplier les circulaires sans vérifier leur application."
+    fact_b: "Bruno Retailleau a affirmé que le parquet ne doit pas seulement être indépendant, mais qu'il doit respecter les circulaires du ministre de la Justice, comme la circulaire Darmanin de janvier 2025."
+    claimed_reason: "Le nouveau fait soutient le respect des circulaires ministérielles alors que le fait existant les juge inefficaces et inutiles sans vérification d'application."
+    expect: drop
+    bucket: same_direction
+    notes: "Both want circulars enforced — A laments they aren't followed, B says the prosecution must respect them. Same pro-enforcement direction; 'inutile sans vérifier leur application' criticizes non-enforcement, not the circulars themselves."
