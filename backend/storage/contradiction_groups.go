@@ -311,6 +311,7 @@ type ContradictionGroup struct {
 	Summary            *string             `json:"summary"`              // merged reason; nil for single-spoke
 	SummaryEn          *string             `json:"summary_en,omitempty"` // English merged reason
 	ContradictingFacts []ContradictingFact `json:"contradicting_facts"`
+	Votes              *VoteCounts         `json:"votes,omitempty"` // community validation counts
 }
 
 // ContradictingFact is one spoke of a group: a fact that conflicts with the base,
@@ -416,5 +417,26 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			ReasonEn:        reasonEn,
 		})
 	}
-	return groups, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Enrich with community vote counts in one batch query.
+	if len(groups) > 0 {
+		ids := make([]int64, len(groups))
+		for i, g := range groups {
+			ids[i] = g.BaseFactID
+		}
+		counts, err := s.GetVoteCountsForFacts(ctx, ids)
+		if err != nil {
+			return nil, fmt.Errorf("get vote counts for stance %d: %w", stanceID, err)
+		}
+		for i := range groups {
+			if vc, ok := counts[groups[i].BaseFactID]; ok {
+				groups[i].Votes = vc
+			}
+		}
+	}
+
+	return groups, nil
 }

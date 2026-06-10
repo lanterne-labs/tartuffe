@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/sha256"
 	"digital-mirror/backend/core"
+	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -395,4 +399,59 @@ func (s *Server) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(persons)
+}
+
+// realIP extracts the client IP, preferring X-Forwarded-For (the host / reverse proxy).
+func realIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(parts[0]); ip != "" {
+			return ip
+		}
+	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return ip
+}
+
+// hashIP returns a SHA-256 hex digest of the IP so no plain address is stored.
+func hashIP(ip string) string {
+	h := sha256.Sum256([]byte(ip))
+	return hex.EncodeToString(h[:])
+}
+
+// handleVoteContradiction accepts a community vote (agree / disagree / not_a_contradiction)
+// for a contradiction group identified by its base_fact_id.
+func (s *Server) handleVoteContradiction(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	baseFactIDStr := chi.URLParam(r, "base_fact_id")
+	baseFactID, err := strconv.ParseInt(baseFactIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid base_fact_id", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		Vote string `json:"vote"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	validVotes := map[string]bool{"agree": true, "disagree": true, "not_a_contradiction": true}
+	if !validVotes[body.Vote] {
+		http.Error(w, "vote must be agree, disagree, or not_a_contradiction", http.StatusBadRequest)
+		return
+	}
+
+	ipHash := hashIP(realIP(r))
+
+	counts, err := s.storer.UpsertContradictionVote(ctx, baseFactID, ipHash, body.Vote)
+	if err != nil {
+		httpInternalError(w, err, "failed to record vote")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(counts)
 }

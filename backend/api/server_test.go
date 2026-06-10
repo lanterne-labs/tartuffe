@@ -95,6 +95,10 @@ func (f *fakeStorer) GetEventsAfter(context.Context, int64, int) ([]storage.Even
 	return nil, nil
 }
 
+func (f *fakeStorer) UpsertContradictionVote(context.Context, int64, string, string) (*storage.VoteCounts, error) {
+	return nil, nil
+}
+
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)

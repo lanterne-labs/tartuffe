@@ -106,6 +106,15 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'contradiction.facts_in_tension': { fr: '{n} faits en tension', en: '{n} facts in tension' },
 	'contradiction.base_fact': { fr: 'Affirmation de base', en: 'Base claim' },
 
+	// Vote widget
+	'vote.label': { fr: 'Vote communautaire', en: 'Community vote' },
+	'vote.prompt': { fr: 'Cette contradiction est :', en: 'This contradiction is:' },
+	'vote.agree': { fr: 'Réelle', en: 'Real' },
+	'vote.disagree': { fr: 'Fausse', en: 'Wrong' },
+	'vote.not_a_contradiction': { fr: 'Pas vraiment', en: 'Not really' },
+	'vote.singular': { fr: 'vote', en: 'vote' },
+	'vote.plural': { fr: 'votes', en: 'votes' },
+
 	// Counts (singular/plural — caller picks the form, but we expose both)
 	'count.fact': { fr: 'fait', en: 'fact' },
 	'count.facts': { fr: 'faits', en: 'facts' },

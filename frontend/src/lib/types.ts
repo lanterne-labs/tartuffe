@@ -71,6 +71,12 @@ export interface ContradictingFact {
 	reason_en?: string;
 }
 
+export interface VoteCounts {
+	agree: number;
+	disagree: number;
+	not_a_contradiction: number;
+}
+
 // A distinct inconsistency: one base (anchor) fact contradicted by N facts. Returned
 // by GET /api/stances/{id}/contradictions, one card per group. `summary` is the
 // LLM-synthesized merged reason (null for a single-fact group — use the spoke reason).
@@ -83,6 +89,7 @@ export interface ContradictionGroup {
 	summary: string | null;
 	summary_en?: string | null;
 	contradicting_facts: ContradictingFact[];
+	votes?: VoteCounts;
 }
 
 export interface PaginatedResponse<T> {

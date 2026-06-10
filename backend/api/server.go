@@ -40,6 +40,7 @@ type Storer interface {
 	GetFactsInStance(ctx context.Context, stanceID int64) ([]storage.FactInStance, error)
 	GetMaxEventID(ctx context.Context) (int64, error)
 	GetEventsAfter(ctx context.Context, sinceID int64, limit int) ([]storage.Event, error)
+	UpsertContradictionVote(ctx context.Context, baseFactID int64, ipHash string, vote string) (*storage.VoteCounts, error)
 }
 
 // Server holds the HTTP router and its dependencies.
@@ -175,5 +176,6 @@ func (s *Server) setupRoutes() {
 		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
 		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
 		r.Get("/events", s.handleEventsSSE)
+		r.Post("/contradictions/{base_fact_id}/vote", s.handleVoteContradiction)
 	})
 }

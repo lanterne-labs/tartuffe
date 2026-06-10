@@ -2,6 +2,7 @@
 	import type { ContradictionGroup } from '$lib/types';
 	import { TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
+	import VoteWidget from './VoteWidget.svelte';
 
 	interface Props {
 		g: ContradictionGroup;
@@ -81,6 +82,8 @@
 			</div>
 		{/each}
 	</div>
+
+	<VoteWidget baseFactId={g.base_fact_id} initialVotes={g.votes} />
 </div>
 
 <style>
