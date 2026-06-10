@@ -418,7 +418,16 @@
 </script>
 
 <svelte:head>
-	<title>{person?.name || 'Person'} - Digital Mirror</title>
+	<title>{person?.name || 'Person'} - tartuffe.me</title>
+	{#if person}
+		<meta property="og:title" content="{person.name} — {(person.honesty_score * 100).toFixed(0)}% honesty score" />
+		<meta property="og:description" content="{person.fact_count} facts tracked, {person.contradiction_count} contradictions detected. Rating: {getHonestyLabel(person.honesty_score, 'en')}." />
+		<meta property="og:url" content={$page.url.href} />
+		<meta property="og:type" content="profile" />
+		<meta name="twitter:card" content="summary" />
+		<meta name="twitter:title" content="{person.name} — {(person.honesty_score * 100).toFixed(0)}% honesty score" />
+		<meta name="twitter:description" content="{person.fact_count} facts tracked, {person.contradiction_count} contradictions detected. Rating: {getHonestyLabel(person.honesty_score, 'en')}." />
+	{/if}
 </svelte:head>
 
 <div class="detail-page">

@@ -145,6 +145,12 @@
 
 <svelte:head>
 	<title>tartuffe.me — the honesty ledger</title>
+	<meta property="og:title" content="tartuffe.me — the honesty ledger" />
+	<meta property="og:description" content="Track honesty scores for political figures. Powered by fact extraction and contradiction detection." />
+	<meta property="og:type" content="website" />
+	<meta name="twitter:card" content="summary" />
+	<meta name="twitter:title" content="tartuffe.me — the honesty ledger" />
+	<meta name="twitter:description" content="Track honesty scores for political figures. Powered by fact extraction and contradiction detection." />
 </svelte:head>
 
 <div class="dashboard">

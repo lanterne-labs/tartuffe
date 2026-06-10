@@ -96,6 +96,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'contradiction.view_in_facts': { fr: 'Voir dans les faits', en: 'View in Facts' },
 	'contradiction.facts_in_tension': { fr: '{n} faits en tension', en: '{n} facts in tension' },
 	'contradiction.base_fact': { fr: 'Affirmation de base', en: 'Base claim' },
+	'contradiction.copy_link': { fr: 'Copier le lien', en: 'Copy link' },
+	'contradiction.copied': { fr: 'Lien copié !', en: 'Copied!' },
 
 	// Counts (singular/plural — caller picks the form, but we expose both)
 	'count.fact': { fr: 'fait', en: 'fact' },

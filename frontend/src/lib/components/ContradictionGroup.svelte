@@ -17,6 +17,31 @@
 		return unsub;
 	});
 
+	let copied = $state(false);
+	let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function copyLink() {
+		const url = window.location.origin + window.location.pathname + '#contradiction-' + g.base_fact_id;
+		navigator.clipboard.writeText(url).then(() => {
+			copied = true;
+			if (copyTimer) clearTimeout(copyTimer);
+			copyTimer = setTimeout(() => { copied = false; }, 2000);
+		}).catch(() => {
+			// Fallback for insecure contexts or missing permission
+			const el = document.createElement('textarea');
+			el.value = url;
+			el.style.position = 'fixed';
+			el.style.opacity = '0';
+			document.body.appendChild(el);
+			el.select();
+			document.execCommand('copy');
+			document.body.removeChild(el);
+			copied = true;
+			if (copyTimer) clearTimeout(copyTimer);
+			copyTimer = setTimeout(() => { copied = false; }, 2000);
+		});
+	}
+
 	function formatDateWithTime(s: string): string {
 		return new Date(s).toLocaleString([], {
 			year: 'numeric',
@@ -28,9 +53,21 @@
 	}
 </script>
 
-<div class="group">
+<div class="group" id="contradiction-{g.base_fact_id}">
 	<div class="group-header">
 		<span class="group-count">{tr('contradiction.facts_in_tension', currentLang, { n: g.contradicting_facts.length + 1 })}</span>
+		<button class="copy-link-btn" title={tr('contradiction.copy_link', currentLang)} aria-label={tr('contradiction.copy_link', currentLang)} onclick={copyLink}>
+			{#if copied}
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="20 6 9 17 4 12"/>
+				</svg>
+			{:else}
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+					<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+				</svg>
+			{/if}
+		</button>
 		{#if TALLY_FORM_ID}
 			<button class="report-btn-inline" title="Report this contradiction" aria-label="Report this contradiction" onclick={() => onReport(g)}>
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -180,6 +217,23 @@
 	}
 	.link-btn:hover {
 		border-color: var(--accent);
+	}
+	.copy-link-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		color: var(--text-secondary);
+		opacity: 0.6;
+		cursor: pointer;
+	}
+	.copy-link-btn:hover {
+		color: var(--accent);
+		opacity: 1;
 	}
 	.report-btn-inline {
 		display: inline-flex;
