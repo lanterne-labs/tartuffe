@@ -38,6 +38,7 @@ export function pickLang(native: string | null | undefined, en: string | null | 
 const dict: Record<string, { fr: string; en: string }> = {
 	// Nav
 	'nav.dashboard': { fr: 'Tableau de bord', en: 'Dashboard' },
+	'nav.activity': { fr: 'Activité', en: 'Activity' },
 	// Brand subtitle stays English in both modes — it's an intentional in-product
 	// English-only tagline (looks worse translated literally to French).
 	'nav.brand_subtitle': { fr: 'the honesty ledger', en: 'the honesty ledger' },
@@ -105,6 +106,12 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'contradiction.view_in_facts': { fr: 'Voir dans les faits', en: 'View in Facts' },
 	'contradiction.facts_in_tension': { fr: '{n} faits en tension', en: '{n} facts in tension' },
 	'contradiction.base_fact': { fr: 'Affirmation de base', en: 'Base claim' },
+
+	// Activity feed page
+	'activity.subtitle': { fr: 'Contradictions et mises à jour récentes', en: 'Recent contradictions and score updates' },
+	'activity.contradiction_added': { fr: 'Contradiction', en: 'Contradiction' },
+	'activity.score_updated': { fr: 'Score mis à jour', en: 'Score updated' },
+	'activity.empty': { fr: 'Aucune activité récente.', en: 'No recent activity.' },
 
 	// Counts (singular/plural — caller picks the form, but we expose both)
 	'count.fact': { fr: 'fait', en: 'fact' },

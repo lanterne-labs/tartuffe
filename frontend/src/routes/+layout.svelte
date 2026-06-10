@@ -48,7 +48,8 @@
 					title="English"
 				>EN</button>
 			</div>
-			<a href="/" class="nav-link">{tr('nav.dashboard', currentLang)}</a>
+			<a href="/activity" class="nav-link" class:active={$page.url.pathname === '/activity'}>{tr('nav.activity', currentLang)}</a>
+			<a href="/" class="nav-link" class:active={$page.url.pathname === '/'}>{tr('nav.dashboard', currentLang)}</a>
 		</div>
 	</div>
 </nav>
@@ -145,7 +146,8 @@
 		letter-spacing: 0.02em;
 	}
 
-	.nav-link:hover {
+	.nav-link:hover,
+	.nav-link.active {
 		color: var(--text-primary);
 	}
 

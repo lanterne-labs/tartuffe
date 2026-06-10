@@ -175,5 +175,6 @@ func (s *Server) setupRoutes() {
 		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
 		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
 		r.Get("/events", s.handleEventsSSE)
+		r.Get("/activity", s.handleGetActivity)
 	})
 }

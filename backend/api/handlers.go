@@ -396,3 +396,36 @@ func (s *Server) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(persons)
 }
+
+// handleGetActivity returns a paginated list of recent contradiction_added and
+// person_updated events, enriched with the associated person's display info.
+func (s *Server) handleGetActivity(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 20
+	if limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if offsetStr != "" {
+		if parsed, err := strconv.Atoi(offsetStr); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	result, err := s.storer.GetActivityFeed(ctx, limit, offset)
+	if err != nil {
+		httpInternalError(w, err, "failed to get activity feed")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=30, stale-while-revalidate=60")
+	json.NewEncoder(w).Encode(result)
+}
