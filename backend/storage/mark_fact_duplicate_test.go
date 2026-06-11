@@ -16,7 +16,6 @@ func TestMarkFactDuplicate(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
-	storer.SetEntityValidator(nil)
 
 	pid, err := storer.FindOrInsertPersonWithType(ctx, "dup test subject", "human")
 	require.NoError(t, err)

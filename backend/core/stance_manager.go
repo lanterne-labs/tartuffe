@@ -202,8 +202,7 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 		model = "gpt-4o-mini"
 	}
 
-	base = strings.TrimRight(base, "/")
-	apiURL := base + "/chat/completions"
+	apiURL := llm.ChatCompletionsURL(base)
 
 	return &StanceManager{
 		storer: storer,
@@ -1291,21 +1290,7 @@ Return ONLY valid JSON:
 
 // stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.
 func stripMarkdownCodeBlock(content string) string {
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		return strings.TrimSpace(content)
-	}
-	if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		return strings.TrimSpace(content)
-	}
-	return content
+	return llm.StripJSONCodeFence(content)
 }
 
 // parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.

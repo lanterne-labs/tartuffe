@@ -24,6 +24,7 @@ var (
 	checkMaxFlag      int
 	checkRandomFlag   bool
 	checkFormatFlag   string
+	checkApplyFlag    bool
 )
 
 var contradictionsCheckCmd = &cobra.Command{
@@ -47,6 +48,7 @@ func init() {
 	contradictionsCheckCmd.Flags().IntVar(&checkMaxFlag, "max", 0, "Maximum number of contradictions to audit (0 = no cap)")
 	contradictionsCheckCmd.Flags().BoolVar(&checkRandomFlag, "random", false, "Sample contradictions in random order (instead of newest-first)")
 	contradictionsCheckCmd.Flags().StringVar(&checkFormatFlag, "format", "jsonl", "Output format: jsonl or text")
+	contradictionsCheckCmd.Flags().BoolVar(&checkApplyFlag, "apply", false, "DELETE auditor-confirmed false positives (verdict=remove, then a confirming 2nd auditor pass; only 2-of-2 removes are deleted). Records a negative pair check so the detector won't re-raise them, and recomputes affected honesty scores. Default is read-only.")
 }
 
 // auditOutputLine is the per-row JSONL schema written to stdout.
@@ -64,6 +66,7 @@ type auditOutputLine struct {
 	Verdict         string   `json:"verdict"`
 	Rule            string   `json:"rule,omitempty"`
 	AuditReasoning  string   `json:"audit_reasoning"`
+	Deleted         bool     `json:"deleted,omitempty"` // true when --apply removed this row (2-of-2 remove)
 	Error           string   `json:"error,omitempty"`
 	SourceURLsA     []string `json:"source_urls_a,omitempty"`
 	SourceURLsB     []string `json:"source_urls_b,omitempty"`
@@ -101,6 +104,10 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 		personIDPtr = &personID
 	}
 
+	if checkApplyFlag {
+		fmt.Fprintf(os.Stderr, "⚠️  --apply: auditor-confirmed false positives will be DELETED from the database (2-of-2 remove required per row).\n\n")
+	}
+
 	_, err = executeContradictionAudit(ctx, storer, ContradictionAuditOpts{
 		PersonID:     personIDPtr,
 		Max:          checkMaxFlag,
@@ -109,6 +116,7 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 		Format:       format,
 		Scope:        scopeDescription(checkPersonFlag),
 		RecordMetric: false, // CLI runs are ad-hoc; only the periodic pipeline pass records job_metrics
+		Apply:        checkApplyFlag,
 	})
 	return err
 }
@@ -136,6 +144,13 @@ type ContradictionAuditOpts struct {
 	// reads this timestamp to decide whether enough time has passed since the
 	// last run; CLI invocations leave it false.
 	RecordMetric bool
+	// Apply — when true, a verdict=remove triggers a confirming SECOND auditor
+	// pass and, on a 2-of-2 remove, the contradiction is DELETED (via
+	// DismissContradictionAsFalsePositive: records a negative pair check so the
+	// detector won't re-raise it, and recomputes the owner's honesty score). A
+	// disagreeing second pass keeps the row (counted as unstable). Default false
+	// (read-only advisory).
+	Apply bool
 }
 
 // ContradictionAuditResult is the return value of executeContradictionAudit —
@@ -149,7 +164,12 @@ type ContradictionAuditResult struct {
 	Ambiguous int
 	Errors    int
 	RemoveIDs []int64
-	Elapsed   time.Duration
+	// Deleted counts rows removed under Apply (2-of-2 remove). Unstable counts
+	// remove verdicts whose confirming pass disagreed (kept). Both stay 0 when
+	// Apply is false.
+	Deleted  int
+	Unstable int
+	Elapsed  time.Duration
 }
 
 // executeContradictionAudit walks every recorded contradiction matching opts,
@@ -238,6 +258,14 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 					Str("rule", auditResult.Rule).
 					Str("audit_reasoning", auditResult.Reasoning).
 					Msg("Auditor flagged contradiction as false positive (verdict=remove)")
+
+				// --apply: confirm with a second independent auditor pass before
+				// deleting, so the local model's run-to-run variance can't remove a
+				// row on a fluke. Only a 2-of-2 remove is deleted; a disagreeing
+				// pass keeps it (unstable).
+				if opts.Apply {
+					line.Deleted = applyAuditRemoval(ctx, storer, auditor, row, result)
+				}
 			case contradiction.VerdictAmbiguous:
 				result.Ambiguous++
 				metrics.IncrementContradictionAudits("ambiguous")
@@ -269,7 +297,7 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 	result.Elapsed = time.Since(startedAt)
 
 	if opts.Output != nil {
-		printSummary(os.Stderr, result.Total, result.Keep, result.Remove, result.Ambiguous, result.Errors, result.Elapsed)
+		printSummary(os.Stderr, result, opts.Apply)
 	}
 
 	if opts.RecordMetric {
@@ -288,6 +316,44 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 		Msg("Contradiction audit pass complete")
 
 	return result, nil
+}
+
+// applyAuditRemoval runs a confirming second auditor pass on a row the first
+// pass flagged for removal and, on a 2-of-2 remove, dismisses the contradiction
+// as a false positive (delete + negative pair check + score recompute). It
+// mutates result.Deleted / result.Unstable and returns true iff the row was
+// deleted. An errored or disagreeing confirmation keeps the row.
+func applyAuditRemoval(
+	ctx context.Context,
+	storer *storage.PostgresStorer,
+	auditor *contradiction.OpenAIContradictionAuditor,
+	row storage.ContradictionAuditRow,
+	result *ContradictionAuditResult,
+) bool {
+	confirm := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+	switch {
+	case confirm.Err != nil:
+		result.Unstable++
+		log.Warn().Err(confirm.Err).Int64("contradiction_id", row.ID).
+			Msg("Confirmation audit pass errored; keeping row (not deleted)")
+		return false
+	case confirm.Verdict != contradiction.VerdictRemove:
+		result.Unstable++
+		log.Info().Int64("contradiction_id", row.ID).Str("confirm_verdict", string(confirm.Verdict)).
+			Str("confirm_reasoning", confirm.Reasoning).
+			Msg("Confirmation audit pass disagreed; row is unstable, NOT deleting")
+		return false
+	default:
+		if err := storer.DismissContradictionAsFalsePositive(ctx, row.ID); err != nil {
+			log.Error().Err(err).Int64("contradiction_id", row.ID).
+				Msg("Failed to dismiss contradiction as false positive")
+			return false
+		}
+		result.Deleted++
+		log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
+			Msg("Dismissed contradiction as false positive (2-of-2 remove)")
+		return true
+	}
 }
 
 // recordAuditJobMetrics persists per-verdict counts so the next pipeline tick
@@ -343,6 +409,9 @@ func printTextRow(w *os.File, line auditOutputLine) {
 	if verdict == "" {
 		verdict = "ERROR"
 	}
+	if line.Deleted {
+		verdict = "DELETED"
+	}
 	fmt.Fprintf(w, "%s[%s]%s contradiction #%d — %s\n", color, verdict, ansiReset, line.ContradictionID, line.Person)
 	fmt.Fprintf(w, "  Fact A [%s] (#%d): %s\n", orUnknown(line.DateA), line.FactAID, line.FactA)
 	fmt.Fprintf(w, "  Fact B [%s] (#%d): %s\n", orUnknown(line.DateB), line.FactBID, line.FactB)
@@ -364,18 +433,22 @@ func orUnknown(s string) string {
 	return s
 }
 
-func printSummary(w *os.File, total, keep, remove, ambiguous, errors int, elapsed time.Duration) {
+func printSummary(w *os.File, r *ContradictionAuditResult, apply bool) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "=== AUDIT SUMMARY ===")
-	fmt.Fprintf(w, "Audited:    %d (in %s)\n", total, elapsed.Round(time.Second))
+	fmt.Fprintf(w, "Audited:    %d (in %s)\n", r.Total, r.Elapsed.Round(time.Second))
 	pct := func(n int) string {
-		if total == 0 {
+		if r.Total == 0 {
 			return ""
 		}
-		return fmt.Sprintf("  (%.1f%%)", 100*float64(n)/float64(total))
+		return fmt.Sprintf("  (%.1f%%)", 100*float64(n)/float64(r.Total))
 	}
-	fmt.Fprintf(w, "Keep:       %d%s\n", keep, pct(keep))
-	fmt.Fprintf(w, "Remove:     %d%s\n", remove, pct(remove))
-	fmt.Fprintf(w, "Ambiguous:  %d%s\n", ambiguous, pct(ambiguous))
-	fmt.Fprintf(w, "Errors:     %d\n", errors)
+	fmt.Fprintf(w, "Keep:       %d%s\n", r.Keep, pct(r.Keep))
+	fmt.Fprintf(w, "Remove:     %d%s\n", r.Remove, pct(r.Remove))
+	fmt.Fprintf(w, "Ambiguous:  %d%s\n", r.Ambiguous, pct(r.Ambiguous))
+	fmt.Fprintf(w, "Errors:     %d\n", r.Errors)
+	if apply {
+		fmt.Fprintf(w, "Deleted:    %d  (2-of-2 remove — removed from DB + score recomputed)\n", r.Deleted)
+		fmt.Fprintf(w, "Unstable:   %d  (confirm pass disagreed — KEPT)\n", r.Unstable)
+	}
 }

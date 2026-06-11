@@ -43,7 +43,7 @@ func NewLLMFilter() (*LLMFilter, error) {
 	}
 	return &LLMFilter{
 		client: llm.NewBaseLLMClient("entity-validator"),
-		apiURL: strings.TrimRight(base, "/") + "/chat/completions",
+		apiURL: llm.ChatCompletionsURL(base),
 		apiKey: os.Getenv("OPEN_AI_KEY"),
 		model:  model,
 		systemMsg: "You are an entity validation oracle. You decide whether a candidate " +
@@ -197,7 +197,7 @@ INPUT:
 		return FilterResult{Decision: Defer}, fmt.Errorf("llm returned no choices")
 	}
 
-	content := stripCodeFence(strings.TrimSpace(chat.Choices[0].Message.Content))
+	content := llm.StripJSONCodeFence(chat.Choices[0].Message.Content)
 	var v llmVerdict
 	if err := json.Unmarshal([]byte(content), &v); err != nil {
 		return FilterResult{Decision: Defer}, fmt.Errorf("decode llm verdict %q: %w", content, err)
@@ -207,17 +207,4 @@ INPUT:
 		return FilterResult{Decision: Approve, Reason: "llm: " + v.Reason}, nil
 	}
 	return FilterResult{Decision: Reject, Reason: "llm: " + v.Reason}, nil
-}
-
-// stripCodeFence removes ```json … ``` wrappers some models emit despite
-// json_object mode.
-func stripCodeFence(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.Index(s, "\n"); idx >= 0 {
-			s = s[idx+1:]
-		}
-		s = strings.TrimSuffix(s, "```")
-	}
-	return strings.TrimSpace(s)
 }

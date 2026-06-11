@@ -2,6 +2,32 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-11: Golden FPs from the daily run — double-negative + homonym
+
+- Added 3 prod-sourced cases to `verify_cases.yaml`. FP_166 (Darmanin "immense échec" vs "no more resources" — failure≠budget) already evicted by existing buckets. FP_170 (Bergé pro-imprescriptibilité in BOTH facts; the flag misread the double negative — the statute of limitations, not imprescriptibility, is what "protects perpetrators") now evicts after a `paraphrase_same_position` clause: "map each statement to the position it IMPLIES; opposing a measure = supporting its opposite". Golden 22/22 stable.
+- FP_169 (Attal homonym "primaire": école primaire vs élection primaire) is NOT asserted — the local model cannot be made to evict it via the verifier even with a guard naming the exact misread (a wrong claimed_reason anchors it). Documented as a deferred skip; the real fix is stance/KNN-level separation (tracked in mirror-ezt). A short homonym note stays under `different_subjects` for clearer cases. Lesson: the verifier weighs the claimed_reason heavily, so a reason that asserts a false link can defeat a correct catalog rule on a weak model — some FP classes must be prevented upstream (don't form the pair), not refuted downstream.
+
+## 2026-06-09: Detector — claim-vs-official-record gate fix + example-block trim
+
+- The HARD GATE now states that an ATTRIBUTION ("X announced/stated/declared/claimed/promised Y") IS the person's own utterance (not third-party narration), and broadens "authoritative finding" to include an audit, official report, or verified official record. This fixes the detector silently NO-ing a real contradiction where a person's announcement is refuted by an official record (e.g. "CEO announced record profits" vs "the official quarterly report showed a loss") — the local model had been bucketing both as "récits de tiers" and failing the gate.
+- To fit that addition under the 12k context ceiling (see the catalog note below — the detector prompt has almost no headroom), 4 redundant examples were removed from `ContradictionRulesAndExamples`: PAIR 13/14 (covered by PAIR 15 + `conviction_vs_acknowledgment`), PAIR 20 (dup of 17), PAIR 24 (dup of 16). 32 → 28 examples. Lesson: examples are load-bearing — an earlier pass also removed the temporal ones (PAIR 1 learning-over-time, PAIR 5 different-events) and that immediately regressed "unknown-date skepticism" (the detector flagged a for/against vote with one missing date). They were restored; only same-bucket duplicates are safe to drop. Validate example edits with the detector live test, and the authoritative check is `dm eval run`.
+
+## 2026-06-09: Single shared false-positive catalog across detector, auditor, verifier
+
+- The FP taxonomy was duplicated and DIVERGED across two constants: `RefuteContradictionPrompt` (insertion/reverify verifier — had numbers/forecast/endorsement buckets the detector lacked) and `ContradictionRulesAndExamples` (detector + auditor). The two gates therefore disagreed on most pairs (the verifier approved at insertion what the auditor rejected 5 days later). Now there is ONE source: `backend/promptrules/false_positives.txt` (`//go:embed` → `promptrules.FalsePositivePatterns`), the deduplicated union of both lists, injected via `%s` into the verifier prompt AND `ContradictionRulesAndExamples` (so detector + auditor get it too). `contradiction` now imports `promptrules` (dependency-free, no cycle). Each bucket is tagged `[token]`; the auditor's closed enum gained 6 tokens (numbers_measurements, forecast_vs_current, procedural_scope, condition_later_met, same_direction, endorsement_vs_non_candidacy) and now GENERATES its prompt's token list from the single-source slice. `TestCatalogEnumInSync` locks catalog↔enum; `TestCatalogSprintfSafe` forbids literal `%` in the catalog (it is concatenated into fmt.Sprintf templates). Net: verifier golden 19/20 → 20/20, and the auditor's wrong `different_subjects` removal of the maximi denounce-then-ally case (a real contradiction) is fixed by the same edit.
+- HARD constraint: the local GPU model (also prod's, via lite-llm) has a 12k context and the detector reserves 4096 output tokens, so the detector prompt has only ~tens of tokens of headroom. The shared catalog MUST stay ≤ the inline NO-list it replaced (~4900 bytes) or every detector call 400s with `maximum context length exceeded`. When editing `false_positives.txt`, keep it terse and re-run the detector live test — bytes are budgeted. Reducing the detector's output reservation to make room instead truncated Gemma's chain-of-thought ("no response parsed"), so size the INPUT, not the output.
+- Prompt-tuning lesson (local Gemma): do not NAME a false-positive hook the model can latch onto. An early `third_party_narrative` wording said "REPORTED SPEECH ... IS the person's own utterance" — the model seized "reported speech" and inverted it to drop a real attitude reversal. Reframing positively ("a statement of what the person said/declared/felt COUNTS as their own utterance — NOT this bucket") fixed it. Validate prompt edits against `TestVerifyGolden` 3× (the model flaps run-to-run).
+
+## 2026-06-09: Contradiction auditor can now DELETE false positives (`check --apply`)
+
+- The contradiction auditor was advisory-only: a prod audit flagged ~79% of recorded contradictions as false positives (verdict=remove) but `executeContradictionAudit` only logged/counted them, so the FPs stayed and depressed honesty scores. New `dm contradictions check --apply` acts on the verdict: a `remove` triggers a confirming SECOND auditor pass and, on a 2-of-2 remove, the contradiction is deleted via the new `storage.DismissContradictionAsFalsePositive`. Read-only by default (mirrors `reverify --apply`). The daily-pipeline audit pass stays advisory (decided manual-only) — wire `Apply:true` into `runContradictionAuditIfDue` if we later want it self-healing.
+- Key design: `DismissContradictionAsFalsePositive` records a NEGATIVE `fact_pair_checks` row (is_contradiction=false) instead of clearing it like `DeleteContradiction` does. Clearing would let the detector re-raise the pair next run, the lenient insertion verifier re-approve it, and the next audit re-delete it — thrashing every cycle. The negative pair check makes the auditor's "not a contradiction" verdict stick. Both methods now share a private `removeContradiction(id, suppressReDetection)` body. Tradeoff: a wrongly-suppressed real contradiction won't self-correct (the 2-of-2 conservative auditor is the guard).
+- Lesson: the insertion verifier (refute prompt) and the 5-day auditor disagree on the bulk of pairs — the verifier approved both contradictions created the same day the auditor rejected them. `reverify --apply` uses the verifier, so it can't clean up what the verifier itself let through; the backlog cleanup must use the auditor's stricter judgment.
+
+## 2026-06-09: Person name matching is accent-insensitive everywhere (fixes éric/eric dup)
+
+- `findPersonIDByName` (the fast-path lookup behind `AddPerson`/`AddPersonWithType`) used exact `WHERE name = $1`, so a news-extracted "eric ciotti" never matched the curated "éric ciotti" and inserted a near-duplicate person (split facts/contradictions/score across two rows). Now matches `lower(immutable_unaccent(name))` like every other find-or-insert path. The `ON CONFLICT (name)` insert guard only catches exact-name collisions, so the unaccent match in the lookup is what actually prevents the dup.
+
 ## 2026-06-08: N-ary contradiction groups — collapse the pairwise wall (gh#21)
 
 - **`contradictions` gets an N-ary GROUP layer without changing its pairwise core.** Migration `20260608010000` adds a nullable `base_fact_id` pointer (+ denormalized `group_summary`/`group_summary_en`). The table stays strictly pairwise and **canonical** (`fact_a_id < fact_b_id` CHECK kept), so insert/dedup/repoint/honesty are entirely unchanged and the unique constraint still blocks duplicate pairs. A group = all rows sharing `(person_id, base_fact_id)`; the contradicting fact of a row is whichever of `{fact_a_id, fact_b_id}` is not the base. **No new table.** (First cut reoriented `fact_a/fact_b` directionally + dropped the CHECK — rejected because it let `(X,Y)` and `(Y,X)` coexist and could make `RepointFactDuplicate` create duplicates; the pointer column avoids that entirely.)
@@ -1156,3 +1182,23 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
   (`TestRemoteLLMExtractor_ExtractFacts`) with poll + passive content asserted rejected — passes
   (model now drops them). Design unchanged: keep the entity's own statements/actions + definitive
   outcomes; reject poll snapshots (they're not the person's contradictable claim).
+
+## Codebase /simplify cleanup pass (2026-06-08)
+
+- Whole-codebase reuse/simplification sweep (no behavior change). Added two shared LLM helpers in
+  `backend/llm/parse.go`: `ChatCompletionsURL(base)` (idempotent endpoint builder) and
+  `StripJSONCodeFence(s)` (strip ```json…``` wrappers). Replaced ~14 inline `+ "/chat/completions"`
+  builders and ~7 divergent fence-strip blocks across core/contradiction/categorizer/complaints/
+  entityvalidator/frpolitics/cmd with calls to them. Future rule: never hand-build the chat URL or
+  strip code fences inline — use the `llm` helpers.
+- Deleted dead code: `backend/core/relation_classifier.go` (whole file — referenced a non-existent
+  batch_job.go), unused storage methods `insertFact`/`InsertFactRelation`(singular)/`RecordPairCheck`
+  (singular), and three unused frpolitics funcs. Replaced builtin-shadowing `min`/`minInt` helpers
+  (go 1.24 has variadic `min`/`max` builtins).
+- Consolidated near-identical postgres.go query methods behind private helpers: `loadPairSet`
+  (contradiction/checked pairs), `personIDByColumn` (the three GetPersonIDBy* lookups), and
+  `queryPersonInfos` (four id/name/entity_type scan loops).
+- Deferred (filed as issues, behavior-sensitive / need DB tests): OpenAI env-read consolidation +
+  default-model drift (config.go defaults gpt-3.5-turbo/ada-002 but code hardcodes
+  gpt-4o-mini/text-embedding-3-small — config.LoadConfig is effectively dead for these); N+1
+  per-similar-fact queries on the dedup/ingest hot paths.

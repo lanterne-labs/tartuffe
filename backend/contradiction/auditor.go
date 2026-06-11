@@ -37,6 +37,14 @@ var contradictionAuditAllowedRules = map[string]bool{
 	"third_party_narrative":        true,
 	"date_only_no_commitment":      true,
 	"symbolic_counter_gesture":     true,
+	// Added with the shared promptrules.FalsePositivePatterns catalog — these
+	// buckets came from the verifier and must be nameable by the auditor too.
+	"numbers_measurements":         true,
+	"forecast_vs_current":          true,
+	"procedural_scope":             true,
+	"condition_later_met":          true,
+	"same_direction":               true,
+	"endorsement_vs_non_candidacy": true,
 }
 
 // contradictionAuditAllowedRulesList is the alphabetised version used in the
@@ -47,15 +55,21 @@ var contradictionAuditAllowedRulesList = []string{
 	"announcement_then_action",
 	"coherent_defense",
 	"complementary_facts",
+	"condition_later_met",
 	"consistent_ignorance",
 	"conviction_vs_acknowledgment",
 	"date_only_no_commitment",
 	"different_events",
 	"different_subjects",
+	"endorsement_vs_non_candidacy",
+	"forecast_vs_current",
 	"geographic_scope",
 	"learning_over_time",
 	"legal_process_stages",
+	"numbers_measurements",
 	"paraphrase_same_position",
+	"procedural_scope",
+	"same_direction",
 	"subjective_vs_objective",
 	"symbolic_counter_gesture",
 	"third_party_narrative",
@@ -98,7 +112,7 @@ type AuditResult struct {
 // (the two facts and the original detection reason). The rule body is shared
 // with the detector via ContradictionRulesAndExamples so audit and detection
 // cannot drift in their definition of a contradiction.
-const auditPromptTpl = `You are auditing previously-flagged contradictions to remove false positives.
+var auditPromptTpl = `You are auditing previously-flagged contradictions to remove false positives.
 
 An earlier automated pass marked the two statements below as contradictory, with the reason given. Re-evaluate STRICTLY using the rules and examples below — would you flag this today?
 
@@ -117,24 +131,7 @@ RULE: [exactly one token, no spaces, no quotes — see closed list below]
 VERDICT: [keep|remove|ambiguous]
 
 ⚠️ STRICT FORMATTING — the RULE field MUST be EXACTLY ONE of these tokens (lowercase snake_case, no extra words, no parentheses, no rule numbers):
-  none
-  accusation_not_finding
-  learning_over_time
-  paraphrase_same_position
-  geographic_scope
-  coherent_defense
-  conviction_vs_acknowledgment
-  announcement_then_action
-  different_subjects
-  different_events
-  subjective_vs_objective
-  consistent_ignorance
-  legal_process_stages
-  complementary_facts
-  vague_vs_specific
-  third_party_narrative
-  date_only_no_commitment
-  symbolic_counter_gesture
+%s
 
 If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token from the list above. Do NOT invent variants. Your verdict MUST follow logically from your reasoning. If your reasoning concludes the pair is compatible/supplementary/paraphrastic, your verdict MUST be "remove".
 
@@ -173,11 +170,7 @@ func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error)
 		model = "gpt-4o-mini"
 	}
 
-	base = strings.TrimRight(base, "/")
-	apiURL := base
-	if !strings.HasSuffix(base, "/chat/completions") {
-		apiURL = base + "/chat/completions"
-	}
+	apiURL := llm.ChatCompletionsURL(base)
 
 	return &OpenAIContradictionAuditor{
 		apiKey:     apiKey,
@@ -203,7 +196,10 @@ func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB str
 		formatDateForLLM(dateB), factB,
 		originalReason,
 	)
-	prompt := fmt.Sprintf(auditPromptTpl, auditBlock)
+	// The allowed-token list is generated from the single-source enum slice so
+	// the prompt can never drift from validateContradictionAuditRule.
+	ruleTokens := "  " + strings.Join(contradictionAuditAllowedRulesList, "\n  ")
+	prompt := fmt.Sprintf(auditPromptTpl, auditBlock, ruleTokens)
 	messages := []llm.ChatMessage{{Role: "user", Content: prompt}}
 
 	llmText, err := a.callChat(ctx, messages)

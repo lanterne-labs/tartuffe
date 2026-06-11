@@ -94,11 +94,7 @@ func NewBundlerFromEnv(storer BundlerStorer, embedder embedding.EmbeddingGenerat
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-4o-mini"
 	}
-	base = strings.TrimRight(base, "/")
-	apiURL := base
-	if !strings.HasSuffix(base, "/chat/completions") {
-		apiURL = base + "/chat/completions"
-	}
+	apiURL := categorizer.ChatCompletionsURL(base)
 	return &Bundler{
 		storer:     storer,
 		embedder:   embedder,

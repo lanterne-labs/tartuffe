@@ -191,10 +191,7 @@ func NewOpenAIFactAuditor(apiKey, apiURL, model string) (*OpenAIFactAuditor, err
 		model = "gpt-4o-mini"
 	}
 
-	apiURL = strings.TrimRight(apiURL, "/")
-	if !strings.HasSuffix(apiURL, "/chat/completions") {
-		apiURL = apiURL + "/chat/completions"
-	}
+	apiURL = llm.ChatCompletionsURL(apiURL)
 
 	return &OpenAIFactAuditor{
 		apiKey:     apiKey,

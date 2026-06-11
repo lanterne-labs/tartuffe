@@ -58,11 +58,7 @@ func NewOpenAIJudgeFromEnv() (*OpenAIJudge, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-4o-mini"
 	}
-	base = strings.TrimRight(base, "/")
-	apiURL := base
-	if !strings.HasSuffix(base, "/chat/completions") {
-		apiURL = base + "/chat/completions"
-	}
+	apiURL := llm.ChatCompletionsURL(base)
 	return &OpenAIJudge{
 		client: llm.NewBaseLLMClient("complaint-judge"),
 		apiURL: apiURL,

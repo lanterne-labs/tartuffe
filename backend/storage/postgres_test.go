@@ -46,6 +46,12 @@ func setupTestDB(t *testing.T) (*PostgresStorer, func()) {
 		t.Fatalf("Failed to connect to test database: %v", err)
 	}
 
+	// Disable the live entity validator for storage tests: fixtures use synthetic
+	// names ("test person", "deputy datetest") that the real LLM validator rejects
+	// as junk placeholders, which would fail every AddPerson-based test. Validator
+	// behavior itself is covered in the entityvalidator package.
+	storer.SetEntityValidator(nil)
+
 	// Teardown function to close the pool
 	teardown := func() {
 		storer.Close()

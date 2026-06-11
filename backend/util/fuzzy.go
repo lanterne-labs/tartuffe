@@ -97,19 +97,6 @@ func LevenshteinDistance(s1, s2 string) int {
 	return matrix[len(r1)][len(r2)]
 }
 
-func min(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
-}
-
 // SimilarityScore calculates a normalized similarity score (0.0 to 1.0) between two strings.
 // Higher scores indicate more similar strings.
 // Handles exact matches, substring matches, acronyms, and fuzzy matches.

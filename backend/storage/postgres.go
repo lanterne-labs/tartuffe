@@ -182,37 +182,31 @@ func (s *PostgresStorer) GetAffiliatedPersonIDs(ctx context.Context, queryer pgx
 	return out, nil
 }
 
-// GetPersonIDByAssembleeID returns the person.id associated with the given assemblee_id in persons.attributes.
-func (s *PostgresStorer) GetPersonIDByAssembleeID(ctx context.Context, assembleeID string) (int64, error) {
+// personIDByColumn returns the person.id matching whereSQL = val. whereSQL is a
+// fixed SQL fragment (never user input); val is bound as $1. Backs the
+// GetPersonIDBy* lookups below.
+func (s *PostgresStorer) personIDByColumn(ctx context.Context, label, whereSQL, val string) (int64, error) {
 	var id int64
-	query := `SELECT id FROM persons WHERE attributes->>'assemblee_id' = $1 LIMIT 1`
-	err := s.pool.QueryRow(ctx, query, assembleeID).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("failed to find person by assemblee_id %s: %w", assembleeID, err)
+	query := fmt.Sprintf(`SELECT id FROM persons WHERE %s = $1 LIMIT 1`, whereSQL)
+	if err := s.pool.QueryRow(ctx, query, val).Scan(&id); err != nil {
+		return 0, fmt.Errorf("failed to find person by %s %s: %w", label, val, err)
 	}
 	return id, nil
+}
+
+// GetPersonIDByAssembleeID returns the person.id associated with the given assemblee_id in persons.attributes.
+func (s *PostgresStorer) GetPersonIDByAssembleeID(ctx context.Context, assembleeID string) (int64, error) {
+	return s.personIDByColumn(ctx, "assemblee_id", "attributes->>'assemblee_id'", assembleeID)
 }
 
 // GetPersonIDByOrgRef returns the person.id associated with the given orgRef stored in persons.attributes.
 func (s *PostgresStorer) GetPersonIDByOrgRef(ctx context.Context, orgRef string) (int64, error) {
-	var id int64
-	query := `SELECT id FROM persons WHERE attributes->>'organeRef' = $1 LIMIT 1`
-	err := s.pool.QueryRow(ctx, query, orgRef).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("failed to find person by orgRef %s: %w", orgRef, err)
-	}
-	return id, nil
+	return s.personIDByColumn(ctx, "orgRef", "attributes->>'organeRef'", orgRef)
 }
 
 // GetPersonIDByName returns the person.id associated with the given name.
 func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (int64, error) {
-	var id int64
-	query := `SELECT id FROM persons WHERE name = $1 LIMIT 1`
-	err := s.pool.QueryRow(ctx, query, name).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("failed to find person by name %s: %w", name, err)
-	}
-	return id, nil
+	return s.personIDByColumn(ctx, "name", "name", name)
 }
 
 // GetSourceURLsForPerson returns every distinct source_url found in fact_sources
@@ -564,34 +558,6 @@ func (s *PostgresStorer) GetFactCanonicalVerb(ctx context.Context, factID int64)
 }
 
 // --- End of public methods for core.FactInserter ---
-
-// findOrInsertFact REMOVED as StoreFact now always uses insertFact.
-// If text-based deduplication is needed later, it can be added back carefully.
-/*
-func (s *PostgresStorer) findOrInsertFact(...) { ... }
-*/
-
-// insertFact inserts a new fact record.
-// If a fact with the same text already exists, it returns the existing fact ID.
-func (s *PostgresStorer) insertFact(ctx context.Context, tx pgx.Tx, text string, embedding []float32, canonicalVerb string) (factID int64, err error) {
-	// Use ON CONFLICT to handle duplicate fact_text gracefully
-	// DO UPDATE with a no-op update allows us to get the RETURNING id for both new and existing facts
-	insertFactStmt := `
-		INSERT INTO facts (fact_text, embedding, canonical_verb)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (fact_text) DO UPDATE SET fact_text = EXCLUDED.fact_text
-		RETURNING id`
-	err = tx.QueryRow(ctx, insertFactStmt,
-		text,
-		pgvector.NewVector(embedding),
-		canonicalVerb,
-	).Scan(&factID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to insert new fact: %w", err)
-	}
-	// Suppress per-item debug log to keep CLI output concise
-	return factID, nil
-}
 
 // Struct to hold similarity search results
 type SimilarFactResult struct {
@@ -1134,10 +1100,10 @@ func (s *PostgresStorer) GetAllPersonRecords(ctx context.Context) ([]core.Person
 	return records, nil
 }
 
-// GetAllPersons retrieves all persons with their details (id, name, entity_type).
-func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error) {
-	query := `SELECT id, name, COALESCE(entity_type, 'person') as entity_type FROM persons ORDER BY name`
-	rows, err := s.pool.Query(ctx, query)
+// queryPersonInfos runs a query selecting (id, name, entity_type) and scans the
+// rows into PersonInfo. Backs the GetPersons* / list helpers below.
+func (s *PostgresStorer) queryPersonInfos(ctx context.Context, query string, args ...any) ([]PersonInfo, error) {
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons: %w", err)
 	}
@@ -1151,12 +1117,15 @@ func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error
 		}
 		persons = append(persons, p)
 	}
-
 	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating over persons: %w", rows.Err())
+		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
 	}
-
 	return persons, nil
+}
+
+// GetAllPersons retrieves all persons with their details (id, name, entity_type).
+func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error) {
+	return s.queryPersonInfos(ctx, `SELECT id, name, COALESCE(entity_type, 'person') as entity_type FROM persons ORDER BY name`)
 }
 
 // GetPersonsWithMultipleStances returns only the persons who have at least 2
@@ -1164,32 +1133,14 @@ func (s *PostgresStorer) GetAllPersons(ctx context.Context) ([]PersonInfo, error
 // inspecting the thousands of single-stance / no-stance persons that can't
 // possibly produce a merge candidate.
 func (s *PostgresStorer) GetPersonsWithMultipleStances(ctx context.Context) ([]PersonInfo, error) {
-	query := `
+	return s.queryPersonInfos(ctx, `
 		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
 		FROM persons p
 		JOIN (
 			SELECT person_id FROM stance_documents
 			GROUP BY person_id HAVING COUNT(*) >= 2
 		) s ON s.person_id = p.id
-		ORDER BY p.name`
-	rows, err := s.pool.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query persons with multiple stances: %w", err)
-	}
-	defer rows.Close()
-
-	var persons []PersonInfo
-	for rows.Next() {
-		var p PersonInfo
-		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
-			return nil, fmt.Errorf("failed to scan person: %w", err)
-		}
-		persons = append(persons, p)
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
-	}
-	return persons, nil
+		ORDER BY p.name`)
 }
 
 // GetPersonsWithFacts returns only persons that have at least one fact attached
@@ -1200,31 +1151,13 @@ func (s *PostgresStorer) GetPersonsWithMultipleStances(ctx context.Context) ([]P
 // inside the loop when facts is empty, but the wrapper still pays the cost.
 // Filtering at SQL level removes that overhead.
 func (s *PostgresStorer) GetPersonsWithFacts(ctx context.Context) ([]PersonInfo, error) {
-	query := `
+	return s.queryPersonInfos(ctx, `
 		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
 		FROM persons p
 		WHERE EXISTS (
 			SELECT 1 FROM fact_mentions fm WHERE fm.person_id = p.id
 		)
-		ORDER BY p.name`
-	rows, err := s.pool.Query(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query persons with facts: %w", err)
-	}
-	defer rows.Close()
-
-	var persons []PersonInfo
-	for rows.Next() {
-		var p PersonInfo
-		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
-			return nil, fmt.Errorf("failed to scan person: %w", err)
-		}
-		persons = append(persons, p)
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating persons: %w", rows.Err())
-	}
-	return persons, nil
+		ORDER BY p.name`)
 }
 
 // AddPerson inserts a new person into the persons table if they don't already exist.
@@ -1646,13 +1579,14 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	return results, nil
 }
 
-// GetExistingContradictionPairs returns a map of existing contradiction pairs for a person.
-// The map keys are "factAID-factBID" strings (with smaller ID first) for quick lookup.
-func (s *PostgresStorer) GetExistingContradictionPairs(ctx context.Context, personID int64) (map[string]bool, error) {
-	query := `SELECT fact_a_id, fact_b_id FROM contradictions WHERE person_id = $1`
+// loadPairSet returns a set of normalized "factAID-factBID" keys (smaller ID
+// first, as stored) from a table holding (fact_a_id, fact_b_id) columns for a
+// person. Backs GetExistingContradictionPairs and GetCheckedPairs.
+func (s *PostgresStorer) loadPairSet(ctx context.Context, table string, personID int64) (map[string]bool, error) {
+	query := fmt.Sprintf(`SELECT fact_a_id, fact_b_id FROM %s WHERE person_id = $1`, table)
 	rows, err := s.pool.Query(ctx, query, personID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query existing contradictions for person %d: %w", personID, err)
+		return nil, fmt.Errorf("failed to query %s for person %d: %w", table, personID, err)
 	}
 	defer rows.Close()
 
@@ -1660,18 +1594,20 @@ func (s *PostgresStorer) GetExistingContradictionPairs(ctx context.Context, pers
 	for rows.Next() {
 		var factAID, factBID int64
 		if err := rows.Scan(&factAID, &factBID); err != nil {
-			return nil, fmt.Errorf("failed to scan contradiction pair: %w", err)
+			return nil, fmt.Errorf("failed to scan pair from %s: %w", table, err)
 		}
-		// IDs are already normalized (smaller first) in the DB
-		key := fmt.Sprintf("%d-%d", factAID, factBID)
-		pairs[key] = true
+		pairs[fmt.Sprintf("%d-%d", factAID, factBID)] = true
 	}
-
 	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating contradiction pairs: %w", rows.Err())
+		return nil, fmt.Errorf("error iterating pairs from %s: %w", table, rows.Err())
 	}
-
 	return pairs, nil
+}
+
+// GetExistingContradictionPairs returns a map of existing contradiction pairs for a person.
+// The map keys are "factAID-factBID" strings (with smaller ID first) for quick lookup.
+func (s *PostgresStorer) GetExistingContradictionPairs(ctx context.Context, personID int64) (map[string]bool, error) {
+	return s.loadPairSet(ctx, "contradictions", personID)
 }
 
 // PairCheckResult represents the result of a fact pair check.
@@ -1685,50 +1621,7 @@ type PairCheckResult struct {
 // Returns map["factAID-factBID"] = true for efficient lookup.
 // This includes both contradictory and non-contradictory pairs.
 func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (map[string]bool, error) {
-	query := `SELECT fact_a_id, fact_b_id FROM fact_pair_checks WHERE person_id = $1`
-	rows, err := s.pool.Query(ctx, query, personID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query checked pairs for person %d: %w", personID, err)
-	}
-	defer rows.Close()
-
-	pairs := make(map[string]bool)
-	for rows.Next() {
-		var factAID, factBID int64
-		if err := rows.Scan(&factAID, &factBID); err != nil {
-			return nil, fmt.Errorf("failed to scan checked pair: %w", err)
-		}
-		key := fmt.Sprintf("%d-%d", factAID, factBID)
-		pairs[key] = true
-	}
-
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating checked pairs: %w", rows.Err())
-	}
-
-	return pairs, nil
-}
-
-// RecordPairCheck records that a fact pair was analyzed.
-func (s *PostgresStorer) RecordPairCheck(ctx context.Context, personID, factAID, factBID int64, isContradiction bool) error {
-	// Ensure consistent ordering
-	if factAID > factBID {
-		factAID, factBID = factBID, factAID
-	}
-
-	query := `
-		INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
-		SET is_contradiction = EXCLUDED.is_contradiction,
-		    checked_at = NOW()`
-
-	_, err := s.pool.Exec(ctx, query, personID, factAID, factBID, isContradiction)
-	if err != nil {
-		return fmt.Errorf("failed to record pair check for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
-	}
-
-	return nil
+	return s.loadPairSet(ctx, "fact_pair_checks", personID)
 }
 
 // RecordPairChecksBatch records multiple pair checks efficiently.
@@ -3047,6 +2940,27 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 // fact_pair_checks row so the pair can be re-analyzed, and recomputes the owner's
 // honesty score. Returns pgx.ErrNoRows if the contradiction does not exist.
 func (s *PostgresStorer) DeleteContradiction(ctx context.Context, id int64) error {
+	return s.removeContradiction(ctx, id, false)
+}
+
+// DismissContradictionAsFalsePositive removes a contradiction the auditor judged
+// a false positive. Unlike DeleteContradiction it does NOT clear the pair check —
+// it records a NEGATIVE fact_pair_checks row (is_contradiction=false) so the daily
+// detector treats the pair as already-judged-not-contradictory and will not
+// re-raise it. Without this, an auditor-deleted pair would be re-detected next
+// run, re-approved by the (more lenient) insertion verifier, and re-deleted at
+// the next audit — thrashing every cycle. Recomputes the owner's honesty score.
+// Returns pgx.ErrNoRows if the contradiction does not exist.
+func (s *PostgresStorer) DismissContradictionAsFalsePositive(ctx context.Context, id int64) error {
+	return s.removeContradiction(ctx, id, true)
+}
+
+// removeContradiction is the shared body of DeleteContradiction and
+// DismissContradictionAsFalsePositive. suppressReDetection controls the
+// fact_pair_checks handling: false clears the row (pair re-analyzed later —
+// self-correcting), true upserts a negative row (pair suppressed from future
+// detection). Either way the owner's honesty score is recomputed.
+func (s *PostgresStorer) removeContradiction(ctx context.Context, id int64, suppressReDetection bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -3068,13 +2982,30 @@ func (s *PostgresStorer) DeleteContradiction(ctx context.Context, id int64) erro
 		return fmt.Errorf("failed to delete contradiction %d: %w", id, err)
 	}
 
-	// fact_pair_checks enforces fact_a_id < fact_b_id; check both orderings to be safe.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM fact_pair_checks
-		 WHERE person_id = $1
-		   AND ((fact_a_id = $2 AND fact_b_id = $3) OR (fact_a_id = $3 AND fact_b_id = $2))`,
-		personID, factAID, factBID); err != nil {
-		return fmt.Errorf("failed to reset pair check: %w", err)
+	if suppressReDetection {
+		// Record the pair as judged-not-contradictory so the detector skips it.
+		// fact_pair_checks enforces fact_a_id < fact_b_id (canonical ordering).
+		a, b := factAID, factBID
+		if a > b {
+			a, b = b, a
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
+			 VALUES ($1, $2, $3, false)
+			 ON CONFLICT (person_id, fact_a_id, fact_b_id)
+			 DO UPDATE SET is_contradiction = false, checked_at = NOW()`,
+			personID, a, b); err != nil {
+			return fmt.Errorf("failed to record negative pair check: %w", err)
+		}
+	} else {
+		// fact_pair_checks enforces fact_a_id < fact_b_id; check both orderings to be safe.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM fact_pair_checks
+			 WHERE person_id = $1
+			   AND ((fact_a_id = $2 AND fact_b_id = $3) OR (fact_a_id = $3 AND fact_b_id = $2))`,
+			personID, factAID, factBID); err != nil {
+			return fmt.Errorf("failed to reset pair check: %w", err)
+		}
 	}
 
 	factsCount, err := s.getPersonFactsCount(ctx, tx, personID)
@@ -3125,6 +3056,7 @@ func (s *PostgresStorer) DeleteContradiction(ctx context.Context, id int64) erro
 		Int64("contradiction_id", id).
 		Int64("person_id", personID).
 		Float64("honesty_score", aggregate).
+		Bool("suppressed", suppressReDetection).
 		Msg("Deleted single contradiction")
 	return nil
 }
@@ -4023,7 +3955,7 @@ func (s *PostgresStorer) UpdateFactText(ctx context.Context, factID int64, norma
 
 	log.Info().
 		Int64("fact_id", factID).
-		Str("new_text", normalizedFact[:minInt(80, len(normalizedFact))]).
+		Str("new_text", normalizedFact[:min(80, len(normalizedFact))]).
 		Msg("Updated fact text")
 
 	return nil
@@ -4265,30 +4197,6 @@ func (s *PostgresStorer) NewsURLsForPerson(ctx context.Context, personID int64) 
 
 // --- Fact Relations Methods ---
 
-// InsertFactRelation inserts a single fact relation. On conflict, updates reason.
-func (s *PostgresStorer) InsertFactRelation(ctx context.Context, input core.FactRelationInput) error {
-	query := `
-		INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type, reason)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (general_fact_id, specific_fact_id) DO UPDATE
-		SET relation_type = EXCLUDED.relation_type,
-		    reason = EXCLUDED.reason`
-
-	_, err := s.pool.Exec(ctx, query, input.GeneralFactID, input.SpecificFactID, input.RelationType, input.Reason)
-	if err != nil {
-		return fmt.Errorf("failed to insert fact relation (%d -> %d, %s): %w",
-			input.GeneralFactID, input.SpecificFactID, input.RelationType, err)
-	}
-
-	log.Debug().
-		Int64("general", input.GeneralFactID).
-		Int64("specific", input.SpecificFactID).
-		Str("type", input.RelationType).
-		Msg("Inserted fact relation")
-
-	return nil
-}
-
 // InsertFactRelationsBatch inserts multiple fact relations efficiently.
 func (s *PostgresStorer) InsertFactRelationsBatch(ctx context.Context, inputs []core.FactRelationInput) error {
 	if len(inputs) == 0 {
@@ -4382,13 +4290,6 @@ func (s *PostgresStorer) IsAncestorOf(ctx context.Context, ancestorID int64, des
 	}
 
 	return isAnc, nil
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // --- Twitter Handle Management ---
@@ -5446,7 +5347,7 @@ type OrphanFact struct {
 // orphan list comes back empty, the person is "skipped", but they still
 // show up next iteration).
 func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]PersonInfo, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.queryPersonInfos(ctx, `
 		SELECT DISTINCT p.id, p.name, COALESCE(p.entity_type, 'person')
 		FROM persons p
 		JOIN fact_mentions fm ON fm.person_id = p.id
@@ -5460,20 +5361,6 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]Pers
 		    WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 		)
 		ORDER BY p.name`)
-	if err != nil {
-		return nil, fmt.Errorf("listing persons with orphan facts: %w", err)
-	}
-	defer rows.Close()
-
-	var out []PersonInfo
-	for rows.Next() {
-		var p PersonInfo
-		if err := rows.Scan(&p.ID, &p.Name, &p.EntityType); err != nil {
-			return nil, fmt.Errorf("scanning person row: %w", err)
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
 }
 
 // ListOrphanFactsForPerson returns every active fact mentioning the person

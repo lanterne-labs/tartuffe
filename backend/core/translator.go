@@ -41,7 +41,7 @@ func NewTranslatorFromEnv() (*Translator, error) {
 	base = strings.TrimRight(base, "/")
 	return &Translator{
 		apiKey:     apiKey,
-		apiURL:     base + "/chat/completions",
+		apiURL:     llm.ChatCompletionsURL(base),
 		model:      model,
 		baseClient: llm.NewBaseLLMClient("translate"),
 	}, nil
@@ -85,10 +85,7 @@ Return ONLY strict JSON, nothing else:
 		return "", fmt.Errorf("translate LLM returned no content")
 	}
 
-	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
+	content := llm.StripJSONCodeFence(chatResp.Choices[0].Message.Content)
 	var res translationResult
 	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &res); err != nil {
 		return "", fmt.Errorf("invalid translate JSON response: %w", err)

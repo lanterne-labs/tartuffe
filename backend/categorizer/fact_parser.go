@@ -3,6 +3,7 @@ package categorizer
 import (
 	"bytes"
 	"digital-mirror/backend" // Need backend package for the Fact struct type
+	"digital-mirror/backend/llm"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -34,18 +35,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	jsonContent := string(jsonData)
 
 	// Pre-process: strip markdown code blocks if present
-	trimmedContent := strings.TrimSpace(jsonContent)
-	if strings.HasPrefix(trimmedContent, "```json") {
-		trimmedContent = strings.TrimPrefix(trimmedContent, "```json")
-		trimmedContent = strings.TrimSuffix(trimmedContent, "```")
-		trimmedContent = strings.TrimSpace(trimmedContent)
-		jsonData = []byte(trimmedContent)
-	} else if strings.HasPrefix(trimmedContent, "```") {
-		trimmedContent = strings.TrimPrefix(trimmedContent, "```")
-		trimmedContent = strings.TrimSuffix(trimmedContent, "```")
-		trimmedContent = strings.TrimSpace(trimmedContent)
-		jsonData = []byte(trimmedContent)
-	}
+	jsonData = []byte(llm.StripJSONCodeFence(jsonContent))
 
 	jsonData = extractFirstJSON(jsonData)
 

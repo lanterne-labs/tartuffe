@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/extractor"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
@@ -56,15 +57,6 @@ func dynamicChunkBudgetChars(promptOverheadChars int) int {
 // openAIChatModelDefault is a sensible default, can be overridden via OPEN_AI_CHAT_MODEL
 const openAIChatModelDefault = "gpt-4o-mini"
 
-// buildChatAPIURL composes the full chat completions endpoint from the OPEN_AI_API base.
-func buildChatAPIURL(base string) string {
-	base = strings.TrimRight(base, "/")
-	if strings.HasSuffix(base, "/chat/completions") {
-		return base
-	}
-	return base + "/chat/completions"
-}
-
 // OpenAIExtractor implements FactExtractor using an OpenAI-compatible Chat Completions API.
 type OpenAIExtractor struct {
 	// apiKey is the API key to authenticate requests.
@@ -95,7 +87,7 @@ func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
 	}
 	return &OpenAIExtractor{
 		apiKey:     apiKey,
-		apiURL:     buildChatAPIURL(base),
+		apiURL:     llm.ChatCompletionsURL(base),
 		model:      model,
 		baseClient: NewBaseLLMClient("fact-extractor"),
 	}, nil

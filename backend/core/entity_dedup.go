@@ -54,7 +54,7 @@ func NewEntityDedupAdjudicatorFromEnv() (*EntityDedupAdjudicator, error) {
 	base = strings.TrimRight(base, "/")
 	return &EntityDedupAdjudicator{
 		apiKey:     apiKey,
-		apiURL:     base + "/chat/completions",
+		apiURL:     llm.ChatCompletionsURL(base),
 		model:      model,
 		baseClient: llm.NewBaseLLMClient("entity-dedup"),
 	}, nil
@@ -171,20 +171,7 @@ or
 }
 
 func (a *EntityDedupAdjudicator) parseResponse(content string) (*PairVerdict, error) {
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	}
+	content = llm.StripJSONCodeFence(content)
 
 	var v PairVerdict
 	if err := json.Unmarshal([]byte(content), &v); err != nil {

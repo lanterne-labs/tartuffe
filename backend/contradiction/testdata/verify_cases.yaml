@@ -211,3 +211,39 @@ cases:
     expect: drop
     bucket: same_direction
     notes: "Both want circulars enforced — A laments they aren't followed, B says the prosecution must respect them. Same pro-enforcement direction; 'inutile sans vérifier leur application' criticizes non-enforcement, not the circulars themselves."
+
+  # ---- Prod-sourced cases from the 2026-06-11 daily run ----
+
+  # She is PRO-imprescriptibility in BOTH facts: B says the statute of limitations (prescription)
+  # "protects perpetrators" and she wants NON-prescription — the SAME position as A. The flag
+  # tripped on the double negative (DROP).
+  - name: "FP_170_berge_double_negative_imprescriptibility"
+    fact_a: "Aurore Bergé a affirmé défendre depuis longtemps l'imprescriptibilité pour les victimes d'inceste et de violences sexuelles."
+    fact_b: "Aurore Bergé stated that the statute of limitations on sexual violence 'protects perpetrators' and 'condemns victims', and she hopes to include the non-prescription of sexual violence in the child protection bill."
+    claimed_reason: "Ses affirmations sur l'effet de l'imprescriptibilité (qu'elle protège les coupables) contredisent sa position de défense de l'imprescriptibilité."
+    expect: drop
+    bucket: paraphrase_same_position
+    notes: "Both facts are PRO non-prescription: A defends imprescriptibility; B criticizes the statute of limitations ('protects perpetrators') and wants non-prescription. Same stance — it is the statute of limitations, not imprescriptibility, that protects perpetrators."
+
+  # NOTE: Attal #169 (homonym 'primaire' = école primaire in A vs une primaire électorale in B)
+  # was considered but NOT asserted here. The local model cannot be made to evict it via the
+  # verifier prompt even with an explicit guard naming the exact misread — anchored by a claimed
+  # reason that asserts the link, it stubbornly reads "une primaire est pas possible" as the
+  # primary-SCHOOL measure. The right fix is at the stance/KNN layer (keep école-primaire and
+  # élection-primaire facts in separate stances so the pair is never formed) — tracked in mirror-ezt.
+  # The catalog keeps a short homonym note under different_subjects for clearer cases.
+
+  # Criticizing the justice handling as a 'failure' (a judgment about the outcome) does NOT
+  # contradict saying the judiciary needs no more resources — different aspects (DROP).
+  - name: "FP_166_darmanin_failure_not_resources"
+    fact_a: "Gérald Darmanin a déclaré être 'furieux' de la situation et a qualifié le traitement de la justice du suspect d'un 'immense échec'."
+    fact_b: "Gérald Darmanin a affirmé que l'institution judiciaire n'avait pas besoin de davantage de moyens et que les dispositions de la loi intégrale ne répondraient pas au cas précis de la petite Lyhanna."
+    claimed_reason: "L'affirmation selon laquelle l'institution n'a pas besoin de plus de moyens contredit le constat d'un 'immense échec' de la justice dans le traitement de l'affaire."
+    expect: drop
+    bucket: subjective_vs_objective
+    notes: "Calling the handling an 'immense échec' (a judgment about the outcome) is compatible with saying the judiciary needs no more MONEY — a failure can be organizational, not budgetary. Same shape as FP_156."
+
+  # NOTE: Bardella #168 ("aperçu dans les tribunes VIP avec sa compagne" vs "ne veut pas qu'elle
+  # soit perçue comme sa compagne") was considered but NOT added: A is a third-party observation,
+  # but appearing publicly with her is a defensible values-vs-action read, so forcing "drop" risks
+  # an over-broad exception (same caution as the Ciotti #157 skip above).

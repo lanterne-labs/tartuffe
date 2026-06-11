@@ -46,7 +46,7 @@ func NewFactDedupeAdjudicatorFromEnv() (*FactDedupeAdjudicator, error) {
 	base = strings.TrimRight(base, "/")
 	return &FactDedupeAdjudicator{
 		apiKey:     apiKey,
-		apiURL:     base + "/chat/completions",
+		apiURL:     llm.ChatCompletionsURL(base),
 		model:      model,
 		baseClient: llm.NewBaseLLMClient("fact-dedupe"),
 	}, nil
@@ -121,20 +121,7 @@ or
 // parseSameClaimResponse tolerates fenced/unfenced JSON, reusing the PairVerdict
 // shape (same/reasoning) defined in entity_dedup.go.
 func parseSameClaimResponse(content string) (*PairVerdict, error) {
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	}
+	content = llm.StripJSONCodeFence(content)
 
 	var v PairVerdict
 	if err := json.Unmarshal([]byte(content), &v); err != nil {

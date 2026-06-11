@@ -68,16 +68,3 @@ func loadOrganeCacheForLegislature(ctx context.Context, legislature int) map[str
 	}
 	return out
 }
-
-// ensureOrganeInfo fetches organe info for a specific ref if not in cache, using API as fallback.
-func ensureOrganeInfo(ctx context.Context, legislature int, orgRef string, cache map[string]OrganeInfo) OrganeInfo {
-	if info, ok := cache[orgRef]; ok {
-		return info
-	}
-	if info, ok := FetchOrganeInfo(ctx, legislature, orgRef); ok {
-		cache[orgRef] = info
-		return info
-	}
-	// Fallback: just the ref
-	return OrganeInfo{OrganeRef: orgRef}
-}

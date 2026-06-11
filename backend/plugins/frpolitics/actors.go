@@ -83,11 +83,6 @@ func loadActorNameMap(ctx context.Context) map[string]string {
 	return out
 }
 
-// cachePathJoin is a tiny helper to normalize paths under cache; retained for future use.
-func cachePathJoin(dir, name string) string {
-	return filepath.Join(dir, name)
-}
-
 // loadActorNameMapFromPath reads an actors/AMO zip strictly from a given local path.
 // It does not attempt any network download; returns an empty map on error.
 func loadActorNameMapFromPath(ctx context.Context, zipPath string) (map[string]string, error) {

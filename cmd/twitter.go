@@ -651,7 +651,7 @@ func executeTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer
 	if apiURL == "" {
 		apiURL = "https://api.openai.com/v1"
 	}
-	apiURL = apiURL + "/chat/completions"
+	apiURL = llm.ChatCompletionsURL(apiURL)
 	apiKey := os.Getenv("OPEN_AI_KEY")
 	model := os.Getenv("OPEN_AI_CHAT_MODEL")
 	if model == "" {

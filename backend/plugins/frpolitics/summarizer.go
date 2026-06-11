@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/llm"
 
 	"github.com/rs/zerolog/log"
 )
@@ -123,9 +124,7 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 	if strings.TrimSpace(base) == "" {
 		return nil, fmt.Errorf("OPEN_AI_API not set")
 	}
-	if !strings.HasSuffix(base, "/chat/completions") {
-		base = strings.TrimRight(base, "/") + "/chat/completions"
-	}
+	base = llm.ChatCompletionsURL(base)
 	apiKey := os.Getenv("OPEN_AI_KEY")
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("OPEN_AI_KEY not set")

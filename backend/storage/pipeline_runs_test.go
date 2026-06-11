@@ -19,7 +19,6 @@ func TestRecordPipelineRun(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
-	storer.SetEntityValidator(nil)
 
 	if _, err := storer.pool.Exec(ctx, "DELETE FROM pipeline_runs"); err != nil {
 		t.Skipf("pipeline_runs table not present (run migrations): %v", err)

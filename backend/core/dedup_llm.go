@@ -65,8 +65,7 @@ func NewDedupLLMVerifierFromEnv() (*DedupLLMVerifier, error) {
 	baseClient := llm.NewBaseLLMClient("dedup-filter")
 
 	// Build chat completions URL
-	base = strings.TrimRight(base, "/")
-	apiURL := base + "/chat/completions"
+	apiURL := llm.ChatCompletionsURL(base)
 
 	return &DedupLLMVerifier{
 		apiKey:     apiKey,
@@ -212,20 +211,7 @@ IMPORTANT: Return ONLY valid JSON.`, string(factsJSON))
 // parseResponse parses the LLM's JSON response into a structured format.
 func (v *DedupLLMVerifier) parseResponse(content string) (*LLMDedupeResponse, error) {
 	// Try to extract JSON if wrapped in markdown code blocks
-	content = strings.TrimSpace(content)
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		if idx := strings.LastIndex(content, "```"); idx != -1 {
-			content = content[:idx]
-		}
-		content = strings.TrimSpace(content)
-	}
+	content = llm.StripJSONCodeFence(content)
 
 	var response LLMDedupeResponse
 	if err := json.Unmarshal([]byte(content), &response); err != nil {

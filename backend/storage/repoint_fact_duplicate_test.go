@@ -15,7 +15,6 @@ func TestRepointFactDuplicate(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
-	storer.SetEntityValidator(nil)
 
 	pid, err := storer.FindOrInsertPersonWithType(ctx, "repoint subject", "human")
 	require.NoError(t, err)

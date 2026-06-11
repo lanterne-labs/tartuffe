@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend/categorizer" // Need access to baseLLMClient and potentially request/response structs
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/promptrules"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,6 +37,9 @@ const (
 	// each). 4096 leaves headroom for Gemma's thinking mode (chain-of-thought
 	// adds 500-1500 tokens before the answer starts) — was 2048 before
 	// thinking was enabled, but that caused empty content + truncated JSON.
+	// The shared FalsePositivePatterns catalog is kept terse (smaller than the
+	// inline NO-list it replaced) so prompt + this reservation still fit the
+	// local model's 12k context.
 	contradictionMaxTokens = 4096
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
@@ -71,12 +75,15 @@ func formatDateForLLM(t *time.Time) string {
 // ContradictionRulesAndExamples is the shared rule body used by both the
 // detector prompt and the auditor prompt. Keeping a single source of truth
 // prevents the two prompts from drifting in their definition of what counts
-// as a contradiction.
-const ContradictionRulesAndExamples = `**CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
+// as a contradiction. Its false-positive section is the shared
+// promptrules.FalsePositivePatterns catalog — the SAME catalog the insertion/
+// reverify verifier uses — so all three judges agree on what is NOT a
+// contradiction. (var, not const, because the catalog is a //go:embed value.)
+var ContradictionRulesAndExamples = `**CRITICAL - WHAT COUNTS AS A CONTRADICTION:**
 A contradiction must be about the SAME SUBJECT - specifically about the person's own knowledge, beliefs, actions, or positions.
 
 **HARD GATE — UTTERANCE REQUIREMENT (check FIRST, before any other reasoning):**
-At least ONE of the two statements MUST be an utterance, claim, denial, position, commitment, or vote BY THE PERSON THEMSELVES. The only acceptable substitute is an AUTHORITATIVE FINDING about the person (a court conviction, official investigation conclusion, judicial ruling). If BOTH statements are third-party reports, journalistic narrations, or descriptions of events involving the person without any first-person claim or authoritative finding, the answer is automatically NO — even if the statements appear to disagree. Different reporters or sources giving slightly different versions of an event the person did not personally claim is a SOURCE DISAGREEMENT, not a personal contradiction.
+At least ONE of the two statements MUST be an utterance, claim, denial, position, commitment, or vote BY THE PERSON THEMSELVES. A statement that ATTRIBUTES words or a position to the person — "X announced/stated/declared/claimed/promised Y" — IS the person's own utterance (it is them asserting Y), NOT third-party narration. The only acceptable substitute is an AUTHORITATIVE FINDING about the person (a court conviction, official investigation conclusion, judicial ruling, audit, official report, or verified official record). If BOTH statements are third-party reports, journalistic narrations, or descriptions of events involving the person without any first-person claim or authoritative finding, the answer is automatically NO — even if the statements appear to disagree. Different reporters or sources giving slightly different versions of an event the person did not personally claim is a SOURCE DISAGREEMENT, not a personal contradiction.
 
 **DATE-ONLY CONFLICTS — NOT A CONTRADICTION:**
 If the only difference between two statements is the DATE or TIMING of an event (e.g., "X happened on Monday" vs "X happened on Tuesday"), it is NOT a contradiction UNLESS one of the statements is a personal commitment about that timing that the other breaks (e.g., the person promised "I will do X by date Y" and the other statement shows they did X later, with clear intent to delay or hide). Pure factual date discrepancies between reports — without the person committing to a specific date — reflect source noise, not dishonesty. Default to NO for date-only conflicts.
@@ -101,23 +108,7 @@ A breaker does NOT invalidate a promise when:
 - An INVESTIGATION (without conclusion) is paired with a denial — being investigated does NOT establish facts
 - An EXTERNAL PARTY'S action is the alleged breaker — only the person's own statements/actions or authoritative findings about them count
 
-**Is NOT a contradiction** when:
-- Statement A is about the person's own belief/acknowledgment, but Statement B is about what an EXTERNAL PARTY did or didn't do as their own action (different subjects)
-- Both statements mention similar TOPICS but are about DIFFERENT SUBJECTS (e.g., what Parliament did vs what she told her colleagues) — similar keywords do NOT make a contradiction
-- Different LEVELS of involvement in CRIMINAL or FRAUDULENT EXECUTION — passively agreeing to a system that others then defraud is NOT the same as personally executing every fraud within it. This is a NARROW carve-out for criminal-execution defences; it does NOT apply when the person's own subsequent ACTION goes in the opposite direction of their stated VALUE or COMMITMENT (that case IS a values-based contradiction — see the dedicated rule below)
-- One statement is VAGUE/GENERAL while the other is SPECIFIC, and there is NO clear indication they refer to the same thing — BUT if context (names, dates, events) makes it clear they ARE about the same thing, it IS a contradiction
-- SUBJECTIVE AWARENESS vs OBJECTIVE FACTS: "I wasn't aware of X" (subjective) and "X didn't happen" (objective) are COMPATIBLE — denying X happened doesn't imply prior knowledge of X. ONLY contradictory if the person demonstrably knew about X earlier
-- DOWNPLAYING ≠ CONTRADICTING: Acknowledging an error, negligence, or that "things could have been better" does NOT contradict denying criminal intent or claiming good faith. A person can admit mistakes while genuinely believing they didn't commit a crime. "Bonne foi" (good faith) is COMPATIBLE with negligence. Only flag if the person explicitly DENIES the specific fact they elsewhere ADMITS
-- CONVICTION does NOT contradict ACKNOWLEDGMENT OF IMPERFECTIONS: A court conviction does not contradict someone saying "things could have been more rigorous" or "reproaches can be made" — the conviction EXCEEDS the acknowledgment but does not logically contradict it. Only "I deny all wrongdoing" + conviction = contradiction
-- COMPLEMENTARY FACTS about the same event: Two facts describing different ASPECTS of the same ruling, sentence, or event (e.g., prison term + ineligibility, first-instance sentence + appeal sentence) are SUPPLEMENTARY, not contradictory. Different court proceedings naturally produce different sentence details
-- COHERENT DEFENSE STRATEGY: Multiple denials, rejections, or claims about DIFFERENT ASPECTS of the same case are a consistent defense, not contradictions. "Denied hiring instructions" + "denied gross negligence" = same defense posture. Only contradictory if the person explicitly ADMITS a specific claim in one statement and DENIES that SAME specific claim in another
-- CONSISTENT IGNORANCE PATTERN: Multiple claims of not knowing about DIFFERENT aspects of the same situation REINFORCE each other — they form a consistent "I didn't know" defense. "Didn't know X" + "didn't know Y" = compatible. Only contradictory if one statement DEMONSTRATES knowledge that another statement DENIES
-- SAME POSITION IN DIFFERENT WORDS: If both statements support the SAME claim or take the SAME side, they CANNOT contradict each other regardless of phrasing, language, or level of detail — paraphrases and translations are not contradictions
-- EXPLORATORY POSTURE: Claiming to "seek to understand," "be in the discovery of," or "try to learn about" a situation is COMPATIBLE with specific instances of not knowing details — the exploration EXPLAINS the ignorance. "I was trying to understand" + "I didn't know X" = consistent. Only contradictory if the person simultaneously claims EXPERT KNOWLEDGE of the thing they claim to be discovering
-- LEGAL PROCESS STAGES: Accusation, indictment, trial, and conviction are sequential stages of the SAME legal process — they do NOT contradict each other. Being accused AND later convicted is normal progression, not a contradiction. Only the person's OWN contradictory statements count
-- CONVICTION SCOPE: A general conviction (e.g., "found guilty of embezzlement") does NOT automatically contradict every specific factual claim the person made about individual details within the case. Only flag if the conviction SPECIFICALLY disproves the particular claim being paired with it
-- ANNOUNCEMENT FOLLOWED BY ACTION: Announcing, promising, or planning to do something and then DOING it is the OPPOSITE of a contradiction — it is a FULFILLED commitment. "X announced they would support Y" + "X came to support Y" = consistent. Only contradictory if the person announced one thing and then did the OPPOSITE
-- GEOGRAPHIC/JURISDICTIONAL SCOPE: A fact about a specific region, département, or city does NOT contradict a fact about national-level data. "Only 3 communes in Vienne" does not contradict "425 lists nationwide." Always check if facts refer to different geographic scopes before flagging
+` + promptrules.FalsePositivePatterns + `
 
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
@@ -127,11 +118,10 @@ A breaker does NOT invalidate a promise when:
 
 **EXAMPLES:**
 
-PAIR 1 (Learning Over Time - NOT Contradictory):
+PAIR 1 (Learning Over Time / Unknown-Date Skepticism - NOT Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen said she didn't know about the mutualization scheme."
 Statement B (dated March 20, 2024): "Marine Le Pen claimed the EU Parliament knew about mutualization and it was normal practice."
-PAIR 1: REASONING: Statement B is dated later than A. She denied knowledge in January, then discussed mutualization as normal in March. This fits the LEARNING OVER TIME temporal rule — earlier "didn't know" followed by later knowledge is not contradictory.
-PAIR 1: NO: The later statement indicates she learned about the mutualization scheme after the earlier denial of knowledge.
+PAIR 1: NO: Earlier "didn't know" followed by later knowledge fits LEARNING OVER TIME. When a date is missing or ordering is unclear, default to skepticism — apparently opposite stances may be a legitimate change of position over time, not a contradiction.
 
 PAIR 2 (Denial After Claim - Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice."
@@ -191,16 +181,6 @@ Statement A (dated January 20, 2024): "Marine Le Pen declared she had 'no consci
 Statement B (dated January 20, 2024): "Marine Le Pen stated the Rassemblement national committed no irregularity regarding the employment of Thierry Légier."
 PAIR 12: NO: These are different statement types - A is about her subjective past awareness, B is an objective factual claim. They reinforce each other: she wasn't aware of any offense because she believes none occurred. Denying wrongdoing does NOT imply prior knowledge of wrongdoing.
 
-PAIR 13 (Admitting Error ≠ Admitting Crime - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès."
-Statement B (dated January 20, 2024): "Marine Le Pen a admis que les assistants parlementaires ont travaillé au siège du parti, ce qu'elle considère comme une erreur."
-PAIR 13: NO: Admitting an error (administrative mistake) does NOT contradict denying criminal intent — a person can acknowledge mistakes while genuinely believing they committed no crime.
-
-PAIR 14 (Good Faith + Negligence Are Compatible - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen a déclaré avoir agi de 'bonne foi' lors de son procès en appel."
-Statement B (dated January 22, 2024): "Marine Le Pen a concédé une certaine 'négligence' lors de son interrogatoire devant la cour d'appel."
-PAIR 14: NO: Good faith and negligence are compatible — a person can be negligent while acting in good faith (e.g., trusting subordinates without adequate oversight). Only "I was careful and diligent" vs "I was negligent" would be contradictory.
-
 PAIR 15 (Conviction vs Acknowledgment of Imperfections - NOT Contradictory):
 Statement A (dated January 20, 2024): "Marine Le Pen a reconnu que 'beaucoup de choses auraient pu se passer de manière plus rigoureuse' dans le traitement des assistants parlementaires."
 Statement B (dated March 28, 2024): "Marine Le Pen a été condamnée pour détournement de fonds publics dans l'affaire des assistants parlementaires."
@@ -226,11 +206,6 @@ Statement A (dated January 20, 2024): "Marine Le Pen a été interrogée pendant
 Statement B (dated March 28, 2024): "Marine Le Pen a déclaré vouloir épuiser toutes les voies de recours après sa condamnation."
 PAIR 19: NO: Being interrogated for 13 hours and wanting to exhaust appeals are completely unrelated facts about different events at different times — no logical relationship exists between them.
 
-PAIR 20 (Exploratory Posture + Specific Ignorance - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen claimed she was only seeking to understand the situation regarding the parliamentary assistants."
-Statement B (dated January 20, 2024): "Marine Le Pen admitted she did not know that her advisor was actually the parliamentary assistant of another MEP."
-PAIR 20: NO: Seeking to understand and not knowing a specific detail are compatible — the ignorance explains why she was seeking to understand, not the opposite.
-
 PAIR 21 (Legal Process Stages - NOT Contradictory):
 Statement A (dated January 20, 2024): "Le Rassemblement National est accusé de détournement de fonds publics dans l'affaire des assistants parlementaires."
 Statement B (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics dans l'affaire des assistants parlementaires."
@@ -245,11 +220,6 @@ PAIR 23 (Conviction vs Specific Detail Defense - NOT Contradictory):
 Statement A (dated March 28, 2024): "Marine Le Pen was sentenced to five years of ineligibility for misappropriation of public funds."
 Statement B (dated January 20, 2024): "Marine Le Pen denied that her parliamentary assistant was solely a bodyguard, stating he had broader administrative functions."
 PAIR 23: NO: The conviction for the broad embezzlement scheme does not specifically disprove her claim about one assistant's job functions — these operate at different levels of specificity.
-
-PAIR 24 (Coherent Defense — Different Denials Reinforcing Same Position - NOT Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen stated she was not aware of her sister's salary as a parliamentary assistant."
-Statement B (dated January 22, 2024): "Marine Le Pen rejected responsibility for the salaries paid to relatives in the parliamentary assistants case."
-PAIR 24: NO: Not knowing a specific salary and rejecting responsibility for relatives' salaries are both part of the same defense — distancing herself from relatives' employment terms. Two denials about the same topic reinforce each other.
 
 PAIR 26 (Geographic/Jurisdictional Scope - NOT Contradictory):
 Statement A (dated March 10, 2024): "Seulement 3 communes en Vienne ont déposé des listes pour les élections municipales."
@@ -300,7 +270,7 @@ Statement B (dated June 10, 2024): "Senator Smith a voté contre la proposition 
 PAIR 32: REASONING: Statement A is imperative rhetoric ("nous devons agir" / "we must act") expressing a general aspiration in the third person. It is NOT a first-person commitment ("je m'engage", "I will", "I commit to"). Per the VAGUE/GENERAL rule, only a personal commitment can be broken by an opposing action. A vote against ONE specific tax mechanism is also a specific policy choice that does not necessarily contradict a broad aspirational direction (the senator could pursue the goal through other policy tools). Without a first-person commitment, there is no promise to break.
 PAIR 32: NO: Imperative aspirational rhetoric ("we must act") is not a first-person commitment that a specific policy vote can break — only "I will" / "je m'engage à" style statements create commitments that can be broken.`
 
-const contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
+var contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 
 ` + ContradictionRulesAndExamples + `
 
@@ -351,11 +321,7 @@ func NewOpenAIContradictionDetectorFromEnv() (*OpenAIContradictionDetector, erro
 	baseClient := categorizer.NewBaseLLMClient("contradiction-detector")
 
 	// Build chat completions URL - check if already includes the path
-	base = strings.TrimRight(base, "/")
-	apiURL := base
-	if !strings.HasSuffix(base, "/chat/completions") {
-		apiURL = base + "/chat/completions"
-	}
+	apiURL := llm.ChatCompletionsURL(base)
 
 	return &OpenAIContradictionDetector{
 		apiKey:     apiKey,

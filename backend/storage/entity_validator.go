@@ -85,9 +85,14 @@ func (s *PostgresStorer) GetFactCountsByPersonIDs(ctx context.Context, ids []int
 // findPersonIDByName returns the existing person id for a normalized name,
 // or (0, nil) if no row exists. Used by the *Add* methods to skip validation
 // for already-known persons (only NEW candidates need the wiki/LLM check).
+// Matches accent- and case-insensitively (via immutable_unaccent), like the
+// other find-or-insert paths, so "eric ciotti" resolves to an existing
+// "éric ciotti" row instead of inserting a near-duplicate.
 func (s *PostgresStorer) findPersonIDByName(ctx context.Context, normalizedName string) (int64, error) {
 	var id int64
-	err := s.pool.QueryRow(ctx, `SELECT id FROM persons WHERE name = $1`, normalizedName).Scan(&id)
+	err := s.pool.QueryRow(ctx,
+		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
+		normalizedName).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgxErrNoRows) {
 			return 0, nil

@@ -38,11 +38,6 @@ func TestMergePersons(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 
-	// Disable the entity validator: these synthetic test names ("alice into")
-	// would otherwise be rejected as junk by the LLM filter when OPEN_AI_API
-	// points at a live model. We're testing merge, not insertion validation.
-	storer.SetEntityValidator(nil)
-
 	// Survivor "into".
 	intoID, err := storer.FindOrInsertPersonWithType(ctx, "alice into", "human")
 	require.NoError(t, err)
