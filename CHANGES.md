@@ -2,6 +2,11 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-12: Auto-evict requires a cross-judge (auditor + verifier) to agree
+
+- `applyAuditRemoval` now deletes a contradiction only when THREE signals agree: the auditor's first pass = remove, a confirming second auditor pass = remove (variance guard), AND the VERIFIER (refute pass) also drops it. The verifier is a different, reversal-aware judge (it has explicit "this IS a reversal, keep it" patterns and keeps Vuibert/Martin/Retailleau/denounce-then-ally in its golden), so it VETOES deletion of a genuine contradiction the auditor mislabeled into a fuzzy bucket (different_subjects, announcement_then_action, …). This is the durable fix for the over-removal the prompt tweak alone couldn't close (the local model still over-removes TP_103 2-of-2).
+- Chosen over a "bucket gate" (never auto-delete on the 6 fuzzy buckets), which was crude — it discards the auditor's per-case judgment on whole buckets. Cross-judge uses every case's full reasoning and just requires a second independent opinion to concur before deleting a prod row. The verifier is built only under `--apply` (one extra call per flagged row; free local LLM).
+
 ## 2026-06-12: Auditor reversal-protection + AUDITOR golden test
 
 - The contradiction AUDITOR (behind `--apply` / the nightly auto-evict) was over-removing real reversals: a 2026-06-12 prod `--apply` run deleted genuine flip-flops (Vuibert "won't be a candidate" then led a winning list; Retailleau pleads-for vs against a primary; Martin announced-run then announced-not-run) by mis-filing them under the fuzzy buckets (announcement_then_action, third_party_narrative, different_events, vague_vs_specific). Root cause: the auditor prompt had NO positive "these ARE contradictions, keep them" section — only "be conservative, remove FPs" — whereas the verifier has explicit YES patterns. Added a "**NEVER REMOVE A GENUINE CONTRADICTION**" block to `auditPromptTpl` (position reversal / commitment-vs-action / denial-vs-finding / denounce-then-ally; reported speech = the person's own claim, not third_party_narrative). Auditor keep-rate on the golden went 5/8 → 6-7/8.

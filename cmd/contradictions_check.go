@@ -202,6 +202,18 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 		return nil, fmt.Errorf("failed to create auditor: %w", err)
 	}
 
+	// When applying, a deletion also requires the VERIFIER (refute pass) to agree.
+	// The verifier is a second, independent, reversal-aware judge: it keeps genuine
+	// reversals/broken-promises the auditor sometimes mislabels into a fuzzy bucket,
+	// so it vetoes those deletions. Only built when Apply (it costs an extra call).
+	var verifier *contradiction.OpenAIContradictionDetector
+	if opts.Apply {
+		verifier, err = contradiction.NewOpenAIContradictionDetectorFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create verifier for --apply cross-check: %w", err)
+		}
+	}
+
 	var enc *json.Encoder
 	if opts.Output != nil && opts.Format == "jsonl" {
 		enc = json.NewEncoder(opts.Output)
@@ -264,7 +276,7 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 				// row on a fluke. Only a 2-of-2 remove is deleted; a disagreeing
 				// pass keeps it (unstable).
 				if opts.Apply {
-					line.Deleted = applyAuditRemoval(ctx, storer, auditor, row, result)
+					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, result)
 				}
 			case contradiction.VerdictAmbiguous:
 				result.Ambiguous++
@@ -318,18 +330,27 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 	return result, nil
 }
 
-// applyAuditRemoval runs a confirming second auditor pass on a row the first
-// pass flagged for removal and, on a 2-of-2 remove, dismisses the contradiction
-// as a false positive (delete + negative pair check + score recompute). It
-// mutates result.Deleted / result.Unstable and returns true iff the row was
-// deleted. An errored or disagreeing confirmation keeps the row.
+// applyAuditRemoval decides whether a row the first auditor pass flagged for
+// removal is actually deleted. A deletion requires THREE independent signals to
+// agree, so a genuine contradiction the auditor mislabels never gets auto-evicted:
+//  1. a confirming SECOND auditor pass also returns remove (absorbs the model's
+//     run-to-run variance), and
+//  2. the VERIFIER (refute pass) — a different, reversal-aware judge — also drops
+//     it. The verifier keeps reversals / broken promises / denounce-then-ally
+//     pairs, so it vetoes those deletions even when the auditor is confident.
+//
+// On all three agreeing it dismisses the contradiction (delete + negative pair
+// check + score recompute). Any disagreement or error keeps the row (counted as
+// unstable). Mutates result.Deleted / result.Unstable; returns true iff deleted.
 func applyAuditRemoval(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
 	auditor *contradiction.OpenAIContradictionAuditor,
+	verifier *contradiction.OpenAIContradictionDetector,
 	row storage.ContradictionAuditRow,
 	result *ContradictionAuditResult,
 ) bool {
+	// Signal 2: confirming second auditor pass (variance guard).
 	confirm := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
 	switch {
 	case confirm.Err != nil:
@@ -343,17 +364,34 @@ func applyAuditRemoval(
 			Str("confirm_reasoning", confirm.Reasoning).
 			Msg("Confirmation audit pass disagreed; row is unstable, NOT deleting")
 		return false
-	default:
-		if err := storer.DismissContradictionAsFalsePositive(ctx, row.ID); err != nil {
-			log.Error().Err(err).Int64("contradiction_id", row.ID).
-				Msg("Failed to dismiss contradiction as false positive")
-			return false
-		}
-		result.Deleted++
-		log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
-			Msg("Dismissed contradiction as false positive (2-of-2 remove)")
-		return true
 	}
+
+	// Signal 3: cross-judge veto. The verifier must ALSO refute it (verdict NO).
+	// If the verifier keeps it, it is a likely-real contradiction the auditor
+	// mislabeled — do not delete.
+	survives, refutation, vErr := verifier.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
+	switch {
+	case vErr != nil:
+		result.Unstable++
+		log.Warn().Err(vErr).Int64("contradiction_id", row.ID).
+			Msg("Verifier cross-check errored; keeping row (not deleted)")
+		return false
+	case survives:
+		result.Unstable++
+		log.Info().Int64("contradiction_id", row.ID).Str("verifier_reason", refutation).
+			Msg("Verifier cross-check KEPT the contradiction (veto); row is unstable, NOT deleting")
+		return false
+	}
+
+	if err := storer.DismissContradictionAsFalsePositive(ctx, row.ID); err != nil {
+		log.Error().Err(err).Int64("contradiction_id", row.ID).
+			Msg("Failed to dismiss contradiction as false positive")
+		return false
+	}
+	result.Deleted++
+	log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
+		Msg("Dismissed contradiction as false positive (auditor 2-of-2 + verifier agree)")
+	return true
 }
 
 // recordAuditJobMetrics persists per-verdict counts so the next pipeline tick
