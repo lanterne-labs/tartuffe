@@ -2,6 +2,11 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-12: Nightly contradiction audit now AUTO-EVICTS false positives
+
+- `runContradictionAuditIfDue` (the daily-pipeline audit step) now passes `Apply: true`. Every audit cycle, a verdict=remove confirmed by a 2nd independent auditor pass (2-of-2) is deleted via `DismissContradictionAsFalsePositive` (negative pair-check + honesty-score recompute) — false positives no longer accumulate between runs. Reverses the earlier "advisory-only / manual --apply" decision (2026-06-09) at the user's request. The Telegram summary now reports "N checked, N evicted, N kept (unstable)" and two new job-metrics (`deleted`, `unstable`) are recorded for Grafana. Guardrail unchanged: only 2-of-2 removes are deleted; a disagreeing confirm pass keeps the row. Note the auditor occasionally over-removes a borderline-real contradiction — accepted trade-off for a self-cleaning pipeline.
+
+
 ## 2026-06-11: Golden FPs from the daily run — double-negative + homonym
 
 - Added 3 prod-sourced cases to `verify_cases.yaml`. FP_166 (Darmanin "immense échec" vs "no more resources" — failure≠budget) already evicted by existing buckets. FP_170 (Bergé pro-imprescriptibilité in BOTH facts; the flag misread the double negative — the statute of limitations, not imprescriptibility, is what "protects perpetrators") now evicts after a `paraphrase_same_position` clause: "map each statement to the position it IMPLIES; opposing a measure = supporting its opposite". Golden 22/22 stable.

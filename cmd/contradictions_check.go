@@ -367,6 +367,8 @@ func recordAuditJobMetrics(ctx context.Context, storer *storage.PostgresStorer, 
 		{JobType: "contradiction-audit", Target: "", Metric: "remove", Value: float64(r.Remove)},
 		{JobType: "contradiction-audit", Target: "", Metric: "ambiguous", Value: float64(r.Ambiguous)},
 		{JobType: "contradiction-audit", Target: "", Metric: "errors", Value: float64(r.Errors)},
+		{JobType: "contradiction-audit", Target: "", Metric: "deleted", Value: float64(r.Deleted)},
+		{JobType: "contradiction-audit", Target: "", Metric: "unstable", Value: float64(r.Unstable)},
 	}
 	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
 		log.Error().Err(err).Msg("Failed to record contradiction-audit job metrics")

@@ -208,7 +208,8 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			msg += "\n" + stats.summary()
 		}
 		if auditResult != nil && auditResult.Total > 0 {
-			msg += fmt.Sprintf("\n🔍 audit: %d checked, %d flagged for removal", auditResult.Total, auditResult.Remove)
+			msg += fmt.Sprintf("\n🔍 audit: %d checked, %d evicted (2-of-2 FP), %d kept (unstable)",
+				auditResult.Total, auditResult.Deleted, auditResult.Unstable)
 		}
 
 		if err := notifier.Send(ctx, msg); err != nil {
@@ -646,5 +647,9 @@ func runContradictionAuditIfDue(ctx context.Context, storer *storage.PostgresSto
 		Format:       "",
 		Scope:        "all persons (periodic)",
 		RecordMetric: true,
+		// Auto-evict: a verdict=remove confirmed by a 2nd auditor pass (2-of-2) is
+		// deleted via DismissContradictionAsFalsePositive (negative pair check +
+		// score recompute), so false positives never accumulate between runs.
+		Apply: true,
 	})
 }
