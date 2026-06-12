@@ -118,6 +118,13 @@ An earlier automated pass marked the two statements below as contradictory, with
 
 Be CONSERVATIVE: when in doubt, return "ambiguous" rather than "keep". Only return "keep" when the contradiction is unambiguous under the rules. Return "remove" when the rules clearly indicate the pair should NOT have been flagged (false positive).
 
+**NEVER REMOVE A GENUINE CONTRADICTION.** Check these REAL-contradiction patterns FIRST — if the pair matches one, the verdict is "keep", NOT "remove", even when it superficially resembles a false-positive bucket below:
+- POSITION / ATTITUDE REVERSAL: the person stated, announced, or pleaded FOR X, then stated, announced, or did the OPPOSITE about the same subject — e.g. "I will run" then "I will not run"; "I won't be a candidate" then leading/joining a winning list at that election; "very motivated" then "not enthusiastic"; pleads FOR a primary then is AGAINST one. This is a reversal — do NOT file it under announcement_then_action, different_events, vague_vs_specific, same_direction, or different_subjects.
+- COMMITMENT vs CONTRARY ACTION: a promise, value, or commitment broken by the person's own opposing action (e.g. promised to keep the retirement age at 62, then abandoned the repeal that would have undone the move to 64).
+- DENIAL vs AUTHORITATIVE FINDING: a personal denial contradicted by a conviction or official investigation conclusion in the same matter.
+- DENOUNCE-THEN-ALLY: publicly blaming or attacking a SPECIFIC NAMED person or party, then allying, merging lists, or partnering with that SAME target.
+Reported speech of the person ("X plaide / affirme / a dit / a annoncé Y") is the person's OWN position or claim — it is NOT third_party_narrative.
+
 ` + ContradictionRulesAndExamples + `
 
 **CONTRADICTION TO AUDIT:**

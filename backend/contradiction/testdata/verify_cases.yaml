@@ -247,3 +247,37 @@ cases:
   # soit perçue comme sa compagne") was considered but NOT added: A is a third-party observation,
   # but appearing publicly with her is a defensible values-vs-action read, so forcing "drop" risks
   # an over-broad exception (same caution as the Ciotti #157 skip above).
+
+  # ---- Reversals the AUDITOR over-removed (KEEP). Added after the 2026-06-12 --apply run
+  # ---- deleted real flip-flops via the fuzzy buckets (announcement_then_action,
+  # ---- third_party_narrative). These guard against eviction of the product's core signal.
+
+  # Announced he IS running, then announced he is NOT running — a textbook reversal, NOT
+  # "announcement followed by action" (that bucket is announce-X-then-DO-X). (KEEP)
+  - name: "TP_111_martin_announced_run_then_not"
+    fact_a: "Patrice Martin, maire sortant du Le Montellier, a annoncé se présenter à sa propre succession à la tête de la liste 'Ensemble pour Le Montellier'."
+    fact_b: "Patrice Martin a annoncé qu'il ne se présentera pas aux élections municipales de mars 2026."
+    claimed_reason: "L'annonce de se présenter à sa propre succession contredit l'annonce ultérieure de ne pas se présenter aux mêmes élections."
+    expect: keep
+    bucket: position_reversal
+    notes: "Announced X ('I will run') then announced NOT-X ('I will not run') for the SAME election — a reversal. The auditor wrongly filed it under announcement_then_action (which is announce-then-DO-consistently)."
+
+  # Said he would NOT be a candidate, then led a winning list (i.e. WAS a candidate) — a stated
+  # position broken by his own contrary action, NOT a benign announcement. (KEEP)
+  - name: "TP_100_vuibert_not_candidate_then_led_list"
+    fact_a: "Lionel Vuibert a annoncé qu'il ne sera pas candidat aux élections municipales de 2026."
+    fact_b: "La liste conduite par Lionel Vuibert a obtenu 100% des voix et 11 sièges au conseil municipal de Faissault au premier tour des élections municipales de mars 2026."
+    claimed_reason: "Avoir annoncé ne pas être candidat contredit le fait d'avoir conduit (donc d'être tête de liste/candidat sur) une liste aux mêmes élections."
+    expect: keep
+    bucket: commitment_vs_action
+    notes: "Stated non-candidacy then led a list (the tête de liste IS a candidate) at that very election — announcement broken by contrary action. The auditor wrongly filed it under announcement_then_action."
+
+  # Pleads FOR a primary vs says he is NOT in favour of a primary — opposing stances on the same
+  # subject. Reported speech ('plaide', 'a exprimé') is still HIS position, not third-party narration. (KEEP)
+  - name: "TP_152_retailleau_for_vs_against_primary"
+    fact_a: "Bruno Retailleau plaide depuis plusieurs mois pour une grande primaire incluant des personnalités comme Gérald Darmanin et Sarah Knafo."
+    fact_b: "Bruno Retailleau a exprimé n'être pas favorable à l'idée d'une primaire."
+    claimed_reason: "Plaider pour une grande primaire contredit le fait de ne pas être favorable à l'idée d'une primaire."
+    expect: keep
+    bucket: position_reversal
+    notes: "Advocating FOR a primary vs being against one is a position reversal on the same subject. The auditor wrongly dismissed both as third_party_narrative because they are phrased as reported speech ('plaide'/'a exprimé') — but reported speech of the person's own position counts as his utterance."
