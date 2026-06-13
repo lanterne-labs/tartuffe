@@ -204,9 +204,20 @@ func (s *PostgresStorer) GetPersonIDByOrgRef(ctx context.Context, orgRef string)
 	return s.personIDByColumn(ctx, "orgRef", "attributes->>'organeRef'", orgRef)
 }
 
-// GetPersonIDByName returns the person.id associated with the given name.
+// GetPersonIDByName returns the person.id for the given name, matched
+// accent-insensitively: the input is normalized to the canonical accent-free
+// person form and compared against immutable_unaccent(name), so it resolves
+// whether stored names are already accent-free or still carry accents (during
+// the one-time unaccent migration).
 func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (int64, error) {
-	return s.personIDByColumn(ctx, "name", "name", name)
+	var id int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = $1 LIMIT 1`,
+		util.NormalizePersonName(name)).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("failed to find person by name %s: %w", name, err)
+	}
+	return id, nil
 }
 
 // GetSourceURLsForPerson returns every distinct source_url found in fact_sources
@@ -358,7 +369,7 @@ func (s *PostgresStorer) FindOrInsertPersons(ctx context.Context, personNames []
 // If the person doesn't exist, creates them with the specified entity type.
 // entityType must be one of: "human", "party", "organization".
 func (s *PostgresStorer) FindOrInsertPersonWithType(ctx context.Context, name string, entityType string) (int64, error) {
-	normalized := util.NormalizeString(name)
+	normalized := util.NormalizePersonName(name)
 	if normalized == "" {
 		return 0, fmt.Errorf("empty person name after normalization")
 	}
@@ -626,7 +637,7 @@ func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, per
 	uniqueNormalizedNames := make(map[string]struct{}) // Using struct{} as a lightweight set value
 
 	for _, originalName := range personNames {
-		normalized := util.NormalizeString(originalName)
+		normalized := util.NormalizePersonName(originalName)
 		if normalized == "" {
 			log.Warn().Str("original_name", originalName).Str("related_fact_text", factTextForLogging).Msg("Skipping empty person name during find/insert")
 			continue
@@ -1165,7 +1176,7 @@ func (s *PostgresStorer) GetPersonsWithFacts(ctx context.Context) ([]PersonInfo,
 // in the table) are run through the EntityValidator first; rejected candidates
 // surface as *ErrEntityRejected so callers can decide whether to skip them.
 func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, inserted bool, err error) {
-	normalizedName := util.NormalizeString(name)
+	normalizedName := util.NormalizePersonName(name)
 	if normalizedName == "" {
 		return 0, false, fmt.Errorf("cannot add empty person name")
 	}
@@ -1210,7 +1221,7 @@ func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, 
 // AddPersonWithType adds a person with a specific entity_type.
 // Valid entity_type values: 'human', 'party', 'company', 'organization'
 func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, entityType string) (id int64, inserted bool, err error) {
-	normalizedName := util.NormalizeString(name)
+	normalizedName := util.NormalizePersonName(name)
 	if normalizedName == "" {
 		return 0, false, fmt.Errorf("cannot add empty person name")
 	}

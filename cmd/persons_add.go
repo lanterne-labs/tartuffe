@@ -35,7 +35,7 @@ func init() {
 func addPerson(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
 	personName := args[0]
-	normalizedName := util.NormalizeString(personName)
+	normalizedName := util.NormalizePersonName(personName)
 
 	log.Info().Str("original_name", personName).Str("normalized_name", normalizedName).Msg("Attempting to add person")
 

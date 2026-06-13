@@ -16,7 +16,7 @@ func UpsertParty(ctx context.Context, tx interface {
 	if name == "" {
 		return fmt.Errorf("party name cannot be empty")
 	}
-	norm := util.NormalizeString(name)
+	norm := util.NormalizePersonName(name)
 	// Store minimal metadata in attributes JSONB
 	stmt := `
         INSERT INTO persons (name, entity_type, attributes)
@@ -36,7 +36,7 @@ func UpsertDeputy(ctx context.Context, tx interface {
 	if displayName == "" {
 		return fmt.Errorf("deputy displayName cannot be empty")
 	}
-	norm := util.NormalizeString(displayName)
+	norm := util.NormalizePersonName(displayName)
 	stmt := `
         INSERT INTO persons (name, entity_type, attributes)
         VALUES ($1, 'human', jsonb_build_object('assemblee_id', $2, 'constituency', $3))
@@ -73,7 +73,7 @@ func BatchInsertActors(ctx context.Context, tx interface {
 			if name == "" {
 				continue
 			}
-			norm := util.NormalizeString(name)
+			norm := util.NormalizePersonName(name)
 			placeholders = append(placeholders, fmt.Sprintf("($%d::text, 'human', jsonb_build_object('assemblee_id', $%d::text, 'constituency', $%d::text))", idx, idx+1, idx+2))
 			values = append(values, norm, id, "")
 			idx += 3
@@ -105,7 +105,7 @@ func BatchInsertActors(ctx context.Context, tx interface {
 			if name == "" {
 				continue
 			}
-			norm := util.NormalizeString(name)
+			norm := util.NormalizePersonName(name)
 			placeholders = append(placeholders, fmt.Sprintf("($%d::text, 'party', jsonb_build_object('organeRef', $%d::text, 'abbrev', $%d::text))", idx, idx+1, idx+2))
 			values = append(values, norm, meta.OrgRef, meta.Abbrev)
 			idx += 3
