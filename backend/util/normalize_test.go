@@ -9,9 +9,12 @@ func TestNormalizePersonName(t *testing.T) {
 	}{
 		{"Éric Ciotti", "eric ciotti"},
 		{"eric ciotti", "eric ciotti"},
-		{"  Élisabeth  Borne ", "elisabeth  borne"}, // accents + case + trim (inner spacing preserved)
-		{"François Hollande", "francois hollande"},
-		{"Jean-Luc Mélenchon", "jean-luc melenchon"}, // hyphen kept, accent stripped
+		{"  Élisabeth  Borne ", "elisabeth borne"},                     // accents + case + trim + collapsed inner spacing
+		{"François Hollande", "francois hollande"},                     // accent stripped
+		{"Jean-Luc Mélenchon", "jean-luc melenchon"},                   // hyphen kept, accent stripped
+		{"Conseil de Nice-Côte d’Azur", "conseil de nice-cote d'azur"}, // curly apostrophe -> ASCII
+		{"Valéry Giscard d’Estaing", "valery giscard d'estaing"},       // curly apostrophe + accent
+		{"Jean–Luc  Mélenchon", "jean-luc melenchon"},                  // en-dash -> hyphen + double space
 	}
 
 	for _, tt := range tests {

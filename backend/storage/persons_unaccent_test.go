@@ -4,65 +4,69 @@ import (
 	"context"
 	"testing"
 
+	"digital-mirror/backend/util"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestUnaccentMergeAndStrip exercises the `dm persons unaccent` heal flow end to
-// end: detect an accent-duplicate group, pick the higher-fact survivor, merge the
-// other in, then strip all names to their accent-free form.
-func TestUnaccentMergeAndStrip(t *testing.T) {
+// TestUnaccentMergeAndCanonicalize exercises the `dm persons unaccent` heal flow:
+// two rows that canonicalize identically under util.NormalizePersonName (here one
+// carries an accent + a curly apostrophe, the other is plain ASCII) are detected as
+// one group, merged into the higher-fact survivor, and the survivor name is
+// rewritten to the canonical form.
+func TestUnaccentMergeAndCanonicalize(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
-	var accentedID, plainID, ctrlID int64
+	const fancy = "Éric D’Testperson" // accent + curly apostrophe
+	const plain = "eric d'testperson" // ASCII; same canonical form
+	require.Equal(t, util.NormalizePersonName(fancy), util.NormalizePersonName(plain),
+		"the two surface forms must canonicalize identically")
+
+	var richID, plainID, ctrlID int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		`INSERT INTO persons (name, entity_type, fact_count) VALUES ('éric testperson', 'human', 5) RETURNING id`).Scan(&accentedID))
+		`INSERT INTO persons (name, entity_type, fact_count) VALUES ($1, 'human', 5) RETURNING id`, fancy).Scan(&richID))
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		`INSERT INTO persons (name, entity_type, fact_count) VALUES ('eric testperson', 'human', 2) RETURNING id`).Scan(&plainID))
+		`INSERT INTO persons (name, entity_type, fact_count) VALUES ($1, 'human', 2) RETURNING id`, plain).Scan(&plainID))
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		`INSERT INTO persons (name, entity_type, fact_count) VALUES ('solo testperson', 'human', 1) RETURNING id`).Scan(&ctrlID))
 
-	// 1. The éric/eric pair is detected as one group; the control is not.
-	groups, err := storer.GetAccentDuplicateGroups(ctx)
+	// 1. Group all persons by the canonical form (mirrors the command).
+	members, err := storer.GetAllDedupMembers(ctx)
 	require.NoError(t, err)
-	var ourGroup []DedupMember
-	for _, g := range groups {
-		for _, m := range g {
-			if m.ID == accentedID || m.ID == plainID {
-				ourGroup = g
-			}
-		}
+	groups := map[string][]DedupMember{}
+	for _, m := range members {
+		groups[util.NormalizePersonName(m.Name)] = append(groups[util.NormalizePersonName(m.Name)], m)
 	}
-	require.Len(t, ourGroup, 2, "the éric/eric pair forms one accent-dup group")
+	ourGroup := groups[util.NormalizePersonName(plain)]
+	require.Len(t, ourGroup, 2, "the accent+apostrophe variant and the ASCII row form one group")
 
-	// 2. Survivor is the higher-fact-count row (the accented one, 5 facts).
+	// 2. Survivor is the higher-fact row; merge the other in.
 	survivor, ok := ChooseCanonical(ourGroup)
 	require.True(t, ok)
-	assert.Equal(t, accentedID, survivor.ID)
-
-	// 3. Merge the other in, then 4. strip all accents.
+	assert.Equal(t, richID, survivor.ID)
 	require.NoError(t, storer.MergePersons(ctx, plainID, survivor.ID))
-	stripped, err := storer.StripAllPersonAccents(ctx)
+
+	// 3. Canonicalize remaining names.
+	members, err = storer.GetAllDedupMembers(ctx)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, stripped, int64(1), "at least the survivor name was stripped")
+	for _, m := range members {
+		if c := util.NormalizePersonName(m.Name); c != m.Name {
+			require.NoError(t, storer.RenamePerson(ctx, m.ID, c))
+		}
+	}
 
-	// 5. One row remains, name is accent-free; the merged-away row is gone.
-	var remaining int
-	require.NoError(t, storer.pool.QueryRow(ctx,
-		`SELECT count(*) FROM persons WHERE lower(immutable_unaccent(name))='eric testperson'`).Scan(&remaining))
-	assert.Equal(t, 1, remaining, "accent variants collapsed to one row")
-
+	// 4. One row remains, name is the canonical ASCII form; merged-away row gone; control intact.
 	var name string
-	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT name FROM persons WHERE id=$1`, accentedID).Scan(&name))
-	assert.Equal(t, "eric testperson", name, "survivor name is accent-free")
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT name FROM persons WHERE id=$1`, richID).Scan(&name))
+	assert.Equal(t, "eric d'testperson", name)
 
 	var gone int
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT count(*) FROM persons WHERE id=$1`, plainID).Scan(&gone))
-	assert.Equal(t, 0, gone, "merged-away row deleted")
+	assert.Equal(t, 0, gone)
 
-	// Control row untouched.
 	var ctrlName string
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT name FROM persons WHERE id=$1`, ctrlID).Scan(&ctrlName))
 	assert.Equal(t, "solo testperson", ctrlName)

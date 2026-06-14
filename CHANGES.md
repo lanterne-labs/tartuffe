@@ -2,6 +2,11 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-14: Person name canonicalization extended beyond accents
+
+- `util.NormalizePersonName` now folds ALL surface variants to one canonical form: accents stripped, typographic punctuation → ASCII (curly apostrophes ’‘ʼ′ → ', curly quotes → ", en/em/figure dashes → -), and internal whitespace collapsed. Triggered by a daily-run finding: "conseil … de nice-côte d’azur" stored with a curly apostrophe that `immutable_unaccent` folds but the accent-only normalizer didn't — the same variant-splits-a-person risk as accents, e.g. "Valéry Giscard d’Estaing" vs "...d'Estaing".
+- The dedup detector + heal are now Go-based on `NormalizePersonName` (replacing the `immutable_unaccent`-SQL `GetAccentDuplicateGroups`/`StripAllPersonAccents` with `GetAllDedupMembers` + `RenamePerson`), so the dedup key is IDENTICAL to the form names are stored under — catching dash/whitespace variants that immutable_unaccent misses. `dm persons unaccent` groups in Go and rewrites every name to the canonical form. Lesson: the in-code normalizer and the dedup key must be the same function, or they drift (immutable_unaccent and RemoveAccents disagreed on curly apostrophes).
+
 ## 2026-06-13: Person names are stored accent-free (kills accent-duplicate rows)
 
 - Root fix: person names are now normalized to an ACCENT-FREE canonical form on every create/match path via new `util.NormalizePersonName` (= lowercase + trim + RemoveAccents). Wired into `FindOrInsertPersonWithType`, `findOrInsertPersons`, `AddPerson`/`AddPersonWithType`, `GetPersonIDByName` (storage), `dm persons add`, and crucially `frpolitics` `UpsertParty`/`UpsertDeputy` — which INSERT directly with `ON CONFLICT (name)` (exact) and were a live source of dups (curated "éric ciotti" vs news "eric ciotti"). `NormalizeString` stays accent-preserving for non-person uses. Lesson: accent-insensitive MATCHING (immutable_unaccent in SELECTs, added 2026-06-09) wasn't enough — the frpolitics direct-insert path with exact ON CONFLICT could still split a person; the only robust invariant is storing the canonical form.

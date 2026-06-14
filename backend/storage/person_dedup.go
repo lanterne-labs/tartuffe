@@ -105,62 +105,47 @@ func (s *PostgresStorer) GetPersonsForDedup(ctx context.Context, ids []int64) ([
 	return members, nil
 }
 
-// GetAccentDuplicateGroups returns groups of person rows whose names collide
-// after accent/case folding (lower(immutable_unaccent(name))) — i.e. the same
-// person stored more than once (e.g. "éric ciotti" + "eric ciotti"). Only groups
-// with 2+ members are returned. Each group is ordered by id; used by
-// `dm persons unaccent` to merge them.
-func (s *PostgresStorer) GetAccentDuplicateGroups(ctx context.Context) ([][]DedupMember, error) {
+// GetAllDedupMembers returns every person row with the fields the dedup tooling
+// needs. Used by `dm persons unaccent`, which groups them in Go by
+// util.NormalizePersonName so the dedup key is IDENTICAL to the canonical form
+// names are stored under (catching accent, curly-apostrophe, fancy-dash and
+// extra-whitespace variants alike — immutable_unaccent only catches some of those).
+func (s *PostgresStorer) GetAllDedupMembers(ctx context.Context) ([]DedupMember, error) {
 	const query = `
 		SELECT id, name, entity_type, fact_count,
-		       (attributes ? 'organeRef' OR attributes ? 'assemblee_id') AS curated,
-		       lower(immutable_unaccent(name)) AS norm
+		       (attributes ? 'organeRef' OR attributes ? 'assemblee_id') AS curated
 		FROM persons
-		WHERE lower(immutable_unaccent(name)) IN (
-			SELECT lower(immutable_unaccent(name)) FROM persons GROUP BY 1 HAVING count(*) > 1
-		)
-		ORDER BY norm, id`
-
+		ORDER BY id`
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query accent-dup groups: %w", err)
+		return nil, fmt.Errorf("failed to query persons for dedup: %w", err)
 	}
 	defer rows.Close()
 
-	var groups [][]DedupMember
-	var cur []DedupMember
-	var curNorm string
+	var members []DedupMember
 	for rows.Next() {
 		var m DedupMember
-		var norm string
-		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.FactCount, &m.Curated, &norm); err != nil {
-			return nil, fmt.Errorf("failed to scan accent-dup member: %w", err)
+		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.FactCount, &m.Curated); err != nil {
+			return nil, fmt.Errorf("failed to scan dedup member: %w", err)
 		}
-		if norm != curNorm && len(cur) > 0 {
-			groups = append(groups, cur)
-			cur = nil
-		}
-		curNorm = norm
-		cur = append(cur, m)
+		members = append(members, m)
 	}
-	if len(cur) > 0 {
-		groups = append(groups, cur)
-	}
-	return groups, rows.Err()
+	return members, rows.Err()
 }
 
-// StripAllPersonAccents rewrites every person name to its accent-free canonical
-// form (lower(immutable_unaccent(name))). Run AFTER merging accent-dups, so no
-// two rows collide on the new value (the UNIQUE(name) constraint would otherwise
-// reject the update). Returns the number of rows changed.
-func (s *PostgresStorer) StripAllPersonAccents(ctx context.Context) (int64, error) {
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE persons SET name = lower(immutable_unaccent(name))
-		 WHERE name <> lower(immutable_unaccent(name))`)
+// RenamePerson sets a person's name. Used by the unaccent heal to rewrite each
+// remaining row to its canonical form. The caller must ensure no collision (the
+// UNIQUE(name) constraint rejects duplicates) — the heal renames only after all
+// canonical-colliding rows have been merged away.
+func (s *PostgresStorer) RenamePerson(ctx context.Context, id int64, name string) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE persons SET name = $2 WHERE id = $1`, id, name)
 	if err != nil {
-		return 0, fmt.Errorf("failed to strip person accents: %w", err)
+		return fmt.Errorf("rename person %d to %q: %w", id, name, err)
 	}
-	return tag.RowsAffected(), nil
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("rename person %d: no such row", id)
+	}
+	return nil
 }
 
 // MergePersons folds person `fromID` into `intoID` inside a single transaction:
