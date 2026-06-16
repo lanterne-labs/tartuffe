@@ -2,6 +2,32 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-15: Stance merge for fragmented persons — pairwise gate + direct fold (mirror-86l)
+
+- `dm stances merge` (and the daily pipeline's stance-merge step) had a hard recall failure on the
+  most-fragmented people. Two regimes by stance count: <= `allStancesLLMCap` (8) hands ALL stances to
+  one `MergeClusterDecision` (good recall at small N, unchanged); above the cap the single all-stances
+  call returns ZERO merges (verified: Ciotti's 30 stances incl. 5 "sécurité publique…" + 3 Olympics →
+  0 merges). Replaced the over-cap path with PAIRWISE: each embedding-similar pair (>= recall floor)
+  is a focused 2-stance yes/no to the LLM, confirmed pairs union-find into groups.
+- Two non-obvious fixes after the first cut still missed real dups: (1) a loose 0.65 candidate floor
+  let union-find chain a 5-stance supercluster through a fuzzy "identité/société" bridge — the LLM
+  pair-gate is NOT reliable in the 0.65-0.80 band (it confirmed immigration↔identité at 0.68). Raised
+  the floor to **0.82**, ABOVE the empirical noise band: genuine near-dups embed at ~0.86-0.90, noise
+  pairs stay <=0.80. (2) The confirmed group was then re-litigated with a SECOND `MergeClusterDecision`
+  over the whole group, which reintroduced the same recall collapse (merged nothing). Now a
+  pre-confirmed group is folded DIRECTLY via `applyMergeSubgroup` (which regenerates the unified
+  label/summary from the merged facts) — the pair-gate IS the decision.
+- Removed the dead centroid-clustering Phase A (agglomerative average-linkage + sub-clustering, the
+  `MaxCluster`/`SubclusterSim` knobs): centroid distance is a poor "same subject" proxy (paired
+  "sécurité publique" with "relations publiques"). Net effect on prod: far fewer LLM calls per person
+  (Zemmour 18 → 1) and the genuine dups actually merge. Merging also surfaces previously-hidden
+  contradictions (the within-stance exhaustive compare runs over the newly co-located facts), which
+  is the mirror-cfy class (commit-to-not-X vs do-X split across stances).
+- Lesson: with a per-pair LLM gate, the gate's confirmation must BE the merge. Re-asking the LLM over
+  the union-find supercluster throws away the focused decision and brings back the recall problem it
+  was built to avoid. And don't trust a fuzzy LLM gate to compensate for a too-loose similarity floor.
+
 ## 2026-06-14: Person name canonicalization extended beyond accents
 
 - `util.NormalizePersonName` now folds ALL surface variants to one canonical form: accents stripped, typographic punctuation → ASCII (curly apostrophes ’‘ʼ′ → ', curly quotes → ", en/em/figure dashes → -), and internal whitespace collapsed. Triggered by a daily-run finding: "conseil … de nice-côte d’azur" stored with a curly apostrophe that `immutable_unaccent` folds but the accent-only normalizer didn't — the same variant-splits-a-person risk as accents, e.g. "Valéry Giscard d’Estaing" vs "...d'Estaing".

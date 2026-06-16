@@ -14,28 +14,28 @@ import (
 )
 
 var (
-	stancesMergePerson        string
-	stancesMergePersonsFile   string
-	stancesMergeRecallSim     float64
-	stancesMergeMaxCluster    int
-	stancesMergeParallel      int
-	stancesMergeDryRun        bool
-	stancesMergeSubclusterSim float64
+	stancesMergePerson      string
+	stancesMergePersonsFile string
+	stancesMergeRecallSim   float64
+	stancesMergeParallel    int
+	stancesMergeDryRun      bool
 )
 
 var stancesMergeCmd = &cobra.Command{
 	Use:   "merge",
 	Short: "Collapse near-duplicate stances per person via LLM verification",
-	Long: `Two-phase per-person merge:
-  Phase A — agglomerative average-linkage clustering on stance centroids
-            (cosine), cut at --recall-threshold (default 0.65 sim / 0.35 dist).
-  Phase B — for each multi-stance candidate cluster, ask an LLM whether subsets
-            should actually merge; for each merge subgroup the LLM proposes,
-            fold all srcs into the largest dst with a unified summary/label.
+	Long: `Per-person stance merge:
+  - Few stances (<= the all-stances cap): hand them all to the LLM in one call.
+  - Many stances: PAIRWISE — for each embedding-similar pair (>= --recall-threshold,
+    default 0.82), ask the LLM whether they cover the same subject, union-find the
+    confirmed pairs into focused groups, and fold each group directly. This avoids
+    the recall collapse of one big all-stances call and the imprecision of
+    embedding clustering.
 
-The Phase-A threshold is intentionally LOOSE — false positives are filtered by
-the LLM in Phase B. Lowering it costs only LLM calls; raising it risks missing
-obvious merges.
+--recall-threshold is the cosine floor for surfacing candidate PAIRS. It sits
+above the empirical noise band (~0.80): genuine near-duplicate stances embed at
+~0.86-0.90, while related-but-distinct pairs stay <=0.80 where the LLM gate is
+unreliable. The gate still vetoes a wrong high-similarity pair.
 
 Examples:
   ./dm stances merge --person "Marine Le Pen"
@@ -50,9 +50,7 @@ func init() {
 	stancesCmd.AddCommand(stancesMergeCmd)
 	stancesMergeCmd.Flags().StringVar(&stancesMergePerson, "person", "", "Specific person name to merge (mutually exclusive with --persons-file)")
 	stancesMergeCmd.Flags().StringVar(&stancesMergePersonsFile, "persons-file", "", "Path to a file with one person name per line")
-	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", defaultMergeOptions.RecallSim, "Cosine-similarity floor for Phase-A candidate clustering")
-	stancesMergeCmd.Flags().Float64Var(&stancesMergeSubclusterSim, "subcluster-threshold", defaultMergeOptions.SubclusterSim, "Cosine-similarity floor for the sub-clustering pass when a Phase-A cluster exceeds --max-cluster")
-	stancesMergeCmd.Flags().IntVar(&stancesMergeMaxCluster, "max-cluster", defaultMergeOptions.MaxCluster, "Phase-A cluster size cap before the sub-clustering pass kicks in")
+	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", defaultMergeOptions.RecallSim, "Cosine-similarity floor for surfacing candidate pairs (the LLM gates each)")
 	stancesMergeCmd.Flags().IntVar(&stancesMergeParallel, "parallel", 1, "Number of persons to merge concurrently")
 	stancesMergeCmd.Flags().BoolVar(&stancesMergeDryRun, "dry-run", false, "Log proposed merges without writing to the database")
 }
@@ -81,12 +79,13 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 
 	adapter := storage.NewStanceStorerAdapter(storer)
 
-	var stanceManager *core.StanceManager
-	if !stancesMergeDryRun {
-		stanceManager, err = core.NewStanceManagerFromEnv(adapter)
-		if err != nil {
-			return fmt.Errorf("failed to create stance manager: %w", err)
-		}
+	// The stance manager is needed even in dry-run: for fragmented persons the
+	// candidate groups are formed by asking the LLM per embedding-similar pair
+	// (pairwiseGroupStances), so a dry-run previews the actual LLM-gated groups.
+	// Only the final apply (MergeClusterDecision + write) is skipped on dry-run.
+	stanceManager, err := core.NewStanceManagerFromEnv(adapter)
+	if err != nil {
+		return fmt.Errorf("failed to create stance manager: %w", err)
 	}
 
 	if stancesMergePerson != "" && stancesMergePersonsFile != "" {
@@ -109,19 +108,11 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 	if stancesMergeRecallSim < 0 || stancesMergeRecallSim > 1 {
 		return fmt.Errorf("--recall-threshold must be in [0,1]")
 	}
-	if stancesMergeSubclusterSim < stancesMergeRecallSim {
-		return fmt.Errorf("--subcluster-threshold (%.3f) must be >= --recall-threshold (%.3f)", stancesMergeSubclusterSim, stancesMergeRecallSim)
-	}
-	if stancesMergeMaxCluster < 2 {
-		stancesMergeMaxCluster = 2
-	}
 
 	log.Info().
 		Int("person_count", len(persons)).
 		Int("parallel", stancesMergeParallel).
 		Float64("recall_sim_threshold", stancesMergeRecallSim).
-		Float64("subcluster_sim_threshold", stancesMergeSubclusterSim).
-		Int("max_cluster", stancesMergeMaxCluster).
 		Bool("dry_run", stancesMergeDryRun).
 		Msg("Starting stance LLM-merge phase")
 
@@ -129,10 +120,8 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 
 	processOne := func(p storage.PersonInfo) {
 		ps, err := mergeStancesForPersonViaLLM(ctx, storer, stanceManager, p, mergeOptions{
-			RecallSim:     stancesMergeRecallSim,
-			SubclusterSim: stancesMergeSubclusterSim,
-			MaxCluster:    stancesMergeMaxCluster,
-			DryRun:        stancesMergeDryRun,
+			RecallSim: stancesMergeRecallSim,
+			DryRun:    stancesMergeDryRun,
 		})
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("LLM-merge failed for person")
@@ -188,10 +177,8 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 }
 
 type mergeOptions struct {
-	RecallSim     float64 // similarity floor → distance cutoff = 1 - RecallSim
-	SubclusterSim float64 // tighter sim floor for sub-clustering oversize clusters
-	MaxCluster    int     // size cap before sub-clustering kicks in
-	DryRun        bool
+	RecallSim float64 // cosine floor for surfacing candidate pairs (the LLM gates each)
+	DryRun    bool
 }
 
 // defaultMergeOptions is the single source of truth for merge thresholds used
@@ -200,23 +187,31 @@ type mergeOptions struct {
 // backfillStancesForPerson. Changing these defaults in one place propagates
 // everywhere.
 var defaultMergeOptions = mergeOptions{
-	RecallSim:     0.65,
-	SubclusterSim: 0.75,
-	MaxCluster:    30,
-	DryRun:        false,
+	// 0.82 sits ABOVE the empirical noise band. Verified on prod (2026-06-15,
+	// Éric Zemmour): genuine near-duplicate stances embed at ~0.86-0.90 while
+	// merely-related-but-distinct pairs (immigration↔identité, parcours↔identité,
+	// droite2027↔parcours) all sit at <=0.80. The LLM pair-gate is NOT reliable in
+	// the 0.65-0.80 band — it confirmed immigration↔identité at 0.68 — so a loose
+	// floor lets union-find chain a fuzzy supercluster. Keeping candidates at
+	// >=0.82 means the gate only ever sees genuine near-dups.
+	RecallSim: 0.82,
+	DryRun:    false,
 }
 
 // allStancesLLMCap is the per-person stance count at or below which we skip
-// Phase-A centroid clustering and just hand every stance to the merge LLM in
-// one call. Rationale: under Framing A (stance = neutral subject area), the
-// LLM's job is exactly to recognise that two directionally-framed stances
-// share a subject — but opposing-direction facts have distant embeddings, so
-// centroid similarity filters out the very pairs we need to merge. With
-// neutral subject labels each person typically has ≤15 stances; even 30 fits
-// comfortably in the merge LLM's 12k context. Above the cap, fall back to
-// centroid clustering as a safety net for the rare politician with decades
-// of fragmented stance data.
-const allStancesLLMCap = 30
+// Phase-A clustering and hand every stance to the merge LLM in one call.
+//
+// Kept small on purpose: the merge LLM's RECALL collapses when it has to
+// enumerate every mergeable subgroup among many stances at once. Verified in
+// prod (2026-06-14): a single call over Éric Ciotti's 30 stances — which
+// included FIVE "sécurité publique…" stances and THREE Olympics stances —
+// returned ZERO merges. So a person with more than a handful of stances is
+// routed through PAIRWISE grouping (pairwiseGroupStances): each embedding-similar
+// pair (>= RecallSim) is a focused 2-stance yes/no question to the LLM, where its
+// recall is reliable, and confirmed pairs are union-found into groups. The
+// previous cap of 30 traded one edge case for a total recall failure on the
+// most-fragmented people — the ones who need merging most. See mirror-86l.
+const allStancesLLMCap = 8
 
 type personMergeStats struct {
 	skipped                  bool
@@ -259,15 +254,21 @@ func mergeStancesForPersonViaLLM(
 	// clustering can filter out exactly the merges we need. Skip clustering
 	// entirely for typical persons and hand all stances to the LLM in one call.
 	//
-	// Safety net for the rare prod edge case (politician with decades of data,
-	// >allStancesLLMCap stances): fall back to centroid clustering with the
-	// existing thresholds to keep the daily cron bounded.
-	centroids := make([][]float32, len(docs))
-	for i, d := range docs {
-		centroids[i] = d.ClusterEmbedding
-	}
-
+	// Above the cap (fragmented politicians), the single call's recall collapses,
+	// so we PAIRWISE-group instead: ask the LLM per embedding-similar pair and
+	// union-find the confirmed ones into focused groups, each then handed back to
+	// the merge LLM below for the actual label/summary + apply.
+	// preConfirmed distinguishes the two regimes' apply semantics:
+	//   - small person (<= cap): one cluster of ALL stances; the LLM still has to
+	//     decide which SUBSETS merge, so we ask MergeClusterDecision per cluster.
+	//   - fragmented person (> cap): pairwiseGroupStances already asked the LLM,
+	//     per embedding-similar pair, whether each merges — so every group it
+	//     returns is pre-confirmed and is folded DIRECTLY. Re-asking the LLM over
+	//     the whole group reintroduces the recall collapse pairwise exists to
+	//     avoid (verified 2026-06-15: a re-decision over Zemmour's confirmed
+	//     immigration cluster merged nothing).
 	var candidateClusters [][]int
+	preConfirmed := false
 	if len(docs) <= allStancesLLMCap {
 		allIdx := make([]int, len(docs))
 		for i := range docs {
@@ -275,21 +276,11 @@ func mergeStancesForPersonViaLLM(
 		}
 		candidateClusters = [][]int{allIdx}
 	} else {
-		// Safety net: centroid clustering with existing thresholds.
-		distanceCutoff := 1.0 - opts.RecallSim
-		clusters := agglomerativeAverageLinkage(centroids, distanceCutoff)
-
-		for _, cl := range clusters {
-			if len(cl) < 2 {
-				continue
-			}
-			if len(cl) > opts.MaxCluster {
-				subs := subClusterIfNeeded(centroids, cl, 1.0-opts.SubclusterSim, opts.MaxCluster)
-				candidateClusters = append(candidateClusters, subs...)
-				continue
-			}
-			candidateClusters = append(candidateClusters, cl)
-		}
+		var pwCalls, pwFails int
+		candidateClusters, pwCalls, pwFails = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim)
+		ps.llmCalls += int64(pwCalls)
+		ps.llmFailures += int64(pwFails)
+		preConfirmed = true
 	}
 
 	if len(candidateClusters) == 0 {
@@ -335,18 +326,32 @@ func mergeStancesForPersonViaLLM(
 			continue
 		}
 
-		ps.llmCalls++
-		decision, err := stanceManager.MergeClusterDecision(ctx, p.Name, live)
-		if err != nil {
-			log.Warn().Err(err).Str("person", p.Name).Int("cluster_size", len(live)).Msg("LLM merge decision failed; cluster left as-is")
-			ps.llmFailures++
-			continue
-		}
-		if decision == nil || len(decision.Merges) == 0 {
-			continue
+		var subgroups []core.MergeSubgroup
+		if preConfirmed {
+			// Every pair in this group was individually confirmed by the gate;
+			// fold them all into one stance. applyMergeSubgroup regenerates the
+			// unified label/summary from the merged fact set, so we don't supply
+			// one here.
+			ids := make([]int64, len(live))
+			for i, s := range live {
+				ids[i] = s.ID
+			}
+			subgroups = []core.MergeSubgroup{{StanceIDs: ids}}
+		} else {
+			ps.llmCalls++
+			decision, err := stanceManager.MergeClusterDecision(ctx, p.Name, live)
+			if err != nil {
+				log.Warn().Err(err).Str("person", p.Name).Int("cluster_size", len(live)).Msg("LLM merge decision failed; cluster left as-is")
+				ps.llmFailures++
+				continue
+			}
+			if decision == nil || len(decision.Merges) == 0 {
+				continue
+			}
+			subgroups = decision.Merges
 		}
 
-		for _, sub := range decision.Merges {
+		for _, sub := range subgroups {
 			merged, contradictions, analyzeFailures, err := applyMergeSubgroup(ctx, storer, stanceManager, p.ID, byID, sub)
 			if err != nil {
 				log.Warn().Err(err).Str("person", p.Name).Interface("subgroup", sub).Msg("Apply merge subgroup failed; skipped")
@@ -375,46 +380,98 @@ func mergeStancesForPersonViaLLM(
 	return ps, nil
 }
 
-// subClusterIfNeeded re-runs agglomerative clustering on the indices of a
-// single oversized cluster at a stricter cutoff. If sub-clusters are still
-// oversized, it logs a warning and falls back to chunking by fact_count.
-func subClusterIfNeeded(centroids [][]float32, originalCluster []int, distanceCutoff float64, maxCluster int) [][]int {
-	subCentroids := make([][]float32, len(originalCluster))
-	for i, idx := range originalCluster {
-		subCentroids[i] = centroids[idx]
+// pairwiseGroupStances groups a person's stances into merge-candidate clusters by
+// asking the merge LLM, for each embedding-SIMILAR pair, whether the two cover the
+// same subject (reusing MergeClusterDecision on a 2-stance cluster), then
+// union-finding the confirmed pairs. This beats both alternatives for the
+// fragmented-person case: unlike ONE big all-stances call (whose recall collapses
+// — verified: 0 merges over 30 stances), each decision is a focused 2-stance
+// question; unlike pure embedding clustering (a poor proxy for "same subject" — it
+// pairs "sécurité publique" with "relations publiques"), a wrong pair the embedding
+// surfaces is rejected per-pair and can't drag a whole cluster along. Returns
+// candidate groups (size >= 2) as input indices, plus the LLM call/failure counts.
+func pairwiseGroupStances(ctx context.Context, sm *core.StanceManager, personName string, docs []storage.StanceDocument, candidateSim float64) (groups [][]int, llmCalls, llmFailures int) {
+	embeddings := make([][]float32, len(docs))
+	for i, d := range docs {
+		embeddings[i] = d.ClusterEmbedding
 	}
-	subClusters := agglomerativeAverageLinkage(subCentroids, distanceCutoff)
+	confirm := func(i, j int) bool {
+		dec, err := sm.MergeClusterDecision(ctx, personName, []core.StanceForMerge{
+			{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary},
+			{ID: docs[j].ID, Label: docs[j].ClusterLabel, Summary: docs[j].Summary},
+		})
+		llmCalls++
+		if err != nil {
+			llmFailures++
+			return false
+		}
+		return dec != nil && len(dec.Merges) > 0
+	}
+	return groupByConfirmedSimilarPairs(embeddings, candidateSim, confirm), llmCalls, llmFailures
+}
 
-	var out [][]int
-	for _, sc := range subClusters {
-		if len(sc) < 2 {
-			continue
-		}
-		// Map sub-cluster local indices back to original-input indices.
-		mapped := make([]int, len(sc))
-		for i, localIdx := range sc {
-			mapped[i] = originalCluster[localIdx]
-		}
-		if len(mapped) > maxCluster {
-			log.Warn().
-				Int("subcluster_size", len(mapped)).
-				Int("max_cluster", maxCluster).
-				Msg("Sub-cluster still exceeds --max-cluster; chunking by index order")
-			for i := 0; i < len(mapped); i += maxCluster {
-				end := i + maxCluster
-				if end > len(mapped) {
-					end = len(mapped)
-				}
-				if end-i < 2 {
-					continue
-				}
-				out = append(out, mapped[i:end])
-			}
-			continue
-		}
-		out = append(out, mapped)
+// groupByConfirmedSimilarPairs is the pure grouping core of pairwiseGroupStances:
+// it forms candidate index pairs whose (L2-normalised) embeddings are at least
+// candidateSim similar, asks confirm() for each — most-similar first, skipping
+// pairs already linked transitively — and union-finds the confirmed pairs into
+// groups of size >= 2 (sorted by size desc, then first index). Separated from the
+// LLM call so it can be unit-tested with a fake predicate.
+func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, confirm func(i, j int) bool) [][]int {
+	n := len(embeddings)
+	parent := make([]int, n)
+	for i := range parent {
+		parent[i] = i
 	}
-	return out
+	var find func(int) int
+	find = func(x int) int {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+
+	type cand struct {
+		i, j int
+		sim  float64
+	}
+	var cands []cand
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			if sim := dotProductF32(embeddings[i], embeddings[j]); sim >= candidateSim {
+				cands = append(cands, cand{i, j, sim})
+			}
+		}
+	}
+	sort.Slice(cands, func(a, b int) bool { return cands[a].sim > cands[b].sim })
+
+	for _, c := range cands {
+		if find(c.i) == find(c.j) {
+			continue
+		}
+		if confirm(c.i, c.j) {
+			parent[find(c.i)] = find(c.j)
+		}
+	}
+
+	byRoot := map[int][]int{}
+	for i := 0; i < n; i++ {
+		byRoot[find(i)] = append(byRoot[find(i)], i)
+	}
+	var groups [][]int
+	for _, m := range byRoot {
+		if len(m) >= 2 {
+			sort.Ints(m)
+			groups = append(groups, m)
+		}
+	}
+	sort.SliceStable(groups, func(a, b int) bool {
+		if len(groups[a]) != len(groups[b]) {
+			return len(groups[a]) > len(groups[b])
+		}
+		return groups[a][0] < groups[b][0]
+	})
+	return groups
 }
 
 // applyMergeSubgroup picks the destination stance (largest fact_count, ties by
