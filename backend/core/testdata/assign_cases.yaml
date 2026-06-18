@@ -1,0 +1,74 @@
+# Golden cases for stance topic assignment (assignTopicFromCandidates).
+#
+# Each case feeds a new fact plus a fixed set of candidate stances (each with its
+# nearest member facts) to the LLM and asserts where the fact routes. `expect` is
+# the exact label of the candidate it should be assigned to, or "NEW" when the
+# fact belongs to a genuinely new single-subject topic.
+#
+# LOCAL ONLY: TestAssignGolden self-skips unless OPEN_AI_KEY is set. The LLM is
+# the local GPU, so runs are free. Add cases here and re-run; tune the prompt in
+# stance_manager.go (assignTopicFromCandidates) until everything is green.
+#
+#   source .env; go test -v -run TestAssignGolden ./backend/core/
+cases:
+  - name: lecornu_493_routes_to_budget_not_security
+    new_fact: "Sébastien Lecornu s'était engagé à renoncer à l'utilisation de l'article 49.3 dans le cadre de discussions avec le PS."
+    candidates:
+      - label: "politique budgétaire, fiscale et aides sociales"
+        summary: "Positions et actes de Sébastien Lecornu sur le budget de l'État, la fiscalité et le recours aux procédures budgétaires."
+        facts:
+          - "Sébastien Lecornu a annoncé qu'il aurait recours à l'article 49-3 sur la partie « recettes » du projet de loi de finances."
+          - "Sébastien Lecornu a déclenché l'article 49.3 sur la partie « dépenses » du PLF 2026."
+      - label: "Politiques de sécurité, de justice et de protection des mineurs"
+        summary: "Positions sur la sécurité publique, la justice pénale et la protection des mineurs."
+        facts:
+          - "Sébastien Lecornu a soutenu un renforcement des effectifs de police dans les quartiers sensibles."
+          - "Sébastien Lecornu a défendu un durcissement des peines pour les agressions contre les forces de l'ordre."
+      - label: "Gouvernement et politique ministérielle"
+        summary: "Composition du gouvernement, nominations et coordination ministérielle."
+        facts:
+          - "Sébastien Lecornu a procédé à un remaniement partiel de son gouvernement."
+    expect: "politique budgétaire, fiscale et aides sociales"
+
+  - name: genuinely_new_subject_returns_new
+    new_fact: "Sébastien Lecornu a annoncé une augmentation du budget de la défense pour atteindre 3 % du PIB d'ici 2030."
+    candidates:
+      - label: "politique budgétaire, fiscale et aides sociales"
+        summary: "Positions sur le budget de l'État, la fiscalité et les aides sociales."
+        facts:
+          - "Sébastien Lecornu a déclenché l'article 49.3 sur la partie « dépenses » du PLF 2026."
+          - "Sébastien Lecornu a proposé de geler certaines aides sociales pour réduire le déficit."
+      - label: "Politiques de sécurité, de justice et de protection des mineurs"
+        summary: "Positions sur la sécurité publique et la justice pénale."
+        facts:
+          - "Sébastien Lecornu a soutenu un renforcement des effectifs de police dans les quartiers sensibles."
+    expect: "NEW"
+
+  - name: routine_consolidation_to_existing_single_subject
+    new_fact: "Sébastien Lecornu a voté contre la revalorisation du point d'indice des enseignants."
+    candidates:
+      - label: "politique salariale des enseignants"
+        summary: "Positions et votes sur la rémunération et le statut des enseignants."
+        facts:
+          - "Sébastien Lecornu avait promis une hausse de 10 % du salaire des enseignants débutants."
+          - "Sébastien Lecornu a soutenu une prime exceptionnelle pour les professeurs en zone prioritaire."
+      - label: "politique climatique"
+        summary: "Positions sur les énergies, le climat et la transition écologique."
+        facts:
+          - "Sébastien Lecornu a défendu le développement de l'énergie nucléaire."
+    expect: "politique salariale des enseignants"
+
+  - name: anti_dumping_focused_over_broad_bucket
+    new_fact: "Sébastien Lecornu a proposé d'instaurer des droits de douane sur les importations d'acier chinois pour protéger la sidérurgie française."
+    candidates:
+      - label: "souveraineté industrielle française"
+        summary: "Positions sur la protection et la relocalisation de l'industrie française, les droits de douane et la production nationale."
+        facts:
+          - "Sébastien Lecornu a soutenu la relocalisation d'une usine de batteries dans le Nord."
+          - "Sébastien Lecornu a défendu des aides à la filière sidérurgique française."
+      - label: "économie, commerce, emploi et affaires européennes"
+        summary: "Positions générales sur l'économie, le commerce, l'emploi et les relations avec l'Union européenne."
+        facts:
+          - "Sébastien Lecornu a soutenu un accord de libre-échange avec un pays tiers."
+          - "Sébastien Lecornu s'est exprimé sur le taux de chômage des jeunes."
+    expect: "souveraineté industrielle française"

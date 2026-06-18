@@ -5107,6 +5107,109 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 	return docs, nil
 }
 
+// NearestFactStanceCandidate is one shortlisted stance for topic assignment,
+// ranked by its NEAREST member fact (not its centroid) to the incoming fact's
+// embedding. The nearest-member-fact ranking is the fix for the mega-stance
+// attractor: a large catch-all stance's averaged centroid sits moderately close
+// to everything, but its individual facts do not, so ranking by nearest member
+// fact keeps loosely related facts out of broad buckets.
+//
+// (Distinct from StanceCandidate, the centroid-ranked struct returned by
+// FindTopStancesForPerson for the Bundler.)
+type NearestFactStanceCandidate struct {
+	ID          int64
+	Label       string
+	Summary     string
+	FactCount   int
+	MemberFacts []string // up to factsPerStance nearest member fact texts, closest first
+	NearestDist float64  // distance of the stance's closest member fact to the query embedding
+}
+
+// ShortlistStancesByNearestFact ranks a person's stances by their nearest member
+// fact's distance to factEmbedding and returns the top-K, each with its
+// factsPerStance nearest member fact texts (closest first). Duplicate facts are
+// excluded. Stances are ordered by nearest distance ascending; member facts
+// within a stance are ordered by distance ascending.
+func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]NearestFactStanceCandidate, error) {
+	query := `
+		WITH fd AS (
+			SELECT sd.id AS stance_id, sd.cluster_label, COALESCE(sd.summary, '') AS summary, sd.fact_count,
+			       f.fact_text, (f.embedding <-> $1) AS dist
+			FROM stance_documents sd
+			JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
+			JOIN facts f ON f.id = sdf.fact_id
+			WHERE sd.person_id = $2
+			  AND NOT EXISTS (
+			      SELECT 1 FROM fact_relations fr
+			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+			  )
+		),
+		ranked AS (
+			SELECT *,
+			       row_number() OVER (PARTITION BY stance_id ORDER BY dist) AS fact_rn,
+			       MIN(dist) OVER (PARTITION BY stance_id) AS stance_min_dist
+			FROM fd
+		),
+		top_stances AS (
+			SELECT stance_id, MIN(stance_min_dist) AS d
+			FROM ranked
+			GROUP BY stance_id
+			ORDER BY d ASC
+			LIMIT $3
+		)
+		SELECT r.stance_id, r.cluster_label, r.summary, r.fact_count, r.fact_text, r.stance_min_dist
+		FROM ranked r
+		JOIN top_stances ts ON ts.stance_id = r.stance_id
+		WHERE r.fact_rn <= $4
+		ORDER BY r.stance_min_dist ASC, r.stance_id ASC, r.dist ASC`
+
+	rows, err := s.pool.Query(ctx, query,
+		pgvector.NewVector(factEmbedding), // $1
+		personID,                          // $2
+		topK,                              // $3
+		factsPerStance,                    // $4
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying nearest-fact stance shortlist for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+
+	// Rows arrive grouped by stance (ordered), so we append fact-by-fact and
+	// start a new candidate whenever the stance ID changes. The ORDER BY in the
+	// query guarantees stance order and per-stance fact order.
+	var candidates []NearestFactStanceCandidate
+	for rows.Next() {
+		var (
+			stanceID      int64
+			label, summ   string
+			factCount     int
+			factText      string
+			stanceMinDist float64
+		)
+		if err := rows.Scan(&stanceID, &label, &summ, &factCount, &factText, &stanceMinDist); err != nil {
+			return nil, fmt.Errorf("scanning stance candidate for person %d: %w", personID, err)
+		}
+		if n := len(candidates); n == 0 || candidates[n-1].ID != stanceID {
+			candidates = append(candidates, NearestFactStanceCandidate{
+				ID:          stanceID,
+				Label:       label,
+				Summary:     summ,
+				FactCount:   factCount,
+				NearestDist: stanceMinDist,
+				MemberFacts: []string{factText},
+			})
+		} else {
+			candidates[n-1].MemberFacts = append(candidates[n-1].MemberFacts, factText)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating stance candidates for person %d: %w", personID, err)
+	}
+
+	return candidates, nil
+}
+
 // GetFactsForStance retrieves all facts associated with a stance document.
 func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
 	query := `

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -21,6 +20,7 @@ type StanceStorer interface {
 	UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
+	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error)
 	DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error
@@ -44,6 +44,18 @@ type StanceDocument struct {
 type StanceMatch struct {
 	StanceDocument
 	Distance float64
+}
+
+// StanceCandidate is one shortlisted stance for topic assignment, ranked by its
+// nearest member fact to the incoming fact's embedding and carrying that
+// stance's closest member fact texts as concrete evidence for the LLM.
+type StanceCandidate struct {
+	ID          int64
+	Label       string
+	Summary     string
+	FactCount   int
+	MemberFacts []string
+	NearestDist float64
 }
 
 // StanceFactInfo represents a fact within a stance.
@@ -96,6 +108,17 @@ type topicAssignmentResponse struct {
 	AssignedIndex   int            `json:"assigned_topic_index"` // 1-indexed, 0 means new topic
 	NewTopicLabel   flexibleString `json:"new_topic_label"`      // only set when AssignedIndex == 0
 	NewTopicLabelEn flexibleString `json:"new_topic_label_en"`   // English translation; empty when new_topic_label is already English
+}
+
+// topicAssignmentDecision is the resolved result of assignTopic — the LLM's
+// 1-based candidate index has already been mapped to a concrete stance ID (or
+// IsNew when the fact belongs to a genuinely new topic).
+type topicAssignmentDecision struct {
+	AssignedID int64  // stance ID the fact was routed to; meaningful only when IsNew is false
+	IsNew      bool   // true when no existing candidate fit and a new stance must be created
+	NewLabel   string // proposed label for the new stance (IsNew only)
+	NewLabelEn string // English translation of NewLabel (IsNew only)
+	Reasoning  string // LLM's brief explanation of its choice
 }
 
 // generalLabelResponse is the response from generateGeneralLabel — a thin
@@ -167,13 +190,6 @@ const (
 	stanceMinFactsBudget = 200
 )
 
-// stanceShortlistSize caps the number of existing stances sent to assignTopic
-// in a single LLM call. When a person has more than this many stances, we
-// pre-filter via embedding cosine similarity (fact embedding vs each stance's
-// cluster_embedding) and pass only the top-K closest to the LLM. Embeddings
-// are recon; the LLM makes the final assignment decision.
-const stanceShortlistSize = 15
-
 // StanceManager handles the core stance document logic: matching new facts to existing
 // stances, creating new stances, and detecting contradictions via LLM analysis.
 type StanceManager struct {
@@ -226,17 +242,17 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 
 	// Always go through assignTopic — even when no stances exist, the LLM emits a
 	// general topic label per the LABEL RULES instead of falling back to fact text.
-	// When the person has many stances, assignTopic uses an embedding-based
-	// shortlist so the LLM only sees the top-K closest candidates.
-	assignment, err := sm.assignTopic(ctx, stances, factText, embedding)
+	// When the fact has an embedding, assignTopic shortlists candidate stances by
+	// their NEAREST member fact and shows the LLM that concrete evidence.
+	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
 
 	// New topic: create a new stance with the LLM-generated general label
-	if assignment.AssignedIndex == 0 {
-		label := strings.TrimSpace(string(assignment.NewTopicLabel))
-		labelEn := strings.TrimSpace(string(assignment.NewTopicLabelEn))
+	if assignment.IsNew {
+		label := assignment.NewLabel
+		labelEn := assignment.NewLabelEn
 		if label == "" {
 			// Defensive: assignTopic didn't emit a usable label. Ask explicitly via
 			// generateGeneralLabel so we never store fact text as a stance label.
@@ -253,19 +269,25 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, labelEn)
 	}
 
-	// Find the matched stance by index (1-indexed)
-	if assignment.AssignedIndex < 1 || assignment.AssignedIndex > len(stances) {
+	// Find the matched stance by the resolved stance ID.
+	var matched *StanceDocument
+	for i := range stances {
+		if stances[i].ID == assignment.AssignedID {
+			matched = &stances[i]
+			break
+		}
+	}
+	if matched == nil {
 		log.Warn().
-			Int("assigned_index", assignment.AssignedIndex).
+			Int64("assigned_stance_id", assignment.AssignedID).
 			Int("total_stances", len(stances)).
-			Msg("LLM returned out-of-range topic index, creating new stance")
+			Msg("LLM-assigned stance ID not found among person's stances, creating new stance")
 		label, err := sm.generateGeneralLabel(ctx, factText)
 		if err != nil {
 			return nil, fmt.Errorf("generating fallback general label: %w", err)
 		}
 		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, "")
 	}
-	matched := &stances[assignment.AssignedIndex-1]
 
 	log.Info().
 		Int64("stance_id", matched.ID).
@@ -1008,60 +1030,94 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 	return nil, lastErr
 }
 
-// assignTopic asks the LLM to assign a new fact to one of the existing stance
-// topics or declare it new. Even with an empty stances list the LLM is forced
-// to AssignedIndex=0 and emits a general topic label per the LABEL RULES — that
-// path replaces the old "use truncated fact text as label" shortcut.
+// assignTopic routes a new fact to one of the person's existing stances or
+// declares it new. It shortlists candidate stances by their NEAREST MEMBER FACT
+// to the fact's embedding (not by centroid), then hands those candidates — each
+// carrying its closest member facts as concrete evidence — to the LLM via
+// assignTopicFromCandidates. The nearest-member-fact ranking is the fix for the
+// mega-stance attractor: a large catch-all's averaged centroid sits moderately
+// close to everything, so centroid ranking vacuumed loosely related facts into
+// it; ranking by nearest member fact does not.
 //
-// When the person has more than stanceShortlistSize stances, we pre-filter via
-// embedding cosine similarity (fact embedding vs each stance's centroid) and
-// pass only the top-K closest stances to the LLM. The LLM still makes the
-// final decision; embeddings are recon. Returned AssignedIndex is mapped back
-// to the original stances slice's 1-indexed positions.
-func (sm *StanceManager) assignTopic(ctx context.Context, stances []StanceDocument, factText string, factEmbedding []float32) (*topicAssignmentResponse, error) {
-	shortlist, indexMap := shortlistStancesByEmbedding(stances, factEmbedding, stanceShortlistSize)
+// When the fact has no embedding, the person has no stances, or the shortlist
+// comes back empty, assignTopic degrades to a label/summary-only shortlist built
+// from the passed stances so it never crashes — same LLM call, weaker evidence.
+func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32) (*topicAssignmentDecision, error) {
+	var candidates []StanceCandidate
+	if len(factEmbedding) > 0 && len(stances) > 0 {
+		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, 8, 6)
+		if err != nil {
+			return nil, fmt.Errorf("shortlisting stances by nearest fact: %w", err)
+		}
+		candidates = shortlisted
+	}
 
-	var topicsBuilder strings.Builder
-	if len(shortlist) == 0 {
-		topicsBuilder.WriteString("(no existing topics — you MUST return assigned_topic_index=0 and emit a general new_topic_label per the LABEL RULES below)\n")
-	} else {
-		for i, s := range shortlist {
-			topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
-				i+1, s.ClusterLabel, s.FactCount, truncate(s.Summary, 150)))
+	// Fallback: no embedding, no stances, or empty shortlist. Build candidates
+	// from the passed stances (label + summary only, no member facts) so the LLM
+	// still classifies against the full topic list instead of crashing.
+	if len(candidates) == 0 {
+		candidates = make([]StanceCandidate, len(stances))
+		for i, s := range stances {
+			candidates[i] = StanceCandidate{
+				ID:        s.ID,
+				Label:     s.ClusterLabel,
+				Summary:   s.Summary,
+				FactCount: s.FactCount,
+			}
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to.
+	return sm.assignTopicFromCandidates(ctx, factText, candidates)
+}
+
+// assignTopicFromCandidates is the pure (LLM-only, no storage) core of topic
+// assignment. It lists each candidate with its label, summary, and nearest
+// member facts as concrete evidence, asks the LLM to pick a candidate (1..N) or
+// declare a new topic (0), and resolves the chosen 1-based index back to the
+// candidate's stance ID. An out-of-range or zero index means a new topic.
+func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText string, candidates []StanceCandidate) (*topicAssignmentDecision, error) {
+	var topicsBuilder strings.Builder
+	if len(candidates) == 0 {
+		topicsBuilder.WriteString("(no existing topics — you MUST return assigned_topic_index=0 and emit a general new_topic_label per the LABEL RULES below)\n")
+	} else {
+		for i, c := range candidates {
+			topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
+				i+1, c.Label, c.FactCount, truncate(c.Summary, 150)))
+			for _, f := range c.MemberFacts {
+				topicsBuilder.WriteString(fmt.Sprintf("   - %s\n", truncate(f, 220)))
+			}
+		}
+	}
+
+	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to. Each candidate topic shows its CLOSEST existing facts as evidence.
 
 EXISTING TOPICS:
 %s
 NEW FACT:
 %s
 
-ASSIGNMENT RULES (lean HARD toward consolidation, not fragmentation):
+ASSIGNMENT RULES (lean toward consolidation, but ONE SUBJECT per topic):
 - A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
+- Each candidate shows its CLOSEST existing facts. Assign the new fact to a candidate ONLY if it covers the SAME SUBJECT as those facts — e.g. the same named instrument (article 49.3), the same law, case, person, or policy area. Concrete matching member facts are STRONG evidence; a vague label match is NOT enough.
+- ONE SUBJECT per stance. Never assign to (or create) a stance whose label glues together MULTIPLE distinct domains. BAD: "sécurité, justice et protection des mineurs" (three different subjects). If the new fact doesn't clearly belong to ONE single-subject candidate, create a NEW topic rather than dumping it into a broad multi-subject bucket.
 - Assign the fact to an existing topic if it shares the SAME subject area, regardless of whether the new fact's direction agrees or disagrees with the existing topic's facts. Different events / different aspects / different positions on the same subject all belong together.
 - **Polarity within a subject is CONTRADICTION MATERIAL, not a reason to fragment.** If the new fact opposes existing facts in a topic on the same subject area, assign it to that topic anyway. The internal tension is precisely what the contradiction detector exists to surface downstream. NEVER create a new topic just because the new fact's direction differs from the existing facts.
   * "promised to defend public hospitals" + later "voted for austerity cutting hospital subsidies" → SAME topic ("politique des dépenses publiques"), not two topics.
   * "promised 10%% teacher raise" + later "voted against teacher raise" → SAME topic ("politique salariale des enseignants").
+  * "promised to renounce article 49.3" + later "triggered article 49.3 on the budget" → SAME topic (the budget / 49.3 procedure), not security or governance.
   * "rebuild French artisanat" + "authorise offshoring of French factory" + "tariffs on Chinese imports" → SAME topic ("souveraineté industrielle française").
-  * "protect civil liberties" + "expand surveillance cameras" + "encryption backdoors" → SAME topic ("libertés civiles et surveillance numérique").
-  * "fight climate change" + "vote against carbon tax" + "delay EV mandate" → SAME topic ("politique climatique").
-- Examples that should consolidate (different aspects of the same subject):
-  * "sentencing in PA case" + "denial of wrongdoing in PA case" + "comments on bracelet condition" → all one "presidential candidacy and PA case" topic.
-  * "Iran sanctions threats" + "Iran nuclear talks" + "Iran-Saudi attack confirmation" → all one "Iran policy" topic.
-  * "EU debt criticism" + "euro inadapté" + "demanding to leave the EU" → all one "EU economic policy" topic.
 - Only create a NEW topic when the fact is about a GENUINELY DIFFERENT SUBJECT AREA — not a different direction on the same subject. A "tax policy" fact and a "foreign policy" fact are different subjects. A "pro-environment" fact and an "anti-environment" fact are the SAME subject.
-- When in doubt between assigning vs creating new, ALWAYS prefer assigning to the closest existing topic over creating a new one. A slightly imperfect consolidation is far better than fragmentation: the contradiction detector tolerates broad topics; it cannot recover from fragmentation.
+- When the new fact clearly matches ONE single-subject candidate, prefer assigning to it over creating a new topic. But a vague resemblance to a BROAD multi-subject bucket is NOT a match — create a new single-subject topic instead.
 
 LABEL RULES (for new_topic_label when creating a new topic):
 - A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. Labels must name a noun-phrase subject area. They MUST NOT contain directional verbs, attitudinal adjectives, or polarity qualifiers. The same label must work whether the person is pro, anti, mixed, or evolving on the subject.
+- ONE SUBJECT per label. NEVER glue multiple distinct domains together. ❌ "sécurité, justice et protection des mineurs" (three subjects) → split into the single subject the fact is actually about.
 - FORBIDDEN label vocabulary (non-exhaustive — apply the spirit, not just the list):
   * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "protection of", "support for", "fight against", "rejet de", "promotion de"
   * Polarity prefixes: "pro-", "anti-"
   * Attitudinal adjectives in the label: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
   * Stance descriptors: "posture sur X", "position concernant Y", "vision de Z"
-- GOOD labels (neutral subject containers):
+- GOOD labels (neutral, single-subject containers):
   * "politique des dépenses publiques" (covers BOTH "defends hospitals" AND "voted for austerity cuts")
   * "services publics et hôpitaux"
   * "politique salariale des enseignants" (covers BOTH "promised raise" AND "voted against raise")
@@ -1100,7 +1156,7 @@ Return ONLY valid JSON:
   "new_topic_label_en": "faithful English translation of new_topic_label — OMIT when new_topic_label is already English"
 }
 
-Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(shortlist))
+Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(candidates))
 
 	content, err := sm.callJSONLLM(ctx, "You are a political fact topic classifier. Return only valid JSON.", prompt, 0.1, 800, false)
 	if err != nil {
@@ -1113,65 +1169,17 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 		return nil, fmt.Errorf("parsing topic assignment response: %w", err)
 	}
 
-	// Translate the LLM's shortlist-relative index back to the original
-	// stances-slice index so callers can subscript stances[AssignedIndex-1]
-	// transparently.
-	if indexMap != nil && resp.AssignedIndex >= 1 && resp.AssignedIndex <= len(shortlist) {
-		resp.AssignedIndex = indexMap[resp.AssignedIndex-1] + 1
+	decision := &topicAssignmentDecision{Reasoning: resp.Reasoning}
+	// Map the LLM's 1-based candidate index to a stance ID. Index 0 or
+	// out-of-range means a new topic.
+	if resp.AssignedIndex >= 1 && resp.AssignedIndex <= len(candidates) {
+		decision.AssignedID = candidates[resp.AssignedIndex-1].ID
+	} else {
+		decision.IsNew = true
+		decision.NewLabel = strings.TrimSpace(string(resp.NewTopicLabel))
+		decision.NewLabelEn = strings.TrimSpace(string(resp.NewTopicLabelEn))
 	}
-
-	return &resp, nil
-}
-
-// shortlistStancesByEmbedding pre-filters a stances slice down to the top-K
-// closest stances by cosine similarity (fact embedding vs stance centroid).
-// Returns the shortlist plus an indexMap such that indexMap[i] is the original
-// position in stances of shortlist[i]. When stances has ≤ K entries (or the
-// fact has no embedding), returns the input unchanged with indexMap=nil
-// (signaling "no remapping needed").
-//
-// All embeddings are L2-normalised so dot product == cosine similarity.
-func shortlistStancesByEmbedding(stances []StanceDocument, factEmbedding []float32, k int) ([]StanceDocument, []int) {
-	if k <= 0 || len(stances) <= k || len(factEmbedding) == 0 {
-		return stances, nil
-	}
-	type entry struct {
-		origIdx int
-		sim     float64
-	}
-	scored := make([]entry, 0, len(stances))
-	for i, s := range stances {
-		if len(s.ClusterEmbedding) != len(factEmbedding) {
-			// Mismatched dimensions — exclude rather than crash.
-			continue
-		}
-		var sim float64
-		for j := range factEmbedding {
-			sim += float64(factEmbedding[j]) * float64(s.ClusterEmbedding[j])
-		}
-		scored = append(scored, entry{origIdx: i, sim: sim})
-	}
-	if len(scored) <= k {
-		// Nothing usable was filtered out; if scored < stances we'd lose the
-		// excluded ones, but in practice all centroids share the embedding dim
-		// so this is fine.
-		shortlist := make([]StanceDocument, len(scored))
-		idxMap := make([]int, len(scored))
-		for i, e := range scored {
-			shortlist[i] = stances[e.origIdx]
-			idxMap[i] = e.origIdx
-		}
-		return shortlist, idxMap
-	}
-	sort.Slice(scored, func(i, j int) bool { return scored[i].sim > scored[j].sim })
-	scored = scored[:k]
-	shortlist := make([]StanceDocument, k)
-	idxMap := make([]int, k)
-	for i, e := range scored {
-		shortlist[i] = stances[e.origIdx]
-		idxMap[i] = e.origIdx
-	}
-	return shortlist, idxMap
+	return decision, nil
 }
 
 // generateGeneralLabel produces a general subject-area label for a single fact.

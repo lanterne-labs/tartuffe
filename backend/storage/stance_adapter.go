@@ -72,6 +72,29 @@ func (a *StanceStorerAdapter) GetStanceDocumentsForPerson(ctx context.Context, p
 	return result, nil
 }
 
+// ShortlistStancesByNearestFact ranks a person's stances by their nearest member
+// fact to factEmbedding and returns the top-K, each with its nearest member fact
+// texts. Converts storage.StanceCandidate to core.StanceCandidate.
+func (a *StanceStorerAdapter) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]core.StanceCandidate, error) {
+	cands, err := a.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, topK, factsPerStance)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]core.StanceCandidate, len(cands))
+	for i, c := range cands {
+		result[i] = core.StanceCandidate{
+			ID:          c.ID,
+			Label:       c.Label,
+			Summary:     c.Summary,
+			FactCount:   c.FactCount,
+			MemberFacts: c.MemberFacts,
+			NearestDist: c.NearestDist,
+		}
+	}
+	return result, nil
+}
+
 // GetFactsForStance retrieves all facts associated with a stance document.
 func (a *StanceStorerAdapter) GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
 	facts, err := a.storer.GetFactsForStance(ctx, stanceID)

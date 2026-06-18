@@ -76,6 +76,25 @@ func (m *mockStanceStorer) GetStanceDocumentsForPerson(ctx context.Context, pers
 	return result, nil
 }
 
+func (m *mockStanceStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error) {
+	var result []StanceCandidate
+	for _, s := range m.stances {
+		if s.PersonID != personID {
+			continue
+		}
+		result = append(result, StanceCandidate{
+			ID:        s.ID,
+			Label:     s.ClusterLabel,
+			Summary:   s.Summary,
+			FactCount: s.FactCount,
+		})
+		if len(result) >= topK {
+			break
+		}
+	}
+	return result, nil
+}
+
 func (m *mockStanceStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
 	return m.facts[stanceID], nil
 }
@@ -334,51 +353,6 @@ func slicesEqualInt(a, b []int) bool {
 		}
 	}
 	return true
-}
-
-// TestShortlistStancesByEmbedding verifies the embedding-based stance pre-filter
-// returns the top-K closest stances by cosine similarity (== dot product since
-// embeddings are normalised) and exposes a correct index map back to the
-// original stances slice.
-func TestShortlistStancesByEmbedding(t *testing.T) {
-	stances := []StanceDocument{
-		{ID: 1, ClusterEmbedding: []float32{1, 0, 0}},
-		{ID: 2, ClusterEmbedding: []float32{0, 1, 0}},
-		{ID: 3, ClusterEmbedding: []float32{0.9, 0.1, 0}},
-		{ID: 4, ClusterEmbedding: []float32{-1, 0, 0}},
-	}
-	factEmb := []float32{1, 0, 0}
-
-	t.Run("k >= len returns all without remap", func(t *testing.T) {
-		short, idx := shortlistStancesByEmbedding(stances, factEmb, 10)
-		if len(short) != 4 {
-			t.Errorf("expected all 4 stances back, got %d", len(short))
-		}
-		if idx != nil {
-			t.Errorf("expected nil index map when no filter applied, got %v", idx)
-		}
-	})
-
-	t.Run("k=2 picks two closest by cosine", func(t *testing.T) {
-		short, idx := shortlistStancesByEmbedding(stances, factEmb, 2)
-		if len(short) != 2 {
-			t.Fatalf("expected 2 stances, got %d", len(short))
-		}
-		// Closest to (1,0,0): stance 1 (sim 1.0), then stance 3 (sim 0.9).
-		if short[0].ID != 1 || short[1].ID != 3 {
-			t.Errorf("expected shortlist IDs [1, 3], got [%d, %d]", short[0].ID, short[1].ID)
-		}
-		if len(idx) != 2 || idx[0] != 0 || idx[1] != 2 {
-			t.Errorf("expected index map [0, 2], got %v", idx)
-		}
-	})
-
-	t.Run("empty embedding returns input unchanged", func(t *testing.T) {
-		short, idx := shortlistStancesByEmbedding(stances, nil, 2)
-		if len(short) != 4 || idx != nil {
-			t.Errorf("expected unchanged input when factEmbedding empty")
-		}
-	})
 }
 
 // TestParseStanceLLMResponse covers the new multi-verdict response schema.
