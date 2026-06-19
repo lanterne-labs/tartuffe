@@ -72,3 +72,20 @@ cases:
           - "Sébastien Lecornu a soutenu un accord de libre-échange avec un pays tiers."
           - "Sébastien Lecornu s'est exprimé sur le taux de chômage des jeunes."
     expect: "souveraineté industrielle française"
+
+  # Anti-fragmentation: a different FACET of an existing focused single-subject
+  # stance must consolidate into it, not spawn a near-duplicate topic. This guards
+  # the over-fragmentation the rebuild exposed (4 separate police/security stances).
+  - name: consolidate_facet_into_focused_stance
+    new_fact: "Sébastien Lecornu a annoncé un renforcement des patrouilles de police pour lutter contre la délinquance dans les transports en commun."
+    candidates:
+      - label: "sécurité intérieure et forces de l'ordre"
+        summary: "Action et moyens des forces de l'ordre, lutte contre la délinquance et sécurité publique."
+        facts:
+          - "Sébastien Lecornu a défendu une hausse des effectifs de police dans les quartiers sensibles."
+          - "Sébastien Lecornu a salué une opération d'interpellations menée par la gendarmerie."
+      - label: "politique budgétaire et finances publiques"
+        summary: "Budget de l'État, fiscalité et procédures budgétaires."
+        facts:
+          - "Sébastien Lecornu a déclenché l'article 49.3 sur la partie « dépenses » du PLF 2026."
+    expect: "sécurité intérieure et forces de l'ordre"

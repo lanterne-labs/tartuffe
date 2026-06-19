@@ -1096,7 +1096,7 @@ EXISTING TOPICS:
 NEW FACT:
 %s
 
-ASSIGNMENT RULES (lean toward consolidation, but ONE SUBJECT per topic):
+ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-buckets AND over-fragmentation into near-duplicate topics):
 - A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
 - Each candidate shows its CLOSEST existing facts. Assign the new fact to a candidate ONLY if it covers the SAME SUBJECT as those facts — e.g. the same named instrument (article 49.3), the same law, case, person, or policy area. Concrete matching member facts are STRONG evidence; a vague label match is NOT enough.
 - ONE SUBJECT per stance. Never assign to (or create) a stance whose label glues together MULTIPLE distinct domains. BAD: "sécurité, justice et protection des mineurs" (three different subjects). If the new fact doesn't clearly belong to ONE single-subject candidate, create a NEW topic rather than dumping it into a broad multi-subject bucket.
@@ -1108,6 +1108,11 @@ ASSIGNMENT RULES (lean toward consolidation, but ONE SUBJECT per topic):
   * "rebuild French artisanat" + "authorise offshoring of French factory" + "tariffs on Chinese imports" → SAME topic ("souveraineté industrielle française").
 - Only create a NEW topic when the fact is about a GENUINELY DIFFERENT SUBJECT AREA — not a different direction on the same subject. A "tax policy" fact and a "foreign policy" fact are different subjects. A "pro-environment" fact and an "anti-environment" fact are the SAME subject.
 - When the new fact clearly matches ONE single-subject candidate, prefer assigning to it over creating a new topic. But a vague resemblance to a BROAD multi-subject bucket is NOT a match — create a new single-subject topic instead.
+- DIFFERENT FACETS OF THE SAME SUBJECT BELONG TOGETHER — do NOT over-fragment. If an existing FOCUSED (single-subject) candidate covers the same broad area as the new fact, assign to it even if the specific event, sub-aspect, actor, or framing differs. A different facet of one domain is NOT a different subject. Creating a near-duplicate topic is just as wrong as a mega-bucket: it splits facts that should be compared and hides contradictions.
+  * "interpellations par les forces de l'ordre" + "délinquance et violence urbaine" + "effectifs de la police" → ONE topic ("sécurité intérieure et forces de l'ordre"), not three.
+  * "dépistage de stupéfiants des agents publics" + "prévention de la consommation de drogue" → ONE topic ("lutte contre les stupéfiants"), not two.
+  * "aides sur le prix des carburants" + "soutien aux ménages face à la crise énergétique" → ONE topic ("aides énergie et carburants"), not two.
+  Reserve a NEW topic for a genuinely different DOMAIN, never for a different facet, event, or wording within the same domain. When an existing focused candidate is a reasonable home, USE IT.
 
 LABEL RULES (for new_topic_label when creating a new topic):
 - A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. Labels must name a noun-phrase subject area. They MUST NOT contain directional verbs, attitudinal adjectives, or polarity qualifiers. The same label must work whether the person is pro, anti, mixed, or evolving on the subject.
