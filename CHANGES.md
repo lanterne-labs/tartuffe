@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-27: Translation subsystem — generic store + async final pipeline phase (mirror-rgw, phases 1-2)
+
+- New extensible translation layer. `translations` table (entity_type, entity_id, field, lang, text,
+  source_hash) holds translations for ANY language — adding a language is config, not schema. New
+  `backend/translate` package: `Translator` interface + OpenAI impl (any language pair, auto-detects
+  the source when lang is unknown), `DefaultTargetLangs{en,fr}`, hash-based staleness.
+- New `dm translate run` + a FINAL step of `dm pipeline daily` (Step 8): scans facts, stances
+  (label+summary) and contradictions (reason), fills missing/stale translations. Decoupled from
+  generation — runs LAST, best-effort, never blocks the pipeline.
+- Still additive for now: the generic table is populated but reads still use the legacy `_en` columns,
+  and generation still emits inline `_en`, until the decouple + read-path phases land (epic mirror-rgw).
+
 ## 2026-06-27: FP catalog — partial-vs-total + qualified-general-vs-specific buckets (mirror-me2)
 
 - The shared false-positive catalog (`backend/promptrules/false_positives.txt`, used by detector +

@@ -1,0 +1,103 @@
+package storage
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// TranslatableItem is one (entity, field) whose source text may need translating
+// into the configured target languages, together with the translations already
+// stored (lang -> the source_hash they were produced from, for staleness checks).
+type TranslatableItem struct {
+	EntityType string
+	EntityID   int64
+	Field      string
+	SourceText string
+	SrcLang    string // "auto" when the entity has no language column
+	Existing   map[string]string
+}
+
+// UpsertTranslation stores (or refreshes) one translation row in the generic
+// translations table.
+func (s *PostgresStorer) UpsertTranslation(ctx context.Context, entityType string, entityID int64, field, lang, text, sourceHash string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO translations (entity_type, entity_id, field, lang, text, source_hash, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, now())
+		ON CONFLICT (entity_type, entity_id, field, lang)
+		DO UPDATE SET text = EXCLUDED.text, source_hash = EXCLUDED.source_hash, updated_at = now()`,
+		entityType, entityID, field, lang, text, sourceHash)
+	if err != nil {
+		return fmt.Errorf("upsert translation (%s/%d/%s/%s): %w", entityType, entityID, field, lang, err)
+	}
+	return nil
+}
+
+// ListTranslatableItems returns every translatable (entity, field) across facts,
+// stances (label + summary) and contradictions (reason), each with the
+// translations already present. The async translate phase decides per item which
+// target languages are missing or stale. Adding a new translatable field is one
+// entry in the specs slice below.
+func (s *PostgresStorer) ListTranslatableItems(ctx context.Context) ([]TranslatableItem, error) {
+	specs := []struct {
+		entityType, field, table, textCol, srcLangExpr string
+	}{
+		{"fact", "text", "facts", "fact_text", "coalesce(e.lang, '')"},
+		{"stance", "label", "stance_documents", "cluster_label", "'auto'"},
+		{"stance", "summary", "stance_documents", "summary", "'auto'"},
+		{"contradiction", "reason", "contradictions", "reason", "'auto'"},
+	}
+	var all []TranslatableItem
+	for _, sp := range specs {
+		items, err := s.collectTranslatable(ctx, sp.entityType, sp.field, sp.table, sp.textCol, sp.srcLangExpr)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+	}
+	return all, nil
+}
+
+// collectTranslatable runs one source query. table/textCol/srcLangExpr are
+// hardcoded constants from ListTranslatableItems (never user input), so the
+// fmt.Sprintf interpolation is safe.
+func (s *PostgresStorer) collectTranslatable(ctx context.Context, entityType, field, table, textCol, srcLangExpr string) ([]TranslatableItem, error) {
+	q := fmt.Sprintf(`
+		SELECT e.id, e.%[1]s, %[2]s,
+		       coalesce((SELECT jsonb_object_agg(t.lang, t.source_hash)
+		                 FROM translations t
+		                 WHERE t.entity_type = $1 AND t.entity_id = e.id AND t.field = $2), '{}')::text
+		FROM %[3]s e
+		WHERE coalesce(e.%[1]s, '') <> ''`,
+		textCol, srcLangExpr, table)
+
+	rows, err := s.pool.Query(ctx, q, entityType, field)
+	if err != nil {
+		return nil, fmt.Errorf("query translatable %s/%s: %w", entityType, field, err)
+	}
+	defer rows.Close()
+
+	var out []TranslatableItem
+	for rows.Next() {
+		var id int64
+		var text, srcLang, existingJSON string
+		if err := rows.Scan(&id, &text, &srcLang, &existingJSON); err != nil {
+			return nil, fmt.Errorf("scan translatable %s/%s: %w", entityType, field, err)
+		}
+		existing := map[string]string{}
+		if existingJSON != "" {
+			if err := json.Unmarshal([]byte(existingJSON), &existing); err != nil {
+				return nil, fmt.Errorf("unmarshal existing translations: %w", err)
+			}
+		}
+		out = append(out, TranslatableItem{
+			EntityType: entityType,
+			EntityID:   id,
+			Field:      field,
+			SourceText: text,
+			SrcLang:    srcLang,
+			Existing:   existing,
+		})
+	}
+	return out, rows.Err()
+}

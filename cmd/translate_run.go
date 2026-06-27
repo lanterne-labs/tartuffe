@@ -1,0 +1,120 @@
+package cmd
+
+import (
+	"context"
+	"digital-mirror/backend/storage"
+	"digital-mirror/backend/translate"
+	"fmt"
+	"strings"
+
+	"github.com/joho/godotenv"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+)
+
+var translateRunLangs string
+
+var translateRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Fill missing or stale translations for facts, stances and contradictions.",
+	Long: `The async translation phase. Scans facts, stances (label + summary) and
+contradictions (reason), and for each target language that is missing or whose
+source text changed (source_hash mismatch), produces a translation and stores it
+in the generic translations table. Idempotent and safe to re-run.
+
+This is the LAST step of 'dm pipeline daily' and never blocks generation; it can
+also be run standalone.`,
+	RunE: runTranslateRunCmd,
+}
+
+func init() {
+	translateCmd.AddCommand(translateRunCmd)
+	translateRunCmd.Flags().StringVar(&translateRunLangs, "langs", "", "Comma-separated target languages (default: en,fr)")
+}
+
+func runTranslateRunCmd(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if err := godotenv.Load(); err != nil {
+		log.Debug().Msg(".env file not found, relying on environment variables")
+	}
+
+	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
+	}
+	defer storer.Close()
+
+	tr, err := translate.NewOpenAITranslatorFromEnv()
+	if err != nil {
+		return fmt.Errorf("failed to create translator: %w", err)
+	}
+
+	targets := translate.DefaultTargetLangs
+	if strings.TrimSpace(translateRunLangs) != "" {
+		targets = splitLangs(translateRunLangs)
+	}
+
+	filled, scanned, err := runTranslateFill(ctx, storer, tr, targets)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Translation phase: %d translations filled across %d translatable items (targets: %s)\n",
+		filled, scanned, strings.Join(targets, ","))
+	return nil
+}
+
+func splitLangs(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// runTranslateFill is the shared core used by the CLI and the daily pipeline's
+// final step. For each translatable item it fills every target language that is
+// missing or stale (source_hash != current hash), best-effort per language.
+func runTranslateFill(ctx context.Context, storer *storage.PostgresStorer, tr translate.Translator, targets []string) (filled int, scanned int, err error) {
+	items, err := storer.ListTranslatableItems(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("list translatable items: %w", err)
+	}
+	for _, it := range items {
+		hash := translate.SourceHash(it.SourceText)
+		// A stored translation counts as done only if it was produced from the
+		// CURRENT source text (hash match); otherwise it is stale and refilled.
+		done := make(map[string]bool, len(it.Existing))
+		for lang, h := range it.Existing {
+			if h == hash {
+				done[lang] = true
+			}
+		}
+		results := translate.FillMissing(ctx, tr, it.SourceText, it.SrcLang, targets, done)
+		for lang, txt := range results {
+			if uErr := storer.UpsertTranslation(ctx, it.EntityType, it.EntityID, it.Field, lang, txt, hash); uErr != nil {
+				log.Warn().Err(uErr).Str("entity", it.EntityType).Int64("id", it.EntityID).
+					Str("field", it.Field).Str("lang", lang).Msg("failed to store translation")
+				continue
+			}
+			filled++
+		}
+	}
+	return filled, len(items), nil
+}
+
+// runTranslateStep is the daily pipeline's final translation phase. Best-effort:
+// it must never block or abort the pipeline (generation has already completed).
+func runTranslateStep(ctx context.Context, storer *storage.PostgresStorer) error {
+	tr, err := translate.NewOpenAITranslatorFromEnv()
+	if err != nil {
+		return fmt.Errorf("translator unavailable: %w", err)
+	}
+	filled, scanned, err := runTranslateFill(ctx, storer, tr, translate.DefaultTargetLangs)
+	if err != nil {
+		return err
+	}
+	log.Info().Int("filled", filled).Int("items", scanned).Msg("Daily pipeline: translation phase done")
+	return nil
+}

@@ -152,6 +152,15 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(auditErr).Msg("Daily pipeline: contradiction audit failed")
 	}
 
+	// Step 8 (final): Translation phase — decoupled from generation. Fills missing
+	// or stale translations for facts, stances and contradictions into the generic
+	// translations table for every target language. Runs LAST so generation never
+	// blocks on it. Best-effort — logged, never aborts the pipeline.
+	trErr := runTranslateStep(ctx, storer)
+	if trErr != nil {
+		log.Error().Err(trErr).Msg("Daily pipeline: translation phase failed")
+	}
+
 	elapsed := time.Since(start)
 
 	// Classify the run once; both the Telegram message and the pipeline_runs row
@@ -163,6 +172,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
 		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-merge", mergeErr},
 		{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
+		{"translate", trErr},
 	}
 	var stepErrs []error
 	var errParts []string
