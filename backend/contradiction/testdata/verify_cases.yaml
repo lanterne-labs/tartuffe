@@ -281,3 +281,32 @@ cases:
     expect: keep
     bucket: position_reversal
     notes: "Advocating FOR a primary vs being against one is a position reversal on the same subject. The auditor wrongly dismissed both as third_party_narrative because they are phrased as reported speech ('plaide'/'a exprimé') — but reported speech of the person's own position counts as his utterance."
+
+  # ---- Prod-sourced FP shapes from the 2026-06 audit-prod-data sweep (mirror-me2). Expect DROP. ----
+
+  # NOTE: two more audit-surfaced FP shapes were trialled here but NOT asserted, because the
+  # verifier LLM (temp 0.1) does not reliably drop them even with the catalog clauses added for
+  # them (mirror-me2 residual gap, documented there):
+  #   - conditional-not-triggered (Le Pen: candidacy IF sursis, but got ferme) -> [condition_later_met] clause added
+  #   - complementary same-day facets (Le Pen: "should resign" + "no point to it") -> [complementary_facts] clause added
+
+  # Targeted/partial benefit for specific groups vs declining the TOTAL/universal version — different scope.
+  - name: "FP_177_ciotti_partial_vs_total_transport"
+    fact_a: "Eric Ciotti a annoncé la gratuité des transports pour les plus de 65 ans, le personnel du CHU et les agents pénitentiaires."
+    fact_b: "Eric Ciotti a écarté l'extension de la gratuité totale des transports pour des raisons budgétaires."
+    claimed_reason: "Il instaure la gratuité des transports tout en écartant la gratuité des transports."
+    expect: drop
+    bucket: procedural_scope
+    notes: "A targeted measure for specific groups is compatible with declining the TOTAL/universal version; 'totale' marks a different scope, not a reversal."
+
+  # Qualified general stance (oppose calls EN PERMANENCE) vs endorsing ONE specific case.
+  - name: "FP_245_lepen_general_vs_specific_resignation"
+    fact_a: "Marine Le Pen a affirmé qu'il ne faut pas faire des appels à la démission en permanence et que c'est à la tête de l'État qu'il faut changer les choses."
+    fact_b: "Marine Le Pen a estimé que Gérald Darmanin aurait dû démissionner pour des raisons morales dans l'affaire Lyhanna."
+    claimed_reason: "Refuser les appels à la démission contredit estimer qu'un ministre aurait dû démissionner."
+    expect: drop
+    bucket: vague_vs_specific
+    notes: "Opposing CONSTANT/systematic resignation calls ('en permanence') is compatible with endorsing ONE specific moral case; the qualifier prevents it from being a blanket position the specific case could break."
+
+  # (FP_203 different-metrics shape — rental DAYS vs tourist-rental COUNT — trialled but not asserted:
+  #  flaky for the judge across runs; already covered by [different_subjects]. See mirror-me2.)

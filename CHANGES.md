@@ -2,6 +2,20 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-27: FP catalog — partial-vs-total + qualified-general-vs-specific buckets (mirror-me2)
+
+- The shared false-positive catalog (`backend/promptrules/false_positives.txt`, used by detector +
+  auditor + verifier) gained clauses for FP shapes the 2026-06 audit surfaced: a targeted/PARTIAL
+  measure vs declining the TOTAL/universal version (`[procedural_scope]`); a QUALIFIED general stance
+  ("oppose X en permanence") vs endorsing ONE specific case (`[vague_vs_specific]`); plus softer clauses
+  for conditional-not-triggered (`[condition_later_met]`) and complementary same-day facets
+  (`[complementary_facts]`). Reused existing rule tokens, so the auditor's closed enum is unchanged.
+- `verify_cases.yaml` gained 2 reliably-passing golden cases (FP_177 partial-vs-total, FP_245
+  general-vs-specific). The conditional-not-triggered / complementary-facets / different-metrics shapes
+  were trialled but NOT asserted — the verifier LLM (temp 0.1) does not reliably drop them and the
+  golden test is inherently flaky at the margin. Lesson: an LLM golden test can only assert shapes the
+  judge handles RELIABLY; borderline ones belong in the issue as a documented gap, not as flaky asserts.
+
 ## 2026-06-27: Extraction grounding rule — no over-specification (mirror-k1q)
 
 - The fact extractor was injecting specifics ABSENT from the cited quote: a named body
