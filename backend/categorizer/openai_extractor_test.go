@@ -192,3 +192,70 @@ pour l'industrie automobile.`
 		t.Errorf("Too many facts extracted (%d) — likely includes invalid ones", len(facts))
 	}
 }
+
+// TestRemoteLLMExtractor_NoOverSpecification is a live golden test for the grounding
+// rule: the extractor must NOT inject specifics absent from the source text. It
+// reproduces three real prod over-specification cases — substituting "GIEC"/IPCC for
+// a generic "les scientifiques", inventing "le Salvador" as a prison model, and
+// inventing an outlet ("Politico"). Each statement below is a legitimately
+// extractable position, but deliberately WITHOUT the tempting specific; those
+// specifics appear NOWHERE in the text, so a correctly-grounded extractor cannot
+// produce them. Requires OPEN_AI_KEY (skips otherwise), like the test above.
+func TestRemoteLLMExtractor_NoOverSpecification(t *testing.T) {
+	loadEnv(t)
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		t.Skip("Skipping over-specification test: OPEN_AI_KEY not set.")
+	}
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	// GIEC and Politico appear here as CONTEXT only — never as part of an entity's
+	// own contradictable statement. The grounding rule must keep them out of the
+	// facts: Le Pen's fact must say "les scientifiques" (not GIEC), and Bardella's
+	// must stay attributed to publicsenat.fr (not Politico). Salvador appears nowhere.
+	mockURL := "http://example.com/grounding"
+	mockText := `Positions politiques — entretiens et contexte
+
+Contexte de la semaine : un rapport du GIEC et une dépêche de l'agence Politico ont circulé.
+
+Interrogée séparément, Marine Le Pen a qualifié les recommandations des scientifiques sur
+le climat de « trop alarmistes ». Elle n'a nommé aucun organisme en particulier.
+
+Dans un entretien accordé à publicsenat.fr, Jordan Bardella a déclaré vouloir bâtir une
+nouvelle architecture européenne fondée sur la coopération entre les États.
+
+Éric Ciotti a affirmé qu'il ne faut pas se soucier des conditions de détention des criminels
+les plus dangereux. Il n'a évoqué aucun pays ni aucun modèle pénitentiaire étranger.`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     mockURL,
+		Title:   "Positions politiques — entretiens croisés",
+		Content: mockText,
+	}
+
+	ctx := context.Background()
+	facts, err := extractorClient.ExtractFacts(ctx, "Marine Le Pen", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] entity=%q normalized=%q quote=%q", i+1, f.SubjectEntity, f.NormalizedFactText, f.OriginalQuote)
+	}
+
+	// Specifics that appear NOWHERE in the source — the extractor must not invent them.
+	forbidden := []string{"GIEC", "IPCC", "Salvador", "Politico"}
+	for _, bad := range forbidden {
+		for i, f := range facts {
+			hay := f.NormalizedFactText + " " + f.NormalizedFactTextEn + " " + f.OriginalQuote
+			if strings.Contains(hay, bad) {
+				t.Errorf("Fact %d over-specifies — injected %q absent from source: %q", i+1, bad, f.NormalizedFactText)
+			}
+		}
+	}
+}

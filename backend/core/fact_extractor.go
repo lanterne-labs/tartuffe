@@ -123,6 +123,7 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - Is the subject_entity the one who actually MADE the statement or PERFORMED the action? A measurement or event ABOUT the entity is not the entity's own fact.
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
 - Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.
+- GROUNDING — do NOT over-specify: every specific in normalized_fact (a date, a named body like "GIEC"/IPCC, a figure like "30 milliards", a place like "le Salvador", a motive like "pour déstabiliser l'Europe", an outlet/byline like "Politico") MUST appear in original_quote. If the quote is generic ("les scientifiques"), keep the fact generic — do NOT swap in a specific name the article didn't attribute. If the quote carries no date, add no date. Strip any detail the quote doesn't prove, or drop the fact. NEVER import a detail from a different sentence or source.
 - If you catch an internal contradiction, re-read the original_quote carefully and rewrite.
 
 ## Consolidation
@@ -156,7 +157,7 @@ Return a JSON array. Each object has 10 fields (in this order):
    - ❌ "campaign promises" / "rhetoric threats" / "denials reversals"
    - ✅ "droits-douane chine" / "coalition détroit-hormuz" / "accord-nucléaire iran"
    - More French examples: "baisse-impôts impôt-revenu" (raise OR cut), "prison affaire-assistants-parlementaires"
-7. 'original_quote': Exact snippet (max ~250 chars) from the source text
+7. 'original_quote': Exact verbatim snippet (max ~250 chars) from the source text that SUBSTANTIATES THE WHOLE fact. Every concrete detail in normalized_fact — names, dates, numbers, places, the action, and any motive/attribution — must appear in (or be directly entailed by) this quote. If a detail is not in a quote you can cite, it does NOT belong in normalized_fact. Never stitch a quote together from distant fragments, and never borrow a detail from a DIFFERENT statement or source in the article.
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
 9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published. Use the most precise form supplied ("YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full RFC3339 with timezone). Set this when the body explicitly states either (a) an absolute date/time in a byline ("Publié le 19/05/2026 à 09h", "Posted on May 19, 2026"), OR (b) a relative phrase ("Publié hier", "Posted 2 days ago", "il y a 3 heures") — resolve relative phrases to absolute values using TODAY'S DATE above, preserving the implied hour when given. OMIT this field entirely otherwise. DO NOT guess from article content, topic, or named events.

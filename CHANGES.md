@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-27: Extraction grounding rule — no over-specification (mirror-k1q)
+
+- The fact extractor was injecting specifics ABSENT from the cited quote: a named body
+  ("GIEC" for a generic "les scientifiques"), fabricated dates/figures, invented places
+  ("le Salvador"), motives, or an outlet ("Politico") — sometimes grafted from a DIFFERENT
+  statement/source in the same article. Rule 6 ("be specific") had no counterweight.
+- `CoreFactExtractionPrompt` now carries a GROUNDING rule (in the original_quote field spec and
+  the Self-Consistency Check): every specific in normalized_fact must appear in original_quote;
+  keep the fact as generic as the quote is; never import a detail from a different sentence/source.
+- Live golden test `TestRemoteLLMExtractor_NoOverSpecification` (categorizer) reproduces the
+  GIEC/Salvador/Politico traps and asserts none leak into a fact. Local-only (OPEN_AI_KEY-gated).
+
 ## 2026-06-24: Contradiction recording rejects cross-person pairs (mirror-ez8)
 
 - The detector's KNN candidate search wasn't strictly person-scoped, so it occasionally paired a fact
@@ -27,8 +39,8 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
   `backend/core/quote_guard.go`: `quoteMissing`), as a per-fact skip-with-WARN that does NOT abort the
   batch (mirrors the entity-rejected skip). Scoped to `news`/`twitter`; structured votes
   (`assemblee_law_page`) always carry a quote from law metadata and are untouched.
-- Rule: a web/news fact with no verbatim quote is a hallucination — never store it. (Still open in
-  mirror-k1q: extraction-prompt over-specification + an extraction golden test.)
+- Rule: a web/news fact with no verbatim quote is a hallucination — never store it. (The
+  extraction-prompt over-specification half is handled by the 2026-06-27 grounding-rule entry above.)
 
 ## 2026-06-15: Stance merge for fragmented persons — pairwise gate + direct fold (mirror-86l)
 
