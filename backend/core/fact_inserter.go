@@ -195,6 +195,18 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 				result.Skipped++
 				continue
 			}
+			// Web-extracted fact with no source quote: unverifiable, skip it
+			// without aborting the batch (mirrors the entity-rejected skip above).
+			if isQuoteMissing(err) {
+				log.Warn().
+					Str("source_type", fact.SourceType).
+					Str("source_url", fact.SourceURL).
+					Str("subject", fact.SubjectEntity).
+					Str("fact_text", truncate(fact.NormalizedFactText, 100)).
+					Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
+				result.Skipped++
+				continue
+			}
 			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
 		}
 		if inserted {
@@ -216,6 +228,15 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (int64, int64, bool, error) {
 	if input.SubjectEntity == "" {
 		return 0, 0, false, fmt.Errorf("subject_entity is required")
+	}
+
+	// Web/news-extracted facts must carry a verbatim source quote. An empty quote
+	// means the extractor produced an unverifiable claim (a hallucination with no
+	// snippet behind it), so reject it rather than store a fact nothing backs.
+	// Scoped to LLM-extracted web sources; structured sources (e.g. vote records)
+	// always populate the quote from metadata and are intentionally excluded.
+	if quoteMissing(input) {
+		return 0, 0, false, errMissingQuote
 	}
 
 	// Resolve subject entity to person ID

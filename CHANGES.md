@@ -2,6 +2,34 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-06-24: Contradiction recording rejects cross-person pairs (mirror-ez8)
+
+- The detector's KNN candidate search wasn't strictly person-scoped, so it occasionally paired a fact
+  about person X with one about person Y and filed it under one of them — a guaranteed "different
+  subjects" false positive (e.g. a Patricia Lemoine fact vs a Darmanin fact). 3 of 74 prod rows were
+  this. NB the `fact_mentions` were correct; the bug was in the PAIRING, not the linkage.
+- `RecordContradiction` now inserts only when the two facts share a mentioned person (via
+  fact_sources -> fact_mentions); a no-shared-person pair is skipped with a WARN (RETURNING is empty
+  -> pgx.ErrNoRows handled as a skip). Deterministic guard at the single insert chokepoint;
+  same-person and stance-path contradictions are unaffected.
+- New `dm contradictions prune-cross-person [--apply]` lists/dismisses pre-guard rows (FP path:
+  removes + suppresses re-detection + recomputes score). Cleaned 225/230/234 in prod.
+- Lesson: this whole FP subclass is DETERMINISTIC (pure SQL: "do the two facts share a person?") — a
+  SQL scan even caught one row (234) the LLM audit missed. Kill deterministic FP classes with a guard,
+  not the LLM verifier (mirror-me2).
+
+## 2026-06-24: Ingestion rejects empty-quote web facts (mirror-k1q)
+
+- A prod audit (audit-prod-data workflow) found `news`/`twitter` facts stored with an EMPTY
+  `original_quote` — unverifiable hallucinations with no snippet behind them. Nothing checked the
+  quote before; `ParseFactJSON`/`insertSingleFact` validated only `SubjectEntity`.
+- `insertSingleFact` now skips a web-extracted fact whose quote is blank (new
+  `backend/core/quote_guard.go`: `quoteMissing`), as a per-fact skip-with-WARN that does NOT abort the
+  batch (mirrors the entity-rejected skip). Scoped to `news`/`twitter`; structured votes
+  (`assemblee_law_page`) always carry a quote from law metadata and are untouched.
+- Rule: a web/news fact with no verbatim quote is a hallucination — never store it. (Still open in
+  mirror-k1q: extraction-prompt over-specification + an extraction golden test.)
+
 ## 2026-06-15: Stance merge for fragmented persons — pairwise gate + direct fold (mirror-86l)
 
 - `dm stances merge` (and the daily pipeline's stance-merge step) had a hard recall failure on the

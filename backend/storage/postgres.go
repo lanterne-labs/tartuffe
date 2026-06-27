@@ -1727,7 +1727,23 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
             LIMIT 1
         )
         INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason, reason_en, bundle_stance_id)
-        VALUES ($1, $2, $3, $4, NULLIF($5,''), (SELECT stance_document_id FROM shared))
+        SELECT $1::bigint, $2::bigint, $3::bigint, $4::text, NULLIF($5, '')::text,
+               (SELECT stance_document_id FROM shared)
+        -- Cross-person guard: only record a contradiction when both facts concern the
+        -- SAME person (share a mentioned person via fact_sources -> fact_mentions). A
+        -- pair with no shared person is a "different subjects" false positive (e.g. a
+        -- Patricia Lemoine fact vs a Darmanin fact), so the SELECT yields no row and
+        -- nothing is inserted; RETURNING comes back empty and the caller treats the
+        -- pgx.ErrNoRows as a skip.
+        WHERE EXISTS (
+            SELECT 1
+            FROM fact_sources fsa
+            JOIN fact_mentions fma ON fma.fact_source_id = fsa.id
+            JOIN fact_sources fsb ON fsb.fact_id = $3
+            JOIN fact_mentions fmb ON fmb.fact_source_id = fsb.id
+                                   AND fmb.person_id = fma.person_id
+            WHERE fsa.fact_id = $2
+        )
         ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
         SET reason = EXCLUDED.reason,
             reason_en = EXCLUDED.reason_en,
@@ -1743,6 +1759,14 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason, reasonEn).Scan(&contradictionID, &wasInserted, &bundleStanceID)
 	timer.ObserveDuration(err)
 
+	if err == pgx.ErrNoRows {
+		// Cross-person guard fired (see WHERE EXISTS above): the two facts share no
+		// mentioned person, so this pair is a different-subjects false positive. Skip
+		// recording it — return as not-inserted rather than an error.
+		log.Warn().Int64("person_id", personID).Int64("fact_a_id", factAID).Int64("fact_b_id", factBID).
+			Msg("Skipped contradiction: facts share no common subject person (cross-person pair)")
+		return 0, false, nil, nil
+	}
 	if err != nil {
 		return 0, false, nil, fmt.Errorf("failed to insert/update contradiction for person %d between facts %d and %d: %w", personID, factAID, factBID, err)
 	}
@@ -2952,6 +2976,41 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 // honesty score. Returns pgx.ErrNoRows if the contradiction does not exist.
 func (s *PostgresStorer) DeleteContradiction(ctx context.Context, id int64) error {
 	return s.removeContradiction(ctx, id, false)
+}
+
+// FindCrossPersonContradictionIDs returns the ids of contradictions whose two
+// facts share no common subject (mentioned) person — the "different subjects"
+// false-positive class that the cross-person guard in RecordContradiction now
+// prevents at insert time. Used by `dm contradictions prune-cross-person` to
+// clean up rows recorded before the guard existed.
+func (s *PostgresStorer) FindCrossPersonContradictionIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.id
+		FROM contradictions c
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM fact_sources fsa
+			JOIN fact_mentions fma ON fma.fact_source_id = fsa.id
+			JOIN fact_sources fsb ON fsb.fact_id = c.fact_b_id
+			JOIN fact_mentions fmb ON fmb.fact_source_id = fsb.id
+			                       AND fmb.person_id = fma.person_id
+			WHERE fsa.fact_id = c.fact_a_id
+		)
+		ORDER BY c.id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying cross-person contradictions: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning contradiction id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // DismissContradictionAsFalsePositive removes a contradiction the auditor judged
