@@ -99,6 +99,13 @@ func runTranslateFill(ctx context.Context, storer *storage.PostgresStorer, tr tr
 				continue
 			}
 			filled++
+			// Backward-compat bridge: keep the legacy _en columns the API/frontend
+			// still read in sync with the generic store (best-effort).
+			if lang == "en" {
+				if lErr := storer.UpdateLegacyEnColumn(ctx, it.EntityType, it.Field, it.EntityID, txt); lErr != nil {
+					log.Warn().Err(lErr).Str("entity", it.EntityType).Int64("id", it.EntityID).Msg("failed to mirror EN into legacy column")
+				}
+			}
 		}
 	}
 	return filled, len(items), nil

@@ -33,6 +33,32 @@ func (s *PostgresStorer) UpsertTranslation(ctx context.Context, entityType strin
 	return nil
 }
 
+// UpdateLegacyEnColumn mirrors an English translation back into the entity's
+// legacy _en column (facts.fact_text_en, stance_documents.label_en/summary_en,
+// contradictions.reason_en). This is the backward-compat bridge: the API and
+// frontend still read those columns, so the async translate phase keeps them
+// fresh once generation stops emitting _en inline. No-op for fields without a
+// legacy column. Remove once the read path reads the translations table directly.
+func (s *PostgresStorer) UpdateLegacyEnColumn(ctx context.Context, entityType, field string, entityID int64, text string) error {
+	var q string
+	switch entityType + "/" + field {
+	case "fact/text":
+		q = `UPDATE facts SET fact_text_en = $1 WHERE id = $2`
+	case "stance/label":
+		q = `UPDATE stance_documents SET label_en = $1 WHERE id = $2`
+	case "stance/summary":
+		q = `UPDATE stance_documents SET summary_en = $1 WHERE id = $2`
+	case "contradiction/reason":
+		q = `UPDATE contradictions SET reason_en = $1 WHERE id = $2`
+	default:
+		return nil // no legacy column for this (entity, field)
+	}
+	if _, err := s.pool.Exec(ctx, q, text, entityID); err != nil {
+		return fmt.Errorf("update legacy _en (%s/%s/%d): %w", entityType, field, entityID, err)
+	}
+	return nil
+}
+
 // ListTranslatableItems returns every translatable (entity, field) across facts,
 // stances (label + summary) and contradictions (reason), each with the
 // translations already present. The async translate phase decides per item which

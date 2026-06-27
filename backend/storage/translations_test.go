@@ -49,4 +49,11 @@ func TestTranslations_UpsertAndList(t *testing.T) {
 	).Scan(&txt, &h))
 	assert.Equal(t, "xtrans: updated English", txt)
 	assert.Equal(t, "hash2", h)
+
+	// Bridge: UpdateLegacyEnColumn mirrors EN back into the legacy fact_text_en column.
+	require.NoError(t, storer.UpdateLegacyEnColumn(ctx, "fact", "text", fid, "bridged EN value"))
+	var en *string
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT fact_text_en FROM facts WHERE id=$1`, fid).Scan(&en))
+	require.NotNil(t, en)
+	assert.Equal(t, "bridged EN value", *en)
 }

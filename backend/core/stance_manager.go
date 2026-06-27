@@ -1280,11 +1280,10 @@ SUMMARY RULES:
 - Do not add facts or claims beyond what's in the listed facts.
 
 LANGUAGE RULES:
-- Write "label" and "summary" in the SAME LANGUAGE as the listed facts (if facts span multiple languages, use French).
-- ALSO provide "label_en" and "summary_en" — faithful English translations. OMIT both _en fields entirely when the native versions are already in English.
+- Write "label" and "summary" in FRENCH, always — even when some or all listed facts are in English. Do NOT emit any translation here; English (and any other language) is produced separately by the translation phase.
 
 Return ONLY valid JSON:
-{"label": "subject-area label", "label_en": "English translation (omit if label is English)", "summary": "2-4 sentence summary", "summary_en": "English translation (omit if summary is English)"}`, factsBuilder.String())
+{"label": "subject-area label in French", "summary": "2-4 sentence summary in French"}`, factsBuilder.String())
 
 	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700, false)
 	if err != nil {
