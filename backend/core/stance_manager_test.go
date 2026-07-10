@@ -50,7 +50,7 @@ func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, s
 	return nil
 }
 
-func (m *mockStanceStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error {
+func (m *mockStanceStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
 	doc, ok := m.stances[id]
 	if !ok {
 		return nil

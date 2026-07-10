@@ -17,7 +17,7 @@ import (
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
 	UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error
-	UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error
+	UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error)
@@ -132,10 +132,8 @@ type generalLabelResponse struct {
 // general topic label and a 2-4 sentence summary regenerated from the FULL
 // fact list of the stance.
 type stanceMetadataResponse struct {
-	Label     flexibleString `json:"label"`
-	LabelEn   flexibleString `json:"label_en"` // English translation; empty when label is already English
-	Summary   string         `json:"summary"`
-	SummaryEn string         `json:"summary_en"` // English translation; empty when summary is already English
+	Label   flexibleString `json:"label"`
+	Summary string         `json:"summary"`
 }
 
 // flexibleString accepts string, number, bool, or null in JSON and stores the
@@ -807,7 +805,7 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 		return nil // nothing to refresh from
 	}
 
-	label, labelEn, summary, summaryEn, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
+	label, summary, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
 	if err != nil {
 		return fmt.Errorf("regenerating metadata: %w", err)
 	}
@@ -818,10 +816,7 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
 	}
-	if r := []rune(labelEn); len(r) > 120 {
-		labelEn = string(r[:120])
-	}
-	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, labelEn, summary, summaryEn); err != nil {
+	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, summary); err != nil {
 		return fmt.Errorf("persisting refreshed metadata: %w", err)
 	}
 	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("facts", len(facts)).Msg("Refreshed stance metadata")
@@ -1241,9 +1236,9 @@ Return ONLY valid JSON:
 //   - Re-derive the broadest accurate subject-area label per the LABEL RULES.
 //   - Write a 2-4 sentence summary that PRESERVES tensions if any pair of key
 //     facts conflict — do not smooth contradictions into one narrative.
-func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int64, facts []StanceFactInfo) (string, string, string, string, error) {
+func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int64, facts []StanceFactInfo) (string, string, error) {
 	if len(facts) == 0 {
-		return "", "", "", "", fmt.Errorf("refreshStanceMetadata: stance %d has no facts", stanceID)
+		return "", "", fmt.Errorf("refreshStanceMetadata: stance %d has no facts", stanceID)
 	}
 	var factsBuilder strings.Builder
 	for _, f := range facts {
@@ -1286,17 +1281,15 @@ Return ONLY valid JSON:
 
 	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700, false)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("metadata refresh: %w", err)
+		return "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
 	var resp stanceMetadataResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		return "", "", "", "", fmt.Errorf("parsing refresh response: %w", err)
+		return "", "", fmt.Errorf("parsing refresh response: %w", err)
 	}
 	label := strings.TrimSpace(string(resp.Label))
-	labelEn := strings.TrimSpace(string(resp.LabelEn))
 	summary := strings.TrimSpace(resp.Summary)
-	summaryEn := strings.TrimSpace(resp.SummaryEn)
-	return label, labelEn, summary, summaryEn, nil
+	return label, summary, nil
 }
 
 // stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.

@@ -35,12 +35,12 @@ func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64
 	return a.storer.UpdateStanceDocument(ctx, id, summary, summaryEn, embedding, keyFactIDs, factCount)
 }
 
-// UpdateStanceMetadata updates ONLY the cluster_label/label_en and summary/summary_en of a stance.
+// UpdateStanceMetadata updates ONLY the native cluster_label and summary of a stance.
 // Used by the per-fact stance-refresh path (ProcessNewFact → handleVerdict →
 // triggerStanceRefresh) to keep the stance's title and description in sync
-// with its accumulating fact set.
-func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error {
-	return a.storer.UpdateStanceMetadata(ctx, id, label, labelEn, summary, summaryEn)
+// with its accumulating fact set. Translations are filled by the async phase.
+func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
+	return a.storer.UpdateStanceMetadata(ctx, id, label, summary)
 }
 
 // AddFactToStance adds a fact to the stance document join table.

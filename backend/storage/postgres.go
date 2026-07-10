@@ -5092,17 +5092,19 @@ func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, sum
 	return nil
 }
 
-// UpdateStanceMetadata updates only the cluster_label/label_en and summary/summary_en of a stance.
+// UpdateStanceMetadata updates only the native cluster_label and summary of a stance.
+// The _en (and other-language) columns are owned by the async translation phase and
+// intentionally left untouched here.
 // Used by the per-fact stance refresh path (StanceManager.triggerStanceRefresh)
 // to keep the stance's title and description in sync with its accumulating
 // fact set without touching the centroid / fact_count / key_fact_ids.
-func (s *PostgresStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, labelEn, summary, summaryEn string) error {
+func (s *PostgresStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
 	query := `
 		UPDATE stance_documents
-		SET cluster_label = $1, label_en = NULLIF($2,''), summary = $3, summary_en = NULLIF($4,''), last_updated_at = NOW()
-		WHERE id = $5`
+		SET cluster_label = $1, summary = $2, last_updated_at = NOW()
+		WHERE id = $3`
 
-	_, err := s.pool.Exec(ctx, query, label, labelEn, summary, summaryEn, id)
+	_, err := s.pool.Exec(ctx, query, label, summary, id)
 	if err != nil {
 		return fmt.Errorf("updating stance metadata %d: %w", id, err)
 	}
