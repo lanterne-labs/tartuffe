@@ -283,15 +283,13 @@ For each pair, respond with these lines in order:
 Line 1 (mandatory): PAIR N: REASONING: [Identify core claims in each statement, check which rules apply, 1-2 sentences of analysis]
 Line 2 (mandatory IFF your verdict will be YES under the VALUES-BASED / DIRECTIONAL rule; otherwise omit): PAIR N: AXIS: [≤5 words naming the single underlying value-axis on which the two facts move in opposite directions, e.g. "souveraineté industrielle française" or "civil liberties / surveillance"]
 Line 3 (mandatory): PAIR N: [YES/NO]: [one-sentence reason]
-Line 4 (mandatory IFF Line 3 is NOT in English): PAIR N: REASON_EN: [faithful English translation of Line 3's reason]
 
 You MUST write your REASONING line BEFORE your verdict line. Analyze before committing.
 If your reasoning concludes the statements are compatible, supplementary, or not contradictory, your verdict MUST be NO.
 CRITICAL: Never output YES when your own analysis shows the facts don't contradict.
 AXIS GATE: If you are about to answer YES on the basis of values/direction (no surface keyword overlap), you MUST first write an AXIS line naming the single shared axis in ≤5 words. If you cannot name a single concrete axis in ≤5 words, your verdict MUST be NO. The AXIS line is your commitment device — it forces you to ground a values-based YES in a specific, articulable axis rather than a vague "feels opposite" intuition.
 
-**LANGUAGE RULE:** Write your REASONING and YES/NO explanations in the same language as the statements being analyzed. If statements span multiple languages, write in French.
-When Line 3's reason is NOT in English, you MUST emit a "PAIR N: REASON_EN: ..." line with a faithful English translation. OMIT it only when Line 3 is already in English.`
+**LANGUAGE RULE:** Write your REASONING and YES/NO explanations in French. Do NOT provide any translation — English and other languages are produced separately by the translation phase.`
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {

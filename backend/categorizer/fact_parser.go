@@ -130,15 +130,10 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 				Msg("Skipping fact: lang is missing (required BCP-47 code)")
 			continue
 		}
-		// If lang is English, normalized_fact_en should be empty (per prompt).
-		// If lang is non-English, normalized_fact_en is required for the bilingual flow.
-		if rawFact.Lang != "en" && strings.TrimSpace(rawFact.NormalizedFactEn) == "" {
-			log.Warn().Int("fact_index", i).
-				Str("lang", rawFact.Lang).
-				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
-				Str("source_url", sourceURL).
-				Msg("non-English fact missing normalized_fact_en — storing without English copy; frontend toggle will fall back to native")
-		}
+		// Translation is no longer produced at extraction time: the prompt emits only
+		// the native normalized_fact, and the async translation phase fills every
+		// target language later. normalized_fact_en is thus expected to be empty here;
+		// if an older prompt/model still returns it, we keep it as a harmless seed.
 
 		// Parse the optional LLM-extracted article publication date. Accept the
 		// progressively-precise ISO 8601 forms the prompt asks for: date only,

@@ -11,8 +11,12 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
 - New `dm translate run` + a FINAL step of `dm pipeline daily` (Step 8): scans facts, stances
   (label+summary) and contradictions (reason), fills missing/stale translations. Decoupled from
   generation — runs LAST, best-effort, never blocks the pipeline.
-- Still additive for now: the generic table is populated but reads still use the legacy `_en` columns,
-  and generation still emits inline `_en`, until the decouple + read-path phases land (epic mirror-rgw).
+- Generation is now DECOUPLED from translation: fact extraction, stance refresh, and both
+  contradiction-reason paths no longer emit inline `_en` (extraction writes only the native
+  `normalized_fact`; stance label/summary + contradiction reason are pinned to French). All `_en`
+  now comes from the async translate phase, which bridges English back into the legacy `_en` columns
+  so the API/frontend keep working. The former mid-pipeline EN-only fact repair (Step 3b) is removed
+  as redundant. Read-path migration to the generic table (N languages) is the remaining phase.
 
 ## 2026-06-27: FP catalog — partial-vs-total + qualified-general-vs-specific buckets (mirror-me2)
 

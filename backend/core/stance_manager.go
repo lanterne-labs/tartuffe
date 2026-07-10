@@ -945,7 +945,7 @@ The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction 
 **RESPONSE FORMAT:**
 Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
 
-**LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in the SAME LANGUAGE as the KEY FACTS and NEW FACT (if facts span multiple languages, use French). For EACH contradiction whose `+"`reason`"+` is NOT English, ALSO provide `+"`reason_en`"+` — a faithful English translation. OMIT `+"`reason_en`"+` when `+"`reason`"+` is already English. `+"`reasoning`"+` fields (both top-level and per-contradiction) follow the same language rule.
+**LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in FRENCH (even when the facts are in English). Do NOT provide any translation — English and other languages are produced separately by the translation phase. `+"`reasoning`"+` fields (both top-level and per-contradiction) may follow the language of the facts.
 
 Return ONLY valid JSON:
 {
@@ -956,8 +956,7 @@ Return ONLY valid JSON:
     {
       "key_fact_id": <id>,
       "reasoning": "1-2 sentences: restate the NEW FACT's core claim, restate THIS key fact's core claim, then explain why these two are directly opposed when considered in isolation. If you find yourself naming a third key fact's ID to explain the opposition, the DIRECT-EDGE REQUIREMENT fails — drop this entry.",
-      "reason": "1-sentence user-facing summary of why these two facts contradict",
-      "reason_en": "English translation (omit when reason is English)"
+      "reason": "1-sentence user-facing summary in French of why these two facts contradict"
     }
   ]
 }

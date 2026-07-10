@@ -144,7 +144,7 @@ Return a JSON array. Each object has 10 fields (in this order):
    "human" | "party" | "organization"
 4. 'normalized_fact': Concise statement of what the entity DID or SAID. Include full name, specific action/statement, negations, dates, quantities. Write in the SAME LANGUAGE as the SOURCE ARTICLE (not the entity's nationality — a French speech reported in English stays English). Use natural language, NEVER the canonical verbs ("a nié" / "denied", not "a DENIED").
 4b. 'lang': REQUIRED. BCP-47 code matching the language of 'normalized_fact' ("fr", "en", "de", "es", ...). Missing or non-BCP-47 values are rejected at parse time.
-4c. 'normalized_fact_en': English translation of 'normalized_fact'. MANDATORY whenever 'lang' != "en" — a non-English fact WITHOUT a non-empty 'normalized_fact_en' is INVALID and must NEVER be emitted; fill it in for every single non-English fact. OMIT entirely ONLY when 'lang' == "en". Preserve every concrete detail (numbers, dates, named entities, negations, conditionals) faithfully — DO NOT paraphrase.
+   Do NOT translate here — write ONLY 'normalized_fact' in the source language. Translations are produced separately by the translation phase.
 5. 'canonical_verb': MUST be EXACTLY one of these 20 UPPERCASE tokens (no synonyms, no inflections, no lowercase, no spaces — facts with any other value will be rejected):
    DENIED | CLAIMED | PROMISED | SUPPORTED | OPPOSED | VOTED_FOR | VOTED_AGAINST | PROPOSED | CONFIRMED | ADMITTED | REFUSED | DEMANDED | THREATENED | WAS_SENTENCED | WAS_CONVICTED | WAS_ACQUITTED | WAS_FINED | RECEIVED_FUNDS | CHANGED_POSITION | ANNOUNCED
    Pick the closest token; do NOT invent new ones (e.g. NEVER return "WAIVED", "SIGNED", "CONVICTED" — use the closest match like ANNOUNCED, PROPOSED, WAS_CONVICTED).
@@ -181,7 +181,7 @@ by itself a reason to return [] — extract whatever real facts are there about
 whoever is there.
 ⚠️ JSON VALIDITY: You MUST produce valid JSON. Inside string values, ESCAPE double quotes as \" or replace them with single quotes. NEVER put raw " inside a JSON string value — this breaks parsing.
 
-Example (French source — note 'lang' = "fr", 'normalized_fact_en' present, 'article_published_at' from explicit "Publié le ..." byline):
+Example (French source — note 'lang' = "fr", NO translation field, 'article_published_at' from explicit "Publié le ..." byline):
 [
   {
     "reasoning": "Type 1: Le Pen's own denial of wrongdoing. Contradictable: she could later admit guilt. Verb: DENIED.",
@@ -189,7 +189,6 @@ Example (French source — note 'lang' = "fr", 'normalized_fact_en' present, 'ar
     "subject_entity_type": "human",
     "normalized_fact": "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit' lors de son procès en appel le 13 janvier 2026.",
     "lang": "fr",
-    "normalized_fact_en": "Marine Le Pen stated she had 'no feeling whatsoever of having committed the slightest offense' during her appeal trial on 13 January 2026.",
     "canonical_verb": "DENIED",
     "embedding_text": "délits affaire-assistants-parlementaires",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
@@ -198,7 +197,7 @@ Example (French source — note 'lang' = "fr", 'normalized_fact_en' present, 'ar
   }
 ]
 
-For an English source: set 'lang': "en", OMIT 'normalized_fact_en', and write 'normalized_fact' / 'embedding_text' in English. All other rules are identical.`
+For an English source: set 'lang': "en" and write 'normalized_fact' / 'embedding_text' in English. All other rules are identical.`
 
 // FactExtractorConfig holds all parameters needed to build a fact extraction prompt.
 type FactExtractorConfig struct {

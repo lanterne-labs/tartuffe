@@ -90,15 +90,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
 	}
 
-	// Step 3b: Translation repair. All fact-creating steps are done; fill any
-	// non-English facts whose extraction-time English translation came back empty
-	// (the model occasionally drops the field). Best-effort — failures are logged
-	// and retried next run, never aborting the pipeline.
-	if filled, failed, trErr := repairMissingTranslations(ctx, storer, 5000); trErr != nil {
-		log.Error().Err(trErr).Msg("Daily pipeline: translation repair failed")
-	} else if filled > 0 || failed > 0 {
-		log.Info().Int("filled", filled).Int("failed", failed).Msg("Daily pipeline: translation repair done")
-	}
+	// (Former Step 3b "translation repair" removed: the final translation phase
+	// (Step 8) now fills every language for facts/stances/contradictions, so the
+	// mid-pipeline EN-only fact repair is redundant.)
 
 	// Step 4: Stance merge sweep. Looks for stances that should be merged per
 	// LLM-vetted centroid clustering, applies the merges, and re-detects
