@@ -74,9 +74,12 @@ func (s *PostgresStorer) ListTranslatableItems(ctx context.Context, entityTypes 
 		entityType, field, table, textCol, srcLangExpr string
 	}{
 		{"fact", "text", "facts", "fact_text", "coalesce(e.lang, '')"},
-		{"stance", "label", "stance_documents", "cluster_label", "'auto'"},
-		{"stance", "summary", "stance_documents", "summary", "'auto'"},
-		{"contradiction", "reason", "contradictions", "reason", "'auto'"},
+		// Stance label/summary are pinned to French (refreshStanceMetadata), so the
+		// source is 'fr' — the translate phase then only needs to fill the other
+		// languages (no redundant fr=native row).
+		{"stance", "label", "stance_documents", "cluster_label", "'fr'"},
+		{"stance", "summary", "stance_documents", "summary", "'fr'"},
+		{"contradiction", "reason", "contradictions", "reason", "'fr'"},
 	}
 	var all []TranslatableItem
 	for _, sp := range specs {
