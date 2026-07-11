@@ -6,13 +6,34 @@ import (
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"fmt"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
-var refreshMetadataPerson string
+var (
+	refreshMetadataPerson    string
+	refreshMetadataNonFrOnly bool
+)
+
+// looksFrench reports whether a stance summary already reads as French, used by
+// --only-non-french to skip already-French stances (both a resume mechanism and a
+// guard against needlessly regenerating good French summaries). Conservative: it
+// leans toward "not French" on borderline text so English stances are not skipped.
+func looksFrench(summary string) bool {
+	s := strings.ToLower(summary)
+	if strings.ContainsAny(s, "éèàçêâîôûùïüœ") {
+		return true
+	}
+	for _, m := range []string{" le ", " la ", " les ", " des ", " une ", " du ", " au ", " qu'", " d'", " l'", " a déclaré", " a affirmé", " a annoncé"} {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
 
 var stancesRefreshMetadataCmd = &cobra.Command{
 	Use:   "refresh-metadata",
@@ -30,6 +51,7 @@ facts' language, so some were English).`,
 func init() {
 	stancesCmd.AddCommand(stancesRefreshMetadataCmd)
 	stancesRefreshMetadataCmd.Flags().StringVar(&refreshMetadataPerson, "person", "", "Only refresh this person's stances (optional)")
+	stancesRefreshMetadataCmd.Flags().BoolVar(&refreshMetadataNonFrOnly, "only-non-french", false, "Skip stances whose summary already looks French (resume / avoid re-doing good ones)")
 }
 
 func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
@@ -64,7 +86,7 @@ func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	var refreshed, failed int
+	var refreshed, failed, skipped int
 	for _, p := range persons {
 		docs, err := storer.GetStanceDocumentsForPerson(ctx, p.ID)
 		if err != nil {
@@ -72,6 +94,10 @@ func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		for _, d := range docs {
+			if refreshMetadataNonFrOnly && looksFrench(d.Summary) {
+				skipped++
+				continue
+			}
 			if err := stanceManager.RefreshStanceMetadata(ctx, d.ID); err != nil {
 				log.Warn().Err(err).Int64("stance_id", d.ID).Str("person", p.Name).Msg("refresh failed")
 				failed++
@@ -80,6 +106,6 @@ func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
 			refreshed++
 		}
 	}
-	fmt.Printf("Stance metadata refresh: %d refreshed, %d failed. Run 'dm translate run' to fill translations.\n", refreshed, failed)
+	fmt.Printf("Stance metadata refresh: %d refreshed, %d skipped (already French), %d failed. Run 'dm translate run' to fill translations.\n", refreshed, skipped, failed)
 	return nil
 }
