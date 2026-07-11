@@ -12,7 +12,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var translateRunLangs string
+var (
+	translateRunLangs  string
+	translateRunEntity string
+	translateRunLimit  int
+)
 
 var translateRunCmd = &cobra.Command{
 	Use:   "run",
@@ -30,6 +34,8 @@ also be run standalone.`,
 func init() {
 	translateCmd.AddCommand(translateRunCmd)
 	translateRunCmd.Flags().StringVar(&translateRunLangs, "langs", "", "Comma-separated target languages (default: en,fr)")
+	translateRunCmd.Flags().StringVar(&translateRunEntity, "entity", "", "Comma-separated entity types to scope to: fact,stance,contradiction (default: all)")
+	translateRunCmd.Flags().IntVar(&translateRunLimit, "limit", 0, "Max translations to fill this run (0 = no limit)")
 }
 
 func runTranslateRunCmd(cmd *cobra.Command, args []string) error {
@@ -54,7 +60,7 @@ func runTranslateRunCmd(cmd *cobra.Command, args []string) error {
 		targets = splitLangs(translateRunLangs)
 	}
 
-	filled, scanned, err := runTranslateFill(ctx, storer, tr, targets)
+	filled, scanned, err := runTranslateFill(ctx, storer, tr, targets, splitLangs(translateRunEntity), translateRunLimit)
 	if err != nil {
 		return err
 	}
@@ -76,12 +82,15 @@ func splitLangs(s string) []string {
 // runTranslateFill is the shared core used by the CLI and the daily pipeline's
 // final step. For each translatable item it fills every target language that is
 // missing or stale (source_hash != current hash), best-effort per language.
-func runTranslateFill(ctx context.Context, storer *storage.PostgresStorer, tr translate.Translator, targets []string) (filled int, scanned int, err error) {
-	items, err := storer.ListTranslatableItems(ctx)
+func runTranslateFill(ctx context.Context, storer *storage.PostgresStorer, tr translate.Translator, targets, entityTypes []string, limit int) (filled int, scanned int, err error) {
+	items, err := storer.ListTranslatableItems(ctx, entityTypes...)
 	if err != nil {
 		return 0, 0, fmt.Errorf("list translatable items: %w", err)
 	}
 	for _, it := range items {
+		if limit > 0 && filled >= limit {
+			break
+		}
 		hash := translate.SourceHash(it.SourceText)
 		// A stored translation counts as done only if it was produced from the
 		// CURRENT source text (hash match); otherwise it is stale and refilled.
@@ -118,10 +127,17 @@ func runTranslateStep(ctx context.Context, storer *storage.PostgresStorer) error
 	if err != nil {
 		return fmt.Errorf("translator unavailable: %w", err)
 	}
-	filled, scanned, err := runTranslateFill(ctx, storer, tr, translate.DefaultTargetLangs)
+	// Cap per run so the first post-deploy run doesn't try to translate the entire
+	// backlog (thousands of facts) in one pass — it drains incrementally over runs.
+	filled, scanned, err := runTranslateFill(ctx, storer, tr, translate.DefaultTargetLangs, nil, dailyTranslateLimit)
 	if err != nil {
 		return err
 	}
 	log.Info().Int("filled", filled).Int("items", scanned).Msg("Daily pipeline: translation phase done")
 	return nil
 }
+
+// dailyTranslateLimit caps how many translations the daily pipeline's final phase
+// fills per run, so a large first-time backlog drains over several runs instead of
+// blocking one run for hours.
+const dailyTranslateLimit = 1500

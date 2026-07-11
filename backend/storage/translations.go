@@ -63,8 +63,13 @@ func (s *PostgresStorer) UpdateLegacyEnColumn(ctx context.Context, entityType, f
 // stances (label + summary) and contradictions (reason), each with the
 // translations already present. The async translate phase decides per item which
 // target languages are missing or stale. Adding a new translatable field is one
-// entry in the specs slice below.
-func (s *PostgresStorer) ListTranslatableItems(ctx context.Context) ([]TranslatableItem, error) {
+// entry in the specs slice below. When entityTypes is non-empty, only those
+// entity types are scanned (e.g. "stance" to backfill just stances).
+func (s *PostgresStorer) ListTranslatableItems(ctx context.Context, entityTypes ...string) ([]TranslatableItem, error) {
+	want := map[string]bool{}
+	for _, et := range entityTypes {
+		want[et] = true
+	}
 	specs := []struct {
 		entityType, field, table, textCol, srcLangExpr string
 	}{
@@ -75,6 +80,9 @@ func (s *PostgresStorer) ListTranslatableItems(ctx context.Context) ([]Translata
 	}
 	var all []TranslatableItem
 	for _, sp := range specs {
+		if len(want) > 0 && !want[sp.entityType] {
+			continue
+		}
 		items, err := s.collectTranslatable(ctx, sp.entityType, sp.field, sp.table, sp.textCol, sp.srcLangExpr)
 		if err != nil {
 			return nil, err
