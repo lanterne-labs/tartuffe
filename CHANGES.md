@@ -1324,3 +1324,11 @@ The prompt template grew 36% across PR #18 (multilingual: +3 071 chars) and ae83
   default-model drift (config.go defaults gpt-3.5-turbo/ada-002 but code hardcodes
   gpt-4o-mini/text-embedding-3-small — config.LoadConfig is effectively dead for these); N+1
   per-similar-fact queries on the dedup/ingest hot paths.
+## 2026-07-16: In-process LLM failover — LiteLLM proxy removed
+
+Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest the host cost) with in-process primary→fallback in the two OpenAI-compatible chokepoints, so chat + embeddings call the home box directly (Cloudflare Access) and fall over to OpenRouter. Batch providers (Gemini/Mistral, direct to their own APIs) are untouched.
+
+- `backend/llm/client.go`: `DoRequest` now tries the primary (caller's URL/key, with CF-Access headers + the existing exponential backoff / credit-error callback / retry metrics) and, on failure, retries a fallback endpoint with the fallback model. `NewBaseLLMClient(component)` reads the fallback/CF config from env — **no new call-site changes** (beyond the `component` label already threaded through), so all ~10 chat clients get failover for free.
+- `backend/embedding/openai_embeddings.go`: same pattern; also pins `encoding_format:"float"` on the request (the proxy used to inject it; llama.cpp/OpenRouter reject its absence).
+- **New env (all optional; unset ⇒ primary-only, unchanged):** `FALLBACK_URL`, `FALLBACK_KEY`, `FALLBACK_CHAT_MODEL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`. CF-Access headers go to the primary only; the chat fallback swaps in `FALLBACK_CHAT_MODEL`, embeddings reuse `OPEN_AI_EMBED_MODEL`.
+- **Behaviour note:** the existing chat backoff (up to ~2 min on retryable 5xx/timeout) is preserved, so failover to the fallback happens only *after* that backoff. Fine for mirror's batch/pipeline workloads; shorten `createDefaultBackoffPolicy` if faster failover is wanted.

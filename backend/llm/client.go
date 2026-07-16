@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"digital-mirror/backend/metrics"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -25,28 +27,82 @@ var OnCreditError func(provider, errMsg string)
 // GPU. If we ever fork this codebase, override here (or expose via env).
 const AppName = "digital-mirror"
 
-// BaseLLMClient provides common HTTP request logic for LLM API clients.
-//
-// Every instance carries a `component` label (e.g. "fact-extractor",
-// "stance-manager") sent as the X-App-Component header. The label is set at
-// construction so the compiler enforces that every cachy-bound call site
-// identifies itself.
+// BaseLLMClient provides common HTTP request logic for LLM API clients. It calls
+// a primary endpoint (the caller-supplied URL/key) and, if configured, fails
+// over to a fallback endpoint — the behaviour the LiteLLM proxy used to provide
+// in-process. Cloudflare-Access headers are sent to the primary only. Every
+// instance also carries a `component` label (e.g. "fact-extractor") sent as the
+// X-App-Component header so every cachy-bound call site identifies itself.
 type BaseLLMClient struct {
-	httpClient *http.Client
-	component  string
+	httpClient     *http.Client
+	component      string
+	primaryHeaders map[string]string // extra headers for the primary (Cloudflare Access)
+	fallbackURL    string            // full chat-completions URL of the fallback (empty = no fallback)
+	fallbackKey    string
+	fallbackModel  string
 }
 
 // NewBaseLLMClient creates a new base client tagged with the given component
-// label. The label is sent on every request as the X-App-Component header.
-// Pass the step name (e.g. "fact-extractor", "stance-manager", "twitter-discovery").
+// label (sent as the X-App-Component header; pass the step name, e.g.
+// "fact-extractor"). Fallback and Cloudflare-Access config is read from the
+// environment, all optional: FALLBACK_URL / FALLBACK_KEY / FALLBACK_CHAT_MODEL
+// configure the fallback endpoint; CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET
+// are stamped on the primary (home box). Unset ⇒ primary-only, no failover.
 func NewBaseLLMClient(component string) *BaseLLMClient {
 	if component == "" {
 		component = "unknown"
 	}
-	return &BaseLLMClient{
+	c := &BaseLLMClient{
 		httpClient: &http.Client{Timeout: 300 * time.Second},
 		component:  component,
 	}
+	if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
+		c.primaryHeaders = map[string]string{
+			"CF-Access-Client-Id":     id,
+			"CF-Access-Client-Secret": os.Getenv("CF_ACCESS_CLIENT_SECRET"),
+		}
+	}
+	if fb := strings.TrimSpace(os.Getenv("FALLBACK_URL")); fb != "" {
+		// The fallback needs its own model — primary and fallback use different
+		// providers. Without it, the fallback would be called with the primary's
+		// model id (400/404 model-not-found) and silently defeat the failover.
+		if model := strings.TrimSpace(os.Getenv("FALLBACK_CHAT_MODEL")); model == "" {
+			log.Warn().Msg("FALLBACK_URL is set but FALLBACK_CHAT_MODEL is empty; chat fallback disabled")
+		} else {
+			c.fallbackURL = buildChatCompletionsURL(fb)
+			c.fallbackKey = os.Getenv("FALLBACK_KEY")
+			c.fallbackModel = model
+		}
+	}
+	return c
+}
+
+// buildChatCompletionsURL composes the chat-completions endpoint from a base URL.
+func buildChatCompletionsURL(base string) string {
+	base = strings.TrimRight(base, "/")
+	if strings.HasSuffix(base, "/chat/completions") {
+		return base
+	}
+	return base + "/chat/completions"
+}
+
+// payloadWithModel returns payloadBytes with its top-level "model" field replaced
+// by model (used to swap in the fallback's model on failover). Other fields are
+// preserved. If model is empty the payload is returned unchanged.
+func payloadWithModel(payloadBytes []byte, model string) ([]byte, error) {
+	if model == "" {
+		return payloadBytes, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(payloadBytes, &m); err != nil {
+		return nil, err
+	}
+	mb, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	m["model"] = mb
+	return json.Marshal(m)
 }
 
 // createDefaultBackoffPolicy creates a reusable exponential backoff policy.
@@ -60,12 +116,41 @@ func createDefaultBackoffPolicy(ctx context.Context) backoff.BackOff {
 	return backoff.WithContext(bo, ctx)
 }
 
-// DoRequest performs the HTTP POST request to the LLM API with context and retry logic.
-// Returns the response body bytes and an error.
+// DoRequest performs the request against the primary endpoint (the caller's
+// apiURL/apiKey, with the configured Cloudflare-Access headers and per-endpoint
+// retry) and, if that ultimately fails and a fallback is configured, retries the
+// fallback endpoint with the fallback model (no CF-Access headers). Returns the
+// response body bytes and an error.
 func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, payloadBytes []byte) ([]byte, error) {
+	start := time.Now()
+
+	body, err := c.sendWithRetry(ctx, "primary", apiURL, apiKey, c.primaryHeaders, payloadBytes)
+	// Fail over only on a real endpoint failure — not when the caller cancelled.
+	if err != nil && ctx.Err() == nil && c.fallbackURL != "" {
+		fbPayload, swapErr := payloadWithModel(payloadBytes, c.fallbackModel)
+		if swapErr != nil {
+			fbPayload = payloadBytes // keep original payload if the model can't be swapped
+		}
+		log.Warn().Err(err).Str("fallback_url", c.fallbackURL).Msg("primary LLM endpoint failed, trying fallback")
+		fbBody, fbErr := c.sendWithRetry(ctx, "openrouter", c.fallbackURL, c.fallbackKey, nil, fbPayload)
+		if fbErr == nil {
+			body, err = fbBody, nil
+		} else {
+			err = fmt.Errorf("primary failed (%v); fallback failed: %w", err, fbErr)
+		}
+	}
+
+	metrics.ObserveLLMRequest("chat", "", time.Since(start), err)
+	return body, err
+}
+
+// sendWithRetry POSTs to a single endpoint with the exponential-backoff retry,
+// credit-error callback, and retry metrics. extraHeaders are set on every
+// attempt (used for Cloudflare-Access on the primary). provider labels the
+// endpoint for the credit-error callback (e.g. "primary" vs "openrouter").
+func (c *BaseLLMClient) sendWithRetry(ctx context.Context, provider, apiURL, apiKey string, extraHeaders map[string]string, payloadBytes []byte) ([]byte, error) {
 	var respBodyBytes []byte
 	var httpStatus int
-	start := time.Now()
 
 	operation := func() error {
 		req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(payloadBytes))
@@ -77,6 +162,9 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("X-Application", AppName)
 		req.Header.Set("X-App-Component", c.component)
+		for k, v := range extraHeaders {
+			req.Header.Set(k, v)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -115,7 +203,7 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			// Detect credit/quota exhaustion errors and fire callback
 			if OnCreditError != nil && isCreditError(resp.StatusCode, bodyStr) {
-				OnCreditError("openrouter", bodyStr)
+				OnCreditError(provider, bodyStr)
 			}
 			log.Error().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API request failed with client error")
 			return backoff.Permanent(fmt.Errorf("LLM API client error: %s (%s)", resp.Status, bodyStr))
@@ -138,18 +226,14 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 	bo := createDefaultBackoffPolicy(ctx)
 	err := backoff.RetryNotify(operation, bo, notify)
 
-	duration := time.Since(start)
-
 	if err != nil {
-		metrics.ObserveLLMRequest("chat", "", duration, err)
 		if httpStatus >= 300 {
 			return respBodyBytes, fmt.Errorf("LLM API request failed after retries: %w", err)
 		}
 		return nil, fmt.Errorf("LLM API request failed after retries: %w", err)
 	}
 
-	metrics.ObserveLLMRequest("chat", "", duration, nil)
-	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Dur("duration", duration).Msg("LLM API request completed")
+	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Msg("LLM API request completed")
 	return respBodyBytes, nil
 }
 
