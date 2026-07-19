@@ -3,15 +3,16 @@
 // exports string constants.
 package promptrules
 
-// ContradictionRules is the single source of truth for the contradiction
-// detection rule body. It is embedded by:
-//   - backend/contradiction/openai_detector.go (pair-wise detector prompt)
-//   - backend/contradiction/auditor.go (false-positive auditor prompt)
-//   - backend/core/stance_manager.go (per-fact analyze-vs-stance prompt)
+// ContradictionRules is the rule body of the STANCE ANALYZE judge — the
+// per-fact analyze-vs-stance prompt in backend/core/stance_manager.go, the
+// only consumer. (The batch detector and the auditor embed their own
+// ContradictionRulesAndExamples in backend/contradiction/openai_detector.go;
+// what all judges DO share is promptrules.FalsePositivePatterns.)
 //
-// Keeping a single source prevents the prompts from drifting in their
-// definition of what counts as a contradiction. When you change this, every
-// caller picks it up automatically — that's the point.
+// Because the analyze judge is the one that CREATES contradiction edges,
+// changes here are tested by TestAnalyzeGolden
+// (backend/core/testdata/analyze_cases.yaml) — and, usefully, tuning this
+// body cannot regress the verifier or auditor prompts.
 //
 // Format note: the prompt is consumed by fmt.Sprintf in some call sites, so
 // any literal `%` MUST appear as `%%`.
@@ -37,6 +38,9 @@ A breaker does NOT invalidate a promise when:
 - POSITION SHIFT ON THE SAME ISSUE: A clear rejection / refusal / negative framing of an issue in one statement, paired with endorsement / openness / support / advocacy for the SAME issue in another. The two statements don't have to use identical wording — "not my priority / not desirable" → "I'm not against / I support" on the same identifiable subject IS a walk-back. Includes positions on policy proposals, candidacies, alliances, willingness to act, willingness to participate.
 - CLAIM ↔ AUTHORITATIVE FINDING: The person denied / claimed X, and a court ruling / official investigation conclusion found the opposite specifically about X.
 - COMMITMENT vs CARVE-OUT: A blanket commitment in one statement (e.g. "I will campaign with X regardless of any outcome") combined with a separately stated condition that would prevent that very commitment (e.g. "I refuse to do the very activity that campaigning would require") IS a contradiction even when each statement individually sounds reasonable.
+- SELF-EXEMPTING DOUBLE STANDARD (hypocrisy): The person publicly demanded a RULE or SANCTION for a CLASS of people (e.g. "anyone convicted should be ineligible for life / must resign / should be barred / should be punished"), and the person's OWN later action or claim exempts THEMSELVES from that very rule once they demonstrably belong to that class (e.g. they were themselves convicted of that offense yet run for or keep the office). Holding others to a standard the person then refuses to apply to themselves IS a real contradiction. The fact that the person NOW falls into the targeted class may be established by the surrounding context or an authoritative finding (their own conviction) — the contradiction edge is still between the person's stated rule and their own self-exempting action. Requires ALL of: (a) a clear normative standard the person THEMSELVES stated (not merely attributed to their party, not a vague value); (b) the person clearly falls into the class the standard targets; (c) the self-exemption concerns the SAME sanction on the SAME axis. Do NOT stretch this to loose "he's a hypocrite" claims where any of (a)-(c) is missing.
+  MECHANICAL CHECK (apply before emitting a self-exemption edge, IN BOTH DIRECTIONS — it does not matter whether the sanction is the NEW FACT or a key fact): a self-exemption edge pairs the person's stated RULE with the person's OWN utterance or act taking the exemption (CLAIMED / ANNOUNCED / PROMISED / DEMANDED / PROPOSED — "je suis éligible", "j'annonce ma candidature"). If EITHER side of the candidate pair is the sanction or legal process itself — a fact tagged WAS_CONVICTED or WAS_SENTENCED, a conviction, sentence, court or appeal ruling, a prosecutor's (le parquet) requisition, or a verdict narration — do NOT emit the edge: the sanction is the class-membership TRIGGER, not the breaker. A person being sanctioned is their own rule being APPLIED — if your reasoning describes the pair as the rule being applied, enforced, or fulfilled on them, that is AGREEMENT and the verdict for that pair is NEW_INFO, never CONTRADICTION.
+  CRITICAL — WHAT THE OTHER FACT MUST BE: the rule can ONLY be paired with the person's OWN self-exempting CLAIM or ACT (e.g. "je suis éligible", "rien ne peut m'empêcher d'être candidate", "j'annonce ma candidature"). The class-membership trigger (their conviction) is CONTEXT, never the contradiction partner. Answer NO when the other fact is merely: the conviction / sentence itself, a court or appeal decision, an ineligibility ruling, a prosecutor's request, an awaiting-verdict or "the outcome will determine" narration, or any third-party account of the proceedings. "She demanded the convicted be barred" + "she was convicted" is NOT a contradiction — being sanctioned is exactly what her own rule prescribes, so it AGREES with it. The contradiction appears ONLY when she then claims or takes the exemption for herself.
 
 **NEGATIVE PATTERNS — these are NOT contradictions** (apply NARROWLY — these rules block real contradictions when over-applied):
 - DIFFERENT SUBJECTS: the two statements are about genuinely different actors, events, bills, or geographic regions. Same person + same topic + different aspects is NOT this rule — it's just same subject with two facets, which CAN contradict.
@@ -210,4 +214,11 @@ PAIR 29 (Two Same-Person Actions Pointing Opposite on Same Axis - YES):
 Statement A (dated June 4, 2024): "Sophie Martin a voté en faveur de l'instauration de droits de douane sur les importations chinoises."
 Statement B (dated February 20, 2025): "Sophie Martin a autorisé la délocalisation en Chine d'une usine française de 5 000 employés à Béthune."
 PAIR 29: REASONING: Neither statement is framed as a "promise"; both are concrete actions by the same person. Statement A protects domestic French industrial production (pro-tariff against Chinese imports); Statement B authorises moving French industrial production to China (anti-domestic-industry). Same axis (French industrial sovereignty), opposite directions, both material. Per BEHAVIORAL INCONSISTENCY (clarified) — applies to two same-person actions pointing opposite on the same axis, not only to promise-vs-action pairs. FLAG YES.
-PAIR 29: YES: Voting for tariffs that protect French industry while authorising a major French-to-China offshoring contradicts on the axis of French industrial sovereignty — two actions, opposite directions, both material.`
+PAIR 29: YES: Voting for tariffs that protect French industry while authorising a major French-to-China offshoring contradicts on the axis of French industrial sovereignty — two actions, opposite directions, both material.
+
+PAIR 30 (Self-Exempting Double Standard - YES):
+Statement A (dated 2013): "Marine Le Pen a déclaré qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
+Statement B (dated July 2026): "Marine Le Pen a affirmé qu'il n'y a plus de scénario dans lequel elle ne pourrait pas être candidate à l'élection présidentielle."
+Context in the stance: Marine Le Pen a elle-même été condamnée en appel pour détournement de fonds publics.
+PAIR 30: REASONING: A is her OWN stated RULE — the convicted should be ineligible for life. B is her OWN claim that nothing can bar her candidacy, asserted after she herself was convicted (her class-membership is established by the surrounding conviction facts). She refuses to apply to herself the exact sanction she demanded for all convicted people — SELF-EXEMPTING DOUBLE STANDARD. Conditions (a) her own normative rule, (b) she now falls in the convicted class, (c) same sanction (ineligibility) — all hold. The [vague_vs_specific] bucket does NOT apply: the rule binds her once she enters the class it targets.
+PAIR 30: YES: Ayant réclamé l'inéligibilité à vie des personnes condamnées, elle revendique désormais sa propre éligibilité alors qu'elle est elle-même condamnée — deux poids, deux mesures.`

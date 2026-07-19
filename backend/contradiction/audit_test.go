@@ -12,7 +12,10 @@ import (
 )
 
 // TestAuditGolden is the golden regression set for the contradiction AUDITOR
-// (the judge behind `dm contradictions check --apply` and the nightly auto-evict).
+// (the judge behind `dm contradictions check --apply` and the 5-day pipeline
+// auto-evict, which runs Apply:true). In prod a deletion additionally requires
+// a confirming 2nd audit pass AND a verifier cross-veto (applyAuditRemoval),
+// so a keep-failure here surfaces as an "unstable" row, not an instant delete.
 // It loads the SAME testdata/verify_cases.yaml as TestVerifyGolden and asserts:
 //   - expect=keep  -> the auditor must NOT return remove (keep or ambiguous are fine;
 //     --apply only deletes on remove, so "not remove" == "not evicted"). This is the

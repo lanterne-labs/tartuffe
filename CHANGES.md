@@ -1332,3 +1332,105 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - `backend/embedding/openai_embeddings.go`: same pattern; also pins `encoding_format:"float"` on the request (the proxy used to inject it; llama.cpp/OpenRouter reject its absence).
 - **New env (all optional; unset ⇒ primary-only, unchanged):** `FALLBACK_URL`, `FALLBACK_KEY`, `FALLBACK_CHAT_MODEL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`. CF-Access headers go to the primary only; the chat fallback swaps in `FALLBACK_CHAT_MODEL`, embeddings reuse `OPEN_AI_EMBED_MODEL`.
 - **Behaviour note:** the existing chat backoff (up to ~2 min on retryable 5xx/timeout) is preserved, so failover to the fallback happens only *after* that backoff. Fine for mirror's batch/pipeline workloads; shorten `createDefaultBackoffPolicy` if faster failover is wanted.
+
+## Self-exempting double standard: a new contradiction class (2026-07-16)
+
+- The judges only recognised a person contradicting their OWN commitments. A politician who demands a
+  sanction for a CLASS ("les condamnés devraient être inéligibles à vie", Le Pen 2013) and then exempts
+  themselves once they enter that class (convicted, yet running) was silently dismissed as "a general
+  policy stance, not a personal commitment" — the verifier filed it under `vague_vs_specific`, the
+  auditor under `different_subjects`. This is the sharpest hypocrisy signal the product exists to
+  surface, so it is now an explicit YES pattern: SELF-EXEMPTING DOUBLE STANDARD. Guarded by three
+  conditions (the person stated the rule themselves; they clearly fall in the class; the self-exemption
+  is on the SAME sanction) — do not stretch it to loose "hypocrite" claims.
+- Landed in three places, deliberately NOT four: the stance analyzer (`promptrules.ContradictionRules`
+  + PAIR 30, the primary catcher), the shared FP catalog (`false_positives.txt` — EXCEPTION clauses on
+  `[vague_vs_specific]` and `[different_subjects]`, which is what carries the verifier), and the
+  auditor's own positive block. The batch detector (`ContradictionRulesAndExamples`) was left alone:
+  its prompt + the 4096-token output reservation already sits ~300 tokens under the local model's 12k
+  context, and adding the pattern overflowed it (400 at 12001 tokens). It is a secondary net; the
+  stance path catches this class at ingest.
+- The rule OVER-FIRED on first contact with prod and had to be re-guarded. The MLP rebuild produced 19
+  edges off the 2013 rule, but only ~8 were real: the model happily paired "les condamnés devraient
+  etre ineligibles" with the conviction itself, the appeal ruling, the parquet's requisition, and
+  awaiting-verdict narration. Those are the class-membership TRIGGER, not the breaker — being
+  sanctioned is what her own rule prescribes, so it AGREES with it. Semantic guards ("the other fact
+  must be her own claim") did NOT hold at either gate. What worked was a MECHANICAL check keyed on the
+  canonical_verb already rendered in the analyze prompt: never emit a self-exemption edge against a
+  WAS_CONVICTED key fact or a court/parquet/verdict fact. Measured on the real prod pairs: conviction
+  0/4, parquet 0/4, awaiting-verdict 0/4, her own eligibility claim 4/4. Rule of thumb: when a small
+  local model won't hold a semantic distinction, look for a mechanical one already in the prompt.
+- Layering lesson: the verifier CANNOT be made to drop the rule-vs-conviction shape (0/4 even with an
+  explicit guard — its own REASONING says she "was subject to that very sanction" and it still votes
+  keep, same stubbornness as the Attal #169 homonym). Fixing it at the ANALYZE step is what mattered,
+  because that is the gate that CREATES the edge; the verifier never sees a pair the analyzer refuses
+  to propose. Prefer fixing over-firing at the layer that emits, not the layer that reviews.
+- MEASURED TRADE-OFF, do not "optimise" it away: the auditor's SELF-EXEMPTING bullet must stay VERBOSE.
+  Compressing it to one line recovers the FP drop-side (FP_177 1/5 -> 4/5) but collapses TP_330b to 0/5
+  — i.e. the auditor starts evicting the very contradiction this change exists to protect. Keeping it
+  verbose holds TP_330b at 5/5 and costs FP_92 + FP_177 (5/5 -> 1/5) on the AUDITOR ONLY. Accepted
+  because (a) the audit test's own contract says never auto-delete a real contradiction is the critical
+  direction, (b) the auditor is read-only in the daily pipeline, and (c) the VERIFIER still drops both
+  FP shapes at insertion, so they never enter the DB — the auditor's drop side only matters for
+  retroactive `contradictions check --apply` cleanup. Net vs baseline: audit keep 6/9 -> 8/9, drop
+  19/19 -> 18/20.
+- Tried and rejected: giving FP_92/FP_177 their OWN "remove decisively" block in the auditor prompt
+  (to counterbalance the self-exemption keep-pressure without shrinking that bullet). It recovered
+  FP_177 5/5 but shifted the whole auditor toward remove, collapsing TP_103 5/5 -> 0/5 and TP_330b
+  5/5 -> 1/5. Reverted. Conclusion (proven from BOTH directions — shrink-keep and add-remove): the
+  auditor gate is at this small local model's capacity ceiling; any counterweight to recover the two
+  FP drops breaks a genuine keep case. Do not re-attempt on this model. The two FP drops are the
+  accepted, documented cost; the verifier still blocks both at insertion.
+- Prompt-tuning lesson (repeat of the gh#23 finding): adding a verbose YES pattern to a refute/audit
+  prompt shifts the model's global prior toward "keep" and silently breaks unrelated FP buckets — a
+  full YES bullet in `verify.go` regressed FP_245 + FP_92 from 4/4 drop to 0/6, and a 4-line worked
+  example in the auditor cost FP_92 + FP_177. Both were fixed by expressing the rule as a narrowly
+  scoped EXCEPTION on the specific FP bucket (catalog) plus a ONE-LINE example. Prefer scoped
+  exceptions over new positive bullets; measure FP cases in isolation (temp 0.1 makes single full-suite
+  runs a misleading signal — stress-test 3-6x).
+
+## Judge-map docs + analyze-path golden harness (2026-07-17)
+
+- Corrected two dangerously stale docs: pipeline step 7 claimed the contradiction auditor is
+  "READ-ONLY today" but it has run with Apply:true (auto-evict) — deletions are gated by THREE
+  signals (audit remove + confirming 2nd audit pass + verifier cross-veto, see applyAuditRemoval);
+  and promptrules/contradiction.go claimed ContradictionRules is embedded by the detector and
+  auditor — it is consumed ONLY by the stance analyzer (they embed their own
+  ContradictionRulesAndExamples). Consequence worth remembering: tuning ContradictionRules is
+  isolated to the analyze judge; tuning false_positives.txt hits every judge. A judge map now
+  lives at the top of backend/contradiction/testdata/verify_cases.yaml.
+- NEW: TestAnalyzeGolden (backend/core/testdata/analyze_cases.yaml) — first golden coverage for
+  the ANALYZE judge, the one that CREATES contradiction edges (previously all its probes were
+  throwaway files). Edge-level assertions (must_flag / must_not_flag per key-fact ID), verdict
+  optional. It found a live bug on its first run: the self-exemption over-fire returns in the
+  REVERSE direction (conviction arrives as the NEW fact vs a stored normative rule).
+- That reverse direction is now a DOCUMENTED KNOWN LIMITATION, not a fixed bug. Three fixes were
+  measured and every one broke case D (denial-vs-conviction, the core signal): direction-symmetric
+  mechanical check (C 0/3, D 3/3), a global "NORM vs FACT" typing rule (C 1/3, D fail), a worked
+  PAIR-31 NO example (C 1/3, D 0/3). The C↔D seesaw is the same fixed-capacity behavior measured
+  on the verifier and auditor — now confirmed on all three prompt-tunable judges. D wins; the
+  residual FP shape is caught via `dm contradictions dismiss` / audit-prod-data.
+- Prompt-anatomy findings for a future consolidation (do NOT attempt on the current model without
+  a much bigger analyze golden): ContradictionRules is 4,454 words of which 66% is 30 worked
+  examples; its NEGATIVE PATTERNS section is a hand-maintained parallel of the shared 23-bucket
+  false_positives.txt and has already drifted (the vague_vs_specific self-exemption EXCEPTION
+  exists only in the catalog). The abstract-principle refactor (NORM vs FACT) failed on this
+  model — it obeys concrete examples, not typing rules — so consolidation must wait for a model
+  that holds abstractions, and would then let the analyze judge embed the shared catalog directly.
+
+## Auditor example diet (2026-07-17, follow-up)
+
+- The auditor now audits with a CURATED subset of the shared worked examples (10 of 28) instead of
+  the full set: `auditorKeptExamples` + `leanAuditRules()` in auditor.go filter the tail of
+  `ContradictionRulesAndExamples` at init — single source, no text duplication, batch detector
+  untouched (locked by TestLeanAuditRules). Assembled audit prompt: ~5.4K → ~3.7K words. (Note: the
+  earlier "10K words / 6.6x verifier" figure in this file double-counted the embedded body; true
+  ratio was ~3.6x.)
+- Measured outcome (x5 per case): FP_177 1/5 → 5/5 (the bloat hypothesis was right for it),
+  full-suite drop 18/20 → 19/20, TP_330b held 5/5, TP_114 0/5 and FP_92 ~0/5 unchanged (their
+  failures are model-intrinsic, not bloat), TP_103 5/5 → 3/5 (real cost, confirmed x10).
+- Why the trade was accepted: the degraded direction (auditor keeping TP_103) is double-protected
+  in prod — a deletion still needs the confirming 2nd pass AND the verifier cross-veto, and the
+  verifier keeps TP_103 reliably, so 3/5 only means occasional "unstable" log lines. The improved
+  direction (evicting FP_177-shaped stored junk) had NO other cleanup path. Net: prompt bloat was
+  ONE real cause of auditor failures (proven), alongside the model-intrinsic ones (TP_114, FP_92).

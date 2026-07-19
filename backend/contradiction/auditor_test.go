@@ -140,3 +140,32 @@ func TestParseAuditResponse_OnlyFirstVerdictWins(t *testing.T) {
 	assert.Equal(t, "First reasoning.", res.Reasoning)
 	assert.Equal(t, "none", res.Rule)
 }
+
+// TestLeanAuditRules locks the auditor's curated-example view of the shared
+// rule body: every allowlisted example present, the cut ones absent, the rule
+// sections (incl. the FP catalog) intact, and the detector's full body
+// untouched.
+func TestLeanAuditRules(t *testing.T) {
+	lean := leanAuditRules()
+	for _, want := range auditorKeptExamples {
+		if !strings.Contains(lean, "\n"+want) && !strings.Contains(lean, "\n\n"+want) && !strings.Contains(lean, want) {
+			t.Errorf("lean body missing kept example %q", want)
+		}
+	}
+	for _, cut := range []string{"PAIR 4 (", "PAIR 10 (", "PAIR 21 (", "PAIR 32 ("} {
+		if strings.Contains(lean, cut) {
+			t.Errorf("lean body still contains cut example %q", cut)
+		}
+	}
+	for _, section := range []string{"HARD GATE", "false-positive patterns", "TEMPORAL REASONING", "**EXAMPLES:**"} {
+		if !strings.Contains(lean, section) {
+			t.Errorf("lean body lost rule section %q", section)
+		}
+	}
+	if !strings.Contains(ContradictionRulesAndExamples, "PAIR 32 (") {
+		t.Error("detector full body unexpectedly modified")
+	}
+	if len(lean) >= len(ContradictionRulesAndExamples) {
+		t.Errorf("lean body (%d chars) not smaller than full body (%d)", len(lean), len(ContradictionRulesAndExamples))
+	}
+}

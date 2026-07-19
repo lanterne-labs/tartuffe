@@ -108,10 +108,70 @@ type AuditResult struct {
 	Err       error
 }
 
+// auditorKeptExamples lists the worked examples retained in the auditor's
+// prompt, by their header prefix in ContradictionRulesAndExamples. The full
+// body pushes the audit prompt to ~10K words, and that bloat measurably
+// degrades judgment: the same local model judges FP_177/TP_114-shaped cases
+// correctly under the ~1.5K-word verifier prompt and wrongly under the full
+// audit prompt (CHANGES.md 2026-07-17). The false-positive knowledge is
+// already carried by the embedded FalsePositivePatterns catalog, so the
+// auditor keeps ONE example per decision family. The batch detector keeps the
+// full example set — its raw-pair task is the one the examples were written
+// for, and its prompt is not the one misjudging.
+var auditorKeptExamples = []string{
+	// keep side (real contradictions the auditor must never evict)
+	"PAIR 2 (",  // denial after claim
+	"PAIR 9 (",  // court finding vs denial
+	"PAIR 30 (", // values-based / directional axis
+	// remove side (false-positive families)
+	"PAIR 1 (",  // learning over time
+	"PAIR 8 (",  // trial/accusation is not a finding
+	"PAIR 15 (", // conviction vs acknowledgment of imperfections
+	"PAIR 18 (", // same position in different words (double negatives)
+	"PAIR 25 (", // announcement then action (fulfilled commitment)
+	"PAIR 27 (", // third-party narratives only
+	"PAIR 28 (", // date-only conflict, no commitment
+}
+
+// leanAuditRules returns ContradictionRulesAndExamples with the worked-example
+// tail filtered down to auditorKeptExamples. Derived from the single shared
+// source at init so the rule text itself can never drift from the detector's;
+// only the example SELECTION differs. Falls back to the full body if the
+// EXAMPLES marker ever moves.
+func leanAuditRules() string {
+	const marker = "**EXAMPLES:**"
+	i := strings.Index(ContradictionRulesAndExamples, marker)
+	if i < 0 {
+		return ContradictionRulesAndExamples
+	}
+	head := ContradictionRulesAndExamples[:i+len(marker)]
+	blocks := strings.Split(ContradictionRulesAndExamples[i+len(marker):], "\n\n")
+	kept := make([]string, 0, len(auditorKeptExamples))
+	for _, b := range blocks {
+		t := strings.TrimSpace(b)
+		if t == "" {
+			continue
+		}
+		if !strings.HasPrefix(t, "PAIR ") {
+			// Non-example chunk inside the tail (none today) — keep, fail-safe.
+			kept = append(kept, t)
+			continue
+		}
+		for _, want := range auditorKeptExamples {
+			if strings.HasPrefix(t, want) {
+				kept = append(kept, t)
+				break
+			}
+		}
+	}
+	return head + "\n\n" + strings.Join(kept, "\n\n")
+}
+
 // auditPromptTpl is the audit prompt. The %s is replaced by the audit block
 // (the two facts and the original detection reason). The rule body is shared
 // with the detector via ContradictionRulesAndExamples so audit and detection
-// cannot drift in their definition of a contradiction.
+// cannot drift in their definition of a contradiction — the auditor just sees
+// a curated subset of the worked examples (see auditorKeptExamples).
 var auditPromptTpl = `You are auditing previously-flagged contradictions to remove false positives.
 
 An earlier automated pass marked the two statements below as contradictory, with the reason given. Re-evaluate STRICTLY using the rules and examples below — would you flag this today?
@@ -122,10 +182,11 @@ Be CONSERVATIVE: when in doubt, return "ambiguous" rather than "keep". Only retu
 - POSITION / ATTITUDE REVERSAL: the person stated, announced, or pleaded FOR X, then stated, announced, or did the OPPOSITE about the same subject — e.g. "I will run" then "I will not run"; "I won't be a candidate" then leading/joining a winning list at that election; "very motivated" then "not enthusiastic"; pleads FOR a primary then is AGAINST one. This is a reversal — do NOT file it under announcement_then_action, different_events, vague_vs_specific, same_direction, or different_subjects.
 - COMMITMENT vs CONTRARY ACTION: a promise, value, or commitment broken by the person's own opposing action (e.g. promised to keep the retirement age at 62, then abandoned the repeal that would have undone the move to 64).
 - DENIAL vs AUTHORITATIVE FINDING: a personal denial contradicted by a conviction or official investigation conclusion in the same matter.
-- DENOUNCE-THEN-ALLY: publicly blaming or attacking a SPECIFIC NAMED person or party, then allying, merging lists, or partnering with that SAME target.
+- DENOUNCE-THEN-ALLY: publicly blaming or attacking a SPECIFIC NAMED person or party, then allying, merging lists, or partnering with that SAME target. The shared subject is that NAMED person, so this is never different_subjects: do NOT excuse it with "blame and alliance are different topics" or "attributing responsibility to him is not logically incompatible with a later alliance with him".
+- SELF-EXEMPTING DOUBLE STANDARD: the person demanded a rule or sanction for a CLASS of people ("anyone convicted should be ineligible / must resign / be barred / be punished"), then — once they themselves demonstrably fall into that class (e.g. they were themselves convicted) — exempt themselves from that same sanction by their own action or claim (running for or keeping the office). Their class-membership may be established by the context in the detection reason. Do NOT file this under different_subjects, vague_vs_specific, or complementary_facts, and do NOT excuse it with "a general normative position is not a personal commitment" — the shared subject is that ONE sanction and they are inside the very class they named, so the rule binds them. Example (verdict keep, RULE none): "il faudrait rendre inéligibles à vie ceux qui étaient condamnés" (2013) vs her own claim to be a candidate while she is herself convicted.
 Reported speech of the person ("X plaide / affirme / a dit / a annoncé Y") is the person's OWN position or claim — it is NOT third_party_narrative.
 
-` + ContradictionRulesAndExamples + `
+` + leanAuditRules() + `
 
 **CONTRADICTION TO AUDIT:**
 %s

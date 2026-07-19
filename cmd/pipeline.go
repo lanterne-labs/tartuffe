@@ -136,11 +136,13 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	}
 
 	// Step 7: Contradiction auditor (5-day cadence). Re-judges previously
-	// recorded contradictions and flags false positives via the
-	// `contradiction_audits_total{verdict="remove"}` Prometheus counter.
-	// READ-ONLY today — it identifies but does not delete; act on its findings
-	// with `dm contradictions check --apply` once Grafana shows the pattern
-	// is reliable.
+	// recorded contradictions and AUTO-EVICTS confirmed false positives
+	// (Apply:true). A row is deleted only when THREE signals agree: the audit
+	// verdict is remove, a confirming second audit pass also says remove, and
+	// the verifier (refute pass — a different, reversal-aware judge) also
+	// drops it (cross-judge veto; see applyAuditRemoval). Any disagreement or
+	// error keeps the row and counts it as unstable. Verdicts are also exposed
+	// via the `contradiction_audits_total` Prometheus counter.
 	auditResult, auditErr := runContradictionAuditIfDue(ctx, storer, 5*24*time.Hour)
 	if auditErr != nil {
 		log.Error().Err(auditErr).Msg("Daily pipeline: contradiction audit failed")

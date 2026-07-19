@@ -1,8 +1,24 @@
-# Golden regression set for the adversarial verification (refute) pass.
+# Golden regression set for a *claimed* contradiction, judged by TWO of the
+# pipeline's four LLM judges. Each case must either be KEPT (real
+# contradiction) or DROPPED (false positive).
 #
-# Each case is a *claimed* contradiction that the detector once produced. The
-# verification pass (OpenAIContradictionDetector.VerifyContradiction) must
-# either KEEP it (real contradiction) or DROP it (false positive).
+# JUDGE MAP — who consumes this file, and when each judge runs in prod:
+#   1. ANALYZE (stance)  — promptrules.ContradictionRules, at ingest on every
+#      new fact; the judge that CREATES contradiction edges. NOT tested here —
+#      it has its own golden set: backend/core/testdata/analyze_cases.yaml
+#      (TestAnalyzeGolden).
+#   2. VERIFIER (refute) — RefuteContradictionPrompt, immediately after (1)
+#      and before the DB write: the insertion gate. Tested by TestVerifyGolden
+#      over THIS file (expect keep|drop).
+#   3. BATCH DETECTOR    — ContradictionRulesAndExamples, daily pipeline step
+#      5, KNN sweep over unchecked pairs. Not directly golden-tested (context
+#      budget is at the local model's 12k ceiling — see CHANGES.md 2026-07-16).
+#   4. AUDITOR           — auditPromptTpl, pipeline step 7 every 5 DAYS over
+#      already-stored rows, Apply:true (auto-evict). Tested by TestAuditGolden
+#      over THIS file. A prod deletion needs 3 signals: audit remove + a
+#      confirming 2nd audit pass + the verifier ALSO refuting (cross-judge
+#      veto, applyAuditRemoval). So an auditor keep-failure here usually means
+#      "unstable row", not data loss — the verifier veto is the last line.
 #
 # HOW TO USE
 #   - When you see a contradiction in prod that looks wrong (a false positive),
@@ -310,3 +326,46 @@ cases:
 
   # (FP_203 different-metrics shape — rental DAYS vs tourist-rental COUNT — trialled but not asserted:
   #  flaky for the judge across runs; already covered by [different_subjects]. See mirror-me2.)
+
+  # ---- Self-exempting double standard (hypocrisy). Le Pen demanded lifelong
+  # ---- ineligibility for the convicted in 2013, then (herself convicted in 2026)
+  # ---- claims nothing can bar her candidacy. Own rule for a class she now enters,
+  # ---- self-exemption on the SAME sanction = a real contradiction (KEEP). mirror-01y.
+  - name: "TP_330b_lepen_selfexempting_ineligibility"
+    fact_a: "Marine Le Pen a affirmé qu'il n'y a plus de scénario dans lequel elle ne pourrait pas être candidate à l'élection présidentielle."
+    fact_b: "Marine Le Pen a déclaré en 2013 qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
+    claimed_reason: "Ayant réclamé l'inéligibilité à vie des personnes condamnées, elle revendique sa propre éligibilité alors qu'elle a elle-même été condamnée en appel — deux poids deux mesures."
+    expect: keep
+    bucket: self_exempting_double_standard
+    notes: "Own normative rule for the convicted class + she now falls in that class (convicted) + self-exemption on the SAME sanction (ineligibility). Not [vague_vs_specific]: the rule binds her once she enters the class."
+
+  # The self-exemption rule OVER-FIRED in prod (mirror-01y): the MLP rebuild paired the 2013
+  # rule with 10 legal-process facts that are not her self-exempting act at all. The rule's
+  # partner must be her OWN claim/act of eligibility; the conviction is only the trigger.
+  # Being convicted AGREES with "the convicted should be barred" — it does not contradict it.
+  # NOTE: the rule-vs-CONVICTION shape ("elle a été condamnée à ... d'inéligibilité" vs the 2013
+  # rule) was trialled here with expect:drop and NOT asserted — same limit as the Attal #169 case
+  # above. Anchored by a claimed_reason that asserts the link, the verifier keeps it 0/4 even
+  # though its own REASONING correctly says she "was subject to that very sanction" (i.e. agrees
+  # with her rule). The real fix is one layer up, at the ANALYZE step, which is what actually
+  # created these edges: promptrules.ContradictionRules now carries a MECHANICAL CHECK (never emit
+  # a self-exemption edge against a WAS_CONVICTED key fact or a court/parquet/verdict fact — those
+  # are the trigger, not the breaker). Measured on the real prod shapes: conviction 0/4, parquet
+  # 0/4, awaiting-verdict 0/4, her own eligibility claim 4/4. So the verifier never sees the pair.
+  - name: "FP_selfexempt_vs_prosecutor_request"
+    fact_a: "Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d'inéligibilité contre Marine Le Pen dans le procès des assistants FN."
+    fact_b: "Marine Le Pen a déclaré en 2013 qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
+    claimed_reason: "Elle voulait l'inéligibilité à vie des condamnés mais fait face à une réquisition d'inéligibilité."
+    expect: drop
+    bucket: self_exempting_double_standard
+    notes: "A prosecutor's request is a third party's act, not hers — fails the utterance gate outright. Was wrongly recorded in prod as contradiction #371."
+
+  # NOTE: the BARE-announcement variant of the same shape ("Marine Le Pen a annoncé sa
+  # candidature pour le Rassemblement national" vs the 2013 rule) was trialled and
+  # deliberately NOT asserted. On its own the pair carries no conviction context — the
+  # class-membership lives only in the claimed_reason — so the auditor files it under
+  # different_subjects 3/3. Forcing it to keep would mean teaching the judges that any
+  # candidacy announcement + any old normative statement is a contradiction, which is
+  # over-broad. It is also not the edge the pipeline forms: the stance analyzer rates the
+  # bare re-announcement DUPLICATE/NEW_INFO, and the real hypocrisy edge it creates is the
+  # 10540 <-> 10846 pair asserted above. Same caution as the Ciotti #157 / Bardella #168 skips.

@@ -27,9 +27,12 @@ type verifyCaseFile struct {
 }
 
 // TestVerifyGolden is the manual/golden regression set for the adversarial
-// verification (refute) pass. It loads real production cases from
-// testdata/verify_cases.yaml and asserts the verifier keeps the true positives
-// and drops the false positives.
+// verification (refute) pass — the INSERTION gate that runs on every
+// contradiction the stance analyzer proposes, before the DB write. It loads
+// real production cases from testdata/verify_cases.yaml and asserts the
+// verifier keeps the true positives and drops the false positives.
+// The same YAML also feeds TestAuditGolden (a different judge, different
+// prompt); the analyze judge has its own set in backend/core/testdata/.
 //
 // LOCAL ONLY: it self-skips unless OPEN_AI_KEY is set, so it never runs in CI
 // or on the host. The LLM endpoint is the local GPU (OPEN_AI_API), so each run

@@ -1,0 +1,142 @@
+# Golden regression set for the STANCE ANALYZE judge — the prompt in
+# StanceManager.callLLM (rule body: promptrules.ContradictionRules). This is
+# judge #1 of the pipeline: it runs at ingest on every new fact and is the ONLY
+# judge that CREATES contradiction edges (the verifier then gates insertion).
+# See the judge map in backend/contradiction/testdata/verify_cases.yaml.
+#
+# HOW TO USE
+#   - When the analyzer emits a bad edge in prod (over-fire) add a case with the
+#     offending key fact in `must_not_flag`; when it misses a real edge, add the
+#     key fact to `must_flag`.
+#   - Re-run:  source .env; go test -v -run TestAnalyzeGolden ./backend/core/
+#     (skips when OPEN_AI_KEY is unset — local-only, free on the local GPU.)
+#   - Tune backend/promptrules/contradiction.go until green. That body is
+#     consumed ONLY by this judge, so tuning here cannot regress the verifier
+#     or auditor goldens.
+#
+# Fields:
+#   name            unique id
+#   summary         the stance summary shown to the model
+#   key_facts       the facts already in the stance: id + canonical verb + text
+#                   (verbs matter: the SELF-EXEMPTION mechanical check keys on
+#                   WAS_CONVICTED/WAS_SENTENCED tags)
+#   new_fact        the arriving fact
+#   expect_verdict  optional: DUPLICATE|NEW_INFO|CONTRADICTION. Empty = only the
+#                   edge assertions below are checked (verdicts can legitimately
+#                   vary between NEW_INFO/DUPLICATE on borderline cases).
+#   must_flag       key-fact IDs that MUST appear in the contradictions list
+#   must_not_flag   key-fact IDs that must NOT appear
+#   notes           why; for humans
+
+# All texts below are real prod facts from the Marine Le Pen self-exemption
+# work (mirror-01y, 2026-07-16). Stance 10366 "Situation judiciaire et
+# éligibilité électorale".
+
+anchors:
+  summary: &mlp_summary >-
+    La situation juridique de Marine Le Pen est marquée par des condamnations
+    liées à l'affaire des assistants parlementaires du Front national, incluant
+    des peines de prison et d'inéligibilité. Alors qu'elle a contesté ces
+    décisions et annoncé son intention de se pourvoir en cassation, elle a
+    officiellement déclaré sa candidature pour l'élection présidentielle de 2027.
+
+cases:
+  # ── The prod over-fire shape (fixed 2026-07-16 via the MECHANICAL verb
+  # ── check). The 2013 rule arrives; the stance holds the conviction, the
+  # ── parquet's requisition, an awaiting-verdict narration, and her own
+  # ── "no scenario" eligibility claim. ONLY her own claim is a valid partner.
+  - name: "A_rule_arrives_flags_only_her_own_claim"
+    summary: *mlp_summary
+    key_facts:
+      - id: 328
+        verb: WAS_CONVICTED
+        text: "Le 31 mars 2025, Marine Le Pen a été condamnée par le tribunal correctionnel de Paris à quatre ans d'emprisonnement, dont deux ans ferme, 100 000 euros d'amende, et cinq ans d'inéligibilité."
+      - id: 6684
+        verb: CLAIMED
+        text: "Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d'inéligibilité contre Marine Le Pen dans le procès des assistants FN au Parlement européen."
+      - id: 9301
+        verb: CLAIMED
+        text: "L'issue du procès en appel de Marine Le Pen, qui déterminera si elle est inéligible ou non, est attendue."
+      - id: 10012
+        verb: CLAIMED
+        text: "Marine Le Pen a affirmé qu'il n'y a plus de scénario où elle ne serait pas candidate à l'élection présidentielle."
+    new_fact: "Marine Le Pen a déclaré en 2013 qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
+    expect_verdict: CONTRADICTION
+    must_flag: [10012]
+    must_not_flag: [328, 6684, 9301]
+    notes: "Measured 4/4 clean after the mechanical check (was 19-edge over-fire in prod: conviction/parquet/verdict facts are the class-membership TRIGGER, not the breaker)."
+
+  # ── The core deliverable direction: her "no scenario" claim arrives and must
+  # ── flag the 2013 rule (self-exempting double standard).
+  - name: "B_eligibility_claim_arrives_flags_rule"
+    summary: *mlp_summary
+    key_facts:
+      - id: 10540
+        verb: CLAIMED
+        text: "Marine Le Pen a déclaré en 2013 qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
+      - id: 328
+        verb: WAS_CONVICTED
+        text: "Le 31 mars 2025, Marine Le Pen a été condamnée par le tribunal correctionnel de Paris à quatre ans d'emprisonnement, dont deux ans ferme, 100 000 euros d'amende, et cinq ans d'inéligibilité."
+      - id: 7629
+        verb: PROMISED
+        text: "Marine Le Pen a déclaré qu'elle ne présenterait pas de candidature si la justice l'en empêchait, mais qu'elle se présenterait en cas de condamnation à une peine avec sursis."
+    new_fact: "Marine Le Pen a affirmé qu'il n'y a plus de scénario dans lequel elle ne pourrait pas être candidate à l'élection présidentielle."
+    expect_verdict: CONTRADICTION
+    must_flag: [10540]
+    must_not_flag: [328]
+    notes: "The mirror-01y feature (prod contradiction #330-family). Measured 3/3; the conviction key fact is context for class-membership, never the edge partner."
+
+  # ── KNOWN LIMITATION (2026-07-17, measured — do NOT re-assert without new
+  # ── evidence): the REVERSE direction of A — the conviction arrives as the NEW
+  # ── fact while the 2013 rule sits in the stance — still over-fires (the
+  # ── analyzer flags the rule even while its own reasoning calls the pair "the
+  # ── rule being applied"). Three fixes were tried and each one BROKE case D
+  # ── (denial-vs-conviction, the pipeline's core signal): (1) a
+  # ── direction-symmetric MECHANICAL CHECK — C 0/3, D 3/3; (2) a global "NORM
+  # ── vs FACT" typing rule — C 1/3, D fail; (3) a worked PAIR-31 NO example —
+  # ── C 1/3, D 0/3. Any suppression strong enough to stop C leaks onto D on
+  # ── this model (google/gemma-4-26b-a4b-it NVFP4), so D wins. Residual prod
+  # ── risk: a future court event (e.g. the cassation ruling) landing in a
+  # ── stance that holds a stored normative rule can create this FP shape, and
+  # ── the verifier keeps it too (measured 0/4 drop) — catch it via
+  # ── `dm contradictions dismiss` / the audit-prod-data sweep. Scores are
+  # ── bundle-based, which dampens the impact. Same class of skip as the Attal
+  # ── #169 homonym in backend/contradiction/testdata/verify_cases.yaml.
+  # ── The case, for re-testing on a future model:
+  # ──   new_fact: the 328 conviction text; key_facts: 10540 (rule), 7629;
+  # ──   must_not_flag: [10540]
+
+  # ── Guard: the mechanical check must NOT suppress the pipeline's core
+  # ── denial-vs-finding signal. A WAS_CONVICTED fact is still a valid partner
+  # ── for an innocence denial — the restriction applies to SELF-EXEMPTION
+  # ── edges only.
+  - name: "D_denial_arrives_still_flags_conviction"
+    summary: *mlp_summary
+    key_facts:
+      - id: 328
+        verb: WAS_CONVICTED
+        text: "Le 31 mars 2025, Marine Le Pen a été condamnée par le tribunal correctionnel de Paris à quatre ans d'emprisonnement, dont deux ans ferme, 100 000 euros d'amende, et cinq ans d'inéligibilité."
+      - id: 9301
+        verb: CLAIMED
+        text: "L'issue du procès en appel de Marine Le Pen, qui déterminera si elle est inéligible ou non, est attendue."
+    new_fact: "Marine Le Pen a affirmé son innocence sur TF1 après avoir été reconnue coupable en appel de détournement de fonds publics."
+    expect_verdict: CONTRADICTION
+    must_flag: [328]
+    must_not_flag: [9301]
+    notes: "UNVERIFIED under the mechanical check as of 2026-07-17 (the check was added AFTER the prod rebuild). If this fails, the check over-generalized from self-exemption to all conviction partners — rescope it."
+
+  # ── Verdict-classification sanity: a paraphrase must be DUPLICATE, not a
+  # ── contradiction and not NEW_INFO.
+  - name: "E_paraphrase_is_duplicate"
+    summary: *mlp_summary
+    key_facts:
+      - id: 10740
+        verb: ANNOUNCED
+        text: "Marine Le Pen a annoncé, le 7 juillet, qu'elle allait se pourvoir en cassation après sa condamnation en appel pour détournement de fonds publics."
+      - id: 9301
+        verb: CLAIMED
+        text: "L'issue du procès en appel de Marine Le Pen, qui déterminera si elle est inéligible ou non, est attendue."
+    new_fact: "Marine Le Pen a annoncé son pourvoi en cassation le mardi 7 juillet 2026, suite à sa condamnation en appel pour détournement de fonds publics."
+    expect_verdict: DUPLICATE
+    must_not_flag: [10740, 9301]
+    notes: "Same announcement, different source phrasing (prod facts 10740 vs 10371)."
