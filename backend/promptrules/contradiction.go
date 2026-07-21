@@ -100,23 +100,6 @@ Context: Le Pen has been sentenced in first instance to wearing an electronic br
 PAIR 5b: REASONING: A is a stated CARVE-OUT — she will not campaign under bracelet conditions. B is a blanket COMMITMENT — she will campaign with Bardella regardless of the appeal's outcome. The two statements are individually reasonable but jointly inconsistent: campaigning with Bardella (B) requires campaigning at all (which A excludes given the first-instance bracelet). COMMITMENT vs CARVE-OUT.
 PAIR 5b: YES: Blanket "I will campaign regardless" combined with separately stated refusal to campaign under the actual conditions she now faces.
 
-PAIR 5c (Behavioral Inconsistency - YES):
-Statement A (dated March 2026): "Jordan Bardella n'a pas voté pour le Rassemblement national aux élections municipales de 2026 dans sa propre commune de Garches."
-Statement B (dated March 2026): "Jordan Bardella a publiquement soutenu le candidat du Rassemblement national Franck Allisio à Marseille."
-PAIR 5c: REASONING: Both are concurrent actions by the same person regarding the same election cycle. Publicly endorsing one's party's candidate elsewhere while not voting for the party's candidate in one's own town is an inconsistency between stated political support and personal voting behaviour. BEHAVIORAL INCONSISTENCY.
-PAIR 5c: YES: Public party support + concurrent failure to vote for the same party in his own municipality.
-
-PAIR 5d (Stated-Objective vs Stated-Action variant - YES):
-Statement A (dated June 18, 2025): "Donald Trump claimed regime change in Iran was not the US goal."
-Statement B (dated June 22, 2025): "Donald Trump a affirmé que les États-Unis avaient « décimé » le régime iranien « en deux semaines »."
-PAIR 5d: REASONING: A states the OBJECTIVE: not regime change. B claims the ACHIEVEMENT: the regime has been decimated by US action. Decimating the regime IS regime change in substance. The stated achievement contradicts the stated objective. STATED-OBJECTIVE vs STATED-ACTION (second variant — same shape as PAIR 4).
-PAIR 5d: YES: Claiming "regime change isn't the goal" alongside claiming "we have decimated the regime" cannot both be true.
-
-PAIR 6 (Same Date Conflict - YES):
-Statement A (dated February 1, 2024): "Alice stated the project budget is $5 million."
-Statement B (dated February 1, 2024): "Alice confirmed the project budget was approved at $7 million."
-PAIR 6: YES: Conflicting monetary values for the same project on the same date.
-
 PAIR 7 (Unknown Dates - NO):
 Statement A (dated unknown date): "CEO Jones supported policy X."
 Statement B (dated unknown date): "CEO Jones opposed policy X."
@@ -133,11 +116,6 @@ Statement A (dated January 20, 2024): "Marine Le Pen acknowledged that reproache
 Statement B (dated January 20, 2024): "Marine Le Pen said the EU Parliament never advised or criticized her party about assistants."
 PAIR 9: NO: A is about her own acknowledgment that criticism is warranted; B is about what the EU Parliament did or didn't do. Different subjects.
 
-PAIR 10 (Person's Claim vs Authoritative Finding - YES):
-Statement A (dated January 20, 2024): "Marine Le Pen claimed she was unaware of the fund misappropriation scheme."
-Statement B (dated January 21, 2024): "Marine Le Pen ordered and supervised the fund misappropriation scheme according to court investigators."
-PAIR 10: YES: Her claim of ignorance is directly contradicted by an authoritative finding that she knew and supervised the scheme.
-
 PAIR 11 (Trial / Accusation vs Denial - NO):
 Statement A (dated January 20, 2024): "Marine Le Pen a été jugée en appel pour détournement de fonds publics européens dans l'affaire des assistants parlementaires du FN."
 Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations."
@@ -148,25 +126,10 @@ Statement A (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de 
 Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics."
 PAIR 12: YES: An authoritative court finding of guilt directly breaks her denial.
 
-PAIR 13 (Vague vs Specific - NO):
-Statement A (dated January 20, 2024): "Marine Le Pen said she discovered emails she wasn't the recipient of."
-Statement B (dated January 20, 2024): "Marine Le Pen claimed she had no knowledge of the damaging emails between Schaffhauser and Saint-Just."
-PAIR 13: NO: A refers to "some emails" vaguely; B refers to specific emails between two named people. We cannot confirm they refer to the same emails.
-
 PAIR 14 (Same Specific Reference - YES):
 Statement A (dated January 20, 2024): "Marine Le Pen said she discovered the emails between Schaffhauser and Saint-Just."
 Statement B (dated January 20, 2024): "Marine Le Pen claimed she had no knowledge of the emails between Schaffhauser and Saint-Just."
 PAIR 14: YES: Both statements explicitly reference the same specific emails — "discovered" directly contradicts "had no knowledge of".
-
-PAIR 15 (Subjective Awareness vs Objective Fact - NO):
-Statement A (dated January 20, 2024): "Marine Le Pen declared she had 'no consciousness' of any potential offense in the parliamentary assistants affair."
-Statement B (dated January 20, 2024): "Marine Le Pen stated the Rassemblement national committed no irregularity regarding the employment of Thierry Légier."
-PAIR 15: NO: A is her subjective past awareness, B is an objective factual claim. They reinforce each other; denying wrongdoing does NOT imply prior knowledge of wrongdoing.
-
-PAIR 16 (Admitting Error vs Denying Crime - NO):
-Statement A: "Marine Le Pen a déclaré n'avoir eu 'aucun sentiment d'avoir commis le moindre délit'."
-Statement B: "Marine Le Pen a admis que les assistants parlementaires ont travaillé au siège du parti, ce qu'elle considère comme une erreur."
-PAIR 16: NO: Admitting an administrative error does NOT contradict denying criminal intent.
 
 PAIR 17 (Conviction vs Acknowledgment of Imperfections - NO):
 Statement A: "Marine Le Pen a reconnu que 'beaucoup de choses auraient pu se passer de manière plus rigoureuse'."
@@ -178,20 +141,10 @@ Statement A: "Marine Le Pen a nié avoir donné des instructions d'embauche fict
 Statement B: "Marine Le Pen a rejeté les accusations de faute lourde dans la gestion des fonds européens."
 PAIR 18: NO: Two denials about different aspects of the same case form a consistent defense, not a contradiction.
 
-PAIR 20 (Paraphrase - NO):
-Statement A: "Marine Le Pen a affirmé que le RN n'a jamais dissimulé les détails de l'emploi de ses assistants parlementaires."
-Statement B: "Marine Le Pen a déclaré que le Rassemblement national n'avait rien caché concernant les pratiques d'emploi de ses assistants."
-PAIR 20: NO: Paraphrases of the same claim cannot contradict each other.
-
 PAIR 21 (Legal Process Stages - NO):
 Statement A: "Le Rassemblement National est accusé de détournement de fonds publics."
 Statement B: "Marine Le Pen a été reconnue coupable de détournement de fonds publics."
 PAIR 21: NO: Accusation and conviction are sequential stages of the same case.
-
-PAIR 23 (Geographic Scope - NO):
-Statement A: "Seulement 3 communes en Vienne ont déposé des listes pour les élections municipales."
-Statement B: "425 listes ont été déposées sur l'ensemble du territoire national."
-PAIR 23: NO: Different geographic scopes — local data does not contradict national aggregates.
 
 PAIR 24 (Announcement Followed by Action - NO):
 Statement A (dated March 15, 2024): "Jean-Luc Mélenchon announced he would come to support his candidate in Lille on Thursday evening."
@@ -203,18 +156,6 @@ Statement A (dated March 15, 2024): "Sophie Martin a promis de reconstruire l'ar
 Statement B (dated February 20, 2025): "Sophie Martin a autorisé la délocalisation en Chine d'une usine française de 5 000 employés à Béthune."
 PAIR 27: REASONING: Statement A is a BROAD VALUES commitment ("rebuild French artisanat") — no quantified target, no deadline, no specific bill named. Statement B is the person's own action that materially undermines that commitment: authorising offshoring of a 5,000-employee French factory removes domestic French manufacturing jobs, which is the OPPOSITE direction on the axis of French industrial/artisanal employment. Per BEHAVIORAL INCONSISTENCY (clarified) — broad value statements DO qualify as stated positions, and the action's direction on the same axis is unambiguous. The size of the action (5,000 employees) is material, not symbolic. FLAG YES.
 PAIR 27: YES: Promise to rebuild French artisanat is materially undermined by authorising offshoring of a French factory to China — opposite directions on the same axis of French industrial sovereignty, even though the promise side names no quantified target.
-
-PAIR 28 (Broad Claim of Support vs Opposing Vote - YES):
-Statement A (dated September 1, 2024): "Marc Dubois a déclaré soutenir massivement les énergies renouvelables."
-Statement B (dated December 5, 2024): "Marc Dubois a voté contre la directive européenne imposant la fin des véhicules thermiques en 2035."
-PAIR 28: REASONING: Statement A is a BROAD CLAIM of support ("soutenir massivement les énergies renouvelables") — no specific bill named, no quantified pledge. Statement B is the person's vote against the EU 2035 EV directive — a flagship instrument of the renewable-energy / decarbonisation transition. Voting against the main legislative mechanism of the energy transition materially undermines the "support renewables" claim on the same axis. Per BEHAVIORAL INCONSISTENCY (clarified) — broad claims of support DO qualify as stated positions, and a vote against the central mechanism IS a contradiction even though the claim was not quantified. FLAG YES.
-PAIR 28: YES: A broad claim of supporting renewables is contradicted by voting against the EU's flagship transition mechanism — opposite directions on the same energy-transition axis.
-
-PAIR 29 (Two Same-Person Actions Pointing Opposite on Same Axis - YES):
-Statement A (dated June 4, 2024): "Sophie Martin a voté en faveur de l'instauration de droits de douane sur les importations chinoises."
-Statement B (dated February 20, 2025): "Sophie Martin a autorisé la délocalisation en Chine d'une usine française de 5 000 employés à Béthune."
-PAIR 29: REASONING: Neither statement is framed as a "promise"; both are concrete actions by the same person. Statement A protects domestic French industrial production (pro-tariff against Chinese imports); Statement B authorises moving French industrial production to China (anti-domestic-industry). Same axis (French industrial sovereignty), opposite directions, both material. Per BEHAVIORAL INCONSISTENCY (clarified) — applies to two same-person actions pointing opposite on the same axis, not only to promise-vs-action pairs. FLAG YES.
-PAIR 29: YES: Voting for tariffs that protect French industry while authorising a major French-to-China offshoring contradicts on the axis of French industrial sovereignty — two actions, opposite directions, both material.
 
 PAIR 30 (Self-Exempting Double Standard - YES):
 Statement A (dated 2013): "Marine Le Pen a déclaré qu'il faudrait rendre inéligibles à vie ceux qui étaient condamnés."
