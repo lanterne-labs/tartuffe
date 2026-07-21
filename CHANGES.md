@@ -1434,3 +1434,17 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   verifier keeps TP_103 reliably, so 3/5 only means occasional "unstable" log lines. The improved
   direction (evicting FP_177-shaped stored junk) had NO other cleanup path. Net: prompt bloat was
   ONE real cause of auditor failures (proven), alongside the model-intrinsic ones (TP_114, FP_92).
+
+## Extraction attribution/grounding rules + post-audit cleanup (2026-07-21)
+
+- The 2026-07-21 prod audit (workflow: 36 suspected, 19 adversarially confirmed) found the extractor's
+  dominant defects are invented specifics and misattribution, so fact_extractor.go gained three
+  self-consistency rules: ATTRIBUTION (aides/"bras droit" statements are not the principal's; @handles
+  resolve only to the person they name, never a substituted guess — prod bug turned "@eciotti" into
+  "Christian Estrosi"), QUALIFIERS (preserve "en partie"/"notamment" — dropping them manufactures
+  absolutes), EVENT DATE ≠ PUBLISH DATE (prod bug dated a July 14 speech July 15 from the article
+  timestamp). Locked by TestRemoteLLMExtractor_AttributionGrounding; existing extraction goldens pass.
+- Ops lesson recorded: the July 19 auto-audit ran the OLD binary (the host auto-deploy silently broken —
+  deploys via `host up` until the dashboard trigger is fixed) and deleted 7 of 8 self-exemption
+  edges while keeping 11 FPs the workflow confirmed. Dismissed the 11; full stance rebuild with the
+  new prompts relaunched to restore + generalize.

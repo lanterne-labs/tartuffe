@@ -259,3 +259,69 @@ les plus dangereux. Il n'a évoqué aucun pays ni aucun modèle pénitentiaire �
 		}
 	}
 }
+
+// TestRemoteLLMExtractor_AttributionGrounding locks the attribution rules added
+// after the 2026-07-21 prod audit (mirror-nik): (a) a social-media handle must
+// not be resolved to a DIFFERENT politician (prod fact 10797 turned "@eciotti"
+// into "Christian Estrosi"); (b) an aide's statement must not be attributed to
+// the principal (prod fact 10919 turned "le bras droit de Mélenchon a dénoncé"
+// into "Mélenchon a dénoncé"); (c) scope qualifiers must survive extraction
+// (prod fact dropped "en partie" from "en partie responsable").
+func TestRemoteLLMExtractor_AttributionGrounding(t *testing.T) {
+	loadEnv(t)
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		t.Skip("Skipping attribution grounding test: OPEN_AI_KEY not set.")
+	}
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Le Pen à Nice, LFI en interne
+
+Sur X, Marine Le Pen a écrit : « Avec mon ami @eciotti, aujourd'hui maire de cette
+magnifique ville de Nice. Demain, j'assisterai à ses côtés aux cérémonies du 14 juillet. »
+
+Au siège de La France insoumise, le bras droit de Jean-Luc Mélenchon a dénoncé
+« l'entêtement de la candidature jusqu'au-boutiste » de Fabien Roussel.
+
+Interrogé sur l'incendie de l'Aude, Jean-Luc Mélenchon a estimé que la politique
+d'austérité était « en partie responsable » de la lenteur des secours.`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/attribution",
+		Title:   "Le Pen à Nice, LFI en interne",
+		Content: mockText,
+	}
+
+	ctx := context.Background()
+	facts, err := extractorClient.ExtractFacts(ctx, "Marine Le Pen", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] entity=%q normalized=%q", i+1, f.SubjectEntity, f.NormalizedFactText)
+	}
+
+	for i, f := range facts {
+		hay := f.NormalizedFactText + " " + f.NormalizedFactTextEn
+		// (a) @eciotti must never become another politician (the prod bug named Estrosi).
+		if strings.Contains(hay, "Estrosi") {
+			t.Errorf("Fact %d resolved @eciotti to the wrong person (Estrosi): %q", i+1, f.NormalizedFactText)
+		}
+		// (b) the aide's denunciation must not be attributed to Mélenchon himself.
+		if strings.Contains(strings.ToLower(f.SubjectEntity), "mélenchon") || strings.Contains(strings.ToLower(f.SubjectEntity), "melenchon") {
+			if strings.Contains(strings.ToLower(hay), "roussel") {
+				t.Errorf("Fact %d attributes the aide's denunciation of Roussel to Mélenchon: %q", i+1, f.NormalizedFactText)
+			}
+			// (c) if the austerity claim is extracted, the "en partie" qualifier must survive.
+			if strings.Contains(strings.ToLower(hay), "responsable") && !strings.Contains(strings.ToLower(hay), "en partie") && !strings.Contains(strings.ToLower(hay), "partly") && !strings.Contains(strings.ToLower(hay), "in part") {
+				t.Errorf("Fact %d dropped the 'en partie' qualifier: %q", i+1, f.NormalizedFactText)
+			}
+		}
+	}
+}
