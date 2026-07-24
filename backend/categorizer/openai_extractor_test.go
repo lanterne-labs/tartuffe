@@ -325,3 +325,52 @@ d'austérité était « en partie responsable » de la lenteur des secours.`
 		}
 	}
 }
+
+// TestRemoteLLMExtractor_ScopeRejection locks REJECT rule 8 (mirror-6ij): facts
+// whose subject is a non-political actor (musicians, athletes) must not be
+// extracted, while the political facts in the same article survive.
+func TestRemoteLLMExtractor_ScopeRejection(t *testing.T) {
+	loadEnv(t)
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		t.Skip("Skipping scope rejection test: OPEN_AI_KEY not set.")
+	}
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Une journée d'actualité chargée
+
+Le ministre Gérald Darmanin a affirmé que la nouvelle loi pénale serait appliquée dès septembre, sans exception.
+
+En marge de son concert à Paris, Jimin a déclaré que le public parisien était le plus grand de l'histoire de BTS et qu'il souhaitait revenir chaque année.
+
+Didier Deschamps a annoncé la composition de l'équipe de France pour le match amical, avec trois nouveaux joueurs.`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/scope",
+		Title:   "Une journée d'actualité chargée",
+		Content: mockText,
+	}
+
+	ctx := context.Background()
+	facts, err := extractorClient.ExtractFacts(ctx, "Gérald Darmanin", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	var darmanin int
+	for i, f := range facts {
+		t.Logf("  [%d] entity=%q normalized=%q", i+1, f.SubjectEntity, f.NormalizedFactText)
+		lower := strings.ToLower(f.SubjectEntity)
+		if strings.Contains(lower, "jimin") || strings.Contains(lower, "deschamps") {
+			t.Errorf("Fact %d extracted for out-of-scope subject %q: %q", i+1, f.SubjectEntity, f.NormalizedFactText)
+		}
+		if strings.Contains(lower, "darmanin") {
+			darmanin++
+		}
+	}
+	if darmanin == 0 {
+		t.Error("expected at least one Darmanin fact to survive the scope rule")
+	}
+}

@@ -117,9 +117,18 @@ An approval rating, popularity or confidence score, voting-intention figure, can
 - ❌ "Attal jouit d'une image positive auprès de 32%% des Français" — survey result
 - ✅ "Macron a affirmé que sa politique porte ses fruits" — the entity's OWN claim is fine (you do NOT need the poll number to record his statement)
 
+**8. Out-of-scope subject — not a political actor (frequent error)**
+This service scores the honesty of POLITICAL actors: officeholders, candidates, parties, governments, political institutions, and organizations acting in the political arena. If the subject_entity is an athlete, musician, actor, entertainer, influencer, business/company, or media outlet acting OUTSIDE politics, REJECT the fact — even when the statement itself is concrete and verifiable.
+- ❌ "Jimin a déclaré que le concert à Paris était le plus grand public de l'histoire de BTS" — entertainment
+- ❌ "Didier Deschamps a annoncé la composition de l'équipe de France" — sports
+- ❌ "Paul Graham a affirmé que les startups devraient..." — tech commentary, no political role
+- ✅ "Gérald Darmanin a affirmé..." — officeholder
+- ✅ A CEO testifying before parliament, or a celebrity endorsing a candidate or contesting an election law, IS in scope — a non-political figure enters scope only when the FACT itself is political.
+
 ## Self-Consistency Check
 Before finalizing each fact, re-read your normalized_fact and verify:
 - Is it a poll/rating/ranking number (rule 7) or a passive event the entity didn't act on — an invitation, a scheduled date, an outcome that "will be known" (rules 3, 4)? If so, DROP it. These are the two most common bad facts.
+- Is the subject a political actor, or is the fact itself political (rule 8)? If neither, DROP it.
 - Is the subject_entity the one who actually MADE the statement or PERFORMED the action? A measurement or event ABOUT the entity is not the entity's own fact.
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
 - Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.

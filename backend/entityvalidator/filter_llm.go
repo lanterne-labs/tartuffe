@@ -149,11 +149,25 @@ a name that people actually use to refer to it (not a description).
   R8. Fictional characters that are not political subjects.
   R9. Junk strings / extraction artifacts that don't look like any real entity
       name AND have no matching wiki/google evidence.
+  R10. Real but OUT OF SCOPE for a political-facts tracker: athletes, coaches,
+      musicians, actors, entertainers, influencers, tech/business figures,
+      companies/brands, media outlets and magazines, sports bodies — any entity
+      whose public identity per the wiki/google evidence is NON-political —
+      UNLESS that evidence shows them holding or running for office, or leading
+      a political organization. Examples: "didier deschamps" (football manager)
+      → reject; "jimin" (K-pop singer) → reject; "fisheyelemag" (photography
+      magazine handle) → reject; "volodymyr zelensky" (actor turned president)
+      → accept. Advocacy organizations active in public/political debate
+      (anti-racism leagues, unions, NGOs) stay IN scope — do not reject them
+      under this rule.
 
 ═══ DECISION RULE ═══
 
-If the candidate matches an ACCEPT signal (A/B/C/D), return real=true.
-If it matches a REJECT pattern (R1–R9), return real=false EVEN IF wiki/google
+If the candidate matches a REJECT pattern (R1–R10), return real=false EVEN IF
+it also matches an ACCEPT signal — scope (R10) and shape (R1–R9) rejections
+override existence evidence. Otherwise, if it matches an ACCEPT signal
+(A/B/C/D), return real=true.
+Note real=false here means "do not track", EVEN IF wiki/google
 have hits about RELATED entities (e.g. "administration trump" gets google hits
 about Trump policy — that's evidence about Trump, not about "administration
 trump" as an entity; still reject).
