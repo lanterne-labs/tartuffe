@@ -37,6 +37,8 @@ func TestPayloadWithModel(t *testing.T) {
 // immediate — no 2-minute backoff), and the fallback serves the completion.
 // It asserts CF-Access headers hit the primary only and the model is swapped.
 func TestDoRequest_FailsOverToFallback(t *testing.T) {
+	defer resetBreaker()
+	resetBreaker()
 	var primaryCFID string
 	var fbModel, fbAuth, fbCF string
 	var fbHit bool
@@ -97,6 +99,8 @@ func TestDoRequest_FailsOverToFallback(t *testing.T) {
 // TestDoRequest_PrimarySucceeds_NoFallback confirms the fallback is not touched
 // when the primary works (and works with no fallback configured).
 func TestDoRequest_PrimarySucceeds_NoFallback(t *testing.T) {
+	defer resetBreaker()
+	resetBreaker()
 	var fbHit bool
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

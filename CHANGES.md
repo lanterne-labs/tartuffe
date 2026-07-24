@@ -1448,3 +1448,20 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   deploys via `host up` until the dashboard trigger is fixed) and deleted 7 of 8 self-exemption
   edges while keeping 11 FPs the workflow confirmed. Dismissed the 11; full stance rebuild with the
   new prompts relaunched to restore + generalize.
+
+## Reliability trio: LLM circuit breaker, run-start rows, pipeline watchdog (2026-07-24)
+
+- The Jul 22-24 box outage exposed three silent-failure modes (mirror-s8t/bp0/1ir): every LLM call
+  burned the full ~2min primary retry before falling back (fallback WORKED but was 30x too slow —
+  runs ballooned 10h+ and died), killed runs left no pipeline_runs row at all, and nobody was told.
+- Circuit breaker (backend/llm/breaker.go): process-wide primary-down state shared by chat AND
+  embeddings (same physical box). Armed by a hard primary failure or the new start-of-run probe
+  (llm.ProbePrimary in runDailyPipeline); while armed, calls skip the primary entirely and go
+  straight to the fallback; half-open retry every 10min auto-recovers. OpenRouter serves
+  qwen/qwen3-embedding-8b (verified empirically), so a fully box-less run is now viable.
+- pipeline_runs rows are now INSERTed at run START (status='running', finished_at nullable via
+  migration 20260724120000) and completed by UPDATE — killed/hung runs leave a visible corpse.
+- Pipeline watchdog (backend/alerting/pipeline_watchdog.go, started by dm web serve): hourly health
+  check, Telegram alert on >30h without a successful run / runs stuck 'running' >6h / errored runs,
+  24h per-condition cooldown. Gotcha for future tests: the breaker is process-global — any test that
+  exercises a primary failure must resetBreaker() or it poisons later tests in the package.

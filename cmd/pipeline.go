@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,6 +50,22 @@ func init() {
 func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) error {
 	start := time.Now()
 	log.Info().Msg("Daily pipeline started")
+
+	// Record the run's existence BEFORE doing anything, so a killed or hung run
+	// leaves a 'running' row instead of vanishing (mirror-bp0). Best-effort:
+	// runID 0 makes RecordPipelineRun fall back to a full INSERT at the end.
+	runID, runIDErr := storer.StartPipelineRun(ctx, start)
+	if runIDErr != nil {
+		log.Error().Err(runIDErr).Msg("Daily pipeline: failed to record run start; summary will be inserted at end")
+	}
+
+	// Probe the primary LLM endpoint once. If the home box is unreachable, arm
+	// the circuit breaker now so EVERY call this run goes straight to the
+	// fallback instead of burning the full retry backoff per call — an outage
+	// used to turn 3-hour runs into 10-hour ones (mirror-s8t).
+	if !llm.ProbePrimary(ctx) {
+		log.Warn().Msg("Daily pipeline: primary LLM endpoint unreachable — routing the entire run to the fallback")
+	}
 
 	// Resolve target persons for fact-extraction steps (news, twitter).
 	targets, targetsErr := dailyTargets(ctx, storer)
@@ -244,7 +261,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		summary.AuditChecked = auditResult.Total
 		summary.AuditFlagged = auditResult.Remove
 	}
-	if err := storer.RecordPipelineRun(ctx, summary); err != nil {
+	if err := storer.RecordPipelineRun(ctx, runID, summary); err != nil {
 		log.Error().Err(err).Msg("Failed to record pipeline_runs summary")
 	}
 

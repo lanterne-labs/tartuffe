@@ -297,7 +297,21 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 
 	// Try the primary endpoint (with Cloudflare-Access headers); on failure fall
 	// over to the fallback endpoint if configured (same model, no CF headers).
-	bodyBytes, status, err := m.sendEmbedOnce(ctx, m.apiURL, m.apiKey, m.cfHeaders, payloadBytes)
+	// When the shared primary breaker is open (home box known-down), skip the
+	// primary attempt entirely — chat and embeddings live on the same box.
+	var bodyBytes []byte
+	var status int
+	if m.fallbackURL != "" && llm.PrimaryDown() {
+		status = http.StatusServiceUnavailable
+		err = fmt.Errorf("primary embeddings endpoint skipped: circuit breaker open")
+	} else {
+		bodyBytes, status, err = m.sendEmbedOnce(ctx, m.apiURL, m.apiKey, m.cfHeaders, payloadBytes)
+		if err == nil && status == http.StatusOK {
+			llm.MarkPrimaryUp()
+		} else if ctx.Err() == nil && m.fallbackURL != "" {
+			llm.MarkPrimaryDown(fmt.Sprintf("embeddings: status=%d err=%v", status, err))
+		}
+	}
 	if (err != nil || status != http.StatusOK) && ctx.Err() == nil && m.fallbackURL != "" {
 		log.Warn().Err(err).Int("status_code", status).Str("fallback_url", m.fallbackURL).Msg("primary embeddings endpoint failed, trying fallback")
 		if fbBody, fbStatus, fbErr := m.sendEmbedOnce(ctx, m.fallbackURL, m.fallbackKey, nil, payloadBytes); fbErr == nil {

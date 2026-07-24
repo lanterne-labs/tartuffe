@@ -124,7 +124,20 @@ func createDefaultBackoffPolicy(ctx context.Context) backoff.BackOff {
 func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, payloadBytes []byte) ([]byte, error) {
 	start := time.Now()
 
-	body, err := c.sendWithRetry(ctx, "primary", apiURL, apiKey, c.primaryHeaders, payloadBytes)
+	var body []byte
+	var err error
+	if c.fallbackURL != "" && PrimaryDown() {
+		// Breaker open: the primary is known-unreachable, don't burn the full
+		// retry backoff on it — go straight to the fallback below.
+		err = errPrimaryBreakerOpen
+	} else {
+		body, err = c.sendWithRetry(ctx, "primary", apiURL, apiKey, c.primaryHeaders, payloadBytes)
+		if err == nil {
+			MarkPrimaryUp()
+		} else if ctx.Err() == nil && c.fallbackURL != "" {
+			MarkPrimaryDown("chat: " + err.Error())
+		}
+	}
 	// Fail over only on a real endpoint failure — not when the caller cancelled.
 	if err != nil && ctx.Err() == nil && c.fallbackURL != "" {
 		fbPayload, swapErr := payloadWithModel(payloadBytes, c.fallbackModel)
