@@ -50,8 +50,17 @@ func TestRecordPipelineRun(t *testing.T) {
 	_, _, err = storer.RecordContradictionImmediate(ctx, pid, aID, bID, "raison", "reason")
 	require.NoError(t, err)
 
+	// The run row now exists from the START (status='running') so killed runs
+	// leave a trace; RecordPipelineRun completes it by id.
+	runID, err := storer.StartPipelineRun(ctx, windowStart)
+	require.NoError(t, err)
+	var midStatus string
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`SELECT status FROM pipeline_runs WHERE id = $1`, runID).Scan(&midStatus))
+	assert.Equal(t, "running", midStatus, "start row must be visible as running mid-run")
+
 	finishedAt := time.Now().Add(time.Second)
-	err = storer.RecordPipelineRun(ctx, PipelineRunSummary{
+	err = storer.RecordPipelineRun(ctx, runID, PipelineRunSummary{
 		StartedAt: windowStart, FinishedAt: finishedAt, Status: "success",
 		Targets: 5, NewsArticles: 10, ScrapeErrors: 1,
 		AuditChecked: 3, AuditFlagged: 1, StepErrors: 0,
