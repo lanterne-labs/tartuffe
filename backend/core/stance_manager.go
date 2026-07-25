@@ -1157,15 +1157,27 @@ Return ONLY valid JSON:
 
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(candidates))
 
-	content, err := sm.callJSONLLM(ctx, "You are a political fact topic classifier. Return only valid JSON.", prompt, 0.1, 800, false)
+	const sys = "You are a political fact topic classifier. Return only valid JSON."
+	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.1, 800, false)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
 
 	var resp topicAssignmentResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic assignment response")
-		return nil, fmt.Errorf("parsing topic assignment response: %w", err)
+		// One retry at a slightly higher temperature. Truncated/garbled JSON here
+		// is the same transient failure mode callStanceJSONWithRetry handles for
+		// the analyze call — during the 2026-07-24 rebuild it orphaned ~11% of
+		// facts (1,243) because a single parse failure skipped the whole fact.
+		log.Warn().Err(err).Str("llm_content", content).Msg("Topic assignment JSON parse failed; retrying once at T=0.3")
+		content, err = sm.callJSONLLM(ctx, sys, prompt, 0.3, 800, false)
+		if err != nil {
+			return nil, fmt.Errorf("topic assignment (retry): %w", err)
+		}
+		if err := json.Unmarshal([]byte(content), &resp); err != nil {
+			log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse topic assignment response twice")
+			return nil, fmt.Errorf("parsing topic assignment response: %w", err)
+		}
 	}
 
 	decision := &topicAssignmentDecision{Reasoning: resp.Reasoning}
@@ -1212,13 +1224,22 @@ LABEL RULES:
 Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
 
-	content, err := sm.callJSONLLM(ctx, "You generate broad topic labels for political facts. Return only valid JSON.", prompt, 0.1, 200, false)
+	const labelSys = "You generate broad topic labels for political facts. Return only valid JSON."
+	content, err := sm.callJSONLLM(ctx, labelSys, prompt, 0.1, 200, false)
 	if err != nil {
 		return "", fmt.Errorf("label generation: %w", err)
 	}
 	var resp generalLabelResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
-		return "", fmt.Errorf("parsing label response: %w", err)
+		// Same transient-truncation retry as assignTopicFromCandidates.
+		log.Warn().Err(err).Str("llm_content", content).Msg("Label JSON parse failed; retrying once at T=0.3")
+		content, err = sm.callJSONLLM(ctx, labelSys, prompt, 0.3, 200, false)
+		if err != nil {
+			return "", fmt.Errorf("label generation (retry): %w", err)
+		}
+		if err := json.Unmarshal([]byte(content), &resp); err != nil {
+			return "", fmt.Errorf("parsing label response: %w", err)
+		}
 	}
 	label := strings.TrimSpace(string(resp.Label))
 	if label == "" {
