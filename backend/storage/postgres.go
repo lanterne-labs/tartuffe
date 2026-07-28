@@ -2169,14 +2169,21 @@ func (s *PostgresStorer) recomputeParentEntityScores(ctx context.Context, tx pgx
 	return nil
 }
 
-// getPersonFactsCount returns the number of distinct facts mentioning a person
+// getPersonFactsCount returns the number of distinct ACTIVE facts mentioning a
+// person: facts folded under a meta (or plain duplicate-marked facts) count via
+// their canonical fact only, so repeating the same claim N times weighs like
+// once in the honesty-score denominator. Matches refreshPersonFactCount.
 func (s *PostgresStorer) getPersonFactsCount(ctx context.Context, tx pgx.Tx, personID int64) (int, error) {
 	query := `
 		SELECT COUNT(DISTINCT f.id)
 		FROM facts f
 		JOIN fact_sources fs ON fs.fact_id = f.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-		WHERE fm.person_id = $1`
+		WHERE fm.person_id = $1
+		  AND NOT EXISTS (
+			SELECT 1 FROM fact_relations fr
+			WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+		  )`
 
 	var count int
 	err := tx.QueryRow(ctx, query, personID).Scan(&count)

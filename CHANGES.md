@@ -2,6 +2,29 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-07-28: Meta-facts — same-claim facts fold under one synthesized fact (mirror-gdb)
+
+- Same-claim handling changed from DROP to FOLD. Before: a new fact ≥0.80-similar with a
+  compatible verb (or LLM-judged "same claim" in the 0.70–0.80 gray zone) was silently discarded —
+  its text/quote/source lost — while differently-phrased restatements slipped through and each
+  paired independently in contradiction detection (Le Pen: ~20 near-identical
+  innocence-vs-conviction contradiction rows). Now the fact is KEPT and linked as a member of a
+  META-FACT: an LLM-synthesized aggregate (`facts.is_meta`, migration `20260728000000`) that alone
+  participates in KNN pairing/contradiction checks. Members use the existing `fact_relations`
+  'duplicate' link (general = meta), so every active-fact exclusion, ancestor redirect, and
+  `RepointFactDuplicate` works unchanged; the meta reuses a representative member's embedding
+  (same claim ⇒ same stance-blind slug — no embedder needed in the fold path).
+- On each absorbed member the meta text is re-synthesized (`core.MetaSynthesizer`, temp 0) and the
+  meta's `fact_pair_checks` are DELETED — text changed, so the detector re-judges it. Folded
+  members skip stance analysis entirely (they join the meta's stance row) — one LLM pairing cost
+  per meta, not per restatement. Wired in ingester (news), twitter, and `dm ingest files`;
+  frpolitics votes intentionally not folded (structured, distinct events).
+- SCORE CHANGE (user decision): the honesty-score fact count now excludes duplicate-marked facts
+  (matches the already-deduped `persons.fact_count`) — repeating a claim N times weighs once.
+- Backfill: `dm facts fold [--person] [--apply]` clusters existing same-claim facts (union-find
+  over embedding candidates + the same verb/LLM gates), builds metas, repoints + collapses
+  duplicate contradiction rows, recomputes scores. DRY-RUN by default.
+
 ## 2026-07-26: Deterministic eviction gate — temp 0 + verdict pinning + order-swap agreement
 
 - The auto-evict decision is now built to be a DETERMINISTIC function of the pair, closing the

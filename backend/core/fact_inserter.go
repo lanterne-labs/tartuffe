@@ -50,6 +50,8 @@ type FactInserter struct {
 	stanceProcessor     StanceProcessor
 	autoDedupeThreshold float64         // Cosine similarity at/above which to auto-skip as duplicate (verb-aware)
 	llmDedupeFloor      float64         // Lower bound of the LLM "gray zone"; below this similarity, never dedup
+	metaStorer          MetaFoldStorer  // Non-nil (with metaSynth) switches dedupe from drop to fold-under-meta
+	metaSynth           MetaSynthesizer // LLM that (re)writes the meta-fact text
 	dedupeJudge         factDedupeJudge // Optional; when set, the [floor, auto) band (and similar-but-different-verb pairs) are LLM-adjudicated
 }
 
@@ -99,6 +101,21 @@ type Storer interface {
 	// by the OpenAI-batch classification flow in batch_job.go; that path is now
 	// redundant with stance-based clustering and queued for removal.
 	InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error
+}
+
+// MetaFoldStorer is the storage surface for meta-fact folding. Implemented by
+// storage.PostgresStorer. Kept separate from Storer so test fakes and callers
+// that don't fold stay untouched.
+type MetaFoldStorer interface {
+	GetMetaForFact(ctx context.Context, factID int64) (int64, bool, error)
+	CreateMetaFact(ctx context.Context, personID int64, text, embeddingText string, memberEmbedding []float32, lang, canonicalVerb string) (int64, error)
+	UpdateMetaFactText(ctx context.Context, metaID int64, text string) error
+	GetMetaMemberTexts(ctx context.Context, metaID int64) ([]string, error)
+	MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error
+	RepointFactDuplicate(ctx context.Context, general, specific int64) (int, int, error)
+	GetFactStanceID(ctx context.Context, factID int64) (int64, bool, error)
+	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
+	RefreshPersonFactCount(ctx context.Context, personID int64) error
 }
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
@@ -159,6 +176,17 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 // OPEN_AI_ env is unconfigured it logs and leaves band-dedup off, so callers
 // keep working with the embedding-only path. Production ingestion paths call
 // this; tests that don't, retain the deterministic embedding-only behavior.
+// EnableMetaFolding switches the dedupe path from DROPPING a same-claim fact to
+// KEEPING it as a member of a meta-fact: the new fact is stored (text, source,
+// quote all preserved), linked as a 'duplicate' member of an LLM-synthesized
+// meta that alone participates in contradiction pairing. The meta's text is
+// re-synthesized on every absorbed member and its pair checks re-open.
+func (fi *FactInserter) EnableMetaFolding(storer MetaFoldStorer, synth MetaSynthesizer) {
+	fi.metaStorer = storer
+	fi.metaSynth = synth
+	log.Info().Msg("Meta-fact folding ENABLED for fact insertion (same-claim facts are kept and folded, not dropped)")
+}
+
 func (fi *FactInserter) EnableLLMDedupe() {
 	judge, err := NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
@@ -267,6 +295,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	//      LLM "same claim?" when an adjudicator is configured. This catches
 	//      genuine restatements with different verbs (e.g. PROMISED vs CLAIMED of
 	//      the same thing) that sit just under the auto line.
+	// When folding is enabled, a same-claim hit no longer drops the fact —
+	// foldTarget records the matched fact and the new one is stored as a member
+	// of its meta after insertion.
+	var foldTarget *SimilarFact
 	if len(input.Embedding) > 0 {
 		// Only widen the candidate search to the gray-zone floor when we can
 		// actually adjudicate it; otherwise keep the original narrow search.
@@ -297,15 +329,33 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("new_verb", input.CanonicalVerb).
 							Str("existing_verb", existingVerb).
 							Bool("both_external", bothExternal).
+							Bool("folding", fi.foldingEnabled()).
 							Str("fact", truncate(input.NormalizedFactText, 80)).
-							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
+							Msg("Same-claim fact (same verb or both external + high similarity)")
+						if fi.foldingEnabled() {
+							sfCopy := sf
+							foldTarget = &sfCopy
+							break
+						}
 						return 0, 0, false, nil
 					}
 				}
 
 				// Tier 2: LLM gray-zone adjudication (and similar-but-different-verb).
+				// In fold mode the broader position-level gate applies when the
+				// judge offers it — folding keeps the raw fact, so grouping
+				// same-position restatements is safe where dropping was not.
 				if fi.dedupeJudge != nil {
-					same, jErr := fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
+					var same bool
+					var jErr error
+					type positionGate interface {
+						IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error)
+					}
+					if pg, ok := fi.dedupeJudge.(positionGate); ok && fi.foldingEnabled() {
+						same, jErr = pg.IsSamePosition(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
+					} else {
+						same, jErr = fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
+					}
 					if jErr != nil {
 						log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
 							Msg("LLM fact-dedupe check failed, proceeding with insertion")
@@ -317,8 +367,14 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Float64("distance", sf.Distance).
 							Str("new_verb", input.CanonicalVerb).
 							Str("existing_verb", existingVerb).
+							Bool("folding", fi.foldingEnabled()).
 							Str("fact", truncate(input.NormalizedFactText, 80)).
-							Msg("Skipping duplicate fact (LLM gray-zone adjudication: same claim)")
+							Msg("Same-claim fact (LLM gray-zone adjudication)")
+						if fi.foldingEnabled() {
+							sfCopy := sf
+							foldTarget = &sfCopy
+							break
+						}
 						return 0, 0, false, nil
 					}
 				}
@@ -354,6 +410,20 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return 0, 0, false, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
+	// Fold path: the fact is a same-claim restatement — attach it to a meta-fact
+	// instead of running stance analysis (the meta carries the claim; analyzing
+	// the member would only duplicate LLM calls and contradictions). The member
+	// inherits the meta's stance so the every-fact-has-a-stance invariant holds.
+	// On any fold error we fall through to normal stance processing (fail-open).
+	if foldTarget != nil {
+		if foldErr := fi.foldNewFact(ctx, subjectID, factID, input, *foldTarget); foldErr != nil {
+			log.Warn().Err(foldErr).Int64("fact_id", factID).Int64("matched_fact_id", foldTarget.ID).
+				Msg("Meta-fold failed; falling back to normal stance routing")
+		} else {
+			return factID, subjectID, true, nil
+		}
+	}
+
 	// Mandatory stance processing. Failure rolls back the fact via compensating
 	// delete so that the "every fact has a stance" invariant holds.
 	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
@@ -371,6 +441,87 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Msg("Inserted fact and routed through stance")
 
 	return factID, subjectID, true, nil
+}
+
+func (fi *FactInserter) foldingEnabled() bool {
+	return fi.metaStorer != nil && fi.metaSynth != nil
+}
+
+// foldNewFact links a freshly inserted same-claim fact under a meta-fact:
+// resolves (or creates) the meta of the matched fact, re-synthesizes the meta
+// text over all member texts, marks the new fact as a member ('duplicate'
+// relation), repoints any contradictions, and attaches the member to the meta's
+// stance for display. Raw member facts are never deleted.
+func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int64, input StoreFactInput, matched SimilarFact) error {
+	ms, synth := fi.metaStorer, fi.metaSynth
+
+	metaID, found, err := ms.GetMetaForFact(ctx, matched.ID)
+	if err != nil {
+		return fmt.Errorf("resolve meta of fact %d: %w", matched.ID, err)
+	}
+
+	if !found {
+		text, err := synth.SynthesizeMetaFact(ctx, input.SubjectEntity,
+			[]string{matched.Text, input.NormalizedFactText}, input.Lang)
+		if err != nil {
+			return fmt.Errorf("synthesize new meta: %w", err)
+		}
+		metaID, err = ms.CreateMetaFact(ctx, personID, text, input.EmbeddingText, input.Embedding, input.Lang, input.CanonicalVerb)
+		if err != nil {
+			return fmt.Errorf("create meta: %w", err)
+		}
+		// The meta takes over the matched fact's stance slot.
+		if stanceID, ok, sErr := ms.GetFactStanceID(ctx, matched.ID); sErr == nil && ok {
+			if aErr := ms.AddFactToStance(ctx, stanceID, metaID); aErr != nil {
+				log.Warn().Err(aErr).Int64("meta_fact_id", metaID).Msg("Failed to attach meta to stance")
+			}
+		}
+		if err := ms.MarkFactAsDuplicate(ctx, matched.ID, metaID); err != nil {
+			return fmt.Errorf("mark matched fact %d as member: %w", matched.ID, err)
+		}
+		if _, _, err := ms.RepointFactDuplicate(ctx, metaID, matched.ID); err != nil {
+			return fmt.Errorf("repoint matched fact %d onto meta: %w", matched.ID, err)
+		}
+	} else {
+		members, err := ms.GetMetaMemberTexts(ctx, metaID)
+		if err != nil {
+			return fmt.Errorf("load meta %d members: %w", metaID, err)
+		}
+		members = append(members, input.NormalizedFactText)
+		text, err := synth.SynthesizeMetaFact(ctx, input.SubjectEntity, members, input.Lang)
+		if err != nil {
+			return fmt.Errorf("re-synthesize meta %d: %w", metaID, err)
+		}
+		if err := ms.UpdateMetaFactText(ctx, metaID, text); err != nil {
+			return fmt.Errorf("update meta %d text: %w", metaID, err)
+		}
+	}
+
+	if err := ms.MarkFactAsDuplicate(ctx, newFactID, metaID); err != nil {
+		return fmt.Errorf("mark new fact %d as member of meta %d: %w", newFactID, metaID, err)
+	}
+	if _, _, err := ms.RepointFactDuplicate(ctx, metaID, newFactID); err != nil {
+		return fmt.Errorf("repoint new fact %d onto meta: %w", newFactID, err)
+	}
+	// Member joins the meta's stance so the every-fact-has-a-stance invariant
+	// holds without any stance-analysis LLM call.
+	if stanceID, ok, sErr := ms.GetFactStanceID(ctx, metaID); sErr == nil && ok {
+		if aErr := ms.AddFactToStance(ctx, stanceID, newFactID); aErr != nil {
+			log.Warn().Err(aErr).Int64("fact_id", newFactID).Msg("Failed to attach member to meta's stance")
+		}
+	}
+	if err := ms.RefreshPersonFactCount(ctx, personID); err != nil {
+		log.Warn().Err(err).Int64("person_id", personID).Msg("Failed to refresh fact count after fold")
+	}
+
+	log.Info().
+		Int64("fact_id", newFactID).
+		Int64("meta_fact_id", metaID).
+		Int64("matched_fact_id", matched.ID).
+		Bool("meta_created", !found).
+		Str("fact", truncate(input.NormalizedFactText, 80)).
+		Msg("Folded same-claim fact under meta-fact")
+	return nil
 }
 
 // compensateDelete rolls back a partially inserted fact. Errors here are logged

@@ -6,6 +6,8 @@ import (
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"fmt"
+
+	"github.com/rs/zerolog/log"
 )
 
 // FactIngester turns normalized facts into DB rows and triggers contradiction checks.
@@ -58,6 +60,11 @@ func (i *FactIngester) Ingest(ctx context.Context, items []storage.StoreFactInpu
 	}
 	inserter := core.NewFactInserter(i.Store, stanceMgr)
 	inserter.EnableLLMDedupe()
+	if synth, sErr := core.NewLLMMetaSynthesizerFromEnv(); sErr != nil {
+		log.Warn().Err(sErr).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped as before")
+	} else {
+		inserter.EnableMetaFolding(i.Store, synth)
+	}
 	_, err = inserter.InsertFacts(ctx, coreInputs)
 	return err
 }

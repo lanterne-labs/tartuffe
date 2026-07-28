@@ -96,6 +96,75 @@ func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA,
 	return verdict.Same, nil
 }
 
+// IsSamePosition is the meta-FOLDING gate: unlike IsSameClaim (which guards a
+// destructive drop and therefore treats any differing specific as distinct),
+// folding keeps every raw fact, so this gate asks the broader question — do the
+// two statements assert the SAME POSITION on the SAME specific matter, differing
+// only in wording, emphasis, or facet? "Affirms his innocence", "claims good
+// faith", and "contests the qualification of embezzlement" about the same affair
+// all fold; a commitment vs a contrary action, opposing positions, or different
+// matters never do (those pairs are contradiction material and must stay apart).
+func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
+	prompt := a.buildSamePositionPrompt(subject, factA, factB)
+	return a.askSameGate(ctx, prompt)
+}
+
+func (a *FactDedupeAdjudicator) buildSamePositionPrompt(subject, factA, factB string) string {
+	return fmt.Sprintf(`Two statements are recorded about the SAME person (%s). Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way, so lean toward true when the position and the matter are the same.
+
+SAME position (answer true):
+- The same stance on the same question, in different words or through different facets: "affirms his innocence in the affair", "claims his good faith", "contests the qualification of embezzlement" — all one position ("denies guilt in that affair").
+- The same announcement/position reported with different incidental detail (outlet, phrasing, minor date differences, added color).
+- The same demand/support/opposition restated over time with the same direction and target.
+
+DIFFERENT (answer false — never aggregate):
+- OPPOSING or diverging positions, or a position vs a later change: these are contradiction material and must stay separate.
+- A commitment/promise/value vs an ACTION or outcome (even one that fulfils it): a statement and a deed are different kinds of facts.
+- Different matters, targets, or questions (two different affairs, laws, elections, policies) — even if thematically close.
+- Different concrete events (two separate votes, two separate trials/instances, two separate polls) or materially different numbers/sanctions as the substance of the statement.
+
+STATEMENT A: "%s"
+STATEMENT B: "%s"
+
+Return ONLY strict JSON, nothing else:
+{"same": true, "reasoning": "<one short sentence>"}
+or
+{"same": false, "reasoning": "<one short sentence>"}`, subject, factA, factB)
+}
+
+// askSameGate runs a same/distinct JSON gate prompt and parses the verdict.
+func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string) (bool, error) {
+	reqPayload := llm.ChatRequest{
+		Model: a.model,
+		Messages: []llm.ChatMessage{
+			{Role: "user", Content: prompt},
+		},
+		Temperature:    0.0,
+		MaxTokens:      256,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	}
+	payloadBytes, err := json.Marshal(reqPayload)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal same-gate request: %w", err)
+	}
+	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
+	if err != nil {
+		return false, fmt.Errorf("same-gate LLM call failed: %w", err)
+	}
+	var chatResp llm.ChatResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		return false, fmt.Errorf("failed to decode chat response: %w", err)
+	}
+	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
+		return false, fmt.Errorf("LLM returned no content")
+	}
+	verdict, err := parseSameClaimResponse(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	if err != nil {
+		return false, fmt.Errorf("failed to parse LLM response: %w", err)
+	}
+	return verdict.Same, nil
+}
+
 func (a *FactDedupeAdjudicator) buildPrompt(subject, factA, factB string) string {
 	return fmt.Sprintf(`Two statements are recorded about the SAME person (%s). Decide whether they are the SAME claim — one a redundant restatement of the other carrying NO new information — so that keeping both would be pure duplication.
 

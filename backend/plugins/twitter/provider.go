@@ -166,6 +166,11 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 	}
 	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
 	factInserter.EnableLLMDedupe()
+	if synth, sErr := core.NewLLMMetaSynthesizerFromEnv(); sErr != nil {
+		log.Warn().Err(sErr).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped as before")
+	} else {
+		factInserter.EnableMetaFolding(p.Storer, synth)
+	}
 
 	for i := 0; i < len(toProcess); i += batchSize {
 		end := i + batchSize
