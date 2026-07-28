@@ -20,6 +20,25 @@ type verifyCase struct {
 	Expect        string `yaml:"expect"` // "keep" or "drop"
 	Bucket        string `yaml:"bucket"`
 	Notes         string `yaml:"notes"`
+	// Judges scopes the case to specific golden suites: "verify" and/or
+	// "audit". Empty = both (the default for every pre-existing case). Use it
+	// when only ONE judge handles the shape reliably — the other judge's gap
+	// stays documented in a comment instead of a flaky assert.
+	Judges []string `yaml:"judges"`
+}
+
+// judgedBy reports whether the case participates in the given suite
+// ("verify" or "audit"). An empty Judges list means all suites.
+func (c verifyCase) judgedBy(judge string) bool {
+	if len(c.Judges) == 0 {
+		return true
+	}
+	for _, j := range c.Judges {
+		if j == judge {
+			return true
+		}
+	}
+	return false
 }
 
 type verifyCaseFile struct {
@@ -71,6 +90,9 @@ func TestVerifyGolden(t *testing.T) {
 	var passed, failed int
 	for _, tc := range cf.Cases {
 		tc := tc
+		if !tc.judgedBy("verify") {
+			continue
+		}
 		wantKeep, err := expectToKeep(tc.Expect)
 		if err != nil {
 			t.Fatalf("case %q: %v", tc.Name, err)

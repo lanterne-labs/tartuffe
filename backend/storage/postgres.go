@@ -2662,6 +2662,9 @@ type ContradictionWithFacts struct {
 type ContradictionAuditRow struct {
 	ContradictionWithFacts
 	PersonName string `json:"person_name"`
+	// LastAuditHash pins the last KEEP verdict to its exact inputs (see
+	// contradiction.AuditInputHash); nil = never audited-kept.
+	LastAuditHash *string `json:"last_audit_hash,omitempty"`
 }
 
 // ListContradictions returns recorded contradictions, optionally filtered to a
@@ -2695,7 +2698,7 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 		       COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
 		       COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
 		       COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-		       c.reason, c.detected_at
+		       c.reason, c.detected_at, c.last_audit_hash
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -2728,7 +2731,7 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 			&r.FactAText, &r.FactBText,
 			&r.FactASourceURLs, &r.FactBSourceURLs,
 			&r.FactADate, &r.FactBDate,
-			&r.Reason, &r.DetectedAt,
+			&r.Reason, &r.DetectedAt, &r.LastAuditHash,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contradiction row: %w", err)
 		}
@@ -2738,6 +2741,21 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 		return nil, fmt.Errorf("error iterating contradictions: %w", err)
 	}
 	return out, nil
+}
+
+// SetContradictionAuditHash pins an audit KEEP verdict to its inputs (see
+// contradiction.AuditInputHash). The audit step skips rows whose stored hash
+// matches the freshly computed one.
+func (s *PostgresStorer) SetContradictionAuditHash(ctx context.Context, id int64, hash string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE contradictions SET last_audit_hash = $2 WHERE id = $1`, id, hash)
+	if err != nil {
+		return fmt.Errorf("failed to set audit hash for contradiction %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("contradiction %d not found when setting audit hash", id)
+	}
+	return nil
 }
 
 // GetPersonContradictions returns a page of contradictions for a person together with the total count.

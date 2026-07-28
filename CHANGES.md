@@ -2,6 +2,60 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-07-26: Deterministic eviction gate — temp 0 + verdict pinning + order-swap agreement
+
+- The auto-evict decision is now built to be a DETERMINISTIC function of the pair, closing the
+  "survived four audits, died on the fifth" ratchet (mirror-bii):
+  (1) auditor LLM calls run at temperature 0.0 (was 0.1 — the only sampling-noise judge left in
+  the eviction path; verifier already 0.0);
+  (2) VERDICT PINNING: a KEEP verdict stores `contradictions.last_audit_hash` =
+  `contradiction.AuditInputHash(...)` — sha256 over the full audit prompt/rulebook AND the row's
+  facts/dates/reason. The audit step skips rows whose hash matches: an unchanged pair is never
+  re-judged, so its verdict cannot flip on server noise. Editing the prompt or repointing a fact
+  changes the hash and re-opens the row (migration `20260726000000`);
+  (3) the confirm pass is now ORDER-SWAPPED (statement B first) and must reach remove citing the
+  SAME rule token — a verdict that flips under order or reproduces "remove" with a different
+  justification (the Vuibert signature) is confabulation and keeps the row as unstable.
+- Auditor prompt gained a direction-mapping instruction under POSITION REVERSAL (abolish-the-age
+  vs harden-the-reform are OPPOSITE directions, not same_direction) — the exact Bardella misread.
+- Lesson: with a stochastic judge and one-way deletions, "2-of-2" via an identical re-roll is not
+  a second opinion — it is the same dice. Independence must come from a deterministic prompt
+  transformation (order swap) + reasoning agreement (same rule), and idempotence from pinning.
+
+## 2026-07-26: Why the auditor deletes real contradictions (mirror-bii) + restores
+
+- Restored two wrongly-evicted real contradictions: Bardella retirement flip (cid 487, via clearing
+  the suppressing negative pair-checks and re-running real detection) and Vuibert non-candidacy
+  (cid 488, via `tools/restore_contradiction` after the CURRENT detector said NO 3/3 on a pair the
+  June detector caught — the detector regressed on it too, it was never detector-locked).
+- Root cause of prod-vs-golden divergence, established by live repro + A/B: (1) hard semantic bug —
+  the auditor reads "supprimer tout âge légal" as SAME direction as "durcir la réforme" and evicts
+  via same_direction/different_subjects (new golden TP_487 locks this RED; TP_114 same family);
+  (2) the auditor verdict is STOCHASTIC on borderline keeps, and 5-day re-audits with a PERMANENT
+  negative pair-check form a ratchet — ~33%/cycle delete probability kills any borderline-real row
+  within weeks even though goldens mostly pass (Vuibert: survived 4 audits, died on the 5th);
+  (3) goldens are single-sample and OPEN_AI_KEY-gated out of CI, so the suite sat red (TP_114,
+  TP_103, FP_161) with nobody seeing it. Lesson: a green golden on a stochastic judge does NOT
+  imply prod safety — the prod loop samples the judge repeatedly and deletions are one-way; any
+  auto-destructive LLM verdict needs an idempotence/stickiness guard, not just better prompts.
+- Eviction forensics recipe: deleted contradictions leave `contradiction_added` events (IDs) and
+  their FR reason survives in `translations` (no FK cascade) — join those to reconstruct what the
+  auditor deleted.
+
+## 2026-07-25: Repeatable "forensic" workflow — why does person X have no contradictions?
+
+- New read-only audit tooling: `scripts/forensic.sql` (per-person corpus/time coverage, detection
+  coverage vs the detector's own KNN criterion, stance fragmentation, eviction trail via
+  `contradiction_added` events which outlive deleted rows, queue membership, pipeline/audit health)
+  + `scripts/forensic_pairs.sql` (dumps closest judged-NO pairs and pairs just outside the KNN
+  threshold for second-judge review). Both take a `-v targets="regex"` person filter and run via
+  `host run --service postgres`. Orchestrated by `.claude/workflows/forensic.js` (invoke the
+  "forensic" workflow; writes `scoped_reports/forensic_report.md`).
+- Key method insight: surviving `contradictions` rows understate detection — auditor evictions flip
+  `fact_pair_checks` to false and delete the row, so the only durable record of "the pipeline DID
+  find something" is the `contradiction_added` event log. First run: ~2/3 of all contradictions ever
+  created have been evicted (e.g. Bardella 9→1, Macron 6→1, Le Pen 97→39).
+
 ## 2026-06-27: Translation subsystem — generic store + async final pipeline phase (mirror-rgw, phases 1-2)
 
 - New extensible translation layer. `translations` table (entity_type, entity_id, field, lang, text,

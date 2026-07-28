@@ -2,7 +2,9 @@ package contradiction
 
 import (
 	"context"
+	"crypto/sha256"
 	"digital-mirror/backend/llm"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -179,7 +181,7 @@ An earlier automated pass marked the two statements below as contradictory, with
 Be CONSERVATIVE: when in doubt, return "ambiguous" rather than "keep". Only return "keep" when the contradiction is unambiguous under the rules. Return "remove" when the rules clearly indicate the pair should NOT have been flagged (false positive).
 
 **NEVER REMOVE A GENUINE CONTRADICTION.** Check these REAL-contradiction patterns FIRST — if the pair matches one, the verdict is "keep", NOT "remove", even when it superficially resembles a false-positive bucket below:
-- POSITION / ATTITUDE REVERSAL: the person stated, announced, or pleaded FOR X, then stated, announced, or did the OPPOSITE about the same subject — e.g. "I will run" then "I will not run"; "I won't be a candidate" then leading/joining a winning list at that election; "very motivated" then "not enthusiastic"; pleads FOR a primary then is AGAINST one. This is a reversal — do NOT file it under announcement_then_action, different_events, vague_vs_specific, same_direction, or different_subjects.
+- POSITION / ATTITUDE REVERSAL: the person stated, announced, or pleaded FOR X, then stated, announced, or did the OPPOSITE about the same subject — e.g. "I will run" then "I will not run"; "I won't be a candidate" then leading/joining a winning list at that election; "very motivated" then "not enthusiastic"; pleads FOR a primary then is AGAINST one. This is a reversal — do NOT file it under announcement_then_action, different_events, vague_vs_specific, same_direction, or different_subjects. Before using same_direction, map EACH statement to the concrete direction it pushes a shared policy axis: proposing to ABOLISH any legal retirement age (lets people leave earlier/freely) vs wanting to HARDEN a reform that raises the age (makes people leave later) are OPPOSITE directions on the same axis — a reversal, even though both criticize the status quo.
 - COMMITMENT vs CONTRARY ACTION: a promise, value, or commitment broken by the person's own opposing action (e.g. promised to keep the retirement age at 62, then abandoned the repeal that would have undone the move to 64).
 - DENIAL vs AUTHORITATIVE FINDING: a personal denial contradicted by a conviction or official investigation conclusion in the same matter.
 - DENOUNCE-THEN-ALLY: publicly blaming or attacking a SPECIFIC NAMED person or party, then allying, merging lists, or partnering with that SAME target. The shared subject is that NAMED person, so this is never different_subjects: do NOT excuse it with "blame and alliance are different topics" or "attributing responsibility to him is not logically incompatible with a later alliance with him".
@@ -249,6 +251,28 @@ func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error)
 }
 
 // Audit evaluates a single recorded contradiction.
+// AuditInputHash returns a stable hash of EVERYTHING that determines an audit
+// verdict: the full audit prompt (template + embedded rulebook + rule tokens)
+// and the per-row inputs (fact texts, dates, detection reason). A KEEP verdict
+// pinned under this hash stays valid until one of those inputs changes — the
+// audit step uses it to skip re-judging unchanged rows, so a verdict can never
+// flip between runs on sampling or server noise. Editing the prompt/catalog or
+// repointing a fact changes the hash and re-opens the row.
+func AuditInputHash(factA, factB string, dateA, dateB *time.Time, originalReason string) string {
+	h := sha256.New()
+	for _, part := range []string{
+		auditPromptTpl,
+		strings.Join(contradictionAuditAllowedRulesList, "|"),
+		factA, factB,
+		formatDateForLLM(dateA), formatDateForLLM(dateB),
+		originalReason,
+	} {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
 	if factA == factB {
 		return AuditResult{
@@ -319,9 +343,13 @@ If VERDICT is "keep", RULE MUST be "none". Do NOT add commentary, headers, code 
 // corrective retry.
 func (a *OpenAIContradictionAuditor) callChat(ctx context.Context, messages []llm.ChatMessage) (string, error) {
 	reqPayload := llm.ChatRequest{
-		Model:       a.model,
-		Messages:    messages,
-		Temperature: 0.1,
+		Model:    a.model,
+		Messages: messages,
+		// 0.0 (greedy): the audit verdict gates PERMANENT row deletion, so
+		// sampling noise is not acceptable — the same pair must always get the
+		// same verdict. Was 0.1, which made borderline keeps flap run-to-run
+		// (mirror-bii: Vuibert 0/3 vs 2/3 removes across identical inputs).
+		Temperature: 0.0,
 		// 3-line response (REASONING/RULE/VERDICT) is ~150 tokens. 1024 leaves
 		// headroom and keeps prompt+reservation well under any 8k ctx.
 		MaxTokens: 1024,

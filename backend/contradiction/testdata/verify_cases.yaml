@@ -280,6 +280,11 @@ cases:
 
   # Said he would NOT be a candidate, then led a winning list (i.e. WAS a candidate) — a stated
   # position broken by his own contrary action, NOT a benign announcement. (KEEP)
+  # PROD FAILURE 2026-07-07: despite this golden passing, the prod auto-evict deleted the real
+  # row (cid 173) — the auditor verdict is stochastic on this shape (~0-2 removes / 3 reps,
+  # rules drawn: announcement_then_action / different_subjects) and the 5-day audit cycle plus
+  # PERMANENT negative pair-check means one bad draw kills it forever (mirror-bii). Restored as
+  # cid 488 on 2026-07-26.
   - name: "TP_100_vuibert_not_candidate_then_led_list"
     fact_a: "Lionel Vuibert a annoncé qu'il ne sera pas candidat aux élections municipales de 2026."
     fact_b: "La liste conduite par Lionel Vuibert a obtenu 100% des voix et 11 sièges au conseil municipal de Faissault au premier tour des élections municipales de mars 2026."
@@ -297,6 +302,21 @@ cases:
     expect: keep
     bucket: position_reversal
     notes: "Advocating FOR a primary vs being against one is a position reversal on the same subject. The auditor wrongly dismissed both as third_party_narrative because they are phrased as reported speech ('plaide'/'a exprimé') — but reported speech of the person's own position counts as his utterance."
+
+  # Abolishing the legal retirement age (no age floor at all) is the OPPOSITE of hardening
+  # (raising the age in) Macron's reform — a direction inversion the auditor misreads. (KEEP)
+  # PROD FAILURE: the auditor filed the real, hand-verified Bardella contradiction under
+  # same_direction ("supprimer l'âge légal = une forme de durcissement") and auto-evicted it
+  # twice (cids 226/227 on 2026-07-07, cid 411 on 2026-07-25). Restored as cid 487 on
+  # 2026-07-26 (mirror-bii). Party-level sibling shape: TP_114.
+  - name: "TP_487_bardella_abolish_age_vs_harden_reform"
+    fact_a: "Jordan Bardella a suggéré de supprimer tout âge légal de départ à la retraite."
+    fact_b: "Jordan Bardella veut durcir la réforme des retraites de Macron."
+    claimed_reason: "La suggestion de supprimer l'âge légal de départ est en opposition directe avec la volonté de durcir la réforme des retraites : supprimer l'âge légal permet de partir plus tôt, durcir la réforme repousse le départ."
+    expect: keep
+    bucket: position_reversal
+    judges: [audit]
+    notes: "Direction inversion: no-age-floor (leave earlier/freely) vs harden-the-reform (leave later) are opposing positions on the same axis. The auditor's same_direction bucket must not swallow it. Audit-only: the VERIFIER keeps this only ~2/3 of runs (documented gap, not asserted per the mirror-me2 convention); with the direction clause the auditor keeps it 3/3."
 
   # ---- Prod-sourced FP shapes from the 2026-06 audit-prod-data sweep (mirror-me2). Expect DROP. ----
 

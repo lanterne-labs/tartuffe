@@ -164,9 +164,13 @@ type ContradictionAuditResult struct {
 	Ambiguous int
 	Errors    int
 	RemoveIDs []int64
-	// Deleted counts rows removed under Apply (2-of-2 remove). Unstable counts
-	// remove verdicts whose confirming pass disagreed (kept). Both stay 0 when
-	// Apply is false.
+	// Cached counts rows skipped because their pinned KEEP hash still matches
+	// (verdict unchanged by construction — see contradiction.AuditInputHash).
+	Cached int
+	// Deleted counts rows removed under Apply (order-swapped unanimous remove
+	// on the SAME rule + verifier veto). Unstable counts remove verdicts whose
+	// confirming pass or verifier disagreed (kept). Both stay 0 when Apply is
+	// false.
 	Deleted  int
 	Unstable int
 	Elapsed  time.Duration
@@ -228,6 +232,19 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 		Msg("Starting contradiction audit")
 
 	for i, row := range rows {
+		// Verdict pinning: a row audited KEEP under identical inputs (facts,
+		// dates, reason, prompt/rulebook) is not re-judged — the verdict is a
+		// pure function of those inputs, so re-sampling could only add noise.
+		inputHash := contradiction.AuditInputHash(row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+		if row.LastAuditHash != nil && *row.LastAuditHash == inputHash {
+			result.Keep++
+			result.Cached++
+			metrics.IncrementContradictionAudits("cached")
+			log.Debug().Int64("contradiction_id", row.ID).
+				Msg("Audit verdict pinned (inputs unchanged); skipping re-judge")
+			continue
+		}
+
 		auditResult := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
 
 		line := auditOutputLine{
@@ -260,6 +277,10 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 			case contradiction.VerdictKeep:
 				result.Keep++
 				metrics.IncrementContradictionAudits("keep")
+				if err := storer.SetContradictionAuditHash(ctx, row.ID, inputHash); err != nil {
+					log.Warn().Err(err).Int64("contradiction_id", row.ID).
+						Msg("Failed to pin audit KEEP verdict (row will be re-judged next audit)")
+				}
 			case contradiction.VerdictRemove:
 				result.Remove++
 				result.RemoveIDs = append(result.RemoveIDs, row.ID)
@@ -271,12 +292,13 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 					Str("audit_reasoning", auditResult.Reasoning).
 					Msg("Auditor flagged contradiction as false positive (verdict=remove)")
 
-				// --apply: confirm with a second independent auditor pass before
-				// deleting, so the local model's run-to-run variance can't remove a
-				// row on a fluke. Only a 2-of-2 remove is deleted; a disagreeing
-				// pass keeps it (unstable).
+				// --apply: deletion additionally requires an ORDER-SWAPPED audit
+				// pass to independently reach remove on the SAME rule, plus the
+				// verifier's agreement. A verdict that flips under statement
+				// order or can't reproduce its own justification is treated as
+				// confabulation and kept.
 				if opts.Apply {
-					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, result)
+					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, auditResult.Rule, result)
 				}
 			case contradiction.VerdictAmbiguous:
 				result.Ambiguous++
@@ -333,36 +355,51 @@ func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStor
 // applyAuditRemoval decides whether a row the first auditor pass flagged for
 // removal is actually deleted. A deletion requires THREE independent signals to
 // agree, so a genuine contradiction the auditor mislabels never gets auto-evicted:
-//  1. a confirming SECOND auditor pass also returns remove (absorbs the model's
-//     run-to-run variance), and
+//  1. an ORDER-SWAPPED second auditor pass (statement B first) also returns
+//     remove AND cites the SAME rule token. A true false positive is false in
+//     both directions for the same reason; a verdict that flips under order, or
+//     reproduces "remove" with a different justification, is confabulation
+//     (mirror-bii: the Vuibert eviction drew announcement_then_action one pass
+//     and different_subjects the next), and
 //  2. the VERIFIER (refute pass) — a different, reversal-aware judge — also drops
 //     it. The verifier keeps reversals / broken promises / denounce-then-ally
 //     pairs, so it vetoes those deletions even when the auditor is confident.
 //
-// On all three agreeing it dismisses the contradiction (delete + negative pair
-// check + score recompute). Any disagreement or error keeps the row (counted as
-// unstable). Mutates result.Deleted / result.Unstable; returns true iff deleted.
+// All calls run at temperature 0, so the whole gate is a deterministic function
+// of the pair — the same row can no longer survive four audits and die on the
+// fifth. On all three agreeing it dismisses the contradiction (delete + negative
+// pair check + score recompute). Any disagreement or error keeps the row
+// (counted as unstable). Mutates result.Deleted / result.Unstable; returns true
+// iff deleted.
 func applyAuditRemoval(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
 	auditor *contradiction.OpenAIContradictionAuditor,
 	verifier *contradiction.OpenAIContradictionDetector,
 	row storage.ContradictionAuditRow,
+	firstRule string,
 	result *ContradictionAuditResult,
 ) bool {
-	// Signal 2: confirming second auditor pass (variance guard).
-	confirm := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+	// Signal 2: order-swapped auditor pass — same verdict AND same rule required.
+	confirm := auditor.Audit(ctx, row.FactBText, row.FactAText, row.FactBDate, row.FactADate, row.Reason)
 	switch {
 	case confirm.Err != nil:
 		result.Unstable++
 		log.Warn().Err(confirm.Err).Int64("contradiction_id", row.ID).
-			Msg("Confirmation audit pass errored; keeping row (not deleted)")
+			Msg("Order-swapped audit pass errored; keeping row (not deleted)")
 		return false
 	case confirm.Verdict != contradiction.VerdictRemove:
 		result.Unstable++
 		log.Info().Int64("contradiction_id", row.ID).Str("confirm_verdict", string(confirm.Verdict)).
 			Str("confirm_reasoning", confirm.Reasoning).
-			Msg("Confirmation audit pass disagreed; row is unstable, NOT deleting")
+			Msg("Order-swapped audit pass disagreed; row is unstable, NOT deleting")
+		return false
+	case confirm.Rule != firstRule:
+		result.Unstable++
+		log.Info().Int64("contradiction_id", row.ID).
+			Str("first_rule", firstRule).Str("confirm_rule", confirm.Rule).
+			Str("confirm_reasoning", confirm.Reasoning).
+			Msg("Order-swapped audit pass cited a DIFFERENT rule (confabulation signal); NOT deleting")
 		return false
 	}
 
@@ -390,7 +427,8 @@ func applyAuditRemoval(
 	}
 	result.Deleted++
 	log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
-		Msg("Dismissed contradiction as false positive (auditor 2-of-2 + verifier agree)")
+		Str("rule", firstRule).
+		Msg("Dismissed contradiction as false positive (both statement orders agree on the same rule + verifier)")
 	return true
 }
 
@@ -407,6 +445,7 @@ func recordAuditJobMetrics(ctx context.Context, storer *storage.PostgresStorer, 
 		{JobType: "contradiction-audit", Target: "", Metric: "errors", Value: float64(r.Errors)},
 		{JobType: "contradiction-audit", Target: "", Metric: "deleted", Value: float64(r.Deleted)},
 		{JobType: "contradiction-audit", Target: "", Metric: "unstable", Value: float64(r.Unstable)},
+		{JobType: "contradiction-audit", Target: "", Metric: "cached", Value: float64(r.Cached)},
 	}
 	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
 		log.Error().Err(err).Msg("Failed to record contradiction-audit job metrics")

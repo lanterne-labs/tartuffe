@@ -60,6 +60,9 @@ func TestAuditGolden(t *testing.T) {
 	var keepPass, keepFail, dropPass, dropFail int
 	for _, tc := range cf.Cases {
 		tc := tc
+		if !tc.judgedBy("audit") {
+			continue
+		}
 		wantKeep, err := expectToKeep(tc.Expect)
 		if err != nil {
 			t.Fatalf("case %q: %v", tc.Name, err)
