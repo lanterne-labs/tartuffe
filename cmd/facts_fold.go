@@ -164,14 +164,16 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 		return pairKey{x, y}
 	}
 	// Hard guard: two facts the detector holds as CONTRADICTORY must never fold
-	// — merging them would erase the contradiction. Deterministic, no LLM.
+	// into one meta — merging them would erase the contradiction. Deterministic,
+	// no LLM. (Their contradiction still repoints onto metas normally when each
+	// side folds with its OWN same-position group.)
 	contraRows, err := storer.ListContradictions(ctx, &p.ID, false, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load contradictions: %w", err)
 	}
-	contradicted := map[pairKey]bool{}
+	contradicted := map[pairKey]int64{}
 	for _, c := range contraRows {
-		contradicted[key(c.FactAID, c.FactBID)] = true
+		contradicted[key(c.FactAID, c.FactBID)] = c.ID
 	}
 	confirmed := map[pairKey]bool{}
 
@@ -192,7 +194,21 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 			if d > floorDist {
 				continue
 			}
-			if contradicted[key(facts[i].ID, facts[j].ID)] {
+			if cid := contradicted[key(facts[i].ID, facts[j].ID)]; cid != 0 {
+				// The pair never folds — but if the fold gate considers the two
+				// sides the SAME position, the recorded contradiction is almost
+				// certainly a false positive (or the gate is wrong): surface it
+				// loudly for monitoring. The repoint-changed audit hash already
+				// queues such rows for re-judgment at the next audit.
+				same, jErr := judge.IsSamePosition(ctx, p.Name, facts[i].Text, facts[j].Text)
+				if jErr == nil && same {
+					log.Warn().
+						Int64("contradiction_id", cid).
+						Int64("fact_a", facts[i].ID).
+						Int64("fact_b", facts[j].ID).
+						Str("person", p.Name).
+						Msg("CONTRADICTION UNDER SUSPICION: fold gate judges its two sides as the SAME position — likely detector false positive; next audit will re-judge it")
+				}
 				continue
 			}
 			// The LLM position gate is the MANDATORY last decider on membership:
@@ -232,7 +248,7 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 			ok := true
 			for _, m := range clique {
 				k := key(m.ID, f.ID)
-				if !confirmed[k] || contradicted[k] {
+				if !confirmed[k] || contradicted[k] != 0 {
 					ok = false
 					break
 				}
