@@ -2,6 +2,28 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-07-29: Meta-fact folding — cosine fix + LLM is the mandatory last decider
+
+- Post-rollout prod audit (metas correct; Le Pen still had ~21 same-thing contradiction rows)
+  exposed a UNITS BUG in the `dm facts fold` backfill: pgvector `<->` is L2 distance while the
+  insertion thresholds are COSINE; applying the 0.70 floor in L2 space demanded cosine ≥0.955, so
+  only near-verbatim pairs ever folded. Fixed (`cosineDistance` on the L2-normalized embeddings).
+  Lesson: never mix pgvector operators and in-code thresholds without checking the metric — the
+  same "0.70" differs wildly between spaces.
+- Folding policy (user decision): the LLM position gate is now the MANDATORY last decider on every
+  fold — embeddings only nominate candidates. The tier-1 "cosine ≥0.80 + compatible verb folds
+  without the LLM" shortcut is removed from both the insertion path and the backfill (it survives
+  only in legacy drop mode), because the stance-blind embedding_text puts same-topic-but-different
+  claims above 0.80 too. Locked by TestFoldVetoedByJudge.
+- IsSamePosition gained a PROCEDURAL-STAGES clause (réquisition vs verdict, indictment vs
+  judgment, first instance vs appeal are different facts) after the corrected floor tried to fold
+  the parquet's réquisition into the conviction meta; with it, that cluster and the
+  different-numbers election cluster self-reject. Backfill meta-reuse also now synthesizes over
+  existing member texts, not just the newly folded ones.
+- Folding CONVERGES BY ITERATION: metas are active facts, so a second `dm facts fold` pass folds
+  small metas into each other and absorbs stragglers; contradiction rows collapse further each
+  pass as members repoint (Le Pen 38 → 34 after pass 1 at floor 0.75).
+
 ## 2026-07-28: Meta-facts — same-claim facts fold under one synthesized fact (mirror-gdb)
 
 - Same-claim handling changed from DROP to FOLD. Before: a new fact ≥0.80-similar with a

@@ -81,6 +81,18 @@ func (fakeSynth) SynthesizeMetaFact(ctx context.Context, subject string, memberT
 	return "synthesized: " + strings.Join(memberTexts, " | "), nil
 }
 
+// fakeJudge stands in for the LLM gate — the mandatory last decider on fold
+// membership (embeddings only select candidates).
+type fakeJudge struct{ same bool }
+
+func (j fakeJudge) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
+	return j.same, nil
+}
+
+func (j fakeJudge) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
+	return j.same, nil
+}
+
 // countingStance fails the test if stance analysis runs for a folded fact.
 type countingStance struct{ calls int }
 
@@ -105,12 +117,14 @@ func foldInput() StoreFactInput {
 	}
 }
 
-// A tier-1 same-claim hit with folding enabled must KEEP the fact (inserted,
-// not dropped), link it under a freshly created meta, and skip stance analysis.
+// A same-claim hit (confirmed by the LLM judge — the mandatory last decider)
+// with folding enabled must KEEP the fact (inserted, not dropped), link it
+// under a freshly created meta, and skip stance analysis.
 func TestFoldNewFactCreatesMeta(t *testing.T) {
 	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
+	fi.dedupeJudge = fakeJudge{same: true}
 	fi.EnableMetaFolding(st, fakeSynth{})
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
@@ -147,6 +161,7 @@ func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
 	}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
+	fi.dedupeJudge = fakeJudge{same: true}
 	fi.EnableMetaFolding(st, fakeSynth{})
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
@@ -164,6 +179,31 @@ func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
 	}
 	if !strings.Contains(st.updatedText, "member one text") || !strings.Contains(st.updatedText, "innocence dans l'affaire") {
 		t.Fatalf("meta must be re-synthesized over old + new members: %q", st.updatedText)
+	}
+}
+
+// The LLM judge is the LAST decider: even a very-high-similarity candidate is
+// NOT folded when the judge says the positions differ — the fact goes through
+// normal stance analysis instead.
+func TestFoldVetoedByJudge(t *testing.T) {
+	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	stance := &countingStance{}
+	fi := NewFactInserter(st, stance)
+	fi.dedupeJudge = fakeJudge{same: false}
+	fi.EnableMetaFolding(st, fakeSynth{})
+
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if res.Inserted != 1 {
+		t.Fatalf("fact must be inserted normally, got %+v", res)
+	}
+	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
+		t.Fatalf("judge veto must prevent any fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	}
+	if stance.calls != 1 {
+		t.Fatalf("vetoed fact must go through stance analysis, ran %d times", stance.calls)
 	}
 }
 

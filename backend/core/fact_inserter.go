@@ -320,7 +320,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				}
 
 				// Tier 1: cheap verb-aware auto-dedup for very-high-similarity pairs.
-				if sf.Distance <= autoDistance {
+				// Only in DROP mode: when folding, the LLM gate below is the
+				// mandatory last decider on membership — embeddings (and verbs)
+				// only select candidates, they never fold on their own, because
+				// the stance-blind embedding_text puts same-topic-but-different
+				// claims well above 0.80 too.
+				if sf.Distance <= autoDistance && !fi.foldingEnabled() {
 					bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
 					if existingVerb == input.CanonicalVerb || bothExternal {
 						log.Info().
@@ -329,14 +334,8 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("new_verb", input.CanonicalVerb).
 							Str("existing_verb", existingVerb).
 							Bool("both_external", bothExternal).
-							Bool("folding", fi.foldingEnabled()).
 							Str("fact", truncate(input.NormalizedFactText, 80)).
-							Msg("Same-claim fact (same verb or both external + high similarity)")
-						if fi.foldingEnabled() {
-							sfCopy := sf
-							foldTarget = &sfCopy
-							break
-						}
+							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
 						return 0, 0, false, nil
 					}
 				}

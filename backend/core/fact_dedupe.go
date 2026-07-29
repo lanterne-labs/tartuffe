@@ -122,6 +122,7 @@ DIFFERENT (answer false — never aggregate):
 - A commitment/promise/value vs an ACTION or outcome (even one that fulfils it): a statement and a deed are different kinds of facts.
 - Different matters, targets, or questions (two different affairs, laws, elections, policies) — even if thematically close.
 - Different concrete events (two separate votes, two separate trials/instances, two separate polls) or materially different numbers/sanctions as the substance of the statement.
+- Different PROCEDURAL STAGES of the same affair: a prosecutor's request (réquisition) vs the court's decision, an indictment vs a verdict, a first-instance ruling vs the appeal — each is its own fact.
 
 STATEMENT A: "%s"
 STATEMENT B: "%s"

@@ -3,11 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 
-	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
@@ -44,7 +42,7 @@ func init() {
 	factsCmd.AddCommand(factsFoldCmd)
 	factsFoldCmd.Flags().StringVar(&factsFoldPerson, "person", "", "Restrict to one person (default: all persons)")
 	factsFoldCmd.Flags().BoolVar(&factsFoldApply, "apply", false, "Apply the folds (default is a read-only report)")
-	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", 0.70, "Similarity floor for same-claim candidates (cosine-style, 1 - L2 distance)")
+	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", 0.70, "Cosine-similarity floor for same-claim candidates")
 	factsFoldCmd.Flags().IntVar(&factsFoldMaxCluster, "max-cluster", 12, "Skip clusters larger than this (defense against runaway chaining)")
 }
 
@@ -177,7 +175,10 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	}
 	confirmed := map[pairKey]bool{}
 
-	autoDist := 1.0 - 0.80 // insertion tier-1 auto threshold
+	// COSINE distances, matching the insertion-path thresholds (FindSimilarActiveFacts
+	// uses cosine). NB the pgvector `<->` operator is L2, not cosine — using L2 here
+	// once made the 0.70 floor behave like cosine 0.955 and fold only near-verbatim
+	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - factsFoldFloor
 	for i := 0; i < len(facts); i++ {
 		if len(facts[i].Embedding) == 0 {
@@ -187,21 +188,17 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 			if len(facts[j].Embedding) == 0 {
 				continue
 			}
-			d := l2Distance(facts[i].Embedding, facts[j].Embedding)
+			d := cosineDistance(facts[i].Embedding, facts[j].Embedding)
 			if d > floorDist {
 				continue
 			}
 			if contradicted[key(facts[i].ID, facts[j].ID)] {
 				continue
 			}
-			// Tier 1: very high similarity + compatible verbs — no LLM needed.
-			if d <= autoDist && verbsCompatibleForFold(facts[i].CanonicalVerb, facts[j].CanonicalVerb) {
-				confirmed[key(facts[i].ID, facts[j].ID)] = true
-				union(i, j)
-				continue
-			}
-			// Gray zone: position-level fold gate (raw facts are kept, so it is
-			// broader than the destructive-drop IsSameClaim gate).
+			// The LLM position gate is the MANDATORY last decider on membership:
+			// embeddings only select candidates (the stance-blind embedding_text
+			// puts same-topic-but-different claims above 0.80 too, so no
+			// similarity level is trusted on its own).
 			same, jErr := judge.IsSamePosition(ctx, p.Name, facts[i].Text, facts[j].Text)
 			if jErr != nil {
 				log.Warn().Err(jErr).Int64("fact_a", facts[i].ID).Int64("fact_b", facts[j].ID).
@@ -272,6 +269,15 @@ func applyFoldCluster(ctx context.Context, storer *storage.PostgresStorer, synth
 	}
 
 	memberTexts := make([]string, 0, len(cluster))
+	if metaID != 0 {
+		// Reusing an existing meta: its current members must be part of the
+		// synthesis too, or their content silently drops out of the meta text.
+		existing, err := storer.GetMetaMemberTexts(ctx, metaID)
+		if err != nil {
+			return err
+		}
+		memberTexts = append(memberTexts, existing...)
+	}
 	for _, f := range members {
 		memberTexts = append(memberTexts, f.Text)
 	}
@@ -318,15 +324,13 @@ func applyFoldCluster(ctx context.Context, storer *storage.PostgresStorer, synth
 	return nil
 }
 
-func verbsCompatibleForFold(a, b string) bool {
-	return a == b || (!categorizer.IsDirectClaimVerb(a) && !categorizer.IsDirectClaimVerb(b))
-}
-
-func l2Distance(a, b []float32) float64 {
-	var sum float64
+// cosineDistance returns 1 - cosine_similarity. Fact embeddings are stored
+// L2-normalized (verified: <#> self-product = -1), so the dot product IS the
+// cosine similarity.
+func cosineDistance(a, b []float32) float64 {
+	var dot float64
 	for i := range a {
-		d := float64(a[i]) - float64(b[i])
-		sum += d * d
+		dot += float64(a[i]) * float64(b[i])
 	}
-	return math.Sqrt(sum)
+	return 1.0 - dot
 }
