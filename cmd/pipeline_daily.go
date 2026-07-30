@@ -14,10 +14,13 @@ import (
 
 var pipelineDailyCmd = &cobra.Command{
 	Use:   "daily",
-	Short: "Run the daily pipeline once and exit.",
-	Long: `Runs all five daily steps in order: news → twitter → frpolitics →
-contradictions → photos. Designed to be invoked by the host cron.
-Exits non-zero if any step fails so the host flags the run as failed.`,
+	Short: "Run the full pipeline once, inline, and exit.",
+	Long: `Runs every pipeline step in order (news → twitter → frpolitics → stance merge →
+contradictions → photos → audit → translate) over the search queue, without going
+through the job queue. Exits non-zero if any step fails.
+
+This is the manual/local escape hatch. In production the schedule enqueues a job
+(` + "`dm pipeline enqueue daily`" + `) and the worker (` + "`dm pipeline worker`" + `) runs it.`,
 	Annotations:   map[string]string{"needs_db": "true"},
 	SilenceUsage:  true,
 	SilenceErrors: false,
@@ -43,5 +46,8 @@ func runPipelineDaily(cmd *cobra.Command, args []string) error {
 
 	notifier := alerting.NewTelegramNotifierFromEnv()
 
-	return runDailyPipeline(ctx, storer, notifier)
+	// The zero config is the nightly pipeline: all steps, search-queue targets,
+	// no date window.
+	_, err = runPipeline(ctx, storer, notifier, "daily", PipelineConfig{})
+	return err
 }

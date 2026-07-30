@@ -133,13 +133,29 @@ SERPAPI_KEY=...                  # https://serpapi.com
 
 ## Deployment (the host)
 
-Three services on the host:
+Four services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
-- **`mirror-cron`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. Shares the same env vars as `mirror` except no HTTP `PORT`/`METRICS_PORT`.
+- **`mirror-cron`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline enqueue daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Only ENQUEUES the nightly job and exits in a second; the worker runs it. Re-enqueueing while yesterday's run is still going is a no-op, so cron ticks can never stack two runs. Shares the same env vars as `mirror` except no HTTP `PORT`/`METRICS_PORT`.
+- **`mirror-worker`** — long-lived `dm pipeline worker` (root `Dockerfile`). Claims queued pipeline jobs one at a time and runs them. Same env vars as `mirror-cron`. This is where all the pipeline's LLM/search work happens — keeping it out of `mirror` means a heavy run can't take down the API.
 - **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` every 15s. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
 
-To trigger the pipeline manually (locally or on the cron service): `./dm pipeline daily`.
+### Pipeline job queue
+
+There is ONE pipeline implementation (`runPipeline` in `cmd/pipeline.go`); a job is just a configuration of it — which entities, which publication date window, which steps. The empty config is the nightly run.
+
+```bash
+dm pipeline enqueue daily                        # what the cron service runs: all steps, search queue, no dates
+dm pipeline enqueue --target "Emmanuel Macron" --date 2017-05-07
+dm pipeline enqueue --target "Marine Le Pen" --from 2024-06-01 --to 2024-06-30 \
+    --window-days 7 --steps news,contradictions --max-parse 20
+dm pipeline jobs                                 # pending first, then history
+dm pipeline cancel <id>                          # queued jobs only
+dm pipeline worker                               # the worker loop (what mirror-worker runs)
+dm pipeline daily                                # run inline without the queue (manual/local escape hatch)
+```
+
+Steps: `news`, `twitter`, `frpolitics`, `stance-merge`, `contradictions`, `photos`, `audit`, `translate` — select with `--steps` or subtract with `--skip-steps`. `frpolitics` skips itself on any scoped job (the Assemblée APIs take neither a person nor a date filter). Job names default to a slug of the config, and only one job per name may be pending, which makes re-enqueueing idempotent.
 
 ## Development Status
 

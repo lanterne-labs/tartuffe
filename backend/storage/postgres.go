@@ -4651,6 +4651,7 @@ func (s *PostgresStorer) RecordJobMetrics(ctx context.Context, metrics []JobMetr
 type PipelineRunSummary struct {
 	StartedAt    time.Time
 	FinishedAt   time.Time
+	JobName      string // pipeline_jobs.name that produced this run ("daily" for the nightly one)
 	Status       string // "success" | "warning" | "no_content" | "error"
 	Targets      int
 	NewsArticles int
@@ -4664,11 +4665,14 @@ type PipelineRunSummary struct {
 // StartPipelineRun inserts the run's row at run START (status='running',
 // finished_at NULL) so a killed or hung run leaves a visible trace instead of
 // vanishing. Returns the row id, which RecordPipelineRun completes at run end.
-func (s *PostgresStorer) StartPipelineRun(ctx context.Context, startedAt time.Time) (int64, error) {
+func (s *PostgresStorer) StartPipelineRun(ctx context.Context, startedAt time.Time, jobName string) (int64, error) {
+	if jobName == "" {
+		jobName = "daily"
+	}
 	var id int64
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO pipeline_runs (started_at, status) VALUES ($1, 'running') RETURNING id`,
-		startedAt).Scan(&id)
+		`INSERT INTO pipeline_runs (started_at, status, job_name) VALUES ($1, 'running', $2) RETURNING id`,
+		startedAt, jobName).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("start pipeline run: %w", err)
 	}
@@ -4686,6 +4690,10 @@ func (s *PostgresStorer) RecordPipelineRun(ctx context.Context, runID int64, sum
 	if sum.ErrorSummary != "" {
 		errSummary = &sum.ErrorSummary
 	}
+	jobName := sum.JobName
+	if jobName == "" {
+		jobName = "daily"
+	}
 	var err error
 	if runID > 0 {
 		_, err = s.pool.Exec(ctx,
@@ -4695,11 +4703,11 @@ func (s *PostgresStorer) RecordPipelineRun(ctx context.Context, runID int64, sum
 				facts_extracted = (SELECT count(*) FROM facts WHERE created_at >= $1 AND created_at <= $2),
 				contradictions_found = (SELECT count(*) FROM contradictions WHERE created_at >= $1 AND created_at <= $2),
 				persons_updated = (SELECT count(DISTINCT entity_id) FROM event_log WHERE topic = 'person_updated' AND created_at >= $1 AND created_at <= $2),
-				audit_checked = $8, audit_flagged = $9, step_errors = $10, error_summary = $11
+				audit_checked = $8, audit_flagged = $9, step_errors = $10, error_summary = $11, job_name = $13
 			WHERE id = $12`,
 			sum.StartedAt, sum.FinishedAt, int(sum.FinishedAt.Sub(sum.StartedAt).Seconds()), sum.Status,
 			sum.Targets, sum.NewsArticles, sum.ScrapeErrors,
-			sum.AuditChecked, sum.AuditFlagged, sum.StepErrors, errSummary, runID,
+			sum.AuditChecked, sum.AuditFlagged, sum.StepErrors, errSummary, runID, jobName,
 		)
 	} else {
 		_, err = s.pool.Exec(ctx,
@@ -4707,18 +4715,18 @@ func (s *PostgresStorer) RecordPipelineRun(ctx context.Context, runID int64, sum
 				started_at, finished_at, duration_seconds, status,
 				targets, news_articles, scrape_errors,
 				facts_extracted, contradictions_found, persons_updated,
-				audit_checked, audit_flagged, step_errors, error_summary
+				audit_checked, audit_flagged, step_errors, error_summary, job_name
 			) VALUES (
 				$1, $2, $3, $4,
 				$5, $6, $7,
 				(SELECT count(*) FROM facts WHERE created_at >= $1 AND created_at <= $2),
 				(SELECT count(*) FROM contradictions WHERE created_at >= $1 AND created_at <= $2),
 				(SELECT count(DISTINCT entity_id) FROM event_log WHERE topic = 'person_updated' AND created_at >= $1 AND created_at <= $2),
-				$8, $9, $10, $11
+				$8, $9, $10, $11, $12
 			)`,
 			sum.StartedAt, sum.FinishedAt, int(sum.FinishedAt.Sub(sum.StartedAt).Seconds()), sum.Status,
 			sum.Targets, sum.NewsArticles, sum.ScrapeErrors,
-			sum.AuditChecked, sum.AuditFlagged, sum.StepErrors, errSummary,
+			sum.AuditChecked, sum.AuditFlagged, sum.StepErrors, errSummary, jobName,
 		)
 	}
 	if err != nil {
@@ -4740,9 +4748,11 @@ type PipelineHealth struct {
 // GetPipelineHealth returns the watchdog summary in one round trip.
 func (s *PostgresStorer) GetPipelineHealth(ctx context.Context) (PipelineHealth, error) {
 	var h PipelineHealth
+	// LastOKStart is restricted to the nightly job: an ad-hoc target-scoped
+	// backfill run must not silence the "the daily pipeline hasn't run" alert.
 	err := s.pool.QueryRow(ctx, `
 		SELECT
-			(SELECT max(started_at) FROM pipeline_runs WHERE status IN ('success','warning','no_content')),
+			(SELECT max(started_at) FROM pipeline_runs WHERE status IN ('success','warning','no_content') AND job_name = 'daily'),
 			(SELECT count(*) FROM pipeline_runs WHERE status = 'running' AND started_at < now() - interval '6 hours'),
 			(SELECT count(*) FROM pipeline_runs WHERE status = 'error' AND started_at > now() - interval '24 hours')`,
 	).Scan(&h.LastOKStart, &h.StuckRunning, &h.RecentFailed)

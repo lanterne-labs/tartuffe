@@ -37,26 +37,43 @@ func init() {
 	rootCmd.AddCommand(pipelineCmd)
 }
 
-// runDailyPipeline executes the unified daily pipeline once and returns an
-// aggregated error if any step failed. Designed to be invoked by the
-// `dm pipeline daily` CLI command (which the host cron triggers).
+// runPipeline executes one configured pipeline run and returns an aggregated
+// error if any step failed. There is exactly one pipeline implementation: the
+// nightly run is `runPipeline` with the zero PipelineConfig (every step, the
+// search queue, no date window), and an ad-hoc job is the same code with a
+// narrower config. jobName labels the run in logs, Telegram and pipeline_runs.
 //
-// Steps in order:
-//  1. news fact extraction      — queue-scoped (search_queue)
-//  2. twitter fact extraction   — queue-scoped (discovery + collection)
-//  3. frpolitics                — French Assemblée votes only (own scope, no news)
-//  4. contradiction detection   — over all persons with new pairs
-//  5. photo backfill            — persons + parties missing an image
-func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier) error {
+// Steps in order (each skippable via PipelineConfig.Steps):
+//  1. news fact extraction      — per target, honours the date window
+//  2. twitter fact extraction   — per target (discovery + collection), honours the date window
+//  3. frpolitics                — French Assemblée votes; neither entity- nor date-addressable,
+//     so it is skipped whenever the job is scoped
+//  4. stance merge sweep        — target-scoped when the job is
+//  5. contradiction detection   — target-scoped when the job is (+ repoint + regroup)
+//  6. photo backfill            — target-scoped when the job is
+//  7. contradiction audit       — cadence-gated globally; on a scoped job it audits the targets now
+//  8. translation phase         — always global, capped per run
+//
+// runID is returned alongside the error so the caller (the queue worker) can
+// link the job to its pipeline_runs summary row.
+func runPipeline(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier, jobName string, cfg PipelineConfig) (int64, error) {
 	start := time.Now()
-	log.Info().Msg("Daily pipeline started")
+	if jobName == "" {
+		jobName = cfg.DefaultName()
+	}
+	log.Info().
+		Str("job", jobName).
+		Strs("steps", cfg.enabledSteps()).
+		Strs("targets", cfg.Targets).
+		Str("window", cfg.windowLabel()).
+		Msg("Pipeline started")
 
 	// Record the run's existence BEFORE doing anything, so a killed or hung run
 	// leaves a 'running' row instead of vanishing (mirror-bp0). Best-effort:
 	// runID 0 makes RecordPipelineRun fall back to a full INSERT at the end.
-	runID, runIDErr := storer.StartPipelineRun(ctx, start)
+	runID, runIDErr := storer.StartPipelineRun(ctx, start, jobName)
 	if runIDErr != nil {
-		log.Error().Err(runIDErr).Msg("Daily pipeline: failed to record run start; summary will be inserted at end")
+		log.Error().Err(runIDErr).Msg("Pipeline: failed to record run start; summary will be inserted at end")
 	}
 
 	// Probe the primary LLM endpoint once. If the home box is unreachable, arm
@@ -64,47 +81,93 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// fallback instead of burning the full retry backoff per call — an outage
 	// used to turn 3-hour runs into 10-hour ones (mirror-s8t).
 	if !llm.ProbePrimary(ctx) {
-		log.Warn().Msg("Daily pipeline: primary LLM endpoint unreachable — routing the entire run to the fallback")
+		log.Warn().Msg("Pipeline: primary LLM endpoint unreachable — routing the entire run to the fallback")
 	}
 
-	// Resolve target persons for fact-extraction steps (news, twitter).
-	targets, targetsErr := dailyTargets(ctx, storer)
+	// Resolve target persons for fact-extraction steps (news, twitter): the
+	// job's explicit targets, or the search queue when it has none.
+	targets, targetsErr := pipelineTargets(ctx, storer, cfg)
 	if targetsErr != nil {
-		log.Error().Err(targetsErr).Msg("Daily pipeline: failed to resolve target persons")
+		log.Error().Err(targetsErr).Msg("Pipeline: failed to resolve target persons")
 	}
 	targetIDs := make(map[int64]bool, len(targets))
 	for _, t := range targets {
 		targetIDs[t.PersonID] = true
 	}
-	log.Info().Int("targets", len(targets)).Msg("Daily pipeline: target persons resolved")
+	log.Info().Int("targets", len(targets)).Msg("Pipeline: target persons resolved")
+
+	// A scoped job whose targets did not resolve must abort: with an empty scope
+	// the entity-wide steps would fall back to their global sweep, so a typo'd
+	// target would silently reprocess the entire database.
+	if cfg.scoped() {
+		if targetsErr == nil && len(targets) == 0 {
+			targetsErr = fmt.Errorf("job targets %v resolved to no entities", cfg.Targets)
+		}
+		if targetsErr != nil {
+			log.Error().Err(targetsErr).Msg("Pipeline: aborting scoped run — refusing to fall back to a global sweep")
+			return runID, finalizePipelineRun(ctx, storer, notifier, jobName, start, runID, nil, nil,
+				[]stepOutcome{{"targets", targetsErr}})
+		}
+	}
+
+	// scopeIDs restricts the entity-wide steps (stance merge, contradictions,
+	// photos, audit) to the job's targets. nil = every entity, the nightly
+	// behaviour.
+	var scopeIDs []int64
+	if cfg.scoped() {
+		for _, t := range targets {
+			scopeIDs = append(scopeIDs, t.PersonID)
+		}
+	}
 
 	// Step 1: News fact extraction — synchronous via the OPEN_AI_API LLM
 	// (lite-llm → local GPU). Searches news per target, scrapes, extracts and
-	// inserts facts inline.
-	stats, newsErr := runNewsCollection(ctx, storer, targets)
-	if newsErr != nil {
-		log.Error().Err(newsErr).Msg("Daily pipeline: news fact extraction failed")
+	// inserts facts inline. Honours the job's date window.
+	var stats *pipelineStats
+	var newsErr error
+	if cfg.enabled(StepNews) {
+		stats, newsErr = runNewsCollection(ctx, storer, targets, cfg)
+		if newsErr != nil {
+			log.Error().Err(newsErr).Msg("Pipeline: news fact extraction failed")
+		}
+	} else {
+		skipStep(StepNews, "not enabled by the job config")
 	}
 
-	// Step 2: Twitter — discovery + fact collection, both queue-scoped. Scoping
-	// to the queue eliminates the long-tail false-handle problem we saw with
+	// Step 2: Twitter — discovery + fact collection, both target-scoped. Scoping
+	// eliminates the long-tail false-handle problem we saw with
 	// @ambrusfrance → Alexey Meshkov and cuts the Serper bill on every cron.
-	discoverErr := runTwitterDiscovery(ctx, storer, targetIDs)
-	if discoverErr != nil {
-		log.Error().Err(discoverErr).Msg("Daily pipeline: Twitter discovery failed")
-	}
+	var discoverErr, twitterErr error
+	if cfg.enabled(StepTwitter) {
+		discoverErr = runTwitterDiscovery(ctx, storer, targetIDs)
+		if discoverErr != nil {
+			log.Error().Err(discoverErr).Msg("Pipeline: Twitter discovery failed")
+		}
 
-	twitterErr := runTwitterCollection(ctx, storer, targetIDs)
-	if twitterErr != nil {
-		log.Error().Err(twitterErr).Msg("Daily pipeline: Twitter collection failed")
+		twitterErr = runTwitterCollection(ctx, storer, targetIDs, cfg)
+		if twitterErr != nil {
+			log.Error().Err(twitterErr).Msg("Pipeline: Twitter collection failed")
+		}
+	} else {
+		skipStep(StepTwitter, "not enabled by the job config")
 	}
 
 	// Step 3: frpolitics — French Assemblée vote facts only. News is handled by
-	// step 1 (queue-scoped); frpolitics no longer sweeps news so it can't pull in
-	// the whole person table via its full-DB news fallback.
-	fpErr := runFrpoliticsStep(ctx, storer)
-	if fpErr != nil {
-		log.Error().Err(fpErr).Msg("Daily pipeline: frpolitics failed")
+	// step 1 (target-scoped); frpolitics no longer sweeps news so it can't pull in
+	// the whole person table via its full-DB news fallback. The AN APIs expose
+	// neither a person filter nor a publication-date filter, so a scoped job skips
+	// it instead of silently doing a full global sweep.
+	var fpErr error
+	switch {
+	case !cfg.enabled(StepFrpolitics):
+		skipStep(StepFrpolitics, "not enabled by the job config")
+	case cfg.hasDateWindow() || cfg.scoped():
+		skipStep(StepFrpolitics, "Assemblée vote scraping supports neither a date window nor a target filter")
+	default:
+		fpErr = runFrpoliticsStep(ctx, storer)
+		if fpErr != nil {
+			log.Error().Err(fpErr).Msg("Pipeline: frpolitics failed")
+		}
 	}
 
 	// (Former Step 3b "translation repair" removed: the final translation phase
@@ -115,41 +178,57 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// LLM-vetted centroid clustering, applies the merges, and re-detects
 	// contradictions across previously-separated facts. Catches the cross-stance
 	// contradictions our per-fact assignTopic missed by mis-grouping.
-	mergeErr := runStancesMergeStep(ctx, storer)
-	if mergeErr != nil {
-		log.Error().Err(mergeErr).Msg("Daily pipeline: stance merge sweep failed")
+	var mergeErr error
+	if cfg.enabled(StepStanceMerge) {
+		mergeErr = runStancesMergeStep(ctx, storer, scopeIDs)
+		if mergeErr != nil {
+			log.Error().Err(mergeErr).Msg("Pipeline: stance merge sweep failed")
+		}
+	} else {
+		skipStep(StepStanceMerge, "not enabled by the job config")
 	}
 
 	// Step 5: Contradiction detection. Runs synchronously over unchecked pairs
-	// across all persons via the OPEN_AI_API LLM, with the inline verification
-	// pass gating each YES before it is recorded.
-	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
-	if contraErr != nil {
-		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")
-	}
+	// via the OPEN_AI_API LLM, with the inline verification pass gating each YES
+	// before it is recorded. Followed by duplicate repointing and regrouping, so
+	// the facts this run added land in their final N-ary groups.
+	var contraErr error
+	if cfg.enabled(StepContradictions) {
+		contraErr = runContradictionDetectionStep(ctx, storer, cfg)
+		if contraErr != nil {
+			log.Error().Err(contraErr).Msg("Pipeline: contradiction detection failed")
+		}
 
-	// Step 5b: Repoint contradictions off any facts the contradiction-pass dedup
-	// just marked as duplicates, so the redundant rows stop inflating scores.
-	// Best-effort — failures are logged, never aborting the pipeline.
-	if processed, repointed, dropped, rErr := repointDuplicates(ctx, storer, true); rErr != nil {
-		log.Error().Err(rErr).Msg("Daily pipeline: repoint-duplicates failed")
-	} else if processed > 0 {
-		log.Info().Int("duplicates", processed).Int("repointed", repointed).Int("dropped", dropped).
-			Msg("Daily pipeline: repointed contradictions off duplicate facts")
-	}
+		// Step 5b: Repoint contradictions off any facts the contradiction-pass dedup
+		// just marked as duplicates, so the redundant rows stop inflating scores.
+		// Best-effort — failures are logged, never aborting the pipeline.
+		if processed, repointed, dropped, rErr := repointDuplicates(ctx, storer, true); rErr != nil {
+			log.Error().Err(rErr).Msg("Pipeline: repoint-duplicates failed")
+		} else if processed > 0 {
+			log.Info().Int("duplicates", processed).Int("repointed", repointed).Int("dropped", dropped).
+				Msg("Pipeline: repointed contradictions off duplicate facts")
+		}
 
-	// Step 5c: Regroup contradictions into N-ary groups (one base fact + N
-	// contradicting facts) and (re)generate each group's merged summary. Runs
-	// after detection + duplicate-repointing so it sees the final pairwise set.
-	// Best-effort — failures are logged, never aborting the pipeline.
-	if regroupErr := runContradictionRegroupStep(ctx, storer); regroupErr != nil {
-		log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
+		// Step 5c: Regroup contradictions into N-ary groups (one base fact + N
+		// contradicting facts) and (re)generate each group's merged summary. Runs
+		// after detection + duplicate-repointing so it sees the final pairwise set.
+		// Best-effort — failures are logged, never aborting the pipeline.
+		if regroupErr := runContradictionRegroupStep(ctx, storer, scopeIDs); regroupErr != nil {
+			log.Error().Err(regroupErr).Msg("Pipeline: contradiction regroup failed")
+		}
+	} else {
+		skipStep(StepContradictions, "not enabled by the job config")
 	}
 
 	// Step 6: Photos backfill (persons + parties missing an image).
-	photosErr := runPhotosBackfill(ctx, storer)
-	if photosErr != nil {
-		log.Error().Err(photosErr).Msg("Daily pipeline: photos backfill failed")
+	var photosErr error
+	if cfg.enabled(StepPhotos) {
+		photosErr = runPhotosBackfill(ctx, storer, targetIDs, cfg.scoped())
+		if photosErr != nil {
+			log.Error().Err(photosErr).Msg("Pipeline: photos backfill failed")
+		}
+	} else {
+		skipStep(StepPhotos, "not enabled by the job config")
 	}
 
 	// Step 7: Contradiction auditor (5-day cadence). Re-judges previously
@@ -160,33 +239,67 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// drops it (cross-judge veto; see applyAuditRemoval). Any disagreement or
 	// error keeps the row and counts it as unstable. Verdicts are also exposed
 	// via the `contradiction_audits_total` Prometheus counter.
-	auditResult, auditErr := runContradictionAuditIfDue(ctx, storer, 5*24*time.Hour)
-	if auditErr != nil {
-		log.Error().Err(auditErr).Msg("Daily pipeline: contradiction audit failed")
+	//
+	// A target-scoped job audits ITS targets immediately and does not touch the
+	// global cadence: the 5-day gate (and the job_metrics stamp behind it) belongs
+	// to the nightly sweep, and an ad-hoc backfill must not postpone it.
+	var auditResult *ContradictionAuditResult
+	var auditErr error
+	if cfg.enabled(StepAudit) {
+		if cfg.scoped() {
+			auditResult, auditErr = runScopedContradictionAudit(ctx, storer, targets)
+		} else {
+			auditResult, auditErr = runContradictionAuditIfDue(ctx, storer, 5*24*time.Hour)
+		}
+		if auditErr != nil {
+			log.Error().Err(auditErr).Msg("Pipeline: contradiction audit failed")
+		}
+	} else {
+		skipStep(StepAudit, "not enabled by the job config")
 	}
 
 	// Step 8 (final): Translation phase — decoupled from generation. Fills missing
 	// or stale translations for facts, stances and contradictions into the generic
 	// translations table for every target language. Runs LAST so generation never
-	// blocks on it. Best-effort — logged, never aborts the pipeline.
-	trErr := runTranslateStep(ctx, storer)
-	if trErr != nil {
-		log.Error().Err(trErr).Msg("Daily pipeline: translation phase failed")
+	// blocks on it. Global by design (it drains whatever backlog exists, capped
+	// per run). Best-effort — logged, never aborts the pipeline.
+	var trErr error
+	if cfg.enabled(StepTranslate) {
+		trErr = runTranslateStep(ctx, storer)
+		if trErr != nil {
+			log.Error().Err(trErr).Msg("Pipeline: translation phase failed")
+		}
+	} else {
+		skipStep(StepTranslate, "not enabled by the job config")
 	}
+
+	return runID, finalizePipelineRun(ctx, storer, notifier, jobName, start, runID, stats, auditResult,
+		[]stepOutcome{
+			{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
+			{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-merge", mergeErr},
+			{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
+			{"translate", trErr},
+		})
+}
+
+// stepOutcome pairs a pipeline step with whatever it failed on (nil = fine).
+type stepOutcome struct {
+	step string
+	err  error
+}
+
+// finalizePipelineRun classifies the run, notifies Telegram and writes the
+// durable pipeline_runs summary. Shared by the normal end of a run and the
+// early abort of a scoped job whose targets did not resolve, so every run —
+// however it ended — leaves exactly one completed summary row.
+func finalizePipelineRun(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier,
+	jobName string, start time.Time, runID int64, stats *pipelineStats, auditResult *ContradictionAuditResult,
+	stepErrPairs []stepOutcome) error {
 
 	elapsed := time.Since(start)
 
 	// Classify the run once; both the Telegram message and the pipeline_runs row
 	// derive their status from these flags.
-	stepErrPairs := []struct {
-		step string
-		err  error
-	}{
-		{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
-		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-merge", mergeErr},
-		{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
-		{"translate", trErr},
-	}
 	var stepErrs []error
 	var errParts []string
 	for _, p := range stepErrPairs {
@@ -209,22 +322,32 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		status = "warning"
 	}
 
+	// The closing writes (Telegram + the pipeline_runs summary) must land even
+	// when the run was cut short by a shutdown signal — otherwise the run row
+	// stays 'running' forever and trips the stuck-run watchdog on every redeploy.
+	bookCtx := ctx
+	if ctx.Err() != nil {
+		var cancelBook context.CancelFunc
+		bookCtx, cancelBook = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancelBook()
+	}
+
 	// Notify via Telegram
 	if notifier != nil {
 		var msg string
 		switch status {
 		case "error":
-			msg = fmt.Sprintf("❌ <b>Daily pipeline errors</b> (%s)\n%s",
-				elapsed.Round(time.Second), strings.Join(errParts, "\n"))
+			msg = fmt.Sprintf("❌ <b>Pipeline %s errors</b> (%s)\n%s",
+				jobName, elapsed.Round(time.Second), strings.Join(errParts, "\n"))
 		case "no_content":
-			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with no content</b> (%s)",
-				elapsed.Round(time.Second))
+			msg = fmt.Sprintf("⚠️ <b>Pipeline %s completed with no content</b> (%s)",
+				jobName, elapsed.Round(time.Second))
 		case "warning":
-			msg = fmt.Sprintf("⚠️ <b>Daily pipeline completed with warnings</b> (%s)",
-				elapsed.Round(time.Second))
+			msg = fmt.Sprintf("⚠️ <b>Pipeline %s completed with warnings</b> (%s)",
+				jobName, elapsed.Round(time.Second))
 		default:
-			msg = fmt.Sprintf("✅ <b>Daily pipeline completed</b> (%s)",
-				elapsed.Round(time.Second))
+			msg = fmt.Sprintf("✅ <b>Pipeline %s completed</b> (%s)",
+				jobName, elapsed.Round(time.Second))
 		}
 
 		if stats != nil {
@@ -235,7 +358,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 				auditResult.Total, auditResult.Deleted, auditResult.Unstable)
 		}
 
-		if err := notifier.Send(ctx, msg); err != nil {
+		if err := notifier.Send(bookCtx, msg); err != nil {
 			log.Error().Err(err).Msg("Failed to send pipeline Telegram notification")
 		}
 	}
@@ -248,6 +371,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	summary := storage.PipelineRunSummary{
 		StartedAt:    start,
 		FinishedAt:   finishedAt,
+		JobName:      jobName,
 		Status:       status,
 		StepErrors:   len(stepErrs),
 		ErrorSummary: strings.Join(errParts, "\n"),
@@ -261,23 +385,97 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		summary.AuditChecked = auditResult.Total
 		summary.AuditFlagged = auditResult.Remove
 	}
-	if err := storer.RecordPipelineRun(ctx, runID, summary); err != nil {
+	if err := storer.RecordPipelineRun(bookCtx, runID, summary); err != nil {
 		log.Error().Err(err).Msg("Failed to record pipeline_runs summary")
 	}
 
 	log.Info().
+		Str("job", jobName).
 		Dur("elapsed", elapsed).
 		Int("step_errors", len(stepErrs)).
-		Msg("Daily pipeline finished")
+		Msg("Pipeline finished")
 
 	return errors.Join(stepErrs...)
 }
 
-// dailyTargets returns the persons that fact-extraction steps (news, twitter)
-// iterate over: the search_queue contents (the "main persons queue").
-// Photos + frpolitics + contradictions ignore this filter — they have their own scope.
-func dailyTargets(ctx context.Context, storer *storage.PostgresStorer) ([]storage.QueueEntry, error) {
-	return storer.GetSearchQueue(ctx)
+// skipStep records why a configured-away or non-applicable step did not run, so
+// a job's log makes its actual coverage obvious.
+func skipStep(step, reason string) {
+	log.Info().Str("step", step).Str("reason", reason).Msg("Pipeline: step skipped")
+}
+
+// pipelineTargets returns the entities the fact-extraction steps (news, twitter)
+// iterate over: the job's explicit targets when it has any, else the
+// search_queue contents (the "main persons queue", the nightly scope).
+// Every name must resolve to an existing entity — an unresolvable target is an
+// error, not a silently-dropped one.
+func pipelineTargets(ctx context.Context, storer *storage.PostgresStorer, cfg PipelineConfig) ([]storage.QueueEntry, error) {
+	if !cfg.scoped() {
+		return storer.GetSearchQueue(ctx)
+	}
+
+	entries := make([]storage.QueueEntry, 0, len(cfg.Targets))
+	for _, name := range cfg.Targets {
+		res := core.ResolveTargetName(ctx, storer, name)
+		if res.Error != nil {
+			return nil, fmt.Errorf("resolving target %q: %w", name, res.Error)
+		}
+		if !res.IsExactMatch {
+			return nil, fmt.Errorf("target %q does not match any known entity", name)
+		}
+		entries = append(entries, storage.QueueEntry{
+			PersonID:   *res.ExactMatch.PersonID,
+			Name:       res.ExactMatch.Name,
+			EntityType: res.ExactMatch.EntityType,
+		})
+	}
+	return entries, nil
+}
+
+// runContradictionDetectionStep runs detection over the job's scope: every
+// person for an unscoped job, or one pass per target for a scoped one.
+func runContradictionDetectionStep(ctx context.Context, storer *storage.PostgresStorer, cfg PipelineConfig) error {
+	if !cfg.scoped() {
+		return executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
+	}
+	var errs []error
+	for _, name := range cfg.Targets {
+		if err := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{Person: name}); err != nil {
+			log.Error().Err(err).Str("person", name).Msg("Pipeline: contradiction detection failed for target")
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// runScopedContradictionAudit audits the given targets' contradictions right
+// away, bypassing the 5-day cadence gate and leaving the job_metrics stamp
+// alone — that stamp paces the nightly global sweep, and an ad-hoc job must not
+// consume it.
+func runScopedContradictionAudit(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry) (*ContradictionAuditResult, error) {
+	agg := &ContradictionAuditResult{}
+	var errs []error
+	for _, t := range targets {
+		personID := t.PersonID
+		res, err := executeContradictionAudit(ctx, storer, ContradictionAuditOpts{
+			PersonID:     &personID,
+			Scope:        t.Name,
+			RecordMetric: false,
+			Apply:        true,
+		})
+		if err != nil {
+			log.Error().Err(err).Str("person", t.Name).Msg("Pipeline: contradiction audit failed for target")
+			errs = append(errs, fmt.Errorf("%s: %w", t.Name, err))
+			continue
+		}
+		if res != nil {
+			agg.Total += res.Total
+			agg.Remove += res.Remove
+			agg.Deleted += res.Deleted
+			agg.Unstable += res.Unstable
+		}
+	}
+	return agg, errors.Join(errs...)
 }
 
 // pipelineStats tracks aggregate stats across all targets in a pipeline run.
@@ -303,9 +501,10 @@ func (s pipelineStats) summary() string {
 
 // runNewsCollection searches news for each target person/party and extracts +
 // stores facts synchronously via the OPEN_AI_API LLM (lite-llm → local GPU).
-// Replaces the former batch-submission path. Returns aggregate stats and the
-// first fatal setup error (per-target failures are collected, not returned).
-func runNewsCollection(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry) (*pipelineStats, error) {
+// The job's date window (if any) is passed straight through to the search
+// provider's date filter. Returns aggregate stats and the first fatal setup
+// error (per-target failures are collected, not returned).
+func runNewsCollection(ctx context.Context, storer *storage.PostgresStorer, targets []storage.QueueEntry, cfg PipelineConfig) (*pipelineStats, error) {
 	stats := &pipelineStats{}
 
 	if len(targets) == 0 {
@@ -345,9 +544,12 @@ func runNewsCollection(ctx context.Context, storer *storage.PostgresStorer, targ
 	}
 
 	newsOpts := news.Options{
-		MaxParse:     5,
-		Location:     "France",
+		MaxParse:     cfg.maxParse(),
+		Location:     cfg.location(),
 		RevisitHours: 24 * 365 * 10,
+		DateFrom:     cfg.DateFrom,
+		DateTo:       cfg.DateTo,
+		WindowDays:   cfg.WindowDays,
 	}
 
 	for i, entry := range targets {
@@ -363,7 +565,14 @@ func runNewsCollection(ctx context.Context, storer *storage.PostgresStorer, targ
 			PersonID: &entry.PersonID,
 		}
 
-		result, err := newsProvider.CollectFacts(ctx, target, newsOpts)
+		// WindowDays is honoured by a separate entry point — CollectFacts ignores it.
+		var result *news.Result
+		var err error
+		if newsOpts.WindowDays > 0 {
+			result, err = newsProvider.CollectFactsWithDateWindows(ctx, target, newsOpts)
+		} else {
+			result, err = newsProvider.CollectFacts(ctx, target, newsOpts)
+		}
 		if err != nil {
 			log.Error().Err(err).Str("person", entry.Name).Msg("News fact extraction failed")
 			stats.CollectErrors = append(stats.CollectErrors, entry.Name+": "+err.Error())
@@ -410,12 +619,13 @@ func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) erro
 	return err
 }
 
-// runStancesMergeStep executes the stance merge sweep step of the daily
-// pipeline: scans every person's stances for centroid-similar candidates,
-// LLM-vets each candidate cluster, applies merges, and re-detects
-// contradictions across the previously-fragmented facts. Uses the CLI's
-// default thresholds (Phase-A 0.65 sim recall + Phase-B LLM vetting).
-func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) error {
+// runStancesMergeStep executes the stance merge sweep step of the pipeline:
+// scans each person's stances for centroid-similar candidates, LLM-vets each
+// candidate cluster, applies merges, and re-detects contradictions across the
+// previously-fragmented facts. Uses the CLI's default thresholds (Phase-A 0.65
+// sim recall + Phase-B LLM vetting). scopeIDs restricts the sweep to those
+// persons; nil sweeps every merge-candidate person.
+func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer, scopeIDs []int64) error {
 	start := time.Now()
 	log.Info().Msg("Stance merge sweep started")
 
@@ -431,6 +641,7 @@ func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) er
 	if err != nil {
 		return fmt.Errorf("listing merge-candidate persons: %w", err)
 	}
+	persons = filterPersonsByIDs(persons, scopeIDs)
 
 	opts := defaultMergeOptions
 
@@ -457,10 +668,30 @@ func runStancesMergeStep(ctx context.Context, storer *storage.PostgresStorer) er
 	return nil
 }
 
+// filterPersonsByIDs narrows a person list to the given ids. A nil/empty id list
+// means "no filter" (the nightly global scope).
+func filterPersonsByIDs(persons []storage.PersonInfo, ids []int64) []storage.PersonInfo {
+	if len(ids) == 0 {
+		return persons
+	}
+	keep := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		keep[id] = true
+	}
+	out := make([]storage.PersonInfo, 0, len(ids))
+	for _, p := range persons {
+		if keep[p.ID] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // runTwitterCollection fetches tweets for active Twitter handles whose person is
-// in targetIDs and extracts facts. Gracefully skips if no handles exist or if
-// the Twitter API key is not configured.
-func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool) error {
+// in targetIDs and extracts facts, restricted to the job's date window when it
+// has one. Gracefully skips if no handles exist or if the Twitter API key is not
+// configured.
+func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool, cfg PipelineConfig) error {
 	handles, err := storer.GetActiveTwitterHandles(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get active Twitter handles: %w", err)
@@ -494,8 +725,11 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, t
 	}
 
 	opts := twitter.Options{
-		MaxTweets: 50,
-		BatchSize: 20,
+		MaxTweets:  50,
+		BatchSize:  20,
+		DateFrom:   cfg.DateFrom,
+		DateTo:     cfg.DateTo,
+		WindowDays: cfg.WindowDays,
 	}
 
 	var (
@@ -513,7 +747,14 @@ func runTwitterCollection(ctx context.Context, storer *storage.PostgresStorer, t
 			continue
 		}
 		handlesUsed++
-		result, err := provider.CollectFacts(ctx, handle, opts)
+		// WindowDays is honoured by a separate entry point — CollectFacts ignores it.
+		var result *twitter.Result
+		var err error
+		if opts.WindowDays > 0 {
+			result, err = provider.CollectFactsWithDateWindows(ctx, handle, opts)
+		} else {
+			result, err = provider.CollectFacts(ctx, handle, opts)
+		}
 		if err != nil {
 			log.Error().Err(err).Str("handle", handle.Handle).Msg("Twitter collection failed for handle")
 			if firstErr == nil {
@@ -558,13 +799,22 @@ func runTwitterDiscovery(ctx context.Context, storer *storage.PostgresStorer, ta
 	return executeTwitterDiscovery(ctx, storer, TwitterDiscoveryOpts{TargetIDs: ids})
 }
 
-// runPhotosBackfill searches and uploads profile photos for every person/party
-// that doesn't have one yet. Gracefully no-ops if image search or R2 is not
-// configured (treated as a degraded but non-fatal state for the daily pipeline).
-func runPhotosBackfill(ctx context.Context, storer *storage.PostgresStorer) error {
+// runPhotosBackfill searches and uploads profile photos for persons/parties that
+// don't have one yet — restricted to targetIDs when the job is scoped. Gracefully
+// no-ops if image search or R2 is not configured (a degraded but non-fatal state).
+func runPhotosBackfill(ctx context.Context, storer *storage.PostgresStorer, targetIDs map[int64]bool, scoped bool) error {
 	persons, err := storer.GetPersonsWithoutImage(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get persons without image: %w", err)
+	}
+	if scoped {
+		kept := make([]storage.PersonSummary, 0, len(targetIDs))
+		for _, p := range persons {
+			if targetIDs[p.ID] {
+				kept = append(kept, p)
+			}
+		}
+		persons = kept
 	}
 	if len(persons) == 0 {
 		log.Info().Msg("All persons have photos, skipping photos backfill")

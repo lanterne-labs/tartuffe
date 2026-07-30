@@ -2,6 +2,33 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-07-30: Pipelines are queued jobs, and a pipeline is a CONFIG not a codepath
+
+- The pipeline is no longer "the daily cron command". `pipeline_jobs` (migration
+  `20260730000000`) is a queue of pipeline runs; `dm pipeline worker` (new long-lived the host
+  service `mirror-worker`) claims one job at a time and runs it; the cron service now only runs
+  `dm pipeline enqueue daily` and exits. So an ad-hoc run and the nightly run never compete for the
+  LLM or the search quota, and the queue is the single serialization point.
+- KEY DESIGN RULE: there is exactly ONE pipeline implementation (`runPipeline`). A job is a
+  `PipelineConfig` — targets, date window (`DateFrom`/`DateTo`/`WindowDays`), enabled steps — stored
+  as JSONB; the ZERO config IS the nightly pipeline. Resist adding a second "kind" of pipeline:
+  new behaviour belongs in the config, not in a parallel codepath. Steps that cannot honour a job's
+  scope skip themselves with a logged reason (frpolitics on any scoped job — the Assemblée APIs take
+  neither a person nor a date filter); the rest narrow to the targets.
+- Idempotency comes from naming: a job's default name is a slug of its config and only one job per
+  name may be queued/running (partial unique index). A cron tick firing while yesterday's run is
+  still going is a no-op instead of a stacked second run.
+- Crash/redeploy semantics: a running job heartbeats; one whose worker died is requeued until its
+  attempt budget is spent, then failed. SIGTERM hands the job back WITHOUT spending an attempt, and
+  the closing `pipeline_runs` write happens on a detached context so an interrupted run can't leave
+  a permanently-'running' row tripping the stuck-run watchdog.
+- `pipeline_runs.job_name` records which job produced a summary, and the watchdog's "last OK run"
+  now filters on `job_name = 'daily'` — otherwise an ad-hoc backfill would silence the
+  "nightly pipeline hasn't run" alert.
+- Gotcha found while wiring this: `CollectFacts` on both the news and twitter providers SILENTLY
+  IGNORES `WindowDays` — windowing lives in a separate `CollectFactsWithDateWindows` entry point.
+  Any new call site must dispatch on `WindowDays > 0` or long backfills collapse into one search.
+
 ## 2026-07-29: Meta-fact folding — cosine fix + LLM is the mandatory last decider
 
 - Post-rollout prod audit (metas correct; Le Pen still had ~21 same-thing contradiction rows)

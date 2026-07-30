@@ -52,7 +52,7 @@ func TestRecordPipelineRun(t *testing.T) {
 
 	// The run row now exists from the START (status='running') so killed runs
 	// leave a trace; RecordPipelineRun completes it by id.
-	runID, err := storer.StartPipelineRun(ctx, windowStart)
+	runID, err := storer.StartPipelineRun(ctx, windowStart, "daily")
 	require.NoError(t, err)
 	var midStatus string
 	require.NoError(t, storer.pool.QueryRow(ctx,

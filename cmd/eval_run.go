@@ -112,7 +112,7 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 	// facts in the merged stance — that's how cross-stance contradictions that
 	// fragmented at ingest time get caught. We run the same function the cron
 	// service runs (cmd/pipeline.go:runStancesMergeStep).
-	if err := runStancesMergeStep(ctx, storer); err != nil {
+	if err := runStancesMergeStep(ctx, storer, nil); err != nil {
 		log.Warn().Err(err).Msg("Eval: stance merge sweep failed (continuing)")
 	}
 

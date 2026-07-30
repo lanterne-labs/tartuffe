@@ -123,13 +123,27 @@ func regroupPersons(ctx context.Context, storer *storage.PostgresStorer, personI
 	return agg
 }
 
-// runContradictionRegroupStep is the daily-pipeline entry point: regroup every person
-// with contradictions, generating merged summaries via the LLM. Best-effort — a nil
-// detector (no LLM env) downgrades to base-only rather than failing the pipeline.
-func runContradictionRegroupStep(ctx context.Context, storer *storage.PostgresStorer) error {
+// runContradictionRegroupStep is the pipeline entry point: regroup persons with
+// contradictions, generating merged summaries via the LLM. scopeIDs restricts it
+// to those persons (nil = all). Best-effort — a nil detector (no LLM env)
+// downgrades to base-only rather than failing the pipeline.
+func runContradictionRegroupStep(ctx context.Context, storer *storage.PostgresStorer, scopeIDs []int64) error {
 	personIDs, err := storer.PersonIDsWithContradictions(ctx)
 	if err != nil {
 		return fmt.Errorf("list persons with contradictions: %w", err)
+	}
+	if len(scopeIDs) > 0 {
+		want := make(map[int64]bool, len(scopeIDs))
+		for _, id := range scopeIDs {
+			want[id] = true
+		}
+		kept := personIDs[:0:0]
+		for _, id := range personIDs {
+			if want[id] {
+				kept = append(kept, id)
+			}
+		}
+		personIDs = kept
 	}
 	if len(personIDs) == 0 {
 		return nil
@@ -151,6 +165,6 @@ func runContradictionRegroupStep(ctx context.Context, storer *storage.PostgresSt
 	agg := regroupPersons(ctx, storer, personIDs, summarize)
 	log.Info().Int("persons", len(personIDs)).Int("rebased", agg.Rebased).
 		Int("groups", agg.Groups).Int("summaries", agg.SummariesWrote).
-		Int("summary_failures", agg.SummariesFailed).Msg("Daily pipeline: contradiction regroup done")
+		Int("summary_failures", agg.SummariesFailed).Msg("Pipeline: contradiction regroup done")
 	return nil
 }
