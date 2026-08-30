@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -48,11 +49,17 @@ func TestChunkText(t *testing.T) {
 			expectedChunks: []string{}, // Should filter out empty chunks
 		},
 		{
-			name:           "SingleLongParagraph",
-			text:           strings.Repeat("word ", 50), // 250 chars
-			chunkSize:      100,
-			overlapSize:    10,
-			expectedChunks: []string{strings.TrimSpace(strings.Repeat("word ", 50))},
+			// A paragraph over the budget must be split, not passed through whole:
+			// letting it through is what overflowed the model context in prod.
+			name:        "SingleLongParagraphIsSplit",
+			text:        strings.Repeat("word ", 50), // 249 chars trimmed
+			chunkSize:   100,
+			overlapSize: 10,
+			expectedChunks: []string{
+				strings.TrimSpace(strings.Repeat("word ", 20)), // 99 chars
+				strings.TrimSpace(strings.Repeat("word ", 20)), // 99 chars
+				strings.TrimSpace(strings.Repeat("word ", 10)), // 49 chars
+			},
 		},
 		{
 			name:           "MultipleParagraphsNoChunkingNeeded",
@@ -88,9 +95,10 @@ func TestChunkText(t *testing.T) {
 			chunkSize:   100,
 			overlapSize: 20, // Ignored
 			expectedChunks: []string{
-				strings.Repeat("a", 150), // Chunk 1 = P1
-				strings.Repeat("b", 50),  // Chunk 2 = P2 (Overlap started at i=1)
-				strings.Repeat("c", 50),  // Chunk 3 = P3 (Overlap started at i=2)
+				strings.Repeat("a", 100), // Chunk 1 = P1 head (hard cut, no whitespace to cut on)
+				strings.Repeat("a", 50),  // Chunk 2 = P1 tail
+				strings.Repeat("b", 50),  // Chunk 3 = P2
+				strings.Repeat("c", 50),  // Chunk 4 = P3
 			},
 		},
 		{
@@ -99,6 +107,30 @@ func TestChunkText(t *testing.T) {
 			chunkSize:      50,
 			overlapSize:    5, // Ignored
 			expectedChunks: []string{"Para 1\n\nPara 2\n\nPara 3"},
+		},
+		{
+			// Prefer a sentence end over an arbitrary word boundary.
+			name:        "LongParagraphSplitsOnSentenceBoundary",
+			text:        "Alpha one two three four. Beta five six seven eight. Gamma nine ten eleven twelve.",
+			chunkSize:   55,
+			overlapSize: 0,
+			expectedChunks: []string{
+				"Alpha one two three four. Beta five six seven eight.",
+				"Gamma nine ten eleven twelve.",
+			},
+		},
+		{
+			// Accented French must never be cut mid-rune: every chunk stays valid UTF-8.
+			name:        "UnbrokenAccentedRunCutsOnRuneBoundary",
+			text:        strings.Repeat("é", 200), // 400 bytes, no whitespace
+			chunkSize:   101,                      // odd size lands mid-rune without the guard
+			overlapSize: 0,
+			expectedChunks: []string{
+				strings.Repeat("é", 50), // 100 bytes
+				strings.Repeat("é", 50),
+				strings.Repeat("é", 50),
+				strings.Repeat("é", 50),
+			},
 		},
 		{
 			name:        "OverlapLargerThanChunkSize",
@@ -118,6 +150,33 @@ func TestChunkText(t *testing.T) {
 			// Pass a dummy overlap size, as it's ignored by current implementation
 			actualChunks := ChunkText(tc.text, tc.chunkSize, 0)
 			assert.Equal(tc.expectedChunks, actualChunks, fmt.Sprintf("Input text:\n%s", tc.text))
+		})
+	}
+}
+
+// TestChunkTextNeverExceedsBudget is the regression guard for the prod defect:
+// whatever the shape of the input, no chunk may come back larger than the
+// budget the caller computed from the model's context window.
+func TestChunkTextNeverExceedsBudget(t *testing.T) {
+	const budget = 120
+	inputs := map[string]string{
+		"unbroken block":       strings.Repeat("mot ", 400),
+		"no whitespace":        strings.Repeat("x", 1000),
+		"accented unbroken":    strings.Repeat("é", 500),
+		"one huge paragraph":   "Court.\n\n" + strings.Repeat("phrase longue et dense. ", 60),
+		"mixed short and long": "Court.\n\n" + strings.Repeat("y", 700) + "\n\nCourt aussi.",
+	}
+
+	for name, in := range inputs {
+		t.Run(name, func(t *testing.T) {
+			for i, chunk := range ChunkText(in, budget, 0) {
+				if len(chunk) > budget {
+					t.Errorf("chunk %d is %d bytes, over the %d budget", i, len(chunk), budget)
+				}
+				if !utf8.ValidString(chunk) {
+					t.Errorf("chunk %d is not valid UTF-8 (cut mid-rune)", i)
+				}
+			}
 		})
 	}
 }

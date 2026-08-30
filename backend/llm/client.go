@@ -134,7 +134,7 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		body, err = c.sendWithRetry(ctx, "primary", apiURL, apiKey, c.primaryHeaders, payloadBytes)
 		if err == nil {
 			MarkPrimaryUp()
-		} else if ctx.Err() == nil && c.fallbackURL != "" {
+		} else if ctx.Err() == nil && c.fallbackURL != "" && isEndpointOutage(err) {
 			MarkPrimaryDown("chat: " + err.Error())
 		}
 	}
@@ -219,7 +219,7 @@ func (c *BaseLLMClient) sendWithRetry(ctx context.Context, provider, apiURL, api
 				OnCreditError(provider, bodyStr)
 			}
 			log.Error().Int("status_code", resp.StatusCode).Str("url", apiURL).Str("response_body_snippet", bodyStr).Msg("LLM API request failed with client error")
-			return backoff.Permanent(fmt.Errorf("LLM API client error: %s (%s)", resp.Status, bodyStr))
+			return backoff.Permanent(&ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: bodyStr})
 		}
 
 		if resp.StatusCode >= 500 {
@@ -248,6 +248,21 @@ func (c *BaseLLMClient) sendWithRetry(ctx context.Context, provider, apiURL, api
 
 	log.Debug().Str("url", apiURL).Int("status_code", httpStatus).Msg("LLM API request completed")
 	return respBodyBytes, nil
+}
+
+// ClientError reports that an endpoint rejected one specific request with a 4xx
+// status — an oversized prompt, a bad parameter, exhausted credits. It says
+// nothing about the endpoint's health, which is why the circuit breaker ignores
+// it: a single over-long prompt used to take the primary offline for ten
+// minutes and push a whole pipeline run onto the fallback.
+type ClientError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *ClientError) Error() string {
+	return fmt.Sprintf("LLM API client error: %s (%s)", e.Status, e.Body)
 }
 
 // isCreditError returns true if the HTTP status and body indicate credit/quota exhaustion.

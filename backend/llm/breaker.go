@@ -57,6 +57,22 @@ func MarkPrimaryDown(reason string) {
 	}
 }
 
+// isEndpointOutage reports whether err means the ENDPOINT is unusable —
+// transport failure, timeout, 5xx, sustained rate limiting — as opposed to this
+// one request being unserviceable. Only the former may arm the breaker: a 4xx
+// is per-request, and arming on it takes every OTHER call to the fallback for
+// probeInterval even though the endpoint is perfectly healthy.
+//
+// A 4xx still fails over for the call that hit it (the fallback may accept a
+// prompt the primary rejected), it just no longer speaks for the endpoint.
+func isEndpointOutage(err error) bool {
+	if err == nil {
+		return false
+	}
+	var clientErr *ClientError
+	return !errors.As(err, &clientErr)
+}
+
 // MarkPrimaryUp clears the breaker. Called whenever a primary call succeeds.
 func MarkPrimaryUp() {
 	primaryBreaker.mu.Lock()

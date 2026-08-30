@@ -1564,3 +1564,26 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   check, Telegram alert on >30h without a successful run / runs stuck 'running' >6h / errored runs,
   24h per-condition cooldown. Gotcha for future tests: the breaker is process-global — any test that
   exercises a primary failure must resetBreaker() or it poisons later tests in the package.
+
+## Chunker actually chunks + breaker ignores 4xx (2026-08-30)
+
+- `util.ChunkText` split only on `\n\n` and its accumulation loop closes a chunk only when it
+  already holds something, so a paragraph longer than the budget was emitted WHOLE. News live
+  blogs arrive as one unbroken block: 13 of 29 chunked articles in the 08-30 run came back as
+  `chunk_count=1` at 2-3x the computed budget, and the densest one overflowed the local model's
+  12k context. The dynamic sizer and `approxCharsPerToken=3` were never the problem — 3 is
+  deliberately conservative (measured 4.37 actual), and the budget it computed was correct.
+  `splitOversized` now breaks over-long units at sentence ends, then word boundaries, then a
+  rune-safe hard cut. Invariant locked by TestChunkTextNeverExceedsBudget: no chunk may exceed
+  the caller's budget, whatever the input shape. The old test ASSERTED the broken behavior
+  (`SingleLongParagraph` expected a 250-char paragraph back whole at chunkSize 100) — that is why
+  it survived so long.
+- The LLM circuit breaker armed on ANY primary failure including 4xx. One oversized prompt
+  therefore declared the home box down for 10 minutes and pushed every other call onto the
+  fallback; with OpenRouter at zero credits this cost the 08-30 run its whole second half (811
+  x 402, last fact stored at the exact minute the breaker tripped). 4xx is now a typed
+  `llm.ClientError` and `isEndpointOutage` keeps it from arming the breaker — the call itself
+  still fails over, it just no longer speaks for the endpoint. 5xx/transport/sustained-429
+  still arm it.
+- Ops lesson: nine consecutive `no_content` runs (08-18..08-26, zero facts each) raised no alert,
+  because the watchdog counts `no_content` as a successful run. See mirror-07b.

@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -109,5 +111,87 @@ func TestProbePrimary_DownArmsBreaker(t *testing.T) {
 	}
 	if !PrimaryDown() {
 		t.Error("failed probe must arm the breaker")
+	}
+}
+
+// TestDoRequest_ClientErrorDoesNotArmBreaker: a 4xx from the primary is that
+// one request's problem (here: a prompt over the model's context window). It
+// must fail over for this call but leave the breaker CLOSED, so the next call —
+// with a prompt that fits — still goes to the primary. Arming here is what
+// pushed a whole pipeline run onto a credit-less fallback in prod.
+func TestDoRequest_ClientErrorDoesNotArmBreaker(t *testing.T) {
+	defer resetBreaker()
+
+	var primaryHits, fallbackHits atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reject only the first call, the way an oversized prompt would.
+		if primaryHits.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":{"message":"This model's maximum context length is 12000 tokens."}}`))
+			return
+		}
+		w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackHits.Add(1)
+		w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer fallback.Close()
+
+	t.Setenv("FALLBACK_URL", fallback.URL)
+	t.Setenv("FALLBACK_CHAT_MODEL", "test-fallback-model")
+	t.Setenv("FALLBACK_KEY", "k")
+	c := NewBaseLLMClient("breaker-test-4xx")
+
+	resetBreaker()
+	if _, err := c.DoRequest(context.Background(), primary.URL+"/v1/chat/completions", "k", []byte(`{"model":"m"}`)); err != nil {
+		t.Fatalf("oversized-prompt call should be served by the fallback: %v", err)
+	}
+	if fallbackHits.Load() != 1 {
+		t.Errorf("fallback hits = %d, want 1 (the 4xx call must still fail over)", fallbackHits.Load())
+	}
+	if PrimaryDown() {
+		t.Fatal("a 4xx must not arm the breaker — the endpoint is healthy")
+	}
+
+	// The next call must go to the primary, not the fallback.
+	if _, err := c.DoRequest(context.Background(), primary.URL+"/v1/chat/completions", "k", []byte(`{"model":"m"}`)); err != nil {
+		t.Fatalf("follow-up request failed: %v", err)
+	}
+	if primaryHits.Load() != 2 {
+		t.Errorf("primary hits = %d, want 2 (breaker must not have diverted the second call)", primaryHits.Load())
+	}
+	if fallbackHits.Load() != 1 {
+		t.Errorf("fallback hits = %d, want 1 (second call must not touch the fallback)", fallbackHits.Load())
+	}
+}
+
+// TestIsEndpointOutage pins the breaker's arming policy. Driving a 5xx through
+// DoRequest would burn the full two-minute retry backoff, so the classifier is
+// tested directly — it is the only thing that decides whether an error speaks
+// for the endpoint or just for one request.
+func TestIsEndpointOutage(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"context overflow 400", &ClientError{StatusCode: 400, Status: "400 Bad Request", Body: "maximum context length is 12000 tokens"}, false},
+		{"insufficient credits 402", &ClientError{StatusCode: 402, Status: "402 Payment Required", Body: "Insufficient credits"}, false},
+		{"bad key 401", &ClientError{StatusCode: 401, Status: "401 Unauthorized", Body: ""}, false},
+		{"wrapped client error", fmt.Errorf("LLM API request failed after retries: %w", &ClientError{StatusCode: 400, Status: "400 Bad Request", Body: "nope"}), false},
+		{"server error", errors.New("LLM API server error: 500 Internal Server Error ()"), true},
+		{"transport failure", errors.New("dial tcp: connect: connection refused"), true},
+		{"sustained rate limit", errors.New("rate limit exceeded (status 429)"), true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isEndpointOutage(tc.err); got != tc.want {
+				t.Errorf("isEndpointOutage(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

@@ -308,7 +308,9 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 		bodyBytes, status, err = m.sendEmbedOnce(ctx, m.apiURL, m.apiKey, m.cfHeaders, payloadBytes)
 		if err == nil && status == http.StatusOK {
 			llm.MarkPrimaryUp()
-		} else if ctx.Err() == nil && m.fallbackURL != "" {
+		} else if ctx.Err() == nil && m.fallbackURL != "" && (status < 400 || status >= 500) {
+			// A 4xx is this request's problem, not the box's — see
+			// llm.isEndpointOutage. Don't take the primary down for it.
 			llm.MarkPrimaryDown(fmt.Sprintf("embeddings: status=%d err=%v", status, err))
 		}
 	}

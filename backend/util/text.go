@@ -2,6 +2,7 @@ package util
 
 import (
 	"strings"
+	"unicode/utf8"
 )
 
 // ChunkText splits a large text into smaller overlapping chunks, respecting paragraph boundaries.
@@ -39,6 +40,19 @@ func ChunkText(text string, chunkSizeChars int, overlapChars int) []string {
 	rebuiltText := rebuiltTextBuilder.String()
 	if len(rebuiltText) <= chunkSizeChars {
 		return []string{rebuiltText}
+	}
+
+	// A paragraph longer than the budget used to pass through whole: the loop
+	// below only closes a chunk when it already holds something, so an article
+	// delivered as one unbroken block (news live blogs carry no blank lines)
+	// was handed to the model at 2-3x the budget and overflowed its context.
+	// Split those up front so every unit the loop sees already fits.
+	if chunkSizeChars > 0 {
+		split := make([]string, 0, len(paragraphs))
+		for _, p := range paragraphs {
+			split = append(split, splitOversized(p, chunkSizeChars)...)
+		}
+		paragraphs = split
 	}
 
 	var chunks []string
@@ -99,4 +113,64 @@ func ChunkText(text string, chunkSizeChars int, overlapChars int) []string {
 	}
 
 	return chunks
+}
+
+// splitOversized breaks s into pieces of at most maxChars bytes. It cuts at the
+// last sentence end inside the window, else the last word boundary, else at a
+// hard rune-safe offset, so a block with no punctuation at all still splits.
+// s shorter than maxChars is returned unchanged.
+func splitOversized(s string, maxChars int) []string {
+	if len(s) <= maxChars {
+		return []string{s}
+	}
+
+	var pieces []string
+	for len(s) > maxChars {
+		cut := cutPoint(s, maxChars)
+		if piece := strings.TrimSpace(s[:cut]); piece != "" {
+			pieces = append(pieces, piece)
+		}
+		s = strings.TrimSpace(s[cut:])
+	}
+	if s != "" {
+		pieces = append(pieces, s)
+	}
+	return pieces
+}
+
+// cutPoint returns the offset to split s at, always in [1, maxChars], so the
+// caller is guaranteed to make progress.
+func cutPoint(s string, maxChars int) int {
+	window := s[:maxChars]
+
+	// Prefer the end of a sentence: a terminator followed by whitespace.
+	for i := len(window) - 1; i > 0; i-- {
+		if isASCIISpace(window[i]) && isSentenceEnd(window[i-1]) {
+			return i
+		}
+	}
+	// Then any word boundary.
+	for i := len(window) - 1; i > 0; i-- {
+		if isASCIISpace(window[i]) {
+			return i
+		}
+	}
+	// Unbroken run (no whitespace at all): cut hard, but never mid-rune.
+	cut := maxChars
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if cut == 0 {
+		// maxChars smaller than a single rune; cut anyway to guarantee progress.
+		return maxChars
+	}
+	return cut
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
+func isSentenceEnd(b byte) bool {
+	return b == '.' || b == '!' || b == '?' || b == ';' || b == ':'
 }
