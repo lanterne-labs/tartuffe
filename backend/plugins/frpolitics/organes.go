@@ -8,26 +8,28 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
-// loadOrganeCacheForLegislature loads organe name mappings from the official static dataset.
-// It attempts to fetch Organes.json.zip and builds a map of organeRef -> {short,long}.
-// On any error, returns an empty map.
-func loadOrganeCacheForLegislature(ctx context.Context, legislature int) map[string]OrganeInfo {
+// loadOrganeCache builds organeRef -> {short,long} from the organe entries of
+// the AMO30 archive (see loadAMO30Archive). An unreadable archive or one that
+// yields no organes is an error: with an empty map every party name resolves
+// to "", derivePartyMajorityFacts drops every party fact, and the party seeds
+// fall back to raw refs — which is how prod ended up with "persons" named
+// po840056 and three months of zero party facts when the old per-legislature
+// Organes.json.zip URL started returning 404.
+func loadOrganeCache(ctx context.Context) (map[string]OrganeInfo, error) {
+	blob, err := loadAMO30Archive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	zr, err := zip.NewReader(bytes.NewReader(blob), int64(len(blob)))
+	if err != nil {
+		return nil, fmt.Errorf("open AMO30 archive: %w", err)
+	}
 	out := make(map[string]OrganeInfo)
-	url := fmt.Sprintf("https://data.assemblee-nationale.fr/static/openData/repository/%d/organes/Organes.json.zip", legislature)
-	body, err := downloadCached(ctx, url, getCacheDir(), 7*24*time.Hour)
-	if err != nil {
-		return out
-	}
-	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
-	if err != nil {
-		return out
-	}
-	// Tolerant per-entry decoder: expect each JSON to contain a top-level 'organe' object with identifiers and labels
 	for _, f := range zr.File {
-		if !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
+		name := strings.ToLower(f.Name)
+		if !strings.HasSuffix(name, ".json") || !strings.Contains(name, "organe") {
 			continue
 		}
 		rc, err := f.Open()
@@ -66,5 +68,8 @@ func loadOrganeCacheForLegislature(ctx context.Context, legislature int) map[str
 		}
 		out[ref] = OrganeInfo{OrganeRef: ref, ShortName: short, LongName: long}
 	}
-	return out
+	if len(out) == 0 {
+		return nil, fmt.Errorf("AMO30 archive contains no organe entries (format changed?)")
+	}
+	return out, nil
 }

@@ -52,6 +52,11 @@ setup-test-env:
 
 # Run tests with proper environment variables
 # Extract DATABASE_URL from supabase CLI and run tests
+# -p 1: run packages one at a time. Six packages hit the local vLLM box; under
+# that concurrent batching load the LLM judges' verdicts flip (measured: golden
+# cases that pass 3/3 alone fail when the whole suite runs in parallel), so a
+# parallel run is red by construction, not by regression. Same reason for the
+# 40m timeout — the voted goldens take ~6 min per pass.
 test:
 	@echo "=================================="
 	@echo "Running tests for project: $(PROJECT_ID)"
@@ -64,10 +69,10 @@ test:
 	if [ -f .env ]; then \
 		export $$(cat .env | grep -v '^#' | grep -v '^$$' | xargs) && \
 		echo "Loaded additional variables from .env" && \
-		go test -v ./...; \
+		go test -p 1 -v -timeout 40m ./...; \
 	else \
 		echo "No .env file found, running tests with DATABASE_URL only" && \
-		go test -v ./...; \
+		go test -p 1 -v -timeout 40m ./...; \
 	fi
 
 # Run tests without verbose output
@@ -78,8 +83,8 @@ test-short:
 	@export DATABASE_URL=$$(supabase status --output env | grep '^DB_URL=' | sed 's/^DB_URL=//') && \
 	if [ -f .env ]; then \
 		export $$(cat .env | grep -v '^#' | grep -v '^$$' | xargs) && \
-		go test ./...; \
+		go test -p 1 -timeout 40m ./...; \
 	else \
-		go test ./...; \
+		go test -p 1 -timeout 40m ./...; \
 	fi
 

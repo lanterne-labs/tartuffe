@@ -67,6 +67,13 @@ func TestVerifyGolden(t *testing.T) {
 		t.Skip("Skipping golden verify test: OPEN_AI_KEY not set (local-only).")
 	}
 
+	// The judges are not deterministic even at temperature 0 (see JudgeVotes),
+	// so a single sample makes this suite a coin flip: full-suite runs failed a
+	// different random 3-4 cases each time while those same cases passed 5/5 in
+	// isolation. Vote so the golden measures the settled verdict.
+	defer func(v int) { JudgeVotes = v }(JudgeVotes)
+	JudgeVotes = 3
+
 	raw, err := os.ReadFile("testdata/verify_cases.yaml")
 	if err != nil {
 		t.Fatalf("reading verify_cases.yaml: %v", err)

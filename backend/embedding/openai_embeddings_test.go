@@ -44,7 +44,10 @@ func TestOpenAIEmbeddingGenerator_GenerateEmbeddings(t *testing.T) {
 	require.NoError(t, err, "GenerateEmbeddings failed")
 	require.Len(t, embeddings, len(testTexts), "Incorrect number of embeddings returned")
 
-	expectedDimensions := 1536 // text-embedding-3-small dimensions
+	// Assert against the constant the generator actually truncates to, not a
+	// hardcoded literal — this test froze at 1536 (text-embedding-3-small) and
+	// stayed red after the move to 4096-d Qwen3 embeddings.
+	expectedDimensions := targetEmbeddingDim
 	for i, emb := range embeddings {
 		t.Logf("Embedding %d: %d dimensions (first few: %v...)", i+1, len(emb), emb[:min(5, len(emb))])
 		assert.Len(t, emb, expectedDimensions, "Embedding %d has incorrect dimensions", i+1)

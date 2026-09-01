@@ -32,15 +32,23 @@ const (
 	// One pair per call eliminates the swap entirely. Per-call latency is higher
 	// but throughput on a local GPU is fine.
 	MaxPairsPerBatchSync = 1
-	// contradictionMaxTokens caps the LLM response budget. A 3-pair response
-	// is ~600 tokens realistically (REASONING + verdict per pair, ~200 tok
-	// each). 4096 leaves headroom for Gemma's thinking mode (chain-of-thought
-	// adds 500-1500 tokens before the answer starts) — was 2048 before
-	// thinking was enabled, but that caused empty content + truncated JSON.
-	// The shared FalsePositivePatterns catalog is kept terse (smaller than the
-	// inline NO-list it replaced) so prompt + this reservation still fit the
-	// local model's 12k context.
-	contradictionMaxTokens = 4096
+	// contradictionMaxTokens caps the LLM response budget. The reservation is
+	// charged against the context window BEFORE generation, so every token
+	// reserved is a token the prompt cannot use.
+	//
+	// Measured 2026-08-31 over live calls: prompt is ~7770 tokens (dominated by
+	// the static template + FalsePositivePatterns catalog) and real replies are
+	// 75-135 completion tokens, finish_reason "stop" every time. At the old
+	// 4096 that left 7770+4096 = 11866 of 12000 — a 1.1% margin, so any pair
+	// with slightly longer fact text 400'd on context overflow.
+	//
+	// 4096 was sized for Gemma's thinking mode, but AreContradictoryBatch (the
+	// only user of this constant) explicitly disables thinking, so that
+	// headroom protected a mode this path never enters. 1024 is ~7.6x the
+	// observed maximum and restores ~3000 tokens of prompt headroom. The
+	// "contradiction token usage" log line reports completion_tokens and warns
+	// on finish_reason=="length", so a too-small budget announces itself.
+	contradictionMaxTokens = 1024
 	// DelayBetweenBatches is the delay between batch API calls to respect rate limits.
 	// 1s is conservative for Gemini Flash via OpenRouter (high RPM limits).
 	DelayBetweenBatches = 1 * time.Second
@@ -268,7 +276,25 @@ PAIR 32 (Imperative Rhetoric vs Personal Commitment - NOT Contradictory):
 Statement A (dated March 15, 2023): "Senator Smith déclare: « Nous devons agir avec détermination contre le changement climatique. »"
 Statement B (dated June 10, 2024): "Senator Smith a voté contre la proposition de loi instaurant une taxe carbone aux frontières."
 PAIR 32: REASONING: Statement A is imperative rhetoric ("nous devons agir" / "we must act") expressing a general aspiration in the third person. It is NOT a first-person commitment ("je m'engage", "I will", "I commit to"). Per the VAGUE/GENERAL rule, only a personal commitment can be broken by an opposing action. A vote against ONE specific tax mechanism is also a specific policy choice that does not necessarily contradict a broad aspirational direction (the senator could pursue the goal through other policy tools). Without a first-person commitment, there is no promise to break.
-PAIR 32: NO: Imperative aspirational rhetoric ("we must act") is not a first-person commitment that a specific policy vote can break — only "I will" / "je m'engage à" style statements create commitments that can be broken.`
+PAIR 32: NO: Imperative aspirational rhetoric ("we must act") is not a first-person commitment that a specific policy vote can break — only "I will" / "je m'engage à" style statements create commitments that can be broken.
+
+PAIR 33 (Denounce-Then-Ally — Same Named Target - Contradictory):
+Statement A (dated February 2026): "Karim Bouamrane a accusé Clémentine Autain d'avoir « trahi les électeurs de gauche » et d'être responsable de la défaite du camp progressiste."
+Statement B (dated March 2026): "Karim Bouamrane et Clémentine Autain ont annoncé une liste commune pour le second tour des municipales."
+PAIR 33: REASONING: The SHARED SUBJECT is the NAMED person, Clémentine Autain. In A the speaker publicly blames her; in B he partners with that SAME person weeks later. "Blame is one topic, an alliance is another" is precisely the excuse the DENOUNCE-THEN-ALLY rule forbids: the subject is not "blame" vs "alliance", it is the speaker's stated stance toward ONE named target, which reversed. [different_subjects] does NOT apply — both statements are about his relationship to Autain.
+PAIR 33: YES: Il a désigné nommément Autain comme responsable de la défaite, puis s'est allié avec elle — retournement envers la même personne.
+
+PAIR 34 (Self-Exempting Double Standard — Own Rule, Own Class - Contradictory):
+Statement A (dated 2019): "Éric Dupond-Moretti a déclaré qu'un ministre mis en examen devrait immédiatement quitter le gouvernement."
+Statement B (dated July 2021): "Éric Dupond-Moretti a affirmé qu'il resterait garde des Sceaux malgré sa mise en examen."
+PAIR 34: REASONING: A is his OWN normative rule for a CLASS ("un ministre mis en examen"). By B he is himself in that class (mis en examen) and exempts himself from the very sanction he demanded (leaving the government). Conditions: (a) his own rule, (b) he now falls in the named class, (c) same sanction. "A general normative position is not a personal commitment" is the forbidden excuse — the rule binds him the moment he enters the class it targets. NOT [different_subjects], NOT [vague_vs_specific].
+PAIR 34: YES: Ayant exigé la démission de tout ministre mis en examen, il refuse de l'appliquer à lui-même une fois mis en examen — deux poids, deux mesures.
+
+PAIR 35 (Commitment Walk-Back Disguised as Same Direction - Contradictory):
+Statement A (dated May 2024): "Le parti a promis de supprimer la taxe foncière pour les résidences principales."
+Statement B (dated January 2025): "Le parti a renoncé à supprimer la taxe foncière, indiquant qu'elle serait seulement plafonnée."
+PAIR 35: REASONING: Map EACH statement to the concrete outcome it commits to. A commits to outcome X (no tax). B explicitly abandons THAT SAME X and settles for less. That is the ONLY shape that is a walk-back: B must give up the very outcome A promised. Likewise "promised to keep the retirement age at 62" vs "renounced repealing the reform that set it to 64" — B abandons exactly what A promised. Contrast the NON-walk-backs that stay [same_direction] / [partial_vs_total] and must be REMOVED: A promises free transport for three named groups, B rules out free transport for EVERYONE — B abandons a broader outcome A never promised, so A still stands; A laments that circulars are not followed, B says prosecutors must follow circulars — both push enforcement; A disagrees that climate is excluded, B says climate is included — same stance behind a double negative. A walk-back needs the SAME outcome abandoned, not merely the same topic revisited.
+PAIR 35: YES: Promesse de suppression, puis renoncement à la suppression au profit d'un simple plafonnement — la promesse est abandonnée, pas tenue.`
 
 var contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 
@@ -365,7 +391,23 @@ func (d *OpenAIContradictionDetector) AreContradictory(ctx context.Context, text
 // Delegates to llm.VerifyContradiction so the detector path and the stance path
 // (core.StanceManager.VerifyContradiction) share identical refutation logic.
 func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	return llm.VerifyContradiction(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, factA, factB, claimedReason)
+	type verdict struct {
+		keep   bool
+		reason string
+	}
+	v, err := majorityVote(JudgeVotes,
+		func() (verdict, error) {
+			k, r, e := llm.VerifyContradiction(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, factA, factB, claimedReason)
+			return verdict{keep: k, reason: r}, e
+		},
+		func(v verdict) string {
+			if v.keep {
+				return "keep"
+			}
+			return "drop"
+		},
+	)
+	return v.keep, v.reason, err
 }
 
 // SynthesizeGroupSummary produces a merged "one inconsistency" sentence (native +
@@ -480,6 +522,27 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 	timer.ObserveDuration(nil)
 
 	// Parse each PAIR N: YES/NO: reason line
+	// Token-usage telemetry for calibrating contradictionMaxTokens. The
+	// reservation is charged against the 12k context BEFORE generation, so
+	// every token reserved here is a token the prompt cannot use — 4096 was
+	// picked to survive Gemma's thinking mode, never measured against real
+	// replies. finish_reason=="length" means the reply was actually truncated,
+	// which is the only signal that the reservation is too SMALL.
+	finishReason := chatResp.Choices[0].FinishReason
+	usageEvt := log.Info()
+	if finishReason == "length" {
+		usageEvt = log.Warn()
+	}
+	usageEvt.
+		Int("prompt_tokens", chatResp.Usage.PromptTokens).
+		Int("completion_tokens", chatResp.Usage.CompletionTokens).
+		Int("total_tokens", chatResp.Usage.TotalTokens).
+		Int("reserved_max_tokens", contradictionMaxTokens).
+		Int("unused_reservation", contradictionMaxTokens-chatResp.Usage.CompletionTokens).
+		Str("finish_reason", finishReason).
+		Int("pairs", len(pairs)).
+		Msg("contradiction token usage")
+
 	llmResponse := chatResp.Choices[0].Message.Content
 
 	// Store raw response on every result for inspection

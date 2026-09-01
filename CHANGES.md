@@ -1587,3 +1587,71 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   still arm it.
 - Ops lesson: nine consecutive `no_content` runs (08-18..08-26, zero facts each) raised no alert,
   because the watchdog counts `no_content` as a successful run. See mirror-07b.
+
+## Embeddings retries 5xx + contradiction reply budget measured, not guessed (2026-08-31)
+
+- The 08-31 cron lost its second half to a 502 on ONE embeddings call. The box was healthy
+  (llama-swap served 200s throughout); cloudflared showed the real cause — a ~1s QUIC tunnel
+  reconnect, `timeout: no recent network activity ... dest=.../v1/embeddings`. sendEmbedOnce
+  retried ONLY 429, so a 5xx or a dropped connection returned instantly and armed the
+  PROCESS-WIDE breaker (chat + embeddings share the box) for 10min → 870 x 402 on the empty
+  OpenRouter fallback, facts down to 24. It now retries 5xx AND transport errors with the same
+  jittered backoff the chat path has always used, so only a SUSTAINED failure speaks for the
+  endpoint. Tests cover all three arms: transient 5xx absorbed, sustained 5xx still surfaces
+  (a dead box must still arm the breaker), 4xx never retried.
+- contradictionMaxTokens was 4096 "for Gemma's thinking mode" — but AreContradictoryBatch, the
+  only user of the constant, explicitly DISABLES thinking, so that reservation guarded a mode
+  the path never enters. max_tokens is charged against the context BEFORE generation, so it was
+  costing prompt budget for nothing: 7770 (prompt) + 4096 = 11866 of 12000, a 1.1% margin, and
+  longer pairs 400'd. Added a "contradiction token usage" log line (prompt/completion/total,
+  unused_reservation, WARN on finish_reason=="length") and MEASURED: replies are 75-135 tokens,
+  never truncated. Set to 1024 (~8x observed max) → margin 26.7%, the previously-400ing pair now
+  passes, all 17 golden verdicts unchanged. Keep the log line: it makes the next calibration a
+  lookup instead of a guess.
+- Method note for future context-overflow bugs: three distinct sites have now hit the same 12k
+  wall (chunker, stance metadata, detector reservation). Before touching --max-model-len, check
+  which side is at fault — the box has ~1.8GB VRAM free with 8GB already CPU-offloaded, so
+  raising context is not the cheap lever it looks like.
+
+## Judges vote 3x, goldens fixed, and a red suite is never pushed (2026-09-01)
+
+- Rule adopted: never push while ANY test fails, pre-existing or not. Proving "not mine" by
+  stashing is necessary but not sufficient — fix it. A red suite everyone ignores hides the
+  next real regression, and this repo's live-LLM goldens skip in CI so local red is the only
+  signal they ever give.
+- The audit/verify judges are NOT deterministic at temperature 0: vLLM continuous batching makes
+  a verdict depend on what else is in flight, so full-suite runs failed a DIFFERENT random 3-4
+  cases each time while those same cases passed 5/5 alone. `JudgeVotes` (contradiction/vote.go)
+  takes a majority over N samples with early exit (2 agreeing votes settle it). It lives in
+  PRODUCTION code, not the test harness: prod took single-sample verdicts and an unlucky sample
+  auto-evicts a real contradiction. JudgeVotes=3 in prod (was 1), after the goldens were green under 3 votes.
+- Five stable golden failures fixed by prompt work, with the seesaw measured each round: the
+  auditor's example catalog had 3 keep-side vs 7 remove-side examples and NO worked example for
+  the three failing keep families (PAIR 33 denounce-then-ally, 34 self-exempting, 35 walk-back
+  vs same_direction). Adding them fixed keep 7/10→10/10 but leaked drop 19→17/20; a STEP 0
+  "resolve before comparing" (unwind negations, carry numbers, resolve vocabulary like
+  imprescriptibilité, resolve who a class rule binds) recovered drop 20/20 without losing keep.
+  Final: audit 30/30, verify 29/29, three passes each. Lesson: the failing excuses were ALREADY
+  prohibited verbatim in the prose rules — the model ignores prohibitions and copies examples.
+- contradictionMaxTokens 4096→1024 (measured 75-135 used) and two more 16384 reservations
+  (frpolitics summarizer, core dedup) that exceeded the whole 12k window and 400'd on every call.
+  Four distinct sites hit the same wall this week; check the reservation before the model.
+- frpolitics party facts were ZERO since May: the per-legislature Organes.json.zip URL 404s and
+  loadOrganeCacheForLegislature swallowed it into an empty map, so every party name resolved to
+  "" and the seeds fell back to raw refs — prod holds 13 "parties" named po840056-style.
+  Organes now come from the AMO30 archive the actor loader already used; an empty cache is an
+  error; unresolved refs are never seeded. This was a textbook silent bypass. The e2e verifier
+  then scored 0% because it keyed deputy votes with NormalizeString (accents kept) while persons
+  are stored under NormalizePersonName (accent-free): "apparentés" never matched "apparentes".
+  Both e2e tests skipIfCI, which is how this stayed red locally for three months unnoticed.
+- Extractor: ATTRIBUTION rule tightened (drop unnamed speakers, resolve @handles only from the
+  handle, never world knowledge) — but the first wording leaked into scope (named non-political
+  speakers kept); tying it to the scope rule fixed both, 6/6 each.
+- The extractor scope test (Deschamps/Jimin must be rejected) slipped ~1 run in 10 on a single
+  sample; prod is guarded downstream by the entity validator's R10, so the test now judges the
+  rule by majority of 3 extractions — the same policy as the judges. `make test` runs packages
+  with -p 1: six packages hitting vLLM at once flips verdicts even under 3 votes (mirror-gka).
+- Storage: TestPersonSimilarity inserted fixture persons through the live validator (Wikipedia +
+  Serper + LLM each) — hung past 10m and burned credits; SetEntityValidator(nil) like the other
+  tests. The stance-invariant collector goroutine outlived Close() (spammed "closed pool");
+  Close now cancels it.

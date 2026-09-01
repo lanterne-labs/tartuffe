@@ -91,8 +91,10 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature:    0.1,
-		MaxTokens:      16384,
+		Temperature: 0.1,
+		// Reply is a short JSON dedupe decision; 16384 exceeded the local
+		// model's entire 12k context and was rejected with 400 up front.
+		MaxTokens:      2048,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 

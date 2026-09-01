@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/rs/zerolog/log"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,40 +17,37 @@ import (
 
 // Note: getCacheDir() is defined in download.go
 
+// amo30URL is the AN open-data archive that carries every actor, mandate AND
+// organe (historical, all legislatures). The per-legislature
+// repository/<n>/organes/Organes.json.zip path it replaced now returns 404.
+const amo30URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/tous_acteurs_mandats_organes_xi_legislature/AMO30_tous_acteurs_tous_mandats_tous_organes_historique.json.zip"
+
+// loadAMO30Archive returns the AMO30 zip bytes: a local copy stored as
+// Organes.json.zip in the cache dir wins, else the archive is downloaded
+// through the 7-day cache. It is the single source for both actor names and
+// organe names, so a failure here is an error, not an empty result.
+func loadAMO30Archive(ctx context.Context) ([]byte, error) {
+	local := filepath.Join(getCacheDir(), "Organes.json.zip")
+	if b, err := os.ReadFile(local); err == nil && len(b) > 0 {
+		return b, nil
+	}
+	b, err := downloadCached(ctx, amo30URL, getCacheDir(), 7*24*time.Hour)
+	if err != nil {
+		return nil, fmt.Errorf("download AMO30 archive: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("AMO30 archive at %s is empty", amo30URL)
+	}
+	return b, nil
+}
+
 // loadActorNameMap builds a map from AssembleeID (e.g., "PA1234") to display name "First Last".
-// It tries multiple known locations and returns a best-effort result.
+// Best-effort: deputies whose name is missing are resolved later from the vote data.
 func loadActorNameMap(ctx context.Context) map[string]string {
 	out := make(map[string]string)
-
-	// Try local cached file first (if present) - user stores AMO30 (historical) as Organes.json.zip
-	tryLocal := func() []byte {
-		cacheDir := getCacheDir()
-		local := filepath.Join(cacheDir, "Organes.json.zip")
-		if _, err := os.Stat(local); err == nil {
-			if b, err := os.ReadFile(local); err == nil {
-				return b
-			}
-		}
-		return nil
-	}
-
-	// Attempt downloads from official historical dataset (AMO30) for legislature 17 (XI legislature historical)
-	sources := []string{
-		"https://data.assemblee-nationale.fr/static/openData/repository/17/amo/tous_acteurs_mandats_organes_xi_legislature/AMO30_tous_acteurs_tous_mandats_tous_organes_historique.json.zip",
-	}
-
-	var blob []byte
-	blob = tryLocal()
-	if blob == nil {
-		for _, u := range sources {
-			b, err := downloadCached(ctx, u, getCacheDir(), 7*24*time.Hour)
-			if err == nil && len(b) > 0 {
-				blob = b
-				break
-			}
-		}
-	}
-	if blob == nil {
+	blob, err := loadAMO30Archive(ctx)
+	if err != nil {
+		log.Warn().Err(err).Msg("frpolitics: actor names unavailable")
 		return out
 	}
 

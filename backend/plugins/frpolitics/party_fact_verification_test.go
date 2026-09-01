@@ -162,8 +162,9 @@ func groupVotesByParty(votes []VoteEvent, organeCache map[string]OrganeInfo) map
 		}
 
 		if partyName != "" {
-			// Normalize the party name to match how it's stored in the database
-			normalizedName := util.NormalizeString(partyName)
+			// Key by the SAME canonical form persons are stored under (accent-free,
+			// see util.NormalizePersonName) or "apparentés" never matches "apparentes".
+			normalizedName := util.NormalizePersonName(partyName)
 			votesByParty[normalizedName] = append(votesByParty[normalizedName], vote)
 		}
 	}

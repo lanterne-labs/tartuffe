@@ -326,9 +326,20 @@ type ChatChoice struct {
 	FinishReason string      `json:"finish_reason"`
 }
 
+// ChatUsage is the OpenAI-compatible token accounting returned with every
+// completion. completion_tokens is what a MaxTokens reservation must actually
+// cover; the reservation is charged against the context window UP FRONT, so an
+// oversized one shrinks the usable prompt for no benefit.
+type ChatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // ChatResponse is the OpenAI-compatible completion response envelope.
 type ChatResponse struct {
 	Choices []ChatChoice `json:"choices"`
+	Usage   ChatUsage    `json:"usage"`
 	Error   *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`

@@ -200,10 +200,20 @@ func matryoshkaTruncate(v []float32) []float32 {
 	return out
 }
 
-// sendEmbedOnce POSTs the embeddings payload to a single endpoint with the 429
-// backoff-retry loop, returning the response body and HTTP status. extraHeaders
-// are set on every attempt (Cloudflare-Access on the primary). A non-2xx status
-// is returned (not an error) so the caller can decide whether to fail over.
+// sendEmbedOnce POSTs the embeddings payload to a single endpoint, retrying
+// rate limits, server errors and transport failures with jittered backoff, and
+// returning the response body and HTTP status. extraHeaders are set on every
+// attempt (Cloudflare-Access on the primary). A non-2xx status is returned (not
+// an error) so the caller can decide whether to fail over.
+//
+// Retrying 5xx and transport errors matters more here than the status code
+// suggests: the caller arms a PROCESS-WIDE breaker on a failed embeddings call
+// (chat and embeddings share the box), so an unretried blip diverts every
+// subsequent call — chat included — to the fallback for probeInterval. A
+// one-second Cloudflare tunnel reconnect did exactly that on 2026-08-31 and
+// cost the run 870 fallback failures. Only a SUSTAINED failure, with retries
+// exhausted, should speak for the endpoint. This mirrors the chat path
+// (BaseLLMClient.sendWithRetry), which has always retried 5xx.
 func (m *OpenAIEmbeddingGenerator) sendEmbedOnce(ctx context.Context, apiURL, apiKey string, extraHeaders map[string]string, payloadBytes []byte) ([]byte, int, error) {
 	var resp *http.Response
 	currentBackoff := initialBackoff
@@ -230,26 +240,34 @@ func (m *OpenAIEmbeddingGenerator) sendEmbedOnce(ctx context.Context, apiURL, ap
 			if ctx.Err() != nil {
 				return nil, 0, fmt.Errorf("context cancelled during embeddings request: %w", ctx.Err())
 			}
+			// A dropped connection is usually a tunnel reconnect, not a dead
+			// endpoint — retry before letting the caller arm the breaker.
+			if attempt < maxRetries {
+				metrics.IncrementLLMRetry("embedding", "transport_error")
+				log.Warn().Err(err).Str("url", apiURL).Int("attempt", attempt+1).Msg("Embeddings request failed to execute, retrying after backoff")
+				if waitErr := backoffWait(ctx, &currentBackoff); waitErr != nil {
+					return nil, 0, waitErr
+				}
+				continue
+			}
 			return nil, 0, fmt.Errorf("failed to execute embeddings request (attempt %d): %w", attempt+1, err)
 		}
 
-		// Retry on rate limit (HTTP 429) with jittered backoff.
-		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+		// Retry rate limits AND server errors with jittered backoff. A 4xx is
+		// this request's problem and is returned to the caller untouched.
+		retriable := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		if retriable && attempt < maxRetries {
 			resp.Body.Close()
-			metrics.IncrementLLMRetry("embedding", "rate_limit")
-			jitter := time.Duration((rand.Float64()*2 - 1) * maxJitter * float64(currentBackoff))
-			waitTime := currentBackoff + jitter
-			if waitTime < 0 {
-				waitTime = 0
+			reason := "rate_limit"
+			if resp.StatusCode >= 500 {
+				reason = "server_error"
 			}
-			log.Warn().Int("status_code", resp.StatusCode).Int("attempt", attempt+1).Dur("wait_time", waitTime).Msg("Rate limit hit. Retrying after backoff.")
-			select {
-			case <-time.After(waitTime):
-				currentBackoff = time.Duration(float64(currentBackoff) * backoffMultiplier)
-				continue
-			case <-ctx.Done():
-				return nil, 0, fmt.Errorf("context cancelled during backoff wait: %w", ctx.Err())
+			metrics.IncrementLLMRetry("embedding", reason)
+			log.Warn().Int("status_code", resp.StatusCode).Int("attempt", attempt+1).Str("reason", reason).Msg("Embeddings request failed, retrying after backoff")
+			if waitErr := backoffWait(ctx, &currentBackoff); waitErr != nil {
+				return nil, 0, waitErr
 			}
+			continue
 		}
 		break
 	}
@@ -393,4 +411,21 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 	timer.ObserveDuration(nil)
 	log.Debug().Int("input_count", len(texts)).Int("output_count", len(results)).Msg("Generated embeddings batch")
 	return results, nil
+}
+
+// backoffWait sleeps for the current backoff with +/- maxJitter of jitter and
+// advances it by backoffMultiplier. Returns a non-nil error only when ctx ends.
+func backoffWait(ctx context.Context, currentBackoff *time.Duration) error {
+	jitter := time.Duration((rand.Float64()*2 - 1) * maxJitter * float64(*currentBackoff))
+	waitTime := *currentBackoff + jitter
+	if waitTime < 0 {
+		waitTime = 0
+	}
+	select {
+	case <-time.After(waitTime):
+		*currentBackoff = time.Duration(float64(*currentBackoff) * backoffMultiplier)
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("context cancelled during backoff wait: %w", ctx.Err())
+	}
 }

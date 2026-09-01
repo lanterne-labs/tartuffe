@@ -125,6 +125,9 @@ var auditorKeptExamples = []string{
 	"PAIR 2 (",  // denial after claim
 	"PAIR 9 (",  // court finding vs denial
 	"PAIR 30 (", // values-based / directional axis
+	"PAIR 33 (", // denounce-then-ally (same named target)
+	"PAIR 34 (", // self-exempting double standard (own rule, own class)
+	"PAIR 35 (", // commitment walk-back that looks like same_direction
 	// remove side (false-positive families)
 	"PAIR 1 (",  // learning over time
 	"PAIR 8 (",  // trial/accusation is not a finding
@@ -179,6 +182,8 @@ var auditPromptTpl = `You are auditing previously-flagged contradictions to remo
 An earlier automated pass marked the two statements below as contradictory, with the reason given. Re-evaluate STRICTLY using the rules and examples below — would you flag this today?
 
 Be CONSERVATIVE: when in doubt, return "ambiguous" rather than "keep". Only return "keep" when the contradiction is unambiguous under the rules. Return "remove" when the rules clearly indicate the pair should NOT have been flagged (false positive).
+
+**STEP 0 — RESOLVE BEFORE COMPARING.** Before applying any rule, rewrite EACH statement as a plain positive stance on a concrete outcome, unwinding negations and nested clauses: "disagrees with the view that climate is NOT covered" → FOR climate being covered; "regrets that circulars are not followed" → FOR enforcing circulars; "rules out TOTAL free transport" → AGAINST total free transport (says nothing about partial). When a statement names a number or threshold, the resolved stance MUST carry that exact number: "promised to keep the retirement age at 62" → FOR age = 62; "renounced repealing the reform that set it to 64" → accepts age = 64. Two different numbers on one axis are OPPOSITE outcomes (62 ≠ 64: leaving earlier vs later), and "maintain" means the number the person stated, never "whatever the status quo later became". Resolve vocabulary too: "imprescriptibilité" / "non-prescription" means NO statute of limitations, so defending imprescriptibilité and saying that prescription "protects perpetrators" are the SAME stance. Resolve WHO a rule binds: a sanction the person demanded for a CLASS ("the convicted should be ineligible") binds the person themselves once they are in that class — the detection reason may establish membership — and the shared subject is then that sanction, not "her candidacy" vs "a general rule". That binding only bites when the OTHER statement is the person's OWN act or claim exempting themselves (running, staying in office, "nothing can bar me"). A prosecutor's réquisition, an indictment, a court's sentence, or anyone else's demand is a THIRD PARTY's act — it is not her exempting herself and is never a self-exempting double standard on its own: remove. Compare the two RESOLVED stances. If they point the same way, or concern different outcomes (partial vs total, one group vs everyone), there is no reversal — do not let a negation or a dramatic verb ("écarté", "renoncé", "désaccord") stand in for an actual opposite position.
 
 **NEVER REMOVE A GENUINE CONTRADICTION.** Check these REAL-contradiction patterns FIRST — if the pair matches one, the verdict is "keep", NOT "remove", even when it superficially resembles a false-positive bucket below:
 - POSITION / ATTITUDE REVERSAL: the person stated, announced, or pleaded FOR X, then stated, announced, or did the OPPOSITE about the same subject — e.g. "I will run" then "I will not run"; "I won't be a candidate" then leading/joining a winning list at that election; "very motivated" then "not enthusiastic"; pleads FOR a primary then is AGAINST one. This is a reversal — do NOT file it under announcement_then_action, different_events, vague_vs_specific, same_direction, or different_subjects. Before using same_direction, map EACH statement to the concrete direction it pushes a shared policy axis: proposing to ABOLISH any legal retirement age (lets people leave earlier/freely) vs wanting to HARDEN a reform that raises the age (makes people leave later) are OPPOSITE directions on the same axis — a reversal, even though both criticize the status quo.
@@ -273,7 +278,25 @@ func AuditInputHash(factA, factB string, dateA, dateB *time.Time, originalReason
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// Audit judges whether a recorded contradiction should be evicted. It takes
+// the verdict by majority over JudgeVotes samples — the judge is not
+// deterministic even at temperature 0 (see JudgeVotes), and an eviction is
+// destructive, so a single unlucky sample must not delete a real contradiction.
 func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
+	res, err := majorityVote(JudgeVotes,
+		func() (AuditResult, error) {
+			r := a.auditOnce(ctx, factA, factB, dateA, dateB, originalReason)
+			return r, r.Err
+		},
+		func(r AuditResult) string { return string(r.Verdict) },
+	)
+	if err != nil && res.Err == nil {
+		res.Err = err
+	}
+	return res
+}
+
+func (a *OpenAIContradictionAuditor) auditOnce(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
 	if factA == factB {
 		return AuditResult{
 			Verdict:   VerdictRemove,

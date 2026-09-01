@@ -75,6 +75,8 @@ type StoreFactInput struct {
 // PostgresStorer implements the storage logic using PostgreSQL.
 type PostgresStorer struct {
 	pool *pgxpool.Pool
+	// stopCollector cancels the stance-invariant metrics goroutine on Close.
+	stopCollector context.CancelFunc
 	// validator is consulted before every NEW person INSERT (existing persons
 	// are never re-validated). nil ⇒ validation disabled. See entity_validator.go.
 	validator EntityValidator
@@ -128,10 +130,14 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 
 	// Backstop for the "every fact has a stance" invariant — code-enforced at
 	// insertion, but a periodic gauge surfaces any historical drift.
-	metrics.StartStanceInvariantCollector(ctx, pool, 5*time.Minute)
+	// The collector stops on context cancellation, so give it one that Close()
+	// owns — otherwise it outlives the pool and logs "closed pool" forever.
+	collectorCtx, stopCollector := context.WithCancel(ctx)
+	metrics.StartStanceInvariantCollector(collectorCtx, pool, 5*time.Minute)
 
 	s := &PostgresStorer{
-		pool: pool,
+		pool:          pool,
+		stopCollector: stopCollector,
 		// embedder: embedder, // REMOVED
 		// contradictor: contradictor, // REMOVED
 	}
@@ -146,6 +152,9 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 
 // Close closes the underlying database connection pool.
 func (s *PostgresStorer) Close() {
+	if s.stopCollector != nil {
+		s.stopCollector()
+	}
 	if s.pool != nil {
 		log.Debug().Msg("Closing database connection pool.")
 		s.pool.Close()

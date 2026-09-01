@@ -153,13 +153,6 @@ func TestRealDataPartyFactVerification(t *testing.T) {
 	cacheDir := "asset/cache"
 	_ = os.MkdirAll(cacheDir, 0755)
 
-	// Download organes cache
-	organeURL := "https://data.assemblee-nationale.fr/static/openData/repository/16/organes/Organes.json.zip"
-	t.Logf("Downloading organes data from %s", organeURL)
-	if _, err := downloadCached(ctx, organeURL, cacheDir, 0); err != nil {
-		t.Logf("Warning: Failed to download organes: %v", err)
-	}
-
 	// Download scrutin data
 	scrutinURL := "https://data.assemblee-nationale.fr/static/openData/repository/16/loi/scrutins/Scrutins.json.zip"
 	t.Logf("Downloading scrutin data from %s", scrutinURL)

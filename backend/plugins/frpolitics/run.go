@@ -200,16 +200,24 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		abbrev string
 	})
 	deputySeed := make(map[string]string) // assembleeID -> displayName
+	// resolvePartyName returns "" for an organe the cache cannot name. A raw
+	// ref must never become a person row — prod accumulated 13 "parties" named
+	// po840056-style that way.
+	unresolvedOrgs := make(map[string]bool)
 	resolvePartyName := func(orgRef string) string {
-		name := orgRef
 		if info, ok := orgCache[orgRef]; ok {
 			if strings.TrimSpace(info.LongName) != "" {
-				name = info.LongName
-			} else if strings.TrimSpace(info.ShortName) != "" {
-				name = info.ShortName
+				return info.LongName
+			}
+			if strings.TrimSpace(info.ShortName) != "" {
+				return info.ShortName
 			}
 		}
-		return name
+		if !unresolvedOrgs[orgRef] {
+			unresolvedOrgs[orgRef] = true
+			log.Warn().Str("organe_ref", orgRef).Msg("frpolitics: organe has no name in cache; not seeding it as a party")
+		}
+		return ""
 	}
 	totalFactLaws := len(aiFilteredLaws)
 	for idx, law := range aiFilteredLaws {
@@ -225,6 +233,9 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		// Collect party seeds (ensure parties exist with entity_type='party')
 		for orgRef := range group {
 			name := resolvePartyName(orgRef)
+			if name == "" {
+				continue
+			}
 			abbr := ""
 			if info, ok := orgCache[orgRef]; ok {
 				abbr = info.ShortName
@@ -242,6 +253,9 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 					continue
 				}
 				name := resolvePartyName(orgRef)
+				if name == "" {
+					continue
+				}
 				abbr := ""
 				if info, ok := orgCache[orgRef]; ok {
 					abbr = info.ShortName
@@ -576,12 +590,14 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 		sincePtr = &s
 	}
 
-	// Load organe caches per legislature and merge
-	for _, leg := range legislatures {
-		cache := loadOrganeCacheForLegislature(ctx, leg)
-		for k, v := range cache {
-			orgCache[k] = v
-		}
+	// Organe names come from the AMO30 archive (all legislatures). Fail rather
+	// than continue with an empty map: every downstream party fact depends on it.
+	organes, err := loadOrganeCache(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, ParseStats{}, fmt.Errorf("load organe cache: %w", err)
+	}
+	for k, v := range organes {
+		orgCache[k] = v
 	}
 
 	// Load actor name map to resolve AssembleeID -> DisplayName (historical)

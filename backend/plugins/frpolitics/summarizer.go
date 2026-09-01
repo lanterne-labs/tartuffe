@@ -135,10 +135,14 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 	}
 
 	req := categorizer.ChatRequest{
-		Model:          model,
-		Messages:       []categorizer.ChatMessage{{Role: "system", Content: prompt}},
-		Temperature:    0.1,
-		MaxTokens:      16384,
+		Model:       model,
+		Messages:    []categorizer.ChatMessage{{Role: "system", Content: prompt}},
+		Temperature: 0.1,
+		// Reply budget for a batch of 10 law summaries (~150 tokens each).
+		// max_tokens is charged against the context window up front, and the
+		// old 16384 exceeded the local model's whole 12k window, so every
+		// summarization call was rejected with 400 before generation.
+		MaxTokens:      4096,
 		ResponseFormat: &categorizer.ResponseFormat{Type: "json_object"},
 	}
 	payload, _ := json.Marshal(req)
