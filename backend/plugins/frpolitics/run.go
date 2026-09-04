@@ -57,8 +57,14 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	filteredLaws := make([]Law, 0, len(laws))
 	skippedProcessed := 0
 	skippedVisited := 0
+	// Default: don't re-scan a law URL more than once a day. An explicitly
+	// NEGATIVE RevisitHours means "always visitable" (IsURLVisitable compares
+	// against a negative window) — the CLI uses it so a law whose store failed
+	// mid-batch can be retried immediately instead of deadlocking behind the
+	// partial fact_sources rows its own failure left behind. 0 keeps the
+	// default so zero-valued Options (the daily pipeline) are unaffected.
 	revisitHours := 24
-	if opts.RevisitHours > 0 {
+	if opts.RevisitHours != 0 {
 		revisitHours = opts.RevisitHours
 	}
 	for _, law := range laws {

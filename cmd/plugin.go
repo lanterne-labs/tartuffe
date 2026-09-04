@@ -152,7 +152,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		MaxLaws:        maxLaws,
 		PartyThreshold: threshold,
 		Legislatures:   legs,
-		RevisitHours:   0, // Always process new data
+		RevisitHours:   -1, // negative = always visitable: retry laws whose store failed (0 would coerce to the 24h default)
 
 		// News search options
 		NewsSince:        newsSince,
