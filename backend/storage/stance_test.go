@@ -373,7 +373,7 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	emb := makeUnitEmbedding(0)
 
 	// Insert first stance
-	_, err = storer.InsertStanceDocument(ctx, StanceDocument{
+	firstID, err := storer.InsertStanceDocument(ctx, StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "unique-topic",
 		ClusterEmbedding: emb,
@@ -383,8 +383,12 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Insert second stance with same person+label should fail
-	_, err = storer.InsertStanceDocument(ctx, StanceDocument{
+	// A colliding (person, label) insert resolves to the EXISTING stance
+	// instead of erroring: the topic assigner can emit NEW_STANCE with a label
+	// the person already has, and failing here used to abort whole insert
+	// batches (frpolitics backfill 2026-09-04). The existing row's content is
+	// untouched — the metadata refresh reconciles it once facts attach.
+	secondID, err := storer.InsertStanceDocument(ctx, StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "unique-topic",
 		ClusterEmbedding: emb,
@@ -392,5 +396,10 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 		KeyFactIDs:       []int64{},
 		FactCount:        1,
 	})
-	assert.Error(t, err, "expected unique constraint violation")
+	require.NoError(t, err, "label collision must resolve, not error")
+	require.Equal(t, firstID, secondID, "collision must return the existing stance id")
+
+	var summary string
+	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT summary FROM stance_documents WHERE id=$1", firstID).Scan(&summary))
+	require.Equal(t, "First", summary, "existing stance content must not be clobbered")
 }

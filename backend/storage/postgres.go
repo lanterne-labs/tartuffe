@@ -5145,13 +5145,23 @@ func (s *PostgresStorer) FindMatchingStance(ctx context.Context, personID int64,
 }
 
 // InsertStanceDocument inserts a new stance document and returns its ID.
+//
+// (person_id, cluster_label) is unique, and the topic assigner can legitimately
+// decide "new stance" while generating a label the person already has — two
+// laws about renewables both yield "énergies renouvelables". That used to blow
+// up the whole insert batch with a 23505 (frpolitics backfill, 2026-09-04). On
+// conflict the EXISTING stance's id is returned instead: the caller attaches
+// the fact to it and the next metadata refresh reconciles summary and counts,
+// which is exactly what routing to the existing stance would have done.
 func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error) {
 	query := `
 		INSERT INTO stance_documents (person_id, cluster_label, label_en, cluster_embedding, summary, summary_en, key_fact_ids, fact_count, last_updated_at)
 		VALUES ($1, $2, NULLIF($3,''), $4, $5, NULLIF($6,''), $7, $8, NOW())
-		RETURNING id`
+		ON CONFLICT (person_id, cluster_label) DO UPDATE SET last_updated_at = NOW()
+		RETURNING id, (xmax = 0) AS inserted`
 
 	var id int64
+	var inserted bool
 	err := s.pool.QueryRow(ctx, query,
 		doc.PersonID,
 		doc.ClusterLabel,
@@ -5161,9 +5171,13 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc StanceDoc
 		doc.SummaryEn,
 		doc.KeyFactIDs,
 		doc.FactCount,
-	).Scan(&id)
+	).Scan(&id, &inserted)
 	if err != nil {
 		return 0, fmt.Errorf("inserting stance document: %w", err)
+	}
+	if !inserted {
+		log.Warn().Int64("person_id", doc.PersonID).Str("label", doc.ClusterLabel).Int64("stance_id", id).
+			Msg("New-stance label already exists for person; routing into the existing stance")
 	}
 
 	return id, nil
