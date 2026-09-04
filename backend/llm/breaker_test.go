@@ -195,3 +195,69 @@ func TestIsEndpointOutage(t *testing.T) {
 		})
 	}
 }
+
+// TestProbePrimary_WarmsColdModel: /models answering does not mean the model is
+// loaded — llama-swap loads on the first completion and Cloudflare 524s past
+// 100s, which used to arm the breaker at the start of every cold-model run.
+// The probe must ride out warm-up 5xx and succeed once the model answers.
+func TestProbePrimary_WarmsColdModel(t *testing.T) {
+	defer resetBreaker()
+	defer func(b, d time.Duration) { warmupBudget, warmupRetryDelay = b, d }(warmupBudget, warmupRetryDelay)
+	warmupBudget, warmupRetryDelay = 5*time.Second, 10*time.Millisecond
+
+	var chatHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		if chatHits.Add(1) <= 2 {
+			w.WriteHeader(524) // Cloudflare's origin-timeout while the model loads
+			return
+		}
+		w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("FALLBACK_URL", "https://example.invalid/fallback")
+	t.Setenv("OPEN_AI_API", srv.URL)
+
+	resetBreaker()
+	if !ProbePrimary(context.Background()) {
+		t.Fatal("probe should succeed once the model warms up")
+	}
+	if PrimaryDown() {
+		t.Error("breaker must be clear after a successful warm-up")
+	}
+	if chatHits.Load() != 3 {
+		t.Errorf("chat hits = %d, want 3 (two loading 524s + one success)", chatHits.Load())
+	}
+}
+
+// TestProbePrimary_WarmupExhaustedArmsBreaker: a model that never comes up is a
+// real outage — the probe must give up within the budget and arm the breaker.
+func TestProbePrimary_WarmupExhaustedArmsBreaker(t *testing.T) {
+	defer resetBreaker()
+	defer func(b, d time.Duration) { warmupBudget, warmupRetryDelay = b, d }(warmupBudget, warmupRetryDelay)
+	warmupBudget, warmupRetryDelay = 200*time.Millisecond, 10*time.Millisecond
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		w.WriteHeader(524)
+	}))
+	defer srv.Close()
+
+	t.Setenv("FALLBACK_URL", "https://example.invalid/fallback")
+	t.Setenv("OPEN_AI_API", srv.URL)
+
+	resetBreaker()
+	if ProbePrimary(context.Background()) {
+		t.Fatal("probe should fail when the model never warms up")
+	}
+	if !PrimaryDown() {
+		t.Error("breaker must be armed after warm-up exhaustion")
+	}
+}

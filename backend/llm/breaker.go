@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -118,11 +119,80 @@ func ProbePrimary(ctx context.Context) bool {
 		MarkPrimaryDown("start-of-run probe: " + err.Error())
 		return false
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 	if resp.StatusCode >= 500 {
 		MarkPrimaryDown("start-of-run probe: HTTP " + resp.Status)
 		return false
 	}
+
+	// /models answers without loading a model, so a reachable llama-swap can
+	// still hide a COLD model behind it: the first completion of a run then
+	// pays the ~105s load, Cloudflare cuts the request at its 100s proxy
+	// ceiling with a 524, the per-call retries burn out, and the breaker sends
+	// the whole run to the fallback (2026-09-03 cron lost its news phase this
+	// way). Warm the chat model here, tolerating 5xx until the load finishes.
+	if !warmPrimaryChat(ctx, base) {
+		MarkPrimaryDown("start-of-run warm-up: chat model did not come up within " + warmupBudget.String())
+		return false
+	}
 	MarkPrimaryUp()
 	return true
+}
+
+// warmupBudget bounds how long ProbePrimary waits for a cold chat model. A
+// llama-swap load of the 26B NVFP4 takes ~105s; the budget covers two loads
+// (e.g. a swap displacing another model first). Variable so tests can shrink it.
+var warmupBudget = 4 * time.Minute
+
+// warmupRetryDelay is the pause between warm-up attempts. Variable for tests.
+var warmupRetryDelay = 5 * time.Second
+
+// warmPrimaryChat POSTs 1-token completions at the primary until one answers
+// or the budget runs out. Any HTTP status below 500 counts as warm — the model
+// answered, even if it disliked this particular request. 5xx (Cloudflare 524
+// while loading, transient 502) and transport errors are retried.
+func warmPrimaryChat(ctx context.Context, base string) bool {
+	model := strings.TrimSpace(os.Getenv("OPEN_AI_CHAT_MODEL"))
+	if model == "" {
+		model = "gpt-4o-mini" // llama-swap aliases this to the local default
+	}
+	payload := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`)
+	url := base + "/chat/completions"
+
+	deadline := time.Now().Add(warmupBudget)
+	for attempt := 1; time.Now().Before(deadline) && ctx.Err() == nil; attempt++ {
+		reqCtx, cancel := context.WithTimeout(ctx, 115*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			cancel()
+			return true // malformed URL is a config problem, not an outage
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+os.Getenv("OPEN_AI_KEY"))
+		if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
+			req.Header.Set("CF-Access-Client-Id", id)
+			req.Header.Set("CF-Access-Client-Secret", os.Getenv("CF_ACCESS_CLIENT_SECRET"))
+		}
+		resp, err := (&http.Client{Timeout: 115 * time.Second}).Do(req)
+		cancel()
+		if err == nil {
+			status := resp.StatusCode
+			resp.Body.Close()
+			if status < 500 {
+				if attempt > 1 {
+					log.Info().Int("attempts", attempt).Msg("Primary chat model warmed up")
+				}
+				return true
+			}
+			log.Warn().Int("status", status).Int("attempt", attempt).Msg("Warm-up completion got 5xx (model likely still loading); retrying")
+		} else {
+			log.Warn().Err(err).Int("attempt", attempt).Msg("Warm-up completion failed; retrying")
+		}
+		select {
+		case <-time.After(warmupRetryDelay):
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return false
 }
