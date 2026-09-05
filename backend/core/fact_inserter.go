@@ -129,11 +129,25 @@ type StoreFactInput struct {
 	OriginalQuote        string
 	CanonicalVerb        string
 	InvolvedPeople       []string // Secondary people mentioned in the fact (not the subject)
-	SourceURL            string
-	PublishedAt          *time.Time
-	SourceType           string
-	Metadata             map[string]any
-	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
+	// CoActorIDs are pre-resolved person ids who PERFORMED the fact's action
+	// alongside the subject (e.g. every deputy/party casting the same vote on a
+	// law, collapsed into one shared fact row). Unlike InvolvedPeople — who are
+	// bystanders and explicitly do NOT own the fact — co-actors get their own
+	// fact_mentions row, i.e. full attribution. Consequences, deliberately:
+	//   - contradiction detection (mention-scoped GetFactsForPerson) pairs the
+	//     shared fact against each co-actor's other facts, so "said X, voted Y"
+	//     can fire for every voter, not just the arbitrary first record;
+	//   - each co-actor's fact_count (and honesty-score denominator, computed
+	//     live from mentions) includes the shared fact;
+	//   - stance routing still runs ONLY for the subject: stances are
+	//     per-person documents, so co-actors' stance systems never see this
+	//     fact — their coverage comes from the nightly pairwise detector.
+	CoActorIDs  []int64
+	SourceURL   string
+	PublishedAt *time.Time
+	SourceType  string
+	Metadata    map[string]any
+	Lang        string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
 }
 
 // SimilarFact represents a fact that is similar to a given embedding.
@@ -403,8 +417,17 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return 0, 0, false, fmt.Errorf("failed to link source: %w", err)
 	}
 
-	// Link subject entity to this source mention
-	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
+	// Link the subject plus any co-actors to this source mention. Co-actors
+	// share full ownership of the fact (see StoreFactInput.CoActorIDs); the
+	// mention insert is ON CONFLICT DO NOTHING so a duplicate id is harmless.
+	mentionIDs := make([]int64, 0, 1+len(input.CoActorIDs))
+	mentionIDs = append(mentionIDs, subjectID)
+	for _, id := range input.CoActorIDs {
+		if id > 0 && id != subjectID {
+			mentionIDs = append(mentionIDs, id)
+		}
+	}
+	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, mentionIDs); err != nil {
 		fi.compensateDelete(ctx, factID, "linking subject entity")
 		return 0, 0, false, fmt.Errorf("failed to link subject entity: %w", err)
 	}

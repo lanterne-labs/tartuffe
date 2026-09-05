@@ -106,6 +106,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 	// Build inputs for the core fact inserter
 	totalFacts := len(factTextToRecords)
 	inputs := make([]core.StoreFactInput, 0, totalFacts)
+	voterIDs := make(map[int64]bool)
 
 	log.Info().
 		Int("total_facts", totalFacts).
@@ -125,14 +126,25 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 			embeddingText = factText // Fallback if EmbeddingText not set
 		}
 
-		// First person is the subject entity, rest are secondary mentions
+		// Every record in this group cast the SAME vote — they are all actors
+		// of the shared fact, not bystanders. The first becomes the subject
+		// (stance routing needs exactly one owner-person); the rest become
+		// co-actors with their own fact_mentions rows, so each voter carries
+		// the fact in detection and scoring. Before 2026-09-05 they were filed
+		// as InvolvedPeople, which by design does NOT attribute — deputies
+		// ended up owning zero vote facts and "said X, voted Y" could never
+		// fire (see StoreFactInput.CoActorIDs for the consequence map).
 		subjectEntity := firstRec.PersonName
-		var secondaryPersons []string
-		if len(records) > 1 {
-			secondaryPersons = make([]string, 0, len(records)-1)
-			for _, rec := range records[1:] {
-				secondaryPersons = append(secondaryPersons, rec.PersonName)
+		var coActorIDs []int64
+		for _, rec := range records[1:] {
+			id, err := storer.GetPersonIDByName(ctx, rec.PersonName)
+			if err != nil || id <= 0 {
+				log.Warn().Str("person", rec.PersonName).Str("law", firstRec.LawKey).
+					Msg("frpolitics: co-voter not found in persons; vote not attributed to them")
+				continue
 			}
+			coActorIDs = append(coActorIDs, id)
+			voterIDs[id] = true
 		}
 
 		// Ensure metadata includes law information for traceability
@@ -160,7 +172,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 			Embedding:          embeddingsMap[embeddingText],
 			OriginalQuote:      originalQuote,
 			CanonicalVerb:      firstRec.CanonicalVerb,
-			InvolvedPeople:     secondaryPersons,
+			CoActorIDs:         coActorIDs,
 			SourceURL:          firstRec.SourceURL,
 			PublishedAt:        firstRec.PublishedAt,
 			SourceType:         "assemblee_law_page",
@@ -189,5 +201,18 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		Int("total_facts", len(inputs)).
 		Msg("frpolitics: fact insertion complete")
 
+	// Co-actor mentions changed these persons' effective fact sets; refresh
+	// their cached fact_count in one statement (honesty scores read the live
+	// mention-derived count at recompute time, so no score write is needed here).
+	if len(voterIDs) > 0 {
+		ids := make([]int64, 0, len(voterIDs))
+		for id := range voterIDs {
+			ids = append(ids, id)
+		}
+		if err := storer.RefreshPersonFactCounts(ctx, ids); err != nil {
+			return fmt.Errorf("refreshing voter fact counts: %w", err)
+		}
+		log.Info().Int("voters", len(ids)).Msg("frpolitics: refreshed fact counts for co-voting persons")
+	}
 	return nil
 }

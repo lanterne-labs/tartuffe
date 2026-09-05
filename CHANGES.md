@@ -1655,3 +1655,25 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   Serper + LLM each) — hung past 10m and burned credits; SetEntityValidator(nil) like the other
   tests. The stance-invariant collector goroutine outlived Close() (spammed "closed pool");
   Close now cancels it.
+
+## Vote facts attribute to EVERY voter + French vote statements (2026-09-05)
+
+- A vote fact is ONE row shared by everyone who cast that vote (text-dedup by design), but only
+  the arbitrary FIRST record got a fact_mentions row; the other voters were filed as
+  InvolvedPeople, which by the extractor's own rule does NOT attribute. Net effect in prod:
+  deputies owned ZERO vote facts, party attribution was first-come, and "said X, voted Y" —
+  the point of ingesting votes — could never fire. New StoreFactInput.CoActorIDs: pre-resolved
+  co-actors get real mention rows in the same LinkPersonsToSourceMention call.
+- CONSEQUENCES (traced, deliberate — see the CoActorIDs doc comment):
+  * contradiction detection is mention-scoped, so each voter's statements now pair against
+    their votes; expect vote-vs-statement contradictions to start appearing and scores to move.
+  * fact_count / honesty denominators grow for every voter (bulk RefreshPersonFactCounts, one
+    statement, after each law batch); scores recompute lazily from live mention counts.
+  * stance routing still runs ONLY for the subject person — stances are per-person documents,
+    so co-actors' stance systems never see the shared fact; their contradiction coverage comes
+    from the nightly pairwise detector, not the stance/analyze path.
+  * e2e locks the fan-out: vote sources must average >1 mention and deputies must own facts.
+- Vote statements are now French ("a voté POUR le texte de loi : « ... »") and the law
+  summarizer is instructed to emit French short_title/simple_statement — texts were English
+  with broken grammar ("collectively voted FOR a Creates a stable...") while labelled lang=fr.
+  The e2e position parser and fixtures follow the French forms.

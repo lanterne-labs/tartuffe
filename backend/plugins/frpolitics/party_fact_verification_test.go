@@ -211,13 +211,13 @@ func calculateMajorityPosition(votes []VoteEvent) (VotePosition, float64) {
 // extractPositionFromFactText extracts the voting position from a fact text
 func extractPositionFromFactText(factText string) VotePosition {
 	lowerText := fmt.Sprintf("%s", factText)
-	if contains(lowerText, "voted FOR") {
+	if contains(lowerText, "voté POUR") {
 		return VoteFor
 	}
-	if contains(lowerText, "voted AGAINST") {
+	if contains(lowerText, "voté CONTRE") {
 		return VoteAgainst
 	}
-	if contains(lowerText, "ABSTAINED") {
+	if contains(lowerText, "abstenu") {
 		return VoteAbstention
 	}
 	return VoteNonVotant
@@ -273,12 +273,12 @@ func TestPartyFactAccuracyWithMockData(t *testing.T) {
 	partyFacts := []FactRecord{
 		{
 			PersonName: "rassemblement national", // Normalized
-			FactText:   "Rassemblement National voted FOR a test law",
+			FactText:   "Rassemblement National a voté POUR le texte de loi : « test »",
 			LawKey:     "test-law-1",
 		},
 		{
-			PersonName: "la france insoumise",                          // Normalized
-			FactText:   "La France Insoumise voted AGAINST a test law", // This should be FOR based on votes
+			PersonName: "la france insoumise",                                          // Normalized
+			FactText:   "La France Insoumise a voté CONTRE le texte de loi : « test »", // This should be FOR based on votes
 			LawKey:     "test-law-1",
 		},
 	}
@@ -328,7 +328,7 @@ func TestPartyFactAccuracyThreshold(t *testing.T) {
 	// Test with 0.5 threshold (should generate party fact)
 	// Note: PersonName should be normalized as it would be in the database
 	partyFacts := []FactRecord{
-		{PersonName: "test party", FactText: "Test Party voted FOR a test law", LawKey: "test-law-1"},
+		{PersonName: "test party", FactText: "Test Party a voté POUR le texte de loi : « test » law", LawKey: "test-law-1"},
 	}
 
 	report := VerifyPartyFactAccuracy(t, partyFacts, deputyVotes, organeCache, 0.5)

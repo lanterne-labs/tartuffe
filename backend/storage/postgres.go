@@ -2280,6 +2280,32 @@ func (s *PostgresStorer) GetStanceContradictionCounts(ctx context.Context, perso
 // refreshPersonFactCount recomputes and stores the deduped fact count for a person.
 // Must be called within a transaction. This keeps persons.fact_count in sync after
 // fact insertions, deletions, or dedup relation changes.
+// RefreshPersonFactCounts recomputes persons.fact_count for many persons in one
+// statement. Used after bulk mention fan-out (shared vote facts attribute to
+// every voter), where per-person refreshes would be hundreds of round trips.
+func (s *PostgresStorer) RefreshPersonFactCounts(ctx context.Context, personIDs []int64) error {
+	if len(personIDs) == 0 {
+		return nil
+	}
+	query := `
+		UPDATE persons p SET fact_count = (
+			SELECT COUNT(DISTINCT fs.fact_id) FILTER (
+				WHERE NOT EXISTS (
+					SELECT 1 FROM fact_relations fr
+					WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate'
+				)
+			)
+			FROM fact_mentions fm
+			JOIN fact_sources fs ON fm.fact_source_id = fs.id
+			WHERE fm.person_id = p.id
+		)
+		WHERE p.id = ANY($1)`
+	if _, err := s.pool.Exec(ctx, query, personIDs); err != nil {
+		return fmt.Errorf("failed to refresh fact counts for %d persons: %w", len(personIDs), err)
+	}
+	return nil
+}
+
 func (s *PostgresStorer) refreshPersonFactCount(ctx context.Context, tx pgx.Tx, personID int64) error {
 	query := `
 		UPDATE persons SET fact_count = (

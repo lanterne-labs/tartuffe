@@ -3,6 +3,7 @@ package frpolitics
 import (
 	"context"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
 	"time"
@@ -111,6 +112,26 @@ func TestE2EPartyFactVerification(t *testing.T) {
 	// Step 7: Assert minimum quality standards
 	if verificationReport.TotalPartyFacts == 0 {
 		t.Fatal("No party facts were generated")
+	}
+
+	// Attribution fan-out: a shared vote fact must mention EVERY voter, not
+	// just the arbitrary first record (see StoreFactInput.CoActorIDs). Without
+	// this, deputies own zero vote facts and "said X, voted Y" never fires.
+	var voteSources, voteMentions, deputyMentions int
+	require.NoError(t, storer.Pool().QueryRow(ctx, `
+		SELECT count(DISTINCT fs.id),
+		       count(fm.person_id),
+		       count(fm.person_id) FILTER (WHERE p.entity_type <> 'party')
+		FROM fact_sources fs
+		LEFT JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		LEFT JOIN persons p ON p.id = fm.person_id
+		WHERE fs.metadata->>'law_key' IS NOT NULL`).Scan(&voteSources, &voteMentions, &deputyMentions))
+	t.Logf("vote fan-out: sources=%d mentions=%d deputy_mentions=%d", voteSources, voteMentions, deputyMentions)
+	if voteMentions <= voteSources {
+		t.Errorf("vote facts average <= 1 mention (%d mentions over %d sources) — co-voter attribution is broken", voteMentions, voteSources)
+	}
+	if deputyMentions == 0 {
+		t.Error("no deputy owns any vote fact — deputy attribution is broken")
 	}
 
 	// Note: Consistency may be lower than 100% due to:

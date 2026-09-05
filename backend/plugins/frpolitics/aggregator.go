@@ -84,13 +84,13 @@ func buildCollectiveVoteStatement(pos VotePosition, lawSimple string) string {
 	lawPhrase := prepareLawPhrase(lawSimple)
 	switch pos {
 	case VoteFor:
-		return fmt.Sprintf("collectively voted FOR %s", lawPhrase)
+		return fmt.Sprintf("a collectivement voté POUR %s", lawPhrase)
 	case VoteAgainst:
-		return fmt.Sprintf("collectively voted AGAINST %s", lawPhrase)
+		return fmt.Sprintf("a collectivement voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("collectively ABSTAINED on %s", lawPhrase)
+		return fmt.Sprintf("s'est collectivement abstenu lors du vote sur %s", lawPhrase)
 	default:
-		return fmt.Sprintf("did not collectively vote on %s", lawPhrase)
+		return fmt.Sprintf("n'a pas pris part au vote collectif sur %s", lawPhrase)
 	}
 }
 
@@ -98,25 +98,25 @@ func buildVoteStatement(pos VotePosition, lawSimple string) string {
 	lawPhrase := prepareLawPhrase(lawSimple)
 	switch pos {
 	case VoteFor:
-		return fmt.Sprintf("voted FOR %s", lawPhrase)
+		return fmt.Sprintf("a voté POUR %s", lawPhrase)
 	case VoteAgainst:
-		return fmt.Sprintf("voted AGAINST %s", lawPhrase)
+		return fmt.Sprintf("a voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("ABSTAINED on %s", lawPhrase)
+		return fmt.Sprintf("s'est abstenu lors du vote sur %s", lawPhrase)
 	default:
-		return fmt.Sprintf("did not vote on %s", lawPhrase)
+		return fmt.Sprintf("n'a pas pris part au vote sur %s", lawPhrase)
 	}
 }
 
 func prepareLawPhrase(lawSimple string) string {
+	// The summarizer's simple_statement is a full French sentence ("Crée un
+	// cadre stable..."), not a noun phrase; wrapping it in guillemets after
+	// "le texte de loi :" reads naturally for any statement shape. The old
+	// English article logic produced "voted FOR a Creates a stable..." while
+	// the fact was labelled lang=fr.
 	guard := strings.TrimSpace(lawSimple)
 	if guard == "" {
-		guard = "the law"
+		return "le texte de loi"
 	}
-	// ensure article "a" before noun if not already starts with article
-	lower := strings.ToLower(guard)
-	if !(strings.HasPrefix(lower, "a ") || strings.HasPrefix(lower, "an ") || strings.HasPrefix(lower, "the ")) {
-		return fmt.Sprintf("a %s", guard)
-	}
-	return guard
+	return fmt.Sprintf("le texte de loi : « %s »", guard)
 }
