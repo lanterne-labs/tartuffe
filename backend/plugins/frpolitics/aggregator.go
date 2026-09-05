@@ -9,7 +9,7 @@ import (
 )
 
 // derivePartyMajorityFacts builds party-level facts based on majority positions
-func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float64, organeCache map[string]OrganeInfo, summary LawSummary) []FactRecord {
+func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float64, organeCache map[string]OrganeInfo, summary LawSummary, objectPhrase string) []FactRecord {
 	facts := make([]FactRecord, 0, len(groupStats))
 	for orgRef, stats := range groupStats {
 		total := stats.For + stats.Against + stats.Abst
@@ -51,9 +51,9 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			continue
 		}
 
-		factText := buildCollectiveVoteStatement(pos, summary.SimpleStatement)
+		factText := buildCollectiveVoteStatement(pos, objectPhrase)
 		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
-		embeddingText := prepareLawPhrase(summary.SimpleStatement)
+		embeddingText := objectPhrase
 		log.Debug().Str("party", name).Float64("frac", majorityFrac).Str("text", factText).Msg("frpolitics: derived collective party fact")
 		facts = append(facts, FactRecord{
 			PersonName:    name,
@@ -80,8 +80,7 @@ func deriveCollectiveVerb(pos VotePosition) string {
 	}
 }
 
-func buildCollectiveVoteStatement(pos VotePosition, lawSimple string) string {
-	lawPhrase := prepareLawPhrase(lawSimple)
+func buildCollectiveVoteStatement(pos VotePosition, lawPhrase string) string {
 	switch pos {
 	case VoteFor:
 		return fmt.Sprintf("a collectivement voté POUR %s", lawPhrase)
@@ -94,8 +93,7 @@ func buildCollectiveVoteStatement(pos VotePosition, lawSimple string) string {
 	}
 }
 
-func buildVoteStatement(pos VotePosition, lawSimple string) string {
-	lawPhrase := prepareLawPhrase(lawSimple)
+func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	switch pos {
 	case VoteFor:
 		return fmt.Sprintf("a voté POUR %s", lawPhrase)

@@ -281,7 +281,7 @@ PAIR 32: NO: Imperative aspirational rhetoric ("we must act") is not a first-per
 PAIR 33 (Denounce-Then-Ally — Same Named Target - Contradictory):
 Statement A (dated February 2026): "Karim Bouamrane a accusé Clémentine Autain d'avoir « trahi les électeurs de gauche » et d'être responsable de la défaite du camp progressiste."
 Statement B (dated March 2026): "Karim Bouamrane et Clémentine Autain ont annoncé une liste commune pour le second tour des municipales."
-PAIR 33: REASONING: The SHARED SUBJECT is the NAMED person, Clémentine Autain. In A the speaker publicly blames her; in B he partners with that SAME person weeks later. "Blame is one topic, an alliance is another" is precisely the excuse the DENOUNCE-THEN-ALLY rule forbids: the subject is not "blame" vs "alliance", it is the speaker's stated stance toward ONE named target, which reversed. [different_subjects] does NOT apply — both statements are about his relationship to Autain.
+PAIR 33: REASONING: The SHARED SUBJECT is the NAMED person, Clémentine Autain. In A the speaker publicly blames her; in B he partners with that SAME person weeks later. "Blame is one topic, an alliance is another" is precisely the excuse the DENOUNCE-THEN-ALLY rule forbids: the subject is not "blame" vs "alliance", it is the speaker's stated stance toward ONE named target, which reversed. [different_subjects] does NOT apply.
 PAIR 33: YES: Il a désigné nommément Autain comme responsable de la défaite, puis s'est allié avec elle — retournement envers la même personne.
 
 PAIR 34 (Self-Exempting Double Standard — Own Rule, Own Class - Contradictory):
@@ -294,7 +294,14 @@ PAIR 35 (Commitment Walk-Back Disguised as Same Direction - Contradictory):
 Statement A (dated May 2024): "Le parti a promis de supprimer la taxe foncière pour les résidences principales."
 Statement B (dated January 2025): "Le parti a renoncé à supprimer la taxe foncière, indiquant qu'elle serait seulement plafonnée."
 PAIR 35: REASONING: Map EACH statement to the concrete outcome it commits to. A commits to outcome X (no tax). B explicitly abandons THAT SAME X and settles for less. That is the ONLY shape that is a walk-back: B must give up the very outcome A promised. Likewise "promised to keep the retirement age at 62" vs "renounced repealing the reform that set it to 64" — B abandons exactly what A promised. Contrast the NON-walk-backs that stay [same_direction] / [partial_vs_total] and must be REMOVED: A promises free transport for three named groups, B rules out free transport for EVERYONE — B abandons a broader outcome A never promised, so A still stands; A laments that circulars are not followed, B says prosecutors must follow circulars — both push enforcement; A disagrees that climate is excluded, B says climate is included — same stance behind a double negative. A walk-back needs the SAME outcome abandoned, not merely the same topic revisited.
-PAIR 35: YES: Promesse de suppression, puis renoncement à la suppression au profit d'un simple plafonnement — la promesse est abandonnée, pas tenue.`
+PAIR 35: YES: Promesse de suppression, puis renoncement à la suppression au profit d'un simple plafonnement — la promesse est abandonnée, pas tenue.
+
+PAIR 36 (Amendment Vote That Breaks the Person's OWN Demanded Measure - Contradictory):
+Statement A: "Le député a déclaré qu'aucune privatisation ne devrait être engagée sans une étude d'impact indépendante préalable."
+Statement B: "Le député a voté CONTRE l'amendement instaurant une étude d'impact indépendante préalable à la privatisation."
+PAIR 36: REASONING: [relative_vote_preference] protects amendment votes ONLY against inverted readings (anti-modification ≠ anti-bill, ≠ pro-status-quo). Here no inversion is needed: the amendment's CONTENT is exactly the measure the person demanded — an independent prior impact study — and they voted against creating it. The exception inside [relative_vote_preference] applies: the ballot breaks their OWN stated principle directly.
+PAIR 36: YES: Il exige une étude d'impact préalable puis vote contre l'amendement qui l'instaure — son vote contredit sa propre exigence, sans aucune inversion de sens.
+`
 
 var contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
 

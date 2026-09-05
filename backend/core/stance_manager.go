@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -343,6 +345,22 @@ type aggregatedAnalysis struct {
 // batches the contradictions list is unioned (deduped by KeyFactID). The
 // primary verdict is CONTRADICTION if any batch returned contradictions, else
 // DUPLICATE if any batch returned DUPLICATE, else NEW_INFO.
+// AnalyzeVotes is the majority-vote count for the stance analyze judge
+// (judge #1, the only edge creator). 1 = historical single-sample behaviour.
+var AnalyzeVotes = 3
+
+// analyzeVoteKey reduces an analyze response to what must agree across votes:
+// the verdict, the duplicate target and the exact contradiction edge set.
+// Reasoning text may differ between agreeing votes.
+func analyzeVoteKey(r *stanceLLMResponse) string {
+	ids := make([]string, 0, len(r.Contradictions))
+	for _, c := range r.Contradictions {
+		ids = append(ids, strconv.FormatInt(c.KeyFactID, 10))
+	}
+	sort.Strings(ids)
+	return r.PrimaryVerdict + "|" + strconv.FormatInt(r.DuplicateOf, 10) + "|" + strings.Join(ids, ",")
+}
+
 func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
 	batches := chunkKeyFactsByBudget(stanceSummary, newFactText, keyFacts)
 	if len(batches) == 0 {
@@ -358,7 +376,14 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 	var reasoningParts []string
 
 	for batchIdx, batch := range batches {
-		resp, err := sm.callLLM(ctx, stanceSummary, batch, newFactText)
+		// The analyze verdict is a sample, and this judge CREATES contradiction
+		// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
+		// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
+		// single-sample). Early exit keeps the usual cost at 2 calls.
+		resp, err := llm.MajorityVote(AnalyzeVotes,
+			func() (*stanceLLMResponse, error) { return sm.callLLM(ctx, stanceSummary, batch, newFactText) },
+			analyzeVoteKey,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
 		}

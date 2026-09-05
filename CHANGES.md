@@ -1677,3 +1677,43 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   summarizer is instructed to emit French short_title/simple_statement — texts were English
   with broken grammar ("collectively voted FOR a Creates a stable...") while labelled lang=fr.
   The e2e position parser and fixtures follow the French forms.
+
+## Amendment-vote semantics: classify the object, fetch the amendment, never invert a ballot (2026-09-05)
+
+- The system's first said-X-voted-Y ("Panot voted against nationalisation") was FALSE: scrutin
+  17-4373 voted a UDR sous-amendement stretching a Cour-des-comptes audit from 6 months to a
+  year; every non-RN group rejected it. Worse, scrutin 4375 shows LFI also voted against the
+  6-month audit itself — proving CONTRE(modification) NEVER implies POUR(status quo): both
+  ballots express one position ("no dilatory audit at all") that neither states. A vote judges
+  its OBJECT, and an amendment ballot's object is the modification, not the parent bill.
+- Tier 0 (votetype.go): deterministic scrutin classifier from the formulaic titles — ensemble/
+  article/motion/declaration are TEXT-LEVEL (the ballot IS the position); amendement/
+  sous-amendement are modification-level. Zero LLM.
+- Tier 1 (amendements.go): the AN Amendements archive (~300MB/legislature, flaky transfers —
+  resume with curl -C - style retries; cached as asset/cache/Amendements_<leg>.json.zip) gives
+  dispositif + exposé sommaire + author group per amendment; filenames encode texte+numero so
+  lookup scans the central directory only, disambiguated by sort-date = scrutin date, AMBIGUOUS
+  → nil. Vote fact texts now describe the voted object: "a voté CONTRE le sous-amendement
+  n° 372 (UDR) visant à accorder à la Cour des comptes un délai suffisant..., déposé sur le
+  texte de loi : « ... »". Unresolvable amendment content GATES the scrutin (no facts): a fact
+  that misstates the voted object is worse than no fact.
+- Judge rules, all four judges: [relative_vote_preference] in the shared FP catalog (amendment
+  ballots only; forbids reading CONTRE-the-modification as anti-bill or pro-status-quo; keeps
+  the ballot cast AGAINST the very measure the person demanded), a scoped line in the analyze
+  rules (first version said "only a vote can break a promise" and broke denial-vs-conviction —
+  quantifier scope matters), PAIR 36 worked example, and 8 golden cases across verify/audit/
+  analyze (incl. the real 4373/4375 pair).
+- Tuning lessons re-confirmed the hard way: catalog GROWTH re-destabilizes boundary cases
+  (FP_170/FP_selfexempt/TP_330b wobbled from added prose; fixed by SHRINKING the bucket 40% and
+  deleting a redundant example); TP_103 vs TP_330b are anti-correlated through prompt mass —
+  a per-example trap-check fixed one and broke the other; the stable fix was ONE symmetric
+  SELF-CHECK paragraph in the audit prompt covering both forbidden excuses. All four judges now vote:
+  llm.MajorityVote is shared; AnalyzeVotes=3 (judge #1 creates edges — keyed on verdict +
+  duplicate + exact edge set), JudgeVotes=3 (verifier), AuditVotes=5 (runs every 5 days, a
+  wrong eviction is destructive, extra votes are free). The audit prompt gained a symmetric
+  SELF-CHECK listing the three forbidden excuses that kept trading places under prompt mass
+  (denounce-then-ally "pas incompatible", self-exempting "sujet différent", numeric walk-back
+  "même direction" with two different numbers) — one paragraph stabilized all three where
+  per-example trap sentences see-sawed. D_denial fixed by a worked example on
+  CLAIM↔AUTHORITATIVE FINDING plus the analyze vote. Goldens run the PROD vote counts (no
+  test-side overrides), so they measure exactly what prod does.

@@ -1,5 +1,7 @@
 package contradiction
 
+import "digital-mirror/backend/llm"
+
 // JudgeVotes is how many times a binary judging call (audit, verify) is
 // repeated before its verdict is taken by majority.
 //
@@ -16,6 +18,12 @@ package contradiction
 // measure the behaviour prod actually has.
 var JudgeVotes = 3
 
+// AuditVotes is the vote count for the AUDITOR specifically. The auditor runs
+// every 5 days over stored rows and auto-evicts, so its per-call cost is
+// negligible while a wrong eviction is destructive — it gets 5 votes where the
+// insert-time verifier gets 3.
+var AuditVotes = 5
+
 // majorityVote calls once() up to `votes` times and returns a result from the
 // largest agreeing group, where agreement is defined by key().
 //
@@ -26,41 +34,5 @@ var JudgeVotes = 3
 // number of votes cast) resolve to the first verdict seen, so the outcome
 // never depends on map iteration order.
 func majorityVote[T any](votes int, once func() (T, error), key func(T) string) (T, error) {
-	if votes <= 1 {
-		return once()
-	}
-
-	tally := make(map[string]int, votes)
-	first := make(map[string]T, votes)
-	var order []string // first-seen order, for deterministic tie-breaks
-	var lastErr error
-
-	for i := 0; i < votes; i++ {
-		v, err := once()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		k := key(v)
-		if _, seen := tally[k]; !seen {
-			first[k] = v
-			order = append(order, k)
-		}
-		tally[k]++
-		if tally[k] > votes/2 {
-			return first[k], nil // unbeatable majority, skip the rest
-		}
-	}
-
-	if len(order) == 0 {
-		var zero T
-		return zero, lastErr
-	}
-	best := order[0]
-	for _, k := range order[1:] {
-		if tally[k] > tally[best] {
-			best = k
-		}
-	}
-	return first[best], nil
+	return llm.MajorityVote(votes, once, key)
 }

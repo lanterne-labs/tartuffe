@@ -389,3 +389,54 @@ cases:
   # over-broad. It is also not the edge the pipeline forms: the stance analyzer rates the
   # bare re-announcement DUPLICATE/NEW_INFO, and the real hypocrisy edge it creates is the
   # 10540 <-> 10846 pair asserted above. Same caution as the Ciotti #157 / Bardella #168 skips.
+
+  # ---- Bucket: amendment-vote semantics (2026-09-05, from prod scrutins 17-4373/17-4375) ----
+  # A vote on an amendment judges the MODIFICATION, not the bill. Never invert it.
+
+  - name: "FP_vote_dilatory_subamendment_arcelor"
+    fact_a: "Mathilde Panot a affirmé qu'elle se battrait pour la nationalisation d'ArcelorMittal."
+    fact_b: "Mathilde Panot a voté CONTRE le sous-amendement UDR n° 372 visant à porter de six mois à un an le délai d'audit de la Cour des comptes préalable à la nationalisation d'ArcelorMittal."
+    claimed_reason: "Elle promet de se battre pour la nationalisation mais a voté contre un texte s'inscrivant dans le projet de nationalisation."
+    expect: drop
+    bucket: relative_vote_preference
+    notes: "Prod scrutin 17-4373: rejecting a rival group's dilatory sub-amendment (longer audit = delayed nationalisation) IS fighting for the bill."
+
+  - name: "FP_vote_contre_modif_and_contre_baseline"
+    fact_a: "Mathilde Panot a voté CONTRE le sous-amendement portant de six mois à un an le délai d'audit préalable à la nationalisation."
+    fact_b: "Mathilde Panot a voté CONTRE l'amendement instaurant un audit de six mois de la Cour des comptes préalable à la nationalisation."
+    claimed_reason: "Elle refuse l'allongement du délai d'audit mais refuse aussi le délai court, positions incompatibles sur le délai."
+    expect: drop
+    bucket: relative_vote_preference
+    notes: "Prod scrutins 17-4373 + 17-4375, minutes apart: both votes express ONE position — no dilatory audit device at all. CONTRE(modification) does not mean POUR(baseline)."
+
+  - name: "FP_vote_hostile_amendment_climat"
+    fact_a: "Marine Tondelier a promis de défendre la loi de programmation climatique jusqu'à son adoption."
+    fact_b: "Marine Tondelier a voté CONTRE le sous-amendement n° 89 de la Droite Républicaine visant à reporter d'un an l'entrée en vigueur de la loi de programmation climatique."
+    claimed_reason: "Elle défend la loi climatique mais vote contre un texte relatif à cette loi."
+    expect: drop
+    bucket: relative_vote_preference
+    notes: "Different domain than the Arcelor cases so the rule generalizes: hostile-camp postponement amendment, voting it down = defending the bill."
+
+  - name: "TP_vote_ensemble_contre_after_support"
+    fact_a: "Olivier Faure a déclaré soutenir pleinement la proposition de loi sur l'encadrement des loyers et appeler à son adoption."
+    fact_b: "Olivier Faure a voté CONTRE l'ensemble de la proposition de loi sur l'encadrement des loyers."
+    claimed_reason: "Il appelle à l'adoption du texte puis vote contre l'ensemble de ce même texte."
+    expect: keep
+    bucket: vote_where_your_mouth_is
+    notes: "A vote on l'ensemble IS the position — relative_vote_preference must NOT excuse text-level votes. Tactical or not, you vote where your mouth is."
+
+  - name: "TP_vote_amendment_hits_own_principle"
+    fact_a: "Laurent Wauquiez a déclaré qu'aucune nationalisation ne devrait être engagée sans un audit préalable de la Cour des comptes."
+    fact_b: "Laurent Wauquiez a voté CONTRE l'amendement instaurant un audit préalable de la Cour des comptes avant la nationalisation d'ArcelorMittal."
+    claimed_reason: "Il exige un audit préalable à toute nationalisation mais vote contre l'amendement qui instaure précisément cet audit."
+    expect: keep
+    bucket: vote_where_your_mouth_is
+    notes: "The carve-out inside relative_vote_preference: the amendment's CONTENT is exactly what he committed to, so the vote breaks HIS OWN stated principle."
+
+  - name: "TP_abstention_after_promised_vote"
+    fact_a: "Sébastien Lecornu a annoncé qu'il voterait pour l'ensemble du projet de loi de programmation militaire."
+    fact_b: "Sébastien Lecornu s'est abstenu lors du vote sur l'ensemble du projet de loi de programmation militaire."
+    claimed_reason: "Il promet de voter pour puis s'abstient lors du scrutin."
+    expect: keep
+    bucket: vote_where_your_mouth_is
+    notes: "Promised ballot behavior is a commitment; abstaining breaks it. Edge: abstention is not a CONTRE but still breaks 'je voterai pour'."

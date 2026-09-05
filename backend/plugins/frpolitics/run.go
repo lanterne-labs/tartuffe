@@ -200,7 +200,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	if threshold <= 0 {
 		threshold = 0.8
 	}
-	var partyFactsCount, deputyFactsCount int
+	var partyFactsCount, deputyFactsCount, skippedCountObject int
 	partySeed := make(map[string]struct {
 		orgRef string
 		abbrev string
@@ -235,6 +235,20 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		if !ok {
 			summary = LawSummary{SimpleStatement: law.Title}
 		}
+		// Describe the voted OBJECT (mirror-f28/mirror-0dj): a ballot on an
+		// amendement judges the modification only, so its fact text must say
+		// what the amendment does (author group + purpose from the archive).
+		// When that content cannot be resolved, the law is GATED — producing
+		// a fact that misstates the voted object is how the false "Panot voted
+		// against nationalisation" edge was born (scrutin 17-4373).
+		objectPhrase, objectOK := describeVotedObject(ctx, law, summary, orgCache)
+		if !objectOK {
+			skippedCountObject++
+			log.Warn().Str("law_key", law.Key).Str("titre", law.Title[:min(80, len(law.Title))]).
+				Msg("frpolitics: amendement content unavailable; gating this scrutin (no facts)")
+			continue
+		}
+
 		group := groupStats[law.Key]
 		// Collect party seeds (ensure parties exist with entity_type='party')
 		for orgRef := range group {
@@ -272,7 +286,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 				}{orgRef: orgRef, abbrev: abbr}
 			}
 		}
-		partyFacts := derivePartyMajorityFacts(law, group, threshold, orgCache, summary)
+		partyFacts := derivePartyMajorityFacts(law, group, threshold, orgCache, summary, objectPhrase)
 		// Add law metadata to party facts
 		for i := range partyFacts {
 			partyFacts[i].LawTitle = law.Title
@@ -282,7 +296,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		toStore = append(toStore, partyFacts...)
 		partyFactsCount += len(partyFacts)
 		if evs, ok := eventsByLaw[law.Key]; ok && len(evs) > 0 {
-			depFacts := deriveDeputyFacts(law, evs, summary)
+			depFacts := deriveDeputyFacts(law, evs, summary, objectPhrase)
 			// Add law metadata to deputy facts
 			for i := range depFacts {
 				depFacts[i].LawTitle = law.Title
@@ -307,6 +321,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 			Int("laws_discovered", len(laws)).
 			Int("laws_filtered", len(filteredLaws)).
 			Int("party_facts_built", partyFactsCount).
+			Int("scrutins_gated_no_object", skippedCountObject).
 			Int("deputy_facts_built", deputyFactsCount).
 			Int("files", pstats.FilesProcessed).
 			Int("json_errors", pstats.JsonErrors).

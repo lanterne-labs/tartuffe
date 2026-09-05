@@ -140,3 +140,28 @@ cases:
     expect_verdict: DUPLICATE
     must_not_flag: [10740, 9301]
     notes: "Same announcement, different source phrasing (prod facts 10740 vs 10371)."
+
+  # ── Amendment-vote semantics (2026-09-05, prod scrutins 17-4373/17-4375):
+  # ── a vote on an amendment judges the modification, not the parent bill.
+  - name: "B_dilatory_subamendment_vote_must_not_flag_support"
+    summary: "Mathilde Panot défend la nationalisation d'ArcelorMittal et se bat pour l'adoption rapide de la proposition de loi LFI."
+    key_facts:
+      - id: 501
+        verb: CLAIMED
+        text: "Mathilde Panot a affirmé qu'elle se battrait pour la nationalisation d'ArcelorMittal."
+    new_fact: "Mathilde Panot a voté CONTRE le sous-amendement UDR n° 372 visant à porter de six mois à un an le délai d'audit de la Cour des comptes préalable à la nationalisation d'ArcelorMittal."
+    must_flag: []
+    must_not_flag: [501]
+    notes: "Rejecting a rival group's dilatory sub-amendment IS fighting for the bill; the analyze judge must not create the edge the verifier would then have to refute."
+
+  - name: "B_vote_ensemble_contre_must_flag_support"
+    summary: "Cyrielle Chatelain soutient la proposition de loi de programmation climatique et appelle publiquement à son adoption."
+    key_facts:
+      - id: 502
+        verb: SUPPORTED
+        text: "Cyrielle Chatelain a déclaré soutenir pleinement la proposition de loi de programmation climatique et appeler à son adoption."
+    new_fact: "Cyrielle Chatelain a voté CONTRE l'ensemble de la proposition de loi de programmation climatique."
+    expect_verdict: CONTRADICTION
+    must_flag: [502]
+    must_not_flag: []
+    notes: "A vote on l'ensemble IS the position — the amendment-vote exemption must not leak onto text-level votes."

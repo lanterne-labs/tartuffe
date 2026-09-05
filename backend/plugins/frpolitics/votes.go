@@ -7,7 +7,7 @@ import (
 )
 
 // deriveDeputyFacts builds deputy-level vote facts for each VoteEvent
-func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary) []FactRecord {
+func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary, objectPhrase string) []FactRecord {
 	if len(events) == 0 {
 		return nil
 	}
@@ -16,9 +16,9 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary) []FactRe
 	// 1. All votes on the SAME law cluster together (FOR, AGAINST, ABSTAIN are neighbors)
 	// 2. Votes on DIFFERENT laws don't cluster together
 	// The action verb (voted FOR/AGAINST) is preserved in FactText for display + LLM comparison
-	embeddingText := prepareLawPhrase(summary.SimpleStatement)
+	embeddingText := objectPhrase
 	for _, ev := range events {
-		text := buildVoteStatement(ev.Position, summary.SimpleStatement)
+		text := buildVoteStatement(ev.Position, objectPhrase)
 		if len(out) < 3 {
 			log.Debug().Str("deputy", ev.DisplayName).Str("text", text).Msg("frpolitics: derived deputy fact")
 		}
