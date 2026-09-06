@@ -127,8 +127,8 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// before the voting judges shipped (2026-09-05) was a single-sample verdict
 	// under weaker rules. Re-open the oldest tranche each night right before
 	// detection; measured flip rate 0.6% (4 verified contradictions per ~670
-	// re-judged pairs). Self-terminating: once nothing predates the cutoff this
-	// logs remaining=0 and deletes nothing, forever.
+	// re-judged pairs). Self-terminating: the last active night logs
+	// legacy_remaining=0; after that the step deletes nothing and stays silent.
 	if rebaselineCutoff, err := time.Parse(time.RFC3339, "2026-09-05T18:00:00Z"); err == nil {
 		if deleted, remaining, evErr := storer.EvictStalePairChecks(ctx, rebaselineCutoff, 1500); evErr != nil {
 			log.Error().Err(evErr).Msg("Daily pipeline: pair-check re-baseline eviction failed")
