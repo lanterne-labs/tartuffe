@@ -123,6 +123,21 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// Step 5: Contradiction detection. Runs synchronously over unchecked pairs
 	// across all persons via the OPEN_AI_API LLM, with the inline verification
 	// pass gating each YES before it is recorded.
+	// Re-baseline of legacy pair verdicts (mirror-0wn): everything judged
+	// before the voting judges shipped (2026-09-05) was a single-sample verdict
+	// under weaker rules. Re-open the oldest tranche each night right before
+	// detection; measured flip rate 0.6% (4 verified contradictions per ~670
+	// re-judged pairs). Self-terminating: once nothing predates the cutoff this
+	// logs remaining=0 and deletes nothing, forever.
+	if rebaselineCutoff, err := time.Parse(time.RFC3339, "2026-09-05T18:00:00Z"); err == nil {
+		if deleted, remaining, evErr := storer.EvictStalePairChecks(ctx, rebaselineCutoff, 1500); evErr != nil {
+			log.Error().Err(evErr).Msg("Daily pipeline: pair-check re-baseline eviction failed")
+		} else if deleted > 0 || remaining > 0 {
+			log.Info().Int("reopened", deleted).Int("legacy_remaining", remaining).
+				Msg("Daily pipeline: re-opened legacy pair verdicts for re-judging")
+		}
+	}
+
 	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
 	if contraErr != nil {
 		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")

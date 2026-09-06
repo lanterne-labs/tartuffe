@@ -1644,6 +1644,37 @@ func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (m
 	return s.loadPairSet(ctx, "fact_pair_checks", personID)
 }
 
+// EvictStalePairChecks deletes up to `limit` of the OLDEST negative pair
+// verdicts recorded before `before`, and reports how many pre-cutoff rows
+// remain. This drives the nightly re-baseline (mirror-0wn): verdicts issued by
+// the pre-voting single-sample judges are re-opened in small tranches, the
+// nightly detector re-judges whichever pairs still surface as candidates, and
+// their fresh checked_at keeps them from ever being re-picked. Once no row
+// predates the cutoff the caller's step is a permanent no-op. Rows with
+// is_contradiction=true are never touched — recorded contradictions are the
+// auditor's jurisdiction, not the detector's.
+func (s *PostgresStorer) EvictStalePairChecks(ctx context.Context, before time.Time, limit int) (deleted, remaining int, err error) {
+	res, err := s.pool.Exec(ctx, `
+		WITH victims AS (
+			SELECT id FROM fact_pair_checks
+			WHERE is_contradiction = false AND checked_at < $1
+			ORDER BY checked_at ASC
+			LIMIT $2
+		)
+		DELETE FROM fact_pair_checks WHERE id IN (SELECT id FROM victims)`, before, limit)
+	if err != nil {
+		return 0, 0, fmt.Errorf("evicting stale pair checks: %w", err)
+	}
+	deleted = int(res.RowsAffected())
+	err = s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND checked_at < $1`,
+		before).Scan(&remaining)
+	if err != nil {
+		return deleted, 0, fmt.Errorf("counting stale pair checks: %w", err)
+	}
+	return deleted, remaining, nil
+}
+
 // RecordPairChecksBatch records multiple pair checks efficiently.
 func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int64, results []PairCheckResult) error {
 	if len(results) == 0 {
