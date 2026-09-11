@@ -1757,12 +1757,17 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	// Fast-path bundle resolution: bundle_stance_id is set to the stance shared by both
 	// facts (if any). Cross-stance and unstanced pairs get NULL and behave as singleton
 	// solo bundles in the score until an LLM-driven Bundler pass upgrades them.
+	// The shared stance MUST belong to the contradiction's own person: shared vote
+	// facts are members of one stance per voter, so without the person filter the
+	// CTE could pick another voter's stance and file the bundle under a foreign key.
 	query := `
         WITH shared AS (
             SELECT sa.stance_document_id
             FROM stance_document_facts sa
             JOIN stance_document_facts sb ON sb.fact_id = $3
                                           AND sb.stance_document_id = sa.stance_document_id
+            JOIN stance_documents sd ON sd.id = sa.stance_document_id
+                                     AND sd.person_id = $1
             WHERE sa.fact_id = $2
             LIMIT 1
         )
@@ -2866,10 +2871,24 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 			JOIN facts fa ON fa.id = c.fact_a_id
 			JOIN facts fb ON fb.id = c.fact_b_id
 			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
-			LEFT JOIN stance_document_facts sdfa ON sdfa.fact_id = c.fact_a_id
-			LEFT JOIN stance_documents sda ON sda.id = sdfa.stance_document_id
-			LEFT JOIN stance_document_facts sdfb ON sdfb.fact_id = c.fact_b_id
-			LEFT JOIN stance_documents sdb ON sdb.id = sdfb.stance_document_id
+			-- Per-fact stance, scoped to THIS person's stances: shared vote facts
+			-- are members of one stance per voter, so an unscoped join would both
+			-- multiply rows (breaking bundle_size/total_count/pagination) and pick
+			-- an arbitrary voter's topic label.
+			LEFT JOIN LATERAL (
+				SELECT s.id, s.cluster_label, s.label_en
+				FROM stance_document_facts sdfa
+				JOIN stance_documents s ON s.id = sdfa.stance_document_id
+				WHERE sdfa.fact_id = c.fact_a_id AND s.person_id = c.person_id
+				LIMIT 1
+			) sda ON true
+			LEFT JOIN LATERAL (
+				SELECT s.id, s.cluster_label, s.label_en
+				FROM stance_document_facts sdfb
+				JOIN stance_documents s ON s.id = sdfb.stance_document_id
+				WHERE sdfb.fact_id = c.fact_b_id AND s.person_id = c.person_id
+				LIMIT 1
+			) sdb ON true
 			LEFT JOIN LATERAL (
 				SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
 				       MIN(published_at) AS earliest
@@ -5602,15 +5621,21 @@ func (s *PostgresStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID
 	return nil
 }
 
-// GetFactStanceMap returns a map fact_id -> stance_document_id for the given facts.
-// Facts without a stance row are simply absent from the map.
-func (s *PostgresStorer) GetFactStanceMap(ctx context.Context, factIDs []int64) (map[int64]int64, error) {
+// GetFactStanceMap returns a map fact_id -> stance_document_id for the given
+// facts, restricted to the given person's stances. Facts without a membership
+// in one of that person's stances are simply absent from the map. The person
+// scope matters: a shared vote fact is a member of one stance PER voter, so an
+// unscoped lookup would return an arbitrary person's stance.
+func (s *PostgresStorer) GetFactStanceMap(ctx context.Context, personID int64, factIDs []int64) (map[int64]int64, error) {
 	if len(factIDs) == 0 {
 		return map[int64]int64{}, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT fact_id, stance_document_id FROM stance_document_facts WHERE fact_id = ANY($1)`,
-		factIDs)
+		`SELECT sdf.fact_id, sdf.stance_document_id
+		 FROM stance_document_facts sdf
+		 JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		 WHERE sdf.fact_id = ANY($2) AND sd.person_id = $1`,
+		personID, factIDs)
 	if err != nil {
 		return nil, fmt.Errorf("querying fact stances: %w", err)
 	}
@@ -5674,8 +5699,11 @@ type OrphanFact struct {
 }
 
 // ListPersonsWithOrphanFacts returns every person who has at least one
-// non-duplicate fact not linked to any stance_document. Drives the
-// per-person worker loop in `dm facts assign-stances`.
+// non-duplicate mentioned fact not linked to any of THAT PERSON's stance
+// documents. Drives the per-person worker loop in `dm facts assign-stances`
+// and the nightly stance fan-out step. The per-person scope is what makes
+// shared vote facts fan out: the fact being in the subject's stance does not
+// make it stanced for its co-voters (mirror-py3).
 //
 // Symmetric with ListOrphanFactsForPerson: facts marked as
 // `fact_relations.relation_type = 'duplicate'` are excluded — duplicate
@@ -5691,8 +5719,11 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]Pers
 		JOIN fact_mentions fm ON fm.person_id = p.id
 		JOIN fact_sources fs ON fs.id = fm.fact_source_id
 		JOIN facts f ON f.id = fs.fact_id
-		WHERE NOT EXISTS (
-		    SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		WHERE f.embedding IS NOT NULL
+		AND NOT EXISTS (
+		    SELECT 1 FROM stance_document_facts sdf
+		    JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		    WHERE sdf.fact_id = f.id AND sd.person_id = p.id
 		)
 		AND NOT EXISTS (
 		    SELECT 1 FROM fact_relations fr
@@ -5702,9 +5733,11 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]Pers
 }
 
 // ListOrphanFactsForPerson returns every active fact mentioning the person
-// that is not linked to any stance_document. Skips facts marked as duplicates
-// via fact_relations (mirrors the filter in cmd/stances_backfill.go's
-// loadFactsForBackfill so we never try to assign a stance to a known dup).
+// that is not linked to any of THAT PERSON's stance documents (a shared vote
+// fact stanced for another voter is still an orphan for this one). Skips facts
+// marked as duplicates via fact_relations (mirrors the filter in
+// cmd/stances_backfill.go's loadFactsForBackfill so we never try to assign a
+// stance to a known dup).
 func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID int64) ([]OrphanFact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
@@ -5713,8 +5746,11 @@ func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID 
 		JOIN fact_sources fs ON f.id = fs.fact_id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 		WHERE fm.person_id = $1
+		AND f.embedding IS NOT NULL
 		AND NOT EXISTS (
-		    SELECT 1 FROM stance_document_facts sdf WHERE sdf.fact_id = f.id
+		    SELECT 1 FROM stance_document_facts sdf
+		    JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		    WHERE sdf.fact_id = f.id AND sd.person_id = $1
 		)
 		AND NOT EXISTS (
 		    SELECT 1 FROM fact_relations fr
@@ -5767,15 +5803,21 @@ func (s *PostgresStorer) BundleBackfillFastPath(ctx context.Context, personID *i
 		args = append(args, *personID)
 		personFilter = "AND c.person_id = $1"
 	}
+	// The shared stance must belong to the contradiction's own person (facts can
+	// be members of one stance per voter); DISTINCT ON keeps the pick
+	// deterministic should a person ever hold duplicate memberships.
 	query := fmt.Sprintf(`
 		WITH shared AS (
-			SELECT c.id AS contradiction_id, sa.stance_document_id
+			SELECT DISTINCT ON (c.id) c.id AS contradiction_id, sa.stance_document_id
 			FROM contradictions c
 			JOIN stance_document_facts sa ON sa.fact_id = c.fact_a_id
 			JOIN stance_document_facts sb ON sb.fact_id = c.fact_b_id
 			                              AND sb.stance_document_id = sa.stance_document_id
+			JOIN stance_documents sd ON sd.id = sa.stance_document_id
+			                         AND sd.person_id = c.person_id
 			WHERE c.bundle_stance_id IS NULL
 			%s
+			ORDER BY c.id, sa.stance_document_id
 		)
 		UPDATE contradictions c
 		SET bundle_stance_id = shared.stance_document_id

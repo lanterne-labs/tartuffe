@@ -159,10 +159,14 @@ func (s *PostgresStorer) RegroupPersonContradictions(ctx context.Context, person
 // is the count the UI badge should show — distinct from the bundle-based total used
 // for the per-stance honesty score.
 func (s *PostgresStorer) GetStanceGroupCounts(ctx context.Context, personID int64) (map[int64]int, error) {
+	// The membership join is scoped to the person's own stances: shared vote
+	// facts belong to one stance per voter, so without the scope the map would
+	// gain keys for other persons' stance ids.
 	query := `
 		SELECT sdf.stance_document_id, COUNT(DISTINCT COALESCE(c.base_fact_id, c.fact_a_id))
 		FROM contradictions c
 		JOIN stance_document_facts sdf ON sdf.fact_id = COALESCE(c.base_fact_id, c.fact_a_id)
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id AND sd.person_id = $1
 		WHERE c.person_id = $1
 		GROUP BY sdf.stance_document_id`
 	rows, err := s.pool.Query(ctx, query, personID)
@@ -331,7 +335,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 	// each un-grouped row renders as its own base + single spoke). spoke = the other fact.
 	query := `
 		WITH g AS (
-			SELECT c.id, c.group_summary, c.group_summary_en,
+			SELECT c.id, c.person_id, c.group_summary, c.group_summary_en,
 			       COALESCE(c.reason,'') AS reason, COALESCE(c.reason_en,'') AS reason_en,
 			       COALESCE(c.base_fact_id, c.fact_a_id) AS base_id,
 			       CASE WHEN COALESCE(c.base_fact_id, c.fact_a_id) = c.fact_a_id
@@ -346,6 +350,10 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		       COALESCE(fss.urls, '{}'), fss.earliest
 		FROM g
 		JOIN stance_document_facts sdf ON sdf.fact_id = g.base_id AND sdf.stance_document_id = $1
+		-- Only this stance owner's contradictions: a shared vote fact sits in
+		-- several persons' stances, and without this filter person Q's
+		-- contradictions on the fact would render inside person P's stance card.
+		JOIN stance_documents sd ON sd.id = $1 AND sd.person_id = g.person_id
 		JOIN facts fb ON fb.id = g.base_id
 		JOIN facts sp ON sp.id = g.spoke_id
 		LEFT JOIN LATERAL (

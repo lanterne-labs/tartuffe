@@ -21,6 +21,19 @@ var (
 			Help:      "Number of facts not linked to any stance_documents row. Should always be 0 once stance backfill has run.",
 		},
 	)
+
+	// StanceRoutingsPending is the per-(person, fact) view of the same
+	// invariant: mention pairs whose fact is not yet in that person's stances.
+	// Non-zero is NORMAL while the nightly stance fan-out drains shared vote
+	// facts into co-voters' stance systems; it should trend to ~0 between
+	// nights, not stay flat.
+	StanceRoutingsPending = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Name:      "stance_routings_pending_total",
+			Help:      "Number of (person, fact) mention pairs not yet routed into that person's stance documents (the stance fan-out backlog).",
+		},
+	)
 )
 
 // StartStanceInvariantCollector polls the database periodically and updates
@@ -73,6 +86,32 @@ func collectStanceInvariant(ctx context.Context, pool *pgxpool.Pool) {
 	if count > 0 {
 		log.Warn().
 			Int64("count", count).
-			Msg("Facts without a stance detected — invariant violation; run `dm facts assign-stances`")
+			Msg("Facts without a stance detected — invariant violation; run `dm facts assign-stances` (a fact with a NULL embedding is invisible to it — regenerate its embedding first)")
 	}
+
+	// Per-(person, fact) backlog: same definition as the fan-out's pending set
+	// (person-scoped orphan queries). Non-zero while the nightly fan-out drains.
+	var pending int64
+	err = pool.QueryRow(queryCtx, `
+		SELECT COUNT(*) FROM (
+			SELECT DISTINCT fm.person_id, fs.fact_id
+			FROM fact_mentions fm
+			JOIN fact_sources fs ON fm.fact_source_id = fs.id
+			JOIN facts f ON f.id = fs.fact_id
+			WHERE f.embedding IS NOT NULL
+			AND NOT EXISTS (
+				SELECT 1 FROM fact_relations fr
+				WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM stance_document_facts sdf
+				JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+				WHERE sdf.fact_id = f.id AND sd.person_id = fm.person_id
+			)
+		) p`).Scan(&pending)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to compute stance_routings_pending gauge")
+		return
+	}
+	StanceRoutingsPending.Set(float64(pending))
 }

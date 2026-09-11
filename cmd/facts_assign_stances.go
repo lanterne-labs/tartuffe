@@ -7,6 +7,7 @@ import (
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 
@@ -18,9 +19,19 @@ var (
 	assignStancesPerson            string
 	assignStancesPersonsFile       string
 	assignStancesParallel          int
+	assignStancesLimit             int
 	assignStancesDryRun            bool
 	assignStancesSkipFinalRebundle bool
 )
+
+// stanceFanoutNightlyBudget caps how many (person, fact) stance routings the
+// daily pipeline performs per night. Sized against the serialized local GPU:
+// most routings for vote co-actors are a single topic-assignment call (new
+// stance on a near-empty deputy), so 250 fits comfortably in the freed
+// re-baseline window. The pending set is derived from the DB, so whatever is
+// not processed tonight simply remains pending for tomorrow (self-draining,
+// self-terminating once the backlog is gone).
+const stanceFanoutNightlyBudget = 250
 
 var factsAssignStancesCmd = &cobra.Command{
 	Use:   "assign-stances",
@@ -62,13 +73,14 @@ func init() {
 	factsAssignStancesCmd.Flags().StringVar(&assignStancesPerson, "person", "", "Specific person name (mutually exclusive with --persons-file)")
 	factsAssignStancesCmd.Flags().StringVar(&assignStancesPersonsFile, "persons-file", "", "Path to a file with one person name per line")
 	factsAssignStancesCmd.Flags().IntVar(&assignStancesParallel, "parallel", 1, "Number of persons to process concurrently (default 1)")
+	factsAssignStancesCmd.Flags().IntVar(&assignStancesLimit, "limit", 0, "Max (person, fact) routings this run (0 = no cap); leftovers stay pending")
 	factsAssignStancesCmd.Flags().BoolVar(&assignStancesDryRun, "dry-run", false, "Show planned work without writing to the database")
 	factsAssignStancesCmd.Flags().BoolVar(&assignStancesSkipFinalRebundle, "skip-final-rebundle", false, "Skip the DB-wide rebundle pass at the end")
 }
 
 type assignStats struct {
 	personsProcessed     int64
-	personsSkippedNoOrph int64 // safety: shouldn't happen with the orphan-driven person list
+	personsSkippedNoOrph int64 // orphans gone between listing and processing, or run budget exhausted
 	orphansAssigned      int64
 	orphanFailures       int64
 	verdictNewStance     int64
@@ -138,9 +150,15 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 		Bool("skip_final_rebundle", assignStancesSkipFinalRebundle).
 		Msg("Starting orphan-fact stance assignment")
 
+	var budget *int64
+	if assignStancesLimit > 0 {
+		b := int64(assignStancesLimit)
+		budget = &b
+	}
+
 	var stats assignStats
 	processOne := func(p storage.PersonInfo) {
-		ps, err := assignOrphansForPerson(ctx, storer, stanceManager, bundler, p, assignStancesDryRun)
+		ps, err := assignOrphansForPerson(ctx, storer, stanceManager, bundler, p, assignStancesDryRun, budget)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("assign-stances failed for person")
 			return
@@ -252,6 +270,12 @@ type personAssignStats struct {
 	rebundleSolosLeft    int64
 }
 
+// assignOrphansForPerson routes every orphan fact of one person through
+// ProcessNewFact, then rebundles that person's solo contradictions. budget,
+// when non-nil, is a shared atomic countdown of (person, fact) routings across
+// the whole run: each person reserves up to len(orphans) slots and processes
+// only what it got — leftovers stay orphans and are picked up by the next run
+// (the orphan queries derive the pending set from the DB).
 func assignOrphansForPerson(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
@@ -259,6 +283,7 @@ func assignOrphansForPerson(
 	bundler *contradiction.Bundler,
 	p storage.PersonInfo,
 	dryRun bool,
+	budget *int64,
 ) (personAssignStats, error) {
 	var ps personAssignStats
 
@@ -269,6 +294,17 @@ func assignOrphansForPerson(
 	if len(orphans) == 0 {
 		ps.skipped = true
 		return ps, nil
+	}
+	if budget != nil {
+		left := atomic.AddInt64(budget, -int64(len(orphans)))
+		if left < 0 {
+			allowed := int64(len(orphans)) + left
+			if allowed <= 0 {
+				ps.skipped = true
+				return ps, nil
+			}
+			orphans = orphans[:allowed]
+		}
 	}
 
 	if dryRun {
@@ -311,4 +347,68 @@ func assignOrphansForPerson(
 		Msg("assign-stances done for person")
 
 	return ps, nil
+}
+
+// runStanceFanoutStep is the daily-pipeline entry for the stance fan-out
+// (mirror-py3): route pending (person, fact) mention pairs — mostly shared
+// vote facts for their co-voters — through the live ProcessNewFact path, up to
+// stanceFanoutNightlyBudget per night. The pending set is derived from the DB
+// by the person-scoped orphan queries, so the step is idempotent, retries
+// failures on later nights, and goes silent once the backlog is drained and
+// each night's new facts fit the budget.
+func runStanceFanoutStep(ctx context.Context, storer *storage.PostgresStorer) error {
+	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
+	if err != nil {
+		return fmt.Errorf("stance fan-out: listing persons with orphan facts: %w", err)
+	}
+	if len(persons) == 0 {
+		return nil
+	}
+
+	adapter := storage.NewStanceStorerAdapter(storer)
+	stanceManager, err := core.NewStanceManagerFromEnv(adapter)
+	if err != nil {
+		return fmt.Errorf("stance fan-out: creating stance manager: %w", err)
+	}
+	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
+	if err != nil {
+		return fmt.Errorf("stance fan-out: creating embedding generator: %w", err)
+	}
+	bundler, err := contradiction.NewBundlerFromEnv(storer, embedder)
+	if err != nil {
+		return fmt.Errorf("stance fan-out: creating bundler: %w", err)
+	}
+
+	// Shuffle so one early-alphabet person with a large (or persistently
+	// failing) orphan set cannot monopolize the nightly budget forever —
+	// every person gets budget eventually regardless of name.
+	rand.Shuffle(len(persons), func(i, j int) { persons[i], persons[j] = persons[j], persons[i] })
+
+	budget := int64(stanceFanoutNightlyBudget)
+	var routed, failures, contradictions int64
+	for _, p := range persons {
+		if atomic.LoadInt64(&budget) <= 0 {
+			break
+		}
+		ps, err := assignOrphansForPerson(ctx, storer, stanceManager, bundler, p, false, &budget)
+		if err != nil {
+			log.Error().Err(err).Str("person", p.Name).Msg("Stance fan-out failed for person")
+			continue
+		}
+		routed += ps.orphansAssigned
+		failures += ps.orphanFailures
+		contradictions += ps.verdictContradiction
+	}
+
+	pending, cErr := storer.CountPendingStanceRoutings(ctx)
+	if cErr != nil {
+		log.Warn().Err(cErr).Msg("Stance fan-out: pending count failed")
+	}
+	log.Info().
+		Int64("routed", routed).
+		Int64("failures", failures).
+		Int64("contradictions", contradictions).
+		Int("pending_remaining", pending).
+		Msg("Daily pipeline: stance fan-out done")
+	return nil
 }

@@ -125,10 +125,19 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 			expectedContradiction: false,
 		},
 		{
+			// Own claim vs authoritative record on the SAME date — the one case where
+			// TEMPORAL rule 3 (same-date default NO) and the HARD GATE (authoritative
+			// finding substitutes for the second utterance) must agree on YES. The
+			// subject is NAMED like every prod fact: with an anonymous role ("The CEO
+			// announced...") gemma was a measured 50/50 on whether the announcement was
+			// the person's own utterance or a third-party narrative (logprob probe,
+			// 2026-09-11: "entreprise" 0.39 vs "intéressé" 0.35), and the verdict
+			// followed the vLLM prefix-cache state. Prod pairs never carry that
+			// ambiguity — the detector always judges a named person's facts.
 			name:                    "Contradiction - Direct Negation (Same Date)",
-			factA:                   "The CEO announced record profits for Q1.",
+			factA:                   "CEO Jane Doe announced record profits for Q1.",
 			dateA:                   "2024-04-15",
-			factB:                   "The official quarterly report showed a significant loss for Q1.",
+			factB:                   "The company's official quarterly report showed a significant loss for Q1.",
 			dateB:                   "2024-04-15",
 			expectedContradiction:   true,
 			expectedReasonSubstring: "", // LLM may use different wording

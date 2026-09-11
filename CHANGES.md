@@ -1717,3 +1717,39 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   per-example trap sentences see-sawed. D_denial fixed by a worked example on
   CLAIM↔AUTHORITATIVE FINDING plus the analyze vote. Goldens run the PROD vote counts (no
   test-side overrides), so they measure exactly what prod does.
+
+## Stance fan-out: votes enter every voter's stance system (2026-09-11)
+
+- mirror-py3 implemented. A shared vote fact is stance-routed only for its subject at insert;
+  a fact may now be a member of MANY stances — but at most ONE per (person, fact). The nightly
+  pipeline gained Step 3b "stance fan-out": the person-scoped orphan queries derive the pending
+  (person, fact) pairs straight from the DB (no queue table — idempotent, self-healing,
+  retroactive), and `dm facts assign-stances` (now with --limit) routes them through the live
+  ProcessNewFact path, 250/night, before the merge sweep. ProcessNewFact needed zero changes:
+  every write it does was already (person, stance)-scoped.
+- The enabling audit found 13 code sites that ASSUMED one-stance-per-fact globally; the
+  dangerous pattern is any fact→stance lookup not scoped by person_id. Fixed: GetFactStanceID/
+  GetFactStanceMap take personID; RecordContradiction + BundleBackfillFastPath shared-stance
+  CTEs join on the contradiction's person (a foreign bundle_stance_id silently detaches the row
+  from the owner's per-stance breakdown); GetPersonContradictions per-fact stance joins became
+  person-scoped LATERALs (unscoped, they multiplied API rows k× per extra membership and broke
+  pagination); GetStanceContradictionGroups filters by the stance owner's person; the two
+  orphan queries define "orphan" per (person, fact) — this scoping IS the feature; MergePersons
+  deduplicates cross-label memberships post-merge (keep oldest).
+- Folding is now REFUSED for shared facts, both directions (new fact with CoActorIDs; matched
+  fact with >1 mention persons; same guard in `dm facts fold` clustering): fact_relations
+  'duplicate' is a GLOBAL flag, so folding a shared vote fact under one person's meta would
+  silently remove it from every other voter's active set. Residual sibling hazard filed as
+  mirror-eqm: the non-fold DROP dedupe path can still discard a new shared fact.
+- New gauge stance_routings_pending_total (the fan-out backlog, per (person, fact)); the old
+  facts_without_stance_total keeps meaning "no stance anywhere" (hard invariant, stays 0).
+- Detector prompt: TEMPORAL rule 3 (same-date default NO) contradicted the HARD GATE (an
+  authoritative finding substitutes for the second utterance); rule 3 now names the
+  claim-vs-authoritative-finding alternative. Found via a logprob probe of the flaky Live
+  case "Direct Negation": the fork was mid-REASONING ("entreprise" 0.39 vs "intéressé" 0.35 —
+  who is "the person" when the subject is the anonymous "The CEO"), not at the verdict token,
+  and the verdict then followed the vLLM prefix-cache state. Lessons: (1) at temperature 0
+  three votes in the same cache state return the same answer — voting does not protect a
+  judge against this failure mode; (2) an LLM's uncertainty lives in its reasoning tokens, a
+  verdict-token confidence would have missed the case; (3) golden pairs must name the subject
+  like every prod fact does — an anonymous role tests something the system never does.

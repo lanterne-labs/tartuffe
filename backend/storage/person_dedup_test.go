@@ -100,11 +100,32 @@ func TestMergePersons(t *testing.T) {
 
 	// Colliding stance: give BOTH persons a stance with the same cluster_label,
 	// each attached to its own fact. After merge the survivor's stance must hold
-	// both fact memberships, and the duplicate stance must be gone.
+	// both fact memberships, and the duplicate stance must be gone. Fresh facts
+	// (no stub stance from insertFactForTest) so each fact has exactly one
+	// membership per person — the one-stance-per-(person, fact) invariant.
+	insertBareFact := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			`INSERT INTO facts (fact_text) VALUES ($1) RETURNING id`, text).Scan(&id))
+		return id
+	}
 	const collideLabel = "shared topic Z"
-	intoCollideStance := insertStanceWithFact(ctx, t, storer, intoID, intoFactID, collideLabel)
-	fromCollideStance := insertStanceWithFact(ctx, t, storer, fromID, fromFactID, collideLabel)
+	collideFactInto := insertBareFact("collide fact of into")
+	collideFactFrom := insertBareFact("collide fact of from")
+	intoCollideStance := insertStanceWithFact(ctx, t, storer, intoID, collideFactInto, collideLabel)
+	fromCollideStance := insertStanceWithFact(ctx, t, storer, fromID, collideFactFrom, collideLabel)
 	require.NotEqual(t, intoCollideStance, fromCollideStance)
+
+	// Cross-label duplicate membership: the SAME fact sits in a stance of each
+	// person under DIFFERENT labels ("retraites" vs "réforme des retraites").
+	// The from stance does not collide, so step c repoints it wholesale to the
+	// survivor — who would then hold the fact in two stances. The post-merge
+	// dedup (step e2) must collapse that to one membership (the oldest).
+	var sharedFactID int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO facts (fact_text) VALUES ('shared cross-label fact') RETURNING id`).Scan(&sharedFactID))
+	intoSharedStance := insertStanceWithFact(ctx, t, storer, intoID, sharedFactID, "retraites")
+	fromSharedStance := insertStanceWithFact(ctx, t, storer, fromID, sharedFactID, "réforme des retraites")
 
 	// --- Merge ---
 	require.NoError(t, storer.MergePersons(ctx, fromID, intoID))
@@ -178,6 +199,30 @@ func TestMergePersons(t *testing.T) {
 	var stancesForFrom int
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT count(*) FROM stance_documents WHERE person_id=$1`, fromID).Scan(&stancesForFrom))
 	assert.Equal(t, 0, stancesForFrom, "no stance should reference from")
+
+	// Cross-label duplicate collapsed: the shared fact must be a member of
+	// exactly ONE of the survivor's stances (one-stance-per-(person, fact)),
+	// and the kept membership is the oldest — the survivor's original stance.
+	var sharedMemberships int
+	require.NoError(t, storer.pool.QueryRow(ctx, `
+		SELECT count(*) FROM stance_document_facts sdf
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		WHERE sd.person_id=$1 AND sdf.fact_id=$2`, intoID, sharedFactID).Scan(&sharedMemberships))
+	assert.Equal(t, 1, sharedMemberships, "shared fact must keep exactly one membership on the survivor")
+
+	var keptStance int64
+	require.NoError(t, storer.pool.QueryRow(ctx, `
+		SELECT sdf.stance_document_id FROM stance_document_facts sdf
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		WHERE sd.person_id=$1 AND sdf.fact_id=$2`, intoID, sharedFactID).Scan(&keptStance))
+	assert.Equal(t, intoSharedStance, keptStance, "oldest membership (survivor's own) must be the one kept")
+
+	// The repointed from-stance survives (non-colliding label) with a refreshed
+	// fact_count of 0 after losing its only membership to the dedup.
+	var fromSharedCount int
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`SELECT fact_count FROM stance_documents WHERE id=$1`, fromSharedStance).Scan(&fromSharedCount))
+	assert.Equal(t, 0, fromSharedCount, "deduped stance fact_count refreshed to reflect removed membership")
 }
 
 // TestMergePersons_SameID guards the self-merge error.

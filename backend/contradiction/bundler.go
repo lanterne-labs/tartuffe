@@ -48,7 +48,7 @@ import (
 // BundlerStorer is the subset of storage operations the Bundler needs.
 // Kept narrow so the Bundler is trivially mockable.
 type BundlerStorer interface {
-	GetFactStanceMap(ctx context.Context, factIDs []int64) (map[int64]int64, error)
+	GetFactStanceMap(ctx context.Context, personID int64, factIDs []int64) (map[int64]int64, error)
 	FindTopStancesForPerson(ctx context.Context, personID int64, embedding []float32, limit int) ([]storage.StanceCandidate, error)
 	SetContradictionBundleStance(ctx context.Context, contradictionID int64, bundleStanceID int64) error
 }
@@ -116,7 +116,7 @@ func (b *Bundler) Resolve(ctx context.Context, personID int64, contradictionID i
 	// Fast path: if both facts share a stance, the SQL CTE in RecordContradiction has
 	// already populated bundle_stance_id. Re-checking here is cheap and lets us skip
 	// the embedding+LLM round-trip entirely.
-	stances, err := b.storer.GetFactStanceMap(ctx, []int64{factAID, factBID})
+	stances, err := b.storer.GetFactStanceMap(ctx, personID, []int64{factAID, factBID})
 	if err != nil {
 		return fmt.Errorf("bundler: fact-stance lookup: %w", err)
 	}

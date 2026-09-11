@@ -14,6 +14,7 @@ type foldFakeStorer struct {
 	similar []SimilarFact
 
 	existingMeta   int64 // 0 = matched fact has no meta yet
+	mentionPersons int   // 0 = default (1 person); >1 marks the matched fact shared
 	createdMeta    int64
 	updatedText    string
 	markedMembers  []int64
@@ -62,8 +63,17 @@ func (f *foldFakeStorer) RepointFactDuplicate(ctx context.Context, general, spec
 	return 0, 0, nil
 }
 
-func (f *foldFakeStorer) GetFactStanceID(ctx context.Context, factID int64) (int64, bool, error) {
+func (f *foldFakeStorer) GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error) {
 	return 42, true, nil
+}
+
+// Single-mention facts by default: the fold path refuses shared (co-actor)
+// facts, and these tests exercise the non-shared case unless overridden.
+func (f *foldFakeStorer) CountFactMentionPersons(ctx context.Context, factID int64) (int, error) {
+	if f.mentionPersons != 0 {
+		return f.mentionPersons, nil
+	}
+	return 1, nil
 }
 
 func (f *foldFakeStorer) AddFactToStance(ctx context.Context, stanceID, factID int64) error {
@@ -204,6 +214,61 @@ func TestFoldVetoedByJudge(t *testing.T) {
 	}
 	if stance.calls != 1 {
 		t.Fatalf("vetoed fact must go through stance analysis, ran %d times", stance.calls)
+	}
+}
+
+// A matched fact carried by several persons (shared co-actor fact, e.g. a vote)
+// must NEVER become a fold member: 'duplicate' is a global flag, so folding it
+// would remove the fact from every other voter's active set. The new fact goes
+// through normal stance analysis instead.
+func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
+	st := &foldFakeStorer{
+		similar:        []SimilarFact{{ID: 7, Text: "a voté POUR le texte.", Distance: 0.05}},
+		mentionPersons: 3,
+	}
+	stance := &countingStance{}
+	fi := NewFactInserter(st, stance)
+	fi.dedupeJudge = fakeJudge{same: true}
+	fi.EnableMetaFolding(st, fakeSynth{})
+
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if res.Inserted != 1 {
+		t.Fatalf("fact must be inserted normally, got %+v", res)
+	}
+	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
+		t.Fatalf("shared matched fact must not fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	}
+	if stance.calls != 1 {
+		t.Fatalf("unfolded fact must go through stance analysis, ran %d times", stance.calls)
+	}
+}
+
+// A NEW fact that itself has co-actors (shared vote fact) must never fold under
+// an existing meta either — same global-duplicate hazard, from the other side.
+func TestFoldRefusedOnNewSharedFact(t *testing.T) {
+	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	stance := &countingStance{}
+	fi := NewFactInserter(st, stance)
+	fi.dedupeJudge = fakeJudge{same: true}
+	fi.EnableMetaFolding(st, fakeSynth{})
+
+	input := foldInput()
+	input.CoActorIDs = []int64{201, 202}
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if res.Inserted != 1 {
+		t.Fatalf("fact must be inserted normally, got %+v", res)
+	}
+	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
+		t.Fatalf("co-actor fact must not fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	}
+	if stance.calls != 1 {
+		t.Fatalf("co-actor fact must go through stance analysis, ran %d times", stance.calls)
 	}
 }
 

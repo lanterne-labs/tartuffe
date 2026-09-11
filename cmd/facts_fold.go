@@ -139,6 +139,46 @@ func foldClustersForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	if err != nil {
 		return nil, fmt.Errorf("load facts: %w", err)
 	}
+
+	// Shared (co-actor) facts never fold: marking one 'duplicate' is a GLOBAL
+	// flag, so folding a shared vote fact under this person's meta would remove
+	// it from every other voter's active-fact set. Mirrors the insertion-path
+	// guard in core.FactInserter.
+	sharedRows, err := storer.Pool().Query(ctx, `
+		SELECT fs.fact_id
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fs.fact_id = ANY($1)
+		GROUP BY fs.fact_id
+		HAVING COUNT(DISTINCT fm.person_id) > 1`, factIDsOf(facts))
+	if err != nil {
+		return nil, fmt.Errorf("load shared-fact ids: %w", err)
+	}
+	shared := map[int64]bool{}
+	for sharedRows.Next() {
+		var id int64
+		if err := sharedRows.Scan(&id); err != nil {
+			sharedRows.Close()
+			return nil, fmt.Errorf("scan shared-fact id: %w", err)
+		}
+		shared[id] = true
+	}
+	sharedRows.Close()
+	if err := sharedRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared-fact ids: %w", err)
+	}
+	if len(shared) > 0 {
+		kept := facts[:0]
+		for _, f := range facts {
+			if !shared[f.ID] {
+				kept = append(kept, f)
+			}
+		}
+		log.Info().Str("person", p.Name).Int("excluded_shared", len(shared)).
+			Msg("Fold: excluded shared co-actor facts from clustering")
+		facts = kept
+	}
+
 	if len(facts) < 2 {
 		return nil, nil
 	}
@@ -314,7 +354,7 @@ func applyFoldCluster(ctx context.Context, storer *storage.PostgresStorer, synth
 		if err != nil {
 			return fmt.Errorf("create meta: %w", err)
 		}
-		if stanceID, ok, sErr := storer.GetFactStanceID(ctx, rep.ID); sErr == nil && ok {
+		if stanceID, ok, sErr := storer.GetFactStanceID(ctx, p.ID, rep.ID); sErr == nil && ok {
 			if aErr := storer.AddFactToStance(ctx, stanceID, metaID); aErr != nil {
 				log.Warn().Err(aErr).Int64("meta_fact_id", metaID).Msg("Failed to attach meta to stance")
 			}
@@ -338,6 +378,14 @@ func applyFoldCluster(ctx context.Context, storer *storage.PostgresStorer, synth
 	log.Info().Str("person", p.Name).Int64("meta_fact_id", metaID).Int("members", len(members)).
 		Str("meta_text", truncateForDisplay(text, 120)).Msg("Folded cluster into meta-fact")
 	return nil
+}
+
+func factIDsOf(facts []storage.FactWithEmbedding) []int64 {
+	ids := make([]int64, len(facts))
+	for i, f := range facts {
+		ids[i] = f.ID
+	}
+	return ids
 }
 
 // cosineDistance returns 1 - cosine_similarity. Fact embeddings are stored

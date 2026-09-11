@@ -113,9 +113,10 @@ type MetaFoldStorer interface {
 	GetMetaMemberTexts(ctx context.Context, metaID int64) ([]string, error)
 	MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error
 	RepointFactDuplicate(ctx context.Context, general, specific int64) (int, int, error)
-	GetFactStanceID(ctx context.Context, factID int64) (int64, bool, error)
+	GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error)
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	RefreshPersonFactCount(ctx context.Context, personID int64) error
+	CountFactMentionPersons(ctx context.Context, factID int64) (int, error)
 }
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
@@ -358,7 +359,9 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				// In fold mode the broader position-level gate applies when the
 				// judge offers it — folding keeps the raw fact, so grouping
 				// same-position restatements is safe where dropping was not.
-				if fi.dedupeJudge != nil {
+				// In fold mode a new fact with co-actors can never fold (see the
+				// shared-fact guard below), so skip the judge calls entirely.
+				if fi.dedupeJudge != nil && !(fi.foldingEnabled() && len(input.CoActorIDs) > 0) {
 					var same bool
 					var jErr error
 					type positionGate interface {
@@ -384,6 +387,22 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("fact", truncate(input.NormalizedFactText, 80)).
 							Msg("Same-claim fact (LLM gray-zone adjudication)")
 						if fi.foldingEnabled() {
+							// Never fold a shared (co-actor) fact: folding marks the
+							// member fact 'duplicate' GLOBALLY, so a shared vote fact
+							// matched by one subject's news claim would vanish from
+							// every other voter's active-fact set and stance. Shared
+							// facts stay standalone; the pair is left to the
+							// contradiction detector instead. The new fact's own side
+							// (CoActorIDs) is guarded before the judge call above.
+							if mentions, mErr := fi.metaStorer.CountFactMentionPersons(ctx, sf.ID); mErr != nil {
+								log.Warn().Err(mErr).Int64("existing_fact_id", sf.ID).
+									Msg("Fold mention-count check failed; keeping fact standalone")
+								continue
+							} else if mentions > 1 {
+								log.Info().Int64("existing_fact_id", sf.ID).Int("mention_persons", mentions).
+									Msg("Skipping fold: matched fact is shared by several persons; keeping standalone")
+								continue
+							}
 							sfCopy := sf
 							foldTarget = &sfCopy
 							break
@@ -492,8 +511,8 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 		if err != nil {
 			return fmt.Errorf("create meta: %w", err)
 		}
-		// The meta takes over the matched fact's stance slot.
-		if stanceID, ok, sErr := ms.GetFactStanceID(ctx, matched.ID); sErr == nil && ok {
+		// The meta takes over the matched fact's stance slot (this person's).
+		if stanceID, ok, sErr := ms.GetFactStanceID(ctx, personID, matched.ID); sErr == nil && ok {
 			if aErr := ms.AddFactToStance(ctx, stanceID, metaID); aErr != nil {
 				log.Warn().Err(aErr).Int64("meta_fact_id", metaID).Msg("Failed to attach meta to stance")
 			}
@@ -527,7 +546,7 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 	}
 	// Member joins the meta's stance so the every-fact-has-a-stance invariant
 	// holds without any stance-analysis LLM call.
-	if stanceID, ok, sErr := ms.GetFactStanceID(ctx, metaID); sErr == nil && ok {
+	if stanceID, ok, sErr := ms.GetFactStanceID(ctx, personID, metaID); sErr == nil && ok {
 		if aErr := ms.AddFactToStance(ctx, stanceID, newFactID); aErr != nil {
 			log.Warn().Err(aErr).Int64("fact_id", newFactID).Msg("Failed to attach member to meta's stance")
 		}

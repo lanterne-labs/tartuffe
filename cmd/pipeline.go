@@ -111,6 +111,17 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// (Step 8) now fills every language for facts/stances/contradictions, so the
 	// mid-pipeline EN-only fact repair is redundant.)
 
+	// Step 3b: Stance fan-out (mirror-py3). Shared vote facts are stance-routed
+	// only for their subject at insert time; this step routes them into each
+	// co-voter's own stance system (budgeted per night, derived pending set,
+	// self-terminating). Runs before the merge sweep so freshly created deputy
+	// stances get merged the same night, and before detection so stance-recorded
+	// contradictions land first.
+	fanoutErr := runStanceFanoutStep(ctx, storer)
+	if fanoutErr != nil {
+		log.Error().Err(fanoutErr).Msg("Daily pipeline: stance fan-out failed")
+	}
+
 	// Step 4: Stance merge sweep. Looks for stances that should be merged per
 	// LLM-vetted centroid clustering, applies the merges, and re-detects
 	// contradictions across previously-separated facts. Catches the cross-stance
@@ -198,7 +209,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		err  error
 	}{
 		{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
-		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-merge", mergeErr},
+		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-fanout", fanoutErr}, {"stance-merge", mergeErr},
 		{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
 		{"translate", trErr},
 	}

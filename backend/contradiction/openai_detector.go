@@ -121,7 +121,7 @@ A breaker does NOT invalidate a promise when:
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
 2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
-3. Same date conflicts: DEFAULT to NO. Only flag YES when BOTH facts are first-person claims by the same person about a fact they directly know (e.g., a number they stated themselves), and those personal claims are logically incompatible. A bare timing/numeric discrepancy between two third-party reports on the same date is NEVER a contradiction — that is the DATE-ONLY CONFLICTS / UTTERANCE-REQUIREMENT case.
+3. Same date conflicts: DEFAULT to NO. Only flag YES when the pair satisfies the HARD GATE on BOTH sides: either BOTH facts are first-person claims by the same person about a fact they directly know (e.g., a number they stated themselves), OR one is the person's own claim and the other an AUTHORITATIVE FINDING about that same fact (official report, audit, court or official record) — and the two are logically incompatible. A bare timing/numeric discrepancy between two third-party reports on the same date is NEVER a contradiction — that is the DATE-ONLY CONFLICTS / UTTERANCE-REQUIREMENT case.
 4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
 
 **EXAMPLES:**

@@ -65,5 +65,6 @@ func init() {
 	// Register invariant gauges
 	Registry.MustRegister(
 		FactsWithoutStance,
+		StanceRoutingsPending,
 	)
 }

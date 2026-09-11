@@ -182,16 +182,40 @@ func (s *PostgresStorer) RefreshPersonFactCount(ctx context.Context, personID in
 }
 
 // GetFactStanceID returns the stance a fact belongs to (0, false if none).
-func (s *PostgresStorer) GetFactStanceID(ctx context.Context, factID int64) (int64, bool, error) {
+// CountFactMentionPersons returns how many distinct persons carry the fact via
+// fact_mentions. Used by the fold path to refuse folding shared (co-actor)
+// facts: marking a shared vote fact as a duplicate member would silently remove
+// it from every voter's active-fact set, not just the subject's.
+func (s *PostgresStorer) CountFactMentionPersons(ctx context.Context, factID int64) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(DISTINCT fm.person_id)
+		FROM fact_mentions fm
+		JOIN fact_sources fs ON fs.id = fm.fact_source_id
+		WHERE fs.fact_id = $1`, factID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count mention persons for fact %d: %w", factID, err)
+	}
+	return n, nil
+}
+
+func (s *PostgresStorer) GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error) {
+	// Person-scoped: a fact may be a member of many stances (one per person who
+	// carries it — shared vote facts), so an unscoped lookup would return an
+	// arbitrary person's stance. Per person a fact belongs to at most one stance.
 	var stanceID int64
 	err := s.pool.QueryRow(ctx,
-		`SELECT stance_document_id FROM stance_document_facts WHERE fact_id = $1 LIMIT 1`,
-		factID).Scan(&stanceID)
+		`SELECT sdf.stance_document_id
+		 FROM stance_document_facts sdf
+		 JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		 WHERE sdf.fact_id = $2 AND sd.person_id = $1
+		 LIMIT 1`,
+		personID, factID).Scan(&stanceID)
 	if err == pgx.ErrNoRows {
 		return 0, false, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("resolve stance for fact %d: %w", factID, err)
+		return 0, false, fmt.Errorf("resolve stance for fact %d (person %d): %w", factID, personID, err)
 	}
 	return stanceID, true, nil
 }

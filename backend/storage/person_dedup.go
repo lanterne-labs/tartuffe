@@ -264,6 +264,29 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		return fmt.Errorf("failed to delete merged person %d: %w", fromID, err)
 	}
 
+	// e2. Enforce the one-stance-per-(person, fact) invariant on the survivor:
+	//     step c repoints non-colliding stances wholesale, so a fact that lived
+	//     in A's "retraites" and B's "réforme des retraites" now sits in two of
+	//     the survivor's stances. Keep the oldest membership, drop the rest.
+	if _, err := tx.Exec(ctx, `
+		WITH ranked AS (
+			SELECT sdf.stance_document_id, sdf.fact_id,
+			       ROW_NUMBER() OVER (
+			           PARTITION BY sdf.fact_id
+			           ORDER BY sdf.added_at ASC, sdf.stance_document_id ASC
+			       ) AS rn
+			FROM stance_document_facts sdf
+			JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+			WHERE sd.person_id = $1
+		)
+		DELETE FROM stance_document_facts d
+		USING ranked r
+		WHERE d.stance_document_id = r.stance_document_id
+		  AND d.fact_id = r.fact_id
+		  AND r.rn > 1`, intoID); err != nil {
+		return fmt.Errorf("failed to dedup survivor stance memberships: %w", err)
+	}
+
 	// f. Refresh the survivor's stance fact_count to reflect moved memberships.
 	if _, err := tx.Exec(ctx, `
 		UPDATE stance_documents s
