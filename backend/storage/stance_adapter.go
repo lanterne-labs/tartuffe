@@ -37,10 +37,10 @@ func (a *StanceStorerAdapter) UpdateStanceDocument(ctx context.Context, id int64
 
 // UpdateStanceMetadata updates ONLY the native cluster_label and summary of a stance.
 // Used by the per-fact stance-refresh path (ProcessNewFact → handleVerdict →
-// triggerStanceRefresh) to keep the stance's title and description in sync
+// refreshAfterVerdict) to keep the stance's title and description in sync
 // with its accumulating fact set. Translations are filled by the async phase.
-func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
-	return a.storer.UpdateStanceMetadata(ctx, id, label, summary)
+func (a *StanceStorerAdapter) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error {
+	return a.storer.UpdateStanceMetadata(ctx, id, label, summary, consumedFactIDs)
 }
 
 // AddFactToStance adds a fact to the stance document join table.
@@ -101,7 +101,41 @@ func (a *StanceStorerAdapter) GetFactsForStance(ctx context.Context, stanceID in
 	if err != nil {
 		return nil, err
 	}
+	return toCoreStanceFacts(facts), nil
+}
 
+// GetUnsummarizedFactsForStance retrieves the stance's facts added after its
+// last metadata refresh (all of them if never refreshed).
+func (a *StanceStorerAdapter) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
+	facts, err := a.storer.GetUnsummarizedFactsForStance(ctx, stanceID)
+	if err != nil {
+		return nil, err
+	}
+	return toCoreStanceFacts(facts), nil
+}
+
+// GetStanceMetadata returns the stance's current native label and summary.
+func (a *StanceStorerAdapter) GetStanceMetadata(ctx context.Context, stanceID int64) (string, string, error) {
+	return a.storer.GetStanceMetadata(ctx, stanceID)
+}
+
+// GetStanceTensions returns the recorded contradictions between facts of the
+// stance, keyed by fact id.
+func (a *StanceStorerAdapter) GetStanceTensions(ctx context.Context, stanceID int64) (map[int64][]core.StanceTension, error) {
+	raw, err := a.storer.GetStanceTensions(ctx, stanceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64][]core.StanceTension, len(raw))
+	for id, list := range raw {
+		for _, t := range list {
+			out[id] = append(out[id], core.StanceTension{FactID: t.FactID, OtherFactText: t.OtherFactText, Reason: t.Reason})
+		}
+	}
+	return out, nil
+}
+
+func toCoreStanceFacts(facts []StanceFactInfo) []core.StanceFactInfo {
 	result := make([]core.StanceFactInfo, len(facts))
 	for i, f := range facts {
 		result[i] = core.StanceFactInfo{
@@ -112,7 +146,7 @@ func (a *StanceStorerAdapter) GetFactsForStance(ctx context.Context, stanceID in
 			Lang:               f.Lang,
 		}
 	}
-	return result, nil
+	return result
 }
 
 // GetStanceDocumentCounts returns aggregate stats.

@@ -5280,17 +5280,120 @@ func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, sum
 // Used by the per-fact stance refresh path (StanceManager.triggerStanceRefresh)
 // to keep the stance's title and description in sync with its accumulating
 // fact set without touching the centroid / fact_count / key_fact_ids.
-func (s *PostgresStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
+func (s *PostgresStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error {
+	// summarized_at advances to the newest membership the refresh actually
+	// absorbed (never backwards). A membership added while the LLM was running
+	// is newer than every consumed one, so it stays pending for the next
+	// refresh (GetUnsummarizedFactsForStance) instead of being stamped past.
 	query := `
-		UPDATE stance_documents
-		SET cluster_label = $1, summary = $2, last_updated_at = NOW()
-		WHERE id = $3`
+		UPDATE stance_documents sd
+		SET cluster_label = $1, summary = $2, last_updated_at = NOW(),
+		    summarized_at = GREATEST(
+		        COALESCE(sd.summarized_at, '-infinity'::timestamptz),
+		        COALESCE((SELECT MAX(sdf.added_at) FROM stance_document_facts sdf
+		                  WHERE sdf.stance_document_id = sd.id AND sdf.fact_id = ANY($4)),
+		                 '-infinity'::timestamptz))
+		WHERE sd.id = $3`
 
-	_, err := s.pool.Exec(ctx, query, label, summary, id)
+	_, err := s.pool.Exec(ctx, query, label, summary, id, consumedFactIDs)
 	if err != nil {
 		return fmt.Errorf("updating stance metadata %d: %w", id, err)
 	}
 	return nil
+}
+
+// GetStanceTensions returns, per fact of the stance, the recorded
+// contradictions between that fact and OTHER facts of the same stance (both
+// directions), owned by the stance's person. Feeds the incremental metadata
+// refresh so a summary never has to rediscover a tension among facts it does
+// not see.
+func (s *PostgresStorer) GetStanceTensions(ctx context.Context, stanceID int64) (map[int64][]StanceTension, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH members AS (
+			SELECT sdf.fact_id, sd.person_id
+			FROM stance_document_facts sdf
+			JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+			WHERE sdf.stance_document_id = $1
+		)
+		SELECT ma.fact_id, fb.fact_text, COALESCE(c.reason, '')
+		FROM contradictions c
+		JOIN members ma ON ma.fact_id = c.fact_a_id AND c.person_id = ma.person_id
+		JOIN members mb ON mb.fact_id = c.fact_b_id
+		JOIN facts fb ON fb.id = c.fact_b_id
+		UNION ALL
+		SELECT mb.fact_id, fa.fact_text, COALESCE(c.reason, '')
+		FROM contradictions c
+		JOIN members mb ON mb.fact_id = c.fact_b_id AND c.person_id = mb.person_id
+		JOIN members ma ON ma.fact_id = c.fact_a_id
+		JOIN facts fa ON fa.id = c.fact_a_id`, stanceID)
+	if err != nil {
+		return nil, fmt.Errorf("querying tensions for stance %d: %w", stanceID, err)
+	}
+	defer rows.Close()
+
+	out := map[int64][]StanceTension{}
+	for rows.Next() {
+		var t StanceTension
+		if err := rows.Scan(&t.FactID, &t.OtherFactText, &t.Reason); err != nil {
+			return nil, fmt.Errorf("scanning stance tension: %w", err)
+		}
+		out[t.FactID] = append(out[t.FactID], t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating tensions for stance %d: %w", stanceID, err)
+	}
+	return out, nil
+}
+
+// StanceTension is one recorded contradiction between a fact of a stance and
+// another fact of the same stance.
+type StanceTension struct {
+	FactID        int64
+	OtherFactText string
+	Reason        string
+}
+
+// GetStanceMetadata returns the stance's current native label and summary.
+func (s *PostgresStorer) GetStanceMetadata(ctx context.Context, stanceID int64) (label, summary string, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT cluster_label, summary FROM stance_documents WHERE id = $1`, stanceID).Scan(&label, &summary)
+	if err != nil {
+		return "", "", fmt.Errorf("loading stance %d metadata: %w", stanceID, err)
+	}
+	return label, summary, nil
+}
+
+// GetUnsummarizedFactsForStance returns the stance's facts whose membership was
+// added after the stance's summarized_at (all of them when it is NULL), oldest
+// membership first — the facts the label + summary have not absorbed yet.
+func (s *PostgresStorer) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
+	query := `
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, '')
+		FROM facts f
+		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		WHERE sdf.stance_document_id = $1
+		  AND (sd.summarized_at IS NULL OR sdf.added_at > sd.summarized_at)
+		ORDER BY sdf.added_at, f.id`
+
+	rows, err := s.pool.Query(ctx, query, stanceID)
+	if err != nil {
+		return nil, fmt.Errorf("querying unsummarized facts for stance %d: %w", stanceID, err)
+	}
+	defer rows.Close()
+
+	var facts []StanceFactInfo
+	for rows.Next() {
+		var f StanceFactInfo
+		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang); err != nil {
+			return nil, fmt.Errorf("scanning unsummarized stance fact: %w", err)
+		}
+		facts = append(facts, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating unsummarized facts for stance %d: %w", stanceID, err)
+	}
+	return facts, nil
 }
 
 // AddFactToStance adds a fact to the stance document join table. No-op if already linked.
@@ -5569,7 +5672,9 @@ func (s *PostgresStorer) UpdateStanceSummary(ctx context.Context, stanceID int64
 }
 
 // MergeStancesForPerson merges src into dst in a single transaction. Fact memberships
-// are moved to dst (duplicates dropped via ON CONFLICT), contradictions whose bundle
+// are moved to dst (duplicates dropped via ON CONFLICT) with added_at = NOW(): the
+// facts are new TO DST, so the next metadata refresh folds them into dst's summary
+// via summarized_at. Contradictions whose bundle
 // pointed at src are repointed to dst BEFORE the row is dropped (the FK is ON DELETE
 // SET NULL, so a naive delete would silently null them), then dst's centroid and
 // fact_count are updated and src is deleted. The new centroid is pre-computed by the
@@ -5588,7 +5693,7 @@ func (s *PostgresStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO stance_document_facts (stance_document_id, fact_id, added_at)
-		SELECT $1, fact_id, added_at FROM stance_document_facts
+		SELECT $1, fact_id, NOW() FROM stance_document_facts
 		WHERE stance_document_id = $2
 		ON CONFLICT (stance_document_id, fact_id) DO NOTHING`, dstID, srcID); err != nil {
 		return fmt.Errorf("moving fact memberships %d->%d: %w", srcID, dstID, err)

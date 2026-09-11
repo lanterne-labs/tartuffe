@@ -12,6 +12,9 @@ type mockStanceStorer struct {
 	facts          map[int64][]StanceFactInfo // keyed by stance ID
 	nextID         int64
 	contradictions []mockContradiction
+	unsummarized   []StanceFactInfo
+	tensions       map[int64][]StanceTension
+	consumed       [][]int64 // fact ids passed to UpdateStanceMetadata, per call
 }
 
 type mockContradiction struct {
@@ -50,7 +53,7 @@ func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, s
 	return nil
 }
 
-func (m *mockStanceStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error {
+func (m *mockStanceStorer) UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error {
 	doc, ok := m.stances[id]
 	if !ok {
 		return nil
@@ -58,7 +61,12 @@ func (m *mockStanceStorer) UpdateStanceMetadata(ctx context.Context, id int64, l
 	doc.ClusterLabel = label
 	doc.Summary = summary
 	m.stances[id] = doc
+	m.consumed = append(m.consumed, consumedFactIDs)
 	return nil
+}
+
+func (m *mockStanceStorer) GetStanceTensions(ctx context.Context, stanceID int64) (map[int64][]StanceTension, error) {
+	return m.tensions, nil
 }
 
 func (m *mockStanceStorer) AddFactToStance(ctx context.Context, stanceID int64, factID int64) error {
@@ -97,6 +105,23 @@ func (m *mockStanceStorer) ShortlistStancesByNearestFact(ctx context.Context, pe
 
 func (m *mockStanceStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
 	return m.facts[stanceID], nil
+}
+
+// unsummarized, when set, is what GetUnsummarizedFactsForStance returns for
+// every stance; nil means "all facts are new" (never summarized).
+func (m *mockStanceStorer) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {
+	if m.unsummarized != nil {
+		return m.unsummarized, nil
+	}
+	return m.facts[stanceID], nil
+}
+
+func (m *mockStanceStorer) GetStanceMetadata(ctx context.Context, stanceID int64) (string, string, error) {
+	doc, ok := m.stances[stanceID]
+	if !ok {
+		return "", "", nil
+	}
+	return doc.ClusterLabel, doc.Summary, nil
 }
 
 func (m *mockStanceStorer) GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error) {

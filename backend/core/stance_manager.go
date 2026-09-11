@@ -19,11 +19,24 @@ import (
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
 	UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error
-	UpdateStanceMetadata(ctx context.Context, id int64, label, summary string) error
+	// UpdateStanceMetadata stores a refreshed label + summary and advances the
+	// stance's summarized_at cursor to the newest membership among
+	// consumedFactIDs (the facts the refresh actually absorbed), so a fact
+	// added while the LLM was running stays pending.
+	UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
+	// GetUnsummarizedFactsForStance returns the facts whose membership was added
+	// after the stance's last metadata refresh (all facts if never refreshed),
+	// oldest membership first.
+	GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
+	// GetStanceMetadata returns the stance's current native label and summary.
+	GetStanceMetadata(ctx context.Context, stanceID int64) (label, summary string, err error)
+	// GetStanceTensions returns, per fact of the stance, the recorded
+	// contradictions it is part of with other facts of the same stance.
+	GetStanceTensions(ctx context.Context, stanceID int64) (map[int64][]StanceTension, error)
 	GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error)
 	DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error
 	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) error
@@ -233,7 +246,8 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 // It uses LLM-based topic assignment to find the right stance (or to generate a
 // general topic label when no existing stance fits), then analyzes the new fact
 // pair-wise against all key facts in the matched stance. After a non-duplicate
-// verdict, the stance's label + summary are regenerated from the full fact list.
+// verdict, the new fact (and its verified tensions) is folded into the stance's
+// label + summary (see refreshAfterVerdict).
 func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
 	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
@@ -538,9 +552,9 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 		LabelEn:          labelEn,
 		ClusterEmbedding: embedding,
 		Summary:          factText,
-		// SummaryEn intentionally empty at creation — first triggerStanceRefresh
-		// (fired when the second fact joins this stance) regenerates both summary
-		// and summary_en bilingually. Until then the frontend falls back to native.
+		// Summary is the first fact's text: a correct seed for the fold that runs
+		// when the second fact joins (refreshAfterVerdict). SummaryEn is left to
+		// the translation phase; until then the frontend falls back to native.
 		KeyFactIDs: []int64{factID},
 		FactCount:  1,
 	}
@@ -632,11 +646,12 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	}
 
 	// For non-duplicate verdicts the stance content has materially changed —
-	// regenerate label + summary from the full fact list. Failures here are
-	// logged but do not fail the verdict (the stance is still correct, just
-	// using its prior label/summary until the next refresh).
+	// fold the new fact (and the tensions the analyze just found) into the
+	// label + summary. Failures here are logged but do not fail the verdict
+	// (the stance is still correct, just using its prior label/summary until
+	// the next refresh picks the fact up via summarized_at).
 	if (result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION") && !refreshDeferred(ctx) {
-		if err := sm.triggerStanceRefresh(ctx, matched.ID); err != nil {
+		if err := sm.refreshAfterVerdict(ctx, matched, factID, result.Contradictions, keyTextByID(keyFacts)); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", matched.ID).
 				Msg("Stance metadata refresh failed; stance kept with previous label/summary")
@@ -785,11 +800,38 @@ func (sm *StanceManager) recordStanceContradictions(
 	return recorded
 }
 
-// RefreshStanceMetadata is a public wrapper around triggerStanceRefresh, used
-// by code outside ProcessNewFact (e.g., the post-merge sweep) that needs to
-// regenerate a stance's label + summary from the full fact list.
+// RefreshStanceMetadata brings a stance's label + summary up to date with its
+// facts. Used by code outside ProcessNewFact (post-merge sweep, deferred
+// backfill refresh, the refresh CLI). Cost is bounded by what is NEW: when the
+// whole fact list fits the model context it is rebuilt from scratch (the most
+// accurate form, and a periodic drift reset for the incremental path); when it
+// does not, only the facts added since summarized_at are folded into the
+// current label + summary, in context-sized chunks. A stance therefore never
+// becomes un-refreshable however large it grows (mirror-t1z).
 func (sm *StanceManager) RefreshStanceMetadata(ctx context.Context, stanceID int64) error {
 	return sm.triggerStanceRefresh(ctx, stanceID)
+}
+
+// RebuildStanceMetadata discards the current label + summary and re-derives
+// them from every fact in the stance: one full-rebuild call when the facts fit
+// the context, otherwise a rolling fold over all facts starting from an empty
+// summary. For `dm stances refresh-metadata --full`.
+func (sm *StanceManager) RebuildStanceMetadata(ctx context.Context, stanceID int64) error {
+	facts, err := sm.storer.GetFactsForStance(ctx, stanceID)
+	if err != nil {
+		return fmt.Errorf("loading facts for rebuild: %w", err)
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	if fullRefreshFits(facts) {
+		return sm.persistFullRefresh(ctx, stanceID, facts)
+	}
+	tensions, err := sm.storer.GetStanceTensions(ctx, stanceID)
+	if err != nil {
+		return fmt.Errorf("loading tensions for rebuild: %w", err)
+	}
+	return sm.persistIncrementalRefresh(ctx, stanceID, "", "", newFactsFromStanceFacts(facts, tensions))
 }
 
 // deferRefreshKey is the context key used by WithDeferRefresh to tell
@@ -801,7 +843,7 @@ func (sm *StanceManager) RefreshStanceMetadata(ctx context.Context, stanceID int
 type deferRefreshKey struct{}
 
 // WithDeferRefresh returns a derived context that disables the inline
-// triggerStanceRefresh call inside handleVerdict. The caller becomes
+// refreshAfterVerdict call inside handleVerdict. The caller becomes
 // responsible for calling RefreshStanceMetadata on every touched stance at
 // the end of the batch.
 //
@@ -818,10 +860,133 @@ func refreshDeferred(ctx context.Context) bool {
 	return v
 }
 
-// triggerStanceRefresh loads the current full fact set for the stance, calls
-// the LLM to regenerate a general label + 2-4 sentence summary, and persists
-// both via UpdateStanceMetadata.
+// Metadata-refresh budgeting. The full-rebuild prompt inlines every fact; it is
+// only used when that fits the model context (see fullRefreshFits). The
+// incremental prompt carries the current label + summary plus the NEW facts,
+// folded in chunks sized by refreshFactsBudgetTokens.
+const (
+	stanceRefreshOutputTokens = 700
+	// stanceRefreshPromptTokens covers the fixed prose of the refresh prompts
+	// plus the current label + summary carried by the fold prompt. Measured
+	// 2026-09-11 with empty inputs: fold prompt 3358 chars = 839 tokens at
+	// stanceCharsPerToken, full-rebuild prompt 724 tokens; the ~560-token
+	// remainder holds the current summary (2-4 sentences, ~150 tokens).
+	stanceRefreshPromptTokens = 1400
+	// stanceCompactionEvery: on the live path, every Nth fact of a stance
+	// triggers a full rebuild instead of a fold when the facts fit the context,
+	// so small and medium stances get a periodic drift reset for free while
+	// large ones stay on the incremental path.
+	stanceCompactionEvery = 10
+)
+
+// StanceTension is one recorded contradiction between a fact of a stance and
+// another fact of the same stance, as the storer reports it.
+type StanceTension struct {
+	FactID        int64  // the fact this tension is attached to
+	OtherFactText string // the fact it contradicts
+	Reason        string
+}
+
+// refreshNewFact is one fact being folded into a stance's label + summary,
+// with the tensions known for it (key facts it contradicts).
+type refreshNewFact struct {
+	ID          int64
+	Text        string
+	Verb        string
+	Contradicts []refreshTension
+}
+
+type refreshTension struct {
+	EarlierFactText string
+	Reason          string
+}
+
+// newFactsFromStanceFacts renders pending facts for the fold prompt, attaching
+// the tensions recorded for each.
+func newFactsFromStanceFacts(facts []StanceFactInfo, tensions map[int64][]StanceTension) []refreshNewFact {
+	out := make([]refreshNewFact, len(facts))
+	for i, f := range facts {
+		nf := refreshNewFact{ID: f.ID, Text: f.NormalizedFactText, Verb: f.CanonicalVerb}
+		for _, t := range tensions[f.ID] {
+			nf.Contradicts = append(nf.Contradicts, refreshTension{EarlierFactText: t.OtherFactText, Reason: t.Reason})
+		}
+		out[i] = nf
+	}
+	return out
+}
+
+// refreshFactsBudgetTokens is the fact-text budget of one refresh call.
+func refreshFactsBudgetTokens() int {
+	return stanceMaxContextTokens - stanceRefreshOutputTokens - stanceContextSafetyTokens - stanceRefreshPromptTokens
+}
+
+// fullRefreshFits reports whether inlining every fact into the full-rebuild
+// prompt stays within the model context.
+func fullRefreshFits(facts []StanceFactInfo) bool {
+	total := 0
+	for _, f := range facts {
+		total += estimateStanceTokens(formatKeyFactLine(f))
+	}
+	return total <= refreshFactsBudgetTokens()
+}
+
+// chunkNewFactsByBudget splits new facts into fold-sized chunks. Never emits an
+// empty chunk, so a single oversized fact is still attempted alone.
+func chunkNewFactsByBudget(facts []refreshNewFact) [][]refreshNewFact {
+	budget := refreshFactsBudgetTokens()
+	var chunks [][]refreshNewFact
+	var cur []refreshNewFact
+	curTokens := 0
+	for _, f := range facts {
+		ft := estimateStanceTokens(formatRefreshNewFact(f))
+		if len(cur) > 0 && curTokens+ft > budget {
+			chunks = append(chunks, cur)
+			cur = nil
+			curTokens = 0
+		}
+		cur = append(cur, f)
+		curTokens += ft
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	return chunks
+}
+
+// triggerStanceRefresh brings the stance's label + summary up to date: full
+// rebuild when every fact fits the context, otherwise an incremental fold of
+// the facts added since summarized_at (chunked, with the tensions recorded
+// for them). No-op when nothing is new.
 func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int64) error {
+	return sm.refreshStance(ctx, stanceID, true, nil)
+}
+
+// refreshAfterVerdict is the live-ingest refresh, O(1) in the stance size in
+// the steady state: it folds the facts still pending for the stance — normally
+// just the one that was analyzed, plus any earlier fact whose fold failed —
+// into the current label + summary, carrying the tensions the analyze just
+// verified for the new fact. Every stanceCompactionEvery-th fact it does a
+// full rebuild instead when the facts fit the context (a drift reset for the
+// small/medium stances that make up 99% of the table). A stance that was
+// never summarized (summarized_at NULL, e.g. right after the migration) is
+// summarized from ALL its facts rather than folding onto its stale
+// placeholder.
+func (sm *StanceManager) refreshAfterVerdict(ctx context.Context, matched *StanceDocument, factID int64, verified []StanceContradictionEntry, keyTexts map[int64]string) error {
+	var live []StanceTension
+	for _, c := range verified {
+		if txt, ok := keyTexts[c.KeyFactID]; ok && txt != "" {
+			live = append(live, StanceTension{FactID: factID, OtherFactText: txt, Reason: c.Reason})
+		}
+	}
+	compact := (matched.FactCount+1)%stanceCompactionEvery == 0
+	return sm.refreshStance(ctx, matched.ID, compact, live)
+}
+
+// refreshStance is the shared refresh engine. compact asks for a full rebuild
+// when the facts fit; extraTensions are tensions known to the caller that may
+// not be in the contradictions table yet (the live path records them just
+// before, but the map is merged either way).
+func (sm *StanceManager) refreshStance(ctx context.Context, stanceID int64, compact bool, extraTensions []StanceTension) error {
 	facts, err := sm.storer.GetFactsForStance(ctx, stanceID)
 	if err != nil {
 		return fmt.Errorf("loading facts for refresh: %w", err)
@@ -829,11 +994,93 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 	if len(facts) == 0 {
 		return nil // nothing to refresh from
 	}
+	pending, err := sm.storer.GetUnsummarizedFactsForStance(ctx, stanceID)
+	if err != nil {
+		return fmt.Errorf("loading unsummarized facts for refresh: %w", err)
+	}
+	fromScratch := len(pending) == len(facts)
 
+	if (compact || fromScratch) && fullRefreshFits(facts) {
+		return sm.persistFullRefresh(ctx, stanceID, facts)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	tensions, err := sm.storer.GetStanceTensions(ctx, stanceID)
+	if err != nil {
+		return fmt.Errorf("loading tensions for refresh: %w", err)
+	}
+	if tensions == nil {
+		tensions = map[int64][]StanceTension{}
+	}
+	for _, t := range extraTensions {
+		if !hasTension(tensions[t.FactID], t) {
+			tensions[t.FactID] = append(tensions[t.FactID], t)
+		}
+	}
+
+	label, summary := "", ""
+	if !fromScratch {
+		label, summary, err = sm.storer.GetStanceMetadata(ctx, stanceID)
+		if err != nil {
+			return fmt.Errorf("loading stance %d metadata: %w", stanceID, err)
+		}
+	}
+	return sm.persistIncrementalRefresh(ctx, stanceID, label, summary, newFactsFromStanceFacts(pending, tensions))
+}
+
+func hasTension(list []StanceTension, t StanceTension) bool {
+	for _, x := range list {
+		if x.OtherFactText == t.OtherFactText {
+			return true
+		}
+	}
+	return false
+}
+
+// persistFullRefresh rebuilds label + summary from the full fact list and
+// stores them.
+func (sm *StanceManager) persistFullRefresh(ctx context.Context, stanceID int64, facts []StanceFactInfo) error {
 	label, summary, err := sm.refreshStanceMetadata(ctx, stanceID, facts)
 	if err != nil {
 		return fmt.Errorf("regenerating metadata: %w", err)
 	}
+	ids := make([]int64, len(facts))
+	for i, f := range facts {
+		ids[i] = f.ID
+	}
+	if err := sm.storeRefreshedMetadata(ctx, stanceID, label, summary, ids); err != nil {
+		return err
+	}
+	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("facts", len(facts)).Msg("Refreshed stance metadata (full rebuild)")
+	return nil
+}
+
+// persistIncrementalRefresh folds newFacts into (label, summary) chunk by
+// chunk — each chunk's output is the next chunk's input — and stores the
+// result. Empty label + summary means "start from scratch".
+func (sm *StanceManager) persistIncrementalRefresh(ctx context.Context, stanceID int64, label, summary string, newFacts []refreshNewFact) error {
+	chunks := chunkNewFactsByBudget(newFacts)
+	for _, chunk := range chunks {
+		var err error
+		label, summary, err = sm.foldStanceMetadata(ctx, label, summary, chunk)
+		if err != nil {
+			return fmt.Errorf("folding %d facts into stance %d metadata: %w", len(chunk), stanceID, err)
+		}
+	}
+	ids := make([]int64, len(newFacts))
+	for i, f := range newFacts {
+		ids[i] = f.ID
+	}
+	if err := sm.storeRefreshedMetadata(ctx, stanceID, label, summary, ids); err != nil {
+		return err
+	}
+	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("new_facts", len(newFacts)).Int("chunks", len(chunks)).Msg("Refreshed stance metadata (incremental fold)")
+	return nil
+}
+
+func (sm *StanceManager) storeRefreshedMetadata(ctx context.Context, stanceID int64, label, summary string, consumedFactIDs []int64) error {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return fmt.Errorf("refresh returned empty label for stance %d", stanceID)
@@ -841,10 +1088,9 @@ func (sm *StanceManager) triggerStanceRefresh(ctx context.Context, stanceID int6
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
 	}
-	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, summary); err != nil {
+	if err := sm.storer.UpdateStanceMetadata(ctx, stanceID, label, strings.TrimSpace(summary), consumedFactIDs); err != nil {
 		return fmt.Errorf("persisting refreshed metadata: %w", err)
 	}
-	log.Debug().Int64("stance_id", stanceID).Str("new_label", label).Int("facts", len(facts)).Msg("Refreshed stance metadata")
 	return nil
 }
 
@@ -1274,9 +1520,9 @@ Return ONLY valid JSON:
 }
 
 // refreshStanceMetadata regenerates a stance's cluster_label AND summary from
-// the FULL set of facts currently attached to it. Called from triggerStanceRefresh
-// after every non-duplicate verdict so the stance metadata stays in sync with
-// its fact set.
+// the FULL set of facts currently attached to it — the compaction form of the
+// refresh, used only when every fact fits the model context (persistFullRefresh);
+// larger stances are folded incrementally by foldStanceMetadata.
 //
 // The prompt asks the LLM to:
 //   - Re-derive the broadest accurate subject-area label per the LABEL RULES.
@@ -1296,7 +1542,21 @@ func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int
 FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
 
-LABEL RULES:
+`+stanceLabelRules+`
+
+SUMMARY RULES:
+- 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
+- If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
+- Do not add facts or claims beyond what's in the listed facts.
+
+`+stanceRefreshLanguageAndFormat, factsBuilder.String())
+
+	return sm.callRefreshLLM(ctx, prompt)
+}
+
+// stanceLabelRules is shared by the full-rebuild and the incremental refresh
+// prompts so the two can never drift in what a label may be.
+const stanceLabelRules = `LABEL RULES:
 - A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. The label names the subject area broadly enough that all listed facts — including any that take opposite positions on the subject — fit under it. The same label must work whether the person is pro, anti, mixed, or evolving.
 - FORBIDDEN label vocabulary (apply the spirit):
   * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "support for", "fight against", "rejet de", "promotion de"
@@ -1312,20 +1572,75 @@ LABEL RULES:
 - Do NOT include the person's name.
 - ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from any fact.
 - Do NOT pack event-detail into the label.
-- NEVER use a meta / pattern-of-behavior / rhetorical label ("denials and reversals", "flip-flops", etc.).
+- NEVER use a meta / pattern-of-behavior / rhetorical label ("denials and reversals", "flip-flops", etc.).`
 
-SUMMARY RULES:
-- 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
-- If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
-- Do not add facts or claims beyond what's in the listed facts.
-
-LANGUAGE RULES:
+const stanceRefreshLanguageAndFormat = `LANGUAGE RULES:
 - Write "label" and "summary" in FRENCH, always — even when some or all listed facts are in English. Do NOT emit any translation here; English (and any other language) is produced separately by the translation phase.
 
 Return ONLY valid JSON:
-{"label": "subject-area label in French", "summary": "2-4 sentence summary in French"}`, factsBuilder.String())
+{"label": "subject-area label in French", "summary": "2-4 sentence summary in French"}`
 
-	content, err := sm.callJSONLLM(ctx, "You regenerate stance metadata for political facts. Return only valid JSON.", prompt, 0.2, 700, false)
+// formatRefreshNewFact renders one new fact for the incremental prompt,
+// including the tensions the analyze verified for it.
+func formatRefreshNewFact(f refreshNewFact) string {
+	var b strings.Builder
+	if f.Verb != "" {
+		fmt.Fprintf(&b, "- (%s) %s\n", f.Verb, f.Text)
+	} else {
+		fmt.Fprintf(&b, "- %s\n", f.Text)
+	}
+	for _, c := range f.Contradicts {
+		fmt.Fprintf(&b, "  ⚠ CONTRADICTS the earlier fact: « %s »", strings.ReplaceAll(c.EarlierFactText, "\n", " "))
+		if c.Reason != "" {
+			fmt.Fprintf(&b, " — %s", c.Reason)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// foldStanceMetadata is the incremental refresh call: given the current label +
+// summary and the facts just added, it returns the updated label + summary.
+// O(1) in the stance size. Empty label + summary means the stance has no
+// summary yet and the facts describe it from scratch. Tensions are explicit
+// input (the analyze already found them), so the summary never has to
+// rediscover a contradiction among facts it cannot see.
+func (sm *StanceManager) foldStanceMetadata(ctx context.Context, label, summary string, newFacts []refreshNewFact) (string, string, error) {
+	if len(newFacts) == 0 {
+		return label, summary, nil
+	}
+	var factsBuilder strings.Builder
+	for _, f := range newFacts {
+		factsBuilder.WriteString(formatRefreshNewFact(f))
+	}
+
+	current := "CURRENT LABEL: (none yet — this is the first summary of the stance)\nCURRENT SUMMARY: (none yet)"
+	if strings.TrimSpace(label) != "" || strings.TrimSpace(summary) != "" {
+		current = fmt.Sprintf("CURRENT LABEL: %s\nCURRENT SUMMARY: %s", label, summary)
+	}
+
+	prompt := fmt.Sprintf(`You maintain the topic label and summary of a stance document about a political figure. The stance already has a label and a summary covering its earlier facts (you do not see those facts — the summary stands for them). New facts were just added. Update the label and summary so they reflect the stance NOW.
+
+%s
+
+NEW FACTS JUST ADDED (one "- " line per fact, with its verb in parentheses when known; an indented ⚠ line names an earlier fact the new fact was found to CONTRADICT):
+%s
+
+`+stanceLabelRules+`
+- KEEP the current label unless the new facts fall outside it; then broaden it to a neutral subject that covers both the old summary and the new facts. Never narrow it.
+
+SUMMARY RULES:
+- 2-4 sentences, French (up to 6 when several ⚠ tensions must be kept). Integrate the new facts into the current summary: keep what the current summary says about earlier facts (rewrite for length, never drop a position or a tension it already records), add what the new facts say / do.
+- Every ⚠ tension MUST be preserved explicitly: state both positions and that the position shifted, was walked back, or conflicts. Do not smooth a contradiction into one narrative. If there are more tensions than the summary can name, keep the most recent ones individually and say that the position has shifted repeatedly on this subject.
+- Do not add facts or claims beyond the current summary and the new facts.
+
+`+stanceRefreshLanguageAndFormat, current, factsBuilder.String())
+
+	return sm.callRefreshLLM(ctx, prompt)
+}
+
+func (sm *StanceManager) callRefreshLLM(ctx context.Context, prompt string) (string, string, error) {
+	content, err := sm.callJSONLLM(ctx, "You maintain stance metadata for political facts. Return only valid JSON.", prompt, 0.2, stanceRefreshOutputTokens, false)
 	if err != nil {
 		return "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
@@ -1333,9 +1648,7 @@ Return ONLY valid JSON:
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return "", "", fmt.Errorf("parsing refresh response: %w", err)
 	}
-	label := strings.TrimSpace(string(resp.Label))
-	summary := strings.TrimSpace(resp.Summary)
-	return label, summary, nil
+	return strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary), nil
 }
 
 // stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.

@@ -258,11 +258,12 @@ func backfillStancesForPerson(
 
 	stanceIDsSeen := make(map[int64]struct{})
 
-	// Defer per-fact triggerStanceRefresh — refresh each touched stance ONCE
+	// Defer the per-fact refresh — refresh each touched stance ONCE
 	// after the loop instead of after every NEW_INFO/CONTRADICTION verdict.
 	// For a heavy person (e.g. 40 facts in one stance) this turns 40 refresh
 	// LLM calls into 1. The final state is identical because the last refresh
-	// regenerates label + summary from the full final fact set.
+	// folds every fact added since the stance's last refresh (a full rebuild when
+	// they fit the context).
 	ctxDefer := core.WithDeferRefresh(ctx)
 	// Track which stances need an end-of-loop refresh. Only NEW_INFO and
 	// CONTRADICTION verdicts would have triggered an inline refresh in the

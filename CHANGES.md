@@ -1753,3 +1753,23 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   judge against this failure mode; (2) an LLM's uncertainty lives in its reasoning tokens, a
   verdict-token confidence would have missed the case; (3) golden pairs must name the subject
   like every prod fact does — an anonymous role tests something the system never does.
+
+## Stance metadata refresh is incremental (2026-09-11)
+
+- mirror-t1z. The label + summary refresh used to inline EVERY fact of the stance on every
+  add — O(n) per fact, O(n²) over a stance's life, and past ~200 facts it overflowed the 12k
+  context and the stance silently froze forever (the biggest topics, exactly the ones that
+  matter). Now: the live path folds ONE new fact into the current label + summary
+  (~3k tokens, O(1) in stance size), and the tensions the analyze just verified are passed
+  in explicitly ("⚠ CONTRADICTS the earlier fact …") instead of hoping the LLM rediscovers
+  them among 200 lines. New column stance_documents.summarized_at is the cursor: memberships
+  added after it are what the generic refresh (merge sweep, deferred backfill, CLI) folds in,
+  chunked to the context; nothing new = no LLM call. Merge copies memberships with a fresh
+  added_at so absorbed facts count as new to the destination.
+- The full rebuild survives as COMPACTION: every 10th fact on the live path, and on every
+  generic refresh, when the whole fact list fits the context — which is 99.6% of prod
+  stances (median 1 fact, 24/6249 over 30, 9 over 60). Small stances get a free drift reset;
+  the big ones stay incremental and never become un-refreshable. No map-reduce needed.
+- `dm stances refresh-metadata --full` rebuilds from every fact (rolling fold when too big).
+- Design note: the creation placeholder summary IS the first fact's text, so the second
+  fact folds onto a correct seed; a never-summarized stance folds from scratch.

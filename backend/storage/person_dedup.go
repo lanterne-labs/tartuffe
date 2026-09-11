@@ -184,7 +184,8 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 
 	// b. Move stance memberships for stances that will collide (same
 	//    cluster_label on the survivor) BEFORE we touch any stance row, so the
-	//    facts keep a stance throughout.
+	//    facts keep a stance throughout. added_at = NOW(): the facts are new to
+	//    the survivor's stance, so its next metadata refresh folds them in.
 	if _, err := tx.Exec(ctx, `
 		WITH collided AS (
 		  SELECT s_from.id AS from_sid, s_into.id AS into_sid
@@ -192,7 +193,7 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		  JOIN stance_documents s_into ON s_into.person_id=$2 AND s_into.cluster_label=s_from.cluster_label
 		  WHERE s_from.person_id=$1
 		)
-		UPDATE stance_document_facts sdf SET stance_document_id=c.into_sid
+		UPDATE stance_document_facts sdf SET stance_document_id=c.into_sid, added_at=NOW()
 		FROM collided c
 		WHERE sdf.stance_document_id=c.from_sid
 		  AND NOT EXISTS (SELECT 1 FROM stance_document_facts x WHERE x.stance_document_id=c.into_sid AND x.fact_id=sdf.fact_id)`,

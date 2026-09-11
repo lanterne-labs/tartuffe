@@ -628,10 +628,11 @@ func applyMergeSubgroup(
 		}
 	}
 
-	// Regenerate label + summary from the now-merged fact set. Supersedes the
-	// LLM's MergeClusterDecision label/summary because refresh sees ALL facts
-	// including any contradictions just detected, and is instructed to preserve
-	// tensions in the summary.
+	// Bring label + summary up to date with the merged fact set: a full rebuild
+	// when the facts fit the context, otherwise the absorbed facts (added to dst
+	// with a fresh added_at) are folded into dst's current summary. Supersedes
+	// the LLM's MergeClusterDecision label/summary, which only saw the two
+	// summaries.
 	if rErr := stanceManager.RefreshStanceMetadata(ctx, dst.ID); rErr != nil {
 		log.Warn().Err(rErr).Int64("dst", dst.ID).Msg("RefreshStanceMetadata failed; dst keeps the merge-decision label/summary")
 		// Fall back: persist the merge-decision label/summary so dst isn't left

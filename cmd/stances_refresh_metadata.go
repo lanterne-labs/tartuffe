@@ -16,6 +16,7 @@ import (
 var (
 	refreshMetadataPerson    string
 	refreshMetadataNonFrOnly bool
+	refreshMetadataFull      bool
 )
 
 // looksFrench reports whether a stance summary already reads as French, used by
@@ -44,7 +45,13 @@ assignments (unlike 'dm stances backfill'). Translations (_en, etc.) are left to
 translation phase — run 'dm translate run' afterwards to fill them.
 
 Used to make existing stances' native language consistent (they used to follow the
-facts' language, so some were English).`,
+facts' language, so some were English).
+
+By default a stance is brought up to date incrementally: a full rebuild when its
+facts fit the model context, otherwise only the facts added since its last
+refresh are folded into the current label + summary (no-op when nothing is new).
+--full discards the current label + summary and re-derives them from every fact
+(rolling fold for stances too large for one call).`,
 	RunE: runStancesRefreshMetadata,
 }
 
@@ -52,6 +59,7 @@ func init() {
 	stancesCmd.AddCommand(stancesRefreshMetadataCmd)
 	stancesRefreshMetadataCmd.Flags().StringVar(&refreshMetadataPerson, "person", "", "Only refresh this person's stances (optional)")
 	stancesRefreshMetadataCmd.Flags().BoolVar(&refreshMetadataNonFrOnly, "only-non-french", false, "Skip stances whose summary already looks French (resume / avoid re-doing good ones)")
+	stancesRefreshMetadataCmd.Flags().BoolVar(&refreshMetadataFull, "full", false, "Rebuild label + summary from every fact, ignoring the current summary")
 }
 
 func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
@@ -98,7 +106,11 @@ func runStancesRefreshMetadata(cmd *cobra.Command, args []string) error {
 				skipped++
 				continue
 			}
-			if err := stanceManager.RefreshStanceMetadata(ctx, d.ID); err != nil {
+			refresh := stanceManager.RefreshStanceMetadata
+			if refreshMetadataFull {
+				refresh = stanceManager.RebuildStanceMetadata
+			}
+			if err := refresh(ctx, d.ID); err != nil {
 				log.Warn().Err(err).Int64("stance_id", d.ID).Str("person", p.Name).Msg("refresh failed")
 				failed++
 				continue
