@@ -53,6 +53,7 @@
 	let members: MemberInfo[] = $state([]);
 	let stances: StanceDocument[] = $state([]);
 	let historyPoints: HistoryPoint[] = $state([]);
+	let historyError: string | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let membersExpanded = $state(false);
@@ -265,12 +266,13 @@
 	}
 
 	async function loadHistory() {
+		historyError = null;
 		try {
 			const response = await fetch(`${API_BASE}/api/person/${personId}/history`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			historyPoints = (await response.json()) ?? [];
 		} catch (err) {
-			error = err instanceof Error ? `Failed to load history: ${err.message}` : 'Failed to load history';
+			historyError = err instanceof Error ? err.message : 'Failed to load history';
 		}
 	}
 
@@ -405,6 +407,7 @@
 		// user's current open panels mid-interaction.
 		loadPerson();
 		loadStances();
+		loadHistory();
 		// Drop any cached per-stance contradictions so the next expand re-fetches.
 		stanceContradictions = {};
 		if (factsExpanded) {
@@ -533,8 +536,14 @@
 
 		<section class="history-section">
 			<h2 class="section-heading">{tr('person.history', currentLang)}</h2>
-			{#if historyPoints.length > 1}
-				<HistoryChart points={historyPoints} lang={currentLang} />
+			{#if historyError}
+				<p class="empty-state">{tr('person.history.error', currentLang)} ({historyError})</p>
+			{:else if historyPoints.length > 0}
+				<HistoryChart
+					points={historyPoints}
+					lang={currentLang}
+					scoreLabel={tr(person.entity_type === 'human' ? 'person.history.score' : 'person.history.own_score', currentLang)}
+				/>
 			{:else}
 				<p class="empty-state">{tr('person.history.empty', currentLang)}</p>
 			{/if}

@@ -371,7 +371,7 @@ func applyFoldCluster(ctx context.Context, storer *storage.PostgresStorer, synth
 			return fmt.Errorf("repoint member %d: %w", f.ID, err)
 		}
 	}
-	if err := storer.RefreshPersonFactCount(ctx, p.ID); err != nil {
+	if err := storer.RefreshPersonScore(ctx, p.ID); err != nil {
 		log.Warn().Err(err).Int64("person_id", p.ID).Msg("Failed to refresh fact count")
 	}
 

@@ -5,9 +5,12 @@
 	interface Props {
 		points: HistoryPoint[];
 		lang: Lang;
+		// Legend/tooltip label of the cumulative line: parties plot their own score while
+		// the hero gauge shows the member-blended aggregate, so the caller names it.
+		scoreLabel: string;
 	}
 
-	let { points, lang }: Props = $props();
+	let { points, lang, scoreLabel }: Props = $props();
 
 	// Geometry: one SVG, two stacked panels sharing the x scale (score on top, facts
 	// per week below) and one hover crosshair across both.
@@ -86,13 +89,20 @@
 	}
 
 	let hovered = $derived(hoverIndex === null ? null : points[hoverIndex]);
-	// Keep the tooltip inside the plot: flip to the left of the crosshair past the midpoint.
-	let tooltipLeft = $derived(hoverIndex !== null && x(hoverIndex) > width / 2);
+	// Keep the tooltip inside the container: prefer the right of the crosshair, flip to
+	// the left when it would overflow, and clamp to the left edge on narrow screens.
+	const TOOLTIP_W = 230;
+	let tooltipX = $derived.by(() => {
+		if (hoverIndex === null) return 0;
+		const cx = x(hoverIndex);
+		if (cx + 10 + TOOLTIP_W <= width) return cx + 10;
+		return Math.max(0, cx - 10 - TOOLTIP_W);
+	});
 </script>
 
 <div class="history-chart" bind:clientWidth={width}>
 	<div class="legend">
-		<span class="legend-item"><span class="swatch cumulative"></span>{tr('person.history.score', lang)}</span>
+		<span class="legend-item"><span class="swatch cumulative"></span>{scoreLabel}</span>
 		<span class="legend-item"><span class="swatch recent"></span>{tr('person.history.recent', lang)}</span>
 		<span class="legend-item"><span class="swatch facts"></span>{tr('person.history.facts', lang)}</span>
 	</div>
@@ -107,6 +117,11 @@
 			{/each}
 			<path class="line recent" d={recentPath} />
 			<path class="line cumulative" d={cumulativePath} />
+			{#if n === 1}
+				<!-- A single week has no line to draw: show the two values as dots. -->
+				<circle class="marker recent" cx={x(0)} cy={yScore(points[0].recent_score)} r="4" />
+				<circle class="marker cumulative" cx={x(0)} cy={yScore(points[0].score)} r="4" />
+			{/if}
 
 			<!-- facts panel -->
 			<line class="grid" x1={PAD.left} x2={PAD.left + plotW} y1={factsTop + FACTS_H} y2={factsTop + FACTS_H} />
@@ -141,9 +156,9 @@
 		</svg>
 
 		{#if hoverIndex !== null && hovered}
-			<div class="tooltip" style="{tooltipLeft ? 'right' : 'left'}: {tooltipLeft ? width - x(hoverIndex) + 10 : x(hoverIndex) + 10}px;">
+			<div class="tooltip" style="left: {tooltipX}px; max-width: {TOOLTIP_W}px;">
 				<div class="tooltip-date">{weekLabel(hovered.date)}</div>
-				<div><span class="swatch cumulative"></span>{tr('person.history.score', lang)}: <strong>{pct(hovered.score)}</strong></div>
+				<div><span class="swatch cumulative"></span>{scoreLabel}: <strong>{pct(hovered.score)}</strong></div>
 				<div><span class="swatch recent"></span>{tr('person.history.recent', lang)}: <strong>{pct(hovered.recent_score)}</strong></div>
 				<div><span class="swatch facts"></span>{tr('person.history.facts', lang)}: <strong>{hovered.facts_added}</strong></div>
 				<div class="tooltip-muted">{hovered.facts_total} {tr('person.history.facts_total', lang)} · {hovered.contradictions} {tr(hovered.contradictions === 1 ? 'count.contradiction' : 'count.contradictions', lang)}</div>
@@ -244,7 +259,6 @@
 		font-size: 0.75rem;
 		color: var(--text-secondary);
 		line-height: 1.5;
-		white-space: nowrap;
 		z-index: 2;
 	}
 	.tooltip strong { color: var(--text-primary); }

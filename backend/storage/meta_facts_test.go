@@ -69,7 +69,7 @@ func TestMetaFactLifecycle(t *testing.T) {
 	assert.Equal(t, []string{"A: affirme son innocence", "B: clame son innocence"}, texts)
 
 	// Deduped fact count: 2 members fold away, the meta counts once → 1.
-	require.NoError(t, storer.RefreshPersonFactCount(ctx, personID))
+	require.NoError(t, storer.RefreshPersonScore(ctx, personID))
 	var factCount int
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		`SELECT fact_count FROM persons WHERE id = $1`, personID).Scan(&factCount))

@@ -214,7 +214,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		for id := range voterIDs {
 			ids = append(ids, id)
 		}
-		if err := storer.RefreshPersonFactCounts(ctx, ids); err != nil {
+		if err := storer.RefreshPersonScores(ctx, ids); err != nil {
 			return fmt.Errorf("refreshing voter fact counts: %w", err)
 		}
 		log.Info().Int("voters", len(ids)).Msg("frpolitics: refreshed fact counts for co-voting persons")

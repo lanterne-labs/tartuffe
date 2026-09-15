@@ -21,7 +21,8 @@ type HistoryPoint struct {
 	Date       time.Time `json:"date"`
 	FactsAdded int       `json:"facts_added"`
 	FactsTotal int       `json:"facts_total"`
-	// Contradictions is the cumulative number of distinct contradiction bundles.
+	// Contradictions is the cumulative number of contradiction pairs, the same count as
+	// persons.contradiction_count on the profile. The score itself uses stance bundles.
 	Contradictions int `json:"contradictions"`
 	// Score is the honesty score over the whole record up to this week — the same
 	// formula as persons.own_score, so the last point equals the live score.
@@ -32,8 +33,10 @@ type HistoryPoint struct {
 }
 
 // historyEvent is a dated fact (bundle == "") or contradiction (bundle key) on the
-// statement-time axis: a fact is dated by its earliest source publication (ingestion
-// time as fallback), a contradiction by the later of its two facts.
+// statement-time axis: a fact is dated by the earliest publication among its own sources
+// and its folded members' sources (a meta fact carries a dateless 'meta' source, so its
+// members hold the real dates), ingestion time as fallback; a contradiction by the later
+// of its two facts.
 type historyEvent struct {
 	at     time.Time
 	bundle string
@@ -52,11 +55,11 @@ func (s *PostgresStorer) GetPersonHistory(ctx context.Context, personID int64) (
 
 func (s *PostgresStorer) personHistoryEvents(ctx context.Context, personID int64) ([]historyEvent, error) {
 	// person_facts mirrors getPersonFactsCount (mentioning the person, duplicate members
-	// excluded). fact_dates covers the facts referenced by the person's contradictions
-	// independently, so a contradiction is always dated even if a side is not in person_facts.
+	// excluded). dated covers those plus the facts referenced by the person's contradictions,
+	// so a contradiction is always dated even if a side is not in person_facts.
 	query := `
 		WITH person_facts AS (
-			SELECT f.id, COALESCE(MIN(fs.published_at), f.created_at) AS at
+			SELECT DISTINCT f.id
 			FROM facts f
 			JOIN fact_sources fs ON fs.fact_id = f.id
 			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -65,27 +68,26 @@ func (s *PostgresStorer) personHistoryEvents(ctx context.Context, personID int64
 				SELECT 1 FROM fact_relations fr
 				WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 			  )
-			GROUP BY f.id
 		),
-		fact_dates AS (
+		dated AS (
 			SELECT f.id, COALESCE(MIN(fs.published_at), f.created_at) AS at
 			FROM facts f
-			LEFT JOIN fact_sources fs ON fs.fact_id = f.id
+			LEFT JOIN fact_relations fr ON fr.general_fact_id = f.id AND fr.relation_type = 'duplicate'
+			LEFT JOIN fact_sources fs ON fs.fact_id = f.id OR fs.fact_id = fr.specific_fact_id
 			WHERE f.id IN (
-				SELECT fact_a_id FROM contradictions WHERE person_id = $1
-				UNION
-				SELECT fact_b_id FROM contradictions WHERE person_id = $1
+				SELECT id FROM person_facts
+				UNION SELECT fact_a_id FROM contradictions WHERE person_id = $1
+				UNION SELECT fact_b_id FROM contradictions WHERE person_id = $1
 			)
 			GROUP BY f.id
 		)
-		SELECT at, '' AS bundle FROM person_facts
+		SELECT d.at, '' AS bundle FROM dated d JOIN person_facts pf ON pf.id = d.id
 		UNION ALL
 		SELECT GREATEST(da.at, db.at), COALESCE(c.bundle_stance_id::text, 'solo:' || c.id::text)
 		FROM contradictions c
-		JOIN fact_dates da ON da.id = c.fact_a_id
-		JOIN fact_dates db ON db.id = c.fact_b_id
-		WHERE c.person_id = $1
-		ORDER BY at`
+		JOIN dated da ON da.id = c.fact_a_id
+		JOIN dated db ON db.id = c.fact_b_id
+		WHERE c.person_id = $1`
 
 	rows, err := s.pool.Query(ctx, query, personID)
 	if err != nil {
@@ -182,7 +184,7 @@ func buildPersonHistory(events []historyEvent, now time.Time) []HistoryPoint {
 			Date:           wk,
 			FactsAdded:     added,
 			FactsTotal:     factsTotal,
-			Contradictions: len(cumulBundles),
+			Contradictions: cumulTotal,
 			Score:          ComputeHonestyScore(factsTotal, ContradictionStats{Bundles: len(cumulBundles), Total: cumulTotal}),
 			RecentScore:    ComputeHonestyScore(windowFacts, ContradictionStats{Bundles: len(windowBundles), Total: windowTotal}),
 		})

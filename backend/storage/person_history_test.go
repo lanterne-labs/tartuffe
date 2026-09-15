@@ -15,6 +15,28 @@ func day(now time.Time, daysAgo int) time.Time {
 	return now.AddDate(0, 0, -daysAgo)
 }
 
+// insertDatedFact stores a fact with one source (published_at nil = dateless) mentioning
+// personID, going through linkPersonsToSourceMention so the score-refresh path runs as in production.
+func insertDatedFact(t *testing.T, storer *PostgresStorer, personID int64, text string, publishedAt *time.Time) int64 {
+	t.Helper()
+	ctx := context.Background()
+	var id int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
+		text, pgvector.NewVector(mockEmbedding()),
+	).Scan(&id))
+	var sourceID int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type, published_at) VALUES ($1, $2, $3, 'test', $4) RETURNING id`,
+		id, fmt.Sprintf("http://ex/%d", id), text, publishedAt,
+	).Scan(&sourceID))
+	tx, err := storer.pool.Begin(ctx)
+	require.NoError(t, err)
+	require.NoError(t, storer.linkPersonsToSourceMention(ctx, tx, sourceID, []int64{personID}))
+	require.NoError(t, tx.Commit(ctx))
+	return id
+}
+
 // TestBuildPersonHistory_CumulativeAndRecentDiverge checks the replay on a fixed clock:
 // an old contradiction stays in the cumulative score forever but leaves the trailing
 // window, so RecentScore recovers while Score does not.
@@ -95,29 +117,19 @@ func TestGetPersonHistory(t *testing.T) {
 
 	insertFact := func(text string, publishedAt time.Time) int64 {
 		t.Helper()
-		var id int64
-		require.NoError(t, storer.pool.QueryRow(ctx,
-			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()),
-		).Scan(&id))
-		_, err := storer.pool.Exec(ctx,
-			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type, published_at) VALUES ($1, $2, $3, 'test', $4)`,
-			id, fmt.Sprintf("http://ex/%d", id), text, publishedAt)
-		require.NoError(t, err)
-		_, err = storer.pool.Exec(ctx,
-			`INSERT INTO fact_mentions (fact_source_id, person_id) SELECT id, $2 FROM fact_sources WHERE fact_id = $1 ORDER BY id DESC LIMIT 1`,
-			id, personID)
-		require.NoError(t, err)
-		return id
+		return insertDatedFact(t, storer, personID, text, &publishedAt)
 	}
 
 	now := time.Now().UTC()
 	fa := insertFact("H: promised to lower the retirement age", day(now, 200))
 	fb := insertFact("H: voted to raise the retirement age", day(now, 100))
-	insertFact("H: unrelated statement", day(now, 20))
 
 	_, _, err := storer.RecordContradictionImmediate(ctx, personID, fa, fb, "flip on retirement age", "")
 	require.NoError(t, err)
+
+	// A fact ingested after the contradiction must move own_score too (the mention insert
+	// refreshes scores), otherwise the chart's last point and the hero gauge disagree.
+	insertFact("H: unrelated statement", day(now, 20))
 
 	points, err := storer.GetPersonHistory(ctx, personID)
 	require.NoError(t, err)
@@ -151,4 +163,42 @@ func TestGetPersonHistory(t *testing.T) {
 	empty, err := storer.GetPersonHistory(ctx, emptyID)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+}
+
+// TestGetPersonHistory_MetaDatedByMembers: a meta fact's own source is dateless, so it
+// must take the earliest date among its folded members, and the members themselves
+// (duplicate-marked) must not appear as separate facts.
+func TestGetPersonHistory_MetaDatedByMembers(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	var personID int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO persons (name, entity_type) VALUES ('meta history person', 'human') RETURNING id`,
+	).Scan(&personID))
+
+	now := time.Now().UTC()
+	older := day(now, 300)
+	newer := day(now, 150)
+	m1 := insertDatedFact(t, storer, personID, "M: member one", &newer)
+	m2 := insertDatedFact(t, storer, personID, "M: member two", &older)
+	meta := insertDatedFact(t, storer, personID, "M: synthesized meta", nil)
+	_, err := storer.pool.Exec(ctx, `UPDATE facts SET is_meta = true WHERE id = $1`, meta)
+	require.NoError(t, err)
+	for _, member := range []int64{m1, m2} {
+		_, err := storer.pool.Exec(ctx,
+			`INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')`,
+			meta, member)
+		require.NoError(t, err)
+	}
+
+	points, err := storer.GetPersonHistory(ctx, personID)
+	require.NoError(t, err)
+	require.NotEmpty(t, points)
+
+	assert.Equal(t, weekStart(older), points[0].Date, "meta dated by its oldest member")
+	assert.Equal(t, 1, points[0].FactsTotal)
+	last := points[len(points)-1]
+	assert.Equal(t, 1, last.FactsTotal, "folded members do not count as separate facts")
 }

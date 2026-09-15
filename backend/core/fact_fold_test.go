@@ -81,7 +81,7 @@ func (f *foldFakeStorer) AddFactToStance(ctx context.Context, stanceID, factID i
 	return nil
 }
 
-func (f *foldFakeStorer) RefreshPersonFactCount(ctx context.Context, personID int64) error {
+func (f *foldFakeStorer) RefreshPersonScore(ctx context.Context, personID int64) error {
 	return nil
 }
 

@@ -11,6 +11,15 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
   `ComputeHonestyScore` bucket by bucket (`backend/storage/person_history.go`). The last point
   therefore always equals `persons.own_score`, and evicted contradictions vanish from the past too —
   the timeline is the current record over time, not a log of what the pipeline once believed.
+- SCORE FRESHNESS FIX surfaced by that invariant: `own_score` used to move only on contradiction
+  events, so a person ingesting 100 clean facts kept a stale (lower) score until the next
+  contradiction. Every path that changes the active fact set (mention insert, meta fold, vote
+  fan-out) now goes through `refreshPersonScores` (`person_scores.go`): batch recompute of
+  fact_count + own/members/aggregate from live rows, parents included, no SSE events.
+  `RecomputeAllHonestyScores` also gained the duplicate-exclusion predicate it was missing.
+- Meta facts carry a dateless `meta://` source: the history dates a fact by the earliest
+  publication across its own sources AND its folded members' sources, otherwise every fold
+  (and every contradiction repointed onto the meta) would jump to fold day.
 - Time axis decision: STATEMENT date, not ingestion date. Ingestion only started 2026-05 while
   statements span years; on the ingestion axis the curve would just mirror the scraping schedule.
   Consequence: re-scraping old articles fills in the past instead of bumping today.
