@@ -41,6 +41,7 @@ type scrutinJSON struct {
 		DateScrutin      string      `json:"dateScrutin"`
 		Legislature      IntOrString `json:"legislature"`
 		UrlDossier       string      `json:"urlDossier"`
+		SeanceRef        string      `json:"seanceRef"`
 		VentilationVotes struct {
 			Organe struct {
 				OrganeRef string `json:"organeRef"`
@@ -119,6 +120,7 @@ func ParseScrutin(s scrutinJSON) (Law, LawGroupStats, error) {
 		URL:         s.Scrutin.UrlDossier,
 		Legislature: int(s.Scrutin.Legislature),
 		VoteDate:    voteTime,
+		SeanceRef:   strings.TrimSpace(s.Scrutin.SeanceRef),
 	}
 	// Fallback URL if missing: build a valid, canonical-ish scrutin link
 	if strings.TrimSpace(law.URL) == "" {

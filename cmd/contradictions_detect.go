@@ -37,7 +37,14 @@ type pairInfo struct {
 	// from the KNN neighbor search, used to gate the dedup-merge check on the
 	// "not a contradiction" path. 0 when unknown (e.g. the --check-all path).
 	similarity float64
+	// queued marks a pair a producer asked for (fact_pair_queue): it bypasses
+	// the external-verb filter — the producer vouches for the pairing.
+	queued bool
 }
+
+// queuedPairsPerPersonPerNight bounds how many queued pairs one person's
+// detection consumes per run; the rest stay queued for the next night.
+const queuedPairsPerPersonPerNight = 300
 
 // contradictionDedupSimFloor is the minimum KNN cosine similarity for the
 // contradiction-pass dedup net to even ask the LLM "same claim?" on a
@@ -297,9 +304,42 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 		_ = readTx.Rollback(ctx)
 	}
 
+	// Queued pairs: producers (e.g. frpolitics pairing a vote with what its
+	// author said in the same séance) asked for these regardless of embedding
+	// distance. Consumed (taken and deleted) here, budgeted per person, then
+	// they join the normal flow below (dedup, checked-pair filter, judge). A
+	// queued fact that is no longer active simply drops; anything not judged
+	// tonight is re-enqueued by the producer's next idempotent run. Appended
+	// AFTER the KNN candidates so a pair KNN also found keeps its similarity.
+	if !opts.DryRun {
+		if queued, qErr := storer.ConsumeQueuedPairsForPerson(ctx, person.ID, queuedPairsPerPersonPerNight); qErr != nil {
+			log.Error().Err(qErr).Str("person", person.Name).Msg("Failed to consume queued pairs; continuing with KNN only")
+		} else if len(queued) > 0 {
+			byID := make(map[int64]storage.FactWithEmbedding, len(facts))
+			for _, f := range facts {
+				byID[f.ID] = f
+			}
+			added := 0
+			for _, q := range queued {
+				a, okA := byID[q.FactAID]
+				b, okB := byID[q.FactBID]
+				if !okA || !okB {
+					continue
+				}
+				allPairs = append(allPairs, pairInfo{
+					factAID: a.ID, factAText: a.Text, factADate: a.PublishedAt,
+					factBID: b.ID, factBText: b.Text, factBDate: b.PublishedAt,
+					queued: true,
+				})
+				added++
+			}
+			log.Info().Str("person", person.Name).Int("queued", len(queued)).Int("usable", added).Msg("Consumed queued pairs into candidates")
+		}
+	}
+
 	// Deduplicate pairs and remove self-pairs
 	{
-		seen := make(map[string]struct{}, len(allPairs))
+		seen := make(map[string]int, len(allPairs))
 		dedupedPairs := make([]pairInfo, 0, len(allPairs))
 		selfPairs := 0
 		for _, pair := range allPairs {
@@ -312,9 +352,11 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 				idA, idB = idB, idA
 			}
 			key := fmt.Sprintf("%d-%d", idA, idB)
-			if _, exists := seen[key]; !exists {
-				seen[key] = struct{}{}
+			if idx, exists := seen[key]; !exists {
+				seen[key] = len(dedupedPairs)
 				dedupedPairs = append(dedupedPairs, pair)
+			} else if pair.queued {
+				dedupedPairs[idx].queued = true
 			}
 		}
 		removed := len(allPairs) - len(dedupedPairs)
@@ -338,7 +380,7 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 		for _, pair := range allPairs {
 			verbA := factVerbMap[pair.factAID]
 			verbB := factVerbMap[pair.factBID]
-			if !categorizer.IsDirectClaimVerb(verbA) && !categorizer.IsDirectClaimVerb(verbB) {
+			if !pair.queued && !categorizer.IsDirectClaimVerb(verbA) && !categorizer.IsDirectClaimVerb(verbB) {
 				externalPairsSkipped++
 				continue
 			}

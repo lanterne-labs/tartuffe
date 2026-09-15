@@ -272,17 +272,27 @@ func TestFoldRefusedOnNewSharedFact(t *testing.T) {
 	}
 }
 
-// Without folding enabled, the historical behavior is preserved: the same-claim
-// fact is dropped.
+// Without folding enabled, the same-claim fact is not inserted — but its
+// source (and mentions) are attached to the existing fact as additional
+// provenance: the claim is known, where it was said again is new, and
+// provenance-based producers (same séance as a vote) depend on it.
 func TestSameClaimDroppedWhenFoldingDisabled(t *testing.T) {
 	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
 	fi := NewFactInserter(st, &countingStance{})
 
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
+	input := foldInput()
+	input.CoActorIDs = []int64{42}
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
 	if err != nil {
 		t.Fatalf("InsertFacts: %v", err)
 	}
 	if res.Inserted != 0 || res.Skipped != 1 {
 		t.Fatalf("fact must be dropped without folding, got %+v", res)
+	}
+	if len(st.linkedSources) != 1 || st.linkedSources[0][0] != int64(7) || st.linkedSources[0][1] != "http://ex/1" {
+		t.Fatalf("the skipped fact's source must be attached to the existing fact 7, got %v", st.linkedSources)
+	}
+	if got := st.mentioned[st.nextSrcID]; len(got) != 2 || got[0] != 1 || got[1] != 42 {
+		t.Fatalf("subject and co-actors must be mentioned on the attached source, got %v", got)
 	}
 }

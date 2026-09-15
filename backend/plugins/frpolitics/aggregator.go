@@ -62,6 +62,7 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			CanonicalVerb: deriveCollectiveVerb(pos),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
+			SeanceRef:     law.SeanceRef,
 			PublishedAt:   core.PickPublishedAt(law.VoteDate),
 		})
 	}

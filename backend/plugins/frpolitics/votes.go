@@ -29,6 +29,7 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary, objectPh
 			CanonicalVerb: deriveVerbFromPosition(ev.Position),
 			SourceURL:     law.URL,
 			LawKey:        law.Key,
+			SeanceRef:     law.SeanceRef,
 			PublishedAt:   core.PickPublishedAt(law.VoteDate),
 		})
 	}

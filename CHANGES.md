@@ -1823,3 +1823,29 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   ~9.5k verdicts judged before the column existed) are re-judged once — the "recheck
   everything since the first facts" the user asked for. Replaces the one-off date-cutoff
   re-baseline. Limit that remains: pairs never within KNN reach are never judged at all.
+
+## Generic fact-pair queue + same-séance pairing (2026-09-15)
+
+- fact_pair_queue: any producer can ask the detector to judge (person, fact A, fact B)
+  regardless of embedding distance. The nightly detection CONSUMES queued pairs (taken and
+  deleted atomically, 300 per person per night, oldest first) into the normal per-person flow
+  (dedup, already-checked filter, judge, fact_pair_checks); queued pairs bypass the
+  external-verb filter — the producer vouches for them. Transient by design: a pair not
+  judged tonight (fact gone, judge error) is re-created by the producer's next idempotent
+  run, never leaked. Review lesson: "delete after recording" leaked rows whenever a person's
+  pairs were all filtered before judging; consume-on-take has no such path.
+- Same-claim facts now keep their provenance: when the inserter drops a restatement (tier-1
+  auto-dedupe or the LLM same-claim judge, drop mode), the new source and its mentions are
+  attached to the existing fact. The claim was known; where it was said again is new — and
+  "repeated the position in séance S2, then voted the other way in S2" only pairs if S2's
+  source reaches the surviving fact. Folded members resolve to their meta in the producer.
+- First producer (frpolitics): the Assemblée séance id. scrutin.seanceRef and the transcript's
+  <seanceRef> are the SAME identifier (verified: same ref → same day), so both vote sources and
+  transcript sources now carry metadata seance_ref, and one set-based SQL
+  (EnqueueFactPairsBySharedSourceKey) queues every (what they said in the sitting, how they
+  voted in the sitting) pair per person — no name matching, no amendement resolution needed,
+  ensemble/article votes included. Older vote sources get the key via
+  `dm plugin frpolitics --mode backfill-seance-ref` (Scrutins archive, law_key → seanceRef).
+- Why a queue rather than a second candidate source inside the detector: the pairing rule is
+  provenance-specific (frpolitics knows what a séance is), the judging is not; the queue keeps
+  the detector generic and lets future producers (news mentioning a scrutin, …) plug in.

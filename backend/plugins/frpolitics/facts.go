@@ -27,6 +27,8 @@ type FactRecord struct {
 	SourceURL string
 	// LawKey is a minimal identifier recorded in fact source metadata
 	LawKey string
+	// SeanceRef is the séance the vote was held in (see Law.SeanceRef)
+	SeanceRef string
 	// LawTitle is the full legal title of the law
 	LawTitle string
 	// LawShortTitle is the AI-derived short title
@@ -156,6 +158,9 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		}
 		if firstRec.SourceURL != "" {
 			metadata["source_url"] = firstRec.SourceURL
+		}
+		if firstRec.SeanceRef != "" {
+			metadata["seance_ref"] = firstRec.SeanceRef
 		}
 
 		// Build original quote that includes law key and titles for traceability

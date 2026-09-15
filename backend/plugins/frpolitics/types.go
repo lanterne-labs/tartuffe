@@ -14,6 +14,11 @@ type Law struct {
 	Legislature int
 	// VoteDate is the date/time of the vote if known
 	VoteDate *time.Time
+	// SeanceRef is the Assemblée's séance id the scrutin was held in
+	// (scrutin.seanceRef, e.g. RUANR5L17S2026IDS29979) — the same id the
+	// séance transcripts carry, which is how a vote and what its author said
+	// in the same sitting get paired without embeddings.
+	SeanceRef string
 }
 
 // VotePosition represents a standardized vote stance

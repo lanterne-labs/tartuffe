@@ -159,6 +159,20 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 			Msg("Daily pipeline: re-opened stale negative pair verdicts for re-judging under the current rulebook")
 	}
 
+	// Structural pairs: what a person said in a séance versus how they voted
+	// in that same séance (shared seance_ref on both sources) are queued for
+	// the detector regardless of embedding distance. The queue is generic;
+	// frpolitics is its first producer. After the eviction so a re-opened
+	// pair is queued tonight rather than tomorrow.
+	if n, qErr := frpolitics.EnqueueSameSeancePairs(ctx, storer); qErr != nil {
+		log.Error().Err(qErr).Msg("Daily pipeline: same-séance pair enqueue failed")
+	} else {
+		total, _ := storer.CountQueuedPairs(ctx)
+		if n > 0 || total > 0 {
+			log.Info().Int("enqueued", n).Int("queue_size", total).Msg("Daily pipeline: same-séance (transcript, vote) pairs queued for detection")
+		}
+	}
+
 	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
 	if contraErr != nil {
 		log.Error().Err(contraErr).Msg("Daily pipeline: contradiction detection failed")

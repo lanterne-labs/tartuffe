@@ -34,6 +34,7 @@ func loadDebatsFixture(t *testing.T) *compteRendu {
 func TestParseCompteRendu_MetadataPointsParagraphs(t *testing.T) {
 	cr := loadDebatsFixture(t)
 	require.Equal(t, "CRSANR5L17S2026O1N274", cr.UID)
+	require.Equal(t, "RUANR5L17S2026IDS30722", cr.SeanceRef, "seanceRef is the pairing key with scrutins")
 	require.Equal(t, 17, cr.Legislature)
 	require.Equal(t, time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC), cr.SeanceDate)
 	require.Equal(t, "mercredi 17 juin 2026", cr.DateSeanceJour)

@@ -14,6 +14,9 @@ type fakeInserterStorer struct {
 	inserted   int
 	nextFactID int64
 	nextSrcID  int64
+	// linkedSources records every LinkSourceToFact call as (factID, sourceURL).
+	linkedSources [][2]any
+	mentioned     map[int64][]int64 // sourceID -> person ids
 }
 
 func (f *fakeInserterStorer) FindOrInsertPersons(ctx context.Context, names []string) ([]int64, error) {
@@ -38,10 +41,15 @@ func (f *fakeInserterStorer) DeleteFact(ctx context.Context, factID int64) error
 
 func (f *fakeInserterStorer) LinkSourceToFact(ctx context.Context, factID int64, sourceURL, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (int64, error) {
 	f.nextSrcID++
+	f.linkedSources = append(f.linkedSources, [2]any{factID, sourceURL})
 	return f.nextSrcID, nil
 }
 
 func (f *fakeInserterStorer) LinkPersonsToSourceMention(ctx context.Context, sourceID int64, personIDs []int64) error {
+	if f.mentioned == nil {
+		f.mentioned = map[int64][]int64{}
+	}
+	f.mentioned[sourceID] = append(f.mentioned[sourceID], personIDs...)
 	return nil
 }
 

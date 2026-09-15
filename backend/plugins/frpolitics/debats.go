@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -86,6 +87,7 @@ type DebatsStats struct {
 // compteRendu is the parsed subset of one séance file.
 type compteRendu struct {
 	UID            string
+	SeanceRef      string // the Assemblée's séance id, shared with scrutin.seanceRef
 	Legislature    int
 	SeanceDate     time.Time
 	DateSeanceJour string // "lundi 26 janvier 2026"
@@ -444,6 +446,9 @@ func ingestDebateDocument(ctx context.Context, storer *storage.PostgresStorer, e
 		if input.Lang == "" {
 			input.Lang = "fr"
 		}
+		if ref := strings.TrimSpace(doc.CR.SeanceRef); ref != "" {
+			input.Metadata["seance_ref"] = ref
+		}
 		r, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 		if err != nil {
 			return res, fmt.Errorf("inserting fact %d/%d: %w", i+1, len(kept), err)
@@ -683,6 +688,8 @@ func parseCompteRendu(r io.Reader) (*compteRendu, error) {
 			switch {
 			case t.Name.Local == "uid" && depth == 2:
 				metaField = "uid"
+			case t.Name.Local == "seanceRef" && depth == 2:
+				metaField = "seanceRef"
 			case depth == 3 && path[1] == "metadonnees":
 				metaField = t.Name.Local
 			case t.Name.Local == "point" && attr(t, "code_grammaire") == "TITRE_TEXTE_DISCUSSION":
@@ -727,6 +734,8 @@ func parseCompteRendu(r io.Reader) (*compteRendu, error) {
 				switch metaField {
 				case "uid":
 					cr.UID += v
+				case "seanceRef":
+					cr.SeanceRef += v
 				case "dateSeance":
 					if len(v) >= 8 {
 						if d, err := time.Parse("20060102", v[:8]); err == nil {
@@ -786,4 +795,56 @@ func parseCompteRendu(r io.Reader) (*compteRendu, error) {
 		cr.Legislature = 17
 	}
 	return cr, nil
+}
+
+// EnqueueSameSeancePairs asks the contradiction detector to judge, for every
+// person, each (transcript fact, vote fact) pair whose sources carry the same
+// Assemblée séance id — what the person said in a sitting versus how they
+// voted in that sitting — regardless of embedding distance. Idempotent; the
+// daily pipeline calls it right before detection.
+func EnqueueSameSeancePairs(ctx context.Context, storer *storage.PostgresStorer) (int, error) {
+	return storer.EnqueueFactPairsBySharedSourceKey(ctx, debatsSourceType, "assemblee_law_page", "seance_ref", "frpolitics:same-seance")
+}
+
+// BackfillVoteSeanceRefs stamps seance_ref on vote sources ingested before the
+// key existed, from the Scrutins archive (law_key = legislature-numero).
+// Returns the number of sources updated.
+func BackfillVoteSeanceRefs(ctx context.Context, storer *storage.PostgresStorer, legislature int) (int, error) {
+	if legislature <= 0 {
+		legislature = 17
+	}
+	body, err := downloadCached(ctx, fmt.Sprintf("https://data.assemblee-nationale.fr/static/openData/repository/%d/loi/scrutins/Scrutins.json.zip", legislature), getCacheDir(), 24*time.Hour)
+	if err != nil {
+		return 0, fmt.Errorf("downloading scrutins: %w", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return 0, fmt.Errorf("reading scrutins archive: %w", err)
+	}
+	byLawKey := map[string]string{}
+	for _, f := range zr.File {
+		if !strings.HasSuffix(strings.ToLower(f.Name), ".json") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			log.Warn().Err(err).Str("file", f.Name).Msg("frpolitics: cannot open scrutin entry")
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(rc, 10<<20))
+		rc.Close()
+		if err != nil {
+			log.Warn().Err(err).Str("file", f.Name).Msg("frpolitics: cannot read scrutin entry")
+			continue
+		}
+		var sj scrutinJSON
+		if err := json.Unmarshal(data, &sj); err != nil {
+			log.Warn().Err(err).Str("file", f.Name).Msg("frpolitics: cannot parse scrutin entry")
+			continue
+		}
+		if ref := strings.TrimSpace(sj.Scrutin.SeanceRef); ref != "" {
+			byLawKey[fmt.Sprintf("%d-%d", int(sj.Scrutin.Legislature), int(sj.Scrutin.Numero))] = ref
+		}
+	}
+	return storer.SetFactSourceMetadataByLawKey(ctx, "assemblee_law_page", "seance_ref", byLawKey)
 }

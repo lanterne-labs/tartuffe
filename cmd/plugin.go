@@ -37,7 +37,7 @@ func init() {
 	pluginCmd.AddCommand(frpoliticsCmd)
 
 	// Flags for frpolitics
-	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), 'both' (votes then news), or 'debats' (séance transcripts)")
+	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), 'both' (votes then news), 'debats' (séance transcripts), or 'backfill-seance-ref' (stamp seance_ref on old vote sources + queue same-séance pairs)")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
 	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD (auto-derives legislatures)")
@@ -99,8 +99,8 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate mode
-	if mode != "votes" && mode != "news" && mode != "both" && mode != "debats" {
-		return fmt.Errorf("invalid mode %q: must be 'votes', 'news', 'both' or 'debats'", mode)
+	if mode != "votes" && mode != "news" && mode != "both" && mode != "debats" && mode != "backfill-seance-ref" {
+		return fmt.Errorf("invalid mode %q: must be 'votes', 'news', 'both', 'debats' or 'backfill-seance-ref'", mode)
 	}
 
 	// Parse since date (--since takes priority; --last-years and --from-year are convenience shorthands)
@@ -145,6 +145,25 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 				log.Warn().Str("leg", p).Msg("invalid legislature")
 			}
 		}
+	}
+
+	// One-off: stamp seance_ref on vote sources ingested before the key
+	// existed, then queue the same-séance pairs.
+	if mode == "backfill-seance-ref" {
+		leg := 17
+		if len(legs) == 1 {
+			leg = legs[0]
+		}
+		n, err := frpolitics.BackfillVoteSeanceRefs(ctx, storer, leg)
+		if err != nil {
+			return err
+		}
+		q, err := frpolitics.EnqueueSameSeancePairs(ctx, storer)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("seance_ref backfilled on %d vote sources; %d same-séance pairs queued\n", n, q)
+		return nil
 	}
 
 	// Séance transcripts: separate engine, shares the AN actor ids with the

@@ -4,6 +4,7 @@ import (
 	"context"
 	"digital-mirror/backend/metrics"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -351,6 +352,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Bool("both_external", bothExternal).
 							Str("fact", truncate(input.NormalizedFactText, 80)).
 							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
+						fi.attachProvenance(ctx, sf.ID, subjectID, input)
 						return 0, 0, false, nil
 					}
 				}
@@ -386,7 +388,11 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Bool("folding", fi.foldingEnabled()).
 							Str("fact", truncate(input.NormalizedFactText, 80)).
 							Msg("Same-claim fact (LLM gray-zone adjudication)")
-						if fi.foldingEnabled() {
+						if !fi.foldingEnabled() {
+							fi.attachProvenance(ctx, sf.ID, subjectID, input)
+							return 0, 0, false, nil
+						}
+						{
 							// Never fold a shared (co-actor) fact: folding marks the
 							// member fact 'duplicate' GLOBALLY, so a shared vote fact
 							// matched by one subject's news claim would vanish from
@@ -407,7 +413,6 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							foldTarget = &sfCopy
 							break
 						}
-						return 0, 0, false, nil
 					}
 				}
 			}
@@ -482,6 +487,37 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Msg("Inserted fact and routed through stance")
 
 	return factID, subjectID, true, nil
+}
+
+// attachProvenance links the source (and its mentions) of a same-claim fact
+// that is NOT being inserted to the existing fact it restates. The claim is
+// already known; what is new is where and when it was said again — a second
+// article, or the same position repeated in another séance — and producers
+// that pair facts by provenance (e.g. a séance id shared with a vote) need
+// that source on the surviving fact. Best-effort: failures are logged, the
+// skip decision stands.
+func (fi *FactInserter) attachProvenance(ctx context.Context, existingFactID, subjectID int64, input StoreFactInput) {
+	if strings.TrimSpace(input.SourceURL) == "" {
+		return
+	}
+	sourceID, err := fi.storer.LinkSourceToFact(ctx, existingFactID, input.SourceURL, input.OriginalQuote, input.PublishedAt, input.SourceType, input.Metadata)
+	if err != nil {
+		log.Warn().Err(err).Int64("existing_fact_id", existingFactID).Str("url", input.SourceURL).
+			Msg("Same-claim fact skipped; could not attach its source to the existing fact")
+		return
+	}
+	mentionIDs := []int64{subjectID}
+	for _, id := range input.CoActorIDs {
+		if id > 0 && id != subjectID {
+			mentionIDs = append(mentionIDs, id)
+		}
+	}
+	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, mentionIDs); err != nil {
+		log.Warn().Err(err).Int64("existing_fact_id", existingFactID).Int64("source_id", sourceID).
+			Msg("Same-claim fact skipped; could not attach its mentions to the existing fact's new source")
+	}
+	log.Info().Int64("existing_fact_id", existingFactID).Int64("source_id", sourceID).Str("url", input.SourceURL).
+		Msg("Same-claim fact skipped; source attached to the existing fact as additional provenance")
 }
 
 func (fi *FactInserter) foldingEnabled() bool {
