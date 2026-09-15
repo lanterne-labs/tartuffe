@@ -122,6 +122,15 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(fanoutErr).Msg("Daily pipeline: stance fan-out failed")
 	}
 
+	// Step 3c: Séance transcripts, daily feed — what tracked persons said in
+	// the hemicycle over the last few days, extracted as their own words so
+	// tonight's detection sees them. The historical backfill runs LAST (step
+	// 9) under a wall-clock deadline.
+	debatsErr := runDebatsDailyStep(ctx, storer)
+	if debatsErr != nil {
+		log.Error().Err(debatsErr).Msg("Daily pipeline: débats daily feed failed")
+	}
+
 	// Step 4: Stance merge sweep. Looks for stances that should be merged per
 	// LLM-vetted centroid clustering, applies the merges, and re-detects
 	// contradictions across previously-separated facts. Catches the cross-stance
@@ -200,6 +209,14 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(trErr).Msg("Daily pipeline: translation phase failed")
 	}
 
+	// Step 9 (last, deadline-bound): débats backfill of the 2025-2026 session,
+	// newest séances first, until debatsBackfillDeadlineHour local time. Self-
+	// terminating: once every document is recorded it processes nothing.
+	backfillErr := runDebatsBackfillStep(ctx, storer)
+	if backfillErr != nil {
+		log.Error().Err(backfillErr).Msg("Daily pipeline: débats backfill failed")
+	}
+
 	elapsed := time.Since(start)
 
 	// Classify the run once; both the Telegram message and the pipeline_runs row
@@ -211,7 +228,7 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		{"targets", targetsErr}, {"news", newsErr}, {"twitter-discover", discoverErr},
 		{"twitter", twitterErr}, {"frpolitics", fpErr}, {"stance-fanout", fanoutErr}, {"stance-merge", mergeErr},
 		{"contradictions", contraErr}, {"photos", photosErr}, {"contradiction-audit", auditErr},
-		{"translate", trErr},
+		{"translate", trErr}, {"debats-daily", debatsErr}, {"debats-backfill", backfillErr},
 	}
 	var stepErrs []error
 	var errParts []string
@@ -433,6 +450,49 @@ func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) erro
 
 	err := frpolitics.Run(ctx, storer, opts)
 	log.Info().Dur("elapsed", time.Since(start)).Err(err).Msg("Frpolitics step finished")
+	return err
+}
+
+// Débats scheduling. The daily feed covers the last debatsDailyWindowDays of
+// séances (the AN archive is refreshed ~02:05 UTC, the cron starts 01:00 UTC,
+// so "yesterday" is often only available the following night). The backfill
+// covers the current session from debatsBackfillSince, newest first, and
+// stops starting documents at debatsBackfillDeadlineHour Europe/Paris.
+const (
+	debatsDailyWindowDays      = 4
+	debatsBackfillDeadlineHour = 11
+	debatsBackfillSince        = "2025-10-01"
+)
+
+func runDebatsDailyStep(ctx context.Context, storer *storage.PostgresStorer) error {
+	start := time.Now()
+	stats, err := frpolitics.RunDebats(ctx, storer, frpolitics.DebatsOptions{
+		Since: time.Now().AddDate(0, 0, -debatsDailyWindowDays),
+	})
+	log.Info().Dur("elapsed", time.Since(start)).Int("documents", stats.Documents).Int("processed", stats.Processed).
+		Int("facts", stats.Facts).Int("errors", stats.Errors).Err(err).Msg("Daily pipeline: débats daily feed done")
+	return err
+}
+
+func runDebatsBackfillStep(ctx context.Context, storer *storage.PostgresStorer) error {
+	loc, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		return fmt.Errorf("loading Europe/Paris timezone: %w", err)
+	}
+	now := time.Now().In(loc)
+	deadline := time.Date(now.Year(), now.Month(), now.Day(), debatsBackfillDeadlineHour, 0, 0, 0, loc)
+	if !now.Before(deadline) {
+		log.Info().Time("now", now).Time("deadline", deadline).Msg("Daily pipeline: débats backfill window already closed; skipping")
+		return nil
+	}
+	since, _ := time.Parse("2006-01-02", debatsBackfillSince)
+	start := time.Now()
+	stats, err := frpolitics.RunDebats(ctx, storer, frpolitics.DebatsOptions{
+		Since: since, NewestFirst: true, Deadline: deadline,
+	})
+	log.Info().Dur("elapsed", time.Since(start)).Int("pending_before", stats.Pending).Int("processed", stats.Processed).
+		Int("facts", stats.Facts).Int("errors", stats.Errors).Int("pending_after", stats.PendingAfter).
+		Bool("deadline_hit", stats.DeadlineHit).Err(err).Msg("Daily pipeline: débats backfill done")
 	return err
 }
 

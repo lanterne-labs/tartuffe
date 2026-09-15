@@ -1773,3 +1773,37 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - `dm stances refresh-metadata --full` rebuilds from every fact (rolling fold when too big).
 - Design note: the creation placeholder summary IS the first fact's text, so the second
   fact folds onto a correct seed; a never-summarized stance folds from scratch.
+
+## AN débats: séance transcripts become first-person facts (2026-09-15)
+
+- mirror-2xw. New source: the Assemblée's daily Syceron export (one zip, whole legislature,
+  one XML per séance). Every paragraph carries the speaker's AN actor id — the same id as
+  persons.attributes.assemblee_id — so attribution is a join, never a name match; the
+  ordre-du-jour point names the texte (n°), and art/adt/ssadt name the article/amendement
+  under discussion (the structural link to the votes). Permalinks are rebuilt from the uid
+  (session kind + parliamentary year) and numSeanceJour/dateSeanceJour, with the paragraph
+  id as anchor — verified live for every session kind.
+- Unit of extraction = one document per (speaker, séance): the speaker's substantive
+  paragraphs (≥300 chars, not the chair, not heckles) under a header naming the sitting and
+  the texte, with a bracketed marker before each change of article/amendement (a rapporteur
+  gives forty "avis" on forty amendments in one séance — one header would mis-attribute
+  thirty-nine). 70% fewer LLM calls than one per intervention and better context. The shared extractor runs with transcript instructions ("every sentence is the
+  target's own words"); facts whose subject is not the speaker are dropped (quotes of
+  third parties); the official record is the verbatim quote; assemblee_debat is a
+  quote-required source type. Insertion goes through FactInserter like news, so dedupe,
+  stance routing and analyze apply — "said X in the hemicycle, voted Y" fires live since
+  votes sit in every voter's stances (mirror-py3).
+- Idempotence: debate_documents records every processed document, zero-fact ones included,
+  keyed by (cr_uid, actor_id) — NOT by the permalink, whose paragraph anchor moves when the
+  substantive threshold changes or the AN republishes a séance (all 601 files are still
+  "avant_JO"; the JO republish will hit the whole archive at once). Pending = archive
+  documents not in that table. MergePersons repoints the rows. Pipeline: Step 3c daily feed (séances of
+  the last 4 days — the archive lags a day) before merge/detection; Step 9 (last) backfill
+  of the 2025-2026 session, newest first, until 11:00 Europe/Paris (wall-clock deadline
+  instead of a count: the user chose to let the night run long). `dm plugin frpolitics
+  --mode debats --since --max-docs --newest-first` drives manual chunks.
+- Run hygiene: a streak of 10 failing documents aborts the run (outage), an all-failed run
+  is a step error, facts whose subject is not the speaker are counted and logged (product
+  question left open: the speaker's group as subject — "notre groupe demande…").
+- Measured on the full archive: 601 séances, 60k substantive tracked interventions
+  (74.6M chars); 2025-2026 session = 9,669 documents; ~65 documents per sitting day.

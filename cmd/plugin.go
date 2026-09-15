@@ -37,7 +37,9 @@ func init() {
 	pluginCmd.AddCommand(frpoliticsCmd)
 
 	// Flags for frpolitics
-	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), or 'both' (votes then news)")
+	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), 'both' (votes then news), or 'debats' (séance transcripts)")
+	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
+	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
 	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD (auto-derives legislatures)")
 	frpoliticsCmd.Flags().Int("last-years", 0, "process votes from the last N years, e.g. --last-years 2 (auto-derives since date and legislatures)")
 	frpoliticsCmd.Flags().Int("from-year", 0, "process votes starting from Jan 1 of this year, e.g. --from-year 2022 (auto-derives legislatures)")
@@ -97,18 +99,18 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate mode
-	if mode != "votes" && mode != "news" && mode != "both" {
-		return fmt.Errorf("invalid mode %q: must be 'votes', 'news', or 'both'", mode)
+	if mode != "votes" && mode != "news" && mode != "both" && mode != "debats" {
+		return fmt.Errorf("invalid mode %q: must be 'votes', 'news', 'both' or 'debats'", mode)
 	}
 
 	// Parse since date (--since takes priority; --last-years and --from-year are convenience shorthands)
 	var since *time.Time
 	if sinceStr != "" {
-		if t, err := time.Parse("2006-01-02", sinceStr); err == nil {
-			since = &t
-		} else {
-			log.Warn().Str("since", sinceStr).Msg("invalid --since format, expected YYYY-MM-DD")
+		t, err := time.Parse("2006-01-02", sinceStr)
+		if err != nil {
+			return fmt.Errorf("invalid --since %q: expected YYYY-MM-DD", sinceStr)
 		}
+		since = &t
 	} else if lastYears > 0 {
 		t := time.Now().AddDate(-lastYears, 0, 0)
 		since = &t
@@ -143,6 +145,31 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 				log.Warn().Str("leg", p).Msg("invalid legislature")
 			}
 		}
+	}
+
+	// Séance transcripts: separate engine, shares the AN actor ids with the
+	// votes path. --since bounds the séance dates; --max-docs / --newest-first
+	// drive a manual backfill chunk.
+	if mode == "debats" {
+		maxDocs, _ := cmd.Flags().GetInt("max-docs")
+		newestFirst, _ := cmd.Flags().GetBool("newest-first")
+		dopts := frpolitics.DebatsOptions{MaxDocs: maxDocs, NewestFirst: newestFirst}
+		if since != nil {
+			dopts.Since = *since
+		}
+		if len(legs) > 1 {
+			return fmt.Errorf("--mode debats processes one legislature per run, got %v", legs)
+		}
+		if len(legs) == 1 {
+			dopts.Legislature = legs[0]
+		}
+		stats, err := frpolitics.RunDebats(ctx, storer, dopts)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\n=== DEBATS RESULTS ===\nSéances in range: %d\nDocuments: %d (pending before: %d)\nAttempted: %d, processed: %d, facts: %d (skipped %d, dropped non-speaker subject %d), no-fact docs: %d, errors: %d\nPending after: %d, deadline hit: %v, elapsed: %.0fs\n",
+			stats.Seances, stats.Documents, stats.Pending, stats.Attempted, stats.Processed, stats.Facts, stats.FactsSkipped, stats.FactsDroppedSubject, stats.NoFacts, stats.Errors, stats.PendingAfter, stats.DeadlineHit, stats.ElapsedSeconds)
+		return nil
 	}
 
 	// Set up options

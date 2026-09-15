@@ -36,3 +36,15 @@ facts_rebuild_progress.json
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+
+# frpolitics downloaded AN archives (hundreds of MB; downloadCached rebuilds them)
+backend/plugins/frpolitics/asset/cache/*_Scrutins.json.zip
+backend/plugins/frpolitics/asset/cache/*_syseron.xml.zip
+backend/plugins/frpolitics/asset/cache/Amendements_*.json.zip
+scoped_persons*.txt
+
+# frpolitics downloaded AN archives (hundreds of MB; downloadCached rebuilds them)
+backend/plugins/frpolitics/asset/cache/*_Scrutins.json.zip
+backend/plugins/frpolitics/asset/cache/*_syseron.xml.zip
+backend/plugins/frpolitics/asset/cache/Amendements_*.json.zip
+scoped_persons*.txt

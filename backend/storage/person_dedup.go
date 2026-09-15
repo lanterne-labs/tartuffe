@@ -217,6 +217,7 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		{"person_links_src", `UPDATE person_links pl SET src_person_id=$2 WHERE pl.src_person_id=$1 AND pl.dst_person_id<>$2 AND NOT EXISTS (SELECT 1 FROM person_links x WHERE x.src_person_id=$2 AND x.dst_person_id=pl.dst_person_id AND x.link_type=pl.link_type)`},
 		{"person_links_dst", `UPDATE person_links pl SET dst_person_id=$2 WHERE pl.dst_person_id=$1 AND pl.src_person_id<>$2 AND NOT EXISTS (SELECT 1 FROM person_links x WHERE x.dst_person_id=$2 AND x.src_person_id=pl.src_person_id AND x.link_type=pl.link_type)`},
 		{"news_search_log", `UPDATE news_search_log SET person_id=$2 WHERE person_id=$1`},
+		{"debate_documents", `UPDATE debate_documents SET person_id=$2 WHERE person_id=$1`},
 		{"rss_feeds", `UPDATE rss_feeds SET person_id=$2 WHERE person_id=$1`},
 	}
 	for _, r := range repoints {

@@ -80,6 +80,8 @@ func TestEmptyQuoteGuard(t *testing.T) {
 		{"news whitespace quote skipped", "news", "   \n\t ", false},
 		{"news with quote inserted", "news", "exact snippet from article", true},
 		{"vote empty quote inserted", "assemblee_law_page", "", true},
+		{"debate empty quote skipped", "assemblee_debat", "", false},
+		{"debate with quote inserted", "assemblee_debat", "je le dis ici", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

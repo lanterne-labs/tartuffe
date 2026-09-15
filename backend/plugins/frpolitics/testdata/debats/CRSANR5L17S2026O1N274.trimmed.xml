@@ -1,0 +1,1019 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<compteRendu xmlns="http://schemas.assemblee-nationale.fr/referentiel">
+  <uid>CRSANR5L17S2026O1N274</uid>
+  <seanceRef>RUANR5L17S2026IDS30722</seanceRef>
+  <sessionRef>SCR5A2026O1</sessionRef>
+  <metadonnees>
+    <dateSeance>20260617140000000</dateSeance>
+    <dateSeanceJour>mercredi 17 juin 2026</dateSeanceJour>
+    <numSeanceJour>1</numSeanceJour>
+    <numSeance>274</numSeance>
+    <typeAssemblee>AN</typeAssemblee>
+    <legislature>17</legislature>
+    <session>Session ordinaire 2025-2026</session>
+    <nomFichierJo>20260274</nomFichierJo>
+    <validite>valide</validite>
+    <etat>complet</etat>
+    <diffusion>public</diffusion>
+    <version>avant_JO</version>
+    <environnement>PROD</environnement>
+    <heureGeneration>2026-06-24T14:45:44.000+02:00</heureGeneration>
+    <sommaire>
+      <presidentSeance id_syceron="4124013">Présidence de Mme Yaël Braun-Pivet</presidentSeance>
+      <sommaire1 valeur_pts_odj="1">
+        <titreStruct id_syceron="4124017">
+          <intitule>Questions au gouvernement</intitule>
+          <sousIntitule>0</sousIntitule>
+        </titreStruct>
+        <sommaire2>
+          <titreStruct id_syceron="4124019">
+            <intitule>Protoxyde d’azote</intitule>
+          </titreStruct>
+          <para id_syceron="4124021">M. David Magnier</para>
+          <para id_syceron="4124028">M. Laurent Nuñez, ministre de l’intérieur</para>
+          <para id_syceron="4124033">M. David Magnier</para>
+          <para id_syceron="4124036">M. Laurent Nuñez, ministre</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124037">
+            <intitule>Déficit du régime des retraites</intitule>
+          </titreStruct>
+          <para id_syceron="4124039">M. Pierre Cazeneuve</para>
+          <para id_syceron="4124051">M. Jean-Pierre Farandou, ministre du travail et des solidarités</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124062">
+            <intitule>Lutte contre les violences sexuelles sur les enfants</intitule>
+          </titreStruct>
+          <para id_syceron="4124064">Mme Mathilde Panot</para>
+          <para id_syceron="4124070">M. Sébastien Lecornu, premier ministre</para>
+          <para id_syceron="4124145">Mme Mathilde Panot</para>
+          <para id_syceron="4124147">M. Sébastien Lecornu, premier ministre</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124152">
+            <intitule>Aide publique au développement</intitule>
+          </titreStruct>
+          <para id_syceron="4124154">M. Dominique Potier</para>
+          <para id_syceron="4124165">M. Jean-Noël Barrot, ministre de l’Europe et des affaires étrangères</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124169">
+            <intitule>Évolution des effectifs des collèges</intitule>
+          </titreStruct>
+          <para id_syceron="4124171">M. Vincent Rolland</para>
+          <para id_syceron="4124175">M. Édouard Geffray, ministre de l’éducation nationale</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124183">
+            <intitule>Adaptation au réchauffement climatique</intitule>
+          </titreStruct>
+          <para id_syceron="4124185">Mme Julie Laernoes</para>
+          <para id_syceron="4124192">Mme Monique Barbut, ministre de la transition écologique, de la biodiversité et des négociations internationales sur le climat et la nature</para>
+          <para id_syceron="4124259">Mme Julie Laernoes</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124262">
+            <intitule>Europe de la défense</intitule>
+          </titreStruct>
+          <para id_syceron="4124264">Mme Sabine Thillaye</para>
+          <para id_syceron="4124268">Mme Alice Rufo, ministre déléguée auprès de la ministre des armées et des anciens combattants</para>
+          <para id_syceron="4124272">Mme Sabine Thillaye</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124273">
+            <intitule>Prime spécifique d’installation pour les fonctionnaires polynésiens</intitule>
+          </titreStruct>
+          <para id_syceron="4124275">Mme Nicole Sanquer</para>
+          <para id_syceron="4124278">M. David Amiel, ministre de l’action et des comptes publics</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124280">
+            <intitule>Filière de l’ameublement</intitule>
+          </titreStruct>
+          <para id_syceron="4124282">M. Dominique Paillat</para>
+          <para id_syceron="4124286">M. Serge Papin, ministre des petites et moyennes entreprises, du commerce, de l’artisanat, du tourisme et du pouvoir d’achat</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124288">
+            <intitule>Espaces protégés en Guyane</intitule>
+          </titreStruct>
+          <para id_syceron="4124290">M. Davy Rimane</para>
+          <para id_syceron="4124302">Mme Monique Barbut, ministre de la transition écologique, de la biodiversité et des négociations internationales sur le climat et la nature</para>
+          <para id_syceron="4124309">M. Davy Rimane</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124310">
+            <intitule>Atteinte à la vie privée d’un député</intitule>
+          </titreStruct>
+          <para id_syceron="4124312">M. Vincent Trébuchet</para>
+          <para id_syceron="4124319">Mme Maud Bregeon, ministre déléguée, porte-parole du gouvernement, et ministre déléguée chargée de l’énergie</para>
+          <para id_syceron="4124322">M. Vincent Trébuchet</para>
+          <sommaire3>
+            <titreStruct id_syceron="4124857">
+              <intitule>
+                <italique>Suspension et reprise de la séance<br /></italique>
+              </intitule>
+            </titreStruct>
+            <presidentSeance id_syceron="4124860">Présidence de Mme Nadège Abomangoli</presidentSeance>
+          </sommaire3>
+        </sommaire2>
+      </sommaire1>
+      <sommaire1 valeur_pts_odj="2">
+        <titreStruct id_syceron="4124863">
+          <intitule>Accès au logement pour les travailleurs des services publics</intitule>
+          <sousIntitule>0</sousIntitule>
+        </titreStruct>
+        <para id_syceron="4124864" />
+        <sommaire2>
+          <titreStruct id_syceron="4124866">
+            <intitule>Présentation</intitule>
+          </titreStruct>
+          <para id_syceron="4124868">Mme Annaïg Le Meur, rapporteure de la commission mixte paritaire</para>
+          <para id_syceron="4124880">M. Vincent Jeanbrun, ministre de la ville et du logement</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124893">
+            <intitule>Discussion générale</intitule>
+          </titreStruct>
+          <para id_syceron="4124895">Mme Catherine Ibled</para>
+          <para id_syceron="4124920">M. François Piquemal</para>
+          <para id_syceron="4124931">M. Iñaki Echaniz</para>
+          <para id_syceron="4124941">M. Thibault Bazin</para>
+          <para id_syceron="4124205">Mme Danielle Simonnet</para>
+          <para id_syceron="4124218">M. Mickaël Cosson</para>
+          <para id_syceron="4124234">Mme Béatrice Piron</para>
+          <para id_syceron="4124248">Mme Valérie Létard</para>
+          <para id_syceron="4124340">M. Stéphane Peu</para>
+          <para id_syceron="4124348">M. Antoine Valentin</para>
+          <para id_syceron="4124357">M. Frédéric Falcon</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124391">
+            <intitule>Vote sur l’ensemble</intitule>
+          </titreStruct>
+        </sommaire2>
+      </sommaire1>
+      <sommaire1 valeur_pts_odj="3">
+        <titreStruct id_syceron="4124398">
+          <intitule>Relance des investissements dans le secteur de l’hydroélectricité</intitule>
+          <sousIntitule>0</sousIntitule>
+        </titreStruct>
+        <para id_syceron="4124399" />
+        <sommaire2>
+          <titreStruct id_syceron="4124401">
+            <intitule>Présentation</intitule>
+          </titreStruct>
+          <para id_syceron="4124403">Mme Marie-Noëlle Battistel, rapporteure de la commission mixte paritaire</para>
+          <para id_syceron="4124418">Mme Maud Bregeon, ministre déléguée, porte-parole du gouvernement, et ministre déléguée chargée de l’énergie</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124489">
+            <intitule>Discussion générale</intitule>
+          </titreStruct>
+          <para id_syceron="4124491">M. Éric Michoux</para>
+          <para id_syceron="4124502">M. Lionel Tivoli</para>
+          <para id_syceron="4124512">M. Jean-Luc Fugit</para>
+          <para id_syceron="4124669">M. Matthias Tavel</para>
+          <para id_syceron="4124686">M. Karim Benbrahim</para>
+          <para id_syceron="4124694">M. Vincent Rolland</para>
+          <para id_syceron="4125138">Mme Julie Laernoes</para>
+          <para id_syceron="4125151">Mme Louise Morel</para>
+          <para id_syceron="4125166">M. Xavier Roseren</para>
+          <para id_syceron="4124431">M. Joël Bruneau</para>
+          <para id_syceron="4124437">M. Julien Brugerolles</para>
+          <para id_syceron="4124448">Mme Marie-Noëlle Battistel, rapporteure</para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124453">
+            <intitule>Texte de la commission mixte paritaire</intitule>
+          </titreStruct>
+          <para>Amendements n<sup>os</sup> <lienAdt id_syceron="4124455"> 1, 2, 5, 3, 6, 4</lienAdt></para>
+        </sommaire2>
+        <sommaire2>
+          <titreStruct id_syceron="4124462">
+            <intitule>Vote sur l’ensemble</intitule>
+          </titreStruct>
+          <sommaire3>
+            <titreStruct id_syceron="4124469">
+              <intitule>
+                <italique>Suspension et reprise de la séance<br /></italique>
+              </intitule>
+            </titreStruct>
+          </sommaire3>
+        </sommaire2>
+      </sommaire1>
+      <sommaire1 valeur_pts_odj="4">
+        <titreStruct id_syceron="4124474">
+          <intitule>Pour une Corse autonome au sein de la République</intitule>
+          <sousIntitule>0</sousIntitule>
+        </titreStruct>
+        <para id_syceron="4124475" />
+        <sommaire2>
+          <titreStruct id_syceron="4124477">
+            <intitule>Discussion des articles<italique> (suite)<br /></italique></intitule>
+          </titreStruct>
+          <sommaire3>
+            <titreStruct id_syceron="4124479">
+              <intitule>Article unique<italique> (suite)<br /></italique></intitule>
+            </titreStruct>
+            <para>Amendements n<sup>os</sup> <lienAdt id_syceron="4124480"> 16</lienAdt>, <lienAdt id_syceron="4124556"> 69</lienAdt>, <lienAdt id_syceron="4126246"> 54</lienAdt></para>
+            <para id_syceron="4124560">M. Florent Boudié, rapporteur de la commission des lois constitutionnelles, de la législation et de l’administration générale de la République</para>
+            <para id_syceron="4124566">Mme Françoise Gatel, ministre de l’aménagement du territoire et de la décentralisation</para>
+            <para>Amendements n<sup>os</sup> <lienAdt id_syceron="4124580"> 55</lienAdt>, <lienAdt id_syceron="4124631"> 68</lienAdt>, <lienAdt id_syceron="4124642"> 35</lienAdt>, <lienAdt id_syceron="4124645"> 6</lienAdt>, <lienAdt id_syceron="4124653"> 82</lienAdt>, <lienAdt id_syceron="4124662"> 93</lienAdt></para>
+          </sommaire3>
+          <sommaire3>
+            <titreStruct id_syceron="4126011">
+              <intitule>
+                <italique>Suspension et reprise de la séance<br /></italique>
+              </intitule>
+            </titreStruct>
+          </sommaire3>
+        </sommaire2>
+      </sommaire1>
+      <sommaire1 valeur_pts_odj="5">
+        <titreStruct id_syceron="4126020">
+          <intitule>Ordre du jour de la prochaine séance</intitule>
+        </titreStruct>
+      </sommaire1>
+    </sommaire>
+  </metadonnees>
+  <contenu>
+    <quantiemes>
+      <journee>Première séance du mercredi 17 juin 2026</journee>
+      <session>Session ordinaire 2025-2026</session>
+    </quantiemes>
+    <ouvertureSeance nivpoint="1" valeur_ptsodj="0" ordinal_prise="1" id_preparation="2971230" ordre_absolu_seance="1" code_grammaire="OUV_SEAN_1_1" code_style="Présidence" code_parole="" sommaire="1" id_syceron="4124013" valeur="">
+      <orateurs />
+      <texte>Présidence de Mme Yaël Braun-Pivet</texte>
+      <paragraphe valeur_ptsodj="0" ordinal_prise="1" id_preparation="2971231" ordre_absolu_seance="2" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="OUV_SEAN_2_1" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124014" valeur="" roledebat="president">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="954.82">La séance est ouverte.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="0" ordinal_prise="1" id_preparation="2971232" ordre_absolu_seance="3" code_grammaire="OUV_SEAN_2_2" code_style="Info Italiques" code_parole="" sommaire="0" id_syceron="4124015" valeur="">
+        <orateurs />
+        <texte>
+          <italique>(La séance est ouverte à quatorze heures.)</italique>
+        </texte>
+      </paragraphe>
+    </ouvertureSeance>
+    <point nivpoint="1" valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971234" ordre_absolu_seance="5" code_grammaire="TITRE_TEXTE_DISCUSSION" code_style="Titre" code_parole="" sommaire="1" id_syceron="4124017" valeur="">
+      <orateurs />
+      <texte>Questions au gouvernement</texte>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971235" ordre_absolu_seance="6" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124018" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="957.64">L’ordre du jour appelle les questions au gouvernement.</texte>
+      </paragraphe>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971236" ordre_absolu_seance="7" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124019" valeur="">
+      <orateurs />
+      <texte>Protoxyde d’azote</texte>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971237" ordre_absolu_seance="8" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124020" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="961.36">La parole est à M. David Magnier.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971238" ordre_absolu_seance="9" id_acteur="PA841587" id_mandat="PM843149" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124021" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. David Magnier</nom>
+            <id>841587</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="974.94">Ma question s’adresse à M. le ministre de l’intérieur.<br />Il aura fallu attendre 2026 pour que le gouvernement s’attaque enfin au fléau du protoxyde d’azote au volant.<br />Vous êtes cruellement en retard. En avril 2022, votre ministère affirmait encore qu’il n’était pas opportun de créer un délit routier au motif que les consommateurs étaient trop jeunes pour conduire et qu’aucun appareil de dépistage n’existait. Quelle déconnexion tragique, sachant que les accidents mortels ont continué de sévir sur nos routes !<br />Aujourd’hui, vous changez d’avis – et c’est tant mieux –, mais votre texte comporte un immense angle mort : aucun appareil de détection n’est mentionné, vous renvoyez nos forces de l’ordre à la constatation d’une consommation manifeste. Les policiers et les gendarmes sont laissés sans aucun outil : ils devront juger à l’œil nu de l’hilarité et de l’euphorie d’un conducteur. C’est un bourbier juridique qui ouvrira la voie à une avalanche de contestations.<br />Pourtant, ces détecteurs existent et ils fonctionnent. Le Danemark équipe déjà ses forces de sécurité avec des dispositifs fiables, et – comble de l’absurdité – le fournisseur de nos voisins danois n’est autre qu’une entreprise française reconnue et récompensée par le prix du ministère de l’intérieur au concours Lépine de 2026. Le savoir-faire français sécurise les routes danoises, mais notre propre ministère refuse le dialogue avec une entreprise française, alors qu’il l’a ouvert avec des sociétés européennes selon les informations données par vos services.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971242" ordre_absolu_seance="14" id_acteur="PA720822" id_mandat="PM840318" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124025" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Bruno Bilde</nom>
+            <id>720822</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1039.04">C’est honteux !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971243" ordre_absolu_seance="15" id_acteur="PA841587" id_mandat="PM843149" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124026" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. David Magnier</nom>
+            <id>841587</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1067.50">Monsieur le ministre, ma question est simple : pourquoi refusez-vous d’inscrire dans la loi un mécanisme de détection qui forcerait une homologation ? Allez-vous, encore une fois, saborder une filière d’innovation française florissante ?<italique> (Applaudissements sur les bancs des groupes RN et UDR.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971244" ordre_absolu_seance="16" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124027" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1081.74">La parole est à M. le ministre de l’intérieur.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971245" ordre_absolu_seance="17" id_acteur="PA759834" id_mandat="-1" id_nomination_oe="PM873646" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124028" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Laurent Nuñez</nom>
+            <id>759834</id>
+            <qualite>ministre de l’intérieur</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1095.03">Le projet de loi Ripost crée en effet un délit de conduite sous l’emprise manifeste de substances comme le protoxyde d’azote. Il contient également des dispositions visant à mieux sanctionner, par des procédures pénales renforcées et par des procédures administratives, sa consommation, son transport et sa vente.<br />Selon vous, on aurait mis un peu de temps, mais je vous invite à regarder ce qui se passe dans tous les pays d’Europe : tout le monde s’attaque à la consommation du protoxyde d’azote en tant que produit stupéfiant, un phénomène qui, admettez-le, est assez nouveau. Les préfets et les maires n’ont pas attendu : ils prennent déjà des arrêtés d’interdiction. Quant aux services de police et de gendarmerie, ils luttent contre les filières d’écoulement illégales de ce produit. Beaucoup de choses sont donc déjà faites.<br />Votre question sur la capacité à tester les conducteurs pour attester de la conduite sous l’emprise du protoxyde d’azote est pertinente. Je vous concède que ces tests ne sont pas simples. Des évaluations sont en cours. Le laboratoire central de la préfecture de police est d’ailleurs en train de tester un équipement. Plusieurs entreprises commercialisent des instruments de mesure de la consommation de protoxyde d’azote.<br />Le choix de tel ou tel instrument ne relève pas forcément de la loi. Le plus important est d’avoir créé trois délits relatifs à la consommation et à la vente de protoxyde d’azote et à la conduite sous emprise de ce produit. Si un choix doit être fait, il le sera, comme chaque fois que nous le pouvons, en privilégiant la souveraineté nationale ou européenne. Ce n’est pas toujours possible, ce qui s’est passé avec Palantir nous le rappelle. Nous allons donc à l’essentiel – la souveraineté –, comme l’a indiqué le premier ministre, mais, parfois, ce choix n’est pas possible.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971249" ordre_absolu_seance="21" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124032" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1174.08">La parole est à M. David Magnier.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971250" ordre_absolu_seance="22" id_acteur="PA841587" id_mandat="PM843149" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124033" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. David Magnier</nom>
+            <id>841587</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1211.39">Vous n’avez pas vraiment répondu à la question de savoir si vous travaillez avec deux entreprises européennes, comme l’a indiqué votre cabinet.<br />Il faut savoir qu’en 2003, lors de l’examen du texte sur la conduite sous l’influence de stupéfiants, un dispositif de contrôle avait été inscrit dans la loi afin de faire avancer l’homologation des moyens de détection. Aujourd’hui, juridiquement, nous sommes face à un mur.<italique> (Applaudissements sur les bancs des groupes RN et UDR.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971252" ordre_absolu_seance="24" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124035" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1231.16">La parole est à M. le ministre.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971253" ordre_absolu_seance="25" id_acteur="PA759834" id_mandat="-1" id_nomination_oe="PM873646" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124036" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Laurent Nuñez</nom>
+            <id>759834</id>
+            <qualite>ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1238.76">J’ai six secondes pour dire que vous me faites un procès d’intention. Nous prévoyons une mesure législative créant un délit, qui sera évidemment contrôlé.<italique> (Applaudissements sur quelques bancs des groupes EPR et Dem. – Mme Michèle Tabarot applaudit également.)</italique> Vous me faites ce procès sans doute parce que des entreprises sont venues frapper à votre porte pour se plaindre de ne pas avoir été contactées : voilà plutôt où est le problème.<italique> (Applaudissements sur quelques bancs des groupes EPR, DR et Dem.)</italique></texte>
+      </paragraphe>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971254" ordre_absolu_seance="26" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124037" valeur="">
+      <orateurs />
+      <texte>Déficit du régime des retraites</texte>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971255" ordre_absolu_seance="27" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124038" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1256.98">La parole est à M. Pierre Cazeneuve.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971256" ordre_absolu_seance="28" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124039" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1264.04">Ma question s’adresse à M. le ministre du travail et des solidarités.<br />Dans le film<italique> Don’t Look Up : Déni cosmique</italique>,…</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971256" ordre_absolu_seance="29" id_acteur="PA795746" id_mandat="PM843584" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124087" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Antoine Léaument</nom>
+            <id>795746</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1268.59">Excellent film !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971256" ordre_absolu_seance="30" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124086" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1269.88">…une satire apocalyptique, le réalisateur Adam McKay dénonce l’aveuglement des dirigeants américains…</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971256" ordre_absolu_seance="31" id_acteur="PA720892" id_mandat="PM840420" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124089" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Mathilde Panot</nom>
+            <id>720892</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1274.42">On pourrait parler du vôtre ! Vous avez même été condamnés pour cette raison !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971256" ordre_absolu_seance="32" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124088" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1277.65">…et d’une partie de la classe politico-médiatique face à l’imminence d’un crash d’astéroïde menaçant l’humanité tout entière.<italique> (Exclamations sur plusieurs bancs du groupe LFI-NFP.)</italique><br />En France, dans une réalité bien réelle cette fois-ci, un autre déni cosmique est en cours. Remplacez Meryl Streep par Marine Le Pen, Jonah Hill par Jean-Luc Mélenchon et Cate Blanchett par Marine Tondelier et vous aurez le casting du<italique> Don’t Look Up</italique> français. Pas d’astéroïde ici, bien sûr, mais un déficit du système des retraites qui explose, une pyramide démographique qui déraille et un modèle social qui fonce dans le mur.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971258" ordre_absolu_seance="34" id_acteur="PA841023" id_mandat="PM842645" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124041" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre-Yves Cadalen</nom>
+            <id>841023</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1290.39">Vous n’avez pas compris le film !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971259" ordre_absolu_seance="35" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124042" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1310.60">Tout est sous nos yeux : les chiffres sont connus, la trajectoire est documentée, mais, collectivement, nous faisons comme si nous pouvions encore attendre. Nous refusons d’écouter les économistes qui tirent la sonnette d’alarme : 420 milliards d’euros par an, 25 % de la dépense publique, 50 % du déficit si l’on regarde avec honnêteté les cotisations patronales artificiellement gonflées pour mieux masquer ce déficit.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971259" ordre_absolu_seance="36" id_acteur="PA795844" id_mandat="PM843515" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124091" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Karen Erodi</nom>
+            <id>795844</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1335.41">La faute à qui ?</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971259" ordre_absolu_seance="37" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124090" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1336.38">Ces chiffres vont continuer à se dégrader, puisque l’Insee indique dans son dernier rapport que le nombre de personnes de plus de 65 ans en France va augmenter de 6 millions dans les quarante prochaines années.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971260" ordre_absolu_seance="38" id_acteur="PA721270" id_mandat="PM840438" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124043" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Stéphane Peu</nom>
+            <id>721270</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1347.44">Cela fait dix ans que vous êtes au pouvoir ! Vous avez ruiné le pays !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971261" ordre_absolu_seance="39" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124044" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1347.68">Qui va supporter ce poids toujours plus important de la solidarité nationale ?<italique> (Exclamations sur les bancs du groupe LFI-NFP.)</italique> Les actifs et leurs enfants après eux. Le Conseil d’orientation des retraites vient de publier son rapport annuel qui indique que, pour simplement maintenir le système à flot, il faudrait décaler l’âge de départ à 66,7 ans en 2070.<br />Notre responsabilité est de dire la vérité aux Français.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971264" ordre_absolu_seance="41" id_acteur="PA330909" id_mandat="PM842399" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124047" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Vincent Descoeur</nom>
+            <id>330909</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1362.18">Sur la taille de l’astéroïde !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971265" ordre_absolu_seance="42" id_acteur="PA795864" id_mandat="PM840429" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124048" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Pierre Cazeneuve</nom>
+            <id>795864</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1370.84">Ma question est donc simple : quelles mesures le gouvernement entend-il prendre, notamment dans le prochain budget, pour contenir le déficit de notre système de retraite, limiter les effets de la suspension de la réforme des retraites et engager un véritable pacte intergénérationnel ?<italique> (Applaudissements sur plusieurs bancs des groupes EPR, DR et Dem.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971265" ordre_absolu_seance="43" id_acteur="PA335612" id_mandat="PM843398" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124129" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Paul Lecoq</nom>
+            <id>335612</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1384.20">Non, ne touchez plus à rien ! Partez !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971266" ordre_absolu_seance="44" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124049" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1387.62">La parole est à M. le ministre du travail et des solidarités.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971267" ordre_absolu_seance="45" id_acteur="PA642847" id_mandat="PM843056" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124050" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Thibault Bazin</nom>
+            <id>642847</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1392.69">Et des astéroïdes !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971268" ordre_absolu_seance="46" id_acteur="PA873624" id_mandat="-1" id_nomination_oe="PM873671" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124051" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Pierre Farandou</nom>
+            <id>873624</id>
+            <qualite>ministre du travail et des solidarités</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1393.43">Je partage avec vous le constat de la gravité de la situation.<italique> (Exclamations sur plusieurs bancs des groupes LFI-NFP, EcoS et GDR.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971268" ordre_absolu_seance="47" id_acteur="PA335612" id_mandat="PM843398" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124130" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Paul Lecoq</nom>
+            <id>335612</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1395.34">C’est un sketch humoristique ?</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971269" ordre_absolu_seance="48" id_acteur="PA721270" id_mandat="PM840438" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124052" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Stéphane Peu</nom>
+            <id>721270</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1396.37">C’est Pif et Hercule !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971270" ordre_absolu_seance="49" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124053" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1398.14">S’il vous plaît, un peu de silence.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971271" ordre_absolu_seance="50" id_acteur="PA873624" id_mandat="-1" id_nomination_oe="PM873671" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124054" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Pierre Farandou</nom>
+            <id>873624</id>
+            <qualite>ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1400.56">Le dernier rapport annuel du COR le dit : le déséquilibre de notre système de retraite est structurel et il fait peser un risque majeur sur les finances de l’État et sur les prochaines générations, à moyen et à long terme. Non seulement notre système reste structurellement déficitaire, mais ce déficit augmente et nous devons consacrer toujours plus de notre richesse nationale aux dépenses de retraite.<br />Il faut donc repenser notre système de retraite et, pour cela, engager une réflexion collective. C’est tout le sens de la Conférence travail emploi retraites qui se tient depuis le mois de décembre dernier pour étudier le sujet dans toutes ses composantes, poser les constats et creuser les pistes de compromis possibles. Elle rendra ses conclusions en septembre.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971273" ordre_absolu_seance="52" id_acteur="PA335612" id_mandat="PM843398" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124056" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Paul Lecoq</nom>
+            <id>335612</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1432.33">C’est le pompier pyromane !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971274" ordre_absolu_seance="53" id_acteur="PA873624" id_mandat="-1" id_nomination_oe="PM873671" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124057" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Pierre Farandou</nom>
+            <id>873624</id>
+            <qualite>ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1440.29">En parallèle, plusieurs partis politiques ont présenté des pistes de solutions alternatives ou complémentaires au système actuel. Je ne doute pas que lors des discussions budgétaires de cet automne, nous aurons l’occasion de discuter des leviers qui permettront à notre système de retraite de continuer à remplir ses objectifs. Peut-être avons-nous aussi parfois voulu protéger davantage les retraités que les actifs. Le débat reste ouvert.<br />Je voudrais profiter de votre question pour appeler à une prise de conscience collective. Chaque dépense nouvelle en matière de retraite représente un coût que nous ne pouvons plus nous permettre en l’état actuel des choses. Chaque dispositif dérogatoire au droit commun adopté pour une nouvelle catégorie de la population mine un peu plus la perspective d’un système équilibré et équitable. Chaque économie qui n’est pas votée dégrade durablement le solde de la sécurité sociale. Chaque remise en question de mesures visant à éviter les effets d’aubaine est une hypothèque de plus sur notre avenir.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971276" ordre_absolu_seance="55" id_acteur="PA794154" id_mandat="PM842918" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124059" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Claude Raux</nom>
+            <id>794154</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1472.59">Cherchez des ressources !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971276" ordre_absolu_seance="56" id_acteur="PA721270" id_mandat="PM840438" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124133" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Stéphane Peu</nom>
+            <id>721270</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1476.71">Deux cent onze milliards de cadeaux aux entreprises !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971277" ordre_absolu_seance="57" id_acteur="PA873624" id_mandat="-1" id_nomination_oe="PM873671" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124060" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Jean-Pierre Farandou</nom>
+            <id>873624</id>
+            <qualite>ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1496.03">Par votre question, vous attirez solennellement l’attention de l’Assemblée nationale sur ce sujet majeur et crucial. Je suis convaincu que le financement de la sécurité sociale et, plus largement, l’avenir du système de retraite seront un enjeu essentiel du débat national de l’an prochain. Les Françaises et les Français trancheront.<italique> (Applaudissements sur quelques bancs des groupes EPR et Dem.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971278" ordre_absolu_seance="58" id_acteur="PA841845" id_mandat="PM843407" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124061" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Arnaud Saint-Martin</nom>
+            <id>841845</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1513.75">Quelle mauvaise pièce !</texte>
+      </paragraphe>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971279" ordre_absolu_seance="59" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124062" valeur="">
+      <orateurs />
+      <texte>Lutte contre les violences sexuelles sur les enfants</texte>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971280" ordre_absolu_seance="60" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124063" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1516.45">La parole est à Mme Mathilde Panot.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971281" ordre_absolu_seance="61" id_acteur="PA720892" id_mandat="PM840420" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124064" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Mathilde Panot</nom>
+            <id>720892</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1523.20">Monsieur le premier ministre, pas une de plus. Lundi encore, des collectifs féministes et enfantistes manifestaient partout en France pour rappeler une réalité massive : 160 000 enfants sont victimes de violences sexuelles chaque année, le plus souvent dans le cadre de la famille. Ces violences sont le produit d’un système de domination et réclament une révolution de société.<br />Mais tout cela, vous le savez. Dès 2023, la Commission indépendante sur l’inceste et les violences sexuelles faites aux enfants publiait quatre-vingt-deux recommandations, mais 75 % de ces mesures n’ont pas été mises en œuvre. Vous les avez délibérément ignorées, préférant la politique spectacle des coups de menton.<italique> (Applaudissements sur les bancs du groupe LFI-NFP. – M. Jean-Claude Raux applaudit également.)</italique><br />Que restera-t-il de ce drame ? Que restera-t-il, sinon le retour du débat sur la peine de mort, quand la stratégie de l’agresseur consiste précisément à faire porter sur l’enfant le poids des conséquences pour obtenir son silence ?<italique> (Applaudissements sur les bancs du groupe LFI-NFP.)</italique> Que restera-t-il, sinon la proposition d’allonger les peines de prison, alors que seules 3 % des plaintes aboutissent à une condamnation ? Que restera-t-il, sinon un président de la République niant la réalité du manque de moyens, quand notre pays compte quatre fois moins de procureurs que la moyenne européenne ?<italique> (Mêmes mouvements.)</italique> Que restera-t-il, sinon un ministre de la justice prêt à jeter les magistrats par-dessus bord pour se maintenir en poste ? « Seuls les lâches se défaussent sur leurs subordonnés », disait Darmanin en 2022. Nous ne pouvons que lui donner raison.<italique> (Mêmes mouvements.)</italique><br />Vos gesticulations sécuritaires n’empêcheront pas les crimes, mais les moyens financiers, si. Chaque année, depuis 2017, notre groupe demande les 3 milliards d’euros que vous refusez de donner aux associations. Mettez cet argent sur la table maintenant pour financer l’éducation à la vie affective et sexuelle, la médecine scolaire, la police judiciaire et la justice et l’aide sociale à l’enfance. Voilà ce qu’il faut pour enrayer la fabrique des agresseurs !<italique> (Applaudissements sur les bancs du groupe LFI-NFP ainsi que sur quelques bancs du groupe EcoS.)</italique><br />Monsieur le premier ministre, sachez que vous n’échapperez pas à la colère qui monte dans le pays, car ce qui se joue n’est pas une petite séquence médiatique délicate à passer. Ce qui se joue, c’est un mouvement populaire puissant contre le mépris et l’impunité.<italique> (Applaudissements sur les bancs du groupe LFI-NFP, dont les députés se lèvent, ainsi que sur quelques bancs du groupe EcoS. – Mme Anna Pic applaudit également.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971286" ordre_absolu_seance="66" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124069" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1642.98">La parole est à M. le premier ministre.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971287" ordre_absolu_seance="67" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124070" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1650.13">Madame la présidente Mathilde Panot, que restera-t-il de ce drame, dites-vous ? Il ne faudrait pas qu’il n’en reste que de la récupération et du cynisme politiques.<italique> (Protestations sur plusieurs bancs du groupe LFI-NFP.)</italique> Pardonnez-moi, mais la tonalité de votre question et la manière dont vous l’avez posée indiquent une volonté très forte de politiser ce qui se passe.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971288" ordre_absolu_seance="68" id_acteur="PA796018" id_mandat="PM843425" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124071" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Danielle Simonnet</nom>
+            <id>796018</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1666.07">Vous êtes à côté de la plaque !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971289" ordre_absolu_seance="69" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124072" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1677.58">S’il vous plaît, peut-on écouter M. le premier ministre ?</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971290" ordre_absolu_seance="70" id_acteur="PA794138" id_mandat="PM842909" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124073" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Ségolène Amiot</nom>
+            <id>794138</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1681.01">Le sujet est hautement politique !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971291" ordre_absolu_seance="71" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124074" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1682.31">S’il vous plaît, madame Amiot.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971292" ordre_absolu_seance="72" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124075" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1685.40">La première des choses sur lesquelles il faut que nous nous accordions, c’est notre capacité à faire face à cette violence endémique, qui appelle une réponse de la société tout entière pour lutter de « manière intégrale ». Nous y reviendrons. Cette capacité demande un minimum d’unité.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971293" ordre_absolu_seance="73" id_acteur="PA841215" id_mandat="PM842801" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124076" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Marie Mesmeur</nom>
+            <id>841215</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1702.00">Et des moyens !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971294" ordre_absolu_seance="74" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124077" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1702.30">La deuxième des choses, ce sont les moyens. J’ai été membre de gouvernements successifs, vous me l’avez suffisamment reproché, depuis maintenant neuf ans. Certains anciens premiers ministres sont ici présents.<italique> (Exclamations sur plusieurs bancs du groupe LFI-NFP.)</italique> Le seul fait qu’on ne puisse pas débattre sereinement et calmement dans cet hémicycle de ce sujet est une indication très claire de vos intentions politiciennes.<italique> (Applaudissements sur plusieurs bancs des groupes EPR, DR et Dem.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971295" ordre_absolu_seance="75" id_acteur="PA330909" id_mandat="PM842399" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124078" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Vincent Descoeur</nom>
+            <id>330909</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1721.63">Il a raison !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="1" id_preparation="2971296" ordre_absolu_seance="76" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124079" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1724.97">Ces gouvernements, que certains ont combattus et que d’autres ont soutenus, ont augmenté sans discontinuité depuis 2017 les moyens du ministère de la justice et du ministère de l’intérieur.<br />Est-ce que je forme le vœu que ces moyens continuent d’augmenter dans les années à venir ? Oui, mais nous avons fait notre part du chemin. Peut-être fallait-il en faire plus. Ça tombe bien : nous aurons l’occasion d’y revenir à l’automne pendant les discussions budgétaires.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971421" ordre_absolu_seance="78" id_acteur="PA796018" id_mandat="PM843425" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="INTERRUPTION_1_10" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124140" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Danielle Simonnet</nom>
+            <id>796018</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1746.53">Et les 3 milliards ?</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971422" ordre_absolu_seance="79" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124141" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1749.07">J’imagine que vous n’aurez pas le cynisme de brandir la menace de motions de censure avant même que ces discussions ne commencent et que vous laisserez se dérouler le débat, qui constituera un moment de vérité pour celles et ceux qui ont à cœur…<italique> (Exclamations sur les bancs du groupe LFI-NFP.)</italique><br />Si je ne peux pas répondre, je n’irai pas au bout de mon intervention !<italique> (Mêmes mouvements – Mme Ségolène Amiot fait mine de sangloter.)</italique> Le sujet est grave. Lundi après-midi s’est tenue une réunion de travail transpartisane à laquelle participaient un certain nombre de députés ayant cosigné la proposition de loi dite intégrale ainsi que certains ministres. Nous avons commencé à parler du fond, article par article, et à examiner, avec Mme la présidente de l’Assemblée nationale – si je puis me permettre de le dire publiquement –, ce qui peut être fait à la suite de la saisine et du travail du Conseil d’État. Le gouvernement veut avancer et il avancera.<br />Mais qu’en restera-t-il ? C’est un moment de vérité : soit vous souhaitez vous livrer à une manœuvre de récupération politicienne – c’est ce que j’ai cru entendre dans votre question, madame la présidente Panot –, soit vous ne le souhaitez pas et entendez sincèrement, sans cynisme, nous permettre de légiférer, de telle sorte que les semaines qui viennent soient utiles à la nation. Si c’est là votre intention, le gouvernement de la République répondra présent.<italique> (Applaudissements sur quelques bancs du groupe EPR.)</italique></texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971425" ordre_absolu_seance="82" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124144" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1765.21">La parole est à Mme Mathilde Panot.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971426" ordre_absolu_seance="83" id_acteur="PA720892" id_mandat="PM840420" id_nomination_oe="-1" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124145" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme Mathilde Panot</nom>
+            <id>720892</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1824.18">Dans la France de Macron, le Planning familial licencie.<italique> (Applaudissements sur les bancs du groupe LFI-NFP et sur plusieurs bancs du groupe EcoS.)</italique> Voilà la réalité ! Assumez vos responsabilités politiques : mettez les 3 milliards !</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971427" ordre_absolu_seance="84" id_acteur="PA721908" id_mandat="PM843467" id_nomination_oe="0" id_nomination_op="PM845400" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="0" id_syceron="4124146" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>Mme la présidente</nom>
+            <id>721908</id>
+            <qualite />
+          </orateur>
+        </orateurs>
+        <texte stime="1829.83">La parole est à M. le premier ministre.</texte>
+      </paragraphe>
+      <paragraphe valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971428" ordre_absolu_seance="85" id_acteur="PA643210" id_mandat="-1" id_nomination_oe="PM873637" id_nomination_op="-1" code_grammaire="PAROLE_GENERIQUE" code_style="NORMAL" code_parole="" sommaire="1" id_syceron="4124147" valeur="">
+        <orateurs>
+          <orateur>
+            <nom>M. Sébastien Lecornu</nom>
+            <id>643210</id>
+            <qualite>premier ministre</qualite>
+          </orateur>
+        </orateurs>
+        <texte stime="1836.54">Flagrant délit de récupération ! Quel est le rapport entre l’affaire Lyhanna et le Planning familial ?<italique> (Protestations vives et prolongées sur les bancs des groupes LFI-NFP et EcoS, dont plusieurs députés se lèvent. – Quelques députés du groupe DR s’exclament en retour.)</italique></texte>
+      </paragraphe>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971433" ordre_absolu_seance="94" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124152" valeur="">
+      <orateurs />
+      <texte>Aide publique au développement</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971450" ordre_absolu_seance="109" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124169" valeur="">
+      <orateurs />
+      <texte>Évolution des effectifs des collèges</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="2" id_preparation="2971464" ordre_absolu_seance="124" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124183" valeur="">
+      <orateurs />
+      <texte>Adaptation au réchauffement climatique</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="3" id_preparation="2971305" ordre_absolu_seance="147" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124262" valeur="">
+      <orateurs />
+      <texte>Europe de la défense</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="3" id_preparation="2971316" ordre_absolu_seance="159" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124273" valeur="">
+      <orateurs />
+      <texte>Prime spécifique d’installation pour les fonctionnaires polynésiens</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="3" id_preparation="2971323" ordre_absolu_seance="167" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124280" valeur="">
+      <orateurs />
+      <texte>Filière de l’ameublement</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="3" id_preparation="2971331" ordre_absolu_seance="176" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124288" valeur="">
+      <orateurs />
+      <texte>Espaces protégés en Guyane</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="1" ordinal_prise="4" id_preparation="2971350" ordre_absolu_seance="195" code_grammaire="QG_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124310" valeur="">
+      <orateurs />
+      <texte>Atteinte à la vie privée d’un député</texte>
+      <point nivpoint="99" valeur_ptsodj="1" ordinal_prise="5" id_preparation="2971366" ordre_absolu_seance="212" code_grammaire="SUSP_SEAN_PRES_1" code_style="Suspension rappel" code_parole="" sommaire="1" id_syceron="4124857" valeur="">
+        <orateurs />
+        <texte>
+          <italique>Suspension et reprise de la séance</italique>
+        </texte>
+        <changementPresidence nivpoint="100" valeur_ptsodj="1" ordinal_prise="5" id_preparation="2971369" ordre_absolu_seance="215" code_grammaire="SUSP_SEAN_PRES_1_2" code_style="Présidence" code_parole="" sommaire="1" id_syceron="4124860" valeur="">
+          <orateurs />
+          <texte>Présidence de Mme Nadège Abomangoli<br /> vice-présidente</texte>
+          </changementPresidence>
+      </point>
+    </point>
+    <point nivpoint="1" valeur_ptsodj="2" ordinal_prise="5" id_preparation="2971372" ordre_absolu_seance="218" code_grammaire="TITRE_TEXTE_DISCUSSION" code_style="Titre" code_parole="" sommaire="1" id_syceron="4124863" valeur=" (n[[o]] 2700)">
+      <orateurs />
+      <texte>Accès au logement pour les travailleurs des services publics</texte>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="2" ordinal_prise="5" id_preparation="2971373" ordre_absolu_seance="219" code_grammaire="SOUS_TITRE_TEXTE_DISCUSSION" code_style="Sous-tit_info" code_parole="" sommaire="1" id_syceron="4124864" valeur="">
+      <orateurs />
+      <texte>Commission mixte paritaire</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="2" ordinal_prise="5" id_preparation="2971375" ordre_absolu_seance="221" code_grammaire="PRESENTATION_1_0" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124866" valeur="">
+      <orateurs />
+      <texte>Présentation</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="2" ordinal_prise="5" id_preparation="2971402" ordre_absolu_seance="248" code_grammaire="DISC_GENERALE_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124893" valeur="" bibard="">
+      <orateurs />
+      <texte>Discussion générale</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="2" ordinal_prise="9" id_preparation="2971576" ordre_absolu_seance="395" code_grammaire="VOTE_ENS_CMP_S_1_10" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124391" valeur=" (n[[o]] 2700)">
+      <orateurs />
+      <texte>Vote sur l’ensemble</texte>
+      </point>
+    <point nivpoint="1" valeur_ptsodj="3" ordinal_prise="9" id_preparation="2971583" ordre_absolu_seance="402" code_grammaire="TITRE_TEXTE_DISCUSSION" code_style="Titre" code_parole="" sommaire="1" id_syceron="4124398" valeur=" (n[[o]] 2856)">
+      <orateurs />
+      <texte>Relance des investissements dans le secteur de l’hydroélectricité</texte>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="3" ordinal_prise="9" id_preparation="2971584" ordre_absolu_seance="403" code_grammaire="SOUS_TITRE_TEXTE_DISCUSSION" code_style="Sous-tit_info" code_parole="" sommaire="1" id_syceron="4124399" valeur="">
+      <orateurs />
+      <texte>Commission mixte paritaire</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="3" ordinal_prise="9" id_preparation="2971586" ordre_absolu_seance="405" code_grammaire="PRESENTATION_1_0" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124401" valeur="">
+      <orateurs />
+      <texte>Présentation</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="3" ordinal_prise="10" id_preparation="2971612" ordre_absolu_seance="433" code_grammaire="DISC_GENERALE_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124489" valeur="" bibard="">
+      <orateurs />
+      <texte>Discussion générale</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="3" ordinal_prise="13" id_preparation="2971870" ordre_absolu_seance="582" code_grammaire="DISC_ARTICLES_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124453" valeur=" (n[[o]] 2856)" bibard=" (n[[o]] 2856)" art="" adt="" ssadt="">
+      <orateurs />
+      <texte>Texte de la commission mixte paritaire</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="3" ordinal_prise="14" id_preparation="2971505" ordre_absolu_seance="592" code_grammaire="VOTE_ENS_CMP_S_1_10" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124462" valeur=" (n[[o]] 2856)">
+      <orateurs />
+      <texte>Vote sur l’ensemble</texte>
+      <point nivpoint="99" valeur_ptsodj="3" ordinal_prise="14" id_preparation="2971512" ordre_absolu_seance="599" code_grammaire="SUSP_SEANCE_1_1" code_style="Suspension rappel" code_parole="" sommaire="1" id_syceron="4124469" valeur="">
+        <orateurs />
+        <texte>
+          <italique>Suspension et reprise de la séance</italique>
+        </texte>
+        </point>
+    </point>
+    <point nivpoint="1" valeur_ptsodj="4" ordinal_prise="14" id_preparation="2971517" ordre_absolu_seance="604" code_grammaire="TITRE_TEXTE_DISCUSSION" code_style="Titre" code_parole="" sommaire="1" id_syceron="4124474" valeur=" (n[[o]] 2865)">
+      <orateurs />
+      <texte>Pour une Corse autonome au sein de la République</texte>
+    </point>
+    <point nivpoint="2" valeur_ptsodj="4" ordinal_prise="14" id_preparation="2971518" ordre_absolu_seance="605" code_grammaire="SOUS_TITRE_TEXTE_DISCUSSION" code_style="Sous-tit_info" code_parole="" sommaire="1" id_syceron="4124475" valeur="">
+      <orateurs />
+      <texte>Suite de la discussion d’un projet de loi constitutionnelle</texte>
+      </point>
+    <point nivpoint="2" valeur_ptsodj="4" ordinal_prise="14" id_preparation="2971520" ordre_absolu_seance="607" code_grammaire="DISC_ARTICLES_1_1" code_style="Sous-tit_p_cap" code_parole="" sommaire="1" id_syceron="4124477" valeur=" (n[[o]] 2865)" bibard=" (n[[o]] 2865)" art="" adt="" ssadt="">
+      <orateurs />
+      <texte>Discussion des articles<italique> (suite)</italique></texte>
+      </point>
+    <point nivpoint="3" valeur_ptsodj="4" ordinal_prise="14" id_preparation="2971522" ordre_absolu_seance="609" code_grammaire="DISC_ARTICLES_2_4" code_style="Sous-titre bdc" code_parole="" sommaire="1" id_syceron="4124479" valeur="" bibard=" (n[[o]] 2865)" art="" adt="" ssadt="">
+      <orateurs />
+      <texte>Article unique<italique> (suite)</italique></texte>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="14" id_preparation="2971523" ordre_absolu_seance="610" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_9_1" code_parole="" sommaire="1" id_syceron="4124480" valeur=" 16" bibard=" (n[[o]] 2865)" art="" adt=" 16" ssadt="">
+        <interExtraction nom_orateur="M. Paul-André Colombani" id_acteur="PA719286" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM842669">
+          </interExtraction>
+      </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="15" id_preparation="2971878" ordre_absolu_seance="615" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124556" valeur=" 69" bibard=" (n[[o]] 2865)" art="" adt=" 69" ssadt="">
+        <interExtraction nom_orateur="Mme Sandra Regol" id_acteur="PA794778" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM843239">
+          </interExtraction>
+      </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="15" id_preparation="2971878" ordre_absolu_seance="617" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4126246" valeur=" 54" bibard=" (n[[o]] 2865)" art="" adt=" 54" ssadt="">
+        <interExtraction nom_orateur="" id_acteur="PA0" id_nomination_oe="0" id_nomination_op="0" id_mandat="0">
+          </interExtraction>
+        </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="15" id_preparation="2971902" ordre_absolu_seance="640" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124580" valeur=" 55" bibard=" (n[[o]] 2865)" art="" adt=" 55" ssadt="">
+        <interExtraction nom_orateur="M. François Cormier-Bouligeon" id_acteur="PA719118" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM842501">
+          </interExtraction>
+        </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="16" id_preparation="2971808" ordre_absolu_seance="691" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_9_1" code_parole="" sommaire="1" id_syceron="4124631" valeur=" 68" bibard=" (n[[o]] 2865)" art="" adt=" 68" ssadt="">
+        <interExtraction nom_orateur="M. François Cormier-Bouligeon" id_acteur="PA719118" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM842501">
+          </interExtraction>
+        </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="16" id_preparation="2971819" ordre_absolu_seance="702" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124642" valeur=" 35" bibard=" (n[[o]] 2865)" art="" adt=" 35" ssadt="">
+        <interExtraction nom_orateur="M. Ugo Bernalicis" id_acteur="PA720430" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM843092">
+          </interExtraction>
+      </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="16" id_preparation="2971822" ordre_absolu_seance="705" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124645" valeur=" 6" bibard=" (n[[o]] 2865)" art="" adt=" 6" ssadt="">
+        <interExtraction nom_orateur="M. Philippe Juvin" id_acteur="PA346782" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM840426">
+          </interExtraction>
+      </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="16" id_preparation="2971830" ordre_absolu_seance="713" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124653" valeur=" 82" bibard=" (n[[o]] 2865)" art="" adt=" 82" ssadt="">
+        <interExtraction nom_orateur="M. Philippe Gosselin" id_acteur="PA266797" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM843071">
+          </interExtraction>
+        </point>
+      <point nivpoint="4" structure="Oui" valeur_ptsodj="4" ordinal_prise="16" id_preparation="2971839" ordre_absolu_seance="722" id_acteur="PA795228" id_mandat="PM840447" id_nomination_oe="0" id_nomination_op="PM873242" orateur="" code_grammaire="DISC_ARTICLES_3_1" code_parole="" sommaire="1" id_syceron="4124662" valeur=" 93" bibard=" (n[[o]] 2865)" art="" adt=" 93" ssadt="">
+        <interExtraction nom_orateur="M. Stéphane Peu" id_acteur="PA721270" id_nomination_oe="-1" id_nomination_op="-1" id_mandat="PM840438">
+          </interExtraction>
+        <point nivpoint="99" valeur_ptsodj="4" ordinal_prise="20" id_preparation="2971772" ordre_absolu_seance="810" code_grammaire="SUSP_SEANCE_1_1" code_style="Suspension rappel" code_parole="" sommaire="1" id_syceron="4126011" valeur="">
+          <orateurs />
+          <texte>
+            <italique>Suspension et reprise de la séance</italique>
+          </texte>
+          </point>
+      </point>
+    </point>
+    <finSeance>
+      <point nivpoint="1" valeur_ptsodj="5" ordinal_prise="20" id_preparation="2971781" ordre_absolu_seance="819" code_grammaire="FIN_SEAN_1_2" code_style="Titre" code_parole="" sommaire="1" id_syceron="4126020" valeur="">
+        <orateurs />
+        <texte>Ordre du jour de la prochaine séance</texte>
+        </point>
+    </finSeance>
+  </contenu>
+</compteRendu>

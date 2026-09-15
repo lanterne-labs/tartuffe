@@ -21,7 +21,7 @@ func isQuoteMissing(err error) bool { return errors.Is(err, errMissingQuote) }
 // from metadata and are intentionally excluded so they are never rejected here.
 func isWebExtractedSource(sourceType string) bool {
 	switch sourceType {
-	case "news", "twitter":
+	case "news", "twitter", "assemblee_debat":
 		return true
 	default:
 		return false
