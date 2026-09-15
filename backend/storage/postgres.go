@@ -1644,49 +1644,50 @@ func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (m
 	return s.loadPairSet(ctx, "fact_pair_checks", personID)
 }
 
-// EvictStalePairChecks deletes up to `limit` of the OLDEST negative pair
-// verdicts recorded before `before`, and reports how many pre-cutoff rows
-// remain. This drives the nightly re-baseline (mirror-0wn): verdicts issued by
-// the pre-voting single-sample judges are re-opened in small tranches, the
-// nightly detector re-judges whichever pairs still surface as candidates, and
-// their fresh checked_at keeps them from ever being re-picked. Once no row
-// predates the cutoff the caller's step is a permanent no-op. Rows with
-// is_contradiction=true are never touched — recorded contradictions are the
-// auditor's jurisdiction, not the detector's.
-func (s *PostgresStorer) EvictStalePairChecks(ctx context.Context, before time.Time, limit int) (deleted, remaining int, err error) {
+// EvictStaleJudgedPairs deletes up to `limit` of the OLDEST negative pair
+// verdicts whose judge_hash is not currentHash (NULL included), so the nightly
+// detector re-judges those pairs under the current rulebook. Returns the
+// number deleted and how many stale negatives remain. Positive verdicts are
+// never touched here — they are the auditor's jurisdiction. Self-terminating:
+// once every negative carries the current hash, nothing is deleted.
+func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHash string, limit int) (deleted, remaining int, err error) {
 	res, err := s.pool.Exec(ctx, `
 		WITH victims AS (
 			SELECT id FROM fact_pair_checks
-			WHERE is_contradiction = false AND checked_at < $1
+			WHERE is_contradiction = false AND judge_hash IS DISTINCT FROM $1
 			ORDER BY checked_at ASC
 			LIMIT $2
 		)
-		DELETE FROM fact_pair_checks WHERE id IN (SELECT id FROM victims)`, before, limit)
+		DELETE FROM fact_pair_checks WHERE id IN (SELECT id FROM victims)`, currentHash, limit)
 	if err != nil {
-		return 0, 0, fmt.Errorf("evicting stale pair checks: %w", err)
+		return 0, 0, fmt.Errorf("evicting stale judged pairs: %w", err)
 	}
 	deleted = int(res.RowsAffected())
 	err = s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND checked_at < $1`,
-		before).Scan(&remaining)
+		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND judge_hash IS DISTINCT FROM $1`,
+		currentHash).Scan(&remaining)
 	if err != nil {
-		return deleted, 0, fmt.Errorf("counting stale pair checks: %w", err)
+		return deleted, 0, fmt.Errorf("counting stale judged pairs: %w", err)
 	}
 	return deleted, remaining, nil
 }
 
 // RecordPairChecksBatch records multiple pair checks efficiently.
-func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int64, results []PairCheckResult) error {
+// judgeHash is the rulebook the verdicts were produced under
+// (contradiction.JudgeRulebookHash); the nightly re-judge step evicts negatives
+// whose hash is not the current one.
+func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int64, judgeHash string, results []PairCheckResult) error {
 	if len(results) == 0 {
 		return nil
 	}
 
 	// Build batch insert query
 	query := `
-		INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction, judge_hash)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
 		SET is_contradiction = EXCLUDED.is_contradiction,
+		    judge_hash = EXCLUDED.judge_hash,
 		    checked_at = NOW()`
 
 	batch := &pgx.Batch{}
@@ -1696,7 +1697,7 @@ func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int
 		if factAID > factBID {
 			factAID, factBID = factBID, factAID
 		}
-		batch.Queue(query, personID, factAID, factBID, result.IsContradiction)
+		batch.Queue(query, personID, factAID, factBID, result.IsContradiction, judgeHash)
 	}
 
 	br := s.pool.SendBatch(ctx, batch)

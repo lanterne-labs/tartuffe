@@ -561,7 +561,7 @@ func processSyncContradictions(ctx context.Context, storer *storage.PostgresStor
 			}
 
 			if !opts.DryRun && len(pairResults) > 0 {
-				if err := storer.RecordPairChecksBatch(ctx, pp.personID, pairResults); err != nil {
+				if err := storer.RecordPairChecksBatch(ctx, pp.personID, contradiction.JudgeRulebookHash(), pairResults); err != nil {
 					log.Error().Err(err).Str("person", pp.personName).Msg("Failed to record pair checks")
 				}
 			}

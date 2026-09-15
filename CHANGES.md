@@ -1803,7 +1803,23 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   instead of a count: the user chose to let the night run long). `dm plugin frpolitics
   --mode debats --since --max-docs --newest-first` drives manual chunks.
 - Run hygiene: a streak of 10 failing documents aborts the run (outage), an all-failed run
-  is a step error, facts whose subject is not the speaker are counted and logged (product
-  question left open: the speaker's group as subject — "notre groupe demande…").
+  is a step error, facts whose subject is not the speaker are counted per document in
+  debate_documents.facts_dropped (cron logs are not retrievable after the fact, so the table
+  is the durable channel; product question left open: the speaker's group as subject —
+  "notre groupe demande…"). First prod document (the host container, 2026-09-15): 96 s,
+  2 facts kept, 1 dropped; the same document re-extracted locally kept 3 — the extractor's
+  subject choice is nondeterministic on borderline facts.
 - Measured on the full archive: 601 séances, 60k substantive tracked interventions
   (74.6M chars); 2025-2026 session = 9,669 documents; ~65 documents per sitting day.
+
+## Negative pair verdicts expire with the rulebook (2026-09-15)
+
+- A NO in fact_pair_checks used to be final forever; only YESes were re-examined (the
+  auditor pins each contradiction with a hash of its inputs INCLUDING the prompt, so a prompt
+  change re-audits every YES). Now every pair verdict stores judge_hash = hash(detector
+  prompt + refutation prompt + vote count); the nightly pipeline re-opens the oldest negatives
+  whose hash is not the current one (1500/night, right before detection) so a rulebook change
+  re-judges the whole backlog of NOs within days, and does nothing otherwise. NULL hashes (the
+  ~9.5k verdicts judged before the column existed) are re-judged once — the "recheck
+  everything since the first facts" the user asked for. Replaces the one-off date-cutoff
+  re-baseline. Limit that remains: pairs never within KNN reach are never judged at all.

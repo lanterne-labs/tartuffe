@@ -67,13 +67,14 @@ func TestDebateDocumentsPendingSet(t *testing.T) {
 	// Upsert: recording again with a moved anchor URL updates the row.
 	require.NoError(t, storer.RecordDebateDocument(ctx, DebateDocumentRecord{
 		DebateDocumentKey: keys[1], SourceURL: "https://an.test/seance-1#250", PersonID: personID,
-		SeanceDate: day, Paragraphs: 3, Chars: 1200, FactsCount: 3,
+		SeanceDate: day, Paragraphs: 3, Chars: 1200, FactsCount: 3, FactsDropped: 1,
 	}))
-	var n int
+	var n, dropped int
 	var u string
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		"SELECT facts_count, source_url FROM debate_documents WHERE cr_uid = $1 AND actor_id = $2", keys[1].CRUID, keys[1].ActorID).Scan(&n, &u))
+		"SELECT facts_count, facts_dropped, source_url FROM debate_documents WHERE cr_uid = $1 AND actor_id = $2", keys[1].CRUID, keys[1].ActorID).Scan(&n, &dropped, &u))
 	require.Equal(t, 3, n)
+	require.Equal(t, 1, dropped)
 	require.Equal(t, "https://an.test/seance-1#250", u)
 	pending, err = storer.FilterUnprocessedDebateDocuments(ctx, keys)
 	require.NoError(t, err)

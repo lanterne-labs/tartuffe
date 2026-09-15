@@ -17,12 +17,13 @@ type DebateDocumentKey struct {
 // DebateDocumentRecord is one processed transcript document.
 type DebateDocumentRecord struct {
 	DebateDocumentKey
-	SourceURL  string
-	PersonID   int64
-	SeanceDate time.Time
-	Paragraphs int
-	Chars      int
-	FactsCount int
+	SourceURL    string
+	PersonID     int64
+	SeanceDate   time.Time
+	Paragraphs   int
+	Chars        int
+	FactsCount   int
+	FactsDropped int // extractor facts whose subject was not the speaker
 }
 
 // FilterUnprocessedDebateDocuments returns, in input order, the keys that have
@@ -69,13 +70,13 @@ func (s *PostgresStorer) FilterUnprocessedDebateDocuments(ctx context.Context, k
 // RecordDebateDocument marks a transcript document as processed (upsert).
 func (s *PostgresStorer) RecordDebateDocument(ctx context.Context, rec DebateDocumentRecord) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO debate_documents (cr_uid, actor_id, source_url, person_id, seance_date, paragraphs, chars, facts_count)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO debate_documents (cr_uid, actor_id, source_url, person_id, seance_date, paragraphs, chars, facts_count, facts_dropped)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (cr_uid, actor_id) DO UPDATE
 		SET source_url = EXCLUDED.source_url, person_id = EXCLUDED.person_id,
 		    paragraphs = EXCLUDED.paragraphs, chars = EXCLUDED.chars,
-		    facts_count = EXCLUDED.facts_count, processed_at = NOW()`,
-		rec.CRUID, rec.ActorID, rec.SourceURL, rec.PersonID, rec.SeanceDate, rec.Paragraphs, rec.Chars, rec.FactsCount)
+		    facts_count = EXCLUDED.facts_count, facts_dropped = EXCLUDED.facts_dropped, processed_at = NOW()`,
+		rec.CRUID, rec.ActorID, rec.SourceURL, rec.PersonID, rec.SeanceDate, rec.Paragraphs, rec.Chars, rec.FactsCount, rec.FactsDropped)
 	if err != nil {
 		return fmt.Errorf("recording debate document %s/%s: %w", rec.CRUID, rec.ActorID, err)
 	}

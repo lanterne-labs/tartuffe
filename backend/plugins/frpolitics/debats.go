@@ -454,7 +454,7 @@ func ingestDebateDocument(ctx context.Context, storer *storage.PostgresStorer, e
 
 	if err := storer.RecordDebateDocument(ctx, storage.DebateDocumentRecord{
 		DebateDocumentKey: doc.key(), SourceURL: doc.SourceURL, PersonID: doc.Person.ID,
-		SeanceDate: seanceDate, Paragraphs: len(doc.Paragraphs), Chars: doc.Chars, FactsCount: res.Inserted,
+		SeanceDate: seanceDate, Paragraphs: len(doc.Paragraphs), Chars: doc.Chars, FactsCount: res.Inserted, FactsDropped: res.DroppedSubject,
 	}); err != nil {
 		return res, err
 	}

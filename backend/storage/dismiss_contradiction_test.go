@@ -131,7 +131,7 @@ func TestDeleteContradictionClearsPairCheck(t *testing.T) {
 		a, b = b, a
 	}
 	// Seed a positive pair check so the clear is actually exercised.
-	require.NoError(t, storer.RecordPairChecksBatch(ctx, personID,
+	require.NoError(t, storer.RecordPairChecksBatch(ctx, personID, "testhash",
 		[]PairCheckResult{{FactAID: a, FactBID: b, IsContradiction: true}}))
 
 	require.NoError(t, storer.DeleteContradiction(ctx, cid))

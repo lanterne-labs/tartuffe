@@ -10,6 +10,7 @@ import (
 
 	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
@@ -143,19 +144,19 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 	// Step 5: Contradiction detection. Runs synchronously over unchecked pairs
 	// across all persons via the OPEN_AI_API LLM, with the inline verification
 	// pass gating each YES before it is recorded.
-	// Re-baseline of legacy pair verdicts (mirror-0wn): everything judged
-	// before the voting judges shipped (2026-09-05) was a single-sample verdict
-	// under weaker rules. Re-open the oldest tranche each night right before
-	// detection; measured flip rate 0.6% (4 verified contradictions per ~670
-	// re-judged pairs). Self-terminating: the last active night logs
-	// legacy_remaining=0; after that the step deletes nothing and stays silent.
-	if rebaselineCutoff, err := time.Parse(time.RFC3339, "2026-09-05T18:00:00Z"); err == nil {
-		if deleted, remaining, evErr := storer.EvictStalePairChecks(ctx, rebaselineCutoff, 1500); evErr != nil {
-			log.Error().Err(evErr).Msg("Daily pipeline: pair-check re-baseline eviction failed")
-		} else if deleted > 0 || remaining > 0 {
-			log.Info().Int("reopened", deleted).Int("legacy_remaining", remaining).
-				Msg("Daily pipeline: re-opened legacy pair verdicts for re-judging")
-		}
+	// Re-judge of stale negatives: a NO is only final under the rulebook that
+	// produced it. Every negative verdict carries the judge rulebook hash; when
+	// the prompts change, the oldest stale negatives are re-opened each night
+	// (pairRejudgeNightlyBudget) right before detection, so the whole backlog
+	// of NOs is re-judged within days — the counterpart of the auditor's
+	// last_audit_hash for YESes. Measured flip rate on the 2026-09 re-baseline:
+	// ~0.5%. Self-terminating: with nothing stale, the step is silent.
+	judgeHash := contradiction.JudgeRulebookHash()
+	if deleted, remaining, evErr := storer.EvictStaleJudgedPairs(ctx, judgeHash, pairRejudgeNightlyBudget); evErr != nil {
+		log.Error().Err(evErr).Msg("Daily pipeline: stale pair-verdict eviction failed")
+	} else if deleted > 0 || remaining > 0 {
+		log.Info().Int("reopened", deleted).Int("stale_remaining", remaining).Str("judge_hash", judgeHash).
+			Msg("Daily pipeline: re-opened stale negative pair verdicts for re-judging under the current rulebook")
 	}
 
 	contraErr := executeContradictionDetection(ctx, storer, ContradictionDetectOpts{})
@@ -458,6 +459,11 @@ func runFrpoliticsStep(ctx context.Context, storer *storage.PostgresStorer) erro
 // so "yesterday" is often only available the following night). The backfill
 // covers the current session from debatsBackfillSince, newest first, and
 // stops starting documents at debatsBackfillDeadlineHour Europe/Paris.
+// pairRejudgeNightlyBudget caps how many stale negative pair verdicts are
+// re-opened per night after a rulebook change (~1.5 h of GPU at the measured
+// pace; the whole backlog cycles in about a week).
+const pairRejudgeNightlyBudget = 1500
+
 const (
 	debatsDailyWindowDays      = 4
 	debatsBackfillDeadlineHour = 11
