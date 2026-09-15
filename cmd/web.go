@@ -163,6 +163,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/person/{id}/facts", ws.handleGetPersonFacts)
 		r.Get("/person/{id}/contradictions", ws.handleGetPersonContradictions)
 		r.Get("/person/{id}/members", ws.handleGetPersonMembers)
+		r.Get("/person/{id}/history", ws.handleGetPersonHistory)
 		r.Get("/facts/{id}/persons", ws.handleGetFactPersons)
 		r.Get("/person/{id}/stances", ws.handleGetPersonStances)
 		r.Get("/stances/{id}/contradictions", ws.handleGetStanceContradictions)
@@ -267,6 +268,25 @@ func (ws *WebServer) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(person)
+}
+
+// handleGetPersonHistory returns the weekly honesty timeline of a person (statement-time axis).
+func (ws *WebServer) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	points, err := ws.storer.GetPersonHistory(ctx, personID)
+	if err != nil {
+		httpInternalError(w, err, "failed to get person history")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(points)
 }
 
 // handleGetPersonFacts returns facts for a specific person

@@ -110,3 +110,13 @@ export interface EventData {
 	payload: any;
 	created_at: string;
 }
+// One weekly bucket of a person's honesty timeline (statement-time axis).
+// Date is the bucket start; counts and scores are the state at the end of that week.
+export interface HistoryPoint {
+	date: string;
+	facts_added: number;
+	facts_total: number;
+	contradictions: number;
+	score: number;
+	recent_score: number;
+}

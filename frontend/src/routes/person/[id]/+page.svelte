@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
+	import HistoryChart from '$lib/components/HistoryChart.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -51,6 +52,7 @@
 	let facts: FactWithSource[] = $state([]);
 	let members: MemberInfo[] = $state([]);
 	let stances: StanceDocument[] = $state([]);
+	let historyPoints: HistoryPoint[] = $state([]);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let membersExpanded = $state(false);
@@ -253,13 +255,23 @@
 		// contradiction counts for the summary line) and the stance list. Facts are lazy-
 		// loaded when the user opens the facts disclosure; per-stance contradictions are
 		// lazy-loaded when a stance card is expanded.
-		await Promise.all([loadPerson(), loadStances()]);
+		await Promise.all([loadPerson(), loadStances(), loadHistory()]);
 
 		if (person?.entity_type === 'party') {
 			await loadMembers();
 		}
 
 		loading = false;
+	}
+
+	async function loadHistory() {
+		try {
+			const response = await fetch(`${API_BASE}/api/person/${personId}/history`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			historyPoints = (await response.json()) ?? [];
+		} catch (err) {
+			error = err instanceof Error ? `Failed to load history: ${err.message}` : 'Failed to load history';
+		}
 	}
 
 	function loadMoreFacts() {
@@ -518,6 +530,15 @@
 				{/if}
 			</div>
 		{/if}
+
+		<section class="history-section">
+			<h2 class="section-heading">{tr('person.history', currentLang)}</h2>
+			{#if historyPoints.length > 1}
+				<HistoryChart points={historyPoints} lang={currentLang} />
+			{:else}
+				<p class="empty-state">{tr('person.history.empty', currentLang)}</p>
+			{/if}
+		</section>
 
 		{#if error}
 			<div class="error-banner" style="margin-bottom: 1rem;">
@@ -985,6 +1006,20 @@
 	}
 
 	/* Stances section: the headline content of the profile. */
+	.history-section {
+		margin-bottom: 1.5rem;
+		padding: 1rem 1.25rem 0.75rem;
+		background: var(--bg-card);
+		backdrop-filter: var(--glass-blur);
+		-webkit-backdrop-filter: var(--glass-blur);
+		border: 1px solid var(--border-card);
+		border-radius: 12px;
+	}
+
+	.history-section .section-heading {
+		margin: 0 0 0.75rem;
+	}
+
 	.stances-section {
 		margin-bottom: 1.5rem;
 	}
