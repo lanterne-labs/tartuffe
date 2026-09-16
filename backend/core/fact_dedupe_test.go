@@ -2,12 +2,116 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"digital-mirror/backend/llm"
+
 	"github.com/joho/godotenv"
 )
+
+// dedupeLLMStub is an OpenAI-compatible chat endpoint that records every user
+// prompt it receives and answers a fixed same=false verdict, so tests can
+// assert the exact bytes the dedupe gates send.
+type dedupeLLMStub struct {
+	mu      sync.Mutex
+	prompts []string
+	server  *httptest.Server
+}
+
+func newDedupeLLMStub(t *testing.T) *dedupeLLMStub {
+	t.Helper()
+	s := &dedupeLLMStub{}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+		s.mu.Lock()
+		s.prompts = append(s.prompts, req.Messages[len(req.Messages)-1].Content)
+		s.mu.Unlock()
+		resp := map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": `{"same": false, "reasoning": "stub"}`}}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(s.server.Close)
+	return s
+}
+
+func (s *dedupeLLMStub) calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.prompts...)
+}
+
+// sharedPrefixLen returns the length of the longest common byte prefix.
+func sharedPrefixLen(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
+}
+
+// TestDedupeGatePromptsShareRulePrefix pins the prefix-cache layout of both
+// gate prompts: two calls with different subjects and statements share every
+// byte up to the first per-call datum ("Person:"), the subject never appears
+// before it, and the JSON response format comes after the statements.
+func TestDedupeGatePromptsShareRulePrefix(t *testing.T) {
+	stub := newDedupeLLMStub(t)
+	cfg := llm.Config{BaseURL: stub.server.URL + "/v1", APIKey: "test", ChatModel: "stub"}
+	adj := &FactDedupeAdjudicator{client: cfg.NewClient("fact-dedupe-test")}
+	ctx := context.Background()
+
+	gates := map[string]func(ctx context.Context, subject, a, b string) (bool, error){
+		"IsSameClaim":    adj.IsSameClaim,
+		"IsSamePosition": adj.IsSamePosition,
+	}
+	for name, gate := range gates {
+		t.Run(name, func(t *testing.T) {
+			before := len(stub.calls())
+			if _, err := gate(ctx, "Bruno Retailleau", "il ira jusqu'au bout de sa candidature", "sa candidature irait jusqu'au bout"); err != nil {
+				t.Fatalf("first call: %v", err)
+			}
+			if _, err := gate(ctx, "Gérald Darmanin", "a annoncé le retrait du plaider-coupable", "présentera son projet de loi le 29 juin"); err != nil {
+				t.Fatalf("second call: %v", err)
+			}
+			calls := stub.calls()[before:]
+			if len(calls) != 2 {
+				t.Fatalf("expected 2 LLM calls, got %d", len(calls))
+			}
+			p1, p2 := calls[0], calls[1]
+
+			marker := strings.Index(p1, "\nPerson: ")
+			if marker < 0 {
+				t.Fatalf("no Person: data marker in prompt:\n%s", p1)
+			}
+			if shared := sharedPrefixLen(p1, p2); shared < marker {
+				t.Errorf("shared prefix is %d bytes, diverges before the data marker at %d:\n%s", shared, marker, p1[shared:min(len(p1), shared+80)])
+			}
+			if marker < 1000 {
+				t.Errorf("cacheable rule prefix is only %d bytes; the rulebook should precede the data", marker)
+			}
+			if strings.Contains(p1[:marker], "Bruno Retailleau") {
+				t.Errorf("subject appears before the data marker")
+			}
+			format := strings.Index(p1, "Return ONLY strict JSON")
+			if stmtB := strings.Index(p1, "STATEMENT B:"); format < 0 || format < stmtB {
+				t.Errorf("response format must come after the statements (format at %d, STATEMENT B at %d)", format, stmtB)
+			}
+		})
+	}
+}
 
 // TestFactDedupeAdjudicatorGolden is the local-only golden set for the
 // gray-zone fact-dedup adjudicator. It asserts genuine restatements are merged

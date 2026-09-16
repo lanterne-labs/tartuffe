@@ -96,9 +96,6 @@ type Storer interface {
 
 	// LinkPersonsToSourceMention links persons to a fact source, creating fact_mentions records.
 	LinkPersonsToSourceMention(ctx context.Context, sourceID int64, personIDs []int64) error
-
-	// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
-	GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error)
 }
 
 // MetaFoldStorer is the storage surface for meta-fact folding. Implemented by
@@ -114,7 +111,6 @@ type MetaFoldStorer interface {
 	GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error)
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	RefreshPersonScore(ctx context.Context, personID int64) error
-	CountFactMentionPersons(ctx context.Context, factID int64) (int, error)
 }
 
 // StoreFactInput encapsulates the data needed to store a fact and its source.
@@ -151,9 +147,11 @@ type StoreFactInput struct {
 
 // SimilarFact represents a fact that is similar to a given embedding.
 type SimilarFact struct {
-	ID       int64   // Fact ID
-	Text     string  // Fact text
-	Distance float64 // Cosine distance (1 - cosine_similarity) from query embedding
+	ID             int64   // Fact ID
+	Text           string  // Fact text
+	Distance       float64 // Cosine distance (1 - cosine_similarity) from query embedding
+	CanonicalVerb  string  // Canonical verb of the fact ("" when unset)
+	MentionPersons int     // Distinct persons carrying the fact via fact_mentions
 }
 
 // NewFactInserter creates a new FactInserter. The StanceProcessor is REQUIRED:
@@ -326,11 +324,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		} else {
 			autoDistance := 1.0 - fi.autoDedupeThreshold
 			for _, sf := range similar {
-				existingVerb, verbErr := fi.storer.GetFactCanonicalVerb(ctx, sf.ID)
-				if verbErr != nil {
-					log.Debug().Err(verbErr).Int64("fact_id", sf.ID).Msg("Failed to get canonical verb for similar fact")
-					continue
-				}
+				existingVerb := sf.CanonicalVerb
 
 				// Tier 1: cheap verb-aware auto-dedup for very-high-similarity pairs.
 				// Only in DROP mode: when folding, the LLM gate below is the
@@ -394,12 +388,8 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							// facts stay standalone; the pair is left to the
 							// contradiction detector instead. The new fact's own side
 							// (CoActorIDs) is guarded before the judge call above.
-							if mentions, mErr := fi.metaStorer.CountFactMentionPersons(ctx, sf.ID); mErr != nil {
-								log.Warn().Err(mErr).Int64("existing_fact_id", sf.ID).
-									Msg("Fold mention-count check failed; keeping fact standalone")
-								continue
-							} else if mentions > 1 {
-								log.Info().Int64("existing_fact_id", sf.ID).Int("mention_persons", mentions).
+							if sf.MentionPersons > 1 {
+								log.Info().Int64("existing_fact_id", sf.ID).Int("mention_persons", sf.MentionPersons).
 									Msg("Skipping fold: matched fact is shared by several persons; keeping standalone")
 								continue
 							}

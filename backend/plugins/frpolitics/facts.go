@@ -114,6 +114,26 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		Int("total_facts", totalFacts).
 		Msg("frpolitics: preparing facts for insertion")
 
+	// Co-voters are resolved by name in one query for the whole batch (a law
+	// has hundreds of voters per side) instead of one per record.
+	seenNames := make(map[string]bool)
+	var coVoterNames []string
+	for _, records := range factTextToRecords {
+		if len(records) == 0 {
+			continue
+		}
+		for _, rec := range records[1:] {
+			if !seenNames[rec.PersonName] {
+				seenNames[rec.PersonName] = true
+				coVoterNames = append(coVoterNames, rec.PersonName)
+			}
+		}
+	}
+	coVoterIDs, err := storer.GetPersonIDsByNames(ctx, coVoterNames)
+	if err != nil {
+		return fmt.Errorf("failed to resolve co-voters: %w", err)
+	}
+
 	for factText, records := range factTextToRecords {
 		if len(records) == 0 {
 			continue
@@ -139,8 +159,8 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		subjectEntity := firstRec.PersonName
 		var coActorIDs []int64
 		for _, rec := range records[1:] {
-			id, err := storer.GetPersonIDByName(ctx, rec.PersonName)
-			if err != nil || id <= 0 {
+			id, ok := coVoterIDs[rec.PersonName]
+			if !ok || id <= 0 {
 				log.Warn().Str("person", rec.PersonName).Str("law", firstRec.LawKey).
 					Msg("frpolitics: co-voter not found in persons; vote not attributed to them")
 				continue

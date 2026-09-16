@@ -2008,3 +2008,33 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   service (`storer.StartMetricsCollectors` from `api.Serve`), not in the storer constructor:
   only the web process is scraped, and the collector's query racing a test TRUNCATE produced
   a Postgres deadlock that flaked the frpolitics store tests.
+
+## Performance: the merge sweep remembers its answers; hot loops stop asking Postgres per row (2026-09-16, phase 4)
+
+- Measured first: nightly runs take 5-8 h and the time is LLM decode (re-judge + detection
+  ~2h45, merge sweep ~1h20, débats backfill ~1h). The one structural waste was the merge
+  sweep: it asked the LLM about all 753 persons with two or more stances every night and
+  remembered nothing, so unchanged stances got the same question again. Now
+  `stance_merge_checks` memoizes each person's swept stance set as an md5 fingerprint
+  computed in SQL (ids, labels, summaries) plus the merge rulebook key (hash of the merge
+  prompt and the candidate floor); `ListPersonsNeedingMergeSweep` returns only the persons
+  whose live fingerprint differs, in one query. A living summary refresh, a new stance, a
+  merge or a prompt edit re-lists the person; a person with an LLM failure or a dry run is
+  never memoized. Expected effect: the sweep costs proportional to persons whose stances
+  changed that day, not to the population.
+- Prefix cache: the two dedupe gates (same-position, same-claim; run on every gray-zone
+  insert) and the merge decision were data-first and are now rules → data → JSON, like the
+  other judges. Verdicts verified unchanged (dedupe golden 4/4 three times; a six-case
+  merge table identical before and after). `mergeDecisionPrompt` is the hashable rulebook.
+  Unit tests pin the shared byte prefix so a later edit cannot silently break the cache.
+- Round trips, per the project rule: the similarity query now carries the canonical verb
+  and the mention count (was 1 + 5 lookups per inserted fact); detection's candidate
+  pairs come from one statement per person with the most-general ancestor resolved by a
+  recursive CTE (was ~16 queries per fact); parent-entity score recompute is one select and
+  one update; frpolitics resolves actor and organe ids in two batch lookups per run instead
+  of two per mandate event and one name lookup per call instead of per co-voter; person
+  name resolution tries an indexed exact match before loading the persons table; the news
+  provider builds one fact inserter per call instead of one per fact.
+- Storage: one lookup → gate → insert core behind the five person entry points, one folded
+  name predicate (both sides folded in SQL, so ł/ß/œ variants match), one person-summary
+  projection shared with the photos plugin. Migration `20260916200000` adds the memo table.

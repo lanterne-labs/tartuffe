@@ -27,10 +27,10 @@ func (s *Store) SetPersonImageURL(ctx context.Context, personID int64, imageURL 
 // GetPersonsWithoutImage returns all persons that don't have an image_url set.
 func (s *Store) GetPersonsWithoutImage(ctx context.Context) ([]storage.PersonSummary, error) {
 	query := `
-		SELECT id, name, entity_type, honesty_score, own_score, members_score, image_url
-		FROM persons
-		WHERE image_url IS NULL
-		ORDER BY name ASC`
+		SELECT ` + storage.PersonSummaryColumns + `
+		FROM persons p
+		WHERE p.image_url IS NULL
+		ORDER BY p.name ASC`
 
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
@@ -41,8 +41,7 @@ func (s *Store) GetPersonsWithoutImage(ctx context.Context) ([]storage.PersonSum
 	var persons []storage.PersonSummary
 	for rows.Next() {
 		var person storage.PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
-		if err != nil {
+		if err := storage.ScanPersonSummary(rows, &person); err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
 		persons = append(persons, person)

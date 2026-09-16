@@ -107,55 +107,69 @@ func (s *PostgresStorer) computeMembersScore(ctx context.Context, q rowQueryer, 
 }
 
 // recomputeParentEntityScores recomputes members_score and honesty_score for all parent entities
-// of the given person (via person_links where src_person_id = personID).
+// of the given person (via person_links where src_person_id = personID): one
+// query for every parent's own_score and members average (computeMembersScore
+// over the pre-update member scores), one batched update, one person_updated
+// event per parent.
 func (s *PostgresStorer) recomputeParentEntityScores(ctx context.Context, tx pgx.Tx, personID int64) error {
-	query := `SELECT DISTINCT dst_person_id FROM person_links WHERE src_person_id = $1 AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)`
+	query := `
+		SELECT e.id, e.own_score, AVG(m.honesty_score)
+		FROM persons e
+		LEFT JOIN person_links pl ON pl.dst_person_id = e.id
+		  AND (pl.valid_to IS NULL OR pl.valid_to >= CURRENT_DATE)
+		LEFT JOIN persons m ON m.id = pl.src_person_id
+		WHERE e.id IN (
+			SELECT dst_person_id FROM person_links
+			WHERE src_person_id = $1 AND (valid_to IS NULL OR valid_to >= CURRENT_DATE)
+		)
+		GROUP BY e.id, e.own_score`
 	rows, err := tx.Query(ctx, query, personID)
 	if err != nil {
 		return fmt.Errorf("failed to find parent entities for person %d: %w", personID, err)
 	}
-	defer rows.Close()
-
 	var parentIDs []int64
+	var ownScores []float64
+	var membersScores []*float64
+	var aggregates []float64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("failed to scan parent entity ID: %w", err)
+		var own float64
+		var members *float64
+		if err := rows.Scan(&id, &own, &members); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan parent entity scores: %w", err)
 		}
 		parentIDs = append(parentIDs, id)
+		ownScores = append(ownScores, own)
+		membersScores = append(membersScores, members)
+		aggregates = append(aggregates, core.ComputeAggregateScore(own, members))
 	}
-	if rows.Err() != nil {
-		return fmt.Errorf("error iterating parent entities: %w", rows.Err())
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating parent entities: %w", err)
+	}
+	if len(parentIDs) == 0 {
+		return nil
 	}
 
-	for _, parentID := range parentIDs {
-		membersScore, err := s.computeMembersScore(ctx, tx, parentID)
-		if err != nil {
-			return err
-		}
+	_, err = tx.Exec(ctx, `
+		UPDATE persons p SET own_score = u.own, members_score = u.members, honesty_score = u.aggregate
+		FROM unnest($1::bigint[], $2::float8[], $3::float8[], $4::float8[]) AS u(id, own, members, aggregate)
+		WHERE p.id = u.id`, parentIDs, ownScores, membersScores, aggregates)
+	if err != nil {
+		return fmt.Errorf("failed to update parent entity scores for person %d: %w", personID, err)
+	}
 
-		// Get the entity's own_score
-		var ownScore float64
-		err = tx.QueryRow(ctx, `SELECT own_score FROM persons WHERE id = $1`, parentID).Scan(&ownScore)
-		if err != nil {
-			return fmt.Errorf("failed to get own_score for entity %d: %w", parentID, err)
-		}
-
-		aggregate := core.ComputeAggregateScore(ownScore, membersScore)
-
-		if err := s.updatePersonHonestyScore(ctx, tx, parentID, ownScore, membersScore, aggregate); err != nil {
-			return err
-		}
-
+	for i, parentID := range parentIDs {
 		if err := s.insertEvent(ctx, tx, "person_updated", "person", parentID, map[string]interface{}{
-			"honesty_score": aggregate,
-			"own_score":     ownScore,
-			"members_score": membersScore,
+			"honesty_score": aggregates[i],
+			"own_score":     ownScores[i],
+			"members_score": membersScores[i],
 		}); err != nil {
 			return fmt.Errorf("failed to emit person_updated event for entity %d: %w", parentID, err)
 		}
 
-		log.Info().Int64("entity_id", parentID).Float64("own_score", ownScore).Interface("members_score", membersScore).Float64("aggregate", aggregate).Msg("Recomputed parent entity scores")
+		log.Info().Int64("entity_id", parentID).Float64("own_score", ownScores[i]).Interface("members_score", membersScores[i]).Float64("aggregate", aggregates[i]).Msg("Recomputed parent entity scores")
 	}
 
 	return nil

@@ -79,6 +79,8 @@ func (s *PostgresStorer) LinkPersonsToSourceMention(ctx context.Context, sourceI
 // for the specified persons, using cosine distance threshold.
 // threshold parameter is cosine distance (1 - cosine_similarity), e.g., 0.20 for 80% similarity.
 // Excludes facts that are the specific side of a 'duplicate' relation in fact_relations.
+// Each hit carries its canonical verb and the number of distinct persons
+// mentioning it, so the dedupe tiers of the inserter need no per-candidate lookup.
 // Returns up to limit results (default 20).
 func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]core.SimilarFact, error) {
 	timer := metrics.NewQueryTimer("find_similar_active_facts")
@@ -94,17 +96,27 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 			FROM fact_mentions fm
 			JOIN fact_sources fs ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = ANY($1)
+		),
+		Hits AS (
+			SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance,
+			       COALESCE(f.canonical_verb, '') AS canonical_verb
+			FROM facts f
+			JOIN PersonFacts pf ON f.id = pf.fact_id
+			WHERE f.embedding <=> $2 <= $3
+			  AND NOT EXISTS (
+			      SELECT 1 FROM fact_relations fr
+			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+			  )
+			ORDER BY distance
+			LIMIT $4
 		)
-		SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance
-		FROM facts f
-		JOIN PersonFacts pf ON f.id = pf.fact_id
-		WHERE f.embedding <=> $2 <= $3
-		  AND NOT EXISTS (
-		      SELECT 1 FROM fact_relations fr
-		      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
-		  )
-		ORDER BY distance
-		LIMIT $4
+		SELECT h.id, h.fact_text, h.distance, h.canonical_verb,
+		       (SELECT COUNT(DISTINCT fm2.person_id)
+		        FROM fact_mentions fm2
+		        JOIN fact_sources fs2 ON fs2.id = fm2.fact_source_id
+		        WHERE fs2.fact_id = h.id) AS mention_persons
+		FROM Hits h
+		ORDER BY h.distance
 	`
 
 	rows, err := s.pool.Query(ctx, query,
@@ -122,7 +134,7 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	var results []core.SimilarFact
 	for rows.Next() {
 		var sf core.SimilarFact
-		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance); err != nil {
+		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance, &sf.CanonicalVerb, &sf.MentionPersons); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
@@ -164,16 +176,6 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 
 	log.Debug().Int64("fact_id", factID).Str("fact_text", input.NormalizedFactText[:min(len(input.NormalizedFactText), 80)]).Msg("Inserted fact")
 	return factID, nil
-}
-
-// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
-func (s *PostgresStorer) GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error) {
-	var verb string
-	err := s.pool.QueryRow(ctx, `SELECT COALESCE(canonical_verb, '') FROM facts WHERE id = $1`, factID).Scan(&verb)
-	if err != nil {
-		return "", fmt.Errorf("failed to get canonical verb for fact %d: %w", factID, err)
-	}
-	return verb, nil
 }
 
 // linkSourceToFact links a source URL, quote, and published date to a given fact ID.
@@ -552,37 +554,6 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	}
 
 	return results, nil
-}
-
-// GetFactTextByID retrieves the normalized text of a specific fact by its ID.
-// Operates within a given transaction.
-func (s *PostgresStorer) GetFactTextByID(ctx context.Context, tx pgx.Tx, factID int64) (string, error) {
-	var factText string
-	query := `SELECT fact_text FROM facts WHERE id = $1`
-	err := tx.QueryRow(ctx, query, factID).Scan(&factText)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			// Consider if ErrNoRows should be a distinct error type or just logged
-			return "", fmt.Errorf("fact not found with ID %d: %w", factID, err)
-		}
-		return "", fmt.Errorf("failed to query fact text for ID %d: %w", factID, err)
-	}
-	return factText, nil
-}
-
-// GetFactDateByID retrieves the earliest publication date for a fact from its sources.
-// Returns nil if no published_at date is available.
-func (s *PostgresStorer) GetFactDateByID(ctx context.Context, tx pgx.Tx, factID int64) (*time.Time, error) {
-	var publishedAt *time.Time
-	query := `SELECT MIN(published_at) FROM fact_sources WHERE fact_id = $1`
-	err := tx.QueryRow(ctx, query, factID).Scan(&publishedAt)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return nil, nil // No sources found, return nil date
-		}
-		return nil, fmt.Errorf("failed to query fact date for ID %d: %w", factID, err)
-	}
-	return publishedAt, nil
 }
 
 // GetFactsForPerson retrieves all facts and their source details for a specific person.
@@ -1394,30 +1365,6 @@ func (s *PostgresStorer) DeleteFactSourcesByURL(ctx context.Context, url, source
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
-}
-
-// GetMostGeneralAncestor walks UP the implication chain from a given factID
-// using a recursive CTE with depth limit 10.
-// Returns the most general ancestor fact ID (or the input factID if no implication chain exists).
-func (s *PostgresStorer) GetMostGeneralAncestor(ctx context.Context, factID int64) (int64, error) {
-	query := `
-		WITH RECURSIVE ancestors AS (
-			SELECT $1::bigint AS fact_id, 0 AS depth
-			UNION ALL
-			SELECT fr.general_fact_id, a.depth + 1
-			FROM fact_relations fr
-			JOIN ancestors a ON fr.specific_fact_id = a.fact_id
-			WHERE fr.relation_type = 'implication' AND a.depth < 10
-		)
-		SELECT fact_id FROM ancestors ORDER BY depth DESC LIMIT 1`
-
-	var ancestorID int64
-	err := s.pool.QueryRow(ctx, query, factID).Scan(&ancestorID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get most general ancestor for fact %d: %w", factID, err)
-	}
-
-	return ancestorID, nil
 }
 
 // FactNeedingTranslation is a non-English fact whose English translation is

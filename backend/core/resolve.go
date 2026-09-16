@@ -19,6 +19,10 @@ type PersonRecord struct {
 
 // PersonResolver is the interface required by ResolveTargetName for looking up persons.
 type PersonResolver interface {
+	// GetPersonRecordByName is the indexed exact lookup: the person whose
+	// stored name equals the canonical person form of name (found=false when
+	// nobody does).
+	GetPersonRecordByName(ctx context.Context, name string) (PersonRecord, bool, error)
 	GetAllPersonRecords(ctx context.Context) ([]PersonRecord, error)
 	FindPersonsByFuzzyName(ctx context.Context, query string, threshold float64, maxResults int) ([]util.PersonMatch, error)
 }
@@ -70,7 +74,24 @@ func ResolveTargetName(ctx context.Context, resolver PersonResolver, query strin
 		Query: query,
 	}
 
-	// First, try exact match (case-insensitive)
+	// First, the indexed exact lookup on the canonical person form: the common
+	// case (a stored name, any accents/case) resolves without loading the table.
+	if p, found, err := resolver.GetPersonRecordByName(ctx, query); err != nil {
+		result.Error = fmt.Errorf("failed to look up person: %w", err)
+		return result
+	} else if found {
+		personID := p.ID
+		result.IsExactMatch = true
+		result.ExactMatch = &ResolvedTarget{
+			Name:       p.Name,
+			EntityType: p.EntityType,
+			PersonID:   &personID,
+		}
+		return result
+	}
+
+	// Then the broader exact match: article-insensitive (NormalizeForFuzzy
+	// drops French articles), which needs the whole table.
 	allPersons, err := resolver.GetAllPersonRecords(ctx)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to get persons: %w", err)

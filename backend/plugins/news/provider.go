@@ -489,6 +489,12 @@ func (p *Provider) extractAndInsertFromArticles(
 	opts Options,
 	result *Result,
 ) error {
+	if p.StanceManager == nil {
+		return fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
+	}
+	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
+	inserter.EnableLLMDedupe()
+
 	// Phase 2: Extract content - use batch if available, otherwise sequential.
 	var extractedContents []*extractor.ExtractedContent
 	var extractionErrors []error
@@ -613,11 +619,6 @@ func (p *Provider) extractAndInsertFromArticles(
 				},
 			}
 
-			if p.StanceManager == nil {
-				return fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
-			}
-			inserter := core.NewFactInserter(p.Storer, p.StanceManager)
-			inserter.EnableLLMDedupe()
 			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).

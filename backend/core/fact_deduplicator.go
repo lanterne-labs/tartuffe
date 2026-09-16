@@ -20,14 +20,11 @@ type DedupeStorer interface {
 	// GetFactsForDeduplication retrieves facts for a person with their embeddings and text.
 	GetFactsForDeduplication(ctx context.Context, personID int64) ([]FactForDedup, error)
 
-	// FindSimilarFactsForDedup finds facts similar to a given embedding within a threshold.
+	// FindSimilarFactsForDedup finds active facts similar to a given embedding within a threshold.
 	FindSimilarFactsForDedup(ctx context.Context, personIDs []int64, embedding []float32, excludeFactID int64, threshold float64) ([]SimilarFactResult, error)
 
 	// MarkFactAsDuplicate marks a fact as a duplicate of a canonical fact.
 	MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error
-
-	// GetFactByID retrieves a single fact by its ID.
-	GetFactByID(ctx context.Context, factID int64) (*FactForDedup, error)
 
 	// DeleteFact deletes a fact that has been determined to be invalid.
 	DeleteFact(ctx context.Context, factID int64) error
@@ -45,12 +42,27 @@ type FactForDedup struct {
 	CanonicalFactID    *int64    `json:"-"`
 }
 
-// SimilarFactResult represents a similar fact found during deduplication.
+// SimilarFactResult represents a similar active fact found during deduplication.
 type SimilarFactResult struct {
-	ID         int64
-	Text       string
-	Distance   float64
-	Similarity float64 // Cosine similarity (1 - distance)
+	ID            int64
+	Text          string
+	CanonicalVerb string
+	EmbeddingText string
+	Distance      float64
+	Similarity    float64 // Cosine similarity (1 - distance)
+}
+
+// dedupFact is the FactForDedup view of a similarity hit: the fields the
+// verb check and the LLM verifier read. The search only returns active facts,
+// so the hit is canonical by construction.
+func (r SimilarFactResult) dedupFact() FactForDedup {
+	return FactForDedup{
+		ID:                 r.ID,
+		NormalizedFactText: r.Text,
+		CanonicalVerb:      r.CanonicalVerb,
+		EmbeddingText:      r.EmbeddingText,
+		IsCanonical:        true,
+	}
 }
 
 // FactDeduplicator handles multi-tier fact deduplication.
@@ -213,20 +225,11 @@ func (d *FactDeduplicator) dedupeForPersonID(ctx context.Context, personID int64
 		}
 
 		for _, similar := range similarFacts {
-			// Skip non-canonical facts (already duplicates)
-			similarFact, err := d.storer.GetFactByID(ctx, similar.ID)
-			if err != nil {
-				log.Error().Err(err).Int64("fact_id", similar.ID).Msg("Failed to get similar fact")
-				continue
-			}
-			if !similarFact.IsCanonical {
-				continue
-			}
-
 			// Skip already processed
 			if processedFacts[similar.ID] {
 				continue
 			}
+			similarFact := similar.dedupFact()
 
 			// Calculate cosine similarity from distance
 			similarity := similar.Similarity
@@ -280,7 +283,7 @@ func (d *FactDeduplicator) dedupeForPersonID(ctx context.Context, personID int64
 			if similarity >= d.uncertainLowThreshold {
 				uncertainPairs = append(uncertainPairs, uncertainPair{
 					factA:      fact,
-					factB:      *similarFact,
+					factB:      similarFact,
 					similarity: similarity,
 				})
 			}

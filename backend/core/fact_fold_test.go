@@ -14,7 +14,6 @@ type foldFakeStorer struct {
 	similar []SimilarFact
 
 	existingMeta   int64 // 0 = matched fact has no meta yet
-	mentionPersons int   // 0 = default (1 person); >1 marks the matched fact shared
 	createdMeta    int64
 	updatedText    string
 	markedMembers  []int64
@@ -26,9 +25,11 @@ func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	return f.similar, nil
 }
 
-// Same canonical verb as the input so the tier-1 auto-dedupe rule fires.
-func (f *foldFakeStorer) GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error) {
-	return "affirmer", nil
+// matchedFact is the similar fact the fixtures return: same canonical verb as
+// the input so the tier-1 auto-dedupe rule fires, carried by a single person
+// (the fold path refuses shared facts) unless mentionPersons says otherwise.
+func matchedFact(text string, mentionPersons int) SimilarFact {
+	return SimilarFact{ID: 7, Text: text, Distance: 0.05, CanonicalVerb: "affirmer", MentionPersons: mentionPersons}
 }
 
 func (f *foldFakeStorer) GetMetaForFact(ctx context.Context, factID int64) (int64, bool, error) {
@@ -65,15 +66,6 @@ func (f *foldFakeStorer) RepointFactDuplicate(ctx context.Context, general, spec
 
 func (f *foldFakeStorer) GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error) {
 	return 42, true, nil
-}
-
-// Single-mention facts by default: the fold path refuses shared (co-actor)
-// facts, and these tests exercise the non-shared case unless overridden.
-func (f *foldFakeStorer) CountFactMentionPersons(ctx context.Context, factID int64) (int, error) {
-	if f.mentionPersons != 0 {
-		return f.mentionPersons, nil
-	}
-	return 1, nil
 }
 
 func (f *foldFakeStorer) AddFactToStance(ctx context.Context, stanceID, factID int64) error {
@@ -131,7 +123,7 @@ func foldInput() StoreFactInput {
 // with folding enabled must KEEP the fact (inserted, not dropped), link it
 // under a freshly created meta, and skip stance analysis.
 func TestFoldNewFactCreatesMeta(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
@@ -166,7 +158,7 @@ func TestFoldNewFactCreatesMeta(t *testing.T) {
 // meta text is re-synthesized over all members including the new one.
 func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
 	st := &foldFakeStorer{
-		similar:      []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}},
+		similar:      []SimilarFact{matchedFact("Il clame son innocence.", 1)},
 		existingMeta: 500,
 	}
 	stance := &countingStance{}
@@ -196,7 +188,7 @@ func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
 // NOT folded when the judge says the positions differ — the fact goes through
 // normal stance analysis instead.
 func TestFoldVetoedByJudge(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: false}
@@ -222,10 +214,7 @@ func TestFoldVetoedByJudge(t *testing.T) {
 // would remove the fact from every other voter's active set. The new fact goes
 // through normal stance analysis instead.
 func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
-	st := &foldFakeStorer{
-		similar:        []SimilarFact{{ID: 7, Text: "a voté POUR le texte.", Distance: 0.05}},
-		mentionPersons: 3,
-	}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("a voté POUR le texte.", 3)}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
@@ -249,7 +238,7 @@ func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
 // A NEW fact that itself has co-actors (shared vote fact) must never fold under
 // an existing meta either — same global-duplicate hazard, from the other side.
 func TestFoldRefusedOnNewSharedFact(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
@@ -277,7 +266,7 @@ func TestFoldRefusedOnNewSharedFact(t *testing.T) {
 // provenance: the claim is known, where it was said again is new, and
 // provenance-based producers (same séance as a vote) depend on it.
 func TestSameClaimDroppedWhenFoldingDisabled(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{{ID: 7, Text: "Il clame son innocence.", Distance: 0.05}}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
 	fi := NewFactInserter(st, &countingStance{})
 
 	input := foldInput()

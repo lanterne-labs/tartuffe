@@ -331,6 +331,38 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	// 4b) Create temporal affiliations between deputies and parties
 	if len(deputySeed) > 0 && len(partySeed) > 0 {
 		log.Info().Int("total_laws", len(aiFilteredLaws)).Msg("frpolitics: creating temporal affiliations (this may take a while)")
+
+		// Resolve every deputy and party the events below name in two queries
+		// instead of two per event.
+		seenDeputy := make(map[string]bool)
+		seenOrg := make(map[string]bool)
+		var assembleeIDs, orgRefs []string
+		for _, law := range aiFilteredLaws {
+			for _, ev := range eventsByLaw[law.Key] {
+				orgRef := strings.TrimSpace(ev.OrganeRef)
+				assembleeID := strings.TrimSpace(ev.AssembleeID)
+				if orgRef == "" || assembleeID == "" {
+					continue
+				}
+				if !seenDeputy[assembleeID] {
+					seenDeputy[assembleeID] = true
+					assembleeIDs = append(assembleeIDs, assembleeID)
+				}
+				if !seenOrg[orgRef] {
+					seenOrg[orgRef] = true
+					orgRefs = append(orgRefs, orgRef)
+				}
+			}
+		}
+		deputyIDs, err := storer.GetPersonIDsByAttribute(ctx, "assemblee_id", assembleeIDs)
+		if err != nil {
+			return fmt.Errorf("resolve deputies for affiliations: %w", err)
+		}
+		partyIDs, err := storer.GetPersonIDsByAttribute(ctx, "organeRef", orgRefs)
+		if err != nil {
+			return fmt.Errorf("resolve parties for affiliations: %w", err)
+		}
+
 		tx, err := storer.Pool().Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin affiliation transaction: %w", err)
@@ -354,17 +386,15 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 						continue
 					}
 
-					// Get deputy ID
-					deputyID, err := storer.GetPersonIDByAttribute(ctx, "assemblee_id", assembleeID)
-					if err != nil {
-						log.Warn().Err(err).Str("assembleeID", assembleeID).Msg("Failed to get deputy ID for affiliation")
+					deputyID, ok := deputyIDs[assembleeID]
+					if !ok {
+						log.Warn().Str("assembleeID", assembleeID).Msg("Failed to get deputy ID for affiliation")
 						continue
 					}
 
-					// Get party ID
-					partyID, err := storer.GetPersonIDByAttribute(ctx, "organeRef", orgRef)
-					if err != nil {
-						log.Warn().Err(err).Str("orgRef", orgRef).Msg("Failed to get party ID for affiliation")
+					partyID, ok := partyIDs[orgRef]
+					if !ok {
+						log.Warn().Str("orgRef", orgRef).Msg("Failed to get party ID for affiliation")
 						continue
 					}
 

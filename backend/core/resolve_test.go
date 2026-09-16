@@ -10,13 +10,30 @@ import (
 )
 
 // fakePersonResolver serves a fixed person list; fuzzy matching runs the real
-// util scorer over it, as the storage implementation does.
+// util scorer over it, as the storage implementation does. tableLoads counts
+// the full-table reads (GetAllPersonRecords).
 type fakePersonResolver struct {
-	persons []PersonRecord
-	err     error
+	persons    []PersonRecord
+	err        error
+	tableLoads int
+}
+
+// Exact lookup on the canonical person form, as the indexed SQL lookup does.
+func (f *fakePersonResolver) GetPersonRecordByName(ctx context.Context, name string) (PersonRecord, bool, error) {
+	if f.err != nil {
+		return PersonRecord{}, false, f.err
+	}
+	key := util.NormalizePersonName(name)
+	for _, p := range f.persons {
+		if util.NormalizePersonName(p.Name) == key {
+			return p, true, nil
+		}
+	}
+	return PersonRecord{}, false, nil
 }
 
 func (f *fakePersonResolver) GetAllPersonRecords(ctx context.Context) ([]PersonRecord, error) {
+	f.tableLoads++
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -48,13 +65,35 @@ func newFakeResolver() *fakePersonResolver {
 
 func TestResolvePersonIDExactMatch(t *testing.T) {
 	ctx := context.Background()
-	// Accents and case differ from the stored form; article-insensitive exact match.
-	got, err := ResolvePersonID(ctx, newFakeResolver(), "Jean-Luc Mélenchon", ExactMatchOnly)
+	r := newFakeResolver()
+	// Accents and case differ from the stored form: the indexed lookup hits
+	// and the persons table is never loaded.
+	got, err := ResolvePersonID(ctx, r, "Jean-Luc Mélenchon", ExactMatchOnly)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got.ID != 2 || got.Name != "jean-luc melenchon" || got.EntityType != "human" {
 		t.Fatalf("unexpected record: %+v", got)
+	}
+	if r.tableLoads != 0 {
+		t.Fatalf("exact hit must not load the persons table, loaded %d times", r.tableLoads)
+	}
+}
+
+// An article-insensitive match ("Marine Pen" for "marine le pen") is not an
+// indexed hit; it still resolves exactly through the full-table scan.
+func TestResolvePersonIDArticleInsensitiveMatchScansTable(t *testing.T) {
+	ctx := context.Background()
+	r := newFakeResolver()
+	got, err := ResolvePersonID(ctx, r, "Marine Pen", ExactMatchOnly)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != 1 {
+		t.Fatalf("expected person 1, got %+v", got)
+	}
+	if r.tableLoads != 1 {
+		t.Fatalf("article-insensitive match must come from one table scan, loaded %d times", r.tableLoads)
 	}
 }
 

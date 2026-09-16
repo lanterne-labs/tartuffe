@@ -57,7 +57,8 @@ func (s *PostgresStorer) GetFactsForDeduplication(ctx context.Context, personID 
 }
 
 // FindSimilarFactsForDedup finds active (non-duplicate) facts similar to a given embedding.
-// Returns facts within the distance threshold, excluding the specified fact ID.
+// Returns facts within the distance threshold, excluding the specified fact ID,
+// with the canonical verb and embedding text the dedup tiers compare.
 func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs []int64, embedding []float32, excludeFactID int64, distanceThreshold float64) ([]core.SimilarFactResult, error) {
 	query := `
 		WITH PersonFacts AS (
@@ -66,7 +67,8 @@ func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs
 			JOIN fact_sources fs ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = ANY($1)
 		)
-		SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance
+		SELECT f.id, f.fact_text, COALESCE(f.canonical_verb, ''), COALESCE(f.embedding_text, ''),
+		       f.embedding <=> $2 AS distance
 		FROM facts f
 		JOIN PersonFacts pf ON f.id = pf.fact_id
 		WHERE f.id <> $3
@@ -92,7 +94,7 @@ func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs
 	var results []core.SimilarFactResult
 	for rows.Next() {
 		var sf core.SimilarFactResult
-		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance); err != nil {
+		if err := rows.Scan(&sf.ID, &sf.Text, &sf.CanonicalVerb, &sf.EmbeddingText, &sf.Distance); err != nil {
 			return nil, fmt.Errorf("failed to scan similar fact: %w", err)
 		}
 		sf.Similarity = 1.0 - sf.Distance

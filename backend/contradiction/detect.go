@@ -82,15 +82,6 @@ const queuedPairsPerPersonPerNight = 300
 // near-duplicate.
 const contradictionDedupSimFloor = 0.80
 
-// neighborCandidate is a fact paired against the current fact during detection,
-// carrying the KNN cosine similarity so the dedup-merge check can be gated on it.
-type neighborCandidate struct {
-	ID          int64
-	Text        string
-	PublishedAt *time.Time
-	Similarity  float64
-}
-
 // personPairs holds collected pairs for a single person, ready for judging.
 type personPairs struct {
 	personID   int64
@@ -188,7 +179,7 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 
 	allPairs, sameVerbSkipped, err := candidatePairs(ctx, storer, person, facts, opts.CheckAll)
 	if err != nil {
-		log.Error().Err(err).Str("person", person.Name).Msg("Failed to begin read transaction, skipping")
+		log.Error().Err(err).Str("person", person.Name).Msg("Failed to find neighbors, skipping")
 		return nil
 	}
 
@@ -248,60 +239,57 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	return filteredPairs
 }
 
-// candidatePairs walks each fact's KNN neighbors (or every other fact with
-// checkAll), skips near-duplicate paraphrases, and resolves each partner to
-// its most general ancestor. Returns the pairs and the paraphrase-skip count.
+// candidatePairs pairs each fact with its KNN neighbors (or every other fact
+// with checkAll), each partner already replaced by its most general ancestor
+// (one statement per person, see storage.NeighborPair), and skips
+// near-duplicate paraphrases among the KNN pairs. Returns the pairs and the
+// paraphrase-skip count.
 func candidatePairs(ctx context.Context, storer *storage.PostgresStorer, person storage.PersonInfo, facts []storage.FactWithEmbedding, checkAll bool) ([]pairInfo, int, error) {
-	reader, err := storer.BeginDetectionRead(ctx)
+	neighborPairs, err := storer.GetNeighborPairsForPerson(ctx, person.ID, checkAll)
 	if err != nil {
 		return nil, 0, err
 	}
-	defer reader.Close(ctx)
+	byID := make(map[int64]storage.FactWithEmbedding, len(facts))
+	for _, f := range facts {
+		byID[f.ID] = f
+	}
 
 	var allPairs []pairInfo
 	sameVerbSkipped := 0
-
-	for _, fact := range facts {
-		var pairsToCheck []neighborCandidate
-
-		if checkAll {
-			for _, other := range facts {
-				if other.ID > fact.ID {
-					pairsToCheck = append(pairsToCheck, neighborCandidate{
-						ID: other.ID, Text: other.Text, PublishedAt: other.PublishedAt, Similarity: 0})
-				}
-			}
-		} else {
-			neighbors, err := reader.Neighbors(ctx, person.ID, fact.Embedding, fact.ID)
-			if err != nil {
-				log.Error().Err(err).Int64("fact_id", fact.ID).Msg("Failed to find neighbors")
+	for _, np := range neighborPairs {
+		fact, ok := byID[np.FactID]
+		if !ok {
+			// Became active after the person's facts were loaded; it is not one
+			// of the facts this run walks.
+			continue
+		}
+		// The KNN similarity gates the paraphrase skip here and the dedup net
+		// in judgePairs; check-all pairs carry none (0).
+		similarity := 0.0
+		if !checkAll {
+			similarity = 1.0 - np.Distance
+			if skip, bothExternal := paraphraseSkip(fact.CanonicalVerb, np.NeighborVerb, similarity); skip {
+				sameVerbSkipped++
+				log.Debug().
+					Int64("fact_a", fact.ID).
+					Int64("fact_b", np.NeighborID).
+					Str("verb_a", fact.CanonicalVerb).
+					Str("verb_b", np.NeighborVerb).
+					Bool("both_external", bothExternal).
+					Float64("similarity", similarity).
+					Msg("Skipping paraphrase pair")
 				continue
 			}
-			for _, neighbor := range neighbors {
-				if neighbor.ID > fact.ID {
-					similarity := 1.0 - neighbor.Distance
-					if skip, bothExternal := paraphraseSkip(fact.CanonicalVerb, neighbor.CanonicalVerb, similarity); skip {
-						sameVerbSkipped++
-						log.Debug().
-							Int64("fact_a", fact.ID).
-							Int64("fact_b", neighbor.ID).
-							Str("verb_a", fact.CanonicalVerb).
-							Str("verb_b", neighbor.CanonicalVerb).
-							Bool("both_external", bothExternal).
-							Float64("similarity", similarity).
-							Msg("Skipping paraphrase pair")
-						continue
-					}
-					pairsToCheck = append(pairsToCheck, neighborCandidate{
-						ID: neighbor.ID, Text: neighbor.Text, PublishedAt: neighbor.PublishedAt,
-						Similarity: similarity})
-				}
-			}
 		}
-
-		for _, other := range pairsToCheck {
-			allPairs = append(allPairs, resolveAncestor(ctx, storer, reader, fact, other))
-		}
+		allPairs = append(allPairs, pairInfo{
+			factAID:    fact.ID,
+			factAText:  fact.Text,
+			factADate:  fact.PublishedAt,
+			factBID:    np.TargetID,
+			factBText:  np.TargetText,
+			factBDate:  np.TargetDate,
+			similarity: similarity,
+		})
 	}
 
 	return allPairs, sameVerbSkipped, nil
@@ -317,44 +305,6 @@ func paraphraseSkip(verbA, verbB string, similarity float64) (skip, bothExternal
 	}
 	bothExternal = !categorizer.IsDirectClaimVerb(verbA) && !categorizer.IsDirectClaimVerb(verbB)
 	return verbA == verbB || bothExternal, bothExternal
-}
-
-// resolveAncestor pairs fact with other, swapping other for its most general
-// ancestor (text and date included) when it has one. Lookup failures keep the
-// original partner.
-func resolveAncestor(ctx context.Context, storer *storage.PostgresStorer, reader *storage.DetectionReader, fact storage.FactWithEmbedding, other neighborCandidate) pairInfo {
-	targetID := other.ID
-	targetText := other.Text
-	targetDate := other.PublishedAt
-
-	ancestorID, err := storer.GetMostGeneralAncestor(ctx, other.ID)
-	if err != nil {
-		log.Warn().Err(err).Int64("fact_id", other.ID).Msg("Failed to get ancestor, using original")
-	} else if ancestorID != other.ID {
-		ancestorText, err := reader.FactText(ctx, ancestorID)
-		if err != nil {
-			log.Warn().Err(err).Int64("fact_id", ancestorID).Msg("Failed to get ancestor text, using original")
-		} else {
-			targetID = ancestorID
-			targetText = ancestorText
-			ancestorDate, err := reader.FactDate(ctx, ancestorID)
-			if err != nil {
-				log.Warn().Err(err).Int64("fact_id", ancestorID).Msg("Failed to get ancestor date, keeping original date")
-			} else {
-				targetDate = ancestorDate
-			}
-		}
-	}
-
-	return pairInfo{
-		factAID:    fact.ID,
-		factAText:  fact.Text,
-		factADate:  fact.PublishedAt,
-		factBID:    targetID,
-		factBText:  targetText,
-		factBDate:  targetDate,
-		similarity: other.Similarity,
-	}
 }
 
 // dedupePairs drops self-pairs and repeated (order-independent) pairs, keeping

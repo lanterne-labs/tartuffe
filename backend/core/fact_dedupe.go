@@ -51,8 +51,12 @@ func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, fac
 	return a.askSameGate(ctx, prompt, 0.0)
 }
 
+// Both gate prompts are laid out rules first, per-call data (person, the two
+// statements) next, response format last: the rule block is byte-identical
+// across calls, so vLLM prefix caching prefills it once per process instead
+// of once per candidate pair (see CHANGES.md, prompt layout).
 func (a *FactDedupeAdjudicator) buildSamePositionPrompt(subject, factA, factB string) string {
-	return fmt.Sprintf(`Two statements are recorded about the SAME person (%s). Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way, so lean toward true when the position and the matter are the same.
+	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way, so lean toward true when the position and the matter are the same.
 
 SAME position (answer true):
 - The same stance on the same question, in different words or through different facets: "affirms his innocence in the affair", "claims his good faith", "contests the qualification of embezzlement" — all one position ("denies guilt in that affair").
@@ -66,6 +70,7 @@ DIFFERENT (answer false — never aggregate):
 - Different concrete events (two separate votes, two separate trials/instances, two separate polls) or materially different numbers/sanctions as the substance of the statement.
 - Different PROCEDURAL STAGES of the same affair: a prosecutor's request (réquisition) vs the court's decision, an indictment vs a verdict, a first-instance ruling vs the appeal — each is its own fact.
 
+Person: %s
 STATEMENT A: "%s"
 STATEMENT B: "%s"
 
@@ -99,7 +104,7 @@ func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string, 
 }
 
 func (a *FactDedupeAdjudicator) buildPrompt(subject, factA, factB string) string {
-	return fmt.Sprintf(`Two statements are recorded about the SAME person (%s). Decide whether they are the SAME claim — one a redundant restatement of the other carrying NO new information — so that keeping both would be pure duplication.
+	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they are the SAME claim — one a redundant restatement of the other carrying NO new information — so that keeping both would be pure duplication.
 
 This is a deduplication gate, so be CONSERVATIVE: when in doubt, answer false. Wrongly merging two statements deletes real information; keeping a redundant one is harmless. Only answer true when B is essentially A reworded.
 
@@ -111,6 +116,7 @@ DISTINCT claims (answer false — keep both):
 - A general position vs a specific concrete act that advances it.
 - Any case where B states something A does not, or vice versa.
 
+Person: %s
 STATEMENT A: "%s"
 STATEMENT B: "%s"
 

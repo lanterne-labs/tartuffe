@@ -71,17 +71,16 @@ func (s *PostgresStorer) GetPersonIDByAttribute(ctx context.Context, key, value 
 }
 
 // GetPersonIDByName returns the person.id for the given name, matched
-// accent-insensitively: the input is normalized to the canonical accent-free
-// person form and compared against immutable_unaccent(name), so it resolves
-// whether stored names are already accent-free or still carry accents (during
-// the one-time unaccent migration).
+// accent- and case-insensitively through personIDByFoldedName (the same
+// lookup the insert paths use, so a name that inserts as an existing row also
+// resolves to it here). A miss wraps pgx.ErrNoRows.
 func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (int64, error) {
-	var id int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = $1 LIMIT 1`,
-		util.NormalizePersonName(name)).Scan(&id)
+	id, err := personIDByFoldedName(ctx, s.pool, util.NormalizePersonName(name))
 	if err != nil {
-		return 0, fmt.Errorf("failed to find person by name %s: %w", name, err)
+		return 0, err
+	}
+	if id == 0 {
+		return 0, fmt.Errorf("failed to find person by name %s: %w", name, pgx.ErrNoRows)
 	}
 	return id, nil
 }
@@ -175,25 +174,65 @@ func (s *PostgresStorer) FindOrCreateAffiliation(ctx context.Context, tx pgx.Tx,
 	return nil
 }
 
-// FindOrInsertPersons is a public wrapper around findOrInsertPersons for use by core.FactInserter.
-// It finds existing persons or inserts new ones based on normalized names.
-// Returns a slice of database IDs corresponding to the input personNames.
+// FindOrInsertPersons resolves personNames (normalized, deduplicated, in
+// input order) to person IDs in one transaction, inserting the unknown ones as
+// entity_type human. A candidate the person gate rejects is dropped from the
+// result (the caller sees a shorter slice); only when every name was rejected
+// and none pre-existed does the first rejection come back as the error, so
+// core.FactInserter can decide whether the fact still has a subject. Empty
+// names after normalization are skipped with a warning.
 func (s *PostgresStorer) FindOrInsertPersons(ctx context.Context, personNames []string) ([]int64, error) {
+	if len(personNames) == 0 {
+		return []int64{}, nil
+	}
+	seen := make(map[string]struct{}, len(personNames))
+	names := make([]string, 0, len(personNames))
+	for _, original := range personNames {
+		normalized := util.NormalizePersonName(original)
+		if normalized == "" {
+			log.Warn().Str("original_name", original).Msg("Skipping empty person name during find/insert")
+			continue
+		}
+		if _, dup := seen[normalized]; !dup {
+			seen[normalized] = struct{}{}
+			names = append(names, normalized)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no valid persons after normalization: %v", personNames)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) // Rollback if not committed
 
-	personIDs, err := s.findOrInsertPersons(ctx, tx, personNames, "")
-	if err != nil {
-		return nil, err
+	// Names resolved one at a time inside the tx: a later name that folds to a
+	// row inserted earlier in this loop resolves to it instead of duplicating.
+	personIDs := make([]int64, 0, len(names))
+	var firstRejection *core.EntityRejectedError
+	for _, name := range names {
+		id, _, err := s.resolveOrInsertPerson(ctx, tx, name, "")
+		if err != nil {
+			var rej *core.EntityRejectedError
+			if errors.As(err, &rej) {
+				if firstRejection == nil {
+					firstRejection = rej
+				}
+				continue
+			}
+			return nil, err
+		}
+		personIDs = append(personIDs, id)
+	}
+	if len(personIDs) == 0 && firstRejection != nil {
+		return nil, firstRejection
 	}
 
 	if err = tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
-
 	return personIDs, nil
 }
 
@@ -216,215 +255,10 @@ func (s *PostgresStorer) FindOrInsertPersonWithType(ctx context.Context, name st
 		entityType = "human"
 	}
 
-	// Try to find existing person first. Match accent- and case-insensitively
-	// (via immutable_unaccent) so "éric zemmour" resolves to an existing
-	// "eric zemmour" row instead of inserting a near-duplicate.
-	var personID int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
-		normalized,
-	).Scan(&personID)
-	if err == nil {
-		return personID, nil
-	}
-	if err != pgx.ErrNoRows {
-		return 0, fmt.Errorf("failed to query person: %w", err)
-	}
-
-	// Person is NEW — run it through the person gate before inserting. A rejection
-	// surfaces as *core.EntityRejectedError so callers can soft-fail this fact and keep
-	// going on the next one.
-	if err := s.checkPersonGate(ctx, normalized, entityType); err != nil {
-		return 0, err
-	}
-
-	// Person doesn't exist, insert with entity type
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO persons (name, entity_type) VALUES ($1, $2)
-		 ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
-		 RETURNING id`,
-		normalized, entityType,
-	).Scan(&personID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to insert person with entity type: %w", err)
-	}
-
-	log.Info().
-		Int64("person_id", personID).
-		Str("name", name).
-		Str("normalized_name", normalized).
-		Str("entity_type", entityType).
-		Msg("Created new person with entity type")
-
-	return personID, nil
-}
-
-// findOrInsertPersons finds existing persons or inserts new ones based on normalized names using batch operations.
-// Returns a slice of database IDs corresponding to the input personNames.
-func (s *PostgresStorer) findOrInsertPersons(ctx context.Context, tx pgx.Tx, personNames []string, factTextForLogging string) (personIDs []int64, err error) {
-	if len(personNames) == 0 {
-		return []int64{}, nil // Nothing to do
-	}
-
-	// 1. Normalize names and create maps for tracking
-	normalizedNameToOriginal := make(map[string]string)
-	normalizedNamesList := make([]string, 0, len(personNames))
-	uniqueNormalizedNames := make(map[string]struct{}) // Using struct{} as a lightweight set value
-
-	for _, originalName := range personNames {
-		normalized := util.NormalizePersonName(originalName)
-		if normalized == "" {
-			log.Warn().Str("original_name", originalName).Str("related_fact_text", factTextForLogging).Msg("Skipping empty person name during find/insert")
-			continue
-		}
-		if _, exists := uniqueNormalizedNames[normalized]; !exists {
-			uniqueNormalizedNames[normalized] = struct{}{}
-			normalizedNamesList = append(normalizedNamesList, normalized)
-			normalizedNameToOriginal[normalized] = originalName // Keep track for logging/errors
-		}
-	}
-
-	if len(normalizedNamesList) == 0 {
-		return nil, fmt.Errorf("no valid persons associated with fact after normalization: '%s'", factTextForLogging)
-	}
-
-	// 2. Find existing persons. Match accent- and case-insensitively by folding
-	//    BOTH sides in SQL (lower(immutable_unaccent(...))) so accent/case
-	//    variants ("éric zemmour" vs "eric zemmour") — and unaccent-only folds
-	//    Postgres applies but a Go fold does not (ß→ss, æ→ae, œ→oe, ł→l, …) —
-	//    resolve to the same existing row. The lookup map is keyed by the
-	//    normalized input name (as found in normalizedNamesList).
-	existingPersons := make(map[string]int64) // Map normalized input name -> existing ID
-	findStmt := `
-		SELECT inp.n AS input_name, p.id
-		FROM unnest($1::text[]) AS inp(n)
-		JOIN persons p ON lower(immutable_unaccent(p.name)) = lower(immutable_unaccent(inp.n))`
-	rows, err := tx.Query(ctx, findStmt, normalizedNamesList)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query existing persons: %w", err)
-	}
-	defer rows.Close() // Ensure rows are closed even if scanning fails mid-way
-
-	for rows.Next() {
-		var id int64
-		var inputName string
-		if err := rows.Scan(&inputName, &id); err != nil {
-			rows.Close() // Close immediately on error
-			return nil, fmt.Errorf("failed to scan existing person row: %w", err)
-		}
-		// Keep the first match for a given input name (legacy dup rows that
-		// share a folded key should be merged via `dm persons dedupe`).
-		if _, seen := existingPersons[inputName]; !seen {
-			existingPersons[inputName] = id
-		}
-	}
-	if rows.Err() != nil {
-		return nil, fmt.Errorf("error iterating existing person rows: %w", rows.Err())
-	}
-	rows.Close() // Explicit close after successful iteration
-
-	// 3. Determine which persons need insertion. NEW candidates (not in existing
-	//    map) go through the person gate; rejected ones are logged and dropped so
-	//    the rest of the batch keeps moving.
-	namesToInsert := make([]string, 0)
-	finalPersonIDsMap := make(map[string]int64) // Store all IDs (existing + new) by normalized name
-	rejectedNames := make([]string, 0)
-	for _, normalizedName := range normalizedNamesList {
-		if id, exists := existingPersons[normalizedName]; exists {
-			finalPersonIDsMap[normalizedName] = id
-			continue
-		}
-		// New candidate — gate it. Rejection drops it from this batch.
-		if err := s.checkPersonGate(ctx, normalizedName, ""); err != nil {
-			var rej *core.EntityRejectedError
-			if errors.As(err, &rej) {
-				rejectedNames = append(rejectedNames, normalizedName)
-				continue
-			}
-			// Non-rejection error (e.g. context cancelled) — bubble up; the batch
-			// can't proceed safely if validation infrastructure itself is broken.
-			return nil, fmt.Errorf("validator failed for %q: %w", normalizedName, err)
-		}
-		namesToInsert = append(namesToInsert, normalizedName)
-	}
-
-	// If every NEW candidate was rejected AND nothing pre-existed, surface a
-	// single typed error so callers can decide whether this fact still has a
-	// resolvable subject.
-	if len(namesToInsert) == 0 && len(finalPersonIDsMap) == 0 && len(rejectedNames) > 0 {
-		return nil, &core.EntityRejectedError{
-			Name:   rejectedNames[0],
-			Reason: fmt.Sprintf("all %d candidate name(s) rejected by validator", len(rejectedNames)),
-		}
-	}
-
-	// 4. Insert the new persons one row at a time with conflict-safe handling.
-	//    These lists are small (a few involved-people names per fact). The
-	//    `name` UNIQUE constraint is on the EXACT name, so ON CONFLICT (name)
-	//    alone would NOT catch two new names in this same batch that differ only
-	//    by accent ("eric" + "éric"). To prevent that, re-check by fold first —
-	//    the lookup runs inside this tx, so it sees rows inserted earlier in this
-	//    loop — and only insert when no fold match exists.
-	for _, name := range namesToInsert {
-		var id int64
-		// Fold re-check: catches within-batch fold collisions (a row inserted
-		// earlier in this loop) that the exact-name ON CONFLICT below would miss.
-		err := tx.QueryRow(ctx,
-			`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
-			name,
-		).Scan(&id)
-		if err == nil {
-			finalPersonIDsMap[name] = id
-			continue
-		}
-		if err != pgx.ErrNoRows {
-			return nil, fmt.Errorf("failed to re-check person %q by fold: %w", name, err)
-		}
-
-		err = tx.QueryRow(ctx,
-			`INSERT INTO persons (name, entity_type) VALUES ($1, 'human')
-			 ON CONFLICT (name) DO NOTHING
-			 RETURNING id`,
-			name,
-		).Scan(&id)
-		if err == pgx.ErrNoRows {
-			// Exact-name race — resolve the existing id by fold.
-			if err := tx.QueryRow(ctx,
-				`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
-				name,
-			).Scan(&id); err != nil {
-				return nil, fmt.Errorf("failed to resolve conflicting person %q: %w", name, err)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("failed to insert new person %q: %w", name, err)
-		} else {
-			log.Debug().Int64("person_id", id).Str("name", name).Msg("Inserted new person")
-		}
-		finalPersonIDsMap[name] = id
-	}
-
-	// 6. Collect final list of IDs in the original order of unique normalized names.
-	// Gate-rejected names are silently omitted (already logged by the gate in
-	// step 3). The remaining missing-from-map case is a real bug.
-	rejectedSet := make(map[string]struct{}, len(rejectedNames))
-	for _, n := range rejectedNames {
-		rejectedSet[n] = struct{}{}
-	}
-	personIDs = make([]int64, 0, len(normalizedNamesList))
-	for _, normalizedName := range normalizedNamesList {
-		if id, ok := finalPersonIDsMap[normalizedName]; ok {
-			personIDs = append(personIDs, id)
-			continue
-		}
-		if _, isRejected := rejectedSet[normalizedName]; isRejected {
-			// Dropped on purpose — no id to return; caller sees a shorter slice.
-			continue
-		}
-		log.Error().Str("normalized_name", normalizedName).Msg("Could not find final ID for person after insert/query steps")
-		return nil, fmt.Errorf("internal error: could not find final ID for person '%s'", normalizedNameToOriginal[normalizedName])
-	}
-
-	return personIDs, nil
+	// A gate rejection surfaces as *core.EntityRejectedError so callers can
+	// soft-fail this fact and keep going on the next one.
+	id, _, err := s.resolveOrInsertPerson(ctx, s.pool, normalized, entityType)
+	return id, err
 }
 
 // PersonInfo represents a person with their details.
@@ -525,42 +359,7 @@ func (s *PostgresStorer) AddPerson(ctx context.Context, name string) (id int64, 
 	if normalizedName == "" {
 		return 0, false, fmt.Errorf("cannot add empty person name")
 	}
-
-	// Fast path: if the person already exists, skip the gate (they were gated
-	// when first inserted OR pre-date the gate). Gate only NEW candidates.
-	if existing, lookupErr := s.findPersonIDByName(ctx, normalizedName); lookupErr == nil && existing > 0 {
-		return existing, false, nil
-	}
-	if err := s.checkPersonGate(ctx, normalizedName, ""); err != nil {
-		return 0, false, err
-	}
-
-	stmt := `
-		INSERT INTO persons (name) VALUES ($1)
-		ON CONFLICT (name) DO NOTHING
-		RETURNING id
-	`
-
-	// Use QueryRow because RETURNING id might not return a row if the conflict occurs.
-	// We need to handle the case where no row is returned.
-	err = s.pool.QueryRow(ctx, stmt, normalizedName).Scan(&id)
-
-	if err == pgx.ErrNoRows {
-		// Conflict occurred, person already exists. We need to get their ID.
-		log.Debug().Str("name", normalizedName).Msg("Person already exists, fetching ID")
-		selectStmt := `SELECT id FROM persons WHERE name = $1`
-		err = s.pool.QueryRow(ctx, selectStmt, normalizedName).Scan(&id)
-		if err != nil {
-			return 0, false, fmt.Errorf("failed to fetch existing person ID for '%s': %w", normalizedName, err)
-		}
-		return id, false, nil // Return existing ID, indicate not inserted
-	} else if err != nil {
-		// Any other error during insert
-		return 0, false, fmt.Errorf("failed to insert person '%s': %w", normalizedName, err)
-	}
-
-	// If we reach here, the insert was successful and returned an ID.
-	return id, true, nil // Return new ID, indicate inserted
+	return s.resolveOrInsertPerson(ctx, s.pool, normalizedName, "")
 }
 
 // AddPersonWithType adds a person with a specific entity_type.
@@ -576,39 +375,7 @@ func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, ent
 	if !validTypes[entityType] {
 		return 0, false, fmt.Errorf("invalid entity_type '%s': must be one of 'human', 'party', 'company', 'organization'", entityType)
 	}
-
-	// Fast path: existing persons skip the gate; only NEW candidates get checked.
-	if existing, lookupErr := s.findPersonIDByName(ctx, normalizedName); lookupErr == nil && existing > 0 {
-		return existing, false, nil
-	}
-	if err := s.checkPersonGate(ctx, normalizedName, entityType); err != nil {
-		return 0, false, err
-	}
-
-	stmt := `
-		INSERT INTO persons (name, entity_type) VALUES ($1, $2)
-		ON CONFLICT (name) DO NOTHING
-		RETURNING id
-	`
-
-	err = s.pool.QueryRow(ctx, stmt, normalizedName, entityType).Scan(&id)
-
-	if err == pgx.ErrNoRows {
-		// Conflict occurred, person already exists. We need to get their ID.
-		log.Debug().Str("name", normalizedName).Msg("Person already exists, fetching ID")
-		selectStmt := `SELECT id FROM persons WHERE name = $1`
-		err = s.pool.QueryRow(ctx, selectStmt, normalizedName).Scan(&id)
-		if err != nil {
-			return 0, false, fmt.Errorf("failed to fetch existing person ID for '%s': %w", normalizedName, err)
-		}
-		return id, false, nil // Return existing ID, indicate not inserted
-	} else if err != nil {
-		// Any other error during insert
-		return 0, false, fmt.Errorf("failed to insert person '%s': %w", normalizedName, err)
-	}
-
-	// If we reach here, the insert was successful and returned an ID.
-	return id, true, nil // Return new ID, indicate inserted
+	return s.resolveOrInsertPerson(ctx, s.pool, normalizedName, entityType)
 }
 
 // PersonSummary represents a summary of a person for the API
@@ -643,15 +410,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT
-			p.id,
-			p.name,
-			p.entity_type,
-			p.honesty_score,
-			p.own_score,
-			p.members_score,
-			p.image_url,
-			p.fact_count
+		SELECT `+PersonSummaryColumns+`, p.fact_count
 		FROM persons p
 		WHERE ($3 = '' OR p.entity_type = $3)
 		  AND ($4 = '' OR p.name ILIKE '%%' || $4 || '%%')
@@ -668,8 +427,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	var persons []PersonSummary
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.FactCount)
-		if err != nil {
+		if err := ScanPersonSummary(rows, &person, &person.FactCount); err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
 		persons = append(persons, person)
@@ -706,14 +464,7 @@ func (s *PostgresStorer) GetPersonLang(ctx context.Context, personID int64) (str
 // counts used for the profile-page summary line.
 func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*PersonSummary, error) {
 	query := `
-		SELECT
-			p.id,
-			p.name,
-			p.entity_type,
-			p.honesty_score,
-			p.own_score,
-			p.members_score,
-			p.image_url,
+		SELECT ` + PersonSummaryColumns + `,
 			COUNT(DISTINCT fs.fact_id) FILTER (
 				WHERE NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate')
 			) AS fact_count,
@@ -723,12 +474,10 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 		LEFT JOIN fact_mentions fm ON p.id = fm.person_id
 		LEFT JOIN fact_sources fs ON fm.fact_source_id = fs.id
 		WHERE p.id = $1
-		GROUP BY p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url`
+		GROUP BY ` + PersonSummaryColumns
 
 	var person PersonSummary
-	err := s.pool.QueryRow(ctx, query, personID).Scan(
-		&person.ID, &person.Name, &person.EntityType, &person.HonestyScore,
-		&person.OwnScore, &person.MembersScore, &person.ImageURL,
+	err := ScanPersonSummary(s.pool.QueryRow(ctx, query, personID), &person,
 		&person.FactCount, &person.StanceCount, &person.ContradictionCount)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -782,8 +531,7 @@ func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit
 			WHERE f.fact_text = tft.transformed_text
 			LIMIT 1
 		)
-		SELECT DISTINCT
-			p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url
+		SELECT DISTINCT ` + PersonSummaryColumns + `
 		FROM target_fact tf
 		JOIN fact_sources fs ON fs.fact_id = tf.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -800,8 +548,7 @@ func (s *PostgresStorer) GetFactPersons(ctx context.Context, factID int64, limit
 	persons := make([]PersonSummary, 0)
 	for rows.Next() {
 		var person PersonSummary
-		err := rows.Scan(&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL)
-		if err != nil {
+		if err := ScanPersonSummary(rows, &person); err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
 		persons = append(persons, person)

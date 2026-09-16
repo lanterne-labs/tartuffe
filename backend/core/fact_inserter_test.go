@@ -53,10 +53,6 @@ func (f *fakeInserterStorer) LinkPersonsToSourceMention(ctx context.Context, sou
 	return nil
 }
 
-func (f *fakeInserterStorer) GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error) {
-	return "", nil
-}
-
 // fakeStanceProcessor satisfies the mandatory stance routing without an LLM.
 type fakeStanceProcessor struct{}
 

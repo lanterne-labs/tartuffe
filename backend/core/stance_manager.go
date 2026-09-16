@@ -1647,79 +1647,7 @@ func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName st
 		return &MergeDecision{}, nil
 	}
 
-	var stancesBuilder strings.Builder
-	for i, s := range cluster {
-		stancesBuilder.WriteString(fmt.Sprintf("[%d] id=%d, label=%q, summary=%q\n",
-			i+1, s.ID, s.Label, truncate(s.Summary, 400)))
-	}
-
-	prompt := fmt.Sprintf(`You are deciding which subsets of the listed stance documents about %s should be merged because they cover the SAME NEUTRAL SUBJECT AREA. A stance is defined as a neutral subject container — both supportive and opposing facts on that subject belong inside it.
-
-MERGE RULES:
-
-**THINK IN TEXTBOOK SUBJECT CATEGORIES.** When deciding whether two stances cover the same subject, ask: "would a political science textbook, a national administration's policy index, or a journalist's beat description put these facts under the same heading?" If yes → MERGE. The canonical taxonomy (use these as the merge target when applicable):
-- DOMESTIC POLICY: politique économique, politique fiscale, politique sociale, politique de l'emploi, politique du logement, politique des retraites, politique de santé, politique de l'éducation, politique culturelle.
-- ECONOMIC & INDUSTRIAL: politique industrielle, politique commerciale, souveraineté économique, politique monétaire, politique de la concurrence, politique agricole.
-- ENVIRONMENTAL & ENERGY: politique climatique, politique énergétique, transition écologique.
-- SECURITY & JUSTICE: politique de sécurité intérieure, politique pénale, libertés civiles et surveillance, immigration et asile.
-- FOREIGN POLICY: politique étrangère, politique européenne, défense nationale, relations bilatérales (e.g. Iran policy, Russia policy).
-- INSTITUTIONS: réforme institutionnelle, décentralisation, fonction publique, laïcité.
-- PERSONAL / LEGAL: a specific legal case ("affaire des assistants parlementaires"), a specific candidacy ("présidentielle 2027").
-
-Fine-grained stances usually roll up into ONE of these textbook headings. If three stances each cover an aspect that a public administration would file under "politique industrielle française", they MUST merge into "politique industrielle française" (or a slightly more specific label like "souveraineté industrielle française"), regardless of which side of the policy they advocate.
-
-- **MERGE WHEN: stances cover the same textbook subject area, REGARDLESS OF POLARITY OR DIRECTION.** A stance whose facts express support for X and a stance whose facts express opposition to X cover the SAME subject (X) and MUST merge. The whole point of consolidation is to put all of the person's positions on one subject in one place so the contradiction detector can surface internal tension.
-
-- Worked examples that MUST merge (textbook-category framing):
-  * "artisanat et pouvoir d'achat" + "politique industrielle et délocalisation" + "politique commerciale et douanière" → unified label "souveraineté industrielle française" or "politique industrielle et commerciale" (all three fit under industrial/trade policy in any textbook)
-  * "défense des services publics" + "discipline budgétaire" + "politique salariale des enseignants" → unified label "politique des dépenses publiques" (all three are aspects of state-spending policy — even though one is teachers, one is hospitals, one is austerity, they all answer "how much does the state spend and on what")
-  * "transition écologique" + "taxe carbone" + "politique énergétique nucléaire" → "politique énergétique et climatique"
-  * "réforme des retraites" + "politique salariale des enseignants" + "fonction publique" → "politique sociale et fonction publique" (broader textbook category that covers all three)
-  * "politique étrangère et coopération de défense" + "diplomatie internationale" + "modernisation militaire" → "politique étrangère et de défense"
-  * "libertés civiles et surveillance" + "encryption et messageries chiffrées" + "vidéosurveillance algorithmique" → "libertés civiles et surveillance numérique"
-  * "droits des couples homoparentaux" + "mariage pour tous" + "lutte contre les discriminations LGBT" → "droits LGBT" or "droits civils et familiaux"
-  * Two labels that share a key phrase (e.g. both contain "transition écologique", "services publics", "industrie", "défense", "retraites") almost always belong together — merge unless the summaries make clear they're genuinely different subjects.
-
-- DO NOT MERGE when stances are about GENUINELY DIFFERENT SUBJECT AREAS at the textbook level:
-  * "politique étrangère" vs "politique fiscale" → different chapters of the textbook, keep separate
-  * "politique étrangère et de défense" vs "politique de sécurité intérieure" → different domains (external vs internal) even though both touch "security", keep separate
-  * Two unrelated specific legal cases involving different events → keep separate (e.g. "affaire des assistants parlementaires" vs "affaire Karachi" — same person but two distinct case files)
-  * Two elections in different jurisdictions / years that don't share a campaign theme → keep separate
-  * A specific case ("affaire des assistants parlementaires") vs a general policy stance ("politique judiciaire") → keep separate (case-level vs policy-level)
-
-- TEMPORAL CONTEXT alone is NOT a reason to keep separate if both bear on the same recurring subject (e.g. "budget 2024" vs "budget 2025" → MERGE under "politique budgétaire de l'État"). Distinct legal cases tied to different events are a separate-subject scenario; recurring policy themes are the same subject.
-
-- When in doubt: PREFER to merge AT THE TEXTBOOK LEVEL. Fragmentation hurts contradiction detection because contradictions only fire within a single stance. Over-merging at the textbook level tolerates broad subjects (the inline detector can still distinguish facts within); under-merging silently loses cross-fragment contradictions forever.
-
-- Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
-
-UNIFIED LABEL RULES (for the `+"`label`"+` field of each merge):
-- The unified label MUST be a NEUTRAL SUBJECT, not a position. The same label must work for both pro and anti facts in the merged stance.
-- FORBIDDEN label vocabulary: directional verbs ("défense de", "lutte contre", "opposition à", "soutien à", "engagement pour", "discipline"), polarity prefixes ("pro-", "anti-"), attitudinal adjectives ("strict", "sacré", "ferme").
-- GOOD unified labels: "politique des dépenses publiques", "politique climatique", "services publics et hôpitaux", "souveraineté industrielle française", "Iran policy", "EU economic policy".
-- BAD unified labels: ❌ "défense de la transition écologique" → ✅ "politique climatique". ❌ "engagement pour les services publics" → ✅ "services publics et hôpitaux".
-- Length: 4-12 words. Max 120 chars.
-
-UNIFIED SUMMARY RULES (for the `+"`summary`"+` field):
-- 1-3 sentences describing what the person has said / done across all merged stances on this subject.
-- If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
-
-**LANGUAGE RULE:** Write the unified `+"`summary`"+` and `+"`label`"+` in the same language as the stances provided. If stances span multiple languages, use French.
-
-STANCES IN THIS CANDIDATE CLUSTER:
-%s
-
-Return ONLY valid JSON:
-{
-  "reasoning": "1-3 sentences explaining your decision",
-  "merges": [
-    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
-  ]
-}
-
-If nothing should be merged, return {"reasoning": "...", "merges": []}.
-Stances not listed in any merge group will be left as-is.`,
-		personName, stancesBuilder.String())
+	prompt := mergeDecisionPrompt(personName, cluster)
 
 	// Thinking OFF (see callLLM comment): same regression pattern observed.
 	// Token cap restored to 800 — no thinking means no need for the headroom.
@@ -1776,6 +1704,91 @@ Stances not listed in any merge group will be left as-is.`,
 		log.Info().Str("person", personName).Int("cluster_size", len(cluster)).Int("subgroups", len(clean)).Str("reasoning", raw.Reasoning).Msg("Merge-decision LLM result")
 	}
 	return &MergeDecision{Merges: clean}, nil
+}
+
+// mergeDecisionPrompt is the exact user message MergeClusterDecision sends for
+// personName and cluster. It is a pure function of its inputs so callers can
+// hash it as the rulebook version a merge verdict was judged under.
+//
+// Layout is rules first, per-call data next, response format last: the rule
+// block is byte-identical across calls, so vLLM prefix caching prefills it once
+// per process instead of once per person (see CHANGES.md, prompt layout).
+func mergeDecisionPrompt(personName string, cluster []StanceForMerge) string {
+	var stancesBuilder strings.Builder
+	for i, s := range cluster {
+		stancesBuilder.WriteString(fmt.Sprintf("[%d] id=%d, label=%q, summary=%q\n",
+			i+1, s.ID, s.Label, truncate(s.Summary, 400)))
+	}
+
+	return fmt.Sprintf(`You are deciding which subsets of the listed stance documents about one person should be merged because they cover the SAME NEUTRAL SUBJECT AREA. A stance is defined as a neutral subject container — both supportive and opposing facts on that subject belong inside it.
+
+MERGE RULES:
+
+**THINK IN TEXTBOOK SUBJECT CATEGORIES.** When deciding whether two stances cover the same subject, ask: "would a political science textbook, a national administration's policy index, or a journalist's beat description put these facts under the same heading?" If yes → MERGE. The canonical taxonomy (use these as the merge target when applicable):
+- DOMESTIC POLICY: politique économique, politique fiscale, politique sociale, politique de l'emploi, politique du logement, politique des retraites, politique de santé, politique de l'éducation, politique culturelle.
+- ECONOMIC & INDUSTRIAL: politique industrielle, politique commerciale, souveraineté économique, politique monétaire, politique de la concurrence, politique agricole.
+- ENVIRONMENTAL & ENERGY: politique climatique, politique énergétique, transition écologique.
+- SECURITY & JUSTICE: politique de sécurité intérieure, politique pénale, libertés civiles et surveillance, immigration et asile.
+- FOREIGN POLICY: politique étrangère, politique européenne, défense nationale, relations bilatérales (e.g. Iran policy, Russia policy).
+- INSTITUTIONS: réforme institutionnelle, décentralisation, fonction publique, laïcité.
+- PERSONAL / LEGAL: a specific legal case ("affaire des assistants parlementaires"), a specific candidacy ("présidentielle 2027").
+
+Fine-grained stances usually roll up into ONE of these textbook headings. If three stances each cover an aspect that a public administration would file under "politique industrielle française", they MUST merge into "politique industrielle française" (or a slightly more specific label like "souveraineté industrielle française"), regardless of which side of the policy they advocate.
+
+- **MERGE WHEN: stances cover the same textbook subject area, REGARDLESS OF POLARITY OR DIRECTION.** A stance whose facts express support for X and a stance whose facts express opposition to X cover the SAME subject (X) and MUST merge. The whole point of consolidation is to put all of the person's positions on one subject in one place so the contradiction detector can surface internal tension.
+
+- Worked examples that MUST merge (textbook-category framing):
+  * "artisanat et pouvoir d'achat" + "politique industrielle et délocalisation" + "politique commerciale et douanière" → unified label "souveraineté industrielle française" or "politique industrielle et commerciale" (all three fit under industrial/trade policy in any textbook)
+  * "défense des services publics" + "discipline budgétaire" + "politique salariale des enseignants" → unified label "politique des dépenses publiques" (all three are aspects of state-spending policy — even though one is teachers, one is hospitals, one is austerity, they all answer "how much does the state spend and on what")
+  * "transition écologique" + "taxe carbone" + "politique énergétique nucléaire" → "politique énergétique et climatique"
+  * "réforme des retraites" + "politique salariale des enseignants" + "fonction publique" → "politique sociale et fonction publique" (broader textbook category that covers all three)
+  * "politique étrangère et coopération de défense" + "diplomatie internationale" + "modernisation militaire" → "politique étrangère et de défense"
+  * "libertés civiles et surveillance" + "encryption et messageries chiffrées" + "vidéosurveillance algorithmique" → "libertés civiles et surveillance numérique"
+  * "droits des couples homoparentaux" + "mariage pour tous" + "lutte contre les discriminations LGBT" → "droits LGBT" or "droits civils et familiaux"
+  * Two labels that share a key phrase (e.g. both contain "transition écologique", "services publics", "industrie", "défense", "retraites") almost always belong together — merge unless the summaries make clear they're genuinely different subjects.
+
+- DO NOT MERGE when stances are about GENUINELY DIFFERENT SUBJECT AREAS at the textbook level:
+  * "politique étrangère" vs "politique fiscale" → different chapters of the textbook, keep separate
+  * "politique étrangère et de défense" vs "politique de sécurité intérieure" → different domains (external vs internal) even though both touch "security", keep separate
+  * Two unrelated specific legal cases involving different events → keep separate (e.g. "affaire des assistants parlementaires" vs "affaire Karachi" — same person but two distinct case files)
+  * Two elections in different jurisdictions / years that don't share a campaign theme → keep separate
+  * A specific case ("affaire des assistants parlementaires") vs a general policy stance ("politique judiciaire") → keep separate (case-level vs policy-level)
+
+- TEMPORAL CONTEXT alone is NOT a reason to keep separate if both bear on the same recurring subject (e.g. "budget 2024" vs "budget 2025" → MERGE under "politique budgétaire de l'État"). Distinct legal cases tied to different events are a separate-subject scenario; recurring policy themes are the same subject.
+
+- When in doubt: PREFER to merge AT THE TEXTBOOK LEVEL. Fragmentation hurts contradiction detection because contradictions only fire within a single stance. Over-merging at the textbook level tolerates broad subjects (the inline detector can still distinguish facts within); under-merging silently loses cross-fragment contradictions forever.
+
+- Singletons (single-stance "merges") are NOT allowed — every merge group must contain at least 2 stance IDs.
+
+UNIFIED LABEL RULES (for the `+"`label`"+` field of each merge):
+- The unified label MUST be a NEUTRAL SUBJECT, not a position. The same label must work for both pro and anti facts in the merged stance.
+- FORBIDDEN label vocabulary: directional verbs ("défense de", "lutte contre", "opposition à", "soutien à", "engagement pour", "discipline"), polarity prefixes ("pro-", "anti-"), attitudinal adjectives ("strict", "sacré", "ferme").
+- GOOD unified labels: "politique des dépenses publiques", "politique climatique", "services publics et hôpitaux", "souveraineté industrielle française", "Iran policy", "EU economic policy".
+- BAD unified labels: ❌ "défense de la transition écologique" → ✅ "politique climatique". ❌ "engagement pour les services publics" → ✅ "services publics et hôpitaux".
+- Length: 4-12 words. Max 120 chars.
+
+UNIFIED SUMMARY RULES (for the `+"`summary`"+` field):
+- 1-3 sentences describing what the person has said / done across all merged stances on this subject.
+- If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
+
+**LANGUAGE RULE:** Write the unified `+"`summary`"+` and `+"`label`"+` in the same language as the stances provided. If stances span multiple languages, use French.
+
+PERSON: %s
+
+STANCES IN THIS CANDIDATE CLUSTER:
+%s
+
+Return ONLY valid JSON:
+{
+  "reasoning": "1-3 sentences explaining your decision",
+  "merges": [
+    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
+  ]
+}
+
+If nothing should be merged, return {"reasoning": "...", "merges": []}.
+Stances not listed in any merge group will be left as-is.`,
+		personName, stancesBuilder.String())
 }
 
 // updateCentroid computes a weighted average of the old centroid and a new embedding,

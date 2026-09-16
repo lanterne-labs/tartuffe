@@ -2,8 +2,115 @@ package storage
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"digital-mirror/backend/core"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+// TestPersonEntryPointsShareOneLookup covers the single lookup behind every
+// person entry point: accent, case and typographic-punctuation variants of one
+// name resolve to the one row the first call inserted, whichever entry point
+// asks, and GetPersonIDByName finds names whose fold only Postgres unaccent
+// knows (ł→l), which the column-only lookup it replaced missed.
+func TestPersonEntryPointsShareOneLookup(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	id, inserted, err := storer.AddPerson(ctx, "Éric D’Testperson")
+	require.NoError(t, err)
+	require.True(t, inserted)
+
+	id2, inserted2, err := storer.AddPersonWithType(ctx, "eric d'testperson", "party")
+	require.NoError(t, err)
+	assert.False(t, inserted2)
+	assert.Equal(t, id, id2)
+
+	id3, err := storer.FindOrInsertPersonWithType(ctx, "ERIC D'TESTPERSON", "human")
+	require.NoError(t, err)
+	assert.Equal(t, id, id3)
+
+	ids, err := storer.FindOrInsertPersons(ctx, []string{"éric d'testperson", "Eric  D’Testperson"})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{id}, ids, "variants dedupe to one name before lookup")
+
+	id4, err := storer.GetPersonIDByName(ctx, "Éric D’Testperson")
+	require.NoError(t, err)
+	assert.Equal(t, id, id4)
+
+	persons, err := storer.GetAllPersons(ctx)
+	require.NoError(t, err)
+	require.Len(t, persons, 1)
+	assert.Equal(t, "eric d'testperson", persons[0].Name)
+	assert.Equal(t, "human", persons[0].EntityType, "an existing row keeps its entity_type")
+
+	// ł has no combining mark, so the Go fold keeps it; only the SQL fold
+	// maps it to l. Both directions must resolve to the same row.
+	idL, inserted, err := storer.AddPerson(ctx, "Łukasz Testperson")
+	require.NoError(t, err)
+	require.True(t, inserted)
+	got, err := storer.GetPersonIDByName(ctx, "Lukasz Testperson")
+	require.NoError(t, err)
+	assert.Equal(t, idL, got)
+	got, inserted, err = storer.AddPerson(ctx, "lukasz testperson")
+	require.NoError(t, err)
+	assert.False(t, inserted)
+	assert.Equal(t, idL, got)
+
+	_, err = storer.GetPersonIDByName(ctx, "Nobody Testperson")
+	require.Error(t, err)
+}
+
+// TestFindOrInsertPersons_BatchFoldAndRejection covers the batch entry point:
+// two names that only the SQL fold unifies collapse to one row inside the
+// transaction, a gate-rejected name is dropped from the result, an all-rejected
+// batch returns the rejection, and degenerate inputs are handled.
+func TestFindOrInsertPersons_BatchFoldAndRejection(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	ids, err := storer.FindOrInsertPersons(ctx, []string{"Łukasz Testperson", "Lukasz Testperson", "Anne Testperson"})
+	require.NoError(t, err)
+	require.Len(t, ids, 3)
+	assert.Equal(t, ids[0], ids[1], "the second name folds to the row inserted by the first")
+	assert.NotEqual(t, ids[0], ids[2])
+	anneID := ids[2]
+
+	persons, err := storer.GetAllPersons(ctx)
+	require.NoError(t, err)
+	require.Len(t, persons, 2)
+
+	storer.SetPersonGate(func(_ context.Context, name, entityType string) error {
+		if strings.HasPrefix(name, "junk") {
+			return &core.EntityRejectedError{Name: name, EntityType: entityType, Filter: "test", Reason: "junk"}
+		}
+		return nil
+	})
+	defer storer.SetPersonGate(nil)
+
+	ids, err = storer.FindOrInsertPersons(ctx, []string{"Junk One", "Anne Testperson"})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{anneID}, ids, "rejected name is dropped, existing name is not re-gated")
+
+	_, err = storer.FindOrInsertPersons(ctx, []string{"Junk One", "Junk Two"})
+	require.True(t, core.IsEntityRejected(err), "all rejected and nothing pre-existing: %v", err)
+
+	_, err = storer.FindOrInsertPersons(ctx, []string{"   "})
+	require.Error(t, err, "no valid name after normalization")
+
+	ids, err = storer.FindOrInsertPersons(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+
+	persons, err = storer.GetAllPersons(ctx)
+	require.NoError(t, err)
+	assert.Len(t, persons, 2, "no junk row was inserted")
+}
 
 func TestAddPersonWithType(t *testing.T) {
 	ctx := context.Background()

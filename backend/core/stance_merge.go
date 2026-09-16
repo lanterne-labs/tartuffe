@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"digital-mirror/backend/util"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"time"
@@ -17,9 +19,13 @@ type StanceMergeStorer interface {
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	MergeStancesForPerson(ctx context.Context, srcID, dstID int64, newDstCentroid []float32) error
 	UpdateStanceSummary(ctx context.Context, stanceID int64, summary, clusterLabel string) error
-	// GetPersonsWithMultipleStances lists the persons with >= 2 stances — the
-	// only ones a merge can apply to.
-	GetPersonsWithMultipleStances(ctx context.Context) ([]PersonRecord, error)
+	// ListPersonsNeedingMergeSweep lists the persons with >= 2 stances whose
+	// stance set changed since the sweep last judged it under rulebookKey, or
+	// that were never judged under it.
+	ListPersonsNeedingMergeSweep(ctx context.Context, rulebookKey string) ([]PersonRecord, error)
+	// RecordMergeSweep memoizes that the person's current stance set was
+	// judged under rulebookKey.
+	RecordMergeSweep(ctx context.Context, personID int64, rulebookKey string) error
 }
 
 // StanceMergeOptions tunes the per-person merge and the sweep over persons.
@@ -105,21 +111,35 @@ func (s *StanceMergeSweepStats) Add(ps PersonMergeStats) {
 	s.PostMergeAnalyzeFailures += ps.PostMergeAnalyzeFailures
 }
 
+// MergeRulebookKey identifies the merge judge's prompt and the sweep's
+// candidate floor: the memo of a person's sweep is keyed on it, so editing the
+// prompt or the floor re-judges every person once.
+func MergeRulebookKey(opts StanceMergeOptions) string {
+	h := sha256.New()
+	h.Write([]byte(mergeDecisionPrompt("\x00", []StanceForMerge{{ID: 0, Label: "\x00", Summary: "\x00"}})))
+	fmt.Fprintf(h, "|recall=%g|cap=%d", opts.RecallSim, allStancesLLMCap)
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
 // RunStanceMergeSweep is the daily-pipeline stance merge step: for every person
-// with at least two stances (capped by opts.MaxPersons), LLM-vets the candidate
-// clusters, applies the merges, and re-detects contradictions across the
-// previously-fragmented facts. A per-person failure is logged and skipped.
+// with at least two stances whose stance set changed since it was last judged
+// (capped by opts.MaxPersons), LLM-vets the candidate clusters, applies the
+// merges, and re-detects contradictions across the previously-fragmented
+// facts. A person judged without LLM failures is memoized under the current
+// stance fingerprint and rulebook (RecordMergeSweep), so unchanged persons
+// cost the sweep nothing the next night. A per-person failure is logged and
+// skipped, and stays pending.
 func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *StanceManager, opts StanceMergeOptions) (StanceMergeSweepStats, error) {
 	var stats StanceMergeSweepStats
 	start := time.Now()
 	log.Info().Msg("Stance merge sweep started")
 
-	// SQL pre-filter: only consider persons with >= 2 stances (the rest can't
-	// possibly merge). Cuts a 3849-person DB-query loop down to ~100-300.
-	persons, err := storer.GetPersonsWithMultipleStances(ctx)
+	key := MergeRulebookKey(opts)
+	persons, err := storer.ListPersonsNeedingMergeSweep(ctx, key)
 	if err != nil {
 		return stats, fmt.Errorf("listing merge-candidate persons: %w", err)
 	}
+	pending := len(persons)
 	if opts.MaxPersons > 0 && len(persons) > opts.MaxPersons {
 		persons = persons[:opts.MaxPersons]
 	}
@@ -131,14 +151,25 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 			continue
 		}
 		stats.Add(ps)
+		// A failed LLM call means a candidate went unjudged: leave the person
+		// pending so the next sweep asks again. Dry runs judge without
+		// applying, so their answer must not be memoized either.
+		if ps.LLMFailures > 0 || opts.DryRun {
+			continue
+		}
+		if err := storer.RecordMergeSweep(ctx, p.ID, key); err != nil {
+			log.Error().Err(err).Str("person", p.Name).Msg("Merge sweep: failed to record the sweep memo")
+		}
 	}
 
 	log.Info().
 		Dur("elapsed", time.Since(start)).
+		Int("pending", pending).
 		Int64("persons_processed", stats.PersonsProcessed).
 		Int64("stances_merged", stats.StancesMerged).
 		Int64("post_merge_contradictions", stats.PostMergeContradictions).
 		Int64("post_merge_analyze_failures", stats.PostMergeAnalyzeFailures).
+		Str("rulebook", key).
 		Msg("Stance merge sweep finished")
 	return stats, nil
 }

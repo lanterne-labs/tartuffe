@@ -168,23 +168,6 @@ func (s *PostgresStorer) IsMetaFact(ctx context.Context, factID int64) (bool, er
 }
 
 // GetFactStanceID returns the stance a fact belongs to (0, false if none).
-// CountFactMentionPersons returns how many distinct persons carry the fact via
-// fact_mentions. Used by the fold path to refuse folding shared (co-actor)
-// facts: marking a shared vote fact as a duplicate member would silently remove
-// it from every voter's active-fact set, not just the subject's.
-func (s *PostgresStorer) CountFactMentionPersons(ctx context.Context, factID int64) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT fm.person_id)
-		FROM fact_mentions fm
-		JOIN fact_sources fs ON fs.id = fm.fact_source_id
-		WHERE fs.fact_id = $1`, factID).Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("count mention persons for fact %d: %w", factID, err)
-	}
-	return n, nil
-}
-
 func (s *PostgresStorer) GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error) {
 	// Person-scoped: a fact may be a member of many stances (one per person who
 	// carries it — shared vote facts), so an unscoped lookup would return an

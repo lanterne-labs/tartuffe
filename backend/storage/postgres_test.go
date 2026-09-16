@@ -925,3 +925,62 @@ func TestStanceBundledContradictions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, groupsB, "stance B has no group whose base fact is in stance B")
 }
+
+// TestPersonSummaryQueries covers the three PersonSummary projections
+// (ranked list, by id, persons of a fact): the same person comes back with
+// identical summary columns from each, plus the counts each query adds.
+func TestPersonSummaryQueries(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+		SubjectEntity:      "Summary Testperson",
+		SubjectEntityType:  "party",
+		NormalizedFactText: "summary testperson backed policy z",
+		Embedding:          mockEmbedding(),
+		OriginalQuote:      "policy z",
+		SourceURL:          "http://example.com/summary-1",
+		SourceType:         "test",
+	})
+	require.NoError(t, err)
+	personID, err := storer.GetPersonIDByName(ctx, "Summary Testperson")
+	require.NoError(t, err)
+	_, err = storer.pool.Exec(ctx, `UPDATE persons SET image_url = 'http://img/x.png', fact_count = 1 WHERE id = $1`, personID)
+	require.NoError(t, err)
+
+	byID, err := storer.GetPersonByID(ctx, personID)
+	require.NoError(t, err)
+	require.NotNil(t, byID)
+	assert.Equal(t, personID, byID.ID)
+	assert.Equal(t, "summary testperson", byID.Name)
+	require.NotNil(t, byID.EntityType)
+	assert.Equal(t, "party", *byID.EntityType)
+	require.NotNil(t, byID.ImageURL)
+	assert.Equal(t, "http://img/x.png", *byID.ImageURL)
+	assert.Equal(t, 1, byID.FactCount)
+	assert.Equal(t, 1, byID.StanceCount, "the stub stance processor gives every fact a stance")
+	assert.Equal(t, 0, byID.ContradictionCount)
+
+	ranked, err := storer.GetPersonsRankedByScore(ctx, 10, 0, "party", "testperson", "", 1)
+	require.NoError(t, err)
+	require.Len(t, ranked, 1)
+	assert.Equal(t, byID.ID, ranked[0].ID)
+	assert.Equal(t, byID.Name, ranked[0].Name)
+	assert.Equal(t, byID.EntityType, ranked[0].EntityType)
+	assert.Equal(t, byID.HonestyScore, ranked[0].HonestyScore)
+	assert.Equal(t, byID.ImageURL, ranked[0].ImageURL)
+	assert.Equal(t, 1, ranked[0].FactCount)
+
+	ofFact, err := storer.GetFactPersons(ctx, factID, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, ofFact, 1)
+	assert.Equal(t, byID.ID, ofFact[0].ID)
+	assert.Equal(t, byID.Name, ofFact[0].Name)
+	assert.Equal(t, byID.EntityType, ofFact[0].EntityType)
+	assert.Equal(t, byID.ImageURL, ofFact[0].ImageURL)
+
+	missing, err := storer.GetPersonByID(ctx, personID+1000)
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+}
