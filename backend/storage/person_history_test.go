@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestBuildPersonHistory_CumulativeAndRecentDiverge(t *testing.T) {
 	assert.Equal(t, weekStart(now), last.Date)
 	assert.Equal(t, 4, last.FactsTotal, "future-dated fact folds into the current week")
 	assert.Equal(t, 1, last.Contradictions)
-	assert.Equal(t, ComputeHonestyScore(4, ContradictionStats{Bundles: 1, Total: 1}), last.Score)
+	assert.Equal(t, core.ComputeHonestyScore(4, core.ContradictionStats{Bundles: 1, Total: 1}), last.Score)
 	assert.Equal(t, 1.0, last.RecentScore, "old contradiction and facts left the trailing window")
 
 	// At the contradiction's week both series carry it.

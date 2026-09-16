@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -57,20 +57,17 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found or error loading")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
-	// Normalize the name to match database storage
-	normalizedName := util.NormalizeString(targetName)
-
-	// Get the person ID
-	personID, err := storer.GetPersonIDByName(ctx, normalizedName)
+	person, err := core.ResolvePersonID(ctx, storer, targetName, core.ExactMatchOnly)
 	if err != nil {
-		return fmt.Errorf("failed to find %s %q: %w", targetType, targetName, err)
+		return err
 	}
+	personID := person.ID
 
 	// Count facts before deletion
 	factCount, err := storer.CountFactsForPerson(ctx, personID)

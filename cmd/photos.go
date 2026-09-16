@@ -3,12 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"digital-mirror/backend/core"
-	"digital-mirror/backend/objectstore"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/plugins/photos"
-	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/joho/godotenv"
@@ -49,13 +47,12 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
 
-	// Parse flags
 	targets, _ := cmd.Flags().GetStringSlice("targets")
 	all, _ := cmd.Flags().GetBool("all")
 	force, _ := cmd.Flags().GetBool("force")
@@ -68,62 +65,31 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("specify --targets or --all")
 	}
 
-	// Build person list
+	store := photos.NewStore(storer)
 	var persons []storage.PersonSummary
-
-	if all {
-		if force {
-			// Get ALL persons
-			allPersons, err := storer.GetPersonsRankedByScore(ctx, 10000, 0, "", "", "", 0)
-			if err != nil {
-				return fmt.Errorf("failed to get persons: %w", err)
-			}
-			persons = allPersons
-		} else {
-			// Only persons without photos
-			withoutImage, err := storer.GetPersonsWithoutImage(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to get persons without image: %w", err)
-			}
-			persons = withoutImage
+	switch {
+	case all && force:
+		persons, err = storer.GetPersonsRankedByScore(ctx, 10000, 0, "", "", "", 0)
+		if err != nil {
+			return fmt.Errorf("failed to get persons: %w", err)
 		}
-	} else {
-		// Resolve each target name
-		for _, target := range targets {
-			target = strings.TrimSpace(target)
-			if target == "" {
+	case all:
+		persons, err = store.GetPersonsWithoutImage(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get persons without image: %w", err)
+		}
+	default:
+		records, err := core.ResolvePersons(ctx, storer, targets, fuzzyFloor)
+		if err != nil {
+			return err
+		}
+		for _, r := range records {
+			person, err := storer.GetPersonByID(ctx, r.ID)
+			if err != nil || person == nil {
+				log.Error().Err(err).Str("target", r.Name).Int64("id", r.ID).Msg("Person not found by ID")
 				continue
 			}
-
-			result := core.ResolveTargetName(ctx, storer, target)
-			if result.Error != nil {
-				log.Error().Err(result.Error).Str("target", target).Msg("Failed to resolve target")
-				continue
-			}
-
-			if result.IsExactMatch {
-				person, err := storer.GetPersonByID(ctx, *result.ExactMatch.PersonID)
-				if err != nil || person == nil {
-					log.Error().Str("target", target).Msg("Person not found by ID")
-					continue
-				}
-				persons = append(persons, *person)
-			} else if len(result.FuzzyMatches) > 0 && result.FuzzyMatches[0].Score >= 0.8 {
-				top := result.FuzzyMatches[0]
-				person, err := storer.GetPersonByID(ctx, *top.Target.PersonID)
-				if err != nil || person == nil {
-					log.Error().Str("target", target).Msg("Person not found by ID")
-					continue
-				}
-				log.Info().
-					Str("query", target).
-					Str("matched", person.Name).
-					Float64("score", top.Score).
-					Msg("Using fuzzy match")
-				persons = append(persons, *person)
-			} else {
-				log.Error().Str("target", target).Msg("No confident match found")
-			}
+			persons = append(persons, *person)
 		}
 	}
 
@@ -131,100 +97,31 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 		fmt.Println("No persons to process.")
 		return nil
 	}
+	log.Info().Int("persons", len(persons)).Bool("force", force).Bool("dry_run", dryRun).Msg("Starting photo search")
 
-	log.Info().
-		Int("persons", len(persons)).
-		Bool("force", force).
-		Bool("dry_run", dryRun).
-		Msg("Starting photo search")
-
-	// Initialize image search provider
-	imageSearcher, err := search.NewImageSearcherFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize image search: %w", err)
-	}
-
-	// Initialize R2 (not needed for dry-run)
-	var r2 *objectstore.R2Client
-	if !dryRun {
-		r2, err = objectstore.NewR2ClientFromEnv()
+	d := deps.New(storer)
+	var provider *photos.Provider
+	if dryRun {
+		// No object store needed: nothing is uploaded.
+		searcher, err := d.ImageSearcher()
 		if err != nil {
-			return fmt.Errorf("failed to initialize R2: %w", err)
+			return fmt.Errorf("failed to initialize image search: %w", err)
+		}
+		provider = &photos.Provider{ImageSearch: searcher, Storer: store}
+	} else {
+		provider, err = photos.NewProviderFromDeps(d)
+		if err != nil {
+			return err
 		}
 	}
 
-	provider := &photos.Provider{
-		ImageSearch: imageSearcher,
-		R2:          r2,
-		Storer:      storer,
-	}
-
-	opts := photos.Options{
-		Force:      force,
-		DryRun:     dryRun,
-		MaxResults: maxResults,
-		MinWidth:   minWidth,
-		MinHeight:  minHeight,
-	}
-
-	uploaded := 0
-	skipped := 0
-	errors := 0
-
-	for i, person := range persons {
-		log.Info().
-			Int("progress", i+1).
-			Int("total", len(persons)).
-			Str("person", person.Name).
-			Msg("Processing person")
-
-		result := provider.SearchAndUpload(ctx, person, opts)
-
-		if result.Error != nil {
-			log.Error().
-				Err(result.Error).
-				Str("person", person.Name).
-				Msg("Photo search failed")
-			errors++
-			continue
-		}
-
-		if result.Skipped {
-			log.Info().
-				Str("person", person.Name).
-				Str("reason", result.SkipReason).
-				Msg("Skipped")
-			skipped++
-			continue
-		}
-
-		if result.Uploaded {
-			log.Info().
-				Str("person", person.Name).
-				Str("url", result.ImageURL).
-				Msg("Photo uploaded")
-			uploaded++
-		}
-	}
-
-	log.Info().
-		Int("total", len(persons)).
-		Int("uploaded", uploaded).
-		Int("skipped", skipped).
-		Int("errors", errors).
-		Msg("Photo search completed")
-
-	// Record job metrics (skip in dry-run mode)
+	st := photos.RunForPersons(ctx, provider, persons, photos.Options{
+		Force: force, DryRun: dryRun, MaxResults: maxResults, MinWidth: minWidth, MinHeight: minHeight,
+	})
 	if !dryRun {
-		jobMetrics := []storage.JobMetric{
-			{JobType: "photos-search", Target: "", Metric: "uploaded", Value: float64(uploaded)},
-			{JobType: "photos-search", Target: "", Metric: "skipped", Value: float64(skipped)},
-			{JobType: "photos-search", Target: "", Metric: "errors", Value: float64(errors)},
-		}
-		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
+		if err := photos.RecordJobMetrics(ctx, storer, "photos-search", st); err != nil {
 			log.Error().Err(err).Msg("Failed to record job metrics")
 		}
 	}
-
 	return nil
 }

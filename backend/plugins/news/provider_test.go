@@ -1,9 +1,39 @@
 package news
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/util"
 )
+
+func TestTargetKind(t *testing.T) {
+	cases := map[string]string{"human": "person", "party": "party", "organization": "party", "": "person"}
+	for entityType, want := range cases {
+		if got := targetKind(plugins.Target{EntityType: entityType}); got != want {
+			t.Errorf("targetKind(%q) = %q, want %q", entityType, got, want)
+		}
+	}
+}
+
+func TestTargetCacheDir(t *testing.T) {
+	base := t.TempDir()
+	got := targetCacheDir(base, "Marine Le Pen")
+	want := filepath.Join(base, util.NormalizeToDirName("Marine Le Pen"))
+	if got != want {
+		t.Errorf("targetCacheDir = %q, want %q", got, want)
+	}
+	if got == base {
+		t.Fatal("target dir must be a subdirectory of the base, not the base itself")
+	}
+	info, err := os.Stat(got)
+	if err != nil || !info.IsDir() {
+		t.Errorf("target cache dir should exist after the call: err=%v", err)
+	}
+}
 
 func date(year, month, day int) time.Time {
 	return time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)

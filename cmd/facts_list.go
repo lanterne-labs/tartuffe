@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"fmt"
@@ -41,7 +42,7 @@ func listFacts(cmd *cobra.Command, args []string) {
 		log.Debug().Msg(".env file not found or error loading.")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}

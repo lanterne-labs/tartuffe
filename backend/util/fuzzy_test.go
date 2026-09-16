@@ -67,9 +67,9 @@ func TestLevenshteinDistance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.s1+"_"+tt.s2, func(t *testing.T) {
-			got := LevenshteinDistance(tt.s1, tt.s2)
+			got := levenshteinDistance(tt.s1, tt.s2)
 			if got != tt.expected {
-				t.Errorf("LevenshteinDistance(%q, %q) = %d, want %d", tt.s1, tt.s2, got, tt.expected)
+				t.Errorf("levenshteinDistance(%q, %q) = %d, want %d", tt.s1, tt.s2, got, tt.expected)
 			}
 		})
 	}
@@ -94,25 +94,25 @@ func TestSimilarityScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.s1+"_vs_"+tt.s2, func(t *testing.T) {
-			score := SimilarityScore(tt.s1, tt.s2)
+			score := similarityScore(tt.s1, tt.s2)
 
 			if tt.expectedExact && score != 1.0 {
-				t.Errorf("SimilarityScore(%q, %q) = %.3f, want 1.0 (exact match)", tt.s1, tt.s2, score)
+				t.Errorf("similarityScore(%q, %q) = %.3f, want 1.0 (exact match)", tt.s1, tt.s2, score)
 			}
 
 			if tt.expectedHigh && score <= 0.8 {
-				t.Errorf("SimilarityScore(%q, %q) = %.3f, want > 0.8 (high similarity)", tt.s1, tt.s2, score)
+				t.Errorf("similarityScore(%q, %q) = %.3f, want > 0.8 (high similarity)", tt.s1, tt.s2, score)
 			}
 
 			if tt.expectedMedium && score <= 0.5 {
-				t.Errorf("SimilarityScore(%q, %q) = %.3f, want > 0.5 (medium similarity)", tt.s1, tt.s2, score)
+				t.Errorf("similarityScore(%q, %q) = %.3f, want > 0.5 (medium similarity)", tt.s1, tt.s2, score)
 			}
 
 			if score < tt.expectedMin {
-				t.Errorf("SimilarityScore(%q, %q) = %.3f, want >= %.3f", tt.s1, tt.s2, score, tt.expectedMin)
+				t.Errorf("similarityScore(%q, %q) = %.3f, want >= %.3f", tt.s1, tt.s2, score, tt.expectedMin)
 			}
 
-			t.Logf("SimilarityScore(%q, %q) = %.3f", tt.s1, tt.s2, score)
+			t.Logf("similarityScore(%q, %q) = %.3f", tt.s1, tt.s2, score)
 		})
 	}
 }

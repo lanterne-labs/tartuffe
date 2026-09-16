@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -76,13 +77,13 @@ func (s *PostgresStorer) refreshPersonScores(ctx context.Context, tx pgx.Tx, per
 	for rows.Next() {
 		var id int64
 		var facts int
-		var stats ContradictionStats
+		var stats core.ContradictionStats
 		if err := rows.Scan(&id, &facts, &stats.Bundles, &stats.Total); err != nil {
 			rows.Close()
 			return fmt.Errorf("scan score inputs: %w", err)
 		}
 		ids = append(ids, id)
-		owns = append(owns, ComputeHonestyScore(facts, stats))
+		owns = append(owns, core.ComputeHonestyScore(facts, stats))
 		counts = append(counts, facts)
 	}
 	rows.Close()
@@ -133,7 +134,7 @@ func (s *PostgresStorer) refreshPersonScores(ctx context.Context, tx pgx.Tx, per
 		}
 		entityIDs = append(entityIDs, id)
 		memberScores = append(memberScores, members)
-		headline = append(headline, ComputeAggregateScore(own, members))
+		headline = append(headline, core.ComputeAggregateScore(own, members))
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {

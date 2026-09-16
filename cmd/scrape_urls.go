@@ -3,14 +3,13 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -73,10 +72,6 @@ func runScrapeURLs(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env not found; relying on environment")
 	}
 
-	if err := os.MkdirAll(scrapeURLsCacheDir, 0o755); err != nil {
-		return fmt.Errorf("create cache dir: %w", err)
-	}
-
 	urls, err := collectURLs(ctx)
 	if err != nil {
 		return err
@@ -91,53 +86,12 @@ func runScrapeURLs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("create extractor: %w", err)
 	}
-	// Wrap with CacheExtractor: read=true so already-scraped URLs are skipped,
-	// write=true so successful scrapes are persisted for downstream `dm ingest files`.
-	cache := extractor.NewCacheExtractor(inner, scrapeURLsCacheDir, true, true)
 
-	var (
-		ok      int64
-		skipped int64
-		failed  int64
-		wg      sync.WaitGroup
-		work    = make(chan string, scrapeURLsConcurrency*2)
-	)
-
-	for i := 0; i < scrapeURLsConcurrency; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for u := range work {
-				content, err := cache.ExtractContent(u)
-				if err != nil {
-					atomic.AddInt64(&failed, 1)
-					log.Warn().Err(err).Str("url", u).Msg("Scrape failed")
-					continue
-				}
-				if content == nil || strings.TrimSpace(content.Content) == "" {
-					atomic.AddInt64(&skipped, 1)
-					log.Warn().Str("url", u).Msg("Empty content, skipped")
-					continue
-				}
-				atomic.AddInt64(&ok, 1)
-				log.Info().Str("url", u).Int("chars", len(content.Content)).Msg("Scraped")
-			}
-		}()
+	stats, err := extractor.ScrapeAll(ctx, inner, urls, scrapeURLsConcurrency, scrapeURLsCacheDir)
+	if err != nil {
+		return fmt.Errorf("scrape urls: %w", err)
 	}
-	for _, u := range urls {
-		work <- u
-	}
-	close(work)
-	wg.Wait()
-
-	log.Info().
-		Int64("scraped", ok).
-		Int64("empty_skipped", skipped).
-		Int64("failed", failed).
-		Int("total", len(urls)).
-		Str("cache_dir", scrapeURLsCacheDir).
-		Msg("Scrape complete")
-	fmt.Printf("Scraped %d, empty %d, failed %d (total %d). Cache: %s\n", ok, skipped, failed, len(urls), scrapeURLsCacheDir)
+	fmt.Printf("Scraped %d, empty %d, failed %d (total %d). Cache: %s\n", stats.Scraped, stats.Empty, stats.Failed, stats.Total, scrapeURLsCacheDir)
 	return nil
 }
 
@@ -145,7 +99,12 @@ func collectURLs(ctx context.Context) ([]string, error) {
 	if scrapeURLsInput != "" {
 		return readURLsFromFile(scrapeURLsInput)
 	}
-	return readURLsFromPerson(ctx, scrapeURLsFromPerson)
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create storer: %w", err)
+	}
+	defer storer.Close()
+	return readURLsFromPerson(ctx, storer, scrapeURLsFromPerson)
 }
 
 func readURLsFromFile(path string) ([]string, error) {
@@ -170,19 +129,14 @@ func readURLsFromFile(path string) ([]string, error) {
 	return urls, nil
 }
 
-func readURLsFromPerson(ctx context.Context, name string) ([]string, error) {
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+func readURLsFromPerson(ctx context.Context, storer *storage.PostgresStorer, name string) ([]string, error) {
+	person, err := core.ResolvePersonID(ctx, storer, name, core.ExactMatchOnly)
 	if err != nil {
-		return nil, fmt.Errorf("create storer: %w", err)
+		return nil, err
 	}
-	defer storer.Close()
-	personID, err := storer.GetPersonIDByName(ctx, util.NormalizeString(name))
+	urls, err := storer.GetSourceURLsForPerson(ctx, person.ID)
 	if err != nil {
-		return nil, fmt.Errorf("find person %q: %w", name, err)
-	}
-	urls, err := storer.GetSourceURLsForPerson(ctx, personID)
-	if err != nil {
-		return nil, fmt.Errorf("read source urls for person %d: %w", personID, err)
+		return nil, fmt.Errorf("read source urls for person %d: %w", person.ID, err)
 	}
 	return urls, nil
 }

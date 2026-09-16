@@ -5,8 +5,6 @@ import (
 	"digital-mirror/backend/llm"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -28,36 +26,16 @@ type PairVerdict struct {
 // EntityDedupAdjudicator asks an LLM whether two similarly-named persons refer to
 // the same real-world entity.
 type EntityDedupAdjudicator struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // NewEntityDedupAdjudicatorFromEnv builds an adjudicator from OPEN_AI_ env vars.
 func NewEntityDedupAdjudicatorFromEnv() (*EntityDedupAdjudicator, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("entity-dedup")
+	if err != nil {
+		return nil, err
 	}
-
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	base = strings.TrimRight(base, "/")
-	return &EntityDedupAdjudicator{
-		apiKey:     apiKey,
-		apiURL:     llm.ChatCompletionsURL(base),
-		model:      model,
-		baseClient: llm.NewBaseLLMClient("entity-dedup"),
-	}, nil
+	return &EntityDedupAdjudicator{client: client}, nil
 }
 
 // AdjudicatePair decides whether two candidate entities are the SAME real-world
@@ -67,42 +45,24 @@ func NewEntityDedupAdjudicatorFromEnv() (*EntityDedupAdjudicator, error) {
 func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 EntityRef) (*PairVerdict, error) {
 	prompt := a.buildPrompt(b1, b2)
 
-	reqPayload := llm.ChatRequest{
-		Model: a.model,
+	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
 		MaxTokens:      256,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal entity-dedup request: %w", err)
-	}
-
-	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("entity-dedup LLM call failed: %w", err)
 	}
 
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode entity-dedup chat response")
-		return nil, fmt.Errorf("failed to decode chat response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		log.Warn().Str("raw_response", string(bodyBytes)).Msg("entity-dedup LLM returned no content")
-		return nil, fmt.Errorf("LLM returned no content")
-	}
-
-	verdict, err := a.parseResponse(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
 	if err != nil {
-		log.Error().Err(err).Str("llm_content", chatResp.Choices[0].Message.Content).Msg("Failed to parse entity-dedup response")
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse entity-dedup response")
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
-	return verdict, nil
+	return &verdict, nil
 }
 
 // ClusterPairs groups ids into connected components given a list of unordered
@@ -168,14 +128,4 @@ Return ONLY strict JSON, nothing else:
 {"same": true, "reasoning": "<one short sentence>"}
 or
 {"same": false, "reasoning": "<one short sentence>"}`, string(pairJSON))
-}
-
-func (a *EntityDedupAdjudicator) parseResponse(content string) (*PairVerdict, error) {
-	content = llm.StripJSONCodeFence(content)
-
-	var v PairVerdict
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
-		return nil, fmt.Errorf("invalid JSON response: %w", err)
-	}
-	return &v, nil
 }

@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/core"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/util"
 	"fmt"
 
@@ -69,14 +69,11 @@ func runDedupe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize storage
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
-
-	// Create storage adapter for deduplicator
-	dedupeStorer := storage.NewDedupeStorerAdapter(storer)
 
 	// Initialize LLM verifier (optional)
 	var llmVerifier *core.DedupLLMVerifier
@@ -88,7 +85,7 @@ func runDedupe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create deduplicator
-	deduplicator := core.NewFactDeduplicator(dedupeStorer, llmVerifier)
+	deduplicator := core.NewFactDeduplicator(storer, llmVerifier)
 
 	// Override thresholds from CLI flags if provided
 	if cmd.Flags().Changed("auto-threshold") || cmd.Flags().Changed("uncertain-threshold") {
@@ -127,13 +124,13 @@ func runDedupe(cmd *cobra.Command, args []string) error {
 }
 
 func printDedupeResults(result *core.DedupeResult, dryRun bool) {
-	fmt.Println()
-	fmt.Println("=== DEDUPLICATION RESULTS ===")
-	fmt.Printf("Total facts checked:    %d\n", result.TotalFactsChecked)
-	fmt.Printf("Auto-deduped (>90%%):    %d\n", result.AutoDeduped)
-	fmt.Printf("LLM verified dupes:     %d\n", result.LLMVerified)
-	fmt.Printf("LLM kept separate:      %d\n", result.LLMKept)
-	fmt.Printf("Invalid facts deleted:  %d\n", result.FactsDeleted)
+	printResults("DEDUPLICATION RESULTS", []resultRow{
+		{Label: "Total facts checked", Value: int64(result.TotalFactsChecked)},
+		{Label: "Auto-deduped (>90%)", Value: int64(result.AutoDeduped)},
+		{Label: "LLM verified dupes", Value: int64(result.LLMVerified)},
+		{Label: "LLM kept separate", Value: int64(result.LLMKept)},
+		{Label: "Invalid facts deleted", Value: int64(result.FactsDeleted)},
+	})
 
 	if dryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
@@ -166,15 +163,8 @@ func printDedupeResults(result *core.DedupeResult, dryRun bool) {
 				break
 			}
 			fmt.Printf("\nDeleted %d (Fact ID: %d):\n", i+1, del.ID)
-			fmt.Printf("  Text:   %s\n", truncateForDisplay(del.Text, 80))
+			fmt.Printf("  Text:   %s\n", util.TruncateString(del.Text, 80))
 			fmt.Printf("  Reason: %s\n", del.Reason)
 		}
 	}
-}
-
-func truncateForDisplay(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

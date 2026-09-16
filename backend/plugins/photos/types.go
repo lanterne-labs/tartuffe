@@ -27,8 +27,8 @@ type Result struct {
 	Error         error
 }
 
-// ScoredImage is an image candidate with a quality score.
-type ScoredImage struct {
+// scoredImage is an image candidate with a quality score.
+type scoredImage struct {
 	URL            string
 	ThumbnailURL   string
 	Width          int

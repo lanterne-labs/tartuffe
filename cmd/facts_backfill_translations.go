@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/core"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
+	"digital-mirror/backend/translate"
 	"fmt"
 	"os"
 
@@ -36,55 +36,16 @@ func runFactsBackfillTranslations(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
-	translated, failed, err := repairMissingTranslations(ctx, storer, backfillTranslationsLimit)
+	translated, failed, err := translate.RepairMissingEnglish(ctx, storer, backfillTranslationsLimit)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Translation backfill: %d filled, %d failed.\n", translated, failed)
 	return nil
-}
-
-// repairMissingTranslations fills fact_text_en for up to `limit` non-English
-// facts that are missing it. Returns (filled, failed, err). A per-fact LLM
-// failure is logged and counted but does not abort the batch — the next run
-// retries it. Shared by the CLI command and the daily-pipeline repair step.
-func repairMissingTranslations(ctx context.Context, storer *storage.PostgresStorer, limit int) (int, int, error) {
-	facts, err := storer.GetFactsMissingEnglish(ctx, limit)
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to list facts missing english: %w", err)
-	}
-	if len(facts) == 0 {
-		log.Info().Msg("Translation repair: no facts missing English, nothing to do")
-		return 0, 0, nil
-	}
-
-	translator, err := core.NewTranslatorFromEnv()
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to create translator: %w", err)
-	}
-
-	log.Info().Int("count", len(facts)).Msg("Translation repair: filling missing English translations")
-	var filled, failed int
-	for _, f := range facts {
-		en, tErr := translator.TranslateToEnglish(ctx, f.Text, f.Lang)
-		if tErr != nil {
-			failed++
-			log.Warn().Err(tErr).Int64("fact_id", f.ID).Msg("Translation repair: translate failed, leaving for next run")
-			continue
-		}
-		if sErr := storer.SetFactEnglish(ctx, f.ID, en); sErr != nil {
-			failed++
-			log.Error().Err(sErr).Int64("fact_id", f.ID).Msg("Translation repair: failed to persist translation")
-			continue
-		}
-		filled++
-	}
-	log.Info().Int("filled", filled).Int("failed", failed).Msg("Translation repair complete")
-	return filled, failed, nil
 }

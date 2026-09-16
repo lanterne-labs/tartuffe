@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/rs/zerolog/log"
@@ -29,16 +29,14 @@ func init() {
 func runStancesStats(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storer: %w", err)
 	}
 	defer storer.Close()
 
-	adapter := storage.NewStanceStorerAdapter(storer)
-
 	// Get aggregate counts
-	totalStances, totalFactsLinked, err := adapter.GetStanceDocumentCounts(ctx)
+	totalStances, totalFactsLinked, err := storer.GetStanceDocumentCounts(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get stance counts: %w", err)
 	}
@@ -62,7 +60,7 @@ func runStancesStats(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\n--- Per-Person Breakdown ---")
 	for _, p := range persons {
-		stances, err := adapter.GetStanceDocumentsForPerson(ctx, p.ID)
+		stances, err := storer.GetStanceDocumentsForPerson(ctx, p.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to get stances")
 			continue

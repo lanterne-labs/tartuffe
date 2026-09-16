@@ -20,7 +20,6 @@ func TestFactPairQueue(t *testing.T) {
 	truncateFanoutTables(t, storer)
 	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE fact_pair_queue, fact_pair_checks RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
-	storer.SetEntityValidator(nil)
 
 	personP, _, err := storer.AddPerson(ctx, "Queue Person P")
 	require.NoError(t, err)
@@ -94,10 +93,10 @@ func TestFactPairQueue(t *testing.T) {
 
 	// Backfilling seance_ref on the old vote source makes it pairable; a
 	// second backfill is a no-op.
-	updated, err := storer.SetFactSourceMetadataByLawKey(ctx, "assemblee_law_page", "seance_ref", map[string]string{"17-4": "S1", "17-999": "S9"})
+	updated, err := storer.SetFactSourceMetadataByKey(ctx, "assemblee_law_page", "law_key", "seance_ref", map[string]string{"17-4": "S1", "17-999": "S9"})
 	require.NoError(t, err)
 	require.Equal(t, 1, updated)
-	updated, err = storer.SetFactSourceMetadataByLawKey(ctx, "assemblee_law_page", "seance_ref", map[string]string{"17-4": "S1"})
+	updated, err = storer.SetFactSourceMetadataByKey(ctx, "assemblee_law_page", "law_key", "seance_ref", map[string]string{"17-4": "S1"})
 	require.NoError(t, err)
 	require.Equal(t, 0, updated)
 	n, err = storer.EnqueueFactPairsBySharedSourceKey(ctx, "assemblee_debat", "assemblee_law_page", "seance_ref", "test:same-seance")

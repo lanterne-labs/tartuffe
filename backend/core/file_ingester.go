@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
+	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,19 +23,12 @@ type FactExtractor interface {
 	ExtractFactsWithType(ctx context.Context, targetName string, targetType string, content extractor.ExtractedContent) ([]backend.Fact, error)
 }
 
-// EmbeddingGenerator defines the interface for generating vector embeddings.
-// This is implemented by embedding.OpenAIEmbeddingGenerator.
-type EmbeddingGenerator interface {
-	// GenerateEmbeddings generates embeddings for the given texts under the stated purpose.
-	GenerateEmbeddings(ctx context.Context, purpose embedding.Purpose, texts []string) ([][]float32, error)
-}
-
 // FileIngester handles ingestion of facts from local JSON files.
 // It reads cached content files, extracts facts using LLM, generates embeddings,
 // and stores the facts with deduplication (handled automatically by FactInserter).
 type FileIngester struct {
 	factExtractor FactExtractor
-	embedder      EmbeddingGenerator
+	embedder      embedding.EmbeddingGenerator
 	factInserter  *FactInserter
 }
 
@@ -85,7 +79,7 @@ type cachedContent struct {
 // NewFileIngester creates a new FileIngester with the given dependencies.
 func NewFileIngester(
 	factExtractor FactExtractor,
-	embedder EmbeddingGenerator,
+	embedder embedding.EmbeddingGenerator,
 	factInserter *FactInserter,
 ) *FileIngester {
 	return &FileIngester{
@@ -156,7 +150,7 @@ func (fi *FileIngester) IngestFiles(ctx context.Context, paths []string, opts In
 			// In dry-run mode, just print extracted facts
 			for _, fact := range facts {
 				log.Info().
-					Str("fact", truncateString(fact.NormalizedFactText, 100)).
+					Str("fact", util.TruncateString(fact.NormalizedFactText, 100)).
 					Str("canonical_verb", fact.CanonicalVerb).
 					Strs("people", fact.InvolvedPeople).
 					Msg("[DRY-RUN] Extracted fact")
@@ -249,7 +243,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 		// Generate embedding from EmbeddingText
 		embeddings, err := fi.embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 		if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
-			log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
+			log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
 			continue
 		}
 
@@ -278,7 +272,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 		// Insert using the fact inserter (handles dedup + similarity-based grouping)
 		insertResult, err := fi.factInserter.InsertFacts(ctx, []StoreFactInput{input})
 		if err != nil {
-			log.Warn().Err(err).Str("fact", truncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
+			log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
 			continue
 		}
 
@@ -287,12 +281,4 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 	}
 
 	return result, nil
-}
-
-// truncateString truncates a string to maxLen characters.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

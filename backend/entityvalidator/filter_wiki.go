@@ -14,10 +14,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// WikiFilter searches Wikipedia (French first, then English) for the candidate
+// wikiFilter searches Wikipedia (French first, then English) for the candidate
 // and fetches the intro paragraph of the top few results. It ALWAYS Defers:
 // the result (possibly empty pages list) is attached as JSON in Extra so the
-// LLMFilter downstream can weigh it alongside other signals (e.g. GoogleFilter).
+// LLMFilter downstream can weigh it alongside other signals (e.g. googleFilter).
 //
 // The previous "reject when zero pages" behavior produced too many false
 // negatives — real but obscure entities (local politicians, French
@@ -25,16 +25,16 @@ import (
 // but DO have a Google footprint, so the LLM gets to combine both sources
 // before deciding. Empty wiki_pages in the LLM prompt is a soft negative,
 // not a hard reject.
-type WikiFilter struct {
+type wikiFilter struct {
 	HTTP      *http.Client
 	Languages []string // tried in order, e.g. ["fr", "en"]
 	UserAgent string   // Wikipedia requires a descriptive UA
 	MaxPages  int      // top N results to fetch intro paragraphs for (default 3)
 }
 
-// NewWikiFilter returns a WikiFilter with sane defaults.
-func NewWikiFilter() *WikiFilter {
-	return &WikiFilter{
+// newWikiFilter returns a wikiFilter with sane defaults.
+func newWikiFilter() *wikiFilter {
+	return &wikiFilter{
 		HTTP:      &http.Client{Timeout: 15 * time.Second},
 		Languages: []string{"fr", "en"},
 		UserAgent: "Mirror-Entity-Validator/1.0 (https://tartuffe.me; contact: noreply@tartuffe.me)",
@@ -42,7 +42,7 @@ func NewWikiFilter() *WikiFilter {
 	}
 }
 
-func (w *WikiFilter) Name() string { return "wiki" }
+func (w *wikiFilter) Name() string { return "wiki" }
 
 // WikiPage is one Wikipedia article we successfully retrieved an intro for.
 // It's exported because LLMFilter (and tests) parse Extra back into this shape.
@@ -52,13 +52,13 @@ type WikiPage struct {
 	Extract string `json:"extract"` // first intro paragraph in plain text
 }
 
-// wikiExtra is the structured payload WikiFilter attaches to its FilterResult.
+// wikiExtra is the structured payload wikiFilter attaches to its FilterResult.
 // LLMFilter reads it via json.Unmarshal(prev.Result.Extra, &wikiExtra{}).
 type wikiExtra struct {
 	Pages []WikiPage `json:"pages"`
 }
 
-func (w *WikiFilter) Check(ctx context.Context, c Candidate) (FilterResult, error) {
+func (w *wikiFilter) Check(ctx context.Context, c Candidate) (FilterResult, error) {
 	if c.Name == "" {
 		return FilterResult{Decision: Defer}, nil
 	}
@@ -129,7 +129,7 @@ func (w *WikiFilter) Check(ctx context.Context, c Candidate) (FilterResult, erro
 // results in a single round-trip. Returns a (possibly empty) slice of pages
 // ordered by the search engine's ranking — Wikipedia returns a map keyed by
 // page id and an `index` field per page that we sort by.
-func (w *WikiFilter) searchWithExtracts(ctx context.Context, lang, query string, limit int) ([]WikiPage, error) {
+func (w *wikiFilter) searchWithExtracts(ctx context.Context, lang, query string, limit int) ([]WikiPage, error) {
 	params := url.Values{}
 	params.Set("action", "query")
 	params.Set("format", "json")
@@ -186,7 +186,7 @@ func (w *WikiFilter) searchWithExtracts(ctx context.Context, lang, query string,
 	return out, nil
 }
 
-func (w *WikiFilter) get(ctx context.Context, lang string, params url.Values) ([]byte, error) {
+func (w *wikiFilter) get(ctx context.Context, lang string, params url.Values) ([]byte, error) {
 	u := fmt.Sprintf("https://%s.wikipedia.org/w/api.php?%s", lang, params.Encode())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

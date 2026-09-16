@@ -40,35 +40,6 @@ func (c *Corpus) AllFacts() []Fact {
 	return out
 }
 
-// FactByID returns the fact with the given logical ID, or nil if absent.
-// Index is built lazily on each call; corpora are small (~tens of facts).
-func (c *Corpus) FactByID(id string) *Fact {
-	for i := range c.Persons {
-		for j := range c.Persons[i].Stances {
-			for k := range c.Persons[i].Stances[j].Facts {
-				if c.Persons[i].Stances[j].Facts[k].ID == id {
-					return &c.Persons[i].Stances[j].Facts[k]
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// PersonOfFact returns the person who owns the given fact ID, or empty string.
-func (c *Corpus) PersonOfFact(id string) string {
-	for _, p := range c.Persons {
-		for _, s := range p.Stances {
-			for _, f := range s.Facts {
-				if f.ID == id {
-					return p.Name
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // normalize validates structure, parses dates, applies defaults, and confirms
 // every PairSpec references a known fact ID. Mutates the receiver in place.
 func (c *Corpus) normalize() error {

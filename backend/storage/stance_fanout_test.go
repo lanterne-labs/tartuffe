@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,6 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 	ctx := context.Background()
 
 	truncateFanoutTables(t, storer)
-	storer.SetEntityValidator(nil)
 
 	subjectID, _, err := storer.AddPerson(ctx, "Fanout Subject")
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 		}
 	}
 	addStanceWithFact := func(personID, factID int64, label string) int64 {
-		stanceID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		stanceID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 			PersonID:         personID,
 			ClusterLabel:     label,
 			ClusterEmbedding: makeUnitEmbedding(0),
@@ -163,7 +163,6 @@ func TestGetFactStanceIDPersonScoped(t *testing.T) {
 	ctx := context.Background()
 
 	truncateFanoutTables(t, storer)
-	storer.SetEntityValidator(nil)
 
 	personP, _, err := storer.AddPerson(ctx, "Scoped P")
 	require.NoError(t, err)
@@ -175,7 +174,7 @@ func TestGetFactStanceIDPersonScoped(t *testing.T) {
 		"INSERT INTO facts (fact_text) VALUES ('shared vote') RETURNING id").Scan(&factID))
 
 	mkStance := func(personID int64, label string) int64 {
-		id, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 			PersonID: personID, ClusterLabel: label,
 			ClusterEmbedding: makeUnitEmbedding(0), Summary: "s",
 			KeyFactIDs: []int64{factID}, FactCount: 1,

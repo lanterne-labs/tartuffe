@@ -2,22 +2,15 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/config"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/util"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
-
-// FactRelationInput represents a relation between two facts.
-// This type is defined in core to avoid import cycles between core and storage.
-type FactRelationInput struct {
-	GeneralFactID  int64
-	SpecificFactID int64
-	RelationType   string // "duplicate" or "implication"
-	Reason         string
-}
 
 // InsertedFactMeta holds metadata about a successfully inserted fact.
 // Used by batch processing to chain classification after fact extraction.
@@ -64,6 +57,15 @@ type factDedupeJudge interface {
 	IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error)
 }
 
+// factPositionJudge is the broader position-level gate a factDedupeJudge may
+// also offer: whether two statements express the same position on a subject,
+// not merely the same claim. Used only in fold mode, where grouping
+// same-position restatements under a meta is safe because the raw fact is
+// kept. Implemented by *FactDedupeAdjudicator.
+type factPositionJudge interface {
+	IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error)
+}
+
 // defaultLLMDedupeFloor is the lower bound of the similarity band handed to the
 // LLM adjudicator. 0.70 catches genuine restatements that slip just under the
 // 0.80 auto-dedup line (e.g. the Retailleau "candidature jusqu'au bout" pair at
@@ -97,11 +99,6 @@ type Storer interface {
 
 	// GetFactCanonicalVerb returns the canonical verb for a given fact ID.
 	GetFactCanonicalVerb(ctx context.Context, factID int64) (string, error)
-
-	// InsertFactRelationsBatch inserts duplicate/implication relations. Still used
-	// by the OpenAI-batch classification flow in batch_job.go; that path is now
-	// redundant with stance-based clustering and queued for removal.
-	InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error
 }
 
 // MetaFoldStorer is the storage surface for meta-fact folding. Implemented by
@@ -176,7 +173,7 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 	// near-duplicate news reports of the same event that differ only in incidental
 	// details (an extra named player, a date string). Verb-aware: opposing positions
 	// never dedup regardless of similarity, so lowering is safe.
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.80)
+	autoDedupeThreshold := config.EnvFloat("DEDUPE_AUTO_THRESHOLD", 0.80)
 
 	return &FactInserter{
 		storer:              storer,
@@ -222,19 +219,19 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 		log.Debug().
 			Int("index", i+1).
 			Int("total", len(facts)).
-			Str("fact_text", truncate(fact.NormalizedFactText, 100)).
+			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 			Msg("Processing fact for insertion")
 
 		factID, personID, inserted, err := fi.insertSingleFact(ctx, fact)
 		if err != nil {
 			// Entity-validator rejection means the subject isn't a real entity —
 			// not a pipeline failure, just a per-fact skip. Don't abort the batch.
-			if isEntityRejected(err) {
+			if IsEntityRejected(err) {
 				log.Info().
 					Err(err).
 					Str("subject", fact.SubjectEntity).
 					Str("subject_type", fact.SubjectEntityType).
-					Str("fact_text", truncate(fact.NormalizedFactText, 100)).
+					Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 					Msg("Skipping fact: subject entity rejected by validator")
 				result.Skipped++
 				continue
@@ -246,7 +243,7 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 					Str("source_type", fact.SourceType).
 					Str("source_url", fact.SourceURL).
 					Str("subject", fact.SubjectEntity).
-					Str("fact_text", truncate(fact.NormalizedFactText, 100)).
+					Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 					Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
 				result.Skipped++
 				continue
@@ -324,7 +321,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		}
 		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, searchDistance, 5)
 		if err != nil {
-			log.Warn().Err(err).Str("fact", truncate(input.NormalizedFactText, 80)).
+			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
 		} else {
 			autoDistance := 1.0 - fi.autoDedupeThreshold
@@ -350,7 +347,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("new_verb", input.CanonicalVerb).
 							Str("existing_verb", existingVerb).
 							Bool("both_external", bothExternal).
-							Str("fact", truncate(input.NormalizedFactText, 80)).
+							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
 						fi.attachProvenance(ctx, sf.ID, subjectID, input)
 						return 0, 0, false, nil
@@ -366,10 +363,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				if fi.dedupeJudge != nil && !(fi.foldingEnabled() && len(input.CoActorIDs) > 0) {
 					var same bool
 					var jErr error
-					type positionGate interface {
-						IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error)
-					}
-					if pg, ok := fi.dedupeJudge.(positionGate); ok && fi.foldingEnabled() {
+					if pg, ok := fi.dedupeJudge.(factPositionJudge); ok && fi.foldingEnabled() {
 						same, jErr = pg.IsSamePosition(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
 					} else {
 						same, jErr = fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
@@ -386,7 +380,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("new_verb", input.CanonicalVerb).
 							Str("existing_verb", existingVerb).
 							Bool("folding", fi.foldingEnabled()).
-							Str("fact", truncate(input.NormalizedFactText, 80)).
+							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 							Msg("Same-claim fact (LLM gray-zone adjudication)")
 						if !fi.foldingEnabled() {
 							fi.attachProvenance(ctx, sf.ID, subjectID, input)
@@ -596,7 +590,7 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 		Int64("meta_fact_id", metaID).
 		Int64("matched_fact_id", matched.ID).
 		Bool("meta_created", !found).
-		Str("fact", truncate(input.NormalizedFactText, 80)).
+		Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 		Msg("Folded same-claim fact under meta-fact")
 	return nil
 }
@@ -617,17 +611,6 @@ func (fi *FactInserter) compensateDelete(ctx context.Context, factID int64, stag
 			Str("stage", stage).
 			Msg("Rolled back fact after failure during ingestion")
 	}
-}
-
-// truncate truncates a string to maxLen runes, appending "..." if truncated.
-// Operates on runes (not bytes) so it never splits a multi-byte UTF-8 codepoint
-// — Postgres rejects invalid UTF-8 with SQLSTATE 22021.
-func truncate(s string, maxLen int) string {
-	r := []rune(s)
-	if len(r) <= maxLen {
-		return s
-	}
-	return string(r[:maxLen]) + "..."
 }
 
 // isDirectClaimVerb returns true if the verb represents a direct claim or action

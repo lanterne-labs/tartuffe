@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"context"
+	"digital-mirror/backend/deps"
 	"fmt"
-
-	"digital-mirror/backend/storage"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -53,7 +52,7 @@ func runPersonsMerge(cmd *cobra.Command, args []string) {
 		log.Fatal().Msg("--from and --into must differ")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}

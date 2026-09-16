@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -33,7 +33,7 @@ func listPersons(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize storer - No longer needs embedder
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}

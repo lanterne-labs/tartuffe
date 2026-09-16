@@ -3,8 +3,6 @@ package frpolitics
 import (
 	"context"
 	"strings"
-
-	"digital-mirror/backend/storage"
 )
 
 // Patterns indicating generic/procedural laws to skip
@@ -52,7 +50,7 @@ func classifyLaw(title string) (skip bool, reason string, pattern string) {
 }
 
 // FilterLaws applies keyword-based filtering and stores skipped laws in the database
-func FilterLaws(ctx context.Context, laws []Law, storer *storage.PostgresStorer) ([]Law, error) {
+func FilterLaws(ctx context.Context, laws []Law, store *Store) ([]Law, error) {
 	var filtered []Law
 
 	for _, law := range laws {
@@ -65,7 +63,7 @@ func FilterLaws(ctx context.Context, laws []Law, storer *storage.PostgresStorer)
 				aiConfidence = nil // keyword-based, no AI confidence
 			}
 
-			err := storer.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, reason, pattern, aiConfidence)
+			err := store.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, reason, pattern, aiConfidence)
 			if err != nil {
 				return nil, err
 			}

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"math"
 	"testing"
 
@@ -46,7 +47,7 @@ func TestStanceDocumentCRUD(t *testing.T) {
 	emb := makeUnitEmbedding(0)
 
 	// Insert a stance document
-	doc := StanceDocument{
+	doc := core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "test-topic",
 		ClusterEmbedding: emb,
@@ -111,7 +112,7 @@ func TestStanceDocumentFindMatching(t *testing.T) {
 	emb1 := makeUnitEmbedding(0) // [1,0,0,0,...]
 	emb2 := makeUnitEmbedding(1) // [0,1,0,0,...]
 
-	_, err = storer.InsertStanceDocument(ctx, StanceDocument{
+	_, err = storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "topic-a",
 		ClusterEmbedding: emb1,
@@ -121,7 +122,7 @@ func TestStanceDocumentFindMatching(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = storer.InsertStanceDocument(ctx, StanceDocument{
+	_, err = storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "topic-b",
 		ClusterEmbedding: emb2,
@@ -131,24 +132,6 @@ func TestStanceDocumentFindMatching(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Search with embedding close to emb1 — should find topic-a
-	queryEmb := makeMixedEmbedding(0, 2, 0.95, 0.05) // close to [1,0,0...] direction
-	match, err := storer.FindMatchingStance(ctx, personID, queryEmb, 0.35)
-	require.NoError(t, err)
-	require.NotNil(t, match, "expected to find a matching stance")
-	assert.Equal(t, "topic-a", match.ClusterLabel)
-	assert.Less(t, match.Distance, 0.35)
-
-	// Search with embedding far from both — should return nil
-	farEmb := makeUnitEmbedding(500) // orthogonal to both
-	match, err = storer.FindMatchingStance(ctx, personID, farEmb, 0.35)
-	require.NoError(t, err)
-	assert.Nil(t, match, "expected no match for distant embedding")
-
-	// Search with wrong person — should return nil
-	match, err = storer.FindMatchingStance(ctx, personID+999, queryEmb, 0.35)
-	require.NoError(t, err)
-	assert.Nil(t, match, "expected no match for wrong person")
 }
 
 func TestStanceDocumentFactsJoinTable(t *testing.T) {
@@ -173,7 +156,7 @@ func TestStanceDocumentFactsJoinTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert stance
-	stanceID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	stanceID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "test-join",
 		ClusterEmbedding: makeUnitEmbedding(0),
@@ -244,7 +227,7 @@ func TestMergeStancesForPerson(t *testing.T) {
 		202, "Fact only on dst", pgvector.NewVector(makeUnitEmbedding(2)))
 	require.NoError(t, err)
 
-	srcID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	srcID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "src-stance",
 		ClusterEmbedding: makeUnitEmbedding(0),
@@ -253,7 +236,7 @@ func TestMergeStancesForPerson(t *testing.T) {
 		FactCount:        2,
 	})
 	require.NoError(t, err)
-	dstID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	dstID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "dst-stance",
 		ClusterEmbedding: makeUnitEmbedding(1),
@@ -328,7 +311,7 @@ func TestUpdateStanceSummary(t *testing.T) {
 	require.NoError(t, err)
 
 	emb := makeUnitEmbedding(0)
-	stanceID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	stanceID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "old-label",
 		ClusterEmbedding: emb,
@@ -373,7 +356,7 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	emb := makeUnitEmbedding(0)
 
 	// Insert first stance
-	firstID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	firstID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "unique-topic",
 		ClusterEmbedding: emb,
@@ -388,7 +371,7 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	// the person already has, and failing here used to abort whole insert
 	// batches (frpolitics backfill 2026-09-04). The existing row's content is
 	// untouched — the metadata refresh reconciles it once facts attach.
-	secondID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	secondID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     "unique-topic",
 		ClusterEmbedding: emb,

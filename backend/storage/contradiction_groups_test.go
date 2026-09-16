@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestRegroupPersonContradictions(t *testing.T) {
 	s3 := insertFact("S3: revenue source C")
 	base := insertFact("BASE: promised aid without a tax increase")
 
-	stance, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	stance, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID: personID, ClusterLabel: "Fuel aid financing",
 		ClusterEmbedding: mockEmbedding(),
 		Summary:          "How the promised aid is financed.",

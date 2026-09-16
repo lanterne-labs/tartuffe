@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -38,29 +38,28 @@ func runContradictionShow(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
-	normalizedName := util.NormalizeString(showPersonFlag)
-	personID, err := storer.GetPersonIDByName(ctx, normalizedName)
+	person, err := core.ResolvePersonID(ctx, storer, showPersonFlag, core.ExactMatchOnly)
 	if err != nil {
-		return fmt.Errorf("failed to find person %q: %w", showPersonFlag, err)
+		return err
 	}
 
-	result, err := storer.GetPersonContradictions(ctx, personID, 100, 0)
+	result, err := storer.GetPersonContradictions(ctx, person.ID, 100, 0)
 	if err != nil {
 		return fmt.Errorf("failed to get contradictions: %w", err)
 	}
 
 	if len(result.Items) == 0 {
-		fmt.Printf("No contradictions found for %s (ID: %d)\n", normalizedName, personID)
+		fmt.Printf("No contradictions found for %s (ID: %d)\n", person.Name, person.ID)
 		return nil
 	}
 
-	fmt.Printf("Found %d contradiction(s) for %s (ID: %d)\n\n", result.Total, normalizedName, personID)
+	fmt.Printf("Found %d contradiction(s) for %s (ID: %d)\n\n", result.Total, person.Name, person.ID)
 
 	for i, c := range result.Items {
 		dateA := "unknown"

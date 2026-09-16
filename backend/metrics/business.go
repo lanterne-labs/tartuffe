@@ -1,8 +1,6 @@
 package metrics
 
 import (
-	"time"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -144,11 +142,6 @@ func IncrementTweets(status string) {
 // IncrementFactsSkippedDedup increments the dedup skip counter by n
 func IncrementFactsSkippedDedup(n int) {
 	FactsSkippedDedupTotal.Add(float64(n))
-}
-
-// ObserveContentExtraction records content extraction duration
-func ObserveContentExtraction(extractor string, duration time.Duration) {
-	ContentExtractionDuration.WithLabelValues(extractor).Observe(duration.Seconds())
 }
 
 // ObserveHonestyScore records an honesty score update

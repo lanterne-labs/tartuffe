@@ -5,53 +5,20 @@ import (
 	"crypto/sha256"
 	"digital-mirror/backend/llm"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"os"
-	"regexp"
 	"strings"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
-// contradictionAuditAllowedRules is the closed set of RULE tokens the
-// contradiction-auditor prompt asks the model to return. We are deliberately
-// strict — anything outside this set triggers a corrective retry; we do NOT
-// fuzzy-match variants because that would silently hide cases where the LLM
-// is not actually reasoning under our enum.
-var contradictionAuditAllowedRules = map[string]bool{
-	"none":                         true,
-	"accusation_not_finding":       true,
-	"learning_over_time":           true,
-	"paraphrase_same_position":     true,
-	"geographic_scope":             true,
-	"coherent_defense":             true,
-	"conviction_vs_acknowledgment": true,
-	"announcement_then_action":     true,
-	"different_subjects":           true,
-	"different_events":             true,
-	"subjective_vs_objective":      true,
-	"consistent_ignorance":         true,
-	"legal_process_stages":         true,
-	"complementary_facts":          true,
-	"vague_vs_specific":            true,
-	"third_party_narrative":        true,
-	"date_only_no_commitment":      true,
-	"symbolic_counter_gesture":     true,
-	// Added with the shared promptrules.FalsePositivePatterns catalog — these
-	// buckets came from the verifier and must be nameable by the auditor too.
-	"numbers_measurements":         true,
-	"forecast_vs_current":          true,
-	"procedural_scope":             true,
-	"condition_later_met":          true,
-	"same_direction":               true,
-	"endorsement_vs_non_candidacy": true,
-	"relative_vote_preference":     true,
-}
-
-// contradictionAuditAllowedRulesList is the alphabetised version used in the
-// strict-retry prompt, so the model sees a stable, ordered list.
+// contradictionAuditAllowedRulesList is the closed set of RULE tokens the
+// contradiction-auditor prompt asks the model to return, alphabetised after
+// "none" so the prompt and the strict-retry quote a stable, ordered list.
+// Anything outside this set is a parse error that triggers the judge's
+// corrective retry (see llm.VerdictJudge); no fuzzy matching, because that
+// would silently hide cases where the LLM is not actually reasoning under our
+// enum. The last seven buckets came from the shared
+// promptrules.FalsePositivePatterns catalog (the verifier's) and must be
+// nameable by the auditor too.
 var contradictionAuditAllowedRulesList = []string{
 	"none",
 	"accusation_not_finding",
@@ -79,18 +46,12 @@ var contradictionAuditAllowedRulesList = []string{
 	"vague_vs_specific",
 }
 
-// validateContradictionAuditRule strictly checks that `raw` is in the closed
-// enum (after lower/trim). Returns the canonical token on success or an error
-// describing the violation so the caller can issue a corrective retry.
-func validateContradictionAuditRule(raw string) (string, error) {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	if s == "" {
-		return "", fmt.Errorf("RULE field is empty (must be one of: %s)", strings.Join(contradictionAuditAllowedRulesList, ", "))
-	}
-	if !contradictionAuditAllowedRules[s] {
-		return "", fmt.Errorf("RULE %q is not in the closed enum (must be one of: %s)", raw, strings.Join(contradictionAuditAllowedRulesList, ", "))
-	}
-	return s, nil
+// contradictionAuditUnlistedRules are catalog buckets the auditor accepts as
+// a RULE although the prompt's token list above never advertised them. Moving
+// one into contradictionAuditAllowedRulesList changes the prompt bytes and the
+// AuditInputHash, which re-opens every pinned KEEP verdict; do it deliberately.
+var contradictionAuditUnlistedRules = []string{
+	"relative_vote_preference",
 }
 
 // AuditVerdict is the auditor's judgement on an existing contradiction record.
@@ -219,50 +180,38 @@ If VERDICT is "keep", RULE MUST be "none". Otherwise return EXACTLY one token fr
 
 **LANGUAGE RULE:** Write your REASONING in the same language as the statements being audited. If statements span multiple languages, write in English.`
 
-var (
-	auditReasoningRegex = regexp.MustCompile(`(?i)^\s*REASONING\s*:\s*(.*)$`)
-	auditRuleRegex      = regexp.MustCompile(`(?i)^\s*RULE\s*:\s*(.*)$`)
-	auditVerdictRegex   = regexp.MustCompile(`(?i)^\s*VERDICT\s*:\s*(keep|remove|ambiguous)\b`)
-)
-
 // OpenAIContradictionAuditor calls an OpenAI-compatible chat API to audit a
 // single recorded contradiction. Unlike the detector it does not batch — audits
 // are run ad-hoc by a human and verdict independence is more important than
 // throughput.
 type OpenAIContradictionAuditor struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	judge *llm.VerdictJudge
 }
 
 // NewOpenAIContradictionAuditorFromEnv builds an auditor from the same env
 // vars as the detector: OPEN_AI_KEY, OPEN_AI_API, OPEN_AI_CHAT_MODEL.
 func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("contradiction-auditor")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	apiURL := llm.ChatCompletionsURL(base)
-
-	return &OpenAIContradictionAuditor{
-		apiKey:     apiKey,
-		apiURL:     apiURL,
-		model:      model,
-		baseClient: llm.NewBaseLLMClient("contradiction-auditor"),
-	}, nil
+	return &OpenAIContradictionAuditor{judge: &llm.VerdictJudge{
+		Client:        client,
+		Name:          "Contradiction audit",
+		Verdicts:      []string{string(VerdictKeep), string(VerdictRemove), string(VerdictAmbiguous)},
+		Rules:         contradictionAuditAllowedRulesList,
+		UnlistedRules: contradictionAuditUnlistedRules,
+		// 0.0 (greedy): the audit verdict gates PERMANENT row deletion, so
+		// sampling noise is not acceptable — the same pair must always get the
+		// same verdict. Was 0.1, which made borderline keeps flap run-to-run
+		// (mirror-bii: Vuibert 0/3 vs 2/3 removes across identical inputs).
+		Temperature: 0.0,
+		// 3-line response (REASONING/RULE/VERDICT) is ~150 tokens. 1024 leaves
+		// headroom and keeps prompt+reservation well under any 8k ctx.
+		MaxTokens: 1024,
+	}}, nil
 }
 
-// Audit evaluates a single recorded contradiction.
 // AuditInputHash returns a stable hash of EVERYTHING that determines an audit
 // verdict: the full audit prompt (template + embedded rulebook + rule tokens)
 // and the per-row inputs (fact texts, dates, detection reason). A KEEP verdict
@@ -290,7 +239,7 @@ func AuditInputHash(factA, factB string, dateA, dateB *time.Time, originalReason
 // deterministic even at temperature 0 (see JudgeVotes), and an eviction is
 // destructive, so a single unlucky sample must not delete a real contradiction.
 func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
-	res, err := majorityVote(AuditVotes,
+	res, err := llm.MajorityVote(AuditVotes,
 		func() (AuditResult, error) {
 			r := a.auditOnce(ctx, factA, factB, dateA, dateB, originalReason)
 			return r, r.Err
@@ -319,147 +268,16 @@ func (a *OpenAIContradictionAuditor) auditOnce(ctx context.Context, factA, factB
 		originalReason,
 	)
 	// The allowed-token list is generated from the single-source enum slice so
-	// the prompt can never drift from validateContradictionAuditRule.
+	// the prompt can never drift from what the judge accepts.
 	ruleTokens := "  " + strings.Join(contradictionAuditAllowedRulesList, "\n  ")
 	prompt := fmt.Sprintf(auditPromptTpl, auditBlock, ruleTokens)
-	messages := []llm.ChatMessage{{Role: "user", Content: prompt}}
 
-	llmText, err := a.callChat(ctx, messages)
-	if err != nil {
-		return AuditResult{Err: err}
-	}
-	res := parseAuditResponse(llmText)
-	res.RawResp = llmText
-	if res.Err == nil {
-		return res
-	}
-
-	// Strict retry: surface what was wrong so the model can correct itself.
-	log.Warn().Err(res.Err).Str("raw_response", llmText).
-		Msg("Contradiction audit: first response failed strict parse; issuing corrective retry")
-	corrective := fmt.Sprintf(
-		`Your previous reply was rejected: %s.
-
-Reply ONCE MORE with EXACTLY three lines, in this order, and nothing else:
-
-REASONING: <1-2 sentences>
-RULE: <one token from this list ONLY: %s>
-VERDICT: <keep|remove|ambiguous>
-
-If VERDICT is "keep", RULE MUST be "none". Do NOT add commentary, headers, code fences, or any text outside the three required lines.`,
-		res.Err.Error(), strings.Join(contradictionAuditAllowedRulesList, " | "),
-	)
-	messages = append(messages,
-		llm.ChatMessage{Role: "assistant", Content: llmText},
-		llm.ChatMessage{Role: "user", Content: corrective},
-	)
-	llmText2, err := a.callChat(ctx, messages)
-	if err != nil {
-		return AuditResult{
-			RawResp: llmText,
-			Err:     fmt.Errorf("strict retry failed: %w (first reply: %q)", err, llmText),
-		}
-	}
-	res2 := parseAuditResponse(llmText2)
-	res2.RawResp = llmText + "\n---RETRY---\n" + llmText2
-	if res2.Err != nil {
-		res2.Err = fmt.Errorf("LLM returned malformed response twice (strict): %w (first reply: %q, second reply: %q)", res2.Err, llmText, llmText2)
-	}
-	return res2
-}
-
-// callChat marshals + executes a single chat-completion call and returns the
-// content of the first choice. Shared between the initial call and the strict
-// corrective retry.
-func (a *OpenAIContradictionAuditor) callChat(ctx context.Context, messages []llm.ChatMessage) (string, error) {
-	reqPayload := llm.ChatRequest{
-		Model:    a.model,
-		Messages: messages,
-		// 0.0 (greedy): the audit verdict gates PERMANENT row deletion, so
-		// sampling noise is not acceptable — the same pair must always get the
-		// same verdict. Was 0.1, which made borderline keeps flap run-to-run
-		// (mirror-bii: Vuibert 0/3 vs 2/3 removes across identical inputs).
-		Temperature: 0.0,
-		// 3-line response (REASONING/RULE/VERDICT) is ~150 tokens. 1024 leaves
-		// headroom and keeps prompt+reservation well under any 8k ctx.
-		MaxTokens: 1024,
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", fmt.Errorf("marshal audit request: %w", err)
-	}
-	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
-	if err != nil {
-		return "", fmt.Errorf("audit API call failed: %w", err)
-	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("decode audit response: %w (raw: %s)", err, string(bodyBytes))
-	}
-	if chatResp.Error != nil {
-		return "", fmt.Errorf("audit API error: %s", chatResp.Error.Message)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("audit API returned no content (raw: %s)", string(bodyBytes))
-	}
-	return chatResp.Choices[0].Message.Content, nil
-}
-
-// parseAuditResponse extracts REASONING / RULE / VERDICT lines.
-func parseAuditResponse(response string) AuditResult {
-	var (
-		reasoning, rule string
-		verdict         AuditVerdict
-	)
-	for _, line := range strings.Split(response, "\n") {
-		if m := auditReasoningRegex.FindStringSubmatch(line); m != nil && reasoning == "" {
-			reasoning = strings.TrimSpace(m[1])
-			continue
-		}
-		if m := auditRuleRegex.FindStringSubmatch(line); m != nil && rule == "" {
-			rule = strings.TrimSpace(m[1])
-			continue
-		}
-		if m := auditVerdictRegex.FindStringSubmatch(line); m != nil && verdict == "" {
-			verdict = AuditVerdict(strings.ToLower(strings.TrimSpace(m[1])))
-		}
-	}
-
-	if verdict == "" {
-		return AuditResult{
-			Reasoning: reasoning,
-			Rule:      rule,
-			Err:       fmt.Errorf("could not parse VERDICT line from audit response: %q", response),
-		}
-	}
-	canonRule, ruleErr := validateContradictionAuditRule(rule)
-	if ruleErr != nil {
-		return AuditResult{
-			Verdict:   verdict,
-			Reasoning: reasoning,
-			Rule:      rule,
-			Err:       ruleErr,
-		}
-	}
-	if verdict == VerdictKeep && canonRule != "none" {
-		return AuditResult{
-			Verdict:   verdict,
-			Reasoning: reasoning,
-			Rule:      canonRule,
-			Err:       fmt.Errorf("VERDICT=keep requires RULE=none (got %q)", canonRule),
-		}
-	}
-	if verdict != VerdictKeep && canonRule == "none" {
-		return AuditResult{
-			Verdict:   verdict,
-			Reasoning: reasoning,
-			Rule:      canonRule,
-			Err:       fmt.Errorf("VERDICT=%s requires a non-'none' RULE", verdict),
-		}
-	}
+	v, err := a.judge.Judge(ctx, prompt)
 	return AuditResult{
-		Verdict:   verdict,
-		Reasoning: reasoning,
-		Rule:      canonRule,
+		Verdict:   AuditVerdict(v.Verdict),
+		Reasoning: v.Reasoning,
+		Rule:      v.Rule,
+		RawResp:   v.RawResp,
+		Err:       err,
 	}
 }

@@ -39,18 +39,18 @@ var localUserAgents = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
 }
 
-// LocalExtractor fetches HTML directly over HTTP and extracts the main article
+// localExtractor fetches HTML directly over HTTP and extracts the main article
 // body locally with go-trafilatura. No API key, no network round-trip to a
 // scraping service — but it can't bypass Cloudflare, paywalls, or aggressive
-// anti-bot. Pair it with a fallback extractor via FailoverExtractor for those.
-type LocalExtractor struct {
+// anti-bot. Pair it with a fallback extractor via failoverExtractor for those.
+type localExtractor struct {
 	httpClient *http.Client
 }
 
-// NewLocalExtractor returns a ready-to-use LocalExtractor. Unlike the other
+// newLocalExtractor returns a ready-to-use localExtractor. Unlike the other
 // extractors, no env config is required — it's always available.
-func NewLocalExtractor() *LocalExtractor {
-	return &LocalExtractor{
+func newLocalExtractor() *localExtractor {
+	return &localExtractor{
 		httpClient: &http.Client{Timeout: localHTTPTimeout},
 	}
 }
@@ -61,7 +61,7 @@ func NewLocalExtractor() *LocalExtractor {
 // rotating UAs recovers pages a single fixed UA gets a 403/anti-bot on, before
 // the failover layer pays for the webcrawler API. A definitively-gone page
 // (404/410) short-circuits the rotation.
-func (e *LocalExtractor) ExtractContent(url string) (*ExtractedContent, error) {
+func (e *localExtractor) ExtractContent(url string) (*ExtractedContent, error) {
 	parsedURL, err := nurl.ParseRequestURI(url)
 	if err != nil {
 		return nil, fmt.Errorf("local extractor: invalid url %q: %w", url, err)
@@ -89,7 +89,7 @@ func (e *LocalExtractor) ExtractContent(url string) (*ExtractedContent, error) {
 // fetchAndExtract performs a single fetch+parse attempt with the given
 // User-Agent. It returns the HTTP status (0 on transport error) so the caller
 // can decide whether rotating the UA is worth another attempt.
-func (e *LocalExtractor) fetchAndExtract(url string, parsedURL *nurl.URL, userAgent string) (*ExtractedContent, int, error) {
+func (e *localExtractor) fetchAndExtract(url string, parsedURL *nurl.URL, userAgent string) (*ExtractedContent, int, error) {
 	log.Debug().Str("url", url).Msg("LocalExtractor: fetching")
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)

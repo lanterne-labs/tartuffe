@@ -3,10 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
-	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -20,36 +17,16 @@ import (
 // vs "sa candidature irait jusqu'au bout" (CLAIMED): the same claim in different
 // words, similarity 0.78, which slips just under the 0.80 auto-dedup line.
 type FactDedupeAdjudicator struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // NewFactDedupeAdjudicatorFromEnv builds an adjudicator from OPEN_AI_ env vars.
 func NewFactDedupeAdjudicatorFromEnv() (*FactDedupeAdjudicator, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("fact-dedupe")
+	if err != nil {
+		return nil, err
 	}
-
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	base = strings.TrimRight(base, "/")
-	return &FactDedupeAdjudicator{
-		apiKey:     apiKey,
-		apiURL:     llm.ChatCompletionsURL(base),
-		model:      model,
-		baseClient: llm.NewBaseLLMClient("fact-dedupe"),
-	}, nil
+	return &FactDedupeAdjudicator{client: client}, nil
 }
 
 // IsSameClaim returns true when factB is a redundant restatement of factA by the
@@ -58,42 +35,7 @@ func NewFactDedupeAdjudicatorFromEnv() (*FactDedupeAdjudicator, error) {
 // context (both facts are about the same person).
 func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
 	prompt := a.buildPrompt(subject, factA, factB)
-
-	reqPayload := llm.ChatRequest{
-		Model: a.model,
-		Messages: []llm.ChatMessage{
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    0.1,
-		MaxTokens:      256,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return false, fmt.Errorf("failed to marshal fact-dedupe request: %w", err)
-	}
-
-	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
-	if err != nil {
-		return false, fmt.Errorf("fact-dedupe LLM call failed: %w", err)
-	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode fact-dedupe chat response")
-		return false, fmt.Errorf("failed to decode chat response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return false, fmt.Errorf("LLM returned no content")
-	}
-
-	verdict, err := parseSameClaimResponse(strings.TrimSpace(chatResp.Choices[0].Message.Content))
-	if err != nil {
-		log.Error().Err(err).Str("llm_content", chatResp.Choices[0].Message.Content).Msg("Failed to parse fact-dedupe response")
-		return false, fmt.Errorf("failed to parse LLM response: %w", err)
-	}
-	return verdict.Same, nil
+	return a.askSameGate(ctx, prompt, 0.1)
 }
 
 // IsSamePosition is the meta-FOLDING gate: unlike IsSameClaim (which guards a
@@ -106,7 +48,7 @@ func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA,
 // matters never do (those pairs are contradiction material and must stay apart).
 func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
 	prompt := a.buildSamePositionPrompt(subject, factA, factB)
-	return a.askSameGate(ctx, prompt)
+	return a.askSameGate(ctx, prompt, 0.0)
 }
 
 func (a *FactDedupeAdjudicator) buildSamePositionPrompt(subject, factA, factB string) string {
@@ -133,34 +75,24 @@ or
 {"same": false, "reasoning": "<one short sentence>"}`, subject, factA, factB)
 }
 
-// askSameGate runs a same/distinct JSON gate prompt and parses the verdict.
-func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string) (bool, error) {
-	reqPayload := llm.ChatRequest{
-		Model: a.model,
+// askSameGate runs a same/distinct JSON gate prompt at the given temperature
+// and parses the verdict (the PairVerdict same/reasoning shape defined in
+// entity_dedup.go).
+func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string, temperature float64) (bool, error) {
+	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
-		Temperature:    0.0,
+		Temperature:    temperature,
 		MaxTokens:      256,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return false, fmt.Errorf("failed to marshal same-gate request: %w", err)
-	}
-	bodyBytes, err := a.baseClient.DoRequest(ctx, a.apiURL, a.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return false, fmt.Errorf("same-gate LLM call failed: %w", err)
 	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return false, fmt.Errorf("failed to decode chat response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return false, fmt.Errorf("LLM returned no content")
-	}
-	verdict, err := parseSameClaimResponse(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
 	if err != nil {
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse fact-dedupe response")
 		return false, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 	return verdict.Same, nil
@@ -186,16 +118,4 @@ Return ONLY strict JSON, nothing else:
 {"same": true, "reasoning": "<one short sentence>"}
 or
 {"same": false, "reasoning": "<one short sentence>"}`, subject, factA, factB)
-}
-
-// parseSameClaimResponse tolerates fenced/unfenced JSON, reusing the PairVerdict
-// shape (same/reasoning) defined in entity_dedup.go.
-func parseSameClaimResponse(content string) (*PairVerdict, error) {
-	content = llm.StripJSONCodeFence(content)
-
-	var v PairVerdict
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
-		return nil, fmt.Errorf("invalid JSON response: %w", err)
-	}
-	return &v, nil
 }

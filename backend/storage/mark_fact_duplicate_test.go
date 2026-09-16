@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,13 +21,13 @@ func TestMarkFactDuplicate(t *testing.T) {
 	pid, err := storer.FindOrInsertPersonWithType(ctx, "dup test subject", "human")
 	require.NoError(t, err)
 
-	faID, _, err := insertFactForTest(ctx, t, storer, StoreFactInput{
+	faID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity: "dup test subject", SubjectEntityType: "human", Lang: "en",
 		NormalizedFactText: "subject will see his candidacy through to the end", EmbeddingText: "candidacy",
 		Embedding: mockEmbedding(), CanonicalVerb: "PROMISED", SourceURL: "http://example.com/a", SourceType: "web",
 	})
 	require.NoError(t, err)
-	fbID, _, err := insertFactForTest(ctx, t, storer, StoreFactInput{
+	fbID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity: "dup test subject", SubjectEntityType: "human", Lang: "en",
 		NormalizedFactText: "subject's candidacy would go all the way", EmbeddingText: "candidacy",
 		Embedding: mockEmbedding(), CanonicalVerb: "CLAIMED", SourceURL: "http://example.com/b", SourceType: "web",

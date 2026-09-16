@@ -1,6 +1,7 @@
 package config
 
 import (
+	"digital-mirror/backend/llm"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,7 +11,14 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds all configuration for the application
+// defaultEmbedModel mirrors embedding.openAIEmbedModelDefault; the embedding
+// package is not imported here to keep this package dependency-light.
+const defaultEmbedModel = "text-embedding-3-small"
+
+// Config holds all configuration for the application. Its only callers today
+// are the frpolitics integration tests (through LoadConfigForTest); the
+// runtime reads the same variables through llm.ConfigFromEnv and the
+// per-component FromEnv constructors.
 type Config struct {
 	Database   DatabaseConfig   `json:"database"`
 	OpenAI     OpenAIConfig     `json:"openai"`
@@ -61,21 +69,24 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL environment variable is required")
 	}
 
-	// OpenAI configuration
-	config.OpenAI.APIKey = os.Getenv("OPEN_AI_KEY")
-	if config.OpenAI.APIKey == "" {
+	// OpenAI configuration: same variables and defaults as llm.ConfigFromEnv.
+	llmCfg := llm.ConfigFromEnv()
+	if llmCfg.APIKey == "" {
 		return nil, fmt.Errorf("OPEN_AI_KEY environment variable is required")
 	}
-
-	config.OpenAI.BaseURL = getEnvWithDefault("OPEN_AI_API", "https://api.openai.com/v1")
-	config.OpenAI.ChatModel = getEnvWithDefault("OPEN_AI_CHAT_MODEL", "gpt-3.5-turbo")
-	config.OpenAI.EmbedModel = getEnvWithDefault("OPEN_AI_EMBED_MODEL", "text-embedding-ada-002")
+	if llmCfg.BaseURL == "" {
+		llmCfg.BaseURL = llm.DefaultBaseURL
+	}
+	config.OpenAI.APIKey = llmCfg.APIKey
+	config.OpenAI.BaseURL = llmCfg.BaseURL
+	config.OpenAI.ChatModel = llmCfg.ChatModel
+	config.OpenAI.EmbedModel = getEnvWithDefault("OPEN_AI_EMBED_MODEL", defaultEmbedModel)
 
 	// Frpolitics configuration (with defaults)
-	config.Frpolitics.MaxLaws = getEnvIntWithDefault("FRPOLITICS_MAX_LAWS", 50)
-	config.Frpolitics.MaxVotes = getEnvIntWithDefault("FRPOLITICS_MAX_VOTES", 1000)
-	config.Frpolitics.PartyThreshold = getEnvFloatWithDefault("FRPOLITICS_PARTY_THRESHOLD", 0.8)
-	config.Frpolitics.RevisitHours = getEnvIntWithDefault("FRPOLITICS_REVISIT_HOURS", 24)
+	config.Frpolitics.MaxLaws = EnvInt("FRPOLITICS_MAX_LAWS", 50)
+	config.Frpolitics.MaxVotes = EnvInt("FRPOLITICS_MAX_VOTES", 1000)
+	config.Frpolitics.PartyThreshold = EnvFloat("FRPOLITICS_PARTY_THRESHOLD", 0.8)
+	config.Frpolitics.RevisitHours = EnvInt("FRPOLITICS_REVISIT_HOURS", 24)
 
 	// Parse legislatures
 	if legsStr := os.Getenv("FRPOLITICS_LEGISLATURES"); legsStr != "" {
@@ -123,8 +134,9 @@ func getEnvWithDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvIntWithDefault returns environment variable as int or default
-func getEnvIntWithDefault(key string, defaultValue int) int {
+// EnvInt returns the environment variable parsed as an int, or defaultValue
+// when it is unset or not an integer.
+func EnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
@@ -133,8 +145,9 @@ func getEnvIntWithDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// getEnvFloatWithDefault returns environment variable as float64 or default
-func getEnvFloatWithDefault(key string, defaultValue float64) float64 {
+// EnvFloat returns the environment variable parsed as a float64, or
+// defaultValue when it is unset or not a number.
+func EnvFloat(key string, defaultValue float64) float64 {
 	if value := os.Getenv(key); value != "" {
 		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
 			return floatValue

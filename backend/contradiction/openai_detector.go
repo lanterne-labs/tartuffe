@@ -2,13 +2,10 @@ package contradiction
 
 import (
 	"context"
-	"digital-mirror/backend/categorizer" // Need access to baseLLMClient and potentially request/response structs
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
-	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -326,40 +323,18 @@ AXIS GATE: If you are about to answer YES on the basis of values/direction (no s
 
 // OpenAIContradictionDetector implements ContradictionDetector using an OpenAI-compatible API.
 type OpenAIContradictionDetector struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *categorizer.BaseLLMClient // Use public type
+	client *llm.Client
 }
 
 // NewOpenAIContradictionDetectorFromEnv creates a detector using OPEN_AI_ env vars.
 // Required: OPEN_AI_KEY, OPEN_AI_API
-// Optional: OPEN_AI_CHAT_MODEL (defaults to categorizer default)
+// Optional: OPEN_AI_CHAT_MODEL (defaults to llm.DefaultChatModel)
 func NewOpenAIContradictionDetectorFromEnv() (*OpenAIContradictionDetector, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("contradiction-detector")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	baseClient := categorizer.NewBaseLLMClient("contradiction-detector")
-
-	// Build chat completions URL - check if already includes the path
-	apiURL := llm.ChatCompletionsURL(base)
-
-	return &OpenAIContradictionDetector{
-		apiKey:     apiKey,
-		apiURL:     apiURL,
-		model:      model,
-		baseClient: baseClient,
-	}, nil
+	return &OpenAIContradictionDetector{client: client}, nil
 }
 
 // AreContradictory implements the ContradictionDetector interface.
@@ -402,9 +377,9 @@ func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, f
 		keep   bool
 		reason string
 	}
-	v, err := majorityVote(JudgeVotes,
+	v, err := llm.MajorityVote(JudgeVotes,
 		func() (verdict, error) {
-			k, r, e := llm.VerifyContradiction(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, factA, factB, claimedReason)
+			k, r, e := llm.VerifyContradiction(ctx, d.client, factA, factB, claimedReason)
 			return verdict{keep: k, reason: r}, e
 		},
 		func(v verdict) string {
@@ -421,7 +396,7 @@ func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, f
 // English) for a contradiction group — one base claim contradicted by N facts.
 // Used by the regroup pass. Delegates to llm.SynthesizeContradictionGroupSummary.
 func (d *OpenAIContradictionDetector) SynthesizeGroupSummary(ctx context.Context, baseFact string, spokes []llm.GroupSpoke) (summary, summaryEn string, err error) {
-	return llm.SynthesizeContradictionGroupSummary(ctx, d.baseClient, d.apiURL, d.apiKey, d.model, baseFact, spokes)
+	return llm.SynthesizeContradictionGroupSummary(ctx, d.client, baseFact, spokes)
 }
 
 // FactPair represents a pair of facts to check for contradiction
@@ -455,7 +430,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		return results
 	}
 
-	timer := metrics.NewLLMTimer("chat", d.model)
+	timer := metrics.NewLLMTimer("chat", d.client.Model)
 
 	// Build the pairs section of the prompt
 	var pairsText strings.Builder
@@ -469,32 +444,17 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 
 	prompt := fmt.Sprintf(contradictionPromptTpl, pairsText.String())
 
-	// Build Chat Request. Thinking OFF — eval showed it regressed recall on
-	// values_based pairs that the COMPLETENESS rule otherwise catches.
-	reqPayload := categorizer.ChatRequest{
-		Model: d.model,
-		Messages: []categorizer.ChatMessage{
+	// Thinking OFF — eval showed it regressed recall on values_based pairs
+	// that the COMPLETENESS rule otherwise catches.
+	llmResponse, chatResp, err := d.client.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.0,
 		MaxTokens:   contradictionMaxTokens,
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
+	})
+	timer.ObserveDuration(err)
 	if err != nil {
-		timer.ObserveDuration(err)
-		for i := range results {
-			results[i].PairIndex = i
-			results[i].Error = fmt.Errorf("failed to marshal batch request: %w", err)
-			metrics.IncrementContradictionChecks("error")
-		}
-		return results
-	}
-
-	// Call the API
-	bodyBytes, err := d.baseClient.DoRequest(ctx, d.apiURL, d.apiKey, payloadBytes)
-	if err != nil {
-		timer.ObserveDuration(err)
 		log.Error().Err(err).Int("pairs", len(pairs)).Msg("Batch contradiction check API call failed")
 		for i := range results {
 			results[i].PairIndex = i
@@ -503,30 +463,6 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		}
 		return results
 	}
-
-	// Parse the response
-	var chatResp categorizer.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode batch response")
-		for i := range results {
-			results[i].PairIndex = i
-			results[i].Error = fmt.Errorf("failed to decode batch response: %w", err)
-		}
-		return results
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		timer.ObserveDuration(fmt.Errorf("no content"))
-		log.Warn().Str("raw_response", string(bodyBytes)).Msg("Batch API returned no content")
-		for i := range results {
-			results[i].PairIndex = i
-			results[i].Error = fmt.Errorf("batch API returned no content")
-			metrics.IncrementContradictionChecks("error")
-		}
-		return results
-	}
-
-	timer.ObserveDuration(nil)
 
 	// Parse each PAIR N: YES/NO: reason line
 	// Token-usage telemetry for calibrating contradictionMaxTokens. The
@@ -549,8 +485,6 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		Str("finish_reason", finishReason).
 		Int("pairs", len(pairs)).
 		Msg("contradiction token usage")
-
-	llmResponse := chatResp.Choices[0].Message.Content
 
 	// Store raw response on every result for inspection
 	for i := range results {

@@ -2,6 +2,7 @@ package complaints
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 	"errors"
 	"fmt"
@@ -15,15 +16,15 @@ import (
 // Storer is the subset of storage operations triage needs. Defined as an
 // interface so tests can supply a fake.
 type Storer interface {
-	GetFactByID(ctx context.Context, factID int64) (*storage.FactForDedup, error)
+	GetFactByID(ctx context.Context, factID int64) (*core.FactForDedup, error)
 	GetFactSourceURLs(ctx context.Context, factID int64) ([]string, error)
 	DeleteFact(ctx context.Context, factID int64) error
 
 	GetContradictionByID(ctx context.Context, id int64) (*storage.ContradictionWithFacts, error)
 	DeleteContradiction(ctx context.Context, id int64) error
 
-	GetStanceDocumentByID(ctx context.Context, id int64) (*storage.StanceDocument, error)
-	GetFactsForStance(ctx context.Context, stanceID int64) ([]storage.StanceFactInfo, error)
+	GetStanceDocumentByID(ctx context.Context, id int64) (*core.StanceDocument, error)
+	GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error)
 	DeleteStanceDocument(ctx context.Context, id int64) error
 }
 
@@ -305,7 +306,7 @@ const verdictInstruction = `Decide one of three verdicts:
 Respond strictly as a JSON object with no markdown, prose, or commentary:
 {"verdict": "delete_target" | "dismiss_complaint" | "ambiguous", "reason": "<one short sentence>"}`
 
-func buildFactPrompt(fact *storage.FactForDedup, urls []string, description string) string {
+func buildFactPrompt(fact *core.FactForDedup, urls []string, description string) string {
 	var b strings.Builder
 	b.WriteString("You are reviewing a user complaint about a FACT stored in a fact-checking database for political figures.\n\n")
 	fmt.Fprintf(&b, "Fact #%d: %q\n", fact.ID, fact.NormalizedFactText)
@@ -346,7 +347,7 @@ func buildContradictionPrompt(contr *storage.ContradictionWithFacts, description
 	return b.String()
 }
 
-func buildStancePrompt(stance *storage.StanceDocument, facts []storage.StanceFactInfo, description string) string {
+func buildStancePrompt(stance *core.StanceDocument, facts []core.StanceFactInfo, description string) string {
 	var b strings.Builder
 	b.WriteString("You are reviewing a user complaint about a STANCE — a clustered group of facts representing a person's position on a topic — in a fact-checking database.\n\n")
 	fmt.Fprintf(&b, "Stance #%d: %q\n", stance.ID, stance.ClusterLabel)

@@ -48,8 +48,8 @@ func NormalizeForFuzzy(s string) string {
 	return strings.Join(filtered, " ")
 }
 
-// LevenshteinDistance calculates the Levenshtein distance between two strings.
-func LevenshteinDistance(s1, s2 string) int {
+// levenshteinDistance calculates the Levenshtein distance between two strings.
+func levenshteinDistance(s1, s2 string) int {
 	if s1 == s2 {
 		return 0
 	}
@@ -97,10 +97,10 @@ func LevenshteinDistance(s1, s2 string) int {
 	return matrix[len(r1)][len(r2)]
 }
 
-// SimilarityScore calculates a normalized similarity score (0.0 to 1.0) between two strings.
+// similarityScore calculates a normalized similarity score (0.0 to 1.0) between two strings.
 // Higher scores indicate more similar strings.
 // Handles exact matches, substring matches, acronyms, and fuzzy matches.
-func SimilarityScore(s1, s2 string) float64 {
+func similarityScore(s1, s2 string) float64 {
 	// Normalize both strings
 	n1 := NormalizeForFuzzy(s1)
 	n2 := NormalizeForFuzzy(s2)
@@ -172,7 +172,7 @@ func SimilarityScore(s1, s2 string) float64 {
 	}
 
 	// Fall back to Levenshtein distance for fuzzy matching
-	distance := LevenshteinDistance(n1, n2)
+	distance := levenshteinDistance(n1, n2)
 	maxLen := len(n1)
 	if len(n2) > maxLen {
 		maxLen = len(n2)
@@ -230,7 +230,7 @@ func FindBestMatches(query string, candidates []struct {
 	matches := make([]PersonMatch, 0)
 
 	for _, candidate := range candidates {
-		score := SimilarityScore(query, candidate.Name)
+		score := similarityScore(query, candidate.Name)
 		if score >= threshold {
 			matches = append(matches, PersonMatch{
 				ID:         candidate.ID,

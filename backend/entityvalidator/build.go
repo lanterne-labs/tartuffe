@@ -22,9 +22,9 @@ import (
 // override to Reject for a more aggressive sweep.
 func BuildFromEnv() *Validator {
 	var filters []Filter
-	filters = append(filters, NewWikiFilter())
+	filters = append(filters, newWikiFilter())
 
-	if g, err := NewGoogleFilter(); err == nil {
+	if g, err := newGoogleFilter(); err == nil {
 		filters = append(filters, g)
 		log.Info().Msg("Entity validator: GoogleFilter active (Serper)")
 	} else {

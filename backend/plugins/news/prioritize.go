@@ -2,7 +2,8 @@ package news
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
+
+	"digital-mirror/backend/plugins"
 
 	"github.com/rs/zerolog/log"
 )
@@ -17,27 +18,18 @@ type PrioritizationOptions struct {
 	PartiesFirst bool
 }
 
-// DefaultPrioritizationOptions returns sensible defaults for prioritization.
-func DefaultPrioritizationOptions() PrioritizationOptions {
-	return PrioritizationOptions{
-		LookbackDays:  30,
-		SkipNoResults: true,
-		PartiesFirst:  true,
-	}
-}
-
 // PrioritizeTargets orders and filters targets based on their likelihood of having news coverage.
 // Returns a prioritized list of targets to search.
-func PrioritizeTargets(ctx context.Context, storer *storage.PostgresStorer, targets []SearchTarget, opts PrioritizationOptions) ([]SearchTarget, error) {
+func (p *Provider) PrioritizeTargets(ctx context.Context, targets []plugins.Target, opts PrioritizationOptions) ([]plugins.Target, error) {
 	if len(targets) == 0 {
 		return targets, nil
 	}
 
 	// Separate parties and persons
-	var parties []SearchTarget
-	var persons []SearchTarget
+	var parties []plugins.Target
+	var persons []plugins.Target
 	for _, t := range targets {
-		if t.Type == TargetParty {
+		if t.IsParty() {
 			parties = append(parties, t)
 		} else {
 			persons = append(persons, t)
@@ -46,32 +38,32 @@ func PrioritizeTargets(ctx context.Context, storer *storage.PostgresStorer, targ
 
 	// If SkipNoResults is set, filter persons based on search history
 	if opts.SkipNoResults {
-		filteredPersons := make([]SearchTarget, 0, len(persons))
-		for _, p := range persons {
-			if p.PersonID == nil {
+		filteredPersons := make([]plugins.Target, 0, len(persons))
+		for _, t := range persons {
+			if t.PersonID == 0 {
 				// No ID means we haven't searched before, include it
-				filteredPersons = append(filteredPersons, p)
+				filteredPersons = append(filteredPersons, t)
 				continue
 			}
 
-			shouldSearch, err := storer.ShouldSearchNews(ctx, *p.PersonID, opts.LookbackDays)
+			shouldSearch, err := p.store.ShouldSearchNews(ctx, t.PersonID, opts.LookbackDays)
 			if err != nil {
-				log.Warn().Err(err).Str("target", p.Name).Msg("Failed to check search history, including target")
-				filteredPersons = append(filteredPersons, p)
+				log.Warn().Err(err).Str("target", t.Name).Msg("Failed to check search history, including target")
+				filteredPersons = append(filteredPersons, t)
 				continue
 			}
 
 			if shouldSearch {
-				filteredPersons = append(filteredPersons, p)
+				filteredPersons = append(filteredPersons, t)
 			} else {
-				log.Debug().Str("target", p.Name).Msg("Skipping target with no prior results")
+				log.Debug().Str("target", t.Name).Msg("Skipping target with no prior results")
 			}
 		}
 		persons = filteredPersons
 	}
 
 	// Combine based on PartiesFirst option
-	var result []SearchTarget
+	var result []plugins.Target
 	if opts.PartiesFirst {
 		result = append(result, parties...)
 		result = append(result, persons...)
@@ -88,25 +80,4 @@ func PrioritizeTargets(ctx context.Context, storer *storage.PostgresStorer, targ
 		Msg("Prioritized news search targets")
 
 	return result, nil
-}
-
-// BuildTargetsFromPersons creates SearchTarget entries from person records.
-// personIDToName maps person IDs to their names.
-// personIDToType maps person IDs to their entity types ("person" or "party").
-func BuildTargetsFromPersons(personIDToName map[int64]string, personIDToType map[int64]string) []SearchTarget {
-	targets := make([]SearchTarget, 0, len(personIDToName))
-	for id, name := range personIDToName {
-		targetType := TargetPerson
-		if entityType, ok := personIDToType[id]; ok && entityType == "party" {
-			targetType = TargetParty
-		}
-
-		personID := id // Create a copy for the pointer
-		targets = append(targets, SearchTarget{
-			Name:     name,
-			Type:     targetType,
-			PersonID: &personID,
-		})
-	}
-	return targets
 }

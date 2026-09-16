@@ -6,27 +6,27 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// ExtractorType represents the available content extractor types
-type ExtractorType string
+// extractorType represents the available content extractor types
+type extractorType string
 
 const (
-	ExtractorWebcrawler ExtractorType = "webcrawler"
-	ExtractorFirecrawl  ExtractorType = "firecrawl"
-	ExtractorApify      ExtractorType = "apify"
-	// ExtractorLocal runs in-process: plain HTTP GET + go-trafilatura. No API
+	extractorWebcrawler extractorType = "webcrawler"
+	extractorFirecrawl  extractorType = "firecrawl"
+	extractorApify      extractorType = "apify"
+	// extractorLocal runs in-process: plain HTTP GET + go-trafilatura. No API
 	// key, no per-scrape cost, but can't bypass paywalls / anti-bot.
-	ExtractorLocal ExtractorType = "local"
-	// ExtractorAuto chains LocalExtractor → WebcrawlerAPI (the latter only if
+	extractorLocal extractorType = "local"
+	// extractorAuto chains localExtractor → WebcrawlerAPI (the latter only if
 	// WEBCRAWLERAPI_KEY is set). Use this everywhere unless a specific provider
 	// is required for debugging.
-	ExtractorAuto ExtractorType = "auto"
+	extractorAuto extractorType = "auto"
 )
 
 // NewExtractorFromType creates a ContentExtractor based on the specified type.
 // Returns an error if the extractor cannot be initialized (e.g., missing API key).
-func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
-	switch ExtractorType(extractorType) {
-	case ExtractorWebcrawler:
+func NewExtractorFromType(kind string) (ContentExtractor, error) {
+	switch extractorType(kind) {
+	case extractorWebcrawler:
 		ext, err := NewWebcrawlerAPIExtractorFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize WebcrawlerAPI extractor: %w", err)
@@ -37,7 +37,7 @@ func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
 		log.Info().Msg("Using WebcrawlerAPI for content extraction")
 		return ext, nil
 
-	case ExtractorFirecrawl:
+	case extractorFirecrawl:
 		ext, err := NewFirecrawlExtractorFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize Firecrawl extractor: %w", err)
@@ -48,7 +48,7 @@ func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
 		log.Info().Msg("Using Firecrawl for content extraction")
 		return ext, nil
 
-	case ExtractorApify:
+	case extractorApify:
 		ext, err := NewApifyExtractorFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize Apify extractor: %w", err)
@@ -59,21 +59,21 @@ func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
 		log.Info().Msg("Using Apify for content extraction")
 		return ext, nil
 
-	case ExtractorLocal:
+	case extractorLocal:
 		log.Info().Msg("Using LocalExtractor (HTTP + trafilatura) for content extraction")
-		return NewLocalExtractor(), nil
+		return newLocalExtractor(), nil
 
-	case ExtractorAuto:
-		local := NewLocalExtractor()
+	case extractorAuto:
+		local := newLocalExtractor()
 		webcrawl, err := NewWebcrawlerAPIExtractorFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("auto extractor: failed to probe WebcrawlerAPI: %w", err)
 		}
 		// webcrawl may be nil if WEBCRAWLERAPI_KEY is unset — failover will
 		// skip nil entries, so we end up with just Local in that case.
-		failover, err := NewFailoverExtractor(
-			FailoverEntry{Name: "local", Extractor: local},
-			FailoverEntry{Name: "webcrawler", Extractor: webcrawl},
+		failover, err := newFailoverExtractor(
+			failoverEntry{Name: "local", Extractor: local},
+			failoverEntry{Name: "webcrawler", Extractor: webcrawl},
 		)
 		if err != nil {
 			return nil, fmt.Errorf("auto extractor: %w", err)
@@ -86,6 +86,6 @@ func NewExtractorFromType(extractorType string) (ContentExtractor, error) {
 		return failover, nil
 
 	default:
-		return nil, fmt.Errorf("unknown extractor type: %s (valid: auto, local, webcrawler, firecrawl, apify)", extractorType)
+		return nil, fmt.Errorf("unknown extractor type: %s (valid: auto, local, webcrawler, firecrawl, apify)", kind)
 	}
 }

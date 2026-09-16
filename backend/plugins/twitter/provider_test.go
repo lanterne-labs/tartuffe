@@ -1,7 +1,6 @@
 package twitter
 
 import (
-	"digital-mirror/backend/storage"
 	"fmt"
 	"strings"
 	"testing"
@@ -156,18 +155,8 @@ func TestMapTweet(t *testing.T) {
 	})
 }
 
-func TestTruncate(t *testing.T) {
-	if truncate("short", 10) != "short" {
-		t.Error("short string should not be truncated")
-	}
-	result := truncate("this is a very long string", 10)
-	if len(result) != 10 {
-		t.Errorf("expected length 10, got %d", len(result))
-	}
-}
-
-func newTestHandle() storage.TwitterHandle {
-	return storage.TwitterHandle{
+func newTestHandle() Handle {
+	return Handle{
 		ID:         1,
 		PersonID:   42,
 		PersonName: "Test Person",

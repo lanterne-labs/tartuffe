@@ -35,9 +35,9 @@ func TestFailoverExtractor_PrimaryWins(t *testing.T) {
 		result: &ExtractedContent{URL: "u", Content: "backup won"},
 	}
 
-	failover, err := NewFailoverExtractor(
-		FailoverEntry{Name: "primary", Extractor: primary},
-		FailoverEntry{Name: "backup", Extractor: backup},
+	failover, err := newFailoverExtractor(
+		failoverEntry{Name: "primary", Extractor: primary},
+		failoverEntry{Name: "backup", Extractor: backup},
 	)
 	require.NoError(t, err)
 
@@ -58,9 +58,9 @@ func TestFailoverExtractor_FailsOverToBackup(t *testing.T) {
 		result: &ExtractedContent{URL: "u", Content: "rescued"},
 	}
 
-	failover, err := NewFailoverExtractor(
-		FailoverEntry{Name: "primary", Extractor: primary},
-		FailoverEntry{Name: "backup", Extractor: backup},
+	failover, err := newFailoverExtractor(
+		failoverEntry{Name: "primary", Extractor: primary},
+		failoverEntry{Name: "backup", Extractor: backup},
 	)
 	require.NoError(t, err)
 
@@ -75,9 +75,9 @@ func TestFailoverExtractor_AllFail(t *testing.T) {
 	a := &stubExtractor{name: "a", err: errors.New("a-err")}
 	b := &stubExtractor{name: "b", err: errors.New("b-err")}
 
-	failover, err := NewFailoverExtractor(
-		FailoverEntry{Name: "a", Extractor: a},
-		FailoverEntry{Name: "b", Extractor: b},
+	failover, err := newFailoverExtractor(
+		failoverEntry{Name: "a", Extractor: a},
+		failoverEntry{Name: "b", Extractor: b},
 	)
 	require.NoError(t, err)
 
@@ -100,9 +100,9 @@ func TestFailoverExtractor_SkipsNilEntries(t *testing.T) {
 		result: &ExtractedContent{URL: "u", Content: "ok"},
 	}
 
-	failover, err := NewFailoverExtractor(
-		FailoverEntry{Name: "local", Extractor: local},
-		FailoverEntry{Name: "webcrawler", Extractor: nil}, // unconfigured
+	failover, err := newFailoverExtractor(
+		failoverEntry{Name: "local", Extractor: local},
+		failoverEntry{Name: "webcrawler", Extractor: nil}, // unconfigured
 	)
 	require.NoError(t, err)
 
@@ -112,9 +112,9 @@ func TestFailoverExtractor_SkipsNilEntries(t *testing.T) {
 }
 
 func TestFailoverExtractor_NoExtractorsIsError(t *testing.T) {
-	_, err := NewFailoverExtractor()
+	_, err := newFailoverExtractor()
 	require.Error(t, err)
 
-	_, err = NewFailoverExtractor(FailoverEntry{Name: "n", Extractor: nil})
+	_, err = newFailoverExtractor(failoverEntry{Name: "n", Extractor: nil})
 	require.Error(t, err, "all-nil entries should error since there's nothing to try")
 }

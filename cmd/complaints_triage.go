@@ -3,7 +3,8 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/complaints"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
+	"digital-mirror/backend/util"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -48,7 +49,7 @@ func runComplaintsTriage(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("init LLM judge: %w", err)
 	}
 
-	store, err := storage.NewPostgresStorerFromEnv(ctx)
+	store, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("init storage: %w", err)
 	}
@@ -98,7 +99,7 @@ func printOutcome(idx int, o complaints.Outcome, dryRun bool) {
 	c := o.Complaint
 	target := targetDescriptor(c)
 	fmt.Printf("[%d] %s — %s\n", idx, target, c.Label)
-	fmt.Printf("    user: %s\n", truncate(c.Description, 200))
+	fmt.Printf("    user: %s\n", util.TruncateString(c.Description, 200))
 	if o.Err != nil {
 		fmt.Printf("    ERROR: %v\n", o.Err)
 		return
@@ -128,11 +129,4 @@ func targetDescriptor(c complaints.Complaint) string {
 	default:
 		return fmt.Sprintf("unknown kind %q", c.Kind)
 	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

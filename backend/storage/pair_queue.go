@@ -99,28 +99,29 @@ func (s *PostgresStorer) CountQueuedPairs(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// SetFactSourceMetadataByLawKey sets metadata[key] = value on every source of
-// the given type whose metadata law_key matches, in one statement (a
-// backfill for keys added after ingestion). Returns the rows updated.
-func (s *PostgresStorer) SetFactSourceMetadataByLawKey(ctx context.Context, sourceType, key string, byLawKey map[string]string) (int, error) {
-	if len(byLawKey) == 0 {
+// SetFactSourceMetadataByKey sets metadata[setKey] = byMatch[metadata[matchKey]]
+// on every source of the given type whose metadata matchKey is a key of
+// byMatch, in one statement (a backfill for keys added after ingestion).
+// Returns the rows updated.
+func (s *PostgresStorer) SetFactSourceMetadataByKey(ctx context.Context, sourceType, matchKey, setKey string, byMatch map[string]string) (int, error) {
+	if len(byMatch) == 0 {
 		return 0, nil
 	}
-	lawKeys := make([]string, 0, len(byLawKey))
-	values := make([]string, 0, len(byLawKey))
-	for k, v := range byLawKey {
-		lawKeys = append(lawKeys, k)
+	matches := make([]string, 0, len(byMatch))
+	values := make([]string, 0, len(byMatch))
+	for k, v := range byMatch {
+		matches = append(matches, k)
 		values = append(values, v)
 	}
 	res, err := s.pool.Exec(ctx, `
 		UPDATE fact_sources fs
-		SET metadata = COALESCE(fs.metadata, '{}'::jsonb) || jsonb_build_object($2::text, m.value)
-		FROM unnest($3::text[], $4::text[]) AS m(law_key, value)
+		SET metadata = COALESCE(fs.metadata, '{}'::jsonb) || jsonb_build_object($3::text, m.value)
+		FROM unnest($4::text[], $5::text[]) AS m(match, value)
 		WHERE fs.source_type = $1
-		  AND fs.metadata->>'law_key' = m.law_key
-		  AND fs.metadata->>$2 IS DISTINCT FROM m.value`, sourceType, key, lawKeys, values)
+		  AND fs.metadata->>$2 = m.match
+		  AND fs.metadata->>$3 IS DISTINCT FROM m.value`, sourceType, matchKey, setKey, matches, values)
 	if err != nil {
-		return 0, fmt.Errorf("backfilling %s on %s sources: %w", key, sourceType, err)
+		return 0, fmt.Errorf("backfilling %s on %s sources: %w", setKey, sourceType, err)
 	}
 	return int(res.RowsAffected()), nil
 }

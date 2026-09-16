@@ -68,7 +68,7 @@ Tests require Supabase running. The Makefile automatically sets `DATABASE_URL` f
 
 To run a single test:
 ```bash
-export DATABASE_URL=$(supabase status --output env | grep '^DB_URL=' | sed 's/^DB_URL=//')
+export DATABASE_URL=$(supabase status --output env | grep '^DB_URL=' | sed -e 's/^DB_URL=//' -e 's/^"//' -e 's/"$//')
 go test -v ./backend/storage -run TestSpecificName
 ```
 

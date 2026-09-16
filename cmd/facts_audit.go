@@ -4,14 +4,12 @@ import (
 	"bufio"
 	"context"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -38,7 +36,7 @@ var factsAuditCmd = &cobra.Command{
 	Use:   "audit",
 	Short: "LLM-audit stored facts against the live extraction rules.",
 	Long: `Walks stored facts and asks an LLM whether each one would still be extracted
-under the current rules in core.CoreFactExtractionPrompt. The auditor sees the
+under the current rules in promptrules.CoreFactExtractionPrompt. The auditor sees the
 WHOLE extraction prompt verbatim, so the rules cannot drift between extractor
 and auditor.
 
@@ -120,7 +118,7 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --format %q: expected 'jsonl' or 'text'", factsAuditFormat)
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
@@ -136,12 +134,11 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		id := factsAuditPersonID
 		personIDPtr = &id
 	case factsAuditPerson != "":
-		normalized := util.NormalizeString(factsAuditPerson)
-		pid, err := storer.GetPersonIDByName(ctx, normalized)
+		person, err := core.ResolvePersonID(ctx, storer, factsAuditPerson, core.ExactMatchOnly)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", factsAuditPerson, err)
+			return err
 		}
-		personIDPtr = &pid
+		personIDPtr = &person.ID
 	}
 
 	rows, err := storer.ListFactsForAudit(ctx, personIDPtr, factIDPtr, factsAuditRandom, factsAuditMax)
@@ -166,11 +163,6 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		parallelism = 1
 	}
 
-	var counts struct {
-		keep, del, unsure, errors int
-	}
-	var deleteIDs []int64
-
 	startedAt := time.Now()
 	log.Info().
 		Int("total", len(rows)).
@@ -182,118 +174,67 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		Bool("apply", factsAuditApply).
 		Msg("Starting fact audit")
 
-	type auditJob struct {
-		idx int
-		row storage.FactAuditRow
-	}
-	type auditResult struct {
-		line    factAuditOutputLine
-		verdict core.FactAuditVerdict
-		factID  int64
-		hasErr  bool
-	}
-
-	jobs := make(chan auditJob)
-	results := make(chan auditResult, parallelism*2)
-
-	var wg sync.WaitGroup
-	for w := 0; w < parallelism; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				row := j.row
-				subject := factsAuditSubjectLabel(row.Persons)
-				factCreatedAt := row.FactCreatedAt
-				result := auditor.Audit(ctx, core.FactAuditInput{
-					NormalizedFact:    row.FactText,
-					CanonicalVerb:     row.CanonicalVerb,
-					EmbeddingText:     row.EmbeddingText,
-					SubjectEntity:     subject,
-					OriginalQuote:     row.FirstOriginalQuote,
-					SourceURL:         row.FirstSourceURL,
-					SourcePublishedAt: row.FirstSourcePublishedAt,
-					FactCreatedAt:     &factCreatedAt,
-				})
-				line := factAuditOutputLine{
-					FactID:         row.ID,
-					Persons:        toAuditInputPersons(row.Persons),
-					FactText:       row.FactText,
-					EmbeddingText:  row.EmbeddingText,
-					CanonicalVerb:  row.CanonicalVerb,
-					OriginalQuote:  row.FirstOriginalQuote,
-					SourceURL:      row.FirstSourceURL,
-					Verdict:        string(result.Verdict),
-					Rule:           result.Rule,
-					AuditReasoning: result.Reasoning,
-				}
-				out := auditResult{line: line, verdict: result.Verdict, factID: row.ID}
-				if result.Err != nil {
-					line.Error = result.Err.Error()
-					out.line = line
-					out.hasErr = true
-					log.Error().Err(result.Err).Int64("fact_id", row.ID).Msg("Fact audit error")
-				}
-				results <- out
-			}
-		}()
-	}
-
-	go func() {
-		for i, row := range rows {
-			jobs <- auditJob{idx: i, row: row}
+	jobs := make([]core.FactAuditJob, len(rows))
+	rowByID := make(map[int64]storage.FactAuditRow, len(rows))
+	for i, row := range rows {
+		factCreatedAt := row.FactCreatedAt
+		names := make([]string, len(row.Persons))
+		for j, p := range row.Persons {
+			names[j] = p.Name
 		}
-		close(jobs)
-	}()
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
+		jobs[i] = core.FactAuditJob{FactID: row.ID, Input: core.FactAuditInput{
+			NormalizedFact:    row.FactText,
+			CanonicalVerb:     row.CanonicalVerb,
+			EmbeddingText:     row.EmbeddingText,
+			SubjectEntity:     core.FactAuditSubjectLabel(names),
+			OriginalQuote:     row.FirstOriginalQuote,
+			SourceURL:         row.FirstSourceURL,
+			SourcePublishedAt: row.FirstSourcePublishedAt,
+			FactCreatedAt:     &factCreatedAt,
+		}}
+		rowByID[row.ID] = row
+	}
 
-	var done atomic.Int64
-	for r := range results {
-		if r.hasErr {
-			counts.errors++
-		} else {
-			switch r.verdict {
-			case core.FactVerdictKeep:
-				counts.keep++
-			case core.FactVerdictDelete:
-				counts.del++
-				deleteIDs = append(deleteIDs, r.factID)
-			case core.FactVerdictUnsure:
-				counts.unsure++
-			}
+	tally, err := core.RunFactAudit(ctx, auditor, jobs, parallelism, func(o core.FactAuditOutcome) error {
+		row := rowByID[o.FactID]
+		line := factAuditOutputLine{
+			FactID:         row.ID,
+			Persons:        toAuditInputPersons(row.Persons),
+			FactText:       row.FactText,
+			EmbeddingText:  row.EmbeddingText,
+			CanonicalVerb:  row.CanonicalVerb,
+			OriginalQuote:  row.FirstOriginalQuote,
+			SourceURL:      row.FirstSourceURL,
+			Verdict:        string(o.Result.Verdict),
+			Rule:           o.Result.Rule,
+			AuditReasoning: o.Result.Reasoning,
+		}
+		if o.Result.Err != nil {
+			line.Error = o.Result.Err.Error()
 		}
 		if format == "jsonl" {
-			if err := enc.Encode(r.line); err != nil {
+			if err := enc.Encode(line); err != nil {
 				return fmt.Errorf("failed to encode JSONL line: %w", err)
 			}
-		} else {
-			printFactAuditTextRow(os.Stdout, r.line)
+			return nil
 		}
-		n := done.Add(1)
-		if n%50 == 0 {
-			log.Info().
-				Int64("audited", n).
-				Int("total", len(rows)).
-				Int("keep", counts.keep).
-				Int("delete", counts.del).
-				Int("unsure", counts.unsure).
-				Int("errors", counts.errors).
-				Msg("Audit progress")
-		}
+		printFactAuditTextRow(os.Stdout, line)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
-	printFactAuditSummary(os.Stderr, len(rows), counts.keep, counts.del, counts.unsure, counts.errors, time.Since(startedAt))
+	printFactAuditSummary(os.Stderr, len(rows), tally.Keep, tally.Delete, tally.Unsure, tally.Errors, time.Since(startedAt))
 
 	if !factsAuditApply {
-		if counts.del > 0 {
-			fmt.Fprintf(os.Stderr, "\n%d facts marked for deletion. Re-run with --apply to delete them.\n", counts.del)
+		if tally.Delete > 0 {
+			fmt.Fprintf(os.Stderr, "\n%d facts marked for deletion. Re-run with --apply to delete them.\n", tally.Delete)
 		}
 		return nil
 	}
 
+	deleteIDs := tally.DeleteIDs
 	if len(deleteIDs) == 0 {
 		fmt.Fprintln(os.Stderr, "Nothing to apply.")
 		return nil
@@ -331,19 +272,6 @@ func factsAuditScopeDescription() string {
 		return factsAuditPerson
 	}
 	return "all persons"
-}
-
-// factsAuditSubjectLabel picks a single subject entity to show the auditor.
-// Most facts have one mention; when several persons are linked we show the
-// first (alphabetical) and a "+N more" tail so the LLM still sees a name.
-func factsAuditSubjectLabel(persons []storage.FactAuditPerson) string {
-	if len(persons) == 0 {
-		return ""
-	}
-	if len(persons) == 1 {
-		return persons[0].Name
-	}
-	return fmt.Sprintf("%s (+%d more)", persons[0].Name, len(persons)-1)
 }
 
 func toAuditInputPersons(persons []storage.FactAuditPerson) []factAuditPerson {

@@ -1,16 +1,14 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
@@ -102,14 +100,14 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize database connection
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
 
 	// Resolve target name
-	resolvedTarget, err := resolveTarget(ctx, storer, targetName, targetType, force)
+	resolvedTarget, err := resolveIngestTarget(ctx, storer, targetName, targetType, force)
 	if err != nil {
 		return err
 	}
@@ -133,7 +131,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize stance manager (mandatory) and fact inserter
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
@@ -194,116 +192,41 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 
 	// Record job metrics (skip in dry-run mode)
 	if !dryRun {
-		jobMetrics := []storage.JobMetric{
-			{JobType: "ingest-files", Target: resolvedTarget, Metric: "files_processed", Value: float64(result.FilesProcessed)},
-			{JobType: "ingest-files", Target: resolvedTarget, Metric: "facts_extracted", Value: float64(result.FactsExtracted)},
-			{JobType: "ingest-files", Target: resolvedTarget, Metric: "facts_stored", Value: float64(result.FactsStored)},
-			{JobType: "ingest-files", Target: resolvedTarget, Metric: "duplicates_skipped", Value: float64(result.DuplicatesSkipped)},
-		}
-		if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
-			log.Error().Err(err).Msg("Failed to record job metrics")
-		}
+		recordJobMetrics(ctx, storer, jobMetrics("ingest-files", resolvedTarget, map[string]float64{
+			"files_processed":    float64(result.FilesProcessed),
+			"facts_extracted":    float64(result.FactsExtracted),
+			"facts_stored":       float64(result.FactsStored),
+			"duplicates_skipped": float64(result.DuplicatesSkipped),
+		}))
 	}
 
 	return nil
 }
 
-// resolveTarget resolves the target name to an existing person/party or creates one.
-func resolveTarget(ctx context.Context, storer *storage.PostgresStorer, targetName string, targetType string, force bool) (string, error) {
-	// Use fuzzy matching to resolve the target
-	result := core.ResolveTargetName(ctx, storer, targetName)
-
-	if result.Error != nil {
-		return "", fmt.Errorf("failed to resolve target name: %w", result.Error)
-	}
-
-	// Exact match found
-	if result.IsExactMatch {
-		log.Info().
-			Str("query", targetName).
-			Str("matched", result.ExactMatch.Name).
-			Msg("Exact match found")
-		return result.ExactMatch.Name, nil
-	}
-
-	// Fuzzy matches found - needs disambiguation
-	if len(result.FuzzyMatches) > 0 {
-		if force {
-			// In force mode with fuzzy matches, use top match if high confidence
-			topMatch := result.FuzzyMatches[0]
-			if topMatch.Score >= 0.8 {
-				log.Info().
-					Str("query", targetName).
-					Str("matched", topMatch.Target.Name).
-					Float64("score", topMatch.Score).
-					Msg("Using high-confidence fuzzy match (force mode)")
-				return topMatch.Target.Name, nil
-			}
-			// Low confidence - create new
-			log.Info().
-				Str("query", targetName).
-				Float64("top_score", topMatch.Score).
-				Msg("Low-confidence matches, creating new target (force mode)")
-			return createTarget(ctx, storer, targetName, targetType)
-		}
-
-		// Interactive disambiguation
-		fmt.Printf("Query: %q\n", targetName)
-		fmt.Printf("Found %d potential matches:\n", len(result.FuzzyMatches))
-
-		for i, match := range result.FuzzyMatches {
-			fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-				i+1, match.Target.Name, match.Target.EntityType, match.Score)
-		}
-		fmt.Printf("  0) Create new %s %q\n", targetType, targetName)
-		fmt.Printf("  -1) Cancel\n")
-		fmt.Print("Enter your choice: ")
-
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		choice, err := strconv.Atoi(input)
-		if err != nil {
-			return "", fmt.Errorf("invalid choice")
-		}
-
-		if choice == -1 {
-			return "", fmt.Errorf("cancelled by user")
-		}
-
-		if choice == 0 {
-			return createTarget(ctx, storer, targetName, targetType)
-		}
-
-		if choice < 1 || choice > len(result.FuzzyMatches) {
-			return "", fmt.Errorf("invalid choice: %d", choice)
-		}
-
-		selected := result.FuzzyMatches[choice-1]
-		return selected.Target.Name, nil
-	}
-
-	// No matches found
+// resolveIngestTarget resolves --target to the stored name of an existing
+// person/party, or creates it: --force takes a confident fuzzy match and
+// creates as --target-type without asking, otherwise the user picks among
+// the candidates or confirms the creation.
+func resolveIngestTarget(ctx context.Context, storer *storage.PostgresStorer, targetName string, targetType string, force bool) (string, error) {
 	if force {
-		// In force mode, create the target
-		log.Info().Str("name", targetName).Str("type", targetType).Msg("Creating target (force mode)")
-		return createTarget(ctx, storer, targetName, targetType)
+		entityType := "human"
+		if targetType == "party" {
+			entityType = "party"
+		}
+		person, err := resolveOrCreatePerson(ctx, storer, targetName, entityType)
+		if err != nil {
+			return "", err
+		}
+		return person.Name, nil
 	}
-
-	// Interactive mode - ask user
-	fmt.Printf("Target %q not found in database.\n", targetName)
-	fmt.Printf("Create as %s? (y/n): ", targetType)
-
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
-
-	if input == "y" || input == "yes" {
-		return createTarget(ctx, storer, targetName, targetType)
+	person, ok, err := resolvePersonInteractive(ctx, storer, targetName, true)
+	if err != nil {
+		return "", err
 	}
-
-	return "", fmt.Errorf("target %q not found and not created", targetName)
+	if !ok {
+		return "", fmt.Errorf("target %q not found and not created", targetName)
+	}
+	return person.Name, nil
 }
 
 // resolveTargetDirectory determines the cache directory for a target.
@@ -330,26 +253,4 @@ func resolveTargetDirectory(baseDir string, targetName string) string {
 		Str("base_dir", baseDir).
 		Msg("No target-specific subdirectory found, using base directory")
 	return baseDir
-}
-
-// createTarget creates a new person or party in the database.
-func createTarget(ctx context.Context, storer *storage.PostgresStorer, name string, targetType string) (string, error) {
-	entityType := "human"
-	if targetType == "party" {
-		entityType = "party"
-	}
-
-	id, inserted, err := storer.AddPersonWithType(ctx, name, entityType)
-	if err != nil {
-		return "", fmt.Errorf("failed to create %s: %w", targetType, err)
-	}
-
-	if inserted {
-		log.Info().Str("name", name).Int64("id", id).Str("type", entityType).Msg("Created new target")
-		fmt.Printf("Created new %s: %s (ID: %d)\n", targetType, name, id)
-	} else {
-		log.Info().Str("name", name).Int64("id", id).Msg("Target already exists")
-	}
-
-	return name, nil
 }

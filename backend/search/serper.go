@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/util"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -30,8 +32,8 @@ type SerperProvider struct {
 const serperDefaultBaseURL = "https://google.serper.dev"
 const serperMaxPerPage = 100 // Serper accepts num up to 100
 
-// NewSerperProvider creates a SerperProvider with the given API key.
-func NewSerperProvider(apiKey string) (*SerperProvider, error) {
+// newSerperProvider creates a SerperProvider with the given API key.
+func newSerperProvider(apiKey string) (*SerperProvider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("Serper API key cannot be empty")
 	}
@@ -48,7 +50,7 @@ func NewSerperProviderFromEnv() (*SerperProvider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("SERPER_API_KEY environment variable not set")
 	}
-	return NewSerperProvider(apiKey)
+	return newSerperProvider(apiKey)
 }
 
 // serperRequestBody mirrors the JSON body Serper accepts for /news, /search,
@@ -151,18 +153,10 @@ func (s *SerperProvider) doPost(endpoint string, body any) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		// Surface 429s in a shape ChainedSearcher recognizes for fallthrough.
-		return nil, fmt.Errorf("serper %s returned %s: %s", endpoint, resp.Status, truncate(string(respBody), 200))
+		return nil, fmt.Errorf("serper %s returned %s: %s", endpoint, resp.Status, util.TruncateString(string(respBody), 200))
 	}
 
 	return respBody, nil
-}
-
-// truncate clips a string to n chars for log/error readability.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }
 
 // SearchNews implements NewsSearcher.
@@ -238,20 +232,6 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 
 	log.Debug().Int("count", len(all)).Str("query", query).Msg("Serper news search completed")
 	return all, nil
-}
-
-// PreviewSearch implements NewsSearcher.
-func (s *SerperProvider) PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error) {
-	previewOpts := opts
-	previewOpts.Limit = 1
-	results, err := s.SearchNews(query, previewOpts)
-	if err != nil {
-		return nil, err
-	}
-	return &NewsSearchPreview{
-		TotalResults: len(results),
-		Query:        query,
-	}, nil
 }
 
 // SearchWeb implements WebSearcher.
@@ -348,23 +328,6 @@ func (s *SerperProvider) SearchImages(query string, opts ImageSearchOptions) ([]
 
 	log.Debug().Int("count", len(results)).Str("query", query).Msg("Serper image search completed")
 	return results, nil
-}
-
-// Search implements the legacy SearchProvider interface (used by some callers).
-func (s *SerperProvider) Search(personName string) ([]SearchResult, error) {
-	newsResults, err := s.SearchNews(personName, NewsSearchOptions{})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SearchResult, 0, len(newsResults))
-	for _, nr := range newsResults {
-		out = append(out, SearchResult{
-			URL:     nr.Link,
-			Title:   nr.Title,
-			Snippet: nr.Snippet,
-		})
-	}
-	return out, nil
 }
 
 // parseSerperDate parses Serper's mixed date formats — absolute (ISO,

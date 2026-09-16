@@ -7,7 +7,9 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 	"fmt"
 	"strings"
 	"time"
@@ -21,8 +23,8 @@ const (
 	defaultRevisitHours = 24 * 365 * 10 // 10 years — never re-process same tweet URL
 )
 
-// PluginInstructions provides twitter-specific extraction instructions for the LLM.
-const PluginInstructions = `## Twitter-Specific Instructions
+// pluginInstructions provides twitter-specific extraction instructions for the LLM.
+const pluginInstructions = `## Twitter-Specific Instructions
 The content below consists of tweets (social media posts). Apply these rules:
 - Each tweet has a URL in the format "https://x.com/handle/status/...". Use this URL as the source_url for facts extracted from that tweet.
 - Tweets use informal language — normalize to formal factual statements.
@@ -33,15 +35,17 @@ The content below consists of tweets (social media posts). Apply these rules:
 - Dates mentioned in tweets should be interpreted relative to the tweet's timestamp.`
 
 // Provider orchestrates tweet fetching and fact extraction for twitter handles.
+// Storer inserts the facts; Store holds the plugin's handles and fetch log.
 type Provider struct {
 	Fetcher       TweetFetcher
 	FactExtractor *categorizer.OpenAIExtractor
 	Embedder      *embedding.OpenAIEmbeddingGenerator
 	Storer        *storage.PostgresStorer
+	Store         *Store
 }
 
 // CollectFacts fetches tweets for a handle and extracts facts.
-func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandle, opts Options) (*Result, error) {
+func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options) (*Result, error) {
 	result := &Result{
 		Handle:     handle.Handle,
 		PersonName: handle.PersonName,
@@ -65,7 +69,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 
 	// Check fetch log (API-level dedup) unless --force
 	if !opts.Force {
-		alreadyFetched, err := p.Storer.IsTwitterRangeFetched(ctx, handle.ID, dateFrom, dateTo)
+		alreadyFetched, err := p.Store.IsRangeFetched(ctx, handle.ID, dateFrom, dateTo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to check fetch log: %w", err)
 		}
@@ -101,7 +105,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 
 	if len(tweets) == 0 {
 		// Still log the fetch so we don't re-query the same empty range
-		if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, 0); err != nil {
+		if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, 0); err != nil {
 			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
 		}
 		return result, nil
@@ -112,7 +116,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 			log.Info().
 				Int("index", i+1).
 				Str("url", tw.URL).
-				Str("text", truncate(tw.Text, 100)).
+				Str("text", util.TruncateString(tw.Text, 100)).
 				Bool("retweet", tw.IsRetweet).
 				Msg("twitter: [DRY-RUN] would process")
 		}
@@ -153,14 +157,14 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 		Msg("twitter: filtered tweets")
 
 	if len(toProcess) == 0 {
-		if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
+		if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
 			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
 		}
 		return result, nil
 	}
 
 	// Process in batches
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(p.Storer))
+	stanceMgr, err := core.NewStanceManagerFromEnv(p.Storer)
 	if err != nil {
 		return result, fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
@@ -181,11 +185,11 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 
 		batchContent := formatTweetBatch(batch)
 
-		cfg := core.FactExtractorConfig{
+		cfg := promptrules.FactExtractorConfig{
 			TargetName:         handle.PersonName,
 			SourceURL:          fmt.Sprintf("https://x.com/%s", handle.Handle),
 			Content:            batchContent,
-			PluginInstructions: PluginInstructions,
+			PluginInstructions: pluginInstructions,
 		}
 
 		facts, err := p.FactExtractor.ExtractFactsWithConfig(ctx, cfg)
@@ -215,7 +219,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 
 			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
-				log.Warn().Err(err).Str("fact", truncate(fact.NormalizedFactText, 80)).Msg("twitter: failed to generate embedding")
+				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("twitter: failed to generate embedding")
 				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
 				continue
 			}
@@ -251,7 +255,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 			insertResult, err := factInserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
 				log.Warn().Err(err).
-					Str("fact", truncate(fact.NormalizedFactText, 80)).
+					Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).
 					Msg("twitter: failed to store fact")
 				result.Errors = append(result.Errors, err)
 				continue
@@ -263,12 +267,12 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 	}
 
 	// Log the fetch
-	if err := p.Storer.LogTwitterFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
+	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
 		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
 	}
 
 	// Update last_fetched_at
-	if err := p.Storer.UpdateTwitterHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
+	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
 		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
 	}
 
@@ -285,7 +289,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle storage.TwitterHandl
 
 // CollectFactsWithDateWindows breaks the date range into N-day windows
 // and calls CollectFacts for each, skipping already-fetched windows.
-func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle storage.TwitterHandle, opts Options) (*Result, error) {
+func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle Handle, opts Options) (*Result, error) {
 	if opts.WindowDays <= 0 {
 		return nil, fmt.Errorf("WindowDays must be > 0, got %d", opts.WindowDays)
 	}
@@ -372,7 +376,7 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle stora
 }
 
 // determineDateRange resolves the effective date range from options and handle state.
-func determineDateRange(handle storage.TwitterHandle, opts Options) (time.Time, time.Time) {
+func determineDateRange(handle Handle, opts Options) (time.Time, time.Time) {
 	now := time.Now()
 
 	var dateFrom time.Time
@@ -469,12 +473,4 @@ func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 		return &batch[0]
 	}
 	return nil
-}
-
-// truncate truncates a string to maxLen characters, adding "..." if truncated.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

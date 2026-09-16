@@ -5,7 +5,6 @@ import (
 	"digital-mirror/backend/llm"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -13,10 +12,7 @@ import (
 
 // DedupLLMVerifier uses an LLM to verify whether facts are duplicates.
 type DedupLLMVerifier struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // LLMDedupeAnalysisEntry represents a pairwise reasoning entry from the LLM.
@@ -47,32 +43,11 @@ type InvalidFact struct {
 
 // NewDedupLLMVerifierFromEnv creates a verifier using OPEN_AI_ environment variables.
 func NewDedupLLMVerifierFromEnv() (*DedupLLMVerifier, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("dedup-filter")
+	if err != nil {
+		return nil, err
 	}
-
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	baseClient := llm.NewBaseLLMClient("dedup-filter")
-
-	// Build chat completions URL
-	apiURL := llm.ChatCompletionsURL(base)
-
-	return &DedupLLMVerifier{
-		apiKey:     apiKey,
-		apiURL:     apiURL,
-		model:      model,
-		baseClient: baseClient,
-	}, nil
+	return &DedupLLMVerifier{client: client}, nil
 }
 
 // VerifyBatch sends a batch of facts to the LLM for deduplication verification.
@@ -82,12 +57,11 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 		return &LLMDedupeResponse{}, nil
 	}
 
-	// Build the prompt
 	prompt := v.buildPrompt(facts)
 
-	// Build Chat Request
-	reqPayload := llm.ChatRequest{
-		Model: v.model,
+	log.Debug().Int("fact_count", len(facts)).Msg("Sending facts to LLM for deduplication verification")
+
+	llmContent, _, err := v.client.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
@@ -96,36 +70,13 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 		// model's entire 12k context and was rejected with 400 up front.
 		MaxTokens:      2048,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal dedup request payload: %w", err)
-	}
-
-	log.Debug().Int("fact_count", len(facts)).Msg("Sending facts to LLM for deduplication verification")
-
-	// Call the LLM
-	bodyBytes, err := v.baseClient.DoRequest(ctx, v.apiURL, v.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("LLM dedup verification failed: %w", err)
 	}
 
-	// Parse the response
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode chat response")
-		return nil, fmt.Errorf("failed to decode chat response: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		log.Warn().Str("raw_response", string(bodyBytes)).Msg("LLM returned no content")
-		return nil, fmt.Errorf("LLM returned no content")
-	}
-
-	// Parse the JSON response from LLM
-	llmContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
-	response, err := v.parseResponse(llmContent)
+	llmContent = strings.TrimSpace(llmContent)
+	response, err := parseDedupeResponse(llmContent)
 	if err != nil {
 		log.Error().Err(err).Str("llm_content", llmContent).Msg("Failed to parse LLM dedup response")
 		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
@@ -210,17 +161,14 @@ IMPORTANT: Return ONLY valid JSON.`, string(factsJSON))
 	return prompt
 }
 
-// parseResponse parses the LLM's JSON response into a structured format.
-func (v *DedupLLMVerifier) parseResponse(content string) (*LLMDedupeResponse, error) {
-	// Try to extract JSON if wrapped in markdown code blocks
-	content = llm.StripJSONCodeFence(content)
-
-	var response LLMDedupeResponse
-	if err := json.Unmarshal([]byte(content), &response); err != nil {
-		return nil, fmt.Errorf("invalid JSON response: %w", err)
+// parseDedupeResponse parses the LLM's JSON response and drops zero-valued
+// ids from every group.
+func parseDedupeResponse(content string) (*LLMDedupeResponse, error) {
+	response, err := llm.ParseJSONResponse[LLMDedupeResponse](content)
+	if err != nil {
+		return nil, err
 	}
 
-	// Validate the response
 	for i, group := range response.UniqueGroups {
 		if group.KeepID == 0 {
 			log.Warn().Int("group_index", i).Msg("LLM returned group with zero keep_id, skipping")

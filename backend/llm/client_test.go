@@ -123,3 +123,26 @@ func TestDoRequest_PrimarySucceeds_NoFallback(t *testing.T) {
 		t.Fatal("fallback should not be tried when primary succeeds")
 	}
 }
+
+func TestIsCreditError(t *testing.T) {
+	tests := []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{402, "payment required", true},
+		{402, "", true},
+		{200, "insufficient credits", true},
+		{200, "Insufficient_Quota reached", true},
+		{429, "RESOURCE_EXHAUSTED: quota exceeded", true},
+		{429, "rate limit exceeded", false},
+		{500, "internal server error", false},
+		{200, "ok", false},
+	}
+	for _, tt := range tests {
+		got := isCreditError(tt.status, tt.body)
+		if got != tt.want {
+			t.Errorf("isCreditError(%d, %q) = %v, want %v", tt.status, tt.body, got, tt.want)
+		}
+	}
+}

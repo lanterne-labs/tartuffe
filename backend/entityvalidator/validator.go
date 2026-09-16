@@ -86,7 +86,3 @@ func (v *Validator) Validate(ctx context.Context, name, entityType string) Verdi
 		History: cand.Previous,
 	}
 }
-
-// Filters returns the configured filters in order. Useful for tests and for
-// the CLI to log which filters are active.
-func (v *Validator) Filters() []Filter { return v.filters }

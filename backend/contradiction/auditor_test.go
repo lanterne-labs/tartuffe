@@ -8,137 +8,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseAuditResponse_Keep(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: Both statements directly contradict on the person's own knowledge of the same specific event.",
-		"RULE: none",
-		"VERDICT: keep",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictKeep, res.Verdict)
-	assert.Equal(t, "none", res.Rule)
-	assert.Contains(t, res.Reasoning, "directly contradict")
+// The contradiction auditor's parse is llm.VerdictJudge.Parse (tested in
+// backend/llm); these tests pin the enums wired into it: every catalog rule
+// token is accepted and the verdict set is keep/remove/ambiguous.
+func newAuditorForParse(t *testing.T) *OpenAIContradictionAuditor {
+	t.Helper()
+	t.Setenv("OPEN_AI_KEY", "k")
+	t.Setenv("OPEN_AI_API", "http://unused")
+	a, err := NewOpenAIContradictionAuditorFromEnv()
+	require.NoError(t, err)
+	return a
 }
 
-func TestParseAuditResponse_Remove(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: Statement A is an indictment, statement B is a denial; an indictment is not an authoritative finding.",
-		"RULE: accusation_not_finding",
-		"VERDICT: remove",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictRemove, res.Verdict)
-	assert.Equal(t, "accusation_not_finding", res.Rule)
+func TestAuditParse_EveryRuleTokenAccepted(t *testing.T) {
+	a := newAuditorForParse(t)
+	for _, rule := range append(append([]string{}, contradictionAuditAllowedRulesList...), contradictionAuditUnlistedRules...) {
+		verdict := "remove"
+		if rule == "none" {
+			verdict = "keep"
+		}
+		res, err := a.judge.Parse("REASONING: x.\nRULE: " + rule + "\nVERDICT: " + verdict)
+		require.NoErrorf(t, err, "rule %q", rule)
+		assert.Equal(t, rule, res.Rule)
+	}
 }
 
-func TestParseAuditResponse_Ambiguous(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: Both dates unknown; cannot determine temporal ordering.",
-		"RULE: different_events",
-		"VERDICT: ambiguous",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictAmbiguous, res.Verdict)
-}
+func TestAuditParse_Verdicts(t *testing.T) {
+	a := newAuditorForParse(t)
+	res, err := a.judge.Parse("REASONING: indictment vs denial.\nRULE: accusation_not_finding\nVERDICT: remove")
+	require.NoError(t, err)
+	assert.Equal(t, string(VerdictRemove), res.Verdict)
 
-func TestParseAuditResponse_CaseInsensitiveAndExtraWhitespace(t *testing.T) {
-	resp := strings.Join([]string{
-		"   reasoning :  Different geographic scope.",
-		"  Rule:  geographic_scope",
-		"  verdict :  REMOVE  with explanation",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictRemove, res.Verdict)
-	assert.Equal(t, "geographic_scope", res.Rule)
-}
+	res, err = a.judge.Parse("REASONING: dates unknown.\nRULE: different_events\nVERDICT: ambiguous")
+	require.NoError(t, err)
+	assert.Equal(t, string(VerdictAmbiguous), res.Verdict)
 
-func TestParseAuditResponse_NoiseBeforeAndAfter(t *testing.T) {
-	resp := strings.Join([]string{
-		"Sure, here's my analysis:",
-		"",
-		"REASONING: Paraphrase of the same position.",
-		"RULE: paraphrase_same_position",
-		"VERDICT: remove",
-		"",
-		"Let me know if you need more detail.",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictRemove, res.Verdict)
-	assert.Contains(t, res.Reasoning, "Paraphrase")
-}
+	res, err = a.judge.Parse("REASONING: real reversal.\nRULE: none\nVERDICT: keep")
+	require.NoError(t, err)
+	assert.Equal(t, string(VerdictKeep), res.Verdict)
 
-func TestParseAuditResponse_MissingVerdictReturnsError(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: I think this might be a contradiction but I'm not certain.",
-		"RULE: none",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	assert.Error(t, res.Err)
-	assert.Equal(t, AuditVerdict(""), res.Verdict)
-}
+	_, err = a.judge.Parse("REASONING: x.\nRULE: vague_or_not_concrete (rule 6)\nVERDICT: remove")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "closed enum")
 
-// Strict-mode contract: a RULE token outside the closed enum is rejected with
-// an error so the auditor can issue a corrective retry. We deliberately do NOT
-// fuzzy-match variants — silent normalisation hid extraction bugs in earlier
-// runs and produced unstable rule frequencies in metrics.
-func TestParseAuditResponse_RejectsUnknownRule(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: not in our enum.",
-		"RULE: vague_or_not_concrete (rule 6)",
-		"VERDICT: remove",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "closed enum")
-	// Verdict is still parsed; rule surfaces the bad raw value so the retry
-	// prompt can quote it.
-	assert.Equal(t, VerdictRemove, res.Verdict)
-}
-
-// Trailing prose on the RULE line ("geographic_scope (the fact about ...)") is
-// also rejected — the prompt asks for EXACTLY one token.
-func TestParseAuditResponse_RejectsRuleWithTrailingProse(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: different geographic scope.",
-		"RULE: geographic_scope (the fact about Vienne is not national)",
-		"VERDICT: remove",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "closed enum")
-}
-
-// Cross-check: keep requires none; otherwise it's a contradiction we can't
-// resolve and the caller should retry.
-func TestParseAuditResponse_KeepRequiresNone(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: actually contradictory.",
-		"RULE: learning_over_time",
-		"VERDICT: keep",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "VERDICT=keep requires RULE=none")
-}
-
-func TestParseAuditResponse_OnlyFirstVerdictWins(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: First reasoning.",
-		"RULE: none",
-		"VERDICT: keep",
-		"REASONING: Second reasoning.",
-		"VERDICT: remove",
-	}, "\n")
-	res := parseAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, VerdictKeep, res.Verdict)
-	assert.Equal(t, "First reasoning.", res.Reasoning)
-	assert.Equal(t, "none", res.Rule)
+	// A verdict from the fact auditor's enum is not a verdict here.
+	_, err = a.judge.Parse("REASONING: x.\nRULE: vague_vs_specific\nVERDICT: delete")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not parse VERDICT line")
 }
 
 // TestLeanAuditRules locks the auditor's curated-example view of the shared

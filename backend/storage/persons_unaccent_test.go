@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/util"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +37,7 @@ func TestUnaccentMergeAndCanonicalize(t *testing.T) {
 	// 1. Group all persons by the canonical form (mirrors the command).
 	members, err := storer.GetAllDedupMembers(ctx)
 	require.NoError(t, err)
-	groups := map[string][]DedupMember{}
+	groups := map[string][]core.PersonDedupMember{}
 	for _, m := range members {
 		groups[util.NormalizePersonName(m.Name)] = append(groups[util.NormalizePersonName(m.Name)], m)
 	}

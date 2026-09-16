@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"strings"
+	"sync"
 )
 
 // errMissingQuote marks a fact rejected because an LLM-extracted web source
@@ -14,18 +15,34 @@ var errMissingQuote = errors.New("web-extracted fact missing original_quote")
 // empty-quote rejection as a skip rather than a hard failure.
 func isQuoteMissing(err error) bool { return errors.Is(err, errMissingQuote) }
 
-// isWebExtractedSource reports whether a fact's source_type is an LLM-extracted
-// free-text web source, where an empty original_quote means the extractor
-// produced a claim with no snippet behind it (a hallucination). Structured
-// sources (e.g. "assemblee_law_page" vote records) always populate the quote
-// from metadata and are intentionally excluded so they are never rejected here.
-func isWebExtractedSource(sourceType string) bool {
-	switch sourceType {
-	case "news", "twitter", "assemblee_debat":
-		return true
-	default:
-		return false
+// quoteRequiredSourceTypes holds the source types whose facts are LLM-extracted
+// from free text, where an empty original_quote means the extractor produced a
+// claim with no snippet behind it (a hallucination). Each plugin registers its
+// own types at init. Structured sources (e.g. "assemblee_law_page" vote
+// records) always populate the quote from metadata and stay unregistered so
+// they are never rejected here.
+var (
+	quoteRequiredMu          sync.RWMutex
+	quoteRequiredSourceTypes = map[string]bool{}
+)
+
+// RequireQuoteForSourceType marks sourceType as LLM-extracted free text: facts
+// of that type are rejected at insertion when original_quote is empty.
+func RequireQuoteForSourceType(sourceType string) {
+	if sourceType == "" {
+		panic("core.RequireQuoteForSourceType: empty source type")
 	}
+	quoteRequiredMu.Lock()
+	defer quoteRequiredMu.Unlock()
+	quoteRequiredSourceTypes[sourceType] = true
+}
+
+// isWebExtractedSource reports whether a fact's source_type was registered
+// with RequireQuoteForSourceType.
+func isWebExtractedSource(sourceType string) bool {
+	quoteRequiredMu.RLock()
+	defer quoteRequiredMu.RUnlock()
+	return quoteRequiredSourceTypes[sourceType]
 }
 
 // quoteMissing reports whether a web-extracted fact lacks a usable source quote.

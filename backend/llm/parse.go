@@ -1,6 +1,10 @@
 package llm
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // ChatCompletionsURL composes the full chat-completions endpoint from an
 // OpenAI-compatible base URL. It is idempotent: a base that already ends in
@@ -32,4 +36,14 @@ func StripJSONCodeFence(s string) string {
 		s = s[:idx]
 	}
 	return strings.TrimSpace(s)
+}
+
+// ParseJSONResponse decodes an LLM reply into T after StripJSONCodeFence.
+// Field-level validation stays with the caller.
+func ParseJSONResponse[T any](content string) (T, error) {
+	var v T
+	if err := json.Unmarshal([]byte(StripJSONCodeFence(content)), &v); err != nil {
+		return v, fmt.Errorf("invalid JSON response: %w", err)
+	}
+	return v, nil
 }

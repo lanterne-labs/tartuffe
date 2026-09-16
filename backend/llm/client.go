@@ -69,21 +69,12 @@ func NewBaseLLMClient(component string) *BaseLLMClient {
 		if model := strings.TrimSpace(os.Getenv("FALLBACK_CHAT_MODEL")); model == "" {
 			log.Warn().Msg("FALLBACK_URL is set but FALLBACK_CHAT_MODEL is empty; chat fallback disabled")
 		} else {
-			c.fallbackURL = buildChatCompletionsURL(fb)
+			c.fallbackURL = ChatCompletionsURL(fb)
 			c.fallbackKey = os.Getenv("FALLBACK_KEY")
 			c.fallbackModel = model
 		}
 	}
 	return c
-}
-
-// buildChatCompletionsURL composes the chat-completions endpoint from a base URL.
-func buildChatCompletionsURL(base string) string {
-	base = strings.TrimRight(base, "/")
-	if strings.HasSuffix(base, "/chat/completions") {
-		return base
-	}
-	return base + "/chat/completions"
 }
 
 // payloadWithModel returns payloadBytes with its top-level "model" field replaced

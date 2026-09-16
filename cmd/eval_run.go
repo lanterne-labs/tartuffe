@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/eval"
 	"digital-mirror/backend/storage"
@@ -66,7 +67,7 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 		Str("cases_file", evalRunCasesPath).
 		Msg("Eval corpus loaded")
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("connect db: %w", err)
 	}
@@ -77,7 +78,7 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("init embedder: %w", err)
 	}
 
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		return fmt.Errorf("init stance manager: %w", err)
 	}
@@ -110,9 +111,8 @@ func runEvalRun(cmd *cobra.Command, args []string) error {
 	// Step 4 in the daily pipeline: stance merge sweep. Looks for centroid-similar
 	// stances per person, LLM-vets each candidate cluster, merges, and re-analyzes
 	// facts in the merged stance — that's how cross-stance contradictions that
-	// fragmented at ingest time get caught. We run the same function the cron
-	// service runs (cmd/pipeline.go:runStancesMergeStep).
-	if err := runStancesMergeStep(ctx, storer); err != nil {
+	// fragmented at ingest time get caught. Same call as the daily pipeline.
+	if _, err := core.RunStanceMergeSweep(ctx, storer, stanceMgr, core.DefaultStanceMergeOptions); err != nil {
 		log.Warn().Err(err).Msg("Eval: stance merge sweep failed (continuing)")
 	}
 
@@ -162,11 +162,12 @@ func preseedEvalPersons(ctx context.Context, storer *storage.PostgresStorer, cor
 // created on first insert.
 func resetEvalPersons(ctx context.Context, storer *storage.PostgresStorer, corpus *eval.Corpus) error {
 	for _, p := range corpus.Persons {
-		personID, err := storer.GetPersonIDByName(ctx, util.NormalizeString(p.Name))
+		person, err := core.ResolvePersonID(ctx, storer, p.Name, core.ExactMatchOnly)
 		if err != nil {
 			log.Debug().Err(err).Str("person", p.Name).Msg("Reset: person not found, skipping (will be created on insert)")
 			continue
 		}
+		personID := person.ID
 		// Order matters: contradictions reference facts, so delete contradictions
 		// first, then facts. Both helpers are idempotent.
 		if _, err := storer.DeleteContradictionsForPerson(ctx, personID); err != nil {
@@ -246,12 +247,12 @@ func ingestCorpus(ctx context.Context, embedder embedding.EmbeddingGenerator, in
 func collectContradictions(ctx context.Context, storer *storage.PostgresStorer, corpus *eval.Corpus) ([]eval.DetectedContradiction, error) {
 	seen := make(map[eval.FactIDPair]string)
 	for _, p := range corpus.Persons {
-		personID, err := storer.GetPersonIDByName(ctx, util.NormalizeString(p.Name))
+		person, err := core.ResolvePersonID(ctx, storer, p.Name, core.ExactMatchOnly)
 		if err != nil {
 			log.Debug().Err(err).Str("person", p.Name).Msg("Collect: person not found, skipping")
 			continue
 		}
-		page, err := storer.GetPersonContradictions(ctx, personID, 1000, 0)
+		page, err := storer.GetPersonContradictions(ctx, person.ID, 1000, 0)
 		if err != nil {
 			return nil, fmt.Errorf("read contradictions for %s: %w", p.Name, err)
 		}

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
 	"digital-mirror/backend/llm"
 )
@@ -21,31 +19,21 @@ import (
 // (Defer, err) — the Validator logs the error and treats it as Defer, so a
 // temporary LLM outage cannot turn into mass-deletion of real entities.
 type LLMFilter struct {
-	client    *llm.BaseLLMClient
-	apiURL    string
-	apiKey    string
-	model     string
+	client    *llm.Client
 	systemMsg string
 }
 
 // NewLLMFilter reads OPEN_AI_API + OPEN_AI_KEY + OPEN_AI_CHAT_MODEL from the
 // environment (same convention the rest of the codebase uses). Returns an
 // error if OPEN_AI_API is unset — call sites can decide whether to skip the
-// filter or hard-fail.
+// filter or hard-fail. An unset key is not an error here.
 func NewLLMFilter() (*LLMFilter, error) {
-	base := strings.TrimSpace(os.Getenv("OPEN_AI_API"))
-	if base == "" {
+	cfg := llm.ConfigFromEnv()
+	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("OPEN_AI_API not set")
 	}
-	model := strings.TrimSpace(os.Getenv("OPEN_AI_CHAT_MODEL"))
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
 	return &LLMFilter{
-		client: llm.NewBaseLLMClient("entity-validator"),
-		apiURL: llm.ChatCompletionsURL(base),
-		apiKey: os.Getenv("OPEN_AI_KEY"),
-		model:  model,
+		client: cfg.NewClient("entity-validator"),
 		systemMsg: "You are an entity validation oracle. You decide whether a candidate " +
 			"entity (with attached Wikipedia page snippets retrieved for it) is a real, " +
 			"notable, individually identifiable entity that warrants its own database row. " +
@@ -181,8 +169,7 @@ Respond with ONLY this JSON, nothing else:
 INPUT:
 ` + string(inputJSON)
 
-	payload, err := json.Marshal(llm.ChatRequest{
-		Model: l.model,
+	content, _, err := l.client.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "system", Content: l.systemMsg},
 			{Role: "user", Content: user},
@@ -192,28 +179,11 @@ INPUT:
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	})
 	if err != nil {
-		return FilterResult{Decision: Defer}, fmt.Errorf("marshal llm payload: %w", err)
-	}
-
-	body, err := l.client.DoRequest(ctx, l.apiURL, l.apiKey, payload)
-	if err != nil {
 		return FilterResult{Decision: Defer}, fmt.Errorf("llm request: %w", err)
 	}
 
-	var chat llm.ChatResponse
-	if err := json.Unmarshal(body, &chat); err != nil {
-		return FilterResult{Decision: Defer}, fmt.Errorf("decode llm response: %w", err)
-	}
-	if chat.Error != nil {
-		return FilterResult{Decision: Defer}, fmt.Errorf("llm error: %s", chat.Error.Message)
-	}
-	if len(chat.Choices) == 0 {
-		return FilterResult{Decision: Defer}, fmt.Errorf("llm returned no choices")
-	}
-
-	content := llm.StripJSONCodeFence(chat.Choices[0].Message.Content)
-	var v llmVerdict
-	if err := json.Unmarshal([]byte(content), &v); err != nil {
+	v, err := llm.ParseJSONResponse[llmVerdict](content)
+	if err != nil {
 		return FilterResult{Decision: Defer}, fmt.Errorf("decode llm verdict %q: %w", content, err)
 	}
 

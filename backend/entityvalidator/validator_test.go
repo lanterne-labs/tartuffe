@@ -50,9 +50,9 @@ type closingReader struct{ r *strings.Reader }
 func (c *closingReader) Read(p []byte) (int, error) { return c.r.Read(p) }
 func (c *closingReader) Close() error               { return nil }
 
-func newFakeWikiFilter() (*WikiFilter, *fakeWikiTransport) {
+func newFakeWikiFilter() (*wikiFilter, *fakeWikiTransport) {
 	tr := &fakeWikiTransport{pagesByQuery: map[string][]struct{ Title, Extract string }{}}
-	w := NewWikiFilter()
+	w := newWikiFilter()
 	w.HTTP = &http.Client{Transport: tr, Timeout: 5 * time.Second}
 	return w, tr
 }

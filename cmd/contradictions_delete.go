@@ -2,8 +2,8 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -47,7 +47,7 @@ func runContradictionDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize storage
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
@@ -55,18 +55,17 @@ func runContradictionDelete(cmd *cobra.Command, args []string) error {
 
 	if deletePersonFlag != "" {
 		// Delete contradictions for a specific person
-		normalizedName := util.NormalizeString(deletePersonFlag)
-		personID, err := storer.GetPersonIDByName(ctx, normalizedName)
+		person, err := core.ResolvePersonID(ctx, storer, deletePersonFlag, core.ExactMatchOnly)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", deletePersonFlag, err)
+			return err
 		}
 
-		deletedCount, err := storer.DeleteContradictionsForPerson(ctx, personID)
+		deletedCount, err := storer.DeleteContradictionsForPerson(ctx, person.ID)
 		if err != nil {
 			return fmt.Errorf("failed to delete contradictions: %w", err)
 		}
 
-		fmt.Printf("Deleted %d contradictions for %s (ID: %d)\n", deletedCount, normalizedName, personID)
+		fmt.Printf("Deleted %d contradictions for %s (ID: %d)\n", deletedCount, person.Name, person.ID)
 		fmt.Printf("Honesty score reset to 1.0\n")
 	} else {
 		// Delete all contradictions

@@ -8,31 +8,31 @@ import (
 	"digital-mirror/backend/search"
 )
 
-// GoogleFilter searches the public web (Serper / Google SERP API) for the
+// googleFilter searches the public web (Serper / Google SERP API) for the
 // candidate and attaches the top N result titles + snippets so the LLMFilter
-// can weigh them alongside Wikipedia evidence. Like WikiFilter, it ALWAYS
+// can weigh them alongside Wikipedia evidence. Like wikiFilter, it ALWAYS
 // Defers — the final accept/reject is the LLM's call. Empty results are still
 // a valid (and informative) signal.
 //
 // This filter is omitted from the chain when no SERPER_API_KEY is configured;
 // the rest of the pipeline (wiki + LLM) keeps working.
-type GoogleFilter struct {
+type googleFilter struct {
 	provider *search.SerperProvider
 	maxHits  int
 }
 
-// NewGoogleFilter wraps a SerperProvider built from SERPER_API_KEY. Returns
+// newGoogleFilter wraps a SerperProvider built from SERPER_API_KEY. Returns
 // (nil, error) when the key is missing — call sites can decide whether to
 // skip the filter or treat it as fatal.
-func NewGoogleFilter() (*GoogleFilter, error) {
+func newGoogleFilter() (*googleFilter, error) {
 	p, err := search.NewSerperProviderFromEnv()
 	if err != nil {
 		return nil, err
 	}
-	return &GoogleFilter{provider: p, maxHits: 3}, nil
+	return &googleFilter{provider: p, maxHits: 3}, nil
 }
 
-func (g *GoogleFilter) Name() string { return "google" }
+func (g *googleFilter) Name() string { return "google" }
 
 // GoogleHit is one organic-search result attached to the LLM's input payload.
 type GoogleHit struct {
@@ -45,7 +45,7 @@ type googleExtra struct {
 	Hits []GoogleHit `json:"hits"`
 }
 
-func (g *GoogleFilter) Check(_ context.Context, c Candidate) (FilterResult, error) {
+func (g *googleFilter) Check(_ context.Context, c Candidate) (FilterResult, error) {
 	if c.Name == "" {
 		return FilterResult{Decision: Defer}, nil
 	}

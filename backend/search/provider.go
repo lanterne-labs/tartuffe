@@ -18,18 +18,9 @@ type SearchResult struct {
 	Snippet string
 }
 
-// SearchProvider defines the interface for searching the web for content related to a person.
-// Implementations could use various search engines or APIs.
-type SearchProvider interface {
-	// Search looks for recent online content mentioning the given personName.
-	// It returns a slice of SearchResult structs or an error if the search fails.
-	Search(personName string) ([]SearchResult, error)
-}
-
 // NewsSearcher is the interface for news search providers (Serper, Brave, SerpAPI, etc.).
 type NewsSearcher interface {
 	SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error)
-	PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error)
 }
 
 // WebSearcher is the interface for general web search providers.
@@ -50,27 +41,27 @@ const (
 	envSerpAPI = "SERPAPI_KEY"
 )
 
-// NewNewsSearcherFromEnv assembles a ChainedNewsSearcher from whichever API
+// NewNewsSearcherFromEnv assembles a chainedNewsSearcher from whichever API
 // keys are present in the environment. Priority: Serper > Brave > SerpAPI.
 func NewNewsSearcherFromEnv() (NewsSearcher, error) {
-	var pairs []NamedNewsSearcher
+	var pairs []namedNewsSearcher
 
 	if key := os.Getenv(envSerper); key != "" {
-		p, err := NewSerperProvider(key)
+		p, err := newSerperProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serper: %w", err)
 		}
-		pairs = append(pairs, NamedNewsSearcher{Name: "serper", Searcher: p})
+		pairs = append(pairs, namedNewsSearcher{Name: "serper", Searcher: p})
 	}
 	if key := os.Getenv(envBrave); key != "" {
-		pairs = append(pairs, NamedNewsSearcher{Name: "brave", Searcher: NewBraveSearchProvider(key)})
+		pairs = append(pairs, namedNewsSearcher{Name: "brave", Searcher: newBraveSearchProvider(key)})
 	}
 	if key := os.Getenv(envSerpAPI); key != "" {
-		p, err := NewSerpAPINewsProvider(key)
+		p, err := newSerpAPINewsProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serpapi: %w", err)
 		}
-		pairs = append(pairs, NamedNewsSearcher{Name: "serpapi", Searcher: p})
+		pairs = append(pairs, namedNewsSearcher{Name: "serpapi", Searcher: p})
 	}
 
 	if len(pairs) == 0 {
@@ -78,30 +69,30 @@ func NewNewsSearcherFromEnv() (NewsSearcher, error) {
 	}
 
 	logChain("news", pairs)
-	return NewChainedNewsSearcher(pairs...), nil
+	return newChainedNewsSearcher(pairs...), nil
 }
 
-// NewWebSearcherFromEnv assembles a ChainedWebSearcher from available keys.
+// NewWebSearcherFromEnv assembles a chainedWebSearcher from available keys.
 // Priority: Serper > Brave > SerpAPI.
 func NewWebSearcherFromEnv() (WebSearcher, error) {
-	var pairs []NamedWebSearcher
+	var pairs []namedWebSearcher
 
 	if key := os.Getenv(envSerper); key != "" {
-		p, err := NewSerperProvider(key)
+		p, err := newSerperProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serper: %w", err)
 		}
-		pairs = append(pairs, NamedWebSearcher{Name: "serper", Searcher: p})
+		pairs = append(pairs, namedWebSearcher{Name: "serper", Searcher: p})
 	}
 	if key := os.Getenv(envBrave); key != "" {
-		pairs = append(pairs, NamedWebSearcher{Name: "brave", Searcher: NewBraveSearchProvider(key)})
+		pairs = append(pairs, namedWebSearcher{Name: "brave", Searcher: newBraveSearchProvider(key)})
 	}
 	if key := os.Getenv(envSerpAPI); key != "" {
-		p, err := NewSerpAPINewsProvider(key)
+		p, err := newSerpAPINewsProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serpapi: %w", err)
 		}
-		pairs = append(pairs, NamedWebSearcher{Name: "serpapi", Searcher: p})
+		pairs = append(pairs, namedWebSearcher{Name: "serpapi", Searcher: p})
 	}
 
 	if len(pairs) == 0 {
@@ -109,30 +100,30 @@ func NewWebSearcherFromEnv() (WebSearcher, error) {
 	}
 
 	logWebChain(pairs)
-	return NewChainedWebSearcher(pairs...), nil
+	return newChainedWebSearcher(pairs...), nil
 }
 
-// NewImageSearcherFromEnv assembles a ChainedImageSearcher from available keys.
+// NewImageSearcherFromEnv assembles a chainedImageSearcher from available keys.
 // Priority: Serper > Brave > SerpAPI.
 func NewImageSearcherFromEnv() (ImageSearcher, error) {
-	var pairs []NamedImageSearcher
+	var pairs []namedImageSearcher
 
 	if key := os.Getenv(envSerper); key != "" {
-		p, err := NewSerperProvider(key)
+		p, err := newSerperProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serper: %w", err)
 		}
-		pairs = append(pairs, NamedImageSearcher{Name: "serper", Searcher: p})
+		pairs = append(pairs, namedImageSearcher{Name: "serper", Searcher: p})
 	}
 	if key := os.Getenv(envBrave); key != "" {
-		pairs = append(pairs, NamedImageSearcher{Name: "brave", Searcher: NewBraveSearchProvider(key)})
+		pairs = append(pairs, namedImageSearcher{Name: "brave", Searcher: newBraveSearchProvider(key)})
 	}
 	if key := os.Getenv(envSerpAPI); key != "" {
-		p, err := NewSerpAPINewsProvider(key)
+		p, err := newSerpAPINewsProvider(key)
 		if err != nil {
 			return nil, fmt.Errorf("init serpapi: %w", err)
 		}
-		pairs = append(pairs, NamedImageSearcher{Name: "serpapi", Searcher: p})
+		pairs = append(pairs, namedImageSearcher{Name: "serpapi", Searcher: p})
 	}
 
 	if len(pairs) == 0 {
@@ -140,10 +131,10 @@ func NewImageSearcherFromEnv() (ImageSearcher, error) {
 	}
 
 	logImageChain(pairs)
-	return NewChainedImageSearcher(pairs...), nil
+	return newChainedImageSearcher(pairs...), nil
 }
 
-func logChain(kind string, pairs []NamedNewsSearcher) {
+func logChain(kind string, pairs []namedNewsSearcher) {
 	names := make([]string, len(pairs))
 	for i, p := range pairs {
 		names[i] = p.Name
@@ -151,7 +142,7 @@ func logChain(kind string, pairs []NamedNewsSearcher) {
 	log.Info().Strs("chain", names).Msgf("Configured %s search chain", kind)
 }
 
-func logWebChain(pairs []NamedWebSearcher) {
+func logWebChain(pairs []namedWebSearcher) {
 	names := make([]string, len(pairs))
 	for i, p := range pairs {
 		names[i] = p.Name
@@ -159,7 +150,7 @@ func logWebChain(pairs []NamedWebSearcher) {
 	log.Info().Strs("chain", names).Msg("Configured web search chain")
 }
 
-func logImageChain(pairs []NamedImageSearcher) {
+func logImageChain(pairs []namedImageSearcher) {
 	names := make([]string, len(pairs))
 	for i, p := range pairs {
 		names[i] = p.Name

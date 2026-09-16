@@ -4,10 +4,10 @@ import (
 	"context"
 	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/storage"
 	"fmt"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 
@@ -23,15 +23,6 @@ var (
 	assignStancesDryRun            bool
 	assignStancesSkipFinalRebundle bool
 )
-
-// stanceFanoutNightlyBudget caps how many (person, fact) stance routings the
-// daily pipeline performs per night. Sized against the serialized local GPU:
-// most routings for vote co-actors are a single topic-assignment call (new
-// stance on a near-empty deputy), so 250 fits comfortably in the freed
-// re-baseline window. The pending set is derived from the DB, so whatever is
-// not processed tonight simply remains pending for tomorrow (self-draining,
-// self-terminating once the backlog is gone).
-const stanceFanoutNightlyBudget = 250
 
 var factsAssignStancesCmd = &cobra.Command{
 	Use:   "assign-stances",
@@ -95,7 +86,7 @@ type assignStats struct {
 func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("creating storer: %w", err)
 	}
@@ -120,12 +111,10 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	adapter := storage.NewStanceStorerAdapter(storer)
-
 	var stanceManager *core.StanceManager
 	var bundler *contradiction.Bundler
 	if !assignStancesDryRun {
-		stanceManager, err = core.NewStanceManagerFromEnv(adapter)
+		stanceManager, err = core.NewStanceManagerFromEnv(storer)
 		if err != nil {
 			return fmt.Errorf("creating stance manager: %w", err)
 		}
@@ -156,29 +145,31 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 		budget = &b
 	}
 
+	rebundle := personRebundler(storer, bundler)
+
 	var stats assignStats
-	processOne := func(p storage.PersonInfo) {
-		ps, err := assignOrphansForPerson(ctx, storer, stanceManager, bundler, p, assignStancesDryRun, budget)
+	processOne := func(p core.PersonRecord) {
+		ps, err := core.AssignOrphansForPerson(ctx, storer, stanceManager, rebundle, p, assignStancesDryRun, budget)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("assign-stances failed for person")
 			return
 		}
 		atomic.AddInt64(&stats.personsProcessed, 1)
-		if ps.skipped {
+		if ps.Skipped {
 			atomic.AddInt64(&stats.personsSkippedNoOrph, 1)
 		}
-		atomic.AddInt64(&stats.orphansAssigned, ps.orphansAssigned)
-		atomic.AddInt64(&stats.orphanFailures, ps.orphanFailures)
-		atomic.AddInt64(&stats.verdictNewStance, ps.verdictNewStance)
-		atomic.AddInt64(&stats.verdictDuplicate, ps.verdictDuplicate)
-		atomic.AddInt64(&stats.verdictNewInfo, ps.verdictNewInfo)
-		atomic.AddInt64(&stats.verdictContradiction, ps.verdictContradiction)
-		atomic.AddInt64(&stats.rebundleSQL, ps.rebundleSQL)
-		atomic.AddInt64(&stats.rebundleLLM, ps.rebundleLLM)
-		atomic.AddInt64(&stats.rebundleSolosLeft, ps.rebundleSolosLeft)
+		atomic.AddInt64(&stats.orphansAssigned, ps.OrphansAssigned)
+		atomic.AddInt64(&stats.orphanFailures, ps.OrphanFailures)
+		atomic.AddInt64(&stats.verdictNewStance, ps.VerdictNewStance)
+		atomic.AddInt64(&stats.verdictDuplicate, ps.VerdictDuplicate)
+		atomic.AddInt64(&stats.verdictNewInfo, ps.VerdictNewInfo)
+		atomic.AddInt64(&stats.verdictContradiction, ps.VerdictContradiction)
+		atomic.AddInt64(&stats.rebundleSQL, ps.RebundleSQL)
+		atomic.AddInt64(&stats.rebundleLLM, ps.RebundleLLM)
+		atomic.AddInt64(&stats.rebundleSolosLeft, ps.RebundleSolosLeft)
 	}
 
-	jobs := make(chan storage.PersonInfo)
+	jobs := make(chan core.PersonRecord)
 	var wg sync.WaitGroup
 	for i := 0; i < assignStancesParallel; i++ {
 		wg.Add(1)
@@ -195,20 +186,23 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 	close(jobs)
 	wg.Wait()
 
-	fmt.Println()
-	fmt.Println("=== ORPHAN-FACT ASSIGN RESULTS ===")
-	fmt.Printf("Persons processed:               %d\n", stats.personsProcessed)
-	fmt.Printf("Orphan facts assigned:           %d\n", stats.orphansAssigned)
-	fmt.Printf("  → NEW_STANCE:                  %d\n", stats.verdictNewStance)
-	fmt.Printf("  → DUPLICATE:                   %d\n", stats.verdictDuplicate)
-	fmt.Printf("  → NEW_INFO:                    %d\n", stats.verdictNewInfo)
-	fmt.Printf("  → CONTRADICTION:               %d\n", stats.verdictContradiction)
-	fmt.Printf("Orphan failures (left orphan):   %d\n", stats.orphanFailures)
-	if !assignStancesDryRun {
-		fmt.Printf("Per-person rebundle (SQL):       %d\n", stats.rebundleSQL)
-		fmt.Printf("Per-person rebundle (LLM):       %d\n", stats.rebundleLLM)
-		fmt.Printf("Per-person solos still left:     %d\n", stats.rebundleSolosLeft)
+	rows := []resultRow{
+		{Label: "Persons processed", Value: stats.personsProcessed},
+		{Label: "Orphan facts assigned", Value: stats.orphansAssigned},
+		{Label: "  → NEW_STANCE", Value: stats.verdictNewStance},
+		{Label: "  → DUPLICATE", Value: stats.verdictDuplicate},
+		{Label: "  → NEW_INFO", Value: stats.verdictNewInfo},
+		{Label: "  → CONTRADICTION", Value: stats.verdictContradiction},
+		{Label: "Orphan failures (left orphan)", Value: stats.orphanFailures},
 	}
+	if !assignStancesDryRun {
+		rows = append(rows,
+			resultRow{Label: "Per-person rebundle (SQL)", Value: stats.rebundleSQL},
+			resultRow{Label: "Per-person rebundle (LLM)", Value: stats.rebundleLLM},
+			resultRow{Label: "Per-person solos still left", Value: stats.rebundleSolosLeft},
+		)
+	}
+	printResults("ORPHAN-FACT ASSIGN RESULTS", rows)
 	if assignStancesDryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
 		return nil
@@ -225,14 +219,27 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 // resolveTargetPersons returns the persons to process based on flags. If
 // neither --person nor --persons-file is set, returns every person who has
 // at least one orphan fact.
-func resolveTargetPersons(ctx context.Context, storer *storage.PostgresStorer) ([]storage.PersonInfo, error) {
+func resolveTargetPersons(ctx context.Context, storer *storage.PostgresStorer) ([]core.PersonRecord, error) {
 	if assignStancesPersonsFile != "" {
 		return resolvePersonsFromFile(ctx, storer, assignStancesPersonsFile)
 	}
 	if assignStancesPerson != "" {
-		return getPersonsForBackfill(ctx, storer, assignStancesPerson)
+		p, err := core.ResolvePersonID(ctx, storer, assignStancesPerson, core.ExactMatchOnly)
+		if err != nil {
+			return nil, err
+		}
+		return []core.PersonRecord{p}, nil
 	}
 	return storer.ListPersonsWithOrphanFacts(ctx)
+}
+
+// personRebundler adapts contradiction.RebundlePerson to the callback core's
+// stance sweeps take. The bundler may be nil in dry-run mode: the callback is
+// never invoked then.
+func personRebundler(storer *storage.PostgresStorer, bundler *contradiction.Bundler) core.PersonRebundler {
+	return func(ctx context.Context, p core.PersonRecord) (fast, llm, failed int64) {
+		return contradiction.RebundlePerson(ctx, storer, bundler, toPersonInfo(p))
+	}
 }
 
 // runFinalRebundle runs a DB-wide BundleBackfillFastPath followed by the LLM
@@ -248,167 +255,12 @@ func runFinalRebundle(ctx context.Context, storer *storage.PostgresStorer) error
 		return fmt.Errorf("creating bundler for final rebundle: %w", err)
 	}
 
-	fmt.Println()
-	fmt.Println("=== DB-WIDE FINAL REBUNDLE ===")
-	fast, llm, failed := rebundleAll(ctx, storer, bundler)
-	fmt.Printf("Rebundled (SQL fast path):       %d\n", fast)
-	fmt.Printf("Rebundled (LLM bundler):         %d\n", llm)
-	fmt.Printf("Solo contradictions remaining:   %d (LLM declined or errored)\n", failed)
-	return nil
-}
-
-type personAssignStats struct {
-	skipped              bool
-	orphansAssigned      int64
-	orphanFailures       int64
-	verdictNewStance     int64
-	verdictDuplicate     int64
-	verdictNewInfo       int64
-	verdictContradiction int64
-	rebundleSQL          int64
-	rebundleLLM          int64
-	rebundleSolosLeft    int64
-}
-
-// assignOrphansForPerson routes every orphan fact of one person through
-// ProcessNewFact, then rebundles that person's solo contradictions. budget,
-// when non-nil, is a shared atomic countdown of (person, fact) routings across
-// the whole run: each person reserves up to len(orphans) slots and processes
-// only what it got — leftovers stay orphans and are picked up by the next run
-// (the orphan queries derive the pending set from the DB).
-func assignOrphansForPerson(
-	ctx context.Context,
-	storer *storage.PostgresStorer,
-	stanceManager *core.StanceManager,
-	bundler *contradiction.Bundler,
-	p storage.PersonInfo,
-	dryRun bool,
-	budget *int64,
-) (personAssignStats, error) {
-	var ps personAssignStats
-
-	orphans, err := storer.ListOrphanFactsForPerson(ctx, p.ID)
-	if err != nil {
-		return ps, fmt.Errorf("loading orphans: %w", err)
-	}
-	if len(orphans) == 0 {
-		ps.skipped = true
-		return ps, nil
-	}
-	if budget != nil {
-		left := atomic.AddInt64(budget, -int64(len(orphans)))
-		if left < 0 {
-			allowed := int64(len(orphans)) + left
-			if allowed <= 0 {
-				ps.skipped = true
-				return ps, nil
-			}
-			orphans = orphans[:allowed]
-		}
-	}
-
-	if dryRun {
-		log.Info().Str("person", p.Name).Int("orphan_count", len(orphans)).Msg("[DRY-RUN] Would process orphan facts")
-		return ps, nil
-	}
-
-	for _, f := range orphans {
-		res, err := stanceManager.ProcessNewFact(ctx, p.ID, f.ID, f.FactText, f.Embedding, f.CanonicalVerb)
-		if err != nil {
-			log.Warn().Err(err).Str("person", p.Name).Int64("fact_id", f.ID).Msg("ProcessNewFact failed; fact stays orphan")
-			ps.orphanFailures++
-			continue
-		}
-		ps.orphansAssigned++
-		switch res.Verdict {
-		case "NEW_STANCE":
-			ps.verdictNewStance++
-		case "DUPLICATE":
-			ps.verdictDuplicate++
-		case "NEW_INFO":
-			ps.verdictNewInfo++
-		case "CONTRADICTION":
-			ps.verdictContradiction++
-		}
-	}
-
-	fast, llm, failed := rebundlePerson(ctx, storer, bundler, p)
-	ps.rebundleSQL = fast
-	ps.rebundleLLM = llm
-	ps.rebundleSolosLeft = failed
-
-	log.Info().
-		Str("person", p.Name).
-		Int("orphans", len(orphans)).
-		Int64("assigned", ps.orphansAssigned).
-		Int64("failed", ps.orphanFailures).
-		Int64("rebundle_sql", ps.rebundleSQL).
-		Int64("rebundle_llm", ps.rebundleLLM).
-		Msg("assign-stances done for person")
-
-	return ps, nil
-}
-
-// runStanceFanoutStep is the daily-pipeline entry for the stance fan-out
-// (mirror-py3): route pending (person, fact) mention pairs — mostly shared
-// vote facts for their co-voters — through the live ProcessNewFact path, up to
-// stanceFanoutNightlyBudget per night. The pending set is derived from the DB
-// by the person-scoped orphan queries, so the step is idempotent, retries
-// failures on later nights, and goes silent once the backlog is drained and
-// each night's new facts fit the budget.
-func runStanceFanoutStep(ctx context.Context, storer *storage.PostgresStorer) error {
-	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
-	if err != nil {
-		return fmt.Errorf("stance fan-out: listing persons with orphan facts: %w", err)
-	}
-	if len(persons) == 0 {
-		return nil
-	}
-
-	adapter := storage.NewStanceStorerAdapter(storer)
-	stanceManager, err := core.NewStanceManagerFromEnv(adapter)
-	if err != nil {
-		return fmt.Errorf("stance fan-out: creating stance manager: %w", err)
-	}
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return fmt.Errorf("stance fan-out: creating embedding generator: %w", err)
-	}
-	bundler, err := contradiction.NewBundlerFromEnv(storer, embedder)
-	if err != nil {
-		return fmt.Errorf("stance fan-out: creating bundler: %w", err)
-	}
-
-	// Shuffle so one early-alphabet person with a large (or persistently
-	// failing) orphan set cannot monopolize the nightly budget forever —
-	// every person gets budget eventually regardless of name.
-	rand.Shuffle(len(persons), func(i, j int) { persons[i], persons[j] = persons[j], persons[i] })
-
-	budget := int64(stanceFanoutNightlyBudget)
-	var routed, failures, contradictions int64
-	for _, p := range persons {
-		if atomic.LoadInt64(&budget) <= 0 {
-			break
-		}
-		ps, err := assignOrphansForPerson(ctx, storer, stanceManager, bundler, p, false, &budget)
-		if err != nil {
-			log.Error().Err(err).Str("person", p.Name).Msg("Stance fan-out failed for person")
-			continue
-		}
-		routed += ps.orphansAssigned
-		failures += ps.orphanFailures
-		contradictions += ps.verdictContradiction
-	}
-
-	pending, cErr := storer.CountPendingStanceRoutings(ctx)
-	if cErr != nil {
-		log.Warn().Err(cErr).Msg("Stance fan-out: pending count failed")
-	}
-	log.Info().
-		Int64("routed", routed).
-		Int64("failures", failures).
-		Int64("contradictions", contradictions).
-		Int("pending_remaining", pending).
-		Msg("Daily pipeline: stance fan-out done")
+	log.Info().Msg("Starting DB-wide final rebundle")
+	fast, llm, failed := contradiction.RebundleAll(ctx, storer, bundler)
+	printResults("DB-WIDE FINAL REBUNDLE", []resultRow{
+		{Label: "Rebundled (SQL fast path)", Value: fast},
+		{Label: "Rebundled (LLM bundler)", Value: llm},
+		{Label: "Solo contradictions remaining", Value: failed, Note: "(LLM declined or errored)"},
+	})
 	return nil
 }

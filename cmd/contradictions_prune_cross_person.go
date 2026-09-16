@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -41,7 +41,7 @@ func runPruneCrossPerson(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}

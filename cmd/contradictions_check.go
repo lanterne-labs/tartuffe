@@ -3,9 +3,9 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/contradiction"
-	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,27 +51,6 @@ func init() {
 	contradictionsCheckCmd.Flags().BoolVar(&checkApplyFlag, "apply", false, "DELETE auditor-confirmed false positives (verdict=remove, then a confirming 2nd auditor pass; only 2-of-2 removes are deleted). Records a negative pair check so the detector won't re-raise them, and recomputes affected honesty scores. Default is read-only.")
 }
 
-// auditOutputLine is the per-row JSONL schema written to stdout.
-type auditOutputLine struct {
-	ContradictionID int64    `json:"id"`
-	PersonID        int64    `json:"person_id"`
-	Person          string   `json:"person"`
-	FactAID         int64    `json:"fact_a_id"`
-	FactBID         int64    `json:"fact_b_id"`
-	FactA           string   `json:"fact_a"`
-	FactB           string   `json:"fact_b"`
-	DateA           string   `json:"date_a,omitempty"`
-	DateB           string   `json:"date_b,omitempty"`
-	OriginalReason  string   `json:"original_reason"`
-	Verdict         string   `json:"verdict"`
-	Rule            string   `json:"rule,omitempty"`
-	AuditReasoning  string   `json:"audit_reasoning"`
-	Deleted         bool     `json:"deleted,omitempty"` // true when --apply removed this row (2-of-2 remove)
-	Error           string   `json:"error,omitempty"`
-	SourceURLsA     []string `json:"source_urls_a,omitempty"`
-	SourceURLsB     []string `json:"source_urls_b,omitempty"`
-}
-
 func runContradictionCheck(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -84,7 +63,7 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --format %q: expected 'jsonl' or 'text'", checkFormatFlag)
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
@@ -96,12 +75,11 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 		id := checkPersonIDFlag
 		personIDPtr = &id
 	case checkPersonFlag != "":
-		normalizedName := util.NormalizeString(checkPersonFlag)
-		personID, err := storer.GetPersonIDByName(ctx, normalizedName)
+		person, err := core.ResolvePersonID(ctx, storer, checkPersonFlag, core.ExactMatchOnly)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", checkPersonFlag, err)
+			return err
 		}
-		personIDPtr = &personID
+		personIDPtr = &person.ID
 	}
 
 	if checkApplyFlag {
@@ -121,11 +99,8 @@ func runContradictionCheck(cmd *cobra.Command, args []string) error {
 	return err
 }
 
-// ContradictionAuditOpts configures executeContradictionAudit. The same code
-// path serves the `dm contradictions check` CLI and the daily-pipeline auditor
-// step — the differences are: who provides the storer, whether stdout output
-// is wanted, and whether the run gets recorded to job_metrics (which gates the
-// pipeline cadence).
+// ContradictionAuditOpts configures executeContradictionAudit: the
+// contradiction.AuditOptions plus where and how per-row output is written.
 type ContradictionAuditOpts struct {
 	// PersonID restricts the audit to one person when set.
 	PersonID *int64
@@ -139,316 +114,62 @@ type ContradictionAuditOpts struct {
 	Format string
 	// Scope is a human-readable label for the log line ("all persons", "Marine Le Pen", etc.).
 	Scope string
-	// RecordMetric — when true, a job_metrics row is inserted after the audit
-	// completes (job_type="contradiction-audit"). The daily pipeline gate
-	// reads this timestamp to decide whether enough time has passed since the
-	// last run; CLI invocations leave it false.
+	// RecordMetric — see contradiction.AuditOptions.RecordMetric.
 	RecordMetric bool
-	// Apply — when true, a verdict=remove triggers a confirming SECOND auditor
-	// pass and, on a 2-of-2 remove, the contradiction is DELETED (via
-	// DismissContradictionAsFalsePositive: records a negative pair check so the
-	// detector won't re-raise it, and recomputes the owner's honesty score). A
-	// disagreeing second pass keeps the row (counted as unstable). Default false
-	// (read-only advisory).
+	// Apply — see contradiction.AuditOptions.Apply.
 	Apply bool
 }
 
-// ContradictionAuditResult is the return value of executeContradictionAudit —
-// callers (especially the daily pipeline) use the counts for logging and
-// Telegram summaries. RemoveIDs is the actionable bit: each ID is a
-// contradiction the auditor flagged as a false positive (verdict=remove).
-type ContradictionAuditResult struct {
-	Total     int
-	Keep      int
-	Remove    int
-	Ambiguous int
-	Errors    int
-	RemoveIDs []int64
-	// Cached counts rows skipped because their pinned KEEP hash still matches
-	// (verdict unchanged by construction — see contradiction.AuditInputHash).
-	Cached int
-	// Deleted counts rows removed under Apply (order-swapped unanimous remove
-	// on the SAME rule + verifier veto). Unstable counts remove verdicts whose
-	// confirming pass or verifier disagreed (kept). Both stay 0 when Apply is
-	// false.
-	Deleted  int
-	Unstable int
-	Elapsed  time.Duration
-}
+// ContradictionAuditResult is the outcome of an audit pass.
+type ContradictionAuditResult = contradiction.AuditRunResult
 
-// executeContradictionAudit walks every recorded contradiction matching opts,
-// asks the LLM auditor to re-judge it against the current ContradictionRules,
-// and emits per-verdict Prometheus counters. Does NOT delete anything — when
-// the auditor flags a row as a false positive (VerdictRemove), the ID lands
-// in result.RemoveIDs so a downstream caller can act (today: a human, eventually:
-// `dm contradictions check --apply`).
+// executeContradictionAudit runs contradiction.RunAudit, writing each verdict
+// to opts.Output in opts.Format and the summary to stderr when Output is set.
 func executeContradictionAudit(ctx context.Context, storer *storage.PostgresStorer, opts ContradictionAuditOpts) (*ContradictionAuditResult, error) {
-	rows, err := storer.ListContradictions(ctx, opts.PersonID, opts.Random, opts.Max)
+	var onRow func(contradiction.AuditRow) error
+	if opts.Output != nil {
+		onRow = auditRowPrinter(opts.Output, opts.Format)
+	}
+
+	result, err := contradiction.RunAudit(ctx, storer, contradiction.AuditOptions{
+		PersonID:     opts.PersonID,
+		Max:          opts.Max,
+		Random:       opts.Random,
+		Scope:        opts.Scope,
+		RecordMetric: opts.RecordMetric,
+		Apply:        opts.Apply,
+		OnRow:        onRow,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list contradictions: %w", err)
+		return result, err
 	}
-
-	result := &ContradictionAuditResult{Total: len(rows)}
-	if len(rows) == 0 {
-		if opts.Output != nil {
-			fmt.Fprintln(os.Stderr, "No contradictions to audit.")
-		}
-		log.Info().Msg("Contradiction audit: no contradictions in scope, nothing to do")
-		if opts.RecordMetric {
-			recordAuditJobMetrics(ctx, storer, result)
-			metrics.IncrementContradictionAuditRuns()
-		}
-		return result, nil
-	}
-
-	auditor, err := contradiction.NewOpenAIContradictionAuditorFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create auditor: %w", err)
-	}
-
-	// When applying, a deletion also requires the VERIFIER (refute pass) to agree.
-	// The verifier is a second, independent, reversal-aware judge: it keeps genuine
-	// reversals/broken-promises the auditor sometimes mislabels into a fuzzy bucket,
-	// so it vetoes those deletions. Only built when Apply (it costs an extra call).
-	var verifier *contradiction.OpenAIContradictionDetector
-	if opts.Apply {
-		verifier, err = contradiction.NewOpenAIContradictionDetectorFromEnv()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create verifier for --apply cross-check: %w", err)
-		}
-	}
-
-	var enc *json.Encoder
-	if opts.Output != nil && opts.Format == "jsonl" {
-		enc = json.NewEncoder(opts.Output)
-		enc.SetEscapeHTML(false)
-	}
-
-	startedAt := time.Now()
-	log.Info().
-		Int("total", len(rows)).
-		Bool("random", opts.Random).
-		Str("scope", opts.Scope).
-		Msg("Starting contradiction audit")
-
-	for i, row := range rows {
-		// Verdict pinning: a row audited KEEP under identical inputs (facts,
-		// dates, reason, prompt/rulebook) is not re-judged — the verdict is a
-		// pure function of those inputs, so re-sampling could only add noise.
-		inputHash := contradiction.AuditInputHash(row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
-		if row.LastAuditHash != nil && *row.LastAuditHash == inputHash {
-			result.Keep++
-			result.Cached++
-			metrics.IncrementContradictionAudits("cached")
-			log.Debug().Int64("contradiction_id", row.ID).
-				Msg("Audit verdict pinned (inputs unchanged); skipping re-judge")
-			continue
-		}
-
-		auditResult := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
-
-		line := auditOutputLine{
-			ContradictionID: row.ID,
-			PersonID:        row.PersonID,
-			Person:          row.PersonName,
-			FactAID:         row.FactAID,
-			FactBID:         row.FactBID,
-			FactA:           row.FactAText,
-			FactB:           row.FactBText,
-			DateA:           formatDateForOutput(row.FactADate),
-			DateB:           formatDateForOutput(row.FactBDate),
-			OriginalReason:  row.Reason,
-			Verdict:         string(auditResult.Verdict),
-			Rule:            auditResult.Rule,
-			AuditReasoning:  auditResult.Reasoning,
-			SourceURLsA:     row.FactASourceURLs,
-			SourceURLsB:     row.FactBSourceURLs,
-		}
-		if auditResult.Err != nil {
-			result.Errors++
-			line.Error = auditResult.Err.Error()
-			metrics.IncrementContradictionAudits("error")
-			log.Error().Err(auditResult.Err).
-				Int64("contradiction_id", row.ID).
-				Str("person", row.PersonName).
-				Msg("Audit error")
-		} else {
-			switch auditResult.Verdict {
-			case contradiction.VerdictKeep:
-				result.Keep++
-				metrics.IncrementContradictionAudits("keep")
-				if err := storer.SetContradictionAuditHash(ctx, row.ID, inputHash); err != nil {
-					log.Warn().Err(err).Int64("contradiction_id", row.ID).
-						Msg("Failed to pin audit KEEP verdict (row will be re-judged next audit)")
-				}
-			case contradiction.VerdictRemove:
-				result.Remove++
-				result.RemoveIDs = append(result.RemoveIDs, row.ID)
-				metrics.IncrementContradictionAudits("remove")
-				log.Warn().
-					Int64("contradiction_id", row.ID).
-					Str("person", row.PersonName).
-					Str("rule", auditResult.Rule).
-					Str("audit_reasoning", auditResult.Reasoning).
-					Msg("Auditor flagged contradiction as false positive (verdict=remove)")
-
-				// --apply: deletion additionally requires an ORDER-SWAPPED audit
-				// pass to independently reach remove on the SAME rule, plus the
-				// verifier's agreement. A verdict that flips under statement
-				// order or can't reproduce its own justification is treated as
-				// confabulation and kept.
-				if opts.Apply {
-					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, auditResult.Rule, result)
-				}
-			case contradiction.VerdictAmbiguous:
-				result.Ambiguous++
-				metrics.IncrementContradictionAudits("ambiguous")
-			}
-		}
-
-		if opts.Output != nil {
-			if opts.Format == "jsonl" {
-				if err := enc.Encode(line); err != nil {
-					return result, fmt.Errorf("failed to encode JSONL line: %w", err)
-				}
-			} else {
-				printTextRow(os.Stdout, line)
-			}
-		}
-
-		if (i+1)%10 == 0 {
-			log.Info().
-				Int("audited", i+1).
-				Int("total", len(rows)).
-				Int("keep", result.Keep).
-				Int("remove", result.Remove).
-				Int("ambiguous", result.Ambiguous).
-				Int("errors", result.Errors).
-				Msg("Audit progress")
-		}
-	}
-
-	result.Elapsed = time.Since(startedAt)
 
 	if opts.Output != nil {
-		printSummary(os.Stderr, result, opts.Apply)
+		if result.Total == 0 {
+			fmt.Fprintln(os.Stderr, "No contradictions to audit.")
+		} else {
+			printSummary(os.Stderr, result, opts.Apply)
+		}
 	}
-
-	if opts.RecordMetric {
-		recordAuditJobMetrics(ctx, storer, result)
-		metrics.IncrementContradictionAuditRuns()
-	}
-
-	log.Info().
-		Int("total", result.Total).
-		Int("keep", result.Keep).
-		Int("remove", result.Remove).
-		Int("ambiguous", result.Ambiguous).
-		Int("errors", result.Errors).
-		Dur("elapsed", result.Elapsed).
-		Ints64("remove_ids", result.RemoveIDs).
-		Msg("Contradiction audit pass complete")
-
 	return result, nil
 }
 
-// applyAuditRemoval decides whether a row the first auditor pass flagged for
-// removal is actually deleted. A deletion requires THREE independent signals to
-// agree, so a genuine contradiction the auditor mislabels never gets auto-evicted:
-//  1. an ORDER-SWAPPED second auditor pass (statement B first) also returns
-//     remove AND cites the SAME rule token. A true false positive is false in
-//     both directions for the same reason; a verdict that flips under order, or
-//     reproduces "remove" with a different justification, is confabulation
-//     (mirror-bii: the Vuibert eviction drew announcement_then_action one pass
-//     and different_subjects the next), and
-//  2. the VERIFIER (refute pass) — a different, reversal-aware judge — also drops
-//     it. The verifier keeps reversals / broken promises / denounce-then-ally
-//     pairs, so it vetoes those deletions even when the auditor is confident.
-//
-// All calls run at temperature 0, so the whole gate is a deterministic function
-// of the pair — the same row can no longer survive four audits and die on the
-// fifth. On all three agreeing it dismisses the contradiction (delete + negative
-// pair check + score recompute). Any disagreement or error keeps the row
-// (counted as unstable). Mutates result.Deleted / result.Unstable; returns true
-// iff deleted.
-func applyAuditRemoval(
-	ctx context.Context,
-	storer *storage.PostgresStorer,
-	auditor *contradiction.OpenAIContradictionAuditor,
-	verifier *contradiction.OpenAIContradictionDetector,
-	row storage.ContradictionAuditRow,
-	firstRule string,
-	result *ContradictionAuditResult,
-) bool {
-	// Signal 2: order-swapped auditor pass — same verdict AND same rule required.
-	confirm := auditor.Audit(ctx, row.FactBText, row.FactAText, row.FactBDate, row.FactADate, row.Reason)
-	switch {
-	case confirm.Err != nil:
-		result.Unstable++
-		log.Warn().Err(confirm.Err).Int64("contradiction_id", row.ID).
-			Msg("Order-swapped audit pass errored; keeping row (not deleted)")
-		return false
-	case confirm.Verdict != contradiction.VerdictRemove:
-		result.Unstable++
-		log.Info().Int64("contradiction_id", row.ID).Str("confirm_verdict", string(confirm.Verdict)).
-			Str("confirm_reasoning", confirm.Reasoning).
-			Msg("Order-swapped audit pass disagreed; row is unstable, NOT deleting")
-		return false
-	case confirm.Rule != firstRule:
-		result.Unstable++
-		log.Info().Int64("contradiction_id", row.ID).
-			Str("first_rule", firstRule).Str("confirm_rule", confirm.Rule).
-			Str("confirm_reasoning", confirm.Reasoning).
-			Msg("Order-swapped audit pass cited a DIFFERENT rule (confabulation signal); NOT deleting")
-		return false
+// auditRowPrinter writes each audited row to w as one JSONL object or as a
+// colored text block.
+func auditRowPrinter(w io.Writer, format string) func(contradiction.AuditRow) error {
+	if format == "jsonl" {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		return func(line contradiction.AuditRow) error {
+			if err := enc.Encode(line); err != nil {
+				return fmt.Errorf("failed to encode JSONL line: %w", err)
+			}
+			return nil
+		}
 	}
-
-	// Signal 3: cross-judge veto. The verifier must ALSO refute it (verdict NO).
-	// If the verifier keeps it, it is a likely-real contradiction the auditor
-	// mislabeled — do not delete.
-	survives, refutation, vErr := verifier.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
-	switch {
-	case vErr != nil:
-		result.Unstable++
-		log.Warn().Err(vErr).Int64("contradiction_id", row.ID).
-			Msg("Verifier cross-check errored; keeping row (not deleted)")
-		return false
-	case survives:
-		result.Unstable++
-		log.Info().Int64("contradiction_id", row.ID).Str("verifier_reason", refutation).
-			Msg("Verifier cross-check KEPT the contradiction (veto); row is unstable, NOT deleting")
-		return false
-	}
-
-	if err := storer.DismissContradictionAsFalsePositive(ctx, row.ID); err != nil {
-		log.Error().Err(err).Int64("contradiction_id", row.ID).
-			Msg("Failed to dismiss contradiction as false positive")
-		return false
-	}
-	result.Deleted++
-	log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
-		Str("rule", firstRule).
-		Msg("Dismissed contradiction as false positive (both statement orders agree on the same rule + verifier)")
-	return true
-}
-
-// recordAuditJobMetrics persists per-verdict counts so the next pipeline tick
-// can read GetLatestJobRunTime("contradiction-audit") and decide whether to
-// skip. Best-effort: a write failure logs but does not abort the caller —
-// missing the timestamp just means the next pipeline run will re-attempt.
-func recordAuditJobMetrics(ctx context.Context, storer *storage.PostgresStorer, r *ContradictionAuditResult) {
-	jobMetrics := []storage.JobMetric{
-		{JobType: "contradiction-audit", Target: "", Metric: "total", Value: float64(r.Total)},
-		{JobType: "contradiction-audit", Target: "", Metric: "keep", Value: float64(r.Keep)},
-		{JobType: "contradiction-audit", Target: "", Metric: "remove", Value: float64(r.Remove)},
-		{JobType: "contradiction-audit", Target: "", Metric: "ambiguous", Value: float64(r.Ambiguous)},
-		{JobType: "contradiction-audit", Target: "", Metric: "errors", Value: float64(r.Errors)},
-		{JobType: "contradiction-audit", Target: "", Metric: "deleted", Value: float64(r.Deleted)},
-		{JobType: "contradiction-audit", Target: "", Metric: "unstable", Value: float64(r.Unstable)},
-		{JobType: "contradiction-audit", Target: "", Metric: "cached", Value: float64(r.Cached)},
-	}
-	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
-		log.Error().Err(err).Msg("Failed to record contradiction-audit job metrics")
+	return func(line contradiction.AuditRow) error {
+		printTextRow(w, line)
+		return nil
 	}
 }
 
@@ -459,22 +180,7 @@ func scopeDescription(person string) string {
 	return person
 }
 
-func formatDateForOutput(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	return t.Format("2006-01-02")
-}
-
-const (
-	ansiReset  = "\x1b[0m"
-	ansiGreen  = "\x1b[32m"
-	ansiRed    = "\x1b[31m"
-	ansiYellow = "\x1b[33m"
-	ansiGray   = "\x1b[90m"
-)
-
-func printTextRow(w *os.File, line auditOutputLine) {
+func printTextRow(w io.Writer, line contradiction.AuditRow) {
 	color := ansiGray
 	switch line.Verdict {
 	case string(contradiction.VerdictKeep):

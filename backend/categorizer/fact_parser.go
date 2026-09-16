@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"digital-mirror/backend" // Need backend package for the Fact struct type
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -63,7 +64,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		if rawFact.Reasoning != "" {
 			log.Debug().
 				Str("reasoning", rawFact.Reasoning).
-				Str("fact", truncateStr(rawFact.NormalizedFact, 80)).
+				Str("fact", util.TruncateString(rawFact.NormalizedFact, 80)).
 				Msg("LLM extraction reasoning")
 		}
 
@@ -95,7 +96,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		if rawFact.CanonicalVerb == "" || !isKnownVerb(rawFact.CanonicalVerb) {
 			log.Warn().Int("fact_index", i).
 				Str("canonical_verb", rawFact.CanonicalVerb).
-				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
+				Str("normalized_fact", util.TruncateString(rawFact.NormalizedFact, 120)).
 				Str("source_url", sourceURL).
 				Msg("Skipping fact: canonical_verb is empty or outside the closed enum")
 			continue
@@ -112,7 +113,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		} else if !isKnownEntityType(rawFact.SubjectEntityType) {
 			log.Warn().Int("fact_index", i).
 				Str("raw_entity_type", rawFact.SubjectEntityType).
-				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
+				Str("normalized_fact", util.TruncateString(rawFact.NormalizedFact, 120)).
 				Str("source_url", sourceURL).
 				Msg("LLM returned unknown subject_entity_type; normalising to 'human'")
 			rawFact.SubjectEntityType = "human"
@@ -125,7 +126,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		rawFact.Lang = strings.ToLower(strings.TrimSpace(rawFact.Lang))
 		if rawFact.Lang == "" {
 			log.Warn().Int("fact_index", i).
-				Str("normalized_fact", truncateStr(rawFact.NormalizedFact, 120)).
+				Str("normalized_fact", util.TruncateString(rawFact.NormalizedFact, 120)).
 				Str("source_url", sourceURL).
 				Msg("Skipping fact: lang is missing (required BCP-47 code)")
 			continue
@@ -252,14 +253,6 @@ func parseFlexibleISO(s string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
-}
-
-// truncateStr truncates a string to maxLen characters.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // extractFirstJSON uses json.Decoder to extract the first complete JSON value

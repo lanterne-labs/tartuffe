@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// braveRateLimiter is a package-level rate limiter shared across all BraveSearchProvider
+// braveRateLimiter is a package-level rate limiter shared across all braveSearchProvider
 // instances. Brave free tier allows 1 req/sec globally (not per-instance).
 var (
 	braveRateMu   sync.Mutex
@@ -44,7 +44,7 @@ const braveMaxRetries = 4
 
 // doBraveRequest executes an HTTP request against the Brave API with rate limiting
 // and exponential backoff on 429 responses. Returns the response body on success.
-func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Response, error) {
+func (b *braveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Response, error) {
 	// Check circuit breaker before entering the retry loop
 	braveCircuitMu.Lock()
 	if time.Now().Before(braveCircuitOpenUntil) {
@@ -111,16 +111,16 @@ func (b *BraveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Resp
 	return nil, fmt.Errorf("Brave %s API: exhausted retries", apiType)
 }
 
-// BraveSearchProvider implements NewsSearcher, ImageSearcher, and SearchProvider
+// braveSearchProvider implements NewsSearcher, WebSearcher and ImageSearcher
 // using the Brave Search API.
-type BraveSearchProvider struct {
+type braveSearchProvider struct {
 	apiKey     string
 	httpClient *http.Client
 }
 
-// NewBraveSearchProvider creates a new BraveSearchProvider instance.
-func NewBraveSearchProvider(apiKey string) *BraveSearchProvider {
-	return &BraveSearchProvider{
+// newBraveSearchProvider creates a new braveSearchProvider instance.
+func newBraveSearchProvider(apiKey string) *braveSearchProvider {
+	return &braveSearchProvider{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
@@ -148,7 +148,7 @@ type braveNewsResult struct {
 }
 
 // SearchNews performs a news search using the Brave News Search API.
-func (b *BraveSearchProvider) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
+func (b *braveSearchProvider) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 10
@@ -179,7 +179,7 @@ func (b *BraveSearchProvider) SearchNews(query string, opts NewsSearchOptions) (
 	return allResults, nil
 }
 
-func (b *BraveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions, count, offset int) ([]NewsResult, error) {
+func (b *braveSearchProvider) fetchNewsPage(query string, opts NewsSearchOptions, count, offset int) ([]NewsResult, error) {
 	params := url.Values{}
 	params.Add("q", query)
 	params.Add("count", fmt.Sprintf("%d", count))
@@ -276,19 +276,6 @@ func parsePageAge(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unable to parse page_age %q", s)
 }
 
-// PreviewSearch performs a lightweight search to check if any results exist.
-func (b *BraveSearchProvider) PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error) {
-	results, err := b.fetchNewsPage(query, opts, 1, 0)
-	if err != nil {
-		return nil, fmt.Errorf("Brave preview search failed: %w", err)
-	}
-
-	return &NewsSearchPreview{
-		TotalResults: len(results),
-		Query:        query,
-	}, nil
-}
-
 // braveImageResponse is the JSON structure returned by the Brave Image Search API.
 type braveImageResponse struct {
 	Results []braveImageResult `json:"results"`
@@ -308,7 +295,7 @@ type braveImageResult struct {
 }
 
 // SearchImages performs an image search using the Brave Image Search API.
-func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
+func (b *braveSearchProvider) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
 	params := url.Values{}
 	params.Add("q", query)
 
@@ -360,7 +347,7 @@ func (b *BraveSearchProvider) SearchImages(query string, opts ImageSearchOptions
 }
 
 // SearchWeb performs a general web search using the Brave Web Search API.
-func (b *BraveSearchProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
+func (b *braveSearchProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -402,23 +389,5 @@ func (b *BraveSearchProvider) SearchWeb(query string, limit int) ([]SearchResult
 	}
 
 	log.Debug().Int("count", len(results)).Str("query", query).Msg("Brave web search completed")
-	return results, nil
-}
-
-// Search implements the SearchProvider interface.
-func (b *BraveSearchProvider) Search(personName string) ([]SearchResult, error) {
-	newsResults, err := b.SearchNews(personName, NewsSearchOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]SearchResult, 0, len(newsResults))
-	for _, nr := range newsResults {
-		results = append(results, SearchResult{
-			URL:     nr.Link,
-			Title:   nr.Title,
-			Snippet: nr.Snippet,
-		})
-	}
 	return results, nil
 }

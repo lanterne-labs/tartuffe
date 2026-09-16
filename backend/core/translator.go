@@ -3,12 +3,8 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-
-	"github.com/rs/zerolog/log"
 )
 
 // Translator produces faithful English translations of non-English fact text.
@@ -18,33 +14,16 @@ import (
 // extraction. Used by the `dm facts backfill-translations` command and the
 // daily-pipeline translation-repair step.
 type Translator struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // NewTranslatorFromEnv builds a Translator from OPEN_AI_ env vars.
 func NewTranslatorFromEnv() (*Translator, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("translate")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-	base = strings.TrimRight(base, "/")
-	return &Translator{
-		apiKey:     apiKey,
-		apiURL:     llm.ChatCompletionsURL(base),
-		model:      model,
-		baseClient: llm.NewBaseLLMClient("translate"),
-	}, nil
+	return &Translator{client: client}, nil
 }
 
 type translationResult struct {
@@ -61,33 +40,18 @@ STATEMENT: "%s"
 Return ONLY strict JSON, nothing else:
 {"english": "<the English translation>"}`, langName(srcLang), text)
 
-	reqPayload := llm.ChatRequest{
-		Model:          t.model,
+	content, _, err := t.client.Chat(ctx, llm.ChatRequest{
 		Messages:       []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature:    0.0,
 		MaxTokens:      1024,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal translate request: %w", err)
-	}
-	bodyBytes, err := t.baseClient.DoRequest(ctx, t.apiURL, t.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return "", fmt.Errorf("translate LLM call failed: %w", err)
 	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		log.Error().Err(err).Str("raw_response", string(bodyBytes)).Msg("Failed to decode translate chat response")
-		return "", fmt.Errorf("failed to decode chat response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("translate LLM returned no content")
-	}
 
-	content := llm.StripJSONCodeFence(chatResp.Choices[0].Message.Content)
-	var res translationResult
-	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &res); err != nil {
+	res, err := llm.ParseJSONResponse[translationResult](content)
+	if err != nil {
 		return "", fmt.Errorf("invalid translate JSON response: %w", err)
 	}
 	english := strings.TrimSpace(res.English)

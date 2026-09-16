@@ -50,7 +50,7 @@ func TestDumpSourceAndFacts(t *testing.T) {
 	}
 
 	// Parse and verify content
-	var dump SourceDump
+	var dump sourceDump
 	if err := json.Unmarshal(data, &dump); err != nil {
 		t.Fatalf("Failed to parse dumped JSON: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestDumpSourceAndFacts_EmptyFacts(t *testing.T) {
 		t.Fatalf("Expected file not found: %v", err)
 	}
 
-	var dump SourceDump
+	var dump sourceDump
 	if err := json.Unmarshal(data, &dump); err != nil {
 		t.Fatalf("Failed to parse JSON: %v", err)
 	}

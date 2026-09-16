@@ -48,7 +48,7 @@ setup-test-env:
 	@echo "DB Port: $(SUPABASE_DB_PORT)"
 	@echo ""
 	@echo "DATABASE_URL will be set to:"
-	@supabase status --output env 2>/dev/null | grep '^DB_URL=' | sed 's/^DB_URL=//' || echo "Supabase not running. Run 'make db-start' first."
+	@supabase status --output env 2>/dev/null | grep '^DB_URL=' | sed -e 's/^DB_URL=//' -e 's/^"//' -e 's/"$$//' || echo "Supabase not running. Run 'make db-start' first."
 
 # Run tests with proper environment variables
 # Extract DATABASE_URL from supabase CLI and run tests
@@ -64,7 +64,7 @@ test:
 	@echo "Starting Supabase (if not already running)..."
 	@supabase start 2>/dev/null || true
 	@echo "Running tests with Supabase DATABASE_URL (port $(SUPABASE_DB_PORT))..."
-	@export DATABASE_URL=$$(supabase status --output env | grep '^DB_URL=' | sed 's/^DB_URL=//') && \
+	@export DATABASE_URL=$$(supabase status --output env | grep '^DB_URL=' | sed -e 's/^DB_URL=//' -e 's/^"//' -e 's/"$$//') && \
 	echo "DATABASE_URL: $$DATABASE_URL" && \
 	if [ -f .env ]; then \
 		export $$(cat .env | grep -v '^#' | grep -v '^$$' | xargs) && \
@@ -80,7 +80,7 @@ test-short:
 	@echo "Starting Supabase (if not already running)..."
 	@supabase start 2>/dev/null || true
 	@echo "Running tests for project '$(PROJECT_ID)'..."
-	@export DATABASE_URL=$$(supabase status --output env | grep '^DB_URL=' | sed 's/^DB_URL=//') && \
+	@export DATABASE_URL=$$(supabase status --output env | grep '^DB_URL=' | sed -e 's/^DB_URL=//' -e 's/^"//' -e 's/"$$//') && \
 	if [ -f .env ]; then \
 		export $$(cat .env | grep -v '^#' | grep -v '^$$' | xargs) && \
 		go test -p 1 -timeout 40m ./...; \

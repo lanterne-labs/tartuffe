@@ -20,7 +20,6 @@ func TestEvictStaleJudgedPairs(t *testing.T) {
 
 	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE fact_pair_checks RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
-	storer.SetEntityValidator(nil)
 
 	personID, _, err := storer.AddPerson(ctx, "Rejudge Fixture")
 	require.NoError(t, err)

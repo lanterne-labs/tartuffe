@@ -34,12 +34,10 @@ package contradiction
 import (
 	"context"
 	"digital-mirror/backend/embedding"
-	categorizer "digital-mirror/backend/llm"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -58,10 +56,7 @@ type BundlerStorer interface {
 type Bundler struct {
 	storer     BundlerStorer
 	embedder   embedding.EmbeddingGenerator
-	llm        *categorizer.BaseLLMClient
-	apiKey     string
-	apiURL     string
-	model      string
+	client     *llm.Client
 	topK       int
 	maxYesDist float64
 }
@@ -82,26 +77,14 @@ const DefaultBundlerMaxDistance = 1.2
 // of the LLM stack. Returns an error if the LLM env is misconfigured; the embedder must
 // be supplied by the caller (it's already constructed elsewhere in the pipeline).
 func NewBundlerFromEnv(storer BundlerStorer, embedder embedding.EmbeddingGenerator) (*Bundler, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("contradiction-bundler")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-	apiURL := categorizer.ChatCompletionsURL(base)
 	return &Bundler{
 		storer:     storer,
 		embedder:   embedder,
-		llm:        categorizer.NewBaseLLMClient("contradiction-bundler"),
-		apiKey:     apiKey,
-		apiURL:     apiURL,
-		model:      model,
+		client:     client,
 		topK:       DefaultBundlerTopK,
 		maxYesDist: DefaultBundlerMaxDistance,
 	}, nil
@@ -210,29 +193,15 @@ VERDICT: NO`
 func (b *Bundler) askLLMRelated(ctx context.Context, bundleText string, cand storage.StanceCandidate) (bool, error) {
 	prompt := fmt.Sprintf(bundlerLLMPromptTpl, bundleText, cand.ClusterLabel, cand.Summary)
 
-	reqPayload := categorizer.ChatRequest{
-		Model:       b.model,
-		Messages:    []categorizer.ChatMessage{{Role: "user", Content: prompt}},
+	content, _, err := b.client.Chat(ctx, llm.ChatRequest{
+		Messages:    []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
 		MaxTokens:   32,
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return false, fmt.Errorf("marshal bundler request: %w", err)
-	}
-
-	bodyBytes, err := b.llm.DoRequest(ctx, b.apiURL, b.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return false, fmt.Errorf("bundler LLM call: %w", err)
 	}
-	var chatResp categorizer.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return false, fmt.Errorf("decode bundler response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return false, fmt.Errorf("bundler: empty LLM response")
-	}
-	content := strings.ToUpper(strings.TrimSpace(chatResp.Choices[0].Message.Content))
+	content = strings.ToUpper(strings.TrimSpace(content))
 	// Robust to small surrounding noise: look for "VERDICT: YES" / "VERDICT: NO".
 	switch {
 	case strings.Contains(content, "VERDICT: YES") || strings.Contains(content, "VERDICT:YES"):

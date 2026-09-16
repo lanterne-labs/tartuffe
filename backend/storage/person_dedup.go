@@ -2,35 +2,20 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 
 	"github.com/rs/zerolog/log"
 )
 
-// DuplicateCandidate is a single trigram-similar pair of persons that may be
-// the same real-world entity.
-type DuplicateCandidate struct {
-	IDA         int64
-	IDB         int64
-	NameA       string
-	NameB       string
-	EntityTypeA string
-	EntityTypeB string
-	FactCountA  int
-	FactCountB  int
-	Similarity  float64
-}
-
-// DedupMember is a person row enriched with the signals the dedup CLI needs to
-// pick a canonical survivor.
-type DedupMember struct {
-	ID         int64
-	Name       string
-	EntityType string
-	FactCount  int
-	// Curated is true when the row is a curated French Assemblée entity (has an
-	// organeRef or assemblee_id attribute) — such rows are preferred survivors.
-	Curated bool
+// curatedSQL returns the predicate marking a persons row (qualified by the
+// table alias) as curated: created by the frpolitics plugin from the Assemblée
+// nationale registry, which stamps an organeRef (organes) or assemblee_id
+// (deputies) attribute on the row. Curated rows are preferred dedupe survivors
+// and two of them are never merged. The attribute pair is that plugin's
+// knowledge; this is the one place a plugin-registered predicate would replace.
+func curatedSQL(alias string) string {
+	return fmt.Sprintf("(%[1]s.attributes ? 'organeRef' OR %[1]s.attributes ? 'assemblee_id')", alias)
 }
 
 // ChooseCanonical picks the survivor of a confirmed same-entity cluster using
@@ -40,8 +25,8 @@ type DedupMember struct {
 //  2. TWO OR MORE curated members -> skip the whole cluster (never merge two
 //     real curated entities); returns ok=false.
 //  3. no curated member -> highest fact_count, tie-break lowest id.
-func ChooseCanonical(members []DedupMember) (DedupMember, bool) {
-	var curated []DedupMember
+func ChooseCanonical(members []core.PersonDedupMember) (core.PersonDedupMember, bool) {
+	var curated []core.PersonDedupMember
 	for _, m := range members {
 		if m.Curated {
 			curated = append(curated, m)
@@ -61,7 +46,7 @@ func ChooseCanonical(members []DedupMember) (DedupMember, bool) {
 			Ints64("curated_ids", ids).
 			Strs("curated_names", names).
 			Msg("Cluster has 2+ curated members; refusing to merge real entities, skipping")
-		return DedupMember{}, false
+		return core.PersonDedupMember{}, false
 	}
 
 	best := members[0]
@@ -73,17 +58,22 @@ func ChooseCanonical(members []DedupMember) (DedupMember, bool) {
 	return best, true
 }
 
+// ChooseCanonical is the package-level ChooseCanonical as a method, satisfying
+// core.PersonDedupStorer.
+func (s *PostgresStorer) ChooseCanonical(members []core.PersonDedupMember) (core.PersonDedupMember, bool) {
+	return ChooseCanonical(members)
+}
+
 // GetPersonsForDedup fetches the dedup-relevant fields for the given person IDs
 // in a single round-trip.
-func (s *PostgresStorer) GetPersonsForDedup(ctx context.Context, ids []int64) ([]DedupMember, error) {
+func (s *PostgresStorer) GetPersonsForDedup(ctx context.Context, ids []int64) ([]core.PersonDedupMember, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	const query = `
-		SELECT id, name, entity_type, fact_count,
-		       (attributes ? 'organeRef' OR attributes ? 'assemblee_id') AS curated
-		FROM persons
-		WHERE id = ANY($1)`
+	query := `
+		SELECT p.id, p.name, p.entity_type, p.fact_count, ` + curatedSQL("p") + ` AS curated
+		FROM persons p
+		WHERE p.id = ANY($1)`
 
 	rows, err := s.pool.Query(ctx, query, ids)
 	if err != nil {
@@ -91,9 +81,9 @@ func (s *PostgresStorer) GetPersonsForDedup(ctx context.Context, ids []int64) ([
 	}
 	defer rows.Close()
 
-	var members []DedupMember
+	var members []core.PersonDedupMember
 	for rows.Next() {
-		var m DedupMember
+		var m core.PersonDedupMember
 		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.FactCount, &m.Curated); err != nil {
 			return nil, fmt.Errorf("failed to scan dedup member: %w", err)
 		}
@@ -110,21 +100,20 @@ func (s *PostgresStorer) GetPersonsForDedup(ctx context.Context, ids []int64) ([
 // util.NormalizePersonName so the dedup key is IDENTICAL to the canonical form
 // names are stored under (catching accent, curly-apostrophe, fancy-dash and
 // extra-whitespace variants alike — immutable_unaccent only catches some of those).
-func (s *PostgresStorer) GetAllDedupMembers(ctx context.Context) ([]DedupMember, error) {
-	const query = `
-		SELECT id, name, entity_type, fact_count,
-		       (attributes ? 'organeRef' OR attributes ? 'assemblee_id') AS curated
-		FROM persons
-		ORDER BY id`
+func (s *PostgresStorer) GetAllDedupMembers(ctx context.Context) ([]core.PersonDedupMember, error) {
+	query := `
+		SELECT p.id, p.name, p.entity_type, p.fact_count, ` + curatedSQL("p") + ` AS curated
+		FROM persons p
+		ORDER BY p.id`
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons for dedup: %w", err)
 	}
 	defer rows.Close()
 
-	var members []DedupMember
+	var members []core.PersonDedupMember
 	for rows.Next() {
-		var m DedupMember
+		var m core.PersonDedupMember
 		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.FactCount, &m.Curated); err != nil {
 			return nil, fmt.Errorf("failed to scan dedup member: %w", err)
 		}
@@ -212,18 +201,18 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		{"contradictions", `UPDATE contradictions c SET person_id=$2 WHERE c.person_id=$1 AND NOT EXISTS (SELECT 1 FROM contradictions x WHERE x.person_id=$2 AND x.fact_a_id=c.fact_a_id AND x.fact_b_id=c.fact_b_id)`},
 		{"fact_pair_checks", `UPDATE fact_pair_checks fpc SET person_id=$2 WHERE fpc.person_id=$1 AND NOT EXISTS (SELECT 1 FROM fact_pair_checks x WHERE x.person_id=$2 AND x.fact_a_id=fpc.fact_a_id AND x.fact_b_id=fpc.fact_b_id)`},
 		{"stance_documents", `UPDATE stance_documents s SET person_id=$2 WHERE s.person_id=$1 AND NOT EXISTS (SELECT 1 FROM stance_documents x WHERE x.person_id=$2 AND x.cluster_label=s.cluster_label)`},
-		{"twitter_handles", `UPDATE twitter_handles th SET person_id=$2 WHERE th.person_id=$1 AND NOT EXISTS (SELECT 1 FROM twitter_handles x WHERE x.person_id=$2 AND x.handle=th.handle)`},
 		{"search_queue", `UPDATE search_queue q SET person_id=$2 WHERE q.person_id=$1 AND NOT EXISTS (SELECT 1 FROM search_queue x WHERE x.person_id=$2)`},
 		{"person_links_src", `UPDATE person_links pl SET src_person_id=$2 WHERE pl.src_person_id=$1 AND pl.dst_person_id<>$2 AND NOT EXISTS (SELECT 1 FROM person_links x WHERE x.src_person_id=$2 AND x.dst_person_id=pl.dst_person_id AND x.link_type=pl.link_type)`},
 		{"person_links_dst", `UPDATE person_links pl SET dst_person_id=$2 WHERE pl.dst_person_id=$1 AND pl.src_person_id<>$2 AND NOT EXISTS (SELECT 1 FROM person_links x WHERE x.dst_person_id=$2 AND x.src_person_id=pl.src_person_id AND x.link_type=pl.link_type)`},
-		{"news_search_log", `UPDATE news_search_log SET person_id=$2 WHERE person_id=$1`},
-		{"debate_documents", `UPDATE debate_documents SET person_id=$2 WHERE person_id=$1`},
-		{"rss_feeds", `UPDATE rss_feeds SET person_id=$2 WHERE person_id=$1`},
 	}
 	for _, r := range repoints {
 		if _, err := tx.Exec(ctx, r.sql, fromID, intoID); err != nil {
 			return fmt.Errorf("failed to repoint %s: %w", r.name, err)
 		}
+	}
+	// Plugin-owned tables (registered by each plugin, see PersonTable).
+	if err := repointPersonTables(ctx, tx, fromID, intoID); err != nil {
+		return err
 	}
 
 	// d. Clean up the leftover from-rows (the ones that collided and were not
@@ -238,7 +227,6 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 		{"contradictions", `DELETE FROM contradictions WHERE person_id=$1`},
 		{"fact_pair_checks", `DELETE FROM fact_pair_checks WHERE person_id=$1`},
 		{"stance_documents", `DELETE FROM stance_documents WHERE person_id=$1`},
-		{"twitter_handles", `DELETE FROM twitter_handles WHERE person_id=$1`},
 		{"search_queue", `DELETE FROM search_queue WHERE person_id=$1`},
 		{"person_links", `DELETE FROM person_links WHERE src_person_id=$1 OR dst_person_id=$1`},
 	}
@@ -313,10 +301,9 @@ func (s *PostgresStorer) MergePersons(ctx context.Context, fromID, intoID int64)
 
 // FindDuplicateCandidates returns trigram-similar person pairs above `threshold`
 // (each unordered pair once, a.id < b.id). When entityType is non-empty only
-// pairs of that type are considered. Pairs where BOTH rows are curated French
-// Assemblée entities (both have organeRef, or both have assemblee_id) are
-// excluded — those are real distinct entities, not dupes.
-func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType string, threshold float64) ([]DuplicateCandidate, error) {
+// pairs of that type are considered. Pairs where BOTH rows are curated (see
+// curatedSQL) are excluded — those are real distinct entities, not dupes.
+func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType string, threshold float64) ([]core.PersonDuplicateCandidate, error) {
 	// Use the pg_trgm `%` operator (gated by set_limit) so the join can use the
 	// trigram GIN index `idx_persons_name_trgm` instead of recomputing
 	// similarity() for every pair (O(n²) ≈ 9M comparisons on ~4k rows). The
@@ -332,15 +319,14 @@ func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType
 		return nil, fmt.Errorf("failed to set trigram similarity threshold: %w", err)
 	}
 
-	const query = `
+	query := `
 		SELECT a.id, a.name, a.entity_type, a.fact_count,
 		       b.id, b.name, b.entity_type, b.fact_count,
 		       similarity(a.name, b.name) AS sim
 		FROM persons a JOIN persons b ON a.id < b.id
 		WHERE ($1 = '' OR a.entity_type = $1) AND ($1 = '' OR b.entity_type = $1)
 		  AND a.name % b.name
-		  AND NOT (a.attributes ? 'organeRef' AND b.attributes ? 'organeRef')
-		  AND NOT (a.attributes ? 'assemblee_id' AND b.attributes ? 'assemblee_id')
+		  AND NOT (` + curatedSQL("a") + ` AND ` + curatedSQL("b") + `)
 		ORDER BY sim DESC`
 
 	rows, err := conn.Query(ctx, query, entityType)
@@ -349,9 +335,9 @@ func (s *PostgresStorer) FindDuplicateCandidates(ctx context.Context, entityType
 	}
 	defer rows.Close()
 
-	var candidates []DuplicateCandidate
+	var candidates []core.PersonDuplicateCandidate
 	for rows.Next() {
-		var c DuplicateCandidate
+		var c core.PersonDuplicateCandidate
 		if err := rows.Scan(&c.IDA, &c.NameA, &c.EntityTypeA, &c.FactCountA,
 			&c.IDB, &c.NameB, &c.EntityTypeB, &c.FactCountB, &c.Similarity); err != nil {
 			return nil, fmt.Errorf("failed to scan duplicate candidate: %w", err)

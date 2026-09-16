@@ -3,9 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -20,32 +18,16 @@ type MetaSynthesizer interface {
 
 // LLMMetaSynthesizer implements MetaSynthesizer against the OPEN_AI_* endpoint.
 type LLMMetaSynthesizer struct {
-	apiKey     string
-	apiURL     string
-	model      string
-	baseClient *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // NewLLMMetaSynthesizerFromEnv builds a synthesizer from OPEN_AI_ env vars.
 func NewLLMMetaSynthesizerFromEnv() (*LLMMetaSynthesizer, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("meta-fact-synthesizer")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-	return &LLMMetaSynthesizer{
-		apiKey:     apiKey,
-		apiURL:     llm.ChatCompletionsURL(strings.TrimRight(base, "/")),
-		model:      model,
-		baseClient: llm.NewBaseLLMClient("meta-fact-synthesizer"),
-	}, nil
+	return &LLMMetaSynthesizer{client: client}, nil
 }
 
 // maxSynthesisMembers caps how many member texts go into the prompt; members
@@ -79,34 +61,20 @@ STATEMENTS:
 Return ONLY strict JSON, nothing else:
 {"meta_fact": "<the aggregated statement>"}`, subject, lang, sb.String())
 
-	reqPayload := llm.ChatRequest{
-		Model:          m.model,
+	content, _, err := m.client.Chat(ctx, llm.ChatRequest{
 		Messages:       []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature:    0.0,
 		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", fmt.Errorf("marshal meta-synthesis request: %w", err)
-	}
-	bodyBytes, err := m.baseClient.DoRequest(ctx, m.apiURL, m.apiKey, payloadBytes)
+	})
 	if err != nil {
 		return "", fmt.Errorf("meta-synthesis LLM call failed: %w", err)
 	}
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("decode meta-synthesis response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("meta-synthesis LLM returned no content")
-	}
 
-	var out struct {
+	out, err := llm.ParseJSONResponse[struct {
 		MetaFact string `json:"meta_fact"`
-	}
-	content := llm.StripJSONCodeFence(strings.TrimSpace(chatResp.Choices[0].Message.Content))
-	if err := json.Unmarshal([]byte(content), &out); err != nil {
+	}](content)
+	if err != nil {
 		log.Error().Str("llm_content", content).Msg("Failed to parse meta-synthesis response")
 		return "", fmt.Errorf("invalid meta-synthesis JSON: %w", err)
 	}

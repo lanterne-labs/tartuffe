@@ -1,6 +1,6 @@
 // Package promptrules holds prompt fragments shared across packages that would
-// otherwise create import cycles. Keep this package dependency-free — it only
-// exports string constants.
+// otherwise create import cycles. Keep this package dependency-free (standard
+// library only) — it exports prompt text and the pure helpers that render it.
 package promptrules
 
 // ContradictionRules is the rule body of the STANCE ANALYZE judge — the

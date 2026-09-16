@@ -11,39 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"digital-mirror/backend/categorizer"
-	"digital-mirror/backend/core"
-	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/extractor"
-	"digital-mirror/backend/plugins/news"
-	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
 )
 
-// AmbiguousNamesError is returned when target names cannot be uniquely resolved.
-type AmbiguousNamesError struct {
-	Resolutions map[string]core.TargetResolutionResult
-}
-
-func (e *AmbiguousNamesError) Error() string {
-	return fmt.Sprintf("ambiguous target names: %d queries need disambiguation", len(e.Resolutions))
-}
-
 // parseStats is now defined in types.go as ParseStats
 
 // Run is the main entrypoint for cron execution; it is intentionally thin and orchestrates library calls
 func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) error {
-	// Default mode to "votes" if not specified
-	if opts.Mode == "" {
-		opts.Mode = "votes"
-	}
-
-	// If mode is "news", skip vote processing and go straight to news search
-	if opts.Mode == "news" {
-		return runNewsSearchStandalone(ctx, storer, opts)
-	}
+	store := NewStore(storer)
 
 	// 1) Discover scrutins -> produce a list of law URLs to process
 	laws, groupStats, eventsByLaw, orgCache, pstats, err := discoverAndParse(ctx, opts)
@@ -69,7 +46,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	}
 	for _, law := range laws {
 		// Check if law fully processed (prevents duplicate law insertions and enables resumability)
-		lawKeyProcessed, err := storer.IsLawFullyProcessed(ctx, law.Key)
+		lawKeyProcessed, err := store.IsLawFullyProcessed(ctx, law.Key)
 		if err != nil {
 			return err
 		}
@@ -113,7 +90,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		keywordFilteredLaws = filteredLaws
 	} else {
 		var err error
-		keywordFilteredLaws, err = FilterLaws(ctx, filteredLaws, storer)
+		keywordFilteredLaws, err = FilterLaws(ctx, filteredLaws, store)
 		if err != nil {
 			return fmt.Errorf("keyword filtering failed: %w", err)
 		}
@@ -122,9 +99,6 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 
 	if len(keywordFilteredLaws) == 0 {
 		log.Info().Msg("frpolitics: all votes already extracted or filtered out")
-		if opts.Mode == "both" {
-			return runNewsSearchStandalone(ctx, storer, opts)
-		}
 		return nil
 	}
 
@@ -172,7 +146,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 			if summary.Confidence < minConfidence {
 				// Skip low-confidence laws
 				confidence := summary.Confidence
-				err := storer.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, "low_ai_confidence", "", &confidence)
+				err := store.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, "low_ai_confidence", "", &confidence)
 				if err != nil {
 					return fmt.Errorf("failed to store skipped law %s: %w", law.Key, err)
 				}
@@ -187,9 +161,6 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 
 	if len(aiFilteredLaws) == 0 {
 		log.Info().Msg("frpolitics: no laws passed AI confidence filter")
-		if opts.Mode == "both" {
-			return runNewsSearchStandalone(ctx, storer, opts)
-		}
 		return nil
 	}
 
@@ -384,14 +355,14 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 					}
 
 					// Get deputy ID
-					deputyID, err := storer.GetPersonIDByAssembleeID(ctx, assembleeID)
+					deputyID, err := storer.GetPersonIDByAttribute(ctx, "assemblee_id", assembleeID)
 					if err != nil {
 						log.Warn().Err(err).Str("assembleeID", assembleeID).Msg("Failed to get deputy ID for affiliation")
 						continue
 					}
 
 					// Get party ID
-					partyID, err := storer.GetPersonIDByOrgRef(ctx, orgRef)
+					partyID, err := storer.GetPersonIDByAttribute(ctx, "organeRef", orgRef)
 					if err != nil {
 						log.Warn().Err(err).Str("orgRef", orgRef).Msg("Failed to get party ID for affiliation")
 						continue
@@ -467,7 +438,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 
 		// Clean up any partial data from previous failed run
 		// This deletes facts, fact_sources, contradictions, and fact_mentions for this law
-		deletedCount, err := storer.DeletePartialLawData(ctx, law.Key)
+		deletedCount, err := store.DeletePartialLawData(ctx, law.Key)
 		if err != nil {
 			log.Error().
 				Err(err).
@@ -497,7 +468,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 
 		// Mark law as fully processed
 		factsCount := len(lawFacts)
-		if err := storer.MarkLawAsProcessed(ctx, law.Key, law.Legislature, law.Title, factsCount); err != nil {
+		if err := store.MarkLawAsProcessed(ctx, law.Key, law.Legislature, law.Title, factsCount); err != nil {
 			log.Error().
 				Err(err).
 				Str("law_key", law.Key).
@@ -547,14 +518,6 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		Int("events_complete", pstats.EventsComplete).
 		Int("events_dropped", pstats.EventsDropped).
 		Msg("frpolitics: run summary")
-
-	// 6) Optional: Search news for deputies and parties (only in "both" mode)
-	if opts.Mode == "both" {
-		if err := runNewsSearch(ctx, storer, deputySeed, partySeed, opts); err != nil {
-			log.Error().Err(err).Msg("frpolitics: news search failed")
-			// Don't return error - news search is optional
-		}
-	}
 
 	return nil
 }
@@ -734,341 +697,6 @@ func discoverAndParse(ctx context.Context, opts Options) ([]Law, map[string]LawG
 	}
 
 	return outLaws, groupStatsByLaw, eventsByLaw, orgCache, stats, nil
-}
-
-// runNewsSearch initializes news search dependencies and searches for news about deputies and parties.
-func runNewsSearch(ctx context.Context, storer *storage.PostgresStorer, deputySeed map[string]string, partySeed map[string]struct {
-	orgRef string
-	abbrev string
-}, opts Options) error {
-	log.Info().
-		Int("deputies", len(deputySeed)).
-		Int("parties", len(partySeed)).
-		Msg("frpolitics: starting news search")
-
-	// Initialize news search provider
-	newsSearcher, err := search.NewNewsSearcherFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize news search: %w", err)
-	}
-
-	// Initialize content extractor based on option (default to webcrawler)
-	var contentExtractor extractor.ContentExtractor
-	if opts.CacheOnly {
-		// Cache-only mode: use CacheOnlyExtractor (no inner extractor)
-		contentExtractor = extractor.NewCacheOnlyExtractor(opts.CacheDir)
-		log.Info().Str("cache_dir", opts.CacheDir).Msg("Using cache-only mode (no scraping)")
-	} else {
-		extractorType := opts.ContentExtractor
-		if extractorType == "" {
-			extractorType = "auto"
-		}
-		ext, err := extractor.NewExtractorFromType(extractorType)
-		if err != nil {
-			return fmt.Errorf("failed to initialize content extractor: %w", err)
-		}
-		contentExtractor = ext
-
-		// Wrap with cache if cache-dir specified
-		if opts.CacheDir != "" {
-			contentExtractor = extractor.NewCacheExtractor(ext, opts.CacheDir, true, true)
-			log.Info().Str("cache_dir", opts.CacheDir).Msg("Caching enabled for content extraction")
-		}
-	}
-
-	// Initialize fact extractor
-	factExtractor, err := categorizer.NewOpenAIExtractorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize fact extractor: %w", err)
-	}
-
-	// Initialize embedder
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize embedder: %w", err)
-	}
-
-	// Stance manager — required by the news provider so newly inserted facts
-	// get routed into stance documents. Without it, CollectFacts errors out.
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
-	if err != nil {
-		return fmt.Errorf("failed to initialize stance manager: %w", err)
-	}
-
-	// Create news provider
-	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer, stanceMgr)
-
-	// Build targets from deputies and parties
-	targets := make([]news.SearchTarget, 0, len(deputySeed)+len(partySeed))
-
-	// Add parties first (they always have coverage)
-	for partyName, meta := range partySeed {
-		// Get party ID from database using orgRef
-		partyID, err := storer.GetPersonIDByOrgRef(ctx, meta.orgRef)
-		if err != nil {
-			// Fall back to name lookup
-			partyID, err = storer.GetPersonIDByName(ctx, partyName)
-			if err != nil {
-				log.Warn().Err(err).Str("party", partyName).Msg("Failed to get party ID for news search")
-				continue
-			}
-		}
-		targets = append(targets, news.SearchTarget{
-			Name:     partyName,
-			Type:     news.TargetParty,
-			PersonID: &partyID,
-		})
-	}
-
-	// Add deputies
-	for assembleeID, displayName := range deputySeed {
-		// Get deputy ID from database
-		deputyID, err := storer.GetPersonIDByAssembleeID(ctx, assembleeID)
-		if err != nil {
-			log.Warn().Err(err).Str("assembleeID", assembleeID).Msg("Failed to get deputy ID for news search")
-			continue
-		}
-		targets = append(targets, news.SearchTarget{
-			Name:     displayName,
-			Type:     news.TargetPerson,
-			PersonID: &deputyID,
-		})
-	}
-
-	if len(targets) == 0 {
-		log.Info().Msg("frpolitics: no targets for news search")
-		return nil
-	}
-
-	// Prioritize targets
-	prioritizedTargets, err := news.PrioritizeTargets(ctx, storer, targets, news.PrioritizationOptions{
-		LookbackDays:  30,
-		SkipNoResults: opts.NewsSkipUnknown,
-		PartiesFirst:  true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to prioritize targets: %w", err)
-	}
-
-	// Build news search options
-	newsOpts := news.Options{
-		MaxParse:     opts.NewsLimit,
-		Location:     opts.NewsLocation,
-		RevisitHours: opts.RevisitHours,
-		SkipUnknown:  opts.NewsSkipUnknown,
-		DateFrom:     opts.NewsSince,
-	}
-	if newsOpts.MaxParse == 0 {
-		newsOpts.MaxParse = 5 // Default to 5 articles per target
-	}
-	if newsOpts.Location == "" {
-		newsOpts.Location = "France" // Default to France for frpolitics
-	}
-
-	// Search news for each target
-	results, err := newsProvider.CollectFactsForTargets(ctx, prioritizedTargets, newsOpts)
-	if err != nil {
-		return fmt.Errorf("news collection failed: %w", err)
-	}
-
-	// Log summary
-	var totalArticles, totalFacts int
-	for _, r := range results {
-		totalArticles += r.ArticlesParsed
-		totalFacts += r.FactsExtracted
-	}
-
-	log.Info().
-		Int("targets_searched", len(results)).
-		Int("articles_processed", totalArticles).
-		Int("facts_extracted", totalFacts).
-		Msg("frpolitics: news search completed")
-
-	return nil
-}
-
-// runNewsSearchStandalone runs news search without processing votes (mode="news").
-// Returns a map of query -> resolution results for disambiguation if needed.
-func runNewsSearchStandalone(ctx context.Context, storer *storage.PostgresStorer, opts Options) error {
-	log.Info().Msg("frpolitics: running in news-only mode")
-
-	// Build targets list
-	var targets []news.SearchTarget
-	var ambiguousQueries map[string]core.TargetResolutionResult
-
-	if len(opts.NewsTargets) > 0 {
-		// Resolve target names with fuzzy matching
-		log.Info().Int("count", len(opts.NewsTargets)).Msg("frpolitics: resolving specified news targets")
-
-		resolutions := core.ResolveTargetNames(ctx, storer, opts.NewsTargets)
-		ambiguousQueries = make(map[string]core.TargetResolutionResult)
-
-		for query, result := range resolutions {
-			if result.Error != nil {
-				log.Error().Err(result.Error).Str("query", query).Msg("Failed to resolve target")
-				continue
-			}
-
-			if result.IsExactMatch {
-				// Exact match found
-				log.Info().Str("query", query).Str("matched", result.ExactMatch.Name).Msg("Exact match found")
-				targetType := news.TargetPerson
-				if result.ExactMatch.EntityType == "party" {
-					targetType = news.TargetParty
-				}
-				targets = append(targets, news.SearchTarget{
-					Name:     result.ExactMatch.Name,
-					Type:     targetType,
-					PersonID: result.ExactMatch.PersonID,
-				})
-			} else if len(result.FuzzyMatches) > 0 {
-				// Ambiguous - store for later
-				log.Warn().Str("query", query).Int("candidates", len(result.FuzzyMatches)).Msg("Ambiguous name - disambiguation needed")
-				ambiguousQueries[query] = result
-			} else {
-				// No matches found - also needs disambiguation (user can create)
-				log.Warn().Str("query", query).Msg("No matches found in database - user can create")
-				ambiguousQueries[query] = result
-			}
-		}
-
-		// If there are ambiguous queries or missing persons, return error with disambiguation info
-		if len(ambiguousQueries) > 0 {
-			return &AmbiguousNamesError{
-				Resolutions: ambiguousQueries,
-			}
-		}
-	} else {
-		// Get all persons from database
-		log.Info().Msg("frpolitics: fetching all persons from database for news search")
-		allPersons, err := storer.GetAllPersons(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to fetch persons: %w", err)
-		}
-
-		if len(allPersons) == 0 {
-			log.Info().Msg("frpolitics: no persons in database to search news for")
-			return nil
-		}
-
-		for _, p := range allPersons {
-			targetType := news.TargetPerson
-			if p.EntityType == "party" {
-				targetType = news.TargetParty
-			}
-
-			personID := p.ID
-			targets = append(targets, news.SearchTarget{
-				Name:     p.Name,
-				Type:     targetType,
-				PersonID: &personID,
-			})
-		}
-
-		log.Info().Int("count", len(targets)).Msg("frpolitics: loaded persons from database")
-	}
-
-	if len(targets) == 0 {
-		log.Info().Msg("frpolitics: no targets for news search")
-		return nil
-	}
-
-	// Initialize news search provider
-	newsSearcher, err := search.NewNewsSearcherFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize news search: %w", err)
-	}
-
-	// Initialize content extractor based on option (default to webcrawler)
-	var contentExtractor extractor.ContentExtractor
-	if opts.CacheOnly {
-		// Cache-only mode: use CacheOnlyExtractor (no inner extractor)
-		contentExtractor = extractor.NewCacheOnlyExtractor(opts.CacheDir)
-		log.Info().Str("cache_dir", opts.CacheDir).Msg("Using cache-only mode (no scraping)")
-	} else {
-		extractorType := opts.ContentExtractor
-		if extractorType == "" {
-			extractorType = "auto"
-		}
-		ext, err := extractor.NewExtractorFromType(extractorType)
-		if err != nil {
-			return fmt.Errorf("failed to initialize content extractor: %w", err)
-		}
-		contentExtractor = ext
-
-		// Wrap with cache if cache-dir specified
-		if opts.CacheDir != "" {
-			contentExtractor = extractor.NewCacheExtractor(ext, opts.CacheDir, true, true)
-			log.Info().Str("cache_dir", opts.CacheDir).Msg("Caching enabled for content extraction")
-		}
-	}
-
-	// Initialize fact extractor
-	factExtractor, err := categorizer.NewOpenAIExtractorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize fact extractor: %w", err)
-	}
-
-	// Initialize embedder
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize embedder: %w", err)
-	}
-
-	// Stance manager — required by the news provider (same as above).
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
-	if err != nil {
-		return fmt.Errorf("failed to initialize stance manager: %w", err)
-	}
-
-	// Create news provider
-	newsProvider := news.NewProvider(newsSearcher, contentExtractor, factExtractor, embedder, storer, stanceMgr)
-
-	// Prioritize targets
-	prioritizedTargets, err := news.PrioritizeTargets(ctx, storer, targets, news.PrioritizationOptions{
-		LookbackDays:  30,
-		SkipNoResults: opts.NewsSkipUnknown,
-		PartiesFirst:  true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to prioritize targets: %w", err)
-	}
-
-	// Build news search options
-	newsOpts := news.Options{
-		MaxParse:     opts.NewsLimit,
-		Location:     opts.NewsLocation,
-		RevisitHours: opts.RevisitHours,
-		SkipUnknown:  opts.NewsSkipUnknown,
-		DateFrom:     opts.NewsSince,
-	}
-	if newsOpts.MaxParse == 0 {
-		newsOpts.MaxParse = 5 // Default to 5 articles per target
-	}
-	if newsOpts.Location == "" {
-		newsOpts.Location = "France" // Default to France for frpolitics
-	}
-
-	// Search news for each target
-	results, err := newsProvider.CollectFactsForTargets(ctx, prioritizedTargets, newsOpts)
-	if err != nil {
-		return fmt.Errorf("news collection failed: %w", err)
-	}
-
-	// Log summary
-	var totalArticles, totalFacts int
-	for _, r := range results {
-		totalArticles += r.ArticlesParsed
-		totalFacts += r.FactsExtracted
-	}
-
-	log.Info().
-		Int("targets_searched", len(results)).
-		Int("articles_processed", totalArticles).
-		Int("facts_extracted", totalFacts).
-		Msg("frpolitics: news-only mode completed")
-
-	return nil
 }
 
 // legislatureStart maps legislature numbers to their start dates (newest first).

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"digital-mirror/backend/core"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -17,11 +17,6 @@ var (
 	personsDedupeThreshold float64
 	personsDedupeApply     bool
 )
-
-// maxConfirmedClusterSize is a defense-in-depth cap: with pairwise adjudication
-// a confirmed cluster should stay tiny, so anything larger is suspicious and we
-// refuse to bulk-merge it silently.
-const maxConfirmedClusterSize = 12
 
 // personsDedupeCmd finds trigram-similar persons, asks an LLM pairwise whether
 // each candidate pair is the same entity, clusters the CONFIRMED pairs, and
@@ -54,7 +49,7 @@ merge those manually with: dm persons merge --from <id> --into <id>`,
 func init() {
 	personsCmd.AddCommand(personsDedupeCmd)
 	personsDedupeCmd.Flags().StringVar(&personsDedupeType, "type", "", "Restrict to one entity_type: human|party|organization. Empty = all.")
-	personsDedupeCmd.Flags().Float64Var(&personsDedupeThreshold, "threshold", 0.45, "Minimum trigram similarity (0-1) for candidate pairs.")
+	personsDedupeCmd.Flags().Float64Var(&personsDedupeThreshold, "threshold", core.DefaultPersonDedupeOptions.Threshold, "Minimum trigram similarity (0-1) for candidate pairs.")
 	personsDedupeCmd.Flags().BoolVar(&personsDedupeApply, "apply", false, "Actually merge duplicates. Default is dry-run.")
 }
 
@@ -70,7 +65,7 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 		log.Fatal().Str("type", personsDedupeType).Msg("--type must be one of: human, party, organization (or empty)")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to create PostgreSQL storer")
 	}
@@ -81,11 +76,15 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 		log.Fatal().Err(err).Msg("Failed to build entity-dedup adjudicator")
 	}
 
-	candidates, err := storer.FindDuplicateCandidates(ctx, personsDedupeType, personsDedupeThreshold)
+	res, err := core.DedupePersons(ctx, storer, adjudicator, core.PersonDedupeOptions{
+		EntityType: personsDedupeType,
+		Threshold:  personsDedupeThreshold,
+		Apply:      personsDedupeApply,
+	})
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to find duplicate candidates")
+		log.Fatal().Err(err).Msg("Persons dedupe failed")
 	}
-	if len(candidates) == 0 {
+	if len(res.Candidates) == 0 {
 		fmt.Println("No candidate duplicate pairs found above threshold.")
 		fmt.Println("\nReminder: trigram only catches same-script variants. Cross-language")
 		fmt.Println("duplicates need a manual `dm persons merge --from <id> --into <id>`.")
@@ -93,117 +92,42 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("=== persons dedupe (threshold=%.2f, type=%q, %d candidate pairs) ===\n",
-		personsDedupeThreshold, personsDedupeType, len(candidates))
+		personsDedupeThreshold, personsDedupeType, len(res.Candidates))
 
-	// 1. Adjudicate each candidate pair; keep only confirmed same-entity pairs.
-	var (
-		confirmedPairs [][2]int64
-		nConfirmed     int
-		nRejected      int
-		nPairErrored   int
-	)
-	for _, c := range candidates {
-		a := core.EntityRef{ID: c.IDA, Name: c.NameA, EntityType: c.EntityTypeA, FactCount: c.FactCountA}
-		b := core.EntityRef{ID: c.IDB, Name: c.NameB, EntityType: c.EntityTypeB, FactCount: c.FactCountB}
-		verdict, err := adjudicator.AdjudicatePair(ctx, a, b)
-		if err != nil {
-			nPairErrored++
-			log.Error().Err(err).
-				Int64("id_a", c.IDA).Str("name_a", c.NameA).
-				Int64("id_b", c.IDB).Str("name_b", c.NameB).
-				Msg("Pair adjudication failed; skipping pair")
-			continue
-		}
-		if !verdict.Same {
-			nRejected++
-			log.Debug().
-				Int64("id_a", c.IDA).Str("name_a", c.NameA).
-				Int64("id_b", c.IDB).Str("name_b", c.NameB).
-				Str("reasoning", verdict.Reasoning).
-				Msg("LLM judged pair as DIFFERENT entities; not merging")
-			continue
-		}
-		nConfirmed++
-		confirmedPairs = append(confirmedPairs, [2]int64{c.IDA, c.IDB})
-	}
-
-	// 2. Cluster only the confirmed pairs — chaining through unconfirmed links is
-	//    structurally impossible.
-	clusters := core.ClusterPairs(confirmedPairs)
-
-	var (
-		nClusters       = len(clusters)
-		nWouldMerge     int
-		nMerged         int
-		nMergeFailed    int
-		nClusterErrored int
-		nClusterSkipped int
-	)
-
-	for _, ids := range clusters {
-		// Defense-in-depth: never bulk-merge a mega-cluster silently.
-		if len(ids) > maxConfirmedClusterSize {
-			nClusterSkipped++
-			log.Warn().
-				Ints64("ids", ids).
-				Int("size", len(ids)).
-				Int("cap", maxConfirmedClusterSize).
-				Msg("Confirmed cluster exceeds safety cap; skipping (will not bulk-merge)")
-			fmt.Printf("  [skip] cluster of %d members exceeds cap %d (ids=%v)\n", len(ids), maxConfirmedClusterSize, ids)
-			continue
-		}
-
-		members, err := storer.GetPersonsForDedup(ctx, ids)
-		if err != nil {
-			nClusterErrored++
-			log.Error().Err(err).Interface("ids", ids).Msg("Failed to load cluster members; skipping")
-			continue
-		}
-		if len(members) < 2 {
-			continue
-		}
-
-		canonical, ok := storage.ChooseCanonical(members)
-		if !ok {
-			// Two or more curated members — ChooseCanonical already logged it.
-			nClusterSkipped++
-			fmt.Printf("  [skip] %s -- 2+ curated entities; refusing to merge real entities\n", memberNames(members))
-			continue
-		}
-
-		fmt.Printf("  [cluster] canonical=%d (%q)\n", canonical.ID, canonical.Name)
-		for _, m := range members {
-			if m.ID == canonical.ID {
-				continue
+	for _, c := range res.Clusters {
+		switch c.SkipReason {
+		case core.PersonClusterSkipCap:
+			fmt.Printf("  [skip] cluster of %d members exceeds cap %d (ids=%v)\n", len(c.IDs), res.MaxClusterSize, c.IDs)
+		case core.PersonClusterSkipCurated:
+			fmt.Printf("  [skip] %s -- 2+ curated entities; refusing to merge real entities\n", memberNames(c.Members))
+		default:
+			fmt.Printf("  [cluster] canonical=%d (%q)\n", c.Canonical.ID, c.Canonical.Name)
+			for _, m := range c.Merges {
+				switch {
+				case m.Err != nil:
+					// Logged by core; nothing to report as done.
+				case m.Applied:
+					fmt.Printf("      merged %d (%q) -> %d (%q)\n", m.From.ID, m.From.Name, m.Into.ID, m.Into.Name)
+				default:
+					fmt.Printf("      would merge %d (%q) -> %d (%q)\n", m.From.ID, m.From.Name, m.Into.ID, m.Into.Name)
+				}
 			}
-			nWouldMerge++
-			if !personsDedupeApply {
-				fmt.Printf("      would merge %d (%q) -> %d (%q)\n", m.ID, m.Name, canonical.ID, canonical.Name)
-				continue
-			}
-			if err := storer.MergePersons(ctx, m.ID, canonical.ID); err != nil {
-				nMergeFailed++
-				log.Error().Err(err).Int64("from", m.ID).Int64("into", canonical.ID).Msg("Merge failed")
-				continue
-			}
-			nMerged++
-			fmt.Printf("      merged %d (%q) -> %d (%q)\n", m.ID, m.Name, canonical.ID, canonical.Name)
 		}
 	}
 
 	fmt.Println("\n=== summary ===")
-	fmt.Printf("  pairs evaluated:    %d\n", len(candidates))
-	fmt.Printf("  pairs confirmed:    %d\n", nConfirmed)
-	fmt.Printf("  pairs rejected:     %d\n", nRejected)
-	fmt.Printf("  pair errors:        %d\n", nPairErrored)
-	fmt.Printf("  clusters:           %d\n", nClusters)
-	fmt.Printf("  clusters skipped:   %d\n", nClusterSkipped)
-	fmt.Printf("  cluster errors:     %d\n", nClusterErrored)
+	fmt.Printf("  pairs evaluated:    %d\n", len(res.Candidates))
+	fmt.Printf("  pairs confirmed:    %d\n", res.PairsConfirmed)
+	fmt.Printf("  pairs rejected:     %d\n", res.PairsRejected)
+	fmt.Printf("  pair errors:        %d\n", res.PairErrors)
+	fmt.Printf("  clusters:           %d\n", len(res.Clusters)+res.ClusterErrors)
+	fmt.Printf("  clusters skipped:   %d\n", res.ClustersSkipped)
+	fmt.Printf("  cluster errors:     %d\n", res.ClusterErrors)
 	if personsDedupeApply {
-		fmt.Printf("  merged:             %d\n", nMerged)
-		fmt.Printf("  merge failed:       %d\n", nMergeFailed)
+		fmt.Printf("  merged:             %d\n", res.Merged)
+		fmt.Printf("  merge failed:       %d\n", res.MergeFailed)
 	} else {
-		fmt.Printf("  would merge:        %d\n", nWouldMerge)
+		fmt.Printf("  would merge:        %d\n", res.WouldMerge)
 		fmt.Println("\nDry run; pass --apply to perform the merges.")
 	}
 	fmt.Println("\nReminder: trigram only catches same-script variants. Cross-language")
@@ -211,7 +135,7 @@ func runPersonsDedupe(cmd *cobra.Command, args []string) {
 	fmt.Println("`dm persons merge --from <id> --into <id>`.")
 }
 
-func memberNames(members []storage.DedupMember) string {
+func memberNames(members []core.PersonDedupMember) string {
 	out := ""
 	for i, m := range members {
 		if i > 0 {

@@ -14,17 +14,17 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// SourceDump represents the dumped content and extracted facts for a single article.
-type SourceDump struct {
+// sourceDump represents the dumped content and extracted facts for a single article.
+type sourceDump struct {
 	SourceURL      string           `json:"source_url"`
 	Title          string           `json:"title"`
 	DatePublished  *time.Time       `json:"date_published,omitempty"`
 	Content        string           `json:"content"`
-	ExtractedFacts []SourceDumpFact `json:"extracted_facts"`
+	ExtractedFacts []sourceDumpFact `json:"extracted_facts"`
 }
 
-// SourceDumpFact is a simplified fact representation for the source dump.
-type SourceDumpFact struct {
+// sourceDumpFact is a simplified fact representation for the source dump.
+type sourceDumpFact struct {
 	SubjectEntity  string `json:"subject_entity"`
 	NormalizedFact string `json:"normalized_fact"`
 	OriginalQuote  string `json:"original_quote"`
@@ -42,15 +42,15 @@ func DumpSourceAndFacts(dir, targetName, sourceURL, title, content string, dateP
 	}
 
 	// Build dump struct
-	dump := SourceDump{
+	dump := sourceDump{
 		SourceURL:      sourceURL,
 		Title:          title,
 		DatePublished:  datePublished,
 		Content:        content,
-		ExtractedFacts: make([]SourceDumpFact, len(facts)),
+		ExtractedFacts: make([]sourceDumpFact, len(facts)),
 	}
 	for i, f := range facts {
-		dump.ExtractedFacts[i] = SourceDumpFact{
+		dump.ExtractedFacts[i] = sourceDumpFact{
 			SubjectEntity:  f.SubjectEntity,
 			NormalizedFact: f.NormalizedFactText,
 			OriginalQuote:  f.OriginalQuote,

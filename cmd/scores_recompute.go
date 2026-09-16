@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"context"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"fmt"
 
 	"github.com/joho/godotenv"
@@ -20,7 +20,7 @@ var scoresCmd = &cobra.Command{
 var scoresRecomputeCmd = &cobra.Command{
 	Use:   "recompute",
 	Short: "Recompute honesty scores for all persons using the exponential formula.",
-	Long:  `Recalculates honesty scores for every person using the smoothed exponential formula (see storage.ComputeHonestyScore). Use --dry-run to preview changes without writing.`,
+	Long:  `Recalculates honesty scores for every person using the smoothed exponential formula (see core.ComputeHonestyScore). Use --dry-run to preview changes without writing.`,
 	Annotations: map[string]string{
 		"needs_db": "true",
 	},
@@ -40,7 +40,7 @@ func runScoresRecompute(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}

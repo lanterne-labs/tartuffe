@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 	"sort"
 	"sync"
@@ -263,8 +264,8 @@ func buildPersonHistory(events []historyEvent, now time.Time) []HistoryPoint {
 			FactsAdded:     added,
 			FactsTotal:     factsTotal,
 			Contradictions: cumulTotal,
-			Score:          ComputeHonestyScore(factsTotal, ContradictionStats{Bundles: len(cumulBundles), Total: cumulTotal}),
-			RecentScore:    ComputeHonestyScore(windowFacts, ContradictionStats{Bundles: len(windowBundles), Total: windowTotal}),
+			Score:          core.ComputeHonestyScore(factsTotal, core.ContradictionStats{Bundles: len(cumulBundles), Total: cumulTotal}),
+			RecentScore:    core.ComputeHonestyScore(windowFacts, core.ContradictionStats{Bundles: len(windowBundles), Total: windowTotal}),
 		})
 	}
 	return points

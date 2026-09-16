@@ -162,16 +162,6 @@ func (c *CacheExtractor) CacheDir() string {
 	return c.cacheDir
 }
 
-// IsReadEnabled returns whether cache reading is enabled.
-func (c *CacheExtractor) IsReadEnabled() bool {
-	return c.readEnabled
-}
-
-// IsWriteEnabled returns whether cache writing is enabled.
-func (c *CacheExtractor) IsWriteEnabled() bool {
-	return c.writeEnabled
-}
-
 // LoadAllCached loads all cached content from the cache directory.
 // Returns a slice of ExtractedContent for all valid JSON files found.
 // This is useful for cache-only mode where we want to process all cached content

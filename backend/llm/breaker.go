@@ -152,12 +152,9 @@ var warmupRetryDelay = 5 * time.Second
 // answered, even if it disliked this particular request. 5xx (Cloudflare 524
 // while loading, transient 502) and transport errors are retried.
 func warmPrimaryChat(ctx context.Context, base string) bool {
-	model := strings.TrimSpace(os.Getenv("OPEN_AI_CHAT_MODEL"))
-	if model == "" {
-		model = "gpt-4o-mini" // llama-swap aliases this to the local default
-	}
+	model := ConfigFromEnv().ChatModel
 	payload := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`)
-	url := base + "/chat/completions"
+	url := ChatCompletionsURL(base)
 
 	deadline := time.Now().Add(warmupBudget)
 	for attempt := 1; time.Now().Before(deadline) && ctx.Err() == nil; attempt++ {

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/llm"
 
 	"github.com/rs/zerolog/log"
@@ -120,45 +119,22 @@ func buildBatchedSummaryPrompt(laws []Law) string {
 func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSummary, error) {
 	prompt := buildBatchedSummaryPrompt(laws)
 
-	// Initialize base LLM client and endpoint from environment
-	base := os.Getenv("OPEN_AI_API")
-	if strings.TrimSpace(base) == "" {
-		return nil, fmt.Errorf("OPEN_AI_API not set")
+	client, err := llm.NewClientFromEnv("frpolitics-summarizer")
+	if err != nil {
+		return nil, err
 	}
-	base = llm.ChatCompletionsURL(base)
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	req := categorizer.ChatRequest{
-		Model:       model,
-		Messages:    []categorizer.ChatMessage{{Role: "system", Content: prompt}},
+	content, _, err := client.Chat(ctx, llm.ChatRequest{
+		Messages:    []llm.ChatMessage{{Role: "system", Content: prompt}},
 		Temperature: 0.1,
 		// Reply budget for a batch of 10 law summaries (~150 tokens each).
 		// max_tokens is charged against the context window up front, and the
 		// old 16384 exceeded the local model's whole 12k window, so every
 		// summarization call was rejected with 400 before generation.
 		MaxTokens:      4096,
-		ResponseFormat: &categorizer.ResponseFormat{Type: "json_object"},
-	}
-	payload, _ := json.Marshal(req)
-	baseClient := categorizer.NewBaseLLMClient("frpolitics-summarizer")
-	body, err := baseClient.DoRequest(ctx, base, apiKey, payload)
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	var env categorizer.ChatResponse
-	if err := json.Unmarshal(body, &env); err != nil {
-		return nil, fmt.Errorf("decode env: %w", err)
-	}
-	if len(env.Choices) == 0 {
-		return nil, fmt.Errorf("no choices")
 	}
 
 	var rawResult map[string]struct {
@@ -167,7 +143,7 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 		Confidence      float64 `json:"confidence"`
 	}
 
-	if err := json.Unmarshal([]byte(env.Choices[0].Message.Content), &rawResult); err != nil {
+	if err := json.Unmarshal([]byte(content), &rawResult); err != nil {
 		return nil, fmt.Errorf("parse summary json: %w", err)
 	}
 

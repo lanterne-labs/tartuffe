@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 	"fmt"
 
 	"github.com/rs/zerolog/log"
@@ -37,31 +39,20 @@ func init() {
 func runStancesList(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storer: %w", err)
 	}
 	defer storer.Close()
 
-	adapter := storage.NewStanceStorerAdapter(storer)
-
 	// Determine which persons to list
 	var persons []storage.PersonInfo
 	if stancesListPerson != "" {
-		result := core.ResolveTargetName(ctx, storer, stancesListPerson)
-		if result.Error != nil {
-			return fmt.Errorf("resolving person name: %w", result.Error)
+		p, err := core.ResolvePersonID(ctx, storer, stancesListPerson, core.ExactMatchOnly)
+		if err != nil {
+			return err
 		}
-		if result.ExactMatch == nil {
-			if len(result.FuzzyMatches) > 0 {
-				top := result.FuzzyMatches[0]
-				return fmt.Errorf("no exact match for %q (best: %s at %.2f). Use exact name", stancesListPerson, top.Target.Name, top.Score)
-			}
-			return fmt.Errorf("person %q not found in database", stancesListPerson)
-		}
-		persons = []storage.PersonInfo{
-			{ID: *result.ExactMatch.PersonID, Name: result.ExactMatch.Name, EntityType: result.ExactMatch.EntityType},
-		}
+		persons = []storage.PersonInfo{toPersonInfo(p)}
 	} else {
 		persons, err = storer.GetAllPersons(ctx)
 		if err != nil {
@@ -72,7 +63,7 @@ func runStancesList(cmd *cobra.Command, args []string) error {
 	totalStances := 0
 
 	for _, p := range persons {
-		stances, err := adapter.GetStanceDocumentsForPerson(ctx, p.ID)
+		stances, err := storer.GetStanceDocumentsForPerson(ctx, p.ID)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to get stances")
 			continue
@@ -84,8 +75,8 @@ func runStancesList(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("\n## %s (%d stances)\n", p.Name, len(stances))
 		for _, s := range stances {
-			summary := truncateForDisplay(s.Summary, 100)
-			fmt.Printf("  [%d] %s (%d facts) — %s\n", s.ID, truncateForDisplay(s.ClusterLabel, 50), s.FactCount, summary)
+			summary := util.TruncateString(s.Summary, 100)
+			fmt.Printf("  [%d] %s (%d facts) — %s\n", s.ID, util.TruncateString(s.ClusterLabel, 50), s.FactCount, summary)
 		}
 		totalStances += len(stances)
 	}

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -26,10 +27,9 @@ const (
 	maxFallbacks    = 5
 )
 
-// Storer is the interface for database operations needed by the photos plugin.
+// Storer is the interface for database operations needed by the provider.
 type Storer interface {
 	SetPersonImageURL(ctx context.Context, personID int64, url string) error
-	GetPersonsWithoutImage(ctx context.Context) ([]storage.PersonSummary, error)
 }
 
 // Provider orchestrates image search, download, upload, and storage.
@@ -214,8 +214,8 @@ func isBlockedURL(url string) bool {
 
 // scoreImages scores image candidates and returns them sorted by score (highest first).
 // Images below the minimum dimensions or from blocked domains are excluded.
-func scoreImages(images []search.ImageResult, minWidth, minHeight int) []ScoredImage {
-	var scored []ScoredImage
+func scoreImages(images []search.ImageResult, minWidth, minHeight int) []scoredImage {
+	var scored []scoredImage
 
 	for _, img := range images {
 		// Filter out images below minimum size (skip filter if dimensions unknown)
@@ -231,7 +231,7 @@ func scoreImages(images []search.ImageResult, minWidth, minHeight int) []ScoredI
 		}
 
 		score, breakdown := computeScore(img)
-		scored = append(scored, ScoredImage{
+		scored = append(scored, scoredImage{
 			URL:            img.Original,
 			ThumbnailURL:   img.Thumbnail,
 			Width:          img.OriginalWidth,
@@ -244,14 +244,10 @@ func scoreImages(images []search.ImageResult, minWidth, minHeight int) []ScoredI
 		})
 	}
 
-	// Sort by score descending
-	for i := 0; i < len(scored); i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].Score > scored[i].Score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
-		}
-	}
+	// Sort by score descending; ties keep search-result order.
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].Score > scored[j].Score
+	})
 
 	return scored
 }

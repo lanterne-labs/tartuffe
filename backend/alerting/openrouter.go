@@ -11,16 +11,16 @@ import (
 	"time"
 )
 
-// OpenRouterChecker checks credit balance via the OpenRouter /auth/key endpoint.
-type OpenRouterChecker struct {
+// openRouterChecker checks credit balance via the OpenRouter /auth/key endpoint.
+type openRouterChecker struct {
 	apiURL     string // base URL, e.g. "https://openrouter.ai/api/v1"
 	apiKey     string
 	httpClient *http.Client
 }
 
-// NewOpenRouterCheckerFromEnv creates an OpenRouterChecker if OPEN_AI_API contains "openrouter.ai".
+// newOpenRouterCheckerFromEnv creates an openRouterChecker if OPEN_AI_API contains "openrouter.ai".
 // Returns nil otherwise.
-func NewOpenRouterCheckerFromEnv() *OpenRouterChecker {
+func newOpenRouterCheckerFromEnv() *openRouterChecker {
 	apiURL := os.Getenv("OPEN_AI_API")
 	apiKey := os.Getenv("OPEN_AI_KEY")
 	if apiURL == "" || apiKey == "" {
@@ -29,14 +29,14 @@ func NewOpenRouterCheckerFromEnv() *OpenRouterChecker {
 	if !strings.Contains(apiURL, "openrouter.ai") {
 		return nil
 	}
-	return &OpenRouterChecker{
+	return &openRouterChecker{
 		apiURL:     apiURL,
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-func (c *OpenRouterChecker) ProviderName() string { return "openrouter" }
+func (c *openRouterChecker) ProviderName() string { return "openrouter" }
 
 // openRouterKeyResponse models the /auth/key response.
 type openRouterKeyResponse struct {
@@ -48,7 +48,7 @@ type openRouterKeyResponse struct {
 }
 
 // CheckBalance calls GET /auth/key and computes remaining balance.
-func (c *OpenRouterChecker) CheckBalance(ctx context.Context) (*BalanceInfo, error) {
+func (c *openRouterChecker) CheckBalance(ctx context.Context) (*BalanceInfo, error) {
 	url := strings.TrimSuffix(c.apiURL, "/") + "/auth/key"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

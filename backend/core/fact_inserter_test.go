@@ -57,10 +57,6 @@ func (f *fakeInserterStorer) GetFactCanonicalVerb(ctx context.Context, factID in
 	return "", nil
 }
 
-func (f *fakeInserterStorer) InsertFactRelationsBatch(ctx context.Context, inputs []FactRelationInput) error {
-	return nil
-}
-
 // fakeStanceProcessor satisfies the mandatory stance routing without an LLM.
 type fakeStanceProcessor struct{}
 

@@ -1907,3 +1907,104 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - The response-format/JSON block must stay LAST, right before generation. A first layout that
   put the data after the JSON schema produced a malformed-JSON retry and a 76 s runaway
   generation on the same golden; rules → data → format fixed both and needed fewer votes.
+
+## Plugin isolation: phase-hook contract, pipeline registry, plugin-owned tables (2026-09-16)
+
+- The daily pipeline no longer names a plugin. `backend/plugins` defines the contract
+  (`Plugin` + optional `Ingester` / `PairProducer` / `Backfiller` phases, `Target`,
+  `IngestOptions`, `IngestStats`); `backend/pipeline` holds the one registry and runs each
+  phase over it; `cmd/pipeline.go` calls phases, never a plugin. `dm queue process` is the
+  ingest phase with a plugin filter and generic options only (per-plugin tuning lives on each
+  plugin's own command). Phase order changed once: stance fan-out now runs after ALL ingestion
+  (votes and transcripts included) instead of between them — the same-séance pair queue is
+  what pairs tonight's speech with tonight's vote, so nothing is lost.
+- `backend/deps` builds the shared env-configured components once (extractor, embedder,
+  stance manager, scrapers, searchers, object store) and hands them to plugins and commands;
+  the six hand-copied bootstrap blocks are gone. Rule: never `NewXFromEnv()` in a plugin or
+  command — take it from `deps`.
+- Plugin-owned tables are declared by the plugin: `storage.RegisterPersonTable` (repoint on
+  merge, cleanup, reset on fact deletion) replaces the twitter/news/débats table names that
+  were hard-coded in `MergePersons` and `DeleteFactsForPerson`. Each plugin keeps its own
+  SQL in `store.go`; storage keeps only generic tables. The orphan `rss_feeds` repoint is
+  gone (no code reads or writes that table).
+- frpolitics lost its news mode (`runNewsSearch*`, the news fields of `Options`, the
+  `--news-*` flags, the `plugin_fr_politics` binary): the news plugin owns news, and that
+  fallback was the source of the 2026-06 full-table sweep. The twitter handle-discovery
+  engine moved from `cmd/twitter.go` into the plugin. Débats scheduling constants live in
+  the plugin; the run-wide backfill deadline (11:00 Europe/Paris) lives in the pipeline.
+- Dead code removed: `backend/ingester`, `backend/plugins/web`, the Google CSE provider, the
+  no-op detector, the `SearchProvider` interface and its three `Search` methods, ~20
+  zero-caller storage methods, `categorizer` type aliases in `contradiction`, the
+  `majorityVote` indirection. `core` no longer imports `entityvalidator` (the rejection error
+  is `core.EntityRejectedError`), so the domain layer stopped linking the search providers;
+  `backend` no longer imports `extractor`; `contradiction` no longer imports `categorizer`.
+- News plugin API: `SearchTarget`/`TargetType` are gone, the provider takes `plugins.Target`
+  (`IsParty()`; `organization` now counts as a party like `party`); the provider owns the
+  per-target cache-extractor wiring (`Options.CacheDir`/`CacheOnly`, `UseExtractor`) and the
+  cache-only ingestion path that used to live in `cmd/news.go`; `dm facts rebuild-from-urls`
+  logic is `news.Provider.RebuildFromURLs`. `dm plugin news search --dry-run` now builds the
+  full provider (needs the LLM key like the pipeline's dry-run).
+
+## cmd/ is thin: the daily run, detection, audit, sweeps and the API server live in backend (2026-09-16)
+
+- `backend/pipeline.RunDaily(ctx, storer, notifier, RunOptions)` is the daily run; `cmd/pipeline_daily.go`
+  is a flag parser. Every generic step is a backend entry point the pipeline calls directly:
+  `core.RunStanceFanout` (explicit budget), `core.RunStanceMergeSweep`, `contradiction.RunDetection`,
+  `storage.RepointDuplicates`, `contradiction.RunRegroupStep`, `contradiction.RunAudit`,
+  `translate.Fill`, then the plugin backfill phase. Nightly budgets are constants in the pipeline
+  package. `RunOptions{Smoke: true}` (`dm pipeline daily --smoke`) bounds every phase to a handful
+  of items (one target, one item per plugin, one person per sweep, no audit, no backfill) and
+  writes no pipeline_runs row: it exercises a deploy end to end in minutes without touching the
+  run history the watchdog reads.
+- Moved out of cmd, behaviour unchanged: contradiction detection orchestration, the three-signal
+  audit eviction gate, reverify, regroup and rebundle (`backend/contradiction`); stance merge,
+  backfill/rebuild, fold, orphan assignment, metadata refresh, fact audit, attribution audit,
+  person dedupe/unaccent/affiliate, verb backfill, embedding regeneration (`backend/core`, raw SQL
+  in new storage files); the HTTP API server (`backend/api`, with an httptest suite it never
+  had); balance-alert config (`backend/alerting`); the translation fill and repair
+  (`backend/translate`); the entity-validation sweep (`backend/entityvalidator/sweep`, a
+  subpackage because storage imports entityvalidator); the scrape worker pool
+  (`backend/extractor`); the reset table list (`backend/migrate`). Vector math (dot, cosine,
+  L2, weighted centroid) is `backend/util/vector.go`; `util.LooksFrench` replaces the cmd copy.
+- Rule going forward: a cmd file holds cobra wiring, flag parsing, name input and printing.
+  Anything that loops over persons or facts, builds a prompt, calls an LLM, or carries a
+  threshold belongs in a backend package with a test.
+- The entity-validation sweep now aborts when the fact counts cannot be loaded instead of
+  validating the whole table as zero-facts (that fallback would have spent the search and LLM
+  credits the has-facts skip exists to protect).
+
+## Storage is persistence only; one LLM client; one verdict judge (2026-09-16, phase 3)
+
+- Storage no longer runs the entity validator (Wikipedia + Serper + LLM used to run inside a
+  person-insert transaction). It keeps a dependency-free `PersonGate` hook; `deps.OpenStorer`
+  attaches `deps.PersonGateFromEnv()` and every command opens the storer through it, so every
+  production insert path is gated exactly as before while `storage` imports only `core`,
+  `metrics` and `util`. Tests open a gate-less storer and no longer need `SetEntityValidator(nil)`.
+- Storage's mirror copies of core's DTOs and the 282 lines of field-copying adapters are gone:
+  `*PostgresStorer` implements the core storer interfaces directly and returns `core.*` types.
+  The honesty-score formula is `core.ComputeHonestyScore` (same constants); storage and the API
+  call it. `postgres.go` (4,900 lines) is split by topic: persons, facts, fact_dedup,
+  contradictions, scores, stances, search_queue, jobs; `postgres.go` keeps the connection.
+- `llm.ConfigFromEnv` / `llm.NewClientFromEnv` / `Client.Chat` replace 16 hand-copied client
+  bootstraps and 17 request envelopes (categorizer, detector, auditor, bundler, the core
+  dedupe/translator/synthesizer/stance files, entity validator, complaints, translate,
+  frpolitics summarizer, twitter discovery). `llm.VerdictJudge` (closed-enum verdict + rule
+  parse + one corrective retry) replaces the line-for-line clones in `core/fact_auditor.go` and
+  `contradiction/auditor.go`; both auditors' request payloads were captured before and after
+  and are byte-identical. `llm.VerifyContradiction` takes a `*llm.Client`.
+- The fact-extraction prompt lives in `promptrules` (byte-identical, captured and diffed);
+  `categorizer` no longer imports `core`, so an extractor no longer links the whole domain
+  layer. The batch content extractor is `extractor.NewBatchExtractorFromEnv`. Quote-required
+  source types are registered by each plugin (`core.RequireQuoteForSourceType`) instead of
+  being listed in core.
+- One deliberate prompt change: the three drifted copies of the stance LABEL RULES are one
+  constant (the union); the assignment prompt adds a two-line addendum for what genuinely
+  differs (label language, journalist-meta fallback). Assign golden 5/5 three times. The fold
+  and rebuild prompts grew by ~500 tokens, so the refresh budgets moved accordingly.
+- Dead exports pruned across search, extractor, entityvalidator, alerting, eval, metrics, util
+  (14 deleted, 23 unexported). Rule going forward: a symbol is exported only if a caller in
+  another package uses it.
+- Prometheus gauge collectors (pool stats, facts-without-stance invariant) start with the web
+  service (`storer.StartMetricsCollectors` from `api.Serve`), not in the storer constructor:
+  only the web process is scraped, and the collector's query racing a test TRUNCATE produced
+  a Postgres deadlock that flaked the frpolitics store tests.

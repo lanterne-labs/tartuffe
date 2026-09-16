@@ -3,7 +3,11 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // PersonRecord holds basic person information for name resolution.
@@ -27,6 +31,15 @@ type ResolvedTarget struct {
 	EntityType string
 	// PersonID is the database ID.
 	PersonID *int64
+}
+
+// Record converts the target to a PersonRecord (ID 0 when PersonID is unset).
+func (t ResolvedTarget) Record() PersonRecord {
+	rec := PersonRecord{Name: t.Name, EntityType: t.EntityType}
+	if t.PersonID != nil {
+		rec.ID = *t.PersonID
+	}
+	return rec
 }
 
 // TargetResolutionResult represents the result of resolving a target name.
@@ -105,12 +118,82 @@ func ResolveTargetName(ctx context.Context, resolver PersonResolver, query strin
 	return result
 }
 
-// ResolveTargetNames resolves multiple target names.
-// Returns a map of query -> resolution result.
-func ResolveTargetNames(ctx context.Context, resolver PersonResolver, queries []string) map[string]TargetResolutionResult {
-	results := make(map[string]TargetResolutionResult)
-	for _, query := range queries {
-		results[query] = ResolveTargetName(ctx, resolver, query)
+// ExactMatchOnly is the fuzzyFloor that makes ResolvePersonID accept exact
+// matches only: the fuzzy similarity score reaches 1 solely for names that
+// ResolveTargetName already reports as an exact match.
+const ExactMatchOnly = 1.0
+
+// PersonNotFoundError is returned by ResolvePersonID when no person matches
+// the name at the requested confidence. Candidates holds the fuzzy matches
+// that fell below the floor, best first.
+type PersonNotFoundError struct {
+	Name       string
+	Candidates []MatchCandidate
+}
+
+func (e *PersonNotFoundError) Error() string {
+	if len(e.Candidates) == 0 {
+		return fmt.Sprintf("person %q not found in database", e.Name)
 	}
-	return results
+	shown := e.Candidates
+	if len(shown) > 3 {
+		shown = shown[:3]
+	}
+	parts := make([]string, 0, len(shown))
+	for _, c := range shown {
+		parts = append(parts, fmt.Sprintf("%s (%.2f)", c.Target.Name, c.Score))
+	}
+	return fmt.Sprintf("no confident match for %q; closest: %s", e.Name, strings.Join(parts, ", "))
+}
+
+// ResolvePersonID resolves a name to one person: an exact match, else the
+// best fuzzy match scoring at least fuzzyFloor, else a *PersonNotFoundError
+// carrying the rejected candidates. Lookup failures are returned wrapped.
+func ResolvePersonID(ctx context.Context, resolver PersonResolver, name string, fuzzyFloor float64) (PersonRecord, error) {
+	result := ResolveTargetName(ctx, resolver, name)
+	if result.Error != nil {
+		return PersonRecord{}, fmt.Errorf("resolve person %q: %w", name, result.Error)
+	}
+	if result.IsExactMatch {
+		return result.ExactMatch.Record(), nil
+	}
+	if len(result.FuzzyMatches) > 0 && result.FuzzyMatches[0].Score >= fuzzyFloor {
+		top := result.FuzzyMatches[0]
+		log.Info().Str("query", name).Str("matched", top.Target.Name).Float64("score", top.Score).Msg("Using fuzzy match")
+		return top.Target.Record(), nil
+	}
+	return PersonRecord{}, &PersonNotFoundError{Name: name, Candidates: result.FuzzyMatches}
+}
+
+// ResolvePersons resolves each name with ResolvePersonID. Blank names and
+// repeated persons are dropped; names that resolve to nobody are logged and
+// skipped; a lookup failure aborts.
+func ResolvePersons(ctx context.Context, resolver PersonResolver, names []string, fuzzyFloor float64) ([]PersonRecord, error) {
+	var out []PersonRecord
+	var unresolved []string
+	seen := make(map[int64]bool)
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		person, err := ResolvePersonID(ctx, resolver, name, fuzzyFloor)
+		var notFound *PersonNotFoundError
+		if errors.As(err, &notFound) {
+			unresolved = append(unresolved, name)
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if seen[person.ID] {
+			continue
+		}
+		seen[person.ID] = true
+		out = append(out, person)
+	}
+	if len(unresolved) > 0 {
+		log.Warn().Strs("unresolved", unresolved).Int("count", len(unresolved)).Msg("Some names did not resolve to a person; skipping them")
+	}
+	return out, nil
 }

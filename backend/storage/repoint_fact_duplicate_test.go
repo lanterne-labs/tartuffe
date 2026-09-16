@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +21,7 @@ func TestRepointFactDuplicate(t *testing.T) {
 	require.NoError(t, err)
 
 	mk := func(text, verb, url string) int64 {
-		id, _, e := insertFactForTest(ctx, t, storer, StoreFactInput{
+		id, _, e := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 			SubjectEntity: "repoint subject", SubjectEntityType: "human", Lang: "en",
 			NormalizedFactText: text, EmbeddingText: text, Embedding: mockEmbedding(),
 			CanonicalVerb: verb, SourceURL: url, SourceType: "web",

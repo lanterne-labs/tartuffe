@@ -18,7 +18,9 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 
 	"github.com/rs/zerolog/log"
 	"golang.org/x/text/runes"
@@ -131,8 +133,8 @@ type debateDocument struct {
 	Chars      int
 }
 
-func (d *debateDocument) key() storage.DebateDocumentKey {
-	return storage.DebateDocumentKey{CRUID: d.CR.UID, ActorID: d.ActorID}
+func (d *debateDocument) key() DebateDocumentKey {
+	return DebateDocumentKey{CRUID: d.CR.UID, ActorID: d.ActorID}
 }
 
 // docResult is what ingesting one document yields.
@@ -157,7 +159,8 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 		minChars = debatsMinInterventionChars
 	}
 
-	persons, err := storer.GetPersonsByAssembleeID(ctx)
+	store := NewStore(storer)
+	persons, err := store.GetPersonsByAssembleeID(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("debats: loading tracked persons: %w", err)
 	}
@@ -177,13 +180,13 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	stats.Seances = seances
 	stats.Documents = len(docs)
 
-	keys := make([]storage.DebateDocumentKey, len(docs))
-	byKey := make(map[storage.DebateDocumentKey]*debateDocument, len(docs))
+	keys := make([]DebateDocumentKey, len(docs))
+	byKey := make(map[DebateDocumentKey]*debateDocument, len(docs))
 	for i := range docs {
 		keys[i] = docs[i].key()
 		byKey[keys[i]] = &docs[i]
 	}
-	pendingKeys, err := storer.FilterUnprocessedDebateDocuments(ctx, keys)
+	pendingKeys, err := store.FilterUnprocessedDebateDocuments(ctx, keys)
 	if err != nil {
 		return stats, fmt.Errorf("debats: filtering processed documents: %w", err)
 	}
@@ -207,7 +210,7 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	if err != nil {
 		return stats, fmt.Errorf("debats: embedder: %w", err)
 	}
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		return stats, fmt.Errorf("debats: stance manager: %w", err)
 	}
@@ -216,13 +219,13 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 
 	var priority map[int64]int
 	if opts.PrioritizePress {
-		priority, err = storer.GetPersonPressFactCounts(ctx)
+		priority, err = storer.GetPersonFactCountsBySourceTypes(ctx, pressSourceTypes)
 		if err != nil {
 			return stats, fmt.Errorf("debats: loading press fact counts: %w", err)
 		}
 	}
 	ingest := func(ctx context.Context, doc *debateDocument) (docResult, error) {
-		return ingestDebateDocument(ctx, storer, extractor, embedder, inserter, doc)
+		return ingestDebateDocument(ctx, store, extractor, embedder, inserter, doc)
 	}
 	runErr := runDebateDocuments(ctx, pending, opts, priority, ingest, &stats)
 	stats.ElapsedSeconds = time.Since(start).Seconds()
@@ -377,10 +380,10 @@ func groupDocuments(cr *compteRendu, persons map[string]storage.PersonInfo, minC
 // document is NOT recorded (it stays pending); facts already inserted are
 // reported in the result so the caller can log them — the next run's
 // re-extraction relies on dedupe for those.
-func ingestDebateDocument(ctx context.Context, storer *storage.PostgresStorer, extractor *categorizer.OpenAIExtractor, embedder *embedding.OpenAIEmbeddingGenerator, inserter *core.FactInserter, doc *debateDocument) (docResult, error) {
+func ingestDebateDocument(ctx context.Context, store *Store, extractor *categorizer.OpenAIExtractor, embedder *embedding.OpenAIEmbeddingGenerator, inserter *core.FactInserter, doc *debateDocument) (docResult, error) {
 	var res docResult
 	content := renderDebateDocument(doc)
-	facts, err := extractor.ExtractFactsWithConfig(ctx, core.FactExtractorConfig{
+	facts, err := extractor.ExtractFactsWithConfig(ctx, promptrules.FactExtractorConfig{
 		TargetName:         doc.Speaker,
 		SourceURL:          doc.SourceURL,
 		Content:            content,
@@ -397,7 +400,7 @@ func ingestDebateDocument(ctx context.Context, storer *storage.PostgresStorer, e
 			kept = append(kept, f)
 		} else {
 			res.DroppedSubject++
-			log.Info().Str("subject", f.SubjectEntity).Str("speaker", doc.Speaker).Str("fact", truncateRunes(f.NormalizedFactText, 100)).
+			log.Info().Str("subject", f.SubjectEntity).Str("speaker", doc.Speaker).Str("fact", util.TruncateString(f.NormalizedFactText, 100)).
 				Msg("debats: dropping fact whose subject is not the speaker")
 		}
 	}
@@ -475,7 +478,7 @@ func ingestDebateDocument(ctx context.Context, storer *storage.PostgresStorer, e
 		res.Skipped += r.Skipped
 	}
 
-	if err := storer.RecordDebateDocument(ctx, storage.DebateDocumentRecord{
+	if err := store.RecordDebateDocument(ctx, DebateDocumentRecord{
 		DebateDocumentKey: doc.key(), SourceURL: doc.SourceURL, PersonID: doc.Person.ID,
 		SeanceDate: seanceDate, Paragraphs: len(doc.Paragraphs), Chars: doc.Chars, FactsCount: res.Inserted, FactsDropped: res.DroppedSubject,
 	}); err != nil {
@@ -491,14 +494,6 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }
 
 // subjectMatches keeps only facts the extractor attributed to the speaker:
@@ -864,5 +859,5 @@ func BackfillVoteSeanceRefs(ctx context.Context, storer *storage.PostgresStorer,
 			byLawKey[fmt.Sprintf("%d-%d", int(sj.Scrutin.Legislature), int(sj.Scrutin.Numero))] = ref
 		}
 	}
-	return storer.SetFactSourceMetadataByLawKey(ctx, "assemblee_law_page", "seance_ref", byLawKey)
+	return storer.SetFactSourceMetadataByKey(ctx, "assemblee_law_page", "law_key", "seance_ref", byLawKey)
 }

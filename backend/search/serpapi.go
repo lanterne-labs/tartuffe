@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -88,16 +87,8 @@ type NewsResult struct {
 	StoryToken string
 }
 
-// NewsSearchPreview contains metadata about search results without the full results.
-type NewsSearchPreview struct {
-	// TotalResults is the estimated number of results available.
-	TotalResults int
-	// Query is the search query that was executed.
-	Query string
-}
-
-// SerpAPINewsProvider implements news search using the SerpAPI Google News endpoint.
-type SerpAPINewsProvider struct {
+// serpAPINewsProvider implements news search using the SerpAPI Google News endpoint.
+type serpAPINewsProvider struct {
 	// apiKey is the SerpAPI API key.
 	apiKey string
 	// httpClient is the client used to make HTTP requests.
@@ -130,28 +121,19 @@ type serpAPIResponse struct {
 	Error string `json:"error"`
 }
 
-// NewSerpAPINewsProvider creates a new SerpAPINewsProvider instance.
-func NewSerpAPINewsProvider(apiKey string) (*SerpAPINewsProvider, error) {
+// newSerpAPINewsProvider creates a new serpAPINewsProvider instance.
+func newSerpAPINewsProvider(apiKey string) (*serpAPINewsProvider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("SerpAPI API key cannot be empty")
 	}
-	return &SerpAPINewsProvider{
+	return &serpAPINewsProvider{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 
-// NewSerpAPINewsProviderFromEnv creates a provider from the SERPAPI_KEY environment variable.
-func NewSerpAPINewsProviderFromEnv() (*SerpAPINewsProvider, error) {
-	apiKey := os.Getenv("SERPAPI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("SERPAPI_KEY environment variable not set")
-	}
-	return NewSerpAPINewsProvider(apiKey)
-}
-
 // buildSearchURL constructs the SerpAPI request URL with all parameters.
-func (s *SerpAPINewsProvider) buildSearchURL(query string, opts NewsSearchOptions) string {
+func (s *serpAPINewsProvider) buildSearchURL(query string, opts NewsSearchOptions) string {
 	baseURL := "https://serpapi.com/search.json"
 	params := url.Values{}
 	params.Add("api_key", s.apiKey)
@@ -218,7 +200,7 @@ func mapLocationToGLCode(location string) string {
 }
 
 // SearchNews performs a news search for the given query.
-func (s *SerpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
+func (s *serpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
 	searchURL := s.buildSearchURL(query, opts)
 
 	log.Debug().Str("query", query).Interface("opts", opts).Msg("Performing SerpAPI news search")
@@ -271,66 +253,6 @@ func (s *SerpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) (
 	return results, nil
 }
 
-// PreviewSearch performs a lightweight search to check if any results exist.
-// This is useful for prioritization - skip targets with no coverage.
-func (s *SerpAPINewsProvider) PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error) {
-	// Override limit to 1 for a quick check
-	previewOpts := opts
-	previewOpts.Limit = 1
-
-	searchURL := s.buildSearchURL(query, previewOpts)
-
-	log.Debug().Str("query", query).Msg("Performing SerpAPI news preview search")
-
-	req, err := http.NewRequest("GET", searchURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create preview request: %w", err)
-	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute preview request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("SerpAPI preview request failed with status: %s", resp.Status)
-	}
-
-	var searchResp serpAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
-		return nil, fmt.Errorf("failed to decode preview response: %w", err)
-	}
-
-	if searchResp.Error != "" {
-		return nil, fmt.Errorf("SerpAPI error: %s", searchResp.Error)
-	}
-
-	return &NewsSearchPreview{
-		TotalResults: len(searchResp.NewsResults), // Use actual count since SerpAPI may not always return total
-		Query:        query,
-	}, nil
-}
-
-// Search implements the SearchProvider interface for backwards compatibility.
-// It performs a news search and converts results to the generic SearchResult format.
-func (s *SerpAPINewsProvider) Search(personName string) ([]SearchResult, error) {
-	newsResults, err := s.SearchNews(personName, NewsSearchOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]SearchResult, 0, len(newsResults))
-	for _, nr := range newsResults {
-		results = append(results, SearchResult{
-			URL:     nr.Link,
-			Title:   nr.Title,
-			Snippet: nr.Snippet,
-		})
-	}
-	return results, nil
-}
-
 // serpAPIWebResponse defines the structure for the JSON response from SerpAPI Google Search (organic results).
 type serpAPIWebResponse struct {
 	SearchMetadata struct {
@@ -347,7 +269,7 @@ type serpAPIWebResponse struct {
 }
 
 // SearchWeb performs a general web search using SerpAPI's Google Search engine.
-func (s *SerpAPINewsProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
+func (s *serpAPINewsProvider) SearchWeb(query string, limit int) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -447,7 +369,7 @@ type serpAPIImageResponse struct {
 }
 
 // SearchImages performs an image search for the given query using SerpAPI Google Images.
-func (s *SerpAPINewsProvider) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
+func (s *serpAPINewsProvider) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
 	baseURL := "https://serpapi.com/search.json"
 	params := url.Values{}
 	params.Add("api_key", s.apiKey)

@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"digital-mirror/backend/promptrules"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -36,34 +35,17 @@ const verifyMaxTokens = 256
 // This is the single source of truth for the verification call. Both
 // contradiction.OpenAIContradictionDetector and core.StanceManager delegate
 // here so the stance path and the batch paths apply identical refutation logic.
-func VerifyContradiction(ctx context.Context, client *BaseLLMClient, apiURL, apiKey, model, factA, factB, claimedReason string) (keep bool, reason string, err error) {
+func VerifyContradiction(ctx context.Context, c *Client, factA, factB, claimedReason string) (keep bool, reason string, err error) {
 	prompt := fmt.Sprintf(promptrules.RefuteContradictionPrompt, factA, factB, claimedReason)
 
-	reqPayload := ChatRequest{
-		Model:       model,
+	content, _, err := c.Chat(ctx, ChatRequest{
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
 		MaxTokens:   verifyMaxTokens,
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return false, "", fmt.Errorf("marshal verify request: %w", err)
-	}
-
-	bodyBytes, err := client.DoRequest(ctx, apiURL, apiKey, payloadBytes)
+	})
 	if err != nil {
 		return false, "", fmt.Errorf("verify API call failed: %w", err)
 	}
-
-	var chatResp ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return false, "", fmt.Errorf("decode verify response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || strings.TrimSpace(chatResp.Choices[0].Message.Content) == "" {
-		return false, "", fmt.Errorf("verify response had no content")
-	}
-
-	content := chatResp.Choices[0].Message.Content
 
 	vm := verifyVerdictRegex.FindStringSubmatch(content)
 	if vm == nil {

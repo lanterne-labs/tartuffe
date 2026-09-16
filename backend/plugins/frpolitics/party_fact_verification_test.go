@@ -108,7 +108,7 @@ func VerifyDeputyPartyConsistency(t *testing.T, ctx context.Context, storer *sto
 		if partyPositions, exists := partyPositionsByLaw[extractLawKeyFromVote(vote)]; exists {
 			if partyPos, partyExists := partyPositions[vote.OrganeRef]; partyExists {
 				// Get deputy's party affiliation at vote time
-				deputyID, err := storer.GetPersonIDByAssembleeID(ctx, vote.AssembleeID)
+				deputyID, err := storer.GetPersonIDByAttribute(ctx, "assemblee_id", vote.AssembleeID)
 				if err != nil {
 					errors = append(errors, AffiliationError{
 						DeputyName: vote.DisplayName,

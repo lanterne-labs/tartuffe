@@ -38,7 +38,7 @@ const sampleArticleHTML = `<!DOCTYPE html>
 const tinyPageHTML = `<!DOCTYPE html>
 <html><head><title>Tiny</title></head><body><p>Only this.</p></body></html>`
 
-// TestLocalExtractor_HappyPath verifies that LocalExtractor returns a clean
+// TestLocalExtractor_HappyPath verifies that localExtractor returns a clean
 // ExtractedContent from a well-formed article — stripping nav/aside/footer
 // and surfacing the title from <meta og:title>.
 func TestLocalExtractor_HappyPath(t *testing.T) {
@@ -48,7 +48,7 @@ func TestLocalExtractor_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	out, err := ext.ExtractContent(srv.URL + "/article")
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -77,7 +77,7 @@ func TestLocalExtractor_ShortContentTriggersFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	_, err := ext.ExtractContent(srv.URL + "/stub")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "below")
@@ -91,7 +91,7 @@ func TestLocalExtractor_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	_, err := ext.ExtractContent(srv.URL + "/blocked")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 403")
@@ -99,7 +99,7 @@ func TestLocalExtractor_HTTPError(t *testing.T) {
 
 // TestLocalExtractor_InvalidURL — bad URLs fail fast before any HTTP.
 func TestLocalExtractor_InvalidURL(t *testing.T) {
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	_, err := ext.ExtractContent("not-a-valid-url")
 	require.Error(t, err)
 }
@@ -121,7 +121,7 @@ func TestLocalExtractor_RotatesUserAgentOn403(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	out, err := ext.ExtractContent(srv.URL + "/article")
 	require.NoError(t, err, "should recover by rotating off the blocked Chrome UA")
 	require.NotNil(t, out)
@@ -139,7 +139,7 @@ func TestLocalExtractor_404ShortCircuits(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ext := NewLocalExtractor()
+	ext := newLocalExtractor()
 	_, err := ext.ExtractContent(srv.URL + "/gone")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404")

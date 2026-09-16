@@ -8,22 +8,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestValidateFactAuditRule_ClosedEnum confirms strict membership semantics:
-// only the canonical tokens are accepted; anything else returns an error so
-// the auditor can issue a corrective retry. We deliberately reject the
-// LLM-emitted variants ("vague_or_not_concrete", "rule_6_vague", "vague (rule
-// 6)") rather than normalising them, because tolerant matching hid bugs.
-func TestValidateFactAuditRule_ClosedEnum(t *testing.T) {
+// The fact auditor's parse is llm.VerdictJudge.Parse (tested in backend/llm);
+// these tests pin the fact-audit enums wired into it: the closed rule list
+// and the keep/delete/unsure verdict set.
+func newFactAuditorForParse(t *testing.T) *OpenAIFactAuditor {
+	t.Helper()
+	t.Setenv("OPEN_AI_KEY", "k")
+	t.Setenv("OPEN_AI_API", "http://unused")
+	a, err := NewOpenAIFactAuditorFromEnv()
+	require.NoError(t, err)
+	return a
+}
+
+// TestFactAuditRules_ClosedEnum confirms strict membership semantics: only the
+// canonical tokens are accepted; anything else is an error so the judge issues
+// a corrective retry. LLM-emitted variants ("vague_or_not_concrete",
+// "rule_6_vague", "vague (rule 6)") are rejected rather than normalised,
+// because tolerant matching hid bugs.
+func TestFactAuditRules_ClosedEnum(t *testing.T) {
+	a := newFactAuditorForParse(t)
 	good := []string{
 		"none", "vague", "speculative", "pattern_of_behavior",
 		"not_about_entity", "lawyers_as_subject", "not_contradictable",
 		"journalist_characterization", "polls_or_surveys",
-		"  None  ", "VAGUE", // case + whitespace tolerated
+		"  Vague  ", "VAGUE", // case + whitespace tolerated
 	}
 	for _, raw := range good {
-		got, err := validateFactAuditRule(raw)
+		verdict := "delete"
+		if strings.TrimSpace(strings.ToLower(raw)) == "none" {
+			verdict = "keep"
+		}
+		res, err := a.judge.Parse("REASONING: x.\nRULE: " + raw + "\nVERDICT: " + verdict)
 		require.NoErrorf(t, err, "expected %q to validate", raw)
-		assert.Equalf(t, strings.ToLower(strings.TrimSpace(raw)), got, "input=%q", raw)
+		assert.Equalf(t, strings.ToLower(strings.TrimSpace(raw)), res.Rule, "input=%q", raw)
 	}
 
 	bad := []string{
@@ -37,60 +54,28 @@ func TestValidateFactAuditRule_ClosedEnum(t *testing.T) {
 		"banana",
 	}
 	for _, raw := range bad {
-		_, err := validateFactAuditRule(raw)
+		_, err := a.judge.Parse("REASONING: x.\nRULE: " + raw + "\nVERDICT: delete")
 		require.Errorf(t, err, "expected %q to be rejected", raw)
 	}
 }
 
-// TestParseFactAuditResponse_RejectsBadRule covers the end-to-end parser flow:
-// a RULE outside the closed enum surfaces as an error so Audit() can retry.
-func TestParseFactAuditResponse_RejectsBadRule(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: vague qualifiers, no concrete metric.",
-		"RULE: vague_or_not_concrete (rule 6)",
-		"VERDICT: delete",
-	}, "\n")
-	res := parseFactAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "closed enum")
-	assert.Equal(t, FactVerdictDelete, res.Verdict)
-}
-
-// Cross-check: keep verdicts must pair with rule "none". Anything else is a
-// model self-contradiction worth retrying.
-func TestParseFactAuditResponse_KeepRequiresNone(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: solid Type 1 fact.",
-		"RULE: vague",
-		"VERDICT: keep",
-	}, "\n")
-	res := parseFactAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "VERDICT=keep requires RULE=none")
-}
-
-// And the inverse: delete/unsure verdicts must NOT pair with rule "none" —
-// the model has to name a rule.
-func TestParseFactAuditResponse_DeleteRequiresRule(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: I think this is bad but cannot say why.",
-		"RULE: none",
-		"VERDICT: delete",
-	}, "\n")
-	res := parseFactAuditResponse(resp)
-	require.Error(t, res.Err)
-	assert.Contains(t, res.Err.Error(), "non-'none'")
-}
-
-// Happy path: a clean canonical response parses without error.
-func TestParseFactAuditResponse_HappyPath(t *testing.T) {
-	resp := strings.Join([]string{
-		"REASONING: prediction about a third party, not the subject's own action.",
-		"RULE: speculative",
-		"VERDICT: delete",
-	}, "\n")
-	res := parseFactAuditResponse(resp)
-	require.NoError(t, res.Err)
-	assert.Equal(t, FactVerdictDelete, res.Verdict)
+func TestFactAuditParse_Verdicts(t *testing.T) {
+	a := newFactAuditorForParse(t)
+	res, err := a.judge.Parse("REASONING: prediction about a third party.\nRULE: speculative\nVERDICT: delete")
+	require.NoError(t, err)
+	assert.Equal(t, string(FactVerdictDelete), res.Verdict)
 	assert.Equal(t, "speculative", res.Rule)
+
+	res, err = a.judge.Parse("REASONING: borderline.\nRULE: vague\nVERDICT: unsure")
+	require.NoError(t, err)
+	assert.Equal(t, string(FactVerdictUnsure), res.Verdict)
+
+	_, err = a.judge.Parse("REASONING: solid.\nRULE: vague\nVERDICT: keep")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "VERDICT=keep requires RULE=none")
+
+	// A verdict from the contradiction auditor's enum is not a verdict here.
+	_, err = a.judge.Parse("REASONING: x.\nRULE: vague\nVERDICT: remove")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "could not parse VERDICT line")
 }

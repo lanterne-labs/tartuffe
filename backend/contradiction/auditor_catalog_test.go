@@ -30,12 +30,17 @@ func TestCatalogEnumInSync(t *testing.T) {
 		t.Fatal("no [token] buckets parsed from FalsePositivePatterns — catalog format changed?")
 	}
 
+	allowed := append(append([]string{}, contradictionAuditAllowedRulesList...), contradictionAuditUnlistedRules...)
+	allowedSet := map[string]bool{}
+	for _, token := range allowed {
+		allowedSet[token] = true
+	}
 	for token := range catalogTokens {
-		if !contradictionAuditAllowedRules[token] {
+		if !allowedSet[token] {
 			t.Errorf("catalog bucket %q is not in the auditor allowed-rule enum", token)
 		}
 	}
-	for token := range contradictionAuditAllowedRules {
+	for _, token := range allowed {
 		if token == "none" {
 			continue
 		}

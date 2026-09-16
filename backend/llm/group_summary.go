@@ -31,7 +31,7 @@ type groupSummaryResponse struct {
 // by the regroup pass. A non-nil error is an operational failure (LLM unreachable /
 // unparseable) — callers should log it and leave the existing summary untouched
 // rather than wiping it.
-func SynthesizeContradictionGroupSummary(ctx context.Context, client *BaseLLMClient, apiURL, apiKey, model, baseFact string, spokes []GroupSpoke) (summary, summaryEn string, err error) {
+func SynthesizeContradictionGroupSummary(ctx context.Context, client *Client, baseFact string, spokes []GroupSpoke) (summary, summaryEn string, err error) {
 	if len(spokes) == 0 {
 		return "", "", fmt.Errorf("group summary requested with no contradicting facts")
 	}
@@ -47,31 +47,16 @@ func SynthesizeContradictionGroupSummary(ctx context.Context, client *BaseLLMCli
 
 	prompt := fmt.Sprintf(promptrules.GroupSummaryPrompt, baseFact, b.String())
 
-	reqPayload := ChatRequest{
-		Model:       model,
+	content, _, err := client.Chat(ctx, ChatRequest{
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
 		MaxTokens:   groupSummaryMaxTokens,
-	}
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", "", fmt.Errorf("marshal group summary request: %w", err)
-	}
-
-	bodyBytes, err := client.DoRequest(ctx, apiURL, apiKey, payloadBytes)
+	})
 	if err != nil {
 		return "", "", fmt.Errorf("group summary API call failed: %w", err)
 	}
 
-	var chatResp ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", "", fmt.Errorf("decode group summary response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || strings.TrimSpace(chatResp.Choices[0].Message.Content) == "" {
-		return "", "", fmt.Errorf("group summary response had no content")
-	}
-
-	content := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	content = strings.TrimSpace(content)
 	jsonStr := extractJSONObject(content)
 	if jsonStr == "" {
 		return "", "", fmt.Errorf("group summary response had no JSON object: %q", content)

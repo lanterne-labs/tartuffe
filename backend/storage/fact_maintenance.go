@@ -1,0 +1,216 @@
+package storage
+
+import (
+	"context"
+	"digital-mirror/backend/core"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	pgvector "github.com/pgvector/pgvector-go"
+	"github.com/rs/zerolog/log"
+)
+
+// Fact maintenance queries used by the sweeps in backend/core (fold, verb
+// backfill, embedding regeneration) and by the duplicate-repoint pass.
+
+// RepointDuplicates finds every 'duplicate' fact that still anchors a
+// contradiction and (when apply) repoints those contradictions onto the
+// canonical fact. Returns (duplicatePairsProcessed, repointed, dropped). Shared
+// by `dm facts repoint-duplicates` and the daily-pipeline cleanup step. A
+// per-pair failure is logged and skipped so one bad pair never aborts the sweep.
+func (s *PostgresStorer) RepointDuplicates(ctx context.Context, apply bool) (processed, repointed, dropped int, err error) {
+	pairs, err := s.GetDuplicatesNeedingRepoint(ctx)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("failed to list duplicates needing repoint: %w", err)
+	}
+	if len(pairs) == 0 {
+		log.Info().Msg("Repoint duplicates: no duplicate facts anchor contradictions, nothing to do")
+		return 0, 0, 0, nil
+	}
+	if !apply {
+		return len(pairs), 0, 0, nil
+	}
+
+	for _, p := range pairs {
+		r, d, rErr := s.RepointFactDuplicate(ctx, p.General, p.Specific)
+		if rErr != nil {
+			log.Error().Err(rErr).Int64("general", p.General).Int64("specific", p.Specific).
+				Msg("Repoint duplicates: failed for pair, skipping")
+			continue
+		}
+		processed++
+		repointed += r
+		dropped += d
+		log.Info().Int64("general", p.General).Int64("specific", p.Specific).
+			Int("repointed", r).Int("dropped", d).
+			Msg("Repointed contradictions off duplicate fact")
+	}
+	return processed, repointed, dropped, nil
+}
+
+// GetFoldFactsForPerson returns the person's active (non-duplicate) facts with
+// their embeddings, in the shape the fold pass needs.
+func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]core.FactForFold, error) {
+	facts, err := s.GetFactsWithEmbeddingsForPerson(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]core.FactForFold, len(facts))
+	for i, f := range facts {
+		out[i] = core.FactForFold{ID: f.ID, Text: f.Text, Embedding: f.Embedding}
+	}
+	return out, nil
+}
+
+// ListSharedFactIDs returns, among factIDs, the facts mentioned by more than
+// one person (shared co-actor facts such as votes).
+func (s *PostgresStorer) ListSharedFactIDs(ctx context.Context, factIDs []int64) (map[int64]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT fs.fact_id
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fs.fact_id = ANY($1)
+		GROUP BY fs.fact_id
+		HAVING COUNT(DISTINCT fm.person_id) > 1`, factIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load shared-fact ids: %w", err)
+	}
+	defer rows.Close()
+	shared := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan shared-fact id: %w", err)
+		}
+		shared[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shared-fact ids: %w", err)
+	}
+	return shared, nil
+}
+
+// ListContradictionFactPairs returns the (fact_a, fact_b) pairs of every
+// recorded contradiction of the person.
+func (s *PostgresStorer) ListContradictionFactPairs(ctx context.Context, personID int64) ([]core.ContradictionFactPair, error) {
+	rows, err := s.ListContradictions(ctx, &personID, false, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]core.ContradictionFactPair, len(rows))
+	for i, c := range rows {
+		out[i] = core.ContradictionFactPair{ID: c.ID, FactAID: c.FactAID, FactBID: c.FactBID}
+	}
+	return out, nil
+}
+
+// ListFactsWithoutCanonicalVerb returns every fact whose canonical_verb is
+// unset, with its current embedding_text, oldest id first.
+func (s *PostgresStorer) ListFactsWithoutCanonicalVerb(ctx context.Context) ([]core.FactEmbeddingText, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, COALESCE(embedding_text, '')
+		FROM facts
+		WHERE canonical_verb IS NULL OR canonical_verb = ''
+		ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query facts: %w", err)
+	}
+	defer rows.Close()
+	return scanFactEmbeddingTexts(rows)
+}
+
+// UpdateFactVerbAndEmbedding sets a fact's canonical verb, its verb-free
+// embedding text and the embedding regenerated from that text.
+func (s *PostgresStorer) UpdateFactVerbAndEmbedding(ctx context.Context, factID int64, verb, embeddingText string, embedding []float32) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE facts
+		SET canonical_verb = $1, embedding_text = $2, embedding = $3
+		WHERE id = $4`,
+		verb, embeddingText, pgvector.NewVector(embedding), factID)
+	if err != nil {
+		return fmt.Errorf("failed to update fact %d: %w", factID, err)
+	}
+	return nil
+}
+
+// CountFactsWithoutEmbedding counts the facts whose embedding is NULL.
+func (s *PostgresStorer) CountFactsWithoutEmbedding(ctx context.Context) (int64, error) {
+	var total int64
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NULL`).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count facts to regenerate: %w", err)
+	}
+	return total, nil
+}
+
+// ListFactsWithoutEmbedding returns up to limit facts whose embedding is NULL,
+// oldest id first, with the text to embed (embedding_text, else fact_text —
+// the same source string the ingestion pipeline uses).
+func (s *PostgresStorer) ListFactsWithoutEmbedding(ctx context.Context, limit int) ([]core.FactEmbeddingText, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, COALESCE(NULLIF(embedding_text, ''), fact_text)
+		FROM facts
+		WHERE embedding IS NULL
+		ORDER BY id
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query batch: %w", err)
+	}
+	defer rows.Close()
+	return scanFactEmbeddingTexts(rows)
+}
+
+func scanFactEmbeddingTexts(rows pgx.Rows) ([]core.FactEmbeddingText, error) {
+	var out []core.FactEmbeddingText
+	for rows.Next() {
+		var f core.FactEmbeddingText
+		if err := rows.Scan(&f.ID, &f.EmbeddingText); err != nil {
+			return nil, fmt.Errorf("scan row: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rows: %w", err)
+	}
+	return out, nil
+}
+
+// CountEmbeddingInvalidationPlan returns the row counts an embedding
+// invalidation would touch: all facts, facts with an embedding, and stance
+// documents.
+func (s *PostgresStorer) CountEmbeddingInvalidationPlan(ctx context.Context) (facts, embedded, stances int64, err error) {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts`).Scan(&facts); err != nil {
+		return 0, 0, 0, fmt.Errorf("count facts: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL`).Scan(&embedded); err != nil {
+		return 0, 0, 0, fmt.Errorf("count embedded facts: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM stance_documents`).Scan(&stances); err != nil {
+		return 0, 0, 0, fmt.Errorf("count stance documents: %w", err)
+	}
+	return facts, embedded, stances, nil
+}
+
+// InvalidateEmbeddings sets facts.embedding = NULL for every row and deletes
+// every stance document, in one transaction. Used when swapping the embedding
+// model: the stored vectors live in a different vector space than the new
+// model. Returns the number of embeddings nulled and stance documents deleted.
+func (s *PostgresStorer) InvalidateEmbeddings(ctx context.Context) (nulled, stancesDeleted int64, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	updateRes, err := tx.Exec(ctx, `UPDATE facts SET embedding = NULL WHERE embedding IS NOT NULL`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("nulling fact embeddings: %w", err)
+	}
+	deleteRes, err := tx.Exec(ctx, `DELETE FROM stance_documents`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("deleting stance_documents: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("commit transaction: %w", err)
+	}
+	return updateRes.RowsAffected(), deleteRes.RowsAffected(), nil
+}

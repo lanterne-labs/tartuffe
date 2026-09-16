@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 	"encoding/json"
@@ -58,17 +59,14 @@ func runDedupeCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize storage
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
-	// Create storage adapter for deduplicator
-	dedupeStorer := storage.NewDedupeStorerAdapter(storer)
-
 	// Create deduplicator without LLM (for fast checking)
-	deduplicator := core.NewFactDeduplicator(dedupeStorer, nil)
+	deduplicator := core.NewFactDeduplicator(storer, nil)
 
 	// Build options - always dry run, skip LLM for fast checking
 	opts := core.DedupeOptions{
@@ -151,11 +149,11 @@ func outputCheckResultsJSON(result *core.DedupeResult, storer *storage.PostgresS
 }
 
 func outputCheckResultsText(result *core.DedupeResult, storer *storage.PostgresStorer, ctx context.Context) {
-	fmt.Println()
-	fmt.Println("=== DUPLICATE CHECK RESULTS ===")
-	fmt.Printf("Total facts checked:     %d\n", result.TotalFactsChecked)
-	fmt.Printf("Potential duplicates:    %d\n", result.AutoDeduped)
-	fmt.Printf("Duplicate groups found:  %d\n", len(result.DuplicateGroups))
+	printResults("DUPLICATE CHECK RESULTS", []resultRow{
+		{Label: "Total facts checked", Value: int64(result.TotalFactsChecked)},
+		{Label: "Potential duplicates", Value: int64(result.AutoDeduped)},
+		{Label: "Duplicate groups found", Value: int64(len(result.DuplicateGroups))},
+	})
 
 	if len(result.DuplicateGroups) == 0 {
 		fmt.Println("\nNo potential duplicates found.")
@@ -179,13 +177,13 @@ func outputCheckResultsText(result *core.DedupeResult, storer *storage.PostgresS
 			// Fetch and display fact text
 			canonicalFact, err := storer.GetFactByID(ctx, group.CanonicalID)
 			if err == nil {
-				fmt.Printf("    Canonical: %s\n", truncateText(canonicalFact.NormalizedFactText, 100))
+				fmt.Printf("    Canonical: %s\n", util.TruncateString(canonicalFact.NormalizedFactText, 100))
 			}
 
 			for _, dupID := range group.DuplicateIDs {
 				dupFact, err := storer.GetFactByID(ctx, dupID)
 				if err == nil {
-					fmt.Printf("    Duplicate [%d]: %s\n", dupID, truncateText(dupFact.NormalizedFactText, 100))
+					fmt.Printf("    Duplicate [%d]: %s\n", dupID, util.TruncateString(dupFact.NormalizedFactText, 100))
 				}
 			}
 		} else {
@@ -197,11 +195,4 @@ func outputCheckResultsText(result *core.DedupeResult, storer *storage.PostgresS
 	fmt.Println()
 	fmt.Println("To mark these as duplicates, run: ./dm dedupe run")
 	fmt.Println("Use --target to process a specific person")
-}
-
-func truncateText(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"digital-mirror/backend/contradiction"
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/storage"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -59,18 +59,16 @@ func init() {
 func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storer: %w", err)
 	}
 	defer storer.Close()
 
-	adapter := storage.NewStanceStorerAdapter(storer)
-
 	var stanceManager *core.StanceManager
 	var bundler *contradiction.Bundler
 	if !stancesRebuildDryRun {
-		stanceManager, err = core.NewStanceManagerFromEnv(adapter)
+		stanceManager, err = core.NewStanceManagerFromEnv(storer)
 		if err != nil {
 			return fmt.Errorf("failed to create stance manager: %w", err)
 		}
@@ -93,11 +91,11 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	if stancesRebuildPerson != "" && stancesRebuildPersonsFile != "" {
 		return fmt.Errorf("--person and --persons-file are mutually exclusive")
 	}
-	var persons []storage.PersonInfo
+	var persons []core.PersonRecord
 	if stancesRebuildPersonsFile != "" {
 		persons, err = resolvePersonsFromFile(ctx, storer, stancesRebuildPersonsFile)
 	} else {
-		persons, err = getPersonsForBackfill(ctx, storer, stancesRebuildPerson)
+		persons, err = personsForCommand(ctx, storer, stancesRebuildPerson, storer.GetPersonsWithFacts)
 	}
 	if err != nil {
 		return err
@@ -117,51 +115,34 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	var totalMerged, totalContradictions int64
 	var totalRebundledFast, totalRebundledLLM, totalBundleFailed int64
 
-	processOne := func(p storage.PersonInfo) {
-		existing, err := adapter.GetStanceDocumentsForPerson(ctx, p.ID)
-		if err != nil {
-			log.Error().Err(err).Str("person", p.Name).Msg("Failed to get existing stances")
-			return
-		}
+	rebundle := personRebundler(storer, bundler)
+	opts := core.RebuildOptions{DryRun: stancesRebuildDryRun, Resume: stancesRebuildResume}
 
-		if stancesRebuildResume && len(existing) > 0 {
-			atomic.AddInt64(&skipped, 1)
-			return
-		}
-
-		if len(existing) > 0 {
-			if stancesRebuildDryRun {
-				fmt.Printf("[DRY-RUN] Would delete %d existing stances for %s\n", len(existing), p.Name)
-			} else {
-				if err := adapter.DeleteStanceDocumentsForPerson(ctx, p.ID); err != nil {
-					log.Error().Err(err).Str("person", p.Name).Msg("Failed to delete existing stances")
-					return
-				}
-				log.Info().Str("person", p.Name).Int("deleted", len(existing)).Msg("Deleted existing stances")
-			}
-			atomic.AddInt64(&totalDeleted, int64(len(existing)))
-		}
-
-		stats, err := backfillStancesForPerson(ctx, storer, adapter, stanceManager, p.ID, p.Name, stancesRebuildDryRun)
+	processOne := func(p core.PersonRecord) {
+		st, err := core.RebuildStancesForPerson(ctx, storer, stanceManager, rebundle, p, opts)
+		// Deleted is set even when the backfill after it failed.
+		atomic.AddInt64(&totalDeleted, int64(st.Deleted))
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Failed to rebuild stances")
 			return
 		}
-		atomic.AddInt64(&totalCreated, int64(stats.StancesCreated))
-		atomic.AddInt64(&totalMerged, int64(stats.StancesMerged))
-		atomic.AddInt64(&totalContradictions, int64(stats.ContradictionsDetected))
-
-		if stancesRebuildDryRun {
+		if st.Skipped {
+			atomic.AddInt64(&skipped, 1)
 			return
 		}
-
-		fast, llm, failed := rebundleContradictionsForPerson(ctx, storer, bundler, p)
-		atomic.AddInt64(&totalRebundledFast, fast)
-		atomic.AddInt64(&totalRebundledLLM, llm)
-		atomic.AddInt64(&totalBundleFailed, failed)
+		if stancesRebuildDryRun && st.Deleted > 0 {
+			fmt.Printf("[DRY-RUN] Would delete %d existing stances for %s\n", st.Deleted, p.Name)
+		}
+		printBackfillDryRunGroups(st.Backfill)
+		atomic.AddInt64(&totalCreated, int64(st.Backfill.StancesCreated))
+		atomic.AddInt64(&totalMerged, int64(st.Backfill.StancesMerged))
+		atomic.AddInt64(&totalContradictions, int64(st.Backfill.ContradictionsDetected))
+		atomic.AddInt64(&totalRebundledFast, st.RebundledFast)
+		atomic.AddInt64(&totalRebundledLLM, st.RebundledLLM)
+		atomic.AddInt64(&totalBundleFailed, st.BundleFailed)
 	}
 
-	jobs := make(chan storage.PersonInfo)
+	jobs := make(chan core.PersonRecord)
 	var wg sync.WaitGroup
 	for i := 0; i < stancesRebuildParallel; i++ {
 		wg.Add(1)
@@ -179,36 +160,27 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 	wg.Wait()
 
 	processed := int64(len(persons)) - skipped
-	fmt.Println()
-	fmt.Println("=== STANCE REBUILD RESULTS ===")
-	fmt.Printf("Persons processed:               %d\n", processed)
-	fmt.Printf("Persons skipped (resume):        %d\n", skipped)
-	fmt.Printf("Stances deleted:                 %d\n", totalDeleted)
-	fmt.Printf("Stances created:                 %d\n", totalCreated)
+	rows := []resultRow{
+		{Label: "Persons processed", Value: processed},
+		{Label: "Persons skipped (resume)", Value: skipped},
+		{Label: "Stances deleted", Value: totalDeleted},
+		{Label: "Stances created", Value: totalCreated},
+	}
 	if !stancesRebuildDryRun {
-		fmt.Printf("Stances merged (centroid):       %d\n", totalMerged)
-		fmt.Printf("Contradictions detected (new):   %d\n", totalContradictions)
-		fmt.Printf("Contradictions rebundled (SQL):  %d\n", totalRebundledFast)
-		fmt.Printf("Contradictions rebundled (LLM):  %d\n", totalRebundledLLM)
+		rows = append(rows,
+			resultRow{Label: "Stances merged (centroid)", Value: totalMerged},
+			resultRow{Label: "Contradictions detected (new)", Value: totalContradictions},
+			resultRow{Label: "Contradictions rebundled (SQL)", Value: totalRebundledFast},
+			resultRow{Label: "Contradictions rebundled (LLM)", Value: totalRebundledLLM},
+		)
 		if totalBundleFailed > 0 {
-			fmt.Printf("Contradictions left solo:        %d (LLM bundler declined or failed)\n", totalBundleFailed)
+			rows = append(rows, resultRow{Label: "Contradictions left solo", Value: totalBundleFailed, Note: "(LLM bundler declined or failed)"})
 		}
 	}
+	printResults("STANCE REBUILD RESULTS", rows)
 	if stancesRebuildDryRun {
 		fmt.Println("\n[DRY-RUN] No changes were made to the database")
 	}
 
 	return nil
-}
-
-// rebundleContradictionsForPerson is a thin wrapper around the shared
-// rebundlePerson helper, kept for callsite clarity inside the rebuild flow.
-// See cmd/stances_rebundle.go for the implementation.
-func rebundleContradictionsForPerson(
-	ctx context.Context,
-	storer *storage.PostgresStorer,
-	bundler *contradiction.Bundler,
-	p storage.PersonInfo,
-) (fast, llm, failed int64) {
-	return rebundlePerson(ctx, storer, bundler, p)
 }

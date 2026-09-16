@@ -1,7 +1,5 @@
 package contradiction
 
-import "digital-mirror/backend/llm"
-
 // JudgeVotes is how many times a binary judging call (audit, verify) is
 // repeated before its verdict is taken by majority.
 //
@@ -23,16 +21,3 @@ var JudgeVotes = 3
 // negligible while a wrong eviction is destructive — it gets 5 votes where the
 // insert-time verifier gets 3.
 var AuditVotes = 5
-
-// majorityVote calls once() up to `votes` times and returns a result from the
-// largest agreeing group, where agreement is defined by key().
-//
-// It stops as soon as one verdict holds a strict majority, so a stable case
-// normally costs 2 calls rather than 3 — only genuinely contested cases pay
-// full price. A call that returns an error casts no vote; if every call errors
-// the last error is returned. Ties (possible only when errors reduce the
-// number of votes cast) resolve to the first verdict seen, so the outcome
-// never depends on map iteration order.
-func majorityVote[T any](votes int, once func() (T, error), key func(T) string) (T, error) {
-	return llm.MajorityVote(votes, once, key)
-}

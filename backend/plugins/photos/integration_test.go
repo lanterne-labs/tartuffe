@@ -45,10 +45,6 @@ func (m *mockStorer) SetPersonImageURL(_ context.Context, personID int64, url st
 	return nil
 }
 
-func (m *mockStorer) GetPersonsWithoutImage(_ context.Context) ([]storage.PersonSummary, error) {
-	return nil, nil
-}
-
 // newFakeS3 creates an in-memory S3 server and returns an R2Client pointed at it,
 // plus the httptest server (caller must close).
 func newFakeS3(t *testing.T, bucket string) (*objectstore.R2Client, *httptest.Server) {

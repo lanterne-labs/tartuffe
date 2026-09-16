@@ -124,32 +124,14 @@ func (m *mockStanceStorer) GetStanceMetadata(ctx context.Context, stanceID int64
 	return doc.ClusterLabel, doc.Summary, nil
 }
 
-func (m *mockStanceStorer) GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error) {
-	totalStances = len(m.stances)
-	for _, facts := range m.facts {
-		totalFactsLinked += len(facts)
-	}
-	return totalStances, totalFactsLinked, nil
-}
-
-func (m *mockStanceStorer) DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error {
-	for id, s := range m.stances {
-		if s.PersonID == personID {
-			delete(m.stances, id)
-			delete(m.facts, id)
-		}
-	}
-	return nil
-}
-
-func (m *mockStanceStorer) RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) error {
+func (m *mockStanceStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (int64, bool, error) {
 	m.contradictions = append(m.contradictions, mockContradiction{
 		personID: personID,
 		factAID:  factAID,
 		factBID:  factBID,
 		reason:   reason,
 	})
-	return nil
+	return int64(len(m.contradictions)), false, nil
 }
 
 // TestProcessNewFact_NewStance previously verified the "no existing stances"
@@ -240,55 +222,6 @@ func TestRecordStanceContradictions(t *testing.T) {
 
 // TestChunkKeyFacts verifies that the analyze-batch chunker splits long key-fact
 // lists into batches of at most keyFactBatchSize, and handles the edge cases.
-func TestChunkKeyFacts(t *testing.T) {
-	mk := func(n int) []StanceFactInfo {
-		out := make([]StanceFactInfo, n)
-		for i := range out {
-			out[i] = StanceFactInfo{ID: int64(i + 1)}
-		}
-		return out
-	}
-
-	t.Run("empty input returns nil", func(t *testing.T) {
-		if got := chunkKeyFacts(nil, 10); got != nil {
-			t.Errorf("expected nil for empty input, got %v", got)
-		}
-	})
-
-	t.Run("single batch fits", func(t *testing.T) {
-		got := chunkKeyFacts(mk(5), 10)
-		if len(got) != 1 || len(got[0]) != 5 {
-			t.Errorf("expected 1 batch of 5, got %d batches sized %v", len(got), batchSizes(got))
-		}
-	})
-
-	t.Run("exact multiple", func(t *testing.T) {
-		got := chunkKeyFacts(mk(20), 10)
-		if len(got) != 2 || len(got[0]) != 10 || len(got[1]) != 10 {
-			t.Errorf("expected 2 batches of 10, got %d batches sized %v", len(got), batchSizes(got))
-		}
-	})
-
-	t.Run("partial last batch", func(t *testing.T) {
-		got := chunkKeyFacts(mk(23), 10)
-		if len(got) != 3 || len(got[0]) != 10 || len(got[1]) != 10 || len(got[2]) != 3 {
-			t.Errorf("expected batches of [10,10,3], got %v", batchSizes(got))
-		}
-	})
-
-	t.Run("large batch with default size", func(t *testing.T) {
-		got := chunkKeyFacts(mk(105), 0) // 0 → use default keyFactBatchSize
-		// With keyFactBatchSize=40: 105/40 = 2 full + 1 partial = 3 batches
-		expected := []int{40, 40, 25}
-		if got2 := batchSizes(got); !slicesEqualInt(got2, expected) {
-			t.Errorf("expected batches %v, got %v", expected, got2)
-		}
-	})
-}
-
-// TestChunkKeyFactsByBudget locks in the property that fixes the 12K-context
-// overflow: EVERY batch must fit base + facts + output + safety ≤ context, no
-// batch may be empty, and all facts are preserved in order.
 func TestChunkKeyFactsByBudget(t *testing.T) {
 	const summary = "The person's stance on pension reform and the legal retirement age."
 	const newFact = "Jordan Bardella a suggéré de supprimer tout âge légal de départ à la retraite."

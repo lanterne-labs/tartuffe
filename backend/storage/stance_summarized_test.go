@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,6 @@ func TestStanceSummarizedAtCursor(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 	truncateFanoutTables(t, storer)
-	storer.SetEntityValidator(nil)
 
 	personID, _, err := storer.AddPerson(ctx, "Summarized Cursor")
 	require.NoError(t, err)
@@ -28,7 +28,7 @@ func TestStanceSummarizedAtCursor(t *testing.T) {
 		return id
 	}
 	mkStance := func(label string, factIDs ...int64) int64 {
-		id, err := storer.InsertStanceDocument(ctx, StanceDocument{
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 			PersonID: personID, ClusterLabel: label, ClusterEmbedding: makeUnitEmbedding(0),
 			Summary: "placeholder", KeyFactIDs: factIDs, FactCount: len(factIDs),
 		})
@@ -103,7 +103,6 @@ func TestGetStanceTensions(t *testing.T) {
 	truncateFanoutTables(t, storer)
 	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE contradictions RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
-	storer.SetEntityValidator(nil)
 
 	personID, _, err := storer.AddPerson(ctx, "Tension Owner")
 	require.NoError(t, err)
@@ -116,7 +115,7 @@ func TestGetStanceTensions(t *testing.T) {
 		return id
 	}
 	fA, fB, fC, fOut := insertFact("promised X"), insertFact("did not-X"), insertFact("unrelated"), insertFact("outside the stance")
-	stanceID, err := storer.InsertStanceDocument(ctx, StanceDocument{
+	stanceID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID: personID, ClusterLabel: "t", ClusterEmbedding: makeUnitEmbedding(0),
 		Summary: "s", KeyFactIDs: []int64{fA, fB, fC}, FactCount: 3,
 	})
@@ -139,7 +138,7 @@ func TestGetStanceTensions(t *testing.T) {
 	tensions, err := storer.GetStanceTensions(ctx, stanceID)
 	require.NoError(t, err)
 	require.Len(t, tensions, 2)
-	require.Equal(t, []StanceTension{{FactID: fA, OtherFactText: "did not-X", Reason: "walked back"}}, tensions[fA])
-	require.Equal(t, []StanceTension{{FactID: fB, OtherFactText: "promised X", Reason: "walked back"}}, tensions[fB])
+	require.Equal(t, []core.StanceTension{{FactID: fA, OtherFactText: "did not-X", Reason: "walked back"}}, tensions[fA])
+	require.Equal(t, []core.StanceTension{{FactID: fB, OtherFactText: "promised X", Reason: "walked back"}}, tensions[fB])
 	require.Empty(t, tensions[fC])
 }

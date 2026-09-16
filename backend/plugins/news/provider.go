@@ -8,9 +8,13 @@ import (
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/plugins"
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -18,34 +22,23 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// TargetType represents the type of entity being searched.
-type TargetType string
+// minArticleContentLen is the minimum length (after the extractor's cleaning
+// pipeline strips sidebars/related-tiles) for which we'll trust the LLM to
+// extract facts. Pages below this floor are typically video-only or paywalled
+// stubs where the LLM would otherwise hallucinate from page chrome.
+const minArticleContentLen = 200
 
-const (
-	// TargetPerson is a human individual.
-	TargetPerson TargetType = "person"
-	// TargetParty is a political party or organization.
-	TargetParty TargetType = "party"
-
-	// minArticleContentLen is the minimum length (after the extractor's cleaning
-	// pipeline strips sidebars/related-tiles) for which we'll trust the LLM to
-	// extract facts. Pages below this floor are typically video-only or paywalled
-	// stubs where the LLM would otherwise hallucinate from page chrome.
-	minArticleContentLen = 200
-)
-
-// SearchTarget represents an entity to search news for.
-type SearchTarget struct {
-	// Name is the name of the person or party to search for.
-	Name string
-	// Type is the type of target (person or party).
-	Type TargetType
-	// PersonID is the database ID of the person, if already known.
-	PersonID *int64
+// targetKind is the search-side label of a target, "person" or "party": it
+// selects the extraction prompt and is stored in fact metadata.
+func targetKind(t plugins.Target) string {
+	if t.IsParty() {
+		return "party"
+	}
+	return "person"
 }
 
-// PartyInfo holds basic information about an affiliated party
-type PartyInfo struct {
+// partyInfo holds basic information about an affiliated party
+type partyInfo struct {
 	ID   int64
 	Name string
 }
@@ -64,8 +57,6 @@ type Options struct {
 	Location string
 	// RevisitHours controls how often a URL can be revisited (0 = always revisit).
 	RevisitHours int
-	// SkipUnknown skips targets with no prior search results (see news_search_log).
-	SkipUnknown bool
 	// DryRun shows what would be done without actually fetching or storing anything.
 	DryRun bool
 	// WindowDays breaks the DateFrom→DateTo range into windows of N days.
@@ -78,12 +69,18 @@ type Options struct {
 	// KeepSourceDir, when set, dumps article content + extracted facts to JSON files
 	// in this directory for debugging LLM fact extraction.
 	KeepSourceDir string
+	// CacheDir, when set, caches scraped article content on disk under a
+	// per-target subdirectory (see targetCacheDir) and serves later runs from it.
+	CacheDir string
+	// CacheOnly ingests the content already cached under CacheDir for each
+	// target instead of searching and scraping. Requires CacheDir.
+	CacheOnly bool
 }
 
 // Result contains the outcome of a news search for a single target.
 type Result struct {
 	// Target is the entity that was searched.
-	Target SearchTarget
+	Target plugins.Target
 	// ArticlesFound is the number of news articles found by search.
 	ArticlesFound int
 	// ArticlesParsed is the number of articles actually parsed for facts.
@@ -128,6 +125,8 @@ type Provider struct {
 	// It is required (every fact must have a stance) — callers must set it
 	// before invoking the provider.
 	StanceManager *core.StanceManager
+	// store is the plugin's own persistence (search log, news provenance).
+	store *Store
 }
 
 // NewProvider creates a news Provider. StanceManager is required at insert
@@ -148,11 +147,67 @@ func NewProvider(
 		Embedder:         embedder,
 		Storer:           storer,
 		StanceManager:    stanceManager,
+		store:            NewStore(storer),
+	}
+}
+
+// UseExtractor replaces the scraper with the named extractor type (see
+// extractor.NewExtractorFromType), batch-wrapped like the default one.
+// NewProviderFromDeps already wires the "auto" chain; call this only for
+// another type.
+func (p *Provider) UseExtractor(extractorType string) error {
+	raw, err := extractor.NewExtractorFromType(extractorType)
+	if err != nil {
+		return fmt.Errorf("content extractor %q: %w", extractorType, err)
+	}
+	p.ContentExtractor = extractor.NewBatchExtractorFromEnv(raw)
+	return nil
+}
+
+// targetCacheDir returns the target-specific cache subdirectory under baseDir.
+// Creates the directory if it doesn't exist.
+func targetCacheDir(baseDir string, targetName string) string {
+	normalizedName := util.NormalizeToDirName(targetName)
+	targetDir := filepath.Join(baseDir, normalizedName)
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		log.Warn().Err(err).Str("dir", targetDir).Msg("Failed to create target cache directory")
+		return baseDir // Fallback to base directory
+	}
+
+	return targetDir
+}
+
+// contentExtractorFor returns the scraper for one target: the provider's own,
+// or, when opts.CacheDir is set, that scraper behind a read-write disk cache
+// in the target's cache directory. The cache is wrapped in a fresh batch
+// extractor so extraction stays concurrent; the provider's scraper may itself
+// be a batch extractor, whose single-URL path is a plain passthrough.
+func (p *Provider) contentExtractorFor(target plugins.Target, opts Options) extractor.ContentExtractor {
+	if opts.CacheDir == "" {
+		return p.ContentExtractor
+	}
+	dir := targetCacheDir(opts.CacheDir, target.Name)
+	log.Debug().Str("target", target.Name).Str("cache_dir", dir).Msg("Caching enabled")
+	return extractor.NewBatchExtractorFromEnv(extractor.NewCacheExtractor(p.ContentExtractor, dir, true, true))
+}
+
+// collect runs one target in the mode opts selects: cached content only,
+// date-windowed search, or a single search.
+func (p *Provider) collect(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
+	switch {
+	case opts.CacheOnly:
+		return p.CollectFactsFromCache(ctx, target, opts)
+	case opts.WindowDays > 0:
+		return p.CollectFactsWithDateWindows(ctx, target, opts)
+	default:
+		return p.CollectFacts(ctx, target, opts)
 	}
 }
 
 // CollectFacts searches news for the given target and extracts facts.
-func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts Options) (*Result, error) {
+func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
 	result := &Result{
 		Target: target,
 	}
@@ -180,15 +235,15 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 	result.ArticlesFound = len(newsResults)
 	log.Info().
 		Str("target", target.Name).
-		Str("type", string(target.Type)).
+		Str("type", targetKind(target)).
 		Int("articles_found", len(newsResults)).
 		Msg("news: search completed")
 
 	if len(newsResults) == 0 {
 		// Log that no results were found for prioritization
-		if target.PersonID != nil {
-			if err := p.Storer.LogNewsSearch(ctx, *target.PersonID, target.Name, 0, 0); err != nil {
-				log.Warn().Err(err).Int64("person_id", *target.PersonID).Msg("Failed to log empty news search")
+		if target.PersonID != 0 {
+			if err := p.store.LogNewsSearch(ctx, target.PersonID, target.Name, 0, 0); err != nil {
+				log.Warn().Err(err).Int64("person_id", target.PersonID).Msg("Failed to log empty news search")
 			}
 		}
 		return result, nil
@@ -200,13 +255,13 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 	}
 
 	// For person targets, get affiliated parties upfront for party-aware extraction
-	var affiliatedParties []PartyInfo
-	if target.Type == TargetPerson && target.PersonID != nil {
+	var affiliatedParties []partyInfo
+	if !target.IsParty() && target.PersonID != 0 {
 		var err error
-		affiliatedParties, err = p.getAffiliatedParties(ctx, *target.PersonID, nil) // nil = current affiliations
+		affiliatedParties, err = p.getAffiliatedParties(ctx, target.PersonID, nil) // nil = current affiliations
 		if err != nil {
 			log.Warn().Err(err).
-				Int64("person_id", *target.PersonID).
+				Int64("person_id", target.PersonID).
 				Str("person", target.Name).
 				Msg("Failed to get affiliated parties, will extract without party awareness")
 		} else if len(affiliatedParties) > 0 {
@@ -317,14 +372,14 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 		Int("urls_to_extract", len(urlsToExtract)).
 		Msg("news: starting content extraction")
 
-	if err := p.extractAndInsertFromArticles(ctx, target, urlsToExtract, articlesToProcess, affiliatedParties, opts, result); err != nil {
+	if err := p.extractAndInsertFromArticles(ctx, target, p.contentExtractorFor(target, opts), urlsToExtract, articlesToProcess, affiliatedParties, opts, result); err != nil {
 		return result, err
 	}
 
 	// Log the search for prioritization
-	if target.PersonID != nil {
-		if err := p.Storer.LogNewsSearch(ctx, *target.PersonID, target.Name, result.ArticlesFound, result.FactsExtracted); err != nil {
-			log.Warn().Err(err).Int64("person_id", *target.PersonID).Msg("Failed to log news search")
+	if target.PersonID != 0 {
+		if err := p.store.LogNewsSearch(ctx, target.PersonID, target.Name, result.ArticlesFound, result.FactsExtracted); err != nil {
+			log.Warn().Err(err).Int64("person_id", target.PersonID).Msg("Failed to log news search")
 		}
 	}
 
@@ -351,7 +406,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 
 // extractAndInsertFromArticles is the shared "scrape → LLM extract → embed →
 // dedup-insert" loop, factored out of CollectFacts so it can be reused by
-// RebuildFromURLs (which skips the search/visitability phase).
+// replayURLs (which skips the search/visitability phase).
 //
 // urlsToExtract and articlesToProcess are parallel slices: urlsToExtract[i] ==
 // articlesToProcess[i].Link. The caller is responsible for de-duplication and
@@ -375,7 +430,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target SearchTarget, opts O
 // Limit is preserved per-call (each language is allowed up to Limit results);
 // final merged slice may exceed Limit when both languages return results, by
 // design — the dedup cap is the user-visible limit, not the per-call one.
-func (p *Provider) bilingualSearch(ctx context.Context, target SearchTarget, baseOpts search.NewsSearchOptions) ([]search.NewsResult, error) {
+func (p *Provider) bilingualSearch(ctx context.Context, target plugins.Target, baseOpts search.NewsSearchOptions) ([]search.NewsResult, error) {
 	langs := p.targetLanguages(ctx, target)
 
 	seen := make(map[string]bool)
@@ -410,10 +465,10 @@ func (p *Provider) bilingualSearch(ctx context.Context, target SearchTarget, bas
 // targetLanguages returns the BCP-47 language tags to search for this target.
 // Always includes "en" exactly once. Falls back to ["fr", "en"] for legacy
 // callers that haven't populated PersonID — historical French-politics focus.
-func (p *Provider) targetLanguages(ctx context.Context, target SearchTarget) []string {
+func (p *Provider) targetLanguages(ctx context.Context, target plugins.Target) []string {
 	native := "fr"
-	if target.PersonID != nil {
-		got, err := p.Storer.GetPersonLang(ctx, *target.PersonID)
+	if target.PersonID != 0 {
+		got, err := p.Storer.GetPersonLang(ctx, target.PersonID)
 		if err == nil && got != "" {
 			native = got
 		}
@@ -426,17 +481,18 @@ func (p *Provider) targetLanguages(ctx context.Context, target SearchTarget) []s
 
 func (p *Provider) extractAndInsertFromArticles(
 	ctx context.Context,
-	target SearchTarget,
+	target plugins.Target,
+	contentExtractor extractor.ContentExtractor,
 	urlsToExtract []string,
 	articlesToProcess []search.NewsResult,
-	affiliatedParties []PartyInfo,
+	affiliatedParties []partyInfo,
 	opts Options,
 	result *Result,
 ) error {
 	// Phase 2: Extract content - use batch if available, otherwise sequential.
 	var extractedContents []*extractor.ExtractedContent
 	var extractionErrors []error
-	if batchExtractor, ok := p.ContentExtractor.(*core.BatchExtractor); ok {
+	if batchExtractor, ok := contentExtractor.(*extractor.BatchExtractor); ok {
 		batchResults := batchExtractor.ExtractBatch(ctx, urlsToExtract)
 		extractedContents = make([]*extractor.ExtractedContent, len(batchResults))
 		extractionErrors = make([]error, len(batchResults))
@@ -448,7 +504,7 @@ func (p *Provider) extractAndInsertFromArticles(
 		extractedContents = make([]*extractor.ExtractedContent, len(urlsToExtract))
 		extractionErrors = make([]error, len(urlsToExtract))
 		for i, url := range urlsToExtract {
-			content, err := p.ContentExtractor.ExtractContent(url)
+			content, err := contentExtractor.ExtractContent(url)
 			extractedContents[i] = content
 			extractionErrors[i] = err
 		}
@@ -482,14 +538,14 @@ func (p *Provider) extractAndInsertFromArticles(
 
 		var facts []backend.Fact
 		var err error
-		if target.Type == TargetPerson && len(affiliatedParties) > 0 {
+		if !target.IsParty() && len(affiliatedParties) > 0 {
 			partyNames := make([]string, len(affiliatedParties))
 			for j, party := range affiliatedParties {
 				partyNames[j] = party.Name
 			}
 			facts, err = p.FactExtractor.ExtractFactsForPersonWithParties(ctx, target.Name, partyNames, *content)
 		} else {
-			facts, err = p.FactExtractor.ExtractFactsWithType(ctx, target.Name, string(target.Type), *content)
+			facts, err = p.FactExtractor.ExtractFactsWithType(ctx, target.Name, targetKind(target), *content)
 		}
 		if err != nil {
 			log.Warn().Err(err).Str("url", article.Link).Msg("Failed to extract facts")
@@ -552,7 +608,7 @@ func (p *Provider) extractAndInsertFromArticles(
 				Metadata: map[string]any{
 					"source_name":  article.Source,
 					"story_token":  article.StoryToken,
-					"target_type":  string(target.Type),
+					"target_type":  targetKind(target),
 					"search_query": target.Name,
 				},
 			}
@@ -580,30 +636,30 @@ func (p *Provider) extractAndInsertFromArticles(
 	return nil
 }
 
-// RebuildFromURLs runs the news extraction pipeline against a hand-picked list
-// of URLs for a single target. It bypasses the search-engine query and the
+// replayURLs runs the news extraction pipeline against a hand-picked list of
+// URLs for a single target. It bypasses the search-engine query and the
 // already-processed visit check — the caller is asserting "I want these URLs
-// re-processed". Used by `dm facts rebuild-from-urls` to re-extract facts after
-// the cleaning-pipeline changes.
+// re-processed". Used by RebuildFromURLs to re-extract facts after the
+// cleaning-pipeline changes.
 //
 // Stance routing and contradiction detection run inline via the normal
 // FactInserter path, so the rebuild is a deterministic replay of the daily
 // pipeline for known URLs.
-func (p *Provider) RebuildFromURLs(ctx context.Context, target SearchTarget, urls []string, opts Options) (*Result, error) {
+func (p *Provider) replayURLs(ctx context.Context, target plugins.Target, urls []string, opts Options) (*Result, error) {
 	result := &Result{}
 	if len(urls) == 0 {
 		return result, nil
 	}
 
-	var affiliatedParties []PartyInfo
-	if target.Type == TargetPerson && target.PersonID != nil {
+	var affiliatedParties []partyInfo
+	if !target.IsParty() && target.PersonID != 0 {
 		var err error
-		affiliatedParties, err = p.getAffiliatedParties(ctx, *target.PersonID, nil)
+		affiliatedParties, err = p.getAffiliatedParties(ctx, target.PersonID, nil)
 		if err != nil {
 			log.Warn().Err(err).
-				Int64("person_id", *target.PersonID).
+				Int64("person_id", target.PersonID).
 				Str("person", target.Name).
-				Msg("RebuildFromURLs: failed to load affiliated parties, continuing without")
+				Msg("replayURLs: failed to load affiliated parties, continuing without")
 		}
 	}
 
@@ -612,9 +668,120 @@ func (p *Provider) RebuildFromURLs(ctx context.Context, target SearchTarget, url
 		articles[i] = search.NewsResult{Link: u}
 	}
 
-	if err := p.extractAndInsertFromArticles(ctx, target, urls, articles, affiliatedParties, opts, result); err != nil {
+	if err := p.extractAndInsertFromArticles(ctx, target, p.ContentExtractor, urls, articles, affiliatedParties, opts, result); err != nil {
 		return result, err
 	}
+	return result, nil
+}
+
+// CollectFactsFromCache ingests the article content already cached under
+// opts.CacheDir for the target: no search, no scraping. Every cached file is
+// run through LLM extraction, embedding and dedup-insert.
+func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
+	if opts.CacheDir == "" {
+		return nil, fmt.Errorf("CacheDir is required for cache-only collection")
+	}
+	if p.StanceManager == nil {
+		return nil, fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
+	}
+	result := &Result{Target: target}
+
+	dir := targetCacheDir(opts.CacheDir, target.Name)
+	cachedContents, err := extractor.NewCacheOnlyExtractor(dir).LoadAllCached()
+	if err != nil {
+		return nil, fmt.Errorf("load cached content for %s from %s: %w", target.Name, dir, err)
+	}
+	if len(cachedContents) == 0 {
+		log.Warn().Str("target", target.Name).Str("cache_dir", dir).Msg("No cached files found")
+		return result, nil
+	}
+	result.ArticlesFound = len(cachedContents)
+	log.Info().
+		Str("target", target.Name).
+		Int("cached_files", len(cachedContents)).
+		Msg("Loaded cached content")
+
+	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
+	inserter.EnableLLMDedupe()
+	kind := targetKind(target)
+	for _, content := range cachedContents {
+		if strings.TrimSpace(content.Content) == "" {
+			log.Debug().Str("url", content.URL).Msg("Skipping empty cached content")
+			continue
+		}
+
+		facts, err := p.FactExtractor.ExtractFactsWithType(ctx, target.Name, kind, *content)
+		if err != nil {
+			log.Warn().Err(err).Str("url", content.URL).Msg("Failed to extract facts from cached content")
+			result.Errors = append(result.Errors, err)
+			continue
+		}
+
+		if opts.KeepSourceDir != "" {
+			if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, content.URL, content.Title, content.Content, content.DatePublished, facts); dumpErr != nil {
+				log.Warn().Err(dumpErr).Str("url", content.URL).Msg("Failed to dump source and facts")
+			}
+		}
+
+		if len(facts) == 0 {
+			log.Debug().Str("url", content.URL).Msg("No facts extracted from cached content")
+			result.ArticlesParsed++
+			result.ArticlesParsedNoFacts++
+			continue
+		}
+		result.ArticlesParsed++
+
+		for _, fact := range facts {
+			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
+			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
+				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
+				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
+				continue
+			}
+
+			input := core.StoreFactInput{
+				SubjectEntity:      fact.SubjectEntity,
+				SubjectEntityType:  fact.SubjectEntityType,
+				NormalizedFactText: fact.NormalizedFactText,
+				EmbeddingText:      fact.EmbeddingText,
+				Embedding:          embeddings[0],
+				OriginalQuote:      fact.OriginalQuote,
+				CanonicalVerb:      fact.CanonicalVerb,
+				InvolvedPeople:     fact.InvolvedPeople,
+				SourceURL:          content.URL,
+				PublishedAt:        content.DatePublished,
+				SourceType:         "news",
+				Metadata: map[string]any{
+					"target_type":  kind,
+					"search_query": target.Name,
+					"cache_only":   true,
+				},
+			}
+
+			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
+			if err != nil {
+				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
+				result.Errors = append(result.Errors, err)
+				continue
+			}
+			result.FactsExtracted += insertResult.Inserted
+			result.FactsSkippedDedup += insertResult.Skipped
+		}
+	}
+
+	dedupRate := 0.0
+	if result.FactsExtracted+result.FactsSkippedDedup > 0 {
+		dedupRate = float64(result.FactsSkippedDedup) / float64(result.FactsExtracted+result.FactsSkippedDedup) * 100
+	}
+	log.Info().
+		Str("target", target.Name).
+		Int("files_processed", len(cachedContents)).
+		Int("facts_stored", result.FactsExtracted).
+		Int("facts_skipped_dedup", result.FactsSkippedDedup).
+		Float64("dedup_rate_pct", dedupRate).
+		Int("errors", len(result.Errors)).
+		Msg("Completed cache-only extraction for target")
+
 	return result, nil
 }
 
@@ -622,7 +789,7 @@ func (p *Provider) RebuildFromURLs(ctx context.Context, target SearchTarget, url
 // and calls CollectFacts for each window. This works around Google News result caps by
 // making multiple narrower queries. Errors in individual windows are logged and collected
 // but do not stop processing of subsequent windows.
-func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target SearchTarget, opts Options) (*Result, error) {
+func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
 	if opts.WindowDays <= 0 {
 		return nil, fmt.Errorf("WindowDays must be > 0, got %d", opts.WindowDays)
 	}
@@ -840,7 +1007,7 @@ func containsString(slice []string, s string) bool {
 
 // getAffiliatedParties retrieves parties affiliated with a person at a specific date.
 // Returns party information (ID, Name, EntityType) for parties where entity_type='party'.
-func (p *Provider) getAffiliatedParties(ctx context.Context, personID int64, atDate *time.Time) ([]PartyInfo, error) {
+func (p *Provider) getAffiliatedParties(ctx context.Context, personID int64, atDate *time.Time) ([]partyInfo, error) {
 	// Begin transaction for affiliated query
 	tx, err := p.Storer.Pool().Begin(ctx)
 	if err != nil {
@@ -855,11 +1022,11 @@ func (p *Provider) getAffiliatedParties(ctx context.Context, personID int64, atD
 	}
 
 	if len(partyIDs) == 0 {
-		return []PartyInfo{}, nil
+		return []partyInfo{}, nil
 	}
 
 	// Fetch party details for each ID
-	parties := make([]PartyInfo, 0, len(partyIDs))
+	parties := make([]partyInfo, 0, len(partyIDs))
 	for _, partyID := range partyIDs {
 		person, err := p.Storer.GetPersonByID(ctx, partyID)
 		if err != nil {
@@ -869,7 +1036,7 @@ func (p *Provider) getAffiliatedParties(ctx context.Context, personID int64, atD
 
 		// Only include entities with entity_type='party'
 		if person.EntityType != nil && *person.EntityType == "party" {
-			parties = append(parties, PartyInfo{
+			parties = append(parties, partyInfo{
 				ID:   person.ID,
 				Name: person.Name,
 			})
@@ -879,50 +1046,28 @@ func (p *Provider) getAffiliatedParties(ctx context.Context, personID int64, atD
 	return parties, nil
 }
 
-// PreviewSearch checks if news results exist for a target without full processing.
-// This is useful for prioritization - skip targets with no coverage.
-func (p *Provider) PreviewSearch(ctx context.Context, target SearchTarget, opts Options) (int, error) {
-	searchOpts := search.NewsSearchOptions{
-		Location: opts.Location,
-	}
-	if opts.DateFrom != nil {
-		searchOpts.DateFrom = *opts.DateFrom
-	}
-	if opts.DateTo != nil {
-		searchOpts.DateTo = *opts.DateTo
-	}
-
-	preview, err := p.NewsSearch.PreviewSearch(target.Name, searchOpts)
-	if err != nil {
-		return 0, fmt.Errorf("preview search failed for %s: %w", target.Name, err)
-	}
-
-	return preview.TotalResults, nil
-}
-
-// CollectFactsForTargets processes multiple targets with prioritization.
-func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []SearchTarget, opts Options) ([]*Result, error) {
+// CollectFactsForTargets runs every target in order through the mode opts
+// selects (see collect). A target whose run fails yields a Result carrying
+// only that error. History-based skipping is PrioritizeTargets' job and is
+// not repeated here.
+func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins.Target, opts Options) ([]*Result, error) {
 	results := make([]*Result, 0, len(targets))
 
-	for _, target := range targets {
+	for i, target := range targets {
 		select {
 		case <-ctx.Done():
 			return results, ctx.Err()
 		default:
 		}
 
-		// If SkipUnknown is set, check if we should skip this target
-		if opts.SkipUnknown && target.PersonID != nil {
-			shouldSearch, err := p.Storer.ShouldSearchNews(ctx, *target.PersonID, 30) // 30 days lookback
-			if err != nil {
-				log.Warn().Err(err).Int64("person_id", *target.PersonID).Msg("Failed to check search history")
-			} else if !shouldSearch {
-				log.Debug().Str("target", target.Name).Msg("news: skipping target with no prior results")
-				continue
-			}
-		}
+		log.Info().
+			Int("progress", i+1).
+			Int("total", len(targets)).
+			Str("target", target.Name).
+			Str("type", targetKind(target)).
+			Msg("Searching news for target")
 
-		result, err := p.CollectFacts(ctx, target, opts)
+		result, err := p.collect(ctx, target, opts)
 		if err != nil {
 			log.Error().Err(err).Str("target", target.Name).Msg("Failed to collect facts")
 			result = &Result{

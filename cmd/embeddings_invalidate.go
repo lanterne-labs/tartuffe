@@ -3,7 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/deps"
 	"fmt"
 	"os"
 	"strings"
@@ -44,23 +44,15 @@ func runEmbeddingsInvalidate(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storer: %w", err)
 	}
 	defer storer.Close()
 
-	pool := storer.Pool()
-
-	var factCount, embeddedCount, stanceCount int64
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts`).Scan(&factCount); err != nil {
-		return fmt.Errorf("count facts: %w", err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL`).Scan(&embeddedCount); err != nil {
-		return fmt.Errorf("count embedded facts: %w", err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM stance_documents`).Scan(&stanceCount); err != nil {
-		return fmt.Errorf("count stance documents: %w", err)
+	factCount, embeddedCount, stanceCount, err := storer.CountEmbeddingInvalidationPlan(ctx)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println("=== EMBEDDING INVALIDATION PLAN ===")
@@ -82,34 +74,20 @@ func runEmbeddingsInvalidate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	tx, err := pool.Begin(ctx)
+	nulled, deleted, err := storer.InvalidateEmbeddings(ctx)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	updateRes, err := tx.Exec(ctx, `UPDATE facts SET embedding = NULL WHERE embedding IS NOT NULL`)
-	if err != nil {
-		return fmt.Errorf("nulling fact embeddings: %w", err)
-	}
-	deleteRes, err := tx.Exec(ctx, `DELETE FROM stance_documents`)
-	if err != nil {
-		return fmt.Errorf("deleting stance_documents: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return err
 	}
 
 	log.Info().
-		Int64("embeddings_nulled", updateRes.RowsAffected()).
-		Int64("stance_documents_deleted", deleteRes.RowsAffected()).
+		Int64("embeddings_nulled", nulled).
+		Int64("stance_documents_deleted", deleted).
 		Msg("Embeddings invalidated")
 
 	fmt.Println()
 	fmt.Println("=== INVALIDATION COMPLETE ===")
-	fmt.Printf("Embeddings nulled:         %d\n", updateRes.RowsAffected())
-	fmt.Printf("Stance documents deleted:  %d\n", deleteRes.RowsAffected())
+	fmt.Printf("Embeddings nulled:         %d\n", nulled)
+	fmt.Printf("Stance documents deleted:  %d\n", deleted)
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1) ./dm embeddings regenerate")

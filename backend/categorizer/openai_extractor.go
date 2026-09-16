@@ -3,13 +3,11 @@ package categorizer
 import (
 	"context"
 	"digital-mirror/backend"
-	"digital-mirror/backend/core"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/util"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -54,48 +52,21 @@ func dynamicChunkBudgetChars(promptOverheadChars int) int {
 	return available * approxCharsPerToken
 }
 
-// openAIChatModelDefault is a sensible default, can be overridden via OPEN_AI_CHAT_MODEL
-const openAIChatModelDefault = "gpt-4o-mini"
-
 // OpenAIExtractor implements FactExtractor using an OpenAI-compatible Chat Completions API.
 type OpenAIExtractor struct {
-	// apiKey is the API key to authenticate requests.
-	apiKey string
-	// apiURL is the full endpoint for chat completions.
-	apiURL string
-	// model is the model to use for chat completions.
-	model string
-	// baseClient handles the underlying HTTP communication.
-	baseClient *BaseLLMClient
+	client *llm.Client
 }
 
 // NewOpenAIExtractorFromEnv creates an OpenAIExtractor using OPEN_AI_ env vars.
 // Required: OPEN_AI_KEY, OPEN_AI_API (base, e.g., https://api.openai.com/v1)
-// Optional: OPEN_AI_CHAT_MODEL (defaults to openAIChatModelDefault)
+// Optional: OPEN_AI_CHAT_MODEL (defaults to llm.DefaultChatModel)
 func NewOpenAIExtractorFromEnv() (*OpenAIExtractor, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("fact-extractor")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = openAIChatModelDefault
-	}
-	return &OpenAIExtractor{
-		apiKey:     apiKey,
-		apiURL:     llm.ChatCompletionsURL(base),
-		model:      model,
-		baseClient: NewBaseLLMClient("fact-extractor"),
-	}, nil
+	return &OpenAIExtractor{client: client}, nil
 }
-
-// NOTE: Chat types (ChatMessage, ChatRequest, ChatResponse, etc.) are now
-// defined as type aliases in base_llm_client.go pointing to backend/llm package.
-// This allows shared usage across packages without import cycles.
 
 // GetChunkingParameters implements the FactExtractor interface.
 // Returns the static fallbacks; callers that need to fit a known prompt within
@@ -110,7 +81,7 @@ func (m *OpenAIExtractor) GetChunkingParameters() backend.ChunkingParameters {
 
 // ExtractFactsWithConfig extracts facts using the unified core prompt with optional plugin instructions.
 // This is the primary extraction method - all other methods delegate to this one.
-func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.FactExtractorConfig) ([]backend.Fact, error) {
+func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg promptrules.FactExtractorConfig) ([]backend.Fact, error) {
 	if strings.TrimSpace(cfg.Content) == "" {
 		log.Warn().Str("url", cfg.SourceURL).Msg("ExtractFactsWithConfig called with empty content")
 		return []backend.Fact{}, nil
@@ -131,7 +102,7 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 	// size whenever the static default would push us past the model context.
 	overheadCfg := cfg
 	overheadCfg.Content = ""
-	promptOverhead := core.BuildFactExtractionPrompt(overheadCfg)
+	promptOverhead := promptrules.BuildFactExtractionPrompt(overheadCfg)
 	dynBudget := dynamicChunkBudgetChars(len(promptOverhead))
 	if dynBudget < chunkParams.ChunkSizeChars {
 		log.Debug().Str("url", cfg.SourceURL).Int("prompt_overhead_chars", len(promptOverhead)).Int("static_chunk", chunkParams.ChunkSizeChars).Int("dynamic_chunk", dynBudget).Msg("Dynamic chunk budget binds — shrinking chunks to fit model context")
@@ -195,7 +166,7 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg core.F
 // ExtractFacts extracts facts from content about a person/target using the core prompt.
 // This is a convenience method that wraps ExtractFactsWithConfig.
 func (m *OpenAIExtractor) ExtractFacts(ctx context.Context, targetName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
-	cfg := core.FactExtractorConfig{
+	cfg := promptrules.FactExtractorConfig{
 		TargetName: targetName,
 		SourceURL:  content.URL,
 		Content:    content.Content,
@@ -209,7 +180,7 @@ func (m *OpenAIExtractor) ExtractFactsWithType(ctx context.Context, targetName s
 	var pluginInstructions string
 	switch targetType {
 	case "party":
-		pluginInstructions = core.PartyInstructions
+		pluginInstructions = promptrules.PartyInstructions
 	case "person":
 		// Person extraction uses core prompt without additional instructions
 		pluginInstructions = ""
@@ -217,7 +188,7 @@ func (m *OpenAIExtractor) ExtractFactsWithType(ctx context.Context, targetName s
 		pluginInstructions = ""
 	}
 
-	cfg := core.FactExtractorConfig{
+	cfg := promptrules.FactExtractorConfig{
 		TargetName:         targetName,
 		SourceURL:          content.URL,
 		Content:            content.Content,
@@ -235,9 +206,9 @@ func (m *OpenAIExtractor) ExtractFactsForPersonWithParties(ctx context.Context, 
 		partiesStr = "(none)"
 	}
 
-	pluginInstructions := fmt.Sprintf(core.PersonWithPartiesInstructions, partiesStr)
+	pluginInstructions := fmt.Sprintf(promptrules.PersonWithPartiesInstructions, partiesStr)
 
-	cfg := core.FactExtractorConfig{
+	cfg := promptrules.FactExtractorConfig{
 		TargetName:         personName,
 		SourceURL:          content.URL,
 		Content:            content.Content,
@@ -252,15 +223,15 @@ func (m *OpenAIExtractor) ExtractFactsForPersonWithParties(ctx context.Context, 
 // denser than our chars/token estimate), it halves the chunk and retries each
 // half once. Two recursion levels max; deeper overflows are returned as-is so
 // the caller logs the failure rather than spinning.
-func (m *OpenAIExtractor) extractChunkWithReactiveRetry(ctx context.Context, cfg core.FactExtractorConfig, chunk string) ([]backend.Fact, error) {
-	chunkCfg := core.FactExtractorConfig{
+func (m *OpenAIExtractor) extractChunkWithReactiveRetry(ctx context.Context, cfg promptrules.FactExtractorConfig, chunk string) ([]backend.Fact, error) {
+	chunkCfg := promptrules.FactExtractorConfig{
 		TargetName:         cfg.TargetName,
 		SourceURL:          cfg.SourceURL,
 		Content:            chunk,
 		PluginInstructions: cfg.PluginInstructions,
 		Now:                cfg.Now,
 	}
-	prompt := core.BuildFactExtractionPrompt(chunkCfg)
+	prompt := promptrules.BuildFactExtractionPrompt(chunkCfg)
 	facts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
 	if err == nil {
 		return facts, nil
@@ -298,9 +269,11 @@ func isContextOverflowError(err error) bool {
 
 // callChatAPIWithPrompt performs a single call to the Chat API with a pre-formatted prompt.
 func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPrompt string, sourceURL string) ([]backend.Fact, error) {
-	reqPayload := ChatRequest{
-		Model: m.model,
-		Messages: []ChatMessage{
+	log.Debug().Str("url", m.client.URL).Int("prompt_chars", len(systemPrompt)).Msg("Attempting LLM chat API call for fact extraction")
+	startTime := time.Now()
+
+	jsonContent, _, err := m.client.Chat(ctx, llm.ChatRequest{
+		Messages: []llm.ChatMessage{
 			{Role: "system", Content: systemPrompt},
 		},
 		Temperature: 0.1,
@@ -313,43 +286,17 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 		// an array — and collapses the prompt's requested array of facts into a
 		// single object, capping yield at 1 fact per article. ParseFactJSON
 		// already tolerates ```json fences and array/object roots.
-	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal chat request payload: %w", err)
-	}
-
-	log.Debug().Str("url", m.apiURL).Int("prompt_chars", len(systemPrompt)).Msg("Attempting LLM chat API call for fact extraction")
-	startTime := time.Now()
-
-	bodyBytes, err := m.baseClient.DoRequest(ctx, m.apiURL, m.apiKey, payloadBytes)
+	})
 
 	duration := time.Since(startTime)
 	if err != nil {
-		log.Error().Err(err).Dur("duration", duration).Str("url", m.apiURL).Msg("Chat API call failed")
-		var chatResp ChatResponse
-		if parseErr := json.Unmarshal(bodyBytes, &chatResp); parseErr == nil && chatResp.Error != nil {
-			return nil, fmt.Errorf("Chat API returned error: [%s] %s - %s (request status: %w)", chatResp.Error.Code, chatResp.Error.Type, chatResp.Error.Message, err)
-		}
+		// A context-overflow 400 surfaces here as an llm.ClientError whose
+		// message carries the body, which is what isContextOverflowError reads.
+		log.Error().Err(err).Dur("duration", duration).Str("url", m.client.URL).Msg("Chat API call failed")
 		return nil, err
 	}
-	log.Debug().Dur("duration", duration).Int("response_bytes", len(bodyBytes)).Str("url", m.apiURL).Msg("Chat API call successful")
+	log.Debug().Dur("duration", duration).Int("content_chars", len(jsonContent)).Str("url", m.client.URL).Msg("Chat API call successful")
 
-	var chatResp ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return nil, fmt.Errorf("failed to decode chat API response envelope: %w. Body: %s", err, string(bodyBytes))
-	}
-
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("Chat API returned error: [%s] %s - %s", chatResp.Error.Code, chatResp.Error.Type, chatResp.Error.Message)
-	}
-
-	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("Chat API returned no choices")
-	}
-
-	jsonContent := chatResp.Choices[0].Message.Content
 	chunkFacts, err := ParseFactJSON([]byte(jsonContent), sourceURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse facts from chat response content: %w", err)

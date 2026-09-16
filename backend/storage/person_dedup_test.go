@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +13,7 @@ import (
 // label and attaches factID as a membership. Returns the stance id.
 func insertStanceWithFact(ctx context.Context, t *testing.T, s *PostgresStorer, personID, factID int64, label string) int64 {
 	t.Helper()
-	stanceID, err := s.InsertStanceDocument(ctx, StanceDocument{
+	stanceID, err := s.InsertStanceDocument(ctx, core.StanceDocument{
 		PersonID:         personID,
 		ClusterLabel:     label,
 		ClusterEmbedding: mockEmbedding(),
@@ -47,7 +48,7 @@ func TestMergePersons(t *testing.T) {
 	require.NotEqual(t, intoID, fromID)
 
 	// Each person gets a fact (-> fact_source + fact_mention + stance via stub).
-	intoFactID, _, err := insertFactForTest(ctx, t, storer, StoreFactInput{
+	intoFactID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity:      "alice into",
 		SubjectEntityType:  "human",
 		Lang:               "en",
@@ -59,7 +60,7 @@ func TestMergePersons(t *testing.T) {
 		SourceType:         "web",
 	})
 	require.NoError(t, err)
-	fromFactID, fromSourceID, err := insertFactForTest(ctx, t, storer, StoreFactInput{
+	fromFactID, fromSourceID, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity:      "alice from",
 		SubjectEntityType:  "human",
 		Lang:               "en",
@@ -82,11 +83,6 @@ func TestMergePersons(t *testing.T) {
 		`INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, reason) VALUES ($1, $2, $3, 'test')`,
 		fromID, a, b)
 	require.NoError(t, err, "insert contradiction on from")
-
-	// Twitter handle on "from".
-	_, err = storer.pool.Exec(ctx,
-		`INSERT INTO twitter_handles (person_id, handle) VALUES ($1, 'alicefrom')`, fromID)
-	require.NoError(t, err, "insert twitter handle on from")
 
 	// Search-queue entry on "from".
 	_, err = storer.pool.Exec(ctx,
@@ -160,13 +156,6 @@ func TestMergePersons(t *testing.T) {
 			WHERE fm.person_id=$1 AND fs.fact_id=$2)`, intoID, fromFactID).Scan(&fromFactMentionedByInto))
 	assert.True(t, fromFactMentionedByInto, "from's fact should now be mentioned by into")
 
-	// Twitter handle repointed.
-	var handlesForFrom, handlesForInto int
-	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT count(*) FROM twitter_handles WHERE person_id=$1`, fromID).Scan(&handlesForFrom))
-	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT count(*) FROM twitter_handles WHERE person_id=$1 AND handle='alicefrom'`, intoID).Scan(&handlesForInto))
-	assert.Equal(t, 0, handlesForFrom, "no twitter handle should reference from")
-	assert.Equal(t, 1, handlesForInto, "twitter handle should be repointed to into")
-
 	// Search-queue: from had one, into had none -> repointed (into now has one, from none).
 	var queueForFrom, queueForInto int
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT count(*) FROM search_queue WHERE person_id=$1`, fromID).Scan(&queueForFrom))
@@ -236,7 +225,7 @@ func TestMergePersons_SameID(t *testing.T) {
 
 func TestChooseCanonical(t *testing.T) {
 	t.Run("one curated wins regardless of fact_count", func(t *testing.T) {
-		members := []DedupMember{
+		members := []core.PersonDedupMember{
 			{ID: 1, Name: "junk dup", FactCount: 100, Curated: false},
 			{ID: 2, Name: "real entity", FactCount: 3, Curated: true},
 		}
@@ -246,7 +235,7 @@ func TestChooseCanonical(t *testing.T) {
 	})
 
 	t.Run("two curated members skip the cluster", func(t *testing.T) {
-		members := []DedupMember{
+		members := []core.PersonDedupMember{
 			{ID: 1, Name: "real a", FactCount: 5, Curated: true},
 			{ID: 2, Name: "real b", FactCount: 9, Curated: true},
 		}
@@ -255,7 +244,7 @@ func TestChooseCanonical(t *testing.T) {
 	})
 
 	t.Run("no curated: highest fact_count, tie-break lowest id", func(t *testing.T) {
-		members := []DedupMember{
+		members := []core.PersonDedupMember{
 			{ID: 5, Name: "a", FactCount: 2, Curated: false},
 			{ID: 3, Name: "b", FactCount: 7, Curated: false},
 			{ID: 9, Name: "c", FactCount: 7, Curated: false},

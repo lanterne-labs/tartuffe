@@ -72,13 +72,8 @@ func (s *refreshLLMStub) calls() []string {
 
 func newRefreshTestManager(t *testing.T, stub *refreshLLMStub, storer StanceStorer) *StanceManager {
 	t.Helper()
-	return &StanceManager{
-		storer: storer,
-		apiKey: "test",
-		apiURL: stub.server.URL + "/v1/chat/completions",
-		model:  "stub",
-		client: llm.NewBaseLLMClient("stance-refresh-test"),
-	}
+	cfg := llm.Config{BaseURL: stub.server.URL + "/v1", APIKey: "test", ChatModel: "stub"}
+	return &StanceManager{storer: storer, client: cfg.NewClient("stance-refresh-test")}
 }
 
 func factOfSize(id int64, chars int) StanceFactInfo {

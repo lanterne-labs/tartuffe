@@ -134,8 +134,7 @@ Concernant la guerre en Ukraine, la présidente du RN a déclaré qu'elle ne sou
 		fmt.Fprintln(os.Stderr, "embedder init:", err)
 		os.Exit(1)
 	}
-	stancer := storage.NewStanceStorerAdapter(storer)
-	sm, err := core.NewStanceManagerFromEnv(stancer)
+	sm, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stance init:", err)
 		os.Exit(1)

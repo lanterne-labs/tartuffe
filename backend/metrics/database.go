@@ -72,13 +72,13 @@ var (
 	)
 )
 
-// ObserveQueryDuration records query duration for a specific operation
-func ObserveQueryDuration(operation string, duration time.Duration) {
+// observeQueryDuration records query duration for a specific operation
+func observeQueryDuration(operation string, duration time.Duration) {
 	DBQueryDuration.WithLabelValues(operation).Observe(duration.Seconds())
 }
 
-// IncrementQueryTotal increments the query counter for an operation
-func IncrementQueryTotal(operation, status string) {
+// incrementQueryTotal increments the query counter for an operation
+func incrementQueryTotal(operation, status string) {
 	DBQueriesTotal.WithLabelValues(operation, status).Inc()
 }
 
@@ -86,11 +86,6 @@ func IncrementQueryTotal(operation, status string) {
 func ObserveVectorSearch(duration time.Duration, resultCount int) {
 	DBVectorSearchDuration.Observe(duration.Seconds())
 	DBVectorSearchResults.Observe(float64(resultCount))
-}
-
-// ObserveTransactionDuration records transaction duration
-func ObserveTransactionDuration(duration time.Duration) {
-	DBTransactionDuration.Observe(duration.Seconds())
 }
 
 // StartPoolStatsCollector starts a goroutine that collects pool stats periodically
@@ -139,11 +134,11 @@ func NewQueryTimer(operation string) *QueryTimer {
 // ObserveDuration records the elapsed time and increments the counter
 func (qt *QueryTimer) ObserveDuration(err error) {
 	duration := time.Since(qt.start)
-	ObserveQueryDuration(qt.operation, duration)
+	observeQueryDuration(qt.operation, duration)
 
 	status := "success"
 	if err != nil {
 		status = "error"
 	}
-	IncrementQueryTotal(qt.operation, status)
+	incrementQueryTotal(qt.operation, status)
 }

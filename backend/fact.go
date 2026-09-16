@@ -1,10 +1,6 @@
 package backend
 
-import (
-	"context"
-	"digital-mirror/backend/extractor"
-	"time"
-)
+import "time"
 
 // Fact represents a single structured factual statement extracted from content.
 // It includes the people involved in this specific statement, the normalized fact,
@@ -69,14 +65,4 @@ type ChunkingParameters struct {
 	ThresholdChars int // Content length (in chars) above which to chunk
 	ChunkSizeChars int // Target size for each chunk (in chars)
 	OverlapChars   int // Character overlap between chunks
-}
-
-// FactExtractor defines the interface for extracting structured facts from text content using an LLM.
-type FactExtractor interface {
-	// ExtractFacts processes the given ExtractedContent and returns a slice of Fact structs.
-	// It needs the original personName searched for context in prompt generation.
-	ExtractFacts(ctx context.Context, personName string, content extractor.ExtractedContent) ([]Fact, error)
-
-	// GetChunkingParameters returns the recommended chunking parameters for the specific LLM implementation.
-	GetChunkingParameters() ChunkingParameters
 }

@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"github.com/joho/godotenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,9 +11,17 @@ import (
 	"time"
 )
 
+// loadEnv loads the project .env for integration tests that need API keys.
+func loadEnv(t *testing.T) {
+	t.Helper()
+	if err := godotenv.Overload("../../.env"); err != nil {
+		t.Log("INFO: .env file not found or failed to load, tests needing env vars might be skipped.")
+	}
+}
+
 // TestSerpAPINewsProvider_BuildSearchURL tests URL construction with various options.
 func TestSerpAPINewsProvider_BuildSearchURL(t *testing.T) {
-	provider := &SerpAPINewsProvider{
+	provider := &serpAPINewsProvider{
 		apiKey:     "test-api-key",
 		httpClient: &http.Client{},
 	}
@@ -218,18 +227,6 @@ func TestSerpAPINewsProvider_ParseResponse(t *testing.T) {
 	}
 }
 
-// TestSerpAPINewsProvider_SearchInterface tests that SerpAPINewsProvider implements SearchProvider.
-func TestSerpAPINewsProvider_SearchInterface(t *testing.T) {
-	provider := &SerpAPINewsProvider{
-		apiKey:     "test-key",
-		httpClient: &http.Client{},
-	}
-
-	// This test just verifies that the Search method signature is correct
-	// by ensuring it compiles as a SearchProvider
-	var _ SearchProvider = provider
-}
-
 // TestSerpAPINewsProvider_ErrorHandling tests error handling for API errors.
 func TestSerpAPINewsProvider_ErrorHandling(t *testing.T) {
 	// Test with empty API error response
@@ -288,7 +285,7 @@ func TestSerpAPINewsProvider_SearchWebParsing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := &SerpAPINewsProvider{
+	provider := &serpAPINewsProvider{
 		apiKey:     "test-key",
 		httpClient: server.Client(),
 	}
@@ -336,7 +333,7 @@ func TestSerpAPINewsProvider_SearchWebError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := &SerpAPINewsProvider{
+	provider := &serpAPINewsProvider{
 		apiKey:     "test-key",
 		httpClient: server.Client(),
 	}
@@ -372,9 +369,9 @@ func TestSerpAPINewsProvider_Integration(t *testing.T) {
 		t.Skip("Skipping SerpAPI integration test: SERPAPI_KEY not set")
 	}
 
-	provider, err := NewSerpAPINewsProvider(apiKey)
+	provider, err := newSerpAPINewsProvider(apiKey)
 	if err != nil {
-		t.Fatalf("Failed to create SerpAPINewsProvider: %v", err)
+		t.Fatalf("Failed to create serpAPINewsProvider: %v", err)
 	}
 
 	// Search for a well-known French politician

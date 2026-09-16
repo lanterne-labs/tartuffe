@@ -1,9 +1,29 @@
 package core
 
-import "digital-mirror/backend/entityvalidator"
+import (
+	"errors"
+	"fmt"
+)
 
-// isEntityRejected is the call-site predicate the fact-inserter uses to
-// distinguish "the subject isn't a real entity, skip this fact" from any other
-// failure that should abort the batch. It defers to entityvalidator.IsRejected
-// so the recognition logic lives in one place.
-func isEntityRejected(err error) bool { return entityvalidator.IsRejected(err) }
+// EntityRejectedError is returned by the person-insertion path when the entity
+// validation gate classifies a candidate as not a trackable entity. Batch
+// callers (fact ingestion, the validate CLI) detect it with IsEntityRejected
+// and treat it as a per-item skip rather than a fatal error.
+type EntityRejectedError struct {
+	Name       string
+	EntityType string
+	Filter     string // which validator filter made the call ("wiki", "llm", "default")
+	Reason     string // short human-readable explanation
+}
+
+func (e *EntityRejectedError) Error() string {
+	return fmt.Sprintf("entity rejected by %s: %q (%s) — %s",
+		e.Filter, e.Name, e.EntityType, e.Reason)
+}
+
+// IsEntityRejected reports whether err (or any wrapped error) is an
+// *EntityRejectedError.
+func IsEntityRejected(err error) bool {
+	var target *EntityRejectedError
+	return errors.As(err, &target)
+}

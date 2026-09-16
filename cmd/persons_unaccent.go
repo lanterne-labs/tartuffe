@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -43,78 +43,32 @@ func runPersonsUnaccent(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env not found, relying on environment")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storer: %w", err)
 	}
 	defer storer.Close()
 
-	members, err := storer.GetAllDedupMembers(ctx)
+	res, err := core.UnaccentPersons(ctx, storer, personsUnaccentApply)
 	if err != nil {
-		return fmt.Errorf("failed to load persons: %w", err)
-	}
-
-	// Group by the canonical form — IDENTICAL to what names are stored under.
-	byCanonical := map[string][]storage.DedupMember{}
-	for _, m := range members {
-		k := util.NormalizePersonName(m.Name)
-		byCanonical[k] = append(byCanonical[k], m)
+		return err
 	}
 
 	if !personsUnaccentApply {
 		fmt.Println("DRY RUN — pass --apply to merge + canonicalize. Variant-duplicate groups:")
 	}
-
-	var dupGroups, mergedAway, skipped, renamed int
-	for canonical, g := range byCanonical {
-		if len(g) > 1 {
-			dupGroups++
-			survivor, ok := storage.ChooseCanonical(g)
-			if !ok {
-				skipped++
-				log.Warn().Str("canonical", canonical).Int("members", len(g)).
-					Msg("Skipping group (2+ curated members — won't merge real entities)")
-				continue
-			}
-			var fromIDs []int64
-			for _, m := range g {
-				if m.ID != survivor.ID {
-					fromIDs = append(fromIDs, m.ID)
-				}
-			}
-			fmt.Printf("  %-45s survivor=#%d (facts=%d) <- %v\n", canonical, survivor.ID, survivor.FactCount, fromIDs)
-			if personsUnaccentApply {
-				for _, from := range fromIDs {
-					if err := storer.MergePersons(ctx, from, survivor.ID); err != nil {
-						return fmt.Errorf("merge %d into %d (%q): %w", from, survivor.ID, canonical, err)
-					}
-					mergedAway++
-				}
-			}
+	for _, g := range res.Groups {
+		if g.Skipped {
+			continue
 		}
+		fmt.Printf("  %-45s survivor=#%d (facts=%d) <- %v\n", g.Canonical, g.Survivor.ID, g.Survivor.FactCount, g.FromIDs)
 	}
 
 	if personsUnaccentApply {
-		// Rewrite every remaining name to its canonical form (collision-free now
-		// that all canonical-colliding rows were merged above).
-		members, err = storer.GetAllDedupMembers(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to reload persons: %w", err)
-		}
-		for _, m := range members {
-			if c := util.NormalizePersonName(m.Name); c != m.Name {
-				if err := storer.RenamePerson(ctx, m.ID, c); err != nil {
-					return fmt.Errorf("canonicalize %d: %w", m.ID, err)
-				}
-				renamed++
-			}
-		}
-		log.Info().Int("dup_groups", dupGroups).Int("rows_merged_away", mergedAway).
-			Int("groups_skipped", skipped).Int("names_canonicalized", renamed).Msg("Unaccent complete")
 		fmt.Printf("\nDone: %d dup groups, %d rows merged away, %d skipped, %d names canonicalized.\n",
-			dupGroups, mergedAway, skipped, renamed)
+			res.DupGroups, res.MergedAway, res.Skipped, res.Renamed)
 	} else {
-		fmt.Printf("\n%d variant-dup groups (%d would be skipped as 2+ curated). Re-run with --apply.\n", dupGroups, skipped)
+		fmt.Printf("\n%d variant-dup groups (%d would be skipped as 2+ curated). Re-run with --apply.\n", res.DupGroups, res.Skipped)
 	}
 	return nil
 }

@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -37,9 +37,10 @@ type StanceStorer interface {
 	// GetStanceTensions returns, per fact of the stance, the recorded
 	// contradictions it is part of with other facts of the same stance.
 	GetStanceTensions(ctx context.Context, stanceID int64) (map[int64][]StanceTension, error)
-	GetStanceDocumentCounts(ctx context.Context) (totalStances int, totalFactsLinked int, err error)
-	DeleteStanceDocumentsForPerson(ctx context.Context, personID int64) error
-	RecordContradiction(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) error
+	// RecordContradictionImmediate records a contradiction between two facts
+	// of the person in its own transaction and returns its id and whether the
+	// bundler still has to resolve its stance.
+	RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (contradictionID int64, needsBundler bool, err error)
 }
 
 // StanceDocument is the core type for stance documents.
@@ -53,12 +54,8 @@ type StanceDocument struct {
 	SummaryEn        string // English translation of Summary; empty if already English
 	KeyFactIDs       []int64
 	FactCount        int
-}
-
-// StanceMatch is a stance found by embedding search.
-type StanceMatch struct {
-	StanceDocument
-	Distance float64
+	LastUpdatedAt    time.Time
+	CreatedAt        time.Time
 }
 
 // StanceCandidate is one shortlisted stance for topic assignment, ranked by its
@@ -207,39 +204,17 @@ const (
 // stances, creating new stances, and detecting contradictions via LLM analysis.
 type StanceManager struct {
 	storer StanceStorer
-	apiKey string
-	apiURL string
-	model  string
-	client *llm.BaseLLMClient
+	client *llm.Client
 }
 
 // NewStanceManagerFromEnv creates a new StanceManager using OPEN_AI_* environment variables.
 // Returns an error if required env vars (OPEN_AI_KEY, OPEN_AI_API) are missing.
 func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("stance-manager")
+	if err != nil {
+		return nil, err
 	}
-
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-
-	apiURL := llm.ChatCompletionsURL(base)
-
-	return &StanceManager{
-		storer: storer,
-		apiKey: apiKey,
-		apiURL: apiURL,
-		model:  model,
-		client: llm.NewBaseLLMClient("stance-manager"),
-	}, nil
+	return &StanceManager{storer: storer, client: client}, nil
 }
 
 // ProcessNewFact analyzes a new fact against existing stances for the given person.
@@ -438,26 +413,6 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 	}
 	agg.Reasoning = strings.Join(reasoningParts, " | ")
 	return agg, nil
-}
-
-// chunkKeyFacts splits the key-facts slice into batches of at most size each.
-// Returns nil if the input is empty.
-func chunkKeyFacts(facts []StanceFactInfo, size int) [][]StanceFactInfo {
-	if size <= 0 {
-		size = keyFactBatchSize
-	}
-	if len(facts) == 0 {
-		return nil
-	}
-	var out [][]StanceFactInfo
-	for i := 0; i < len(facts); i += size {
-		end := i + size
-		if end > len(facts) {
-			end = len(facts)
-		}
-		out = append(out, facts[i:end])
-	}
-	return out
 }
 
 // estimateStanceTokens is a cheap, deliberately conservative token estimate
@@ -717,7 +672,7 @@ func (sm *StanceManager) AnalyzeFactInStance(
 // (contradiction.OpenAIContradictionDetector.VerifyContradiction) share
 // identical refutation logic.
 func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	return llm.VerifyContradiction(ctx, sm.client, sm.apiURL, sm.apiKey, sm.model, factA, factB, claimedReason)
+	return llm.VerifyContradiction(ctx, sm.client, factA, factB, claimedReason)
 }
 
 // verifyEntries runs the adversarial refutation pass over each flagged
@@ -787,7 +742,10 @@ func (sm *StanceManager) recordStanceContradictions(
 			// Self-pair — should never come from the LLM but guard anyway.
 			continue
 		}
-		if err := sm.storer.RecordContradiction(ctx, personID, factID, c.KeyFactID, c.Reason, c.ReasonEn); err != nil {
+		// The bundler-needed signal is dropped: both facts are in the same
+		// stance OF THIS PERSON, so the person-scoped fast path in storage
+		// always sets bundle_stance_id directly.
+		if _, _, err := sm.storer.RecordContradictionImmediate(ctx, personID, factID, c.KeyFactID, c.Reason, c.ReasonEn); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", stanceID).
 				Int64("fact_a", factID).
@@ -868,10 +826,11 @@ const (
 	stanceRefreshOutputTokens = 700
 	// stanceRefreshPromptTokens covers the fixed prose of the refresh prompts
 	// plus the current label + summary carried by the fold prompt. Measured
-	// 2026-09-11 with empty inputs: fold prompt 3358 chars = 839 tokens at
-	// stanceCharsPerToken, full-rebuild prompt 724 tokens; the ~560-token
-	// remainder holds the current summary (2-4 sentences, ~150 tokens).
-	stanceRefreshPromptTokens = 1400
+	// 2026-09-16 with empty inputs, after the label rules became the shared
+	// union block: fold prompt 5396 chars = 1349 tokens at stanceCharsPerToken,
+	// full-rebuild prompt 1152 tokens; the ~600-token remainder holds the
+	// current summary (2-4 sentences, ~150 tokens).
+	stanceRefreshPromptTokens = 1950
 	// stanceCompactionEvery: on the live path, every Nth fact of a stance
 	// triggers a full rebuild instead of a fold when the facts fit the context,
 	// so small and medium stances get a periodic drift reset for free while
@@ -1110,8 +1069,7 @@ func (sm *StanceManager) callJSONLLM(
 	maxTokens int,
 	enableThinking bool,
 ) (string, error) {
-	reqPayload := llm.ChatRequest{
-		Model: sm.model,
+	req := llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "system", Content: systemMsg},
 			{Role: "user", Content: userPrompt},
@@ -1125,28 +1083,13 @@ func (sm *StanceManager) callJSONLLM(
 		// `message.reasoning`, leaves `message.content` clean. Our parsers
 		// only read content, so this is a drop-in quality boost for the
 		// judgment-heavy calls (stance analyze, merge decision).
-		reqPayload.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
+		req.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
 	}
-
-	payloadBytes, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", fmt.Errorf("marshaling LLM request: %w", err)
-	}
-
-	bodyBytes, err := sm.client.DoRequest(ctx, sm.apiURL, sm.apiKey, payloadBytes)
+	content, _, err := sm.client.Chat(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("LLM request failed: %w", err)
 	}
-
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", fmt.Errorf("decoding chat response: %w", err)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return "", fmt.Errorf("LLM returned no content")
-	}
-
-	return stripMarkdownCodeBlock(strings.TrimSpace(chatResp.Choices[0].Message.Content)), nil
+	return llm.StripJSONCodeFence(strings.TrimSpace(content)), nil
 }
 
 // callLLM sends the stance analysis prompt for ONE batch of key facts to the LLM
@@ -1297,6 +1240,18 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 	return nil, lastErr
 }
 
+// truncate keeps the first maxLen runes of s and appends "..." when it cut.
+// Kept separate from util.TruncateString (which fits the suffix inside
+// maxLen): the stance prompts below embed the result, and changing their
+// bytes would invalidate the vLLM prefix cache and the golden fixtures.
+func truncate(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen]) + "..."
+}
+
 // assignTopic routes a new fact to one of the person's existing stances or
 // declares it new. It shortlists candidate stances by their NEAREST MEMBER FACT
 // to the fact's embedding (not by centroid), then hands those candidates — each
@@ -1356,7 +1311,7 @@ func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to. Each candidate topic shows its CLOSEST existing facts as evidence. The EXISTING TOPICS and the NEW FACT are given after the rules.
+	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to. Each candidate topic shows its CLOSEST existing facts as evidence. When no topic fits you name a new one: the LABEL RULES govern that new_topic_label. The EXISTING TOPICS and the NEW FACT are given after the rules.
 
 ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-buckets AND over-fragmentation into near-duplicate topics):
 - A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
@@ -1376,43 +1331,8 @@ ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-bucket
   * "aides sur le prix des carburants" + "soutien aux ménages face à la crise énergétique" → ONE topic ("aides énergie et carburants"), not two.
   Reserve a NEW topic for a genuinely different DOMAIN, never for a different facet, event, or wording within the same domain. When an existing focused candidate is a reasonable home, USE IT.
 
-LABEL RULES (for new_topic_label when creating a new topic):
-- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. Labels must name a noun-phrase subject area. They MUST NOT contain directional verbs, attitudinal adjectives, or polarity qualifiers. The same label must work whether the person is pro, anti, mixed, or evolving on the subject.
-- ONE SUBJECT per label. NEVER glue multiple distinct domains together. ❌ "sécurité, justice et protection des mineurs" (three subjects) → split into the single subject the fact is actually about.
-- FORBIDDEN label vocabulary (non-exhaustive — apply the spirit, not just the list):
-  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "protection of", "support for", "fight against", "rejet de", "promotion de"
-  * Polarity prefixes: "pro-", "anti-"
-  * Attitudinal adjectives in the label: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
-  * Stance descriptors: "posture sur X", "position concernant Y", "vision de Z"
-- GOOD labels (neutral, single-subject containers):
-  * "politique des dépenses publiques" (covers BOTH "defends hospitals" AND "voted for austerity cuts")
-  * "services publics et hôpitaux"
-  * "politique salariale des enseignants" (covers BOTH "promised raise" AND "voted against raise")
-  * "souveraineté industrielle française" (covers tariffs, offshoring, artisanat)
-  * "politique climatique" (covers renewables, fossil fuels, EV mandates, carbon tax)
-  * "libertés civiles et surveillance numérique"
-  * "Iran policy and military operations"
-  * "presidential candidacy 2027"
-  * "EU economic and trade policy"
-  * "affaire des assistants parlementaires"
-- BAD labels (directional / position-laden) — translate to the neutral form:
-  * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
-  * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
-  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
-  * ❌ "engagement pour les droits LGBT" → ✅ "droits LGBT et coparentalité"
-  * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
-  * ❌ "opposition à la surveillance" → ✅ "surveillance et vie privée"
-- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
-- Do NOT include the person's name (labels are already per-person).
+`+stanceLabelRules+`
 - **LANGUAGE:** Write `+"`new_topic_label`"+` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
-- ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
-  * ❌ "Donald Trump a posté « FREE LEPEN »" — quoting an action
-  * ❌ "Marine Le Pen a affirmé qu'elle ne se présenterait pas..." — quoting a statement
-  * ❌ "denied bracelet candidacy" — quoting a verb + claim
-- ⚠️ Do NOT pack event-detail into the label. The label should NOT name a specific ruling, date, or instance.
-  * ❌ "presidential candidacy eligibility and legal sentencing 2027 first-instance bracelet ruling"
-  * ✅ "presidential candidacy 2027"
-- ⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT, not a way of speaking. ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "flip-flops on foreign policy". ✅ "US tariffs on Chinese goods" / "Strait of Hormuz coalition".
 - If the fact is itself a journalist's META observation about the entity, the upstream extractor should have rejected it; either pick the closest existing subject-bound topic or, if truly no fit, emit a SUBJECT-bound new label (never the meta phrasing).
 
 EXISTING TOPICS:
@@ -1471,28 +1391,12 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 // assignTopic somehow returns an empty NewTopicLabel — keeps the system from
 // ever falling back to the fact text as a stance label.
 func (sm *StanceManager) generateGeneralLabel(ctx context.Context, factText string) (string, error) {
-	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for the political fact below. The label is a NEUTRAL SUBJECT AREA broad enough that 5-20 related future facts — including facts that take OPPOSITE positions on this subject — can all fit under it.
+	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for a political fact. The label is a NEUTRAL SUBJECT AREA broad enough that 5-20 related future facts — including facts that take OPPOSITE positions on this subject — can all fit under it. The FACT is given after the rules.
+
+`+stanceLabelRules+`
 
 FACT:
 %s
-
-LABEL RULES:
-- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. The same label must work whether future facts are pro, anti, mixed, or evolving on the subject.
-- FORBIDDEN label vocabulary (apply the spirit):
-  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "support for", "fight against", "rejet de", "promotion de"
-  * Polarity prefixes: "pro-", "anti-"
-  * Attitudinal adjectives: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
-- GOOD label examples (neutral subject containers): "Iran policy", "presidential candidacy 2027", "EU economic policy", "parliamentary assistants case", "souveraineté industrielle française", "politique climatique", "politique des dépenses publiques", "services publics et hôpitaux", "libertés civiles et surveillance numérique", "droits LGBT et coparentalité".
-- BAD label examples (translate to neutral):
-  * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
-  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
-  * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
-  * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
-- Format: "{subject area}{ optional temporal scope}". Max 120 chars.
-- Do NOT include the person's name.
-- ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from the fact. Describe the topic, not the statement.
-- Do NOT pack event-detail into the label.
-- NEVER use a meta / pattern-of-behavior / rhetorical label.
 
 Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
@@ -1556,25 +1460,48 @@ FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 	return sm.callRefreshLLM(ctx, prompt)
 }
 
-// stanceLabelRules is shared by the full-rebuild and the incremental refresh
-// prompts so the two can never drift in what a label may be.
+// stanceLabelRules is the single source of what a stance label may be, shared
+// by topic assignment, the fallback label generator, the full rebuild and the
+// incremental refresh so the five prompts can never drift. Prompt-specific
+// rules (the label language, the keep-the-current-label rule of the fold)
+// follow the block in each prompt.
 const stanceLabelRules = `LABEL RULES:
-- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. The label names the subject area broadly enough that all listed facts — including any that take opposite positions on the subject — fit under it. The same label must work whether the person is pro, anti, mixed, or evolving.
-- FORBIDDEN label vocabulary (apply the spirit):
-  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "support for", "fight against", "rejet de", "promotion de"
+- A LABEL IS A NEUTRAL SUBJECT, NOT A POSITION. Labels must name a noun-phrase subject area broad enough that every fact on the subject — including facts that take opposite positions on it — fits under it. They MUST NOT contain directional verbs, attitudinal adjectives, or polarity qualifiers. The same label must work whether the person is pro, anti, mixed, or evolving on the subject.
+- ONE SUBJECT per label. NEVER glue multiple distinct domains together. ❌ "sécurité, justice et protection des mineurs" (three subjects) → split into the single subject the fact is actually about.
+- FORBIDDEN label vocabulary (non-exhaustive — apply the spirit, not just the list):
+  * Directional verbs / verbal nouns: "défense de", "défendre", "lutte contre", "opposition à", "soutien à", "attachement à", "engagement pour", "discipline", "protection of", "support for", "fight against", "rejet de", "promotion de"
   * Polarity prefixes: "pro-", "anti-"
-  * Attitudinal adjectives: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
-- GOOD label examples (neutral subject containers): "Iran policy and military operations", "presidential candidacy 2027", "EU economic and trade policy", "parliamentary assistants case", "souveraineté industrielle française", "politique climatique", "politique des dépenses publiques", "services publics et hôpitaux", "libertés civiles et surveillance numérique", "politique salariale des enseignants".
-- BAD label examples (translate to neutral):
+  * Attitudinal adjectives in the label: "strict", "ambitieux", "sacré", "ferme", "rigoureux"
+  * Stance descriptors: "posture sur X", "position concernant Y", "vision de Z"
+- GOOD labels (neutral, single-subject containers):
+  * "politique des dépenses publiques" (covers BOTH "defends hospitals" AND "voted for austerity cuts")
+  * "services publics et hôpitaux"
+  * "politique salariale des enseignants" (covers BOTH "promised raise" AND "voted against raise")
+  * "souveraineté industrielle française" (covers tariffs, offshoring, artisanat)
+  * "politique climatique" (covers renewables, fossil fuels, EV mandates, carbon tax)
+  * "libertés civiles et surveillance numérique"
+  * "droits LGBT et coparentalité"
+  * "Iran policy and military operations"
+  * "presidential candidacy 2027"
+  * "EU economic and trade policy"
+  * "affaire des assistants parlementaires"
+- BAD labels (directional / position-laden) — translate to the neutral form:
   * ❌ "défense des services publics" → ✅ "services publics et hôpitaux"
-  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
   * ❌ "discipline budgétaire stricte" → ✅ "politique budgétaire de l'État"
+  * ❌ "lutte contre le changement climatique" → ✅ "politique climatique"
+  * ❌ "engagement pour les droits LGBT" → ✅ "droits LGBT et coparentalité"
   * ❌ "soutien à la transition écologique" → ✅ "transition écologique"
+  * ❌ "opposition à la surveillance" → ✅ "surveillance et vie privée"
 - Format: "{subject area}{ optional temporal scope}". Max 120 chars.
-- Do NOT include the person's name.
-- ABSOLUTELY NEVER quote a sentence, phrase, or specific verb from any fact.
-- Do NOT pack event-detail into the label.
-- NEVER use a meta / pattern-of-behavior / rhetorical label ("denials and reversals", "flip-flops", etc.).`
+- Do NOT include the person's name (labels are already per-person).
+- ⚠️ ABSOLUTELY NEVER quote a sentence, phrase, or specific verb the person said. Labels describe topics, not statements. Examples of FORBIDDEN labels:
+  * ❌ "Donald Trump a posté « FREE LEPEN »" — quoting an action
+  * ❌ "Marine Le Pen a affirmé qu'elle ne se présenterait pas..." — quoting a statement
+  * ❌ "denied bracelet candidacy" — quoting a verb + claim
+- ⚠️ Do NOT pack event-detail into the label. The label should NOT name a specific ruling, date, or instance.
+  * ❌ "presidential candidacy eligibility and legal sentencing 2027 first-instance bracelet ruling"
+  * ✅ "presidential candidacy 2027"
+- ⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT, not a way of speaking. ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "flip-flops on foreign policy". ✅ "US tariffs on Chinese goods" / "Strait of Hormuz coalition".`
 
 const stanceRefreshLanguageAndFormat = `LANGUAGE RULES:
 - Write "label" and "summary" in FRENCH, always — even when some or all listed facts are in English. Do NOT emit any translation here; English (and any other language) is produced separately by the translation phase.
@@ -1653,14 +1580,9 @@ func (sm *StanceManager) callRefreshLLM(ctx context.Context, prompt string) (str
 	return strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary), nil
 }
 
-// stripMarkdownCodeBlock removes optional markdown code block wrappers from LLM output.
-func stripMarkdownCodeBlock(content string) string {
-	return llm.StripJSONCodeFence(content)
-}
-
 // parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.
 func parseStanceLLMResponse(content string) (*stanceLLMResponse, error) {
-	content = stripMarkdownCodeBlock(strings.TrimSpace(content))
+	content = llm.StripJSONCodeFence(strings.TrimSpace(content))
 
 	var resp stanceLLMResponse
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {

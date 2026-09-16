@@ -8,11 +8,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// FailoverExtractor tries a list of ContentExtractors in order and returns
+// failoverExtractor tries a list of ContentExtractors in order and returns
 // the first successful extraction. Use this to chain a cheap-but-fragile
-// extractor (LocalExtractor) in front of a slower/paid one (WebcrawlerAPI):
+// extractor (localExtractor) in front of a slower/paid one (WebcrawlerAPI):
 // most URLs succeed locally, the fallback only fires when local fails.
-type FailoverExtractor struct {
+type failoverExtractor struct {
 	extractors []namedExtractor
 }
 
@@ -21,12 +21,12 @@ type namedExtractor struct {
 	ext  ContentExtractor
 }
 
-// NewFailoverExtractor builds a FailoverExtractor. Pass extractors in order
+// newFailoverExtractor builds a failoverExtractor. Pass extractors in order
 // of preference — the first one that succeeds wins. nil entries are skipped
 // so callers can pass optional extractors (e.g. WebcrawlerAPI only if its
 // key is set) without conditional plumbing.
-func NewFailoverExtractor(entries ...FailoverEntry) (*FailoverExtractor, error) {
-	out := &FailoverExtractor{}
+func newFailoverExtractor(entries ...failoverEntry) (*failoverExtractor, error) {
+	out := &failoverExtractor{}
 	for _, e := range entries {
 		if e.Extractor == nil {
 			continue
@@ -43,15 +43,15 @@ func NewFailoverExtractor(entries ...FailoverEntry) (*FailoverExtractor, error) 
 	return out, nil
 }
 
-// FailoverEntry pairs an extractor with a human-readable name used in logs.
-type FailoverEntry struct {
+// failoverEntry pairs an extractor with a human-readable name used in logs.
+type failoverEntry struct {
 	Name      string
 	Extractor ContentExtractor
 }
 
 // ExtractContent tries each extractor in order. Returns the first successful
 // result. If all fail, returns a wrapped error listing every failure.
-func (e *FailoverExtractor) ExtractContent(url string) (*ExtractedContent, error) {
+func (e *failoverExtractor) ExtractContent(url string) (*ExtractedContent, error) {
 	var failures []string
 	for i, n := range e.extractors {
 		result, err := n.ext.ExtractContent(url)

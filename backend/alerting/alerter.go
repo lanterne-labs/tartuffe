@@ -3,7 +3,6 @@ package alerting
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,8 +21,8 @@ type Alerter struct {
 	mu           sync.Mutex
 }
 
-// NewAlerter creates a new Alerter. Returns nil if notifier is nil.
-func NewAlerter(checkers []BalanceChecker, notifier Notifier, thresholdUSD float64, cooldown time.Duration) *Alerter {
+// newAlerter creates a new Alerter. Returns nil if notifier is nil.
+func newAlerter(checkers []BalanceChecker, notifier Notifier, thresholdUSD float64, cooldown time.Duration) *Alerter {
 	if notifier == nil || len(checkers) == 0 {
 		return nil
 	}
@@ -36,8 +35,8 @@ func NewAlerter(checkers []BalanceChecker, notifier Notifier, thresholdUSD float
 	}
 }
 
-// CheckAndAlert checks all provider balances and alerts if any are below threshold.
-func (a *Alerter) CheckAndAlert(ctx context.Context) {
+// checkAndAlert checks all provider balances and alerts if any are below threshold.
+func (a *Alerter) checkAndAlert(ctx context.Context) {
 	for _, checker := range a.checkers {
 		info, err := checker.CheckBalance(ctx)
 		if err != nil {
@@ -113,7 +112,7 @@ func StartBalancePoller(ctx context.Context, alerter *Alerter, interval time.Dur
 	log.Info().Dur("interval", interval).Float64("threshold_usd", alerter.thresholdUSD).Msg("Starting balance alert poller")
 
 	// Run immediately
-	alerter.CheckAndAlert(ctx)
+	alerter.checkAndAlert(ctx)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -124,21 +123,7 @@ func StartBalancePoller(ctx context.Context, alerter *Alerter, interval time.Dur
 			log.Info().Msg("Balance poller stopped")
 			return
 		case <-ticker.C:
-			alerter.CheckAndAlert(ctx)
+			alerter.checkAndAlert(ctx)
 		}
 	}
-}
-
-// IsCreditError returns true if the HTTP status and response body indicate credit/quota exhaustion.
-func IsCreditError(statusCode int, body string) bool {
-	if statusCode == 402 {
-		return true
-	}
-	lower := strings.ToLower(body)
-	if statusCode == 429 && strings.Contains(lower, "resource_exhausted") {
-		return true
-	}
-	return strings.Contains(lower, "insufficient credits") ||
-		strings.Contains(lower, "insufficient_quota") ||
-		strings.Contains(lower, "payment required")
 }

@@ -9,57 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// UpsertParty ensures a party exists in persons with entity_type='party'
-func UpsertParty(ctx context.Context, tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, name string, organeRef string, abbrev string) error {
-	if name == "" {
-		return fmt.Errorf("party name cannot be empty")
-	}
-	norm := util.NormalizePersonName(name)
-	// Store minimal metadata in attributes JSONB
-	stmt := `
-        INSERT INTO persons (name, entity_type, attributes)
-        VALUES ($1, 'party', jsonb_build_object('organeRef', $2, 'abbrev', $3))
-        ON CONFLICT (name) DO UPDATE SET
-          entity_type = 'party',
-          attributes = persons.attributes || jsonb_build_object('organeRef', EXCLUDED.attributes->>'organeRef', 'abbrev', EXCLUDED.attributes->>'abbrev')
-    `
-	_, err := tx.Exec(ctx, stmt, norm, organeRef, abbrev)
-	return err
-}
-
-// UpsertDeputy ensures a deputy exists in persons with entity_type='human'
-func UpsertDeputy(ctx context.Context, tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, displayName string, assembleeID string, constituency string) error {
-	if displayName == "" {
-		return fmt.Errorf("deputy displayName cannot be empty")
-	}
-	norm := util.NormalizePersonName(displayName)
-	stmt := `
-        INSERT INTO persons (name, entity_type, attributes)
-        VALUES ($1, 'human', jsonb_build_object('assemblee_id', $2, 'constituency', $3))
-        ON CONFLICT (name) DO UPDATE SET
-          attributes = persons.attributes || jsonb_build_object('assemblee_id', EXCLUDED.attributes->>'assemblee_id', 'constituency', EXCLUDED.attributes->>'constituency')
-    `
-	_, err := tx.Exec(ctx, stmt, norm, assembleeID, constituency)
-	return err
-}
-
-// LinkAffiliation creates/updates an affiliation link human -> party
-func LinkAffiliation(ctx context.Context, tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, humanID int64, partyID int64, organeRef string, legislature int) error {
-	stmt := `
-		INSERT INTO person_links (src_person_id, dst_person_id, link_type, attributes)
-		VALUES ($1, $2, 'affiliation', jsonb_build_object('organeRef', $3, 'legislature', $4))
-		ON CONFLICT DO NOTHING
-	`
-	_, err := tx.Exec(ctx, stmt, humanID, partyID, organeRef, legislature)
-	return err
-}
-
 // BatchInsertActors inserts all actors (deputies and parties) in batch operations within a transaction.
 func BatchInsertActors(ctx context.Context, tx interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)

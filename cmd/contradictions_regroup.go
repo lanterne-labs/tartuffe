@@ -3,9 +3,8 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/contradiction"
-	"digital-mirror/backend/llm"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"fmt"
 	"os"
 
@@ -53,104 +52,40 @@ func runContradictionRegroup(cmd *cobra.Command, args []string) error {
 		log.Debug().Msg(".env file not found, relying on environment variables")
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
 	defer storer.Close()
 
+	opts := contradiction.RegroupOptions{}
+
 	// Build the LLM-backed summarizer unless skipped.
-	var summarize storage.GroupSummarizer
 	if !regroupNoSummary {
 		detector, err := contradiction.NewOpenAIContradictionDetectorFromEnv()
 		if err != nil {
 			return fmt.Errorf("failed to create contradiction detector (use --no-summary to skip LLM): %w", err)
 		}
-		summarize = func(ctx context.Context, baseFact string, spokes []storage.GroupSpokeInput) (string, string, error) {
-			ls := make([]llm.GroupSpoke, len(spokes))
-			for i, sp := range spokes {
-				ls[i] = llm.GroupSpoke{FactText: sp.FactText, Reason: sp.Reason}
-			}
-			return detector.SynthesizeGroupSummary(ctx, baseFact, ls)
-		}
+		opts.Summarize = contradiction.GroupSummarizer(detector)
 	}
 
-	// Resolve the target person set.
-	var personIDs []int64
+	// Resolve the target person set (empty = every person with contradictions).
 	switch {
 	case regroupPersonIDFlag > 0:
-		personIDs = []int64{regroupPersonIDFlag}
+		opts.PersonIDs = []int64{regroupPersonIDFlag}
 	case regroupPersonFlag != "":
-		id, err := storer.GetPersonIDByName(ctx, util.NormalizeString(regroupPersonFlag))
+		person, err := core.ResolvePersonID(ctx, storer, regroupPersonFlag, core.ExactMatchOnly)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", regroupPersonFlag, err)
+			return err
 		}
-		personIDs = []int64{id}
-	default:
-		personIDs, err = storer.PersonIDsWithContradictions(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to list persons with contradictions: %w", err)
-		}
+		opts.PersonIDs = []int64{person.ID}
 	}
 
-	agg := regroupPersons(ctx, storer, personIDs, summarize)
-	fmt.Fprintf(os.Stderr, "Regroup complete: %d person(s), %d rows rebased, %d multi-fact groups, %d summaries written, %d summary failures.\n",
-		len(personIDs), agg.Rebased, agg.Groups, agg.SummariesWrote, agg.SummariesFailed)
-	return nil
-}
-
-// regroupPersons runs RegroupPersonContradictions over each person id and returns the
-// aggregate result. A per-person error is logged and skipped so one bad person never
-// aborts a full sweep (used by both the CLI and the daily pipeline).
-func regroupPersons(ctx context.Context, storer *storage.PostgresStorer, personIDs []int64, summarize storage.GroupSummarizer) storage.RegroupResult {
-	var agg storage.RegroupResult
-	for _, pid := range personIDs {
-		res, err := storer.RegroupPersonContradictions(ctx, pid, summarize)
-		if err != nil {
-			log.Error().Err(err).Int64("person_id", pid).Msg("regroup: person failed, skipping")
-			continue
-		}
-		agg.Rebased += res.Rebased
-		agg.Groups += res.Groups
-		agg.SummariesWrote += res.SummariesWrote
-		agg.SummariesFailed += res.SummariesFailed
-		if res.Rebased > 0 || res.Groups > 0 {
-			log.Info().Int64("person_id", pid).Int("rebased", res.Rebased).
-				Int("groups", res.Groups).Int("summaries", res.SummariesWrote).
-				Int("summary_failures", res.SummariesFailed).Msg("regrouped contradictions")
-		}
-	}
-	return agg
-}
-
-// runContradictionRegroupStep is the daily-pipeline entry point: regroup every person
-// with contradictions, generating merged summaries via the LLM. Best-effort — a nil
-// detector (no LLM env) downgrades to base-only rather than failing the pipeline.
-func runContradictionRegroupStep(ctx context.Context, storer *storage.PostgresStorer) error {
-	personIDs, err := storer.PersonIDsWithContradictions(ctx)
+	agg, err := contradiction.RunRegroup(ctx, storer, opts)
 	if err != nil {
-		return fmt.Errorf("list persons with contradictions: %w", err)
+		return err
 	}
-	if len(personIDs) == 0 {
-		return nil
-	}
-
-	var summarize storage.GroupSummarizer
-	if detector, dErr := contradiction.NewOpenAIContradictionDetectorFromEnv(); dErr != nil {
-		log.Warn().Err(dErr).Msg("regroup: no LLM detector; setting group bases without summaries")
-	} else {
-		summarize = func(ctx context.Context, baseFact string, spokes []storage.GroupSpokeInput) (string, string, error) {
-			ls := make([]llm.GroupSpoke, len(spokes))
-			for i, sp := range spokes {
-				ls[i] = llm.GroupSpoke{FactText: sp.FactText, Reason: sp.Reason}
-			}
-			return detector.SynthesizeGroupSummary(ctx, baseFact, ls)
-		}
-	}
-
-	agg := regroupPersons(ctx, storer, personIDs, summarize)
-	log.Info().Int("persons", len(personIDs)).Int("rebased", agg.Rebased).
-		Int("groups", agg.Groups).Int("summaries", agg.SummariesWrote).
-		Int("summary_failures", agg.SummariesFailed).Msg("Daily pipeline: contradiction regroup done")
+	fmt.Fprintf(os.Stderr, "Regroup complete: %d person(s), %d rows rebased, %d multi-fact groups, %d summaries written, %d summary failures.\n",
+		agg.Persons, agg.Rebased, agg.Groups, agg.SummariesWrote, agg.SummariesFailed)
 	return nil
 }

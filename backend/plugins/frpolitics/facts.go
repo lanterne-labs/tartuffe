@@ -187,7 +187,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		inputs = append(inputs, input)
 	}
 
-	stanceMgr, err := core.NewStanceManagerFromEnv(storage.NewStanceStorerAdapter(storer))
+	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}

@@ -2,18 +2,17 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/config"
 	"fmt"
-	"os"
-	"strconv"
 
 	"github.com/rs/zerolog/log"
 )
 
 // DedupeStorer defines the interface for storage operations needed by FactDeduplicator.
-// This is typically implemented by storage.PostgresStorer via DedupeStorerAdapter.
+// storage.PostgresStorer implements it.
 type DedupeStorer interface {
-	// GetAllPersons retrieves all persons from the database.
-	GetAllPersons(ctx context.Context) ([]DedupePersonInfo, error)
+	// GetAllPersonRecords retrieves all persons from the database.
+	GetAllPersonRecords(ctx context.Context) ([]PersonRecord, error)
 
 	// GetPersonIDByName returns the person ID for a given name.
 	GetPersonIDByName(ctx context.Context, name string) (int64, error)
@@ -30,18 +29,8 @@ type DedupeStorer interface {
 	// GetFactByID retrieves a single fact by its ID.
 	GetFactByID(ctx context.Context, factID int64) (*FactForDedup, error)
 
-	// FindOrInsertPersons resolves person names to person IDs.
-	FindOrInsertPersons(ctx context.Context, names []string) ([]int64, error)
-
 	// DeleteFact deletes a fact that has been determined to be invalid.
 	DeleteFact(ctx context.Context, factID int64) error
-}
-
-// DedupePersonInfo represents basic person information for deduplication.
-type DedupePersonInfo struct {
-	ID         int64
-	Name       string
-	EntityType string
 }
 
 // FactForDedup represents a fact with fields needed for deduplication.
@@ -111,8 +100,8 @@ type DuplicateGroup struct {
 // Thresholds are loaded from environment variables with sensible defaults.
 func NewFactDeduplicator(storer DedupeStorer, llmVerifier *DedupLLMVerifier) *FactDeduplicator {
 	// Load thresholds from environment or use defaults
-	autoDedupeThreshold := getEnvFloat("DEDUPE_AUTO_THRESHOLD", 0.90)
-	uncertainLowThreshold := getEnvFloat("DEDUPE_UNCERTAIN_THRESHOLD", 0.75)
+	autoDedupeThreshold := config.EnvFloat("DEDUPE_AUTO_THRESHOLD", 0.90)
+	uncertainLowThreshold := config.EnvFloat("DEDUPE_UNCERTAIN_THRESHOLD", 0.75)
 
 	log.Info().
 		Float64("auto_threshold", autoDedupeThreshold).
@@ -139,7 +128,7 @@ func (d *FactDeduplicator) SetThresholds(autoDedupeThreshold, uncertainLowThresh
 
 // DedupeAll runs deduplication on all facts in the database.
 func (d *FactDeduplicator) DedupeAll(ctx context.Context, opts DedupeOptions) (*DedupeResult, error) {
-	persons, err := d.storer.GetAllPersons(ctx)
+	persons, err := d.storer.GetAllPersonRecords(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all persons: %w", err)
 	}
@@ -344,7 +333,7 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 
 	batchSize := opts.BatchSize
 	if batchSize <= 0 {
-		batchSize = getEnvInt("DEDUPE_LLM_BATCH_SIZE", 10)
+		batchSize = config.EnvInt("DEDUPE_LLM_BATCH_SIZE", 10)
 	}
 
 	log.Info().Int("pairs", len(pairs)).Int("batch_size", batchSize).Msg("Processing uncertain pairs with LLM")
@@ -453,21 +442,3 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 }
 
 // Helper functions for loading environment variables
-
-func getEnvFloat(key string, defaultVal float64) float64 {
-	if val := os.Getenv(key); val != "" {
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return defaultVal
-}
-
-func getEnvInt(key string, defaultVal int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return defaultVal
-}

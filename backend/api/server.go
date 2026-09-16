@@ -1,0 +1,179 @@
+// Package api is the Digital Mirror HTTP API: the Chi router, its middleware
+// stack, the JSON handlers and the SSE event stream. Serve wires the server
+// together with the long-lived background workers (metrics endpoint, balance
+// poller, pipeline watchdog, archiver) that only the web service runs.
+package api
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/storage"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/go-chi/httprate"
+	"github.com/rs/zerolog/log"
+)
+
+// Storer is the storage surface the HTTP handlers use.
+type Storer interface {
+	Ping(ctx context.Context) error
+	GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int) ([]storage.PersonSummary, error)
+	GetPersonByID(ctx context.Context, personID int64) (*storage.PersonSummary, error)
+	GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedFacts, error)
+	GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedContradictions, error)
+	GetPersonMembers(ctx context.Context, personID int64) ([]storage.MemberInfo, error)
+	GetPersonHistory(ctx context.Context, personID int64) ([]storage.HistoryPoint, error)
+	GetFactPersons(ctx context.Context, factID int64, limit int, offset int) ([]storage.PersonSummary, error)
+	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]core.StanceDocument, error)
+	GetStanceContradictionCounts(ctx context.Context, personID int64) (map[int64]int, error)
+	GetStanceGroupCounts(ctx context.Context, personID int64) (map[int64]int, error)
+	GetStanceContradictionGroups(ctx context.Context, stanceID int64) ([]storage.ContradictionGroup, error)
+	GetFactsInStance(ctx context.Context, stanceID int64) ([]storage.FactInStance, error)
+	GetMaxEventID(ctx context.Context) (int64, error)
+	GetEventsAfter(ctx context.Context, sinceID int64, limit int) ([]storage.Event, error)
+}
+
+// Server holds the HTTP router and its dependencies.
+type Server struct {
+	storer Storer
+	router *chi.Mux
+}
+
+// NewServer builds the router with its middleware stack and routes.
+func NewServer(storer Storer) *Server {
+	r := chi.NewRouter()
+
+	// Parse rate limit from env (default: 100 req/min per IP)
+	rateLimit := 100
+	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			rateLimit = parsed
+		}
+	}
+
+	// Middleware — applied in order:
+	// securityHeaders → Logger → Recoverer → Timeout → RateLimit → CORS → metrics
+	r.Use(securityHeaders)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(httprate.LimitByIP(rateLimit, 1*time.Minute))
+	r.Use(cors.Handler(cors.Options{
+		AllowOriginFunc:  corsOriginFunc(),
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+	r.Use(metrics.Middleware)
+
+	server := &Server{
+		storer: storer,
+		router: r,
+	}
+
+	server.setupRoutes()
+	return server
+}
+
+// Handler returns the root HTTP handler (for tests and embedding).
+func (s *Server) Handler() http.Handler {
+	return s.router
+}
+
+// Routes returns every registered "METHOD /path" pair, in walk order.
+func (s *Server) Routes() ([]string, error) {
+	var routes []string
+	err := chi.Walk(s.router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		routes = append(routes, method+" "+route)
+		return nil
+	})
+	return routes, err
+}
+
+// Start serves the API on addr and blocks until the listener fails.
+func (s *Server) Start(addr string) error {
+	log.Info().Str("addr", addr).Msg("Starting web server")
+	return http.ListenAndServe(addr, s.router)
+}
+
+// corsOriginFunc returns a CORS origin checker based on the ALLOWED_ORIGINS env var.
+// If ALLOWED_ORIGINS is set (comma-separated), only those origins are permitted.
+// Otherwise, localhost/127.0.0.1 origins are allowed for development.
+func corsOriginFunc() func(r *http.Request, origin string) bool {
+	if env := os.Getenv("ALLOWED_ORIGINS"); env != "" {
+		allowed := make(map[string]struct{})
+		for _, o := range strings.Split(env, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				allowed[o] = struct{}{}
+			}
+		}
+		return func(r *http.Request, origin string) bool {
+			_, ok := allowed[origin]
+			return ok
+		}
+	}
+	return func(r *http.Request, origin string) bool {
+		return strings.HasPrefix(origin, "http://localhost:") ||
+			strings.HasPrefix(origin, "http://127.0.0.1:") ||
+			strings.HasPrefix(origin, "https://localhost:") ||
+			strings.HasPrefix(origin, "https://127.0.0.1:")
+	}
+}
+
+// httpInternalError logs err server-side and returns a generic 500 to the client,
+// preventing internal details (e.g. DB connection strings) from leaking.
+func httpInternalError(w http.ResponseWriter, err error, msg string) {
+	log.Error().Err(err).Msg(msg)
+	http.Error(w, "Internal server error", http.StatusInternalServerError)
+}
+
+// securityHeaders adds standard security headers to all responses.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'")
+
+		// HSTS only when behind HTTPS (reverse proxy sets X-Forwarded-Proto)
+		if r.Header.Get("X-Forwarded-Proto") == "https" {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// setupRoutes configures all the API routes
+func (s *Server) setupRoutes() {
+	// Health check endpoint (kept on main API for external LB probes)
+	s.router.Get("/health", s.handleHealth)
+
+	// API routes
+	s.router.Route("/api", func(r chi.Router) {
+		r.Get("/persons", s.handleGetPersons)
+		r.Get("/person/{id}", s.handleGetPerson)
+		r.Get("/person/{id}/facts", s.handleGetPersonFacts)
+		r.Get("/person/{id}/contradictions", s.handleGetPersonContradictions)
+		r.Get("/person/{id}/members", s.handleGetPersonMembers)
+		r.Get("/person/{id}/history", s.handleGetPersonHistory)
+		r.Get("/facts/{id}/persons", s.handleGetFactPersons)
+		r.Get("/person/{id}/stances", s.handleGetPersonStances)
+		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
+		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
+		r.Get("/events", s.handleEventsSSE)
+	})
+}

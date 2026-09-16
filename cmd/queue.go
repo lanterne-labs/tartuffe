@@ -1,25 +1,16 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"digital-mirror/backend/categorizer"
-	"digital-mirror/backend/core"
-	"digital-mirror/backend/embedding"
-	"digital-mirror/backend/extractor"
-	"digital-mirror/backend/plugins/news"
-	"digital-mirror/backend/plugins/twitter"
-	"digital-mirror/backend/search"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/deps"
+	"digital-mirror/backend/pipeline"
+	"digital-mirror/backend/plugins"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -30,7 +21,7 @@ import (
 var queueCmd = &cobra.Command{
 	Use:   "queue",
 	Short: "Manage the search queue",
-	Long:  `Add, remove, list, and process persons in the search queue. The search queue is shared across all plugins (news, twitter).`,
+	Long:  `Add, remove, list, and process persons in the search queue. The search queue is shared across all plugins.`,
 }
 
 // queueAddCmd adds a person to the search queue
@@ -66,8 +57,8 @@ var queueListCmd = &cobra.Command{
 // queueProcessCmd processes the search queue
 var queueProcessCmd = &cobra.Command{
 	Use:         "process",
-	Short:       "Process the search queue with all plugins",
-	Long:        `Process persons in the search queue, running selected plugins (news, twitter) to extract facts.`,
+	Short:       "Run the ingest phase of the selected plugins over the search queue",
+	Long:        `Process persons in the search queue through the ingest phase of the selected plugins. Plugin-specific tuning lives on each plugin's own command.`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.NoArgs,
 	RunE:        runQueueProcess,
@@ -76,111 +67,40 @@ var queueProcessCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(queueCmd)
 
-	// Add queue subcommands
 	queueCmd.AddCommand(queueAddCmd)
 	queueCmd.AddCommand(queueRemoveCmd)
 	queueCmd.AddCommand(queueListCmd)
 	queueCmd.AddCommand(queueProcessCmd)
 
-	// Shared process flags
 	queueProcessCmd.Flags().Int("limit", 0, "maximum number of persons to process (0 = all)")
 	queueProcessCmd.Flags().String("since", "", "only search content published after YYYY-MM-DD")
 	queueProcessCmd.Flags().Int("days", 0, "only search content from last N days (alternative to --since)")
 	queueProcessCmd.Flags().Int("window-days", 0, "break date range into windows of N days (requires --since or --days, 0=disabled)")
-
-	// Plugin selection
-	queueProcessCmd.Flags().String("plugins", "news,twitter", "comma-separated list of plugins to run (news, twitter)")
-
-	// News-specific flags
-	queueProcessCmd.Flags().Int("news-max-parse", 5, "maximum news articles to parse per person")
-	queueProcessCmd.Flags().String("news-extractor", "auto", "content extractor to use (auto, local, webcrawler, firecrawl, apify)")
-	queueProcessCmd.Flags().String("news-cache-dir", "", "directory to cache extracted content (enables caching)")
-	queueProcessCmd.Flags().Bool("news-cache-only", false, "only load from cache, don't scrape (requires --news-cache-dir)")
-	queueProcessCmd.Flags().Int("news-max-per-story", 0, "max articles per story_token (0=no cap)")
-	queueProcessCmd.Flags().String("news-location", "France", "restrict news search to this country")
-
-	// Debugging flags
-	queueProcessCmd.Flags().String("keep-source", "", "dump article content + extracted facts to this directory for debugging")
-
-	// Twitter-specific flags
-	queueProcessCmd.Flags().Int("twitter-max-tweets", 50, "maximum tweets to fetch per handle")
-	queueProcessCmd.Flags().Int("twitter-batch-size", 20, "tweets per LLM extraction call")
-	queueProcessCmd.Flags().Bool("twitter-force", false, "bypass dedup, re-fetch and re-process everything")
-	queueProcessCmd.Flags().Bool("twitter-dry-run", false, "show what would be done without fetching or storing")
+	queueProcessCmd.Flags().StringSlice("plugins", []string{"news", "twitter"}, "plugins to run (registered: "+strings.Join(pipeline.Names(), ", ")+")")
+	queueProcessCmd.Flags().Bool("force", false, "bypass the plugins' already-processed checks")
+	queueProcessCmd.Flags().Bool("dry-run", false, "fetch and extract without storing anything")
 }
 
 func runQueueAdd(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
 
-	personName := args[0]
-
-	// Resolve name using fuzzy matching
-	result := core.ResolveTargetName(ctx, storer, personName)
-
-	if result.Error != nil {
-		return fmt.Errorf("failed to resolve person name: %w", result.Error)
+	person, ok, err := resolvePersonInteractive(ctx, storer, args[0], false)
+	if err != nil || !ok {
+		return err
 	}
-
-	var personID int64
-	var resolvedName string
-
-	if result.IsExactMatch {
-		personID = *result.ExactMatch.PersonID
-		resolvedName = result.ExactMatch.Name
-		log.Info().Str("query", personName).Str("matched", resolvedName).Msg("Exact match found")
-	} else if len(result.FuzzyMatches) > 0 {
-		// Multiple fuzzy matches - ask user to disambiguate
-		fmt.Printf("Query: %q\n", personName)
-		fmt.Printf("Found %d potential matches:\n", len(result.FuzzyMatches))
-
-		for i, match := range result.FuzzyMatches {
-			fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-				i+1, match.Target.Name, match.Target.EntityType, match.Score)
-		}
-		fmt.Printf("  0) Cancel\n")
-		fmt.Print("Enter your choice (0-" + fmt.Sprintf("%d", len(result.FuzzyMatches)) + "): ")
-
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		choice, err := strconv.Atoi(input)
-		if err != nil || choice < 0 || choice > len(result.FuzzyMatches) {
-			return fmt.Errorf("invalid choice")
-		}
-
-		if choice == 0 {
-			fmt.Println("Cancelled")
-			return nil
-		}
-
-		selected := result.FuzzyMatches[choice-1]
-		personID = *selected.Target.PersonID
-		resolvedName = selected.Target.Name
-		fmt.Printf("Selected: %s\n", resolvedName)
-	} else {
-		return fmt.Errorf("person %q not found in database. Use 'persons add' to create first", personName)
-	}
-
-	// Add to queue
-	err = storer.AddToSearchQueue(ctx, personID)
-	if err != nil {
+	if err := storer.AddToSearchQueue(ctx, person.ID); err != nil {
 		return fmt.Errorf("failed to add to queue: %w", err)
 	}
-
-	// Check if it was already in queue
-	inQueue, _ := storer.IsInSearchQueue(ctx, personID)
-	if inQueue {
-		fmt.Printf("Added %s (ID: %d) to search queue\n", resolvedName, personID)
+	if inQueue, _ := storer.IsInSearchQueue(ctx, person.ID); inQueue {
+		fmt.Printf("Added %s (ID: %d) to search queue\n", person.Name, person.ID)
 	}
-
 	return nil
 }
 
@@ -188,69 +108,20 @@ func runQueueRemove(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
 
-	personName := args[0]
-
-	// Resolve name using fuzzy matching
-	result := core.ResolveTargetName(ctx, storer, personName)
-
-	if result.Error != nil {
-		return fmt.Errorf("failed to resolve person name: %w", result.Error)
-	}
-
-	var personID int64
-	var resolvedName string
-
-	if result.IsExactMatch {
-		personID = *result.ExactMatch.PersonID
-		resolvedName = result.ExactMatch.Name
-		log.Info().Str("query", personName).Str("matched", resolvedName).Msg("Exact match found")
-	} else if len(result.FuzzyMatches) > 0 {
-		// Multiple fuzzy matches - ask user to disambiguate
-		fmt.Printf("Query: %q\n", personName)
-		fmt.Printf("Found %d potential matches:\n", len(result.FuzzyMatches))
-
-		for i, match := range result.FuzzyMatches {
-			fmt.Printf("  %d) %s (%s) - similarity: %.2f\n",
-				i+1, match.Target.Name, match.Target.EntityType, match.Score)
-		}
-		fmt.Printf("  0) Cancel\n")
-		fmt.Print("Enter your choice (0-" + fmt.Sprintf("%d", len(result.FuzzyMatches)) + "): ")
-
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		choice, err := strconv.Atoi(input)
-		if err != nil || choice < 0 || choice > len(result.FuzzyMatches) {
-			return fmt.Errorf("invalid choice")
-		}
-
-		if choice == 0 {
-			fmt.Println("Cancelled")
-			return nil
-		}
-
-		selected := result.FuzzyMatches[choice-1]
-		personID = *selected.Target.PersonID
-		resolvedName = selected.Target.Name
-		fmt.Printf("Selected: %s\n", resolvedName)
-	} else {
-		return fmt.Errorf("person %q not found in database", personName)
-	}
-
-	// Remove from queue
-	err = storer.RemoveFromSearchQueue(ctx, personID)
-	if err != nil {
+	person, ok, err := resolvePersonInteractive(ctx, storer, args[0], false)
+	if err != nil || !ok {
 		return err
 	}
-
-	fmt.Printf("Removed %s (ID: %d) from search queue\n", resolvedName, personID)
+	if err := storer.RemoveFromSearchQueue(ctx, person.ID); err != nil {
+		return err
+	}
+	fmt.Printf("Removed %s (ID: %d) from search queue\n", person.Name, person.ID)
 	return nil
 }
 
@@ -258,7 +129,7 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
@@ -268,7 +139,6 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get search queue: %w", err)
 	}
-
 	if len(queue) == 0 {
 		fmt.Println("Search queue is empty")
 		return nil
@@ -276,56 +146,29 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "PERSON ID\tNAME\tTYPE\tADDED AT")
-
 	for _, entry := range queue {
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n",
-			entry.PersonID,
-			entry.Name,
-			entry.EntityType,
-			entry.AddedAt.Format("2006-01-02 15:04"))
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", entry.PersonID, entry.Name, entry.EntityType, entry.AddedAt.Format("2006-01-02 15:04"))
 	}
-
 	w.Flush()
-
 	fmt.Printf("\nTotal: %d persons in queue\n", len(queue))
 	return nil
 }
 
-// runQueueProcess is the CLI wrapper that parses cobra flags and delegates to executeQueueProcess.
 func runQueueProcess(cmd *cobra.Command, args []string) error {
 	_ = godotenv.Load()
 	ctx := context.Background()
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize database: %w", err)
-	}
-	defer storer.Close()
-
-	// Parse flags
 	limit, _ := cmd.Flags().GetInt("limit")
 	sinceStr, _ := cmd.Flags().GetString("since")
 	days, _ := cmd.Flags().GetInt("days")
 	windowDays, _ := cmd.Flags().GetInt("window-days")
-	plugins, _ := cmd.Flags().GetString("plugins")
-	newsMaxParse, _ := cmd.Flags().GetInt("news-max-parse")
-	newsExtractor, _ := cmd.Flags().GetString("news-extractor")
-	newsCacheDir, _ := cmd.Flags().GetString("news-cache-dir")
-	newsCacheOnly, _ := cmd.Flags().GetBool("news-cache-only")
-	newsMaxPerStory, _ := cmd.Flags().GetInt("news-max-per-story")
-	newsLocation, _ := cmd.Flags().GetString("news-location")
-	keepSourceDir, _ := cmd.Flags().GetString("keep-source")
-	twitterMaxTweets, _ := cmd.Flags().GetInt("twitter-max-tweets")
-	twitterBatchSize, _ := cmd.Flags().GetInt("twitter-batch-size")
-	twitterForce, _ := cmd.Flags().GetBool("twitter-force")
-	twitterDryRun, _ := cmd.Flags().GetBool("twitter-dry-run")
+	pluginNames, _ := cmd.Flags().GetStringSlice("plugins")
+	force, _ := cmd.Flags().GetBool("force")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
-	// Validate mutually exclusive flags
 	if sinceStr != "" && days > 0 {
 		return fmt.Errorf("--since and --days are mutually exclusive, use only one")
 	}
-
-	// Parse since date
 	var since *time.Time
 	if sinceStr != "" {
 		t, err := time.Parse("2006-01-02", sinceStr)
@@ -338,316 +181,54 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 		since = &t
 		log.Info().Int("days", days).Time("since", t).Msg("Calculated since date from --days flag")
 	}
-
-	opts := QueueProcessOpts{
-		Limit:            limit,
-		Since:            since,
-		WindowDays:       windowDays,
-		Plugins:          plugins,
-		NewsMaxParse:     newsMaxParse,
-		NewsExtractor:    newsExtractor,
-		NewsCacheDir:     newsCacheDir,
-		NewsCacheOnly:    newsCacheOnly,
-		NewsMaxPerStory:  newsMaxPerStory,
-		NewsLocation:     newsLocation,
-		KeepSourceDir:    keepSourceDir,
-		TwitterMaxTweets: twitterMaxTweets,
-		TwitterBatchSize: twitterBatchSize,
-		TwitterForce:     twitterForce,
-		TwitterDryRun:    twitterDryRun,
-	}
-
-	return executeQueueProcess(ctx, storer, opts)
-}
-
-// QueueProcessOpts configures queue processing, used by both CLI and pipeline scheduler.
-type QueueProcessOpts struct {
-	Limit            int
-	Since            *time.Time
-	WindowDays       int
-	Plugins          string // comma-separated: "news", "twitter", "news,twitter"
-	NewsMaxParse     int
-	NewsExtractor    string
-	NewsCacheDir     string
-	NewsCacheOnly    bool
-	NewsMaxPerStory  int
-	NewsLocation     string
-	KeepSourceDir    string
-	TwitterMaxTweets int
-	TwitterBatchSize int
-	TwitterForce     bool
-	TwitterDryRun    bool
-}
-
-// executeQueueProcess runs queue processing with the given options.
-// Called by both the CLI command and the pipeline scheduler.
-func executeQueueProcess(ctx context.Context, storer *storage.PostgresStorer, opts QueueProcessOpts) error {
-	// Parse plugin selection
-	selectedPlugins := make(map[string]bool)
-	for _, p := range strings.Split(opts.Plugins, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			selectedPlugins[p] = true
-		}
-	}
-	runNews := selectedPlugins["news"]
-	runTwitter := selectedPlugins["twitter"]
-
-	if !runNews && !runTwitter {
-		return fmt.Errorf("no valid plugins selected (available: news, twitter)")
-	}
-
-	// Validate
-	if opts.NewsCacheOnly && opts.NewsCacheDir == "" {
-		return fmt.Errorf("--news-cache-only requires --news-cache-dir to be set")
-	}
-	if opts.WindowDays > 0 && opts.Since == nil {
+	if windowDays > 0 && since == nil {
 		return fmt.Errorf("--window-days requires --since or --days to be set")
 	}
 
-	// Get queue
-	queue, err := storer.GetSearchQueue(ctx)
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+
+	targets, err := pipeline.QueueTargets(ctx, storer)
 	if err != nil {
 		return fmt.Errorf("failed to get search queue: %w", err)
 	}
-
-	if len(queue) == 0 {
+	if len(targets) == 0 {
 		log.Info().Msg("Search queue is empty")
 		return nil
 	}
-
-	log.Info().Int("queue_size", len(queue)).Msg("Loaded search queue")
-
-	// Apply limit
-	if opts.Limit > 0 && len(queue) > opts.Limit {
-		queue = queue[:opts.Limit]
-		log.Info().Int("limited_to", opts.Limit).Msg("Applied limit to queue")
+	if limit > 0 && len(targets) > limit {
+		targets = targets[:limit]
 	}
+	log.Info().Int("queue_size", len(targets)).Strs("plugins", pluginNames).Msg("Starting queue processing")
 
-	// Initialize shared components
-	factExtractor, err := categorizer.NewOpenAIExtractorFromEnv()
+	opts := plugins.IngestOptions{Since: since, WindowDays: windowDays, Force: force, DryRun: dryRun}
+	stats, stepErrs, err := pipeline.Ingest(ctx, deps.New(storer), targets, opts, pluginNames)
 	if err != nil {
-		return fmt.Errorf("failed to initialize fact extractor: %w", err)
+		return err
 	}
-
-	embedder, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to initialize embedder: %w", err)
-	}
-
-	// Initialize news-specific components if needed
-	var newsSearcher search.NewsSearcher
-	var rawExtractor extractor.ContentExtractor
-	if runNews {
-		newsSearcher, err = search.NewNewsSearcherFromEnv()
-		if err != nil {
-			return fmt.Errorf("failed to initialize news search: %w", err)
-		}
-
-		if !opts.NewsCacheOnly {
-			rawExtractor, err = extractor.NewExtractorFromType(opts.NewsExtractor)
-			if err != nil {
-				return fmt.Errorf("failed to initialize content extractor: %w", err)
-			}
-		}
-	}
-
-	// Initialize twitter-specific components if needed
-	var twitterFetcher twitter.TweetFetcher
-	if runTwitter {
-		twitterFetcher, err = twitter.NewTwitterAPIIOFetcherFromEnv()
-		if err != nil {
-			log.Warn().Err(err).Msg("Failed to initialize twitter fetcher, skipping twitter plugin")
-			runTwitter = false
-		}
-	}
-
-	pluginNames := make([]string, 0)
-	if runNews {
-		pluginNames = append(pluginNames, "news")
-	}
-	if runTwitter {
-		pluginNames = append(pluginNames, "twitter")
-	}
-
-	log.Info().
-		Int("queue_size", len(queue)).
-		Strs("plugins", pluginNames).
-		Msg("Starting queue processing")
-
-	// Process each person in the queue
-	totalNewsFacts := 0
-	totalTwitterFacts := 0
-	successCount := 0
-	errorCount := 0
-
-	for i, entry := range queue {
-		log.Info().
-			Int("progress", i+1).
-			Int("total", len(queue)).
-			Str("person", entry.Name).
-			Str("type", entry.EntityType).
-			Msg("Processing queue entry")
-
-		personSuccess := false
-
-		// --- News plugin ---
-		if runNews {
-			targetType := news.TargetPerson
-			if entry.EntityType == "party" {
-				targetType = news.TargetParty
-			}
-			target := news.SearchTarget{
-				Name:     entry.Name,
-				Type:     targetType,
-				PersonID: &entry.PersonID,
-			}
-
-			// Create content extractor with target-specific caching
-			var contentExt extractor.ContentExtractor
-			if opts.NewsCacheOnly {
-				targetCacheDir := queueTargetCacheDir(opts.NewsCacheDir, target.Name)
-				contentExt = extractor.NewCacheOnlyExtractor(targetCacheDir)
-			} else if opts.NewsCacheDir != "" {
-				targetCacheDir := queueTargetCacheDir(opts.NewsCacheDir, target.Name)
-				contentExt = extractor.NewCacheExtractor(rawExtractor, targetCacheDir, true, true)
-			} else {
-				contentExt = rawExtractor
-			}
-
-			batchExtractor := core.NewBatchExtractorFromEnv(contentExt)
-
-			newsProvider := &news.Provider{
-				NewsSearch:       newsSearcher,
-				ContentExtractor: batchExtractor,
-				FactExtractor:    factExtractor,
-				Embedder:         embedder,
-				Storer:           storer,
-			}
-
-			newsOpts := news.Options{
-				DateFrom:      opts.Since,
-				MaxParse:      opts.NewsMaxParse,
-				Location:      opts.NewsLocation,
-				RevisitHours:  24 * 365 * 10,
-				MaxPerStory:   opts.NewsMaxPerStory,
-				KeepSourceDir: opts.KeepSourceDir,
-			}
-
-			var newsResult *news.Result
-			if opts.WindowDays > 0 {
-				newsOpts.WindowDays = opts.WindowDays
-				newsResult, err = newsProvider.CollectFactsWithDateWindows(ctx, target, newsOpts)
-			} else {
-				newsResult, err = newsProvider.CollectFacts(ctx, target, newsOpts)
-			}
-			if err != nil {
-				log.Error().Err(err).Str("person", entry.Name).Msg("News plugin failed")
-			} else {
-				totalNewsFacts += newsResult.FactsExtracted
-				personSuccess = true
-				log.Info().
-					Str("person", entry.Name).
-					Int("articles_found", newsResult.ArticlesFound).
-					Int("articles_parsed", newsResult.ArticlesParsed).
-					Int("facts_extracted", newsResult.FactsExtracted).
-					Msg("News plugin completed")
-			}
-		}
-
-		// --- Twitter plugin ---
-		if runTwitter {
-			handles, err := storer.GetTwitterHandlesByPersonID(ctx, entry.PersonID)
-			if err != nil {
-				log.Warn().Err(err).Str("person", entry.Name).Msg("Failed to get twitter handles")
-			} else if len(handles) > 0 {
-				twitterProvider := &twitter.Provider{
-					Fetcher:       twitterFetcher,
-					FactExtractor: factExtractor,
-					Embedder:      embedder,
-					Storer:        storer,
-				}
-
-				twitterOpts := twitter.Options{
-					MaxTweets:  opts.TwitterMaxTweets,
-					BatchSize:  opts.TwitterBatchSize,
-					Force:      opts.TwitterForce,
-					DryRun:     opts.TwitterDryRun,
-					WindowDays: opts.WindowDays,
-					DateFrom:   opts.Since,
-				}
-
-				for _, handle := range handles {
-					var twitterResult *twitter.Result
-					if opts.WindowDays > 0 {
-						twitterResult, err = twitterProvider.CollectFactsWithDateWindows(ctx, handle, twitterOpts)
-					} else {
-						twitterResult, err = twitterProvider.CollectFacts(ctx, handle, twitterOpts)
-					}
-					if err != nil {
-						log.Error().Err(err).Str("handle", handle.Handle).Msg("Twitter plugin failed for handle")
-					} else {
-						totalTwitterFacts += twitterResult.FactsExtracted
-						personSuccess = true
-						log.Info().
-							Str("handle", handle.Handle).
-							Int("tweets_fetched", twitterResult.TweetsFetched).
-							Int("facts_extracted", twitterResult.FactsExtracted).
-							Msg("Twitter plugin completed for handle")
-					}
-				}
-			} else {
-				log.Debug().Str("person", entry.Name).Msg("No twitter handles found, skipping twitter plugin")
-			}
-		}
-
-		if personSuccess {
-			successCount++
-		} else {
-			errorCount++
-		}
-
-		fmt.Printf("[%d/%d] %s: news=%d facts, twitter=%d facts\n",
-			i+1, len(queue), entry.Name, totalNewsFacts, totalTwitterFacts)
-	}
-
-	log.Info().
-		Int("total_processed", successCount).
-		Int("total_errors", errorCount).
-		Int("news_facts", totalNewsFacts).
-		Int("twitter_facts", totalTwitterFacts).
-		Msg("Queue processing completed")
 
 	fmt.Printf("\nProcessing complete:\n")
 	fmt.Printf("  Plugins: %s\n", strings.Join(pluginNames, ", "))
-	fmt.Printf("  Successful: %d\n", successCount)
-	fmt.Printf("  Errors: %d\n", errorCount)
-	fmt.Printf("  News facts: %d\n", totalNewsFacts)
-	fmt.Printf("  Twitter facts: %d\n", totalTwitterFacts)
-
-	// Record job metrics
-	jobMetrics := []storage.JobMetric{
-		{JobType: "queue-process", Target: "", Metric: "news_facts", Value: float64(totalNewsFacts)},
-		{JobType: "queue-process", Target: "", Metric: "twitter_facts", Value: float64(totalTwitterFacts)},
-		{JobType: "queue-process", Target: "", Metric: "success_count", Value: float64(successCount)},
-		{JobType: "queue-process", Target: "", Metric: "error_count", Value: float64(errorCount)},
-	}
-	if err := storer.RecordJobMetrics(ctx, jobMetrics); err != nil {
-		log.Error().Err(err).Msg("Failed to record job metrics")
+	fmt.Printf("  Targets: %d\n", stats.Targets)
+	fmt.Printf("  Items: %d\n", stats.Items)
+	fmt.Printf("  Facts: %d\n", stats.Facts)
+	fmt.Printf("  Item errors: %d\n", stats.Errors)
+	for name, perr := range stepErrs {
+		fmt.Printf("  %s failed: %v\n", name, perr)
 	}
 
+	if !dryRun {
+		recordJobMetrics(ctx, storer, jobMetrics("queue-process", "", map[string]float64{
+			"targets": float64(stats.Targets),
+			"facts":   float64(stats.Facts),
+			"errors":  float64(stats.Errors + len(stepErrs)),
+		}))
+	}
+	if len(stepErrs) > 0 {
+		return fmt.Errorf("%d plugin(s) failed", len(stepErrs))
+	}
 	return nil
-}
-
-// queueTargetCacheDir returns the target-specific cache subdirectory.
-func queueTargetCacheDir(baseDir string, targetName string) string {
-	normalizedName := util.NormalizeToDirName(targetName)
-	targetDir := filepath.Join(baseDir, normalizedName)
-
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		log.Warn().Err(err).Str("dir", targetDir).Msg("Failed to create target cache directory")
-		return baseDir
-	}
-
-	return targetDir
 }

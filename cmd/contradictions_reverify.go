@@ -3,10 +3,11 @@ package cmd
 import (
 	"context"
 	"digital-mirror/backend/contradiction"
-	"digital-mirror/backend/storage"
-	"digital-mirror/backend/util"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -59,22 +60,6 @@ func init() {
 	contradictionsReverifyCmd.Flags().BoolVar(&reverifyApplyFlag, "apply", false, "DELETE dropped contradictions (requires a confirming 2nd verification pass per row). Default is read-only.")
 }
 
-// reverifyOutputLine is the per-row JSONL schema written to stdout.
-type reverifyOutputLine struct {
-	ContradictionID int64  `json:"id"`
-	PersonID        int64  `json:"person_id"`
-	Person          string `json:"person"`
-	FactAID         int64  `json:"fact_a_id"`
-	FactBID         int64  `json:"fact_b_id"`
-	FactA           string `json:"fact_a"`
-	FactB           string `json:"fact_b"`
-	OriginalReason  string `json:"original_reason"`
-	Verdict         string `json:"verdict"` // "keep" | "drop" | "error"
-	Refutation      string `json:"refutation,omitempty"`
-	Deleted         bool   `json:"deleted,omitempty"` // true when --apply removed this row (2-of-2 drop)
-	Error           string `json:"error,omitempty"`
-}
-
 func runContradictionReverify(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -87,7 +72,7 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --format %q: expected 'jsonl' or 'text'", reverifyFormatFlag)
 	}
 
-	storer, err := storage.NewPostgresStorerFromEnv(ctx)
+	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
 	}
@@ -99,132 +84,68 @@ func runContradictionReverify(cmd *cobra.Command, args []string) error {
 		id := reverifyPersonIDFlag
 		personIDPtr = &id
 	case reverifyPersonFlag != "":
-		normalizedName := util.NormalizeString(reverifyPersonFlag)
-		personID, err := storer.GetPersonIDByName(ctx, normalizedName)
+		person, err := core.ResolvePersonID(ctx, storer, reverifyPersonFlag, core.ExactMatchOnly)
 		if err != nil {
-			return fmt.Errorf("failed to find person %q: %w", reverifyPersonFlag, err)
+			return err
 		}
-		personIDPtr = &personID
-	}
-
-	rows, err := storer.ListContradictions(ctx, personIDPtr, reverifyRandomFlag, reverifyMaxFlag)
-	if err != nil {
-		return fmt.Errorf("failed to list contradictions: %w", err)
-	}
-	if len(rows) == 0 {
-		fmt.Fprintln(os.Stderr, "No contradictions to reverify.")
-		return nil
-	}
-
-	detector, err := contradiction.NewOpenAIContradictionDetectorFromEnv()
-	if err != nil {
-		return fmt.Errorf("failed to create contradiction detector: %w", err)
-	}
-
-	var enc *json.Encoder
-	if format == "jsonl" {
-		enc = json.NewEncoder(os.Stdout)
-		enc.SetEscapeHTML(false)
+		personIDPtr = &person.ID
 	}
 
 	if reverifyApplyFlag {
 		fmt.Fprintf(os.Stderr, "⚠️  --apply: dropped contradictions will be DELETED from the database (2-of-2 drop required per row).\n\n")
 	}
 
-	var keep, drop, deleted, unstable, errors int
-	startedAt := time.Now()
-	log.Info().Int("total", len(rows)).Bool("random", reverifyRandomFlag).Bool("apply", reverifyApplyFlag).Str("scope", scopeDescription(reverifyPersonFlag)).Msg("Starting contradiction reverify")
-
-	for i, row := range rows {
-		line := reverifyOutputLine{
-			ContradictionID: row.ID,
-			PersonID:        row.PersonID,
-			Person:          row.PersonName,
-			FactAID:         row.FactAID,
-			FactBID:         row.FactBID,
-			FactA:           row.FactAText,
-			FactB:           row.FactBText,
-			OriginalReason:  row.Reason,
-		}
-
-		survives, refutation, vErr := detector.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
-		switch {
-		case vErr != nil:
-			errors++
-			line.Verdict = "error"
-			line.Error = vErr.Error()
-			log.Error().Err(vErr).Int64("contradiction_id", row.ID).Str("person", row.PersonName).Msg("Reverify error")
-		case survives:
-			keep++
-			line.Verdict = "keep"
-			line.Refutation = refutation
-		default:
-			drop++
-			line.Verdict = "drop"
-			line.Refutation = refutation
-			log.Warn().
-				Int64("contradiction_id", row.ID).
-				Str("person", row.PersonName).
-				Str("original_reason", row.Reason).
-				Str("refutation", refutation).
-				Msg("Verifier would DROP this contradiction (false positive)")
-
-			// --apply: confirm with a second independent pass before deleting,
-			// so the local model's run-to-run variance can't delete a row on a
-			// fluke. Only a 2-of-2 drop is removed; a disagreeing pass keeps it.
-			if reverifyApplyFlag {
-				confirmKeep, confirmReason, cErr := detector.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
-				switch {
-				case cErr != nil:
-					log.Warn().Err(cErr).Int64("contradiction_id", row.ID).Msg("Confirmation pass errored; keeping row (not deleted)")
-				case confirmKeep:
-					// Second pass disagrees (it would KEEP) — unstable, do not delete.
-					unstable++
-					log.Info().Int64("contradiction_id", row.ID).Str("confirm_reason", confirmReason).Msg("Confirmation pass disagreed (keep); row is unstable, NOT deleting")
-				default:
-					if err := storer.DeleteContradiction(ctx, row.ID); err != nil {
-						log.Error().Err(err).Int64("contradiction_id", row.ID).Msg("Failed to delete contradiction")
-					} else {
-						deleted++
-						line.Deleted = true
-						log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).Msg("Deleted contradiction (2-of-2 drop)")
-					}
-				}
-			}
-		}
-
-		if format == "jsonl" {
-			if err := enc.Encode(line); err != nil {
-				return fmt.Errorf("failed to encode JSONL line: %w", err)
-			}
-		} else {
-			printReverifyRow(os.Stdout, line)
-		}
-
-		if (i+1)%10 == 0 {
-			log.Info().Int("done", i+1).Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("deleted", deleted).Int("errors", errors).Msg("Reverify progress")
-		}
+	result, err := contradiction.RunReverify(ctx, storer, contradiction.ReverifyOptions{
+		PersonID: personIDPtr,
+		Max:      reverifyMaxFlag,
+		Random:   reverifyRandomFlag,
+		Scope:    scopeDescription(reverifyPersonFlag),
+		Apply:    reverifyApplyFlag,
+		OnRow:    reverifyRowPrinter(os.Stdout, format),
+	})
+	if err != nil {
+		return err
+	}
+	if result.Total == 0 {
+		fmt.Fprintln(os.Stderr, "No contradictions to reverify.")
+		return nil
 	}
 
-	elapsed := time.Since(startedAt)
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "=== REVERIFY SUMMARY ===")
-	fmt.Fprintf(os.Stderr, "Checked:  %d (in %s)\n", len(rows), elapsed.Round(time.Second))
-	fmt.Fprintf(os.Stderr, "Keep:     %d\n", keep)
+	fmt.Fprintf(os.Stderr, "Checked:  %d (in %s)\n", result.Total, result.Elapsed.Round(time.Second))
+	fmt.Fprintf(os.Stderr, "Keep:     %d\n", result.Keep)
 	if reverifyApplyFlag {
-		fmt.Fprintf(os.Stderr, "Drop:     %d  (flagged false positives)\n", drop)
-		fmt.Fprintf(os.Stderr, "Deleted:  %d  (2-of-2 drop — removed from DB)\n", deleted)
-		fmt.Fprintf(os.Stderr, "Unstable: %d  (passes disagreed — KEPT, not deleted)\n", unstable)
+		fmt.Fprintf(os.Stderr, "Drop:     %d  (flagged false positives)\n", result.Drop)
+		fmt.Fprintf(os.Stderr, "Deleted:  %d  (2-of-2 drop — removed from DB)\n", result.Deleted)
+		fmt.Fprintf(os.Stderr, "Unstable: %d  (passes disagreed — KEPT, not deleted)\n", result.Unstable)
 	} else {
-		fmt.Fprintf(os.Stderr, "Drop:     %d  (false positives — re-run with --apply to delete)\n", drop)
+		fmt.Fprintf(os.Stderr, "Drop:     %d  (false positives — re-run with --apply to delete)\n", result.Drop)
 	}
-	fmt.Fprintf(os.Stderr, "Errors:   %d\n", errors)
-
-	log.Info().Int("total", len(rows)).Int("keep", keep).Int("drop", drop).Int("deleted", deleted).Int("unstable", unstable).Int("errors", errors).Bool("apply", reverifyApplyFlag).Dur("elapsed", elapsed).Msg("Contradiction reverify complete")
+	fmt.Fprintf(os.Stderr, "Errors:   %d\n", result.Errors)
 	return nil
 }
 
-func printReverifyRow(w *os.File, line reverifyOutputLine) {
+// reverifyRowPrinter writes each reverified row to w as one JSONL object or
+// as a colored text block.
+func reverifyRowPrinter(w io.Writer, format string) func(contradiction.ReverifyRow) error {
+	if format == "jsonl" {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		return func(line contradiction.ReverifyRow) error {
+			if err := enc.Encode(line); err != nil {
+				return fmt.Errorf("failed to encode JSONL line: %w", err)
+			}
+			return nil
+		}
+	}
+	return func(line contradiction.ReverifyRow) error {
+		printReverifyRow(w, line)
+		return nil
+	}
+}
+
+func printReverifyRow(w io.Writer, line contradiction.ReverifyRow) {
 	color := ansiGray
 	label := strings.ToUpper(line.Verdict)
 	switch line.Verdict {

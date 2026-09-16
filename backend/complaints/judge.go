@@ -3,9 +3,9 @@ package complaints
 import (
 	"context"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -38,74 +38,38 @@ type Judge interface {
 // OpenAIJudge uses the OpenAI-compatible chat API (same env vars as the rest
 // of the codebase) to evaluate complaints in JSON mode.
 type OpenAIJudge struct {
-	client *llm.BaseLLMClient
-	apiURL string
-	apiKey string
-	model  string
+	client *llm.Client
 }
 
 // NewOpenAIJudgeFromEnv reads OPEN_AI_KEY, OPEN_AI_API, OPEN_AI_CHAT_MODEL.
 func NewOpenAIJudgeFromEnv() (*OpenAIJudge, error) {
-	key := os.Getenv("OPEN_AI_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("OPEN_AI_KEY environment variable not set")
+	client, err := llm.NewClientFromEnv("complaint-judge")
+	if err != nil {
+		return nil, err
 	}
-	base := os.Getenv("OPEN_AI_API")
-	if base == "" {
-		return nil, fmt.Errorf("OPEN_AI_API environment variable not set")
-	}
-	model := os.Getenv("OPEN_AI_CHAT_MODEL")
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
-	}
-	apiURL := llm.ChatCompletionsURL(base)
-	return &OpenAIJudge{
-		client: llm.NewBaseLLMClient("complaint-judge"),
-		apiURL: apiURL,
-		apiKey: key,
-		model:  model,
-	}, nil
+	return &OpenAIJudge{client: client}, nil
 }
 
 // Judge calls the LLM and parses the verdict. Returns an error on transport
 // failure or unparseable response; a parsed-but-unknown verdict is returned as
 // VerdictAmbiguous so triage stays conservative.
 func (j *OpenAIJudge) Judge(ctx context.Context, prompt string) (VerdictResult, error) {
-	payload := llm.ChatRequest{
-		Model:          j.model,
+	content, _, err := j.client.Chat(ctx, llm.ChatRequest{
 		Messages:       []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature:    0.1,
 		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-	bodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return VerdictResult{}, fmt.Errorf("marshal judge request: %w", err)
-	}
-
-	respBytes, err := j.client.DoRequest(ctx, j.apiURL, j.apiKey, bodyBytes)
+	})
 	if err != nil {
 		return VerdictResult{}, fmt.Errorf("judge API call: %w", err)
 	}
 
-	var chatResp llm.ChatResponse
-	if err := json.Unmarshal(respBytes, &chatResp); err != nil {
-		return VerdictResult{}, fmt.Errorf("decode judge response: %w (raw: %s)", err, truncate(string(respBytes), 500))
-	}
-	if chatResp.Error != nil {
-		return VerdictResult{}, fmt.Errorf("judge API error: %s", chatResp.Error.Message)
-	}
-	if len(chatResp.Choices) == 0 || chatResp.Choices[0].Message.Content == "" {
-		return VerdictResult{}, fmt.Errorf("judge API returned no content")
-	}
-
-	content := chatResp.Choices[0].Message.Content
 	var parsed struct {
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		return VerdictResult{}, fmt.Errorf("parse judge JSON: %w (raw: %s)", err, truncate(content, 500))
+		return VerdictResult{}, fmt.Errorf("parse judge JSON: %w (raw: %s)", err, util.TruncateString(content, 500))
 	}
 
 	v := Verdict(strings.ToLower(strings.TrimSpace(parsed.Verdict)))

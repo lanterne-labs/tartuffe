@@ -2,7 +2,6 @@ package extractor
 
 import (
 	"bytes"
-	// "digital-mirror/backend/util" // No longer needed if NewRobustHTTPClient doesn't exist
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -116,13 +115,6 @@ func (e *FirecrawlExtractor) ExtractContent(url string) (*ExtractedContent, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// Attempt to read error message from body if possible
-		// var errorResp struct { Message string `json:"message"`}
-		// _ = json.NewDecoder(resp.Body).Decode(&errorResp) // Ignore decode error
-		// errorMsg := errorResp.Message
-		// if errorMsg == "" {
-		//  errorMsg = fmt.Sprintf("status code %d", resp.StatusCode)
-		// }
 		return nil, fmt.Errorf("firecrawl API request failed for url %s with status %d", url, resp.StatusCode)
 	}
 

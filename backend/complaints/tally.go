@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/util"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -111,7 +113,7 @@ func (c *TallyClient) ListComplaints(ctx context.Context) ([]Complaint, error) {
 
 		var resp tallySubmissionsPage
 		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("decode submissions page %d: %w (raw: %s)", page, err, truncate(string(body), 500))
+			return nil, fmt.Errorf("decode submissions page %d: %w (raw: %s)", page, err, util.TruncateString(string(body), 500))
 		}
 
 		titleByQID := make(map[string]string, len(resp.Questions))
@@ -159,7 +161,7 @@ func (c *TallyClient) fetchPage(ctx context.Context, page int) ([]byte, error) {
 		return nil, fmt.Errorf("read list response (status %d): %w", resp.StatusCode, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("tally list returned status %d: %s", resp.StatusCode, truncate(string(body), 500))
+		return nil, fmt.Errorf("tally list returned status %d: %s", resp.StatusCode, util.TruncateString(string(body), 500))
 	}
 	return body, nil
 }
@@ -186,7 +188,7 @@ func (c *TallyClient) DeleteSubmission(ctx context.Context, submissionID string)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("tally delete returned status %d: %s", resp.StatusCode, truncate(string(body), 500))
+		return fmt.Errorf("tally delete returned status %d: %s", resp.StatusCode, util.TruncateString(string(body), 500))
 	}
 	return nil
 }
@@ -303,11 +305,4 @@ func parseInt64(s string) (int64, error) {
 		return 0, fmt.Errorf("empty")
 	}
 	return strconv.ParseInt(s, 10, 64)
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

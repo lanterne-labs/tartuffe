@@ -234,7 +234,6 @@ func TestSerper_Interfaces(t *testing.T) {
 	var _ NewsSearcher = p
 	var _ WebSearcher = p
 	var _ ImageSearcher = p
-	var _ SearchProvider = p
 }
 
 func TestSerper_Integration(t *testing.T) {
@@ -244,9 +243,9 @@ func TestSerper_Integration(t *testing.T) {
 		t.Skip("SERPER_API_KEY not set")
 	}
 
-	p, err := NewSerperProvider(apiKey)
+	p, err := newSerperProvider(apiKey)
 	if err != nil {
-		t.Fatalf("NewSerperProvider: %v", err)
+		t.Fatalf("newSerperProvider: %v", err)
 	}
 
 	results, err := p.SearchNews("Emmanuel Macron", NewsSearchOptions{

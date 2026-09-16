@@ -13,18 +13,18 @@ type chainEntry[T any] struct {
 	provider T
 }
 
-// ChainedNewsSearcher tries each NewsSearcher in order until one succeeds.
+// chainedNewsSearcher tries each NewsSearcher in order until one succeeds.
 // If a provider errors, the next is attempted; if all fail, the last error is
 // returned wrapped with the chain context. A single-element chain behaves like
 // the underlying provider with one extra log line on failure.
-type ChainedNewsSearcher struct {
+type chainedNewsSearcher struct {
 	entries []chainEntry[NewsSearcher]
 }
 
-// NewChainedNewsSearcher builds a chain from (name, provider) pairs. Names are
+// newChainedNewsSearcher builds a chain from (name, provider) pairs. Names are
 // only used for logging which provider failed; they have no functional effect.
-func NewChainedNewsSearcher(pairs ...NamedNewsSearcher) *ChainedNewsSearcher {
-	cs := &ChainedNewsSearcher{}
+func newChainedNewsSearcher(pairs ...namedNewsSearcher) *chainedNewsSearcher {
+	cs := &chainedNewsSearcher{}
 	for _, p := range pairs {
 		if p.Searcher == nil {
 			continue
@@ -34,17 +34,14 @@ func NewChainedNewsSearcher(pairs ...NamedNewsSearcher) *ChainedNewsSearcher {
 	return cs
 }
 
-// NamedNewsSearcher is a (name, provider) pair for NewChainedNewsSearcher.
-type NamedNewsSearcher struct {
+// namedNewsSearcher is a (name, provider) pair for newChainedNewsSearcher.
+type namedNewsSearcher struct {
 	Name     string
 	Searcher NewsSearcher
 }
 
-// Len returns the number of providers in the chain.
-func (c *ChainedNewsSearcher) Len() int { return len(c.entries) }
-
 // SearchNews iterates providers; returns the first non-error result.
-func (c *ChainedNewsSearcher) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
+func (c *chainedNewsSearcher) SearchNews(query string, opts NewsSearchOptions) ([]NewsResult, error) {
 	if len(c.entries) == 0 {
 		return nil, fmt.Errorf("chained news searcher has no providers")
 	}
@@ -60,37 +57,20 @@ func (c *ChainedNewsSearcher) SearchNews(query string, opts NewsSearchOptions) (
 	return nil, fmt.Errorf("all news providers failed; last error: %w", lastErr)
 }
 
-// PreviewSearch iterates providers; returns the first non-error preview.
-func (c *ChainedNewsSearcher) PreviewSearch(query string, opts NewsSearchOptions) (*NewsSearchPreview, error) {
-	if len(c.entries) == 0 {
-		return nil, fmt.Errorf("chained news searcher has no providers")
-	}
-	var lastErr error
-	for _, e := range c.entries {
-		result, err := e.provider.PreviewSearch(query, opts)
-		if err == nil {
-			return result, nil
-		}
-		log.Warn().Err(err).Str("provider", e.name).Msg("news preview failed, trying next provider in chain")
-		lastErr = fmt.Errorf("%s: %w", e.name, err)
-	}
-	return nil, fmt.Errorf("all news providers failed; last error: %w", lastErr)
-}
-
-// ChainedWebSearcher tries each WebSearcher in order.
-type ChainedWebSearcher struct {
+// chainedWebSearcher tries each WebSearcher in order.
+type chainedWebSearcher struct {
 	entries []chainEntry[WebSearcher]
 }
 
-// NamedWebSearcher is a (name, provider) pair for NewChainedWebSearcher.
-type NamedWebSearcher struct {
+// namedWebSearcher is a (name, provider) pair for newChainedWebSearcher.
+type namedWebSearcher struct {
 	Name     string
 	Searcher WebSearcher
 }
 
-// NewChainedWebSearcher builds a chain from (name, provider) pairs.
-func NewChainedWebSearcher(pairs ...NamedWebSearcher) *ChainedWebSearcher {
-	cs := &ChainedWebSearcher{}
+// newChainedWebSearcher builds a chain from (name, provider) pairs.
+func newChainedWebSearcher(pairs ...namedWebSearcher) *chainedWebSearcher {
+	cs := &chainedWebSearcher{}
 	for _, p := range pairs {
 		if p.Searcher == nil {
 			continue
@@ -100,11 +80,8 @@ func NewChainedWebSearcher(pairs ...NamedWebSearcher) *ChainedWebSearcher {
 	return cs
 }
 
-// Len returns the number of providers in the chain.
-func (c *ChainedWebSearcher) Len() int { return len(c.entries) }
-
 // SearchWeb iterates providers; returns the first non-error result.
-func (c *ChainedWebSearcher) SearchWeb(query string, limit int) ([]SearchResult, error) {
+func (c *chainedWebSearcher) SearchWeb(query string, limit int) ([]SearchResult, error) {
 	if len(c.entries) == 0 {
 		return nil, fmt.Errorf("chained web searcher has no providers")
 	}
@@ -120,20 +97,20 @@ func (c *ChainedWebSearcher) SearchWeb(query string, limit int) ([]SearchResult,
 	return nil, fmt.Errorf("all web providers failed; last error: %w", lastErr)
 }
 
-// ChainedImageSearcher tries each ImageSearcher in order.
-type ChainedImageSearcher struct {
+// chainedImageSearcher tries each ImageSearcher in order.
+type chainedImageSearcher struct {
 	entries []chainEntry[ImageSearcher]
 }
 
-// NamedImageSearcher is a (name, provider) pair for NewChainedImageSearcher.
-type NamedImageSearcher struct {
+// namedImageSearcher is a (name, provider) pair for newChainedImageSearcher.
+type namedImageSearcher struct {
 	Name     string
 	Searcher ImageSearcher
 }
 
-// NewChainedImageSearcher builds a chain from (name, provider) pairs.
-func NewChainedImageSearcher(pairs ...NamedImageSearcher) *ChainedImageSearcher {
-	cs := &ChainedImageSearcher{}
+// newChainedImageSearcher builds a chain from (name, provider) pairs.
+func newChainedImageSearcher(pairs ...namedImageSearcher) *chainedImageSearcher {
+	cs := &chainedImageSearcher{}
 	for _, p := range pairs {
 		if p.Searcher == nil {
 			continue
@@ -143,11 +120,8 @@ func NewChainedImageSearcher(pairs ...NamedImageSearcher) *ChainedImageSearcher 
 	return cs
 }
 
-// Len returns the number of providers in the chain.
-func (c *ChainedImageSearcher) Len() int { return len(c.entries) }
-
 // SearchImages iterates providers; returns the first non-error result.
-func (c *ChainedImageSearcher) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
+func (c *chainedImageSearcher) SearchImages(query string, opts ImageSearchOptions) ([]ImageResult, error) {
 	if len(c.entries) == 0 {
 		return nil, fmt.Errorf("chained image searcher has no providers")
 	}

@@ -106,10 +106,6 @@ func TestPersonSimilarity(t *testing.T) {
 	storer, err := NewPostgresStorerFromEnv(ctx)
 	require.NoError(t, err, "Failed to connect to test database")
 	defer storer.Close()
-	// Corpus fixtures are not real-world entities to validate: with the live
-	// validator every AddPerson costs a Wikipedia + Serper + LLM round-trip,
-	// which burned search credits and hung the suite past its 10m timeout.
-	storer.SetEntityValidator(nil)
 
 	// --- Database Setup and Cleanup ---
 	cleanup := func(pool *pgxpool.Pool) {

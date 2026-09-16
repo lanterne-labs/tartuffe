@@ -41,7 +41,7 @@ func TestBraveNewsResponseParsing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewBraveSearchProvider("test-key")
+	provider := newBraveSearchProvider("test-key")
 	provider.httpClient = server.Client()
 
 	// Override the URL by using a custom transport
@@ -161,7 +161,7 @@ func TestBravePagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewBraveSearchProvider("test-key")
+	provider := newBraveSearchProvider("test-key")
 	provider.httpClient = server.Client()
 	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
@@ -207,7 +207,7 @@ func TestBraveImageResponseParsing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewBraveSearchProvider("test-key")
+	provider := newBraveSearchProvider("test-key")
 	provider.httpClient = server.Client()
 	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
@@ -268,12 +268,12 @@ func TestFactoryEnvPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	chain, ok := searcher.(*ChainedNewsSearcher)
+	chain, ok := searcher.(*chainedNewsSearcher)
 	if !ok {
-		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+		t.Fatalf("expected *chainedNewsSearcher, got %T", searcher)
 	}
-	if chain.Len() != 1 {
-		t.Errorf("expected chain Len=1 with only SERPAPI_KEY set, got %d", chain.Len())
+	if len(chain.entries) != 1 {
+		t.Errorf("expected chain Len=1 with only SERPAPI_KEY set, got %d", len(chain.entries))
 	}
 
 	// Brave + SerpAPI set → chain of length 2 (Brave, SerpAPI), no Serper
@@ -282,12 +282,12 @@ func TestFactoryEnvPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	chain, ok = searcher.(*ChainedNewsSearcher)
+	chain, ok = searcher.(*chainedNewsSearcher)
 	if !ok {
-		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+		t.Fatalf("expected *chainedNewsSearcher, got %T", searcher)
 	}
-	if chain.Len() != 2 {
-		t.Errorf("expected chain Len=2 with BRAVE+SERPAPI, got %d", chain.Len())
+	if len(chain.entries) != 2 {
+		t.Errorf("expected chain Len=2 with BRAVE+SERPAPI, got %d", len(chain.entries))
 	}
 
 	// All three set → Serper goes first, then Brave, then SerpAPI
@@ -296,24 +296,24 @@ func TestFactoryEnvPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	chain, ok = searcher.(*ChainedNewsSearcher)
+	chain, ok = searcher.(*chainedNewsSearcher)
 	if !ok {
-		t.Fatalf("expected *ChainedNewsSearcher, got %T", searcher)
+		t.Fatalf("expected *chainedNewsSearcher, got %T", searcher)
 	}
-	if chain.Len() != 3 {
-		t.Errorf("expected chain Len=3 with all keys, got %d", chain.Len())
+	if len(chain.entries) != 3 {
+		t.Errorf("expected chain Len=3 with all keys, got %d", len(chain.entries))
 	}
 	if chain.entries[0].name != "serper" {
 		t.Errorf("expected serper first, got %q", chain.entries[0].name)
 	}
 
-	// Image searcher returns ChainedImageSearcher
+	// Image searcher returns chainedImageSearcher
 	imgSearcher, err := NewImageSearcherFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := imgSearcher.(*ChainedImageSearcher); !ok {
-		t.Errorf("expected *ChainedImageSearcher, got %T", imgSearcher)
+	if _, ok := imgSearcher.(*chainedImageSearcher); !ok {
+		t.Errorf("expected *chainedImageSearcher, got %T", imgSearcher)
 	}
 }
 
@@ -335,7 +335,7 @@ func TestBraveCircuitBreakerOpensAfterThreshold(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewBraveSearchProvider("test-key")
+	provider := newBraveSearchProvider("test-key")
 	provider.httpClient = server.Client()
 	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
@@ -396,7 +396,7 @@ func TestBraveCircuitBreakerResetsOnSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewBraveSearchProvider("test-key")
+	provider := newBraveSearchProvider("test-key")
 	provider.httpClient = server.Client()
 	provider.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
@@ -444,12 +444,12 @@ func TestWebSearcherFromEnvFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	chain, ok := searcher.(*ChainedWebSearcher)
+	chain, ok := searcher.(*chainedWebSearcher)
 	if !ok {
-		t.Fatalf("expected *ChainedWebSearcher, got %T", searcher)
+		t.Fatalf("expected *chainedWebSearcher, got %T", searcher)
 	}
-	if chain.Len() != 1 {
-		t.Errorf("expected chain Len=1, got %d", chain.Len())
+	if len(chain.entries) != 1 {
+		t.Errorf("expected chain Len=1, got %d", len(chain.entries))
 	}
 
 	// Brave + SerpAPI -> chain of 2
@@ -458,12 +458,12 @@ func TestWebSearcherFromEnvFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	chain, ok = searcher.(*ChainedWebSearcher)
+	chain, ok = searcher.(*chainedWebSearcher)
 	if !ok {
-		t.Fatalf("expected *ChainedWebSearcher, got %T", searcher)
+		t.Fatalf("expected *chainedWebSearcher, got %T", searcher)
 	}
-	if chain.Len() != 2 {
-		t.Errorf("expected chain Len=2, got %d", chain.Len())
+	if len(chain.entries) != 2 {
+		t.Errorf("expected chain Len=2, got %d", len(chain.entries))
 	}
 }
 
