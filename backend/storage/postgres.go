@@ -80,6 +80,8 @@ type PostgresStorer struct {
 	// validator is consulted before every NEW person INSERT (existing persons
 	// are never re-validated). nil ⇒ validation disabled. See entity_validator.go.
 	validator EntityValidator
+	// historyCache memoizes GetPersonHistory per person; see person_history.go.
+	historyCache historyCache
 	// embedder embedding.EmbeddingGenerator // REMOVED
 	// contradictor contradiction.ContradictionDetector // REMOVED
 }

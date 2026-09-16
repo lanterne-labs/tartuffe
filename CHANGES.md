@@ -29,6 +29,10 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
   lately?" is answered by the separate trailing-window series, not by decaying the record.
 - Bad publication dates (1908, 2027) exist in prod: future dates clamp to now, anything older than
   10 years folds into the first point rather than stretching the x-axis.
+- The replay (~30 ms on the largest prod person, dominated by two whole-table scans that grow with
+  the corpus) is memoized per person in the web process. Invalidation cannot be event-based —
+  the daily pipeline writes from another container — so every request revalidates against a
+  cheap fingerprint (fact_count, own_score, contradiction count, current week) and a 1 h cap.
 - Frontend gotcha: a Svelte `$state` named `history` silently shadowed `window.history` and the
   chart rendered the empty state with a 200 response in the network tab. Don't name state after
   browser globals.

@@ -202,3 +202,40 @@ func TestGetPersonHistory_MetaDatedByMembers(t *testing.T) {
 	last := points[len(points)-1]
 	assert.Equal(t, 1, last.FactsTotal, "folded members do not count as separate facts")
 }
+
+// TestGetPersonHistory_Cache: a second call with unchanged counts is served from the memo
+// (an edit invisible to the fingerprint is not reflected), while a new fact moves the
+// fingerprint and forces a recompute.
+func TestGetPersonHistory_Cache(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	var personID int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO persons (name, entity_type) VALUES ('cached history person', 'human') RETURNING id`,
+	).Scan(&personID))
+
+	now := time.Now().UTC()
+	first := day(now, 60)
+	insertDatedFact(t, storer, personID, "C: first statement", &first)
+
+	points, err := storer.GetPersonHistory(ctx, personID)
+	require.NoError(t, err)
+	require.Equal(t, weekStart(first), points[0].Date)
+
+	// Fingerprint-invisible edit: the cached series still starts at the old date.
+	_, err = storer.pool.Exec(ctx, `UPDATE fact_sources SET published_at = $1`, day(now, 90))
+	require.NoError(t, err)
+	cached, err := storer.GetPersonHistory(ctx, personID)
+	require.NoError(t, err)
+	assert.Equal(t, weekStart(first), cached[0].Date, "unchanged fingerprint serves the memo")
+
+	// A new fact changes fact_count and own_score: recompute picks up both changes.
+	second := day(now, 10)
+	insertDatedFact(t, storer, personID, "C: second statement", &second)
+	fresh, err := storer.GetPersonHistory(ctx, personID)
+	require.NoError(t, err)
+	assert.Equal(t, weekStart(day(now, 90)), fresh[0].Date, "fingerprint change forces a recompute")
+	assert.Equal(t, 2, fresh[len(fresh)-1].FactsTotal)
+}

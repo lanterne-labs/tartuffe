@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // PersonHistoryWindowDays is the trailing window used for HistoryPoint.RecentScore.
@@ -42,15 +45,90 @@ type historyEvent struct {
 	bundle string
 }
 
+// historyCacheMaxAge bounds how long a cached series may be served on an unchanged
+// fingerprint. It covers the rare edits the fingerprint cannot see: a fold or repoint
+// that leaves every count equal, or a corrected published_at.
+const historyCacheMaxAge = time.Hour
+
+// historyFingerprint is the cheap per-person state read on every request to validate a
+// cached series. Any fact-set change moves own_score (refreshPersonScores) and any
+// contradiction insert or eviction moves the count, so the common write paths all miss.
+type historyFingerprint struct {
+	factCount      int
+	ownScore       float64
+	contradictions int
+	// week pins the series to its last bucket so a cached entry never serves yesterday's
+	// week boundary after midnight Monday.
+	week time.Time
+}
+
+type historyCacheEntry struct {
+	fp     historyFingerprint
+	at     time.Time
+	points []HistoryPoint
+}
+
+// historyCache is an in-process memo of GetPersonHistory. The daily pipeline writes from
+// another container, so it cannot rely on in-process invalidation: every hit is validated
+// against a fresh fingerprint (one indexed query) instead of an event.
+type historyCache struct {
+	mu      sync.Mutex
+	entries map[int64]historyCacheEntry
+}
+
+func (c *historyCache) get(personID int64, fp historyFingerprint, now time.Time) ([]HistoryPoint, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[personID]
+	if !ok || e.fp != fp || now.Sub(e.at) > historyCacheMaxAge {
+		return nil, false
+	}
+	return e.points, true
+}
+
+func (c *historyCache) put(personID int64, fp historyFingerprint, now time.Time, points []HistoryPoint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = map[int64]historyCacheEntry{}
+	}
+	c.entries[personID] = historyCacheEntry{fp: fp, at: now, points: points}
+}
+
 // GetPersonHistory returns the weekly honesty timeline of a person on the statement-time
 // axis, ending at the current week. Deleted (evicted) contradictions leave no trace, so the
 // series always reflects the current record. Returns an empty slice for a person with no facts.
+// The replay is memoized per person and revalidated against a cheap fingerprint on every call.
 func (s *PostgresStorer) GetPersonHistory(ctx context.Context, personID int64) ([]HistoryPoint, error) {
+	now := time.Now()
+	fp, err := s.personHistoryFingerprint(ctx, personID)
+	if err != nil {
+		return nil, err
+	}
+	fp.week = weekStart(now)
+	if points, ok := s.historyCache.get(personID, fp, now); ok {
+		return points, nil
+	}
 	events, err := s.personHistoryEvents(ctx, personID)
 	if err != nil {
 		return nil, err
 	}
-	return buildPersonHistory(events, time.Now()), nil
+	points := buildPersonHistory(events, now)
+	s.historyCache.put(personID, fp, now, points)
+	log.Debug().Int64("person_id", personID).Int("events", len(events)).Msg("person history recomputed")
+	return points, nil
+}
+
+func (s *PostgresStorer) personHistoryFingerprint(ctx context.Context, personID int64) (historyFingerprint, error) {
+	var fp historyFingerprint
+	err := s.pool.QueryRow(ctx, `
+		SELECT p.fact_count, COALESCE(p.own_score, 1.0),
+		       (SELECT COUNT(*) FROM contradictions c WHERE c.person_id = p.id)
+		FROM persons p WHERE p.id = $1`, personID).Scan(&fp.factCount, &fp.ownScore, &fp.contradictions)
+	if err != nil {
+		return historyFingerprint{}, fmt.Errorf("failed to read history fingerprint for person %d: %w", personID, err)
+	}
+	return fp, nil
 }
 
 func (s *PostgresStorer) personHistoryEvents(ctx context.Context, personID int64) ([]historyEvent, error) {
