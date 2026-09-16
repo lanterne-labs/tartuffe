@@ -1161,14 +1161,7 @@ func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyF
 
 	prompt := fmt.Sprintf(`You are analyzing whether a new fact about a political figure updates, duplicates, or contradicts their known stance on a topic.
 
-EXISTING STANCE SUMMARY:
-%s
-
-KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
-%s
-
-NEW FACT:
-%s
+The EXISTING STANCE SUMMARY, the KEY FACTS IN THIS STANCE and the NEW FACT are given after the rules.
 
 Decide ONE primary_verdict for the NEW FACT vs the stance:
 1. DUPLICATE — the new fact says essentially the same thing as one of the key facts (paraphrase / same claim, different source). Set duplicate_of_key_fact_id to that key fact's [ID N].
@@ -1207,6 +1200,15 @@ The COMPLETENESS and DIRECT-EDGE rules are complementary: COMPLETENESS says "don
 
 **HOW TO MAP THE PAIR-WISE EXAMPLES TO THIS TASK:**
 The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction entry (one per DIRECTLY contradicted key fact — see DIRECT-EDGE REQUIREMENT above). Treat NO as either DUPLICATE (same position, different words — set duplicate_of_key_fact_id) or NEW_INFO (compatible-but-distinct).
+
+EXISTING STANCE SUMMARY:
+%s
+
+KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
+%s
+
+NEW FACT:
+%s
 
 **RESPONSE FORMAT:**
 Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
@@ -1343,7 +1345,7 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText string, candidates []StanceCandidate) (*topicAssignmentDecision, error) {
 	var topicsBuilder strings.Builder
 	if len(candidates) == 0 {
-		topicsBuilder.WriteString("(no existing topics — you MUST return assigned_topic_index=0 and emit a general new_topic_label per the LABEL RULES below)\n")
+		topicsBuilder.WriteString("(no existing topics — you MUST return assigned_topic_index=0 and emit a general new_topic_label per the LABEL RULES above)\n")
 	} else {
 		for i, c := range candidates {
 			topicsBuilder.WriteString(fmt.Sprintf("%d. %q (%d facts): %s\n",
@@ -1354,12 +1356,7 @@ func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to. Each candidate topic shows its CLOSEST existing facts as evidence.
-
-EXISTING TOPICS:
-%s
-NEW FACT:
-%s
+	prompt := fmt.Sprintf(`You are a topic classifier for political facts. Given a new fact and a list of existing topics about a person, decide which topic the fact belongs to. Each candidate topic shows its CLOSEST existing facts as evidence. The EXISTING TOPICS and the NEW FACT are given after the rules.
 
 ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-buckets AND over-fragmentation into near-duplicate topics):
 - A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
@@ -1417,6 +1414,11 @@ LABEL RULES (for new_topic_label when creating a new topic):
   * ✅ "presidential candidacy 2027"
 - ⚠️ NEVER use a META / PATTERN-OF-BEHAVIOR / RHETORICAL label. The label must name a SUBJECT, not a way of speaking. ❌ "policy announcements contradictions" / "campaign promises" / "denials and reversals" / "flip-flops on foreign policy". ✅ "US tariffs on Chinese goods" / "Strait of Hormuz coalition".
 - If the fact is itself a journalist's META observation about the entity, the upstream extractor should have rejected it; either pick the closest existing subject-bound topic or, if truly no fit, emit a SUBJECT-bound new label (never the meta phrasing).
+
+EXISTING TOPICS:
+%s
+NEW FACT:
+%s
 
 Return ONLY valid JSON:
 {
@@ -1537,10 +1539,7 @@ func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int
 		factsBuilder.WriteString(fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText))
 	}
 
-	prompt := fmt.Sprintf(`You are regenerating the topic label and summary for a stance document about a political figure. The stance contains the facts below; produce a fresh broad subject-area label and a 2-4 sentence summary that accurately reflects what's in the stance NOW.
-
-FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
-%s
+	prompt := fmt.Sprintf(`You are regenerating the topic label and summary for a stance document about a political figure. The stance contains the facts given after the rules; produce a fresh broad subject-area label and a 2-4 sentence summary that accurately reflects what's in the stance NOW.
 
 `+stanceLabelRules+`
 
@@ -1548,6 +1547,9 @@ SUMMARY RULES:
 - 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
 - If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
 - Do not add facts or claims beyond what's in the listed facts.
+
+FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
+%s
 
 `+stanceRefreshLanguageAndFormat, factsBuilder.String())
 
@@ -1619,12 +1621,7 @@ func (sm *StanceManager) foldStanceMetadata(ctx context.Context, label, summary 
 		current = fmt.Sprintf("CURRENT LABEL: %s\nCURRENT SUMMARY: %s", label, summary)
 	}
 
-	prompt := fmt.Sprintf(`You maintain the topic label and summary of a stance document about a political figure. The stance already has a label and a summary covering its earlier facts (you do not see those facts — the summary stands for them). New facts were just added. Update the label and summary so they reflect the stance NOW.
-
-%s
-
-NEW FACTS JUST ADDED (one "- " line per fact, with its verb in parentheses when known; an indented ⚠ line names an earlier fact the new fact was found to CONTRADICT):
-%s
+	prompt := fmt.Sprintf(`You maintain the topic label and summary of a stance document about a political figure. The stance already has a label and a summary covering its earlier facts (you do not see those facts — the summary stands for them). New facts were just added. Update the label and summary so they reflect the stance NOW. The current label and summary and the new facts are given after the rules.
 
 `+stanceLabelRules+`
 - KEEP the current label unless the new facts fall outside it; then broaden it to a neutral subject that covers both the old summary and the new facts. Never narrow it.
@@ -1633,6 +1630,11 @@ SUMMARY RULES:
 - 2-4 sentences, French (up to 6 when several ⚠ tensions must be kept). Integrate the new facts into the current summary: keep what the current summary says about earlier facts (rewrite for length, never drop a position or a tension it already records), add what the new facts say / do.
 - Every ⚠ tension MUST be preserved explicitly: state both positions and that the position shifted, was walked back, or conflicts. Do not smooth a contradiction into one narrative. If there are more tensions than the summary can name, keep the most recent ones individually and say that the position has shifted repeatedly on this subject.
 - Do not add facts or claims beyond the current summary and the new facts.
+
+%s
+
+NEW FACTS JUST ADDED (one "- " line per fact, with its verb in parentheses when known; an indented ⚠ line names an earlier fact the new fact was found to CONTRADICT):
+%s
 
 `+stanceRefreshLanguageAndFormat, current, factsBuilder.String())
 

@@ -1856,3 +1856,19 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - Why a queue rather than a second candidate source inside the detector: the pairing rule is
   provenance-specific (frpolitics knows what a séance is), the judging is not; the queue keeps
   the detector generic and lets future producers (news mentioning a scrutin, …) plug in.
+
+## Prompt layout: static rules first, per-call data next, response format last (2026-09-16)
+
+- vLLM prefix caching reuses the KV cache of a byte-identical prompt prefix, so a prompt that
+  opens with the ~8k-token rulebook and ends with the per-call data is prefilled once per
+  process; one that opens with the data re-prefills the rulebook on every call. The four
+  stance-routing prompts (analyze, topic assignment, full rebuild, incremental fold) were
+  data-first; the detector, verifier and auditor were already rules-first. Measured on the
+  7-case analyze golden: prefill 29.5 s → 7.9 s, cache-hit rate 58% → 88%.
+- Where the time really goes (lifetime vLLM counters, ~250M prompt tokens): decode 81%,
+  prefill 19%, ~27 tok/s decode. Output length, not context size, is the cost driver — never
+  "pack" several independent facts into one prompt to save context; it buys nothing and
+  re-creates the cross-talk the one-verdict-per-call design removed.
+- The response-format/JSON block must stay LAST, right before generation. A first layout that
+  put the data after the JSON schema produced a malformed-JSON retry and a 76 s runaway
+  generation on the same golden; rules → data → format fixed both and needed fewer votes.
