@@ -207,8 +207,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		Msg("frpolitics: fact insertion complete")
 
 	// Co-actor mentions changed these persons' effective fact sets; refresh
-	// their cached fact_count in one statement (honesty scores read the live
-	// mention-derived count at recompute time, so no score write is needed here).
+	// their fact_count and scores in one batch.
 	if len(voterIDs) > 0 {
 		ids := make([]int64, 0, len(voterIDs))
 		for id := range voterIDs {
@@ -217,7 +216,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		if err := storer.RefreshPersonScores(ctx, ids); err != nil {
 			return fmt.Errorf("refreshing voter fact counts: %w", err)
 		}
-		log.Info().Int("voters", len(ids)).Msg("frpolitics: refreshed fact counts for co-voting persons")
+		log.Info().Int("voters", len(ids)).Msg("frpolitics: refreshed fact counts and scores for co-voting persons")
 	}
 	return nil
 }
