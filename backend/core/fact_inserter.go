@@ -116,7 +116,7 @@ type MetaFoldStorer interface {
 	RepointFactDuplicate(ctx context.Context, general, specific int64) (int, int, error)
 	GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error)
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
-	RefreshPersonFactCount(ctx context.Context, personID int64) error
+	RefreshPersonScore(ctx context.Context, personID int64) error
 	CountFactMentionPersons(ctx context.Context, factID int64) (int, error)
 }
 
@@ -587,7 +587,7 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 			log.Warn().Err(aErr).Int64("fact_id", newFactID).Msg("Failed to attach member to meta's stance")
 		}
 	}
-	if err := ms.RefreshPersonFactCount(ctx, personID); err != nil {
+	if err := ms.RefreshPersonScore(ctx, personID); err != nil {
 		log.Warn().Err(err).Int64("person_id", personID).Msg("Failed to refresh fact count after fold")
 	}
 

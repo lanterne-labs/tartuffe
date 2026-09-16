@@ -2,6 +2,41 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-09-15: Person honesty timeline — statement-time axis, replayed from live rows (mirror-3f9)
+
+- New `GET /api/person/{id}/history` + "Évolution dans le temps" charts on the profile: weekly
+  points with the all-time score, a trailing-12-month score, and facts per week. NOTHING is
+  persisted: one SQL query dates every fact (earliest `fact_sources.published_at`, ingestion time
+  as fallback) and every contradiction (the LATER of its two facts), and Go replays
+  `ComputeHonestyScore` bucket by bucket (`backend/storage/person_history.go`). The last point
+  therefore always equals `persons.own_score`, and evicted contradictions vanish from the past too —
+  the timeline is the current record over time, not a log of what the pipeline once believed.
+- SCORE FRESHNESS FIX surfaced by that invariant: `own_score` used to move only on contradiction
+  events, so a person ingesting 100 clean facts kept a stale (lower) score until the next
+  contradiction. Every path that changes the active fact set (mention insert, meta fold, vote
+  fan-out) now goes through `refreshPersonScores` (`person_scores.go`): batch recompute of
+  fact_count + own/members/aggregate from live rows, parents included, no SSE events.
+  `RecomputeAllHonestyScores` also gained the duplicate-exclusion predicate it was missing.
+- Meta facts carry a dateless `meta://` source: the history dates a fact by the earliest
+  publication across its own sources AND its folded members' sources, otherwise every fold
+  (and every contradiction repointed onto the meta) would jump to fold day.
+- Time axis decision: STATEMENT date, not ingestion date. Ingestion only started 2026-05 while
+  statements span years; on the ingestion axis the curve would just mirror the scraping schedule.
+  Consequence: re-scraping old articles fills in the past instead of bumping today.
+- Scoring-over-time decision: the headline formula is unchanged. More facts with no new
+  contradiction raise the score only through the ratio term, bounded below by the absolute term
+  (`exp(-0.03·bundles)`) — a contradiction is never erased by volume. "Is this person better
+  lately?" is answered by the separate trailing-window series, not by decaying the record.
+- Bad publication dates (1908, 2027) exist in prod: future dates clamp to now, anything older than
+  10 years folds into the first point rather than stretching the x-axis.
+- The replay (~30 ms on the largest prod person, dominated by two whole-table scans that grow with
+  the corpus) is memoized per person in the web process. Invalidation cannot be event-based —
+  the daily pipeline writes from another container — so every request revalidates against a
+  cheap fingerprint (fact_count, own_score, contradiction count, current week) and a 24 h cap.
+- Frontend gotcha: a Svelte `$state` named `history` silently shadowed `window.history` and the
+  chart rendered the empty state with a 200 response in the network tab. Don't name state after
+  browser globals.
+
 ## 2026-07-29: Meta-fact folding — cosine fix + LLM is the mandatory last decider
 
 - Post-rollout prod audit (metas correct; Le Pen still had ~21 same-thing contradiction rows)

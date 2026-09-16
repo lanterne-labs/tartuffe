@@ -167,20 +167,6 @@ func (s *PostgresStorer) IsMetaFact(ctx context.Context, factID int64) (bool, er
 	return isMeta, nil
 }
 
-// RefreshPersonFactCount recomputes persons.fact_count (deduped) outside a
-// caller-owned transaction — used after fold operations mark new duplicates.
-func (s *PostgresStorer) RefreshPersonFactCount(ctx context.Context, personID int64) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin fact-count refresh tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	if err := s.refreshPersonFactCount(ctx, tx, personID); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
 // GetFactStanceID returns the stance a fact belongs to (0, false if none).
 // CountFactMentionPersons returns how many distinct persons carry the fact via
 // fact_mentions. Used by the fold path to refuse folding shared (co-actor)
