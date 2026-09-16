@@ -48,7 +48,7 @@ type historyEvent struct {
 // historyCacheMaxAge bounds how long a cached series may be served on an unchanged
 // fingerprint. It covers the rare edits the fingerprint cannot see: a fold or repoint
 // that leaves every count equal, or a corrected published_at.
-const historyCacheMaxAge = time.Hour
+const historyCacheMaxAge = 24 * time.Hour
 
 // historyFingerprint is the cheap per-person state read on every request to validate a
 // cached series. Any fact-set change moves own_score (refreshPersonScores) and any
