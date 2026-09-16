@@ -112,3 +112,34 @@ func (s *PostgresStorer) GetPersonsByAssembleeID(ctx context.Context) (map[strin
 	}
 	return out, rows.Err()
 }
+
+// GetPersonPressFactCounts returns, per person id, how many active facts they
+// carry from press-like sources (news, twitter). Used to prioritize the
+// débats backfill: transcripts of persons who also speak to the press are
+// where "said in the hemicycle vs said to the press" contradictions live.
+func (s *PostgresStorer) GetPersonPressFactCounts(ctx context.Context) (map[int64]int, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT fm.person_id, COUNT(DISTINCT fs.fact_id)
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		WHERE fs.source_type IN ('news', 'twitter')
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_relations fr
+		      WHERE fr.specific_fact_id = fs.fact_id AND fr.relation_type = 'duplicate'
+		  )
+		GROUP BY fm.person_id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying press fact counts: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("scanning press fact count: %w", err)
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

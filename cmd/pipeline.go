@@ -224,8 +224,9 @@ func runDailyPipeline(ctx context.Context, storer *storage.PostgresStorer, notif
 		log.Error().Err(trErr).Msg("Daily pipeline: translation phase failed")
 	}
 
-	// Step 9 (last, deadline-bound): débats backfill of the 2025-2026 session,
-	// newest séances first, until debatsBackfillDeadlineHour local time. Self-
+	// Step 9 (last, deadline-bound): débats backfill of the 2025-2026 session
+	// until debatsBackfillDeadlineHour local time — speakers with press facts
+	// first (most first), newest séances first within a speaker. Self-
 	// terminating: once every document is recorded it processes nothing.
 	backfillErr := runDebatsBackfillStep(ctx, storer)
 	if backfillErr != nil {
@@ -508,7 +509,7 @@ func runDebatsBackfillStep(ctx context.Context, storer *storage.PostgresStorer) 
 	since, _ := time.Parse("2006-01-02", debatsBackfillSince)
 	start := time.Now()
 	stats, err := frpolitics.RunDebats(ctx, storer, frpolitics.DebatsOptions{
-		Since: since, NewestFirst: true, Deadline: deadline,
+		Since: since, NewestFirst: true, Deadline: deadline, PrioritizePress: true,
 	})
 	log.Info().Dur("elapsed", time.Since(start)).Int("pending_before", stats.Pending).Int("processed", stats.Processed).
 		Int("facts", stats.Facts).Int("errors", stats.Errors).Int("pending_after", stats.PendingAfter).

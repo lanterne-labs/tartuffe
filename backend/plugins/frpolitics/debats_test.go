@@ -151,7 +151,7 @@ func TestRunDebateDocuments_Scheduling(t *testing.T) {
 	// Newest first, MaxDocs=2 attempts, one failure: order D,B; B fails and stays pending.
 	var seen []string
 	stats := DebatsStats{Pending: 4}
-	err := runDebateDocuments(context.Background(), docs(), DebatsOptions{NewestFirst: true, MaxDocs: 2},
+	err := runDebateDocuments(context.Background(), docs(), DebatsOptions{NewestFirst: true, MaxDocs: 2}, nil,
 		func(_ context.Context, d *debateDocument) (docResult, error) {
 			seen = append(seen, d.CR.UID)
 			if d.CR.UID == "B" {
@@ -172,7 +172,7 @@ func TestRunDebateDocuments_Scheduling(t *testing.T) {
 	// Oldest first with a deadline already passed: nothing attempted, flagged.
 	stats = DebatsStats{Pending: 4}
 	seen = nil
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{Deadline: time.Now().Add(-time.Second)},
+	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{Deadline: time.Now().Add(-time.Second)}, nil,
 		func(_ context.Context, d *debateDocument) (docResult, error) {
 			seen = append(seen, d.CR.UID)
 			return docResult{}, nil
@@ -185,7 +185,7 @@ func TestRunDebateDocuments_Scheduling(t *testing.T) {
 	// Oldest first, no caps: A, C, B, D; a zero-fact document counts as NoFacts.
 	stats = DebatsStats{Pending: 4}
 	seen = nil
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{},
+	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{}, nil,
 		func(_ context.Context, d *debateDocument) (docResult, error) {
 			seen = append(seen, d.CR.UID)
 			return docResult{}, nil
@@ -198,7 +198,7 @@ func TestRunDebateDocuments_Scheduling(t *testing.T) {
 	// Every document fails: run reported as an error (breaker after 10, or
 	// all-failed on a short list).
 	stats = DebatsStats{Pending: 4}
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{},
+	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{}, nil,
 		func(_ context.Context, d *debateDocument) (docResult, error) {
 			return docResult{}, errors.New("outage")
 		}, &stats)
@@ -212,7 +212,7 @@ func TestRunDebateDocuments_Scheduling(t *testing.T) {
 		long = append(long, mk(fmt.Sprintf("L%02d", i), 1))
 	}
 	stats = DebatsStats{Pending: 30}
-	err = runDebateDocuments(context.Background(), long, DebatsOptions{},
+	err = runDebateDocuments(context.Background(), long, DebatsOptions{}, nil,
 		func(_ context.Context, d *debateDocument) (docResult, error) {
 			return docResult{}, errors.New("outage")
 		}, &stats)
@@ -250,4 +250,23 @@ func TestStripCivilityAndSubjectMatch(t *testing.T) {
 	require.True(t, subjectMatches(fakeFact("mathilde PANOT"), doc))
 	require.False(t, subjectMatches(fakeFact("Sébastien Lecornu"), doc), "facts about a third party are dropped")
 	require.False(t, subjectMatches(fakeFact(""), doc))
+}
+
+// Backfill priority: speakers with press facts first (most first), then the
+// date order; speakers without press facts come last.
+func TestRunDebateDocuments_PrioritizePress(t *testing.T) {
+	mk := func(uid string, day int, person int64) *debateDocument {
+		return &debateDocument{CR: &compteRendu{UID: uid, SeanceDate: time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)}, ActorID: "PA" + uid, Person: storage.PersonInfo{ID: person}}
+	}
+	pending := []*debateDocument{mk("A", 5, 1), mk("B", 9, 2), mk("C", 3, 3), mk("D", 7, 2), mk("E", 8, 1)}
+	priority := map[int64]int{1: 40, 2: 300} // person 3 has no press facts
+	var seen []string
+	stats := DebatsStats{Pending: 5}
+	err := runDebateDocuments(context.Background(), pending, DebatsOptions{NewestFirst: true, PrioritizePress: true}, priority,
+		func(_ context.Context, d *debateDocument) (docResult, error) {
+			seen = append(seen, d.CR.UID)
+			return docResult{Inserted: 1}, nil
+		}, &stats)
+	require.NoError(t, err)
+	require.Equal(t, []string{"B", "D", "E", "A", "C"}, seen, "press-heavy speaker first, newest first within a speaker, no-press speaker last")
 }

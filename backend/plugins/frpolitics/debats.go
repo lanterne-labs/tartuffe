@@ -63,6 +63,10 @@ type DebatsOptions struct {
 	Deadline time.Time
 	// NewestFirst processes the most recent séances first (backfill order).
 	NewestFirst bool
+	// PrioritizePress orders documents by the speaker's press presence first
+	// (persons with news/twitter facts, most first), then by date: the
+	// backfill spends its window where transcript facts can meet press facts.
+	PrioritizePress bool
 	// MinChars overrides debatsMinInterventionChars when > 0.
 	MinChars int
 }
@@ -210,10 +214,17 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	inserter := core.NewFactInserter(storer, stanceMgr)
 	inserter.EnableLLMDedupe()
 
+	var priority map[int64]int
+	if opts.PrioritizePress {
+		priority, err = storer.GetPersonPressFactCounts(ctx)
+		if err != nil {
+			return stats, fmt.Errorf("debats: loading press fact counts: %w", err)
+		}
+	}
 	ingest := func(ctx context.Context, doc *debateDocument) (docResult, error) {
 		return ingestDebateDocument(ctx, storer, extractor, embedder, inserter, doc)
 	}
-	runErr := runDebateDocuments(ctx, pending, opts, ingest, &stats)
+	runErr := runDebateDocuments(ctx, pending, opts, priority, ingest, &stats)
 	stats.ElapsedSeconds = time.Since(start).Seconds()
 	log.Info().
 		Int("attempted", stats.Attempted).Int("processed", stats.Processed).Int("facts", stats.Facts).
@@ -228,9 +239,16 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 // at a time under the MaxDocs / Deadline caps. A failed document stays
 // pending for the next run; a streak of debatsMaxConsecutiveFailures aborts
 // the run (outage), and a run that attempted documents without processing
-// any is reported as an error so the pipeline step goes red.
-func runDebateDocuments(ctx context.Context, pending []*debateDocument, opts DebatsOptions, ingest func(context.Context, *debateDocument) (docResult, error), stats *DebatsStats) error {
+// any is reported as an error so the pipeline step goes red. priority (may be
+// nil) ranks speakers by press presence when opts.PrioritizePress is set.
+func runDebateDocuments(ctx context.Context, pending []*debateDocument, opts DebatsOptions, priority map[int64]int, ingest func(context.Context, *debateDocument) (docResult, error), stats *DebatsStats) error {
 	sort.SliceStable(pending, func(i, j int) bool {
+		if opts.PrioritizePress {
+			pi, pj := priority[pending[i].Person.ID], priority[pending[j].Person.ID]
+			if pi != pj {
+				return pi > pj
+			}
+		}
 		a, b := pending[i].CR.SeanceDate, pending[j].CR.SeanceDate
 		if opts.NewestFirst {
 			return a.After(b)

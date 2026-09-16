@@ -84,3 +84,48 @@ func TestDebateDocumentsPendingSet(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, empty)
 }
+
+// GetPersonPressFactCounts counts active news/twitter facts per person and
+// ignores vote/transcript sources and duplicate-marked facts.
+func TestGetPersonPressFactCounts(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	truncateFanoutTables(t, storer)
+	storer.SetEntityValidator(nil)
+
+	pressy, _, err := storer.AddPerson(ctx, "Press Heavy")
+	require.NoError(t, err)
+	quiet, _, err := storer.AddPerson(ctx, "Press Quiet")
+	require.NoError(t, err)
+	newFact := func() int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx, "INSERT INTO facts (fact_text) VALUES ('f') RETURNING id").Scan(&id))
+		return id
+	}
+	n := 0
+	src := func(factID int64, sourceType string, person int64) {
+		n++
+		var sid int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO fact_sources (fact_id, source_url, source_type) VALUES ($1, $2, $3) RETURNING id",
+			factID, "https://s.test/"+string(rune('a'+n)), sourceType).Scan(&sid))
+		_, err := storer.pool.Exec(ctx, "INSERT INTO fact_mentions (fact_source_id, person_id) VALUES ($1, $2)", sid, person)
+		require.NoError(t, err)
+	}
+	f1, f2, f3, f4, f5 := newFact(), newFact(), newFact(), newFact(), newFact()
+	src(f1, "news", pressy)
+	src(f2, "twitter", pressy)
+	src(f3, "assemblee_law_page", pressy) // votes do not count
+	src(f4, "assemblee_debat", pressy)    // transcripts do not count
+	src(f5, "news", pressy)               // duplicate-marked: does not count
+	_, err = storer.pool.Exec(ctx, "INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')", f1, f5)
+	require.NoError(t, err)
+	src(newFact(), "assemblee_law_page", quiet)
+
+	counts, err := storer.GetPersonPressFactCounts(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, counts[pressy])
+	_, has := counts[quiet]
+	require.False(t, has, "no press facts → absent (priority 0)")
+}

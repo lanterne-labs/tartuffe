@@ -1802,6 +1802,13 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   of the 2025-2026 session, newest first, until 11:00 Europe/Paris (wall-clock deadline
   instead of a count: the user chose to let the night run long). `dm plugin frpolitics
   --mode debats --since --max-docs --newest-first` drives manual chunks.
+- Backfill priority (2026-09-16, first night's lesson): the backfill window is ~1 h once the
+  other steps have run (re-judge + detection took 2h45), i.e. 20-35 documents a night against
+  a 9,669 backlog. Documents are now ordered by the speaker's press presence (active
+  news/twitter facts, most first) then newest séance — the window is spent where transcript
+  facts can meet press facts; speakers with no press facts come last. The daily feed stays
+  unprioritized (everyone). Capacity itself is still the constraint: ~2.8 min per document
+  (extraction + ~36 s of stance routing per fact); a daytime job would be the real fix.
 - Run hygiene: a streak of 10 failing documents aborts the run (outage), an all-failed run
   is a step error, facts whose subject is not the speaker are counted per document in
   debate_documents.facts_dropped (cron logs are not retrievable after the fact, so the table

@@ -40,6 +40,7 @@ func init() {
 	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'news' (search news only), 'both' (votes then news), 'debats' (séance transcripts), or 'backfill-seance-ref' (stamp seance_ref on old vote sources + queue same-séance pairs)")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
+	frpoliticsCmd.Flags().Bool("prioritize-press", false, "debats mode: speakers with news/twitter facts first (backfill order)")
 	frpoliticsCmd.Flags().String("since", "", "process laws voted on or after YYYY-MM-DD (auto-derives legislatures)")
 	frpoliticsCmd.Flags().Int("last-years", 0, "process votes from the last N years, e.g. --last-years 2 (auto-derives since date and legislatures)")
 	frpoliticsCmd.Flags().Int("from-year", 0, "process votes starting from Jan 1 of this year, e.g. --from-year 2022 (auto-derives legislatures)")
@@ -172,7 +173,8 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	if mode == "debats" {
 		maxDocs, _ := cmd.Flags().GetInt("max-docs")
 		newestFirst, _ := cmd.Flags().GetBool("newest-first")
-		dopts := frpolitics.DebatsOptions{MaxDocs: maxDocs, NewestFirst: newestFirst}
+		prioritizePress, _ := cmd.Flags().GetBool("prioritize-press")
+		dopts := frpolitics.DebatsOptions{MaxDocs: maxDocs, NewestFirst: newestFirst, PrioritizePress: prioritizePress}
 		if since != nil {
 			dopts.Since = *since
 		}
