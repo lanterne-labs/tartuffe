@@ -2038,3 +2038,24 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - Storage: one lookup → gate → insert core behind the five person entry points, one folded
   name predicate (both sides folded in SQL, so ł/ß/œ variants match), one person-summary
   projection shared with the photos plugin. Migration `20260916200000` adds the memo table.
+
+## Stance over-fragmentation: assignment golden from prod + a label recall pass (2026-09-17)
+
+- Measured on prod: 73% of stances hold one fact; the weeks of Sep 7 and 14 created ~1,200
+  stances, over 90% still singletons. Le Pen got three housing singletons on consecutive
+  days next to "politique du logement" (8 facts); Retailleau's "parti girouette" quote got a
+  third stance while the RN stance already held the same statement twice.
+- Two distinct failures. (1) Decision: the right stance was in the shortlist and the LLM
+  still created a new one. The assign golden now carries 17 production cases (shortlists
+  reconstructed from the live stance sets); the prompt change is targeted: member facts show
+  the candidate's DOMAIN rather than a literal template, a compound fact is routed by its main
+  subject and never gets a multi-subject topic, plus worked examples of the failures. 22/22
+  three runs in a row. Three cases accept either outcome (one borderline taxonomy, two
+  compound facts the extractor should have split). (2) Recall: for 7 of 36 cases the fitting
+  stance was not in the top-8 embedding shortlist at all, and centroid ranking did no better
+  (ranks 9-47) because both live in the stance-blind topic-slug space. New label pass
+  (`pickTopicsByLabel`): for persons with more stances than the shortlist holds, one cheap
+  call reads the person's labels and adds up to three picks to the candidates
+  (`StanceCandidatesByIDs`). Its golden (`label_pick_cases.yaml`, 9 prod cases): 9/9 three
+  runs. Lessons: classify the statement's content, never its venue ("sur BFM" pulled the
+  media labels); a principle applied to a policy field belongs to that field's topic.

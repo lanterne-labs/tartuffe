@@ -24,6 +24,31 @@ type assignCase struct {
 	NewFact    string            `yaml:"new_fact"`
 	Candidates []assignCandidate `yaml:"candidates"`
 	Expect     string            `yaml:"expect"` // exact candidate label, or "NEW"
+	// ExpectAny lists every acceptable outcome (labels or "NEW") for a case
+	// whose taxonomy is genuinely debatable; used instead of Expect so the
+	// golden documents the ambiguity without asserting a coin flip.
+	ExpectAny []string `yaml:"expect_any"`
+}
+
+// accepts reports whether the outcome (a candidate label, or "NEW") satisfies
+// the case.
+func (c assignCase) accepts(outcome string) bool {
+	if len(c.ExpectAny) > 0 {
+		for _, e := range c.ExpectAny {
+			if e == outcome {
+				return true
+			}
+		}
+		return false
+	}
+	return outcome == c.Expect
+}
+
+func (c assignCase) want() string {
+	if len(c.ExpectAny) > 0 {
+		return "one of " + fmt.Sprint(c.ExpectAny)
+	}
+	return c.Expect
 }
 
 type assignCaseFile struct {
@@ -97,33 +122,26 @@ func TestAssignGolden(t *testing.T) {
 				t.Fatalf("assignTopicFromCandidates error: %v", err)
 			}
 
-			if tc.Expect == "NEW" {
-				if !decision.IsNew {
-					failed++
-					t.Errorf("got=ASSIGNED(%q) want=NEW\n    fact: %s\n    reasoning: %s",
-						labelByID[decision.AssignedID], tc.NewFact, decision.Reasoning)
-					return
+			outcome := "NEW"
+			if !decision.IsNew {
+				outcome = labelByID[decision.AssignedID]
+			}
+			if !tc.accepts(outcome) {
+				failed++
+				got := outcome
+				if decision.IsNew {
+					got = fmt.Sprintf("NEW(%q)", decision.NewLabel)
 				}
+				t.Errorf("got=%s want=%s\n    fact: %s\n    reasoning: %s", got, tc.want(), tc.NewFact, decision.Reasoning)
+				return
+			}
+			if decision.IsNew {
 				passed++
 				t.Logf("NEW ✓ label=%q (%s)", decision.NewLabel, decision.Reasoning)
 				return
 			}
-
-			if decision.IsNew {
-				failed++
-				t.Errorf("got=NEW(%q) want=%q\n    fact: %s\n    reasoning: %s",
-					decision.NewLabel, tc.Expect, tc.NewFact, decision.Reasoning)
-				return
-			}
-			got := labelByID[decision.AssignedID]
-			if got != tc.Expect {
-				failed++
-				t.Errorf("got=%q want=%q\n    fact: %s\n    reasoning: %s",
-					got, tc.Expect, tc.NewFact, decision.Reasoning)
-				return
-			}
 			passed++
-			t.Logf("ASSIGNED %q ✓  (%s)", got, decision.Reasoning)
+			t.Logf("ASSIGNED %q ✓  (%s)", outcome, decision.Reasoning)
 		})
 	}
 

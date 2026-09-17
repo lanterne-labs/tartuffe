@@ -89,3 +89,1073 @@ cases:
         facts:
           - "Sébastien Lecornu a déclenché l'article 49.3 sur la partie « dépenses » du PLF 2026."
     expect: "sécurité intérieure et forces de l'ordre"
+
+# --- Production-derived cases (2026-09-17) ---------------------------------
+# Each new_fact created a one-fact stance in production although a fitting
+# stance was in the shortlist assignTopic showed the LLM (candidates are that
+# shortlist, reconstructed from the live stance set: top-8 stances by nearest
+# member fact, six members each, in that order). `expect` names the stance the
+# fact should have joined; the NEW cases are facts whose fitting stance was not
+# in the shortlist, so creating a topic is the right answer for this function.
+  - name: prod_mlp_tobacco_tax_joins_fiscal
+    new_fact: Marine Le Pen a proposé le gel des taxes sur le tabac et la désindexation du prix sur l'inflation pour stopper l'escalade fiscale.
+    candidates:
+    - label: Sécurité publique, ordre et gestion des crises
+      summary: Marine Le Pen intervient sur des sujets liés à la sécurité intérieure, notamment concernant les violences urbaines, la menace terroriste et la gestion des squats. Elle exprime son soutien aux forces de l'ordre et aux secours lors de crises ou d'incidents. Elle propose également des mesures législatives visant le renforcement des sanctions pénales et l'évolution des prérogatives de police.
+      facts:
+      - Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et la vente à la sauvette, ainsi que renforcer les prérogatives des policiers municipaux.
+      - Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et renforcer les prérogatives des policiers municipaux pour les saisies de produits illicites.
+      - Marine Le Pen a adressé un message de soutien et de solidarité aux victimes des incendies, tout en exprimant sa reconnaissance envers les sapeurs-pompiers.
+      - Marine Le Pen a déclaré qu'il est extrêmement important de ne pas « baisser la garde » dans la lutte contre le terrorisme.
+      - Marine Le Pen a adressé sa reconnaissance et son soutien aux pompiers, aux forces de sécurité et de secours mobilisés sur le territoire, notamment à Fontainebleau.
+      - Marine Le Pen a affirmé que la lutte contre les squats est un sujet important exigeant du courage et a promis de faire voter et appliquer une loi permettant aux propriétaires de retrouver la libre possession de leur bien en quelques jours immédiatement après l'élection.
+    - label: fiscalité de l'énergie et des carburants
+      summary: Marine Le Pen propose de baisser durablement la TVA de 20 % à 5,5 % sur les carburants, l'électricité, le gaz et le fioul. Elle souhaite également suspendre les hausses d'impôts sur l'énergie et s'oppose à l'application de taxes supplémentaires sur les carburants. Elle affirme porter cette mesure de réduction de la fiscalité énergétique depuis cinq ans.
+      facts:
+      - Marine Le Pen a proposé de baisser la TVA sur les carburants de 20 % à 5,5 % de manière pérenne et de suspendre les hausses d'impôts sur l'énergie décidées par Emmanuel Macron et Édouard Philippe.
+      - Marine Le Pen a affirmé qu'elle n'appliquerait jamais la hausse de taxes de 15cts/l si elle est élue présidente de la République.
+      - Marine Le Pen défend depuis cinq ans l'idée de baisser la TVA sur l'énergie, incluant non seulement le carburant mais aussi l'électricité, le gaz et le fioul.
+      - Marine Le Pen a affirmé que si les Français lui font confiance, le 'racket contre les automobilistes' prendra fin.
+      - Marine Le Pen a proposé de baisser la TVA sur l'énergie (carburant, électricité, gaz et fioul) de 20 % à 5,5 %, une mesure qu'elle affirme proposer depuis cinq ans.
+      - Marine Le Pen a affirmé que l'énergie est un bien de première nécessité pour justifier sa volonté de baisser la TVA de 20 à 5,5%.
+    - label: politique fiscale et mesures d'imposition
+      summary: Les propositions incluent une modification des conditions du dispositif Dutreil et une réduction des délais pour l'exonération des plus-values immobilières. Parallèlement, des mécanismes pour taxer les surprofits sont évoqués, tandis qu'une opposition ferme à toute hausse d'impôt est affirmée. Cette position est assortie d'une condition de non-censure envers le premier ministre, sous réserve du respect de ces principes budgétaires.
+      facts:
+      - Marine Le Pen a déclaré qu'elle n'accepterait aucune hausse d'impôt ni aucune injustice sociale, et a affirmé que son groupe exigerait des économies.
+      - Marine Le Pen a proposé la mise en place de mécanismes fiscaux pour récupérer les surprofits et les rentes abusives.
+      - Marine Le Pen s'est engagée à ne pas censurer le premier ministre à condition qu'il respecte des lignes rouges, notamment l'absence de hausse d'impôts et d'injustice sociale.
+      - Marine Le Pen a proposé de conditionner l'avantage fiscal du dispositif Dutreil au maintien de l'activité en France pendant dix ans.
+      - Marine Le Pen a annoncé vouloir abaisser la durée de détention pour bénéficier de l'exonération de plus-value lors de la vente d'un bien de 30 à 15 ans.
+    - label: Politique économique et souveraineté industrielle
+      summary: Le discours porte sur la mise en œuvre d'un patriotisme économique, incluant la priorité aux entreprises françaises dans la commande publique et le numérique. Les propositions incluent également la sortie de l'euro, la taxation de la spéculation et la réduction des marges de la grande distribution. Enfin, l'accent est mis sur l'alignement de la vision économique avec celle de Jordan Bardella pour la campagne présidentielle de 2027.
+      facts:
+      - Marine Le Pen a exprimé la volonté de sortir de l'euro, de taxer la spéculation et de forcer la grande distribution à réduire ses marges.
+      - Le représentant de l'extrême droite a fait des promesses de dérégulation et de baisse des impôts de production.
+      - Marine Le Pen a déclaré que l'objectif de son camp est de privilégier l'achat par l'État plutôt que la subvention pour favoriser le patriotisme économique.
+      - Marine Le Pen a déclaré partager la même vision économique et les mêmes objectifs que Jordan Bardella.
+      - Marine Le Pen a affirmé qu'il faut privilégier les entreprises françaises, notamment les entreprises innovantes et entreprenantes, dans la commande publique et le domaine du numérique.
+      - Marine Le Pen a affirmé qu'il ne suffit pas de dire que l'on est patriote et qu'il faut aussi mettre en œuvre le patriotisme.
+    - label: activité des buralistes
+      summary: Marine Le Pen a affirmé que si elle est élue à la tête de l'État, elle mettra en place des principes d'action pour protéger durablement l'activité des buralistes.
+      facts:
+      - Marine Le Pen a affirmé que si elle est élue à la tête de l'État, elle mettra en place des principes d'action pour protéger durablement l'activité des buralistes.
+    - label: politique budgétaire et économie
+      summary: Marine Le Pen a annoncé un plan d'économies de 125 milliards d'euros ciblant les dépenses administratives, l'immigration et l'Union européenne. Elle a exprimé une préférence pour l'adoption d'un budget jugé « imparfait » plutôt qu'une loi spéciale, tout en indiquant pouvoir voter contre le budget actuel. Elle a également précisé qu'elle présenterait une trajectoire budgétaire pour le quinquennat début octobre, accompagnée d'un projet de contre-budget présenté avec Jordan Bardella. Enfin, elle a affirmé que la France est désormais le troisième pays de la zone euro avec le plus fort taux de chômage et a promis de restaurer la prospérité du pays avec l'UDR.
+      facts:
+      - Marine Le Pen a promis de rétablir les finances publiques, la croissance et l'emploi.
+      - Marine Le Pen a annoncé un programme de 125 milliards d'euros d'économies sur cinq ans qui sera dévoilé en septembre, ainsi que la promesse d'une règle d'or des finances publiques et la chasse aux normes environnementales.
+      - Marine Le Pen a appelé l'État à réduire son train de vie afin de limiter les dépenses et de reprendre le contrôle sur son budget.
+      - Marine Le Pen a annoncé qu'elle détaillerait la trajectoire budgétaire pour le quinquennat au début du mois d'octobre.
+      - Marine Le Pen a annoncé qu'elle présenterait un plan d'économies de 125 milliards d'euros avant le débat budgétaire de fin septembre ou début octobre.
+      - Marine Le Pen a déclaré préférer l'adoption d'un budget même « imparfait » au Parlement plutôt qu'une loi spéciale.
+    - label: Réforme des retraites
+      summary: Marine Le Pen maintient sa position sur un âge de départ à la retraite situé entre 60 et 62 ans, selon l'entrée sur le marché du travail. Elle défend la continuité de son projet de 2022 tout en envisageant une part de capitalisation volontaire pour certains profils. Bien que des divergences aient été évoquées avec Jordan Bardella, elle affirme la cohérence de sa position sur ce sujet.
+      facts:
+      - Marine Le Pen n'a pas fait de reniement sur la retraite à 60 ans pour ceux ayant commencé à travailler tôt et n'a pas mentionné de TVA sociale lors de son intervention.
+      - Marine Le Pen a rejeté l'argument selon lequel sa réforme des retraites coûterait 9 milliards d'euros par an.
+      - Marine Le Pen et Jordan Bardella ont affiché des divergences sur la question des retraites.
+      - Fin août 2026, Marine Le Pen a qualifié la réforme des retraites de « choix de société » devant le Medef.
+      - Marine Le Pen a maintenu sa réforme des retraites malgré les tentatives de son président de parti pour l'infléchir.
+      - Marine Le Pen maintient la proposition du Rassemblement national visant un départ à la retraite à 62 ans, voire 60 ans, avec 40 à 42 années de cotisation.
+    - label: politique de l'énergie et des prix de l'électricité
+      summary: Marine Le Pen critique la gestion gouvernementale des coûts énergétiques, accusant l'État de suivre une idéologie de la décroissance. Elle préconise une baisse des tarifs de l'électricité et dénonce une déconnexion entre les promesses de stabilité tarifaire et l'augmentation réelle des prix prévue pour l'été.
+      facts:
+      - Marine Le Pen a affirmé qu'elle enrichira son programme de nouvelles propositions pour assurer une baisse durable des factures d'électricité des familles et des entreprises lors de la campagne présidentielle.
+      - Marine Le Pen a dénoncé un mensonge du gouvernement, affirmant que les prix du tarif réglementé augmenteront de 2,5 % au 1er août, contrairement aux promesses de stabilité pour 2026 et 2027.
+      - Marine Le Pen a accusé le gouvernement de se soumettre à l'idéologie de la décroissance en ne luttant pas contre la hausse des prix de l'énergie, et a proposé de baisser les coûts de l'électricité et les taxes sur l'énergie.
+    expect: politique fiscale et mesures d'imposition
+  - name: prod_mlp_buralistes_joins_tobacco_singleton
+    new_fact: Marine Le Pen a affirmé que si elle est élue à la tête de l'État, elle mettra en place des principes d'action pour protéger durablement l'activité des buralistes.
+    candidates:
+    - label: Sécurité publique, ordre et gestion des crises
+      summary: Marine Le Pen intervient sur des sujets liés à la sécurité intérieure, notamment concernant les violences urbaines, la menace terroriste et la gestion des squats. Elle exprime son soutien aux forces de l'ordre et aux secours lors de crises ou d'incidents. Elle propose également des mesures législatives visant le renforcement des sanctions pénales et l'évolution des prérogatives de police.
+      facts:
+      - Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et la vente à la sauvette, ainsi que renforcer les prérogatives des policiers municipaux.
+      - Marine Le Pen a adressé sa reconnaissance et son soutien aux pompiers, aux forces de sécurité et de secours mobilisés sur le territoire, notamment à Fontainebleau.
+      - Marine Le Pen a exprimé son soutien aux policiers, aux gendarmes et aux pompiers mobilisés pour assurer la sécurité suite aux violences lors de la victoire du PSG le 30 mai 2026.
+      - Marine Le Pen a affirmé que la 'Macronie' et l'extrême gauche sont responsables de l'augmentation des refus d'obtempérer ciblant les policiers en alimentant des discours incendiaires.
+      - Marine Le Pen a exprimé sa solidarité envers les policiers manifestants, affirmant que le rétablissement de l’ordre et de la tranquillité publique sera une priorité nationale.
+      - Marine Le Pen a adressé un message de soutien et de solidarité aux victimes des incendies, tout en exprimant sa reconnaissance envers les sapeurs-pompiers.
+    - label: fiscalité du tabac
+      summary: Marine Le Pen a proposé le gel des taxes sur le tabac et la désindexation du prix sur l'inflation pour stopper l'escalade fiscale.
+      facts:
+      - Marine Le Pen a proposé le gel des taxes sur le tabac et la désindexation du prix sur l'inflation pour stopper l'escalade fiscale.
+      - Marine Le Pen a proposé le gel des taxes sur le tabac et la désindexation du prix sur l'inflation pour soutenir les buralistes.
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place des conditions permettant à tous les candidats de faire campagne sans violence.
+      - Marine Le Pen a affirmé son innocence et a protesté de sa bonne foi concernant l'affaire des assistants parlementaires après avoir été reconnue coupable par la cour d'appel.
+      - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place les conditions permettant à tous les candidats de faire campagne normalement et sans violence.
+      - Marine Le Pen attend le verdict de la cour d'appel concernant une peine d'inéligibilité pour détournement de fonds publics dans l'affaire des assistants parlementaires européens du Front national, prévu pour le 7 juillet 2026.
+      - Le 31 mars 2025, Marine Le Pen a été condamnée en première instance à quatre ans d'emprisonnement dont deux avec sursis, 100 000 euros d'amende et cinq ans d'inéligibilité avec exécution provisoire.
+      - Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d'inéligibilité contre Marine Le Pen dans l'affaire des assistants parlementaires.
+    - label: fiscalité de l'énergie et des carburants
+      summary: Marine Le Pen propose de baisser durablement la TVA de 20 % à 5,5 % sur les carburants, l'électricité, le gaz et le fioul. Elle souhaite également suspendre les hausses d'impôts sur l'énergie et s'oppose à l'application de taxes supplémentaires sur les carburants. Elle affirme porter cette mesure de réduction de la fiscalité énergétique depuis cinq ans.
+      facts:
+      - Marine Le Pen a affirmé que si les Français lui font confiance, le 'racket contre les automobilistes' prendra fin.
+      - Marine Le Pen défend depuis cinq ans l'idée de baisser la TVA sur l'énergie, incluant non seulement le carburant mais aussi l'électricité, le gaz et le fioul.
+      - Marine Le Pen a affirmé qu'elle n'appliquerait jamais la hausse de taxes de 15cts/l si elle est élue présidente de la République.
+      - Marine Le Pen a proposé de baisser la TVA sur les carburants de 20 % à 5,5 % de manière pérenne et de suspendre les hausses d'impôts sur l'énergie décidées par Emmanuel Macron et Édouard Philippe.
+      - Marine Le Pen a affirmé proposer depuis cinq ans de baisser la TVA de 20 % à 5,5 % sur le carburant, l'électricité, le gaz et le fioul.
+      - Marine Le Pen a proposé de baisser la TVA sur l'énergie (carburant, électricité, gaz et fioul) de 20 % à 5,5 %, une mesure qu'elle affirme proposer depuis cinq ans.
+    - label: interdiction du voile dans l'espace public
+      summary: Marine Le Pen prône l'interdiction du voile dans l'espace public, une position qu'elle soutient depuis 2012. Elle propose désormais de soumettre cette mesure, incluant des sanctions pénales contre les idéologies islamistes, à un référendum. Elle a précisé que ce projet de loi serait soumis aux Français après un premier référendum constitutionnel lié à l'immigration.
+      facts:
+      - Marine Le Pen a proposé de soumettre la question du port du voile à un référendum et a indiqué que le voile pourrait être interdit progressivement, notamment dans les établissements publics et les sorties scolaires.
+      - Marine Le Pen privilégierait désormais la voie du référendum pour faire passer la réforme de l'interdiction du voile dans l'espace public afin d'éviter une censure du Conseil constitutionnel.
+      - Depuis 2012, Marine Le Pen prône l’interdiction du voile dans l’espace public.
+      - Marine Le Pen relance sa proposition d'interdiction du voile dans l'espace public et promet, en cas d'élection en 2027, un référendum pouvant déboucher sur une sanction pénale.
+      - Marine Le Pen a déclaré qu'elle soumettra aux Français par référendum une loi de lutte contre les idéologies islamistes incluant la pénalisation du voile islamique dans l'espace public.
+      - Marine Le Pen a indiqué qu'elle souhaitait soumettre la question de l'interdiction du voile islamique aux Français par voie de référendum le 31 août 2026.
+    - label: présomption d'innocence et état de droit
+      summary: Marine Le Pen a affirmé que la présomption d'innocence interdisait d'annuler les concerts de Patrick Bruel dans l'état actuel de la procédure, arguant que cela reviendrait à rompre avec l'état de droit.
+      facts:
+      - Marine Le Pen a affirmé que l'on ne pouvait pas empêcher Patrick Bruel de se produire en concert, arguant que l'empêcher reviendrait à une mort professionnelle avant que la justice ne se soit prononcée.
+      - Marine Le Pen a affirmé que la présomption d'innocence interdisait d'annuler les concerts de Patrick Bruel dans l'état actuel de la procédure, arguant que cela reviendrait à rompre avec l'état de droit.
+    - label: Réforme des retraites
+      summary: Marine Le Pen maintient sa position sur un âge de départ à la retraite situé entre 60 et 62 ans, selon l'entrée sur le marché du travail. Elle défend la continuité de son projet de 2022 tout en envisageant une part de capitalisation volontaire pour certains profils. Bien que des divergences aient été évoquées avec Jordan Bardella, elle affirme la cohérence de sa position sur ce sujet.
+      facts:
+      - Marine Le Pen a déclaré que l'objectif prioritaire est de protéger les retraites de ceux qui n'ont pas les moyens de mettre en œuvre la capitalisation volontaire.
+      - Marine Le Pen et Jordan Bardella ont affiché des divergences sur la question des retraites.
+      - Fin août 2026, Marine Le Pen a qualifié la réforme des retraites de « choix de société » devant le Medef.
+      - Marine Le Pen a maintenu sa réforme des retraites malgré les tentatives de son président de parti pour l'infléchir.
+      - Marine Le Pen n'a pas fait de reniement sur la retraite à 60 ans pour ceux ayant commencé à travailler tôt et n'a pas mentionné de TVA sociale lors de son intervention.
+      - Marine Le Pen défend la réforme de 2022 prévoyant un âge légal de départ à la retraite de 60 à 62 ans en fonction de l'entrée sur le marché du travail.
+    - label: stratégie politique et image de marque
+      summary: Cette démarche vise à transformer l'image du parti par une accélération de la dédiabolisation. Cette évolution a notamment impliqué l'exclusion de Jean-Marie Le Pen en 2015 suite à des propos polémiques. La stratégie repose également sur une mise en scène de discipline et le respect des codes parlementaires.
+      facts:
+      - Marine Le Pen poursuit une stratégie de dédiabolisation et de 'stratégie de la cravate', caractérisée par le respect des codes parlementaires et la mise en scène d'un parti discipliné.
+      - En 2015, Marine Le Pen a exclu son père Jean-Marie Le Pen du parti dont il était le fondateur.
+      - Marine Le Pen a procédé à l'exclusion de Jean-Marie Le Pen du Front national en 2015 suite à ses propos négationnistes.
+      - Marine Le Pen a décidé d'accélérer et de renforcer la stratégie de dédiabolisation du Front national.
+    expect: fiscalité du tabac
+  - name: prod_mlp_mortgage_portability_joins_housing
+    new_fact: Marine Le Pen a promis de rendre obligatoire la portabilité des prêts immobiliers antérieurement souscrits avec des taux plus favorables.
+    candidates:
+    - label: politique du logement
+      summary: Marine Le Pen propose de placer le logement au cœur de son programme, incluant l'abrogation de la loi SRU et la transformation des bureaux en logements. Elle prône la priorité d'accès au logement social et aux APL pour les Français, tout en prévoyant l'expulsion des familles délinquantes des HLM. Son projet intègre également la suppression de certaines contraintes liées aux diagnostics de performance énergétique et le remplacement de MaPrimeRenov' par un prêt à taux zéro.
+      facts:
+      - Marine Le Pen a détaillé que le logement sera l'un des grands chantiers de son quinquennat si elle est élue.
+      - Marine Le Pen a promis que le logement sera au cœur de son combat présidentiel, avec un projet reposant sur la construction, l'utilisation du parc existant et l'accès à la propriété.
+      - Marine Le Pen a promis que le logement serait un grand chantier de son quinquennat, souhaitant donner la priorité d'accès au logement social aux Français et leur réserver les aides personnelles au logement (APL).
+      - Marine Le Pen a promis que le logement serait un grand chantier de son quinquennat, souhaitant donner la priorité d'accès au logement social aux Français et leur réserver les aides personnelles au logement (APL).
+      - Marine Le Pen a annoncé vouloir abroger la loi SRU, expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov' par un prêt à taux zéro et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+      - Marine Le Pen a affirmé que 70% des Français sont éligibles au parc social mais que seulement 11% en bénéficient.
+    - label: politique fiscale et mesures d'imposition
+      summary: Les propositions incluent une modification des conditions du dispositif Dutreil et une réduction des délais pour l'exonération des plus-values immobilières. Parallèlement, des mécanismes pour taxer les surprofits sont évoqués, tandis qu'une opposition ferme à toute hausse d'impôt est affirmée. Cette position est assortie d'une condition de non-censure envers le premier ministre, sous réserve du respect de ces principes budgétaires.
+      facts:
+      - Marine Le Pen a annoncé vouloir abaisser la durée de détention pour bénéficier de l'exonération de plus-value lors de la vente d'un bien de 30 à 15 ans.
+      - Marine Le Pen s'est engagée à ne pas censurer le premier ministre à condition qu'il respecte des lignes rouges, notamment l'absence de hausse d'impôts et d'injustice sociale.
+      - Marine Le Pen a proposé de conditionner l'avantage fiscal du dispositif Dutreil au maintien de l'activité en France pendant dix ans.
+      - Marine Le Pen a déclaré qu'elle n'accepterait aucune hausse d'impôt ni aucune injustice sociale, et a affirmé que son groupe exigerait des économies.
+      - Marine Le Pen a proposé la mise en place de mécanismes fiscaux pour récupérer les surprofits et les rentes abusives.
+    - label: politique migratoire
+      summary: Marine Le Pen propose de reprendre le contrôle de la politique migratoire en 2027, notamment par une révision de la Constitution et un référendum. Elle prône un renforcement du contrôle des frontières et souhaite réserver la libre-circulation dans l'espace Schengen aux nationaux de l'UE. Elle critique la gestion actuelle du pouvoir macroniste, l'accusant de laisser les vannes de l'immigration ouvertes.
+      facts:
+      - Marine Le Pen a affirmé qu'en 2027, si les Français le décident, elle reprendra le contrôle de la politique migratoire pour faire respecter la loi et le droit, critiquant l'ouverture totale des vannes migratoires sous le pouvoir macroniste.
+      - Marine Le Pen a imputé le drame de la mort d'Etienne D. au pouvoir macroniste, affirmant que celui-ci a ouvert les vannes d'une immigration hors de contrôle.
+      - Marine Le Pen a annoncé qu'elle proposerait un référendum constitutionnel sur l'immigration dès qu'elle arriverait au pouvoir pour reprendre le contrôle de la politique migratoire.
+      - Marine Le Pen a affirmé que le Premier ministre actuel a accordé chaque année 30 % de titres de séjour et 60 % de cartes de réfugiés de plus que le socialiste François Hollande.
+      - Marine Le Pen entend procéder à une grande révision de la Constitution dès son arrivée pour introduire des dispositions sur l'immigration, la nationalité ou la primauté du droit national par référendum.
+      - Marine Le Pen a imputé le drame d'Étienne D. au pouvoir macroniste, l'accusant d'avoir ouvert les vannes d'une immigration hors de contrôle et d'être incapable de faire exécuter les OQTF.
+    - label: Gestion du patrimoine familial Montretout
+      summary: Marine Le Pen et sa famille ont signé un compromis de vente pour la propriété de Montretout. Elle a affirmé ne pas avoir l'intention de conserver ce manoir et a justifié un déménagement par la protection de ses chats. Elle a également précisé que la demeure est désormais un lieu relevant de la vie privée et non plus un lieu politique.
+      facts:
+      - Marine Le Pen a justifié son déménagement de la demeure de Montretout en affirmant qu'elle l'avait fait pour préserver ses autres chats de l'instinct de chasse des chiens présents sur place.
+      - Marine Le Pen et sa famille ont signé un compromis de vente pour la propriété de Montretout.
+      - Marine Le Pen a déclaré que la demeure de Montretout n'est plus un endroit politique et que tout cela relève de la vie privée.
+      - Marine Le Pen a affirmé qu'elle n'avait « ni intérêt, ni envie de garder » le manoir de Montretout.
+    - label: réglementations environnementales et de l'habitat
+      summary: Marine Le Pen a exprimé son désaccord concernant les normes RE 2020, les jugeant responsables de l'inadaptation thermique de certains logements. Elle a également annoncé son intention de supprimer le dispositif Zéro Artificialisation Nette ainsi que les diagnostics de performance énergétique.
+      facts:
+      - Marine Le Pen a critiqué Édouard Philippe pour avoir instauré les normes RE 2020, affirmant qu'elles ont généré des logements thermiquement inadaptés.
+      - Marine Le Pen a exprimé sa volonté de supprimer la loi ZAN (Zéro artificialisation nette) et de retirer les éléments contraignants du diagnostic de performance énergétique (DPE).
+      - Marine Le Pen a promis de supprimer les contraintes basées sur le DPE pour qu'il ne devienne qu'un simple élément indicatif.
+      - Marine Le Pen a promis de supprimer le dispositif ZAN (Zéro artificialisation nette) ainsi que les diagnostics de performance énergétique (DPE).
+    - label: Sécurité publique, ordre et gestion des crises
+      summary: Marine Le Pen intervient sur des sujets liés à la sécurité intérieure, notamment concernant les violences urbaines, la menace terroriste et la gestion des squats. Elle exprime son soutien aux forces de l'ordre et aux secours lors de crises ou d'incidents. Elle propose également des mesures législatives visant le renforcement des sanctions pénales et l'évolution des prérogatives de police.
+      facts:
+      - Marine Le Pen a affirmé que la lutte contre les squats est un sujet important exigeant du courage et a promis de faire voter et appliquer une loi permettant aux propriétaires de retrouver la libre possession de leur bien en quelques jours immédiatement après l'élection.
+      - Marine Le Pen a adressé un message de soutien et de solidarité aux victimes des incendies, tout en exprimant sa reconnaissance envers les sapeurs-pompiers.
+      - Marine Le Pen a adressé sa reconnaissance et son soutien aux pompiers, aux forces de sécurité et de secours mobilisés sur le territoire, notamment à Fontainebleau.
+      - Marine Le Pen a annoncé qu'en 2027, elle fera voter un projet de loi de lutte contre les idéologies islamistes pour contrer la menace islamiste.
+      - Marine Le Pen et Jordan Bardella ont fustigé la faiblesse des autorités face aux violences qui ont entaché la victoire du PSG en finale de la Ligue des champions.
+      - Marine Le Pen a exprimé sa solidarité envers les policiers manifestants, affirmant que le rétablissement de l’ordre et de la tranquillité publique sera une priorité nationale.
+    - label: logement, rénovation et normes de l'habitat
+      summary: Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+      facts:
+      - Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen et Jordan Bardella ont effectué leur premier déplacement de campagne commun le 8 juillet à La Flèche, dans la Sarthe.
+      - Marine Le Pen a confié vouloir prendre 'un repos nécessaire avant la bataille' de la présidentielle dans sa résidence familiale.
+      - Marine Le Pen a affirmé qu'une certitude se crée concernant la capacité de son parti à être une alternance crédible.
+      - Marine Le Pen est susceptible de devenir inéligible le 7 juillet prochain, date du verdict de son procès en appel.
+      - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place les conditions permettant à tous les candidats de faire campagne normalement et sans violence.
+      - Marine Le Pen a déclaré qu'un candidat à la présidentielle doit être totalement libre de ses mouvements et ne pas dépendre d'un magistrat.
+    expect: politique du logement
+  - name: prod_mlp_maprimerenov_joins_housing
+    new_fact: Marine Le Pen a annoncé son intention de remplacer MaPrimeRénov’ par le dispositif 100 % Renov, incluant un prêt à taux zéro pour les travaux de rénovation.
+    candidates:
+    - label: politique du logement
+      summary: Marine Le Pen propose de placer le logement au cœur de son programme, incluant l'abrogation de la loi SRU et la transformation des bureaux en logements. Elle prône la priorité d'accès au logement social et aux APL pour les Français, tout en prévoyant l'expulsion des familles délinquantes des HLM. Son projet intègre également la suppression de certaines contraintes liées aux diagnostics de performance énergétique et le remplacement de MaPrimeRenov' par un prêt à taux zéro.
+      facts:
+      - Marine Le Pen a annoncé vouloir abroger la loi SRU, expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov' par un prêt à taux zéro et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+      - Marine Le Pen a détaillé que le logement sera l'un des grands chantiers de son quinquennat si elle est élue.
+      - Marine Le Pen a promis que le logement sera au cœur de son combat présidentiel, avec un projet reposant sur la construction, l'utilisation du parc existant et l'accès à la propriété.
+      - Marine Le Pen a promis que le logement serait un grand chantier de son quinquennat, souhaitant donner la priorité d'accès au logement social aux Français et leur réserver les aides personnelles au logement (APL).
+      - Marine Le Pen a posé les fondations de sa campagne incluant la préférence nationale et l'abrogation de la loi SRU et des normes sur le logement.
+      - Marine Le Pen a affirmé que la priorité d'accès au logement social et le bénéfice des APL doivent être réservés aux Français.
+    - label: logement, rénovation et normes de l'habitat
+      summary: Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+      facts:
+      - Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+    - label: politique de l'énergie et des prix de l'électricité
+      summary: Marine Le Pen critique la gestion gouvernementale des coûts énergétiques, accusant l'État de suivre une idéologie de la décroissance. Elle préconise une baisse des tarifs de l'électricité et dénonce une déconnexion entre les promesses de stabilité tarifaire et l'augmentation réelle des prix prévue pour l'été.
+      facts:
+      - Marine Le Pen a accusé le gouvernement de se soumettre à l'idéologie de la décroissance en ne luttant pas contre la hausse des prix de l'énergie, et a proposé de baisser les coûts de l'électricité et les taxes sur l'énergie.
+      - Marine Le Pen a affirmé qu'elle enrichira son programme de nouvelles propositions pour assurer une baisse durable des factures d'électricité des familles et des entreprises lors de la campagne présidentielle.
+      - Marine Le Pen a dénoncé un mensonge du gouvernement, affirmant que les prix du tarif réglementé augmenteront de 2,5 % au 1er août, contrairement aux promesses de stabilité pour 2026 et 2027.
+    - label: fiscalité de l'énergie et des carburants
+      summary: Marine Le Pen propose de baisser durablement la TVA de 20 % à 5,5 % sur les carburants, l'électricité, le gaz et le fioul. Elle souhaite également suspendre les hausses d'impôts sur l'énergie et s'oppose à l'application de taxes supplémentaires sur les carburants. Elle affirme porter cette mesure de réduction de la fiscalité énergétique depuis cinq ans.
+      facts:
+      - Marine Le Pen défend depuis cinq ans l'idée de baisser la TVA sur l'énergie, incluant non seulement le carburant mais aussi l'électricité, le gaz et le fioul.
+      - Marine Le Pen a proposé de baisser la TVA sur l'énergie (carburant, électricité, gaz et fioul) de 20 % à 5,5 %, une mesure qu'elle affirme proposer depuis cinq ans.
+      - Marine Le Pen a affirmé que l'énergie est un bien de première nécessité pour justifier sa volonté de baisser la TVA de 20 à 5,5%.
+      - Marine Le Pen a affirmé qu'elle n'appliquerait jamais la hausse de taxes de 15cts/l si elle est élue présidente de la République.
+      - Marine Le Pen a affirmé que si les Français lui font confiance, le 'racket contre les automobilistes' prendra fin.
+      - Marine Le Pen a proposé de baisser la TVA sur les carburants de 20 % à 5,5 % de manière pérenne et de suspendre les hausses d'impôts sur l'énergie décidées par Emmanuel Macron et Édouard Philippe.
+    - label: politiques d'aménagement et d'infrastructures publiques
+      summary: Marine Le Pen propose la mise en œuvre d'un plan massif d'installation de la climatisation dans les établissements publics tels que les écoles, les hôpitaux et les Ehpad. Elle souligne l'urgence de cette mesure pour faire face aux canicules. Par ailleurs, elle a affirmé la nécessité de faire de l'accès à l'eau en Outre-mer une priorité publique impliquant l'État et les collectivités.
+      facts:
+      - Marine Le Pen a déclaré qu'en cas d'élection à la présidence de la République en 2027, elle mettrait en place un plan massif de climatisation, notamment dans les hôpitaux, les Ehpad et les écoles.
+      - Marine Le Pen a appelé le gouvernement à prendre une décision sur la climatisation, préconisant un plan massif pour les écoles, les hôpitaux et les maisons de retraite.
+      - Marine Le Pen a déclaré vouloir mettre en place un plan massif de climatisation, ciblant en priorité les hôpitaux, les Ehpad et les écoles, si elle est élue présidente de la République en 2027.
+      - Marine Le Pen a affirmé qu'il est nécessaire d'équiper massivement l'ensemble des locaux, notamment les hôpitaux, en climatisation, qualifiant de 'criminel' le fait de construire des hôpitaux sans climatisation.
+      - Marine Le Pen et ses porte-parole ont martelé un 'grand plan de climatisation' ces dernières semaines pour remédier à la canicule.
+      - Dès 2022, Marine Le Pen a affirmé l'urgence de faire de l'accès à l'eau en Outre-mer une mission prioritaire d'urgence publique impliquant l'État et les collectivités locales.
+    - label: réglementations environnementales et de l'habitat
+      summary: Marine Le Pen a exprimé son désaccord concernant les normes RE 2020, les jugeant responsables de l'inadaptation thermique de certains logements. Elle a également annoncé son intention de supprimer le dispositif Zéro Artificialisation Nette ainsi que les diagnostics de performance énergétique.
+      facts:
+      - Marine Le Pen a exprimé sa volonté de supprimer la loi ZAN (Zéro artificialisation nette) et de retirer les éléments contraignants du diagnostic de performance énergétique (DPE).
+      - Marine Le Pen a critiqué Édouard Philippe pour avoir instauré les normes RE 2020, affirmant qu'elles ont généré des logements thermiquement inadaptés.
+      - Marine Le Pen a promis de supprimer le dispositif ZAN (Zéro artificialisation nette) ainsi que les diagnostics de performance énergétique (DPE).
+      - Marine Le Pen a promis de supprimer les contraintes basées sur le DPE pour qu'il ne devienne qu'un simple élément indicatif.
+    - label: Réforme des retraites
+      summary: Marine Le Pen maintient sa position sur un âge de départ à la retraite situé entre 60 et 62 ans, selon l'entrée sur le marché du travail. Elle défend la continuité de son projet de 2022 tout en envisageant une part de capitalisation volontaire pour certains profils. Bien que des divergences aient été évoquées avec Jordan Bardella, elle affirme la cohérence de sa position sur ce sujet.
+      facts:
+      - Marine Le Pen a maintenu sa réforme des retraites malgré les tentatives de son président de parti pour l'infléchir.
+      - Fin août 2026, Marine Le Pen a qualifié la réforme des retraites de « choix de société » devant le Medef.
+      - Marine Le Pen a réaffirmé le 13 mai 2026 que sa réforme de 2022 est toujours d'actualité.
+      - Marine Le Pen a rejeté l'argument selon lequel sa réforme des retraites coûterait 9 milliards d'euros par an.
+      - Marine Le Pen maintient la proposition du Rassemblement national visant un départ à la retraite à 62 ans, voire 60 ans, avec 40 à 42 années de cotisation.
+      - Marine Le Pen et Jordan Bardella ont affiché des divergences sur la question des retraites.
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen a annoncé qu'elle engagerait, avec Jordan Bardella, la renaissance de la France avec le peuple français.
+      - Marine Le Pen a dévoilé une affiche de campagne présidentielle avec le slogan « Pour la France, la renaissance ».
+      - Marine Le Pen a promis de libérer le pays lors de son lancement de campagne.
+      - Le tribunal judiciaire de Paris a accordé à Marine Le Pen le droit d'utiliser le mot 'renaissance' sur son affiche de campagne pour l'élection présidentielle de 2027, rejetant les accusations de contrefaçon et de parasitisme.
+      - Marine Le Pen a annoncé qu'elle tiendrait son discours de rentrée le samedi 13 septembre à Hénin-Beaumont.
+      - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place les conditions permettant à tous les candidats de faire campagne normalement et sans violence.
+    expect: politique du logement
+  - name: prod_mlp_hlm_expulsions_joins_housing
+    new_fact: Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+    candidates:
+    - label: politique du logement
+      summary: Marine Le Pen propose de placer le logement au cœur de son programme, incluant l'abrogation de la loi SRU et la transformation des bureaux en logements. Elle prône la priorité d'accès au logement social et aux APL pour les Français, tout en prévoyant l'expulsion des familles délinquantes des HLM. Son projet intègre également la suppression de certaines contraintes liées aux diagnostics de performance énergétique et le remplacement de MaPrimeRenov' par un prêt à taux zéro.
+      facts:
+      - Marine Le Pen a annoncé vouloir abroger la loi SRU, expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov' par un prêt à taux zéro et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
+      - Marine Le Pen a promis que le logement sera au cœur de son combat présidentiel, avec un projet reposant sur la construction, l'utilisation du parc existant et l'accès à la propriété.
+      - Marine Le Pen a détaillé que le logement sera l'un des grands chantiers de son quinquennat si elle est élue.
+      - Marine Le Pen a promis que le logement serait un grand chantier de son quinquennat, souhaitant donner la priorité d'accès au logement social aux Français et leur réserver les aides personnelles au logement (APL).
+      - Marine Le Pen a proposé la vente d'un certain nombre de logements HLM aux Français pour financer de nouvelles constructions.
+      - Marine Le Pen a promis que le logement serait un grand chantier de son quinquennat, souhaitant donner la priorité d'accès au logement social aux Français et leur réserver les aides personnelles au logement (APL).
+    - label: rénovation de l'habitat et aides à la rénovation
+      summary: Marine Le Pen a annoncé son intention de remplacer MaPrimeRénov’ par le dispositif 100 % Renov, incluant un prêt à taux zéro pour les travaux de rénovation.
+      facts:
+      - Marine Le Pen a annoncé son intention de remplacer MaPrimeRénov’ par le dispositif 100 % Renov, incluant un prêt à taux zéro pour les travaux de rénovation.
+    - label: réglementations environnementales et de l'habitat
+      summary: Marine Le Pen a exprimé son désaccord concernant les normes RE 2020, les jugeant responsables de l'inadaptation thermique de certains logements. Elle a également annoncé son intention de supprimer le dispositif Zéro Artificialisation Nette ainsi que les diagnostics de performance énergétique.
+      facts:
+      - Marine Le Pen a promis de supprimer les contraintes basées sur le DPE pour qu'il ne devienne qu'un simple élément indicatif.
+      - Marine Le Pen a exprimé sa volonté de supprimer la loi ZAN (Zéro artificialisation nette) et de retirer les éléments contraignants du diagnostic de performance énergétique (DPE).
+      - Marine Le Pen a critiqué Édouard Philippe pour avoir instauré les normes RE 2020, affirmant qu'elles ont généré des logements thermiquement inadaptés.
+      - Marine Le Pen a promis de supprimer le dispositif ZAN (Zéro artificialisation nette) ainsi que les diagnostics de performance énergétique (DPE).
+    - label: politiques d'aménagement et d'infrastructures publiques
+      summary: Marine Le Pen propose la mise en œuvre d'un plan massif d'installation de la climatisation dans les établissements publics tels que les écoles, les hôpitaux et les Ehpad. Elle souligne l'urgence de cette mesure pour faire face aux canicules. Par ailleurs, elle a affirmé la nécessité de faire de l'accès à l'eau en Outre-mer une priorité publique impliquant l'État et les collectivités.
+      facts:
+      - Marine Le Pen a déclaré qu'en cas d'élection à la présidence de la République en 2027, elle mettrait en place un plan massif de climatisation, notamment dans les hôpitaux, les Ehpad et les écoles.
+      - Marine Le Pen a appelé le gouvernement à prendre une décision sur la climatisation, préconisant un plan massif pour les écoles, les hôpitaux et les maisons de retraite.
+      - Marine Le Pen a affirmé qu'il est nécessaire d'équiper massivement l'ensemble des locaux, notamment les hôpitaux, en climatisation, qualifiant de 'criminel' le fait de construire des hôpitaux sans climatisation.
+      - Marine Le Pen a déclaré vouloir mettre en place un plan massif de climatisation, ciblant en priorité les hôpitaux, les Ehpad et les écoles, si elle est élue présidente de la République en 2027.
+      - Marine Le Pen et ses porte-parole ont martelé un 'grand plan de climatisation' ces dernières semaines pour remédier à la canicule.
+      - Marine Le Pen a promis de prendre les mesures nécessaires pour garantir un accès continu à l'eau potable dans les départements d'Outre-mer.
+    - label: Réforme des retraites
+      summary: Marine Le Pen maintient sa position sur un âge de départ à la retraite situé entre 60 et 62 ans, selon l'entrée sur le marché du travail. Elle défend la continuité de son projet de 2022 tout en envisageant une part de capitalisation volontaire pour certains profils. Bien que des divergences aient été évoquées avec Jordan Bardella, elle affirme la cohérence de sa position sur ce sujet.
+      facts:
+      - Fin août 2026, Marine Le Pen a qualifié la réforme des retraites de « choix de société » devant le Medef.
+      - Marine Le Pen a maintenu sa réforme des retraites malgré les tentatives de son président de parti pour l'infléchir.
+      - Marine Le Pen a démenti toute contradiction avec Jordan Bardella concernant la réforme des retraites.
+      - Marine Le Pen maintient la proposition du Rassemblement national visant un départ à la retraite à 62 ans, voire 60 ans, avec 40 à 42 années de cotisation.
+      - Marine Le Pen a réaffirmé le 13 mai 2026 que sa réforme de 2022 est toujours d'actualité.
+      - Marine Le Pen a rejeté l'argument selon lequel sa réforme des retraites coûterait 9 milliards d'euros par an.
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen a annoncé qu'elle engagerait, avec Jordan Bardella, la renaissance de la France avec le peuple français.
+      - Marine Le Pen a annoncé qu'elle tiendrait son discours de rentrée le samedi 13 septembre à Hénin-Beaumont.
+      - Marine Le Pen a déclaré que si elle est candidate, Jordan Bardella sera son Premier ministre.
+      - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place les conditions permettant à tous les candidats de faire campagne normalement et sans violence.
+      - Le 29 avril 2017, Marine Le Pen a officialisé un accord de gouvernement avec Nicolas Dupont-Aignan, annonçant qu'elle nommerait ce dernier Premier ministre si elle était élue Présidente.
+      - Marine Le Pen a promis que «les Français auront le dernier mot et seront juges» face à la décision de la Cour de cassation.
+    - label: atteintes à la propriété privée
+      summary: La maison de Marine Le Pen située à La Trinité-sur-Mer a été taguée avec l'inscription "Non au R-Haine" dans la nuit du 13 au 14 août 2026.
+      facts:
+      - La maison de Marine Le Pen située à La Trinité-sur-Mer a été taguée avec l'inscription "Non au R-Haine" dans la nuit du 13 au 14 août 2026.
+    - label: politique de l'énergie et des prix de l'électricité
+      summary: Marine Le Pen critique la gestion gouvernementale des coûts énergétiques, accusant l'État de suivre une idéologie de la décroissance. Elle préconise une baisse des tarifs de l'électricité et dénonce une déconnexion entre les promesses de stabilité tarifaire et l'augmentation réelle des prix prévue pour l'été.
+      facts:
+      - Marine Le Pen a accusé le gouvernement de se soumettre à l'idéologie de la décroissance en ne luttant pas contre la hausse des prix de l'énergie, et a proposé de baisser les coûts de l'électricité et les taxes sur l'énergie.
+      - Marine Le Pen a affirmé qu'elle enrichira son programme de nouvelles propositions pour assurer une baisse durable des factures d'électricité des familles et des entreprises lors de la campagne présidentielle.
+      - Marine Le Pen a dénoncé un mensonge du gouvernement, affirmant que les prix du tarif réglementé augmenteront de 2,5 % au 1er août, contrairement aux promesses de stabilité pour 2026 et 2027.
+    expect: politique du logement
+  - name: prod_mlp_marechal_joins_rn_leadership
+    new_fact: Marine Le Pen a annoncé son intention de refaire une place dans les rangs du Rassemblement national à sa nièce Marion Maréchal.
+    candidates:
+    - label: élections présidentielles
+      summary: Les données montrent une trajectoire électorale marquée par des scores variables lors des scrutins passés, de 17,9 % en 2012 à 33,9 % en 2017. Les sondages récents présentent des tensions entre des intentions de vote pouvant atteindre 35,5 % et des niveaux de rejet ou de faibles scores auprès de certains segments de la population. Bien qu'elle bénéficie d'un socle électoral solide, sa capacité à gouverner et sa perception par les électeurs font l'objet de données contrastées selon les enquêtes.
+      facts:
+      - Marine Le Pen est créditée de 32% des voix dans l'attente d'une décision judiciaire le 7 juillet sur sa capacité à se présenter.
+      - Parmi les électeurs déclarant voter pour Marine Le Pen, 33 % citent spontanément son nom et 13 % celui de Jordan Bardella.
+      - Dans le segment RN-Reconquête, 96 % des électeurs peuvent envisager Marine Le Pen et 89 % lui donnent une note de 8 à 10.
+      - Parmi les électeurs LR qui envisagent de voter pour elle, plus de neuf sur dix préfèrent déjà Marine Le Pen.
+      - Marine Le Pen a perdu quatorze places dans le baromètre Ifop-Fiducial de juin, avec une faible opinion favorable chez les 18-24 ans (un seul jeune sur 5 en a une bonne opinion).
+      - Marine Le Pen estime que le regard sur elle et son parti a changé au fil des élections.
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen participera à une réunion à huis clos avec les parlementaires du Rassemblement national le samedi 12 septembre 2026 au Touquet-Paris-Plage.
+      - Marine Le Pen est la candidate officielle du Rassemblement national depuis le 7 juillet 2026.
+      - Marine Le Pen a affirmé que la proposition du RN est une 'impulsion pour les années à venir' et une 'renaissance', et a annoncé donner le coup d'envoi de sa campagne à Orléans le 25 octobre 2026 lors du Congrès du RN.
+      - Le tribunal a tranché en faveur de Marine Le Pen après une saisine de Renaissance concernant une affiche de campagne du RN.
+      - Marine Le Pen a décidé le 7 juillet de s'imposer comme la candidate du RN à l'élection présidentielle malgré sa condamnation en appel.
+      - Marine Le Pen a annoncé sa candidature pour le Rassemblement national.
+    - label: Fonctionnement et moyens de la justice française
+      summary: Marine Le Pen appelle à une refondation profonde du système judiciaire, préconisant une augmentation des moyens humains et la numérisation des services. Elle insiste sur la nécessité de renforcer les enquêtes spécialisées pour les mineurs et de doubler le nombre de magistrats. Par ailleurs, elle exprime un désaccord concernant l'application de certains articles du Code pénal.
+      facts:
+      - Marine Le Pen a déclaré que le doublement du nombre de magistrats pour le porter à 20.000 doit rester au programme.
+      - Marine Le Pen a indiqué qu'elle soutiendrait les mesures proposées par le gouvernement en réponse à la mort de Lyhanna.
+      - Marine Le Pen a déclaré qu'elle soutiendrait les mesures proposées par le gouvernement en réponse à la mort de Lyhanna, tout en appelant à une véritable introspection du fonctionnement de la justice.
+      - Marine Le Pen a affirmé que les Français attendent une vraie introspection dans le fonctionnement de la justice suite à l'affaire Lyhanna.
+      - Marine Le Pen a interrogé le Premier ministre sur son intention de tout remettre à plat pour restaurer la confiance des Français dans la justice.
+      - Marine Le Pen a affirmé qu'il existe un déni concernant l'aggravation de la délinquance et qu'il faut une refondation de la justice accompagnée de moyens supplémentaires, notamment des services d'enquête spécialisés pour les mineurs victimes.
+    - label: départs et démissions de personnalités politiques
+      summary: Marine Le Pen a affirmé avoir 'souhaité' le départ de François Durvye et ne pas le 'déplorer'.
+      facts:
+      - Marine Le Pen a déclaré ne pas déplorer le départ de François Durvye, affirmant qu'elle avait elle-même souhaité ce départ.
+      - Marine Le Pen a affirmé avoir "souhaité" le départ de son conseiller François Durvye et ne pas le "déplorer"
+      - Marine Le Pen a affirmé avoir 'souhaité' le départ de François Durvye et ne pas le 'déplorer'.
+    - label: relations avec le secteur économique et les chefs d'entreprise
+      summary: Marine Le Pen a déclaré que le Rassemblement National continuerait à avoir beaucoup de contacts avec les chefs d'entreprise après le premier débat présidentiel du jeudi 28 août 2026.
+      facts:
+      - Marine Le Pen a déclaré que le Rassemblement National continuerait à avoir beaucoup de contacts avec les chefs d'entreprise après le premier débat présidentiel du jeudi 28 août 2026.
+      - Marine Le Pen a déclaré que le Rassemblement National 'continuera à avoir beaucoup de contacts avec les chefs d'entreprise' après le premier débat présidentiel.
+    - label: nominations et influence politique
+      summary: Marine Le Pen a accusé Emmanuel Macron de multiplier la nomination de ses proches à des postes clés pour faire obstacle au Rassemblement National après 2027.
+      facts:
+      - Marine Le Pen a accusé Emmanuel Macron de multiplier la nomination de copains pour faire obstacle au RN après 2027.
+      - Marine Le Pen a accusé Emmanuel Macron de multiplier la nomination de ses proches à des postes clés pour faire obstacle au Rassemblement National après 2027.
+    - label: Responsabilité ministérielle et démission de Gérald Darmanin
+      summary: Marine Le Pen a exprimé des positions divergentes concernant la démission de Gérald Darmanin suite à l'affaire Lyhanna. Bien qu'elle ait initialement affirmé qu'un tel appel à la démission n'aurait que peu d'intérêt, elle a par la suite soutenu que le garde des Sceaux aurait dû présenter sa démission sur le plan moral. Elle a également souligné la nécessité de changements plus profonds à la tête de l'État plutôt que de simples appels à la démission.
+      facts:
+      - Marine Le Pen a invité le gouvernement à "faire le ménage dans ses rangs" suite aux accusations portées contre Philippe Tabarot.
+      - Marine Le Pen a déclaré qu'il ne faut pas faire des appels à la démission en permanence et a estimé que c’est à la tête de l’État qu’il faut surtout changer les choses.
+      - Marine Le Pen a affirmé que la démission de Gérald Darmanin ne changerait rien.
+      - Marine Le Pen a déclaré à l'Assemblée nationale qu'il ne fallait pas faire des appels à la démission en permanence et a affirmé que c'est à la tête de l'État qu'il faut changer les choses.
+      - Marine Le Pen a affirmé que Gérald Darmanin aurait dû présenter sa démission au président de la République.
+      - Marine Le Pen a estimé que Gérald Darmanin aurait dû présenter sa démission après la mort de Lyhanna, 11 ans, dans le Gers.
+    - label: direction et gouvernance du Rassemblement national
+      summary: Marine Le Pen reprend fermement en main les rênes du Rassemblement national.
+      facts:
+      - Marine Le Pen reprend fermement en main les rênes du Rassemblement national.
+      - Marine Le Pen a officialisé son duo avec Jordan Bardella et lui a donné les rênes du Rassemblement national en novembre 2022.
+    expect: direction et gouvernance du Rassemblement national
+  - name: prod_retailleau_girouette_joins_rn_evaluation
+    new_fact: Bruno Retailleau a qualifié le Rassemblement national de "parti girouette" et a critiqué Jordan Bardella pour sa rencontre avec Nigel Farage à Londres.
+    candidates:
+    - label: Relations entre les acteurs politiques et l'identité nationale
+      summary: Bruno Retailleau critique vivement Jean-Luc Mélenchon et le mouvement La France insoumise, les accusant de collaborer avec l'islamisme et de menacer la République. Il dénonce une forme d'antisémitisme lié à l'islamo-gauchisme tout en affirmant son propre engagement pour le patriotisme et le redressement de la France. Ses déclarations visent également à positionner son projet politique face aux autres forces de l'opposition et de la droite.
+      facts:
+      - Bruno Retailleau a accusé le parti LFI d'être 'des collabos avec les ennemis de la France'.
+      - Bruno Retailleau a dénoncé « La Nouvelle France » défendue par La France insoumise, la qualifiant d'antisémitisme s'abreuvant aux sources de l'islamo-gauchisme.
+      - Bruno Retailleau a accusé le parti LFI d'être des collabos avec les ennemis de la France et de préférer protéger les islamistes plutôt que les Français.
+      - Bruno Retailleau a accusé LFI d'utiliser l'inversion accusatoire lors d'un drame à Lyon, affirmant que la victime devient coupable et les bourreaux deviennent victimes.
+      - Bruno Retailleau a affirmé qu'il ne mettrait jamais un bulletin de vote de LFI dans une urne.
+      - Bruno Retailleau a désigné Jean-Luc Mélenchon comme son 'principal adversaire' et l'a qualifié de 'premier racialiste de France' lors d'une intervention sur BFMTV le 9 juin 2026.
+    - label: Candidature à l'élection présidentielle de 2027
+      summary: Le candidat annonce une volonté de rupture avec le système actuel et de reconstruction nationale à travers un projet de réforme constitutionnelle. Il se positionne en opposant radical au macronisme, tout en naviguant entre des tensions internes au sein des Républicains et des divergences d'opinions avec d'autres figures politiques. Sa stratégie oscille entre l'affirmation d'une candidature de combat et des discussions sur la forme de la compétition, comme la question d'une éventuelle primaire.
+      facts:
+      - Bruno Retailleau a fustigé les slogans de Gabriel Attal, affirmant que le ton de ce dernier était inadapté face aux menaces réelles.
+      - Bruno Retailleau a quitté les Républicains il y a quelques mois pour lancer son propre parti, Nouvelle Énergie.
+      - Bruno Retailleau s'est félicité du renouvellement des présidents départementaux, affirmant que cela témoigne de la vitalité du mouvement pour l'élection présidentielle.
+      - Bruno Retailleau a déclaré qu'il ne fait pas partie du bloc central.
+      - Bruno Retailleau a balayé d'un revers de manche les critiques sur la cacophonie au sein de son camp le 4 juin 2026.
+      - Bruno Retailleau a affirmé que le match est « plié » en interne, suggérant que toute autre candidature se placerait en position de concurrence externe.
+    - label: Évaluation du Rassemblement national et de ses dirigeants
+      summary: Bruno Retailleau exprime des critiques sévères envers le Rassemblement national, qualifiant l'organisation de clan familial et de parti amateur. Il remet en question la capacité de Marine Le Pen et de Jordan Bardella à diriger la France, pointant du doigt une fragilité politique et des incohérences sur les dossiers internationaux. Il dénonce également l'inexpérience du parti face aux enjeux de pouvoir et de gestion de l'État.
+      facts:
+      - Bruno Retailleau a affirmé que le Rassemblement national est le parti de la girouette lors d'un meeting à Nogent-sur-Marne.
+      - Bruno Retailleau a critiqué le Rassemblement national en le qualifiant de « parti de la girouette », l'accusant de s'être « vendu aux Anglais ».
+      - Bruno Retailleau a critiqué le Rassemblement national, le qualifiant de 'parti de la girouette' et a dénoncé des revirements sur les dossiers des retraites et de l'Ukraine.
+      - Bruno Retailleau a reproché l'amateurisme du RN, et particulièrement de Jordan Bardella, sur les volets international et migratoire.
+      - Bruno Retailleau a affirmé que le Rassemblement National n'est pas en mesure de redresser la France.
+      - Bruno Retailleau a qualifié l'intervention de Jordan Bardella aux côtés de Nigel Farage et la signature de l'accord qui en a résulté de « signe parfait de l'amateurisme » et a jugé la signature du mémorandum « absolument incompréhensible ».
+    - label: intelligence artificielle
+      summary: Bruno Retailleau a qualifié la vision de l'intelligence artificielle d'Emmanuel Macron de « simpliste ».
+      facts:
+      - Bruno Retailleau a qualifié la vision de l'intelligence artificielle d'Emmanuel Macron de « simpliste ».
+    - label: Évaluation du bilan de l'exécutif français
+      summary: L'intéressé a exprimé une critique sévère de l'action d'Emmanuel Macron lors d'un rassemblement en juin 2026. Il a notamment qualifié certains anciens dirigeants de l'influence de la présidence actuelle, affirmant qu'ils ne pourraient pas s'en détacher. Enfin, il a ironisé sur la constance de ses propres positions politiques face à d'autres figures publiques.
+      facts:
+      - Bruno Retailleau a dénoncé ceux qui changent souvent d'opinion politique, ironisant sur le fait que cela le rend plus sympathique par contraste avec Édouard Philippe.
+      - Bruno Retailleau présente Edouard Philippe et Gabriel Attal comme des 'contaminés' par les deux quinquennats du chef de l'Etat.
+      - Bruno Retailleau s'est montré très sévère sur le bilan d'Emmanuel Macron lors de son meeting du 20 juin 2026.
+      - Bruno Retailleau a affirmé que les anciens Premiers ministres Édouard Philippe et Gabriel Attat ne parviendront pas à se décontaminer du quinquennat de Macron.
+    - label: Relations et critiques des acteurs politiques
+      summary: Bruno Retailleau a qualifié Jean-Luc Mélenchon de 'David Copperfield qui veut faire disparaître la dette' et a décrit le RN comme 'le parti de la girouette'.
+      facts:
+      - Bruno Retailleau a qualifié Jean-Luc Mélenchon de 'David Copperfield qui veut faire disparaître la dette' et a décrit le RN comme 'le parti de la girouette'.
+    - label: leadership et autorité politique
+      summary: Bruno Retailleau a affirmé qu'il ne laisserait pas les voix dissonantes dicter sa conduite.
+      facts:
+      - Bruno Retailleau a affirmé qu'il ne laisserait pas les voix dissonantes dicter sa conduite.
+    - label: signes religieux dans l'espace public
+      summary: Bruno Retailleau a dénoncé la proposition du RN d'interdire le voile dans l'espace public, la qualifiant de populisme et de démagogie.
+      facts:
+      - Bruno Retailleau a dénoncé la proposition du RN d'interdire le voile dans l'espace public, la qualifiant de populisme et de démagogie.
+    expect: Évaluation du Rassemblement national et de ses dirigeants
+  - name: prod_retailleau_platforms_joins_digital_sovereignty
+    new_fact: Bruno Retailleau a déclaré vouloir obliger les plateformes à supprimer les fonctions d'addiction (défilement infini, notifications, compteurs de likes) pour les comptes de mineurs à l'échelle européenne.
+    candidates:
+    - label: Organisation de l'État et de l'administration française
+      summary: Bruno Retailleau critique l'inefficacité de la bureaucratie et l'absence de direction des services publics. Ses propositions incluent une réduction des effectifs de la fonction publique, la suppression de certains organismes comme le CESE ou l'OFB, et une simplification des normes administratives. Il prévoit également l'usage de l'intelligence artificielle et la réalisation d'audits méthodiques pour optimiser les processus étatiques.
+      facts:
+      - Bruno Retailleau a annoncé qu'en cas d'élection, il abrogerait par ordonnance dès l'été 2027 les règles les plus paralysantes, notamment en divisant par deux les délais d'urbanisme et en relevant les seuils d'obligations pour les PME.
+      - Bruno Retailleau a proposé de se charger de la réduction des normes et de la bureaucratie s'il emménage à l'Élysée en 2027.
+      - Bruno Retailleau a annoncé qu'il supprimerait le CESE ainsi que certains organismes et agences qu'il juge inutiles et coûteux.
+      - Bruno Retailleau a décrit les services publics comme étant en roue libre et hors de contrôle, illustrant une absence de direction réelle.
+      - Bruno Retailleau a affirmé qu'avant d'allouer davantage de moyens, il faut réaliser un audit complet sur les méthodes, les processus et les outils afin de gagner en efficacité.
+      - Bruno Retailleau a critiqué l'inefficacité de l'État et de la bureaucratie française, affirmant que multiplier les circulaires ne sert à rien si leur application n'est pas vérifiée méthodiquement.
+    - label: Souveraineté numérique et intelligence artificielle
+      summary: Bruno Retailleau propose de réduire la dépendance technologique envers les acteurs extra-européens pour protéger les fonctions régaliennes et les infrastructures critiques. Ses propositions incluent le développement de solutions d'IA souveraines, la création de dérogations réglementaires pour l'innovation et l'utilisation de l'IA pour moderniser l'État et réaliser des économies budgétaires. Il insiste sur la nécessité de maîtriser les technologies stratégiques pour garantir l'efficacité de la défense et de la cybersécurité française.
+      facts:
+      - Bruno Retailleau a proposé d'instaurer un régime expérimental de dérogation de trois ans au RGPD et à l'AI Act pour les projets de recherche et d'innovation à fort enjeu stratégique.
+      - Bruno Retailleau a promis que, dès les premiers mois de son mandat, il retirerait immédiatement les technologies extra-européennes des fonctions de renseignement, de défense et de traitement des données régaliennes.
+      - Bruno Retailleau participera à l'ouverture du premier salon de la Souveraineté Numérique à l'Espace Champerret à Paris ce mardi 30 juin, où il interviendra à 16 h 50 sur le thème de la cybersécurité.
+      - Bruno Retailleau a affirmé que l'intelligence artificielle est une architecture de civilisation et une question de souvereté pour la France, dépassant le choix stratégique du nucléaire, afin d'en faire un outil au service des Français.
+      - Bruno Retailleau a affirmé qu'il appliquerait le principe de priorité européenne aux fonctions stratégiques de l'État et aux infrastructures critiques comme la cybersécurité et le cloud.
+      - Bruno Retailleau souhaite héberger les données sensibles en Europe, selon la norme SecNumCloud, pour reprendre le contrôle des données des Français.
+    - label: principe de précaution et révision constitutionnelle
+      summary: Bruno Retailleau propose de supprimer le principe de précaution inscrit dans la charte de l'environnement et le préambule de la Constitution. Il souhaite modifier le texte constitutionnel pour lever ce qu'il considère comme un frein au développement d'une agriculture novatrice et à la dérégulation. Cette démarche vise à transformer un principe qu'il juge bloquant pour l'activité économique.
+      facts:
+      - Bruno Retailleau a proposé de supprimer le principe de précaution dans la charte de l'environnement pour favoriser la dérégulation.
+      - Bruno Retailleau a exigé la suppression du principe de précaution, estimant qu'il est devenu un principe de blocage.
+      - Bruno Retailleau annonce vouloir réviser la Constitution pour supprimer le principe de précaution et mettre fin aux surtranspositions par une loi organique.
+      - Bruno Retailleau propose la suppression du principe de précaution, pourtant consacré par le préambule de la Constitution française.
+      - Bruno Retailleau a proposé de modifier la Constitution pour supprimer le principe de précaution afin de favoriser une agriculture novatrice.
+    - label: politique économique et sociale
+      summary: Bruno Retailleau propose une réduction de la fiscalité et des charges sociales, notamment par la suppression des cotisations sur les heures supplémentaires et le plafonnement des aides. Il critique les programmes de ses opposants, qualifiant les propositions de La France Insoumise sur le blocage des prix de « pénurie assurée » et s'opposant aux baisses de taxes prévues par le RN. Il alerte également sur la situation financière de la France, évoquant un possible « scénario à la grec » concernant la dette.
+      facts:
+      - Bruno Retailleau veut "plafonner à 70% du Smic les aides sociales" que l'on peut recevoir.
+      - Bruno Retailleau a affirmé que l'État est bureaucratique et vorace, et qu'il prend les entreprises pour des vaches à lait.
+      - Bruno Retailleau a proposé de plafonner le cumul des aides sociales à 70 % du SMIC via la création d'un compte social unique.
+      - Bruno Retailleau s'engage à rendre 40 milliards de cotisations sociales et d'impôts aux entreprises.
+      - Bruno Retailleau a proposé de supprimer les cotisations sociales sur les heures supplémentaires à partir de la 36ème heure, en répartissant la suppression entre les salariés et les employeurs.
+      - Bruno Retailleau a affirmé que son programme prévoit une déréglementation drastique ainsi qu'une baisse massive des impôts, des charges et des taxes.
+    - label: politique pénale et réforme de la justice
+      summary: Bruno Retailleau prône une refonte profonde du système judiciaire, incluant la création d'une cour disciplinaire de la magistrature et une réforme du Conseil supérieur de la magistrature. Il propose des mesures de fermeté telles que la castration chimique sans consentement pour certains délinquants, le rétablissement des peines de prison minimales et la suppression des juges d'application des peines. Il dénonce également le caractère corporatiste de la magistrature et l'influence des syndicats de magistrats sur le débat politique.
+      facts:
+      - Bruno Retailleau a affirmé qu'il est difficile d'avoir un arsenal efficace contre la délinquance des mineurs face à une Constitution constante.
+      - Dans son programme présidentiel, Bruno Retailleau propose d'abaisser la majorité pénale à 15 ans en France et d'adapter l'ordonnance sur la protection des mineurs face à la violence actuelle.
+      - Bruno Retailleau a affirmé que le Conseil supérieur de la magistrature (CSM) est trop corporatiste et que les mécanismes de sanction actuels ne fonctionnent pas.
+      - Bruno Retailleau plaide pour la création d’un "véritable principe de précaution face aux violences faites aux enfants", avec une "accélération des procédures" et des "responsabilités clairement établies en cas de défaillance".
+      - Bruno Retailleau a proposé de créer une cour disciplinaire de la magistrature composée d'un collège de citoyens désignés par tirage au sort, afin de remplacer le rôle actuel du Conseil supérieur de la magistture en matière de sanctions.
+      - Bruno Retailleau a estimé que le ministre de la Justice a fait son travail malgré un manque de discipline du parquet.
+    - label: Politique migratoire et révision constitutionnelle
+      summary: Bruno Retailleau propose une révision de la Constitution pour élargir le recours au référendum sur des sujets tels que l'immigration, la sécurité et la justice. Il prône une gestion plus stricte de l'immigration, incluant la réduction du regroupement familial, la suppression du droit du sol et l'application du règlement retour européen. Ses propositions visent également à limiter l'influence du Conseil constitutionnel en redonnant la parole directe au peuple français.
+      facts:
+      - Bruno Retailleau a affirmé que la décision de régulariser les immigrés clandestins par Pedro Sánchez a créé un appel d'air menaçant de déstabiliser l'Europe.
+      - Bruno Retailleau a enjoint que l'accord européen sur les nouvelles règles d'éloignement des migrants déboutés du droit d'asile soit appliqué immédiatement et dans sa totalité.
+      - Bruno Retailleau s'est félicité de l'accord sur le « règlement retour » et a exigé que la France s'en saisisse sans délai pour reprendre le contrôle sur l'immigration et participer activement aux négociations pour l'installation de hubs de retour.
+      - Bruno Retailleau a affirmé que l'objectif du Rassemblement national serait de transformer la France en un centre de retour pour les immigrés illégaux, qualifiant cela d'amateurisme.
+      - Bruno Retailleau et Édouard Philippe ont accusé le gouvernement espagnol de Pedro Sanchez d'avoir créé un « appel d'air » et ont appelé l'Union européenne et la France à appliquer le règlement « retour » européen.
+      - Bruno Retailleau a pris l'engagement que les Français définiront la politique migratoire en cas de victoire à la présidentielle.
+    - label: Législation sur l'aide à mourir et la fin de vie
+      summary: Bruno Retailleau exprime de vives inquiétudes concernant les dérives potentielles de la loi sur l'aide à mourir, craignant une pression financière sur les plus vulnérables. Il demande le déport des membres du Conseil constitutionnel ayant participé aux travaux législatifs et envisage de proposer un référendum sur cette question en cas d'élection présidentielle en 2027.
+      facts:
+      - Bruno Retailleau a exprimé son choc face à l'organisation d'un cocktail au sein d'un ministère pour célébrer le vote de la loi sur l'aide à mourir.
+      - Bruno Retailleau a affirmé que Sebastien Lecornu tente de se défausser de sa responsabilité face aux dérives de la loi sur la fin de vie en saisissant le Conseil constitutionnel.
+      - Bruno Retailleau a demandé solennellement aux membres du Conseil constitutionnel ayant déposé des propositions de loi pour favoriser l'aide à mourir de se déporter afin d'éviter d'être juge et partie.
+      - Bruno Retailleau a demandé aux membres du Conseil constitutionnel ayant par le passé soutenu des propositions de loi pour l'aide à mourir de se déporter.
+      - Bruno Retailleau a affirmé que la proposition de loi sur l'aide à mourir pourrait créer une pression financière sur les plus vulnérables, les poussant à choisir la mort pour ne pas être un poids financier.
+      - Bruno Retailleau a cité Jacques Mézard et Laurence Vichnievsky comme des membres du Conseil constitutionnel ayant participé aux travaux préalables à la loi sur l'aide à mourir.
+    - label: Candidature à l'élection présidentielle de 2027
+      summary: Le candidat annonce une volonté de rupture avec le système actuel et de reconstruction nationale à travers un projet de réforme constitutionnelle. Il se positionne en opposant radical au macronisme, tout en naviguant entre des tensions internes au sein des Républicains et des divergences d'opinions avec d'autres figures politiques. Sa stratégie oscille entre l'affirmation d'une candidature de combat et des discussions sur la forme de la compétition, comme la question d'une éventuelle primaire.
+      facts:
+      - Bruno Retailleau a affirmé vouloir proposer à la jeunesse une voie de reconstruction pour une France libre, juste et fière, plutôt que le ressentiment ou la résignation.
+      - Bruno Retailleau a appelé la jeunesse de France à choisir le parti de la «reconstruction», soit les Républicains (LR).
+      - Bruno Retailleau a affirmé qu'une présidentielle ne se gagne pas huit mois avant et qu'il souhaite mobiliser la jeunesse avec un projet qui "renverse la table".
+      - Bruno Retailleau a soutenu que le combat de la jeunesse n'est pas un combat de générations, mais un combat de civilisation.
+      - Bruno Retailleau a critiqué le maintien de l'en-même-temps macroniste, le qualifiant de 'grand vide' qui alimente les extrêmes.
+      - Bruno Retailleau a exprimé l'intention d'élargir son socle conservateur lors de son meeting à Paris le 29 juin 2026.
+    # Borderline taxonomy: platform regulation for minors can be filed under
+    # digital policy or child protection. Either answer is accepted; the merge
+    # sweep is where a standalone platform stance folds into the digital one.
+    expect_any: [Souveraineté numérique et intelligence artificielle, NEW]
+  - name: prod_retailleau_polls_joins_candidacy
+    new_fact: Bruno Retailleau a affirmé que les sondages à huit mois d'une élection ne disent rien de l'élection lors de son intervention sur BFMTV le dimanche 7 septembre 2026.
+    candidates:
+    - label: Candidature à l'élection présidentielle de 2027
+      summary: Le candidat annonce une volonté de rupture avec le système actuel et de reconstruction nationale à travers un projet de réforme constitutionnelle. Il se positionne en opposant radical au macronisme, tout en naviguant entre des tensions internes au sein des Républicains et des divergences d'opinions avec d'autres figures politiques. Sa stratégie oscille entre l'affirmation d'une candidature de combat et des discussions sur la forme de la compétition, comme la question d'une éventuelle primaire.
+      facts:
+      - Bruno Retailleau plaide depuis plusieurs mois pour une grande primaire incluant des personnalités comme Gérald Darmanin et Sarah Knafo.
+      - Bruno Retailleau a certifié qu'il irait « jusqu'au bout » lors de son premier meeting de campagne le 20 juin 2026.
+      - Bruno Retailleau a annoncé sa candidature à l'élection présidentielle de 2027 lors du lancement de son parti Nouvelle Énergie.
+      - Bruno Retailleau a affirmé ne pas avoir d'opposition de principe à une éventuelle primaire pour la présidentielle, précisant qu'il ne veut pas perdre son temps et préfère travailler sur le fond.
+      - Bruno Retailleau fait le pari d'une candidature de « rupture » pour s'imposer face à Edouard Philippe et Jordan Bardella.
+      - Bruno Retailleau est candidat à l'élection présidentielle.
+    - label: Évaluation du Rassemblement national et de ses dirigeants
+      summary: Bruno Retailleau exprime des critiques sévères envers le Rassemblement national, qualifiant l'organisation de clan familial et de parti amateur. Il remet en question la capacité de Marine Le Pen et de Jordan Bardella à diriger la France, pointant du doigt une fragilité politique et des incohérences sur les dossiers internationaux. Il dénonce également l'inexpérience du parti face aux enjeux de pouvoir et de gestion de l'État.
+      facts:
+      - Bruno Retailleau a qualifié un duel entre Jean-Luc Mélenchon et Marine Le Pen au second tour de "la chienlit".
+      - Pour la droite de Bruno Retailleau, l’entrée en campagne de Marine Le Pen ne change rien.
+      - Le 7 juillet, Bruno Retailleau a affirmé que les Français n'ont aucune envie d'un match de second tour entre Jean-Luc Mélenchon et Jordan Bardella ou entre Marine Le Pen et des partisans d'Emmanuel Macron.
+      - Bruno Retailleau a affirmé qu'en 2027, le nom de Marine Le Pen sera sur les bulletins de vote pour la neuvième fois, mais que cela sera un échec.
+      - Bruno Retailleau a affirmé le 30 juin 2026 que la candidature de Marine Le Pen à l'élection présidentielle de 2027 'ruinerait le pays'.
+      - Bruno Retailleau a affirmé que le Rassemblement National n'est pas en mesure de redresser la France.
+    - label: débat politique et échanges publics
+      summary: Bruno Retailleau critique la dégradation de la qualité des échanges politiques actuels, déplorant la prédominance de l'insulte et de la démagogie. Il se montre par ailleurs ouvert à la confrontation d'idées, exprimant sa volonté de participer à des débats, notamment face à Jean-Luc Mélenchon ou à un candidat d'Horizons.
+      facts:
+      - Bruno Retailleau s'est dit prêt mercredi à un débat de type 'projet contre projet' avec le candidat de Horizons.
+      - Bruno Retailleau se dit très favorable à l'idée d'un débat face à Jean-Luc Mélenchon.
+      - Bruno Retailleau a déclaré que la politique actuelle est marquée par des dérives où l'anathème remplace le débat, l'insulte l'argument et la démagogie le sérieux.
+    - label: Élections sénatoriales et activités politiques locales
+      summary: Le président des Républicains mène une campagne en Vendée pour les élections sénatoriales, avec l'objectif d'obtenir un score élevé. Il a également exprimé sa volonté de renouveler les listes locales par une approche plus jeune. Par ailleurs, il a manifesté son appui à une candidature spécifique dans les Bouches-du-Rhône.
+      facts:
+      - Bruno Retailleau a affirmé vouloir obtenir 70 % des suffrages lors des élections sénatoriales de septembre en Vendée, comme sa liste l'avait fait en 2020.
+      - Bruno Retailleau prévoit de prendre une dizaine de jours de repos à l'Île d'Yeu en Vendée avant de soutenir les candidats des Républicains aux élections sénatoriales.
+      - Bruno Retailleau, président des Républicains et candidat à la présidentielle, mène parallèlement une campagne en Vendée pour les élections sénatoriales.
+      - Bruno Retailleau a expliqué avoir voulu rajeunir la liste de l'Union pour la Vendée pour les élections sénatoriales.
+      - Bruno Retailleau bat campagne en Vendée pour les sénatoriales.
+      - Bruno Retailleau a apporté son soutien à la candidature de Valérie Boyer pour les sénatoriales dans les Bouches-du-Rhône, la jugeant 'légitime et nécessaire' pour représenter les Républicains au Sénat.
+    - label: éthique et communication politique
+      summary: Bruno Retailleau a promis de toujours dire la vérité aux Français et de ne jamais faire de fausses promesses durant sa campagne.
+      facts:
+      - Bruno Retailleau a promis de toujours dire la vérité aux Français et de ne jamais faire de fausses promesses durant sa campagne.
+    - label: Relations et critiques des acteurs politiques
+      summary: Bruno Retailleau a qualifié Jean-Luc Mélenchon de 'David Copperfield qui veut faire disparaître la dette' et a décrit le RN comme 'le parti de la girouette'.
+      facts:
+      - Bruno Retailleau a qualifié Jean-Luc Mélenchon de 'David Copperfield qui veut faire disparaître la dette' et a décrit le RN comme 'le parti de la girouette'.
+    - label: Évaluation du bilan de l'exécutif français
+      summary: L'intéressé a exprimé une critique sévère de l'action d'Emmanuel Macron lors d'un rassemblement en juin 2026. Il a notamment qualifié certains anciens dirigeants de l'influence de la présidence actuelle, affirmant qu'ils ne pourraient pas s'en détacher. Enfin, il a ironisé sur la constance de ses propres positions politiques face à d'autres figures publiques.
+      facts:
+      - Bruno Retailleau a affirmé que les anciens Premiers ministres Édouard Philippe et Gabriel Attat ne parviendront pas à se décontaminer du quinquennat de Macron.
+      - Bruno Retailleau s'est montré très sévère sur le bilan d'Emmanuel Macron lors de son meeting du 20 juin 2026.
+      - Bruno Retailleau présente Edouard Philippe et Gabriel Attal comme des 'contaminés' par les deux quinquennats du chef de l'Etat.
+      - Bruno Retailleau a dénoncé ceux qui changent souvent d'opinion politique, ironisant sur le fait que cela le rend plus sympathique par contraste avec Édouard Philippe.
+    - label: vie politique au sein des Républicains
+      summary: Bruno Retailleau a exprimé un sentiment de renforcement suite aux élections internes du parti. Parallèlement, il a indiqué avoir voté contre une mesure concernant cette même formation politique.
+      facts:
+      - Bruno Retailleau s'estime conforté par les élections internes des Républicains.
+      - Bruno Retailleau a affirmé avoir voté contre une mesure liée aux Républicains.
+    expect: Candidature à l'élection présidentielle de 2027
+  - name: prod_ruffin_social_vat_joins_fiscal
+    new_fact: François Ruffin a précisé qu'il est contre la TVA sociale proposée par François Hollande et qu'il n'est pas favorable à l'entrée de l'Ukraine dans l'Union européenne, tout en affirmant qu'il est ouvert au débat sur ces sujets.
+    candidates:
+    - label: statut et privilèges des anciens responsables publics
+      summary: Un députat a déposé une proposition de loi visant à supprimer les avantages accordés par l'État aux anciens présidents de la République. Cette initiative inclut également une proposition d'interdiction d'activités liées aux anciens portefeuilles ministériels pour limiter l'influence des lobbies. L'objectif affiché est de transformer ces anciens dirigeants en citoyens ordinaires.
+      facts:
+      - François Ruffin a promis de supprimer les avantages à vie des anciens présidents de la République et d'interdire aux anciens ministres et hauts fonctionnaires de se mettre au service des lobbies.
+      - François Ruffin a affirmé, à l'occasion de la fête nationale, qu'il reste encore beaucoup à faire pour abattre les privilèges.
+      - François Ruffin a annoncé le dépôt d'une proposition de loi pour supprimer les privilèges octroyés par l'État aux anciens présidents de la République afin qu'ils redeviennent des 'citoyens ordinaires'.
+      - François Ruffin a proposé une interdiction d'activités de dix ans dans le périmètre de l'ancien portefeuille pour les ministres et la suppression des avantages accordés aux anciens présidents.
+    - label: politique fiscale et régulation de la richesse
+      summary: François Ruffin propose une refonte du système fiscal incluant la taxation des super-héritages, des dividendes et la mise en œuvre de la taxe Zucman. Son programme prévoit également une séparation entre l'argent et l'État ainsi que la tenue d'États généraux de la fiscalité. Il soutient que les entreprises et les milliardaires doivent contribuer proportionnellement à leur richesse.
+      facts:
+      - François Ruffin a appelé à la mise en place de la taxe Zucman, de la taxation des super-héritages, de la fin des sociétés écrans et de l'imposition des dividendes.
+      - François Ruffin a proposé la tenue d'États généraux de la fiscalité.
+      - François Ruffin a affirmé que lors de la mise en place de la Sécurité sociale, la question de la séparation n'avait pas été suffisamment prise en compte.
+      - François Ruffin a soutenu que les entreprises et les milliardaires devraient payer des impôts proportionnels à leur richesse.
+      - François Ruffin a annoncé qu'il ferait une grande révolution fiscale s'il est président.
+      - François Ruffin a annoncé que, s'il est élu président, il instaurera une grande loi de séparation de l'argent et de l'État.
+    - label: gouvernance et situation politique de la France
+      summary: François Ruffin a exprimé des critiques sévères envers le pouvoir actuel, qualifiant la gestion de l'État de défaillante. Il a utilisé des métaphores pour illustrer l'instabilité du pays et a dénoncé une banalisation de la vie politique sous la présidence de l'exécutif en place.
+      facts:
+      - François Ruffin a critiqué la situation de la France sous la présidence actuelle en utilisant la métaphore de la France en auto-stop.
+      - François Ruffin a affirmé que la présence de couvertures de survie sur les fenêtres de l'Assemblée nationale est le symbole de la défaite et de la nullité des dirigeants politiques.
+      - François Ruffin a dénoncé l'inconscience de la direction actuelle, affirmant que la France est dirigée par des aveugles et des inconscients.
+      - François Ruffin a critiqué la 'Macronie', affirmant que le pouvoir en place a habitué les Français à la banalisation des affaires politiques.
+    - label: Candidature à l'élection présidentielle de 2027
+      summary: François Ruffin a exprimé son intention de se présenter à l'élection présidentielle de 2027, utilisant une campagne itinéraire pour échanger avec les citoyens. Son projet de rassemblement inclut désormais une volonté d'élargir son mouvement au-delà des partis traditionnels de la gauche, tels que les Verts ou le Parti socialiste. Ses positions oscillent entre l'appel à une primaire ouverte et des critiques envers les stratégies de ses alliés ou concurrents.
+      facts:
+      - François Ruffin a affirmé que Jean-Luc Mélenchon est aujourd'hui dix fois plus repoussoir que Marine Le Pen dans certains territoires.
+      - François Ruffin a regretté que le tarif de la primaire soit passé de 2 €, ce qu'il plaidait, à 10 € ou 15 €.
+      - François Ruffin a lancé un appel à l’union, au-delà des partis.
+      - François Ruffin a affirmé que Raphaël Glucksmann cherche à verrouiller l'accès à la primaire pour empêcher d'autres de participer.
+      - François Ruffin a fustigé la primaire entre le PS et Place publique, la qualifiant de « suffrage censitaire » et de démarche « presque antipopulaire » lors des journées d'été du PS à Blois.
+      - François Ruffin a affirmé que Raphaël Glucksmann a peur des électeurs et a critiqué le fait que la primaire soit fermée par des barrières financières.
+    - label: Politiques salariales, logement et régulation économique
+      summary: François Ruffin propose des mesures centrées sur l'indexation des salaires sur l'inflation et la création d'un président au SMIC. Il prône également un encadrement strict des loyers sur l'ensemble du territoire et une régulation des prix et des marges pour faire face aux crises. Ses interventions incluent également des critiques sur les conditions de travail dans certains secteurs et des demandes de protection face aux mutations technologiques.
+      facts:
+      - François Ruffin a appelé à inverser la hiérarchie des salaires pour que les distinctions sociales reflètent l'utilité sociale, critiquant le fait que les professions les plus utiles soient les moins bien payées.
+      - François Ruffin a déclaré être en faveur de l'indexation des salaires sur les dividendes ou sur les salaires des PDG.
+      - François Ruffin a proposé que l'État intervienne pour réguler les prix de l'essence en contrôlant les marges, en taxant les surprofits des raffineurs et en mettant en place une TIPP flottante.
+      - François Ruffin a indiqué que le relèvement des salaires serait une de ses priorités immédiates dès les premiers jours de son éventuel nouveau quinquennat.
+      - François Ruffin a annoncé comme première mesure un président au SMIC.
+      - François Ruffin a affirmé que la gauche ne devrait pas céder à tous les effets de mode en matière de politique sociale, privilégiant le travail et les salaires.
+    - label: Débats politiques et échanges médiatiques
+      summary: François Ruffin a annoncé sa participation à un débat organisé par Libération à l'Académie du Climat le 2 septembre 2026. Cet échange avec Dominique de Villepin a duré deux heures et a permis d'identifier des points d'accord ainsi qu'un horizon commun. L'événement a également fait l'objet de commentaires sur la nature de l'interaction entre les deux interlocuteurs.
+      facts:
+      - François Ruffin participera à un débat avec Dominique de Villepin le 2 septembre 2026 à 19 heures.
+      - François Ruffin a admis que les deux protagonistes du débat 'se reniflent' à l'issue de leur échange le 2 septembre 2026.
+      - François Ruffin et Dominique de Villepin ont débattu pendant deux heures et ont découvert des points d'accord.
+      - Lors d'un débat au début du mois, François Ruffin a affirmé partager un diagnostic et un horizon commun avec Dominique de Villepin.
+      - François Ruffin a participé à un débat organisé par Libération à l'Académie du Climat le 2 septembre 2026 aux côtés de Dominique de Villepin.
+      - François Ruffin a affirmé qu'il y a un « horizon commun » avec Dominique de Villepin.
+    - label: Vision sociétale et philosophique
+      summary: L'auteur soutient que les difficultés de la population française dépassent les simples enjeux économiques pour toucher à la dimension spirituelle et à la fierté nationale. Il considère que la transformation du monde nécessite une réappropriation de l'imaginaire collectif. Enfin, il exprime une volonté de s'opposer activement à une forme de fatalité sociale.
+      facts:
+      - François Ruffin a affirmé que la souffrance des Français n'est pas seulement matérielle mais aussi spirituelle et liée à la fierté.
+      - François Ruffin a affirmé que le pays a non seulement des soucis matériels et de porte-monnaie, mais aussi un souci spirituel.
+      - François Ruffin a affirmé vouloir « tout essayer » pour faire dérailler ce qu'il appelle le « train de la fatalité ».
+      - François Ruffin a affirmé que la bataille centrale pour changer le monde est la bataille de l'imaginaire, consistant à changer le regard sur le monde.
+    - label: protection de l'enfance et politiques sociales
+      summary: François Ruffin s'est exprimé sur la protection des mineurs, proposant une loi cadre contre les violences sexuelles et critiquant le fonctionnement de la justice et de la police dans certains dossiers. Il s'est également opposé aux mesures visant à sanctionner financièrement les parents de mineurs impliqués dans des débordements. Enfin, il a critiqué le manque de moyens concernant l'Aide Sociale à l'Enfance en annonçant son abstention sur le projet de loi associé.
+      facts:
+      - François Ruffin a annoncé l'abstention sur le projet de loi (PJL) concernant l'Aide Sociale à l'Enfance, critiquant le manque de vision et de moyens du gouvernement.
+      - François Ruffin s'est dit « hostile » à l'idée de sanctionner les parents des mineurs impliqués dans les débordements après la victoire du PSG.
+      - François Ruffin a proposé une grande loi cadre intégrale contre les violences sexuelles incluant 130 mesures recommandées par les acteurs de terrain, ainsi qu'une enquête systématique à chaque plainte et une éducation à la vie affective et sexuelle effective dans les classes.
+      - François Ruffin s'est déclaré hostile à la proposition de David Lisnard visant à suspendre les allocations des parents de jeunes condamnés.
+      - François Ruffin a affirmé que le premier rôle de l'État est de protéger ses enfants.
+      - François Ruffin a affirmé que les responsabilités et les dysfonctionnements dans l'affaire de la disparition de Lyhanna doivent être mis en lumière pour alerter sur le continent de violences sexuelles envers les enfants.
+    # Compound fact (two claims in one sentence: social VAT and Ukraine's EU
+    # entry). The main-subject rule routes it to the fiscal stance most of the
+    # time; the reliable fix is the extractor emitting one fact per claim.
+    expect_any: [politique fiscale et régulation de la richesse, NEW]
+  - name: prod_faure_industrial_odysseys_joins_sovereignty
+    new_fact: 'Olivier Faure a affirmé que l''État doit accompagner trois grandes odyssées industrielles : la transformation écologique (énergies renouvelables), la souveraineté alimentaire et la souveraineté numérique.'
+    candidates:
+    - label: politique économique et industrielle de l'Union européenne
+      summary: Olivier Faure a affirmé que l'argent public de l'Europe doit cesser de financer sa désindustrialisation afin que le continent redevienne un lieu de production et de décision.
+      facts:
+      - Olivier Faure a affirmé que l'argent public de l'Europe doit cesser de financer sa désindustrialisation afin que le continent redevienne un lieu de production et de décision.
+    - label: souveraineté industrielle et nationalisation
+      summary: Olivier Faure a affirmé que la nationalisation, même temporaire, est un impératif pour la souveraineté du pays en matière de production d'acier.
+      facts:
+      - Olivier Faure a affirmé que la nationalisation, même temporaire, est un impératif pour la souveraineté du pays en matière de production d'acier.
+    - label: politique écologique et socialisme
+      summary: Olivier Faure propose que la transformation écologique imprègne l'action politique et sociale, en liant les enjeux environnementaux aux réalités sociales. Il préconise la création d'un grand fonds national et européen pour investir sur le long terme dans la biodiversité, les sols et l'eau. Il soutient également l'instauration d'une règle d'or écologique pour conditionner les budgets publics aux objectifs de protection du climat.
+      facts:
+      - Olivier Faure a affirmé que la bifurcation écologique doit devenir un investissement national, proposant la création d'un grand fonds national et européen doté de ressources permanentes pour investir sur 20 ou 30 ans dans la diversification des forêts, des sols, de l'eau et la protection des populations.
+      - Olivier Faure a annoncé que la transformation écologique doit imprégner toute l'action politique.
+      - Olivier Faure a accepté d'inscrire dans son propre programme des articles tels que la désobéissance aux traités d'Europe, le grand soir fiscal, et la retraite à l'âge, des positions qu'il repoussait autrefois.
+      - Olivier Faure a présenté, le 29 août 2026 à Blois, un plan de 'socialisme écologique' incluant la création d'un 'grand fonds national et européen doté de ressources permanentes' pour investir dans l'écologie sur 20 ou 30 ans.
+      - Olivier Faure a déclaré que la transformation écologique doit imprégner toute l'action du socialisme.
+      - Olivier Faure a annoncé la mise en place d'une règle d'or écologique stipulant qu'aucun budget, investissement ou aide publique ne pourra être engagé s'il n'est pas compatible avec les objectifs de protection de la biodiversité et de lutte contre le réchauffement climatique.
+    - label: mobilité et électrification de la société
+      summary: Olivier Faure a plaidé pour l'électrification de la société française et le développement de leasings sociaux autour de 100 euros par mois.
+      facts:
+      - Olivier Faure a plaidé pour l'électrification de la société française et le développement de leasings sociaux autour de 100 euros par mois.
+    - label: stratégie politique et candidatures pour 2027
+      summary: Olivier Faure a officialisé sa candidature à l'élection présidentielle de 2027, proposant une stratégie de « double primaire » pour rassembler la gauche. Bien qu'il ait initialement précisé qu'aucun accord n'était prévu avec La France Insoumise, il a nuancé sa position en affirmant qu'il refuse de couper les ponts avec le reste de la gauche, laissant la possibilité d'accords ponctuels.
+      facts:
+      - Olivier Faure a un programme pour la France basé sur l'idée de « tout reconstruire, tout rebâtir, tout réparer ».
+      - 'Olivier Faure a proposé une piste de double primaire : une première entre les membres du Parti socialiste et Raphaël Glucksmann, suivie d''une seconde entre le vainqueur et le reste de la gauche démocratique et écologique.'
+      - Olivier Faure a affirmé que la primaire a pour vocation de permettre aux électeurs de trancher les divergences entre les candidats d'un camp politique.
+      - Olivier Faure a affirmé que la création du think tank Noûs est une « invitation à penser contre soi-même » pour ne pas oublier l'essence de l'engagement politique face aux défis de stratégie.
+      - Olivier Faure entend faire trancher les militants socialistes, le 9 juillet, sur la stratégie pour la présidentielle.
+      - Olivier Faure a annoncé devoir déléguer une partie de ses missions au sein du Parti socialiste à Johanna Rolland pour mener à bien sa campagne de la primaire de la gauche.
+    - label: réformes sociales et enjeux socio-économiques
+      summary: Lors du 54ème congrès de la CGT, Olivier Faure a affirmé partager des buts communs avec la CGT, notamment la lutte contre le racisme et l'antisémitisme, la lutte contre le néocapitalisme prédateur, l'abrogation de la réforme Borne et la justice fiscale.
+      facts:
+      - Lors du 54ème congrès de la CGT, Olivier Faure a affirmé partager des buts communs avec la CGT, notamment la lutte contre le racisme et l'antisémitisme, la lutte contre le néocapitalisme prédateur, l'abrogation de la réforme Borne et la justice fiscale.
+    - label: politique climatique et transition écologique
+      summary: Olivier Faure appelle à faire de la question climatique une priorité absolue pour l'élection présidentielle. Il demande des mesures concrètes telles qu'un plan de rénovation thermique et le dégel du fond vert pour les collectivités. Il souligne également le lien entre le dérèglement climatique et les catastrophes naturelles comme les incendies.
+      facts:
+      - Olivier Faure a déclaré que la lutte contre le dérèglement climatique doit devenir une priorité absolue pour éviter les improvisations.
+      - Olivier Faure a affirmé que le climat doit être l'un des grands enjeux de la présidentielle et que l'on ne peut pas continuer à vivre comme avant.
+      - Olivier Faure a relayé une proposition de loi de programmation pour la protection de la France face aux bouleversements climatiques, proposée par le maire de Saint-Médard-en-Jalles.
+      - Olivier Faure a déclaré que les catastrophes de type incendies sont la conséquence directe du changement climatique et a appelé à donner plus de moyens aux territoires pour agir.
+      - Olivier Faure a demandé au Premier ministre de lancer un grand plan de rénovation thermique et de dégeler le fond vert pour les collectivités locales afin de lutter contre la vague de chaleur.
+    - label: politique fiscale et budgétaire
+      summary: Olivier Faure a affirmé qu'en 2027, il est nécessaire d'inverser le cap politique actuel, critiquant une dette liée aux cadeaux fiscaux.
+      facts:
+      - Olivier Faure a affirmé qu'en 2027, il est nécessaire d'inverser le cap politique actuel, critiquant une dette liée aux cadeaux fiscaux.
+    # Compound fact (three "odysseys": ecology, food, digital). Same extractor
+    # defect as above; either outcome is accepted here.
+    expect_any: [souveraineté industrielle et nationalisation, NEW]
+  - name: prod_ruffin_meat_joins_agriculture
+    new_fact: Francois Ruffin est favorable à une réduction de la consommation de viande et prône une sortie de l'élevage industriel pour un retour à des élevages à taille humaine.
+    candidates:
+    - label: Politique agricole et gestion des risques
+      summary: Les propositions portent sur la sécurisation des revenus agricoles face aux aléas climatiques par le biais d'une assurance publique. Les mesures évoquées incluent la mise en place de prix planchers, de quotas et une remise en cause du libre-échange. Un déplacement dans les Pyrénées-Orientales est également prévu pour traiter des thématiques liées à l'agriculture, l'écologie et l'emploi saisonnier.
+      facts:
+      - François Ruffin a proposé que la loi d'urgence agricole serve à nourrir les Français, à garantir un revenu aux agriculteurs via des prix planchers et des quotas, et à rompre avec le libre-échange.
+      - François Ruffin a annoncé qu'il se rendrait dans les Pyrénées-Orientales le 17 juillet pour échanger sur l'agriculture, l'écologie et l'emploi saisonnier.
+      - François Ruffin a affirmé qu'il faut une assurance publique pour garantir les revenus des agriculteurs face aux aléas climatiques, plutôt que de confier l'assurance au secteur privé.
+    - label: Politiques salariales, logement et régulation économique
+      summary: François Ruffin propose des mesures centrées sur l'indexation des salaires sur l'inflation et la création d'un président au SMIC. Il prône également un encadrement strict des loyers sur l'ensemble du territoire et une régulation des prix et des marges pour faire face aux crises. Ses interventions incluent également des critiques sur les conditions de travail dans certains secteurs et des demandes de protection face aux mutations technologiques.
+      facts:
+      - Devant les éleveurs, François Ruffin a défendu une rémunération des agriculteurs indexée sur les prix.
+      - François Ruffin a indiqué que le relèvement des salaires serait une de ses priorités immédiates dès les premiers jours de son éventuel nouveau quinquennat.
+      - Le lundi 13 juillet 2026, François Ruffin s'est rendu à la base nautique d'Agon-Coutainville pour porter la voix des saisonniers et des salariés qu'il qualifie de 'gens qui tiennent la France debout'.
+      - François Ruffin a demandé au ministre de l'Économie et de la Souveraineté numérique ce que le Gouvernement compte faire contre les pertes d'emplois et de compétences liées à l'intelligence artificielle et aux délocalisations.
+      - François Ruffin a appelé à inverser la hiérarchie des salaires pour que les distinctions sociales reflètent l'utilité sociale, critiquant le fait que les professions les plus utiles soient les moins bien payées.
+      - 'François Ruffin a proposé quatre mesures pour le logement : le plafonnement des loyers en France, la création de comités d''usagers du logement, le doublement des prêts à taux zéro et un plan de construction pour les nouveaux entrants.'
+    - label: santé publique et sécurité alimentaire
+      summary: François Ruffin a critiqué le maintien par la France d'une dérogation à 90 mg/kg de cadmium dans les engrais, affirmant que cela protège les importateurs plutôt que la santé.
+      facts:
+      - François Ruffin a critiqué le maintien par la France d'une dérogation à 90 mg/kg de cadmium dans les engrais, affirmant que cela protège les importateurs plutôt que la santé.
+    - label: Débats politiques et échanges médiatiques
+      summary: François Ruffin a annoncé sa participation à un débat organisé par Libération à l'Académie du Climat le 2 septembre 2026. Cet échange avec Dominique de Villepin a duré deux heures et a permis d'identifier des points d'accord ainsi qu'un horizon commun. L'événement a également fait l'objet de commentaires sur la nature de l'interaction entre les deux interlocuteurs.
+      facts:
+      - François Ruffin a admis que les deux protagonistes du débat 'se reniflent' à l'issue de leur échange le 2 septembre 2026.
+      - François Ruffin participera à un débat avec Dominique de Villepin le 2 septembre 2026 à 19 heures.
+      - François Ruffin et Dominique de Villepin ont débattu pendant deux heures et ont découvert des points d'accord.
+      - François Ruffin a participé à un débat organisé par Libération à l'Académie du Climat le 2 septembre 2026 aux côtés de Dominique de Villepin.
+      - Lors d'un débat au début du mois, François Ruffin a affirmé partager un diagnostic et un horizon commun avec Dominique de Villepin.
+      - François Ruffin a affirmé qu'il y a un « horizon commun » avec Dominique de Villepin.
+    - label: thématiques et discours politiques
+      summary: François Ruffin a affirmé que Jean-Luc Mélenchon ne prononce jamais les mots 'salaire', 'logement', 'école', 'hôpital', 'carburants', 'profits' ou 'dividendes' dans son discours.
+      facts:
+      - François Ruffin a affirmé que le discours de Jean-Luc-Mélenchon lors du meeting de Saint-Dominique n'abordait pas les thématiques de 'salaire', 'logement', 'école', 'éducation', 'hôpital', 'actionnaire', 'dividende' ou 'profit'.
+      - François Ruffin a affirmé que Jean-Luc Mélenchon ne prononce jamais les mots 'salaire', 'logement', 'école', 'hôpital', 'carburants', 'profits' ou 'dividendes' dans son discours.
+    - label: régulation de la publicité et impact écologique
+      summary: François Ruffin a affirmé qu'il faut une grande régulation de la publicité pour lutter contre le déficit écologique et commercial.
+      facts:
+      - François Ruffin a affirmé qu'il faut une grande régulation de la publicité pour lutter contre le déficit écologique et commercial.
+    - label: Vision sociétale et philosophique
+      summary: L'auteur soutient que les difficultés de la population française dépassent les simples enjeux économiques pour toucher à la dimension spirituelle et à la fierté nationale. Il considère que la transformation du monde nécessite une réappropriation de l'imaginaire collectif. Enfin, il exprime une volonté de s'opposer activement à une forme de fatalité sociale.
+      facts:
+      - François Ruffin a affirmé que le pays a non seulement des soucis matériels et de porte-monnaie, mais aussi un souci spirituel.
+      - François Ruffin a affirmé que la souffrance des Français n'est pas seulement matérielle mais aussi spirituelle et liée à la fierté.
+      - François Ruffin a affirmé que la bataille centrale pour changer le monde est la bataille de l'imaginaire, consistant à changer le regard sur le monde.
+      - François Ruffin a affirmé vouloir « tout essayer » pour faire dérailler ce qu'il appelle le « train de la fatalité ».
+    - label: Souveraineté industrielle et politique économique française
+      summary: François Ruffin préconise un rôle d'État stratège capable de mobiliser l'épargne nationale pour financer les PME et la transition thermique. Il propose des mesures telles qu'un 'Buy French Act' et une protection accrue contre les capitaux étrangers pour préserver l'indépendance numérique et industrielle. Ses interventions portent également sur la sauvegarde de l'emploi industriel et la gestion des filières stratégiques comme l'hydrogène.
+      facts:
+      - François Ruffin a réclamé la mise en place d'un 'Buy French Act' pour que la commande publique privilégie l'achat de produits français.
+      - François Ruffin a affirmé que l'industrie réclame des filières installées dans la durée pour sortir les transports du pétrole, après avoir observé que l'État, l'Europe et Stellantis avaient misé des milliards sur l'hydrogène alors que l'entreprise Symbio licencie.
+      - François Ruffin a affirmé que l'eau est un bien commun qui doit être organisé de manière démocratique, face à l'investissement des Gafams dans les data centers en France.
+      - François Ruffin a appelé à un État stratège capable de coordonner les actions publiques.
+      - François Ruffin a affirmé qu'Emmanuel Macron est absent lors des fermetures d'entreprises (Ynsect, SFG, Watts, Meiser, Klégé, Durisotti) et a critiqué la baisse de la part de l'industrie dans le PIB à 10 %.
+      - François Ruffin a expliqué que l'industrie de défense française subsiste car l'État a établi une stratégie de longue durée plutôt que de livrer le secteur à la concurrence du marché.
+    expect: Politique agricole et gestion des risques
+  - name: prod_panot_ukraine_aid_joins_foreign_policy
+    new_fact: Mathilde Panot a affirmé que La France insoumise maintiendrait les aides françaises à l'Ukraine jusqu'à la fin de l'agression illégale de la Russie.
+    candidates:
+    - label: Discours sur les discriminations et les atteintes à la dignité
+      summary: Mathilde Panot a dénoncé le silence de l'exécutif face à des insultes racistes visant des élus et a exprimé sa solidarité envers des victimes d'agressions et de propos discriminatoires. Elle a également critiqué certains médias après des propos jugés dégradants envers une députée. Enfin, elle a manifesté son soutien à des citoyens face à des propos qualifiés de racistes et sexistes.
+      facts:
+      - Mathilde Panot a exprimé son plein soutien à Aminata Pouye suite à ce qu'elle a qualifié d'agression raciste.
+      - Mathilde Panot a exprimé son plein soutien à Benmaghsoula face à des propos qualifiés de racistes et immondes.
+      - Mathilde Panot a exprimé sa solidarité avec les concitoyens de confession musulmane suite aux propos du chef de la police municipale de Carcassonne, membre du RN, qualifiés de racistes, homophobes et sexistes.
+      - Mathilde Panot a critiqué le silence d'Emmanuel Macron face aux insultes racistes visant Bally Bagayoko, le maire de Saint-Denis.
+      - Mathilde Panot a déclaré que le racisme est un délit et a qualifié Valeurs Actuelles de 'torchon' après que le média a dépeint la députée Danielle Obono comme une esclave.
+    - label: Relations diplomatiques et politiques de l'étranger
+      summary: Mathilde Panot a exprimé des critiques sévères envers la politique de la France et de l'Union européenne vis-à-vis d'Israël, réclamant des sanctions, un embargo sur les armes et une rupture diplomatique. Elle a également dénoncé l'accueil réservé à Donald Trump par Emmanuel Macron, qualifiant la stratégie de l'Élysée d'erreur morale. Ses interventions portent également sur la gestion des tensions dans le détroit d'Ormuz et la défense des droits des populations palestiniennes.
+      facts:
+      - Mathilde Panot a affirmé que Sébastien Lecornu est l'incarnation de la complicité de la France avec le génocide à Gaza.
+      - Mathilde Panot a affirmé que le consentement de la France et de nombreux pays occidentaux au génocide à Gaza permet à Benyamin Netanyahou de poursuivre ses violations du droit international.
+      - Mathilde Panot a affirmé sur X que Donald Trump a insulté la France et l'Europe à plusieurs reprises, a déclenché une guerre commerciale contre eux et une guerre illégale au Proche-Orient.
+      - Mathilde Panot a appelé la France à prendre des mesures fortes, notamment à décréter un embargo sur les armes et à prendre des sanctions contre Benyamin Nétanyahou.
+      - Mathilde Panot a accusé l'ambassadeur israélien en France de s'immiscer dans la vie politique française en faveur de la position 'tout plutôt que Mélenchon' lors des élections présidentielles.
+      - Mathilde Panot a réclamé des sanctions, un embargo sur les armes, la suspension de l'accord d'association entre l'Union Européenne et Israël ainsi que le droit au retour des réfugiés palestiniens.
+    - label: Politiques de prévention et de lutte contre les violences sexistes et sexuelles
+      summary: Mathilde Panot critique l'action du gouvernement et réclame l'allocation de 3 milliards d'euros pour financer la lutte contre les violences faites aux femmes et aux enfants. Elle dénonce une domination patriarcale systémique et l'impunité liée à la notoriété, tout en plaidant pour une éducation à la sexualité renforcée. Elle a également appelé à des mesures de protection immédiates pour les enfants et a critiqué l'insuffisance des moyens financiers face aux enjeux de prévention.
+      facts:
+      - Mathilde Panot a appelé à « enrayer la fabrique des agresseurs ».
+      - Mathilde Panot a affirmé que les violences faites aux femmes et aux enfants résultent d'une domination patriarcale systémique et d'un refus politique de mettre en œuvre une politique globale de lutte contre ces violences.
+      - Mathilde Panot a accusé Sébastien Lecornu de se livrer à des « petits jeux médiocres et politiciens » en réponse à la problématique des violences.
+      - Mathilde Panot a demandé de mettre 3 milliards d'euros 'sur la table' pour lutter contre les violences sexistes et sexuelles.
+      - Mathilde Panot a demandé à Gabriel Attal pourquoi le gouvernement ne met pas sur la table les 3 milliards d'euros demandés par les associations contre les violences sexuelles.
+      - Mathilde Panot a affirmé que les associations réclament 3 milliards d'euros pour lutter contre les violences sexistes et sexuelles.
+    - label: Relations avec les médias et la liberté de presse
+      summary: Mathilde Panot a dénoncé une certaine partie du paysage médiatique, l'accusant de reprendre l'agenda de l'extrême droite et de pratiquer des traitements différenciés à son égard. Elle a également critiqué des interventions journalistiques ciblées et a proposé de boycotter les maisons d'édition appartenant à Vincent Bolloré. Enfin, elle a exprimé son soutien aux mouvements de grève au sein de France Inter.
+      facts:
+      - Mathilde Panot a demandé à Apolline de Malherbe d'arrêter de salir les personnes qui soutiennent La France insoumise.
+      - Mathilde Panot a affirmé son soutien aux grévistes de France Inter qui s'opposent à la présence de Charles Sapin, de Valeurs Actuelles, à l'antenne.
+      - Mathilde Panot a accusé une partie du paysage médiatique de reprendre l'agenda de l'extrême droite et a défendu la nécessité de médias indépendants.
+      - Mathilde Panot a affirmé avoir subi des traitements différenciés dans les invitations médiatiques, expliquant qu'elle a dû attendre d'être présidente du groupe parlementaire pour être enfin invitée dans les médias.
+      - Mathilde Panot a accusé Apolline de Malherbe de tenter de salir l'actrice Anna Mouglalis lors de l'entretien du 25 août 2026.
+      - Mathilde Panot a déclaré qu'aucun député de La France Insoumise ne devrait publier chez Bollore.
+    - label: Identité nationale et composition démographique
+      summary: Mathilde Panot a affirmé que la vision d'une France blanche et chrétienne est un mythe utilisé par l'extrême droite, soulignant l'évolution démographique du pays. Elle a également contesté le concept de subversion migratoire et a critiqué l'augmentation des actes de haine. Elle a exprimé sa détermination à s'opposer aux courants réactionnaires pour la conquête de nouveaux droits.
+      facts:
+      - Mathilde Panot a affirmé que la subversion ou l'invasion migratoire n'existe pas en France.
+      - Mathilde Panot a affirmé que face à l'extrême droite et aux réactionnaires, elle et son camp continueront de conquérir des droits et de se dresser contre la haine.
+      - Mathilde Panot a dénoncé une explosion des actes de haine nourrie par les campagnes de la droite et de l'extrême droite ainsi que par l'inaction du gouvernement.
+      - Mathilde Panot a expliqué que l'expression utilisée par Jean-Luc Mélenchon devrait être 'une génération remplace l'autre' plutôt que 'le grand remplacement'.
+      - Mathilde Panot a affirmé que l'extrême droite fantasme une France blanche et chrétienne qui n'a jamais existé le 25 mai 2025.
+      - Mathilde Panot a déclaré que le peuple français a profondément changé depuis 1958, précisant qu'un Français sur trois aurait désormais un grand-parent étranger.
+    - label: harcèlement et violences
+      summary: Mathilde Panot a exprimé sa solidarité envers la présidente de SOS Homophobie face à des actes de harcèlement. Elle a également sollicité des témoignages concernant le décès de Joris Laurencin et a réclamé des clarifications sur les intimidations visant l'élu Hocine Tmimi et ses proches.
+      facts:
+      - Mathilde Panot a lancé un appel à témoignages pour faire la lumière sur le suicide de Joris Laurencin, qualifiant l'événement de 'meurtre par harcèlement'.
+      - Mathilde Panot a apporté son soutien à Julia Torlet, présidente de SOS Homophobie, ainsi qu'à tous les membres de l'organisation, suite à des faits de harcèlement.
+      - Mathilde Panot a dénoncé des intimidations contre l'élu Hocine Tmimi et sa famille, exigeant que toute la lumière soit faite sur ces méthodes.
+      - Mathilde Panot a lancé un appel à témoignages pour faire la lumière sur le suicide de Joris Laurencin, qualifiant l'événement de 'meurtre par harcèlement'.
+    - label: rapport entre le pouvoir politique et les forces armées
+      summary: Mathilde Panot a affirmé que les militaires ne sont pas responsables des critiques, car ils exécutent les ordres du pouvoir politique.
+      facts:
+      - Mathilde Panot a affirmé que les militaires ne sont pas responsables des critiques, car ils exécutent les ordres du pouvoir politique.
+    - label: Situation juridique et protection de Rima Hassan
+      summary: Mathilde Panot a appelé à manifester en faveur de Rima Hassan devant le tribunal de Paris. Elle a également exigé que le gouvernement réponde des pressions judiciaires et politiques, ainsi que des mesures de surveillance et des fuctions médiatiques subies par cette dernière.
+      facts:
+      - Mathilde Panot a appelé à soutenir Rima Hassan le mardi 7 juillet à 12h30 devant le tribunal de Paris.
+      - Mathilde Panot a déclaré que le Gouvernement doit répondre de ses actes concernant le harcèlement judiciaire et politique subi par Rima Has, incluant des fuites dans les médias et des mesures de surveillance excessives.
+    expect: Relations diplomatiques et politiques de l'étranger
+  - name: prod_retailleau_putin_kgb_new_no_foreign_candidate
+    new_fact: Bruno Retailleau a déclaré que « Poutine, c'est le KGB » lors de son passage sur BFM Politique le 6 septembre 2026.
+    candidates:
+    - label: Candidature à l'élection présidentielle de 2027
+      summary: Le candidat annonce une volonté de rupture avec le système actuel et de reconstruction nationale à travers un projet de réforme constitutionnelle. Il se positionne en opposant radical au macronisme, tout en naviguant entre des tensions internes au sein des Républicains et des divergences d'opinions avec d'autres figures politiques. Sa stratégie oscille entre l'affirmation d'une candidature de combat et des discussions sur la forme de la compétition, comme la question d'une éventuelle primaire.
+      facts:
+      - Bruno Retailleau a déclaré qu'il s'attacherait à une politique de puissance, de prospérité, d'indépendance et de partenariats renouvelés s'il est élu en 2027.
+      - Bruno Retailleau a déclaré qu'il ne fait pas partie du bloc central.
+      - Bruno Retailleau s'est donné jusqu'à Noël pour se détacher à droite dans la course à l'Élysée.
+      - Bruno Retailleau a exprimé son désaccord avec les propositions de la sénatrice Agnès Evren.
+      - Bruno Retailleau a exprimé sa confiance dans un rapprochement politique qu'il juge inéluctable.
+      - Bruno Retailleau a déclaré ne pas vouloir faire suffisamment de mal à Édoud Philippe pour se réjouir du soutien de Laurent Wauquiez.
+    - label: Évaluation du Rassemblement national et de ses dirigeants
+      summary: Bruno Retailleau exprime des critiques sévères envers le Rassemblement national, qualifiant l'organisation de clan familial et de parti amateur. Il remet en question la capacité de Marine Le Pen et de Jordan Bardella à diriger la France, pointant du doigt une fragilité politique et des incohérences sur les dossiers internationaux. Il dénonce également l'inexpérience du parti face aux enjeux de pouvoir et de gestion de l'État.
+      facts:
+      - Bruno Retailleau a affirmé que le Rassemblement National n'est pas en mesure de redresser la France.
+      - Bruno Retailleau a affirmé, le 8 juillet, que Marine Le Pen est la véritable dirigeante du Rassemblement national, même si Jordan Bardella avait été candidat.
+      - Bruno Retailleau a déclaré que la dégradation des relations entre Marine Le Pen et Jordan Bardella faisait «peur» et que ce dernier devrait être premier ministre en cas de succès de la candidate.
+      - Bruno Retailleau a affirmé ne pas croire que Marine Le Pen parviendrait à redresser la France.
+      - Pour la droite de Bruno Retailleau, l’entrée en campagne de Marine Le Pen ne change rien.
+      - Le 7 juillet, Bruno Retailleau a affirmé que les Français n'ont aucune envie d'un match de second tour entre Jean-Luc Mélenchon et Jordan Bardella ou entre Marine Le Pen et des partisans d'Emmanuel Macron.
+    - label: Relations entre les acteurs politiques et l'identité nationale
+      summary: Bruno Retailleau critique vivement Jean-Luc Mélenchon et le mouvement La France insoumise, les accusant de collaborer avec l'islamisme et de menacer la République. Il dénonce une forme d'antisémitisme lié à l'islamo-gauchisme tout en affirmant son propre engagement pour le patriotisme et le redressement de la France. Ses déclarations visent également à positionner son projet politique face aux autres forces de l'opposition et de la droite.
+      facts:
+      - Bruno Retailleau a déclaré que la 'nouvelle France' de Jean-Luc Mélenchon représente la fin de la France.
+      - Bruno Retailleau a affirmé que son combat est fondé sur le sens du patriotisme français.
+      - Bruno Retailleau a dénoncé « La Nouvelle France » défendue par La France insoumise, la qualifiant d'antisémitisme s'abreuvant aux sources de l'islamo-gauchisme.
+      - Bruno Retailleau a affirmé que Jean-Luc Mélenchon est un vrai danger pour la République.
+      - Bruno Retailleau a affirmé qu'il ne mettrait jamais un bulletin de vote de LFI dans une urne.
+      - Bruno Retailleau a désigné Jean-Luc Mélenchon comme son 'principal adversaire' et l'a qualifié de 'premier racialiste de France' lors d'une intervention sur BFMTV le 9 juin 2026.
+    - label: Politique migratoire et révision constitutionnelle
+      summary: Bruno Retailleau propose une révision de la Constitution pour élargir le recours au référendum sur des sujets tels que l'immigration, la sécurité et la justice. Il prône une gestion plus stricte de l'immigration, incluant la réduction du regroupement familial, la suppression du droit du sol et l'application du règlement retour européen. Ses propositions visent également à limiter l'influence du Conseil constitutionnel en redonnant la parole directe au peuple français.
+      facts:
+      - Bruno Retailleau a affirmé qu'il n'est pas dans le 'en même temps' concernant l'immigration.
+      - Bruno Retailleau a déclaré qu'il n'était pas pour l'immigration zéro lors d'un meeting le 20 juin 2026 à Paris.
+      - Bruno Retailleau s'est dit favorable à la suppression du droit du sol.
+      - Bruno Retailleau a pris l'engagement que les Français définiront la politique migratoire en cas de victoire à la présidentielle.
+      - Bruno Retailleau a affirmé que l'immigration n'est plus une chance et qu'il faut la réduire.
+      - Bruno Retailleau a affirmé que la régularisation de centaines de milliers de clandestins par Pedro Sánchez a créé un appel d'air, et que l'Espagne et l'Europe paient le prix de cette politique.
+    - label: signes religieux dans l'espace public
+      summary: Bruno Retailleau a dénoncé la proposition du RN d'interdire le voile dans l'espace public, la qualifiant de populisme et de démagogie.
+      facts:
+      - Bruno Retailleau a dénoncé la proposition du RN d'interdire le voile dans l'espace public, la qualifiant de populisme et de démagogie.
+    - label: relations diplomatiques avec l'Algérie
+      summary: Bruno Retailleau a affirmé que la multiplication des visites de courtoisie des ministres français à Alger n'y change rien face au discours anti-France.
+      facts:
+      - Bruno Retailleau a adressé une lettre ouverte à Emmanuel Macron le 29 avril pour demander davantage de fermeté à l'égard de l'Algérie.
+      - Lors de son passage au ministère de l'Intérieur, Bruno Retailleau a prôné la mise en place d'un "rapport de force" avec l'Algérie pour obtenir la libération de l'écrivain Boualem Sansal.
+      - Bruno Retailleau a affirmé que la multiplication des visites de courtoisie des ministres français à Alger n'y change rien face au discours anti-France.
+      - Bruno Retailleau a accusé Emmanuel Macron d'avoir fait preuve de faiblesse et d'être dans une forme de dépendance vis-à-vis de l'Algérie le 29 avril 2026.
+      - Bruno Retailleau a appelé Emmanuel Macron à sortir d'une "mauvaise conscience mémorielle" liée à la colonisation et à la guerre d'Algérie le 29 avril 2026.
+      - Bruno Retailleau a appelé à la libération du journaliste Christophe Gleize, détenu en Algérie.
+    - label: intelligence artificielle
+      summary: Bruno Retailleau a qualifié la vision de l'intelligence artificielle d'Emmanuel Macron de « simpliste ».
+      facts:
+      - Bruno Retailleau a qualifié la vision de l'intelligence artificielle d'Emmanuel Macron de « simpliste ».
+    - label: Évaluation du bilan de l'exécutif français
+      summary: L'intéressé a exprimé une critique sévère de l'action d'Emmanuel Macron lors d'un rassemblement en juin 2026. Il a notamment qualifié certains anciens dirigeants de l'influence de la présidence actuelle, affirmant qu'ils ne pourraient pas s'en détacher. Enfin, il a ironisé sur la constance de ses propres positions politiques face à d'autres figures publiques.
+      facts:
+      - Bruno Retailleau a dénoncé ceux qui changent souvent d'opinion politique, ironisant sur le fait que cela le rend plus sympathique par contraste avec Édouard Philippe.
+      - Bruno Retailleau s'est montré très sévère sur le bilan d'Emmanuel Macron lors de son meeting du 20 juin 2026.
+      - Bruno Retailleau a affirmé que les anciens Premiers ministres Édouard Philippe et Gabriel Attat ne parviendront pas à se décontaminer du quinquennat de Macron.
+      - Bruno Retailleau présente Edouard Philippe et Gabriel Attal comme des 'contaminés' par les deux quinquennats du chef de l'Etat.
+    expect: NEW
+  - name: prod_mlp_pisa_education_new
+    new_fact: Marine Le Pen a qualifié les résultats de PISA 2025 de « triple défaite » pour les familles, l'économie française et les gouvernants.
+    candidates:
+    - label: élections présidentielles
+      summary: Les données montrent une trajectoire électorale marquée par des scores variables lors des scrutins passés, de 17,9 % en 2012 à 33,9 % en 2017. Les sondages récents présentent des tensions entre des intentions de vote pouvant atteindre 35,5 % et des niveaux de rejet ou de faibles scores auprès de certains segments de la population. Bien qu'elle bénéficie d'un socle électoral solide, sa capacité à gouverner et sa perception par les électeurs font l'objet de données contrastées selon les enquêtes.
+      facts:
+      - Marine Le Pen a obtenu 11,1 % des voix dans la 16e circonscription de Paris lors des législatives de 1993 face à Bernard Pons.
+      - Marine Le Pen a obtenu 42,2 % des voix lors de l'élection mentionnée.
+      - Dans le sondage Ifop-Fiducial, Marine Le Pen est donnée gagnante au second tour avec 52% face à Édouard Philippe, 54% face à Gabriel Attal ou François Hollande, 55% face à Raphaël Glucksmann et 67% face à Jean-Luc Mélenchon.
+      - Marine Le Pen et Édouard Philippe ont terminé à égalité parfaite, à la voix près, après le recomptage des bulletins du second tour de la présidentielle.
+      - Dans une configuration de duel, Marine Le Pen battrait Jean-Luc Mélenchon avec les deux tiers des suffrages exprimés (67 %).
+      - Marine Le Pen est rejetée par près d'un Français sur deux selon l'enquête.
+    - label: Relation au football
+      summary: Marine Le Pen a affirmé ne pas apprécier le football et ne jamais suivre de matchs. Elle a également exprimé son désintérêt pour le PSG, critiquant le modèle économique du club.
+      facts:
+      - Le 12 mai 2014, Marine Le Pen a déclaré ne pas soutenir le PSG, critiquant ce qu'elle a appelé un 'règne du fric' basé sur l'achat des meilleurs joueurs de la planète.
+      - Marine Le Pen a déclaré qu'elle n'aimait pas le football et qu'elle ne regardait jamais les matchs.
+    - label: réglementations environnementales et de l'habitat
+      summary: Marine Le Pen a exprimé son désaccord concernant les normes RE 2020, les jugeant responsables de l'inadaptation thermique de certains logements. Elle a également annoncé son intention de supprimer le dispositif Zéro Artificialisation Nette ainsi que les diagnostics de performance énergétique.
+      facts:
+      - Marine Le Pen a promis de supprimer le dispositif ZAN (Zéro artificialisation nette) ainsi que les diagnostics de performance énergétique (DPE).
+      - Marine Le Pen a promis de supprimer les contraintes basées sur le DPE pour qu'il ne devienne qu'un simple élément indicatif.
+      - Marine Le Pen a critiqué Édouard Philippe pour avoir instauré les normes RE 2020, affirmant qu'elles ont généré des logements thermiquement inadaptés.
+      - Marine Le Pen a exprimé sa volonté de supprimer la loi ZAN (Zéro artificialisation nette) et de retirer les éléments contraignants du diagnostic de performance énergétique (DPE).
+    - label: Affaire des assistants parlementaires européens
+      summary: Une condamnation par la cour d'appel de Paris a prononcé une peine d'emprisonnement avec bracelet électronique et une période d'inéligibilité pour détournement de fonds publics. La personne concernée conteste fermement ces faits et a annoncé un pourvoi en cassation afin de défendre son innocence et de suspendre l'exécution de la peine. Elle a également comparé sa situation juridique à celle d'autres figures politiques pour contester la qualification des faits.
+      facts:
+      - Marine Le Pen a annoncé son intention de saisir les hauts magistrats pour contester sa condamnation et suspendre sa peine d'un an d'emprisonnement à domicile.
+      - Marine Le Pen a été condamnée par la cour d'appel de Paris, dans l'affaire des assistants parlementaires, à une peine d'un an sous bracelet électronique et à une période d'inéligibilité.
+      - Marine Le Pen a été condamnée à un an de bracelet électronique et 15 mois ferme d'inéligibilité.
+      - Marine Le Pen was convicted on appeal in the case of misappropriation of public funds and complicity of misappropriation involving European Parliament parliamentary assistants.
+      - Le choix de Marine Le Pen de se présenter malgré sa condamnation pour détournement de fonds publics annonce une campagne rocambolesque.
+      - Marine Le Pen a été condamnée par la cour d'appel de Paris à une inéligibilité de 45 mois, dont 30 avec sursis, et à trois ans d'emprisonnement, dont un an sous bracelet électronique.
+    - label: Sécurité publique, ordre et gestion des crises
+      summary: Marine Le Pen intervient sur des sujets liés à la sécurité intérieure, notamment concernant les violences urbaines, la menace terroriste et la gestion des squats. Elle exprime son soutien aux forces de l'ordre et aux secours lors de crises ou d'incidents. Elle propose également des mesures législatives visant le renforcement des sanctions pénales et l'évolution des prérogatives de police.
+      facts:
+      - Marine Le Pen et Jordan Bardella ont fustigé la faiblesse des autorités face aux violences qui ont entaché la victoire du PSG en finale de la Ligue des champions.
+      - Marine Le Pen a affirmé que le pouvoir et la gauche tentent de dissimuler la réalité de l'attaque survenue le 27 juillet 2026 pour ne pas nommer l'islamisme.
+      - Marine Le Pen a déclaré qu'il est extrêmement important de ne pas « baisser la garde » dans la lutte contre le terrorisme.
+      - Marine Le Pen a annoncé qu'en 2027, elle fera voter un projet de loi de lutte contre les idéologies islamistes pour contrer la menace islamiste.
+      - Marine Le Pen stated that an officer almost fell due to the 'unworthy behavior' of the Adama Traoré collective.
+      - Marine Le Pen a appelé à une réflexion sur l'aggravation des peines en cas d'atteintes à l'intégrité physique suite aux violences à Paris.
+    - label: pouvoir d'achat et niveau de vie
+      summary: Marine Le Pen a affirmé que le pouvoir d'achat des Français est en 'état d'urgence absolue' dans un post sur X le vendredi soir.
+      facts:
+      - Marine Le Pen a affirmé que le pouvoir d'achat des Français est en 'état d'urgence absolue' dans un post sur X le vendredi soir.
+    - label: Responsabilité ministérielle et démission de Gérald Darmanin
+      summary: Marine Le Pen a exprimé des positions divergentes concernant la démission de Gérald Darmanin suite à l'affaire Lyhanna. Bien qu'elle ait initialement affirmé qu'un tel appel à la démission n'aurait que peu d'intérêt, elle a par la suite soutenu que le garde des Sceaux aurait dû présenter sa démission sur le plan moral. Elle a également souligné la nécessité de changements plus profonds à la tête de l'État plutôt que de simples appels à la démission.
+      facts:
+      - Marine Le Pen a déclaré à l'Assemblée nationale qu'il ne fallait pas faire des appels à la démission en permanence et a affirmé que c'est à la tête de l'État qu'il faut changer les choses.
+      - Marine Le Pen a affirmé que Gérald Darmanin aurait dû présenter sa démission au président de la République.
+      - Marine Le Pen a affirmé que la démission de Gérald Darmanin ne changerait rien.
+      - Marine Le Pen a estimé que Gérald Darmanin aurait dû présenter sa démission après la mort de Lyhanna, 11 ans, dans le Gers.
+      - Marine Le Pen stated that one cannot constantly call for resignations, noting she saw no interest in the resignation of Gérald Darmanin.
+      - Marine Le Pen a affirmé que Gérald Darmanin aurait dû présenter sa démission après la mort de la jeune Lyanna dans le Gers le 14 juin 2026.
+    - label: campagne présidentielle 2027
+      summary: Marine Le Pen a officialisé sa candidature pour l'élection présidentielle de 2027, présentant un binôme avec Jordan Bardella. Malgré une condamnation judiciaire en appel concernant l'affaire des assistants parlementaires, elle a affirmé son intention de se présenter et de se pourvoir en cassation. Sa campagne, placée sous le slogan « Pour la France, la Renaissance », inclut des événements prévus à Orléans et des déplacements dans la Sarthe.
+      facts:
+      - Marine Le Pen a promis que «les Français auront le dernier mot et seront juges» face à la décision de la Cour de cassation.
+      - Marine Le Pen a été condamnée en première instance à quatre ans d’emprisonnement dont deux avec sursis, 100 000 euros d’amende et cinq ans d’inéligibilité.
+      - Marine Le Pen a annoncé qu'elle engagerait, avec Jordan Bardella, la renaissance de la France avec le peuple français.
+      - Marine Le Pen a déclaré à la presse qu'elle est désormais éligible suite à la décision de la cour d'appel.
+      - Marine Le Pen attend la décision de son procès en appel concernant son inéligibilité pour le 7 juillet 2026.
+      - Marine Le Pen a fait sa rentrée politique dans sa circonscription du Pas-de-Calais à Hénin-Beaumont le dimanche 13 septembre 2026.
+    expect: NEW
+  - name: prod_mlp_fisheries_new
+    new_fact: Marine Le Pen a apporté son soutien aux comités régionaux des pêches du sud de la France face à la hausse des carburants et aux contraintes européennes.
+    candidates:
+    - label: Sécurité publique, ordre et gestion des crises
+      summary: Marine Le Pen intervient sur des sujets liés à la sécurité intérieure, notamment concernant les violences urbaines, la menace terroriste et la gestion des squats. Elle exprime son soutien aux forces de l'ordre et aux secours lors de crises ou d'incidents. Elle propose également des mesures législatives visant le renforcement des sanctions pénales et l'évolution des prérogatives de police.
+      facts:
+      - Marine Le Pen a adressé un message de soutien et de solidarité aux victimes des incendies, tout en exprimant sa reconnaissance envers les sapeurs-pompiers.
+      - Marine Le Pen a adressé sa reconnaissance et son soutien aux pompiers, aux forces de sécurité et de secours mobilisés sur le territoire, notamment à Fontainebleau.
+      - Marine Le Pen a exprimé sa solidarité envers les policiers manifestants, affirmant que le rétablissement de l’ordre et de la tranquillité publique sera une priorité nationale.
+      - Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et la vente à la sauvette, ainsi que renforcer les prérogatives des policiers municipaux.
+      - Marine Le Pen a exprimé son soutien aux policiers, aux gendarmes et aux pompiers mobilisés pour assurer la sécurité suite aux violences lors de la victoire du PSG le 30 mai 2026.
+      - Marine Le Pen et Jordan Bardella ont fustigé la faiblesse des autorités face aux violences qui ont entaché la victoire du PSG en finale de la Ligue des champions.
+    - label: sécurité et menaces
+      summary: Marine Le Pen a apporté son soutien au maire d'Alès, Christophe Rivenq, qui a été menacé de mort par la DZ Mafia.
+      facts:
+      - Marine Le Pen a apporté son soutien au maire d'Alès, Christophe Rivenq, qui a été menacé de mort par la DZ Mafia.
+    - label: Financement de campagne et sources de fonds
+      summary: Une déclaration sur X a précisé que les prêts de particuliers ne sont pas éligibles pour le financement d'une campagne présidentielle. Par ailleurs, des flux de capitaux provenant de banques russes en 2014 et d'un groupe hongrois en 2022 ont été identifiés.
+      facts:
+      - Marine Le Pen a reçu des financements de banques russes en 2014 et d'un groupe hongrois en 2022.
+      - Marine Le Pen a réagi sur X en affirmant que les prêts de particuliers ne peuvent pas financer une campagne présidentielle.
+    - label: départs et démissions de personnalités politiques
+      summary: Marine Le Pen a affirmé avoir 'souhaité' le départ de François Durvye et ne pas le 'déplorer'.
+      facts:
+      - Marine Le Pen a affirmé avoir "souhaité" le départ de son conseiller François Durvye et ne pas le "déplorer"
+      - Marine Le Pen a affirmé avoir 'souhaité' le départ de François Durvye et ne pas le 'déplorer'.
+      - Marine Le Pen a déclaré ne pas déplorer le départ de François Durvye, affirmant qu'elle avait elle-même souhaité ce départ.
+    - label: interdiction du voile dans l'espace public
+      summary: Marine Le Pen prône l'interdiction du voile dans l'espace public, une position qu'elle soutient depuis 2012. Elle propose désormais de soumettre cette mesure, incluant des sanctions pénales contre les idéologies islamistes, à un référendum. Elle a précisé que ce projet de loi serait soumis aux Français après un premier référendum constitutionnel lié à l'immigration.
+      facts:
+      - Marine Le Pen a proposé de soumettre la question du port du voile à un référendum et a indiqué que le voile pourrait être interdit progressivement, notamment dans les établissements publics et les sorties scolaires.
+      - Marine Le Pen a rappelé que le référendum sur les idéologies islamistes ne serait pas organisé immédiatement, mais après un premier référendum constitutionnel lié à son programme sur l'immigration.
+      - Marine Le Pen relance sa proposition d'interdiction du voile dans l'espace public et promet, en cas d'élection en 2027, un référendum pouvant déboucher sur une sanction pénale.
+      - Marine Le Pen a affirmé qu'elle proposerait un référendum pour lutter contre les idéologies islamistes et l'interdiction progressive du voile dans les universités, les sorties scolaires, les fédérations sportives et les bâtiments publics.
+      - Depuis 2012, Marine Le Pen prône l’interdiction du voile dans l’espace public.
+      - Marine Le Pen privilégierait désormais la voie du référendum pour faire passer la réforme de l'interdiction du voile dans l'espace public afin d'éviter une censure du Conseil constitutionnel.
+    - label: politique sociale et accès aux prestations
+      summary: Marine Le Pen a critiqué les modalités actuelles d'accès à la sécurité sociale pour certains étrangers, qualifiant la situation de déraisonnable. Elle a également distingué la solidarité nationale de ce qu'elle considère comme un assistanat excessif, tout en déplorant l'insuffisance des mesures contre l'exclusion sociale. Enfin, elle a annoncé l'intégration d'une nouvelle thématique sociale dans son discours politique à Hénin-Beaumont.
+      facts:
+      - Lors de son discours du 1er mai, Marine Le Pen a opéré une distinction entre la 'nécessaire solidarité nationale' et un 'assistanat endémique, entretenu et encouragé'.
+      - Marine Le Pen a affirmé que les moyens déployés et les réponses apportées en matière de lutte contre l'exclusion sociale ne sont pas à la hauteur du drame national.
+      - Marine Le Pen prévoit de consacrer son discours de rentrée politique à Hénin-Beaumont à une thématique nouvelle dans le domaine social.
+      - Marine Le Pen a dénoncé une « folie » qui ne « peut plus durer » concernant l'accès à la sécurité sociale par certains étrangers.
+    - label: relations avec le secteur économique et les chefs d'entreprise
+      summary: Marine Le Pen a déclaré que le Rassemblement National continuerait à avoir beaucoup de contacts avec les chefs d'entreprise après le premier débat présidentiel du jeudi 28 août 2026.
+      facts:
+      - Marine Le Pen a déclaré que le Rassemblement National 'continuera à avoir beaucoup de contacts avec les chefs d'entreprise' après le premier débat présidentiel.
+      - Marine Le Pen a déclaré que le Rassemblement National continuerait à avoir beaucoup de contacts avec les chefs d'entreprise après le premier débat présidentiel du jeudi 28 août 2026.
+    - label: aide à mourir et bioéthique
+      summary: Marine Le Pen avait déclaré en mai 2025 qu'elle ne voterait pas la loi sur l'aide à mourir 'à titre personnel'.
+      facts:
+      - Marine Le Pen avait déclaré en mai 2025 qu'elle ne voterait pas la loi sur l'aide à mourir 'à titre personnel'.
+    expect: NEW
+  - name: prod_tondelier_police_violence_new
+    new_fact: Marine Tondelier a affirmé qu'il existe des violences systémiques dans la police, s'appuyant sur les documents du Défenseur des droits et des associations.
+    candidates:
+    - label: Violences sexistes et sexuelles et protection des mineurs
+      summary: Marine Tondelier a critiqué l'incapacité du système politico-judiciaire à protéger les enfants et les victimes de violences sexuelles, notamment dans le contexte de l'affaire Lyhanna. Elle a appelé à l'adoption d'une loi intégrale et a réclamé la démission de Gérald Darmanin. Par ailleurs, elle a exprimé des réserves sur l'efficacité de la castration chimique seule, préconisant un accompagnement axé sur la santé mentale.
+      facts:
+      - Marine Tondelier a dénoncé le système politico-judiciaire comme étant incapable de gérer les violences sexistes et sexuelles.
+      - Marine Tondelier a réclamé la démission de Gérald Darmanin ainsi que l'adoption d'une loi intégrale contre les violences sexuelles et sexistes (VSS) suite à l'affaire Lyhanna.
+      - Marine Tondelier a proposé que la France s'inspire du modèle belge en créant des centres de prise en charge d'urgence des violences sexuelles, gratuits, accessibles 24h/24 et 7j/7 sur tout le territoire.
+      - Marine Tondelier a appelé les responsables politiques à défendre la loi intégrale contre les violences sexistes et sexuelles demandée par la Fondation des femmes.
+      - Marine Tondelier a affirmé qu'elle serait présente tous les lundis soirs sans relâche pour soutenir les femmes et les enfants victimes de violences sexuelles.
+      - Marine Tondelier a accusé les politiques en responsabilité de se défausser de leurs responsabilités sur les magistrats dans le cadre de l'affaire Lyhanna.
+    - label: Rassemblement National et port du voile
+      summary: Marine Tondelier a critiqué une proposition du Rassemblement National concernant le port du voile, la qualifiant d'islamophobe. Elle a également exprimé le souhait que les forces de l'ordre ne sanctionnent pas les femmes portant le voile dans l'espace public.
+      facts:
+      - Marine Tondelier a déclaré espérer que si des consignes politiques précises sont données, les policiers ne verbaliseront pas les femmes portant le voile dans l'espace public.
+      - Marine Tondelier a dénoncé la proposition du Rassemblement National concernant le port du voile, la qualifiant d'idée islamophobe et de rupture avec la laïcité.
+    - label: Critiques de la gouvernance et du système politique français
+      summary: Elle a dénoncé un système politique jugé trop masculin et déconnecté des réalités citoyennes. Elle a également critiqué l'attitude de l'exécutif, comparant certains dirigeants à des figures du passé et déplorant un manque de partage du pouvoir. Enfin, elle a appelé à un changement de gouvernement face à la situation actuelle.
+      facts:
+      - Marine Tondelier a estimé que le système politique est trop masculin et trop déconnecté de la réalité des Français.
+      - Marine Tondelier a critiqué les « rois du cimetière », désignant les dirigeants qui préfèrent régner sur les ruines de leur camp plutôt que de partager le pouvoir.
+      - Marine Tondelier a critiqué Emmanuel Macron pour avoir publié un "publireportage" sur ses vacances dans Paris Match alors que les Français subissent un "été apocalyptique".
+      - Marine Tondelier a déclaré que changer de gouvernement est la première mesure indispensable.
+      - Marine Tondelier a commenté que Valéry Giscard d'Estaing lui faisait penser à Emmanuel Macron, notant des parallèles entre leur politique.
+    - label: Droits LGBTQIA+ et enjeux sociétaux
+      summary: Marine Tondelier a réitéré l'engagement de son mouvement pour les droits LGBTQIA+. Elle a également alerté sur l'influence d'une organisation américaine concernant les mouvements de contestation de ces droits en Afrique. Enfin, elle a souligné le lien entre les luttes antiracistes et les droits LGBTQIA+ lors d'un événement culturel.
+      facts:
+      - Marine Tondelier a salué l'organisation de la Global Black Pride par Marame Kane et a affirmé que les luttes antiracistes et LGBTQIA+ sont indissociables.
+      - Marine Tondelier a affirmé que les Écologistes vont continuer de mener la bataille pour les droits LGBT.
+      - Marine Tondelier a alerté sur le fait qu'une organisation américaine, MassResistance, aurait appuyé les mouvements opposés aux droits LGBTQIA+ dans plusieurs pays d'Afrique.
+    - label: discriminations
+      summary: Marine Tondelier a indiqué que son parti sortira cet automne un plan de lutte contre toutes les discriminations dans le cadre de l'élection présidentielle.
+      facts:
+      - Marine Tondelier a indiqué que son parti sortira cet automne un plan de lutte contre toutes les discriminations dans le cadre de l'élection présidentielle.
+    - label: Relations avec les organisations agricoles
+      summary: Marine Tondelier a exprimé son mécontentement suite à des propos injurieux reçus de la part de responsables de la FDSEA. Elle a réclamé des excuses publiques de la part du président de la FDSEA de Lozère ainsi que de celui de l'Oise. Elle a également indiqué son intention d'engager des poursuites judiciaires si ces excuses ne sont pas présentées.
+      facts:
+      - Marine Tondelier a exigé des excuses publiques de la part de la FNSEA après avoir été la cible d'injures sexistes, sous peine d'engager des poursuites judiciaires.
+      - Marine Tondelier a exigé des excuses publiques après avoir été insultée par un responsable syndical et a menacé de l'auteur de poursuites judiciaires.
+      - Marine Tondelier a exigé des excuses publiques de la part d'un responsable syndical de la FNSEA après avoir été insultée sur Facebook, menaçant de poursuites judiciaires.
+      - Marine Tondelier a exigé des excuses publiques de la part d'un responsable de la FDSEA de l'Oise après avoir été insultée de « grosse salope » sur Facebook.
+      - Marine Tondelier a exigé des excuses publiques de la part du président de la FDSEA de l'Oise et a indiqué qu'en l'absence de celles-ci, elle engagerait des poursuites judiciaires.
+      - Marine Tondelier a déclaré attendre des excuses publiques de la part du président de la FDSEA de Lozère après avoir été insultée.
+    - label: Gestion des incendies et moyens de secours
+      summary: Marine Tondelier critique l'impréparation de l'État et le manque de moyens aériens, notamment concernant le renouvellement des Canadairs. Elle dénonce l'annulation de certains projets de sécurité et réclame des ressources accrues pour les pompiers ainsi qu'une réunion de crise transpartisane. Elle a également adapté son programme politique pour intégrer ces enjeux liés aux feux de forêt historiques.
+      facts:
+      - Marine Tondelier a réclamé une réunion de crise transpartisane et la programmation en procédure d'urgence de la loi pour améliorer les conditions d'engagement des pompiers.
+      - Marine Tondelier a demandé que la loi faisant suite au Beauvau de la sécurité civile soit programmée en procédure d'urgence à la rentrée pour améliorer les conditions d'engagement des pompiers.
+      - Marine Tondelier a dénoncé la responsabilité de l'État dans l'impréparation face aux incendies actuels.
+      - Marine Tondelier a annoncé qu'elle serait sur le plateau de Franceinfo radio à 17h45 pour parler de la situation des incendies.
+      - Marine Tondelier a demandé au gouvernement d'organiser une réunion de crise en urgence avec les chefs de partis et les chefs de groupes parlementaires pour faire face aux incendies.
+      - Marine Tondelier a affirmé que le gouvernement ne donne pas aux pompiers les moyens essentiels qu'ils réclament, notamment des tenues sans PFAS et des cagoules.
+    - label: philosophie de l'action publique
+      summary: Marine Tondelier a affirmé vouloir mener une « politique du sensible » qui place le lien, la santé, la vulnérabilité et l'attention aux autres au centre de l'action publique.
+      facts:
+      - Marine Tondelier a affirmé vouloir mener une « politique du sensible » qui place le lien, la santé, la vulnérabilité et l'attention aux autres au centre de l'action publique.
+    expect: NEW

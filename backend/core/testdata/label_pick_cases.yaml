@@ -1,0 +1,980 @@
+# Golden cases for the topic LABEL pass (pickTopicsByLabel): given a person's
+# existing topic labels only, the pass must include a fitting topic among its
+# picks (recall). Over-picking is acceptable: the assignment step decides.
+# Built 2026-09-17 from production facts that created a one-fact stance while
+# a fitting stance existed but was outside the embedding shortlist; `labels`
+# is the person's live label list minus the stance the fact created.
+#
+#   source .env; go test -v -run TestLabelPickGolden ./backend/core/
+cases:
+- name: mlp_eu_budget_framework
+  new_fact: Marine Le Pen a exigé que le gouvernement ne conclue pas d'accord avec Bruxelles sur le cadre financier pluriannuel 2028-2034, qu'il suspende la troisième Programmation pluriannuelle de l'énergie (PPE3) et qu'il gèle l'immigration jusqu'à l'élection présidentielle.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - Contribution de la France au budget de l'Union européenne
+  - Relations avec l'Union européenne et souveraineté nationale
+- name: mlp_purchasing_power_emergency
+  new_fact: Marine Le Pen a affirmé que le pouvoir d'achat des Français est en 'état d'urgence absolue' dans un post sur X le vendredi soir.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - Politique économique et souveraineté industrielle
+  - politique budgétaire et économie
+  - politique sociale et accès aux prestations
+- name: mlp_national_priority
+  new_fact: Marine Le Pen a présenté la « priorité nationale » comme un « droit naturel et juste », un « privilège » et une « mesure sociale » lors de son discours à Hénin-Beaumont le 13 septembre.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - politique migratoire
+  - politique sociale et accès aux prestations
+- name: retailleau_retention_centres
+  new_fact: Bruno Retailleau a proposé de mettre fin à la présence des associations dans les centres de rétention administrative (CRA).
+  labels:
+  - procédure législative de la loi sur le 1er-Mai
+  - violence contre les élus
+  - relations et positionnement politique du groupe
+  - conflit en Ukraine et droit international
+  - Candidature à l'élection présidentielle de 2027
+  - relations diplomatiques avec l'Algérie
+  - islamisme et radicalisme
+  - politique environnementale et transition écologique
+  - exécution des OQTF et gestion des flux migratoires
+  - fin de vie et euthanasie
+  - frais de scolarité et enseignement supérieur
+  - politique énergétique et climatique
+  - Politique éducative et réforme de l'enseignement
+  - politique pénale et réforme de la justice
+  - politique économique et sociale
+  - Laïcité et identité culturelle en France
+  - Politique migratoire et révision constitutionnelle
+  - outils de surveillance et sécurité publique
+  - violence et comportement social
+  - principe de précaution et révision constitutionnelle
+  - Souveraineté numérique et intelligence artificielle
+  - politique agricole
+  - Relation entre le droit national et le droit européen
+  - souveraineté alimentaire
+  - représentation médiatique
+  - relations entre la France et l'Union européenne
+  - gestion de l'eau et ressources hydriques
+  - administration et action gouvernementale
+  - Organisation de l'État et de l'administration française
+  - Vie privée et communications personnelles
+  - échanges avec des personnalités publiques
+  - Hommages et déclarations publiques
+  - Relations entre les acteurs politiques et l'identité nationale
+  - stabilité du gouvernement et crises politiques
+  - sécurité et contrôle des antécédents criminels
+  - droits LGBT et adoption
+  - droits LGBT et thérapies de conversion
+  - droits reproductifs et constitution
+  - liberté de la presse et droits des journalistes
+  - Politiques de sécurité et de lutte contre le narcotrafic
+  - synthèse des programmes politiques
+  - Évaluation du Rassemblement national et de ses dirigeants
+  - leadership et autorité politique
+  - relations diplomatiques et accords internationaux
+  - relations internationales et diplomatie
+  - politique démographique et natalité
+  - organisation de la défense et réserve citoyenne
+  - Évaluation du bilan de l'exécutif français
+  - politique espagnole
+  - politique climatique et adaptation thermique
+  - présences et interventions médiatiques
+  - Identité et intégration nationale
+  - intelligence artificielle
+  - Législation sur l'aide à mourir et la fin de vie
+  - sécurité et criminalité
+  - politique du logement
+  - Élections sénatoriales et activités politiques locales
+  - justice pénale et libertés publiques
+  - sécurité civile et gestion des risques
+  - politique de défense et budget de la défense
+  - réformes de l'immigration et de la justice pénale
+  - liens territoriaux et vie privée
+  - Politique de sécurité intérieure et relations avec les forces de l'ordre
+  - déplacements et rencontres associatives
+  - déplacements et présence publique
+  - projets de loi et actions législatives
+  - rôle et identité de l'Union européenne
+  - vie privée et événements personnels
+  - vie politique au sein des Républicains
+  - institutions parlementaires et équilibre des pouvoirs
+  - religion et convictions personnelles
+  - identité politique et idéologie
+  - bioéthique et procréation
+  - personnalité et traits de caractère
+  - modèles de société et structures sociales
+  - identité nationale et transmission des valeurs
+  - débat politique et échanges publics
+  - signes religieux dans l'espace public
+  - légalité des actes administratifs et décisions d'expulsion
+  - État de la démocratie et politique migratoire en France
+  - relations internationales et chefs d'État étrangers
+  - fiabilité des sondages et prévisions électorales
+  - identité et principes de la France
+  - activités politiques et meetings de rentrée
+  - Relations avec le Rassemblement National
+  - Relations et critiques des acteurs politiques
+  - fiscalité des carburants et certificats d'économie d'énergie
+  - éthique et communication politique
+  - régulation des plateformes numériques et protection des mineurs
+  expect_any_of:
+  - Politique migratoire et révision constitutionnelle
+- name: retailleau_putin_kgb
+  new_fact: Bruno Retailleau a déclaré que « Poutine, c'est le KGB » lors de son passage sur BFM Politique le 6 septembre 2026.
+  labels:
+  - procédure législative de la loi sur le 1er-Mai
+  - violence contre les élus
+  - relations et positionnement politique du groupe
+  - conflit en Ukraine et droit international
+  - Candidature à l'élection présidentielle de 2027
+  - relations diplomatiques avec l'Algérie
+  - islamisme et radicalisme
+  - politique environnementale et transition écologique
+  - exécution des OQTF et gestion des flux migratoires
+  - fin de vie et euthanasie
+  - frais de scolarité et enseignement supérieur
+  - politique énergétique et climatique
+  - Politique éducative et réforme de l'enseignement
+  - politique pénale et réforme de la justice
+  - politique économique et sociale
+  - Laïcité et identité culturelle en France
+  - Politique migratoire et révision constitutionnelle
+  - outils de surveillance et sécurité publique
+  - violence et comportement social
+  - principe de précaution et révision constitutionnelle
+  - Souveraineté numérique et intelligence artificielle
+  - politique agricole
+  - Relation entre le droit national et le droit européen
+  - souveraineté alimentaire
+  - représentation médiatique
+  - relations entre la France et l'Union européenne
+  - gestion de l'eau et ressources hydriques
+  - administration et action gouvernementale
+  - Organisation de l'État et de l'administration française
+  - Vie privée et communications personnelles
+  - échanges avec des personnalités publiques
+  - Hommages et déclarations publiques
+  - Relations entre les acteurs politiques et l'identité nationale
+  - stabilité du gouvernement et crises politiques
+  - sécurité et contrôle des antécédents criminels
+  - droits LGBT et adoption
+  - droits LGBT et thérapies de conversion
+  - droits reproductifs et constitution
+  - liberté de la presse et droits des journalistes
+  - Politiques de sécurité et de lutte contre le narcotrafic
+  - synthèse des programmes politiques
+  - Évaluation du Rassemblement national et de ses dirigeants
+  - leadership et autorité politique
+  - relations diplomatiques et accords internationaux
+  - relations internationales et diplomatie
+  - politique démographique et natalité
+  - organisation de la défense et réserve citoyenne
+  - Évaluation du bilan de l'exécutif français
+  - politique espagnole
+  - politique climatique et adaptation thermique
+  - présences et interventions médiatiques
+  - Identité et intégration nationale
+  - intelligence artificielle
+  - Législation sur l'aide à mourir et la fin de vie
+  - sécurité et criminalité
+  - politique du logement
+  - Élections sénatoriales et activités politiques locales
+  - justice pénale et libertés publiques
+  - sécurité civile et gestion des risques
+  - politique de défense et budget de la défense
+  - réformes de l'immigration et de la justice pénale
+  - liens territoriaux et vie privée
+  - Politique de sécurité intérieure et relations avec les forces de l'ordre
+  - déplacements et rencontres associatives
+  - déplacements et présence publique
+  - projets de loi et actions législatives
+  - rôle et identité de l'Union européenne
+  - vie privée et événements personnels
+  - vie politique au sein des Républicains
+  - institutions parlementaires et équilibre des pouvoirs
+  - religion et convictions personnelles
+  - identité politique et idéologie
+  - bioéthique et procréation
+  - personnalité et traits de caractère
+  - modèles de société et structures sociales
+  - identité nationale et transmission des valeurs
+  - débat politique et échanges publics
+  - signes religieux dans l'espace public
+  - légalité des actes administratifs et décisions d'expulsion
+  - État de la démocratie et politique migratoire en France
+  - fiabilité des sondages et prévisions électorales
+  - identité et principes de la France
+  - activités politiques et meetings de rentrée
+  - Relations avec le Rassemblement National
+  - Relations et critiques des acteurs politiques
+  - fiscalité des carburants et certificats d'économie d'énergie
+  - éthique et communication politique
+  - centres de rétention administrative et présence associative
+  - régulation des plateformes numériques et protection des mineurs
+  expect_any_of:
+  - conflit en Ukraine et droit international
+  - relations internationales et diplomatie
+  - relations diplomatiques et accords internationaux
+- name: mlp_fisheries
+  new_fact: Marine Le Pen a apporté son soutien aux comités régionaux des pêches du sud de la France face à la hausse des carburants et aux contraintes européennes.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - politique de la dette publique
+  expect_any_of:
+  - politique agricole et européenne
+- name: mlp_tobacco_tax
+  new_fact: Marine Le Pen a proposé le gel des taxes sur le tabac et la désindexation du prix sur l'inflation pour stopper l'escalade fiscale.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - politique fiscale et mesures d'imposition
+- name: mlp_maprimerenov
+  new_fact: Marine Le Pen a annoncé son intention de remplacer MaPrimeRénov’ par le dispositif 100 % Renov, incluant un prêt à taux zéro pour les travaux de rénovation.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - crédit et prêts immobiliers
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - politique du logement
+- name: mlp_mortgage_portability
+  new_fact: Marine Le Pen a promis de rendre obligatoire la portabilité des prêts immobiliers antérieurement souscrits avec des taux plus favorables.
+  labels:
+  - Réforme des retraites
+  - fiscalité de l'énergie et des carburants
+  - aides sociales et soutien aux ménages
+  - campagne présidentielle 2027
+  - Politique économique et souveraineté industrielle
+  - OTAN et commandement militaire
+  - relations avec l'Algérie et gestion des OQTF
+  - nominations et influence politique
+  - présomption d'innocence et état de droit
+  - Réactions aux interventions médiatiques et publiques
+  - zones à faibles émissions (ZFE)
+  - institutions et pouvoirs publics français
+  - politique sociale et accès aux prestations
+  - Relations et pratiques au sein de l'Assemblée nationale
+  - héritage et influence politique d'Emmanuel Macron
+  - Image de marque et communication politique
+  - Sécurité publique, ordre et gestion des crises
+  - Relation au football
+  - goûts et préférences personnelles
+  - conflits et échanges politiques
+  - élections présidentielles
+  - Gestion du patrimoine familial Montretout
+  - patrimoine et intérêts financiers
+  - politique agricole et européenne
+  - Contribution de la France au budget de l'Union européenne
+  - sécurité et protection des mineurs
+  - gendarmerie nationale
+  - Hommages et relations avec les figures politiques françaises
+  - sécurité numérique et cybersécurité
+  - programmes et stratégies politiques
+  - Fonctionnement et moyens de la justice française
+  - Responsabilité ministérielle et démission de Gérald Darmanin
+  - militaires et forces armées
+  - Statut institutionnel et autonomie de la Corse
+  - politique migratoire
+  - politique de l'énergie et des prix de l'électricité
+  - Politique étrangère et sécurité au Moyen-Orient
+  - coopération de défense et projets militaires
+  - Présence médiatique et communication
+  - organisation et rôles politiques
+  - politique monétaire et l'euro
+  - campagnes électorales et soutien politique
+  - corps électoral et droit de vote
+  - industrie minière et souveraineté industrielle
+  - élections législatives en République tchèque
+  - Positionnement des forces politiques européennes et nationales
+  - Relations avec l'Union européenne et souveraineté nationale
+  - technologies émergentes et intelligence artificielle
+  - politiques d'aménagement et d'infrastructures publiques
+  - politique climatique et environnementale
+  - Relations politiques et critiques institutionnelles
+  - responsabilité et comportement social
+  - secteurs d'activité et services publics en France
+  - Affaire des assistants parlementaires européens
+  - accès des candidats aux électeurs et sécurité des campagnes
+  - politique de l'immigration et de la justice
+  - relation avec les citoyens et identité politique
+  - Discours sur les idéologies et les menaces politiques
+  - désinformation et libertés publiques
+  - interdiction du voile dans l'espace public
+  - aide à mourir et bioéthique
+  - politique de dissuasion nucléaire
+  - relations internationales et politique américaine
+  - sécurité et menaces
+  - état de droit et politique en Hongrie
+  - Participation aux événements du Medef
+  - Lieux de villégiature et de ressourcement
+  - attentats et événements internationaux
+  - Financement de campagne et sources de fonds
+  - vie personnelle et relations familiales
+  - budget du patrimoine
+  - Droits des femmes et législations sociales
+  - politique de défense européenne
+  - stratégie politique et image de marque
+  - atteintes à la propriété privée
+  - philosophie politique et choix de société
+  - politique budgétaire et économie
+  - départs et démissions de personnalités politiques
+  - départ de François Durvye
+  - relations avec le secteur économique et les chefs d'entreprise
+  - relations avec les organisations syndicales
+  - inclusion et handicap
+  - marché du travail et emploi
+  - souveraineté territoriale et contentieux internationaux
+  - politique fiscale et mesures d'imposition
+  - conflit en Ukraine et relations avec la Russie
+  - bilan et performance des personnalités politiques
+  - visibilité et rôle des membres de la famille et des proches
+  - politique des retraites et réglementation du voile
+  - fiscalité du tabac
+  - activité des buralistes
+  - direction et gouvernance du Rassemblement national
+  - identité politique et idéologie
+  - organisation interne et personnel politique
+  - éducation et classements internationaux
+  - cadre financier de l'UE, politique énergétique et immigration
+  - pouvoir d'achat et niveau de vie
+  - sécurité des transports et des voyageurs
+  - politique du logement
+  - réglementations environnementales et de l'habitat
+  - rénovation de l'habitat et aides à la rénovation
+  - relations personnelles et sociales
+  - logement, rénovation et normes de l'habitat
+  - préférence nationale et identité
+  - secteur de la pêche et régulations européennes
+  - politique de la dette publique
+  expect_any_of:
+  - politique du logement

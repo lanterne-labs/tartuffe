@@ -293,40 +293,47 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 	}
 	defer rows.Close()
 
-	// Rows arrive grouped by stance (ordered), so we append fact-by-fact and
-	// start a new candidate whenever the stance ID changes. The ORDER BY in the
-	// query guarantees stance order and per-stance fact order.
-	var candidates []core.StanceCandidate
-	for rows.Next() {
-		var (
-			stanceID      int64
-			label, summ   string
-			factCount     int
-			factText      string
-			stanceMinDist float64
+	return scanStanceCandidates(rows, personID)
+}
+
+// StanceCandidatesByIDs returns the given stances of the person as topic
+// candidates in the same shape as ShortlistStancesByNearestFact (each with its
+// factsPerStance nearest active member facts, closest first), ordered by their
+// nearest member fact's distance to factEmbedding. Used to add the stances the
+// label pass picked to the embedding shortlist.
+func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int) ([]core.StanceCandidate, error) {
+	if len(stanceIDs) == 0 {
+		return nil, nil
+	}
+	query := `
+		WITH fd AS (
+			SELECT sd.id AS stance_id, sd.cluster_label, COALESCE(sd.summary, '') AS summary, sd.fact_count,
+			       f.fact_text, (f.embedding <-> $1) AS dist
+			FROM stance_documents sd
+			JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
+			JOIN facts f ON f.id = sdf.fact_id
+			WHERE sd.person_id = $2 AND sd.id = ANY($3)
+			  AND NOT EXISTS (
+			      SELECT 1 FROM fact_relations fr
+			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+			  )
+		),
+		ranked AS (
+			SELECT *,
+			       row_number() OVER (PARTITION BY stance_id ORDER BY dist) AS fact_rn,
+			       MIN(dist) OVER (PARTITION BY stance_id) AS stance_min_dist
+			FROM fd
 		)
-		if err := rows.Scan(&stanceID, &label, &summ, &factCount, &factText, &stanceMinDist); err != nil {
-			return nil, fmt.Errorf("scanning stance candidate for person %d: %w", personID, err)
-		}
-		if n := len(candidates); n == 0 || candidates[n-1].ID != stanceID {
-			candidates = append(candidates, core.StanceCandidate{
-				ID:          stanceID,
-				Label:       label,
-				Summary:     summ,
-				FactCount:   factCount,
-				NearestDist: stanceMinDist,
-				MemberFacts: []string{factText},
-			})
-		} else {
-			candidates[n-1].MemberFacts = append(candidates[n-1].MemberFacts, factText)
-		}
+		SELECT stance_id, cluster_label, summary, fact_count, fact_text, stance_min_dist
+		FROM ranked
+		WHERE fact_rn <= $4
+		ORDER BY stance_min_dist ASC, stance_id ASC, dist ASC`
+	rows, err := s.pool.Query(ctx, query, pgvector.NewVector(factEmbedding), personID, stanceIDs, factsPerStance)
+	if err != nil {
+		return nil, fmt.Errorf("querying stance candidates by id for person %d: %w", personID, err)
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating stance candidates for person %d: %w", personID, err)
-	}
-
-	return candidates, nil
+	defer rows.Close()
+	return scanStanceCandidates(rows, personID)
 }
 
 // GetFactsForStance retrieves all facts associated with a stance document.
@@ -644,4 +651,40 @@ func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID 
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// scanStanceCandidates builds candidates from rows ordered by stance then
+// member distance: a new candidate starts whenever the stance id changes.
+func scanStanceCandidates(rows pgx.Rows, personID int64) ([]core.StanceCandidate, error) {
+	var candidates []core.StanceCandidate
+	for rows.Next() {
+		var (
+			stanceID      int64
+			label, summ   string
+			factCount     int
+			factText      string
+			stanceMinDist float64
+		)
+		if err := rows.Scan(&stanceID, &label, &summ, &factCount, &factText, &stanceMinDist); err != nil {
+			return nil, fmt.Errorf("scanning stance candidate for person %d: %w", personID, err)
+		}
+		if n := len(candidates); n == 0 || candidates[n-1].ID != stanceID {
+			candidates = append(candidates, core.StanceCandidate{
+				ID:          stanceID,
+				Label:       label,
+				Summary:     summ,
+				FactCount:   factCount,
+				NearestDist: stanceMinDist,
+				MemberFacts: []string{factText},
+			})
+		} else {
+			candidates[n-1].MemberFacts = append(candidates[n-1].MemberFacts, factText)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating stance candidates for person %d: %w", personID, err)
+	}
+
+	return candidates, nil
 }

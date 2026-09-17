@@ -27,6 +27,9 @@ type StanceStorer interface {
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
 	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error)
+	// StanceCandidatesByIDs returns the given stances as candidates in the same
+	// shape as ShortlistStancesByNearestFact, ordered by nearest member fact.
+	StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int) ([]StanceCandidate, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	// GetUnsummarizedFactsForStance returns the facts whose membership was added
 	// after the stance's last metadata refresh (all facts if never refreshed),
@@ -1267,11 +1270,30 @@ func truncate(s string, maxLen int) string {
 func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32) (*topicAssignmentDecision, error) {
 	var candidates []StanceCandidate
 	if len(factEmbedding) > 0 && len(stances) > 0 {
-		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, 8, 6)
+		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, shortlistTopK, shortlistFactsPerStance)
 		if err != nil {
 			return nil, fmt.Errorf("shortlisting stances by nearest fact: %w", err)
 		}
 		candidates = shortlisted
+
+		// The embedding shortlist ranks stances by their nearest member fact,
+		// in the stance-blind topic-slug space; for a person with more stances
+		// than the shortlist holds, a fitting stance is often not in it at all
+		// (measured on prod: 7 of 36 singleton creations had the right home
+		// outside the top 8, and ranking by centroid did no better). The label
+		// pass reads the person's labels instead and adds the ones it picks.
+		if len(stances) > shortlistTopK {
+			picked, err := sm.pickTopicsByLabel(ctx, factText, stances)
+			if err != nil {
+				log.Warn().Err(err).Int64("person_id", personID).Msg("Topic label pass failed; using the embedding shortlist alone")
+			} else if extra := excludeIDs(picked, candidates); len(extra) > 0 {
+				added, err := sm.storer.StanceCandidatesByIDs(ctx, personID, factEmbedding, extra, shortlistFactsPerStance)
+				if err != nil {
+					return nil, fmt.Errorf("loading label-picked stance candidates: %w", err)
+				}
+				candidates = append(candidates, added...)
+			}
+		}
 	}
 
 	// Fallback: no embedding, no stances, or empty shortlist. Build candidates
@@ -1292,11 +1314,85 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 	return sm.assignTopicFromCandidates(ctx, factText, candidates)
 }
 
-// assignTopicFromCandidates is the pure (LLM-only, no storage) core of topic
-// assignment. It lists each candidate with its label, summary, and nearest
-// member facts as concrete evidence, asks the LLM to pick a candidate (1..N) or
-// declare a new topic (0), and resolves the chosen 1-based index back to the
-// candidate's stance ID. An out-of-range or zero index means a new topic.
+// Shortlist sizes for topic assignment: the embedding shortlist's length and
+// the member facts shown per candidate, and how many stances the label pass
+// may add on top.
+const (
+	shortlistTopK           = 8
+	shortlistFactsPerStance = 6
+	labelPickMax            = 3
+)
+
+// excludeIDs returns the ids not already among the candidates, in order.
+func excludeIDs(ids []int64, candidates []StanceCandidate) []int64 {
+	present := make(map[int64]bool, len(candidates))
+	for _, c := range candidates {
+		present[c.ID] = true
+	}
+	var out []int64
+	for _, id := range ids {
+		if !present[id] {
+			present[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// topicLabelPickResponse is the JSON the label pass returns.
+type topicLabelPickResponse struct {
+	Reasoning string `json:"reasoning"`
+	Indexes   []int  `json:"topic_indexes"` // 1-indexed into the label list; empty when none could fit
+}
+
+// pickTopicsByLabel asks which of the person's existing topics, by label
+// alone, could house the fact, and returns up to labelPickMax stance ids in
+// the order given. It is a recall pass: it may over-pick, the assignment
+// prompt decides with the member facts in view. Rules first, data last, so
+// the prefix is cached across persons.
+func (sm *StanceManager) pickTopicsByLabel(ctx context.Context, factText string, stances []StanceDocument) ([]int64, error) {
+	var labels strings.Builder
+	for i, s := range stances {
+		fmt.Fprintf(&labels, "%d. %s\n", i+1, s.ClusterLabel)
+	}
+	prompt := fmt.Sprintf(`You are a topic classifier for political facts. A person has the numbered list of existing topics below (labels only). Given a NEW FACT about that person, list every topic that could house it: the subject area the fact belongs to, or a broader area that contains it. This is a recall pass — a later step sees the topics' facts and decides — so include a topic when the fact is plausibly within its area, and return an empty list only when no listed topic is in the same domain.
+
+RULES:
+- A topic is a NEUTRAL SUBJECT AREA: "politique du logement" houses every housing measure (HLM rules, renovation aid, mortgage rules), whatever the person's position.
+- A fact about one measure belongs to the topic of its policy domain even when the label names the domain generically ("politique fiscale" houses a tobacco tax freeze; "politique migratoire" houses retention-centre rules; "politique agricole" houses support to fisheries committees).
+- Classify the CONTENT of the statement, never its venue or occasion: "lors de son passage sur BFM", "dans un meeting", "sur X" say where it was said, not what it is about. A remark on a foreign leader made on TV is foreign policy, not media relations.
+- A stated principle, right or value applied to a policy field belongs to that field's topic: "la priorité nationale est un droit naturel" is about immigration and access to social benefits, not about political philosophy.
+- Prefer the most specific topic that contains the fact; also list a broader one when both fit.
+- Return at most %d topics, most likely first. Never invent a topic that is not in the list.
+
+EXISTING TOPICS:
+%sNEW FACT:
+%s
+Return ONLY valid JSON:
+{"reasoning": "one sentence", "topic_indexes": [ ... ]}`, labelPickMax, labels.String(), factText)
+	const sys = "You are a political fact topic classifier. Return only valid JSON."
+	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.0, 200, false)
+	if err != nil {
+		return nil, fmt.Errorf("topic label pass: %w", err)
+	}
+	resp, err := llm.ParseJSONResponse[topicLabelPickResponse](content)
+	if err != nil {
+		return nil, fmt.Errorf("topic label pass: parsing response %q: %w", truncate(content, 200), err)
+	}
+	var ids []int64
+	for _, idx := range resp.Indexes {
+		if idx < 1 || idx > len(stances) {
+			log.Warn().Int("index", idx).Int("labels", len(stances)).Msg("Topic label pass returned an index outside the list; ignoring it")
+			continue
+		}
+		ids = append(ids, stances[idx-1].ID)
+		if len(ids) == labelPickMax {
+			break
+		}
+	}
+	return ids, nil
+}
+
 func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText string, candidates []StanceCandidate) (*topicAssignmentDecision, error) {
 	var topicsBuilder strings.Builder
 	if len(candidates) == 0 {
@@ -1315,7 +1411,7 @@ func (sm *StanceManager) assignTopicFromCandidates(ctx context.Context, factText
 
 ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-buckets AND over-fragmentation into near-duplicate topics):
 - A topic is a NEUTRAL SUBJECT AREA — the underlying issue, not a position on it. "Iran policy" covers BOTH support for and opposition to Iran-related actions; "politique des dépenses publiques" covers BOTH defending public services AND advocating austerity. The same topic label must work whether the person is pro, anti, mixed, or evolving on the subject.
-- Each candidate shows its CLOSEST existing facts. Assign the new fact to a candidate ONLY if it covers the SAME SUBJECT as those facts — e.g. the same named instrument (article 49.3), the same law, case, person, or policy area. Concrete matching member facts are STRONG evidence; a vague label match is NOT enough.
+- Each candidate shows its CLOSEST existing facts. They show WHICH DOMAIN the candidate covers — the new fact does not have to match them literally. Assign the new fact to a candidate when it is about the SAME SUBJECT AREA as those facts: the same named instrument (article 49.3), the same law, case or person, OR another measure within the same policy domain. Matching member facts are STRONG evidence; a vague resemblance to a label that names a DIFFERENT domain is not.
 - ONE SUBJECT per stance. Never assign to (or create) a stance whose label glues together MULTIPLE distinct domains. BAD: "sécurité, justice et protection des mineurs" (three different subjects). If the new fact doesn't clearly belong to ONE single-subject candidate, create a NEW topic rather than dumping it into a broad multi-subject bucket.
 - Assign the fact to an existing topic if it shares the SAME subject area, regardless of whether the new fact's direction agrees or disagrees with the existing topic's facts. Different events / different aspects / different positions on the same subject all belong together.
 - **Polarity within a subject is CONTRADICTION MATERIAL, not a reason to fragment.** If the new fact opposes existing facts in a topic on the same subject area, assign it to that topic anyway. The internal tension is precisely what the contradiction detector exists to surface downstream. NEVER create a new topic just because the new fact's direction differs from the existing facts.
@@ -1329,7 +1425,11 @@ ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-bucket
   * "interpellations par les forces de l'ordre" + "délinquance et violence urbaine" + "effectifs de la police" → ONE topic ("sécurité intérieure et forces de l'ordre"), not three.
   * "dépistage de stupéfiants des agents publics" + "prévention de la consommation de drogue" → ONE topic ("lutte contre les stupéfiants"), not two.
   * "aides sur le prix des carburants" + "soutien aux ménages face à la crise énergétique" → ONE topic ("aides énergie et carburants"), not two.
+  * new fact "remplacer MaPrimeRénov' par un nouveau dispositif de rénovation" + existing "politique du logement" (HLM, loi SRU, accès au logement) → ASSIGN to "politique du logement": a different housing measure is the same domain.
+  * new fact "obliger les plateformes à supprimer les fonctions d'addiction" + existing "souveraineté numérique et intelligence artificielle" → ASSIGN: platform regulation is another facet of digital policy.
+  * new fact "les sondages à huit mois de l'élection ne disent rien" + existing "candidature à l'élection présidentielle de 2027" → ASSIGN: a remark on the polls of the race the person runs in belongs to the candidacy topic.
   Reserve a NEW topic for a genuinely different DOMAIN, never for a different facet, event, or wording within the same domain. When an existing focused candidate is a reasonable home, USE IT.
+- A fact that touches SEVERAL subjects (e.g. "contre la TVA sociale et contre l'entrée de l'Ukraine dans l'UE") is assigned by its MAIN subject — the one its first clause is about — to the matching single-subject candidate. NEVER create a multi-subject topic for it.
 
 `+stanceLabelRules+`
 - **LANGUAGE:** Write `+"`new_topic_label`"+` in the same language as the NEW FACT provided. Do not translate to English unless the fact itself is in English. If facts span multiple languages, use French.
