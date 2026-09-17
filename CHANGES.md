@@ -2077,3 +2077,18 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   retrievable to prove it); the gate now retries once. Lesson: when a judge answers correctly
   on replay but the rows coexist in prod, look at candidate recall and at the error path
   before touching the prompt.
+
+## Extractor: non-position facts rejected, one claim per fact (2026-09-17)
+
+- Facts like "a souhaité un joyeux anniversaire à Jordan", "est décrite comme portant une
+  vision plus sociale", "a organisé son meeting de rentrée", "a nommé Y porte-parole", "a
+  déclaré avoir grandi dans un quartier populaire", "chacun prend ses responsabilités" were
+  extracted and each spawned a junk stance. The reject rules already covered every one of
+  these shapes as prose; what was missing was worked ❌ examples, which is what this model
+  follows. Added one line of examples per shape (wishes/thanks/tastes, campaign logistics,
+  biography, empty formulas, narrated exchanges, passive-voice portraits).
+- One claim per fact: a sentence carrying two positions came out as one fact glued with
+  "et" (3/3 runs), which no downstream step can dedupe, assign or contradict cleanly. A rule
+  in the valid-fact section did nothing (0/3), a self-consistency bullet got 1/3, a worked
+  JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
+  pins both (majority of 3, like the scope test); all five extractor goldens green twice.

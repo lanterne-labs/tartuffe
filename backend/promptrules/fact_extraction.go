@@ -39,6 +39,8 @@ Court rulings, official votes, detailed investigative reports with evidence. The
 
 ⚠️ NOT Type 2: An opinion without evidence is NOT authoritative. "Critics say X is corrupt" or "Analysts say X will struggle" are third-party opinions, not verifiable outcomes.
 
+**ONE claim per fact.** A fact asserts exactly one position, commitment, claim or outcome, so that it can be matched and contradicted on its own. A sentence carrying several ("X soutiendrait un mouvement social contre la vie chère ET propose un bouclier social", "X est contre la TVA sociale ET contre l'entrée de l'Ukraine dans l'UE") yields one fact PER claim, each with its own quote span. Never glue distinct claims with "et"; a list of measures is a list of facts.
+
 ## REJECT Rules (if ANY rule applies, do NOT extract the fact)
 
 **1. Not about the entity or their organization**
@@ -77,12 +79,13 @@ The third-party-action rejection above applies ONLY to FORECASTS (X stated/predi
 
 **4. Not contradictable**
 If a statement can NEVER lead to a self-contradiction, reject it. This includes:
-- Hopes, wishes, preferences, feelings, trust
-- Travel, logistics, sightings
+- Hopes, wishes, preferences, feelings, trust, thanks, greetings. ❌ "X a souhaité un joyeux anniversaire à Y" ❌ "X a remercié Y pour l'organisation de l'événement" ❌ "X a indiqué apprécier les chansons de Z"
+- Travel, logistics, sightings, campaign logistics and organisation: holding a meeting, naming a spokesperson, publishing a book, appearing on a programme. ❌ "X a organisé son meeting de rentrée à Nogent-sur-Marne" ❌ "X a nommé Y porte-parole de sa campagne" ❌ "X publie un livre-programme jeudi" — the CONTENT of what X said there may be a fact; the event itself is not.
 - PASSIVE events the entity did not choose or act on: being invited/scheduled/expected, an event happening to or around them, a date being set. ❌ "X est invité à un banquet le 13 juin" ❌ "L'issue de l'appel de X sera connue le 7 juillet" — these are not the entity's statement or action.
 - Courtroom behavior/procedure (listening, appearing, being called to the stand)
-- Pure biographical facts: birth date, party-founding year, role titles, lifetime events (retirement, marriage)
-- Personal purchases, truisms, reactions to scheduling
+- Pure biographical facts: birth date, party-founding year, role titles, lifetime events (retirement, marriage), childhood and personal background. ❌ "X a déclaré avoir grandi dans un quartier populaire" ❌ "X a décrit son engagement bénévole comme formateur"
+- Personal purchases, truisms, reactions to scheduling, empty formulas. ❌ "X a déclaré que chacun prend ses responsabilités"
+- Narration of an exchange without its substance: that X "s'est expliqué", "a répondu", "a réagi" to someone is not a fact; WHAT X asserted in the answer may be one. ❌ "X s'est expliquée face au journaliste après avoir été critiquée"
 
 ⚠️ DO NOT reject under rule 4 (these LOOK biographical/historical but ARE contradictable):
 - A specific recorded legislative vote — Type 2 outcome. KEEP even when from a prior parliament. ✅ "X voted AGAINST the Sondervermögen in the previous Bundestag" → KEEP.
@@ -93,6 +96,7 @@ If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 A journalist's interpretation or narrative framing is NOT a valid fact. However, a journalist reporting a concrete, documented finding WITH evidence IS valid (Type 2).
 - ❌ "X a été séduite par Trump" — journalist's narrative, no evidence
 - ❌ "X adopte un ton plus pro-marché" — subjective assessment
+- ❌ "X est décrite comme portant une vision plus sociale de l'extrême droite" — a portrait in the passive voice ("est décrit(e) comme", "apparaît comme", "incarne") is the journalist's, never X's own statement
 - ✅ "X a déclaré soutenir Donald Trump" — X's own statement
 - ✅ "An investigation revealed X received €50,000 from Y" — documented finding with specifics
 
@@ -131,6 +135,7 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - Is the subject a political actor, or is the fact itself political (rule 8)? If neither, DROP it.
 - Is the subject_entity the one who actually MADE the statement or PERFORMED the action? A measurement or event ABOUT the entity is not the entity's own fact.
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
+- ONE CLAIM — does the normalized_fact assert more than one position, promise, measure or outcome (typically two clauses joined by "et"/"and", or a list of measures)? Then SPLIT it into one fact per claim; each fact quotes its own clause of the source sentence (a quote may be a sub-span of one sentence). "X soutiendrait un mouvement social contre la vie chère, et a proposé un bouclier social" → TWO facts.
 - Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.
 - GROUNDING — do NOT over-specify: every specific in normalized_fact (a date, a named body like "GIEC"/IPCC, a figure like "30 milliards", a place like "le Salvador", a motive like "pour déstabiliser l'Europe", an outlet/byline like "Politico") MUST appear in original_quote. If the quote is generic ("les scientifiques"), keep the fact generic — do NOT swap in a specific name the article didn't attribute. If the quote carries no date, add no date. Strip any detail the quote doesn't prove, or drop the fact. NEVER import a detail from a different sentence or source.
 - ATTRIBUTION — the subject must be the person who actually spoke or acted. A statement by an aide, deputy, spokesperson, "le bras droit de X", "un proche de X", "l'entourage de X", or a party colleague is NOT X's statement: attribute it to the actual speaker BY NAME — provided that speaker is themselves a political actor in scope (the scope rule below still applies: a named coach, singer, or CEO speaking outside politics is still REJECTED) — or DROP the fact if that speaker is not named. A descriptive role is never a valid subject_entity — never emit a subject like "le bras droit de Jean-Luc Mélenchon"; an unnamed speaker means no fact. A social-media handle (e.g. "@eciotti") names exactly one person — the one whose name the handle spells (@eciotti = Éric Ciotti). Resolve it ONLY from the handle's letters, NEVER from surrounding context or from what you know about the real world: "mon ami @eciotti, aujourd'hui maire de Nice" is a fact about Ciotti even if you believe someone else is mayor of Nice. If you cannot name the handle's owner from the handle itself, keep the handle text verbatim. NEVER substitute a different politician's name for a handle or an unnamed speaker.
@@ -139,7 +144,7 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - If you catch an internal contradiction, re-read the original_quote carefully and rewrite.
 
 ## Consolidation
-- MERGE facts expressing the same core claim in different words. Keep ONLY the most specific version.
+- MERGE facts expressing the same core claim in different words. Keep ONLY the most specific version. Never merge DISTINCT claims into one fact (see ONE claim per fact).
 - Typical article yields 2-5 valid facts. If you have more than 6, re-check against the rules.
 - Extract in the entity's NATIVE LANGUAGE. Never duplicate across languages.
 - Quality over quantity: fewer correct facts is ALWAYS better than including invalid ones.
@@ -206,6 +211,32 @@ Example (French source — note 'lang' = "fr", NO translation field, 'article_pu
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
     "involved_people": [],
     "article_published_at": "2026-01-14T09:00:00+01:00"
+  }
+]
+
+Example of ONE sentence carrying TWO claims — "Marine Le Pen a promis de baisser la TVA sur l'énergie à 5,5 %% et de rendre obligatoire la portabilité des prêts immobiliers" — extracted as TWO facts, each quoting its own clause:
+[
+  {
+    "reasoning": "Type 1: own promise, first clause. Verb: PROMISED.",
+    "subject_entity": "Marine Le Pen",
+    "subject_entity_type": "human",
+    "normalized_fact": "Marine Le Pen a promis de baisser la TVA sur l'énergie à 5,5 %%.",
+    "lang": "fr",
+    "canonical_verb": "PROMISED",
+    "embedding_text": "baisse-tva énergie",
+    "original_quote": "a promis de baisser la TVA sur l'énergie à 5,5 %%",
+    "involved_people": []
+  },
+  {
+    "reasoning": "Type 1: own promise, second clause of the same sentence. Verb: PROMISED.",
+    "subject_entity": "Marine Le Pen",
+    "subject_entity_type": "human",
+    "normalized_fact": "Marine Le Pen a promis de rendre obligatoire la portabilité des prêts immobiliers.",
+    "lang": "fr",
+    "canonical_verb": "PROMISED",
+    "embedding_text": "portabilité prêts-immobiliers",
+    "original_quote": "de rendre obligatoire la portabilité des prêts immobiliers",
+    "involved_people": []
   }
 ]
 

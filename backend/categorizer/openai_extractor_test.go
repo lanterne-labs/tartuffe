@@ -395,3 +395,86 @@ Didier Deschamps a annoncé la composition de l'équipe de France pour le match 
 		t.Errorf("a Darmanin fact survived the scope rule in only %d of %d runs", darmaninRuns, samples)
 	}
 }
+
+// TestRemoteLLMExtractor_NonPositionRejection pins the reject rules on the
+// non-position shapes that leaked into prod as facts and spawned junk stances
+// (2026-09-17): birthday wishes, thanks, personal tastes, campaign logistics
+// (meeting held, spokesperson named, book published), biography, empty
+// formulas, narrated exchanges and passive-voice portraits. The two real
+// positions in the same text must survive. Majority of 3 samples, like the
+// scope rule (extraction is one stochastic sample in prod too).
+func TestRemoteLLMExtractor_NonPositionRejection(t *testing.T) {
+	loadEnv(t)
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		t.Skip("Skipping non-position rejection test: OPEN_AI_KEY not set.")
+	}
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Marine Tondelier en campagne
+
+Marine Tondelier a souhaité un joyeux anniversaire à Jordan Bardella sur X, avant de remercier Marame Kane pour l'organisation de la Global Black Pride à Paris.
+
+Invitée de BFMTV, elle a indiqué apprécier les chansons « J'irai où tu iras » et « Prière païenne » pour mettre l'ambiance dans ses réunions. Elle s'est expliquée face à Benjamin Duhamel après avoir été critiquée pour ne pas avoir cité un ouvrage de Pompidou.
+
+Sur le fond, Marine Tondelier a affirmé qu'elle soutiendrait un éventuel mouvement social contre la vie chère, et a proposé un bouclier social et environnemental incluant des mesures pour le logement abordable.
+
+La candidate, décrite par ses proches comme portant une vision plus sociale de l'écologie, a organisé son meeting de rentrée à Nantes et a nommé la conseillère de Paris Rania Kissi comme porte-parole de sa campagne. Elle publie jeudi un livre-programme aux éditions du Seuil.
+
+Elle a déclaré avoir grandi à Hénin-Beaumont dans un quartier populaire, et a conclu que « chacun prend ses responsabilités ».`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/non-position",
+		Title:   "Marine Tondelier en campagne",
+		Content: mockText,
+	}
+	junkMarkers := []string{"anniversaire", "remerci", "chanson", "expliqu", "décrite", "meeting de rentrée", "porte-parole", "livre", "grandi", "responsabilit"}
+
+	ctx := context.Background()
+	const samples = 3
+	var leakRuns, positionsRuns int
+	for run := 1; run <= samples; run++ {
+		facts, err := extractorClient.ExtractFacts(ctx, "Marine Tondelier", mockContent)
+		if err != nil {
+			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
+		}
+		leaked, social, shield, split := false, false, false, true
+		for i, f := range facts {
+			text := strings.ToLower(f.NormalizedFactText)
+			t.Logf("  run %d [%d] %s", run, i+1, f.NormalizedFactText)
+			for _, m := range junkMarkers {
+				if strings.Contains(text, m) {
+					t.Logf("  run %d: non-position fact leaked (%q): %q", run, m, f.NormalizedFactText)
+					leaked = true
+				}
+			}
+			isSocial := strings.Contains(text, "mouvement social") || strings.Contains(text, "vie chère")
+			isShield := strings.Contains(text, "bouclier")
+			if isSocial {
+				social = true
+			}
+			if isShield {
+				shield = true
+			}
+			if isSocial && isShield {
+				// One claim per fact: the two positions must not be glued together.
+				t.Logf("  run %d: compound fact (two claims in one): %q", run, f.NormalizedFactText)
+				split = false
+			}
+		}
+		if leaked {
+			leakRuns++
+		}
+		if social && shield && split {
+			positionsRuns++
+		}
+	}
+	if leakRuns > samples/2 {
+		t.Errorf("non-position facts leaked in %d of %d runs — the reject rules are not holding", leakRuns, samples)
+	}
+	if positionsRuns <= samples/2 {
+		t.Errorf("both real positions survived as separate facts in only %d of %d runs", positionsRuns, samples)
+	}
+}
