@@ -205,10 +205,11 @@ func runQueueProcess(cmd *cobra.Command, args []string) error {
 	log.Info().Int("queue_size", len(targets)).Strs("plugins", pluginNames).Msg("Starting queue processing")
 
 	opts := plugins.IngestOptions{Since: since, WindowDays: windowDays, Force: force, DryRun: dryRun}
-	stats, stepErrs, err := pipeline.Ingest(ctx, deps.New(storer), targets, opts, pluginNames)
+	ingest, stepErrs, err := pipeline.Ingest(ctx, deps.New(storer), targets, opts, pluginNames)
 	if err != nil {
 		return err
 	}
+	stats := ingest.Total
 
 	fmt.Printf("\nProcessing complete:\n")
 	fmt.Printf("  Plugins: %s\n", strings.Join(pluginNames, ", "))

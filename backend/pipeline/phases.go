@@ -47,14 +47,21 @@ func Names() []string {
 	return out
 }
 
+// IngestResult is the outcome of the ingest phase: the stats summed over the
+// plugins that ran, and each plugin's own.
+type IngestResult struct {
+	Total    plugins.IngestStats
+	ByPlugin map[string]plugins.IngestStats
+}
+
 // Ingest runs the ingest phase of every selected plugin that has one and
-// returns the aggregated stats plus the per-plugin errors.
-func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) (plugins.IngestStats, StepErrors, error) {
+// returns the stats plus the per-plugin errors.
+func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) (IngestResult, StepErrors, error) {
 	sel, err := selected(only)
 	if err != nil {
-		return plugins.IngestStats{}, nil, err
+		return IngestResult{}, nil, err
 	}
-	var total plugins.IngestStats
+	res := IngestResult{ByPlugin: map[string]plugins.IngestStats{}}
 	errs := StepErrors{}
 	for _, p := range sel {
 		ing, ok := p.(plugins.Ingester)
@@ -63,7 +70,8 @@ func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts pl
 		}
 		start := time.Now()
 		stats, err := ing.Ingest(ctx, d, targets, opts)
-		total.Add(stats)
+		res.Total.Add(stats)
+		res.ByPlugin[p.Name()] = stats
 		if err != nil {
 			errs[p.Name()] = err
 			log.Error().Err(err).Str("plugin", p.Name()).Msg("Pipeline: ingest failed")
@@ -72,7 +80,7 @@ func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts pl
 			Int("targets", stats.Targets).Int("items", stats.Items).Int("facts", stats.Facts).Int("errors", stats.Errors).
 			Msg("Pipeline: ingest done")
 	}
-	return total, errs, nil
+	return res, errs, nil
 }
 
 // ProducePairs runs the pair-producing phase of every plugin that has one and

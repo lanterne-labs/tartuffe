@@ -108,9 +108,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 
 	// Phase 1: ingest. Every plugin collects its new facts; stance routing and
 	// the analyze judge run inline on insert.
-	stats, ingestErrs, err := Ingest(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
+	ingest, ingestErrs, err := Ingest(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
 	fail("ingest", err, "ingest phase failed")
 	mergeStepErrs(stepErrs, ingestErrs)
+	stats := ingest.Total
 
 	stanceMgr, err := d.StanceManager()
 	if err != nil {
@@ -262,9 +263,12 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 			Status:       status,
 			StepErrors:   len(errs),
 			ErrorSummary: strings.Join(errParts, "\n"),
-			Targets:      stats.Targets,
-			NewsArticles: stats.Items,
-			ScrapeErrors: stats.Errors,
+			// The row's columns keep their historical meaning for the Grafana
+			// dashboards: the queue size, the news plugin's parsed articles and
+			// its scrape errors, not the sums over every plugin.
+			Targets:      len(targets),
+			NewsArticles: ingest.ByPlugin["news"].Items,
+			ScrapeErrors: ingest.ByPlugin["news"].Errors,
 		}
 		if auditResult != nil {
 			summary.AuditChecked = auditResult.Total
