@@ -65,7 +65,7 @@ func TestMarkFactDuplicate(t *testing.T) {
 	assert.Equal(t, 1, n, "MarkFactDuplicate must be idempotent")
 
 	// The specific (duplicate) fact is now excluded from active-fact similarity search.
-	similar, err := storer.FindSimilarActiveFacts(ctx, []int64{pid}, mockEmbedding(), 0.9, 10)
+	similar, err := storer.FindSimilarActiveFacts(ctx, []int64{pid}, mockEmbedding(), 0.9, "", 0, 10)
 	require.NoError(t, err)
 	for _, sf := range similar {
 		assert.NotEqual(t, specific, sf.ID, "duplicate fact must be excluded from active facts")

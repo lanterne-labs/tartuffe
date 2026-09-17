@@ -27,7 +27,7 @@ func (f *fakeInserterStorer) FindOrInsertPersonWithType(ctx context.Context, nam
 	return 1, nil
 }
 
-func (f *fakeInserterStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]SimilarFact, error) {
+func (f *fakeInserterStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error) {
 	return nil, nil
 }
 

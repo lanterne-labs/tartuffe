@@ -72,6 +72,13 @@ type factPositionJudge interface {
 // 0.78) while staying high enough to keep the per-run LLM call volume bounded.
 const defaultLLMDedupeFloor = 0.70
 
+// dedupeTextSimilarityFloor is the trigram similarity (pg_trgm) of the fact
+// texts at or above which an existing fact is a dedupe candidate regardless of
+// embedding distance. Measured on prod pairs (2026-09-17): restatements of one
+// statement score 0.38-0.84, distinct same-topic claims 0.24-0.40. The LLM gate
+// decides, so a borderline candidate costs one call, not a wrong merge.
+const dedupeTextSimilarityFloor = 0.40
+
 // Storer defines the interface for storage operations needed by FactInserter.
 // This is typically implemented by storage.PostgresStorer.
 type Storer interface {
@@ -82,7 +89,10 @@ type Storer interface {
 	FindOrInsertPersonWithType(ctx context.Context, name string, entityType string) (int64, error)
 
 	// FindSimilarActiveFacts searches for active (non-duplicate) facts similar to the given embedding.
-	FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]SimilarFact, error)
+	// FindSimilarActiveFacts returns the person's active facts within the
+	// embedding distance threshold OR whose text trigram-matches factText at
+	// least textFloor, closest first.
+	FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error)
 
 	// InsertFact inserts a new fact into the database.
 	InsertFact(ctx context.Context, input StoreFactInput) (factID int64, err error)
@@ -317,7 +327,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		if fi.dedupeJudge != nil {
 			searchDistance = 1.0 - fi.llmDedupeFloor
 		}
-		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, searchDistance, 5)
+		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, searchDistance, input.NormalizedFactText, dedupeTextSimilarityFloor, 5)
 		if err != nil {
 			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
@@ -355,16 +365,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				// In fold mode a new fact with co-actors can never fold (see the
 				// shared-fact guard below), so skip the judge calls entirely.
 				if fi.dedupeJudge != nil && !(fi.foldingEnabled() && len(input.CoActorIDs) > 0) {
-					var same bool
-					var jErr error
-					if pg, ok := fi.dedupeJudge.(factPositionJudge); ok && fi.foldingEnabled() {
-						same, jErr = pg.IsSamePosition(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
-					} else {
-						same, jErr = fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, sf.Text, input.NormalizedFactText)
-					}
+					same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
 					if jErr != nil {
 						log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
-							Msg("LLM fact-dedupe check failed, proceeding with insertion")
+							Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
 						continue
 					}
 					if same {
@@ -471,6 +475,25 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Msg("Inserted fact and routed through stance")
 
 	return factID, subjectID, true, nil
+}
+
+// askDedupeGate asks the judge whether existing is the same claim (drop mode)
+// or the same position (fold mode) as the incoming fact. A failed call is
+// retried once: dedupe is decided exactly once, at insert time, so a transient
+// LLM failure would otherwise be a permanent miss.
+func (fi *FactInserter) askDedupeGate(ctx context.Context, input StoreFactInput, existing string) (bool, error) {
+	ask := func() (bool, error) {
+		if pg, ok := fi.dedupeJudge.(factPositionJudge); ok && fi.foldingEnabled() {
+			return pg.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
+		}
+		return fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
+	}
+	same, err := ask()
+	if err == nil {
+		return same, nil
+	}
+	log.Warn().Err(err).Msg("LLM fact-dedupe check failed, retrying once")
+	return ask()
 }
 
 // attachProvenance links the source (and its mentions) of a same-claim fact

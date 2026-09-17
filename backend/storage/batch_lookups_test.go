@@ -128,7 +128,7 @@ func TestFindSimilarActiveFactsCarriesVerbAndMentions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	similar, err := storer.FindSimilarActiveFacts(ctx, []int64{pid}, emb, 0.2, 5)
+	similar, err := storer.FindSimilarActiveFacts(ctx, []int64{pid}, emb, 0.2, "", 0, 5)
 	require.NoError(t, err)
 	require.Len(t, similar, 1)
 	assert.Equal(t, factID, similar[0].ID)

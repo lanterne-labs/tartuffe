@@ -82,7 +82,7 @@ func (s *PostgresStorer) LinkPersonsToSourceMention(ctx context.Context, sourceI
 // Each hit carries its canonical verb and the number of distinct persons
 // mentioning it, so the dedupe tiers of the inserter need no per-candidate lookup.
 // Returns up to limit results (default 20).
-func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]core.SimilarFact, error) {
+func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]core.SimilarFact, error) {
 	timer := metrics.NewQueryTimer("find_similar_active_facts")
 	start := time.Now()
 
@@ -90,6 +90,12 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 		limit = 20
 	}
 
+	// Two candidate sources, unioned: embedding distance on the stance-blind
+	// topic slug, and trigram similarity on the fact text. The slug is
+	// nondeterministic across extractions of one statement (measured on prod:
+	// the same quote embedded at cosine distance 0.47 from itself under two
+	// slugs), so near-verbatim restatements often fall outside the embedding
+	// window while their text still matches; the LLM gate decides either way.
 	query := `
 		WITH PersonFacts AS (
 			SELECT DISTINCT fs.fact_id
@@ -97,16 +103,20 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 			JOIN fact_sources fs ON fm.fact_source_id = fs.id
 			WHERE fm.person_id = ANY($1)
 		),
-		Hits AS (
+		Active AS (
 			SELECT f.id, f.fact_text, f.embedding <=> $2 AS distance,
 			       COALESCE(f.canonical_verb, '') AS canonical_verb
 			FROM facts f
 			JOIN PersonFacts pf ON f.id = pf.fact_id
-			WHERE f.embedding <=> $2 <= $3
-			  AND NOT EXISTS (
+			WHERE NOT EXISTS (
 			      SELECT 1 FROM fact_relations fr
 			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 			  )
+		),
+		Hits AS (
+			SELECT * FROM Active
+			WHERE distance <= $3
+			   OR ($5 <> '' AND similarity(fact_text, $5) >= $6)
 			ORDER BY distance
 			LIMIT $4
 		)
@@ -124,6 +134,8 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 		pgvector.NewVector(embedding),
 		threshold,
 		limit,
+		factText,
+		textFloor,
 	)
 	if err != nil {
 		timer.ObserveDuration(err)

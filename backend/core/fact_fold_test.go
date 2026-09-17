@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ type foldFakeStorer struct {
 	stanceAttached []int64
 }
 
-func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, limit int) ([]SimilarFact, error) {
+func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error) {
 	return f.similar, nil
 }
 
@@ -283,5 +284,66 @@ func TestSameClaimDroppedWhenFoldingDisabled(t *testing.T) {
 	}
 	if got := st.mentioned[st.nextSrcID]; len(got) != 2 || got[0] != 1 || got[1] != 42 {
 		t.Fatalf("subject and co-actors must be mentioned on the attached source, got %v", got)
+	}
+}
+
+// flakyJudge fails its first `failures` calls, then answers same.
+type flakyJudge struct {
+	failures int
+	same     bool
+	calls    int
+}
+
+func (j *flakyJudge) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
+	j.calls++
+	if j.calls <= j.failures {
+		return false, errors.New("llm unavailable")
+	}
+	return j.same, nil
+}
+
+// A gate call that fails once is retried and its verdict applied: the fact is
+// deduplicated instead of the failure counting as "not a duplicate" forever.
+func TestDedupeGateRetriesOnceOnError(t *testing.T) {
+	// Two different direct-claim verbs keep the cheap tier out of the way so
+	// the gate is consulted.
+	candidate := matchedFact("Il clame son innocence.", 1)
+	candidate.CanonicalVerb = "CLAIMED"
+	st := &foldFakeStorer{similar: []SimilarFact{candidate}}
+	fi := NewFactInserter(st, &countingStance{})
+	judge := &flakyJudge{failures: 1, same: true}
+	fi.dedupeJudge = judge
+	input := foldInput()
+	input.CanonicalVerb = "PROMISED"
+
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if judge.calls != 2 {
+		t.Fatalf("the gate must be asked twice (one failure, one retry), got %d calls", judge.calls)
+	}
+	if res.Inserted != 0 || res.Skipped != 1 {
+		t.Fatalf("the retried verdict must apply (fact dropped), got %+v", res)
+	}
+}
+
+// Two consecutive failures give up on that candidate and the fact is inserted.
+func TestDedupeGateGivesUpAfterTwoFailures(t *testing.T) {
+	candidate := matchedFact("Il clame son innocence.", 1)
+	candidate.CanonicalVerb = "CLAIMED"
+	st := &foldFakeStorer{similar: []SimilarFact{candidate}}
+	fi := NewFactInserter(st, &countingStance{})
+	judge := &flakyJudge{failures: 2, same: true}
+	fi.dedupeJudge = judge
+	input := foldInput()
+	input.CanonicalVerb = "PROMISED"
+
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if judge.calls != 2 || res.Inserted != 1 {
+		t.Fatalf("after two failures the fact is inserted, got calls=%d res=%+v", judge.calls, res)
 	}
 }

@@ -2059,3 +2059,21 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   (`StanceCandidatesByIDs`). Its golden (`label_pick_cases.yaml`, 9 prod cases): 9/9 three
   runs. Lessons: classify the statement's content, never its venue ("sur BFM" pulled the
   media labels); a principle applied to a policy field belongs to that field's topic.
+
+## Dedupe: folding reaches news, lexical candidates, gate retry (2026-09-17)
+
+- Measured on prod: ~13 clear duplicates among the 224 facts of one night, and stances
+  holding the same statement 3-4 times (Faure's "aux côtés des Gilets jaunes" x4). Three
+  causes, all fixed. (1) News never folded: the 2026-07-28 wiring landed in a package nothing
+  imported, so news (60% of nightly facts) kept dropping under the strict same-claim gate,
+  which answers no whenever either side states anything the other does not. The news
+  provider now folds with the position gate like twitter. (2) Candidate recall: the
+  stance-blind topic slug is nondeterministic across extractions of one statement ("mouvement
+  gilets jaunes" vs "mouvement social vie chère", cosine 0.47), so restatements fell outside
+  the 0.30 window and the gate never saw them. `FindSimilarActiveFacts` now unions embedding
+  hits with pg_trgm text matches (floor 0.40; prod restatements score 0.38-0.84, distinct
+  same-topic claims 0.24-0.40); the union reaches all twelve known pairs. (3) A failed gate
+  call was a permanent miss (dedupe is decided once, at insert time, and cron logs are not
+  retrievable to prove it); the gate now retries once. Lesson: when a judge answers correctly
+  on replay but the rows coexist in prod, look at candidate recall and at the error path
+  before touching the prompt.

@@ -492,8 +492,7 @@ func (p *Provider) extractAndInsertFromArticles(
 	if p.StanceManager == nil {
 		return fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
 	}
-	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
-	inserter.EnableLLMDedupe()
+	inserter := p.newFactInserter()
 
 	// Phase 2: Extract content - use batch if available, otherwise sequential.
 	var extractedContents []*extractor.ExtractedContent
@@ -702,8 +701,7 @@ func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Tar
 		Int("cached_files", len(cachedContents)).
 		Msg("Loaded cached content")
 
-	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
-	inserter.EnableLLMDedupe()
+	inserter := p.newFactInserter()
 	kind := targetKind(target)
 	for _, content := range cachedContents {
 		if strings.TrimSpace(content.Content) == "" {
@@ -1080,4 +1078,20 @@ func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins
 	}
 
 	return results, nil
+}
+
+// newFactInserter builds the inserter every news insertion path uses: LLM
+// dedupe gate on, and same-claim facts folded under a meta-fact rather than
+// dropped, with the position-level gate (decided 2026-07-28; the wiring then
+// landed in a package nothing imported, so news kept dropping under the strict
+// same-claim gate until 2026-09-17).
+func (p *Provider) newFactInserter() *core.FactInserter {
+	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
+	inserter.EnableLLMDedupe()
+	if synth, err := core.NewLLMMetaSynthesizerFromEnv(); err != nil {
+		log.Warn().Err(err).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped instead")
+	} else {
+		inserter.EnableMetaFolding(p.Storer, synth)
+	}
+	return inserter
 }
