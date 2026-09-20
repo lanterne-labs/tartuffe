@@ -140,7 +140,10 @@ func TestFactDedupeAdjudicatorGolden(t *testing.T) {
 		subject string
 		factA   string
 		factB   string
-		want    bool // true = same claim (dedup)
+		want    bool // true = same claim / same position (dedup)
+		// position selects the fold gate (IsSamePosition, what news uses
+		// since the 2026-09-17 fold wiring) instead of the drop gate.
+		position bool
 	}{
 		{
 			// The real prod pair (facts 4740 / 4897) — cosine 0.78, verbs
@@ -172,18 +175,107 @@ func TestFactDedupeAdjudicatorGolden(t *testing.T) {
 			factB:   "Gérald Darmanin présentera son projet de loi le 29 juin devant l'Assemblée nationale.",
 			want:    false,
 		},
+
+		// Fold gate. Prod member pairs from the 2026-09-18..20 nights, texts
+		// verbatim: the over-folds the sample turned up (must NOT fold) and
+		// clean restatements (must fold).
+		{
+			// meta 20575: 200 € vs 150→500 € is the substance of the proposal.
+			name:     "fold_different_amounts",
+			subject:  "Raphaël Glucksmann",
+			factA:    "Raphaël Glucksmann a proposé de tripler le chèque énergie à 200 euros pour les classes populaires et moyennes.",
+			factB:    "Raphaël Glucksmann propose que le montant du chèque énergie soit porté de 150 euros à 500 euros par an.",
+			want:     false,
+			position: true,
+		},
+		{
+			// meta 19253: wanting the PS nomination vs claiming the useful vote.
+			name:     "fold_same_theme_different_claims",
+			subject:  "Raphaël Glucksmann",
+			factA:    "Raphaël Glucksmann souhaite être recruté par le parti socialiste comme candidat pour l'élection présidentielle de 2027.",
+			factB:    "Raphaël Glucksmann a annoncé que le vote utile pour la présidentielle 2027 serait pour sa part.",
+			want:     false,
+			position: true,
+		},
+		{
+			// meta 19262: an undecided candidacy vs the ambition to win the primary.
+			name:     "fold_pending_decision_vs_ambition",
+			subject:  "Raphaël Glucksmann",
+			factA:    "Raphaël Glucksmann doit confirmer à la rentrée s'il sera candidat à la présidentielle, ce qui impliquerait de passer par une primaire de l'espace social-démocrate.",
+			factB:    "Raphaël Glucksmann a affirmé avoir l'ambition de gagner la primaire.",
+			want:     false,
+			position: true,
+		},
+		{
+			// meta 20343: the war must end vs France/EU cannot weigh on it.
+			name:     "fold_different_matters_same_conflict",
+			subject:  "Fabien Roussel",
+			factA:    "Fabien Roussel a affirmé que la guerre en Ukraine doit cesser.",
+			factB:    "Fabien Roussel a jugé inadmissible que la France et l’Union européenne soient incapables de peser sur la guerre en Ukraine.",
+			want:     false,
+			position: true,
+		},
+		{
+			// meta 20397: a 500 bn€ fund vs a large loan — related, different instruments.
+			name:     "fold_fund_vs_loan",
+			subject:  "Fabien Roussel",
+			factA:    "Fabien Roussel propose la création d'un Fonds d'avenir doté de 500 milliards d'euros pour financer la réindustrialisation, la formation et la transition écologique.",
+			factB:    "Fabien Roussel a demandé un grand emprunt pour financer la transition écologique.",
+			want:     false,
+			position: true,
+		},
+		{
+			// meta 19704: the same demand (lower fuel taxes) in two wordings.
+			name:     "fold_fuel_tax_restatement",
+			subject:  "Fabien Roussel",
+			factA:    "Fabien Roussel a demandé la baisse des taxes sur les carburants, affirmant que 60 % du prix sont des taxes.",
+			factB:    "Fabien Roussel a affirmé que la France peut agir immédiatement pour baisser le poids de la fiscalité sur l'essence.",
+			want:     true,
+			position: true,
+		},
+		{
+			// meta 20175.
+			name:     "fold_more_massive_aid_restatement",
+			subject:  "Raphaël Glucksmann",
+			factA:    "Raphaël Glucksmann a déclaré qu'il y a besoin d'aides beaucoup plus massives que ce qui est annoncé aujourd'hui.",
+			factB:    "Raphaël Glucksmann a plaidé pour que les aides soient plus massives.",
+			want:     true,
+			position: true,
+		},
+		{
+			// meta 19421.
+			name:     "fold_housing_priority_restatement",
+			subject:  "Fabien Roussel",
+			factA:    "Fabien Roussel, candidat du PCF à la présidentielle, a affirmé que la priorité n'est pas la préférence nationale mais la construction de logements.",
+			factB:    "Fabien Roussel a déclaré que la priorité pour le logement ne doit pas être la préférence nationale mais la construction de logements pour tous.",
+			want:     true,
+			position: true,
+		},
+		{
+			// meta 19367: two wordings of opposing the 2027 budget.
+			name:     "fold_budget_opposition_facets",
+			subject:  "Fabien Roussel",
+			factA:    "Fabien Roussel a affirmé qu'il ne faut pas imposer un budget qui demande des sacrifices aux retraités et aux personnes malades.",
+			factB:    "Fabien Roussel a dénoncé un budget de casse sociale après la présentation du projet de budget 2027.",
+			want:     true,
+			position: true,
+		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	var passed, failed int
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := adj.IsSameClaim(ctx, tc.subject, tc.factA, tc.factB)
+			gate := adj.IsSameClaim
+			if tc.position {
+				gate = adj.IsSamePosition
+			}
+			got, err := gate(ctx, tc.subject, tc.factA, tc.factB)
 			if err != nil {
-				t.Fatalf("IsSameClaim error: %v", err)
+				t.Fatalf("gate error: %v", err)
 			}
 			if got != tc.want {
 				failed++

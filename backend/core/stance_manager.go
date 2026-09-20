@@ -236,7 +236,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	// general topic label per the LABEL RULES instead of falling back to fact text.
 	// When the fact has an embedding, assignTopic shortlists candidate stances by
 	// their NEAREST member fact and shows the LLM that concrete evidence.
-	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding)
+	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding, 0)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
@@ -1267,14 +1267,21 @@ func truncate(s string, maxLen int) string {
 // When the fact has no embedding, the person has no stances, or the shortlist
 // comes back empty, assignTopic degrades to a label/summary-only shortlist built
 // from the passed stances so it never crashes — same LLM call, weaker evidence.
-func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32) (*topicAssignmentDecision, error) {
+// excludeStanceID, when non-zero, is a stance the fact currently belongs to
+// and must not be offered again (the singleton re-assignment sweep); stances
+// is then the person's stances without it.
+func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32, excludeStanceID int64) (*topicAssignmentDecision, error) {
 	var candidates []StanceCandidate
 	if len(factEmbedding) > 0 && len(stances) > 0 {
 		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, shortlistTopK, shortlistFactsPerStance)
 		if err != nil {
 			return nil, fmt.Errorf("shortlisting stances by nearest fact: %w", err)
 		}
-		candidates = shortlisted
+		for _, c := range shortlisted {
+			if c.ID != excludeStanceID {
+				candidates = append(candidates, c)
+			}
+		}
 
 		// The embedding shortlist ranks stances by their nearest member fact,
 		// in the stance-blind topic-slug space; for a person with more stances

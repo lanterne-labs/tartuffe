@@ -214,3 +214,27 @@ func (s *PostgresStorer) InvalidateEmbeddings(ctx context.Context) (nulled, stan
 	}
 	return updateRes.RowsAffected(), deleteRes.RowsAffected(), nil
 }
+
+// ListTextSimilarFactPairs returns the pairs among factIDs whose fact_text
+// trigram similarity is at least floor, as [smaller id, larger id]. The
+// pg_trgm similarity runs in SQL over the given ids only.
+func (s *PostgresStorer) ListTextSimilarFactPairs(ctx context.Context, factIDs []int64, floor float64) ([][2]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.id, b.id
+		FROM facts a
+		JOIN facts b ON b.id > a.id AND b.id = ANY($1)
+		WHERE a.id = ANY($1) AND similarity(a.fact_text, b.fact_text) >= $2`, factIDs, floor)
+	if err != nil {
+		return nil, fmt.Errorf("listing text-similar fact pairs: %w", err)
+	}
+	defer rows.Close()
+	var out [][2]int64
+	for rows.Next() {
+		var p [2]int64
+		if err := rows.Scan(&p[0], &p[1]); err != nil {
+			return nil, fmt.Errorf("scanning text-similar pair: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

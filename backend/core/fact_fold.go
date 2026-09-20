@@ -40,6 +40,9 @@ type FactFoldStorer interface {
 	// than one person.
 	ListSharedFactIDs(ctx context.Context, factIDs []int64) (map[int64]bool, error)
 	ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error)
+	// ListTextSimilarFactPairs returns the pairs among factIDs whose texts
+	// have trigram similarity of at least floor, as [smaller id, larger id].
+	ListTextSimilarFactPairs(ctx context.Context, factIDs []int64, floor float64) ([][2]int64, error)
 	IsMetaFact(ctx context.Context, factID int64) (bool, error)
 	GetFactEmbeddingMeta(ctx context.Context, factID int64) (embeddingText, lang, verb string, err error)
 }
@@ -47,16 +50,21 @@ type FactFoldStorer interface {
 // FoldOptions tunes the fold clustering.
 type FoldOptions struct {
 	Floor      float64 // cosine-similarity floor for same-claim candidates
+	TextFloor  float64 // trigram-similarity floor for same-claim candidates (0 = embedding only)
 	MaxCluster int     // clusters larger than this are skipped (defense against runaway chaining)
 }
 
-// DefaultFoldOptions are the thresholds `dm facts fold` uses.
-var DefaultFoldOptions = FoldOptions{Floor: 0.70, MaxCluster: 12}
+// DefaultFoldOptions are the thresholds `dm facts fold` uses. TextFloor is
+// the inserter's dedupeTextSimilarityFloor: the two candidate sources of the
+// insert-time gate, so the backfill reaches the same pairs.
+var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12}
 
-// FoldClustersForPerson finds same-claim clusters among a person's active facts:
-// candidate pairs by embedding similarity, confirmed by the same verb-aware
-// tier-1 rule or the LLM same-claim gate used at insertion, then union-find.
-// Clusters larger than opts.MaxCluster are logged and dropped.
+// FoldClustersForPerson finds same-position clusters among a person's active
+// facts: candidate pairs by embedding similarity or by trigram text similarity
+// (the embedding slug is nondeterministic across extractions of one quote, so
+// near-verbatim restatements often sit outside the embedding window), each
+// confirmed by the LLM same-position gate, then union-find. Clusters larger
+// than opts.MaxCluster are logged and dropped.
 func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge SamePositionJudge, p PersonRecord, opts FoldOptions) ([][]FactForFold, error) {
 	facts, err := storer.GetFoldFactsForPerson(ctx, p.ID)
 	if err != nil {
@@ -121,22 +129,31 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	}
 	confirmed := map[pairKey]bool{}
 
+	textPairs := map[pairKey]bool{}
+	if opts.TextFloor > 0 {
+		pairs, err := storer.ListTextSimilarFactPairs(ctx, foldFactIDs(facts), opts.TextFloor)
+		if err != nil {
+			return nil, fmt.Errorf("load text-similar pairs: %w", err)
+		}
+		for _, pr := range pairs {
+			textPairs[key(pr[0], pr[1])] = true
+		}
+	}
+
 	// COSINE distances, matching the insertion-path thresholds (FindSimilarActiveFacts
 	// uses cosine). NB the pgvector `<->` operator is L2, not cosine — using L2 here
 	// once made the 0.70 floor behave like cosine 0.955 and fold only near-verbatim
 	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - opts.Floor
 	for i := 0; i < len(facts); i++ {
-		if len(facts[i].Embedding) == 0 {
-			continue
-		}
 		for j := i + 1; j < len(facts); j++ {
-			if len(facts[j].Embedding) == 0 {
-				continue
-			}
-			d := util.CosineDistance(facts[i].Embedding, facts[j].Embedding)
-			if d > floorDist {
-				continue
+			if !textPairs[key(facts[i].ID, facts[j].ID)] {
+				if len(facts[i].Embedding) == 0 || len(facts[j].Embedding) == 0 {
+					continue
+				}
+				if util.CosineDistance(facts[i].Embedding, facts[j].Embedding) > floorDist {
+					continue
+				}
 			}
 			if cid := contradicted[key(facts[i].ID, facts[j].ID)]; cid != 0 {
 				// The pair never folds — but if the fold gate considers the two

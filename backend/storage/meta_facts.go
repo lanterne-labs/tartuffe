@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/pgvector/pgvector-go"
@@ -187,4 +189,69 @@ func (s *PostgresStorer) GetFactStanceID(ctx context.Context, personID int64, fa
 		return 0, false, fmt.Errorf("resolve stance for fact %d (person %d): %w", factID, personID, err)
 	}
 	return stanceID, true, nil
+}
+
+// ListMetaFacts returns the meta-facts created at or after since with their
+// person, oldest first.
+func (s *PostgresStorer) ListMetaFacts(ctx context.Context, since time.Time) ([]core.MetaFactRef, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.id, p.id, p.name, f.fact_text
+		FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id AND fs.source_type = 'meta'
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		JOIN persons p ON p.id = fm.person_id
+		WHERE f.is_meta AND f.created_at >= $1
+		ORDER BY f.id`, since)
+	if err != nil {
+		return nil, fmt.Errorf("listing meta-facts: %w", err)
+	}
+	defer rows.Close()
+	var out []core.MetaFactRef
+	for rows.Next() {
+		var m core.MetaFactRef
+		if err := rows.Scan(&m.ID, &m.PersonID, &m.PersonName, &m.Text); err != nil {
+			return nil, fmt.Errorf("scanning meta-fact: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// GetMetaMembers returns the meta's member facts (id and text), oldest first.
+func (s *PostgresStorer) GetMetaMembers(ctx context.Context, metaID int64) ([]core.FactForFold, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.id, f.fact_text FROM fact_relations fr
+		JOIN facts f ON f.id = fr.specific_fact_id
+		WHERE fr.general_fact_id = $1 AND fr.relation_type = 'duplicate'
+		ORDER BY f.id`, metaID)
+	if err != nil {
+		return nil, fmt.Errorf("load meta %d members: %w", metaID, err)
+	}
+	defer rows.Close()
+	var out []core.FactForFold
+	for rows.Next() {
+		var f core.FactForFold
+		if err := rows.Scan(&f.ID, &f.Text); err != nil {
+			return nil, fmt.Errorf("scan member: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// UnfoldFactFromMeta removes the member's 'duplicate' link to the meta, so the
+// fact is active again. Its contradictions stay where the fold repointed them
+// (on the meta); the nightly detection re-judges the fact as active.
+func (s *PostgresStorer) UnfoldFactFromMeta(ctx context.Context, metaID, factID int64) error {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM fact_relations
+		WHERE general_fact_id = $1 AND specific_fact_id = $2 AND relation_type = 'duplicate'`, metaID, factID)
+	if err != nil {
+		return fmt.Errorf("unfolding fact %d from meta %d: %w", factID, metaID, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("fact %d is not a member of meta %d", factID, metaID)
+	}
+	log.Info().Int64("fact_id", factID).Int64("meta_id", metaID).Msg("Unfolded fact from meta")
+	return nil
 }

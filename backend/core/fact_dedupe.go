@@ -56,18 +56,26 @@ func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, fac
 // across calls, so vLLM prefix caching prefills it once per process instead
 // of once per candidate pair (see CHANGES.md, prompt layout).
 func (a *FactDedupeAdjudicator) buildSamePositionPrompt(subject, factA, factB string) string {
-	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way, so lean toward true when the position and the matter are the same.
+	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way.
+
+The MATTER is the specific question a statement answers — NOT its subject area. Two statements about the same area (the same election, the same war, the same adversary, the same budget) that answer DIFFERENT questions are different matters. Test: could a reader who knows A still learn a distinct demand, prediction, assessment, or figure from B? If yes, answer false.
 
 SAME position (answer true):
 - The same stance on the same question, in different words or through different facets: "affirms his innocence in the affair", "claims his good faith", "contests the qualification of embezzlement" — all one position ("denies guilt in that affair").
 - The same announcement/position reported with different incidental detail (outlet, phrasing, minor date differences, added color).
-- The same demand/support/opposition restated over time with the same direction and target.
+- The same demand/support/opposition restated over time with the same direction and target: "demande la baisse des taxes sur les carburants" / "la France peut baisser la fiscalité sur l'essence dès maintenant".
 
 DIFFERENT (answer false — never aggregate):
 - OPPOSING or diverging positions, or a position vs a later change: these are contradiction material and must stay separate.
 - A commitment/promise/value vs an ACTION or outcome (even one that fulfils it): a statement and a deed are different kinds of facts.
+- Different questions within the same subject area:
+  "annonce sa candidature à la primaire" vs "affirme qu'il gagnera la présidentielle" — a candidacy vs a prediction.
+  "demande la démission du ministre" vs "juge la politique du ministre catastrophique" — a demand vs an assessment, same adversary.
+  "veut sortir du nucléaire d'ici 2040" vs "demande un moratoire sur les nouveaux réacteurs" — two measures in one policy field.
+  "la guerre doit cesser" vs "l'Europe est incapable de peser sur la guerre" — a wish vs a judgment about actors.
 - Different matters, targets, or questions (two different affairs, laws, elections, policies) — even if thematically close.
-- Different concrete events (two separate votes, two separate trials/instances, two separate polls) or materially different numbers/sanctions as the substance of the statement.
+- Different concrete events (two separate votes, two separate trials/instances, two separate polls).
+- Materially different numbers as the substance of the statement: "une aide de 300 euros par foyer" vs "une aide de 1 000 euros par foyer" are two proposals, not one.
 - Different PROCEDURAL STAGES of the same affair: a prosecutor's request (réquisition) vs the court's decision, an indictment vs a verdict, a first-instance ruling vs the appeal — each is its own fact.
 
 Person: %s

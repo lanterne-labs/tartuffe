@@ -70,7 +70,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts := core.FoldOptions{Floor: factsFoldFloor, MaxCluster: factsFoldMaxCluster}
+	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster}
 	totalClusters, totalFolded := 0, 0
 	for _, p := range persons {
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)

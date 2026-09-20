@@ -688,3 +688,20 @@ func scanStanceCandidates(rows pgx.Rows, personID int64) ([]core.StanceCandidate
 
 	return candidates, nil
 }
+
+// ListPersonsWithSingletonStances lists the persons with at least one
+// one-fact stance and at least two stances in total (a singleton on a
+// one-stance person has nothing to join). Search queue members come first,
+// then by person id, so a deadline-cut sweep resumes deterministically.
+func (s *PostgresStorer) ListPersonsWithSingletonStances(ctx context.Context) ([]core.PersonRecord, error) {
+	return s.queryPersonRecords(ctx, `
+		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
+		FROM persons p
+		JOIN (
+			SELECT person_id
+			FROM stance_documents
+			GROUP BY person_id
+			HAVING COUNT(*) >= 2 AND COUNT(*) FILTER (WHERE fact_count = 1) >= 1
+		) s ON s.person_id = p.id
+		ORDER BY EXISTS (SELECT 1 FROM search_queue q WHERE q.person_id = p.id) DESC, p.id`)
+}

@@ -2092,3 +2092,35 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   in the valid-fact section did nothing (0/3), a self-consistency bullet got 1/3, a worked
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
+
+## Fold gate pinned on prod pairs; singleton re-assignment sweep; fold backfill reaches text pairs (2026-09-20)
+
+- Three nights of news folding (272-409 members/night, was 15-62) read as clean on a first
+  sample, but a full read of two persons' metas found ~1 in 6 over-folded: same subject
+  area, different claim ("wants the PS nomination" + "the useful vote is for him"; "the war
+  must end" + "the EU cannot weigh on it"; a 200 € vs a 150→500 € chèque énergie). The
+  position gate reproduced all of them: its "lean toward true when the matter is the same"
+  let "matter" mean "theme". The prompt now defines the matter as the specific question the
+  statement answers, with a reader test and worked ❌ pairs (candidacy vs prediction, demand
+  vs assessment, two measures in one field, wish vs judgment, different amounts). The
+  `TestFactDedupeAdjudicatorGolden` cases are the prod texts (9 fold-gate pins, verbatim,
+  prompt examples are analogues so the golden stays held out): 13/13 x3. One borderline pair
+  ("affrontement sur les propos racistes" vs "éviter la bascule vers l'extrême droite") was
+  dropped rather than tuned against — both are "fight the far right".
+- `dm stances reassign-singletons`: 72% of stances were one-fact stances, most created
+  before the 2026-09-17 shortlist/decision fixes. The sweep re-runs topic assignment for
+  each singleton against the person's other stances (the singleton itself excluded from the
+  shortlist) and, on a join, reuses the merge apply path (fact moves, bundles repointed,
+  re-analyzed in the new stance, label+summary refreshed). Marine Le Pen: 33 of 48 joined.
+  Cost on the serial LLM is ~11 s per decision and ~25 s per join, so 3,900 singletons is
+  a multi-day sweep; it is deadline-bound (`--until`) and resumable (`--start-after`), run
+  outside the nightly window so it never races insert-time routing on the same person.
+- `dm facts fold` gets the inserter's trigram candidate source (`FoldOptions.TextFloor`), so
+  the backfill reaches the near-verbatim restatements whose embeddings sit outside the
+  cosine window. Prod count: 11,115 candidate pairs, 3,101 of them text-only.
+- `dm facts review-metas --since D`: re-judges the memberships of the metas folded under the
+  old gate (clique in id order, as the fold pass builds them). Members that no longer belong
+  are unfolded and the meta text rewritten (`--apply`); a meta with fewer than two members
+  left is a phantom and is only deleted with `--delete-dissolved`. Unfolded members have no
+  stance link and are placed by the nightly orphan routing; their contradictions stay on
+  the meta and the fact is re-detected as active.

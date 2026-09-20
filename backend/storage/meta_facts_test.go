@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pgvector/pgvector-go"
 	"github.com/stretchr/testify/assert"
@@ -94,4 +96,46 @@ func TestMetaFactLifecycle(t *testing.T) {
 
 	// Updating a non-meta fact through the meta API must fail loudly.
 	assert.Error(t, storer.UpdateMetaFactText(ctx, other, "nope"))
+}
+
+// The review's storage: metas listed from a date with their person, members
+// with texts, and unfolding a member makes it active again (and refuses a
+// non-member).
+func TestMetaReviewStorage(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	pid, _, err := storer.AddPerson(ctx, "meta review person")
+	require.NoError(t, err)
+	member := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+		return id
+	}
+	a := member("review member a")
+	b := member("review member b")
+	metaID, err := storer.CreateMetaFact(ctx, pid, "review meta", "slug", mockEmbedding(), "fr", "")
+	require.NoError(t, err)
+	require.NoError(t, storer.MarkFactAsDuplicate(ctx, a, metaID))
+	require.NoError(t, storer.MarkFactAsDuplicate(ctx, b, metaID))
+
+	metas, err := storer.ListMetaFacts(ctx, time.Now().Add(-time.Minute))
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	require.Equal(t, core.MetaFactRef{ID: metaID, PersonID: pid, PersonName: "meta review person", Text: "review meta"}, metas[0])
+	later, err := storer.ListMetaFacts(ctx, time.Now().Add(time.Minute))
+	require.NoError(t, err)
+	require.Empty(t, later)
+
+	members, err := storer.GetMetaMembers(ctx, metaID)
+	require.NoError(t, err)
+	require.Equal(t, []core.FactForFold{{ID: a, Text: "review member a"}, {ID: b, Text: "review member b"}}, members)
+
+	require.NoError(t, storer.UnfoldFactFromMeta(ctx, metaID, b))
+	f, err := storer.GetFactByID(ctx, b)
+	require.NoError(t, err)
+	require.True(t, f.IsCanonical, "an unfolded member is active again")
+	require.Error(t, storer.UnfoldFactFromMeta(ctx, metaID, b), "unfolding a non-member is an error")
 }

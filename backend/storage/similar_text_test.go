@@ -65,3 +65,27 @@ func TestFindSimilarActiveFactsUnionsTextMatches(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, nearEmb, got[0].ID)
 }
+
+// ListTextSimilarFactPairs surfaces the pairs, among the given ids only, whose
+// texts pass the trigram floor, each once as [smaller, larger].
+func TestListTextSimilarFactPairs(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	insert := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(makeUnitEmbedding(0))).Scan(&id))
+		return id
+	}
+	a := insert("Olivier Faure a assuré qu'il serait aux côtés des Gilets jaunes s'ils se soulèvent de nouveau.")
+	b := insert("Olivier Faure a affirmé qu'il serait aux côtés des Gilets jaunes s'ils se soulevaient de nouveau en 2026.")
+	c := insert("Olivier Faure a proposé une taxe sur les super-héritages pour financer les retraites.")
+	outside := insert("Olivier Faure a assuré qu'il serait aux côtés des Gilets jaunes s'ils se soulèvent.")
+
+	pairs, err := storer.ListTextSimilarFactPairs(ctx, []int64{b, a, c}, 0.40)
+	require.NoError(t, err)
+	require.Equal(t, [][2]int64{{a, b}}, pairs, "only the restatement pair, ordered [smaller, larger]; ids outside the set are ignored")
+	_ = outside
+}
