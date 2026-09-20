@@ -2106,7 +2106,11 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   `TestFactDedupeAdjudicatorGolden` cases are the prod texts (9 fold-gate pins, verbatim,
   prompt examples are analogues so the golden stays held out): 13/13 x3. One borderline pair
   ("affrontement sur les propos racistes" vs "éviter la bascule vers l'extrême droite") was
-  dropped rather than tuned against — both are "fight the far right".
+  dropped rather than tuned against — both are "fight the far right". The strict gate splits
+  a rounding variance ("TVA à 5 %" vs "à 5,5 %"); a clause saying rounding is the same figure
+  did not win that case and flipped an unrelated pin in 2/2 runs, so it was reverted. Accepted
+  cost: two such facts sit side by side in one stance, which is harmless; the reverse (a hidden
+  distinct claim) is not.
 - `dm stances reassign-singletons`: 72% of stances were one-fact stances, most created
   before the 2026-09-17 shortlist/decision fixes. The sweep re-runs topic assignment for
   each singleton against the person's other stances (the singleton itself excluded from the
