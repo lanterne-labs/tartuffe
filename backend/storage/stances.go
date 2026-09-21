@@ -717,7 +717,7 @@ func (s *PostgresStorer) SampleFactsInMultiFactStances(ctx context.Context, pers
 		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
 		JOIN persons p ON p.id = sd.person_id
 		WHERE sd.fact_count > 1
-		  AND (cardinality($1::bigint[]) = 0 OR sd.person_id = ANY($1))
+		  AND (coalesce(cardinality($1::bigint[]), 0) = 0 OR sd.person_id = ANY($1))
 		  AND NOT EXISTS (
 		      SELECT 1 FROM fact_relations fr
 		      WHERE fr.specific_fact_id = sdf.fact_id AND fr.relation_type = 'duplicate'

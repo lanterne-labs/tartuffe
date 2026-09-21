@@ -124,6 +124,9 @@ func TestShortlistExcludesFactAndSamplesMultiFactStances(t *testing.T) {
 	none, err := storer.SampleFactsInMultiFactStances(ctx, []int64{personID + 1000}, 10)
 	require.NoError(t, err)
 	require.Empty(t, none)
+	all, err := storer.SampleFactsInMultiFactStances(ctx, nil, 10)
+	require.NoError(t, err)
+	require.Len(t, all, 2, "a nil person filter (encoded as SQL NULL) means every person")
 }
 
 // ListLabelSimilarStancePairs surfaces one person's label-similar pairs once,

@@ -15,6 +15,7 @@ var (
 	factsReviewMetasSince           string
 	factsReviewMetasApply           bool
 	factsReviewMetasDeleteDissolved bool
+	factsReviewMetasOnly            []int64
 )
 
 var factsReviewMetasCmd = &cobra.Command{
@@ -42,6 +43,7 @@ func init() {
 	factsReviewMetasCmd.Flags().StringVar(&factsReviewMetasSince, "since", "", "Review meta-facts created on or after YYYY-MM-DD (required)")
 	factsReviewMetasCmd.Flags().BoolVar(&factsReviewMetasApply, "apply", false, "Unfold the members that no longer belong and rewrite the meta text")
 	factsReviewMetasCmd.Flags().BoolVar(&factsReviewMetasDeleteDissolved, "delete-dissolved", false, "With --apply: delete the metas whose members no longer hold together")
+	factsReviewMetasCmd.Flags().Int64SliceVar(&factsReviewMetasOnly, "metas", nil, "Review only these meta ids (e.g. the dissolved list of a dry run)")
 	_ = factsReviewMetasCmd.MarkFlagRequired("since")
 }
 
@@ -70,7 +72,7 @@ func runFactsReviewMetas(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("meta synthesizer required: %w", err)
 	}
 
-	stats, err := core.ReviewMetaFacts(ctx, storer, judge, synth, core.MetaReviewOptions{Since: since, Apply: factsReviewMetasApply})
+	stats, err := core.ReviewMetaFacts(ctx, storer, judge, synth, core.MetaReviewOptions{Since: since, OnlyIDs: factsReviewMetasOnly, Apply: factsReviewMetasApply})
 	if err != nil {
 		return err
 	}

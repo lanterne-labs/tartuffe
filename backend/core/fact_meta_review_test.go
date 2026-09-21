@@ -15,7 +15,7 @@ type reviewStorer struct {
 	texts    map[int64]string
 }
 
-func (r *reviewStorer) ListMetaFacts(ctx context.Context, since time.Time) ([]MetaFactRef, error) {
+func (r *reviewStorer) ListMetaFacts(ctx context.Context, since time.Time, onlyIDs []int64) ([]MetaFactRef, error) {
 	return r.metas, nil
 }
 func (r *reviewStorer) GetMetaMembers(ctx context.Context, metaID int64) ([]FactForFold, error) {

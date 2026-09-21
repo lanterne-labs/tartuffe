@@ -192,8 +192,8 @@ func (s *PostgresStorer) GetFactStanceID(ctx context.Context, personID int64, fa
 }
 
 // ListMetaFacts returns the meta-facts created at or after since with their
-// person, oldest first.
-func (s *PostgresStorer) ListMetaFacts(ctx context.Context, since time.Time) ([]core.MetaFactRef, error) {
+// person, oldest first; onlyIDs, when non-empty, restricts it to those metas.
+func (s *PostgresStorer) ListMetaFacts(ctx context.Context, since time.Time, onlyIDs []int64) ([]core.MetaFactRef, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, p.id, p.name, f.fact_text
 		FROM facts f
@@ -201,7 +201,8 @@ func (s *PostgresStorer) ListMetaFacts(ctx context.Context, since time.Time) ([]
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 		JOIN persons p ON p.id = fm.person_id
 		WHERE f.is_meta AND f.created_at >= $1
-		ORDER BY f.id`, since)
+		  AND (coalesce(cardinality($2::bigint[]), 0) = 0 OR f.id = ANY($2))
+		ORDER BY f.id`, since, onlyIDs)
 	if err != nil {
 		return nil, fmt.Errorf("listing meta-facts: %w", err)
 	}

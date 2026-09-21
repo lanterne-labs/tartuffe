@@ -20,8 +20,9 @@ type MetaFactRef struct {
 // MetaReviewStorer is the storage view the meta-fact review needs.
 // *storage.PostgresStorer implements it.
 type MetaReviewStorer interface {
-	// ListMetaFacts returns the meta-facts created at or after since, oldest first.
-	ListMetaFacts(ctx context.Context, since time.Time) ([]MetaFactRef, error)
+	// ListMetaFacts returns the meta-facts created at or after since, oldest
+	// first; onlyIDs, when non-empty, restricts the listing to those metas.
+	ListMetaFacts(ctx context.Context, since time.Time, onlyIDs []int64) ([]MetaFactRef, error)
 	// GetMetaMembers returns the meta's member facts (id and text), oldest first.
 	GetMetaMembers(ctx context.Context, metaID int64) ([]FactForFold, error)
 	// UnfoldFactFromMeta removes the member's 'duplicate' link to the meta, so
@@ -35,6 +36,9 @@ type MetaReviewStorer interface {
 // MetaReviewOptions tunes ReviewMetaFacts.
 type MetaReviewOptions struct {
 	Since time.Time
+	// OnlyIDs restricts the review to these metas (a re-run over the metas a
+	// dry run reported, instead of every meta again).
+	OnlyIDs []int64
 	// Apply unfolds the members the gate no longer confirms and rewrites the
 	// meta text from the members that stay. Without it the review only reports.
 	Apply bool
@@ -72,7 +76,7 @@ type MetaReviewStats struct {
 // never trimmed on partial information.
 func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePositionJudge, synth MetaSynthesizer, opts MetaReviewOptions) (MetaReviewStats, error) {
 	var st MetaReviewStats
-	metas, err := storer.ListMetaFacts(ctx, opts.Since)
+	metas, err := storer.ListMetaFacts(ctx, opts.Since, opts.OnlyIDs)
 	if err != nil {
 		return st, fmt.Errorf("listing meta-facts: %w", err)
 	}
