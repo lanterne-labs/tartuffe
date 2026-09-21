@@ -35,12 +35,16 @@ func (r *reviewStorer) GetFactEmbeddingMeta(ctx context.Context, factID int64) (
 func (r *reviewStorer) RefreshPersonScore(ctx context.Context, personID int64) error { return nil }
 
 // prefixJudge: two texts are the same position when they share their first
-// word; "err" as a text makes the gate fail.
+// word; "err" as a text makes the gate fail; a "(flip)" text is judged
+// different only as the second statement (order-dependent).
 type prefixJudge struct{}
 
 func (prefixJudge) IsSamePosition(ctx context.Context, subject, a, b string) (bool, error) {
 	if a == "err" || b == "err" {
 		return false, errors.New("gate down")
+	}
+	if strings.Contains(b, "(flip)") {
+		return false, nil
 	}
 	// A "(odd)" text is a compound the gate is borderline on: it agrees with
 	// the seed "tax cut A" and rejects every other sibling.
@@ -58,7 +62,7 @@ func (joinSynth) SynthesizeMetaFact(ctx context.Context, subject string, texts [
 
 func TestReviewMetaFacts(t *testing.T) {
 	store := &reviewStorer{
-		metas: []MetaFactRef{{ID: 1, PersonName: "p"}, {ID: 2, PersonName: "p"}, {ID: 3, PersonName: "p"}, {ID: 4, PersonName: "p"}, {ID: 5, PersonName: "p"}},
+		metas: []MetaFactRef{{ID: 1, PersonName: "p"}, {ID: 2, PersonName: "p"}, {ID: 3, PersonName: "p"}, {ID: 4, PersonName: "p"}, {ID: 5, PersonName: "p"}, {ID: 6, PersonName: "p"}},
 		members: map[int64][]FactForFold{
 			1: {{ID: 10, Text: "tax cut A"}, {ID: 11, Text: "tax cut B"}},                                 // intact
 			2: {{ID: 20, Text: "tax cut A"}, {ID: 21, Text: "war must end"}, {ID: 22, Text: "tax cut C"}}, // trimmed: 21 out
@@ -68,6 +72,9 @@ func TestReviewMetaFacts(t *testing.T) {
 			// yes, 51 no); 53 then agrees with 50 and 51 and fails only
 			// against 52 — it stays. Under complete linkage it was evicted.
 			5: {{ID: 50, Text: "tax cut A"}, {ID: 51, Text: "tax cut B"}, {ID: 52, Text: "tax cut (odd)"}, {ID: 53, Text: "tax cut D"}},
+			// Order-swap: the gate rejects 61 as the second statement but
+			// accepts it as the first — not a stable "different"; intact.
+			6: {{ID: 60, Text: "tax cut A"}, {ID: 61, Text: "tax cut (flip)"}},
 		},
 		texts: map[int64]string{},
 	}
@@ -76,7 +83,7 @@ func TestReviewMetaFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := MetaReviewStats{Metas: 5, Intact: 2, Trimmed: 1, Dissolved: 1, GateFailures: 1, DissolvedIDs: []int64{3}}
+	want := MetaReviewStats{Metas: 6, Intact: 3, Trimmed: 1, Dissolved: 1, GateFailures: 1, DissolvedIDs: []int64{3}}
 	if st.Metas != want.Metas || st.Intact != want.Intact || st.Trimmed != want.Trimmed || st.Dissolved != want.Dissolved ||
 		st.GateFailures != want.GateFailures || st.Unfolded != 0 || len(st.DissolvedIDs) != 1 || st.DissolvedIDs[0] != 3 {
 		t.Fatalf("dry run stats = %+v, want %+v", st, want)

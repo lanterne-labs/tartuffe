@@ -65,8 +65,11 @@ type MetaReviewStats struct {
 // become active facts again; they have no stance link, so the nightly orphan
 // routing places them) and the meta text is re-synthesized from the rest. A
 // meta with fewer than two members left is reported as dissolved and left
-// untouched. A gate error skips the meta: it is never trimmed on partial
-// information.
+// untouched. A "different" verdict only counts when the gate repeats it
+// with the two statements swapped (order-swap agreement, as the auditor's
+// eviction gate): a 2-member meta gets one comparison, and a borderline
+// call in one order must not dissolve it. A gate error skips the meta: it is
+// never trimmed on partial information.
 func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePositionJudge, synth MetaSynthesizer, opts MetaReviewOptions) (MetaReviewStats, error) {
 	var st MetaReviewStats
 	metas, err := storer.ListMetaFacts(ctx, opts.Since)
@@ -90,6 +93,9 @@ func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePos
 			agree, disagree := 0, 0
 			for _, k := range clique {
 				same, err := judge.IsSamePosition(ctx, m.PersonName, k.Text, f.Text)
+				if err == nil && !same {
+					same, err = judge.IsSamePosition(ctx, m.PersonName, f.Text, k.Text)
+				}
 				if err != nil {
 					log.Warn().Err(err).Int64("meta_id", m.ID).Msg("Meta-fact review: gate failed; meta skipped")
 					failed = true

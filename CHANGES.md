@@ -2152,4 +2152,8 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   sibling ("TVA … et suspendre les hausses d'impôts (électricité, gaz, fioul)"), while it
   agreed with the seed and two other members. An over-fold fails against every member; a
   borderline pair fails against one. Complete linkage cannot tell them apart under an
-  imperfect gate.
+  imperfect gate. And a "different" only counts when the gate repeats it with the two
+  statements swapped (the auditor's order-swap agreement): a 2-member meta gets one
+  comparison, and the second dry run dissolved ~25 % of the July metas, two in five of a
+  sample on a coin-flip verdict ("demande d'inscrire la PPL" / "apporte son soutien à la
+  PPL"). Costs one extra call per "different", in this one-off review only.
