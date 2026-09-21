@@ -182,3 +182,32 @@ func TestDownloadCached_ZeroMaxAge(t *testing.T) {
 		t.Fatalf("expected cache hit with maxAge=0, got %d calls", callCount)
 	}
 }
+
+// A body read that breaks mid-transfer is retried like a failed connection:
+// the first response is truncated (Content-Length larger than what is sent,
+// then the handler aborts), the second is complete.
+func TestDownloadCached_RetriesTruncatedBody(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Header().Set("Content-Length", "100")
+			w.Write([]byte("partial"))
+			panic(http.ErrAbortHandler)
+		}
+		w.Write([]byte("complete data"))
+	}))
+	defer srv.Close()
+
+	origClient := httpClient
+	httpClient = srv.Client()
+	defer func() { httpClient = origClient }()
+
+	data, err := downloadCached(context.Background(), srv.URL+"/archive.zip", t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatalf("expected the retry to succeed, got: %v", err)
+	}
+	if string(data) != "complete data" || callCount != 2 {
+		t.Fatalf("got %q after %d calls, want the complete body from the second call", data, callCount)
+	}
+}

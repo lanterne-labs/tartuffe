@@ -158,6 +158,8 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 				data, err = io.ReadAll(resp.Body)
 				if err != nil {
 					lastErr = fmt.Errorf("read body: %w", err)
+					sleepWithJitter(ctx, backoff)
+					backoff *= 2
 					return
 				}
 				lastErr = nil
@@ -189,8 +191,9 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 		if lastErr == nil && len(data) > 0 {
 			break
 		}
-		// Don't burn the rest of the budget on non-retryable errors.
-		if lastErr != nil && !strings.HasPrefix(lastErr.Error(), "retryable status") && !strings.HasPrefix(lastErr.Error(), "http get") {
+		// Don't burn the rest of the budget on non-retryable errors. A body
+		// read that broke mid-way (reset, truncated transfer) is transient.
+		if lastErr != nil && !strings.HasPrefix(lastErr.Error(), "retryable status") && !strings.HasPrefix(lastErr.Error(), "http get") && !strings.HasPrefix(lastErr.Error(), "read body") {
 			break
 		}
 	}

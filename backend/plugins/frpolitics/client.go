@@ -6,12 +6,19 @@ import (
 	"time"
 )
 
-// httpClient is a lightweight HTTP client with sane timeout. All frpolitics
-// HTTP requests should go through it, and callers should call
-// applyBrowserHeaders on the request before .Do() — AN's open-data portal
-// rate-limits Go's default UA much more aggressively than a real browser
-// fingerprint, even though the data is public.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// httpClient is the client every frpolitics download goes through; callers
+// call applyBrowserHeaders on the request before .Do() — AN's open-data
+// portal rate-limits Go's default UA much more aggressively than a real
+// browser fingerprint, even though the data is public. A hung connection is
+// bounded by the time to the response headers (30 s); the body is not, because
+// the archives are tens of MB (the debates archive is 56 MB) and a total
+// 30 s timeout killed the read whenever the portal served under ~2 MB/s
+// (pipeline run 103, 2026-09-21). The 10 min cap is the ceiling for a whole
+// download.
+var httpClient = &http.Client{
+	Timeout:   10 * time.Minute,
+	Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second, Proxy: http.ProxyFromEnvironment},
+}
 
 // browserHeaders is a Chrome-on-Linux fingerprint applied to every frpolitics
 // HTTP request. The data we fetch is public; the UA swap exists only to avoid
