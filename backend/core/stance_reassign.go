@@ -101,7 +101,7 @@ func ReassignSingletonsForPerson(ctx context.Context, storer StanceReassignStore
 				others = append(others, o)
 			}
 		}
-		decision, err := sm.assignTopic(ctx, p.ID, others, fact.NormalizedFactText, fact.Embedding, s.ID)
+		decision, err := sm.assignTopic(ctx, p.ID, others, fact.NormalizedFactText, fact.Embedding, assignExclude{StanceID: s.ID})
 		if err != nil {
 			log.Warn().Err(err).Str("person", p.Name).Int64("stance_id", s.ID).Msg("Singleton re-assignment: topic assignment failed; stance stays")
 			st.Failures++
@@ -197,4 +197,91 @@ func RunSingletonReassign(ctx context.Context, storer StanceReassignStorer, sm *
 		Int64("contradictions", stats.Contradictions).
 		Msg("Singleton re-assignment sweep finished")
 	return stats, nil
+}
+
+// FactPlacement is a fact together with the stance it currently sits in.
+type FactPlacement struct {
+	FactID      int64
+	StanceID    int64
+	StanceLabel string
+	PersonID    int64
+	PersonName  string
+}
+
+// StancePlacementStorer is the storage view the placement check needs.
+type StancePlacementStorer interface {
+	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
+	GetFactByID(ctx context.Context, factID int64) (*FactForDedup, error)
+	// SampleFactsInMultiFactStances draws up to n random facts sitting in
+	// stances with more than one fact, among the given persons (all persons
+	// when personIDs is empty).
+	SampleFactsInMultiFactStances(ctx context.Context, personIDs []int64, n int) ([]FactPlacement, error)
+}
+
+// PlacementStats are the counters of one placement check.
+type PlacementStats struct {
+	Sampled  int64
+	Stays    int64 // the assigner picks the fact's current stance
+	Moves    int64 // it picks another existing stance
+	Splits   int64 // it wants a new topic
+	Failures int64
+}
+
+// CheckFactPlacements measures how often the current topic assigner disagrees
+// with where a fact already sits: each sampled fact is re-assigned among ALL
+// of its person's stances, its own stance included but with the fact hidden
+// from the evidence, so the stance has to earn the fact on its other members.
+// Read-only; the moves and splits are logged with both labels for review.
+func CheckFactPlacements(ctx context.Context, storer StancePlacementStorer, sm *StanceManager, personIDs []int64, sample int) (PlacementStats, error) {
+	var st PlacementStats
+	placements, err := storer.SampleFactsInMultiFactStances(ctx, personIDs, sample)
+	if err != nil {
+		return st, fmt.Errorf("sampling facts: %w", err)
+	}
+	log.Info().Int("sample", len(placements)).Msg("Placement check started")
+
+	stancesByPerson := map[int64][]StanceDocument{}
+	for _, pl := range placements {
+		stances, ok := stancesByPerson[pl.PersonID]
+		if !ok {
+			stances, err = storer.GetStanceDocumentsForPerson(ctx, pl.PersonID)
+			if err != nil {
+				return st, fmt.Errorf("loading stances of person %d: %w", pl.PersonID, err)
+			}
+			stancesByPerson[pl.PersonID] = stances
+		}
+		fact, err := storer.GetFactByID(ctx, pl.FactID)
+		if err != nil {
+			return st, fmt.Errorf("loading fact %d: %w", pl.FactID, err)
+		}
+		st.Sampled++
+		decision, err := sm.assignTopic(ctx, pl.PersonID, stances, fact.NormalizedFactText, fact.Embedding, assignExclude{FactID: pl.FactID})
+		if err != nil {
+			log.Warn().Err(err).Int64("fact_id", pl.FactID).Msg("Placement check: assignment failed")
+			st.Failures++
+			continue
+		}
+		ev := log.Info().Str("person", pl.PersonName).Int64("fact_id", pl.FactID).Str("fact", fact.NormalizedFactText).
+			Int64("stance_id", pl.StanceID).Str("label", pl.StanceLabel).Str("reasoning", decision.Reasoning)
+		switch {
+		case decision.IsNew:
+			st.Splits++
+			ev.Str("proposed_label", decision.NewLabel).Msg("Placement check: SPLIT — the assigner wants a new topic")
+		case decision.AssignedID == pl.StanceID:
+			st.Stays++
+			ev.Msg("Placement check: stays")
+		default:
+			st.Moves++
+			target := "?"
+			for _, s := range stances {
+				if s.ID == decision.AssignedID {
+					target = s.ClusterLabel
+				}
+			}
+			ev.Int64("target_id", decision.AssignedID).Str("target_label", target).Msg("Placement check: MOVE — the assigner picks another stance")
+		}
+	}
+	log.Info().Int64("sampled", st.Sampled).Int64("stays", st.Stays).Int64("moves", st.Moves).Int64("splits", st.Splits).
+		Int64("failures", st.Failures).Msg("Placement check finished")
+	return st, nil
 }

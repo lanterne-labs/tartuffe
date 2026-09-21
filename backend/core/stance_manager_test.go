@@ -84,7 +84,7 @@ func (m *mockStanceStorer) GetStanceDocumentsForPerson(ctx context.Context, pers
 	return result, nil
 }
 
-func (m *mockStanceStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int) ([]StanceCandidate, error) {
+func (m *mockStanceStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error) {
 	var result []StanceCandidate
 	for _, id := range stanceIDs {
 		for _, s := range m.stances {
@@ -96,7 +96,7 @@ func (m *mockStanceStorer) StanceCandidatesByIDs(ctx context.Context, personID i
 	return result, nil
 }
 
-func (m *mockStanceStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error) {
+func (m *mockStanceStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error) {
 	var result []StanceCandidate
 	for _, s := range m.stances {
 		if s.PersonID != personID {

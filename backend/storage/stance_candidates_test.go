@@ -56,7 +56,7 @@ func TestStanceCandidatesByIDs(t *testing.T) {
 		"INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')", near, dup)
 	require.NoError(t, err)
 
-	got, err := storer.StanceCandidatesByIDs(ctx, personID, query, []int64{a, b, foreign}, 6)
+	got, err := storer.StanceCandidatesByIDs(ctx, personID, query, []int64{a, b, foreign}, 6, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2, "only the person's own requested stances")
 	require.Equal(t, b, got[0].ID, "ordered by nearest member fact")
@@ -66,7 +66,62 @@ func TestStanceCandidatesByIDs(t *testing.T) {
 	require.Equal(t, 3, got[1].FactCount)
 	_ = c
 
-	none, err := storer.StanceCandidatesByIDs(ctx, personID, query, nil, 6)
+	none, err := storer.StanceCandidatesByIDs(ctx, personID, query, nil, 6, 0)
+	require.NoError(t, err)
+	require.Empty(t, none)
+}
+
+// A fact hidden from the evidence never appears as a candidate's member fact,
+// so its own stance is ranked on its other members; and the sampler only
+// draws active facts from multi-fact stances of the given persons.
+func TestShortlistExcludesFactAndSamplesMultiFactStances(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	personID, _, err := storer.AddPerson(ctx, "shortlist exclude person")
+	require.NoError(t, err)
+	fact := func(text string, emb []float32) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(emb)).Scan(&id))
+		return id
+	}
+	stance := func(label string, factIDs ...int64) int64 {
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+			PersonID: personID, ClusterLabel: label, ClusterEmbedding: mockEmbedding(), Summary: "s " + label,
+			KeyFactIDs: factIDs, FactCount: len(factIDs),
+		})
+		require.NoError(t, err)
+		for _, f := range factIDs {
+			require.NoError(t, storer.AddFactToStance(ctx, id, f))
+		}
+		return id
+	}
+	query := makeUnitEmbedding(0)
+	self := fact("the fact itself", query)
+	sibling := fact("its sibling", makeMixedEmbedding(0, 1, 0.9, 0.1))
+	lone := fact("a lone fact", makeUnitEmbedding(5))
+	pair := stance("pair", self, sibling)
+	stance("single", lone)
+
+	got, err := storer.ShortlistStancesByNearestFact(ctx, personID, query, 8, 6, self)
+	require.NoError(t, err)
+	require.Equal(t, pair, got[0].ID)
+	require.Equal(t, []string{"its sibling"}, got[0].MemberFacts, "the hidden fact must not be evidence")
+
+	sample, err := storer.SampleFactsInMultiFactStances(ctx, []int64{personID}, 10)
+	require.NoError(t, err)
+	ids := []int64{}
+	for _, s := range sample {
+		require.Equal(t, pair, s.StanceID)
+		require.Equal(t, "pair", s.StanceLabel)
+		ids = append(ids, s.FactID)
+	}
+	require.ElementsMatch(t, []int64{self, sibling}, ids, "only the multi-fact stance's facts")
+	none, err := storer.SampleFactsInMultiFactStances(ctx, []int64{personID + 1000}, 10)
 	require.NoError(t, err)
 	require.Empty(t, none)
 }

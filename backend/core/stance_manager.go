@@ -26,10 +26,15 @@ type StanceStorer interface {
 	UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
-	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]StanceCandidate, error)
+	// ShortlistStancesByNearestFact ranks the person's stances by their
+	// nearest member fact and returns the topK with up to factsPerStance
+	// member facts each as evidence. excludeFactID (0 = none) hides one fact
+	// from the evidence: a fact re-checked against its own stance must not
+	// be its own nearest neighbour.
+	ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error)
 	// StanceCandidatesByIDs returns the given stances as candidates in the same
 	// shape as ShortlistStancesByNearestFact, ordered by nearest member fact.
-	StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int) ([]StanceCandidate, error)
+	StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	// GetUnsummarizedFactsForStance returns the facts whose membership was added
 	// after the stance's last metadata refresh (all facts if never refreshed),
@@ -236,7 +241,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	// general topic label per the LABEL RULES instead of falling back to fact text.
 	// When the fact has an embedding, assignTopic shortlists candidate stances by
 	// their NEAREST member fact and shows the LLM that concrete evidence.
-	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding, 0)
+	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding, assignExclude{})
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
@@ -1267,18 +1272,25 @@ func truncate(s string, maxLen int) string {
 // When the fact has no embedding, the person has no stances, or the shortlist
 // comes back empty, assignTopic degrades to a label/summary-only shortlist built
 // from the passed stances so it never crashes — same LLM call, weaker evidence.
-// excludeStanceID, when non-zero, is a stance the fact currently belongs to
-// and must not be offered again (the singleton re-assignment sweep); stances
-// is then the person's stances without it.
-func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32, excludeStanceID int64) (*topicAssignmentDecision, error) {
+// assignExclude narrows a re-assignment: StanceID is a stance the fact
+// currently belongs to and must not be offered again (the singleton sweep;
+// stances is then the person's stances without it); FactID is the fact
+// itself, hidden from the candidates' evidence (the placement check, where
+// its current stance stays a candidate but must earn it on its other facts).
+type assignExclude struct {
+	StanceID int64
+	FactID   int64
+}
+
+func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32, excl assignExclude) (*topicAssignmentDecision, error) {
 	var candidates []StanceCandidate
 	if len(factEmbedding) > 0 && len(stances) > 0 {
-		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, shortlistTopK, shortlistFactsPerStance)
+		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, shortlistTopK, shortlistFactsPerStance, excl.FactID)
 		if err != nil {
 			return nil, fmt.Errorf("shortlisting stances by nearest fact: %w", err)
 		}
 		for _, c := range shortlisted {
-			if c.ID != excludeStanceID {
+			if c.ID != excl.StanceID {
 				candidates = append(candidates, c)
 			}
 		}
@@ -1294,7 +1306,7 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 			if err != nil {
 				log.Warn().Err(err).Int64("person_id", personID).Msg("Topic label pass failed; using the embedding shortlist alone")
 			} else if extra := excludeIDs(picked, candidates); len(extra) > 0 {
-				added, err := sm.storer.StanceCandidatesByIDs(ctx, personID, factEmbedding, extra, shortlistFactsPerStance)
+				added, err := sm.storer.StanceCandidatesByIDs(ctx, personID, factEmbedding, extra, shortlistFactsPerStance, excl.FactID)
 				if err != nil {
 					return nil, fmt.Errorf("loading label-picked stance candidates: %w", err)
 				}

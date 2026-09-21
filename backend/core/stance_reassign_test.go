@@ -181,3 +181,55 @@ func TestReassignSingletonsForPerson(t *testing.T) {
 		t.Fatalf("dry run: stats = %+v merges = %v, want 1 join decided and no merge", st, store.merges)
 	}
 }
+
+type placementStorer struct {
+	*reassignStorer
+	placements []FactPlacement
+}
+
+func (p *placementStorer) SampleFactsInMultiFactStances(ctx context.Context, personIDs []int64, n int) ([]FactPlacement, error) {
+	return p.placements, nil
+}
+
+// The placement check re-assigns among ALL stances with the fact hidden from
+// the evidence, and counts stays / moves / splits without writing anything.
+func TestCheckFactPlacements(t *testing.T) {
+	srv, prompts := reassignLLMStub(t)
+	mock := newMockStanceStorer()
+	base := &reassignStorer{mockStanceStorer: mock, factsByID: map[int64]*FactForDedup{}}
+	emb := []float32{1, 0}
+	add := func(label string, factIDs ...int64) int64 {
+		id, _ := mock.InsertStanceDocument(context.Background(), StanceDocument{PersonID: 1, ClusterLabel: label, Summary: "s " + label, ClusterEmbedding: emb, FactCount: len(factIDs)})
+		for _, f := range factIDs {
+			mock.facts[id] = append(mock.facts[id], StanceFactInfo{ID: f, NormalizedFactText: fmt.Sprintf("fact %d", f)})
+			base.factsByID[f] = &FactForDedup{ID: f, NormalizedFactText: fmt.Sprintf("fact %d", f), Embedding: emb}
+		}
+		return id
+	}
+	retraites := add("retraites", 10, 11)
+	other := add("nucléaire", 20, 21)
+	base.factsByID[10].NormalizedFactText = "retraite à 62 ans"  // stays: the stub routes "retraite" to retraites
+	base.factsByID[20].NormalizedFactText = "retraite anticipée" // move: sits in nucléaire, routed to retraites
+	// fact 21 ("fact 21"): the stub answers new topic → split
+	store := &placementStorer{reassignStorer: base, placements: []FactPlacement{
+		{FactID: 10, StanceID: retraites, StanceLabel: "retraites", PersonID: 1, PersonName: "p"},
+		{FactID: 20, StanceID: other, StanceLabel: "nucléaire", PersonID: 1, PersonName: "p"},
+		{FactID: 21, StanceID: other, StanceLabel: "nucléaire", PersonID: 1, PersonName: "p"},
+	}}
+	cfg := llm.Config{BaseURL: srv.URL + "/v1", APIKey: "test", ChatModel: "stub"}
+	sm := &StanceManager{storer: store, client: cfg.NewClient("placement-test")}
+
+	st, err := CheckFactPlacements(context.Background(), store, sm, nil, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Sampled != 3 || st.Stays != 1 || st.Moves != 1 || st.Splits != 1 || st.Failures != 0 {
+		t.Fatalf("stats = %+v, want 1 stay, 1 move, 1 split", st)
+	}
+	if len(store.merges) != 0 || len(store.facts[retraites]) != 2 {
+		t.Fatal("the placement check must not write")
+	}
+	if n := len(*prompts); n != 3 {
+		t.Fatalf("%d LLM calls, want one assignment per sampled fact", n)
+	}
+}

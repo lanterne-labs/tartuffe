@@ -2122,6 +2122,12 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - `dm facts fold` gets the inserter's trigram candidate source (`FoldOptions.TextFloor`), so
   the backfill reaches the near-verbatim restatements whose embeddings sit outside the
   cosine window. Prod count: 11,115 candidate pairs, 3,101 of them text-only.
+- `dm stances check-placement --sample N` measures the assigner's disagreement with facts
+  already sitting in multi-fact stances before any blanket re-assignment is run: each sampled
+  fact is re-assigned among ALL of its person's stances, its own included, with the fact itself
+  hidden from the evidence (`excludeFactID` on the shortlist queries) so the stance has to earn
+  it on its other members. Excluding the current stance would force a move; showing the fact
+  as its own nearest neighbour would force a stay.
 - `dm facts review-metas --since D`: re-judges the memberships of the metas folded under the
   old gate (clique in id order, as the fold pass builds them). Members that no longer belong
   are unfolded and the meta text rewritten (`--apply`); a meta with fewer than two members

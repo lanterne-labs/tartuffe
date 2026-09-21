@@ -249,7 +249,7 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 // ranking keeps loosely related facts out of broad buckets. (Distinct from
 // StanceCandidate, the centroid-ranked struct returned by
 // FindTopStancesForPerson for the Bundler.)
-func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int) ([]core.StanceCandidate, error) {
+func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, personID int64, factEmbedding []float32, topK, factsPerStance int, excludeFactID int64) ([]core.StanceCandidate, error) {
 	query := `
 		WITH fd AS (
 			SELECT sd.id AS stance_id, sd.cluster_label, COALESCE(sd.summary, '') AS summary, sd.fact_count,
@@ -257,7 +257,7 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 			FROM stance_documents sd
 			JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
 			JOIN facts f ON f.id = sdf.fact_id
-			WHERE sd.person_id = $2
+			WHERE sd.person_id = $2 AND f.id <> $5
 			  AND NOT EXISTS (
 			      SELECT 1 FROM fact_relations fr
 			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
@@ -287,6 +287,7 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 		personID,                          // $2
 		topK,                              // $3
 		factsPerStance,                    // $4
+		excludeFactID,                     // $5
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying nearest-fact stance shortlist for person %d: %w", personID, err)
@@ -301,7 +302,7 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 // factsPerStance nearest active member facts, closest first), ordered by their
 // nearest member fact's distance to factEmbedding. Used to add the stances the
 // label pass picked to the embedding shortlist.
-func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int) ([]core.StanceCandidate, error) {
+func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int, excludeFactID int64) ([]core.StanceCandidate, error) {
 	if len(stanceIDs) == 0 {
 		return nil, nil
 	}
@@ -312,7 +313,7 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 			FROM stance_documents sd
 			JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
 			JOIN facts f ON f.id = sdf.fact_id
-			WHERE sd.person_id = $2 AND sd.id = ANY($3)
+			WHERE sd.person_id = $2 AND sd.id = ANY($3) AND f.id <> $5
 			  AND NOT EXISTS (
 			      SELECT 1 FROM fact_relations fr
 			      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
@@ -328,7 +329,7 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 		FROM ranked
 		WHERE fact_rn <= $4
 		ORDER BY stance_min_dist ASC, stance_id ASC, dist ASC`
-	rows, err := s.pool.Query(ctx, query, pgvector.NewVector(factEmbedding), personID, stanceIDs, factsPerStance)
+	rows, err := s.pool.Query(ctx, query, pgvector.NewVector(factEmbedding), personID, stanceIDs, factsPerStance, excludeFactID)
 	if err != nil {
 		return nil, fmt.Errorf("querying stance candidates by id for person %d: %w", personID, err)
 	}
@@ -704,4 +705,36 @@ func (s *PostgresStorer) ListPersonsWithSingletonStances(ctx context.Context) ([
 			HAVING COUNT(*) >= 2 AND COUNT(*) FILTER (WHERE fact_count = 1) >= 1
 		) s ON s.person_id = p.id
 		ORDER BY EXISTS (SELECT 1 FROM search_queue q WHERE q.person_id = p.id) DESC, p.id`)
+}
+
+// SampleFactsInMultiFactStances draws up to n random active facts that sit
+// in a stance with more than one fact, among personIDs (all persons when
+// empty), with the stance and person they belong to.
+func (s *PostgresStorer) SampleFactsInMultiFactStances(ctx context.Context, personIDs []int64, n int) ([]core.FactPlacement, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sdf.fact_id, sd.id, sd.cluster_label, p.id, p.name
+		FROM stance_document_facts sdf
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		JOIN persons p ON p.id = sd.person_id
+		WHERE sd.fact_count > 1
+		  AND (cardinality($1::bigint[]) = 0 OR sd.person_id = ANY($1))
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_relations fr
+		      WHERE fr.specific_fact_id = sdf.fact_id AND fr.relation_type = 'duplicate'
+		  )
+		ORDER BY random()
+		LIMIT $2`, personIDs, n)
+	if err != nil {
+		return nil, fmt.Errorf("sampling facts in multi-fact stances: %w", err)
+	}
+	defer rows.Close()
+	var out []core.FactPlacement
+	for rows.Next() {
+		var pl core.FactPlacement
+		if err := rows.Scan(&pl.FactID, &pl.StanceID, &pl.StanceLabel, &pl.PersonID, &pl.PersonName); err != nil {
+			return nil, fmt.Errorf("scanning sampled fact: %w", err)
+		}
+		out = append(out, pl)
+	}
+	return out, rows.Err()
 }
