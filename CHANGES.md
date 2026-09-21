@@ -2146,4 +2146,10 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   are unfolded and the meta text rewritten (`--apply`); a meta with fewer than two members
   left is a phantom and is only deleted with `--delete-dissolved`. Unfolded members have no
   stance link and are placed by the nightly orphan routing; their contradictions stay on
-  the meta and the fact is re-detected as active.
+  the meta and the fact is re-detected as active. Membership is a MAJORITY vote against the
+  kept members, not a clique: the first dry run evicted Le Pen's "TVA à 5,5 % sur le
+  carburant" from its own TVA meta because the gate said no once, against one compound
+  sibling ("TVA … et suspendre les hausses d'impôts (électricité, gaz, fioul)"), while it
+  agreed with the seed and two other members. An over-fold fails against every member; a
+  borderline pair fails against one. Complete linkage cannot tell them apart under an
+  imperfect gate.

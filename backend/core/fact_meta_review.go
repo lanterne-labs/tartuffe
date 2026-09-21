@@ -55,12 +55,16 @@ type MetaReviewStats struct {
 }
 
 // ReviewMetaFacts re-judges every meta-fact created since opts.Since with the
-// current same-position gate: the members are checked pairwise and kept as a
-// clique (each confirmed against every kept member, in id order), as the fold
-// pass builds them. Members outside the clique are unfolded (they become
-// active facts again; they have no stance link, so the nightly orphan routing
-// places them) and the meta text is re-synthesized from the clique. A meta
-// whose clique has fewer than two members is reported as dissolved and left
+// current same-position gate. Members are taken in id order; each stays when
+// the gate confirms it against at least as many already-kept members as it
+// rejects. A majority, not a clique: an over-folded member (a different
+// claim) fails against every member, while a member the gate is borderline
+// on against ONE compound sibling still agrees with the rest — under
+// complete linkage that single "no" evicted Le Pen's "TVA à 5,5 %% sur le
+// carburant" from its own TVA meta. Members that fall out are unfolded (they
+// become active facts again; they have no stance link, so the nightly orphan
+// routing places them) and the meta text is re-synthesized from the rest. A
+// meta with fewer than two members left is reported as dissolved and left
 // untouched. A gate error skips the meta: it is never trimmed on partial
 // information.
 func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePositionJudge, synth MetaSynthesizer, opts MetaReviewOptions) (MetaReviewStats, error) {
@@ -83,6 +87,7 @@ func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePos
 		failed := false
 	members:
 		for _, f := range members {
+			agree, disagree := 0, 0
 			for _, k := range clique {
 				same, err := judge.IsSamePosition(ctx, m.PersonName, k.Text, f.Text)
 				if err != nil {
@@ -90,10 +95,15 @@ func ReviewMetaFacts(ctx context.Context, storer MetaReviewStorer, judge SamePos
 					failed = true
 					break members
 				}
-				if !same {
-					out = append(out, f)
-					continue members
+				if same {
+					agree++
+				} else {
+					disagree++
 				}
+			}
+			if disagree > agree {
+				out = append(out, f)
+				continue
 			}
 			clique = append(clique, f)
 		}

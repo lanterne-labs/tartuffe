@@ -34,11 +34,11 @@ type SamePositionJudge interface {
 type FactFoldStorer interface {
 	MetaFoldStorer
 	// GetFoldFactsForPerson returns the person's active (non-duplicate) facts
-	// with their embeddings.
+	// that mention nobody else, with their embeddings. Shared (co-actor)
+	// facts never fold: marking one 'duplicate' is a GLOBAL flag, so folding
+	// a shared vote fact under this person's meta would remove it from every
+	// other voter's active-fact set (the insertion path has the same guard).
 	GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error)
-	// ListSharedFactIDs returns, among factIDs, the facts mentioned by more
-	// than one person.
-	ListSharedFactIDs(ctx context.Context, factIDs []int64) (map[int64]bool, error)
 	ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error)
 	// ListTextSimilarFactPairs returns the pairs among factIDs whose texts
 	// have trigram similarity of at least floor, as [smaller id, larger id].
@@ -69,26 +69,6 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	facts, err := storer.GetFoldFactsForPerson(ctx, p.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load facts: %w", err)
-	}
-
-	// Shared (co-actor) facts never fold: marking one 'duplicate' is a GLOBAL
-	// flag, so folding a shared vote fact under this person's meta would remove
-	// it from every other voter's active-fact set. Mirrors the insertion-path
-	// guard in FactInserter.
-	shared, err := storer.ListSharedFactIDs(ctx, foldFactIDs(facts))
-	if err != nil {
-		return nil, err
-	}
-	if len(shared) > 0 {
-		kept := facts[:0]
-		for _, f := range facts {
-			if !shared[f.ID] {
-				kept = append(kept, f)
-			}
-		}
-		log.Info().Str("person", p.Name).Int("excluded_shared", len(shared)).
-			Msg("Fold: excluded shared co-actor facts from clustering")
-		facts = kept
 	}
 
 	if len(facts) < 2 {

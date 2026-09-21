@@ -48,46 +48,45 @@ func (s *PostgresStorer) RepointDuplicates(ctx context.Context, apply bool) (pro
 	return processed, repointed, dropped, nil
 }
 
-// GetFoldFactsForPerson returns the person's active (non-duplicate) facts with
-// their embeddings, in the shape the fold pass needs.
+// GetFoldFactsForPerson returns the person's active (non-duplicate) facts
+// that mention nobody else, with their embeddings, in the shape the fold pass
+// needs. Shared co-actor facts (votes) never fold — a fold flag is global —
+// so they are left out here rather than loaded with their 4096-dim
+// embeddings and dropped: a deputy has hundreds of them and nothing else.
 func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]core.FactForFold, error) {
-	facts, err := s.GetFactsWithEmbeddingsForPerson(ctx, personID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]core.FactForFold, len(facts))
-	for i, f := range facts {
-		out[i] = core.FactForFold{ID: f.ID, Text: f.Text, Embedding: f.Embedding}
-	}
-	return out, nil
-}
-
-// ListSharedFactIDs returns, among factIDs, the facts mentioned by more than
-// one person (shared co-actor facts such as votes).
-func (s *PostgresStorer) ListSharedFactIDs(ctx context.Context, factIDs []int64) (map[int64]bool, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT fs.fact_id
-		FROM fact_sources fs
-		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-		WHERE fs.fact_id = ANY($1)
-		GROUP BY fs.fact_id
-		HAVING COUNT(DISTINCT fm.person_id) > 1`, factIDs)
+		SELECT f.id, f.fact_text, f.embedding
+		FROM facts f
+		WHERE EXISTS (
+		      SELECT 1 FROM fact_sources fs
+		      JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		      WHERE fs.fact_id = f.id AND fm.person_id = $1
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_sources fs
+		      JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		      WHERE fs.fact_id = f.id AND fm.person_id <> $1
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_relations fr
+		      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+		  )
+		ORDER BY f.id`, personID)
 	if err != nil {
-		return nil, fmt.Errorf("load shared-fact ids: %w", err)
+		return nil, fmt.Errorf("loading fold facts for person %d: %w", personID, err)
 	}
 	defer rows.Close()
-	shared := map[int64]bool{}
+	var out []core.FactForFold
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan shared-fact id: %w", err)
+		var f core.FactForFold
+		var vec pgvector.Vector
+		if err := rows.Scan(&f.ID, &f.Text, &vec); err != nil {
+			return nil, fmt.Errorf("scanning fold fact: %w", err)
 		}
-		shared[id] = true
+		f.Embedding = vec.Slice()
+		out = append(out, f)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate shared-fact ids: %w", err)
-	}
-	return shared, nil
+	return out, rows.Err()
 }
 
 // ListContradictionFactPairs returns the (fact_a, fact_b) pairs of every

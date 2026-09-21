@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
@@ -19,6 +20,8 @@ var (
 	factsFoldApply      bool
 	factsFoldFloor      float64
 	factsFoldMaxCluster int
+	factsFoldUntil      string
+	factsFoldStartAfter int64
 )
 
 var factsFoldCmd = &cobra.Command{
@@ -43,6 +46,8 @@ func init() {
 	factsFoldCmd.Flags().BoolVar(&factsFoldApply, "apply", false, "Apply the folds (default is a read-only report)")
 	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", core.DefaultFoldOptions.Floor, "Cosine-similarity floor for same-claim candidates")
 	factsFoldCmd.Flags().IntVar(&factsFoldMaxCluster, "max-cluster", core.DefaultFoldOptions.MaxCluster, "Skip clusters larger than this (defense against runaway chaining)")
+	factsFoldCmd.Flags().StringVar(&factsFoldUntil, "until", "", "Stop starting persons after this RFC 3339 time (a long backfill must not overlap the nightly)")
+	factsFoldCmd.Flags().Int64Var(&factsFoldStartAfter, "start-after", 0, "Skip persons up to and including this person id (resume a cut run)")
 }
 
 func runFactsFold(cmd *cobra.Command, args []string) error {
@@ -70,9 +75,31 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var deadline time.Time
+	if factsFoldUntil != "" {
+		if deadline, err = time.Parse(time.RFC3339, factsFoldUntil); err != nil {
+			return fmt.Errorf("invalid --until (expected RFC 3339, e.g. 2026-09-22T00:45:00Z): %w", err)
+		}
+	}
+	if factsFoldStartAfter != 0 {
+		for i, p := range persons {
+			if p.ID == factsFoldStartAfter {
+				persons = persons[i+1:]
+				break
+			}
+		}
+	}
+
 	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster}
 	totalClusters, totalFolded := 0, 0
-	for _, p := range persons {
+	var lastDone int64
+	for i, p := range persons {
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			log.Info().Int("done", i).Int("left", len(persons)-i).Int64("last_person_id", lastDone).
+				Msg("Fold: deadline reached; the rest stays pending (resume with --start-after)")
+			break
+		}
+		lastDone = p.ID
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Fold clustering failed; skipping person")

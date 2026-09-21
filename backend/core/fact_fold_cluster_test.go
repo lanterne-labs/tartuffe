@@ -16,9 +16,6 @@ type foldClusterStorer struct {
 func (f *foldClusterStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error) {
 	return f.facts, nil
 }
-func (f *foldClusterStorer) ListSharedFactIDs(ctx context.Context, factIDs []int64) (map[int64]bool, error) {
-	return map[int64]bool{}, nil
-}
 func (f *foldClusterStorer) ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error) {
 	return nil, nil
 }

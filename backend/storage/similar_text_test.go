@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	pgvector "github.com/pgvector/pgvector-go"
@@ -88,4 +89,46 @@ func TestListTextSimilarFactPairs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][2]int64{{a, b}}, pairs, "only the restatement pair, ordered [smaller, larger]; ids outside the set are ignored")
 	_ = outside
+}
+
+// GetFoldFactsForPerson returns the person's active facts with embeddings,
+// leaving out facts that mention another person too (shared co-actor facts
+// never fold) and facts already folded.
+func TestGetFoldFactsForPersonExcludesSharedAndFolded(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	pid, _, err := storer.AddPerson(ctx, "fold facts person")
+	require.NoError(t, err)
+	other, _, err := storer.AddPerson(ctx, "fold facts other")
+	require.NoError(t, err)
+	seq := 0
+	insert := func(text string, persons ...int64) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(makeUnitEmbedding(0))).Scan(&id))
+		for _, person := range persons {
+			seq++
+			var sid int64
+			require.NoError(t, storer.pool.QueryRow(ctx,
+				"INSERT INTO fact_sources (fact_id, source_url, source_type) VALUES ($1, $2, 'news') RETURNING id",
+				id, fmt.Sprintf("https://f.test/%d", seq)).Scan(&sid))
+			_, err := storer.pool.Exec(ctx, "INSERT INTO fact_mentions (fact_source_id, person_id) VALUES ($1, $2)", sid, person)
+			require.NoError(t, err)
+		}
+		return id
+	}
+	own := insert("own fact", pid)
+	shared := insert("shared vote fact", pid, other)
+	folded := insert("folded member", pid)
+	require.NoError(t, storer.MarkFactAsDuplicate(ctx, folded, own))
+	insert("someone else's fact", other)
+
+	got, err := storer.GetFoldFactsForPerson(ctx, pid)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, own, got[0].ID)
+	require.Len(t, got[0].Embedding, len(makeUnitEmbedding(0)))
+	_ = shared
 }

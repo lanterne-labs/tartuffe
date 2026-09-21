@@ -42,6 +42,11 @@ func (prefixJudge) IsSamePosition(ctx context.Context, subject, a, b string) (bo
 	if a == "err" || b == "err" {
 		return false, errors.New("gate down")
 	}
+	// A "(odd)" text is a compound the gate is borderline on: it agrees with
+	// the seed "tax cut A" and rejects every other sibling.
+	if strings.Contains(a, "(odd)") || strings.Contains(b, "(odd)") {
+		return a == "tax cut A" || b == "tax cut A", nil
+	}
 	return strings.Fields(a)[0] == strings.Fields(b)[0], nil
 }
 
@@ -53,12 +58,16 @@ func (joinSynth) SynthesizeMetaFact(ctx context.Context, subject string, texts [
 
 func TestReviewMetaFacts(t *testing.T) {
 	store := &reviewStorer{
-		metas: []MetaFactRef{{ID: 1, PersonName: "p"}, {ID: 2, PersonName: "p"}, {ID: 3, PersonName: "p"}, {ID: 4, PersonName: "p"}},
+		metas: []MetaFactRef{{ID: 1, PersonName: "p"}, {ID: 2, PersonName: "p"}, {ID: 3, PersonName: "p"}, {ID: 4, PersonName: "p"}, {ID: 5, PersonName: "p"}},
 		members: map[int64][]FactForFold{
 			1: {{ID: 10, Text: "tax cut A"}, {ID: 11, Text: "tax cut B"}},                                 // intact
 			2: {{ID: 20, Text: "tax cut A"}, {ID: 21, Text: "war must end"}, {ID: 22, Text: "tax cut C"}}, // trimmed: 21 out
 			3: {{ID: 30, Text: "tax cut A"}, {ID: 31, Text: "war must end"}},                              // dissolved
 			4: {{ID: 40, Text: "err"}, {ID: 41, Text: "tax cut"}},                                         // gate failure
+			// Majority tolerance: the compound 52 gets in on a 1-1 tie (seed
+			// yes, 51 no); 53 then agrees with 50 and 51 and fails only
+			// against 52 — it stays. Under complete linkage it was evicted.
+			5: {{ID: 50, Text: "tax cut A"}, {ID: 51, Text: "tax cut B"}, {ID: 52, Text: "tax cut (odd)"}, {ID: 53, Text: "tax cut D"}},
 		},
 		texts: map[int64]string{},
 	}
@@ -67,7 +76,7 @@ func TestReviewMetaFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := MetaReviewStats{Metas: 4, Intact: 1, Trimmed: 1, Dissolved: 1, GateFailures: 1, DissolvedIDs: []int64{3}}
+	want := MetaReviewStats{Metas: 5, Intact: 2, Trimmed: 1, Dissolved: 1, GateFailures: 1, DissolvedIDs: []int64{3}}
 	if st.Metas != want.Metas || st.Intact != want.Intact || st.Trimmed != want.Trimmed || st.Dissolved != want.Dissolved ||
 		st.GateFailures != want.GateFailures || st.Unfolded != 0 || len(st.DissolvedIDs) != 1 || st.DissolvedIDs[0] != 3 {
 		t.Fatalf("dry run stats = %+v, want %+v", st, want)
@@ -82,6 +91,9 @@ func TestReviewMetaFacts(t *testing.T) {
 	}
 	if st.Unfolded != 1 || len(store.unfolded) != 1 || store.unfolded[0] != [2]int64{2, 21} {
 		t.Fatalf("apply: unfolded=%v stats=%+v, want fact 21 unfolded from meta 2 only", store.unfolded, st)
+	}
+	if _, touched := store.texts[5]; touched {
+		t.Fatal("meta 5 is intact by majority; it must not be rewritten")
 	}
 	if got := store.texts[2]; got != "tax cut A + tax cut C" {
 		t.Fatalf("meta 2 text = %q, want it re-synthesized from the clique", got)
