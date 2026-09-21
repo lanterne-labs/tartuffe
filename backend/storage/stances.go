@@ -738,3 +738,26 @@ func (s *PostgresStorer) SampleFactsInMultiFactStances(ctx context.Context, pers
 	}
 	return out, rows.Err()
 }
+
+// ListLabelSimilarStancePairs returns the person's stance pairs whose labels
+// have pg_trgm similarity of at least floor, as [smaller id, larger id].
+func (s *PostgresStorer) ListLabelSimilarStancePairs(ctx context.Context, personID int64, floor float64) ([][2]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT a.id, b.id
+		FROM stance_documents a
+		JOIN stance_documents b ON b.person_id = a.person_id AND b.id > a.id
+		WHERE a.person_id = $1 AND similarity(a.cluster_label, b.cluster_label) >= $2`, personID, floor)
+	if err != nil {
+		return nil, fmt.Errorf("listing label-similar stance pairs for person %d: %w", personID, err)
+	}
+	defer rows.Close()
+	var out [][2]int64
+	for rows.Next() {
+		var p [2]int64
+		if err := rows.Scan(&p[0], &p[1]); err != nil {
+			return nil, fmt.Errorf("scanning label-similar pair: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

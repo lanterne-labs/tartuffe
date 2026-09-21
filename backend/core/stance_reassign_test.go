@@ -42,6 +42,10 @@ func (r *reassignStorer) UpdateStanceSummary(ctx context.Context, stanceID int64
 	return nil
 }
 
+func (r *reassignStorer) ListLabelSimilarStancePairs(ctx context.Context, personID int64, floor float64) ([][2]int64, error) {
+	return nil, nil
+}
+
 func (r *reassignStorer) ListPersonsNeedingMergeSweep(ctx context.Context, rulebookKey string) ([]PersonRecord, error) {
 	return nil, nil
 }

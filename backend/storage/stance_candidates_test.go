@@ -125,3 +125,33 @@ func TestShortlistExcludesFactAndSamplesMultiFactStances(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, none)
 }
+
+// ListLabelSimilarStancePairs surfaces one person's label-similar pairs once,
+// as [smaller, larger], and never crosses persons.
+func TestListLabelSimilarStancePairs(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	personID, _, err := storer.AddPerson(ctx, "label pairs person")
+	require.NoError(t, err)
+	otherID, _, err := storer.AddPerson(ctx, "label pairs other")
+	require.NoError(t, err)
+	stance := func(person int64, label string) int64 {
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+			PersonID: person, ClusterLabel: label, ClusterEmbedding: mockEmbedding(), Summary: "s " + label, KeyFactIDs: []int64{},
+		})
+		require.NoError(t, err)
+		return id
+	}
+	a := stance(personID, "politique environnementale et régulations écologiques")
+	b := stance(personID, "Politique environnementale et Pacte vert")
+	stance(personID, "réforme des retraites")
+	stance(otherID, "politique environnementale et transition")
+
+	pairs, err := storer.ListLabelSimilarStancePairs(ctx, personID, 0.40)
+	require.NoError(t, err)
+	require.Equal(t, [][2]int64{{a, b}}, pairs)
+}

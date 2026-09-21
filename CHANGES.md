@@ -2128,6 +2128,19 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   hidden from the evidence (`excludeFactID` on the shortlist queries) so the stance has to earn
   it on its other members. Excluding the current stance would force a move; showing the fact
   as its own nearest neighbour would force a stay.
+- Placement check on 200 queue-person facts: 175 stay, 21 move, 3 split. Read against the
+  labels, ~3 % are real misfiles, ~2 % are facts shuttling between two stances that are the
+  SAME topic under two labels (Bardella: "politique environnementale et régulations
+  écologiques" and "Politique environnementale et Pacte vert", centroids at cosine 0.44, far
+  under the 0.82 merge recall floor because opposite-direction facts pull centroids apart),
+  ~1 % would be regressions, the rest coin flips. A blanket re-assignment of the 11k facts was
+  not worth its ~2 LLM-days; the duplicate-stance signal was. The merge sweep gets a second
+  candidate source: label trigram similarity ≥ 0.40 (219 pairs over the whole table). Label
+  pairs are mostly shared generic words ("France-Hongrie" / "France-Espagne" scores 0.64, and
+  the merge decision is known to be loose on related pairs), so they pass a stricter
+  same-subject gate (`SameSubjectByLabel`, `TestSameSubjectByLabelGolden` on prod pairs,
+  10/10 x3) before the merge decision. The rulebook key includes it, so the nightly re-judges
+  every person once.
 - `dm facts review-metas --since D`: re-judges the memberships of the metas folded under the
   old gate (clique in id order, as the fold pass builds them). Members that no longer belong
   are unfolded and the meta text rewritten (`--apply`); a meta with fewer than two members

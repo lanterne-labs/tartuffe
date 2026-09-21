@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crypto/sha256"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
 	"encoding/hex"
 	"fmt"
@@ -19,6 +20,10 @@ type StanceMergeStorer interface {
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
 	MergeStancesForPerson(ctx context.Context, srcID, dstID int64, newDstCentroid []float32) error
 	UpdateStanceSummary(ctx context.Context, stanceID int64, summary, clusterLabel string) error
+	// ListLabelSimilarStancePairs returns the person's stance pairs whose
+	// labels have trigram similarity of at least floor, as [smaller id,
+	// larger id].
+	ListLabelSimilarStancePairs(ctx context.Context, personID int64, floor float64) ([][2]int64, error)
 	// ListPersonsNeedingMergeSweep lists the persons with >= 2 stances whose
 	// stance set changed since the sweep last judged it under rulebookKey, or
 	// that were never judged under it.
@@ -31,7 +36,17 @@ type StanceMergeStorer interface {
 // StanceMergeOptions tunes the per-person merge and the sweep over persons.
 type StanceMergeOptions struct {
 	RecallSim float64 // cosine floor for surfacing candidate pairs (the LLM gates each)
-	DryRun    bool
+	// LabelSim is the trigram floor on stance LABELS for a second candidate
+	// source (0 = off). Two stances of one person that say the same thing in
+	// their labels ("politique environnementale et régulations écologiques"
+	// / "Politique environnementale et Pacte vert") had centroids at cosine
+	// 0.44, far under RecallSim, because opposite-direction facts pull the
+	// centroids apart. Label pairs are mostly shared generic words, though
+	// ("relations bilatérales France-Hongrie" / "France-Espagne" scores
+	// 0.64), so they pass a stricter same-subject gate before the merge
+	// decision (see sameSubjectLabelPrompt).
+	LabelSim float64
+	DryRun   bool
 	// MaxPersons caps how many candidate persons RunStanceMergeSweep processes
 	// (0 = all), taken in the order storage lists them. Bounded smoke runs use it.
 	MaxPersons int
@@ -50,7 +65,10 @@ var DefaultStanceMergeOptions = StanceMergeOptions{
 	// floor lets union-find chain a fuzzy supercluster. Keeping candidates at
 	// >=0.82 means the gate only ever sees genuine near-dups.
 	RecallSim: 0.82,
-	DryRun:    false,
+	// 0.40 reaches the known duplicates (0.43-0.77 on prod) at ~220 candidate
+	// pairs over the whole table; the gate carries the precision.
+	LabelSim: 0.40,
+	DryRun:   false,
 }
 
 // allStancesLLMCap is the per-person stance count at or below which we skip
@@ -117,7 +135,8 @@ func (s *StanceMergeSweepStats) Add(ps PersonMergeStats) {
 func MergeRulebookKey(opts StanceMergeOptions) string {
 	h := sha256.New()
 	h.Write([]byte(mergeDecisionPrompt("\x00", []StanceForMerge{{ID: 0, Label: "\x00", Summary: "\x00"}})))
-	fmt.Fprintf(h, "|recall=%g|cap=%d", opts.RecallSim, allStancesLLMCap)
+	h.Write([]byte(sameSubjectLabelPrompt("\x00", StanceForMerge{Label: "\x00", Summary: "\x00"}, StanceForMerge{Label: "\x00", Summary: "\x00"})))
+	fmt.Fprintf(h, "|recall=%g|label=%g|cap=%d", opts.RecallSim, opts.LabelSim, allStancesLLMCap)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -226,8 +245,15 @@ func MergeStancesForPerson(
 		}
 		candidateClusters = [][]int{allIdx}
 	} else {
+		var labelPairs [][2]int64
+		if opts.LabelSim > 0 {
+			labelPairs, err = storer.ListLabelSimilarStancePairs(ctx, p.ID, opts.LabelSim)
+			if err != nil {
+				return ps, fmt.Errorf("loading label-similar stance pairs: %w", err)
+			}
+		}
 		var pwCalls, pwFails int
-		candidateClusters, pwCalls, pwFails = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim)
+		candidateClusters, pwCalls, pwFails = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim, labelPairs)
 		ps.LLMCalls += int64(pwCalls)
 		ps.LLMFailures += int64(pwFails)
 		preConfirmed = true
@@ -337,16 +363,40 @@ func MergeStancesForPerson(
 // pairs "sécurité publique" with "relations publiques"), a wrong pair the embedding
 // surfaces is rejected per-pair and can't drag a whole cluster along. Returns
 // candidate groups (size >= 2) as input indices, plus the LLM call/failure counts.
-func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName string, docs []StanceDocument, candidateSim float64) (groups [][]int, llmCalls, llmFailures int) {
+// labelPairs are extra candidates by label similarity (stance ids); each is
+// confirmed by the stricter same-subject gate first, then by the merge
+// decision like an embedding candidate.
+func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName string, docs []StanceDocument, candidateSim float64, labelPairs [][2]int64) (groups [][]int, llmCalls, llmFailures int) {
 	embeddings := make([][]float32, len(docs))
+	idx := make(map[int64]int, len(docs))
 	for i, d := range docs {
 		embeddings[i] = d.ClusterEmbedding
+		idx[d.ID] = i
 	}
-	confirm := func(i, j int) bool {
-		dec, err := sm.MergeClusterDecision(ctx, personName, []StanceForMerge{
-			{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary},
-			{ID: docs[j].ID, Label: docs[j].ClusterLabel, Summary: docs[j].Summary},
-		})
+	var extra [][2]int
+	for _, pr := range labelPairs {
+		i, okI := idx[pr[0]]
+		j, okJ := idx[pr[1]]
+		if okI && okJ {
+			extra = append(extra, [2]int{i, j})
+		}
+	}
+	forMerge := func(i int) StanceForMerge {
+		return StanceForMerge{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary}
+	}
+	confirm := func(i, j int, viaLabel bool) bool {
+		if viaLabel {
+			same, err := sm.SameSubjectByLabel(ctx, personName, forMerge(i), forMerge(j))
+			llmCalls++
+			if err != nil {
+				llmFailures++
+				return false
+			}
+			if !same {
+				return false
+			}
+		}
+		dec, err := sm.MergeClusterDecision(ctx, personName, []StanceForMerge{forMerge(i), forMerge(j)})
 		llmCalls++
 		if err != nil {
 			llmFailures++
@@ -354,16 +404,18 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		}
 		return dec != nil && len(dec.Merges) > 0
 	}
-	return groupByConfirmedSimilarPairs(embeddings, candidateSim, confirm), llmCalls, llmFailures
+	return groupByConfirmedSimilarPairs(embeddings, candidateSim, extra, confirm), llmCalls, llmFailures
 }
 
 // groupByConfirmedSimilarPairs is the pure grouping core of pairwiseGroupStances:
 // it forms candidate index pairs whose (L2-normalised) embeddings are at least
-// candidateSim similar, asks confirm() for each — most-similar first, skipping
-// pairs already linked transitively — and union-finds the confirmed pairs into
-// groups of size >= 2 (sorted by size desc, then first index). Separated from the
-// LLM call so it can be unit-tested with a fake predicate.
-func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, confirm func(i, j int) bool) [][]int {
+// candidateSim similar, plus the extra pairs (label candidates, asked after
+// the embedding ones and flagged viaLabel unless the embedding also
+// surfaced them), asks confirm() for each — most-similar first, skipping pairs
+// already linked transitively — and union-finds the confirmed pairs into
+// groups of size >= 2 (sorted by size desc, then first index). Separated from
+// the LLM call so it can be unit-tested with a fake predicate.
+func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, extra [][2]int, confirm func(i, j int, viaLabel bool) bool) [][]int {
 	n := len(embeddings)
 	parent := make([]int, n)
 	for i := range parent {
@@ -379,24 +431,38 @@ func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, 
 	}
 
 	type cand struct {
-		i, j int
-		sim  float64
+		i, j     int
+		sim      float64
+		viaLabel bool
 	}
 	var cands []cand
+	seen := map[[2]int]bool{}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			if sim := util.DotProductF32(embeddings[i], embeddings[j]); sim >= candidateSim {
-				cands = append(cands, cand{i, j, sim})
+				cands = append(cands, cand{i: i, j: j, sim: sim})
+				seen[[2]int{i, j}] = true
 			}
 		}
 	}
 	sort.Slice(cands, func(a, b int) bool { return cands[a].sim > cands[b].sim })
+	for _, pr := range extra {
+		i, j := pr[0], pr[1]
+		if i > j {
+			i, j = j, i
+		}
+		if i == j || i < 0 || j >= n || seen[[2]int{i, j}] {
+			continue
+		}
+		seen[[2]int{i, j}] = true
+		cands = append(cands, cand{i: i, j: j, viaLabel: true})
+	}
 
 	for _, c := range cands {
 		if find(c.i) == find(c.j) {
 			continue
 		}
-		if confirm(c.i, c.j) {
+		if confirm(c.i, c.j, c.viaLabel) {
 			parent[find(c.i)] = find(c.j)
 		}
 	}
@@ -598,4 +664,48 @@ func applyMergeSubgroup(
 	}
 
 	return merged, contradictions, analyzeFailures, nil
+}
+
+// sameSubjectLabelPrompt is the strict gate for label-similar stance pairs.
+// Rules first, the two stances next, response format last (prefix caching).
+func sameSubjectLabelPrompt(personName string, a, b StanceForMerge) string {
+	return fmt.Sprintf(`Two stance topics of the SAME person have similar-looking labels. Decide whether they are the SAME SUBJECT AREA — one topic recorded twice under two labels — so that one should absorb the other.
+
+Label similarity is a weak hint: most such pairs only share a generic word. Answer true ONLY when a reader would call them one topic.
+
+SAME subject (answer true):
+- One label is a rewording or a sub-facet of the other on the same policy field, country, institution or affair: "politique du logement et rénovation" / "Politique du logement et aides à la rénovation"; "relations entre la France et l'Italie" / "relations franco-italiennes"; "lutte contre les discriminations" / "politique de lutte contre les discriminations".
+- The summaries describe the same matter from the same angle, with the same actors and the same policy field.
+
+DIFFERENT (answer false):
+- A generic word in common on different fields: "réglementation des drones" / "réglementation des loyers"; "politique éducative" / "politique pénale"; "relations avec les médias" / "relations avec les syndicats".
+- Different countries, institutions, parties or persons: "relations bilatérales France-Italie" / "relations bilatérales France-Portugal"; "présidence du parti" / "financement du parti".
+- A field and one of its neighbours: "politique économique" / "politique sociale"; "sécurité publique" / "politique pénale"; "immigration" / "identité nationale" — related is not the same.
+- A whole area and a specific affair or event inside it are two topics ("relations diplomatiques de la France" / "relations diplomatiques avec la Syrie").
+
+Person: %s
+TOPIC A: %q
+  summary: %s
+TOPIC B: %q
+  summary: %s
+
+Return ONLY strict JSON, nothing else:
+{"same": true, "reasoning": "<one short sentence>"}
+or
+{"same": false, "reasoning": "<one short sentence>"}`, personName, a.Label, a.Summary, b.Label, b.Summary)
+}
+
+// SameSubjectByLabel asks the strict same-subject gate about two stances whose
+// labels look alike. It is the first of two gates for label-surfaced merge
+// candidates; the merge decision still has the last word.
+func (sm *StanceManager) SameSubjectByLabel(ctx context.Context, personName string, a, b StanceForMerge) (bool, error) {
+	content, err := sm.callJSONLLM(ctx, "You are a political stance topic classifier. Return only valid JSON.", sameSubjectLabelPrompt(personName, a, b), 0.0, 200, false)
+	if err != nil {
+		return false, fmt.Errorf("same-subject gate: %w", err)
+	}
+	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
+	if err != nil {
+		return false, fmt.Errorf("same-subject gate: parsing response: %w", err)
+	}
+	return verdict.Same, nil
 }
