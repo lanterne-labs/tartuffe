@@ -153,10 +153,11 @@ func TestReassignSingletonsForPerson(t *testing.T) {
 	if n := len(store.facts[big]); n != 4 {
 		t.Fatalf("stance %d has %d facts, want 4", big, n)
 	}
-	// The singleton itself was never offered as a destination.
+	// The singleton itself was never offered as a destination for its own
+	// fact (it is a legitimate candidate when the OTHER singleton is judged).
 	for _, p := range *prompts {
-		if strings.Contains(p, "You are a topic classifier") && strings.Contains(p, `"âge de départ"`) {
-			t.Fatalf("the singleton was offered as a candidate:\n%s", p)
+		if strings.Contains(p, "You are a topic classifier") && strings.Contains(p, "NEW FACT:\nretraite à 62 ans") && strings.Contains(p, `"âge de départ"`) {
+			t.Fatalf("the singleton was offered as a candidate for its own fact:\n%s", p)
 		}
 	}
 	// Joined: analyze against the destination's facts (majority-voted, so
