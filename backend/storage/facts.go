@@ -291,31 +291,26 @@ func (s *PostgresStorer) linkPersonsToSourceMention(ctx context.Context, tx pgx.
 // 1. visitable (bool): True if the URL can be visited (either new or past the revisit interval).
 // 2. sourceExists (bool): True if the URL already exists in the fact_sources table.
 // 3. err (error): Any error encountered during the database query.
+//
+// A visit is a stored fact source OR a fetched document (source_documents):
+// a document fetched and extracted with no facts, or whose extraction failed,
+// is still a visit — it is resumed from its stored content, never fetched
+// again inside the interval.
 func (s *PostgresStorer) IsURLVisitable(ctx context.Context, url string, revisitIntervalHours int) (visitable bool, sourceExists bool, err error) {
-	var lastVisitedAt time.Time
-	query := `SELECT last_visited_at FROM fact_sources WHERE source_url = $1`
-
-	err = s.pool.QueryRow(ctx, query, url).Scan(&lastVisitedAt)
-
-	if err == pgx.ErrNoRows {
-		// URL does not exist, so it's visitable and sourceExists is false
+	var lastVisit *time.Time
+	var lastSource *time.Time
+	err = s.pool.QueryRow(ctx, `
+		SELECT GREATEST(fs.t, sd.t), fs.t
+		FROM (SELECT MAX(last_visited_at) AS t FROM fact_sources WHERE source_url = $1) fs,
+		     (SELECT MAX(fetched_at) AS t FROM source_documents WHERE url = $1) sd`, url).Scan(&lastVisit, &lastSource)
+	if err != nil {
+		return false, false, fmt.Errorf("failed to query last visit for URL '%s': %w", url, err)
+	}
+	if lastVisit == nil {
 		return true, false, nil
 	}
-	if err != nil {
-		// Other query error
-		return false, false, fmt.Errorf("failed to query last_visited_at for URL '%s': %w", url, err)
-	}
-
-	// URL exists, sourceExists is true
-	sourceExists = true
-
-	// Check if last_visited_at is older than NOW() - revisitIntervalHours
-	if time.Since(lastVisitedAt) > (time.Duration(revisitIntervalHours) * time.Hour) {
-		visitable = true // It's time to revisit
-	} else {
-		visitable = false // Visited too recently
-	}
-
+	sourceExists = lastSource != nil
+	visitable = time.Since(*lastVisit) > time.Duration(revisitIntervalHours)*time.Hour
 	return visitable, sourceExists, nil
 }
 

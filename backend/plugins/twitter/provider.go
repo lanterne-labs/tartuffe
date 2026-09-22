@@ -21,6 +21,9 @@ const (
 	defaultMaxTweets    = 50
 	defaultBatchSize    = 20
 	defaultRevisitHours = 24 * 365 * 10 // 10 years — never re-process same tweet URL
+	// twitterMaxConsecutiveFailures aborts a handle's extraction after this
+	// many batches failed in a row: the LLM is down, not the tweets.
+	twitterMaxConsecutiveFailures = 3
 )
 
 // pluginInstructions provides twitter-specific extraction instructions for the LLM.
@@ -156,17 +159,44 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 		Int("skipped_already_processed", result.SkippedAlreadyProcessed).
 		Msg("twitter: filtered tweets")
 
-	if len(toProcess) == 0 {
-		if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
-			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+	// Fetch step of the document state machine: every tweet to process is
+	// saved now and the range logged as fetched, before any LLM call.
+	for _, tw := range toProcess {
+		if _, err := p.Storer.SaveFetchedDocument(ctx, documentFromTweet(tw, handle)); err != nil {
+			return result, fmt.Errorf("saving tweet %s: %w", tw.URL, err)
 		}
-		return result, nil
+	}
+	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
+		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+	}
+	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
+		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
 	}
 
-	// Process in batches
+	if err := p.extractStoredTweets(ctx, handle, batchSize, result); err != nil {
+		return result, err
+	}
+
+	log.Info().
+		Str("handle", handle.Handle).
+		Int("tweets_processed", result.TweetsProcessed).
+		Int("tweets_no_facts", result.TweetsProcessedNoFacts).
+		Int("facts_extracted", result.FactsExtracted).
+		Int("errors", len(result.Errors)).
+		Msg("twitter: collection completed")
+
+	return result, nil
+}
+
+// extractStoredTweets is the extract step of the document state machine for
+// the handle's person: every unfinished tweet — this run's and whatever an
+// earlier run left fetched or failed — goes through the LLM in batches,
+// embedding and dedup-insert. A failed batch fails each of its tweets; a
+// streak of failures aborts the run (the LLM is down).
+func (p *Provider) extractStoredTweets(ctx context.Context, handle Handle, batchSize int, result *Result) error {
 	stanceMgr, err := core.NewStanceManagerFromEnv(p.Storer)
 	if err != nil {
-		return result, fmt.Errorf("stance manager required for fact ingestion: %w", err)
+		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
 	factInserter.EnableLLMDedupe()
@@ -176,36 +206,29 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 		factInserter.EnableMetaFolding(p.Storer, synth)
 	}
 
-	for i := 0; i < len(toProcess); i += batchSize {
-		end := i + batchSize
-		if end > len(toProcess) {
-			end = len(toProcess)
+	extract := func(ctx context.Context, batchDocs []core.SourceDocument) (map[int64]int, error) {
+		batch := make([]Tweet, len(batchDocs))
+		idByURL := make(map[string]int64, len(batchDocs))
+		for j, d := range batchDocs {
+			batch[j] = tweetFromDocument(d)
+			idByURL[d.URL] = d.ID
 		}
-		batch := toProcess[i:end]
 
-		batchContent := formatTweetBatch(batch)
-
-		cfg := promptrules.FactExtractorConfig{
+		facts, err := p.FactExtractor.ExtractFactsWithConfig(ctx, promptrules.FactExtractorConfig{
 			TargetName:         handle.PersonName,
 			SourceURL:          fmt.Sprintf("https://x.com/%s", handle.Handle),
-			Content:            batchContent,
+			Content:            formatTweetBatch(batch),
 			PluginInstructions: pluginInstructions,
-		}
-
-		facts, err := p.FactExtractor.ExtractFactsWithConfig(ctx, cfg)
+		})
 		if err != nil {
-			log.Warn().Err(err).
-				Str("handle", handle.Handle).
-				Int("batch_start", i).
-				Int("batch_size", len(batch)).
+			log.Warn().Err(err).Str("handle", handle.Handle).Int("batch_size", len(batch)).
 				Msg("twitter: failed to extract facts from batch")
 			result.Errors = append(result.Errors, err)
 			metrics.IncrementTweets("error")
-			continue
+			return nil, err
 		}
 
 		result.TweetsProcessed += len(batch)
-
 		if len(facts) == 0 {
 			result.TweetsProcessedNoFacts += len(batch)
 			metrics.IncrementTweets("parsed_no_facts")
@@ -213,7 +236,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 			metrics.IncrementTweets("parsed")
 		}
 
-		// Store each extracted fact
+		factsByDoc := make(map[int64]int, len(batchDocs))
 		for _, fact := range facts {
 			sourceURL := matchFactToTweetURL(fact, batch)
 
@@ -224,12 +247,8 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 				continue
 			}
 
-			// Publication date — for Twitter the tweet API's CreatedAt is the
-			// authoritative source. The LLM may also have extracted a date from
-			// the tweet body (article_published_at), but that's only a fallback
-			// if CreatedAt is somehow missing. Before this fix every Twitter
-			// fact had PublishedAt = nil because fact.PublishedAt was never
-			// populated by the parser (see backend/categorizer/openai_extractor.go).
+			// Publication date — the tweet API's CreatedAt is authoritative;
+			// a date the LLM read in the body is only a fallback.
 			tweetCreatedAt := matchFactToTweetCreatedAt(fact, batch)
 			finalPubAt := core.PickPublishedAt(tweetCreatedAt, fact.ArticlePublishedAt, fact.PublishedAt)
 
@@ -254,37 +273,57 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 
 			insertResult, err := factInserter.InsertFacts(ctx, []core.StoreFactInput{input})
 			if err != nil {
-				log.Warn().Err(err).
-					Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).
-					Msg("twitter: failed to store fact")
+				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("twitter: failed to store fact")
 				result.Errors = append(result.Errors, err)
 				continue
 			}
-
 			result.FactsExtracted += insertResult.Inserted
+			factsByDoc[idByURL[sourceURL]] += insertResult.Inserted + insertResult.Skipped
 			metrics.IncrementTweets("fact_extracted")
 		}
+		return factsByDoc, nil
 	}
 
-	// Log the fetch
-	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
-		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+	stats, err := core.ProcessDocuments(ctx, p.Storer, "twitter", handle.PersonID, extract, core.ProcessOptions{
+		BatchSize:              batchSize,
+		MaxConsecutiveFailures: twitterMaxConsecutiveFailures,
+	})
+	log.Info().Str("handle", handle.Handle).Int("pending", stats.Pending).Int("extracted", stats.Extracted).
+		Int("failed", stats.Failed).Int("facts", stats.Facts).Msg("twitter: documents extracted")
+	return err
+}
+
+// documentFromTweet is the stored form of a fetched tweet.
+func documentFromTweet(tw Tweet, handle Handle) core.SourceDocument {
+	return core.SourceDocument{
+		SourceType:  "twitter",
+		URL:         tw.URL,
+		PersonID:    handle.PersonID,
+		Title:       "",
+		Content:     tw.Text,
+		PublishedAt: tw.CreatedAt,
+		Metadata: map[string]any{
+			"tweet_id":      tw.ID,
+			"author_handle": tw.AuthorHandle,
+			"author_name":   tw.AuthorName,
+			"lang":          tw.Lang,
+		},
 	}
+}
 
-	// Update last_fetched_at
-	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
-		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
+// tweetFromDocument rebuilds the tweet the extraction prompt needs from its
+// stored form.
+func tweetFromDocument(d core.SourceDocument) Tweet {
+	str := func(k string) string { v, _ := d.Metadata[k].(string); return v }
+	return Tweet{
+		ID:           str("tweet_id"),
+		Text:         d.Content,
+		AuthorHandle: str("author_handle"),
+		AuthorName:   str("author_name"),
+		URL:          d.URL,
+		Lang:         str("lang"),
+		CreatedAt:    d.PublishedAt,
 	}
-
-	log.Info().
-		Str("handle", handle.Handle).
-		Int("tweets_processed", result.TweetsProcessed).
-		Int("tweets_no_facts", result.TweetsProcessedNoFacts).
-		Int("facts_extracted", result.FactsExtracted).
-		Int("errors", len(result.Errors)).
-		Msg("twitter: collection completed")
-
-	return result, nil
 }
 
 // CollectFactsWithDateWindows breaks the date range into N-day windows

@@ -164,6 +164,10 @@ func (p *Provider) UseExtractor(extractorType string) error {
 	return nil
 }
 
+// newsMaxConsecutiveFailures aborts a target's extraction after this many
+// documents failed in a row: the LLM is down, not the articles.
+const newsMaxConsecutiveFailures = 5
+
 // targetCacheDir returns the target-specific cache subdirectory under baseDir.
 // Creates the directory if it doesn't exist.
 func targetCacheDir(baseDir string, targetName string) string {
@@ -208,9 +212,7 @@ func (p *Provider) collect(ctx context.Context, target plugins.Target, opts Opti
 
 // CollectFacts searches news for the given target and extracts facts.
 func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
-	result := &Result{
-		Target: target,
-	}
+	result := &Result{Target: target}
 
 	// Build search options - request MaxParse articles
 	searchOpts := search.NewsSearchOptions{
@@ -492,7 +494,6 @@ func (p *Provider) extractAndInsertFromArticles(
 	if p.StanceManager == nil {
 		return fmt.Errorf("news provider: StanceManager is required (set p.StanceManager before calling)")
 	}
-	inserter := p.newFactInserter()
 
 	// Phase 2: Extract content - use batch if available, otherwise sequential.
 	var extractedContents []*extractor.ExtractedContent
@@ -515,125 +516,189 @@ func (p *Provider) extractAndInsertFromArticles(
 		}
 	}
 
-	// Phase 3: For each article, extract facts via LLM, embed, dedup-insert.
+	// Fetch step of the document state machine: every scraped article is
+	// saved now, before any LLM call. Empty and thin pages are saved as
+	// extracted with no facts: nothing to do, and never scraped again.
 	for i, article := range articlesToProcess {
 		content := extractedContents[i]
-		extractErr := extractionErrors[i]
-
-		if extractErr != nil {
+		if extractErr := extractionErrors[i]; extractErr != nil {
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)
 			metrics.IncrementNewsArticles("error")
 			continue
 		}
-		if content == nil || strings.TrimSpace(content.Content) == "" {
+		if content == nil {
+			content = &extractor.ExtractedContent{}
+		}
+		id, err := p.Storer.SaveFetchedDocument(ctx, core.SourceDocument{
+			SourceType:  "news",
+			URL:         article.Link,
+			PersonID:    target.PersonID,
+			Title:       content.Title,
+			Content:     content.Content,
+			PublishedAt: core.PickPublishedAt(nil, content.DatePublished, article.Date),
+			Metadata: map[string]any{
+				"source_name": article.Source,
+				"story_token": article.StoryToken,
+				"target_type": targetKind(target),
+				"target_name": target.Name,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("saving scraped article: %w", err)
+		}
+		text := strings.TrimSpace(content.Content)
+		switch {
+		case text == "":
 			log.Debug().Str("url", article.Link).Msg("news: no content extracted")
 			metrics.IncrementNewsArticles("skipped_empty_content")
-			continue
-		}
-		if len(strings.TrimSpace(content.Content)) < minArticleContentLen {
-			log.Warn().
-				Str("url", article.Link).
-				Int("content_len", len(content.Content)).
+		case len(text) < minArticleContentLen:
+			log.Warn().Str("url", article.Link).Int("content_len", len(content.Content)).
 				Msg("news: scraped content too thin after cleaning — skipping extraction")
 			metrics.IncrementNewsArticles("skipped_thin_content")
 			result.SkippedThinContent++
+		default:
+			continue
+		}
+		if err := p.Storer.MarkDocumentExtracted(ctx, id, 0); err != nil {
+			return err
+		}
+	}
+
+	return p.extractStoredDocuments(ctx, target, affiliatedParties, opts, result)
+}
+
+// extractStoredDocuments is the extract step of the document state machine
+// for the target: every unfinished news document of the person — this run's
+// scrapes and whatever an earlier run left fetched or failed — goes through
+// the LLM, embedding and dedup-insert. A streak of failures aborts the run
+// (the LLM is down) and leaves the documents for the next one.
+func (p *Provider) extractStoredDocuments(ctx context.Context, target plugins.Target, affiliatedParties []partyInfo, opts Options, result *Result) error {
+	if target.PersonID == 0 {
+		return nil
+	}
+	inserter := p.newFactInserter()
+	extract := func(ctx context.Context, docs []core.SourceDocument) (map[int64]int, error) {
+		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, result)
+		if err != nil {
+			result.Errors = append(result.Errors, err)
+			return nil, err
+		}
+		return map[int64]int{docs[0].ID: n}, nil
+	}
+	stats, err := core.ProcessDocuments(ctx, p.Storer, "news", target.PersonID, extract, core.ProcessOptions{
+		MaxConsecutiveFailures: newsMaxConsecutiveFailures,
+	})
+	log.Info().Str("target", target.Name).Int("pending", stats.Pending).Int("extracted", stats.Extracted).
+		Int("failed", stats.Failed).Int("facts", stats.Facts).Msg("news: documents extracted")
+	return err
+}
+
+// extractDocument runs the LLM extraction on one stored document, embeds and
+// dedup-inserts its facts, and returns how many facts the document produced
+// (stored or deduplicated). Storage failures of single facts are counted in
+// result.Errors; only the extraction failure fails the document.
+func (p *Provider) extractDocument(
+	ctx context.Context,
+	target plugins.Target,
+	doc core.SourceDocument,
+	affiliatedParties []partyInfo,
+	opts Options,
+	inserter *core.FactInserter,
+	result *Result,
+) (int, error) {
+	content := extractor.ExtractedContent{Title: doc.Title, Content: doc.Content, DatePublished: doc.PublishedAt}
+
+	var facts []backend.Fact
+	var err error
+	if !target.IsParty() && len(affiliatedParties) > 0 {
+		partyNames := make([]string, len(affiliatedParties))
+		for j, party := range affiliatedParties {
+			partyNames[j] = party.Name
+		}
+		facts, err = p.FactExtractor.ExtractFactsForPersonWithParties(ctx, target.Name, partyNames, content)
+	} else {
+		facts, err = p.FactExtractor.ExtractFactsWithType(ctx, target.Name, targetKind(target), content)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("extracting facts from %s: %w", doc.URL, err)
+	}
+
+	// Publication date — priority: LLM-from-body > the date stored with the
+	// document (webcrawlerapi <meta>, else the SERP date).
+	var llmDate *time.Time
+	for _, f := range facts {
+		if f.ArticlePublishedAt != nil {
+			llmDate = f.ArticlePublishedAt
+			break
+		}
+	}
+	publishedAt := core.PickPublishedAt(llmDate, doc.PublishedAt, nil)
+
+	if opts.KeepSourceDir != "" {
+		if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, doc.URL, doc.Title, doc.Content, publishedAt, facts); dumpErr != nil {
+			log.Warn().Err(dumpErr).Str("url", doc.URL).Msg("Failed to dump source and facts")
+		}
+	}
+
+	result.ArticlesParsed++
+	if len(facts) == 0 {
+		log.Debug().Str("url", doc.URL).Msg("news: no facts extracted")
+		result.ArticlesParsedNoFacts++
+		metrics.IncrementNewsArticles("parsed_no_facts")
+		return 0, nil
+	}
+	metrics.IncrementNewsArticles("parsed")
+
+	sourceName, _ := doc.Metadata["source_name"].(string)
+	storyToken, _ := doc.Metadata["story_token"].(string)
+	stored := 0
+	for _, fact := range facts {
+		embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
+		if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
+			log.Warn().Err(err).Str("fact", fact.NormalizedFactText).Msg("Failed to generate embedding")
+			result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
 			continue
 		}
 
-		var facts []backend.Fact
-		var err error
-		if !target.IsParty() && len(affiliatedParties) > 0 {
-			partyNames := make([]string, len(affiliatedParties))
-			for j, party := range affiliatedParties {
-				partyNames[j] = party.Name
-			}
-			facts, err = p.FactExtractor.ExtractFactsForPersonWithParties(ctx, target.Name, partyNames, *content)
-		} else {
-			facts, err = p.FactExtractor.ExtractFactsWithType(ctx, target.Name, targetKind(target), *content)
+		input := core.StoreFactInput{
+			SubjectEntity:        fact.SubjectEntity,
+			SubjectEntityType:    fact.SubjectEntityType,
+			NormalizedFactText:   fact.NormalizedFactText,
+			NormalizedFactTextEn: fact.NormalizedFactTextEn,
+			Lang:                 fact.Lang,
+			EmbeddingText:        fact.EmbeddingText,
+			Embedding:            embeddings[0],
+			OriginalQuote:        fact.OriginalQuote,
+			CanonicalVerb:        fact.CanonicalVerb,
+			InvolvedPeople:       fact.InvolvedPeople,
+			SourceURL:            doc.URL,
+			PublishedAt:          publishedAt,
+			SourceType:           "news",
+			Metadata: map[string]any{
+				"source_name":  sourceName,
+				"story_token":  storyToken,
+				"target_type":  targetKind(target),
+				"search_query": target.Name,
+			},
 		}
+
+		insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 		if err != nil {
-			log.Warn().Err(err).Str("url", article.Link).Msg("Failed to extract facts")
+			log.Warn().Err(err).
+				Str("fact", fact.NormalizedFactText).
+				Str("subject_entity", fact.SubjectEntity).
+				Msg("Failed to store fact")
 			result.Errors = append(result.Errors, err)
 			continue
 		}
-
-		// Publication date — priority: LLM-from-body > webcrawlerapi <meta>
-		// > Serper SERP date. All facts in this batch came from the same
-		// article so they share the same article_published_at; take the first
-		// non-nil one the LLM emitted (if any).
-		var llmDate *time.Time
-		for _, f := range facts {
-			if f.ArticlePublishedAt != nil {
-				llmDate = f.ArticlePublishedAt
-				break
-			}
-		}
-		publishedAt := core.PickPublishedAt(llmDate, content.DatePublished, article.Date)
-
-		if opts.KeepSourceDir != "" {
-			if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, article.Link, content.Title, content.Content, publishedAt, facts); dumpErr != nil {
-				log.Warn().Err(dumpErr).Str("url", article.Link).Msg("Failed to dump source and facts")
-			}
-		}
-
-		if len(facts) == 0 {
-			log.Debug().Str("url", article.Link).Msg("news: no facts extracted")
-			result.ArticlesParsed++
-			result.ArticlesParsedNoFacts++
-			metrics.IncrementNewsArticles("parsed_no_facts")
-			continue
-		}
-
-		result.ArticlesParsed++
-		metrics.IncrementNewsArticles("parsed")
-
-		for _, fact := range facts {
-			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
-			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
-				log.Warn().Err(err).Str("fact", fact.NormalizedFactText).Msg("Failed to generate embedding")
-				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
-				continue
-			}
-
-			input := core.StoreFactInput{
-				SubjectEntity:        fact.SubjectEntity,
-				SubjectEntityType:    fact.SubjectEntityType,
-				NormalizedFactText:   fact.NormalizedFactText,
-				NormalizedFactTextEn: fact.NormalizedFactTextEn,
-				Lang:                 fact.Lang,
-				EmbeddingText:        fact.EmbeddingText,
-				Embedding:            embeddings[0],
-				OriginalQuote:        fact.OriginalQuote,
-				CanonicalVerb:        fact.CanonicalVerb,
-				InvolvedPeople:       fact.InvolvedPeople,
-				SourceURL:            article.Link,
-				PublishedAt:          publishedAt,
-				SourceType:           "news",
-				Metadata: map[string]any{
-					"source_name":  article.Source,
-					"story_token":  article.StoryToken,
-					"target_type":  targetKind(target),
-					"search_query": target.Name,
-				},
-			}
-
-			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
-			if err != nil {
-				log.Warn().Err(err).
-					Str("fact", fact.NormalizedFactText).
-					Str("subject_entity", fact.SubjectEntity).
-					Msg("Failed to store fact")
-				result.Errors = append(result.Errors, err)
-				continue
-			}
-			result.FactsExtracted += insertResult.Inserted
-			result.FactsSkippedDedup += insertResult.Skipped
-		}
-
-		log.Debug().Str("url", article.Link).Int("facts", len(facts)).Msg("news: processed article")
+		result.FactsExtracted += insertResult.Inserted
+		result.FactsSkippedDedup += insertResult.Skipped
+		stored += insertResult.Inserted + insertResult.Skipped
 	}
-	return nil
+
+	log.Debug().Str("url", doc.URL).Int("facts", len(facts)).Msg("news: processed article")
+	return stored, nil
 }
 
 // replayURLs runs the news extraction pipeline against a hand-picked list of
@@ -701,71 +766,22 @@ func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Tar
 		Int("cached_files", len(cachedContents)).
 		Msg("Loaded cached content")
 
-	inserter := p.newFactInserter()
-	kind := targetKind(target)
+	// Cached files enter the same state machine as scraped articles.
 	for _, content := range cachedContents {
 		if strings.TrimSpace(content.Content) == "" {
 			log.Debug().Str("url", content.URL).Msg("Skipping empty cached content")
 			continue
 		}
-
-		facts, err := p.FactExtractor.ExtractFactsWithType(ctx, target.Name, kind, *content)
-		if err != nil {
-			log.Warn().Err(err).Str("url", content.URL).Msg("Failed to extract facts from cached content")
-			result.Errors = append(result.Errors, err)
-			continue
+		if _, err := p.Storer.SaveFetchedDocument(ctx, core.SourceDocument{
+			SourceType: "news", URL: content.URL, PersonID: target.PersonID,
+			Title: content.Title, Content: content.Content, PublishedAt: content.DatePublished,
+			Metadata: map[string]any{"target_type": targetKind(target), "target_name": target.Name, "cache_only": true},
+		}); err != nil {
+			return result, fmt.Errorf("saving cached article: %w", err)
 		}
-
-		if opts.KeepSourceDir != "" {
-			if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, content.URL, content.Title, content.Content, content.DatePublished, facts); dumpErr != nil {
-				log.Warn().Err(dumpErr).Str("url", content.URL).Msg("Failed to dump source and facts")
-			}
-		}
-
-		if len(facts) == 0 {
-			log.Debug().Str("url", content.URL).Msg("No facts extracted from cached content")
-			result.ArticlesParsed++
-			result.ArticlesParsedNoFacts++
-			continue
-		}
-		result.ArticlesParsed++
-
-		for _, fact := range facts {
-			embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
-			if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
-				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to generate embedding, skipping fact")
-				result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
-				continue
-			}
-
-			input := core.StoreFactInput{
-				SubjectEntity:      fact.SubjectEntity,
-				SubjectEntityType:  fact.SubjectEntityType,
-				NormalizedFactText: fact.NormalizedFactText,
-				EmbeddingText:      fact.EmbeddingText,
-				Embedding:          embeddings[0],
-				OriginalQuote:      fact.OriginalQuote,
-				CanonicalVerb:      fact.CanonicalVerb,
-				InvolvedPeople:     fact.InvolvedPeople,
-				SourceURL:          content.URL,
-				PublishedAt:        content.DatePublished,
-				SourceType:         "news",
-				Metadata: map[string]any{
-					"target_type":  kind,
-					"search_query": target.Name,
-					"cache_only":   true,
-				},
-			}
-
-			insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
-			if err != nil {
-				log.Warn().Err(err).Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).Msg("Failed to store fact")
-				result.Errors = append(result.Errors, err)
-				continue
-			}
-			result.FactsExtracted += insertResult.Inserted
-			result.FactsSkippedDedup += insertResult.Skipped
-		}
+	}
+	if err := p.extractStoredDocuments(ctx, target, nil, opts, result); err != nil {
+		return result, err
 	}
 
 	dedupRate := 0.0

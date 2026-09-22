@@ -33,17 +33,14 @@ func setupStoreTest(t *testing.T) (*storage.PostgresStorer, *Store) {
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	require.NoError(t, err, "connecting to the test database")
 	t.Cleanup(storer.Close)
-	_, err = storer.Pool().Exec(ctx, "TRUNCATE TABLE debate_documents, processed_laws, fact_relations, fact_mentions, fact_sources, facts, contradictions, person_links, persons RESTART IDENTITY CASCADE")
+	_, err = storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents, processed_laws, fact_relations, fact_mentions, fact_sources, facts, contradictions, person_links, persons RESTART IDENTITY CASCADE")
 	require.NoError(t, err, "truncating tables")
 	return storer, NewStore(storer)
 }
 
-// TestDebateDocumentsPendingSet pins the débats idempotence primitive: a
-// document is pending until recorded (even with zero facts), identity is
-// (cr_uid, actor_id) — the source URL may change without re-extraction —
-// recording is an upsert, and the assemblee_id → person map only covers
-// persons carrying the attribute and picks one row per id deterministically.
-func TestDebateDocumentsPendingSet(t *testing.T) {
+// The assemblee_id → person map only covers persons carrying the attribute
+// and picks one row per id deterministically.
+func TestGetPersonsByAssembleeID(t *testing.T) {
 	storer, store := setupStoreTest(t)
 	ctx := context.Background()
 	pool := storer.Pool()
@@ -71,45 +68,6 @@ func TestDebateDocumentsPendingSet(t *testing.T) {
 	for _, p := range byAID {
 		require.NotEqual(t, otherID, p.ID, "persons without assemblee_id are not in the map")
 	}
-
-	keys := []DebateDocumentKey{
-		{CRUID: "CRSANR5L17S2026O1N001", ActorID: "PA999001"},
-		{CRUID: "CRSANR5L17S2026O1N001", ActorID: "PA999002"},
-		{CRUID: "CRSANR5L17S2026O1N002", ActorID: "PA999001"},
-	}
-	pending, err := store.FilterUnprocessedDebateDocuments(ctx, keys)
-	require.NoError(t, err)
-	require.Equal(t, keys, pending, "nothing recorded yet: everything pending, input order kept")
-
-	// A zero-fact document is still recorded and leaves the pending set.
-	day := time.Date(2026, 1, 26, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.RecordDebateDocument(ctx, DebateDocumentRecord{
-		DebateDocumentKey: keys[1], SourceURL: "https://an.test/seance-1#200", PersonID: personID,
-		SeanceDate: day, Paragraphs: 2, Chars: 900, FactsCount: 0,
-	}))
-	pending, err = store.FilterUnprocessedDebateDocuments(ctx, keys)
-	require.NoError(t, err)
-	require.Equal(t, []DebateDocumentKey{keys[0], keys[2]}, pending)
-
-	// Upsert: recording again with a moved anchor URL updates the row.
-	require.NoError(t, store.RecordDebateDocument(ctx, DebateDocumentRecord{
-		DebateDocumentKey: keys[1], SourceURL: "https://an.test/seance-1#250", PersonID: personID,
-		SeanceDate: day, Paragraphs: 3, Chars: 1200, FactsCount: 3, FactsDropped: 1,
-	}))
-	var n, dropped int
-	var u string
-	require.NoError(t, pool.QueryRow(ctx,
-		"SELECT facts_count, facts_dropped, source_url FROM debate_documents WHERE cr_uid = $1 AND actor_id = $2", keys[1].CRUID, keys[1].ActorID).Scan(&n, &dropped, &u))
-	require.Equal(t, 3, n)
-	require.Equal(t, 1, dropped)
-	require.Equal(t, "https://an.test/seance-1#250", u)
-	pending, err = store.FilterUnprocessedDebateDocuments(ctx, keys)
-	require.NoError(t, err)
-	require.Len(t, pending, 2, "same identity: still processed after the URL moved")
-
-	empty, err := store.FilterUnprocessedDebateDocuments(ctx, nil)
-	require.NoError(t, err)
-	require.Nil(t, empty)
 }
 
 // GetPersonFactCountsBySourceTypes counts active facts of the given source

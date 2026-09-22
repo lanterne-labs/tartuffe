@@ -1,15 +1,15 @@
 package frpolitics
 
 import (
-	"context"
-	"errors"
-	"fmt"
+	"encoding/json"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"digital-mirror/backend"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 
 	"github.com/stretchr/testify/require"
@@ -140,84 +140,25 @@ func TestRenderDebateDocument_TexteAndAmendementHeader(t *testing.T) {
 // The scheduling loop is exercised with a fake ingester: ordering, the
 // MaxDocs cap (attempts, not successes), the deadline, failed documents
 // staying pending, the consecutive-failure breaker and the all-failed error.
-func TestRunDebateDocuments_Scheduling(t *testing.T) {
-	mk := func(uid string, day int) *debateDocument {
-		return &debateDocument{CR: &compteRendu{UID: uid, SeanceDate: time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)}, ActorID: "PA1"}
+// The processing order handed to the document engine: newest séance first
+// when asked, oldest otherwise.
+func TestDebateDocumentOrder(t *testing.T) {
+	day := func(d int) *time.Time { t := time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC); return &t }
+	docs := []core.SourceDocument{
+		{URL: "A", PublishedAt: day(1)}, {URL: "B", PublishedAt: day(3)}, {URL: "C", PublishedAt: day(2)}, {URL: "D", PublishedAt: day(4)},
 	}
-	docs := func() []*debateDocument {
-		return []*debateDocument{mk("A", 1), mk("B", 3), mk("C", 2), mk("D", 4)}
+	order := func(opts DebatsOptions, priority map[int64]int) []string {
+		sorted := append([]core.SourceDocument(nil), docs...)
+		less := debateDocumentOrder(opts, priority)
+		sort.SliceStable(sorted, func(i, j int) bool { return less(sorted[i], sorted[j]) })
+		out := make([]string, len(sorted))
+		for i, d := range sorted {
+			out[i] = d.URL
+		}
+		return out
 	}
-
-	// Newest first, MaxDocs=2 attempts, one failure: order D,B; B fails and stays pending.
-	var seen []string
-	stats := DebatsStats{Pending: 4}
-	err := runDebateDocuments(context.Background(), docs(), DebatsOptions{NewestFirst: true, MaxDocs: 2}, nil,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			seen = append(seen, d.CR.UID)
-			if d.CR.UID == "B" {
-				return docResult{Inserted: 1}, errors.New("boom")
-			}
-			return docResult{Inserted: 2, Skipped: 1, DroppedSubject: 1}, nil
-		}, &stats)
-	require.NoError(t, err)
-	require.Equal(t, []string{"D", "B"}, seen)
-	require.Equal(t, 2, stats.Attempted)
-	require.Equal(t, 1, stats.Processed)
-	require.Equal(t, 1, stats.Errors)
-	require.Equal(t, 2, stats.Facts)
-	require.Equal(t, 1, stats.FactsSkipped)
-	require.Equal(t, 1, stats.FactsDroppedSubject)
-	require.Equal(t, 3, stats.PendingAfter, "the failed document is still pending")
-
-	// Oldest first with a deadline already passed: nothing attempted, flagged.
-	stats = DebatsStats{Pending: 4}
-	seen = nil
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{Deadline: time.Now().Add(-time.Second)}, nil,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			seen = append(seen, d.CR.UID)
-			return docResult{}, nil
-		}, &stats)
-	require.NoError(t, err)
-	require.Empty(t, seen)
-	require.True(t, stats.DeadlineHit)
-	require.Equal(t, 4, stats.PendingAfter)
-
-	// Oldest first, no caps: A, C, B, D; a zero-fact document counts as NoFacts.
-	stats = DebatsStats{Pending: 4}
-	seen = nil
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{}, nil,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			seen = append(seen, d.CR.UID)
-			return docResult{}, nil
-		}, &stats)
-	require.NoError(t, err)
-	require.Equal(t, []string{"A", "C", "B", "D"}, seen)
-	require.Equal(t, 4, stats.NoFacts)
-	require.Equal(t, 0, stats.PendingAfter)
-
-	// Every document fails: run reported as an error (breaker after 10, or
-	// all-failed on a short list).
-	stats = DebatsStats{Pending: 4}
-	err = runDebateDocuments(context.Background(), docs(), DebatsOptions{}, nil,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			return docResult{}, errors.New("outage")
-		}, &stats)
-	require.Error(t, err)
-	require.Equal(t, 4, stats.Errors)
-	require.Equal(t, 4, stats.PendingAfter)
-
-	// Outage on a long backlog: stops after debatsMaxConsecutiveFailures.
-	long := make([]*debateDocument, 0, 30)
-	for i := 1; i <= 30; i++ {
-		long = append(long, mk(fmt.Sprintf("L%02d", i), 1))
-	}
-	stats = DebatsStats{Pending: 30}
-	err = runDebateDocuments(context.Background(), long, DebatsOptions{}, nil,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			return docResult{}, errors.New("outage")
-		}, &stats)
-	require.Error(t, err)
-	require.Equal(t, debatsMaxConsecutiveFailures, stats.Attempted)
+	require.Equal(t, []string{"D", "B", "C", "A"}, order(DebatsOptions{NewestFirst: true}, nil))
+	require.Equal(t, []string{"A", "C", "B", "D"}, order(DebatsOptions{}, nil))
 }
 
 // Permalink slugs, verified against the live site for every session kind of
@@ -245,28 +186,62 @@ func TestStripCivilityAndSubjectMatch(t *testing.T) {
 	require.Equal(t, "Mathilde Panot", stripCivility("Mme Mathilde Panot"))
 	require.Equal(t, "Thibault Bazin", stripCivility("M. Thibault Bazin"))
 	require.Equal(t, "la présidente", stripCivility("Mme la présidente"))
-	doc := &debateDocument{Speaker: "Mathilde Panot", Person: storage.PersonInfo{Name: "mathilde panot"}}
-	require.True(t, subjectMatches(fakeFact("Mathilde Panot"), doc))
-	require.True(t, subjectMatches(fakeFact("mathilde PANOT"), doc))
-	require.False(t, subjectMatches(fakeFact("Sébastien Lecornu"), doc), "facts about a third party are dropped")
-	require.False(t, subjectMatches(fakeFact(""), doc))
+	require.True(t, subjectMatches(fakeFact("Mathilde Panot"), "Mathilde Panot", "mathilde panot"))
+	require.True(t, subjectMatches(fakeFact("mathilde PANOT"), "Mathilde Panot", "mathilde panot"))
+	require.False(t, subjectMatches(fakeFact("Sébastien Lecornu"), "Mathilde Panot", "mathilde panot"), "facts about a third party are dropped")
+	require.False(t, subjectMatches(fakeFact(""), "Mathilde Panot", "mathilde panot"))
 }
 
 // Backfill priority: speakers with press facts first (most first), then the
 // date order; speakers without press facts come last.
-func TestRunDebateDocuments_PrioritizePress(t *testing.T) {
-	mk := func(uid string, day int, person int64) *debateDocument {
-		return &debateDocument{CR: &compteRendu{UID: uid, SeanceDate: time.Date(2026, 6, day, 0, 0, 0, 0, time.UTC)}, ActorID: "PA" + uid, Person: storage.PersonInfo{ID: person}}
+func TestDebateDocumentOrder_PrioritizePress(t *testing.T) {
+	day := func(d int) *time.Time { t := time.Date(2026, 6, d, 0, 0, 0, 0, time.UTC); return &t }
+	docs := []core.SourceDocument{
+		{URL: "A", PublishedAt: day(5), PersonID: 1}, {URL: "B", PublishedAt: day(9), PersonID: 2}, {URL: "C", PublishedAt: day(3), PersonID: 3},
+		{URL: "D", PublishedAt: day(7), PersonID: 2}, {URL: "E", PublishedAt: day(8), PersonID: 1},
 	}
-	pending := []*debateDocument{mk("A", 5, 1), mk("B", 9, 2), mk("C", 3, 3), mk("D", 7, 2), mk("E", 8, 1)}
 	priority := map[int64]int{1: 40, 2: 300} // person 3 has no press facts
-	var seen []string
-	stats := DebatsStats{Pending: 5}
-	err := runDebateDocuments(context.Background(), pending, DebatsOptions{NewestFirst: true, PrioritizePress: true}, priority,
-		func(_ context.Context, d *debateDocument) (docResult, error) {
-			seen = append(seen, d.CR.UID)
-			return docResult{Inserted: 1}, nil
-		}, &stats)
-	require.NoError(t, err)
+	less := debateDocumentOrder(DebatsOptions{NewestFirst: true, PrioritizePress: true}, priority)
+	sort.SliceStable(docs, func(i, j int) bool { return less(docs[i], docs[j]) })
+	seen := make([]string, len(docs))
+	for i, d := range docs {
+		seen[i] = d.URL
+	}
 	require.Equal(t, []string{"B", "D", "E", "A", "C"}, seen, "press-heavy speaker first, newest first within a speaker, no-press speaker last")
+}
+
+// A (speaker, séance) document round-trips through its stored form: the
+// provenance the facts need comes back from the metadata.
+func TestDebateDocumentStoredForm(t *testing.T) {
+	cr := &compteRendu{UID: "CRSANR5L17S2026O1N001", SeanceRef: "RUANR5L17S2026IDS28001", Legislature: 17,
+		SeanceDate: time.Date(2026, 1, 26, 0, 0, 0, 0, time.UTC), DateSeanceJour: "lundi 26 janvier 2026", NumSeanceJour: "1",
+		Points: map[string]odjPoint{"p1": {Title: "Budget", TexteNum: "2341"}}}
+	doc := &debateDocument{
+		CR: cr, ActorID: "PA1", Person: storage.PersonInfo{ID: 42, Name: "mathilde panot"}, Speaker: "Mathilde Panot",
+		Paragraphs: []crParagraph{{IDSyceron: "39", PtsODJ: "p1", Article: "1er", Amendement: "109", Text: "Nous demandons le retrait."}},
+		SourceURL:  "https://www.assemblee-nationale.fr/dyn/17/comptes-rendus/seance/x/y#39", Chars: 27,
+	}
+	stored := doc.toSourceDocument()
+	require.Equal(t, debatsSourceType, stored.SourceType)
+	require.Equal(t, "debats:CRSANR5L17S2026O1N001/PA1", stored.URL, "identity, not the permalink: stable when a republished séance moves the anchor")
+	require.EqualValues(t, 42, stored.PersonID)
+	require.Equal(t, cr.SeanceDate, *stored.PublishedAt)
+	require.Contains(t, stored.Content, "Nous demandons le retrait.")
+
+	// Metadata survives a JSON round-trip (what the database hands back).
+	raw, err := json.Marshal(stored.Metadata)
+	require.NoError(t, err)
+	var back map[string]any
+	require.NoError(t, json.Unmarshal(raw, &back))
+	stored.Metadata = back
+	meta := debateMeta(stored)
+	require.Equal(t, doc.SourceURL, meta.sourceURL, "the permalink is the facts' source")
+	require.Equal(t, "CRSANR5L17S2026O1N001", meta.crUID)
+	require.Equal(t, "PA1", meta.actorID)
+	require.Equal(t, "Mathilde Panot", meta.speaker)
+	require.Equal(t, "mathilde panot", meta.personName)
+	require.Equal(t, []string{"39"}, meta.paragraphIDs)
+	require.Equal(t, []string{"2341"}, meta.textes)
+	require.Equal(t, []string{"1er"}, meta.articles)
+	require.Equal(t, []string{"109"}, meta.amendements)
 }

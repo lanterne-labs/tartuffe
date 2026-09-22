@@ -2093,6 +2093,29 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
 
+## One document state machine for every plugin: fetched → extracted | failed (2026-09-22)
+
+- Run 104 (2026-09-22) was lost to a 77-minute tunnel outage: the LLM was unreachable, the
+  OpenRouter fallback had no credits, and the night's 26 scraped articles were thrown away
+  with it, because a scrape lived only in memory and "already processed" was inferred from
+  stored facts. That inference also meant every article whose extraction failed or yielded no
+  facts was re-scraped and re-extracted each night while the search window still returned
+  it; twitter logged a fetched range only after all its tweets were extracted, so a cut run
+  re-bought the range. Debats alone did it right, with its own table.
+- `source_documents` + `core.ProcessDocuments`: a plugin's fetch step saves each document
+  the moment the fetch succeeds (content included); the engine drives every unfinished
+  document of a source type to `extracted` (facts count recorded, content deleted, the row
+  kept as the never-fetch-again marker) or `failed` (retried until `MaxExtractionAttempts`).
+  A run does not know or care which run fetched a document. The engine owns the scheduling
+  debats had: order hook, deadline, max documents, abort on a failure streak (an outage,
+  left for the next run), "every attempt failed" → error, so a dead LLM turns the step red
+  instead of silently marking things. Plugins supply only the fetch step and
+  `extract(batch) → facts per document`; news uses batches of 1, twitter its tweet batches.
+  `IsURLVisitable` counts a fetched document as a visit. Debats moved onto the same table
+  (`debate_documents` rows migrated as extracted, keyed by permalink) so there is one machine,
+  not two; its durable `facts_dropped` count is now only in the run log. Lesson: a step's
+  state is written by that step when it finishes, never inferred from a later step's output.
+
 ## Fold gate pinned on prod pairs; singleton re-assignment sweep; fold backfill reaches text pairs (2026-09-20)
 
 - Three nights of news folding (272-409 members/night, was 15-62) read as clean on a first

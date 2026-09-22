@@ -41,7 +41,7 @@ const (
 	debatsCacheMaxAge   = 12 * time.Hour
 	// debatsMinInterventionChars drops heckles and procedural one-liners
 	// (median intervention is ~60 chars; p75 ~430). Tune with data — the
-	// pending-set identity is (cr_uid, actor_id), so tuning it never
+	// document identity is (cr_uid, actor_id), so tuning it never
 	// re-extracts already processed documents.
 	debatsMinInterventionChars = 300
 	debatsSourceType           = "assemblee_debat"
@@ -133,10 +133,6 @@ type debateDocument struct {
 	Chars      int
 }
 
-func (d *debateDocument) key() DebateDocumentKey {
-	return DebateDocumentKey{CRUID: d.CR.UID, ActorID: d.ActorID}
-}
-
 // docResult is what ingesting one document yields.
 type docResult struct {
 	Inserted, Skipped, DroppedSubject int
@@ -146,7 +142,8 @@ type docResult struct {
 // archive, builds one document per (speaker, séance) not yet processed,
 // extracts facts with the shared extractor and inserts them through the
 // normal FactInserter path (dedupe, stance routing, analyze). Idempotent:
-// processed documents are recorded in debate_documents by (cr_uid, actor_id).
+// documents live in the shared document state machine (core.SourceDocument),
+// keyed by (cr_uid, actor_id), so a processed one is never rebuilt.
 func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsOptions) (DebatsStats, error) {
 	start := time.Now()
 	var stats DebatsStats
@@ -180,26 +177,25 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	stats.Seances = seances
 	stats.Documents = len(docs)
 
-	keys := make([]DebateDocumentKey, len(docs))
-	byKey := make(map[DebateDocumentKey]*debateDocument, len(docs))
+	// Fetch step of the document state machine: every document not yet
+	// known is saved with its rendered transcript, keyed by its identity
+	// (compte-rendu uid + actor id), which is stable across republished
+	// séances where the permalink's anchor moves.
+	keys := make([]string, len(docs))
 	for i := range docs {
-		keys[i] = docs[i].key()
-		byKey[keys[i]] = &docs[i]
+		keys[i] = docs[i].documentKey()
 	}
-	pendingKeys, err := store.FilterUnprocessedDebateDocuments(ctx, keys)
+	known, err := storer.KnownDocumentURLs(ctx, debatsSourceType, keys)
 	if err != nil {
 		return stats, fmt.Errorf("debats: filtering processed documents: %w", err)
 	}
-	pending := make([]*debateDocument, 0, len(pendingKeys))
-	for _, k := range pendingKeys {
-		pending = append(pending, byKey[k])
-	}
-	stats.Pending = len(pending)
-	log.Info().Int("seances", seances).Int("documents", len(docs)).Int("pending", len(pending)).
-		Bool("newest_first", opts.NewestFirst).Msg("debats: documents to process")
-	if len(pending) == 0 {
-		stats.ElapsedSeconds = time.Since(start).Seconds()
-		return stats, nil
+	for i := range docs {
+		if known[keys[i]] {
+			continue
+		}
+		if _, err := storer.SaveFetchedDocument(ctx, docs[i].toSourceDocument()); err != nil {
+			return stats, fmt.Errorf("debats: saving document: %w", err)
+		}
 	}
 
 	extractor, err := categorizer.NewOpenAIExtractorFromEnv()
@@ -224,10 +220,27 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 			return stats, fmt.Errorf("debats: loading press fact counts: %w", err)
 		}
 	}
-	ingest := func(ctx context.Context, doc *debateDocument) (docResult, error) {
-		return ingestDebateDocument(ctx, store, extractor, embedder, inserter, doc)
+	extract := func(ctx context.Context, batch []core.SourceDocument) (map[int64]int, error) {
+		res, err := ingestDebateDocument(ctx, extractor, embedder, inserter, batch[0])
+		stats.FactsSkipped += res.Skipped
+		stats.FactsDroppedSubject += res.DroppedSubject
+		if err != nil {
+			return nil, err
+		}
+		if res.Inserted == 0 {
+			stats.NoFacts++
+		}
+		return map[int64]int{batch[0].ID: res.Inserted}, nil
 	}
-	runErr := runDebateDocuments(ctx, pending, opts, priority, ingest, &stats)
+	ps, runErr := core.ProcessDocuments(ctx, storer, debatsSourceType, 0, extract, core.ProcessOptions{
+		Deadline:               opts.Deadline,
+		MaxDocs:                opts.MaxDocs,
+		MaxConsecutiveFailures: debatsMaxConsecutiveFailures,
+		Order:                  debateDocumentOrder(opts, priority),
+	})
+	stats.Pending, stats.Attempted, stats.Processed, stats.Facts, stats.Errors, stats.DeadlineHit =
+		ps.Pending, ps.Attempted, ps.Extracted, ps.Facts, ps.Failed, ps.DeadlineHit
+	stats.PendingAfter = stats.Pending - stats.Processed
 	stats.ElapsedSeconds = time.Since(start).Seconds()
 	log.Info().
 		Int("attempted", stats.Attempted).Int("processed", stats.Processed).Int("facts", stats.Facts).
@@ -238,68 +251,31 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	return stats, runErr
 }
 
-// runDebateDocuments is the scheduling loop: sort, then ingest documents one
-// at a time under the MaxDocs / Deadline caps. A failed document stays
-// pending for the next run; a streak of debatsMaxConsecutiveFailures aborts
-// the run (outage), and a run that attempted documents without processing
-// any is reported as an error so the pipeline step goes red. priority (may be
-// nil) ranks speakers by press presence when opts.PrioritizePress is set.
-func runDebateDocuments(ctx context.Context, pending []*debateDocument, opts DebatsOptions, priority map[int64]int, ingest func(context.Context, *debateDocument) (docResult, error), stats *DebatsStats) error {
-	sort.SliceStable(pending, func(i, j int) bool {
+// debateDocumentOrder is the processing order of the unfinished documents:
+// speakers with the most press facts first when opts.PrioritizePress (the
+// backfill spends its window where transcript facts can meet press facts),
+// then by séance date, newest first when opts.NewestFirst.
+func debateDocumentOrder(opts DebatsOptions, priority map[int64]int) func(a, b core.SourceDocument) bool {
+	return func(a, b core.SourceDocument) bool {
 		if opts.PrioritizePress {
-			pi, pj := priority[pending[i].Person.ID], priority[pending[j].Person.ID]
-			if pi != pj {
-				return pi > pj
+			pa, pb := priority[a.PersonID], priority[b.PersonID]
+			if pa != pb {
+				return pa > pb
 			}
 		}
-		a, b := pending[i].CR.SeanceDate, pending[j].CR.SeanceDate
+		da, db := docTime(a), docTime(b)
 		if opts.NewestFirst {
-			return a.After(b)
+			return da.After(db)
 		}
-		return a.Before(b)
-	})
-	consecutive := 0
-	var lastErr error
-	for _, doc := range pending {
-		if ctx.Err() != nil {
-			break
-		}
-		if opts.MaxDocs > 0 && stats.Attempted >= opts.MaxDocs {
-			break
-		}
-		if !opts.Deadline.IsZero() && time.Now().After(opts.Deadline) {
-			stats.DeadlineHit = true
-			break
-		}
-		stats.Attempted++
-		res, err := ingest(ctx, doc)
-		if err != nil {
-			stats.Errors++
-			consecutive++
-			lastErr = err
-			log.Warn().Err(err).Str("cr_uid", doc.CR.UID).Str("actor_id", doc.ActorID).Str("speaker", doc.Speaker).
-				Int("facts_inserted_before_failure", res.Inserted).
-				Msg("debats: document failed; left pending for the next run")
-			if consecutive >= debatsMaxConsecutiveFailures {
-				stats.PendingAfter = stats.Pending - stats.Processed
-				return fmt.Errorf("debats: %d consecutive document failures, aborting run (last: %w)", consecutive, err)
-			}
-			continue
-		}
-		consecutive = 0
-		stats.Processed++
-		stats.Facts += res.Inserted
-		stats.FactsSkipped += res.Skipped
-		stats.FactsDroppedSubject += res.DroppedSubject
-		if res.Inserted == 0 {
-			stats.NoFacts++
-		}
+		return da.Before(db)
 	}
-	stats.PendingAfter = stats.Pending - stats.Processed
-	if stats.Attempted > 0 && stats.Processed == 0 && stats.Errors > 0 {
-		return fmt.Errorf("debats: every attempted document failed (%d): %w", stats.Errors, lastErr)
+}
+
+func docTime(d core.SourceDocument) time.Time {
+	if d.PublishedAt != nil {
+		return *d.PublishedAt
 	}
-	return nil
+	return d.FetchedAt
 }
 
 // buildDebateDocuments parses every séance in the archive that falls in the
@@ -380,15 +356,21 @@ func groupDocuments(cr *compteRendu, persons map[string]storage.PersonInfo, minC
 // document is NOT recorded (it stays pending); facts already inserted are
 // reported in the result so the caller can log them — the next run's
 // re-extraction relies on dedupe for those.
-func ingestDebateDocument(ctx context.Context, store *Store, extractor *categorizer.OpenAIExtractor, embedder *embedding.OpenAIEmbeddingGenerator, inserter *core.FactInserter, doc *debateDocument) (docResult, error) {
+// ingestDebateDocument is the extract step for one stored transcript
+// document: LLM extraction, the speaker-only subject filter, embeddings and
+// the normal FactInserter path. The document's metadata carries what the
+// facts' provenance needs (séance, actor, paragraphs, textes, articles,
+// amendements), written by toSourceDocument at fetch time.
+func ingestDebateDocument(ctx context.Context, extractor *categorizer.OpenAIExtractor, embedder *embedding.OpenAIEmbeddingGenerator, inserter *core.FactInserter, doc core.SourceDocument) (docResult, error) {
 	var res docResult
-	content := renderDebateDocument(doc)
+	meta := debateMeta(doc)
+	seanceDate := docTime(doc)
 	facts, err := extractor.ExtractFactsWithConfig(ctx, promptrules.FactExtractorConfig{
-		TargetName:         doc.Speaker,
-		SourceURL:          doc.SourceURL,
-		Content:            content,
+		TargetName:         meta.speaker,
+		SourceURL:          meta.sourceURL,
+		Content:            doc.Content,
 		PluginInstructions: debatsExtractionInstructions,
-		Now:                doc.CR.SeanceDate,
+		Now:                seanceDate,
 	})
 	if err != nil {
 		return res, fmt.Errorf("extracting: %w", err)
@@ -396,11 +378,11 @@ func ingestDebateDocument(ctx context.Context, store *Store, extractor *categori
 
 	kept := make([]backend.Fact, 0, len(facts))
 	for _, f := range facts {
-		if subjectMatches(f, doc) {
+		if subjectMatches(f, meta.speaker, meta.personName) {
 			kept = append(kept, f)
 		} else {
 			res.DroppedSubject++
-			log.Info().Str("subject", f.SubjectEntity).Str("speaker", doc.Speaker).Str("fact", util.TruncateString(f.NormalizedFactText, 100)).
+			log.Info().Str("subject", f.SubjectEntity).Str("speaker", meta.speaker).Str("fact", util.TruncateString(f.NormalizedFactText, 100)).
 				Msg("debats: dropping fact whose subject is not the speaker")
 		}
 	}
@@ -420,28 +402,12 @@ func ingestDebateDocument(ctx context.Context, store *Store, extractor *categori
 		}
 	}
 
-	paragraphIDs := make([]string, len(doc.Paragraphs))
-	textes, articles, amendements := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for i, p := range doc.Paragraphs {
-		paragraphIDs[i] = p.IDSyceron
-		if pt, ok := doc.CR.Points[p.PtsODJ]; ok && pt.TexteNum != "" {
-			textes[pt.TexteNum] = true
-		}
-		if a := strings.TrimSpace(p.Article); a != "" {
-			articles[a] = true
-		}
-		if a := strings.TrimSpace(p.Amendement); a != "" {
-			amendements[a] = true
-		}
-	}
-	seanceDate := doc.CR.SeanceDate
-
 	for i, fact := range kept {
 		if len(embs[i]) == 0 {
 			return res, fmt.Errorf("embedding: empty vector for fact %d", i)
 		}
 		input := core.StoreFactInput{
-			SubjectEntity:        doc.Person.Name,
+			SubjectEntity:        meta.personName,
 			SubjectEntityType:    "human",
 			NormalizedFactText:   fact.NormalizedFactText,
 			NormalizedFactTextEn: fact.NormalizedFactTextEn,
@@ -451,24 +417,24 @@ func ingestDebateDocument(ctx context.Context, store *Store, extractor *categori
 			OriginalQuote:        fact.OriginalQuote,
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople,
-			SourceURL:            doc.SourceURL,
+			SourceURL:            meta.sourceURL,
 			PublishedAt:          &seanceDate,
 			SourceType:           debatsSourceType,
 			Metadata: map[string]any{
-				"cr_uid":        doc.CR.UID,
+				"cr_uid":        meta.crUID,
 				"seance_date":   seanceDate.Format("2006-01-02"),
-				"actor_id":      doc.ActorID,
-				"paragraph_ids": paragraphIDs,
-				"textes":        sortedKeys(textes),
-				"articles":      sortedKeys(articles),
-				"amendements":   sortedKeys(amendements),
+				"actor_id":      meta.actorID,
+				"paragraph_ids": meta.paragraphIDs,
+				"textes":        meta.textes,
+				"articles":      meta.articles,
+				"amendements":   meta.amendements,
 			},
 		}
 		if input.Lang == "" {
 			input.Lang = "fr"
 		}
-		if ref := strings.TrimSpace(doc.CR.SeanceRef); ref != "" {
-			input.Metadata["seance_ref"] = ref
+		if meta.seanceRef != "" {
+			input.Metadata["seance_ref"] = meta.seanceRef
 		}
 		r, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
 		if err != nil {
@@ -477,14 +443,85 @@ func ingestDebateDocument(ctx context.Context, store *Store, extractor *categori
 		res.Inserted += r.Inserted
 		res.Skipped += r.Skipped
 	}
-
-	if err := store.RecordDebateDocument(ctx, DebateDocumentRecord{
-		DebateDocumentKey: doc.key(), SourceURL: doc.SourceURL, PersonID: doc.Person.ID,
-		SeanceDate: seanceDate, Paragraphs: len(doc.Paragraphs), Chars: doc.Chars, FactsCount: res.Inserted, FactsDropped: res.DroppedSubject,
-	}); err != nil {
-		return res, err
-	}
 	return res, nil
+}
+
+// documentKey is the document's identity in the document store: the
+// compte-rendu uid and the speaker's actor id, stable across republished
+// séances and threshold changes (the permalink's anchor is not).
+func (d *debateDocument) documentKey() string {
+	return debatsDocumentKey(d.CR.UID, d.ActorID)
+}
+
+func debatsDocumentKey(crUID, actorID string) string {
+	return "debats:" + crUID + "/" + actorID
+}
+
+// toSourceDocument is the stored form of a (speaker, séance) document: the
+// rendered transcript as content, the provenance the facts need as metadata.
+func (d *debateDocument) toSourceDocument() core.SourceDocument {
+	paragraphIDs := make([]string, len(d.Paragraphs))
+	textes, articles, amendements := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for i, p := range d.Paragraphs {
+		paragraphIDs[i] = p.IDSyceron
+		if pt, ok := d.CR.Points[p.PtsODJ]; ok && pt.TexteNum != "" {
+			textes[pt.TexteNum] = true
+		}
+		if a := strings.TrimSpace(p.Article); a != "" {
+			articles[a] = true
+		}
+		if a := strings.TrimSpace(p.Amendement); a != "" {
+			amendements[a] = true
+		}
+	}
+	seanceDate := d.CR.SeanceDate
+	return core.SourceDocument{
+		SourceType:  debatsSourceType,
+		URL:         d.documentKey(),
+		PersonID:    d.Person.ID,
+		Title:       fmt.Sprintf("%s — %s", d.Speaker, d.CR.DateSeanceJour),
+		Content:     renderDebateDocument(d),
+		PublishedAt: &seanceDate,
+		Metadata: map[string]any{
+			"source_url":    d.SourceURL,
+			"cr_uid":        d.CR.UID,
+			"seance_ref":    strings.TrimSpace(d.CR.SeanceRef),
+			"actor_id":      d.ActorID,
+			"speaker":       d.Speaker,
+			"person_name":   d.Person.Name,
+			"paragraphs":    len(d.Paragraphs),
+			"chars":         d.Chars,
+			"paragraph_ids": paragraphIDs,
+			"textes":        sortedKeys(textes),
+			"articles":      sortedKeys(articles),
+			"amendements":   sortedKeys(amendements),
+		},
+	}
+}
+
+// debateDocMeta is the provenance read back from a stored document.
+type debateDocMeta struct {
+	sourceURL, crUID, seanceRef, actorID, speaker, personName string
+	paragraphIDs, textes, articles, amendements               []string
+}
+
+func debateMeta(doc core.SourceDocument) debateDocMeta {
+	str := func(k string) string { v, _ := doc.Metadata[k].(string); return v }
+	strs := func(k string) []string {
+		raw, _ := doc.Metadata[k].([]any)
+		out := make([]string, 0, len(raw))
+		for _, v := range raw {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return debateDocMeta{
+		sourceURL: str("source_url"), crUID: str("cr_uid"), seanceRef: str("seance_ref"), actorID: str("actor_id"),
+		speaker: str("speaker"), personName: str("person_name"),
+		paragraphIDs: strs("paragraph_ids"), textes: strs("textes"), articles: strs("articles"), amendements: strs("amendements"),
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -499,12 +536,12 @@ func sortedKeys(m map[string]bool) []string {
 // subjectMatches keeps only facts the extractor attributed to the speaker:
 // a transcript is first-person speech, so a fact about someone else is the
 // speaker quoting or attacking a third party, not the speaker's own position.
-func subjectMatches(fact backend.Fact, doc *debateDocument) bool {
+func subjectMatches(fact backend.Fact, speaker, personName string) bool {
 	subj := normalizeForMatch(fact.SubjectEntity)
 	if subj == "" {
 		return false
 	}
-	return subj == normalizeForMatch(doc.Speaker) || subj == normalizeForMatch(doc.Person.Name)
+	return subj == normalizeForMatch(speaker) || subj == normalizeForMatch(personName)
 }
 
 func normalizeForMatch(s string) string {
