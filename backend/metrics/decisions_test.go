@@ -81,6 +81,24 @@ func (f fakeReader) DecisionTotals(context.Context) ([]DecisionCount, []Decision
 	return f.allTime, f.today, nil
 }
 
+// The gauges are exported by the registry the service actually serves — a
+// gauge on the default registerer is invisible (it happened).
+func TestDecisionGaugesAreRegistered(t *testing.T) {
+	refreshDecisionGauges(context.Background(), fakeReader{
+		allTime: []DecisionCount{{Stage: StageEntityGate, Outcome: OutcomeEntityRejected, Count: 7}},
+	})
+	families, err := Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() == Namespace+"_decisions_total" {
+			return
+		}
+	}
+	t.Fatalf("%s_decisions_total is not exported by the served registry", Namespace)
+}
+
 // The gauges mirror the database totals, and a stage that stops appearing is
 // dropped instead of freezing at its last value.
 func TestDecisionGauges(t *testing.T) {

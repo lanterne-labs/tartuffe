@@ -23,6 +23,7 @@ const (
 	StageStanceMerge     = "stance_merge"     // two stances of one person
 	StageContradiction   = "contradiction"    // a candidate pair, and the verifier's veto
 	StageDocumentExtract = "document_extract" // a fetched document through the LLM
+	StageStanceReassign  = "stance_reassign"  // a one-fact stance re-judged against the person's others
 )
 
 // Outcomes, grouped by stage. Each set is closed: these are label values.
@@ -57,6 +58,10 @@ const (
 	OutcomeMergeRejected      = "rejected"
 	OutcomeMergeViaLabel      = "confirmed_via_label" // surfaced by label similarity, not embeddings
 	OutcomeMergeLabelRejected = "rejected_via_label"
+
+	// StageStanceReassign
+	OutcomeReassignJoined = "joined" // the singleton's fact found a home
+	OutcomeReassignKept   = "kept"   // it still deserves its own topic
 
 	// StageDocumentExtract
 	OutcomeDocExtracted = "extracted"
@@ -175,7 +180,9 @@ var DecisionsDaily = prometheus.NewGaugeVec(
 )
 
 func init() {
-	prometheus.MustRegister(DecisionsTotal, DecisionsDaily)
+	// The service serves metrics.Registry, not the default registerer (see
+	// api.Serve): a gauge registered anywhere else is simply never exported.
+	Registry.MustRegister(DecisionsTotal, DecisionsDaily)
 }
 
 // DecisionReader reads back the persisted counts. *storage.PostgresStorer

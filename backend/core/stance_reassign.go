@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/metrics"
 	"fmt"
 	"time"
 
@@ -109,9 +110,11 @@ func ReassignSingletonsForPerson(ctx context.Context, storer StanceReassignStore
 		}
 		target, ok := currentByID[decision.AssignedID]
 		if decision.IsNew || !ok {
+			metrics.RecordDecision(metrics.StageStanceReassign, metrics.OutcomeReassignKept)
 			st.Kept++
 			continue
 		}
+		metrics.RecordDecision(metrics.StageStanceReassign, metrics.OutcomeReassignJoined)
 		log.Info().Str("person", p.Name).
 			Int64("stance_id", s.ID).Str("label", s.ClusterLabel).
 			Int64("target_id", target.ID).Str("target_label", target.ClusterLabel).
