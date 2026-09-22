@@ -207,12 +207,12 @@ func (s *serpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) (
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create search request: %w", err)
+		return nil, fmt.Errorf("failed to create search request: %w", redactSecrets(err))
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute search request: %w", err)
+		return nil, fmt.Errorf("failed to execute search request: %w", redactSecrets(err))
 	}
 	defer resp.Body.Close()
 
@@ -287,12 +287,12 @@ func (s *serpAPINewsProvider) SearchWeb(query string, limit int) ([]SearchResult
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SerpAPI web search request: %w", err)
+		return nil, fmt.Errorf("failed to create SerpAPI web search request: %w", redactSecrets(err))
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute SerpAPI web search request: %w", err)
+		return nil, fmt.Errorf("failed to execute SerpAPI web search request: %w", redactSecrets(err))
 	}
 	defer resp.Body.Close()
 
@@ -393,12 +393,12 @@ func (s *serpAPINewsProvider) SearchImages(query string, opts ImageSearchOptions
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create image search request: %w", err)
+		return nil, fmt.Errorf("failed to create image search request: %w", redactSecrets(err))
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute image search request: %w", err)
+		return nil, fmt.Errorf("failed to execute image search request: %w", redactSecrets(err))
 	}
 	defer resp.Body.Close()
 

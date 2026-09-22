@@ -2093,6 +2093,15 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
 
+## Secrets never reach a log: SerpAPI errors are redacted (2026-09-22)
+
+- SerpAPI takes its key as a query parameter and net/http quotes the whole URL in transport
+  errors, so every network failure printed the live key — into the logs and into CI output
+  (seen in a test run today). Errors from the SerpAPI requests now pass through
+  `redactSecrets`, which rewrites `api_key`/`key`/`token`/`secret`/`password` parameter
+  values and drops the error chain on purpose: leaving the `*url.Error` reachable would hand
+  an unwrapping caller the raw URL again.
+
 ## Every judgement call is counted: decision_counters + Prometheus (2026-09-22)
 
 - "How often does that happen?" had no answer for any gate or judge in the pipeline. The
