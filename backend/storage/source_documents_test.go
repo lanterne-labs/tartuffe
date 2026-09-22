@@ -21,13 +21,16 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	pid, _, err := storer.AddPerson(ctx, "documents person")
 	require.NoError(t, err)
 
-	id, err := storer.SaveFetchedDocument(ctx, core.SourceDocument{
-		SourceType: "news", URL: "https://d.test/a", PersonID: pid, Title: "A", Content: "body A",
-		Metadata: map[string]any{"source_name": "Le Monde"},
+	ids, err := storer.SaveFetchedDocuments(ctx, []core.SourceDocument{
+		{SourceType: "news", URL: "https://d.test/a", PersonID: pid, Title: "A", Content: "body A",
+			Metadata: map[string]any{"source_name": "Le Monde"}},
+		{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B"},
 	})
 	require.NoError(t, err)
-	other, err := storer.SaveFetchedDocument(ctx, core.SourceDocument{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B"})
-	require.NoError(t, err)
+	require.Len(t, ids, 2, "every saved document is returned by url")
+	id, other := ids["https://d.test/a"], ids["https://d.test/b"]
+	require.NotZero(t, id)
+	require.NotZero(t, other)
 
 	known, err := storer.KnownDocumentURLs(ctx, "news", []string{"https://d.test/a", "https://d.test/zzz"})
 	require.NoError(t, err)
@@ -70,9 +73,9 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	require.Empty(t, unfinished, "at the attempt cap the document is left alone")
 
 	// A refetch restarts the machine for that URL.
-	again, err := storer.SaveFetchedDocument(ctx, core.SourceDocument{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B v2"})
+	again, err := storer.SaveFetchedDocuments(ctx, []core.SourceDocument{{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B v2"}})
 	require.NoError(t, err)
-	require.Equal(t, other, again)
+	require.Equal(t, other, again["https://d.test/b"])
 	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", 0, 10)
 	require.NoError(t, err)
 	require.Len(t, unfinished, 1)
@@ -80,4 +83,9 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	require.Equal(t, 0, unfinished[0].Attempts)
 
 	require.Error(t, storer.MarkDocumentExtracted(ctx, id+100000, 0), "marking an unknown document is an error")
+
+	// An empty batch is a no-op, not an error.
+	empty, err := storer.SaveFetchedDocuments(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
 }

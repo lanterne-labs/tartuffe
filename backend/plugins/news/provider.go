@@ -519,6 +519,8 @@ func (p *Provider) extractAndInsertFromArticles(
 	// Fetch step of the document state machine: every scraped article is
 	// saved now, before any LLM call. Empty and thin pages are saved as
 	// extracted with no facts: nothing to do, and never scraped again.
+	var docs []core.SourceDocument
+	var nothingToExtract []string
 	for i, article := range articlesToProcess {
 		content := extractedContents[i]
 		if extractErr := extractionErrors[i]; extractErr != nil {
@@ -530,7 +532,7 @@ func (p *Provider) extractAndInsertFromArticles(
 		if content == nil {
 			content = &extractor.ExtractedContent{}
 		}
-		id, err := p.Storer.SaveFetchedDocument(ctx, core.SourceDocument{
+		docs = append(docs, core.SourceDocument{
 			SourceType:  "news",
 			URL:         article.Link,
 			PersonID:    target.PersonID,
@@ -544,9 +546,6 @@ func (p *Provider) extractAndInsertFromArticles(
 				"target_name": target.Name,
 			},
 		})
-		if err != nil {
-			return fmt.Errorf("saving scraped article: %w", err)
-		}
 		text := strings.TrimSpace(content.Content)
 		switch {
 		case text == "":
@@ -560,7 +559,14 @@ func (p *Provider) extractAndInsertFromArticles(
 		default:
 			continue
 		}
-		if err := p.Storer.MarkDocumentExtracted(ctx, id, 0); err != nil {
+		nothingToExtract = append(nothingToExtract, article.Link)
+	}
+	ids, err := p.Storer.SaveFetchedDocuments(ctx, docs)
+	if err != nil {
+		return fmt.Errorf("saving scraped articles: %w", err)
+	}
+	for _, url := range nothingToExtract {
+		if err := p.Storer.MarkDocumentExtracted(ctx, ids[url], 0); err != nil {
 			return err
 		}
 	}
@@ -767,18 +773,20 @@ func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Tar
 		Msg("Loaded cached content")
 
 	// Cached files enter the same state machine as scraped articles.
+	var docs []core.SourceDocument
 	for _, content := range cachedContents {
 		if strings.TrimSpace(content.Content) == "" {
 			log.Debug().Str("url", content.URL).Msg("Skipping empty cached content")
 			continue
 		}
-		if _, err := p.Storer.SaveFetchedDocument(ctx, core.SourceDocument{
+		docs = append(docs, core.SourceDocument{
 			SourceType: "news", URL: content.URL, PersonID: target.PersonID,
 			Title: content.Title, Content: content.Content, PublishedAt: content.DatePublished,
 			Metadata: map[string]any{"target_type": targetKind(target), "target_name": target.Name, "cache_only": true},
-		}); err != nil {
-			return result, fmt.Errorf("saving cached article: %w", err)
-		}
+		})
+	}
+	if _, err := p.Storer.SaveFetchedDocuments(ctx, docs); err != nil {
+		return result, fmt.Errorf("saving cached articles: %w", err)
 	}
 	if err := p.extractStoredDocuments(ctx, target, nil, opts, result); err != nil {
 		return result, err

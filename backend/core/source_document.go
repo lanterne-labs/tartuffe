@@ -50,9 +50,10 @@ const MaxExtractionAttempts = 3
 // DocumentStorer is the persistence of the document state machine.
 // *storage.PostgresStorer implements it.
 type DocumentStorer interface {
-	// SaveFetchedDocument upserts by (source_type, url) into the fetched
-	// state: a refetch replaces the content and restarts the attempts.
-	SaveFetchedDocument(ctx context.Context, doc SourceDocument) (int64, error)
+	// SaveFetchedDocuments upserts documents by (source_type, url) into the
+	// fetched state and returns their ids by url: a refetch replaces the
+	// content and restarts the attempts.
+	SaveFetchedDocuments(ctx context.Context, docs []SourceDocument) (map[string]int64, error)
 	// KnownDocumentURLs returns which of the urls already have a document of
 	// the source type, in any state.
 	KnownDocumentURLs(ctx context.Context, sourceType string, urls []string) (map[string]bool, error)

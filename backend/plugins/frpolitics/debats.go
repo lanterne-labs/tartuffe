@@ -189,14 +189,16 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	if err != nil {
 		return stats, fmt.Errorf("debats: filtering processed documents: %w", err)
 	}
+	var fresh []core.SourceDocument
 	for i := range docs {
-		if known[keys[i]] {
-			continue
-		}
-		if _, err := storer.SaveFetchedDocument(ctx, docs[i].toSourceDocument()); err != nil {
-			return stats, fmt.Errorf("debats: saving document: %w", err)
+		if !known[keys[i]] {
+			fresh = append(fresh, docs[i].toSourceDocument())
 		}
 	}
+	if _, err := storer.SaveFetchedDocuments(ctx, fresh); err != nil {
+		return stats, fmt.Errorf("debats: saving documents: %w", err)
+	}
+	log.Info().Int("documents", len(docs)).Int("saved", len(fresh)).Msg("debats: new documents saved")
 
 	extractor, err := categorizer.NewOpenAIExtractorFromEnv()
 	if err != nil {

@@ -25,8 +25,8 @@ func newMemDocs(docs ...SourceDocument) *memDocs {
 	return m
 }
 
-func (m *memDocs) SaveFetchedDocument(ctx context.Context, doc SourceDocument) (int64, error) {
-	return 0, errors.New("not used")
+func (m *memDocs) SaveFetchedDocuments(ctx context.Context, docs []SourceDocument) (map[string]int64, error) {
+	return nil, errors.New("not used")
 }
 func (m *memDocs) KnownDocumentURLs(ctx context.Context, sourceType string, urls []string) (map[string]bool, error) {
 	return nil, errors.New("not used")

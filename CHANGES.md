@@ -2111,7 +2111,9 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   left for the next run), "every attempt failed" → error, so a dead LLM turns the step red
   instead of silently marking things. Plugins supply only the fetch step and
   `extract(batch) → facts per document`; news uses batches of 1, twitter its tweet batches.
-  `IsURLVisitable` counts a fetched document as a visit. Debats moved onto the same table
+  `IsURLVisitable` counts a fetched document as a visit. Saves are batched (one round trip
+  per 500 documents): the débats backlog is ~12k documents, and one INSERT each took 25
+  minutes against the public proxy before dying on a network blip, having extracted nothing. Debats moved onto the same table
   (`debate_documents` rows migrated as extracted, keyed by permalink) so there is one machine,
   not two; its durable `facts_dropped` count is now only in the run log. Lesson: a step's
   state is written by that step when it finishes, never inferred from a later step's output.

@@ -20,26 +20,59 @@ func init() {
 	})
 }
 
-// SaveFetchedDocument upserts a fetched document by (source_type, url) into
-// the fetched state. A refetch of a known URL replaces the content, stamps
-// fetched_at and restarts the attempts: the previous extraction was of other
-// content.
-func (s *PostgresStorer) SaveFetchedDocument(ctx context.Context, doc core.SourceDocument) (int64, error) {
-	meta := []byte("{}")
-	if doc.Metadata != nil {
-		var err error
-		if meta, err = json.Marshal(doc.Metadata); err != nil {
-			return 0, fmt.Errorf("encoding document metadata: %w", err)
+// saveBatch is how many documents one SaveFetchedDocuments round trip
+// carries. A débats run saves its whole backlog at once (~9k documents on
+// the first run), which is minutes of latency one INSERT at a time.
+const saveBatch = 500
+
+// SaveFetchedDocuments upserts documents by (source_type, url) into the
+// fetched state and returns their ids keyed by url. A refetch of a known URL
+// replaces the content, stamps fetched_at and restarts the attempts: the
+// previous extraction was of other content.
+func (s *PostgresStorer) SaveFetchedDocuments(ctx context.Context, docs []core.SourceDocument) (map[string]int64, error) {
+	ids := make(map[string]int64, len(docs))
+	for start := 0; start < len(docs); start += saveBatch {
+		end := start + saveBatch
+		if end > len(docs) {
+			end = len(docs)
+		}
+		if err := s.saveFetchedChunk(ctx, docs[start:end], ids); err != nil {
+			return nil, err
 		}
 	}
-	var personID any
-	if doc.PersonID != 0 {
-		personID = doc.PersonID
+	return ids, nil
+}
+
+func (s *PostgresStorer) saveFetchedChunk(ctx context.Context, docs []core.SourceDocument, into map[string]int64) error {
+	n := len(docs)
+	sourceTypes := make([]string, n)
+	urls := make([]string, n)
+	personIDs := make([]*int64, n)
+	titles := make([]string, n)
+	contents := make([]string, n)
+	published := make([]*time.Time, n)
+	metas := make([][]byte, n)
+	for i, doc := range docs {
+		meta := []byte("{}")
+		if doc.Metadata != nil {
+			var err error
+			if meta, err = json.Marshal(doc.Metadata); err != nil {
+				return fmt.Errorf("encoding metadata of %s: %w", doc.URL, err)
+			}
+		}
+		sourceTypes[i], urls[i], titles[i], contents[i], published[i], metas[i] =
+			doc.SourceType, doc.URL, doc.Title, doc.Content, doc.PublishedAt, meta
+		if doc.PersonID != 0 {
+			id := doc.PersonID
+			personIDs[i] = &id
+		}
 	}
-	var id int64
-	err := s.pool.QueryRow(ctx, `
+
+	rows, err := s.pool.Query(ctx, `
 		INSERT INTO source_documents (source_type, url, person_id, title, content, published_at, metadata, state)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		SELECT d.source_type, d.url, d.person_id, d.title, d.content, d.published_at, d.metadata, $8
+		FROM unnest($1::text[], $2::text[], $3::bigint[], $4::text[], $5::text[], $6::timestamptz[], $7::jsonb[])
+		     AS d(source_type, url, person_id, title, content, published_at, metadata)
 		ON CONFLICT (source_type, url) DO UPDATE SET
 		    person_id = COALESCE(EXCLUDED.person_id, source_documents.person_id),
 		    title = EXCLUDED.title,
@@ -52,12 +85,21 @@ func (s *PostgresStorer) SaveFetchedDocument(ctx context.Context, doc core.Sourc
 		    extracted_at = NULL,
 		    facts_count = 0,
 		    last_error = NULL
-		RETURNING id`,
-		doc.SourceType, doc.URL, personID, doc.Title, doc.Content, doc.PublishedAt, meta, core.DocFetched).Scan(&id)
+		RETURNING id, url`,
+		sourceTypes, urls, personIDs, titles, contents, published, metas, core.DocFetched)
 	if err != nil {
-		return 0, fmt.Errorf("saving %s document %s: %w", doc.SourceType, doc.URL, err)
+		return fmt.Errorf("saving %d documents: %w", n, err)
 	}
-	return id, nil
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var url string
+		if err := rows.Scan(&id, &url); err != nil {
+			return fmt.Errorf("scanning saved document: %w", err)
+		}
+		into[url] = id
+	}
+	return rows.Err()
 }
 
 // KnownDocumentURLs returns which of urls already have a document of the

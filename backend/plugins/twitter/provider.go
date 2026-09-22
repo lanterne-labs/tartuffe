@@ -161,10 +161,12 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 
 	// Fetch step of the document state machine: every tweet to process is
 	// saved now and the range logged as fetched, before any LLM call.
-	for _, tw := range toProcess {
-		if _, err := p.Storer.SaveFetchedDocument(ctx, documentFromTweet(tw, handle)); err != nil {
-			return result, fmt.Errorf("saving tweet %s: %w", tw.URL, err)
-		}
+	docs := make([]core.SourceDocument, len(toProcess))
+	for i, tw := range toProcess {
+		docs[i] = documentFromTweet(tw, handle)
+	}
+	if _, err := p.Storer.SaveFetchedDocuments(ctx, docs); err != nil {
+		return result, fmt.Errorf("saving tweets: %w", err)
 	}
 	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
 		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
