@@ -331,7 +331,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		if err != nil {
 			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
+		} else if len(similar) == 0 {
+			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeNoCandidates)
 		} else {
+			judged := false
 			autoDistance := 1.0 - fi.autoDedupeThreshold
 			for _, sf := range similar {
 				existingVerb := sf.CanonicalVerb
@@ -353,6 +356,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Bool("both_external", bothExternal).
 							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
+						metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDuplicate)
 						fi.attachProvenance(ctx, sf.ID, subjectID, input)
 						return 0, 0, false, nil
 					}
@@ -365,10 +369,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 				// In fold mode a new fact with co-actors can never fold (see the
 				// shared-fact guard below), so skip the judge calls entirely.
 				if fi.dedupeJudge != nil && !(fi.foldingEnabled() && len(input.CoActorIDs) > 0) {
+					judged = true
 					same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
 					if jErr != nil {
 						log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
 							Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
+						metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
 						continue
 					}
 					if same {
@@ -381,6 +387,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 							Msg("Same-claim fact (LLM gray-zone adjudication)")
 						if !fi.foldingEnabled() {
+							metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDuplicate)
 							fi.attachProvenance(ctx, sf.ID, subjectID, input)
 							return 0, 0, false, nil
 						}
@@ -397,12 +404,16 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 									Msg("Skipping fold: matched fact is shared by several persons; keeping standalone")
 								continue
 							}
+							metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
 							sfCopy := sf
 							foldTarget = &sfCopy
 							break
 						}
 					}
 				}
+			}
+			if judged && foldTarget == nil {
+				metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDistinct)
 			}
 		}
 	}

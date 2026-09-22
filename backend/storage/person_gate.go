@@ -3,6 +3,9 @@ package storage
 import (
 	"context"
 	"fmt"
+
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/metrics"
 )
 
 // PersonGate decides whether a NEW person candidate (normalized name + entity
@@ -20,12 +23,25 @@ func (s *PostgresStorer) SetPersonGate(g PersonGate) {
 	s.personGate = g
 }
 
-// checkPersonGate runs the gate for a NEW candidate; a nil gate allows.
+// checkPersonGate runs the gate for a NEW candidate; a nil gate allows. Both
+// outcomes are counted: how often the extractor proposes a subject the gate
+// throws away is the measure of the extraction scope rule (and of the
+// validator lookups it costs).
 func (s *PostgresStorer) checkPersonGate(ctx context.Context, name, entityType string) error {
 	if s.personGate == nil {
 		return nil
 	}
-	return s.personGate(ctx, name, entityType)
+	err := s.personGate(ctx, name, entityType)
+	if err != nil {
+		if core.IsEntityRejected(err) {
+			metrics.RecordDecision(metrics.StageEntityGate, metrics.OutcomeEntityRejected)
+		} else {
+			metrics.RecordDecision(metrics.StageEntityGate, metrics.OutcomeError)
+		}
+		return err
+	}
+	metrics.RecordDecision(metrics.StageEntityGate, metrics.OutcomeEntityKept)
+	return nil
 }
 
 // DeletePersonByID removes a single persons row. Used by the

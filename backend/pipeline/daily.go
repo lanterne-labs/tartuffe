@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"digital-mirror/backend/metrics"
 	"errors"
 	"fmt"
 	"sort"
@@ -96,6 +97,11 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		stepErrs[step] = err
 		log.Error().Err(err).Msg("Daily pipeline: " + msg)
 	}
+
+	// The judgement counters this run produces are flushed as it goes, not
+	// only at the end: the cron process is not scraped, and a run that dies
+	// mid-night (an outage) would otherwise take the night's counts with it.
+	metrics.StartDecisionFlusher(ctx, storer, time.Minute)
 
 	// Targets for the queue-scoped plugins: the search_queue contents (the
 	// "main persons queue"). Plugins with their own scope ignore them.

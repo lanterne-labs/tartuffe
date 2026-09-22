@@ -496,13 +496,17 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 	// Log results and update metrics
 	contradictions := 0
 	for _, r := range results {
-		if r.IsContradictory {
+		switch {
+		case r.IsContradictory:
 			contradictions++
 			metrics.IncrementContradictionChecks("found")
-		} else if r.Error == nil {
+			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionFound)
+		case r.Error == nil:
 			metrics.IncrementContradictionChecks("not_found")
-		} else {
+			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionNone)
+		default:
 			metrics.IncrementContradictionChecks("error")
+			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeError)
 		}
 	}
 	log.Info().Int("pairs", len(pairs)).Int("contradictions", contradictions).Msg("Batch contradiction check completed")

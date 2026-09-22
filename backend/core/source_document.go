@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/metrics"
 	"errors"
 	"fmt"
 	"sort"
@@ -155,6 +156,7 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 			lastErr = err
 			consecutive++
 			st.Failed += len(batch)
+			metrics.AddDecision(metrics.StageDocumentExtract, metrics.OutcomeDocFailed, int64(len(batch)))
 			for _, d := range batch {
 				log.Warn().Err(err).Str("source", sourceType).Str("url", d.URL).Int("attempt", d.Attempts+1).
 					Msg("document extraction failed; left unfinished for the next run")
@@ -172,6 +174,11 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 			n := facts[d.ID]
 			st.Extracted++
 			st.Facts += n
+			if n > 0 {
+				metrics.RecordDecision(metrics.StageDocumentExtract, metrics.OutcomeDocExtracted)
+			} else {
+				metrics.RecordDecision(metrics.StageDocumentExtract, metrics.OutcomeDocNoFacts)
+			}
 			if mErr := storer.MarkDocumentExtracted(ctx, d.ID, n); mErr != nil {
 				return st, mErr
 			}

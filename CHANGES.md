@@ -2093,6 +2093,27 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
 
+## Every judgement call is counted: decision_counters + Prometheus (2026-09-22)
+
+- "How often does that happen?" had no answer for any gate or judge in the pipeline. The
+  question came up over the extractor's scope rule (out-of-scope subjects: singers, coaches)
+  and there was nothing to look at — the gate that rejects them returns an error, logs it,
+  and the cron logs are not retrievable.
+- `metrics.RecordDecision(stage, outcome)` at each decision point, tallied in memory and
+  flushed to `decision_counters` (day-bucketed). The database is the transport because the
+  judgements happen in the cron process, which Prometheus cannot scrape: the web service
+  exports the stored totals as `dm_decisions_total` / `dm_decisions_today`
+  {stage, outcome}. Flushed every minute during a run and on `storer.Close()`, so a CLI
+  job's counts land too and an outage costs at most a minute.
+- Instrumented: entity gate (kept / rejected), fact dedupe (no candidates / duplicate /
+  folded / distinct / gate error), stance assign (joined / new / **label_rescue** — joined a
+  stance only the label pass surfaced), stance analyze (duplicate / new info / contradiction),
+  stance merge (confirmed / rejected, split by whether the pair came from embeddings or from
+  the label source), contradictions (found / none / refuted by the verifier / error),
+  document extraction (extracted / no facts / failed / skipped). The split labels are there
+  to answer "does this mechanism earn its keep?" — the label pass and the label-similarity
+  merge source both cost LLM calls and both now report what they contribute.
+
 ## One document state machine for every plugin: fetched → extracted | failed (2026-09-22)
 
 - Run 104 (2026-09-22) was lost to a 77-minute tunnel outage: the LLM was unreachable, the

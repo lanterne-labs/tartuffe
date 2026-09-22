@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util"
 	"encoding/hex"
 	"fmt"
@@ -385,14 +386,20 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		return StanceForMerge{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary}
 	}
 	confirm := func(i, j int, viaLabel bool) bool {
+		rejected, confirmed := metrics.OutcomeMergeRejected, metrics.OutcomeMergeConfirmed
 		if viaLabel {
+			// Counted apart so the label candidate source can be judged on
+			// what it actually contributes.
+			rejected, confirmed = metrics.OutcomeMergeLabelRejected, metrics.OutcomeMergeViaLabel
 			same, err := sm.SameSubjectByLabel(ctx, personName, forMerge(i), forMerge(j))
 			llmCalls++
 			if err != nil {
 				llmFailures++
+				metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeError)
 				return false
 			}
 			if !same {
+				metrics.RecordDecision(metrics.StageStanceMerge, rejected)
 				return false
 			}
 		}
@@ -400,9 +407,15 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		llmCalls++
 		if err != nil {
 			llmFailures++
+			metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeError)
 			return false
 		}
-		return dec != nil && len(dec.Merges) > 0
+		if dec != nil && len(dec.Merges) > 0 {
+			metrics.RecordDecision(metrics.StageStanceMerge, confirmed)
+			return true
+		}
+		metrics.RecordDecision(metrics.StageStanceMerge, rejected)
+		return false
 	}
 	return groupByConfirmedSimilarPairs(embeddings, candidateSim, extra, confirm), llmCalls, llmFailures
 }

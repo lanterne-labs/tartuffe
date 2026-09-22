@@ -560,6 +560,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			continue
 		}
 		nothingToExtract = append(nothingToExtract, article.Link)
+		metrics.RecordDecision(metrics.StageDocumentExtract, metrics.OutcomeDocSkipped)
 	}
 	ids, err := p.Storer.SaveFetchedDocuments(ctx, docs)
 	if err != nil {

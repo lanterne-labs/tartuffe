@@ -66,12 +66,20 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	return &PostgresStorer{pool: pool}, nil
 }
 
-// Close closes the underlying database connection pool.
+// Close flushes what this process counted and closes the connection pool.
+// Every process ends through here, so a CLI job's judgement counts reach the
+// database even though only the web process is scraped.
 func (s *PostgresStorer) Close() {
-	if s.pool != nil {
-		log.Debug().Msg("Closing database connection pool.")
-		s.pool.Close()
+	if s.pool == nil {
+		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := metrics.FlushDecisions(ctx, s); err != nil {
+		log.Warn().Err(err).Msg("Failed to flush decision counters on close")
+	}
+	log.Debug().Msg("Closing database connection pool.")
+	s.pool.Close()
 }
 
 // Pool returns the underlying database connection pool.
@@ -106,4 +114,6 @@ func scanInt64Set(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]
 func (s *PostgresStorer) StartMetricsCollectors(ctx context.Context) {
 	metrics.StartPoolStatsCollector(ctx, s.pool, 15*time.Second)
 	metrics.StartStanceInvariantCollector(ctx, s.pool, 5*time.Minute)
+	metrics.StartDecisionCollector(ctx, s, time.Minute)
+	metrics.StartDecisionFlusher(ctx, s, time.Minute)
 }

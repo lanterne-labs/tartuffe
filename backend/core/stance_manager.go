@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
 	"encoding/json"
 	"fmt"
@@ -139,6 +140,9 @@ type topicAssignmentDecision struct {
 	NewLabel   string // proposed label for the new stance (IsNew only)
 	NewLabelEn string // English translation of NewLabel (IsNew only)
 	Reasoning  string // LLM's brief explanation of its choice
+	// ViaLabelPass is true when the assigned stance was outside the embedding
+	// shortlist and only the label pass offered it.
+	ViaLabelPass bool
 }
 
 // generalLabelResponse is the response from generateGeneralLabel — a thin
@@ -248,6 +252,7 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 
 	// New topic: create a new stance with the LLM-generated general label
 	if assignment.IsNew {
+		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceNew)
 		label := assignment.NewLabel
 		labelEn := assignment.NewLabelEn
 		if label == "" {
@@ -286,11 +291,18 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, "")
 	}
 
+	metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceJoined)
+	if assignment.ViaLabelPass {
+		// The embedding shortlist did not contain this stance; only the label
+		// pass surfaced it. Counts how much recall that pass actually buys.
+		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceLabelRescue)
+	}
 	log.Info().
 		Int64("stance_id", matched.ID).
 		Str("topic", matched.ClusterLabel).
 		Int64("fact_id", factID).
 		Str("reasoning", assignment.Reasoning).
+		Bool("via_label_pass", assignment.ViaLabelPass).
 		Msg("LLM assigned fact to existing topic")
 
 	// Get key facts for the matched stance and analyze relationship.
@@ -555,6 +567,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 
 	switch agg.PrimaryVerdict {
 	case "DUPLICATE":
+		metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeDuplicate)
 		result.Verdict = "DUPLICATE"
 		log.Info().
 			Int64("stance_id", matched.ID).
@@ -564,6 +577,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Msg("Fact is duplicate of existing stance")
 
 	case "NEW_INFO":
+		metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeNewInfo)
 		result.Verdict = "NEW_INFO"
 		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
 			return nil, err
@@ -585,6 +599,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 
 		recorded := 0
 		if len(verified) > 0 {
+			metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeContradiction)
 			result.Verdict = "CONTRADICTION"
 			recorded = sm.recordStanceContradictions(ctx, personID, factID, matched.ID, verified)
 		} else {
@@ -716,6 +731,7 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 				Str("flagged_reason", c.Reason).
 				Str("refutation", reason).
 				Msg("Contradiction refuted by verification pass; dropping (stance path)")
+			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)
 			continue
 		}
 		survivors = append(survivors, c)
@@ -1284,6 +1300,7 @@ type assignExclude struct {
 
 func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stances []StanceDocument, factText string, factEmbedding []float32, excl assignExclude) (*topicAssignmentDecision, error) {
 	var candidates []StanceCandidate
+	var labelOnly map[int64]bool
 	if len(factEmbedding) > 0 && len(stances) > 0 {
 		shortlisted, err := sm.storer.ShortlistStancesByNearestFact(ctx, personID, factEmbedding, shortlistTopK, shortlistFactsPerStance, excl.FactID)
 		if err != nil {
@@ -1310,6 +1327,10 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 				if err != nil {
 					return nil, fmt.Errorf("loading label-picked stance candidates: %w", err)
 				}
+				labelOnly = make(map[int64]bool, len(added))
+				for _, c := range added {
+					labelOnly[c.ID] = true
+				}
 				candidates = append(candidates, added...)
 			}
 		}
@@ -1330,7 +1351,11 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 		}
 	}
 
-	return sm.assignTopicFromCandidates(ctx, factText, candidates)
+	decision, err := sm.assignTopicFromCandidates(ctx, factText, candidates)
+	if err == nil && decision != nil && !decision.IsNew {
+		decision.ViaLabelPass = labelOnly[decision.AssignedID]
+	}
+	return decision, err
 }
 
 // Shortlist sizes for topic assignment: the embedding shortlist's length and

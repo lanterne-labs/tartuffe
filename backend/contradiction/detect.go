@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"time"
@@ -458,6 +459,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 							Msg("Contradiction verification failed; keeping contradiction (fail-open)")
 					} else if !keep {
 						isContra = false
+						metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)
 						log.Info().
 							Str("person", pp.personName).
 							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
