@@ -212,3 +212,25 @@ Some trailing explanation text here`)
 		}
 	})
 }
+
+func TestSpokenByProxy(t *testing.T) {
+	cases := []struct {
+		subject, quote string
+		want           bool
+	}{
+		{"Jean-Luc Mélenchon", "le bras droit de Jean-Luc Mélenchon a dénoncé « l'entêtement » de Fabien Roussel.", true},
+		{"le bras droit de Jean-Luc Mélenchon", "a dénoncé « l'entêtement » de Fabien Roussel.", true},
+		{"Éric Ciotti", "L'entourage d'Éric Ciotti assure qu'il ne sera pas candidat.", true},
+		{"Donald Trump", "An aide to Donald Trump said the talks were over.", true},
+		{"Jean-Luc Mélenchon", "Jean-Luc Mélenchon a estimé que la politique d'austérité était « en partie responsable ».", false},
+		// "approche de" must not read as "proche de".
+		{"Marine Le Pen", "Une approche de Marine Le Pen sur l'immigration a été défendue par elle-même.", false},
+		// The aide named in the quote works for someone other than the subject.
+		{"Fabien Roussel", "le bras droit de Jean-Luc Mélenchon a dénoncé la candidature de Fabien Roussel.", false},
+	}
+	for _, c := range cases {
+		if got := spokenByProxy(c.subject, c.quote); got != c.want {
+			t.Errorf("spokenByProxy(%q, %q) = %v, want %v", c.subject, c.quote, got, c.want)
+		}
+	}
+}

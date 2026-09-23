@@ -24,6 +24,7 @@ const (
 	StageContradiction   = "contradiction"    // a candidate pair, and the verifier's veto
 	StageDocumentExtract = "document_extract" // a fetched document through the LLM
 	StageStanceReassign  = "stance_reassign"  // a one-fact stance re-judged against the person's others
+	StageFactParse       = "fact_parse"       // an extracted fact through the deterministic guards
 )
 
 // Outcomes, grouped by stage. Each set is closed: these are label values.
@@ -68,6 +69,9 @@ const (
 	OutcomeDocNoFacts   = "no_facts"
 	OutcomeDocFailed    = "failed"
 	OutcomeDocSkipped   = "skipped" // empty or too thin to extract from
+
+	// StageFactParse
+	OutcomeProxySpeaker = "proxy_speaker" // an aide's statement credited to the person they work for: dropped
 )
 
 // DecisionCount is one (stage, outcome) tally.

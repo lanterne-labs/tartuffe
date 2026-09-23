@@ -47,6 +47,7 @@ Court rulings, official votes, detailed investigative reports with evidence. The
 The fact must be either: (a) the entity's OWN statements/actions or those of an organization they lead/represent, or (b) an authoritative outcome about the entity (court ruling, official vote, documented evidence). Reject: third-party opinions without evidence, opponents' claims about the entity, non-actions ("Y didn't comment").
 - ❌ "X said the Parliament did not play its role" — X doesn't represent Parliament
 - ❌ "Critics say X is corrupt" — opinion without evidence
+- ❌ Article: « le bras droit de Jean-Luc Mélenchon a dénoncé la candidature de Roussel » → NO fact. Not "Jean-Luc Mélenchon a dénoncé…" (he did not speak), not subject "le bras droit de Jean-Luc Mélenchon" (unnamed speaker). Same for "un proche de X", "l'entourage de X", "un conseiller de X".
 - ✅ "Marine Le Pen stated RN never hid anything" — she leads/represents RN
 - ✅ "X was found guilty by the court of appeal" — authoritative judicial outcome
 

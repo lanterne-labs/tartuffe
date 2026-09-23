@@ -166,17 +166,17 @@ func TestGetPersonHistory(t *testing.T) {
 	assert.Empty(t, empty)
 }
 
-// TestGetPersonHistory_MetaDatedByMembers: a meta fact's own source is dateless, so it
-// must take the earliest date among its folded members, and the members themselves
+// TestGetPersonHistory_GroupDatedByMembers: a claim group whose parent is undated
+// takes the earliest date among its members, and the members themselves
 // (duplicate-marked) must not appear as separate facts.
-func TestGetPersonHistory_MetaDatedByMembers(t *testing.T) {
+func TestGetPersonHistory_GroupDatedByMembers(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
 	var personID int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		`INSERT INTO persons (name, entity_type) VALUES ('meta history person', 'human') RETURNING id`,
+		`INSERT INTO persons (name, entity_type) VALUES ('group history person', 'human') RETURNING id`,
 	).Scan(&personID))
 
 	now := time.Now().UTC()
@@ -184,13 +184,11 @@ func TestGetPersonHistory_MetaDatedByMembers(t *testing.T) {
 	newer := day(now, 150)
 	m1 := insertDatedFact(t, storer, personID, "M: member one", &newer)
 	m2 := insertDatedFact(t, storer, personID, "M: member two", &older)
-	meta := insertDatedFact(t, storer, personID, "M: synthesized meta", nil)
-	_, err := storer.pool.Exec(ctx, `UPDATE facts SET is_meta = true WHERE id = $1`, meta)
-	require.NoError(t, err)
+	parent := insertDatedFact(t, storer, personID, "M: undated parent", nil)
 	for _, member := range []int64{m1, m2} {
 		_, err := storer.pool.Exec(ctx,
 			`INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')`,
-			meta, member)
+			parent, member)
 		require.NoError(t, err)
 	}
 
@@ -198,7 +196,7 @@ func TestGetPersonHistory_MetaDatedByMembers(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, points)
 
-	assert.Equal(t, weekStart(older), points[0].Date, "meta dated by its oldest member")
+	assert.Equal(t, weekStart(older), points[0].Date, "group dated by its oldest member")
 	assert.Equal(t, 1, points[0].FactsTotal)
 	last := points[len(points)-1]
 	assert.Equal(t, 1, last.FactsTotal, "folded members do not count as separate facts")

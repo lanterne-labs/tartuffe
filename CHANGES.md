@@ -2114,6 +2114,8 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   concrete real member, then deletes the synthetic rows (guarded: never one with members or
   contradictions). The stance Facts tab lists active facts only, each with "Déclaré N fois"
   and its other wordings and sources.
+- Ran on prod 2026-09-23 (1,985 metas: 55 flattened, 1,930 parents promoted, 0 failed; real
+  facts, contradictions and stances unchanged). The command and `facts.is_meta` are gone.
 
 ## Every contradiction gate sees a group's restatements (2026-09-22)
 

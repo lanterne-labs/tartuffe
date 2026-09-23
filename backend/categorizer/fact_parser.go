@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"digital-mirror/backend" // Need backend package for the Fact struct type
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -131,6 +133,18 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 				Msg("Skipping fact: lang is missing (required BCP-47 code)")
 			continue
 		}
+		// The prompt's ATTRIBUTION rule forbids crediting an aide's statement to
+		// the person they work for, yet the model still does it about 1 time in 4
+		// when the quote itself names the aide ("le bras droit de X a dénoncé…").
+		if rawFact.SubjectEntityType == "human" && spokenByProxy(rawFact.SubjectEntity, rawFact.OriginalQuote) {
+			log.Warn().Int("fact_index", i).
+				Str("subject_entity", rawFact.SubjectEntity).
+				Str("original_quote", util.TruncateString(rawFact.OriginalQuote, 160)).
+				Str("source_url", sourceURL).
+				Msg("Skipping fact: spoken by an aide or relative of the subject, not the subject")
+			metrics.RecordDecision(metrics.StageFactParse, metrics.OutcomeProxySpeaker)
+			continue
+		}
 		// Translation is no longer produced at extraction time: the prompt emits only
 		// the native normalized_fact, and the async translation phase fills every
 		// target language later. normalized_fact_en is thus expected to be empty here;
@@ -170,6 +184,25 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 	}
 
 	return finalFacts, nil
+}
+
+// proxyRole matches a role that speaks on someone's behalf, followed by the
+// "of" that ties it to that someone ("le bras droit de", "l'entourage d'",
+// "an aide to").
+const proxyRole = `(?:bras droit|proches?|entourage|conseill(?:er|ère)s?|porte-parole|collaborat(?:eur|rice)s?|right[- ]hand(?: man| woman)?|aides?|spokes(?:person|man|woman)|advis[eo]rs?)\s+(?:de\s+|d['’]\s*|of\s+|to\s+)`
+
+// roleSubjectRe matches a subject that is a role description rather than a name.
+var roleSubjectRe = regexp.MustCompile(`(?i)^(?:(?:le|la|les|l['’]|un|une|the|an?)\s*)?` + proxyRole)
+
+// spokenByProxy reports whether the fact is really an aide's statement: the
+// subject is a role ("le bras droit de X"), or the quote introduces the
+// speaker as a role of the subject ("le bras droit de X a dénoncé…").
+func spokenByProxy(subject, quote string) bool {
+	subject = strings.TrimSpace(subject)
+	if roleSubjectRe.MatchString(subject) {
+		return true
+	}
+	return regexp.MustCompile(`(?i)(?:^|[^\p{L}])` + proxyRole + regexp.QuoteMeta(subject)).MatchString(quote)
 }
 
 // knownVerbs is the set of 20 canonical verbs used in fact extraction.

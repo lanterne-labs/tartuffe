@@ -119,7 +119,7 @@ A breaker does NOT invalidate a promise when:
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
 2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
 3. Same date conflicts: DEFAULT to NO. Only flag YES when the pair satisfies the HARD GATE on BOTH sides: either BOTH facts are first-person claims by the same person about a fact they directly know (e.g., a number they stated themselves), OR one is the person's own claim and the other an AUTHORITATIVE FINDING about that same fact (official report, audit, court or official record) — and the two are logically incompatible. A bare timing/numeric discrepancy between two third-party reports on the same date is NEVER a contradiction — that is the DATE-ONLY CONFLICTS / UTTERANCE-REQUIREMENT case.
-4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
+4. Unknown dates: when EITHER date is unknown (one missing is enough), the order is unknown — be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
 
 **EXAMPLES:**
 
@@ -134,11 +134,11 @@ Statement B (dated March 20, 2024): "Marine Le Pen claimed she never knew about 
 PAIR 2: REASONING: She claimed full awareness in January, then denied any knowledge in March. The temporal rule says earlier "claimed X" followed by later "denied X" IS a contradiction — you cannot unknow something.
 PAIR 2: YES: She claimed personal knowledge of the mutualization on January 15, then denied having that knowledge on March 20 - you cannot unknow something.
 
-PAIR 3 (Unknown Dates - Be Skeptical):
-Statement A (dated unknown date): "CEO Jones supported policy X."
+PAIR 3 (One Date Unknown - Be Skeptical):
+Statement A (dated February 1, 2024): "CEO Jones supported policy X."
 Statement B (dated unknown date): "CEO Jones opposed policy X."
-PAIR 3: REASONING: Both dates are unknown. The statements appear opposite, but per the UNKNOWN DATES temporal rule, we must be skeptical — without dates, these could represent a legitimate change of position over time.
-PAIR 3: NO: Without dates, these could represent a legitimate change of position over time.
+PAIR 3: REASONING: Statement B's date is unknown, so the order of the two is unknown. The statements appear opposite, but per the UNKNOWN DATES temporal rule, we must be skeptical — B may come before or after A, a legitimate change of position over time.
+PAIR 3: NO: With one date unknown, these could represent a legitimate change of position over time.
 
 PAIR 4 (Same Date Conflict, BOTH First-Person Claims - Contradictory):
 Statement A (dated February 1, 2024): "Alice, the project owner, stated 'our budget is $5 million.'"
