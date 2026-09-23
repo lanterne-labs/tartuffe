@@ -2093,6 +2093,25 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
 
+## Every contradiction gate sees a group's restatements (2026-09-22)
+
+- A meta-fact went to the judge as its synthesized sentence only; the members' wordings —
+  where the figures and specifics live — never reached any prompt. Measured on the Bayrou
+  meta: headline alone → NO ("sujets distincts"); with its restatements → YES 3/3 (two
+  public holidays he proposed to cut vs "je ne supprimerai aucun jour férié").
+- `promptrules.Statement{Text, Also}` is what every judge and veto gate now takes: the batch
+  detector, its verifier, the auditor (both passes) and its verifier, `reverify`. Members are
+  loaded once per batch (`GroupMemberTexts`, most concrete first, 800-char budget covering
+  97 % of groups). A shared `RestatementsRule` tells each judge the wordings are one
+  statement, never to be compared with each other (golden: 200 € vs 150→500 € stays NO).
+- Rule for adding context to a judge: a gate that can DROP a contradiction must never see
+  less than the gate that found it — otherwise the auditor evicts exactly what the new
+  context revealed. The stance path is the one exception: its finder (stance analysis) sees
+  plain texts, so its verifier does too.
+- The judge and audit prompts changed, so the verdict caches invalidate by design: stale
+  negatives re-judge at 1,500 a night (10,170 cached, ~7 nights), and every contradiction
+  is re-audited once.
+
 ## Secrets never reach a log: SerpAPI errors are redacted (2026-09-22)
 
 - SerpAPI takes its key as a query parameter and net/http quotes the whole URL in transport

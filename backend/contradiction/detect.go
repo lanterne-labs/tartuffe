@@ -6,6 +6,7 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"time"
@@ -63,6 +64,9 @@ type pairInfo struct {
 	factBID   int64
 	factBText string
 	factBDate *time.Time
+	// alsoA / alsoB are the other wordings of a statement that stands for a
+	// group of restatements; the judge and its verifier both see them.
+	alsoA, alsoB []string
 	// similarity is the cosine similarity (1 - distance) between the two facts
 	// from the KNN neighbor search, used to gate the dedup-merge check on the
 	// "not a contradiction" path. 0 when unknown (e.g. the --check-all path).
@@ -231,6 +235,10 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 		return nil
 	}
 	filteredPairs := dropCheckedPairs(person.Name, allPairs, checkedPairs)
+	if err := attachGroupMembers(ctx, storer, filteredPairs); err != nil {
+		log.Error().Err(err).Str("person", person.Name).Msg("Failed to load group members; skipping person")
+		return nil
+	}
 
 	if sameVerbSkipped > 0 {
 		log.Info().Str("person", person.Name).Int("skipped", sameVerbSkipped).Msg("Skipped same-verb pairs (paraphrases)")
@@ -238,6 +246,27 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 
 	log.Info().Str("person", person.Name).Int("pairs_to_check", len(filteredPairs)).Msg("Collected pairs for processing")
 	return filteredPairs
+}
+
+// attachGroupMembers gives every pair side that stands for a group of
+// restatements its other wordings, in one lookup for all the pairs.
+func attachGroupMembers(ctx context.Context, storer *storage.PostgresStorer, pairs []pairInfo) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, 2*len(pairs))
+	for _, p := range pairs {
+		ids = append(ids, p.factAID, p.factBID)
+	}
+	members, err := storer.GroupMemberTexts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range pairs {
+		pairs[i].alsoA = members[pairs[i].factAID]
+		pairs[i].alsoB = members[pairs[i].factBID]
+	}
+	return nil
 }
 
 // candidatePairs pairs each fact with its KNN neighbors (or every other fact
@@ -430,6 +459,8 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 					IndexB: j,
 					TextB:  p.factBText,
 					DateB:  p.factBDate,
+					AlsoA:  p.alsoA,
+					AlsoB:  p.alsoB,
 				}
 			}
 
@@ -452,7 +483,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 				// deleted mid-run) — we can't refute what we can't read, so keep
 				// the contradiction (fail-open), mirroring the stance path.
 				if isContra && batch[j].factAText != "" && batch[j].factBText != "" {
-					keep, refutation, vErr := detector.VerifyContradiction(ctx, batch[j].factAText, batch[j].factBText, result.Reason)
+					keep, refutation, vErr := detector.VerifyContradiction(ctx,
+						promptrules.Statement{Text: batch[j].factAText, Also: batch[j].alsoA},
+						promptrules.Statement{Text: batch[j].factBText, Also: batch[j].alsoB}, result.Reason)
 					if vErr != nil {
 						log.Warn().Err(vErr).
 							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).

@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend/promptrules"
 	"fmt"
 	"os"
 	"testing"
@@ -13,13 +14,17 @@ import (
 
 // verifyCase is one row of testdata/verify_cases.yaml.
 type verifyCase struct {
-	Name          string `yaml:"name"`
-	FactA         string `yaml:"fact_a"`
-	FactB         string `yaml:"fact_b"`
-	ClaimedReason string `yaml:"claimed_reason"`
-	Expect        string `yaml:"expect"` // "keep" or "drop"
-	Bucket        string `yaml:"bucket"`
-	Notes         string `yaml:"notes"`
+	Name  string `yaml:"name"`
+	FactA string `yaml:"fact_a"`
+	FactB string `yaml:"fact_b"`
+	// AlsoA / AlsoB are other wordings of a statement that stands for a group
+	// of restatements (promptrules.Statement.Also).
+	AlsoA         []string `yaml:"also_a"`
+	AlsoB         []string `yaml:"also_b"`
+	ClaimedReason string   `yaml:"claimed_reason"`
+	Expect        string   `yaml:"expect"` // "keep" or "drop"
+	Bucket        string   `yaml:"bucket"`
+	Notes         string   `yaml:"notes"`
 	// Judges scopes the case to specific golden suites: "verify" and/or
 	// "audit". Empty = both (the default for every pre-existing case). Use it
 	// when only ONE judge handles the shape reliably — the other judge's gap
@@ -98,7 +103,7 @@ func TestVerifyGolden(t *testing.T) {
 			t.Fatalf("case %q: %v", tc.Name, err)
 		}
 		t.Run(tc.Name, func(t *testing.T) {
-			keep, reason, err := detector.VerifyContradiction(ctx, tc.FactA, tc.FactB, tc.ClaimedReason)
+			keep, reason, err := detector.VerifyContradiction(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, tc.ClaimedReason)
 			if err != nil {
 				t.Fatalf("VerifyContradiction error: %v", err)
 			}

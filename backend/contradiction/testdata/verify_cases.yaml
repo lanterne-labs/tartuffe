@@ -440,3 +440,27 @@ cases:
     expect: keep
     bucket: vote_where_your_mouth_is
     notes: "Promised ballot behavior is a commitment; abstaining breaks it. Edge: abstention is not a CONTRE but still breaks 'je voterai pour'."
+
+  # Groups of restatements (promptrules.Statement.Also). Headline texts are the
+  # prod meta-fact wordings; the restatements are its real members.
+  - name: "TP_detail_only_in_a_restatement"
+    fact_a: "François Bayrou a proposé un plan pour ramener le déficit sous un certain niveau afin de sortir du surendettement."
+    also_a:
+      - "François Bayrou a proposé un effort de 43,8 milliards d'euros, incluant la suppression de deux jours fériés, pour ramener le déficit sous les 5 % du PIB."
+      - "François Bayrou a prôné la définition d'un plan de cinq ans pour ramener les déficits en dessous du niveau moyen de la croissance afin de sortir du surendettement."
+    fact_b: "François Bayrou a affirmé qu'il ne supprimerait aucun jour férié."
+    claimed_reason: "Il propose de supprimer deux jours fériés puis affirme qu'il n'en supprimera aucun."
+    expect: keep
+    bucket: restatements
+    notes: "The decisive detail (two public holidays) is only in a restatement, not in the headline. A gate that ignores the other wordings drops a real reversal."
+
+  - name: "FP_restatements_disagree_among_themselves"
+    fact_a: "Raphaël Glucksmann a proposé de revaloriser le chèque énergie pour les classes populaires et moyennes."
+    also_a:
+      - "Raphaël Glucksmann a proposé de tripler le chèque énergie à 200 euros pour les classes populaires et moyennes."
+      - "Raphaël Glucksmann propose que le montant du chèque énergie soit porté de 150 euros à 500 euros par an."
+    fact_b: "Raphaël Glucksmann a proposé de financer les aides à l'énergie par la taxation des superprofits des multinationales pétrolières."
+    claimed_reason: "Le montant du chèque énergie proposé varie entre 200 et 500 euros."
+    expect: drop
+    bucket: restatements
+    notes: "The only 'conflict' is between two wordings of statement A (reporting variance on the amount); statement B does not contradict A. Wordings of one statement are never compared with each other."

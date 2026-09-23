@@ -35,8 +35,11 @@ const verifyMaxTokens = 256
 // This is the single source of truth for the verification call. Both
 // contradiction.OpenAIContradictionDetector and core.StanceManager delegate
 // here so the stance path and the batch paths apply identical refutation logic.
-func VerifyContradiction(ctx context.Context, c *Client, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	prompt := fmt.Sprintf(promptrules.RefuteContradictionPrompt, factA, factB, claimedReason)
+//
+// A statement that stands for a group of restatements carries them in Also,
+// so the pass judges the same details the detector saw.
+func VerifyContradiction(ctx context.Context, c *Client, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error) {
+	prompt := fmt.Sprintf(promptrules.RefuteContradictionPrompt, a.Render(), b.Render(), claimedReason)
 
 	content, _, err := c.Chat(ctx, ChatRequest{
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},

@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"time"
@@ -77,10 +78,23 @@ func RunReverify(ctx context.Context, storer *storage.PostgresStorer, opts Rever
 		return nil, fmt.Errorf("failed to create contradiction detector: %w", err)
 	}
 
+	// Sides that stand for a group of restatements are judged with their other
+	// wordings, as the detector judged them.
+	factIDs := make([]int64, 0, 2*len(rows))
+	for _, row := range rows {
+		factIDs = append(factIDs, row.FactAID, row.FactBID)
+	}
+	members, err := storer.GroupMemberTexts(ctx, factIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load group members: %w", err)
+	}
+
 	startedAt := time.Now()
 	log.Info().Int("total", len(rows)).Bool("random", opts.Random).Bool("apply", opts.Apply).Str("scope", opts.Scope).Msg("Starting contradiction reverify")
 
 	for i, row := range rows {
+		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID]}
+		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID]}
 		line := ReverifyRow{
 			ContradictionID: row.ID,
 			PersonID:        row.PersonID,
@@ -92,7 +106,7 @@ func RunReverify(ctx context.Context, storer *storage.PostgresStorer, opts Rever
 			OriginalReason:  row.Reason,
 		}
 
-		survives, refutation, vErr := detector.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
+		survives, refutation, vErr := detector.VerifyContradiction(ctx, stmtA, stmtB, row.Reason)
 		switch {
 		case vErr != nil:
 			result.Errors++
@@ -118,7 +132,7 @@ func RunReverify(ctx context.Context, storer *storage.PostgresStorer, opts Rever
 			// so the local model's run-to-run variance can't delete a row on a
 			// fluke. Only a 2-of-2 drop is removed; a disagreeing pass keeps it.
 			if opts.Apply {
-				confirmKeep, confirmReason, cErr := detector.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
+				confirmKeep, confirmReason, cErr := detector.VerifyContradiction(ctx, stmtA, stmtB, row.Reason)
 				switch {
 				case cErr != nil:
 					log.Warn().Err(cErr).Int64("contradiction_id", row.ID).Msg("Confirmation pass errored; keeping row (not deleted)")

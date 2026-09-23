@@ -693,9 +693,11 @@ func (sm *StanceManager) AnalyzeFactInStance(
 //
 // Delegates to llm.VerifyContradiction so the stance path and the detector path
 // (contradiction.OpenAIContradictionDetector.VerifyContradiction) share
-// identical refutation logic.
+// identical refutation logic. The stance path judges plain texts (no group
+// members) because the stance analysis that found the contradiction saw
+// plain texts too: a veto never sees less than the finder.
 func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	return llm.VerifyContradiction(ctx, sm.client, factA, factB, claimedReason)
+	return llm.VerifyContradiction(ctx, sm.client, promptrules.Statement{Text: factA}, promptrules.Statement{Text: factB}, claimedReason)
 }
 
 // verifyEntries runs the adversarial refutation pass over each flagged

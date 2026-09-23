@@ -3,6 +3,7 @@ package contradiction
 import (
 	"context"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
 	"fmt"
 	"time"
@@ -112,6 +113,18 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 		return nil, fmt.Errorf("failed to create auditor: %w", err)
 	}
 
+	// A side that stands for a group of restatements is judged with its other
+	// wordings, as the detector judged it: an eviction gate must never see
+	// less than the gate that found the contradiction.
+	factIDs := make([]int64, 0, 2*len(rows))
+	for _, row := range rows {
+		factIDs = append(factIDs, row.FactAID, row.FactBID)
+	}
+	members, err := storer.GroupMemberTexts(ctx, factIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load group members: %w", err)
+	}
+
 	// When applying, a deletion also requires the VERIFIER (refute pass) to agree.
 	// The verifier is a second, independent, reversal-aware judge: it keeps genuine
 	// reversals/broken-promises the auditor sometimes mislabels into a fuzzy bucket,
@@ -132,10 +145,13 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 		Msg("Starting contradiction audit")
 
 	for i, row := range rows {
-		// Verdict pinning: a row audited KEEP under identical inputs (facts,
-		// dates, reason, prompt/rulebook) is not re-judged — the verdict is a
-		// pure function of those inputs, so re-sampling could only add noise.
-		inputHash := AuditInputHash(row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID]}
+		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID]}
+		// Verdict pinning: a row audited KEEP under identical inputs (facts and
+		// their other wordings, dates, reason, prompt/rulebook) is not
+		// re-judged — the verdict is a pure function of those inputs, so
+		// re-sampling could only add noise.
+		inputHash := AuditInputHash(stmtA, stmtB, row.FactADate, row.FactBDate, row.Reason)
 		if row.LastAuditHash != nil && *row.LastAuditHash == inputHash {
 			result.Keep++
 			result.Cached++
@@ -145,7 +161,7 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 			continue
 		}
 
-		auditResult := auditor.Audit(ctx, row.FactAText, row.FactBText, row.FactADate, row.FactBDate, row.Reason)
+		auditResult := auditor.Audit(ctx, stmtA, stmtB, row.FactADate, row.FactBDate, row.Reason)
 
 		line := AuditRow{
 			ContradictionID: row.ID,
@@ -198,7 +214,7 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 				// order or can't reproduce its own justification is treated as
 				// confabulation and kept.
 				if opts.Apply {
-					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, auditResult.Rule, result)
+					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, stmtA, stmtB, auditResult.Rule, result)
 				}
 			case VerdictAmbiguous:
 				result.Ambiguous++
@@ -269,11 +285,12 @@ func applyAuditRemoval(
 	auditor *OpenAIContradictionAuditor,
 	verifier *OpenAIContradictionDetector,
 	row storage.ContradictionAuditRow,
+	stmtA, stmtB promptrules.Statement,
 	firstRule string,
 	result *AuditRunResult,
 ) bool {
 	// Signal 2: order-swapped auditor pass — same verdict AND same rule required.
-	confirm := auditor.Audit(ctx, row.FactBText, row.FactAText, row.FactBDate, row.FactADate, row.Reason)
+	confirm := auditor.Audit(ctx, stmtB, stmtA, row.FactBDate, row.FactADate, row.Reason)
 	switch {
 	case confirm.Err != nil:
 		result.Unstable++
@@ -298,7 +315,7 @@ func applyAuditRemoval(
 	// Signal 3: cross-judge veto. The verifier must ALSO refute it (verdict NO).
 	// If the verifier keeps it, it is a likely-real contradiction the auditor
 	// mislabeled — do not delete.
-	survives, refutation, vErr := verifier.VerifyContradiction(ctx, row.FactAText, row.FactBText, row.Reason)
+	survives, refutation, vErr := verifier.VerifyContradiction(ctx, stmtA, stmtB, row.Reason)
 	switch {
 	case vErr != nil:
 		result.Unstable++

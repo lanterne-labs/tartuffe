@@ -304,6 +304,8 @@ var contradictionPromptTpl = `You are analyzing pairs of statements for contradi
 
 ` + ContradictionRulesAndExamples + `
 
+` + promptrules.RestatementsRule + `
+
 **PAIRS TO ANALYZE:**
 %s
 
@@ -372,14 +374,14 @@ func (d *OpenAIContradictionDetector) AreContradictory(ctx context.Context, text
 //
 // Delegates to llm.VerifyContradiction so the detector path and the stance path
 // (core.StanceManager.VerifyContradiction) share identical refutation logic.
-func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
+func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error) {
 	type verdict struct {
 		keep   bool
 		reason string
 	}
 	v, err := llm.MajorityVote(JudgeVotes,
 		func() (verdict, error) {
-			k, r, e := llm.VerifyContradiction(ctx, d.client, factA, factB, claimedReason)
+			k, r, e := llm.VerifyContradiction(ctx, d.client, a, b, claimedReason)
 			return verdict{keep: k, reason: r}, e
 		},
 		func(v verdict) string {
@@ -407,6 +409,9 @@ type FactPair struct {
 	IndexB int
 	TextB  string
 	DateB  *time.Time
+	// AlsoA / AlsoB are the other wordings of each statement when it stands
+	// for a group of restatements (see promptrules.Statement).
+	AlsoA, AlsoB []string
 }
 
 // BatchResult represents the result of checking a single pair in a batch
@@ -438,8 +443,8 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		dateAStr := formatDateForLLM(pair.DateA)
 		dateBStr := formatDateForLLM(pair.DateB)
 		pairsText.WriteString(fmt.Sprintf("\nPAIR %d:\n", i+1))
-		pairsText.WriteString(fmt.Sprintf("Statement A (dated %s): \"%s\"\n", dateAStr, pair.TextA))
-		pairsText.WriteString(fmt.Sprintf("Statement B (dated %s): \"%s\"\n", dateBStr, pair.TextB))
+		pairsText.WriteString(fmt.Sprintf("Statement A (dated %s): %s\n", dateAStr, promptrules.Statement{Text: pair.TextA, Also: pair.AlsoA}.Render()))
+		pairsText.WriteString(fmt.Sprintf("Statement B (dated %s): %s\n", dateBStr, promptrules.Statement{Text: pair.TextB, Also: pair.AlsoB}.Render()))
 	}
 
 	prompt := fmt.Sprintf(contradictionPromptTpl, pairsText.String())

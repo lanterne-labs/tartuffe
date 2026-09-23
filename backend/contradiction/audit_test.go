@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend/promptrules"
 	"fmt"
 	"os"
 	"testing"
@@ -68,7 +69,7 @@ func TestAuditGolden(t *testing.T) {
 			t.Fatalf("case %q: %v", tc.Name, err)
 		}
 		t.Run(tc.Name, func(t *testing.T) {
-			res := auditor.Audit(ctx, tc.FactA, tc.FactB, nil, nil, tc.ClaimedReason)
+			res := auditor.Audit(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, nil, nil, tc.ClaimedReason)
 			if res.Err != nil {
 				t.Fatalf("Audit error: %v", res.Err)
 			}

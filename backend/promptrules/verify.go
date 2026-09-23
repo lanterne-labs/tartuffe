@@ -8,8 +8,9 @@ package promptrules
 // and auditor use — so the insertion gate and the audit gate cannot drift.
 //
 // It is rendered by llm.VerifyContradiction with three %s arguments in order:
-// factA, factB, claimedReason. Any literal `%` MUST be written `%%` (the catalog
-// itself is kept symbol-free for exactly this reason).
+// statement A and statement B (already rendered by Statement.Render, quotes
+// included) and the claimed reason. Any literal `%` MUST be written `%%` (the
+// catalog itself is kept symbol-free for exactly this reason).
 //
 // The model MUST answer with exactly two lines:
 //
@@ -29,14 +30,16 @@ A REAL contradiction (answer YES) is the person's own statements or actions conf
   - DENOUNCE-THEN-ALLY: the person publicly blamed, denounced, attacked, or attributed fault to a SPECIFIC NAMED person or party, then formally allied / merged lists / partnered / agreed to govern with that SAME named person or party. Taking a hostile public stance toward someone and then joining forces with them IS a real reversal — do not excuse it as "different aspects" (blame vs strategy) or realpolitik. This applies only to a stance about a NAMED person/party paired with an alliance toward that SAME person/party; it does NOT apply to two policy positions or two abstract concepts that merely seem opposed.
 
 ` + FalsePositivePatterns + `
+` + RestatementsRule + `
+
 Decision procedure:
   - If the case clearly matches one of the NO patterns above, answer NO.
   - Otherwise, if it clearly matches one of the YES patterns (reversal, denial-vs-finding, warned-then-acted, commitment-vs-action, denounce-then-ally), answer YES.
   - Only if it fits NEITHER and you genuinely cannot tell, answer NO.
 
 CLAIMED CONTRADICTION UNDER REVIEW:
-Statement A: "%s"
-Statement B: "%s"
+Statement A: %s
+Statement B: %s
 Reason it was flagged: "%s"
 
 Respond with EXACTLY two lines and nothing else:

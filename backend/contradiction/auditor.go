@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/promptrules"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -163,6 +164,8 @@ Reported speech of the person ("X plaide / affirme / a dit / a annoncé Y") is t
 
 ` + leanAuditRules() + `
 
+` + promptrules.RestatementsRule + `
+
 **CONTRADICTION TO AUDIT:**
 %s
 
@@ -219,12 +222,12 @@ func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error)
 // audit step uses it to skip re-judging unchanged rows, so a verdict can never
 // flip between runs on sampling or server noise. Editing the prompt/catalog or
 // repointing a fact changes the hash and re-opens the row.
-func AuditInputHash(factA, factB string, dateA, dateB *time.Time, originalReason string) string {
+func AuditInputHash(factA, factB promptrules.Statement, dateA, dateB *time.Time, originalReason string) string {
 	h := sha256.New()
 	for _, part := range []string{
 		auditPromptTpl,
 		strings.Join(contradictionAuditAllowedRulesList, "|"),
-		factA, factB,
+		factA.Render(), factB.Render(),
 		formatDateForLLM(dateA), formatDateForLLM(dateB),
 		originalReason,
 	} {
@@ -238,7 +241,7 @@ func AuditInputHash(factA, factB string, dateA, dateB *time.Time, originalReason
 // the verdict by majority over JudgeVotes samples — the judge is not
 // deterministic even at temperature 0 (see JudgeVotes), and an eviction is
 // destructive, so a single unlucky sample must not delete a real contradiction.
-func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
+func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB promptrules.Statement, dateA, dateB *time.Time, originalReason string) AuditResult {
 	res, err := llm.MajorityVote(AuditVotes,
 		func() (AuditResult, error) {
 			r := a.auditOnce(ctx, factA, factB, dateA, dateB, originalReason)
@@ -252,8 +255,8 @@ func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB str
 	return res
 }
 
-func (a *OpenAIContradictionAuditor) auditOnce(ctx context.Context, factA, factB string, dateA, dateB *time.Time, originalReason string) AuditResult {
-	if factA == factB {
+func (a *OpenAIContradictionAuditor) auditOnce(ctx context.Context, factA, factB promptrules.Statement, dateA, dateB *time.Time, originalReason string) AuditResult {
+	if factA.Text == factB.Text {
 		return AuditResult{
 			Verdict:   VerdictRemove,
 			Reasoning: "Both statements are textually identical; an identical pair cannot be a contradiction.",
@@ -262,9 +265,9 @@ func (a *OpenAIContradictionAuditor) auditOnce(ctx context.Context, factA, factB
 	}
 
 	auditBlock := fmt.Sprintf(
-		"Statement A (dated %s): %q\nStatement B (dated %s): %q\nOriginal detection reason: %q",
-		formatDateForLLM(dateA), factA,
-		formatDateForLLM(dateB), factB,
+		"Statement A (dated %s): %s\nStatement B (dated %s): %s\nOriginal detection reason: %q",
+		formatDateForLLM(dateA), factA.Render(),
+		formatDateForLLM(dateB), factB.Render(),
 		originalReason,
 	)
 	// The allowed-token list is generated from the single-source enum slice so
