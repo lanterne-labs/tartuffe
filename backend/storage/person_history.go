@@ -38,9 +38,8 @@ type HistoryPoint struct {
 
 // historyEvent is a dated fact (bundle == "") or contradiction (bundle key) on the
 // statement-time axis: a fact is dated by the earliest publication among its own sources
-// and its folded members' sources (a meta fact carries a dateless 'meta' source, so its
-// members hold the real dates), ingestion time as fallback; a contradiction by the later
-// of its two facts.
+// and its claim-group members' sources (a claim counts from the first time it was made),
+// ingestion time as fallback; a contradiction by the later of its two facts.
 type historyEvent struct {
 	at     time.Time
 	bundle string

@@ -15,7 +15,7 @@ type QueuedFactPair struct {
 // EnqueueFactPairsBySharedSourceKey enqueues, for every person, each pair of
 // their active facts where one fact has a source of type sourceTypeA and the
 // other a source of type sourceTypeB and both sources carry the same
-// non-empty value under metadata key. A folded member resolves to its meta
+// non-empty value under metadata key. A group member resolves to its parent
 // (the fact that actually takes part in detection). Pairs already judged
 // (fact_pair_checks) or already queued are skipped, so the call is idempotent
 // and cheap to repeat nightly. One set-based statement — no per-fact

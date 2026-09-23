@@ -2,12 +2,11 @@ package storage
 
 import (
 	"context"
-
 	"digital-mirror/backend/core"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
-	"github.com/rs/zerolog/log"
 )
 
 // GetFactsForDeduplication retrieves all facts for a person with their embeddings.
@@ -104,54 +103,6 @@ func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs
 	return results, rows.Err()
 }
 
-// MarkFactAsDuplicate marks a fact as a duplicate of a canonical (general) fact
-// by inserting a 'duplicate' relation into fact_relations.
-func (s *PostgresStorer) MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error {
-	query := `
-		INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type, reason)
-		VALUES ($1, $2, 'duplicate', 'Marked as duplicate')
-		ON CONFLICT (general_fact_id, specific_fact_id) DO UPDATE
-		SET relation_type = 'duplicate',
-		    reason = EXCLUDED.reason`
-
-	_, err := s.pool.Exec(ctx, query, canonicalID, duplicateID)
-	if err != nil {
-		return fmt.Errorf("failed to mark fact %d as duplicate of %d: %w", duplicateID, canonicalID, err)
-	}
-
-	log.Info().
-		Int64("duplicate_id", duplicateID).
-		Int64("canonical_id", canonicalID).
-		Msg("Marked fact as duplicate")
-
-	return nil
-}
-
-// MarkFactDuplicate records that two facts are duplicates by inserting a
-// 'duplicate' fact_relations row (keeping the lower id as the canonical/general
-// fact, hiding the higher id as the specific one — it is then excluded from
-// active-fact queries, dedup candidates, and future contradiction detection).
-// Non-destructive and reversible (delete the row to un-hide). Idempotent via the
-// uq_fact_relation constraint. Used by the contradiction-detection dedup net.
-func (s *PostgresStorer) MarkFactDuplicate(ctx context.Context, factID1, factID2 int64, reason string) error {
-	if factID1 == factID2 {
-		return fmt.Errorf("cannot mark a fact as a duplicate of itself: %d", factID1)
-	}
-	general, specific := factID1, factID2
-	if general > specific {
-		general, specific = specific, general
-	}
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type, reason)
-		 VALUES ($1, $2, 'duplicate', NULLIF($3, ''))
-		 ON CONFLICT (general_fact_id, specific_fact_id) DO NOTHING`,
-		general, specific, reason)
-	if err != nil {
-		return fmt.Errorf("mark fact %d duplicate of %d: %w", specific, general, err)
-	}
-	return nil
-}
-
 // FactDuplicatePair is a (canonical, duplicate) fact pair from a 'duplicate'
 // fact_relations row whose duplicate side still anchors live contradictions.
 type FactDuplicatePair struct {
@@ -196,15 +147,26 @@ func (s *PostgresStorer) GetDuplicatesNeedingRepoint(ctx context.Context) ([]Fac
 // already hidden from active queries, and keeping its stance row preserves the
 // every-fact-has-a-stance invariant. Returns (repointed, dropped).
 func (s *PostgresStorer) RepointFactDuplicate(ctx context.Context, general, specific int64) (repointed int, dropped int, err error) {
-	if general == specific {
-		return 0, 0, fmt.Errorf("general and specific are the same fact: %d", general)
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, 0, fmt.Errorf("begin repoint tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if repointed, dropped, err = s.repointFactDuplicateTx(ctx, tx, general, specific); err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("commit repoint: %w", err)
+	}
+	return repointed, dropped, nil
+}
 
+// repointFactDuplicateTx is RepointFactDuplicate inside the caller's
+// transaction.
+func (s *PostgresStorer) repointFactDuplicateTx(ctx context.Context, tx pgx.Tx, general, specific int64) (repointed int, dropped int, err error) {
+	if general == specific {
+		return 0, 0, fmt.Errorf("general and specific are the same fact: %d", general)
+	}
 	rows, err := tx.Query(ctx,
 		`SELECT id, person_id, fact_a_id, fact_b_id FROM contradictions
 		 WHERE fact_a_id = $1 OR fact_b_id = $1`, specific)
@@ -270,10 +232,6 @@ func (s *PostgresStorer) RepointFactDuplicate(ctx context.Context, general, spec
 		if e := s.recomputeHonestyScoreAndEmitEvents(ctx, tx, p, 0); e != nil {
 			return 0, 0, fmt.Errorf("recompute score for person %d: %w", p, e)
 		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, 0, fmt.Errorf("commit repoint: %w", err)
 	}
 	return repointed, dropped, nil
 }

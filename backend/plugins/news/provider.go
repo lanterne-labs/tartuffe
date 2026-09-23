@@ -1106,17 +1106,11 @@ func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins
 }
 
 // newFactInserter builds the inserter every news insertion path uses: LLM
-// dedupe gate on, and same-claim facts folded under a meta-fact rather than
-// dropped, with the position-level gate (decided 2026-07-28; the wiring then
-// landed in a package nothing imported, so news kept dropping under the strict
-// same-claim gate until 2026-09-17).
+// dedupe gate on, and same-claim facts grouped with the fact they restate
+// rather than dropped, with the position-level gate.
 func (p *Provider) newFactInserter() *core.FactInserter {
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 	inserter.EnableLLMDedupe()
-	if synth, err := core.NewLLMMetaSynthesizerFromEnv(); err != nil {
-		log.Warn().Err(err).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped instead")
-	} else {
-		inserter.EnableMetaFolding(p.Storer, synth)
-	}
+	inserter.EnableFolding(p.Storer)
 	return inserter
 }

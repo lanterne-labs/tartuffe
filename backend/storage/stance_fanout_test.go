@@ -154,10 +154,10 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 	require.False(t, personIDs[coActorB])
 }
 
-// TestGetFactStanceIDPersonScoped pins the person-scoped fact→stance lookup:
+// TestGetFactStanceMapPersonScoped pins the person-scoped fact→stance lookup:
 // with a shared fact in two persons' stances, each person resolves to their OWN
 // stance, never an arbitrary one.
-func TestGetFactStanceIDPersonScoped(t *testing.T) {
+func TestGetFactStanceMapPersonScoped(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
@@ -186,27 +186,16 @@ func TestGetFactStanceIDPersonScoped(t *testing.T) {
 	stanceP := mkStance(personP, "p-topic")
 	stanceQ := mkStance(personQ, "q-topic")
 
-	gotP, ok, err := storer.GetFactStanceID(ctx, personP, factID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, stanceP, gotP)
-
-	gotQ, ok, err := storer.GetFactStanceID(ctx, personQ, factID)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, stanceQ, gotQ)
-
 	// A third person carrying no membership resolves to none.
 	personR, _, err := storer.AddPerson(ctx, "Scoped R")
 	require.NoError(t, err)
-	_, ok, err = storer.GetFactStanceID(ctx, personR, factID)
-	require.NoError(t, err)
-	require.False(t, ok)
 
-	// GetFactStanceMap: same scoping, batch form.
 	m, err := storer.GetFactStanceMap(ctx, personP, []int64{factID})
 	require.NoError(t, err)
 	require.Equal(t, map[int64]int64{factID: stanceP}, m)
+	m, err = storer.GetFactStanceMap(ctx, personQ, []int64{factID})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int64{factID: stanceQ}, m)
 	m, err = storer.GetFactStanceMap(ctx, personR, []int64{factID})
 	require.NoError(t, err)
 	require.Empty(t, m)

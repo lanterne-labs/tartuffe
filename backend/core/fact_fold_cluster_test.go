@@ -8,7 +8,7 @@ import (
 // foldClusterStorer is a FactFoldStorer over in-memory facts: no shared
 // facts, no contradictions, and a scripted trigram pair list.
 type foldClusterStorer struct {
-	MetaFoldStorer
+	GroupStorer
 	facts     []FactForFold
 	textPairs [][2]int64
 }
@@ -21,12 +21,6 @@ func (f *foldClusterStorer) ListContradictionFactPairs(ctx context.Context, pers
 }
 func (f *foldClusterStorer) ListTextSimilarFactPairs(ctx context.Context, factIDs []int64, floor float64) ([][2]int64, error) {
 	return f.textPairs, nil
-}
-func (f *foldClusterStorer) IsMetaFact(ctx context.Context, factID int64) (bool, error) {
-	return false, nil
-}
-func (f *foldClusterStorer) GetFactEmbeddingMeta(ctx context.Context, factID int64) (string, string, string, error) {
-	return "", "fr", "", nil
 }
 
 type sameAlwaysJudge struct{ asked [][2]string }

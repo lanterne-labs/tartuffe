@@ -248,6 +248,20 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	return filteredPairs
 }
 
+// groupSameClaim puts two active facts found to be the same claim into one
+// claim group headed by the more concrete of the two.
+func groupSameClaim(ctx context.Context, storer *storage.PostgresStorer, a, b int64) error {
+	parent, err := storer.MostConcreteFact(ctx, []int64{a, b})
+	if err != nil {
+		return err
+	}
+	from := a
+	if parent == a {
+		from = b
+	}
+	return storer.MergeFactIntoGroup(ctx, from, parent)
+}
+
 // attachGroupMembers gives every pair side that stands for a group of
 // restatements its other wordings, in one lookup for all the pairs.
 func attachGroupMembers(ctx context.Context, storer *storage.PostgresStorer, pairs []pairInfo) error {
@@ -539,17 +553,16 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
 							Msg("Contradiction-pass dedup adjudication failed")
 					} else if same {
-						reason := fmt.Sprintf("contradiction-pass dedup: same claim (sim=%.2f)", batch[j].similarity)
-						if mErr := storer.MarkFactDuplicate(ctx, batch[j].factAID, batch[j].factBID, reason); mErr != nil {
-							log.Error().Err(mErr).
+						if gErr := groupSameClaim(ctx, storer, batch[j].factAID, batch[j].factBID); gErr != nil {
+							log.Error().Err(gErr).
 								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-								Msg("Failed to mark facts as duplicates")
+								Msg("Failed to group same-claim facts")
 						} else {
 							log.Info().
 								Str("person", pp.personName).
 								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
 								Float64("similarity", batch[j].similarity).
-								Msg("Marked facts as duplicates (contradiction-pass dedup)")
+								Msg("Grouped same-claim facts (contradiction-pass dedup)")
 						}
 					}
 				}

@@ -23,8 +23,8 @@ type DedupeStorer interface {
 	// FindSimilarFactsForDedup finds active facts similar to a given embedding within a threshold.
 	FindSimilarFactsForDedup(ctx context.Context, personIDs []int64, embedding []float32, excludeFactID int64, threshold float64) ([]SimilarFactResult, error)
 
-	// MarkFactAsDuplicate marks a fact as a duplicate of a canonical fact.
-	MarkFactAsDuplicate(ctx context.Context, duplicateID int64, canonicalID int64) error
+	// MergeFactIntoGroup makes from (and its members) members of into's claim group.
+	MergeFactIntoGroup(ctx context.Context, from, into int64) error
 
 	// DeleteFact deletes a fact that has been determined to be invalid.
 	DeleteFact(ctx context.Context, factID int64) error
@@ -262,7 +262,7 @@ func (d *FactDeduplicator) dedupeForPersonID(ctx context.Context, personID int64
 					Msg("Auto-deduping high-similarity fact")
 
 				if !opts.DryRun {
-					if err := d.storer.MarkFactAsDuplicate(ctx, similar.ID, fact.ID); err != nil {
+					if err := d.storer.MergeFactIntoGroup(ctx, similar.ID, fact.ID); err != nil {
 						log.Error().Err(err).Msg("Failed to mark fact as duplicate")
 						continue
 					}
@@ -380,7 +380,7 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 			// Mark duplicates
 			if !opts.DryRun {
 				for _, dupID := range group.DuplicateIDs {
-					if err := d.storer.MarkFactAsDuplicate(ctx, dupID, group.KeepID); err != nil {
+					if err := d.storer.MergeFactIntoGroup(ctx, dupID, group.KeepID); err != nil {
 						log.Error().Err(err).Int64("duplicate", dupID).Int64("canonical", group.KeepID).Msg("Failed to mark duplicate")
 						continue
 					}

@@ -3,23 +3,18 @@ package core
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 )
 
 // foldFakeStorer extends fakeInserterStorer with a same-claim match and records
-// every MetaFoldStorer call, so the fold path can be asserted without a DB.
+// every group merge, so the fold path can be asserted without a DB.
 type foldFakeStorer struct {
 	fakeInserterStorer
 	similar []SimilarFact
 
-	existingMeta   int64 // 0 = matched fact has no meta yet
-	createdMeta    int64
-	updatedText    string
-	markedMembers  []int64
-	repointedSpecs []int64
-	stanceAttached []int64
+	newIsMoreConcrete bool       // MostConcreteFact picks the new fact over the matched one
+	merges            [][2]int64 // (from, into)
 }
 
 func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error) {
@@ -33,55 +28,21 @@ func matchedFact(text string, mentionPersons int) SimilarFact {
 	return SimilarFact{ID: 7, Text: text, Distance: 0.05, CanonicalVerb: "affirmer", MentionPersons: mentionPersons}
 }
 
-func (f *foldFakeStorer) GetMetaForFact(ctx context.Context, factID int64) (int64, bool, error) {
-	if f.existingMeta != 0 {
-		return f.existingMeta, true, nil
+// MostConcreteFact is called with (matched, new).
+func (f *foldFakeStorer) MostConcreteFact(ctx context.Context, factIDs []int64) (int64, error) {
+	if f.newIsMoreConcrete {
+		return factIDs[1], nil
 	}
-	return 0, false, nil
+	return factIDs[0], nil
 }
 
-func (f *foldFakeStorer) CreateMetaFact(ctx context.Context, personID int64, text, embeddingText string, memberEmbedding []float32, lang, canonicalVerb string) (int64, error) {
-	f.createdMeta = 900
-	f.updatedText = text
-	return f.createdMeta, nil
-}
-
-func (f *foldFakeStorer) UpdateMetaFactText(ctx context.Context, metaID int64, text string) error {
-	f.updatedText = text
-	return nil
-}
-
-func (f *foldFakeStorer) GetMetaMemberTexts(ctx context.Context, metaID int64) ([]string, error) {
-	return []string{"member one text"}, nil
-}
-
-func (f *foldFakeStorer) MarkFactAsDuplicate(ctx context.Context, duplicateID, canonicalID int64) error {
-	f.markedMembers = append(f.markedMembers, duplicateID)
-	return nil
-}
-
-func (f *foldFakeStorer) RepointFactDuplicate(ctx context.Context, general, specific int64) (int, int, error) {
-	f.repointedSpecs = append(f.repointedSpecs, specific)
-	return 0, 0, nil
-}
-
-func (f *foldFakeStorer) GetFactStanceID(ctx context.Context, personID int64, factID int64) (int64, bool, error) {
-	return 42, true, nil
-}
-
-func (f *foldFakeStorer) AddFactToStance(ctx context.Context, stanceID, factID int64) error {
-	f.stanceAttached = append(f.stanceAttached, factID)
+func (f *foldFakeStorer) MergeFactIntoGroup(ctx context.Context, from, into int64) error {
+	f.merges = append(f.merges, [2]int64{from, into})
 	return nil
 }
 
 func (f *foldFakeStorer) RefreshPersonScore(ctx context.Context, personID int64) error {
 	return nil
-}
-
-type fakeSynth struct{}
-
-func (fakeSynth) SynthesizeMetaFact(ctx context.Context, subject string, memberTexts []string, lang string) (string, error) {
-	return "synthesized: " + strings.Join(memberTexts, " | "), nil
 }
 
 // fakeJudge stands in for the LLM gate — the mandatory last decider on fold
@@ -121,14 +82,14 @@ func foldInput() StoreFactInput {
 }
 
 // A same-claim hit (confirmed by the LLM judge — the mandatory last decider)
-// with folding enabled must KEEP the fact (inserted, not dropped), link it
-// under a freshly created meta, and skip stance analysis.
-func TestFoldNewFactCreatesMeta(t *testing.T) {
+// with folding enabled must KEEP the fact (inserted, not dropped), put it in
+// the matched fact's group, and skip stance analysis.
+func TestFoldGroupsNewFactUnderMatchedFact(t *testing.T) {
 	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableMetaFolding(st, fakeSynth{})
+	fi.EnableFolding(st)
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -137,35 +98,22 @@ func TestFoldNewFactCreatesMeta(t *testing.T) {
 	if res.Inserted != 1 || res.Skipped != 0 {
 		t.Fatalf("fact must be inserted (kept), got inserted=%d skipped=%d", res.Inserted, res.Skipped)
 	}
-	if st.createdMeta == 0 {
-		t.Fatal("expected a meta-fact to be created")
-	}
-	// Both the matched fact (7) and the new fact (1) become members.
-	if len(st.markedMembers) != 2 || st.markedMembers[0] != 7 || st.markedMembers[1] != 1 {
-		t.Fatalf("expected members [7 1], got %v", st.markedMembers)
-	}
-	if len(st.repointedSpecs) != 2 {
-		t.Fatalf("expected both members repointed, got %v", st.repointedSpecs)
+	if len(st.merges) != 1 || st.merges[0] != [2]int64{1, 7} {
+		t.Fatalf("the new fact (1) must join the matched fact's group (7), got %v", st.merges)
 	}
 	if stance.calls != 0 {
-		t.Fatalf("stance analysis must be skipped for folded facts, ran %d times", stance.calls)
-	}
-	if !strings.Contains(st.updatedText, "innocence") {
-		t.Fatalf("meta text not synthesized from members: %q", st.updatedText)
+		t.Fatalf("stance analysis must be skipped for grouped facts, ran %d times", stance.calls)
 	}
 }
 
-// When the matched fact already belongs to a meta, the new fact joins it and the
-// meta text is re-synthesized over all members including the new one.
-func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
-	st := &foldFakeStorer{
-		similar:      []SimilarFact{matchedFact("Il clame son innocence.", 1)},
-		existingMeta: 500,
-	}
+// When the new wording is more concrete, it becomes the group's parent and
+// the matched fact moves under it.
+func TestFoldPromotesMoreConcreteNewFact(t *testing.T) {
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}, newIsMoreConcrete: true}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableMetaFolding(st, fakeSynth{})
+	fi.EnableFolding(st)
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -174,14 +122,11 @@ func TestFoldNewFactJoinsExistingMeta(t *testing.T) {
 	if res.Inserted != 1 {
 		t.Fatalf("fact must be inserted, got %+v", res)
 	}
-	if st.createdMeta != 0 {
-		t.Fatal("must reuse the existing meta, not create a new one")
+	if len(st.merges) != 1 || st.merges[0] != [2]int64{7, 1} {
+		t.Fatalf("the matched fact (7) must move under the new parent (1), got %v", st.merges)
 	}
-	if len(st.markedMembers) != 1 || st.markedMembers[0] != 1 {
-		t.Fatalf("only the new fact should be marked, got %v", st.markedMembers)
-	}
-	if !strings.Contains(st.updatedText, "member one text") || !strings.Contains(st.updatedText, "innocence dans l'affaire") {
-		t.Fatalf("meta must be re-synthesized over old + new members: %q", st.updatedText)
+	if stance.calls != 0 {
+		t.Fatalf("stance analysis must be skipped for grouped facts, ran %d times", stance.calls)
 	}
 }
 
@@ -193,7 +138,7 @@ func TestFoldVetoedByJudge(t *testing.T) {
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: false}
-	fi.EnableMetaFolding(st, fakeSynth{})
+	fi.EnableFolding(st)
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -202,8 +147,8 @@ func TestFoldVetoedByJudge(t *testing.T) {
 	if res.Inserted != 1 {
 		t.Fatalf("fact must be inserted normally, got %+v", res)
 	}
-	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
-		t.Fatalf("judge veto must prevent any fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	if len(st.merges) != 0 {
+		t.Fatalf("judge veto must prevent any grouping, got %v", st.merges)
 	}
 	if stance.calls != 1 {
 		t.Fatalf("vetoed fact must go through stance analysis, ran %d times", stance.calls)
@@ -219,7 +164,7 @@ func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableMetaFolding(st, fakeSynth{})
+	fi.EnableFolding(st)
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -228,8 +173,8 @@ func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
 	if res.Inserted != 1 {
 		t.Fatalf("fact must be inserted normally, got %+v", res)
 	}
-	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
-		t.Fatalf("shared matched fact must not fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	if len(st.merges) != 0 {
+		t.Fatalf("shared matched fact must not be grouped, got %v", st.merges)
 	}
 	if stance.calls != 1 {
 		t.Fatalf("unfolded fact must go through stance analysis, ran %d times", stance.calls)
@@ -243,7 +188,7 @@ func TestFoldRefusedOnNewSharedFact(t *testing.T) {
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableMetaFolding(st, fakeSynth{})
+	fi.EnableFolding(st)
 
 	input := foldInput()
 	input.CoActorIDs = []int64{201, 202}
@@ -254,8 +199,8 @@ func TestFoldRefusedOnNewSharedFact(t *testing.T) {
 	if res.Inserted != 1 {
 		t.Fatalf("fact must be inserted normally, got %+v", res)
 	}
-	if st.createdMeta != 0 || len(st.markedMembers) != 0 {
-		t.Fatalf("co-actor fact must not fold, got meta=%d members=%v", st.createdMeta, st.markedMembers)
+	if len(st.merges) != 0 {
+		t.Fatalf("co-actor fact must not be grouped, got %v", st.merges)
 	}
 	if stance.calls != 1 {
 		t.Fatalf("co-actor fact must go through stance analysis, ran %d times", stance.calls)

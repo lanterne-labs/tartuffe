@@ -32,7 +32,7 @@ type SamePositionJudge interface {
 // FactFoldStorer is the storage view the fold backfill needs.
 // *storage.PostgresStorer implements it.
 type FactFoldStorer interface {
-	MetaFoldStorer
+	GroupStorer
 	// GetFoldFactsForPerson returns the person's active (non-duplicate) facts
 	// that mention nobody else, with their embeddings. Shared (co-actor)
 	// facts never fold: marking one 'duplicate' is a GLOBAL flag, so folding
@@ -43,8 +43,6 @@ type FactFoldStorer interface {
 	// ListTextSimilarFactPairs returns the pairs among factIDs whose texts
 	// have trigram similarity of at least floor, as [smaller id, larger id].
 	ListTextSimilarFactPairs(ctx context.Context, factIDs []int64, floor float64) ([][2]int64, error)
-	IsMetaFact(ctx context.Context, factID int64) (bool, error)
-	GetFactEmbeddingMeta(ctx context.Context, factID int64) (embeddingText, lang, verb string, err error)
 }
 
 // FoldOptions tunes the fold clustering.
@@ -212,78 +210,28 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	return clusters, nil
 }
 
-// ApplyFoldCluster creates (or reuses) the meta for one cluster and folds every
-// member under it: synthesized text, 'duplicate' member links, contradiction
-// repoint (collapsing duplicate rows), stance attachment for the meta.
-func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, synth MetaSynthesizer, p PersonRecord, cluster []FactForFold) error {
-	// Reuse an existing meta if the cluster contains one (it can absorb the rest).
-	var metaID int64
-	var members []FactForFold
-	for _, f := range cluster {
-		isMeta, err := storer.IsMetaFact(ctx, f.ID)
-		if err != nil {
-			return err
-		}
-		if isMeta && metaID == 0 {
-			metaID = f.ID
-		} else {
-			members = append(members, f)
-		}
-	}
-
-	memberTexts := make([]string, 0, len(cluster))
-	if metaID != 0 {
-		// Reusing an existing meta: its current members must be part of the
-		// synthesis too, or their content silently drops out of the meta text.
-		existing, err := storer.GetMetaMemberTexts(ctx, metaID)
-		if err != nil {
-			return err
-		}
-		memberTexts = append(memberTexts, existing...)
-	}
-	for _, f := range members {
-		memberTexts = append(memberTexts, f.Text)
-	}
-
-	rep := cluster[0]
-	embeddingText, lang, verb, err := storer.GetFactEmbeddingMeta(ctx, rep.ID)
+// ApplyFoldCluster groups one cluster of same-claim facts: the most concrete
+// becomes the parent and every other fact (with any members it already had)
+// joins its group — contradictions, stance slots and key facts follow the
+// parent (storage.MergeFactIntoGroup).
+func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord, cluster []FactForFold) error {
+	parent, err := storer.MostConcreteFact(ctx, foldFactIDs(cluster))
 	if err != nil {
 		return err
 	}
-
-	text, err := synth.SynthesizeMetaFact(ctx, p.Name, memberTexts, lang)
-	if err != nil {
-		return fmt.Errorf("synthesize meta text: %w", err)
-	}
-
-	if metaID == 0 {
-		metaID, err = storer.CreateMetaFact(ctx, p.ID, text, embeddingText, rep.Embedding, lang, verb)
-		if err != nil {
-			return fmt.Errorf("create meta: %w", err)
+	for _, f := range cluster {
+		if f.ID == parent {
+			continue
 		}
-		if stanceID, ok, sErr := storer.GetFactStanceID(ctx, p.ID, rep.ID); sErr == nil && ok {
-			if aErr := storer.AddFactToStance(ctx, stanceID, metaID); aErr != nil {
-				log.Warn().Err(aErr).Int64("meta_fact_id", metaID).Msg("Failed to attach meta to stance")
-			}
-		}
-	} else if err := storer.UpdateMetaFactText(ctx, metaID, text); err != nil {
-		return fmt.Errorf("update existing meta %d: %w", metaID, err)
-	}
-
-	for _, f := range members {
-		if err := storer.MarkFactAsDuplicate(ctx, f.ID, metaID); err != nil {
-			return fmt.Errorf("mark member %d: %w", f.ID, err)
-		}
-		if _, _, err := storer.RepointFactDuplicate(ctx, metaID, f.ID); err != nil {
-			return fmt.Errorf("repoint member %d: %w", f.ID, err)
+		if err := storer.MergeFactIntoGroup(ctx, f.ID, parent); err != nil {
+			return fmt.Errorf("grouping fact %d under %d: %w", f.ID, parent, err)
 		}
 	}
 	if err := storer.RefreshPersonScore(ctx, p.ID); err != nil {
 		log.Warn().Err(err).Int64("person_id", p.ID).Msg("Failed to refresh fact count")
 	}
-
-	log.Info().Str("person", p.Name).Int64("meta_fact_id", metaID).Int("members", len(members)).
-		Str("meta_text", util.TruncateString(text, 120)).Msg("Folded cluster into meta-fact")
+	log.Info().Str("person", p.Name).Int64("parent_fact_id", parent).Int("members", len(cluster)-1).
+		Msg("Grouped same-claim cluster")
 	return nil
 }
 

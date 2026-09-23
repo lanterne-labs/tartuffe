@@ -26,12 +26,12 @@ var (
 
 var factsFoldCmd = &cobra.Command{
 	Use:   "fold",
-	Short: "Fold near-identical same-claim facts under LLM-synthesized meta-facts.",
+	Short: "Group same-claim facts under their most concrete wording.",
 	Long: `Backfill pass over existing facts: clusters same-claim facts of each person
-(embedding similarity + the same verb-aware / LLM gates as insertion dedup),
-creates one meta-fact per cluster (raw facts are kept as members), repoints
-their contradictions onto the meta (collapsing duplicate rows), and recomputes
-scores. Insertion-time folding handles new facts; this command cleans up the
+(embedding or text similarity + the same LLM gate as insertion), makes each
+cluster one claim group whose parent is its most concrete wording (the others
+are kept as members), moves their contradictions onto the parent (collapsing
+duplicate rows), and recomputes scores. Insertion-time folding handles new facts; this command cleans up the
 piles that accumulated before it existed (e.g. 20 copies of the same
 innocence-vs-conviction contradiction).
 
@@ -64,10 +64,6 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 	judge, err := core.NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
 		return fmt.Errorf("same-claim adjudicator required for folding: %w", err)
-	}
-	synth, err := core.NewLLMMetaSynthesizerFromEnv()
-	if err != nil {
-		return fmt.Errorf("meta synthesizer required for folding: %w", err)
 	}
 
 	persons, err := personsForCommand(ctx, storer, factsFoldPerson, storer.GetAllPersons)
@@ -114,7 +110,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			if !factsFoldApply {
 				continue
 			}
-			if err := core.ApplyFoldCluster(ctx, storer, synth, p, cluster); err != nil {
+			if err := core.ApplyFoldCluster(ctx, storer, p, cluster); err != nil {
 				log.Error().Err(err).Str("person", p.Name).Msg("Failed to apply fold cluster")
 				continue
 			}
@@ -130,7 +126,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if factsFoldApply {
-		fmt.Fprintf(os.Stderr, "\nFolded %d/%d clusters into meta-facts.\n", totalFolded, totalClusters)
+		fmt.Fprintf(os.Stderr, "\nGrouped %d/%d clusters.\n", totalFolded, totalClusters)
 	} else {
 		fmt.Fprintf(os.Stderr, "\n[DRY RUN] %d fold clusters found. Re-run with --apply to write.\n", totalClusters)
 	}

@@ -137,11 +137,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	}
 	factInserter := core.NewFactInserter(storer, stanceMgr)
 	factInserter.EnableLLMDedupe()
-	if synth, sErr := core.NewLLMMetaSynthesizerFromEnv(); sErr != nil {
-		log.Warn().Err(sErr).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped as before")
-	} else {
-		factInserter.EnableMetaFolding(storer, synth)
-	}
+	factInserter.EnableFolding(storer)
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)

@@ -50,13 +50,14 @@ func TestRepointFactDuplicate(t *testing.T) {
 	ins(b, y) // → redundant with (A,Y) → dropped
 	ins(a, b) // → self-pair (A vs its own duplicate) → dropped
 
-	require.NoError(t, storer.MarkFactDuplicate(ctx, a, b, "same claim")) // general=min(a,b), specific=max(a,b)
-
-	// Determine which id is the hidden specific (MarkFactDuplicate keeps lower as general).
+	// The raw relation only: this test drives RepointFactDuplicate itself.
 	general, specific := a, b
 	if general > specific {
 		general, specific = specific, general
 	}
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')", general, specific)
+	require.NoError(t, err)
 
 	repointed, dropped, err := storer.RepointFactDuplicate(ctx, general, specific)
 	require.NoError(t, err)

@@ -693,15 +693,41 @@ type FactInStance struct {
 	SourceURL     string  `json:"source_url"`
 	OriginalQuote string  `json:"original_quote,omitempty"`
 	ArchiveURL    *string `json:"archive_url,omitempty"` // Wayback snapshot URL; nil until archived
+	// Restatements are the other statements of the same claim (the fact's
+	// claim-group members), each with its own source, oldest first.
+	Restatements []Restatement `json:"restatements,omitempty"`
 }
 
-// GetFactsInStance returns the facts attached to a stance with both native and
+// Restatement is one other wording of a fact's claim, with its source.
+type Restatement struct {
+	FactText      string `json:"fact_text"`
+	FactTextEn    string `json:"fact_text_en,omitempty"`
+	SourceURL     string `json:"source_url"`
+	OriginalQuote string `json:"original_quote,omitempty"`
+}
+
+// GetFactsInStance returns the stance's active facts with both native and
 // English text + source info, for the per-stance Facts tab on the person page.
+// A claim group's members are not listed on their own but under their
+// parent's Restatements. One query.
 func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) ([]FactInStance, error) {
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.fact_text_en,'') AS fact_text_en,
 		       COALESCE(f.lang,'') AS lang, COALESCE(f.canonical_verb,'') AS canonical_verb,
-		       src.source_url, COALESCE(src.original_quote,'') AS original_quote, src.archive_url
+		       src.source_url, COALESCE(src.original_quote,'') AS original_quote, src.archive_url,
+		       COALESCE((
+		           SELECT json_agg(json_build_object(
+		                      'fact_text', m.fact_text,
+		                      'fact_text_en', COALESCE(m.fact_text_en, ''),
+		                      'source_url', COALESCE(ms.source_url, ''),
+		                      'original_quote', COALESCE(ms.original_quote, ''))
+		                  ORDER BY m.id)
+		           FROM fact_relations r
+		           JOIN facts m ON m.id = r.specific_fact_id
+		           LEFT JOIN LATERAL (
+		               SELECT ms.source_url, ms.original_quote FROM fact_sources ms
+		               WHERE ms.fact_id = m.id ORDER BY ms.id LIMIT 1) ms ON true
+		           WHERE r.general_fact_id = f.id AND r.relation_type = 'duplicate'), '[]') AS restatements
 		FROM facts f
 		LEFT JOIN LATERAL (
 		    SELECT fs.source_url, fs.original_quote, fs.archive_url
@@ -709,6 +735,9 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 		) src ON true
 		JOIN stance_document_facts sdf ON sdf.fact_id = f.id
 		WHERE sdf.stance_document_id = $1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_relations fr
+		      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		ORDER BY f.id`
 	rows, err := s.pool.Query(ctx, query, stanceID)
 	if err != nil {
@@ -719,11 +748,15 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 	for rows.Next() {
 		var f FactInStance
 		var src *string
-		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote, &f.ArchiveURL); err != nil {
+		var restatements []byte
+		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote, &f.ArchiveURL, &restatements); err != nil {
 			return nil, err
 		}
 		if src != nil {
 			f.SourceURL = *src
+		}
+		if err := json.Unmarshal(restatements, &f.Restatements); err != nil {
+			return nil, fmt.Errorf("decoding restatements of fact %d: %w", f.FactID, err)
 		}
 		out = append(out, f)
 	}

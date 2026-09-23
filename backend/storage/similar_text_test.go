@@ -122,7 +122,7 @@ func TestGetFoldFactsForPersonExcludesSharedAndFolded(t *testing.T) {
 	own := insert("own fact", pid)
 	shared := insert("shared vote fact", pid, other)
 	folded := insert("folded member", pid)
-	require.NoError(t, storer.MarkFactAsDuplicate(ctx, folded, own))
+	require.NoError(t, storer.MergeFactIntoGroup(ctx, folded, own))
 	insert("someone else's fact", other)
 
 	got, err := storer.GetFoldFactsForPerson(ctx, pid)

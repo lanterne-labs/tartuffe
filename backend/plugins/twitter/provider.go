@@ -202,11 +202,7 @@ func (p *Provider) extractStoredTweets(ctx context.Context, handle Handle, batch
 	}
 	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
 	factInserter.EnableLLMDedupe()
-	if synth, sErr := core.NewLLMMetaSynthesizerFromEnv(); sErr != nil {
-		log.Warn().Err(sErr).Msg("Meta-fact folding disabled (synthesizer unavailable); same-claim facts are dropped as before")
-	} else {
-		factInserter.EnableMetaFolding(p.Storer, synth)
-	}
+	factInserter.EnableFolding(p.Storer)
 
 	extract := func(ctx context.Context, batchDocs []core.SourceDocument) (map[int64]int, error) {
 		batch := make([]Tweet, len(batchDocs))

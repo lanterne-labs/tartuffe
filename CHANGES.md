@@ -2093,6 +2093,28 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   JSON example of one sentence → two facts got 3/3. `TestRemoteLLMExtractor_NonPositionRejection`
   pins both (majority of 3, like the scope test); all five extractor goldens green twice.
 
+## Claim groups replace synthesized meta-facts (2026-09-22)
+
+- A meta-fact was an LLM-written sentence standing in for its members: a statement nobody
+  made, with a `meta://` source and no quote, which could lose the checkable details
+  (Bayrou's "43,8 milliards, deux jours fériés" became "un plan pour ramener le déficit sous
+  un certain niveau"). 107 of 1,381 metas turned out not to hold together at all.
+- A claim group is the same 'duplicate' fact_relations, with a real parent: the group's
+  most concrete wording (most digits, then longest — one SQL ordering shared with the
+  judges' member order). `storage.MergeFactIntoGroup(from, into)` is the one operation for
+  every case — a fresh restatement joining, a more concrete one being promoted to parent,
+  two groups merging, a synthetic meta being replaced — and moves members, contradictions
+  (redundant and self-pairs dropped), group bases, stance slot and stance key-fact ids in
+  one transaction. No synthesis call on the fold path any more.
+- Groups vs stances, for the record: a stance is the same SUBJECT (few, global), a group is
+  the same CLAIM (count once, judge once). 99 of the 107 bad groupings had their members in
+  one stance already — the grouping was wrong, the stance was right.
+- `dm facts review-groups` un-groups members that no longer belong; nothing is deleted.
+  `dm facts migrate-metas` (one-off) flattens nested metas, promotes each meta's most
+  concrete real member, then deletes the synthetic rows (guarded: never one with members or
+  contradictions). The stance Facts tab lists active facts only, each with "Déclaré N fois"
+  and its other wordings and sources.
+
 ## Every contradiction gate sees a group's restatements (2026-09-22)
 
 - A meta-fact went to the judge as its synthesized sentence only; the members' wordings —
