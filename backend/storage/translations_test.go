@@ -57,3 +57,39 @@ func TestTranslations_UpsertAndList(t *testing.T) {
 	require.NotNil(t, en)
 	assert.Equal(t, "bridged EN value", *en)
 }
+
+// TestTranslations_FollowDeletes: deleting a fact removes its translations and
+// only its own — not another fact's, nor another entity type's with the same id.
+func TestTranslations_FollowDeletes(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	insert := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			`INSERT INTO facts (fact_text, lang, embedding) VALUES ($1, 'fr', $2) RETURNING id`,
+			text, pgvector.NewVector(mockEmbedding()),
+		).Scan(&id))
+		return id
+	}
+	gone, kept := insert("xtrans: fait supprimé"), insert("xtrans: fait gardé")
+	require.NoError(t, storer.UpsertTranslation(ctx, "fact", gone, "text", "en", "deleted fact", "h"))
+	require.NoError(t, storer.UpsertTranslation(ctx, "fact", kept, "text", "en", "kept fact", "h"))
+	require.NoError(t, storer.UpsertTranslation(ctx, "stance", gone, "label", "en", "a stance sharing the id", "h"))
+
+	_, err := storer.pool.Exec(ctx, `DELETE FROM facts WHERE id = $1`, gone)
+	require.NoError(t, err)
+
+	count := func(entityType string, id int64) int {
+		var n int
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			`SELECT count(*) FROM translations WHERE entity_type = $1 AND entity_id = $2`, entityType, id).Scan(&n))
+		return n
+	}
+	assert.Equal(t, 0, count("fact", gone), "the deleted fact's translation goes with it")
+	assert.Equal(t, 1, count("fact", kept))
+	assert.Equal(t, 1, count("stance", gone), "another entity type with the same id is untouched")
+	_, err = storer.pool.Exec(ctx, `DELETE FROM translations WHERE entity_type = 'stance' AND entity_id = $1`, gone)
+	require.NoError(t, err)
+}
