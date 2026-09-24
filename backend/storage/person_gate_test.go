@@ -3,9 +3,11 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"digital-mirror/backend/core"
+	"digital-mirror/backend/llm"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,4 +118,36 @@ func TestPersonGate_FactInserterSkipsRejectedSubject(t *testing.T) {
 	require.Len(t, persons, 1, "no gated candidate was inserted")
 	assert.Equal(t, "real person", persons[0].Name)
 	assert.Equal(t, []string{"junk subject/"}, asked, "only the new subject reaches the gate; the existing subject is not re-gated")
+}
+
+// TestPersonGate_UnavailableValidatorFailsTheFact: a gate that cannot reach
+// the LLM is not a rejection. The fact insert fails with the error wrapping
+// llm.ErrUnavailable (so the document is retried), nothing is inserted, and
+// the fact is not counted as a skipped rejected subject.
+func TestPersonGate_UnavailableValidatorFailsTheFact(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	storer.SetPersonGate(func(_ context.Context, name, _ string) error {
+		return fmt.Errorf("validating new entity %q: %w", name, llm.ErrUnavailable)
+	})
+	inserter := core.NewFactInserter(storer, &stubStanceProcessor{storer: storer})
+	res, err := inserter.InsertFacts(ctx, []core.StoreFactInput{{
+		SubjectEntity:      "New Subject",
+		NormalizedFactText: "new subject said X",
+		Embedding:          mockEmbedding(),
+		OriginalQuote:      "X",
+		SourceURL:          "http://example.com/new",
+		SourceType:         "test",
+		Lang:               "en",
+	}})
+	require.ErrorIs(t, err, llm.ErrUnavailable)
+	assert.False(t, core.IsEntityRejected(err))
+	assert.Zero(t, res.Skipped)
+	assert.Zero(t, res.Inserted)
+
+	persons, err := storer.GetAllPersons(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, persons, "no person validated by nobody")
 }

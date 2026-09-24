@@ -55,13 +55,15 @@ func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (m
 // verdicts whose judge_hash is not currentHash (NULL included), so the nightly
 // detector re-judges those pairs under the current rulebook. Returns the
 // number deleted and how many stale negatives remain. Positive verdicts are
-// never touched here — they are the auditor's jurisdiction. Self-terminating:
-// once every negative carries the current hash, nothing is deleted.
+// never touched here — they are the auditor's jurisdiction — nor are the
+// negatives a dismissal recorded (dismissed): their NO does not come from the
+// detector's rulebook. Self-terminating: once every negative carries the
+// current hash, nothing is deleted.
 func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHash string, limit int) (deleted, remaining int, err error) {
 	res, err := s.pool.Exec(ctx, `
 		WITH victims AS (
 			SELECT id FROM fact_pair_checks
-			WHERE is_contradiction = false AND judge_hash IS DISTINCT FROM $1
+			WHERE is_contradiction = false AND NOT dismissed AND judge_hash IS DISTINCT FROM $1
 			ORDER BY checked_at ASC
 			LIMIT $2
 		)
@@ -71,7 +73,7 @@ func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHash 
 	}
 	deleted = int(res.RowsAffected())
 	err = s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND judge_hash IS DISTINCT FROM $1`,
+		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND NOT dismissed AND judge_hash IS DISTINCT FROM $1`,
 		currentHash).Scan(&remaining)
 	if err != nil {
 		return deleted, 0, fmt.Errorf("counting stale judged pairs: %w", err)
@@ -82,7 +84,8 @@ func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHash 
 // RecordPairChecksBatch records multiple pair checks efficiently.
 // judgeHash is the rulebook the verdicts were produced under
 // (contradiction.JudgeRulebookHash); the nightly re-judge step evicts negatives
-// whose hash is not the current one.
+// whose hash is not the current one. A re-judged pair is the detector's
+// verdict again: a dismissal recorded on it before is cleared.
 func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int64, judgeHash string, results []PairCheckResult) error {
 	if len(results) == 0 {
 		return nil
@@ -95,6 +98,7 @@ func (s *PostgresStorer) RecordPairChecksBatch(ctx context.Context, personID int
 		ON CONFLICT (person_id, fact_a_id, fact_b_id) DO UPDATE
 		SET is_contradiction = EXCLUDED.is_contradiction,
 		    judge_hash = EXCLUDED.judge_hash,
+		    dismissed = false,
 		    checked_at = NOW()`
 
 	batch := &pgx.Batch{}
@@ -763,17 +767,18 @@ func (s *PostgresStorer) removeContradiction(ctx context.Context, id int64, supp
 	}
 
 	if suppressReDetection {
-		// Record the pair as judged-not-contradictory so the detector skips it.
+		// Record the pair as dismissed so the detector skips it for good (the
+		// stale-verdict re-judge leaves dismissed rows alone).
 		// fact_pair_checks enforces fact_a_id < fact_b_id (canonical ordering).
 		a, b := factAID, factBID
 		if a > b {
 			a, b = b, a
 		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction)
-			 VALUES ($1, $2, $3, false)
+			`INSERT INTO fact_pair_checks (person_id, fact_a_id, fact_b_id, is_contradiction, dismissed)
+			 VALUES ($1, $2, $3, false, true)
 			 ON CONFLICT (person_id, fact_a_id, fact_b_id)
-			 DO UPDATE SET is_contradiction = false, checked_at = NOW()`,
+			 DO UPDATE SET is_contradiction = false, dismissed = true, checked_at = NOW()`,
 			personID, a, b); err != nil {
 			return fmt.Errorf("failed to record negative pair check: %w", err)
 		}

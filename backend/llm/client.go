@@ -125,31 +125,51 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		body, err = c.sendWithRetry(ctx, "primary", apiURL, apiKey, c.primaryHeaders, payloadBytes)
 		if err == nil {
 			MarkPrimaryUp()
-		} else if ctx.Err() == nil && c.fallbackURL != "" && isEndpointOutage(err) {
+		} else if ctx.Err() == nil && c.fallbackURL != "" && IsEndpointOutage(err) {
 			MarkPrimaryDown("chat: " + err.Error())
 		}
 	}
 	// Fail over only on a real endpoint failure — not when the caller cancelled.
-	if err != nil && ctx.Err() == nil && c.fallbackURL != "" {
-		fbPayload, swapErr := payloadWithModel(payloadBytes, c.fallbackModel)
-		if swapErr != nil {
-			fbPayload = payloadBytes // keep original payload if the model can't be swapped
+	if err != nil && ctx.Err() == nil {
+		var fbErr error
+		if c.fallbackURL != "" {
+			fbPayload, swapErr := payloadWithModel(payloadBytes, c.fallbackModel)
+			if swapErr != nil {
+				fbPayload = payloadBytes // keep original payload if the model can't be swapped
+			}
+			log.Warn().Err(err).Str("fallback_url", c.fallbackURL).Msg("primary LLM endpoint failed, trying fallback")
+			var fbBody []byte
+			fbBody, fbErr = c.sendWithRetry(ctx, "openrouter", c.fallbackURL, c.fallbackKey, nil, fbPayload)
+			if fbErr == nil {
+				body, err = fbBody, nil
+			}
 		}
-		log.Warn().Err(err).Str("fallback_url", c.fallbackURL).Msg("primary LLM endpoint failed, trying fallback")
-		fbBody, fbErr := c.sendWithRetry(ctx, "openrouter", c.fallbackURL, c.fallbackKey, nil, fbPayload)
-		if fbErr == nil {
-			body, err = fbBody, nil
-		} else if isEndpointOutage(err) {
-			err = fmt.Errorf("%w: primary failed (%v); fallback failed: %w", ErrUnavailable, err, fbErr)
-		} else {
-			err = fmt.Errorf("primary failed (%v); fallback failed: %w", err, fbErr)
+		if err != nil {
+			err = FailedCallError(err, fbErr)
 		}
-	} else if err != nil && ctx.Err() == nil && isEndpointOutage(err) {
-		err = fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 
 	metrics.ObserveLLMRequest("chat", "", time.Since(start), err)
 	return body, err
+}
+
+// FailedCallError builds the error of a call no endpoint served: primaryErr is
+// the primary's failure (or the open-breaker skip) and fallbackErr the
+// fallback's, nil when no fallback is configured. The result wraps
+// ErrUnavailable when primaryErr is an endpoint outage (not a *ClientError):
+// the endpoints were down, the request itself was not at fault. Shared by the
+// chat and embeddings clients so both classify outages the same way.
+func FailedCallError(primaryErr, fallbackErr error) error {
+	outage := IsEndpointOutage(primaryErr)
+	switch {
+	case fallbackErr != nil && outage:
+		return fmt.Errorf("%w: primary failed (%v); fallback failed: %w", ErrUnavailable, primaryErr, fallbackErr)
+	case fallbackErr != nil:
+		return fmt.Errorf("primary failed (%v); fallback failed: %w", primaryErr, fallbackErr)
+	case outage:
+		return fmt.Errorf("%w: %w", ErrUnavailable, primaryErr)
+	}
+	return primaryErr
 }
 
 // sendWithRetry POSTs to a single endpoint with the exponential-backoff retry,

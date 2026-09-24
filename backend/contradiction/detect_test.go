@@ -1,8 +1,13 @@
 package contradiction
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
+	"digital-mirror/backend/llm"
+	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
 )
 
@@ -110,4 +115,83 @@ func TestDetectFirstNBoundsPersons(t *testing.T) {
 	if len(ids) != 1 || ids[0] != 7 {
 		t.Errorf("firstN on ids = %v, want [7]", ids)
 	}
+}
+
+type fakeVerifier struct {
+	keep bool
+	err  error
+}
+
+func (f fakeVerifier) VerifyContradiction(context.Context, promptrules.Statement, promptrules.Statement, string) (bool, string, error) {
+	return f.keep, "", f.err
+}
+
+type fakeSameClaim struct {
+	same  bool
+	err   error
+	calls *int
+}
+
+func (f fakeSameClaim) IsSameClaim(context.Context, string, string, string) (bool, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	return f.same, f.err
+}
+
+// TestDecidePair: an LLM that goes away between the judge and its second
+// gate leaves the pair undecided (nothing recorded, judged again next run)
+// and stops the run; other gate failures keep their documented behavior.
+func TestDecidePair(t *testing.T) {
+	ctx := context.Background()
+	down := fmt.Errorf("%w: primary down", llm.ErrUnavailable)
+	boom := errors.New("unparseable")
+	pair := pairInfo{factAID: 1, factAText: "a", factBID: 2, factBText: "b", similarity: 0.9}
+	yes := BatchResult{IsContradictory: true, Reason: "r"}
+	no := BatchResult{}
+
+	cases := []struct {
+		name     string
+		result   BatchResult
+		verifier fakeVerifier
+		dedupe   sameClaimJudge
+		want     pairDecision
+		wantDown bool
+	}{
+		{name: "verified yes", result: yes, verifier: fakeVerifier{keep: true},
+			want: pairDecision{decided: true, contradiction: true}},
+		{name: "refuted yes is a checked no", result: yes, verifier: fakeVerifier{keep: false},
+			want: pairDecision{decided: true}},
+		{name: "verifier unavailable after a yes: nothing recorded", result: yes, verifier: fakeVerifier{err: down},
+			wantDown: true},
+		{name: "verifier fails otherwise: yes kept (fail-open)", result: yes, verifier: fakeVerifier{err: boom},
+			want: pairDecision{decided: true, contradiction: true}},
+		{name: "detector unavailable", result: BatchResult{Error: down}, wantDown: true},
+		{name: "detector fails otherwise: pair left pending", result: BatchResult{Error: boom}},
+		{name: "no without dedup net", result: no, want: pairDecision{decided: true}},
+		{name: "same claim", result: no, dedupe: fakeSameClaim{same: true},
+			want: pairDecision{decided: true, sameClaim: true}},
+		{name: "dedup net unavailable after a no: nothing recorded", result: no, dedupe: fakeSameClaim{err: down},
+			wantDown: true},
+		{name: "dedup net fails otherwise: pair left pending", result: no, dedupe: fakeSameClaim{err: boom}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := decidePair(ctx, c.verifier, c.dedupe, "p", pair, c.result, false)
+			if c.wantDown != errors.Is(err, llm.ErrUnavailable) || (!c.wantDown && err != nil) {
+				t.Fatalf("err = %v, want unavailable=%v", err, c.wantDown)
+			}
+			if got != c.want {
+				t.Errorf("decision = %+v, want %+v", got, c.want)
+			}
+		})
+	}
+
+	t.Run("dry run never asks the dedup net", func(t *testing.T) {
+		calls := 0
+		got, err := decidePair(ctx, fakeVerifier{}, fakeSameClaim{same: true, calls: &calls}, "p", pair, no, true)
+		if err != nil || got != (pairDecision{decided: true}) || calls != 0 {
+			t.Fatalf("got (%+v, %v, calls=%d)", got, err, calls)
+		}
+	})
 }

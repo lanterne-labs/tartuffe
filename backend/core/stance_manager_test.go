@@ -157,7 +157,7 @@ func TestProcessNewFact_NewStance(t *testing.T) {
 }
 
 // TestRecordStanceContradictions covers the dispatch / skip logic shared by
-// handleVerdict (live ingest) and AnalyzeFactInStance (post-merge sweep).
+// handleVerdict (live ingest) and applyMergeSubgroup (post-merge sweep).
 // Verifies invalid entries (KeyFactID <= 0) and self-pairs (KeyFactID == factID)
 // are dropped, and that valid entries reach the storer.
 func TestRecordStanceContradictions(t *testing.T) {

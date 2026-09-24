@@ -2285,3 +2285,20 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - Why: the local LLM box's wifi dropped three nights running and the fallback had no
   credits; every outage night charged each attempted document one of its three attempts, so a
   third bad night would have abandoned 160 documents for good.
+
+## Stopping the LLM mid-run loses nothing (2026-09-24)
+
+- The user stops the local LLM at any time. `llm.ErrUnavailable` (chat and embeddings) means "no
+  decision": no judge records a verdict on it (`MajorityVote` stops; the auditor removes only on
+  a full quorum), a document stays pending (`core.FailsDocument`), the entity validator does not
+  approve, the audit clock is not reset, a stance link happens only after analysis succeeds.
+- `RunDaily` stops starting LLM phases after the first ErrUnavailable (ingest loops stop per
+  target/handle/law too) and records the run failed. Other per-item failures are still skipped
+  and counted, so one bad answer never blocks a document or a merge.
+- Found by an audit, fixed: chunked documents whose chunks all failed were marked extracted and
+  their content deleted; news/twitter dropped facts after extraction; a failed vote summary read
+  as "irrelevant"; vote resume was keyed on LLM-generated text; `MaxLaws` was spent on unusable
+  laws; leftover documents waited for new items; dismissed pairs (NULL judge_hash) were re-opened
+  by the stale-verdict re-judge (`fact_pair_checks.dismissed`).
+- Lesson: any "log and continue" around an LLM call is a place where an outage becomes a final
+  decision. Propagate ErrUnavailable; fail open only for documented non-outage errors.

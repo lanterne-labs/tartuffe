@@ -54,10 +54,11 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 	// Full phrase as the fact text will carry it.
 	law := Law{Title: "le sous-amendement n° 372 de M. Verny à l'amendement n° 96 de M. Bernhardt après l'article premier bis de la proposition de loi visant à la nationalisation d'ArcelorMittal France", Legislature: 17, VoteDate: &date}
 	orgCache := map[string]OrganeInfo{"PO872880": {OrganeRef: "PO872880", ShortName: "UDR"}}
-	phrase, ok := describeVotedObject(context.Background(), law, LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"}, orgCache)
+	amendment, ok := resolveVotedObject(context.Background(), law, orgCache)
 	if !ok {
-		t.Fatal("describeVotedObject gated a resolvable sous-amendement")
+		t.Fatal("resolveVotedObject gated a resolvable sous-amendement")
 	}
+	phrase := votedObjectPhrase(amendment, LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"})
 	t.Logf("phrase: %s", phrase)
 	for _, want := range []string{"le sous-amendement n° 372", "(UDR)", "visant à accorder", "déposé sur le texte de loi"} {
 		if !strings.Contains(phrase, want) {

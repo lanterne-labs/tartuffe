@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -13,22 +12,16 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// SummarizeLaws producing LLM summaries from law titles respecting a limit
-func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]LawSummary, error) {
-	if maxLaws > 0 && len(laws) > maxLaws {
-		laws = laws[:maxLaws]
-	}
+// summarizeBatchSize is how many laws one summarization call covers.
+const summarizeBatchSize = 10
 
+// SummarizeLaws produces the LLM summary of every law, in batches. A failed
+// batch fails the call: its confidence would otherwise read as 0 and the AI
+// filter would record the laws as irrelevant for good.
+func SummarizeLaws(ctx context.Context, laws []Law) (map[string]LawSummary, error) {
 	result := make(map[string]LawSummary, len(laws))
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		for _, law := range laws {
-			result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Confidence: 0}
-		}
-		return result, nil
-	}
 
-	// Process in batches of 10
-	batchSize := 10
+	batchSize := summarizeBatchSize
 	totalBatches := (len(laws) + batchSize - 1) / batchSize
 	for i := 0; i < len(laws); i += batchSize {
 		end := i + batchSize
@@ -57,11 +50,7 @@ func SummarizeLaws(ctx context.Context, laws []Law, maxLaws int) (map[string]Law
 
 		summaries, err := callBatchedSummaryJSON(ctx, batch)
 		if err != nil {
-			// On error, fall back to title-only for this batch
-			for _, law := range batch {
-				result[law.Key] = LawSummary{ShortTitle: law.Title, SimpleStatement: law.Title, Confidence: 0}
-			}
-			continue
+			return nil, fmt.Errorf("summarizing laws %d-%d: %w", i+1, end, err)
 		}
 
 		for key, summary := range summaries {

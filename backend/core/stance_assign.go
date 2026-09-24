@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sync/atomic"
@@ -49,6 +51,10 @@ type PersonAssignStats struct {
 // only what it got — leftovers stay orphans and are picked up by the next run
 // (the orphan queries derive the pending set from the DB). In dry-run mode
 // nothing is written and the orphan count is only logged.
+//
+// A failed routing writes nothing (see ProcessNewFact), so the fact stays an
+// orphan for the next run. When the LLM is unavailable the person stops at
+// that fact and the error (wrapping llm.ErrUnavailable) is returned.
 func AssignOrphansForPerson(
 	ctx context.Context,
 	storer StanceAssignStorer,
@@ -87,6 +93,9 @@ func AssignOrphansForPerson(
 
 	for _, f := range orphans {
 		res, err := stanceManager.ProcessNewFact(ctx, p.ID, f.ID, f.FactText, f.Embedding, f.CanonicalVerb)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return ps, fmt.Errorf("routing fact %d: %w", f.ID, err)
+		}
 		if err != nil {
 			log.Warn().Err(err).Str("person", p.Name).Int64("fact_id", f.ID).Msg("ProcessNewFact failed; fact stays orphan")
 			ps.OrphanFailures++
@@ -127,6 +136,8 @@ func AssignOrphansForPerson(
 // pending set is derived from the DB by the person-scoped orphan queries, so
 // the step is idempotent, retries failures on later nights, and goes silent
 // once the backlog is drained and each night's new facts fit the budget.
+// It stops at the first call the LLM could not serve and returns an error
+// wrapping llm.ErrUnavailable.
 func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManager *StanceManager, rebundle PersonRebundler, budget int) error {
 	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
 	if err != nil {
@@ -148,6 +159,9 @@ func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManag
 			break
 		}
 		ps, err := AssignOrphansForPerson(ctx, storer, stanceManager, rebundle, p, false, &remaining)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return fmt.Errorf("stance fan-out stopped at %s after %d routings: %w", p.Name, routed+ps.OrphansAssigned, err)
+		}
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Stance fan-out failed for person")
 			continue

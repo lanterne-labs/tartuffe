@@ -17,3 +17,7 @@ var Plugins = []plugins.Plugin{
 	photos.Plugin{},
 	frpolitics.Plugin{},
 }
+
+// llmFreeBackfills names the plugins whose backfill makes no LLM call: once
+// the LLM is unavailable, the only backfills a run still starts.
+var llmFreeBackfills = []string{photos.Plugin{}.Name()}

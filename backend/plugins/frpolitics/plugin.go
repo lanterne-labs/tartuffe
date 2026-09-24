@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
 
 	"github.com/rs/zerolog/log"
@@ -36,26 +37,43 @@ const (
 // Ingest implements plugins.Ingester: the votes of newly published scrutins,
 // then the transcripts of the last few sitting days.
 func (Plugin) Ingest(ctx context.Context, d *deps.Deps, _ []plugins.Target, opts plugins.IngestOptions) (plugins.IngestStats, error) {
-	var stats plugins.IngestStats
 	maxLaws := dailyMaxLaws
 	if opts.MaxItems > 0 {
 		maxLaws = opts.MaxItems
 	}
-	votesErr := Run(ctx, d.Storer, Options{
-		Since:          opts.Since,
-		MaxLaws:        maxLaws,
-		PartyThreshold: dailyPartyThreshold,
-	})
-	if votesErr != nil {
-		votesErr = fmt.Errorf("votes: %w", votesErr)
-		log.Error().Err(votesErr).Msg("frpolitics: votes failed")
-	}
-
 	since := time.Now().AddDate(0, 0, -debatsDailyWindowDays)
 	if opts.Since != nil {
 		since = *opts.Since
 	}
-	ds, debatsErr := RunDebats(ctx, d.Storer, DebatsOptions{Since: since, MaxDocs: opts.MaxItems})
+	return ingestVotesThenDebats(
+		func() error {
+			return Run(ctx, d.Storer, Options{
+				Since:          opts.Since,
+				MaxLaws:        maxLaws,
+				PartyThreshold: dailyPartyThreshold,
+			})
+		},
+		func() (DebatsStats, error) {
+			return RunDebats(ctx, d.Storer, DebatsOptions{Since: since, MaxDocs: opts.MaxItems})
+		},
+	)
+}
+
+// ingestVotesThenDebats runs the votes, then the transcripts, and returns
+// both failures. Votes that fail on an unreachable LLM (llm.ErrUnavailable)
+// skip the transcripts, which need the LLM too.
+func ingestVotesThenDebats(votes func() error, debats func() (DebatsStats, error)) (plugins.IngestStats, error) {
+	var stats plugins.IngestStats
+	votesErr := votes()
+	if votesErr != nil {
+		votesErr = fmt.Errorf("votes: %w", votesErr)
+		log.Error().Err(votesErr).Msg("frpolitics: votes failed")
+		if errors.Is(votesErr, llm.ErrUnavailable) {
+			return stats, votesErr
+		}
+	}
+
+	ds, debatsErr := debats()
 	stats.Items += ds.Processed
 	stats.Facts += ds.Facts
 	stats.Errors += ds.Errors

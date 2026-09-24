@@ -38,7 +38,9 @@ type FillStats struct {
 // Fill is the async translation phase shared by `dm translate run` and the
 // daily pipeline. For each translatable item it fills every target language
 // that is missing or stale (source_hash != current hash), best-effort per
-// language: a failed translation or store is logged and skipped.
+// language: a failed translation or store is logged and skipped. It stops at
+// the first call the LLM could not serve and returns an error wrapping
+// llm.ErrUnavailable.
 func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOptions) (FillStats, error) {
 	targets := opts.Langs
 	if len(targets) == 0 {
@@ -62,7 +64,7 @@ func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOption
 				done[lang] = true
 			}
 		}
-		results := FillMissing(ctx, tr, it.SourceText, it.SrcLang, targets, done)
+		results, unavailable := FillMissing(ctx, tr, it.SourceText, it.SrcLang, targets, done)
 		for lang, txt := range results {
 			if uErr := storer.UpsertTranslation(ctx, it.EntityType, it.EntityID, it.Field, lang, txt, hash); uErr != nil {
 				log.Warn().Err(uErr).Str("entity", it.EntityType).Int64("id", it.EntityID).
@@ -77,6 +79,9 @@ func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOption
 					log.Warn().Err(lErr).Str("entity", it.EntityType).Int64("id", it.EntityID).Msg("failed to mirror EN into legacy column")
 				}
 			}
+		}
+		if unavailable != nil {
+			return stats, fmt.Errorf("translation fill stopped after %d translations: %w", stats.Filled, unavailable)
 		}
 	}
 	log.Info().Int("filled", stats.Filled).Int("items", stats.Scanned).Msg("Translation fill done")

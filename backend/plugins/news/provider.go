@@ -7,11 +7,13 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
 	"digital-mirror/backend/extractor"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/plugins"
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,6 +77,11 @@ type Options struct {
 	// CacheOnly ingests the content already cached under CacheDir for each
 	// target instead of searching and scraping. Requires CacheDir.
 	CacheOnly bool
+
+	// skipLeftovers leaves the unfinished documents to the caller when the
+	// search brings nothing new: the date-windowed collection extracts them
+	// once for the target, not once per window.
+	skipLeftovers bool
 }
 
 // Result contains the outcome of a news search for a single target.
@@ -107,6 +114,10 @@ type Result struct {
 	StoryCappedTokens []string
 	// Errors contains any errors encountered during processing.
 	Errors []error
+
+	// storedExtracted records that the target's unfinished documents went
+	// through extraction during this invocation.
+	storedExtracted bool
 }
 
 // Provider orchestrates news search and fact extraction for any entity.
@@ -226,12 +237,15 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 		searchOpts.DateTo = *opts.DateTo
 	}
 
+	affiliatedParties := p.currentParties(ctx, target)
+
 	// Search for news articles bilingually: native language of the person + en.
 	// Prevents random foreign-language articles (Korean, Thai, etc.) from being
 	// dragged in when search engines return globally-relevant matches.
 	newsResults, err := p.bilingualSearch(ctx, target, searchOpts)
 	if err != nil {
-		return nil, fmt.Errorf("news search failed for %s: %w", target.Name, err)
+		return result, p.extractLeftovers(ctx, target, affiliatedParties, opts, result,
+			fmt.Errorf("news search failed for %s: %w", target.Name, err))
 	}
 
 	result.ArticlesFound = len(newsResults)
@@ -248,34 +262,12 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 				log.Warn().Err(err).Int64("person_id", target.PersonID).Msg("Failed to log empty news search")
 			}
 		}
-		return result, nil
+		return result, p.extractLeftovers(ctx, target, affiliatedParties, opts, result, nil)
 	}
 
 	revisitHours := opts.RevisitHours
 	if revisitHours == 0 {
 		revisitHours = 24 // Default to 24 hours
-	}
-
-	// For person targets, get affiliated parties upfront for party-aware extraction
-	var affiliatedParties []partyInfo
-	if !target.IsParty() && target.PersonID != 0 {
-		var err error
-		affiliatedParties, err = p.getAffiliatedParties(ctx, target.PersonID, nil) // nil = current affiliations
-		if err != nil {
-			log.Warn().Err(err).
-				Int64("person_id", target.PersonID).
-				Str("person", target.Name).
-				Msg("Failed to get affiliated parties, will extract without party awareness")
-		} else if len(affiliatedParties) > 0 {
-			partyNames := make([]string, len(affiliatedParties))
-			for i, p := range affiliatedParties {
-				partyNames[i] = p.Name
-			}
-			log.Info().
-				Str("person", target.Name).
-				Strs("parties", partyNames).
-				Msg("Found affiliated parties for party-aware fact extraction")
-		}
 	}
 
 	maxParse := opts.MaxParse
@@ -350,7 +342,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 			Int("skipped_already_processed", result.SkippedAlreadyProcessed).
 			Int("skipped_empty_url", result.SkippedEmptyURL).
 			Msg("news: no new URLs to process")
-		return result, nil
+		return result, p.extractLeftovers(ctx, target, affiliatedParties, opts, result, nil)
 	}
 
 	// Dry-run mode: just show what would be done
@@ -404,6 +396,46 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 		Msg("news: collection completed")
 
 	return result, nil
+}
+
+// currentParties returns the current parties of a person target, for
+// party-aware extraction (nil for a party target or when the lookup fails).
+func (p *Provider) currentParties(ctx context.Context, target plugins.Target) []partyInfo {
+	if target.IsParty() || target.PersonID == 0 {
+		return nil
+	}
+	affiliatedParties, err := p.getAffiliatedParties(ctx, target.PersonID, nil) // nil = current affiliations
+	if err != nil {
+		log.Warn().Err(err).
+			Int64("person_id", target.PersonID).
+			Str("person", target.Name).
+			Msg("Failed to get affiliated parties, will extract without party awareness")
+		return nil
+	}
+	if len(affiliatedParties) > 0 {
+		partyNames := make([]string, len(affiliatedParties))
+		for i, p := range affiliatedParties {
+			partyNames[i] = p.Name
+		}
+		log.Info().
+			Str("person", target.Name).
+			Strs("parties", partyNames).
+			Msg("Found affiliated parties for party-aware fact extraction")
+	}
+	return affiliatedParties
+}
+
+// extractLeftovers is CollectFacts' exit when the run fetched nothing new: the
+// target's documents an earlier run left unfinished (an LLM outage mid-run)
+// are extracted anyway, so they never wait for new articles to show up. A dry
+// run makes no LLM call, and a window of a date-windowed collection leaves them
+// to the collection (skipLeftovers). searchErr, when set, is returned along
+// with any extraction error.
+func (p *Provider) extractLeftovers(ctx context.Context, target plugins.Target, affiliatedParties []partyInfo, opts Options, result *Result, searchErr error) error {
+	if opts.DryRun || opts.skipLeftovers {
+		return searchErr
+	}
+	return errors.Join(searchErr, p.extractStoredDocuments(ctx, target, affiliatedParties, opts, result))
 }
 
 // extractAndInsertFromArticles is the shared "scrape → LLM extract → embed →
@@ -584,6 +616,7 @@ func (p *Provider) extractStoredDocuments(ctx context.Context, target plugins.Ta
 	if target.PersonID == 0 {
 		return nil
 	}
+	result.storedExtracted = true
 	inserter := p.newFactInserter()
 	extract := func(ctx context.Context, docs []core.SourceDocument) (map[int64]int, error) {
 		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, result)
@@ -603,8 +636,12 @@ func (p *Provider) extractStoredDocuments(ctx context.Context, target plugins.Ta
 
 // extractDocument runs the LLM extraction on one stored document, embeds and
 // dedup-inserts its facts, and returns how many facts the document produced
-// (stored or deduplicated). Storage failures of single facts are counted in
-// result.Errors; only the extraction failure fails the document.
+// (stored or deduplicated). An extraction failure fails the document, and so
+// does an embedding or insert failure that core.FailsDocument reports (an
+// unreachable LLM): the document stays pending, the facts inserted before the
+// failure stay, and the retry's re-extracted restatements of them are grouped
+// by the inserter's same-claim check. Any other failure of a single fact skips
+// that fact and is counted in result.Errors.
 func (p *Provider) extractDocument(
 	ctx context.Context,
 	target plugins.Target,
@@ -662,6 +699,9 @@ func (p *Provider) extractDocument(
 	stored := 0
 	for _, fact := range facts {
 		embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
+		if core.FailsDocument(ctx, err) {
+			return stored, fmt.Errorf("embedding a fact of %s: %w", doc.URL, err)
+		}
 		if err != nil || len(embeddings) == 0 || len(embeddings[0]) == 0 {
 			log.Warn().Err(err).Str("fact", fact.NormalizedFactText).Msg("Failed to generate embedding")
 			result.Errors = append(result.Errors, fmt.Errorf("embedding failed: %w", err))
@@ -691,6 +731,9 @@ func (p *Provider) extractDocument(
 		}
 
 		insertResult, err := inserter.InsertFacts(ctx, []core.StoreFactInput{input})
+		if core.FailsDocument(ctx, err) {
+			return stored, fmt.Errorf("storing a fact of %s: %w", doc.URL, err)
+		}
 		if err != nil {
 			log.Warn().Err(err).
 				Str("fact", fact.NormalizedFactText).
@@ -812,7 +855,9 @@ func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Tar
 // CollectFactsWithDateWindows breaks the date range into windows of opts.WindowDays days
 // and calls CollectFacts for each window. This works around Google News result caps by
 // making multiple narrower queries. Errors in individual windows are logged and collected
-// but do not stop processing of subsequent windows.
+// but do not stop processing of subsequent windows, except an unreachable LLM
+// (llm.ErrUnavailable), which is returned. The target's documents an earlier run left
+// unfinished are extracted once, after the windows, when no window extracted any.
 func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
 	if opts.WindowDays <= 0 {
 		return nil, fmt.Errorf("WindowDays must be > 0, got %d", opts.WindowDays)
@@ -884,8 +929,16 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 		windowTo := w.to
 		windowOpts.DateTo = &windowTo
 		windowOpts.WindowDays = 0
+		windowOpts.skipLeftovers = true
 
 		result, err := p.CollectFacts(ctx, target, windowOpts)
+		if result != nil && result.storedExtracted {
+			aggregate.storedExtracted = true
+		}
+		if errors.Is(err, llm.ErrUnavailable) {
+			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",
+				i+1, totalWindows, w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err)
+		}
 		if err != nil {
 			log.Error().Err(err).
 				Str("target", target.Name).
@@ -921,6 +974,12 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 				reQueryOpts.MaxParse = remainingBudget
 
 				reResult, reErr := p.CollectFacts(ctx, target, reQueryOpts)
+				if reResult != nil && reResult.storedExtracted {
+					aggregate.storedExtracted = true
+				}
+				if errors.Is(reErr, llm.ErrUnavailable) {
+					return aggregate, fmt.Errorf("re-query window %d/%d: %w", i+1, totalWindows, reErr)
+				}
 				if reErr != nil {
 					log.Warn().Err(reErr).
 						Str("target", target.Name).
@@ -937,6 +996,12 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 						Msg("Re-query completed")
 				}
 			}
+		}
+	}
+
+	if !aggregate.storedExtracted {
+		if err := p.extractLeftovers(ctx, target, p.currentParties(ctx, target), opts, aggregate, nil); err != nil {
+			return aggregate, err
 		}
 	}
 

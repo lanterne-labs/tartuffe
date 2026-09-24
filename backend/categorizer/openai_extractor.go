@@ -125,8 +125,9 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg prompt
 
 			chunkFacts, err := m.extractChunkWithReactiveRetry(ctx, cfg, chunk)
 			if err != nil {
-				log.Error().Err(err).Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Msg("Failed to extract facts for chunk")
-				continue
+				// A document counts as extracted only when every chunk was: a
+				// skipped chunk would have its content deleted with the rest.
+				return nil, fmt.Errorf("failed to extract facts from chunk %d/%d for url %s: %w", chunkNum, len(chunks), cfg.SourceURL, err)
 			}
 			allExtractedFacts = append(allExtractedFacts, chunkFacts...)
 			log.Debug().Str("url", cfg.SourceURL).Int("chunk_num", chunkNum).Int("total_chunks", len(chunks)).Int("facts_extracted", len(chunkFacts)).Msg("Successfully processed chunk")
@@ -244,9 +245,16 @@ func (m *OpenAIExtractor) extractChunkWithReactiveRetry(ctx context.Context, cfg
 	leftFacts, leftErr := m.extractChunkWithReactiveRetry(ctx, cfg, chunk[:mid])
 	rightFacts, rightErr := m.extractChunkWithReactiveRetry(ctx, cfg, chunk[mid:])
 	// If both halves still fail, surface the original error so the operator
-	// sees the real cause (not "context overflow after split").
+	// sees the real cause (not "context overflow after split"). One failed half
+	// fails the chunk: returning the other half alone would lose its facts.
 	if leftErr != nil && rightErr != nil {
 		return nil, err
+	}
+	if leftErr != nil {
+		return nil, fmt.Errorf("first half of split chunk: %w", leftErr)
+	}
+	if rightErr != nil {
+		return nil, fmt.Errorf("second half of split chunk: %w", rightErr)
 	}
 	out := append([]backend.Fact{}, leftFacts...)
 	out = append(out, rightFacts...)

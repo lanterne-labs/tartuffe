@@ -3,7 +3,10 @@ package translate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+
+	"digital-mirror/backend/llm"
 )
 
 func TestLangsToFill(t *testing.T) {
@@ -43,6 +46,7 @@ func TestSourceHashStable(t *testing.T) {
 type fakeTranslator struct {
 	calls int
 	fail  string // if dst == fail, return an error
+	down  string // if dst == down, the LLM is unavailable
 }
 
 func (f *fakeTranslator) Translate(ctx context.Context, text, src, dst string) (string, error) {
@@ -50,12 +54,18 @@ func (f *fakeTranslator) Translate(ctx context.Context, text, src, dst string) (
 	if dst == f.fail {
 		return "", errors.New("boom")
 	}
+	if dst == f.down {
+		return "", fmt.Errorf("%w: primary down", llm.ErrUnavailable)
+	}
 	return "[" + dst + "] " + text, nil
 }
 
 func TestFillMissing_SkipsSourceAndExisting(t *testing.T) {
 	ft := &fakeTranslator{}
-	got := FillMissing(context.Background(), ft, "Bonjour", "fr", []string{"en", "fr", "de"}, map[string]bool{})
+	got, err := FillMissing(context.Background(), ft, "Bonjour", "fr", []string{"en", "fr", "de"}, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got["en"] != "[en] Bonjour" || got["de"] != "[de] Bonjour" {
 		t.Fatalf("unexpected translations: %v", got)
 	}
@@ -69,12 +79,29 @@ func TestFillMissing_SkipsSourceAndExisting(t *testing.T) {
 
 func TestFillMissing_BestEffortOnFailure(t *testing.T) {
 	ft := &fakeTranslator{fail: "de"} // de fails, en should still succeed
-	got := FillMissing(context.Background(), ft, "Bonjour", "fr", []string{"en", "de"}, map[string]bool{})
+	got, err := FillMissing(context.Background(), ft, "Bonjour", "fr", []string{"en", "de"}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("a non-outage failure must not fail the item: %v", err)
+	}
 	if got["en"] != "[en] Bonjour" {
 		t.Fatalf("en should have succeeded: %v", got)
 	}
 	if _, ok := got["de"]; ok {
 		t.Fatalf("failed language must be absent, not block others: %v", got)
+	}
+}
+
+func TestFillMissing_StopsWhenLLMUnavailable(t *testing.T) {
+	ft := &fakeTranslator{down: "de"}
+	got, err := FillMissing(context.Background(), ft, "Bonjour", "fr", []string{"en", "de", "es"}, map[string]bool{})
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if got["en"] != "[en] Bonjour" || len(got) != 1 {
+		t.Fatalf("translations made before the outage must be returned, got %v", got)
+	}
+	if ft.calls != 2 {
+		t.Fatalf("calls = %d, want 2: no language is tried after the outage", ft.calls)
 	}
 }
 

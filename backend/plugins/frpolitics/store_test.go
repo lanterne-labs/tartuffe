@@ -33,7 +33,7 @@ func setupStoreTest(t *testing.T) (*storage.PostgresStorer, *Store) {
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	require.NoError(t, err, "connecting to the test database")
 	t.Cleanup(storer.Close)
-	_, err = storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents, processed_laws, fact_relations, fact_mentions, fact_sources, facts, contradictions, person_links, persons RESTART IDENTITY CASCADE")
+	_, err = storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents, processed_laws, skipped_laws, fact_relations, fact_mentions, fact_sources, facts, contradictions, person_links, persons RESTART IDENTITY CASCADE")
 	require.NoError(t, err, "truncating tables")
 	return storer, NewStore(storer)
 }
@@ -114,7 +114,8 @@ func TestGetPersonFactCountsBySourceTypes(t *testing.T) {
 }
 
 // TestStoreProcessedLawsTracking covers the processed_laws completion marker:
-// absent until marked, upsert on re-marking.
+// absent until marked, upsert on re-marking. A marked law is settled, and so
+// is a law skipped for a verdict (skipped_laws).
 func TestStoreProcessedLawsTracking(t *testing.T) {
 	storer, store := setupStoreTest(t)
 	ctx := context.Background()
@@ -142,8 +143,9 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	}
 
 	// Case 1: Initially not processed
-	processed, err := store.IsLawFullyProcessed(ctx, lawKey1)
-	require.NoError(t, err, "IsLawFullyProcessed should not error for non-existent law")
+	settled, err := store.SettledLawKeys(ctx, []string{lawKey1}, nil)
+	processed := settled[lawKey1]
+	require.NoError(t, err, "SettledLawKeys should not error for non-existent law")
 	assert.False(t, processed, "Law should not be processed initially")
 
 	// Case 2: Mark law as processed
@@ -151,8 +153,9 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	require.NoError(t, err, "MarkLawAsProcessed should succeed")
 
 	// Case 3: Now should be processed
-	processed, err = store.IsLawFullyProcessed(ctx, lawKey1)
-	require.NoError(t, err, "IsLawFullyProcessed should not error after marking")
+	settled, err = store.SettledLawKeys(ctx, []string{lawKey1}, nil)
+	processed = settled[lawKey1]
+	require.NoError(t, err, "SettledLawKeys should not error after marking")
 	assert.True(t, processed, "Law should be marked as processed")
 
 	// Case 4: The marker row carries the law metadata
@@ -164,8 +167,9 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	assert.False(t, info.processedAt.IsZero(), "ProcessedAt should be set")
 
 	// Case 5: Different law key should not be processed
-	processed, err = store.IsLawFullyProcessed(ctx, lawKey2)
-	require.NoError(t, err, "IsLawFullyProcessed should not error for different law")
+	settled, err = store.SettledLawKeys(ctx, []string{lawKey2}, nil)
+	processed = settled[lawKey2]
+	require.NoError(t, err, "SettledLawKeys should not error for different law")
 	assert.False(t, processed, "Different law should not be processed")
 
 	// Case 6: No marker row for a law never marked
@@ -177,11 +181,13 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	require.NoError(t, err, "MarkLawAsProcessed should succeed for second law")
 
 	// Both should now be processed
-	processed, err = store.IsLawFullyProcessed(ctx, lawKey1)
+	settled, err = store.SettledLawKeys(ctx, []string{lawKey1}, nil)
+	processed = settled[lawKey1]
 	require.NoError(t, err)
 	assert.True(t, processed, "First law should still be processed")
 
-	processed, err = store.IsLawFullyProcessed(ctx, lawKey2)
+	settled, err = store.SettledLawKeys(ctx, []string{lawKey2}, nil)
+	processed = settled[lawKey2]
 	require.NoError(t, err)
 	assert.True(t, processed, "Second law should be processed")
 
@@ -193,36 +199,57 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	info, found = processedLawFor(lawKey1)
 	require.True(t, found)
 	assert.Equal(t, 43, info.factsCount, "FactsCount should be updated to new value")
+
+	// Case 9: A law skipped by a filter the run applies is settled too; an
+	// unknown one is not
+	lowConfidence := 0.2
+	require.NoError(t, store.StoreSkippedLaw(ctx, "16-9999", "Loi de finances", 16, nil, "keyword_match", "projet de loi de finances", nil))
+	require.NoError(t, store.StoreSkippedLaw(ctx, "16-9998", "Loi obscure", 16, nil, "low_ai_confidence", "", &lowConfidence))
+	keys := []string{lawKey1, "16-9999", "16-9998", "16-0000"}
+	settled, err = store.SettledLawKeys(ctx, keys, []string{"keyword_match", "low_ai_confidence"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{lawKey1: true, "16-9999": true, "16-9998": true}, settled)
+
+	// Case 10: A run with a filter disabled re-considers that filter's skips
+	settled, err = store.SettledLawKeys(ctx, keys, []string{"low_ai_confidence"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{lawKey1: true, "16-9998": true}, settled, "keyword filter disabled")
+	settled, err = store.SettledLawKeys(ctx, keys, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{lawKey1: true}, settled, "both filters disabled")
 }
 
-// TestStoreStoredLawFactTexts: a law whose store failed part-way resumes from
-// the vote facts already stored for it, and only from that law's.
-func TestStoreStoredLawFactTexts(t *testing.T) {
+// TestStoreStoredLawSubjects: a law whose store failed part-way resumes
+// after the voters whose ballot is stored for it, and only for that law. The
+// voter is matched like the inserter resolves it (normalized, accent- and
+// case-folded), whatever the fact text says.
+func TestStoreStoredLawSubjects(t *testing.T) {
 	storer, store := setupStoreTest(t)
 	ctx := context.Background()
 	pool := storer.Pool()
 
-	lawFact := func(text, url, sourceType, lawKey string) {
-		var id int64
-		require.NoError(t, pool.QueryRow(ctx, "INSERT INTO facts (fact_text) VALUES ($1) RETURNING id", text).Scan(&id))
-		_, err := pool.Exec(ctx,
-			"INSERT INTO fact_sources (fact_id, source_url, source_type, metadata) VALUES ($1, $2, $3, jsonb_build_object('law_key', $4::text))",
-			id, url, sourceType, lawKey)
+	ballot := func(voter, text, sourceType, lawKey string) {
+		personID, _, err := storer.AddPerson(ctx, voter)
+		require.NoError(t, err)
+		var factID, sourceID int64
+		require.NoError(t, pool.QueryRow(ctx, "INSERT INTO facts (fact_text) VALUES ($1) RETURNING id", text).Scan(&factID))
+		require.NoError(t, pool.QueryRow(ctx,
+			"INSERT INTO fact_sources (fact_id, source_url, source_type, metadata) VALUES ($1, $2, $3, jsonb_build_object('law_key', $4::text)) RETURNING id",
+			factID, "https://test.com/"+lawKey, sourceType, lawKey).Scan(&sourceID))
+		_, err = pool.Exec(ctx, "INSERT INTO fact_mentions (fact_source_id, person_id) VALUES ($1, $2)", sourceID, personID)
 		require.NoError(t, err)
 	}
-	lawFact("Jean Dupont a voté POUR le texte 9001", "https://test.com/9001", "assemblee_law_page", "16-9001")
-	lawFact("Marie Martin a voté CONTRE le texte 9001", "https://test.com/9001", "assemblee_law_page", "16-9001")
-	lawFact("Jean Dupont a voté POUR le texte 9002", "https://test.com/9002", "assemblee_law_page", "16-9002")
-	lawFact("Jean Dupont a parlé du texte 9001", "https://test.com/debat", "assemblee_debat", "16-9001")
+	ballot("Jean Dupont", "Jean Dupont a voté POUR le texte de loi : « Renforce X »", "assemblee_law_page", "16-9001")
+	ballot("Rassemblement National", "Rassemblement National a collectivement voté CONTRE le texte", "assemblee_law_page", "16-9001")
+	ballot("Marie Martin", "Marie Martin a voté POUR le texte 9002", "assemblee_law_page", "16-9002")
+	ballot("Paul Durand", "Paul Durand a parlé du texte 9001", "assemblee_debat", "16-9001")
 
-	stored, err := store.StoredLawFactTexts(ctx, "16-9001")
+	subjects := []string{"Jean DUPONT", "Rassemblement National", "Marie Martin", "Paul Durand", "Élise Neuve"}
+	stored, err := store.StoredLawSubjects(ctx, "16-9001", subjects)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]bool{
-		"Jean Dupont a voté POUR le texte 9001":    true,
-		"Marie Martin a voté CONTRE le texte 9001": true,
-	}, stored)
+	assert.Equal(t, map[string]bool{"Jean DUPONT": true, "Rassemblement National": true}, stored)
 
-	none, err := store.StoredLawFactTexts(ctx, "16-9999")
+	none, err := store.StoredLawSubjects(ctx, "16-9999", subjects)
 	require.NoError(t, err)
 	assert.Empty(t, none)
 }

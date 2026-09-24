@@ -1,9 +1,6 @@
 package frpolitics
 
-import (
-	"context"
-	"strings"
-)
+import "strings"
 
 // Patterns indicating generic/procedural laws to skip
 var genericPatterns = []string{
@@ -47,31 +44,4 @@ func classifyLaw(title string) (skip bool, reason string, pattern string) {
 
 	// Ambiguous -> needs AI
 	return false, "needs_ai", ""
-}
-
-// FilterLaws applies keyword-based filtering and stores skipped laws in the database
-func FilterLaws(ctx context.Context, laws []Law, store *Store) ([]Law, error) {
-	var filtered []Law
-
-	for _, law := range laws {
-		skip, reason, pattern := classifyLaw(law.Title)
-
-		if skip {
-			// Store skipped law
-			var aiConfidence *float64
-			if reason == "keyword_match" {
-				aiConfidence = nil // keyword-based, no AI confidence
-			}
-
-			err := store.StoreSkippedLaw(ctx, law.Key, law.Title, law.Legislature, law.VoteDate, reason, pattern, aiConfidence)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// Keep the law for further processing
-			filtered = append(filtered, law)
-		}
-	}
-
-	return filtered, nil
 }

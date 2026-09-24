@@ -3,10 +3,14 @@ package entityvalidator
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"digital-mirror/backend/llm"
 )
 
 // --- WikiFilter (uses httptest, no network) ---
@@ -176,7 +180,7 @@ func TestValidator_ShortCircuits_OnFirstApprove(t *testing.T) {
 		&fixedFilter{name: "first", res: FilterResult{Decision: Approve, Reason: "ok"}},
 		&fixedFilter{name: "second", res: FilterResult{Decision: Reject, Reason: "x"}, hit: &hit2},
 	)
-	verdict := v.Validate(context.Background(), "anything", "human")
+	verdict, _ := v.Validate(context.Background(), "anything", "human")
 	if !verdict.Real || verdict.Filter != "first" {
 		t.Fatalf("unexpected verdict %+v", verdict)
 	}
@@ -191,7 +195,7 @@ func TestValidator_ShortCircuits_OnFirstReject(t *testing.T) {
 		&fixedFilter{name: "first", res: FilterResult{Decision: Reject, Reason: "junk"}},
 		&fixedFilter{name: "second", res: FilterResult{Decision: Approve, Reason: "ok"}, hit: &hit2},
 	)
-	verdict := v.Validate(context.Background(), "anything", "human")
+	verdict, _ := v.Validate(context.Background(), "anything", "human")
 	if verdict.Real || verdict.Filter != "first" {
 		t.Fatalf("unexpected verdict %+v", verdict)
 	}
@@ -206,13 +210,13 @@ func TestValidator_Defer_FallsThrough_ToDefault(t *testing.T) {
 		&fixedFilter{name: "second", res: FilterResult{Decision: Defer}},
 	)
 	v.DefaultDecision = Approve
-	verdict := v.Validate(context.Background(), "anything", "human")
+	verdict, _ := v.Validate(context.Background(), "anything", "human")
 	if !verdict.Real || verdict.Filter != "default" {
 		t.Fatalf("unexpected verdict %+v", verdict)
 	}
 
 	v.DefaultDecision = Reject
-	verdict = v.Validate(context.Background(), "anything", "human")
+	verdict, _ = v.Validate(context.Background(), "anything", "human")
 	if verdict.Real || verdict.Filter != "default" {
 		t.Fatalf("unexpected verdict %+v", verdict)
 	}
@@ -224,12 +228,29 @@ func TestValidator_FilterError_TreatedAsDefer(t *testing.T) {
 		&fixedFilter{name: "first", res: FilterResult{Decision: Defer}, err: errTest("network down")},
 		&fixedFilter{name: "second", res: FilterResult{Decision: Approve, Reason: "ok"}, hit: &hit2},
 	)
-	verdict := v.Validate(context.Background(), "x", "human")
+	verdict, _ := v.Validate(context.Background(), "x", "human")
 	if !verdict.Real || verdict.Filter != "second" {
 		t.Fatalf("unexpected verdict %+v", verdict)
 	}
 	if hit2 != 1 {
 		t.Fatalf("second filter should have been called once, got %d", hit2)
+	}
+}
+
+// An unreachable LLM is not a Defer: the chain stops with the error and no
+// verdict, so the default decision never stands in for the judge.
+func TestValidator_UnavailableLLM_Aborts(t *testing.T) {
+	hit2 := 0
+	v := New(
+		&fixedFilter{name: "llm", res: FilterResult{Decision: Defer}, err: fmt.Errorf("llm request: %w", llm.ErrUnavailable)},
+		&fixedFilter{name: "second", res: FilterResult{Decision: Approve, Reason: "ok"}, hit: &hit2},
+	)
+	verdict, err := v.Validate(context.Background(), "x", "human")
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if verdict.Real || hit2 != 0 {
+		t.Fatalf("verdict %+v, second filter hits %d: nothing may be decided", verdict, hit2)
 	}
 }
 
@@ -260,7 +281,9 @@ func TestValidator_PropagatesPreviousResults_ToDownstream(t *testing.T) {
 		res:  FilterResult{Decision: Approve, Reason: "llm: matched"},
 	}
 	v := New(wiki, inspector)
-	v.Validate(context.Background(), "Emmanuel Macron", "human")
+	if _, err := v.Validate(context.Background(), "Emmanuel Macron", "human"); err != nil {
+		t.Fatal(err)
+	}
 
 	if got := len(inspector.got.Previous); got != 1 {
 		t.Fatalf("downstream got %d previous, want 1", got)

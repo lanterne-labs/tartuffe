@@ -3,10 +3,13 @@ package embedding
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"digital-mirror/backend/llm"
 )
 
 // TestGenerateEmbeddings_FailsOverToFallback drives the embedding primary→fallback
@@ -65,5 +68,50 @@ func TestGenerateEmbeddings_FailsOverToFallback(t *testing.T) {
 	}
 	if len(embs) != 1 || len(embs[0]) != 3 {
 		t.Fatalf("unexpected embeddings shape: %v", embs)
+	}
+}
+
+// TestGenerateEmbeddings_UnavailableOnlyWhenNoEndpointServes mirrors the chat
+// client's rule (llm TestDoRequest_UnavailableOnlyWhenNoEndpointServes): an
+// embeddings call fails with llm.ErrUnavailable when the primary is down
+// (breaker open) and the fallback rejects it too, but not when the primary
+// itself rejected the request (a 4xx says nothing about the endpoint).
+func TestGenerateEmbeddings_UnavailableOnlyWhenNoEndpointServes(t *testing.T) {
+	defer llm.MarkPrimaryUp()
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad request"}}`)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"error":{"message":"Insufficient credits"}}`)
+	}))
+	defer fallback.Close()
+
+	t.Setenv("OPEN_AI_KEY", "primary-key")
+	t.Setenv("OPEN_AI_API", primary.URL)
+	t.Setenv("OPEN_AI_EMBED_MODEL", "test-embed")
+	t.Setenv("FALLBACK_URL", fallback.URL)
+	t.Setenv("FALLBACK_KEY", "fb-key")
+	g, err := NewOpenAIEmbeddingGeneratorFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	llm.MarkPrimaryDown("test")
+	_, err = g.GenerateEmbeddings(context.Background(), PurposeFactStorage, []string{"hello"})
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("breaker open + fallback 402: want ErrUnavailable, got %v", err)
+	}
+
+	llm.MarkPrimaryUp()
+	_, err = g.GenerateEmbeddings(context.Background(), PurposeFactStorage, []string{"hello"})
+	if err == nil || errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("primary 400 + fallback 402: want a plain error, got %v", err)
+	}
+	if llm.PrimaryDown() {
+		t.Fatal("a primary 400 must not arm the breaker")
 	}
 }

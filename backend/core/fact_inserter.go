@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
 	"time"
 
@@ -269,6 +271,11 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		} else {
 			for _, sf := range similar {
 				same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
+				if errors.Is(jErr, llm.ErrUnavailable) {
+					// Dedupe is decided once, at insert time: inserting the
+					// fact ungrouped would make the outage's answer final.
+					return 0, 0, fmt.Errorf("fact-dedupe gate: %w", jErr)
+				}
 				if jErr != nil {
 					log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
 						Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
@@ -338,10 +345,13 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	}
 
 	// Mandatory stance processing. Failure rolls back the fact via compensating
-	// delete so that the "every fact has a stance" invariant holds.
+	// delete so that the "every fact has a stance" invariant holds — unless the
+	// fact is already in its stance and only the label refresh is pending.
 	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
 	if err != nil {
-		fi.compensateDelete(ctx, factID, "stance processing")
+		if !errors.Is(err, ErrStanceRefreshPending) {
+			fi.compensateDelete(ctx, factID, "stance processing")
+		}
 		return 0, 0, fmt.Errorf("stance processing failed for fact %d: %w", factID, err)
 	}
 

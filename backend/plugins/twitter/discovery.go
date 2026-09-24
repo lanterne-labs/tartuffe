@@ -3,6 +3,7 @@ package twitter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -200,15 +201,18 @@ func Discover(ctx context.Context, d *deps.Deps, opts DiscoveryOptions) (int, er
 		return 0, fmt.Errorf("failed to initialize search provider: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 15 * time.Second}
-
 	// The key is not required here; an unset OPEN_AI_API falls back to OpenAI.
 	llmCfg := llm.ConfigFromEnv()
 	if llmCfg.BaseURL == "" {
 		llmCfg.BaseURL = llm.DefaultBaseURL
 	}
-	client := llmCfg.NewClient("twitter-discovery")
-	twitterAPIKey := os.Getenv("TWITTER_API_IO_KEY")
+	dc := &discoverer{
+		store:         store,
+		searcher:      searcher,
+		client:        llmCfg.NewClient("twitter-discovery"),
+		httpClient:    &http.Client{Timeout: 15 * time.Second},
+		twitterAPIKey: os.Getenv("TWITTER_API_IO_KEY"),
+	}
 
 	var discovered int
 	for i, person := range persons {
@@ -239,111 +243,147 @@ func Discover(ctx context.Context, d *deps.Deps, opts DiscoveryOptions) (int, er
 
 		log.Info().Int("progress", i+1).Int("total", len(persons)).Str("person", person.Name).Msg("Searching for Twitter handle")
 
-		query := fmt.Sprintf(`"%s" twitter site:x.com OR site:twitter.com`, person.Name)
-		results, err := searcher.SearchWeb(query, 10)
-		if markErr := store.MarkSearched(ctx, person.ID); markErr != nil {
-			log.Warn().Err(markErr).Str("person", person.Name).Msg("Failed to mark person as twitter-searched")
-		}
+		confirmed, err := dc.discover(ctx, person, opts)
 		if err != nil {
-			log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
-			continue
+			return discovered, err
 		}
-
-		wikiSummary, wikiErr := search.FetchWikipediaSummary(ctx, httpClient, person.Name)
-		if wikiErr != nil {
-			log.Warn().Err(wikiErr).Str("person", person.Name).Msg("Wikipedia lookup failed (continuing without it)")
+		if confirmed {
+			discovered++
 		}
-
-		candidates := extractHandlesFromWeb(results)
-
-		// Enrich direct SERP hits with live profile data from twitterapi.io.
-		for idx, c := range candidates {
-			if !c.Direct {
-				continue
-			}
-			info, err := fetchUserInfo(ctx, twitterAPIKey, c.Handle)
-			if err != nil {
-				log.Warn().Err(err).Str("handle", c.Handle).Msg("Failed to fetch Twitter user info")
-				continue
-			}
-			if info != nil {
-				candidates[idx].UserInfo = info
-				log.Debug().Str("handle", c.Handle).Str("name", info.Name).Int("followers", info.Followers).Msg("Fetched Twitter user info")
-			}
-		}
-
-		if len(candidates) == 0 && wikiSummary == nil {
-			log.Info().Str("person", person.Name).Msg("No candidate handles found and no Wikipedia bio")
-			continue
-		}
-
-		if len(candidates) > 0 {
-			var directHandles, otherHandles []string
-			for _, c := range candidates {
-				if c.Direct {
-					directHandles = append(directHandles, c.Handle)
-				} else {
-					otherHandles = append(otherHandles, c.Handle)
-				}
-			}
-			log.Info().Str("person", person.Name).Strs("direct_hits", directHandles).Strs("mentioned", otherHandles).Msg("Found candidate handles")
-		}
-		if wikiSummary != nil {
-			log.Debug().Str("person", person.Name).Str("wiki_title", wikiSummary.Title).Str("lang", wikiSummary.Lang).Msg("Got Wikipedia bio")
-		}
-
-		content, _, err := client.Chat(ctx, llm.ChatRequest{
-			Temperature: 0.1,
-			MaxTokens:   512,
-			Messages: []llm.ChatMessage{
-				{
-					Role: "system",
-					Content: "You are an expert at identifying official Twitter/X accounts for public figures. " +
-						"You cross-reference multiple sources to confirm the handle belongs to the exact person, " +
-						"not a homonym, parody, or fan account.",
-				},
-				{Role: "user", Content: buildDiscoveryPrompt(person.Name, results, candidates, wikiSummary)},
-			},
-		})
-		if err != nil {
-			log.Error().Err(err).Str("person", person.Name).Msg("LLM request failed")
-			continue
-		}
-
-		content = strings.TrimSpace(content)
-		match := handleLineRe.FindStringSubmatch(content)
-		if match == nil || strings.EqualFold(strings.TrimRight(match[1], ".,;"), "NONE") {
-			log.Info().Str("person", person.Name).Str("llm_response", content).Msg("No confirmed handle")
-			continue
-		}
-		confirmedHandle := strings.ToLower(strings.TrimRight(match[1], ".,;"))
-
-		// Hard guardrail: never link a handle without a live Twitter bio
-		// confirming it. The LLM can be tricked by SERP-adjacent results when
-		// no bio is available (Alexey Meshkov → @ambrusfrance was linked when
-		// TwitterAPI.io was 402'd and UserInfo was nil for all candidates).
-		// Without a bio, prefer "no link" — the next discovery run retries
-		// once the API is healthy.
-		if !handleConfirmedByBio(confirmedHandle, candidates) {
-			log.Warn().Str("person", person.Name).Str("rejected_handle", confirmedHandle).
-				Msg("Discovery guardrail: no live Twitter bio confirms the handle; refusing to link (will retry next run)")
-			continue
-		}
-
-		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", opts.DryRun).Msg("Confirmed Twitter handle")
-
-		if !opts.DryRun {
-			if err := store.AddHandle(ctx, person.ID, confirmedHandle); err != nil {
-				log.Error().Err(err).Str("person", person.Name).Str("handle", confirmedHandle).Msg("Failed to save handle")
-				continue
-			}
-			log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Msg("Saved Twitter handle")
-		}
-		discovered++
 	}
 
 	log.Info().Int("discovered", discovered).Int("total_persons", len(persons)).Msg("Twitter discovery completed")
 	return discovered, nil
+}
+
+// discoverer holds what the per-person handle discovery needs.
+type discoverer struct {
+	store         *Store
+	searcher      search.WebSearcher
+	client        *llm.Client
+	httpClient    *http.Client // Wikipedia lookups
+	twitterAPIKey string
+}
+
+// discover searches the person's handle, has the LLM confirm it and links it.
+// It reports whether a handle was confirmed. The person enters the discovery
+// cooldown (MarkSearched) on every outcome but an unreachable LLM
+// (llm.ErrUnavailable): a failed search or a rejected LLM call would fail the
+// same way on the next run and re-spend a web search each time. The only
+// error returned is that unreachable LLM, which aborts the discovery: every
+// further person would burn a web search for nothing, and the person is left
+// to the next run.
+func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, opts DiscoveryOptions) (bool, error) {
+	markSearched := func() {
+		if err := dc.store.MarkSearched(ctx, person.ID); err != nil {
+			log.Warn().Err(err).Str("person", person.Name).Msg("Failed to mark person as twitter-searched")
+		}
+	}
+
+	query := fmt.Sprintf(`"%s" twitter site:x.com OR site:twitter.com`, person.Name)
+	results, err := dc.searcher.SearchWeb(query, 10)
+	if err != nil {
+		log.Error().Err(err).Str("person", person.Name).Msg("Search failed")
+		markSearched()
+		return false, nil
+	}
+
+	wikiSummary, wikiErr := search.FetchWikipediaSummary(ctx, dc.httpClient, person.Name)
+	if wikiErr != nil {
+		log.Warn().Err(wikiErr).Str("person", person.Name).Msg("Wikipedia lookup failed (continuing without it)")
+	}
+
+	candidates := extractHandlesFromWeb(results)
+
+	// Enrich direct SERP hits with live profile data from twitterapi.io.
+	for idx, c := range candidates {
+		if !c.Direct {
+			continue
+		}
+		info, err := fetchUserInfo(ctx, dc.twitterAPIKey, c.Handle)
+		if err != nil {
+			log.Warn().Err(err).Str("handle", c.Handle).Msg("Failed to fetch Twitter user info")
+			continue
+		}
+		if info != nil {
+			candidates[idx].UserInfo = info
+			log.Debug().Str("handle", c.Handle).Str("name", info.Name).Int("followers", info.Followers).Msg("Fetched Twitter user info")
+		}
+	}
+
+	if len(candidates) == 0 && wikiSummary == nil {
+		log.Info().Str("person", person.Name).Msg("No candidate handles found and no Wikipedia bio")
+		markSearched()
+		return false, nil
+	}
+
+	if len(candidates) > 0 {
+		var directHandles, otherHandles []string
+		for _, c := range candidates {
+			if c.Direct {
+				directHandles = append(directHandles, c.Handle)
+			} else {
+				otherHandles = append(otherHandles, c.Handle)
+			}
+		}
+		log.Info().Str("person", person.Name).Strs("direct_hits", directHandles).Strs("mentioned", otherHandles).Msg("Found candidate handles")
+	}
+	if wikiSummary != nil {
+		log.Debug().Str("person", person.Name).Str("wiki_title", wikiSummary.Title).Str("lang", wikiSummary.Lang).Msg("Got Wikipedia bio")
+	}
+
+	content, _, err := dc.client.Chat(ctx, llm.ChatRequest{
+		Temperature: 0.1,
+		MaxTokens:   512,
+		Messages: []llm.ChatMessage{
+			{
+				Role: "system",
+				Content: "You are an expert at identifying official Twitter/X accounts for public figures. " +
+					"You cross-reference multiple sources to confirm the handle belongs to the exact person, " +
+					"not a homonym, parody, or fan account.",
+			},
+			{Role: "user", Content: buildDiscoveryPrompt(person.Name, results, candidates, wikiSummary)},
+		},
+	})
+	if errors.Is(err, llm.ErrUnavailable) {
+		return false, fmt.Errorf("twitter discovery for %s: %w", person.Name, err)
+	}
+	markSearched()
+	if err != nil {
+		log.Error().Err(err).Str("person", person.Name).Msg("LLM request failed")
+		return false, nil
+	}
+
+	content = strings.TrimSpace(content)
+	match := handleLineRe.FindStringSubmatch(content)
+	if match == nil || strings.EqualFold(strings.TrimRight(match[1], ".,;"), "NONE") {
+		log.Info().Str("person", person.Name).Str("llm_response", content).Msg("No confirmed handle")
+		return false, nil
+	}
+	confirmedHandle := strings.ToLower(strings.TrimRight(match[1], ".,;"))
+
+	// Hard guardrail: never link a handle without a live Twitter bio
+	// confirming it. The LLM can be tricked by SERP-adjacent results when
+	// no bio is available (Alexey Meshkov → @ambrusfrance was linked when
+	// TwitterAPI.io was 402'd and UserInfo was nil for all candidates).
+	// Without a bio, prefer "no link" — the next discovery run retries
+	// once the API is healthy.
+	if !handleConfirmedByBio(confirmedHandle, candidates) {
+		log.Warn().Str("person", person.Name).Str("rejected_handle", confirmedHandle).
+			Msg("Discovery guardrail: no live Twitter bio confirms the handle; refusing to link (will retry next run)")
+		return false, nil
+	}
+
+	log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Bool("dry_run", opts.DryRun).Msg("Confirmed Twitter handle")
+
+	if !opts.DryRun {
+		if err := dc.store.AddHandle(ctx, person.ID, confirmedHandle); err != nil {
+			log.Error().Err(err).Str("person", person.Name).Str("handle", confirmedHandle).Msg("Failed to save handle")
+			return false, nil
+		}
+		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Msg("Saved Twitter handle")
+	}
+	return true, nil
 }
 
 // handleConfirmedByBio is the deterministic post-LLM guardrail: a handle is

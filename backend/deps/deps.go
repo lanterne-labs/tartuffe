@@ -8,6 +8,7 @@ package deps
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"digital-mirror/backend/categorizer"
@@ -44,7 +45,11 @@ func OpenStorer(ctx context.Context) (*storage.PostgresStorer, error) {
 func PersonGateFromEnv() storage.PersonGate {
 	validator := entityvalidator.BuildFromEnv()
 	return func(ctx context.Context, name, entityType string) error {
-		v := validator.Validate(ctx, name, entityType)
+		v, err := validator.Validate(ctx, name, entityType)
+		if err != nil {
+			// Not a rejection: the insert fails and the fact is retried.
+			return fmt.Errorf("validating new entity %q: %w", name, err)
+		}
 		ev := log.Info().
 			Str("name", name).
 			Str("entity_type", entityType).

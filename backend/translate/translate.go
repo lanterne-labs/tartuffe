@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"digital-mirror/backend/llm"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -55,18 +56,23 @@ func LangsToFill(targets []string, srcLang string, existing map[string]bool) []s
 // FillMissing translates text into every target language that LangsToFill selects,
 // returning lang->translation. Best-effort: a per-language failure is logged and
 // skipped so one bad language never blocks the others (this runs in the async
-// phase, decoupled from the rest of the pipeline).
-func FillMissing(ctx context.Context, tr Translator, text, srcLang string, targets []string, existing map[string]bool) map[string]string {
+// phase, decoupled from the rest of the pipeline). When the LLM is unavailable
+// it stops and returns the error (wrapping llm.ErrUnavailable) with the
+// translations made so far.
+func FillMissing(ctx context.Context, tr Translator, text, srcLang string, targets []string, existing map[string]bool) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, lang := range LangsToFill(targets, srcLang, existing) {
 		translated, err := tr.Translate(ctx, text, srcLang, lang)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return out, err
+		}
 		if err != nil {
 			log.Warn().Err(err).Str("src", srcLang).Str("dst", lang).Msg("translation failed; skipping this language")
 			continue
 		}
 		out[lang] = translated
 	}
-	return out
+	return out, nil
 }
 
 func normLang(s string) string { return strings.ToLower(strings.TrimSpace(s)) }

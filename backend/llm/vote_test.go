@@ -2,6 +2,7 @@ package llm
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -93,6 +94,26 @@ func TestMajorityVote(t *testing.T) {
 			if got != "a" {
 				t.Fatalf("got %q, want a (deterministic tie-break)", got)
 			}
+		}
+	})
+	t.Run("an unavailable LLM ends the vote without a verdict", func(t *testing.T) {
+		// keep, then the LLM goes away: deciding "keep" on 1 of 3 samples is
+		// a reduced-quorum verdict, so the vote must fail instead.
+		seq := []struct {
+			v   string
+			err error
+		}{{"keep", nil}, {"", fmt.Errorf("%w: primary down", ErrUnavailable)}, {"keep", nil}}
+		calls := 0
+		got, err := MajorityVote(3, func() (string, error) {
+			s := seq[calls]
+			calls++
+			return s.v, s.err
+		}, id)
+		if !errors.Is(err, ErrUnavailable) || got != "" {
+			t.Fatalf("got (%q, %v), want (\"\", ErrUnavailable)", got, err)
+		}
+		if calls != 2 {
+			t.Errorf("calls = %d, want 2 — no sample is drawn after the LLM went away", calls)
 		}
 	})
 }

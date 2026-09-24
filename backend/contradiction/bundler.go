@@ -37,6 +37,7 @@ import (
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -143,6 +144,11 @@ func (b *Bundler) Resolve(ctx context.Context, personID int64, contradictionID i
 			continue
 		}
 		ok, judgeErr := b.askLLMRelated(ctx, bundleText, cand)
+		if errors.Is(judgeErr, llm.ErrUnavailable) {
+			// Declining the remaining candidates would leave the row solo on
+			// the outage's account.
+			return fmt.Errorf("bundler: relatedness check for stance %d: %w", cand.ID, judgeErr)
+		}
 		if judgeErr != nil {
 			// Don't fail the whole resolution on one LLM hiccup; try the next candidate.
 			log.Warn().Err(judgeErr).Int64("stance_id", cand.ID).

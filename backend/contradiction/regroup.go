@@ -4,6 +4,7 @@ import (
 	"context"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
+	"errors"
 	"fmt"
 
 	"github.com/rs/zerolog/log"
@@ -42,7 +43,10 @@ type RegroupResult struct {
 
 // RunRegroup runs RegroupPersonContradictions over each person in scope and
 // returns the aggregate result. A per-person error is logged and skipped so
-// one bad person never aborts a full sweep.
+// one bad person never aborts a full sweep. Once the summarizer reports the
+// LLM unavailable it is not called again (the remaining groups keep their
+// summaries), the pass stops after that person, and the error (wrapping
+// llm.ErrUnavailable) is returned.
 func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts RegroupOptions) (RegroupResult, error) {
 	personIDs := opts.PersonIDs
 	if len(personIDs) == 0 {
@@ -54,9 +58,24 @@ func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts Regrou
 	}
 	personIDs = firstN(personIDs, opts.MaxPersons)
 
+	summarize := opts.Summarize
+	var unavailable error
+	if summarize != nil {
+		summarize = func(ctx context.Context, baseFact string, spokes []storage.GroupSpokeInput) (string, string, error) {
+			if unavailable != nil {
+				return "", "", unavailable
+			}
+			summary, summaryEn, err := opts.Summarize(ctx, baseFact, spokes)
+			if errors.Is(err, llm.ErrUnavailable) {
+				unavailable = err
+			}
+			return summary, summaryEn, err
+		}
+	}
+
 	agg := RegroupResult{Persons: len(personIDs)}
 	for _, pid := range personIDs {
-		res, err := storer.RegroupPersonContradictions(ctx, pid, opts.Summarize)
+		res, err := storer.RegroupPersonContradictions(ctx, pid, summarize)
 		if err != nil {
 			log.Error().Err(err).Int64("person_id", pid).Msg("regroup: person failed, skipping")
 			continue
@@ -69,6 +88,9 @@ func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts Regrou
 			log.Info().Int64("person_id", pid).Int("rebased", res.Rebased).
 				Int("groups", res.Groups).Int("summaries", res.SummariesWrote).
 				Int("summary_failures", res.SummariesFailed).Msg("regrouped contradictions")
+		}
+		if unavailable != nil {
+			return agg, fmt.Errorf("regroup stopped at person %d: %w", pid, unavailable)
 		}
 	}
 	return agg, nil

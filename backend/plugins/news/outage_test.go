@@ -1,0 +1,152 @@
+package news
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"digital-mirror/backend/categorizer"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/extractor"
+	"digital-mirror/backend/llm"
+	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/search"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestIngestTargetsStopsOnUnavailableLLM: an unreachable LLM stops the target
+// loop and is returned with the failures collected before it; any other
+// failure is recorded and the loop goes on.
+func TestIngestTargetsStopsOnUnavailableLLM(t *testing.T) {
+	targets := []plugins.Target{{Name: "A"}, {Name: "B"}, {Name: "C"}, {Name: "D"}}
+	var called []string
+	stats, err := ingestTargets(context.Background(), targets, func(_ context.Context, tg plugins.Target) (*Result, error) {
+		called = append(called, tg.Name)
+		switch tg.Name {
+		case "A":
+			return nil, errors.New("search quota")
+		case "C":
+			return nil, fmt.Errorf("extracting: %w", llm.ErrUnavailable)
+		}
+		return &Result{FactsExtracted: 1}, nil
+	})
+	require.ErrorIs(t, err, llm.ErrUnavailable)
+	assert.ErrorContains(t, err, "search quota")
+	assert.Equal(t, []string{"A", "B", "C"}, called, "no target after the outage")
+	assert.Equal(t, 1, stats.Targets)
+	assert.Equal(t, []string{"A: search quota"}, stats.Details)
+
+	called = nil
+	_, err = ingestTargets(context.Background(), targets[:2], func(_ context.Context, tg plugins.Target) (*Result, error) {
+		called = append(called, tg.Name)
+		return nil, errors.New("search quota")
+	})
+	require.NoError(t, err, "other failures are only recorded")
+	assert.Equal(t, []string{"A", "B"}, called)
+}
+
+// windowSearcher returns one new article per search and records the start
+// of each searched window.
+type windowSearcher struct {
+	mu    sync.Mutex
+	froms map[time.Time]bool
+}
+
+func (s *windowSearcher) SearchNews(_ string, opts search.NewsSearchOptions) ([]search.NewsResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.froms[opts.DateFrom] = true
+	link := fmt.Sprintf("https://example.test/%d-%s", opts.DateFrom.UnixNano(), opts.Language)
+	return []search.NewsResult{{Link: link, Title: "Article"}}, nil
+}
+
+// longPage is a scraper returning enough content to be extracted.
+type longPage struct{}
+
+func (longPage) ExtractContent(url string) (*extractor.ExtractedContent, error) {
+	return &extractor.ExtractedContent{URL: url, Content: strings.Repeat("Jean Dupont a parlé de la TVA. ", 20)}, nil
+}
+
+// chatDown makes every chat call fail with llm.ErrUnavailable: the primary is
+// marked down (breaker open) and the fallback has no credits.
+func chatDown(t *testing.T) {
+	t.Helper()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"error":{"message":"Insufficient credits"}}`)
+	}))
+	t.Cleanup(fallback.Close)
+	t.Setenv("FALLBACK_URL", fallback.URL)
+	t.Setenv("FALLBACK_KEY", "fb")
+	t.Setenv("FALLBACK_CHAT_MODEL", "fm")
+	llm.MarkPrimaryDown("test")
+}
+
+// TestWindowedCollectionStopsOnUnavailableLLM: a window whose extraction hits
+// an unreachable LLM stops the date-windowed collection instead of searching
+// and scraping the next windows.
+func TestWindowedCollectionStopsOnUnavailableLLM(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	_, err := storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean fenetre", "human")
+	require.NoError(t, err)
+
+	stubLLM(t, noFactReply, http.StatusOK, `{}`)
+	chatDown(t)
+	ext, err := categorizer.NewOpenAIExtractorFromEnv()
+	require.NoError(t, err)
+	searcher := &windowSearcher{froms: map[time.Time]bool{}}
+	p := NewProvider(searcher, longPage{}, ext, nil, storer, &core.StanceManager{})
+
+	from, to := time.Now().AddDate(0, 0, -9), time.Now()
+	_, err = p.CollectFactsWithDateWindows(ctx, plugins.Target{Name: "jean fenetre", PersonID: personID},
+		Options{DateFrom: &from, DateTo: &to, WindowDays: 3, MaxParse: 5})
+	require.ErrorIs(t, err, llm.ErrUnavailable)
+	assert.Len(t, searcher.froms, 1, "only the first window is searched")
+}
+
+// TestWindowedCollectionExtractsLeftoversOnce: when no window brings anything
+// new, the target's unfinished documents are extracted once for the
+// collection, not once per window (a failing document would use up its
+// attempts in one run).
+func TestWindowedCollectionExtractsLeftoversOnce(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	_, err := storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean leftover", "human")
+	require.NoError(t, err)
+	url := "https://example.test/leftover"
+	_, err = storer.SaveFetchedDocuments(ctx, []core.SourceDocument{{
+		SourceType: "news", URL: url, PersonID: personID, Content: "Un article.",
+	}})
+	require.NoError(t, err)
+
+	_, emb := stubLLM(t, noFactReply, http.StatusOK, `{}`)
+	t.Setenv("OPEN_AI_API", stubServer(t, http.StatusBadRequest, `{"error":{"message":"bad request"}}`).URL)
+	ext, err := categorizer.NewOpenAIExtractorFromEnv()
+	require.NoError(t, err)
+	p := NewProvider(emptyNewsSearcher{}, nil, ext, emb, storer, &core.StanceManager{})
+
+	from, to := time.Now().AddDate(0, 0, -9), time.Now()
+	_, err = p.CollectFactsWithDateWindows(ctx, plugins.Target{Name: "jean leftover", PersonID: personID},
+		Options{DateFrom: &from, DateTo: &to, WindowDays: 3, MaxParse: 5})
+	require.Error(t, err, "the leftover's extraction fails")
+	assert.NotErrorIs(t, err, llm.ErrUnavailable)
+
+	var attempts int
+	require.NoError(t, storer.Pool().QueryRow(ctx, `SELECT attempts FROM source_documents WHERE url = $1`, url).Scan(&attempts))
+	assert.Equal(t, 1, attempts)
+}

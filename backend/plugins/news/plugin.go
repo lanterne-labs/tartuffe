@@ -2,9 +2,11 @@ package news
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
 
 	"github.com/rs/zerolog/log"
@@ -52,7 +54,8 @@ func NewProviderFromDeps(d *deps.Deps) (*Provider, error) {
 }
 
 // Ingest implements plugins.Ingester: searches news for every target and
-// extracts facts inline. Per-target failures are collected, not returned.
+// extracts facts inline. Per-target failures are collected, not returned,
+// except an unreachable LLM, which stops the run (see ingestTargets).
 func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
 	if len(targets) == 0 {
@@ -79,11 +82,26 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		newsOpts.MaxParse = opts.MaxItems
 	}
 
+	return ingestTargets(ctx, targets, func(ctx context.Context, t plugins.Target) (*Result, error) {
+		return provider.collect(ctx, t, newsOpts)
+	})
+}
+
+// ingestTargets runs collect on every target. Per-target failures are
+// collected in the stats; an unreachable LLM (llm.ErrUnavailable) stops the
+// loop and is returned along with the failures collected so far.
+func ingestTargets(ctx context.Context, targets []plugins.Target, collect func(context.Context, plugins.Target) (*Result, error)) (plugins.IngestStats, error) {
+	var stats plugins.IngestStats
+	var failures []error
 	for i, t := range targets {
 		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", t.Name).Msg("news: target")
-		result, err := provider.collect(ctx, t, newsOpts)
+		result, err := collect(ctx, t)
 		if err != nil {
 			log.Error().Err(err).Str("person", t.Name).Msg("news: target failed")
+			failures = append(failures, fmt.Errorf("%s: %w", t.Name, err))
+			if errors.Is(err, llm.ErrUnavailable) {
+				return stats, errors.Join(failures...)
+			}
 			stats.Details = append(stats.Details, t.Name+": "+err.Error())
 			continue
 		}

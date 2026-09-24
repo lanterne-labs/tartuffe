@@ -189,8 +189,8 @@ func TestIsEndpointOutage(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isEndpointOutage(tc.err); got != tc.want {
-				t.Errorf("isEndpointOutage(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := IsEndpointOutage(tc.err); got != tc.want {
+				t.Errorf("IsEndpointOutage(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -229,12 +230,21 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 	return &StanceManager{storer: storer, client: client}, nil
 }
 
+// ErrStanceRefreshPending marks a ProcessNewFact error returned after the fact
+// was committed to its stance (membership, contradictions, centroid): only the
+// label + summary refresh failed, because the LLM was unavailable. The fact
+// stays pending for the stance's next refresh (summarized_at), so the caller
+// must keep the fact, not roll it back.
+var ErrStanceRefreshPending = errors.New("fact linked to its stance; label and summary refresh pending")
+
 // ProcessNewFact analyzes a new fact against existing stances for the given person.
 // It uses LLM-based topic assignment to find the right stance (or to generate a
 // general topic label when no existing stance fits), then analyzes the new fact
 // pair-wise against all key facts in the matched stance. After a non-duplicate
 // verdict, the new fact (and its verified tensions) is folded into the stance's
-// label + summary (see refreshAfterVerdict).
+// label + summary (see refreshAfterVerdict). An error wrapping
+// ErrStanceRefreshPending means the fact was routed and only that refresh
+// failed.
 func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
 	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
@@ -311,17 +321,11 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return nil, fmt.Errorf("getting facts for stance %d: %w", matched.ID, err)
 	}
 
-	// Add the fact to the stance join table BEFORE analysis. AddFactToStance is
-	// idempotent (ON CONFLICT) so a partial/retried call leaves the join row in
-	// place; we want the fact to belong to its stance even if a downstream LLM
-	// call errors.
-	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
-		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
-	}
-
 	// Analyze the new fact against the stance's key facts. When there are too
 	// many key facts to fit in one prompt, batch the call and union the
-	// contradictions across batches.
+	// contradictions across batches. The fact joins the stance only once the
+	// analysis and its verification are done (handleVerdict): a failed call
+	// leaves nothing written, so the (person, fact) pair stays pending.
 	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText)
 	if err != nil {
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
@@ -556,13 +560,32 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 	}, nil
 }
 
-// handleVerdict processes the aggregated analyze result, updates the stance
-// counters/centroid/key_facts as appropriate, records every contradiction the
-// LLM flagged, and triggers a label+summary refresh for non-duplicate verdicts.
+// handleVerdict processes the aggregated analyze result: it verifies the
+// flagged contradictions, then adds the fact to the stance, updates the stance
+// counters/centroid/key_facts as appropriate, records every verified
+// contradiction, and triggers a label+summary refresh for non-duplicate
+// verdicts. Nothing is written before the verification succeeded, so a failed
+// verifier call leaves the fact out of the stance, still pending.
 func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
 	result := &StanceProcessResult{
 		StanceID:  matched.ID,
 		Reasoning: agg.Reasoning,
+	}
+
+	var verified []StanceContradictionEntry
+	switch agg.PrimaryVerdict {
+	case "DUPLICATE", "NEW_INFO":
+	case "CONTRADICTION":
+		var err error
+		if verified, err = sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unexpected LLM verdict: %q", agg.PrimaryVerdict)
+	}
+
+	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
+		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
 	}
 
 	switch agg.PrimaryVerdict {
@@ -589,12 +612,11 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Msg("Added new info to existing stance")
 
 	case "CONTRADICTION":
-		// Adversarial verification pass: refute each flagged pair before
-		// persisting. Survivors only — refuted pairs are dropped here and never
-		// recorded, so they never dent the honesty score. If every pair is
-		// refuted the fact is just new info for the stance, so relabel as
-		// NEW_INFO (the stance still absorbs the fact via applyStanceUpdate).
-		verified := sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		// Adversarial verification pass (above): survivors only — refuted
+		// pairs are never recorded, so they never dent the honesty score. If
+		// every pair is refuted the fact is just new info for the stance, so
+		// relabel as NEW_INFO (the stance still absorbs the fact via
+		// applyStanceUpdate).
 		result.Contradictions = verified
 
 		recorded := 0
@@ -618,18 +640,19 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Int("contradictions_verified", len(verified)).
 			Str("reasoning", agg.Reasoning).
 			Msg("Contradictions detected in stance")
-
-	default:
-		return nil, fmt.Errorf("unexpected LLM verdict: %q", agg.PrimaryVerdict)
 	}
 
 	// For non-duplicate verdicts the stance content has materially changed —
 	// fold the new fact (and the tensions the analyze just found) into the
-	// label + summary. Failures here are logged but do not fail the verdict
-	// (the stance is still correct, just using its prior label/summary until
-	// the next refresh picks the fact up via summarized_at).
+	// label + summary. Failures here do not fail the verdict (the stance is
+	// still correct, just using its prior label/summary until the next refresh
+	// picks the fact up via summarized_at); an unavailable LLM is returned,
+	// marked ErrStanceRefreshPending, so the run stops.
 	if (result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION") && !refreshDeferred(ctx) {
 		if err := sm.refreshAfterVerdict(ctx, matched, factID, result.Contradictions, keyTextByID(keyFacts)); err != nil {
+			if errors.Is(err, llm.ErrUnavailable) {
+				return nil, fmt.Errorf("%w: stance %d: %w", ErrStanceRefreshPending, matched.ID, err)
+			}
 			log.Warn().Err(err).
 				Int64("stance_id", matched.ID).
 				Msg("Stance metadata refresh failed; stance kept with previous label/summary")
@@ -652,44 +675,40 @@ func (sm *StanceManager) applyStanceUpdate(ctx context.Context, matched *StanceD
 	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, matched.SummaryEn, newCentroid, keyFactIDs, newFactCount)
 }
 
-// AnalyzeFactInStance treats `fact` as if it just arrived in `stance` and runs
-// the analyze + multi-verdict + contradiction-recording path against
-// `otherFacts`. Used by the post-merge sweep to detect contradictions between
-// facts that were previously separated across different stances. Returns the
-// number of contradictions recorded.
+// verifiedContradictionsInStance treats `fact` as if it just arrived in
+// `stance`: it runs the analyze + verification path against `otherFacts` and
+// returns the verified contradictions without recording them. Used by the
+// merge sweep, which analyzes the facts a merge will co-locate before
+// committing it, and records the result only once the merge is applied.
 //
 // Unlike ProcessNewFact this skips assignTopic (we already KNOW the stance the
-// fact belongs to — no need to re-classify) and skips the centroid / fact_count
-// / key_fact_ids update (the merge already handled that). It does NOT trigger a
-// metadata refresh — callers should call RefreshStanceMetadata once after all
-// per-fact analysis is done, to avoid N redundant refresh calls.
-func (sm *StanceManager) AnalyzeFactInStance(
+// fact belongs to) and writes nothing.
+func (sm *StanceManager) verifiedContradictionsInStance(
 	ctx context.Context,
-	personID int64,
 	stance StanceDocument,
 	fact StanceFactInfo,
 	otherFacts []StanceFactInfo,
-) (int, error) {
+) ([]StanceContradictionEntry, error) {
 	if len(otherFacts) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText)
 	if err != nil {
-		return 0, fmt.Errorf("analyze: %w", err)
+		return nil, fmt.Errorf("analyze: %w", err)
 	}
 	if agg.PrimaryVerdict != "CONTRADICTION" {
-		return 0, nil
+		return nil, nil
 	}
-	// Adversarial verification pass before persisting (same gate as the live
-	// ingest path in handleVerdict).
-	verified := sm.verifyEntries(ctx, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
-	return sm.recordStanceContradictions(ctx, personID, fact.ID, stance.ID, verified), nil
+	// Adversarial verification pass (same gate as the live ingest path in
+	// handleVerdict).
+	return sm.verifyEntries(ctx, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
 }
 
 // VerifyContradiction runs the adversarial refutation pass over a single
 // claimed contradiction before it is persisted. keep == true means the claim
 // survived (record it); keep == false means it was refuted as a false positive
-// (drop it). A non-nil error is an operational failure — callers fall open.
+// (drop it). A non-nil error is an operational failure — callers fall open,
+// except on llm.ErrUnavailable, where they decide nothing.
 //
 // Delegates to llm.VerifyContradiction so the stance path and the detector path
 // (contradiction.OpenAIContradictionDetector.VerifyContradiction) share
@@ -704,12 +723,14 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 // contradiction entry and returns only the survivors. newFactText is the text
 // of the fact being processed; keyTexts maps each candidate key-fact ID to
 // its text. An entry whose key-fact text is missing is kept unchecked (we
-// cannot verify what we cannot read). On verifier error the entry is kept
-// (fail-open) and logged; on an explicit refutation (keep=false) it is dropped
-// and logged at INFO.
-func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) []StanceContradictionEntry {
+// cannot verify what we cannot read). On a verifier error other than
+// llm.ErrUnavailable the entry is kept (fail-open, as on the detector path)
+// and logged; on an explicit refutation (keep=false) it is dropped and logged
+// at INFO. When the LLM is unavailable nothing is decided: the error (wrapping
+// llm.ErrUnavailable) is returned and the caller must record nothing.
+func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
 	if len(entries) == 0 {
-		return entries
+		return entries, nil
 	}
 	survivors := make([]StanceContradictionEntry, 0, len(entries))
 	for _, c := range entries {
@@ -720,6 +741,9 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 			continue
 		}
 		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return nil, fmt.Errorf("verifying contradiction with key fact %d: %w", c.KeyFactID, err)
+		}
 		if err != nil {
 			log.Warn().Err(err).
 				Int64("key_fact_id", c.KeyFactID).
@@ -738,7 +762,7 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 		}
 		survivors = append(survivors, c)
 	}
-	return survivors
+	return survivors, nil
 }
 
 // recordStanceContradictions writes each contradiction entry to the store,
@@ -746,7 +770,7 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 // Per-entry RecordContradiction errors are logged but do not abort the loop.
 // Returns the number successfully recorded.
 //
-// Shared by handleVerdict (live ingest path) and AnalyzeFactInStance
+// Shared by handleVerdict (live ingest path) and applyMergeSubgroup
 // (post-merge sweep) so both treat malformed LLM output the same way.
 func (sm *StanceManager) recordStanceContradictions(
 	ctx context.Context,
@@ -1322,6 +1346,11 @@ func (sm *StanceManager) assignTopic(ctx context.Context, personID int64, stance
 		// pass reads the person's labels instead and adds the ones it picks.
 		if len(stances) > shortlistTopK {
 			picked, err := sm.pickTopicsByLabel(ctx, factText, stances)
+			if errors.Is(err, llm.ErrUnavailable) {
+				// Assigning on the shortlist alone would make the outage's
+				// miss final: the fact would open a new stance for good.
+				return nil, fmt.Errorf("topic label pass: %w", err)
+			}
 			if err != nil {
 				log.Warn().Err(err).Int64("person_id", personID).Msg("Topic label pass failed; using the embedding shortlist alone")
 			} else if extra := excludeIDs(picked, candidates); len(extra) > 0 {

@@ -85,7 +85,9 @@ func ValidatorFromEnv() *entityvalidator.Validator {
 }
 
 // Run validates every person through v and returns the report. Nothing is
-// deleted; pass Report.RejectedRows to DeleteRejected for that.
+// deleted; pass Report.RejectedRows to DeleteRejected for that. A validator
+// that cannot reach the LLM stops the sweep: the rows left are skipped and
+// the error is returned.
 func Run(ctx context.Context, storer Storer, v *entityvalidator.Validator, opts Options) (Report, error) {
 	persons, err := storer.GetAllPersons(ctx)
 	if err != nil {
@@ -124,6 +126,9 @@ func Run(ctx context.Context, storer Storer, v *entityvalidator.Validator, opts 
 		nRejected atomic.Int64
 		nSkipped  atomic.Int64
 		nFiltered atomic.Int64
+		// failed holds the first validator error (an unreachable LLM): the
+		// remaining rows are skipped, never judged by the default decision.
+		failed atomic.Pointer[error]
 	)
 	for w := 0; w < concurrency; w++ {
 		wg.Add(1)
@@ -142,7 +147,20 @@ func Run(ctx context.Context, storer Storer, v *entityvalidator.Validator, opts 
 					nSkipped.Add(1)
 					continue
 				}
-				verdict := v.Validate(ctx, j.person.Name, j.person.EntityType)
+				if failed.Load() != nil {
+					row.Skipped = true
+					row.SkipReason = "sweep stopped: validator unavailable"
+					rows[j.idx] = row
+					continue
+				}
+				verdict, err := v.Validate(ctx, j.person.Name, j.person.EntityType)
+				if err != nil {
+					failed.CompareAndSwap(nil, &err)
+					row.Skipped = true
+					row.SkipReason = err.Error()
+					rows[j.idx] = row
+					continue
+				}
 				row.Real = verdict.Real
 				row.Filter = verdict.Filter
 				row.Reason = verdict.Reason
@@ -163,14 +181,18 @@ func Run(ctx context.Context, storer Storer, v *entityvalidator.Validator, opts 
 	close(jobs)
 	wg.Wait()
 
-	return Report{
+	report := Report{
 		Rows:      rows,
 		Elapsed:   time.Since(t0),
 		Validated: int(nFiltered.Load()),
 		Approved:  int(nApproved.Load()),
 		Rejected:  int(nRejected.Load()),
 		Skipped:   int(nSkipped.Load()),
-	}, nil
+	}
+	if errp := failed.Load(); errp != nil {
+		return report, fmt.Errorf("validating persons: %w", *errp)
+	}
+	return report, nil
 }
 
 // collectFactCounts batches a single query for fact counts of all candidate IDs.

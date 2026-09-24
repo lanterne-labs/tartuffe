@@ -12,6 +12,7 @@ import (
 // must be rejected before it ever gets that far.
 type fakeInserterStorer struct {
 	inserted   int
+	deleted    int
 	nextFactID int64
 	nextSrcID  int64
 }
@@ -34,7 +35,10 @@ func (f *fakeInserterStorer) InsertFact(ctx context.Context, input StoreFactInpu
 	return f.nextFactID, nil
 }
 
-func (f *fakeInserterStorer) DeleteFact(ctx context.Context, factID int64) error { return nil }
+func (f *fakeInserterStorer) DeleteFact(ctx context.Context, factID int64) error {
+	f.deleted++
+	return nil
+}
 
 func (f *fakeInserterStorer) LinkSourceToFact(ctx context.Context, factID int64, sourceURL, originalQuote string, publishedAt *time.Time, sourceType string, metadata map[string]any) (int64, error) {
 	f.nextSrcID++

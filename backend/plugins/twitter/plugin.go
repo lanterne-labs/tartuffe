@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
 
 	"github.com/rs/zerolog/log"
@@ -58,6 +59,9 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		if _, err := Discover(ctx, d, DiscoveryOptions{TargetIDs: ids, Force: opts.Force}); err != nil {
 			discoverErr = fmt.Errorf("discovery: %w", err)
 			log.Error().Err(discoverErr).Msg("twitter: handle discovery failed")
+			if errors.Is(err, llm.ErrUnavailable) {
+				return stats, discoverErr
+			}
 		}
 	}
 
@@ -75,21 +79,37 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		DryRun: opts.DryRun, Force: opts.Force, MaxTweets: opts.MaxItems,
 	}
 
+	stats, err = collectHandles(ctx, handles, targetIDs, func(ctx context.Context, h Handle) (*Result, error) {
+		if twOpts.WindowDays > 0 {
+			return provider.CollectFactsWithDateWindows(ctx, h, twOpts)
+		}
+		return provider.CollectFacts(ctx, h, twOpts)
+	})
+	log.Info().Int("handles", len(handles)).Int("persons", stats.Targets).Int("tweets", stats.Items).Int("facts", stats.Facts).
+		Msg("twitter: collection completed")
+	return stats, errors.Join(discoverErr, err)
+}
+
+// collectHandles runs collect on the handles of the target persons. A failed
+// handle is recorded and the loop goes on, except on an unreachable LLM
+// (llm.ErrUnavailable): every further handle would fetch tweets (API credits)
+// only to leave them unextracted, so the loop stops and returns it with the
+// first failure. Otherwise the first failure is returned.
+func collectHandles(ctx context.Context, handles []Handle, targetIDs map[int64]bool, collect func(context.Context, Handle) (*Result, error)) (plugins.IngestStats, error) {
+	var stats plugins.IngestStats
 	var firstErr error
 	seen := make(map[int64]bool)
 	for _, h := range handles {
 		if !targetIDs[h.PersonID] {
 			continue
 		}
-		var result *Result
-		if twOpts.WindowDays > 0 {
-			result, err = provider.CollectFactsWithDateWindows(ctx, h, twOpts)
-		} else {
-			result, err = provider.CollectFacts(ctx, h, twOpts)
-		}
+		result, err := collect(ctx, h)
 		if err != nil {
 			log.Error().Err(err).Str("handle", h.Handle).Msg("twitter: collection failed for handle")
 			stats.Details = append(stats.Details, "@"+h.Handle+": "+err.Error())
+			if errors.Is(err, llm.ErrUnavailable) {
+				return stats, errors.Join(firstErr, err)
+			}
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -105,7 +125,5 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 			stats.Errors += len(result.Errors)
 		}
 	}
-	log.Info().Int("handles", len(handles)).Int("persons", stats.Targets).Int("tweets", stats.Items).Int("facts", stats.Facts).
-		Msg("twitter: collection completed")
-	return stats, errors.Join(discoverErr, firstErr)
+	return stats, firstErr
 }

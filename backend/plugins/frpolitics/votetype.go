@@ -68,21 +68,22 @@ func IsTextLevelVote(t ScrutinObjectType) bool {
 // ("le sous-amendement n° 372 de M. Verny", "l'amendement n°30 de Mme Lebec").
 var scrutinNumeroRe = regexp.MustCompile(`n°\s*(\d+)`)
 
-// describeVotedObject returns the phrase the vote-statement templates wrap
-// ("a voté CONTRE %s") and whether facts may be generated at all.
+// resolveVotedObject resolves what a scrutin voted on, from the scrutin alone
+// (no summary needed, so a gated scrutin costs no LLM call), and whether facts
+// may be generated at all. votedObjectPhrase turns it into the phrase the
+// vote-statement templates wrap ("a voté CONTRE %s").
 //
 //   - text-level votes (ensemble/article/motion/declaration) and unclassified
 //     scrutins keep the bill phrase: the ballot IS a position on the text.
 //   - amendement / sous-amendement votes describe the modification itself —
-//     number, author group, purpose from the AN amendments archive — because
-//     the ballot judges only that modification. Without resolvable content the
-//     scrutin is gated (ok=false): better no fact than a fact that misstates
-//     what was voted.
-func describeVotedObject(ctx context.Context, law Law, summary LawSummary, orgCache map[string]OrganeInfo) (string, bool) {
+//     number, author group, purpose from the AN amendments archive, returned
+//     as amendment — because the ballot judges only that modification.
+//     Without resolvable content the scrutin is gated (ok=false): better no
+//     fact than a fact that misstates what was voted.
+func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]OrganeInfo) (amendment string, ok bool) {
 	objType := ClassifyScrutinObject(law.Title)
-	billPhrase := prepareLawPhrase(summary.SimpleStatement)
 	if IsTextLevelVote(objType) || objType == ObjectOther {
-		return billPhrase, true
+		return "", true
 	}
 
 	m := scrutinNumeroRe.FindStringSubmatch(law.Title)
@@ -114,5 +115,15 @@ func describeVotedObject(ctx context.Context, law Law, summary LawSummary, orgCa
 			group = fmt.Sprintf(" (%s)", name)
 		}
 	}
-	return fmt.Sprintf("%s n° %d%s %s, déposé sur %s", label, numero, group, purpose, billPhrase), true
+	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true
+}
+
+// votedObjectPhrase is the voted object's phrase: the bill phrase, preceded
+// by the amendment when the ballot judged one (see resolveVotedObject).
+func votedObjectPhrase(amendment string, summary LawSummary) string {
+	billPhrase := prepareLawPhrase(summary.SimpleStatement)
+	if amendment == "" {
+		return billPhrase
+	}
+	return amendment + ", déposé sur " + billPhrase
 }

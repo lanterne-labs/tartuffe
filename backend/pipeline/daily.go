@@ -64,6 +64,13 @@ type RunOptions struct {
 //  6. contradiction audit (5-day cadence)
 //  7. translation phase
 //  8. backfill                  — every plugin, deadline-bound
+//
+// Once a phase reports the LLM unavailable (llm.ErrUnavailable) no further
+// LLM phase starts: every item would fail the same way, and walking them
+// only burns scrape credits and hours. The phases that need no LLM still run,
+// and the run is recorded as failed ("LLM unavailable: stopped after phase
+// X"). Every phase derives its pending work from the database, so the next
+// run resumes where this one stopped.
 func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier, opts RunOptions) error {
 	start := time.Now()
 	log.Info().Bool("smoke", opts.Smoke).Msg("Daily pipeline started")
@@ -90,10 +97,12 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	stepErrs := map[string]error{}
+	var gate llmGate
 	fail := func(step string, err error, msg string) {
 		if err == nil {
 			return
 		}
+		gate.observe(step, err)
 		stepErrs[step] = err
 		log.Error().Err(err).Msg("Daily pipeline: " + msg)
 	}
@@ -116,6 +125,9 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// the analyze judge run inline on insert.
 	ingest, ingestErrs, err := Ingest(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
 	fail("ingest", err, "ingest phase failed")
+	for _, pErr := range ingestErrs {
+		gate.observe("ingest", pErr)
+	}
 	mergeStepErrs(stepErrs, ingestErrs)
 	stats := ingest.Total
 
@@ -134,7 +146,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// self-terminating). Runs before the merge sweep
 		// so freshly created deputy stances get merged the same night, and
 		// before detection so stance-recorded contradictions land first.
-		if rebundle != nil {
+		if rebundle != nil && gate.open("stance-fanout") {
 			fail("stance-fanout", core.RunStanceFanout(ctx, storer, stanceMgr, rebundle, b.fanout), "stance fan-out failed")
 		}
 
@@ -143,10 +155,12 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// contradictions across previously-separated facts. Catches the
 		// cross-stance contradictions our per-fact assignTopic missed by
 		// mis-grouping.
-		mergeOpts := core.DefaultStanceMergeOptions
-		mergeOpts.MaxPersons = b.maxPersons
-		_, err = core.RunStanceMergeSweep(ctx, storer, stanceMgr, mergeOpts)
-		fail("stance-merge", err, "stance merge sweep failed")
+		if gate.open("stance-merge") {
+			mergeOpts := core.DefaultStanceMergeOptions
+			mergeOpts.MaxPersons = b.maxPersons
+			_, err = core.RunStanceMergeSweep(ctx, storer, stanceMgr, mergeOpts)
+			fail("stance-merge", err, "stance merge sweep failed")
+		}
 	}
 
 	// Phase 4: contradiction detection over unchecked pairs across all
@@ -157,8 +171,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// re-opened each night (pairRejudgeNightlyBudget) right before detection,
 	// so the whole backlog of NOs is re-judged within days — the counterpart
 	// of the auditor's last_audit_hash for YESes. Self-terminating: with
-	// nothing stale, silent.
-	if b.rejudge > 0 {
+	// nothing stale, silent. Skipped with the detection it feeds when the LLM
+	// is unavailable: re-opened pairs would pile onto the next night's budget.
+	detect := gate.open("contradictions")
+	if detect && b.rejudge > 0 {
 		judgeHash := contradiction.JudgeRulebookHash()
 		if deleted, remaining, evErr := storer.EvictStaleJudgedPairs(ctx, judgeHash, b.rejudge); evErr != nil {
 			log.Error().Err(evErr).Msg("Daily pipeline: stale pair-verdict eviction failed")
@@ -177,8 +193,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		log.Info().Int("enqueued", queued).Int("queue_size", total).Msg("Daily pipeline: fact pairs queued for detection")
 	}
 
-	_, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
-	fail("contradictions", err, "contradiction detection failed")
+	if detect {
+		_, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
+		fail("contradictions", err, "contradiction detection failed")
+	}
 
 	// Phase 5a: repoint contradictions off any facts the contradiction-pass
 	// dedup just marked as duplicates, so the redundant rows stop inflating
@@ -193,9 +211,13 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// Phase 5b: regroup contradictions into N-ary groups (one base fact + N
 	// contradicting facts) and (re)generate each group's merged summary. Runs
 	// after detection + duplicate-repointing so it sees the final pairwise
-	// set. Best-effort — failures are logged, never aborting the pipeline.
-	if regroupErr := contradiction.RunRegroupStep(ctx, storer, b.maxPersons); regroupErr != nil {
-		log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
+	// set. Best-effort — failures are logged, never aborting the pipeline,
+	// except an unavailable LLM, which stops the run's LLM phases.
+	if gate.open("regroup") {
+		if regroupErr := contradiction.RunRegroupStep(ctx, storer, b.maxPersons); regroupErr != nil {
+			gate.observe("regroup", regroupErr)
+			log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
+		}
 	}
 
 	// Phase 6: contradiction auditor (auditCadence). Re-judges previously
@@ -207,24 +229,38 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// error keeps the row and counts it as unstable. Verdicts are also
 	// exposed via the `contradiction_audits_total` Prometheus counter.
 	var auditResult *contradiction.AuditRunResult
-	if b.audit {
+	if b.audit && gate.open("contradiction-audit") {
 		auditResult, err = runAuditIfDue(ctx, storer, auditCadence)
 		fail("contradiction-audit", err, "contradiction audit failed")
 	}
 
 	// Phase 7: translation — decoupled from generation. Fills missing or
 	// stale translations for facts, stances and contradictions into the
-	// generic translations table for every target language. Best-effort —
-	// logged, never aborts the pipeline.
-	fail("translate", runTranslate(ctx, storer, b.translate), "translation phase failed")
+	// generic translations table for every target language.
+	if gate.open("translate") {
+		fail("translate", runTranslate(ctx, storer, b.translate), "translation phase failed")
+	}
 
-	// Phase 8 (last, deadline-bound): plugin backfills.
+	// Phase 8 (last, deadline-bound): plugin backfills; only those that need
+	// no LLM once it is unavailable.
 	if b.backfill {
+		var only []string
+		if !gate.open("backfill") {
+			only = llmFreeBackfills
+		}
 		if deadline, dErr := backfillDeadline(time.Now()); dErr != nil {
 			fail("backfill", dErr, "backfill deadline")
 		} else {
-			mergeStepErrs(stepErrs, Backfill(ctx, d, deadline))
+			bfErrs := Backfill(ctx, d, deadline, only)
+			for _, pErr := range bfErrs {
+				gate.observe("backfill", pErr)
+			}
+			mergeStepErrs(stepErrs, bfErrs)
 		}
+	}
+	if gErr := gate.err(); gErr != nil {
+		stepErrs["llm"] = gErr
+		log.Error().Err(gErr).Msg("Daily pipeline: LLM unavailable; the next run resumes the skipped phases")
 	}
 
 	elapsed := time.Since(start)
@@ -346,8 +382,9 @@ func personRebundler(d *deps.Deps) (core.PersonRebundler, error) {
 
 // runAuditIfDue runs the contradiction auditor at most once per cadence. The
 // cadence is enforced via the job_metrics timestamp for
-// job_type="contradiction-audit": last-run is read at the start, and the
-// audit (RecordMetric) writes a new row at the end. Returns nil when skipped.
+// job_type="contradiction-audit": last-run is read at the start, and an audit
+// that judged its rows (RecordMetric) writes a new row at the end; a failed
+// audit writes none, so the next run tries again. Returns nil when skipped.
 func runAuditIfDue(ctx context.Context, storer *storage.PostgresStorer, cadence time.Duration) (*contradiction.AuditRunResult, error) {
 	last, err := storer.GetLatestJobRunTime(ctx, "contradiction-audit")
 	if err != nil {
@@ -381,6 +418,38 @@ func runTranslate(ctx context.Context, storer *storage.PostgresStorer, limit int
 	}
 	_, err = translate.Fill(ctx, storer, tr, translate.FillOptions{Limit: limit})
 	return err
+}
+
+// llmGate stops a run's LLM phases once one of them reports the LLM
+// unavailable (llm.ErrUnavailable).
+type llmGate struct {
+	stoppedAfter string // the phase that hit the outage; "" while the LLM is up
+}
+
+// observe records phase as the stopping point when err says the LLM is
+// unavailable and no earlier phase did.
+func (g *llmGate) observe(phase string, err error) {
+	if g.stoppedAfter == "" && errors.Is(err, llm.ErrUnavailable) {
+		g.stoppedAfter = phase
+	}
+}
+
+// open reports whether the LLM phase may start; it logs the skip when not.
+func (g *llmGate) open(phase string) bool {
+	if g.stoppedAfter == "" {
+		return true
+	}
+	log.Warn().Str("phase", phase).Str("stopped_after", g.stoppedAfter).
+		Msg("Daily pipeline: LLM unavailable; phase not started")
+	return false
+}
+
+// err is the run-level error of a run the gate stopped, nil otherwise.
+func (g *llmGate) err() error {
+	if g.stoppedAfter == "" {
+		return nil
+	}
+	return fmt.Errorf("%w: stopped after phase %s", llm.ErrUnavailable, g.stoppedAfter)
 }
 
 func mergeStepErrs(dst map[string]error, src StepErrors) {

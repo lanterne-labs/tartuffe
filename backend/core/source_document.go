@@ -110,6 +110,16 @@ type ProcessStats struct {
 // the documents stay unfinished for the next run.
 var ErrOutage = errors.New("document extraction outage")
 
+// FailsDocument reports whether a failure to embed or store one fact of a
+// document must fail the whole document: an unreachable LLM
+// (llm.ErrUnavailable) or a cancelled run. Any other failure is the fact's own
+// (a deterministic stance failure, an unparseable judge answer, a 4xx) and
+// skips only that fact; errors do not tell a database outage apart cleanly,
+// but one also fails marking the document extracted, which leaves it pending.
+func FailsDocument(ctx context.Context, err error) bool {
+	return err != nil && (errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil)
+}
+
 // ProcessDocuments drives every unfinished document of sourceType (and
 // personID, when non-zero) through extract, recording each document's
 // transition as soon as its batch finishes.
@@ -177,7 +187,7 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 				}
 			}
 			if opts.MaxConsecutiveFailures > 0 && consecutive >= opts.MaxConsecutiveFailures {
-				return st, fmt.Errorf("%w: %d consecutive failures (last: %v)", ErrOutage, consecutive, err)
+				return st, fmt.Errorf("%w: %d consecutive failures (last: %w)", ErrOutage, consecutive, err)
 			}
 			continue
 		}
@@ -197,7 +207,7 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 		}
 	}
 	if st.Attempted > 0 && st.Extracted == 0 && st.Failed > 0 {
-		return st, fmt.Errorf("%w: every attempted document failed (%d, last: %v)", ErrOutage, st.Failed, lastErr)
+		return st, fmt.Errorf("%w: every attempted document failed (%d, last: %w)", ErrOutage, st.Failed, lastErr)
 	}
 	return st, nil
 }

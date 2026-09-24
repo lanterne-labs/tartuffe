@@ -1,0 +1,394 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"digital-mirror/backend/llm"
+)
+
+// outageLLM stands in for the LLM with the primary endpoint down (breaker
+// open) and the stub as the fallback: a prompt answer returns 200 with its
+// JSON, a nil answer returns 402, so the call fails with llm.ErrUnavailable
+// at once, as when the local LLM is stopped mid-run and the fallback has no
+// credits.
+type outageLLM struct {
+	mu      sync.Mutex
+	prompts []string
+}
+
+func (o *outageLLM) count(substr string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := 0
+	for _, p := range o.prompts {
+		if strings.Contains(p, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+const (
+	topicPrompt   = "You are a topic classifier"
+	analyzePrompt = "KEY FACTS IN THIS STANCE"
+	verifyPrompt  = "You are auditing a *claimed* contradiction"
+)
+
+func newOutageManager(t *testing.T, storer StanceStorer, answer func(prompt string) any) (*StanceManager, *outageLLM) {
+	t.Helper()
+	o := &outageLLM{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+		prompt := req.Messages[len(req.Messages)-1].Content
+		o.mu.Lock()
+		o.prompts = append(o.prompts, prompt)
+		o.mu.Unlock()
+
+		out := answer(prompt)
+		if out == nil {
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(`{"error":{"message":"Insufficient credits"}}`))
+			return
+		}
+		content, ok := out.(string)
+		if !ok {
+			b, _ := json.Marshal(out)
+			content = string(b)
+		}
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": content}}}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(srv.Close)
+
+	t.Setenv("FALLBACK_URL", srv.URL+"/v1")
+	t.Setenv("FALLBACK_CHAT_MODEL", "stub")
+	t.Setenv("FALLBACK_KEY", "k")
+	llm.MarkPrimaryDown("outage test")
+	t.Cleanup(llm.MarkPrimaryUp)
+
+	cfg := llm.Config{BaseURL: "http://127.0.0.1:1/v1", APIKey: "test", ChatModel: "primary"}
+	return &StanceManager{storer: storer, client: cfg.NewClient("outage-test")}, o
+}
+
+// answers is the stub's happy path; a test overrides the prompt kind that
+// goes unavailable with nil.
+func answers(overrides map[string]any) func(string) any {
+	return func(prompt string) any {
+		for kind, out := range overrides {
+			if strings.Contains(prompt, kind) {
+				return out
+			}
+		}
+		switch {
+		case strings.Contains(prompt, topicPrompt):
+			return map[string]any{"reasoning": "stub", "assigned_topic_index": 1, "new_topic_label": ""}
+		case strings.Contains(prompt, analyzePrompt):
+			return map[string]any{"reasoning": "stub", "primary_verdict": "CONTRADICTION",
+				"contradictions": []map[string]any{{"key_fact_id": 10, "reason": "62 vs 64"}}}
+		case strings.Contains(prompt, verifyPrompt):
+			return "REASON: real reversal.\nVERDICT: YES"
+		default:
+			return map[string]string{"label": "retraites", "summary": "refreshed"}
+		}
+	}
+}
+
+// pensionStorer holds person 1's stance 1 with one key fact (10).
+func pensionStorer() *mockStanceStorer {
+	m := newMockStanceStorer()
+	m.stances[1] = StanceDocument{ID: 1, PersonID: 1, ClusterLabel: "retraites", Summary: "âge de départ", ClusterEmbedding: []float32{1, 0}, KeyFactIDs: []int64{10}, FactCount: 1}
+	m.facts[1] = []StanceFactInfo{{ID: 10, NormalizedFactText: "veut la retraite à 62 ans"}}
+	m.nextID = 2
+	return m
+}
+
+// TestProcessNewFact_UnavailableLLMWritesNothing: when the LLM goes away
+// during the analysis or its verification, ProcessNewFact fails with
+// ErrUnavailable and writes nothing — the fact is not linked to the stance
+// (so its (person, fact) pair stays pending) and no contradiction is
+// recorded. The control case proves the same flow links and records once
+// every call succeeds.
+func TestProcessNewFact_UnavailableLLMWritesNothing(t *testing.T) {
+	for _, down := range []string{analyzePrompt, verifyPrompt} {
+		t.Run("unavailable at "+down, func(t *testing.T) {
+			storer := pensionStorer()
+			sm, _ := newOutageManager(t, storer, answers(map[string]any{down: nil}))
+			_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+			if !errors.Is(err, llm.ErrUnavailable) {
+				t.Fatalf("err = %v, want ErrUnavailable", err)
+			}
+			if got := storer.facts[1]; len(got) != 1 || got[0].ID != 10 {
+				t.Errorf("stance 1 facts = %+v, want only fact 10: the failed fact must stay pending", got)
+			}
+			if len(storer.contradictions) != 0 || storer.stances[1].FactCount != 1 {
+				t.Errorf("nothing may be recorded: contradictions=%v fact_count=%d", storer.contradictions, storer.stances[1].FactCount)
+			}
+		})
+	}
+
+	t.Run("control: every call succeeds", func(t *testing.T) {
+		storer := pensionStorer()
+		sm, _ := newOutageManager(t, storer, answers(nil))
+		res, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Verdict != "CONTRADICTION" || len(storer.contradictions) != 1 || len(storer.facts[1]) != 2 {
+			t.Fatalf("verdict=%s contradictions=%v facts=%+v", res.Verdict, storer.contradictions, storer.facts[1])
+		}
+	})
+}
+
+// fanoutStorer lists person 1 with two orphan facts.
+type fanoutStorer struct{}
+
+func (fanoutStorer) ListPersonsWithOrphanFacts(context.Context) ([]PersonRecord, error) {
+	return []PersonRecord{{ID: 1, Name: "p"}}, nil
+}
+
+func (fanoutStorer) ListOrphanFactsForPerson(context.Context, int64) ([]StanceRoutingFact, error) {
+	return []StanceRoutingFact{
+		{ID: 20, FactText: "veut la retraite à 64 ans", Embedding: []float32{1, 0}},
+		{ID: 21, FactText: "veut la retraite à 65 ans", Embedding: []float32{1, 0}},
+	}, nil
+}
+
+func (fanoutStorer) CountPendingStanceRoutings(context.Context) (int, error) { return 0, nil }
+
+// TestStanceFanout_StopsAtUnavailableLLM: the fan-out stops at the first
+// routing the LLM could not serve, returns ErrUnavailable, leaves that fact
+// unlinked (pending) and does not walk the remaining facts or rebundle.
+func TestStanceFanout_StopsAtUnavailableLLM(t *testing.T) {
+	storer := pensionStorer()
+	sm, o := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: nil}))
+	rebundled := false
+	rebundle := func(context.Context, PersonRecord) (int64, int64, int64) { rebundled = true; return 0, 0, 0 }
+
+	err := RunStanceFanout(context.Background(), fanoutStorer{}, sm, rebundle, 10)
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if n := o.count(topicPrompt); n != 1 {
+		t.Errorf("topic assignments = %d, want 1: fact 21 must not be routed after the outage", n)
+	}
+	if len(storer.facts[1]) != 1 || rebundled {
+		t.Errorf("facts=%+v rebundled=%v: nothing may be written after the outage", storer.facts[1], rebundled)
+	}
+}
+
+// TestApplyMergeSubgroup_AnalysisBeforeMerge: the post-merge analysis runs
+// before the merge commits, so an LLM outage during it leaves both stances
+// unmerged (the subgroup is proposed again next sweep) instead of deleting
+// the source with its facts' cross-stance check lost. Any other analysis
+// failure does not block the merge: that fact is merged unchecked and
+// counted. An outage at the final label refresh is returned with the
+// committed merge's counts.
+func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
+	newStorer := func() *reassignStorer {
+		m := pensionStorer()
+		m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+		m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+		return &reassignStorer{mockStanceStorer: m}
+	}
+	sub := MergeSubgroup{StanceIDs: []int64{1, 2}, Label: "retraites", Summary: "âge de départ"}
+
+	t.Run("unavailable", func(t *testing.T) {
+		storer := newStorer()
+		sm, _ := newOutageManager(t, storer, answers(map[string]any{verifyPrompt: nil}))
+		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		if !errors.Is(err, llm.ErrUnavailable) {
+			t.Fatalf("err = %v, want ErrUnavailable", err)
+		}
+		if merged != 0 || n != 0 || len(storer.merges) != 0 || len(storer.contradictions) != 0 {
+			t.Errorf("merged=%d contradictions=%d merges=%v: nothing may be merged or recorded", merged, n, storer.merges)
+		}
+	})
+
+	t.Run("analysis rejected", func(t *testing.T) {
+		storer := newStorer()
+		sm, _ := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: "not json"}))
+		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+		merged, n, failures, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if merged != 1 || n != 0 || failures != 1 || len(storer.contradictions) != 0 {
+			t.Errorf("merged=%d contradictions=%d failures=%d: the merge must go on with the fact unchecked", merged, n, failures)
+		}
+	})
+
+	t.Run("refresh unavailable", func(t *testing.T) {
+		storer := newStorer()
+		judged := answers(nil)
+		sm, _ := newOutageManager(t, storer, func(prompt string) any {
+			for _, kind := range []string{topicPrompt, analyzePrompt, verifyPrompt} {
+				if strings.Contains(prompt, kind) {
+					return judged(prompt)
+				}
+			}
+			return nil // the label + summary refresh
+		})
+		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		if !errors.Is(err, llm.ErrUnavailable) {
+			t.Fatalf("err = %v, want ErrUnavailable", err)
+		}
+		if merged != 1 || n != 1 || len(storer.merges) != 1 {
+			t.Errorf("merged=%d contradictions=%d merges=%v: the committed merge is reported", merged, n, storer.merges)
+		}
+	})
+
+	t.Run("control", func(t *testing.T) {
+		storer := newStorer()
+		sm, _ := newOutageManager(t, storer, answers(nil))
+		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+		merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if merged != 1 || n != 1 || len(storer.contradictions) != 1 {
+			t.Errorf("merged=%d contradictions=%d recorded=%v", merged, n, storer.contradictions)
+		}
+	})
+}
+
+// failingMergeStorer fails the merge of one source stance.
+type failingMergeStorer struct {
+	*reassignStorer
+	failSrc int64
+}
+
+func (f *failingMergeStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID int64, newDstCentroid []float32) error {
+	if srcID == f.failSrc {
+		return errors.New("merge failed")
+	}
+	return f.reassignStorer.MergeStancesForPerson(ctx, srcID, dstID, newDstCentroid)
+}
+
+// TestApplyMergeSubgroup_RecordsOnlyWithinMergedStance: when one source's
+// merge fails, no contradiction is recorded for its facts, nor between a
+// merged fact and one of its facts: only pairs now inside dst.
+func TestApplyMergeSubgroup_RecordsOnlyWithinMergedStance(t *testing.T) {
+	m := pensionStorer()
+	m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+	m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+	m.stances[3] = StanceDocument{ID: 3, PersonID: 1, ClusterLabel: "report de l'âge légal", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+	m.facts[3] = []StanceFactInfo{{ID: 30, NormalizedFactText: "veut la retraite à 65 ans"}}
+	storer := &failingMergeStorer{reassignStorer: &reassignStorer{mockStanceStorer: m}, failSrc: 3}
+
+	// Every analysis claims a contradiction with facts 10, 20 and 30.
+	sm, _ := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: map[string]any{
+		"reasoning": "stub", "primary_verdict": "CONTRADICTION",
+		"contradictions": []map[string]any{{"key_fact_id": 10, "reason": "a"}, {"key_fact_id": 20, "reason": "b"}, {"key_fact_id": 30, "reason": "c"}},
+	}}))
+	byID := map[int64]StanceDocument{1: m.stances[1], 2: m.stances[2], 3: m.stances[3]}
+	sub := MergeSubgroup{StanceIDs: []int64{1, 2, 3}, Label: "retraites", Summary: "âge de départ"}
+	merged, n, _, err := applyMergeSubgroup(context.Background(), storer, sm, 1, byID, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged != 1 || n != 1 {
+		t.Fatalf("merged=%d contradictions=%d, want 1 and 1", merged, n)
+	}
+	if c := m.contradictions[0]; c.factAID != 20 || c.factBID != 10 {
+		t.Errorf("recorded %+v, want only the pair (20, 10) inside dst", m.contradictions)
+	}
+}
+
+// TestProcessNewFact_RefreshUnavailableKeepsTheLink: an LLM outage at the
+// label + summary refresh comes after the fact was committed to its stance
+// (membership, contradictions): ProcessNewFact returns the outage marked
+// ErrStanceRefreshPending, the link stays, and the fact stays pending for
+// the stance's next refresh.
+func TestProcessNewFact_RefreshUnavailableKeepsTheLink(t *testing.T) {
+	storer := pensionStorer()
+	judged := answers(nil)
+	sm, _ := newOutageManager(t, storer, func(prompt string) any {
+		for _, kind := range []string{topicPrompt, analyzePrompt, verifyPrompt} {
+			if strings.Contains(prompt, kind) {
+				return judged(prompt)
+			}
+		}
+		return nil // the label + summary refresh
+	})
+	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+	if !errors.Is(err, llm.ErrUnavailable) || !errors.Is(err, ErrStanceRefreshPending) {
+		t.Fatalf("err = %v, want ErrUnavailable marked ErrStanceRefreshPending", err)
+	}
+	if len(storer.facts[1]) != 2 || len(storer.contradictions) != 1 {
+		t.Errorf("facts=%+v contradictions=%v: the committed link and contradiction stay", storer.facts[1], storer.contradictions)
+	}
+	if storer.stances[1].Summary != "âge de départ" {
+		t.Errorf("summary = %q, want the previous one until the next refresh", storer.stances[1].Summary)
+	}
+}
+
+// stanceErrProcessor fails every routing with err.
+type stanceErrProcessor struct{ err error }
+
+func (p stanceErrProcessor) ProcessNewFact(context.Context, int64, int64, string, []float32, string) (*StanceProcessResult, error) {
+	return nil, p.err
+}
+
+// TestInsertFacts_KeepsFactLinkedBeforeRefreshOutage: a routing failure rolls
+// the fact back, except when the fact is already in its stance and only the
+// refresh is pending; either way the error reaches the caller.
+func TestInsertFacts_KeepsFactLinkedBeforeRefreshOutage(t *testing.T) {
+	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page"}
+	for name, tc := range map[string]struct {
+		err         error
+		wantDeleted int
+	}{
+		"refresh pending": {fmt.Errorf("%w: stance 1: %w", ErrStanceRefreshPending, llm.ErrUnavailable), 0},
+		"routing failed":  {fmt.Errorf("analyze: %w", llm.ErrUnavailable), 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &fakeInserterStorer{}
+			_, err := NewFactInserter(st, stanceErrProcessor{tc.err}).InsertFacts(context.Background(), []StoreFactInput{input})
+			if !errors.Is(err, llm.ErrUnavailable) {
+				t.Fatalf("err = %v, want ErrUnavailable", err)
+			}
+			if st.deleted != tc.wantDeleted {
+				t.Errorf("deleted %d facts, want %d", st.deleted, tc.wantDeleted)
+			}
+		})
+	}
+}
+
+// TestProcessNewFact_LabelPassUnavailable: for a person with more stances
+// than the embedding shortlist holds, an LLM outage in the topic label pass
+// fails the routing instead of assigning on the shortlist alone, and writes
+// nothing.
+func TestProcessNewFact_LabelPassUnavailable(t *testing.T) {
+	storer := pensionStorer()
+	for id := int64(2); id <= shortlistTopK+1; id++ {
+		storer.stances[id] = StanceDocument{ID: id, PersonID: 1, ClusterLabel: fmt.Sprintf("sujet %d", id), ClusterEmbedding: []float32{0, 1}, FactCount: 1}
+	}
+	storer.nextID = shortlistTopK + 2
+	sm, o := newOutageManager(t, storer, answers(map[string]any{"(labels only)": nil}))
+	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if n := o.count("decide which topic the fact belongs to"); n != 0 {
+		t.Errorf("assignment calls = %d, want 0 after the label pass outage", n)
+	}
+	if len(storer.stances) != shortlistTopK+1 || len(storer.facts[1]) != 1 {
+		t.Errorf("stances=%d facts=%+v: nothing may be written", len(storer.stances), storer.facts[1])
+	}
+}

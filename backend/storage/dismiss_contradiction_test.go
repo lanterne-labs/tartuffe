@@ -82,6 +82,29 @@ func TestDismissContradictionAsFalsePositive(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, checked, fmt.Sprintf("%d-%d", a, b), "detector should see the pair as already checked")
 
+	// 3b. The nightly re-judge of stale negatives leaves a dismissed pair
+	//     alone: its NO comes from the auditor, not the detector's rulebook.
+	deleted, stale, err := storer.EvictStaleJudgedPairs(ctx, "current-rulebook", 1500)
+	require.NoError(t, err)
+	assert.Equal(t, 0, deleted, "a dismissed pair must not be re-opened")
+	assert.Equal(t, 0, stale, "a dismissed pair is not a stale verdict")
+	checked, err = storer.GetCheckedPairs(ctx, personID)
+	require.NoError(t, err)
+	assert.Contains(t, checked, fmt.Sprintf("%d-%d", a, b), "the dismissal must survive the re-judge eviction")
+
+	// 3c. A detector verdict recorded on the pair later is the detector's
+	//     again: the dismissal flag is cleared, so a later rulebook change
+	//     re-judges it like any other negative.
+	require.NoError(t, storer.RecordPairChecksBatch(ctx, personID, "old-rulebook", []PairCheckResult{{FactAID: b, FactBID: a}}))
+	var dismissed bool
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`SELECT dismissed FROM fact_pair_checks WHERE person_id=$1 AND fact_a_id=$2 AND fact_b_id=$3`,
+		personID, a, b).Scan(&dismissed))
+	assert.False(t, dismissed, "a re-judged pair is no longer a dismissal")
+	_, stale, err = storer.EvictStaleJudgedPairs(ctx, "current-rulebook", 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stale, "the re-judged negative is stale under a new rulebook")
+
 	// 4. Honesty score recovered (no contradictions left).
 	var scoreAfter float64
 	require.NoError(t, storer.pool.QueryRow(ctx,

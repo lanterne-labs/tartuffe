@@ -7,6 +7,7 @@ import (
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/util"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,15 +30,29 @@ type Store struct{ pool *pgxpool.Pool }
 // NewStore binds a plugin store to the shared connection pool.
 func NewStore(s *storage.PostgresStorer) *Store { return &Store{pool: s.Pool()} }
 
-// IsLawFullyProcessed checks if a law has been completely processed (all facts stored).
-func (s *Store) IsLawFullyProcessed(ctx context.Context, lawKey string) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM processed_laws WHERE law_key = $1)`
-	var exists bool
-	err := s.pool.QueryRow(ctx, query, lawKey).Scan(&exists)
+// SettledLawKeys returns which of keys are settled: fully processed (all
+// facts stored) or skipped for a verdict on the law itself whose skip_reason
+// is one of skipReasons ('keyword_match', 'low_ai_confidence'); a run with a
+// filter disabled leaves that filter's verdicts out. Settled laws never
+// re-enter a run.
+func (s *Store) SettledLawKeys(ctx context.Context, keys, skipReasons []string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT law_key FROM processed_laws WHERE law_key = ANY($1)
+		UNION
+		SELECT law_key FROM skipped_laws WHERE law_key = ANY($1) AND skip_reason = ANY($2)`, keys, skipReasons)
 	if err != nil {
-		return false, fmt.Errorf("failed to check if law %s is processed: %w", lawKey, err)
+		return nil, fmt.Errorf("failed to load settled laws: %w", err)
 	}
-	return exists, nil
+	defer rows.Close()
+	settled := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("failed to scan settled law: %w", err)
+		}
+		settled[key] = true
+	}
+	return settled, rows.Err()
 }
 
 // MarkLawAsProcessed records that a law has been fully processed (all facts stored).
@@ -57,27 +72,42 @@ func (s *Store) MarkLawAsProcessed(ctx context.Context, lawKey string, legislatu
 	return nil
 }
 
-// StoredLawFactTexts returns the texts of the facts already stored for a law.
-// A law whose store failed part-way resumes from them: every ballot is its
-// own fact with a text unique to its voter, and each insert is atomic, so
-// the ballots already stored are skipped rather than deleted and redone.
-func (s *Store) StoredLawFactTexts(ctx context.Context, lawKey string) (map[string]bool, error) {
+// StoredLawSubjects returns which of subjects already have a ballot stored
+// for a law. A law whose store failed part-way resumes after them: every
+// ballot is its own fact, one per voter (deputy or party), and each insert is
+// atomic, so the ballots already stored are skipped rather than deleted and
+// redone. The key is the voter, not the fact text: the text embeds the LLM
+// summary of the law, which a retry regenerates differently. A subject is
+// matched the way the inserter resolves it to a person
+// (util.NormalizePersonName, then the accent- and case-folded name).
+func (s *Store) StoredLawSubjects(ctx context.Context, lawKey string, subjects []string) (map[string]bool, error) {
+	normalized := make([]string, len(subjects))
+	for i, name := range subjects {
+		normalized[i] = util.NormalizePersonName(name)
+	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT f.fact_text
-		FROM facts f
-		JOIN fact_sources fs ON fs.fact_id = f.id
-		WHERE fs.source_type = 'assemblee_law_page' AND fs.metadata->>'law_key' = $1`, lawKey)
+		WITH stored AS (
+			SELECT DISTINCT lower(immutable_unaccent(p.name)) AS name
+			FROM fact_sources fs
+			JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			JOIN persons p ON p.id = fm.person_id
+			WHERE fs.source_type = 'assemblee_law_page' AND fs.metadata->>'law_key' = $1
+		)
+		SELECT n.idx
+		FROM unnest($2::text[]) WITH ORDINALITY AS n(name, idx)
+		JOIN stored ON stored.name = lower(immutable_unaccent(n.name))`,
+		lawKey, normalized)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load stored facts for law %s: %w", lawKey, err)
+		return nil, fmt.Errorf("failed to load stored ballots for law %s: %w", lawKey, err)
 	}
 	defer rows.Close()
 	stored := make(map[string]bool)
 	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
-			return nil, fmt.Errorf("failed to scan stored fact for law %s: %w", lawKey, err)
+		var idx int
+		if err := rows.Scan(&idx); err != nil {
+			return nil, fmt.Errorf("failed to scan stored ballot for law %s: %w", lawKey, err)
 		}
-		stored[text] = true
+		stored[subjects[idx-1]] = true
 	}
 	return stored, rows.Err()
 }

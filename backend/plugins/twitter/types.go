@@ -47,6 +47,11 @@ type Options struct {
 	DateFrom *time.Time
 	// DateTo is the explicit end of the date range.
 	DateTo *time.Time
+
+	// skipLeftovers leaves the unfinished tweets to the caller when the fetch
+	// brings nothing new: the windowed collection extracts them once for the
+	// handle, not once per window.
+	skipLeftovers bool
 }
 
 // Result contains the outcome of a twitter collection for a single handle.
@@ -61,6 +66,10 @@ type Result struct {
 	SkippedRetweets            int
 	SkippedAlreadyFetchedRange bool
 	Errors                     []error
+
+	// storedExtracted records that the person's unfinished tweets went
+	// through extraction during this invocation.
+	storedExtracted bool
 }
 
 // aggregateResult adds the counters from src into dst.

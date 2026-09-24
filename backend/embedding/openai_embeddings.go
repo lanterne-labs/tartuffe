@@ -318,49 +318,35 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 	// When the shared primary breaker is open (home box known-down), skip the
 	// primary attempt entirely — chat and embeddings live on the same box.
 	var bodyBytes []byte
-	var status int
 	if m.fallbackURL != "" && llm.PrimaryDown() {
-		status = http.StatusServiceUnavailable
 		err = fmt.Errorf("primary embeddings endpoint skipped: circuit breaker open")
 	} else {
+		var status int
 		bodyBytes, status, err = m.sendEmbedOnce(ctx, m.apiURL, m.apiKey, m.cfHeaders, payloadBytes)
-		if err == nil && status == http.StatusOK {
+		err = embedStatusError(bodyBytes, status, err)
+		if err == nil {
 			llm.MarkPrimaryUp()
-		} else if ctx.Err() == nil && m.fallbackURL != "" && (status < 400 || status >= 500) {
-			// A 4xx is this request's problem, not the box's — see
-			// llm.isEndpointOutage. Don't take the primary down for it.
-			llm.MarkPrimaryDown(fmt.Sprintf("embeddings: status=%d err=%v", status, err))
+		} else if ctx.Err() == nil && m.fallbackURL != "" && llm.IsEndpointOutage(err) {
+			// A 4xx is this request's problem, not the box's. Don't take the
+			// primary down for it.
+			llm.MarkPrimaryDown("embeddings: " + err.Error())
 		}
 	}
-	if (err != nil || status != http.StatusOK) && ctx.Err() == nil && m.fallbackURL != "" {
-		log.Warn().Err(err).Int("status_code", status).Str("fallback_url", m.fallbackURL).Msg("primary embeddings endpoint failed, trying fallback")
-		if fbBody, fbStatus, fbErr := m.sendEmbedOnce(ctx, m.fallbackURL, m.fallbackKey, nil, payloadBytes); fbErr == nil {
-			bodyBytes, status, err = fbBody, fbStatus, nil
+	if err != nil && ctx.Err() == nil {
+		var fbErr error
+		if m.fallbackURL != "" {
+			log.Warn().Err(err).Str("fallback_url", m.fallbackURL).Msg("primary embeddings endpoint failed, trying fallback")
+			fbBody, fbStatus, sendErr := m.sendEmbedOnce(ctx, m.fallbackURL, m.fallbackKey, nil, payloadBytes)
+			if fbErr = embedStatusError(fbBody, fbStatus, sendErr); fbErr == nil {
+				bodyBytes, err = fbBody, nil
+			}
+		}
+		if err != nil {
+			err = llm.FailedCallError(err, fbErr)
 		}
 	}
 	if err != nil {
-		timer.ObserveDuration(err)
-		return nil, err
-	}
-
-	// Check final status code (after retries and any failover)
-	if status != http.StatusOK {
-		bodyStr := string(bodyBytes)
-		maxLen := 250
-		if len(bodyStr) > maxLen {
-			bodyStr = bodyStr[:maxLen] + "... (truncated)"
-		}
-		// Try to parse structured error first
-		var embResp embedResponse
-		if parseErr := json.Unmarshal(bodyBytes, &embResp); parseErr == nil && embResp.Error != nil {
-			log.Error().Int("status_code", status).Str("api_error_code", embResp.Error.Code).Str("api_error_type", embResp.Error.Type).Str("api_error_message", embResp.Error.Message).Msg("Embeddings API returned error after retries")
-			err := fmt.Errorf("embeddings API returned error after retries: [%s] %s - %s (HTTP status %d)", embResp.Error.Code, embResp.Error.Type, embResp.Error.Message, status)
-			timer.ObserveDuration(err)
-			return nil, err
-		}
-		// Log generic error if specific one couldn't be parsed
-		log.Error().Int("status_code", status).Str("response_body_snippet", bodyStr).Msg("Embeddings API request failed after retries")
-		err := fmt.Errorf("embeddings API request failed with status %d after retries", status)
+		log.Error().Err(err).Msg("Embeddings request failed")
 		timer.ObserveDuration(err)
 		return nil, err
 	}
@@ -411,6 +397,31 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 	timer.ObserveDuration(nil)
 	log.Debug().Int("input_count", len(texts)).Int("output_count", len(results)).Msg("Generated embeddings batch")
 	return results, nil
+}
+
+// embedStatusError turns one endpoint's embeddings response into the error it
+// stands for, nil on HTTP 200. A 4xx other than 429 is a *llm.ClientError (this
+// request was rejected), so llm.IsEndpointOutage and llm.FailedCallError
+// classify it the same way as a chat call; 429 and 5xx left after the retries
+// speak for the endpoint.
+func embedStatusError(body []byte, status int, sendErr error) error {
+	if sendErr != nil {
+		return sendErr
+	}
+	if status == http.StatusOK {
+		return nil
+	}
+	detail := string(body)
+	var embResp embedResponse
+	if json.Unmarshal(body, &embResp) == nil && embResp.Error != nil {
+		detail = fmt.Sprintf("[%s] %s - %s", embResp.Error.Code, embResp.Error.Type, embResp.Error.Message)
+	} else if len(detail) > 250 {
+		detail = detail[:250] + "... (truncated)"
+	}
+	if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
+		return &llm.ClientError{StatusCode: status, Status: http.StatusText(status), Body: detail}
+	}
+	return fmt.Errorf("embeddings API request failed with status %d after retries: %s", status, detail)
 }
 
 // backoffWait sleeps for the current backoff with +/- maxJitter of jitter and

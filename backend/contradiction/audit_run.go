@@ -2,9 +2,11 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
+	"errors"
 	"fmt"
 	"time"
 
@@ -24,10 +26,12 @@ type AuditOptions struct {
 	Random bool
 	// Scope is a human-readable label for the log line ("all persons", "Marine Le Pen", etc.).
 	Scope string
-	// RecordMetric — when true, a job_metrics row is inserted after the audit
-	// completes (job_type="contradiction-audit"). The daily pipeline gate
-	// reads this timestamp to decide whether enough time has passed since the
-	// last run; CLI invocations leave it false.
+	// RecordMetric — when true, a job_metrics row is inserted after an audit
+	// that judged its rows (job_type="contradiction-audit"). The daily
+	// pipeline gate reads this timestamp to decide whether enough time has
+	// passed since the last run; CLI invocations leave it false. An audit
+	// stopped by an unavailable LLM, or whose every verdict failed, records
+	// nothing, so the next run audits again.
 	RecordMetric bool
 	// Apply — when true, a verdict=remove triggers a confirming SECOND auditor
 	// pass and, on a 2-of-2 remove, the contradiction is DELETED (via
@@ -92,6 +96,10 @@ type AuditRunResult struct {
 // per-verdict Prometheus counters. Without Apply it deletes nothing — when
 // the auditor flags a row as a false positive (VerdictRemove), the ID lands
 // in result.RemoveIDs so a downstream caller can act.
+//
+// The run stops at the first call the LLM could not serve and returns an
+// error wrapping llm.ErrUnavailable; a run where every verdict failed returns
+// an error too. Neither records the job metric (see AuditOptions.RecordMetric).
 func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOptions) (*AuditRunResult, error) {
 	rows, err := storer.ListContradictions(ctx, opts.PersonID, opts.Random, opts.Max)
 	if err != nil {
@@ -138,6 +146,7 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 	}
 
 	startedAt := time.Now()
+	var unavailable error
 	log.Info().
 		Int("total", len(rows)).
 		Bool("random", opts.Random).
@@ -162,6 +171,10 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 		}
 
 		auditResult := auditor.Audit(ctx, stmtA, stmtB, row.FactADate, row.FactBDate, row.Reason)
+		if errors.Is(auditResult.Err, llm.ErrUnavailable) {
+			unavailable = auditResult.Err
+			break
+		}
 
 		line := AuditRow{
 			ContradictionID: row.ID,
@@ -198,9 +211,6 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 						Msg("Failed to pin audit KEEP verdict (row will be re-judged next audit)")
 				}
 			case VerdictRemove:
-				result.Remove++
-				result.RemoveIDs = append(result.RemoveIDs, row.ID)
-				metrics.IncrementContradictionAudits("remove")
 				log.Warn().
 					Int64("contradiction_id", row.ID).
 					Str("person", row.PersonName).
@@ -212,16 +222,27 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 				// pass to independently reach remove on the SAME rule, plus the
 				// verifier's agreement. A verdict that flips under statement
 				// order or can't reproduce its own justification is treated as
-				// confabulation and kept.
+				// confabulation and kept. A row whose check the LLM could not
+				// serve is not counted: the audit stops and re-judges it next
+				// time.
 				if opts.Apply {
-					line.Deleted = applyAuditRemoval(ctx, storer, auditor, verifier, row, stmtA, stmtB, auditResult.Rule, result)
+					line.Deleted, unavailable = applyAuditRemoval(ctx, storer, auditor, verifier, row, stmtA, stmtB, auditResult.Rule, result)
+					if unavailable != nil {
+						break
+					}
 				}
+				result.Remove++
+				result.RemoveIDs = append(result.RemoveIDs, row.ID)
+				metrics.IncrementContradictionAudits("remove")
 			case VerdictAmbiguous:
 				result.Ambiguous++
 				metrics.IncrementContradictionAudits("ambiguous")
 			}
 		}
 
+		if unavailable != nil {
+			break
+		}
 		if opts.OnRow != nil {
 			if err := opts.OnRow(line); err != nil {
 				return result, err
@@ -241,6 +262,13 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 	}
 
 	result.Elapsed = time.Since(startedAt)
+
+	if unavailable != nil {
+		return result, fmt.Errorf("contradiction audit stopped, next run audits again: %w", unavailable)
+	}
+	if toJudge := result.Total - result.Cached; toJudge > 0 && result.Errors == toJudge {
+		return result, fmt.Errorf("contradiction audit: every verdict failed (%d rows)", toJudge)
+	}
 
 	if opts.RecordMetric {
 		recordAuditJobMetrics(ctx, storer, result)
@@ -278,7 +306,8 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 // fifth. On all three agreeing it dismisses the contradiction (delete + negative
 // pair check + score recompute). Any disagreement or error keeps the row
 // (counted as unstable). Mutates result.Deleted / result.Unstable; returns true
-// iff deleted.
+// iff deleted. The error is non-nil only when the LLM was unavailable (it
+// wraps llm.ErrUnavailable); the row is then kept and not counted.
 func applyAuditRemoval(
 	ctx context.Context,
 	storer *storage.PostgresStorer,
@@ -288,28 +317,30 @@ func applyAuditRemoval(
 	stmtA, stmtB promptrules.Statement,
 	firstRule string,
 	result *AuditRunResult,
-) bool {
+) (bool, error) {
 	// Signal 2: order-swapped auditor pass — same verdict AND same rule required.
 	confirm := auditor.Audit(ctx, stmtB, stmtA, row.FactBDate, row.FactADate, row.Reason)
 	switch {
+	case errors.Is(confirm.Err, llm.ErrUnavailable):
+		return false, confirm.Err
 	case confirm.Err != nil:
 		result.Unstable++
 		log.Warn().Err(confirm.Err).Int64("contradiction_id", row.ID).
 			Msg("Order-swapped audit pass errored; keeping row (not deleted)")
-		return false
+		return false, nil
 	case confirm.Verdict != VerdictRemove:
 		result.Unstable++
 		log.Info().Int64("contradiction_id", row.ID).Str("confirm_verdict", string(confirm.Verdict)).
 			Str("confirm_reasoning", confirm.Reasoning).
 			Msg("Order-swapped audit pass disagreed; row is unstable, NOT deleting")
-		return false
+		return false, nil
 	case confirm.Rule != firstRule:
 		result.Unstable++
 		log.Info().Int64("contradiction_id", row.ID).
 			Str("first_rule", firstRule).Str("confirm_rule", confirm.Rule).
 			Str("confirm_reasoning", confirm.Reasoning).
 			Msg("Order-swapped audit pass cited a DIFFERENT rule (confabulation signal); NOT deleting")
-		return false
+		return false, nil
 	}
 
 	// Signal 3: cross-judge veto. The verifier must ALSO refute it (verdict NO).
@@ -317,28 +348,30 @@ func applyAuditRemoval(
 	// mislabeled — do not delete.
 	survives, refutation, vErr := verifier.VerifyContradiction(ctx, stmtA, stmtB, row.Reason)
 	switch {
+	case errors.Is(vErr, llm.ErrUnavailable):
+		return false, vErr
 	case vErr != nil:
 		result.Unstable++
 		log.Warn().Err(vErr).Int64("contradiction_id", row.ID).
 			Msg("Verifier cross-check errored; keeping row (not deleted)")
-		return false
+		return false, nil
 	case survives:
 		result.Unstable++
 		log.Info().Int64("contradiction_id", row.ID).Str("verifier_reason", refutation).
 			Msg("Verifier cross-check KEPT the contradiction (veto); row is unstable, NOT deleting")
-		return false
+		return false, nil
 	}
 
 	if err := storer.DismissContradictionAsFalsePositive(ctx, row.ID); err != nil {
 		log.Error().Err(err).Int64("contradiction_id", row.ID).
 			Msg("Failed to dismiss contradiction as false positive")
-		return false
+		return false, nil
 	}
 	result.Deleted++
 	log.Warn().Int64("contradiction_id", row.ID).Str("person", row.PersonName).
 		Str("rule", firstRule).
 		Msg("Dismissed contradiction as false positive (both statement orders agree on the same rule + verifier)")
-	return true
+	return true, nil
 }
 
 // recordAuditJobMetrics persists per-verdict counts so the next pipeline tick

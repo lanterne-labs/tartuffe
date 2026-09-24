@@ -5,9 +5,11 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
 	"digital-mirror/backend/storage"
+	"errors"
 	"fmt"
 	"time"
 
@@ -444,16 +446,23 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	// stance-blind by design, so the judge is the authority). If the adjudicator
 	// confirms they are the same claim, we mark the pair a duplicate so it stops
 	// generating future pairs/contradictions. Nil = disabled (no LLM env).
-	dedupeJudge, err := core.NewFactDedupeAdjudicatorFromEnv()
-	if err != nil {
-		log.Warn().Err(err).Msg("Fact-dedupe adjudicator unavailable; contradiction-pass dedup disabled")
-		dedupeJudge = nil
+	var dedupeJudge sameClaimJudge
+	if adj, aErr := core.NewFactDedupeAdjudicatorFromEnv(); aErr != nil {
+		log.Warn().Err(aErr).Msg("Fact-dedupe adjudicator unavailable; contradiction-pass dedup disabled")
+	} else {
+		dedupeJudge = adj
 	}
 
 	totalContradictions := 0
 	totalPairsChecked := 0
+	// unavailable is set when the LLM went away: the run stops at that pair
+	// and every pair not yet recorded stays pending for the next run.
+	var unavailable error
 
 	for _, pp := range allPersonPairs {
+		if unavailable != nil {
+			break
+		}
 		personContradictions := 0
 		batchSize := MaxPairsPerBatchSync
 
@@ -483,38 +492,15 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 
 			var pairResults []storage.PairCheckResult
 			for j, result := range results {
-				if result.Error != nil {
-					log.Error().Err(result.Error).Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).Msg("Detector error")
+				d, dErr := decidePair(ctx, detector, dedupeJudge, pp.personName, batch[j], result, opts.DryRun)
+				if dErr != nil {
+					unavailable = dErr
+					break
+				}
+				if !d.decided {
 					continue
 				}
-
-				// Adversarial verification pass: refute each YES before recording.
-				// On verifier error we fall open (keep the contradiction) and log;
-				// on an explicit refutation we drop it and record the pair as
-				// checked-and-not-contradictory so it is not re-detected.
-				isContra := result.IsContradictory
-				// Skip verification when either fact text is empty (e.g. a fact was
-				// deleted mid-run) — we can't refute what we can't read, so keep
-				// the contradiction (fail-open), mirroring the stance path.
-				if isContra && batch[j].factAText != "" && batch[j].factBText != "" {
-					keep, refutation, vErr := detector.VerifyContradiction(ctx,
-						promptrules.Statement{Text: batch[j].factAText, Also: batch[j].alsoA},
-						promptrules.Statement{Text: batch[j].factBText, Also: batch[j].alsoB}, result.Reason)
-					if vErr != nil {
-						log.Warn().Err(vErr).
-							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-							Msg("Contradiction verification failed; keeping contradiction (fail-open)")
-					} else if !keep {
-						isContra = false
-						metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)
-						log.Info().
-							Str("person", pp.personName).
-							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-							Str("flagged_reason", result.Reason).
-							Str("refutation", refutation).
-							Msg("Contradiction refuted by verification pass; dropping")
-					}
-				}
+				isContra := d.contradiction
 
 				if opts.OnVerdict != nil {
 					reasoning := result.Reasoning
@@ -540,30 +526,17 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 					IsContradiction: isContra,
 				})
 
-				// Dedup net: the judge said NOT a contradiction, but if the two
-				// facts are near-identical they may be the same claim restated.
-				// Ask the adjudicator and, if so, mark the pair a duplicate so the
-				// redundant fact stops surfacing in future detection/dedup.
-				if !isContra && dedupeJudge != nil && !opts.DryRun &&
-					batch[j].similarity >= contradictionDedupSimFloor &&
-					batch[j].factAText != "" && batch[j].factBText != "" {
-					same, dErr := dedupeJudge.IsSameClaim(ctx, pp.personName, batch[j].factAText, batch[j].factBText)
-					if dErr != nil {
-						log.Warn().Err(dErr).
+				if d.sameClaim {
+					if gErr := groupSameClaim(ctx, storer, batch[j].factAID, batch[j].factBID); gErr != nil {
+						log.Error().Err(gErr).
 							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-							Msg("Contradiction-pass dedup adjudication failed")
-					} else if same {
-						if gErr := groupSameClaim(ctx, storer, batch[j].factAID, batch[j].factBID); gErr != nil {
-							log.Error().Err(gErr).
-								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-								Msg("Failed to group same-claim facts")
-						} else {
-							log.Info().
-								Str("person", pp.personName).
-								Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-								Float64("similarity", batch[j].similarity).
-								Msg("Grouped same-claim facts (contradiction-pass dedup)")
-						}
+							Msg("Failed to group same-claim facts")
+					} else {
+						log.Info().
+							Str("person", pp.personName).
+							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
+							Float64("similarity", batch[j].similarity).
+							Msg("Grouped same-claim facts (contradiction-pass dedup)")
 					}
 				}
 
@@ -585,11 +558,11 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 						} else {
 							log.Info().Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).Msg("Contradiction recorded and committed")
 							if needsBundler && bundler != nil {
-								if bErr := bundler.Resolve(ctx, pp.personID, contradictionID,
+								if bErr := resolveBundle(ctx, bundler, pp.personID, contradictionID,
 									batch[j].factAID, batch[j].factBID,
 									batch[j].factAText, batch[j].factBText, result.Reason); bErr != nil {
-									log.Warn().Err(bErr).Int64("contradiction_id", contradictionID).
-										Msg("Bundler resolution failed; row remains a solo bundle")
+									unavailable = bErr
+									break
 								}
 							}
 						}
@@ -601,6 +574,10 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 				if err := storer.RecordPairChecksBatch(ctx, pp.personID, JudgeRulebookHash(), pairResults); err != nil {
 					log.Error().Err(err).Str("person", pp.personName).Msg("Failed to record pair checks")
 				}
+			}
+
+			if unavailable != nil {
+				break
 			}
 
 			log.Debug().Int("batch_start", i).Int("batch_end", end).Int("total_pairs", len(pp.pairs)).Str("person", pp.personName).Msg("Batch processed")
@@ -625,5 +602,114 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		}
 	}
 
-	return DetectResult{PairsChecked: totalPairsChecked, Contradictions: totalContradictions}, nil
+	res := DetectResult{PairsChecked: totalPairsChecked, Contradictions: totalContradictions}
+	if unavailable != nil {
+		return res, fmt.Errorf("contradiction detection stopped: %w", unavailable)
+	}
+	return res, nil
+}
+
+// pairVerifier is the refutation pass run on each YES before it is recorded.
+type pairVerifier interface {
+	VerifyContradiction(ctx context.Context, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error)
+}
+
+// sameClaimJudge is the dedup net run on near-identical NOs.
+type sameClaimJudge interface {
+	IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error)
+}
+
+// pairDecision is what judgePairs records for one judged pair.
+type pairDecision struct {
+	// decided is false when nothing may be recorded: the pair stays pending
+	// and is judged again by the next run.
+	decided       bool
+	contradiction bool
+	// sameClaim asks for the two facts to be grouped as one claim.
+	sameClaim bool
+}
+
+// bundleResolver is the part of *Bundler the detection uses.
+type bundleResolver interface {
+	Resolve(ctx context.Context, personID, contradictionID, factAID, factBID int64, factAText, factBText, reason string) error
+}
+
+// resolveBundle runs the bundler on a newly recorded contradiction. A failure
+// leaves the row a solo bundle and is only logged, except an unavailable LLM
+// (llm.ErrUnavailable), which is returned so the run stops: the row stays solo
+// until the person's next rebundle (RebundlePerson, run by the stance
+// fan-out for persons with new facts).
+func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contradictionID, factAID, factBID int64, factAText, factBText, reason string) error {
+	err := bundler.Resolve(ctx, personID, contradictionID, factAID, factBID, factAText, factBText, reason)
+	if err == nil {
+		return nil
+	}
+	log.Warn().Err(err).Int64("contradiction_id", contradictionID).
+		Msg("Bundler resolution failed; row remains a solo bundle")
+	if errors.Is(err, llm.ErrUnavailable) {
+		return fmt.Errorf("bundling contradiction %d: %w", contradictionID, err)
+	}
+	return nil
+}
+
+// decidePair turns the detector's verdict on one pair into the decision to
+// record. A YES goes through the verifier; a NO between near-identical facts
+// through the dedup net (skipped in dry runs).
+//
+// No decision is made when the detector failed, when the LLM was unavailable
+// to the verifier or the dedup net, or when the dedup net failed otherwise: a
+// recorded NO is never judged again, so it would lose the same-claim grouping
+// for good. A verifier failure other than llm.ErrUnavailable keeps the YES
+// (fail-open, see OpenAIContradictionDetector.VerifyContradiction): the judge
+// found it, and a verifier that cannot answer must not silently drop it; the
+// auditor re-judges it later.
+//
+// The error is non-nil only when the LLM was unavailable (it wraps
+// llm.ErrUnavailable): the caller stops the run there.
+func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudge, person string, p pairInfo, r BatchResult, dryRun bool) (pairDecision, error) {
+	if r.Error != nil {
+		if errors.Is(r.Error, llm.ErrUnavailable) {
+			return pairDecision{}, r.Error
+		}
+		log.Error().Err(r.Error).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).Msg("Detector error")
+		return pairDecision{}, nil
+	}
+
+	d := pairDecision{decided: true, contradiction: r.IsContradictory}
+	// A pair whose fact text is empty (deleted mid-run) cannot be verified;
+	// the YES is kept, mirroring the stance path.
+	if d.contradiction && p.factAText != "" && p.factBText != "" {
+		keep, refutation, err := verifier.VerifyContradiction(ctx,
+			promptrules.Statement{Text: p.factAText, Also: p.alsoA},
+			promptrules.Statement{Text: p.factBText, Also: p.alsoB}, r.Reason)
+		switch {
+		case errors.Is(err, llm.ErrUnavailable):
+			return pairDecision{}, err
+		case err != nil:
+			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+		case !keep:
+			d.contradiction = false
+			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)
+			log.Info().Str("person", person).
+				Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+				Str("flagged_reason", r.Reason).Str("refutation", refutation).
+				Msg("Contradiction refuted by verification pass; dropping")
+		}
+	}
+
+	if !d.contradiction && dedupe != nil && !dryRun &&
+		p.similarity >= contradictionDedupSimFloor && p.factAText != "" && p.factBText != "" {
+		same, err := dedupe.IsSameClaim(ctx, person, p.factAText, p.factBText)
+		switch {
+		case errors.Is(err, llm.ErrUnavailable):
+			return pairDecision{}, err
+		case err != nil:
+			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+				Msg("Contradiction-pass dedup adjudication failed; pair left pending")
+			return pairDecision{}, nil
+		}
+		d.sameClaim = same
+	}
+	return d, nil
 }

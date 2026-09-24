@@ -207,7 +207,7 @@ func TestProcessDocuments_UnavailableLLMKeepsAttempts(t *testing.T) {
 	}
 	for run := 0; run < MaxExtractionAttempts+1; run++ {
 		st, err := ProcessDocuments(context.Background(), m, "t", 0, down, ProcessOptions{MaxConsecutiveFailures: 10})
-		if !errors.Is(err, ErrOutage) || st.Attempted != 10 || st.Pending != 30 {
+		if !errors.Is(err, ErrOutage) || !errors.Is(err, llm.ErrUnavailable) || st.Attempted != 10 || st.Pending != 30 {
 			t.Fatalf("run %d: stats=%+v err=%v, want the outage abort after 10 with all 30 pending", run+1, st, err)
 		}
 	}

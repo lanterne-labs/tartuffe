@@ -241,16 +241,29 @@ func AuditInputHash(factA, factB promptrules.Statement, dateA, dateB *time.Time,
 // the verdict by majority over JudgeVotes samples — the judge is not
 // deterministic even at temperature 0 (see JudgeVotes), and an eviction is
 // destructive, so a single unlucky sample must not delete a real contradiction.
+// When samples failed, a remove verdict must still hold a strict majority of
+// all AuditVotes: a plurality of the samples that answered is not enough to
+// delete a row. Such a result carries Err (no decision).
 func (a *OpenAIContradictionAuditor) Audit(ctx context.Context, factA, factB promptrules.Statement, dateA, dateB *time.Time, originalReason string) AuditResult {
+	removes, failed := 0, 0
 	res, err := llm.MajorityVote(AuditVotes,
 		func() (AuditResult, error) {
 			r := a.auditOnce(ctx, factA, factB, dateA, dateB, originalReason)
+			switch {
+			case r.Err != nil:
+				failed++
+			case r.Verdict == VerdictRemove:
+				removes++
+			}
 			return r, r.Err
 		},
 		func(r AuditResult) string { return string(r.Verdict) },
 	)
 	if err != nil && res.Err == nil {
 		res.Err = err
+	}
+	if res.Err == nil && res.Verdict == VerdictRemove && failed > 0 && removes <= AuditVotes/2 {
+		res.Err = fmt.Errorf("remove holds %d of %d votes (%d samples failed): below the full quorum", removes, AuditVotes, failed)
 	}
 	return res
 }

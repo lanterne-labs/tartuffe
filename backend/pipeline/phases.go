@@ -5,10 +5,12 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
 
 	"github.com/rs/zerolog/log"
@@ -55,7 +57,9 @@ type IngestResult struct {
 }
 
 // Ingest runs the ingest phase of every selected plugin that has one and
-// returns the stats plus the per-plugin errors.
+// returns the stats plus the per-plugin errors. Once a plugin fails because
+// the LLM is unavailable (llm.ErrUnavailable) the remaining plugins are not
+// started: their items would fail the same way.
 func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) (IngestResult, StepErrors, error) {
 	sel, err := selected(only)
 	if err != nil {
@@ -66,6 +70,10 @@ func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts pl
 	for _, p := range sel {
 		ing, ok := p.(plugins.Ingester)
 		if !ok {
+			continue
+		}
+		if llmDown(errs) {
+			log.Warn().Str("plugin", p.Name()).Msg("Pipeline: LLM unavailable; ingest not started")
 			continue
 		}
 		start := time.Now()
@@ -107,13 +115,22 @@ func ProducePairs(ctx context.Context, d *deps.Deps) (int, StepErrors) {
 	return total, errs
 }
 
-// Backfill runs the backfill phase of every plugin that has one, in
-// registration order, each bounded by the same deadline.
-func Backfill(ctx context.Context, d *deps.Deps, deadline time.Time) StepErrors {
+// Backfill runs the backfill phase of every selected plugin that has one, in
+// registration order, each bounded by the same deadline. Like Ingest, it
+// starts no further plugin once one failed because the LLM is unavailable.
+func Backfill(ctx context.Context, d *deps.Deps, deadline time.Time, only []string) StepErrors {
+	sel, err := selected(only)
+	if err != nil {
+		return StepErrors{"backfill": err}
+	}
 	errs := StepErrors{}
-	for _, p := range Plugins {
+	for _, p := range sel {
 		bf, ok := p.(plugins.Backfiller)
 		if !ok {
+			continue
+		}
+		if llmDown(errs) {
+			log.Warn().Str("plugin", p.Name()).Msg("Pipeline: LLM unavailable; backfill not started")
 			continue
 		}
 		if time.Now().After(deadline) {
@@ -128,4 +145,14 @@ func Backfill(ctx context.Context, d *deps.Deps, deadline time.Time) StepErrors 
 		log.Info().Str("plugin", p.Name()).Dur("elapsed", time.Since(start)).Msg("Pipeline: backfill done")
 	}
 	return errs
+}
+
+// llmDown reports whether one of errs says the LLM is unavailable.
+func llmDown(errs StepErrors) bool {
+	for _, err := range errs {
+		if errors.Is(err, llm.ErrUnavailable) {
+			return true
+		}
+	}
+	return false
 }

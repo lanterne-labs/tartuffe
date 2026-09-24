@@ -2,7 +2,11 @@ package entityvalidator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+
+	"digital-mirror/backend/llm"
 
 	"github.com/rs/zerolog/log"
 )
@@ -45,7 +49,12 @@ func New(filters ...Filter) *Validator {
 // same robustness extends to the call site: callers iterating many candidates
 // (a fact batch, the whole persons table) should keep going on Validate-level
 // failures by catching the typed error returned from the wiring layer.
-func (v *Validator) Validate(ctx context.Context, name, entityType string) Verdict {
+//
+// The exception is an unreachable LLM (llm.ErrUnavailable): the chain stops
+// and the error is returned with no verdict, so the default decision never
+// stands in for a judge that could not answer; the candidate is judged again
+// once the LLM is back.
+func (v *Validator) Validate(ctx context.Context, name, entityType string) (Verdict, error) {
 	cand := Candidate{
 		Name:       strings.TrimSpace(name),
 		EntityType: strings.ToLower(strings.TrimSpace(entityType)),
@@ -59,6 +68,9 @@ func (v *Validator) Validate(ctx context.Context, name, entityType string) Verdi
 			Result: res,
 			Err:    err,
 		})
+		if errors.Is(err, llm.ErrUnavailable) {
+			return Verdict{}, fmt.Errorf("entity validator filter %s: %w", f.Name(), err)
+		}
 		if err != nil {
 			log.Warn().
 				Err(err).
@@ -76,7 +88,7 @@ func (v *Validator) Validate(ctx context.Context, name, entityType string) Verdi
 			Filter:  f.Name(),
 			Reason:  res.Reason,
 			History: cand.Previous,
-		}
+		}, nil
 	}
 
 	return Verdict{
@@ -84,5 +96,5 @@ func (v *Validator) Validate(ctx context.Context, name, entityType string) Verdi
 		Filter:  "default",
 		Reason:  "no filter produced a non-Defer decision",
 		History: cand.Previous,
-	}
+	}, nil
 }
