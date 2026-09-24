@@ -127,17 +127,6 @@ func (d *Deps) StanceManager() (*core.StanceManager, error) {
 	return d.stanceManager, nil
 }
 
-// FactInserter returns a new inserter bound to the stance manager. Each caller
-// gets its own instance so feature toggles (LLM dedupe, meta folding) stay
-// local to that caller.
-func (d *Deps) FactInserter() (*core.FactInserter, error) {
-	sm, err := d.StanceManager()
-	if err != nil {
-		return nil, err
-	}
-	return core.NewFactInserter(d.Storer, sm), nil
-}
-
 // ContentExtractor is the web page scraper ("auto" provider chain wrapped in
 // the concurrent batch extractor).
 func (d *Deps) ContentExtractor() (extractor.ContentExtractor, error) {

@@ -201,8 +201,7 @@ func (p *Provider) extractStoredTweets(ctx context.Context, handle Handle, batch
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	factInserter := core.NewFactInserter(p.Storer, stanceMgr)
-	factInserter.EnableLLMDedupe()
-	factInserter.EnableFolding(p.Storer)
+	factInserter.EnableDedupe(p.Storer)
 
 	extract := func(ctx context.Context, batchDocs []core.SourceDocument) (map[int64]int, error) {
 		batch := make([]Tweet, len(batchDocs))

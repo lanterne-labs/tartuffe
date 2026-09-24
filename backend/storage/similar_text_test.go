@@ -92,9 +92,9 @@ func TestListTextSimilarFactPairs(t *testing.T) {
 }
 
 // GetFoldFactsForPerson returns the person's active facts with embeddings,
-// leaving out facts that mention another person too (shared co-actor facts
-// never fold) and facts already folded.
-func TestGetFoldFactsForPersonExcludesSharedAndFolded(t *testing.T) {
+// whoever else a fact mentions, leaving out facts already folded and facts
+// the person is not mentioned on.
+func TestGetFoldFactsForPersonExcludesFolded(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
@@ -120,15 +120,15 @@ func TestGetFoldFactsForPersonExcludesSharedAndFolded(t *testing.T) {
 		return id
 	}
 	own := insert("own fact", pid)
-	shared := insert("shared vote fact", pid, other)
+	alsoOther := insert("fact also mentioning another person", pid, other)
 	folded := insert("folded member", pid)
 	require.NoError(t, storer.MergeFactIntoGroup(ctx, folded, own))
 	insert("someone else's fact", other)
 
 	got, err := storer.GetFoldFactsForPerson(ctx, pid)
 	require.NoError(t, err)
-	require.Len(t, got, 1)
+	require.Len(t, got, 2)
 	require.Equal(t, own, got[0].ID)
+	require.Equal(t, alsoOther, got[1].ID)
 	require.Len(t, got[0].Embedding, len(makeUnitEmbedding(0)))
-	_ = shared
 }

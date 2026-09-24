@@ -33,15 +33,7 @@ func TestE2EWithSampleData(t *testing.T) {
 	defer storer.Close()
 
 	// 2. Clean Database
-	{
-		pool := storer.Pool()
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE contradictions RESTART IDENTITY CASCADE;")
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE fact_mentions RESTART IDENTITY CASCADE;")
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE fact_sources RESTART IDENTITY CASCADE;")
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE facts RESTART IDENTITY CASCADE;")
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE person_links RESTART IDENTITY CASCADE;")
-		_, _ = pool.Exec(ctx, "TRUNCATE TABLE persons RESTART IDENTITY CASCADE;")
-	}
+	cleanDatabase(t, storer.Pool())
 
 	t.Log("=== FRPOLITICS E2E TEST WITH SAMPLE DATA ===")
 
@@ -54,8 +46,8 @@ func TestE2EWithSampleData(t *testing.T) {
 	// Since we want to test with a specific local file, we'll use the Options to limit processing.
 
 	opts := Options{
-		MaxLaws:              10,        // Process more laws
-		MaxVotes:             5000,      // Process more votes
+		MaxLaws:              2, // each ballot is stance-routed at insert (~5 s): keep the sample small
+		MaxVotes:             100,
 		PartyThreshold:       0.7,       // Standard threshold
 		DisableKeywordFilter: true,      // Skip keyword filtering for tests
 		DisableAIFilter:      true,      // Skip AI confidence filtering for tests

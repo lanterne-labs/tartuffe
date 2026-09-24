@@ -80,50 +80,21 @@ func TestGetPersonIDsByAttribute(t *testing.T) {
 	assert.Empty(t, empty)
 }
 
-// TestGetPersonIDsByNames covers the batch name lookup: keyed by the names as
-// given, matched through the canonical person form like GetPersonIDByName,
-// unknown names absent.
-func TestGetPersonIDsByNames(t *testing.T) {
-	storer, teardown := setupTestDB(t)
-	defer teardown()
-	ctx := context.Background()
-
-	a, _, err := storer.AddPersonWithType(ctx, "éric ciotti", "human")
-	require.NoError(t, err)
-	b, _, err := storer.AddPersonWithType(ctx, "marine le pen", "human")
-	require.NoError(t, err)
-
-	got, err := storer.GetPersonIDsByNames(ctx, []string{"Éric Ciotti", "marine le pen", "nobody at all"})
-	require.NoError(t, err)
-	assert.Equal(t, map[string]int64{"Éric Ciotti": a, "marine le pen": b}, got)
-
-	single, err := storer.GetPersonIDByName(ctx, "Éric Ciotti")
-	require.NoError(t, err)
-	assert.Equal(t, single, got["Éric Ciotti"])
-
-	empty, err := storer.GetPersonIDsByNames(ctx, nil)
-	require.NoError(t, err)
-	assert.Empty(t, empty)
-}
-
-// TestFindSimilarActiveFactsCarriesVerbAndMentions pins the two per-candidate
-// lookups the inserter used to make: each hit carries its canonical verb and
-// the number of distinct persons mentioning it.
-func TestFindSimilarActiveFactsCarriesVerbAndMentions(t *testing.T) {
+// TestFindSimilarActiveFactsCarriesVerb pins the per-candidate lookup the
+// inserter used to make: each hit carries its canonical verb.
+func TestFindSimilarActiveFactsCarriesVerb(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
 	ctx := context.Background()
 
 	pid, _, err := storer.AddPersonWithType(ctx, "similar subject", "human")
 	require.NoError(t, err)
-	coActor, _, err := storer.AddPersonWithType(ctx, "similar co actor", "human")
-	require.NoError(t, err)
 
 	emb := makeUnitEmbedding(0)
 	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity: "similar subject", SubjectEntityType: "human", Lang: "fr",
 		NormalizedFactText: "a voté pour le texte", EmbeddingText: "vote texte",
-		Embedding: emb, CanonicalVerb: "VOTED_FOR", CoActorIDs: []int64{coActor},
+		Embedding: emb, CanonicalVerb: "VOTED_FOR",
 		SourceURL: "http://example.com/vote", SourceType: "assemblee_law_page",
 	})
 	require.NoError(t, err)
@@ -133,7 +104,6 @@ func TestFindSimilarActiveFactsCarriesVerbAndMentions(t *testing.T) {
 	require.Len(t, similar, 1)
 	assert.Equal(t, factID, similar[0].ID)
 	assert.Equal(t, "VOTED_FOR", similar[0].CanonicalVerb)
-	assert.Equal(t, 2, similar[0].MentionPersons, "subject + co-actor")
 }
 
 // TestGetNeighborPairsForPerson pins the one-statement candidate walk against

@@ -33,11 +33,8 @@ type SamePositionJudge interface {
 // *storage.PostgresStorer implements it.
 type FactFoldStorer interface {
 	GroupStorer
-	// GetFoldFactsForPerson returns the person's active (non-duplicate) facts
-	// that mention nobody else, with their embeddings. Shared (co-actor)
-	// facts never fold: marking one 'duplicate' is a GLOBAL flag, so folding
-	// a shared vote fact under this person's meta would remove it from every
-	// other voter's active-fact set (the insertion path has the same guard).
+	// GetFoldFactsForPerson returns the person's active (non-duplicate)
+	// facts with their embeddings.
 	GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error)
 	ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error)
 	// ListTextSimilarFactPairs returns the pairs among factIDs whose texts

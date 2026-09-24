@@ -51,12 +51,13 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			continue
 		}
 
-		factText := buildCollectiveVoteStatement(pos, objectPhrase)
+		factText := name + " " + buildCollectiveVoteStatement(pos, objectPhrase)
 		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
 		embeddingText := objectPhrase
 		log.Debug().Str("party", name).Float64("frac", majorityFrac).Str("text", factText).Msg("frpolitics: derived collective party fact")
 		facts = append(facts, FactRecord{
 			PersonName:    name,
+			EntityType:    "party",
 			FactText:      factText,
 			EmbeddingText: embeddingText, // Just the law topic, no action verb
 			CanonicalVerb: deriveCollectiveVerb(pos),

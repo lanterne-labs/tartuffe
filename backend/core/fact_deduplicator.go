@@ -445,3 +445,18 @@ func (d *FactDeduplicator) processUncertainPairs(ctx context.Context, pairs []un
 }
 
 // Helper functions for loading environment variables
+
+// isDirectClaimVerb returns true if the verb represents a direct claim or action
+// by the person (as opposed to an external attribution like a court ruling).
+// Duplicated from categorizer.IsDirectClaimVerb to avoid import cycle.
+func isDirectClaimVerb(verb string) bool {
+	switch verb {
+	case "DENIED", "CLAIMED", "PROMISED", "SUPPORTED",
+		"OPPOSED", "VOTED_FOR", "VOTED_AGAINST", "PROPOSED",
+		"CONFIRMED", "ADMITTED", "REFUSED", "DEMANDED",
+		"THREATENED", "ANNOUNCED", "CHANGED_POSITION":
+		return true
+	default:
+		return false
+	}
+}

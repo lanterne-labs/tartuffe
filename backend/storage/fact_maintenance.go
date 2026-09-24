@@ -49,10 +49,7 @@ func (s *PostgresStorer) RepointDuplicates(ctx context.Context, apply bool) (pro
 }
 
 // GetFoldFactsForPerson returns the person's active (non-duplicate) facts
-// that mention nobody else, with their embeddings, in the shape the fold pass
-// needs. Shared co-actor facts (votes) never fold — a fold flag is global —
-// so they are left out here rather than loaded with their 4096-dim
-// embeddings and dropped: a deputy has hundreds of them and nothing else.
+// with their embeddings, in the shape the fold pass needs.
 func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]core.FactForFold, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.fact_text, f.embedding
@@ -61,11 +58,6 @@ func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int
 		      SELECT 1 FROM fact_sources fs
 		      JOIN fact_mentions fm ON fm.fact_source_id = fs.id
 		      WHERE fs.fact_id = f.id AND fm.person_id = $1
-		  )
-		  AND NOT EXISTS (
-		      SELECT 1 FROM fact_sources fs
-		      JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-		      WHERE fs.fact_id = f.id AND fm.person_id <> $1
 		  )
 		  AND NOT EXISTS (
 		      SELECT 1 FROM fact_relations fr

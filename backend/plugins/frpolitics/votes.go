@@ -18,12 +18,14 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary, objectPh
 	// The action verb (voted FOR/AGAINST) is preserved in FactText for display + LLM comparison
 	embeddingText := objectPhrase
 	for _, ev := range events {
-		text := buildVoteStatement(ev.Position, objectPhrase)
+		// The text names its voter, like any fact: one fact row per ballot.
+		text := ev.DisplayName + " " + buildVoteStatement(ev.Position, objectPhrase)
 		if len(out) < 3 {
 			log.Debug().Str("deputy", ev.DisplayName).Str("text", text).Msg("frpolitics: derived deputy fact")
 		}
 		out = append(out, FactRecord{
 			PersonName:    ev.DisplayName,
+			EntityType:    "human",
 			FactText:      text,
 			EmbeddingText: embeddingText, // Just the law topic, no action verb
 			CanonicalVerb: deriveVerbFromPosition(ev.Position),

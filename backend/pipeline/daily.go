@@ -57,7 +57,7 @@ type RunOptions struct {
 //
 // Phases in order:
 //  1. ingest                    — every plugin (queue-scoped targets)
-//  2. stance fan-out            — shared facts into every co-actor's stances
+//  2. stance fan-out            — unrouted (person, fact) pairs into that person's stances
 //  3. stance merge sweep
 //  4. stale-verdict eviction + plugin pair production + contradiction detection
 //  5. duplicate repoint + contradiction regroup
@@ -128,10 +128,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		rebundle, rbErr := personRebundler(d)
 		fail("bundler", rbErr, "contradiction bundler unavailable")
 
-		// Phase 2: stance fan-out (mirror-py3). Shared vote facts are
-		// stance-routed only for their subject at insert time; this step routes
-		// them into each co-voter's own stance system (budgeted per night,
-		// derived pending set, self-terminating). Runs before the merge sweep
+		// Phase 2: stance fan-out (mirror-py3). Routes every (person, fact)
+		// mention pair missing from that person's stances into their own
+		// stance system (budgeted per night, derived pending set,
+		// self-terminating). Runs before the merge sweep
 		// so freshly created deputy stances get merged the same night, and
 		// before detection so stance-recorded contradictions land first.
 		if rebundle != nil {

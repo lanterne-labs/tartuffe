@@ -185,8 +185,8 @@ func resetEvalPersons(ctx context.Context, storer *storage.PostgresStorer, corpu
 
 // ingestCorpus inserts every fact one-by-one (so we can map each corpus ID
 // to its assigned DB fact ID). Returns the corpus_id → db_fact_id map.
-// Facts that get deduped during insertion produce a warning and are absent
-// from the map; downstream Evaluate handles missing mappings explicitly.
+// Facts the inserter skips (rejected subject, missing quote) produce a warning
+// and are absent from the map; downstream Evaluate handles missing mappings explicitly.
 func ingestCorpus(ctx context.Context, embedder embedding.EmbeddingGenerator, inserter *core.FactInserter, corpus *eval.Corpus) (map[string]int64, error) {
 	idMap := make(map[string]int64)
 
@@ -226,14 +226,14 @@ func ingestCorpus(ctx context.Context, embedder embedding.EmbeddingGenerator, in
 					// rolled back upstream; we just log and continue so a one-off
 					// model hiccup doesn't waste the entire 20-min eval. Pairs that
 					// reference the missing fact ID will show as MAPPING_MISSING in
-					// the report — the same shape as deduped facts.
+					// the report — the same shape as skipped facts.
 					log.Error().Err(err).Str("corpus_id", fact.ID).Msg("Eval: fact ingest failed; skipping and continuing")
 					continue
 				}
 				if len(result.InsertedMeta) > 0 {
 					idMap[fact.ID] = result.InsertedMeta[0].FactID
 				} else {
-					log.Warn().Str("corpus_id", fact.ID).Msg("Fact was deduped during insertion; will be absent from id map")
+					log.Warn().Str("corpus_id", fact.ID).Msg("Fact was skipped during insertion; will be absent from id map")
 				}
 			}
 		}

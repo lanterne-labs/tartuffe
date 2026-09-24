@@ -7,10 +7,8 @@ import (
 
 // CountPendingStanceRoutings returns the number of (person, fact) mention
 // pairs whose fact is active, has an embedding, and is not yet a member of any
-// of that person's stance documents. These are the co-actor gaps the stance
-// fan-out closes (mirror-py3): a shared vote fact is stance-routed only for
-// its subject at insert time, so every other voter's stance system still has
-// to absorb it. The definition matches ListPersonsWithOrphanFacts /
+// of that person's stance documents: the gaps the stance fan-out closes
+// (mirror-py3), e.g. unfolded group members. The definition matches ListPersonsWithOrphanFacts /
 // ListOrphanFactsForPerson exactly — when those queries drain, this count
 // reaches zero.
 func (s *PostgresStorer) CountPendingStanceRoutings(ctx context.Context) (int, error) {

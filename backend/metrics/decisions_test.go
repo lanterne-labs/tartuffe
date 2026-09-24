@@ -35,8 +35,8 @@ func (f *fakeSink) AddDecisionCounts(ctx context.Context, counts []DecisionCount
 func TestDecisionsAccumulateAndFlush(t *testing.T) {
 	takeDecisions() // start from empty
 
-	RecordDecision(StageFactDedupe, OutcomeDuplicate)
-	RecordDecision(StageFactDedupe, OutcomeDuplicate)
+	RecordDecision(StageFactDedupe, OutcomeFolded)
+	RecordDecision(StageFactDedupe, OutcomeFolded)
 	AddDecision(StageFactDedupe, OutcomeDistinct, 3)
 	AddDecision(StageEntityGate, OutcomeEntityRejected, 0) // zero is not a decision
 
@@ -46,7 +46,7 @@ func TestDecisionsAccumulateAndFlush(t *testing.T) {
 	}
 	want := []DecisionCount{
 		{Stage: StageFactDedupe, Outcome: OutcomeDistinct, Count: 3},
-		{Stage: StageFactDedupe, Outcome: OutcomeDuplicate, Count: 2},
+		{Stage: StageFactDedupe, Outcome: OutcomeFolded, Count: 2},
 	}
 	if len(sink.got) != 1 || len(sink.got[0]) != 2 || sink.got[0][0] != want[0] || sink.got[0][1] != want[1] {
 		t.Fatalf("flushed %+v, want %+v", sink.got, want)
@@ -103,13 +103,13 @@ func TestDecisionGaugesAreRegistered(t *testing.T) {
 // dropped instead of freezing at its last value.
 func TestDecisionGauges(t *testing.T) {
 	refreshDecisionGauges(context.Background(), fakeReader{
-		allTime: []DecisionCount{{Stage: StageFactDedupe, Outcome: OutcomeDuplicate, Count: 12}},
-		today:   []DecisionCount{{Stage: StageFactDedupe, Outcome: OutcomeDuplicate, Count: 5}},
+		allTime: []DecisionCount{{Stage: StageFactDedupe, Outcome: OutcomeFolded, Count: 12}},
+		today:   []DecisionCount{{Stage: StageFactDedupe, Outcome: OutcomeFolded, Count: 5}},
 	})
-	if got := testutil.ToFloat64(DecisionsTotal.WithLabelValues(StageFactDedupe, OutcomeDuplicate)); got != 12 {
+	if got := testutil.ToFloat64(DecisionsTotal.WithLabelValues(StageFactDedupe, OutcomeFolded)); got != 12 {
 		t.Fatalf("all-time gauge = %v, want 12", got)
 	}
-	if got := testutil.ToFloat64(DecisionsDaily.WithLabelValues(StageFactDedupe, OutcomeDuplicate)); got != 5 {
+	if got := testutil.ToFloat64(DecisionsDaily.WithLabelValues(StageFactDedupe, OutcomeFolded)); got != 5 {
 		t.Fatalf("today gauge = %v, want 5", got)
 	}
 

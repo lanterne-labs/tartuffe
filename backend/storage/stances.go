@@ -510,8 +510,8 @@ func (s *PostgresStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID
 // GetFactStanceMap returns a map fact_id -> stance_document_id for the given
 // facts, restricted to the given person's stances. Facts without a membership
 // in one of that person's stances are simply absent from the map. The person
-// scope matters: a shared vote fact is a member of one stance PER voter, so an
-// unscoped lookup would return an arbitrary person's stance.
+// scope matters: a fact mentioned by several persons is a member of one stance
+// PER person, so an unscoped lookup would return an arbitrary person's stance.
 func (s *PostgresStorer) GetFactStanceMap(ctx context.Context, personID int64, factIDs []int64) (map[int64]int64, error) {
 	if len(factIDs) == 0 {
 		return map[int64]int64{}, nil
@@ -576,9 +576,8 @@ func (s *PostgresStorer) FindTopStancesForPerson(ctx context.Context, personID i
 // ListPersonsWithOrphanFacts returns every person who has at least one
 // non-duplicate mentioned fact not linked to any of THAT PERSON's stance
 // documents. Drives the per-person worker loop in `dm facts assign-stances`
-// and the nightly stance fan-out step. The per-person scope is what makes
-// shared vote facts fan out: the fact being in the subject's stance does not
-// make it stanced for its co-voters (mirror-py3).
+// and the nightly stance fan-out step. The scope is per person: a fact in one
+// person's stance is not stanced for another person it mentions (mirror-py3).
 //
 // Symmetric with ListOrphanFactsForPerson: facts marked as
 // `fact_relations.relation_type = 'duplicate'` are excluded — duplicate
@@ -608,8 +607,8 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]core
 }
 
 // ListOrphanFactsForPerson returns every active fact mentioning the person
-// that is not linked to any of THAT PERSON's stance documents (a shared vote
-// fact stanced for another voter is still an orphan for this one). Skips facts
+// that is not linked to any of THAT PERSON's stance documents (a fact stanced
+// for another person it mentions is still an orphan for this one). Skips facts
 // marked as duplicates via fact_relations (mirrors the filter in
 // cmd/stances_backfill.go's loadFactsForBackfill so we never try to assign a
 // stance to a known dup).

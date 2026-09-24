@@ -35,7 +35,6 @@ const (
 
 	// StageFactDedupe
 	OutcomeNoCandidates = "no_candidates" // nothing similar enough to judge
-	OutcomeDuplicate    = "duplicate"     // same claim: dropped
 	OutcomeFolded       = "folded"        // same position: kept in the claim group of the fact it restates
 	OutcomeDistinct     = "distinct"      // judged different: stored on its own
 	OutcomeGateError    = "gate_error"    // the judge failed twice; treated as distinct

@@ -421,27 +421,12 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		log.Info().Int("total_affiliations", affiliationsCreated).Msg("frpolitics: affiliations committed successfully")
 	}
 
-	// 5) Group by fact text to generate embeddings once per unique text, then persist with all mentions
-	log.Info().Int("total_facts", len(toStore)).Msg("frpolitics: grouping facts by text for deduplication")
-	factTextToRecords := make(map[string][]FactRecord, len(toStore))
-	for _, r := range toStore {
-		factTextToRecords[r.FactText] = append(factTextToRecords[r.FactText], r)
-	}
-
-	// 6) Store facts per-law with completion marking (enables resumability)
+	// 5) Store facts per-law with completion marking (enables resumability)
 	log.Info().Int("total_laws", len(aiFilteredLaws)).Msg("frpolitics: storing facts per law")
 
-	// Group facts by law_key for per-law processing
-	factsByLawKey := make(map[string]map[string][]FactRecord)
-	for factText, records := range factTextToRecords {
-		if len(records) == 0 {
-			continue
-		}
-		lawKey := records[0].LawKey // All records for same fact have same law_key
-		if factsByLawKey[lawKey] == nil {
-			factsByLawKey[lawKey] = make(map[string][]FactRecord)
-		}
-		factsByLawKey[lawKey][factText] = records
+	factsByLawKey := make(map[string][]FactRecord)
+	for _, r := range toStore {
+		factsByLawKey[r.LawKey] = append(factsByLawKey[r.LawKey], r)
 	}
 
 	// Store facts per law and mark completion
@@ -466,26 +451,27 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 			Int("facts_count", len(lawFacts)).
 			Msg("frpolitics: storing facts for law")
 
-		// Clean up any partial data from previous failed run
-		// This deletes facts, fact_sources, contradictions, and fact_mentions for this law
-		deletedCount, err := store.DeletePartialLawData(ctx, law.Key)
+		// A previous run may have stored part of this law before failing:
+		// resume after the ballots already stored.
+		stored, err := store.StoredLawFactTexts(ctx, law.Key)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("law_key", law.Key).
-				Msg("frpolitics: failed to clean up partial law data")
+			log.Error().Err(err).Str("law_key", law.Key).Msg("frpolitics: failed to load the law's stored facts")
 			failedCount++
 			continue
 		}
-		if deletedCount > 0 {
-			log.Info().
-				Int("deleted_facts", deletedCount).
-				Str("law_key", law.Key).
-				Msg("frpolitics: cleaned up partial data from previous failed run")
+		pending := make([]FactRecord, 0, len(lawFacts))
+		for _, r := range lawFacts {
+			if !stored[r.FactText] {
+				pending = append(pending, r)
+			}
+		}
+		if len(pending) < len(lawFacts) {
+			log.Info().Int("already_stored", len(lawFacts)-len(pending)).Int("pending", len(pending)).
+				Str("law_key", law.Key).Msg("frpolitics: resuming a partially stored law")
 		}
 
 		// Store all facts for this law
-		if err := StoreFactsGrouped(ctx, storer, lawFacts); err != nil {
+		if err := StoreFacts(ctx, storer, pending); err != nil {
 			log.Error().
 				Err(err).
 				Int("law_num", idx+1).
@@ -527,12 +513,6 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	if failedCount > 0 {
 		return fmt.Errorf("failed to fully process %d/%d laws (will resume on next run)", failedCount, len(aiFilteredLaws))
 	}
-	unique := make([]FactRecord, 0, len(factTextToRecords))
-	for _, recs := range factTextToRecords {
-		if len(recs) > 0 {
-			unique = append(unique, recs[0])
-		}
-	}
 	log.Info().
 		Int("laws_discovered", len(laws)).
 		Int("laws_url_filtered", len(filteredLaws)).
@@ -540,8 +520,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		Int("laws_ai_filtered", len(aiFilteredLaws)).
 		Int("party_facts_built", partyFactsCount).
 		Int("deputy_facts_built", deputyFactsCount).
-		Int("dedup_removed", len(toStore)-len(unique)).
-		Int("stored", len(unique)).
+		Int("stored", len(toStore)).
 		Int("files", pstats.FilesProcessed).
 		Int("json_errors", pstats.JsonErrors).
 		Int("events_parsed", pstats.EventsParsed).

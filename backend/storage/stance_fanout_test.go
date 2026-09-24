@@ -32,11 +32,11 @@ func truncateFanoutTables(t *testing.T, storer *PostgresStorer) {
 }
 
 // TestStanceFanoutPendingSet covers the person-scoped orphan derivation that
-// drives the stance fan-out (mirror-py3): a shared vote fact mentioned by
-// three persons but stance-routed only for its subject must surface as an
-// orphan for BOTH co-actors (the old unscoped queries considered it globally
-// stanced), duplicates and embedding-less facts must be excluded, and routing
-// a pair must remove it (idempotent, self-terminating). Also pins
+// drives the stance fan-out (mirror-py3): a fact mentioned by three persons
+// but stance-routed only for its subject must surface as an orphan for BOTH
+// other persons (the old unscoped queries considered it globally stanced),
+// duplicates and embedding-less facts must be excluded, and routing a pair
+// must remove it (idempotent, self-terminating). Also pins
 // CountPendingStanceRoutings to the same definition.
 func TestStanceFanoutPendingSet(t *testing.T) {
 	storer, teardown := setupTestDB(t)
@@ -47,9 +47,9 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 
 	subjectID, _, err := storer.AddPerson(ctx, "Fanout Subject")
 	require.NoError(t, err)
-	coActorA, _, err := storer.AddPerson(ctx, "Fanout CoActor A")
+	otherA, _, err := storer.AddPerson(ctx, "Fanout Other A")
 	require.NoError(t, err)
-	coActorB, _, err := storer.AddPerson(ctx, "Fanout CoActor B")
+	otherB, _, err := storer.AddPerson(ctx, "Fanout Other B")
 	require.NoError(t, err)
 
 	emb := pgvector.NewVector(makeUnitEmbedding(0))
@@ -90,14 +90,14 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 		return stanceID
 	}
 
-	// Shared vote fact: three mentions, stance membership for the subject only.
+	// A fact mentioned by three persons, in the subject's stance only.
 	voteFact := insertFact("a voté POUR le texte de loi : « Loi A »", true)
-	mention(voteFact, subjectID, coActorA, coActorB)
+	mention(voteFact, subjectID, otherA, otherB)
 	addStanceWithFact(subjectID, voteFact, "loi A")
 
-	// Duplicate-marked fact: mentioned by a co-actor but must never be pending.
+	// Duplicate-marked fact: mentioned by another person but must never be pending.
 	dupFact := insertFact("duplicate member", true)
-	mention(dupFact, coActorA)
+	mention(dupFact, otherA)
 	_, err = storer.pool.Exec(ctx,
 		"INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES ($1, $2, 'duplicate')",
 		voteFact, dupFact)
@@ -105,39 +105,39 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 
 	// Embedding-less fact: cannot be routed, must not surface.
 	noEmbFact := insertFact("no embedding yet", false)
-	mention(noEmbFact, coActorB)
+	mention(noEmbFact, otherB)
 
-	// Both co-actors are orphan-carriers; the subject is fully routed.
+	// Both other persons carry an orphan; the subject is fully routed.
 	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
 	require.NoError(t, err)
 	personIDs := make(map[int64]bool)
 	for _, p := range persons {
 		personIDs[p.ID] = true
 	}
-	require.True(t, personIDs[coActorA], "co-actor A must be listed (shared fact not stanced for them)")
-	require.True(t, personIDs[coActorB], "co-actor B must be listed")
+	require.True(t, personIDs[otherA], "person A must be listed (the fact is not in any of their stances)")
+	require.True(t, personIDs[otherB], "person B must be listed")
 	require.False(t, personIDs[subjectID], "subject already routed, not listed")
 
-	// The shared fact is an orphan FOR EACH co-actor despite the subject's stance.
-	orphansA, err := storer.ListOrphanFactsForPerson(ctx, coActorA)
+	// The fact is an orphan for each other person despite the subject's stance.
+	orphansA, err := storer.ListOrphanFactsForPerson(ctx, otherA)
 	require.NoError(t, err)
 	require.Len(t, orphansA, 1)
 	require.Equal(t, voteFact, orphansA[0].ID)
 	require.NotEmpty(t, orphansA[0].FactText)
 	require.NotEmpty(t, orphansA[0].Embedding)
 
-	orphansB, err := storer.ListOrphanFactsForPerson(ctx, coActorB)
+	orphansB, err := storer.ListOrphanFactsForPerson(ctx, otherB)
 	require.NoError(t, err)
 	require.Len(t, orphansB, 1)
 	require.Equal(t, voteFact, orphansB[0].ID)
 
 	count, err := storer.CountPendingStanceRoutings(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 2, count, "one pending routing per unrouted co-actor")
+	require.Equal(t, 2, count, "one pending routing per unrouted person")
 
-	// Routing the fact for co-actor B removes exactly B's pending pair.
-	addStanceWithFact(coActorB, voteFact, "loi A")
-	orphansB, err = storer.ListOrphanFactsForPerson(ctx, coActorB)
+	// Routing the fact for person B removes exactly B's pending pair.
+	addStanceWithFact(otherB, voteFact, "loi A")
+	orphansB, err = storer.ListOrphanFactsForPerson(ctx, otherB)
 	require.NoError(t, err)
 	require.Empty(t, orphansB, "routed pair leaves the pending set")
 	count, err = storer.CountPendingStanceRoutings(ctx)
@@ -150,12 +150,12 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 	for _, p := range persons {
 		personIDs[p.ID] = true
 	}
-	require.True(t, personIDs[coActorA])
-	require.False(t, personIDs[coActorB])
+	require.True(t, personIDs[otherA])
+	require.False(t, personIDs[otherB])
 }
 
 // TestGetFactStanceMapPersonScoped pins the person-scoped fact→stance lookup:
-// with a shared fact in two persons' stances, each person resolves to their OWN
+// with one fact in two persons' stances, each person resolves to their OWN
 // stance, never an arbitrary one.
 func TestGetFactStanceMapPersonScoped(t *testing.T) {
 	storer, teardown := setupTestDB(t)
@@ -171,7 +171,7 @@ func TestGetFactStanceMapPersonScoped(t *testing.T) {
 
 	var factID int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		"INSERT INTO facts (fact_text) VALUES ('shared vote') RETURNING id").Scan(&factID))
+		"INSERT INTO facts (fact_text) VALUES ('fact in two stances') RETURNING id").Scan(&factID))
 
 	mkStance := func(personID int64, label string) int64 {
 		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{

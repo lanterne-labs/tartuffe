@@ -11,18 +11,12 @@ import (
 // RefreshPersonScore recomputes one person's fact_count and scores from live rows,
 // outside a caller-owned transaction. Used after fold operations mark new duplicates.
 func (s *PostgresStorer) RefreshPersonScore(ctx context.Context, personID int64) error {
-	return s.RefreshPersonScores(ctx, []int64{personID})
-}
-
-// RefreshPersonScores is the batch form of RefreshPersonScore. Used after bulk mention
-// fan-out (shared vote facts attribute to every voter).
-func (s *PostgresStorer) RefreshPersonScores(ctx context.Context, personIDs []int64) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin score refresh tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := s.refreshPersonScores(ctx, tx, personIDs); err != nil {
+	if err := s.refreshPersonScores(ctx, tx, []int64{personID}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

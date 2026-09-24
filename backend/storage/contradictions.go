@@ -165,9 +165,10 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	// Fast-path bundle resolution: bundle_stance_id is set to the stance shared by both
 	// facts (if any). Cross-stance and unstanced pairs get NULL and behave as singleton
 	// solo bundles in the score until an LLM-driven Bundler pass upgrades them.
-	// The shared stance MUST belong to the contradiction's own person: shared vote
-	// facts are members of one stance per voter, so without the person filter the
-	// CTE could pick another voter's stance and file the bundle under a foreign key.
+	// The shared stance MUST belong to the contradiction's own person: a fact
+	// mentioned by several persons is a member of one stance per person, so without
+	// the person filter the CTE could pick another person's stance and file the
+	// bundle under a foreign key.
 	query := `
         WITH shared AS (
             SELECT sa.stance_document_id
@@ -496,10 +497,10 @@ func (s *PostgresStorer) GetPersonContradictions(ctx context.Context, personID i
 			JOIN facts fa ON fa.id = c.fact_a_id
 			JOIN facts fb ON fb.id = c.fact_b_id
 			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
-			-- Per-fact stance, scoped to THIS person's stances: shared vote facts
-			-- are members of one stance per voter, so an unscoped join would both
-			-- multiply rows (breaking bundle_size/total_count/pagination) and pick
-			-- an arbitrary voter's topic label.
+			-- Per-fact stance, scoped to THIS person's stances: a fact mentioned by
+			-- several persons is a member of one stance per person, so an unscoped
+			-- join would both multiply rows (breaking bundle_size/total_count/
+			-- pagination) and pick an arbitrary person's topic label.
 			LEFT JOIN LATERAL (
 				SELECT s.id, s.cluster_label, s.label_en
 				FROM stance_document_facts sdfa

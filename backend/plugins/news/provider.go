@@ -1105,12 +1105,10 @@ func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins
 	return results, nil
 }
 
-// newFactInserter builds the inserter every news insertion path uses: LLM
-// dedupe gate on, and same-claim facts grouped with the fact they restate
-// rather than dropped, with the position-level gate.
+// newFactInserter builds the inserter every news insertion path uses:
+// same-claim facts grouped with the fact they restate.
 func (p *Provider) newFactInserter() *core.FactInserter {
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
-	inserter.EnableLLMDedupe()
-	inserter.EnableFolding(p.Storer)
+	inserter.EnableDedupe(p.Storer)
 	return inserter
 }

@@ -2,11 +2,9 @@ package core
 
 import (
 	"context"
-	"digital-mirror/backend/config"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/util"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -22,7 +20,7 @@ type InsertedFactMeta struct {
 // InsertResult contains the outcome of a batch InsertFacts call.
 type InsertResult struct {
 	Inserted     int                // Number of facts successfully inserted
-	Skipped      int                // Number of facts skipped as duplicates
+	Skipped      int                // Number of facts skipped: subject rejected by the entity validator, or web source without a quote
 	InsertedMeta []InsertedFactMeta // Metadata for each successfully inserted fact
 }
 
@@ -40,36 +38,18 @@ type StanceProcessor interface {
 // the single ingestion path: there is no fallback, no skip flag, and no other
 // way to land a fact in the database.
 type FactInserter struct {
-	storer              Storer
-	stanceProcessor     StanceProcessor
-	autoDedupeThreshold float64         // Cosine similarity at/above which to auto-skip as duplicate (verb-aware)
-	llmDedupeFloor      float64         // Lower bound of the LLM "gray zone"; below this similarity, never dedup
-	groupStorer         GroupStorer     // Non-nil switches dedupe from drop to grouping the restatement with the fact it restates
-	dedupeJudge         factDedupeJudge // Optional; when set, the [floor, auto) band (and similar-but-different-verb pairs) are LLM-adjudicated
+	storer          Storer
+	stanceProcessor StanceProcessor
+	groupStorer     GroupStorer       // Set by EnableDedupe; stores the group a same-claim fact joins
+	dedupeJudge     SamePositionJudge // Set by EnableDedupe; the mandatory last decider on grouping
 }
 
-// factDedupeJudge adjudicates whether two same-subject statements are the same
-// claim (one a redundant restatement of the other). Implemented by
-// *FactDedupeAdjudicator. Optional: when nil, the gray-zone band is not consulted
-// and only the >= autoDedupeThreshold verb-aware auto-dedup runs.
-type factDedupeJudge interface {
-	IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error)
-}
-
-// factPositionJudge is the broader position-level gate a factDedupeJudge may
-// also offer: whether two statements express the same position on a subject,
-// not merely the same claim. Used only in fold mode, where grouping
-// same-position restatements under a meta is safe because the raw fact is
-// kept. Implemented by *FactDedupeAdjudicator.
-type factPositionJudge interface {
-	IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error)
-}
-
-// defaultLLMDedupeFloor is the lower bound of the similarity band handed to the
-// LLM adjudicator. 0.70 catches genuine restatements that slip just under the
-// 0.80 auto-dedup line (e.g. the Retailleau "candidature jusqu'au bout" pair at
-// 0.78) while staying high enough to keep the per-run LLM call volume bounded.
-const defaultLLMDedupeFloor = 0.70
+// dedupeEmbeddingFloor is the cosine similarity at or above which an existing
+// fact is a dedupe candidate handed to the LLM gate. 0.70 catches genuine
+// restatements that embed apart (e.g. the Retailleau "candidature jusqu'au
+// bout" pair at 0.78) while staying high enough to keep the per-run LLM call
+// volume bounded.
+const dedupeEmbeddingFloor = 0.70
 
 // dedupeTextSimilarityFloor is the trigram similarity (pg_trgm) of the fact
 // texts at or above which an existing fact is a dedupe candidate regardless of
@@ -131,34 +111,19 @@ type StoreFactInput struct {
 	OriginalQuote        string
 	CanonicalVerb        string
 	InvolvedPeople       []string // Secondary people mentioned in the fact (not the subject)
-	// CoActorIDs are pre-resolved person ids who PERFORMED the fact's action
-	// alongside the subject (e.g. every deputy/party casting the same vote on a
-	// law, collapsed into one shared fact row). Unlike InvolvedPeople — who are
-	// bystanders and explicitly do NOT own the fact — co-actors get their own
-	// fact_mentions row, i.e. full attribution. Consequences, deliberately:
-	//   - contradiction detection (mention-scoped GetFactsForPerson) pairs the
-	//     shared fact against each co-actor's other facts, so "said X, voted Y"
-	//     can fire for every voter, not just the arbitrary first record;
-	//   - each co-actor's fact_count (and honesty-score denominator, computed
-	//     live from mentions) includes the shared fact;
-	//   - stance routing still runs ONLY for the subject: stances are
-	//     per-person documents, so co-actors' stance systems never see this
-	//     fact — their coverage comes from the nightly pairwise detector.
-	CoActorIDs  []int64
-	SourceURL   string
-	PublishedAt *time.Time
-	SourceType  string
-	Metadata    map[string]any
-	Lang        string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
+	SourceURL            string
+	PublishedAt          *time.Time
+	SourceType           string
+	Metadata             map[string]any
+	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
 }
 
 // SimilarFact represents a fact that is similar to a given embedding.
 type SimilarFact struct {
-	ID             int64   // Fact ID
-	Text           string  // Fact text
-	Distance       float64 // Cosine distance (1 - cosine_similarity) from query embedding
-	CanonicalVerb  string  // Canonical verb of the fact ("" when unset)
-	MentionPersons int     // Distinct persons carrying the fact via fact_mentions
+	ID            int64   // Fact ID
+	Text          string  // Fact text
+	Distance      float64 // Cosine distance (1 - cosine_similarity) from query embedding
+	CanonicalVerb string  // Canonical verb of the fact ("" when unset)
 }
 
 // NewFactInserter creates a new FactInserter. The StanceProcessor is REQUIRED:
@@ -173,49 +138,38 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 		panic("NewFactInserter: stance processor is nil — every fact must be routed through a stance, no exceptions")
 	}
 
-	// 0.80 (was 0.85): the embedding_text is verb-free and strips dates/numbers/names,
-	// so same-topic facts should embed very close. Dropping the threshold catches
-	// near-duplicate news reports of the same event that differ only in incidental
-	// details (an extra named player, a date string). Verb-aware: opposing positions
-	// never dedup regardless of similarity, so lowering is safe.
-	autoDedupeThreshold := config.EnvFloat("DEDUPE_AUTO_THRESHOLD", 0.80)
-
 	return &FactInserter{
-		storer:              storer,
-		stanceProcessor:     stance,
-		autoDedupeThreshold: autoDedupeThreshold,
-		llmDedupeFloor:      defaultLLMDedupeFloor,
+		storer:          storer,
+		stanceProcessor: stance,
 	}
 }
 
-// EnableLLMDedupe activates LLM adjudication of the gray-zone similarity band
-// ([llmDedupeFloor, autoDedupeThreshold)) and of similar-but-different-verb
-// pairs that the cheap verb heuristic leaves undecided. Best-effort: if the
-// OPEN_AI_ env is unconfigured it logs and leaves band-dedup off, so callers
-// keep working with the embedding-only path. Production ingestion paths call
-// this; tests that don't, retain the deterministic embedding-only behavior.
-// EnableFolding switches the dedupe path from DROPPING a same-claim fact to
-// KEEPING it in a claim group with the fact it restates: the new fact is
-// stored (text, source, quote all preserved) and the group's parent is
-// whichever of the two is more concrete. Only the parent is active; every
-// contradiction judge sees the members alongside it.
-func (fi *FactInserter) EnableFolding(storer GroupStorer) {
-	fi.groupStorer = storer
-	log.Info().Msg("Claim grouping ENABLED for fact insertion (same-claim facts are kept and grouped, not dropped)")
-}
-
-func (fi *FactInserter) EnableLLMDedupe() {
+// EnableDedupe turns on claim grouping: an incoming fact that the LLM
+// same-position gate (FactDedupeAdjudicator.IsSamePosition) judges a
+// restatement of one of the subject's active facts is stored (text, source,
+// quote all preserved) and grouped with it; the group's parent is whichever
+// of the two is more concrete. Only the parent is active; every
+// contradiction judge sees the members alongside it. Embedding and text
+// similarity only nominate candidates, the gate always decides. If the
+// OPEN_AI_ env is unconfigured it logs and leaves dedupe off: every fact is
+// inserted standalone. Production ingestion paths call this; tests that
+// don't, keep the deterministic no-dedupe behavior.
+func (fi *FactInserter) EnableDedupe(groups GroupStorer) {
+	if groups == nil {
+		panic("EnableDedupe: group storer is nil")
+	}
 	judge, err := NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
-		log.Warn().Err(err).Msg("LLM fact-dedupe disabled (OPEN_AI env not configured); using embedding-only dedup")
+		log.Warn().Err(err).Msg("Fact dedupe disabled (OPEN_AI env not configured); every fact is inserted standalone")
 		return
 	}
 	fi.dedupeJudge = judge
+	fi.groupStorer = groups
 }
 
-// InsertFacts processes a batch of facts. Each fact goes through verb-aware
-// near-duplicate dedup, then is inserted, then is routed through the stance
-// manager. If stance processing fails for any fact, the fact (and its source/
+// InsertFacts processes a batch of facts. Each fact is inserted, then either
+// grouped with the same-claim fact it restates (when dedupe is enabled) or
+// routed through the stance manager. If stance processing fails for any fact, the fact (and its source/
 // mention rows) is deleted and the batch fails — there is no silent fallback.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
 	result := &InsertResult{}
@@ -226,7 +180,7 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 			Msg("Processing fact for insertion")
 
-		factID, personID, inserted, err := fi.insertSingleFact(ctx, fact)
+		factID, personID, err := fi.insertSingleFact(ctx, fact)
 		if err != nil {
 			// Entity-validator rejection means the subject isn't a real entity —
 			// not a pipeline failure, just a per-fact skip. Don't abort the batch.
@@ -254,25 +208,20 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 			}
 			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
 		}
-		if inserted {
-			result.Inserted++
-			result.InsertedMeta = append(result.InsertedMeta, InsertedFactMeta{
-				FactID:   factID,
-				PersonID: personID,
-			})
-		} else {
-			result.Skipped++
-		}
+		result.Inserted++
+		result.InsertedMeta = append(result.InsertedMeta, InsertedFactMeta{
+			FactID:   factID,
+			PersonID: personID,
+		})
 	}
 	return result, nil
 }
 
 // insertSingleFact handles insertion of a single fact and its mandatory stance
-// routing. Returns (factID, personID, inserted, error). factID/personID are 0
-// when the fact was skipped as a near-duplicate.
-func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (int64, int64, bool, error) {
+// routing. Returns (factID, personID, error).
+func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInput) (int64, int64, error) {
 	if input.SubjectEntity == "" {
-		return 0, 0, false, fmt.Errorf("subject_entity is required")
+		return 0, 0, fmt.Errorf("subject_entity is required")
 	}
 
 	// Web/news-extracted facts must carry a verbatim source quote. An empty quote
@@ -281,7 +230,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Scoped to LLM-extracted web sources; structured sources (e.g. vote records)
 	// always populate the quote from metadata and are intentionally excluded.
 	if quoteMissing(input) {
-		return 0, 0, false, errMissingQuote
+		return 0, 0, errMissingQuote
 	}
 
 	// Resolve subject entity to person ID
@@ -290,125 +239,57 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	if input.SubjectEntityType != "" {
 		subjectID, err = fi.storer.FindOrInsertPersonWithType(ctx, input.SubjectEntity, input.SubjectEntityType)
 		if err != nil {
-			return 0, 0, false, fmt.Errorf("failed to find/insert subject entity with type: %w", err)
+			return 0, 0, fmt.Errorf("failed to find/insert subject entity with type: %w", err)
 		}
 	} else {
 		subjectIDs, err := fi.storer.FindOrInsertPersons(ctx, []string{input.SubjectEntity})
 		if err != nil {
-			return 0, 0, false, fmt.Errorf("failed to find/insert subject entity: %w", err)
+			return 0, 0, fmt.Errorf("failed to find/insert subject entity: %w", err)
 		}
 		if len(subjectIDs) == 0 {
-			return 0, 0, false, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
+			return 0, 0, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
 		}
 		subjectID = subjectIDs[0]
 	}
 
-	// Near-duplicate check before inserting, in two tiers:
-	//   1. High similarity (>= autoDedupeThreshold) + compatible verb (same verb
-	//      or both external) → cheap auto-skip, no LLM. Different direct-claim
-	//      verbs do NOT auto-dedup here, to preserve opposing stances.
-	//   2. Gray zone [llmDedupeFloor, autoDedupeThreshold), OR similar-but-
-	//      different-verb pairs: cosine + verb heuristics can't decide, so ask the
-	//      LLM "same claim?" when an adjudicator is configured. This catches
-	//      genuine restatements with different verbs (e.g. PROMISED vs CLAIMED of
-	//      the same thing) that sit just under the auto line.
-	// When folding is enabled, a same-claim hit no longer drops the fact —
-	// foldTarget records the matched fact and the new one is stored as a member
-	// of its meta after insertion.
-	var foldTarget *SimilarFact
-	if len(input.Embedding) > 0 {
-		// Only widen the candidate search to the gray-zone floor when we can
-		// actually adjudicate it; otherwise keep the original narrow search.
-		searchDistance := 1.0 - fi.autoDedupeThreshold
-		if fi.dedupeJudge != nil {
-			searchDistance = 1.0 - fi.llmDedupeFloor
-		}
-		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, searchDistance, input.NormalizedFactText, dedupeTextSimilarityFloor, 5)
+	// Same-claim check before inserting: embedding distance and text
+	// similarity nominate the subject's active facts as candidates, and the
+	// LLM same-position gate is the mandatory last decider — the stance-blind
+	// embedding_text puts same-topic-but-different claims well above 0.80
+	// too. A confirmed hit does not drop the fact: groupTarget records the
+	// matched fact and the new one joins its group after insertion.
+	var groupTarget *SimilarFact
+	if len(input.Embedding) > 0 && fi.dedupeEnabled() {
+		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, 1.0-dedupeEmbeddingFloor, input.NormalizedFactText, dedupeTextSimilarityFloor, 5)
 		if err != nil {
 			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 				Msg("Dedup check failed, proceeding with insertion")
 		} else if len(similar) == 0 {
 			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeNoCandidates)
 		} else {
-			judged := false
-			autoDistance := 1.0 - fi.autoDedupeThreshold
 			for _, sf := range similar {
-				existingVerb := sf.CanonicalVerb
-
-				// Tier 1: cheap verb-aware auto-dedup for very-high-similarity pairs.
-				// Only in DROP mode: when folding, the LLM gate below is the
-				// mandatory last decider on membership — embeddings (and verbs)
-				// only select candidates, they never fold on their own, because
-				// the stance-blind embedding_text puts same-topic-but-different
-				// claims well above 0.80 too.
-				if sf.Distance <= autoDistance && !fi.foldingEnabled() {
-					bothExternal := !isDirectClaimVerb(existingVerb) && !isDirectClaimVerb(input.CanonicalVerb)
-					if existingVerb == input.CanonicalVerb || bothExternal {
-						log.Info().
-							Int64("existing_fact_id", sf.ID).
-							Float64("distance", sf.Distance).
-							Str("new_verb", input.CanonicalVerb).
-							Str("existing_verb", existingVerb).
-							Bool("both_external", bothExternal).
-							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
-							Msg("Skipping duplicate fact (same verb or both external + high similarity)")
-						metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDuplicate)
-						fi.attachProvenance(ctx, sf.ID, subjectID, input)
-						return 0, 0, false, nil
-					}
+				same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
+				if jErr != nil {
+					log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
+						Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
+					metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
+					continue
 				}
-
-				// Tier 2: LLM gray-zone adjudication (and similar-but-different-verb).
-				// In fold mode the broader position-level gate applies when the
-				// judge offers it — folding keeps the raw fact, so grouping
-				// same-position restatements is safe where dropping was not.
-				// In fold mode a new fact with co-actors can never fold (see the
-				// shared-fact guard below), so skip the judge calls entirely.
-				if fi.dedupeJudge != nil && !(fi.foldingEnabled() && len(input.CoActorIDs) > 0) {
-					judged = true
-					same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
-					if jErr != nil {
-						log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
-							Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
-						metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
-						continue
-					}
-					if same {
-						log.Info().
-							Int64("existing_fact_id", sf.ID).
-							Float64("distance", sf.Distance).
-							Str("new_verb", input.CanonicalVerb).
-							Str("existing_verb", existingVerb).
-							Bool("folding", fi.foldingEnabled()).
-							Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
-							Msg("Same-claim fact (LLM gray-zone adjudication)")
-						if !fi.foldingEnabled() {
-							metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDuplicate)
-							fi.attachProvenance(ctx, sf.ID, subjectID, input)
-							return 0, 0, false, nil
-						}
-						{
-							// Never fold a shared (co-actor) fact: folding marks the
-							// member fact 'duplicate' GLOBALLY, so a shared vote fact
-							// matched by one subject's news claim would vanish from
-							// every other voter's active-fact set and stance. Shared
-							// facts stay standalone; the pair is left to the
-							// contradiction detector instead. The new fact's own side
-							// (CoActorIDs) is guarded before the judge call above.
-							if sf.MentionPersons > 1 {
-								log.Info().Int64("existing_fact_id", sf.ID).Int("mention_persons", sf.MentionPersons).
-									Msg("Skipping fold: matched fact is shared by several persons; keeping standalone")
-								continue
-							}
-							metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
-							sfCopy := sf
-							foldTarget = &sfCopy
-							break
-						}
-					}
+				if same {
+					log.Info().
+						Int64("existing_fact_id", sf.ID).
+						Float64("distance", sf.Distance).
+						Str("new_verb", input.CanonicalVerb).
+						Str("existing_verb", sf.CanonicalVerb).
+						Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
+						Msg("Same-claim fact (LLM gate)")
+					metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
+					sfCopy := sf
+					groupTarget = &sfCopy
+					break
 				}
 			}
-			if judged && foldTarget == nil {
+			if groupTarget == nil {
 				metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDistinct)
 			}
 		}
@@ -417,7 +298,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Insert the fact
 	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {
-		return 0, 0, false, fmt.Errorf("failed to insert fact: %w", err)
+		return 0, 0, fmt.Errorf("failed to insert fact: %w", err)
 	}
 	metrics.IncrementFactsExtracted(input.SourceType, true)
 
@@ -433,22 +314,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	)
 	if err != nil {
 		fi.compensateDelete(ctx, factID, "linking source")
-		return 0, 0, false, fmt.Errorf("failed to link source: %w", err)
+		return 0, 0, fmt.Errorf("failed to link source: %w", err)
 	}
 
-	// Link the subject plus any co-actors to this source mention. Co-actors
-	// share full ownership of the fact (see StoreFactInput.CoActorIDs); the
-	// mention insert is ON CONFLICT DO NOTHING so a duplicate id is harmless.
-	mentionIDs := make([]int64, 0, 1+len(input.CoActorIDs))
-	mentionIDs = append(mentionIDs, subjectID)
-	for _, id := range input.CoActorIDs {
-		if id > 0 && id != subjectID {
-			mentionIDs = append(mentionIDs, id)
-		}
-	}
-	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, mentionIDs); err != nil {
+	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
 		fi.compensateDelete(ctx, factID, "linking subject entity")
-		return 0, 0, false, fmt.Errorf("failed to link subject entity: %w", err)
+		return 0, 0, fmt.Errorf("failed to link subject entity: %w", err)
 	}
 
 	// Fold path: the fact is a same-claim restatement — group it with the fact
@@ -457,12 +328,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// only duplicate LLM calls). A new fact promoted to parent takes over the
 	// matched fact's stance slot. On any fold error we fall through to normal
 	// stance processing (fail-open).
-	if foldTarget != nil {
-		if foldErr := fi.foldNewFact(ctx, subjectID, factID, input, *foldTarget); foldErr != nil {
-			log.Warn().Err(foldErr).Int64("fact_id", factID).Int64("matched_fact_id", foldTarget.ID).
+	if groupTarget != nil {
+		if foldErr := fi.foldNewFact(ctx, subjectID, factID, input, *groupTarget); foldErr != nil {
+			log.Warn().Err(foldErr).Int64("fact_id", factID).Int64("matched_fact_id", groupTarget.ID).
 				Msg("Grouping failed; falling back to normal stance routing")
 		} else {
-			return factID, subjectID, true, nil
+			return factID, subjectID, nil
 		}
 	}
 
@@ -471,7 +342,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
 	if err != nil {
 		fi.compensateDelete(ctx, factID, "stance processing")
-		return 0, 0, false, fmt.Errorf("stance processing failed for fact %d: %w", factID, err)
+		return 0, 0, fmt.Errorf("stance processing failed for fact %d: %w", factID, err)
 	}
 
 	log.Info().
@@ -482,61 +353,24 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		Int64("stance_id", stanceResult.StanceID).
 		Msg("Inserted fact and routed through stance")
 
-	return factID, subjectID, true, nil
+	return factID, subjectID, nil
 }
 
-// askDedupeGate asks the judge whether existing is the same claim (drop mode)
-// or the same position (fold mode) as the incoming fact. A failed call is
-// retried once: dedupe is decided exactly once, at insert time, so a transient
-// LLM failure would otherwise be a permanent miss.
+// askDedupeGate asks the judge whether existing states the same position as
+// the incoming fact. A failed call is retried once: dedupe is decided exactly
+// once, at insert time, so a transient LLM failure would otherwise be a
+// permanent miss.
 func (fi *FactInserter) askDedupeGate(ctx context.Context, input StoreFactInput, existing string) (bool, error) {
-	ask := func() (bool, error) {
-		if pg, ok := fi.dedupeJudge.(factPositionJudge); ok && fi.foldingEnabled() {
-			return pg.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
-		}
-		return fi.dedupeJudge.IsSameClaim(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
-	}
-	same, err := ask()
+	same, err := fi.dedupeJudge.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
 	if err == nil {
 		return same, nil
 	}
 	log.Warn().Err(err).Msg("LLM fact-dedupe check failed, retrying once")
-	return ask()
+	return fi.dedupeJudge.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
 }
 
-// attachProvenance links the source (and its mentions) of a same-claim fact
-// that is NOT being inserted to the existing fact it restates. The claim is
-// already known; what is new is where and when it was said again — a second
-// article, or the same position repeated in another séance — and producers
-// that pair facts by provenance (e.g. a séance id shared with a vote) need
-// that source on the surviving fact. Best-effort: failures are logged, the
-// skip decision stands.
-func (fi *FactInserter) attachProvenance(ctx context.Context, existingFactID, subjectID int64, input StoreFactInput) {
-	if strings.TrimSpace(input.SourceURL) == "" {
-		return
-	}
-	sourceID, err := fi.storer.LinkSourceToFact(ctx, existingFactID, input.SourceURL, input.OriginalQuote, input.PublishedAt, input.SourceType, input.Metadata)
-	if err != nil {
-		log.Warn().Err(err).Int64("existing_fact_id", existingFactID).Str("url", input.SourceURL).
-			Msg("Same-claim fact skipped; could not attach its source to the existing fact")
-		return
-	}
-	mentionIDs := []int64{subjectID}
-	for _, id := range input.CoActorIDs {
-		if id > 0 && id != subjectID {
-			mentionIDs = append(mentionIDs, id)
-		}
-	}
-	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, mentionIDs); err != nil {
-		log.Warn().Err(err).Int64("existing_fact_id", existingFactID).Int64("source_id", sourceID).
-			Msg("Same-claim fact skipped; could not attach its mentions to the existing fact's new source")
-	}
-	log.Info().Int64("existing_fact_id", existingFactID).Int64("source_id", sourceID).Str("url", input.SourceURL).
-		Msg("Same-claim fact skipped; source attached to the existing fact as additional provenance")
-}
-
-func (fi *FactInserter) foldingEnabled() bool {
-	return fi.groupStorer != nil
+func (fi *FactInserter) dedupeEnabled() bool {
+	return fi.dedupeJudge != nil && fi.groupStorer != nil
 }
 
 // foldNewFact puts a freshly inserted same-claim fact in one group with the
@@ -583,20 +417,5 @@ func (fi *FactInserter) compensateDelete(ctx context.Context, factID int64, stag
 			Int64("fact_id", factID).
 			Str("stage", stage).
 			Msg("Rolled back fact after failure during ingestion")
-	}
-}
-
-// isDirectClaimVerb returns true if the verb represents a direct claim or action
-// by the person (as opposed to an external attribution like a court ruling).
-// Duplicated from categorizer.IsDirectClaimVerb to avoid import cycle.
-func isDirectClaimVerb(verb string) bool {
-	switch verb {
-	case "DENIED", "CLAIMED", "PROMISED", "SUPPORTED",
-		"OPPOSED", "VOTED_FOR", "VOTED_AGAINST", "PROPOSED",
-		"CONFIRMED", "ADMITTED", "REFUSED", "DEMANDED",
-		"THREATENED", "ANNOUNCED", "CHANGED_POSITION":
-		return true
-	default:
-		return false
 	}
 }

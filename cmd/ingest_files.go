@@ -136,8 +136,7 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	factInserter := core.NewFactInserter(storer, stanceMgr)
-	factInserter.EnableLLMDedupe()
-	factInserter.EnableFolding(storer)
+	factInserter.EnableDedupe(storer)
 
 	// Create file ingester
 	ingester := core.NewFileIngester(factExtractor, embedder, factInserter)
@@ -173,8 +172,8 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Facts extracted:    %d\n", result.FactsExtracted)
 	if !dryRun {
 		fmt.Printf("  Facts stored:       %d\n", result.FactsStored)
-		if result.DuplicatesSkipped > 0 {
-			fmt.Printf("  Duplicates skipped: %d\n", result.DuplicatesSkipped)
+		if result.FactsSkipped > 0 {
+			fmt.Printf("  Facts skipped: %d\n", result.FactsSkipped)
 		}
 	} else {
 		fmt.Println("  [DRY-RUN] No facts were stored")
@@ -189,10 +188,10 @@ func runIngestFiles(cmd *cobra.Command, args []string) error {
 	// Record job metrics (skip in dry-run mode)
 	if !dryRun {
 		recordJobMetrics(ctx, storer, jobMetrics("ingest-files", resolvedTarget, map[string]float64{
-			"files_processed":    float64(result.FilesProcessed),
-			"facts_extracted":    float64(result.FactsExtracted),
-			"facts_stored":       float64(result.FactsStored),
-			"duplicates_skipped": float64(result.DuplicatesSkipped),
+			"files_processed": float64(result.FilesProcessed),
+			"facts_extracted": float64(result.FactsExtracted),
+			"facts_stored":    float64(result.FactsStored),
+			"facts_skipped":   float64(result.FactsSkipped),
 		}))
 	}
 

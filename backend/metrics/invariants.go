@@ -24,9 +24,8 @@ var (
 
 	// StanceRoutingsPending is the per-(person, fact) view of the same
 	// invariant: mention pairs whose fact is not yet in that person's stances.
-	// Non-zero is NORMAL while the nightly stance fan-out drains shared vote
-	// facts into co-voters' stance systems; it should trend to ~0 between
-	// nights, not stay flat.
+	// Non-zero is NORMAL while the nightly stance fan-out drains them; it
+	// should trend to ~0 between nights, not stay flat.
 	StanceRoutingsPending = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,

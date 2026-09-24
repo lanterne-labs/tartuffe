@@ -79,8 +79,7 @@ func (s *PostgresStorer) LinkPersonsToSourceMention(ctx context.Context, sourceI
 // for the specified persons, using cosine distance threshold.
 // threshold parameter is cosine distance (1 - cosine_similarity), e.g., 0.20 for 80% similarity.
 // Excludes facts that are the specific side of a 'duplicate' relation in fact_relations.
-// Each hit carries its canonical verb and the number of distinct persons
-// mentioning it, so the dedupe tiers of the inserter need no per-candidate lookup.
+// Each hit carries its canonical verb.
 // Returns up to limit results (default 20).
 func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]core.SimilarFact, error) {
 	timer := metrics.NewQueryTimer("find_similar_active_facts")
@@ -120,13 +119,9 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 			ORDER BY distance
 			LIMIT $4
 		)
-		SELECT h.id, h.fact_text, h.distance, h.canonical_verb,
-		       (SELECT COUNT(DISTINCT fm2.person_id)
-		        FROM fact_mentions fm2
-		        JOIN fact_sources fs2 ON fs2.id = fm2.fact_source_id
-		        WHERE fs2.fact_id = h.id) AS mention_persons
-		FROM Hits h
-		ORDER BY h.distance
+		SELECT id, fact_text, distance, canonical_verb
+		FROM Hits
+		ORDER BY distance
 	`
 
 	rows, err := s.pool.Query(ctx, query,
@@ -146,7 +141,7 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	var results []core.SimilarFact
 	for rows.Next() {
 		var sf core.SimilarFact
-		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance, &sf.CanonicalVerb, &sf.MentionPersons); err != nil {
+		if err := rows.Scan(&sf.ID, &sf.Text, &sf.Distance, &sf.CanonicalVerb); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}

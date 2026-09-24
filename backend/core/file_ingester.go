@@ -25,7 +25,7 @@ type FactExtractor interface {
 
 // FileIngester handles ingestion of facts from local JSON files.
 // It reads cached content files, extracts facts using LLM, generates embeddings,
-// and stores the facts with deduplication (handled automatically by FactInserter).
+// and stores the facts through the FactInserter (dedupe and claim grouping included).
 type FileIngester struct {
 	factExtractor FactExtractor
 	embedder      embedding.EmbeddingGenerator
@@ -55,8 +55,8 @@ type IngestResult struct {
 	FactsExtracted int
 	// FactsStored is the number of facts successfully stored (0 in dry-run).
 	FactsStored int
-	// DuplicatesSkipped is the number of facts skipped due to deduplication.
-	DuplicatesSkipped int
+	// FactsSkipped is the number of facts the inserter skipped (rejected subject, missing quote).
+	FactsSkipped int
 	// Errors contains any errors encountered during processing.
 	Errors []FileError
 }
@@ -164,7 +164,7 @@ func (fi *FileIngester) IngestFiles(ctx context.Context, paths []string, opts In
 				continue
 			}
 			result.FactsStored += storeResult.stored
-			result.DuplicatesSkipped += storeResult.duplicatesSkipped
+			result.FactsSkipped += storeResult.factsSkipped
 		}
 	}
 
@@ -231,8 +231,8 @@ func (fi *FileIngester) parseJSONFile(path string) (*cachedContent, error) {
 
 // storeFactsResult contains the outcome of storing facts.
 type storeFactsResult struct {
-	stored            int
-	duplicatesSkipped int
+	stored       int
+	factsSkipped int
 }
 
 // storeFacts generates embeddings and stores facts using the fact inserter.
@@ -277,7 +277,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 		}
 
 		result.stored += insertResult.Inserted
-		result.duplicatesSkipped += insertResult.Skipped
+		result.factsSkipped += insertResult.Skipped
 	}
 
 	return result, nil

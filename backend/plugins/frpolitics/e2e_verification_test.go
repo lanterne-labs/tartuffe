@@ -44,7 +44,7 @@ func TestE2EPartyFactVerification(t *testing.T) {
 	opts := Options{
 		Since:                &since,
 		MaxLaws:              3,         // Process only 3 laws for this test
-		MaxVotes:             500,       // Limit votes for faster test
+		MaxVotes:             100,       // each ballot is stance-routed at insert (~5 s): keep the sample small
 		PartyThreshold:       0.8,       // Standard threshold
 		DisableKeywordFilter: true,      // Skip keyword filtering for tests
 		DisableAIFilter:      true,      // Skip AI confidence filtering for tests
@@ -114,21 +114,33 @@ func TestE2EPartyFactVerification(t *testing.T) {
 		t.Fatal("No party facts were generated")
 	}
 
-	// Attribution fan-out: a shared vote fact must mention EVERY voter, not
-	// just the arbitrary first record (see StoreFactInput.CoActorIDs). Without
-	// this, deputies own zero vote facts and "said X, voted Y" never fires.
-	var voteSources, voteMentions, deputyMentions int
+	// A vote is a single-subject fact: every vote source carries exactly one
+	// mention, and the fact text starts with that voter's name.
+	var voteSources, badMentions, badTexts, deputyMentions int
 	require.NoError(t, storer.Pool().QueryRow(ctx, `
-		SELECT count(DISTINCT fs.id),
-		       count(fm.person_id),
-		       count(fm.person_id) FILTER (WHERE p.entity_type <> 'party')
-		FROM fact_sources fs
-		LEFT JOIN fact_mentions fm ON fm.fact_source_id = fs.id
-		LEFT JOIN persons p ON p.id = fm.person_id
-		WHERE fs.metadata->>'law_key' IS NOT NULL`).Scan(&voteSources, &voteMentions, &deputyMentions))
-	t.Logf("vote fan-out: sources=%d mentions=%d deputy_mentions=%d", voteSources, voteMentions, deputyMentions)
-	if voteMentions <= voteSources {
-		t.Errorf("vote facts average <= 1 mention (%d mentions over %d sources) — co-voter attribution is broken", voteMentions, voteSources)
+		WITH per_source AS (
+			SELECT fs.id, f.fact_text,
+			       count(fm.person_id) AS mentions,
+			       min(p.name) AS voter,
+			       bool_or(p.entity_type <> 'party') AS deputy
+			FROM fact_sources fs
+			JOIN facts f ON f.id = fs.fact_id
+			LEFT JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			LEFT JOIN persons p ON p.id = fm.person_id
+			WHERE fs.metadata->>'law_key' IS NOT NULL
+			GROUP BY fs.id, f.fact_text
+		)
+		SELECT count(*),
+		       count(*) FILTER (WHERE mentions <> 1),
+		       count(*) FILTER (WHERE mentions = 1 AND NOT starts_with(lower(immutable_unaccent(fact_text)), lower(immutable_unaccent(voter)) || ' ')),
+		       count(*) FILTER (WHERE deputy)
+		FROM per_source`).Scan(&voteSources, &badMentions, &badTexts, &deputyMentions))
+	t.Logf("vote facts: sources=%d bad_mentions=%d bad_texts=%d deputy_sources=%d", voteSources, badMentions, badTexts, deputyMentions)
+	if badMentions > 0 {
+		t.Errorf("%d vote sources do not carry exactly one mention", badMentions)
+	}
+	if badTexts > 0 {
+		t.Errorf("%d vote facts do not start with their voter's name", badTexts)
 	}
 	if deputyMentions == 0 {
 		t.Error("no deputy owns any vote fact — deputy attribution is broken")
@@ -187,7 +199,7 @@ func TestRealDataPartyFactVerification(t *testing.T) {
 	opts := Options{
 		Since:                &since,
 		MaxLaws:              3,
-		MaxVotes:             1000,
+		MaxVotes:             100,
 		PartyThreshold:       0.8,
 		DisableKeywordFilter: true, // Skip keyword filtering for tests
 		DisableAIFilter:      true, // Skip AI confidence filtering for tests

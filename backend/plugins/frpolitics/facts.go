@@ -16,10 +16,13 @@ import (
 type FactRecord struct {
 	// PersonName is the normalized person name to mention (human or party)
 	PersonName string
-	// FactText is the normalized fact text (without person names for display)
+	// EntityType is PersonName's entity type: "human" for a deputy, "party"
+	// for a group
+	EntityType string
+	// FactText is the normalized fact text, starting with PersonName
 	FactText string
-	// EmbeddingText is the text used for generating embeddings (without person names)
-	// For frpolitics, this equals FactText since FactText is already name-free
+	// EmbeddingText is the name-free law/object phrase used for the embedding:
+	// every ballot on one scrutin shares it
 	EmbeddingText string
 	// CanonicalVerb is the canonical verb (VOTED_FOR, VOTED_AGAINST, etc.)
 	CanonicalVerb string
@@ -39,34 +42,33 @@ type FactRecord struct {
 	PublishedAt *time.Time
 }
 
-// StoreFactsGrouped generates embeddings once per unique fact text and links all associated persons
-func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, factTextToRecords map[string][]FactRecord) error {
-	if len(factTextToRecords) == 0 {
+// StoreFacts stores one fact per record, its subject being the record's
+// PersonName. Embeddings are generated once per unique EmbeddingText and
+// shared by every ballot on the same scrutin. The subject's fact_count and
+// score are refreshed by the mention insert, as for any other fact.
+func StoreFacts(ctx context.Context, storer *storage.PostgresStorer, records []FactRecord) error {
+	if len(records) == 0 {
 		return nil
 	}
 
-	// Try to initialize embedding generator
 	embGen, err := embedding.NewOpenAIEmbeddingGeneratorFromEnv()
 	if err != nil {
 		return fmt.Errorf("failed to initialize embedding generator: %w", err)
 	}
 
-	// Collect unique embedding texts for embedding generation
-	// For frpolitics, EmbeddingText equals FactText since both are name-free
-	embeddingTexts := make([]string, 0, len(factTextToRecords))
-	embeddingTextToFactText := make(map[string]string, len(factTextToRecords))
-	for factText, records := range factTextToRecords {
-		if len(records) > 0 {
-			embText := records[0].EmbeddingText
-			if embText == "" {
-				embText = factText // Fallback if EmbeddingText not set
-			}
-			embeddingTexts = append(embeddingTexts, embText)
-			embeddingTextToFactText[embText] = factText
+	seen := make(map[string]bool)
+	var embeddingTexts []string
+	for _, rec := range records {
+		if rec.EmbeddingText == "" {
+			return fmt.Errorf("vote fact %q (law %s) has no embedding text", rec.FactText, rec.LawKey)
+		}
+		if !seen[rec.EmbeddingText] {
+			seen[rec.EmbeddingText] = true
+			embeddingTexts = append(embeddingTexts, rec.EmbeddingText)
 		}
 	}
 
-	// Generate embeddings in batches using EmbeddingText (name-free version)
+	// Generate embeddings in batches
 	batchSize := 50
 	embeddingsMap := make(map[string][]float32, len(embeddingTexts))
 	totalBatches := (len(embeddingTexts) + batchSize - 1) / batchSize
@@ -105,106 +107,9 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		}
 	}
 
-	// Build inputs for the core fact inserter
-	totalFacts := len(factTextToRecords)
-	inputs := make([]core.StoreFactInput, 0, totalFacts)
-	voterIDs := make(map[int64]bool)
-
-	log.Info().
-		Int("total_facts", totalFacts).
-		Msg("frpolitics: preparing facts for insertion")
-
-	// Co-voters are resolved by name in one query for the whole batch (a law
-	// has hundreds of voters per side) instead of one per record.
-	seenNames := make(map[string]bool)
-	var coVoterNames []string
-	for _, records := range factTextToRecords {
-		if len(records) == 0 {
-			continue
-		}
-		for _, rec := range records[1:] {
-			if !seenNames[rec.PersonName] {
-				seenNames[rec.PersonName] = true
-				coVoterNames = append(coVoterNames, rec.PersonName)
-			}
-		}
-	}
-	coVoterIDs, err := storer.GetPersonIDsByNames(ctx, coVoterNames)
+	inputs, err := buildVoteFactInputs(records, embeddingsMap)
 	if err != nil {
-		return fmt.Errorf("failed to resolve co-voters: %w", err)
-	}
-
-	for factText, records := range factTextToRecords {
-		if len(records) == 0 {
-			continue
-		}
-
-		// Use the first record for metadata (they should all have the same law info)
-		firstRec := records[0]
-
-		// Get embedding text (name-free version)
-		embeddingText := firstRec.EmbeddingText
-		if embeddingText == "" {
-			embeddingText = factText // Fallback if EmbeddingText not set
-		}
-
-		// Every record in this group cast the SAME vote — they are all actors
-		// of the shared fact, not bystanders. The first becomes the subject
-		// (stance routing needs exactly one owner-person); the rest become
-		// co-actors with their own fact_mentions rows, so each voter carries
-		// the fact in detection and scoring. Before 2026-09-05 they were filed
-		// as InvolvedPeople, which by design does NOT attribute — deputies
-		// ended up owning zero vote facts and "said X, voted Y" could never
-		// fire (see StoreFactInput.CoActorIDs for the consequence map).
-		subjectEntity := firstRec.PersonName
-		var coActorIDs []int64
-		for _, rec := range records[1:] {
-			id, ok := coVoterIDs[rec.PersonName]
-			if !ok || id <= 0 {
-				log.Warn().Str("person", rec.PersonName).Str("law", firstRec.LawKey).
-					Msg("frpolitics: co-voter not found in persons; vote not attributed to them")
-				continue
-			}
-			coActorIDs = append(coActorIDs, id)
-			voterIDs[id] = true
-		}
-
-		// Ensure metadata includes law information for traceability
-		metadata := map[string]any{
-			"law_key":         firstRec.LawKey,
-			"law_title":       firstRec.LawTitle,
-			"law_short_title": firstRec.LawShortTitle,
-			"law_summary":     firstRec.LawSummary,
-		}
-		if firstRec.SourceURL != "" {
-			metadata["source_url"] = firstRec.SourceURL
-		}
-		if firstRec.SeanceRef != "" {
-			metadata["seance_ref"] = firstRec.SeanceRef
-		}
-
-		// Build original quote that includes law key and titles for traceability
-		originalQuote := fmt.Sprintf("Law Key: %s\nFull Title: %s\nShort Title: %s\nSummary: %s",
-			firstRec.LawKey, firstRec.LawTitle, firstRec.LawShortTitle, firstRec.LawSummary)
-		if firstRec.SourceURL != "" {
-			originalQuote += fmt.Sprintf("\nSource: %s", firstRec.SourceURL)
-		}
-
-		input := core.StoreFactInput{
-			SubjectEntity:      subjectEntity,
-			NormalizedFactText: factText,
-			EmbeddingText:      embeddingText, // Name-free version for embeddings
-			Embedding:          embeddingsMap[embeddingText],
-			OriginalQuote:      originalQuote,
-			CanonicalVerb:      firstRec.CanonicalVerb,
-			CoActorIDs:         coActorIDs,
-			SourceURL:          firstRec.SourceURL,
-			PublishedAt:        firstRec.PublishedAt,
-			SourceType:         "assemblee_law_page",
-			Metadata:           metadata,
-			Lang:               "fr",
-		}
-		inputs = append(inputs, input)
+		return err
 	}
 
 	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
@@ -212,7 +117,7 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
 	inserter := core.NewFactInserter(storer, stanceMgr)
-	inserter.EnableLLMDedupe()
+	inserter.EnableDedupe(storer)
 
 	log.Info().
 		Int("total_facts", len(inputs)).
@@ -225,18 +130,54 @@ func StoreFactsGrouped(ctx context.Context, storer *storage.PostgresStorer, fact
 	log.Info().
 		Int("total_facts", len(inputs)).
 		Msg("frpolitics: fact insertion complete")
-
-	// Co-actor mentions changed these persons' effective fact sets; refresh
-	// their fact_count and scores in one batch.
-	if len(voterIDs) > 0 {
-		ids := make([]int64, 0, len(voterIDs))
-		for id := range voterIDs {
-			ids = append(ids, id)
-		}
-		if err := storer.RefreshPersonScores(ctx, ids); err != nil {
-			return fmt.Errorf("refreshing voter fact counts: %w", err)
-		}
-		log.Info().Int("voters", len(ids)).Msg("frpolitics: refreshed fact counts and scores for co-voting persons")
-	}
 	return nil
+}
+
+// buildVoteFactInputs turns each record into one inserter input whose subject
+// is the record's PersonName, attaching the embedding of its EmbeddingText.
+func buildVoteFactInputs(records []FactRecord, embeddings map[string][]float32) ([]core.StoreFactInput, error) {
+	inputs := make([]core.StoreFactInput, 0, len(records))
+	for _, rec := range records {
+		emb, ok := embeddings[rec.EmbeddingText]
+		if !ok {
+			return nil, fmt.Errorf("no embedding for %q (law %s, %s)", rec.EmbeddingText, rec.LawKey, rec.PersonName)
+		}
+
+		// Ensure metadata includes law information for traceability
+		metadata := map[string]any{
+			"law_key":         rec.LawKey,
+			"law_title":       rec.LawTitle,
+			"law_short_title": rec.LawShortTitle,
+			"law_summary":     rec.LawSummary,
+		}
+		if rec.SourceURL != "" {
+			metadata["source_url"] = rec.SourceURL
+		}
+		if rec.SeanceRef != "" {
+			metadata["seance_ref"] = rec.SeanceRef
+		}
+
+		// Build original quote that includes law key and titles for traceability
+		originalQuote := fmt.Sprintf("Law Key: %s\nFull Title: %s\nShort Title: %s\nSummary: %s",
+			rec.LawKey, rec.LawTitle, rec.LawShortTitle, rec.LawSummary)
+		if rec.SourceURL != "" {
+			originalQuote += fmt.Sprintf("\nSource: %s", rec.SourceURL)
+		}
+
+		inputs = append(inputs, core.StoreFactInput{
+			SubjectEntity:      rec.PersonName,
+			SubjectEntityType:  rec.EntityType,
+			NormalizedFactText: rec.FactText,
+			EmbeddingText:      rec.EmbeddingText,
+			Embedding:          emb,
+			OriginalQuote:      originalQuote,
+			CanonicalVerb:      rec.CanonicalVerb,
+			SourceURL:          rec.SourceURL,
+			PublishedAt:        rec.PublishedAt,
+			SourceType:         "assemblee_law_page",
+			Metadata:           metadata,
+			Lang:               "fr",
+		})
+	}
+	return inputs, nil
 }

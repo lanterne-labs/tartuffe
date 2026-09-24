@@ -57,98 +57,29 @@ func (s *Store) MarkLawAsProcessed(ctx context.Context, lawKey string, legislatu
 	return nil
 }
 
-// DeletePartialLawData removes all facts, fact_sources, contradictions, and fact_mentions
-// associated with a law_key. This is used for cleanup before reprocessing an incomplete law.
-// IMPORTANT: Only deletes if the law is NOT marked as fully processed in processed_laws table.
-// Returns the number of facts deleted.
-func (s *Store) DeletePartialLawData(ctx context.Context, lawKey string) (int, error) {
-	// Use a transaction to ensure atomic cleanup
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	// Safety check: Only delete if law is NOT in processed_laws table
-	var isComplete bool
-	checkQuery := `SELECT EXISTS(SELECT 1 FROM processed_laws WHERE law_key = $1)`
-	if err := tx.QueryRow(ctx, checkQuery, lawKey).Scan(&isComplete); err != nil {
-		return 0, fmt.Errorf("failed to check if law %s is complete: %w", lawKey, err)
-	}
-	if isComplete {
-		// Law is marked as complete - do NOT delete its facts
-		return 0, tx.Commit(ctx)
-	}
-
-	// Step 1: Find all fact IDs associated with this law_key
-	factIDsQuery := `
-		SELECT DISTINCT f.id
+// StoredLawFactTexts returns the texts of the facts already stored for a law.
+// A law whose store failed part-way resumes from them: every ballot is its
+// own fact with a text unique to its voter, and each insert is atomic, so
+// the ballots already stored are skipped rather than deleted and redone.
+func (s *Store) StoredLawFactTexts(ctx context.Context, lawKey string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT f.fact_text
 		FROM facts f
-		JOIN fact_sources fs ON f.id = fs.fact_id::bigint
-		WHERE fs.metadata->>'law_key' = $1
-	`
-	rows, err := tx.Query(ctx, factIDsQuery, lawKey)
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.source_type = 'assemblee_law_page' AND fs.metadata->>'law_key' = $1`, lawKey)
 	if err != nil {
-		return 0, fmt.Errorf("failed to find facts for law %s: %w", lawKey, err)
+		return nil, fmt.Errorf("failed to load stored facts for law %s: %w", lawKey, err)
 	}
-
-	factIDs := make([]int64, 0)
+	defer rows.Close()
+	stored := make(map[string]bool)
 	for rows.Next() {
-		var factID int64
-		if err := rows.Scan(&factID); err != nil {
-			rows.Close()
-			return 0, fmt.Errorf("failed to scan fact ID: %w", err)
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, fmt.Errorf("failed to scan stored fact for law %s: %w", lawKey, err)
 		}
-		factIDs = append(factIDs, factID)
+		stored[text] = true
 	}
-	rows.Close()
-
-	if len(factIDs) == 0 {
-		// No facts to delete
-		return 0, tx.Commit(ctx)
-	}
-
-	// Step 2: Delete contradictions referencing these facts
-	deleteContradictionsQuery := `
-		DELETE FROM contradictions
-		WHERE fact_a_id = ANY($1) OR fact_b_id = ANY($1)
-	`
-	_, err = tx.Exec(ctx, deleteContradictionsQuery, factIDs)
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete contradictions for law %s: %w", lawKey, err)
-	}
-
-	// Step 3: Delete fact_mentions (via fact_source_id)
-	deleteMentionsQuery := `
-		DELETE FROM fact_mentions
-		WHERE fact_source_id IN (
-			SELECT id FROM fact_sources WHERE metadata->>'law_key' = $1
-		)
-	`
-	_, err = tx.Exec(ctx, deleteMentionsQuery, lawKey)
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete fact_mentions for law %s: %w", lawKey, err)
-	}
-
-	// Step 4: Delete fact_sources
-	deleteSourcesQuery := `DELETE FROM fact_sources WHERE metadata->>'law_key' = $1`
-	_, err = tx.Exec(ctx, deleteSourcesQuery, lawKey)
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete fact_sources for law %s: %w", lawKey, err)
-	}
-
-	// Step 5: Delete facts (orphaned by removing fact_sources)
-	deleteFactsQuery := `DELETE FROM facts WHERE id = ANY($1)`
-	_, err = tx.Exec(ctx, deleteFactsQuery, factIDs)
-	if err != nil {
-		return 0, fmt.Errorf("failed to delete facts for law %s: %w", lawKey, err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return len(factIDs), nil
+	return stored, rows.Err()
 }
 
 // StoreSkippedLaw stores information about a law that was skipped during processing

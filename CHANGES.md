@@ -2255,3 +2255,33 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   comparison, and the second dry run dissolved ~25 % of the July metas, two in five of a
   sample on a coin-flip verdict ("demande d'inscrire la PPL" / "apporte son soutien à la
   PPL"). Costs one extra call per "different", in this one-off review only.
+
+## Votes are single-subject facts; one dedupe mode (2026-09-23)
+
+- frpolitics stores one fact per ballot, named after its voter or party ("Jean Dupont a voté
+  CONTRE …", "Rassemblement National a collectivement voté POUR …"). The embedding text stays
+  the name-free object phrase, so every ballot on one scrutin shares one embedding.
+- Gone: `StoreFactInput.CoActorIDs`, the shared-fact guards (`SimilarFact.MentionPersons`,
+  the multi-mention exclusion of `dm facts fold`), and the inserter's drop mode (tier-1
+  auto-drop, `IsSameClaim` gate, provenance attach). `EnableDedupe(groups)` is the one
+  switch: every inserter (news, twitter, frpolitics votes and débats, `dm ingest files`)
+  groups same-position facts under the LLM gate; without a configured judge nothing is
+  deduped. The inserter no longer reads `DEDUPE_AUTO_THRESHOLD`; only `dm dedupe run` does.
+- A vote law whose store fails part-way resumes after the ballots already stored instead
+  of deleting and redoing them (a grouped ballot may already hold another fact's slot).
+- Why: one fact belonging to many persons forced per-person overlays everywhere — 13
+  unscoped queries found in the fan-out audit, grouping refused for shared facts, and
+  frpolitics kept a drop mode that could lose every co-voter's ballot (mirror-eqm).
+- Cost moved to insert time: each ballot is stance-routed and dedupe-gated when inserted
+  instead of waiting for the nightly fan-out. Person-scoped stance/contradiction queries stay:
+  scoping by person is correct for any fact.
+
+## An unreachable LLM does not use up a document's retries (2026-09-24)
+
+- `llm.ErrUnavailable` marks a call no endpoint could serve (primary down or skipped by the
+  breaker, fallback failed too). `core.ProcessDocuments` still aborts the run on the outage
+  streak but no longer charges those failures to the documents: `MaxExtractionAttempts`
+  counts failures of the document only.
+- Why: the local LLM box's wifi dropped three nights running and the fallback had no
+  credits; every outage night charged each attempted document one of its three attempts, so a
+  third bad night would have abandoned 160 documents for good.

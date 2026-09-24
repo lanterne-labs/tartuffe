@@ -213,7 +213,7 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 		return stats, fmt.Errorf("debats: stance manager: %w", err)
 	}
 	inserter := core.NewFactInserter(storer, stanceMgr)
-	inserter.EnableLLMDedupe()
+	inserter.EnableDedupe(storer)
 
 	var priority map[int64]int
 	if opts.PrioritizePress {

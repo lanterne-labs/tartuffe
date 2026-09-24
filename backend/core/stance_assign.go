@@ -22,9 +22,8 @@ type StanceAssignStorer interface {
 
 // StanceFanoutNightlyBudget caps how many (person, fact) stance routings the
 // daily pipeline performs per night. Sized against the serialized local GPU:
-// most routings for vote co-actors are a single topic-assignment call (new
-// stance on a near-empty deputy), so 250 fits comfortably in the freed
-// re-baseline window. The pending set is derived from the DB, so whatever is
+// most routings are a single topic-assignment call, so 250 fits comfortably
+// in the freed re-baseline window. The pending set is derived from the DB, so whatever is
 // not processed tonight simply remains pending for tomorrow (self-draining,
 // self-terminating once the backlog is gone).
 const StanceFanoutNightlyBudget = 250
@@ -121,8 +120,9 @@ func AssignOrphansForPerson(
 }
 
 // RunStanceFanout is the daily-pipeline stance fan-out step (mirror-py3):
-// route pending (person, fact) mention pairs — mostly shared vote facts for
-// their co-voters — through the live ProcessNewFact path, up to budget
+// route pending (person, fact) mention pairs — facts that never reached that
+// person's stances, e.g. unfolded group members — through the live
+// ProcessNewFact path, up to budget
 // routings per run (StanceFanoutNightlyBudget for the nightly run). The
 // pending set is derived from the DB by the person-scoped orphan queries, so
 // the step is idempotent, retries failures on later nights, and goes silent

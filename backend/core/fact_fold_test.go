@@ -21,11 +21,10 @@ func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	return f.similar, nil
 }
 
-// matchedFact is the similar fact the fixtures return: same canonical verb as
-// the input so the tier-1 auto-dedupe rule fires, carried by a single person
-// (the fold path refuses shared facts) unless mentionPersons says otherwise.
-func matchedFact(text string, mentionPersons int) SimilarFact {
-	return SimilarFact{ID: 7, Text: text, Distance: 0.05, CanonicalVerb: "affirmer", MentionPersons: mentionPersons}
+// matchedFact is the similar fact the fixtures return: very close to the
+// input and with the same canonical verb, so only the judge can refuse it.
+func matchedFact(text string) SimilarFact {
+	return SimilarFact{ID: 7, Text: text, Distance: 0.05, CanonicalVerb: "affirmer"}
 }
 
 // MostConcreteFact is called with (matched, new).
@@ -48,10 +47,6 @@ func (f *foldFakeStorer) RefreshPersonScore(ctx context.Context, personID int64)
 // fakeJudge stands in for the LLM gate — the mandatory last decider on fold
 // membership (embeddings only select candidates).
 type fakeJudge struct{ same bool }
-
-func (j fakeJudge) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
-	return j.same, nil
-}
 
 func (j fakeJudge) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
 	return j.same, nil
@@ -82,14 +77,14 @@ func foldInput() StoreFactInput {
 }
 
 // A same-claim hit (confirmed by the LLM judge — the mandatory last decider)
-// with folding enabled must KEEP the fact (inserted, not dropped), put it in
+// must KEEP the fact (inserted, not dropped), put it in
 // the matched fact's group, and skip stance analysis.
 func TestFoldGroupsNewFactUnderMatchedFact(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.")}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableFolding(st)
+	fi.groupStorer = st
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -109,11 +104,11 @@ func TestFoldGroupsNewFactUnderMatchedFact(t *testing.T) {
 // When the new wording is more concrete, it becomes the group's parent and
 // the matched fact moves under it.
 func TestFoldPromotesMoreConcreteNewFact(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}, newIsMoreConcrete: true}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.")}, newIsMoreConcrete: true}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableFolding(st)
+	fi.groupStorer = st
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -134,11 +129,11 @@ func TestFoldPromotesMoreConcreteNewFact(t *testing.T) {
 // NOT folded when the judge says the positions differ — the fact goes through
 // normal stance analysis instead.
 func TestFoldVetoedByJudge(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.")}}
 	stance := &countingStance{}
 	fi := NewFactInserter(st, stance)
 	fi.dedupeJudge = fakeJudge{same: false}
-	fi.EnableFolding(st)
+	fi.groupStorer = st
 
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
@@ -155,83 +150,6 @@ func TestFoldVetoedByJudge(t *testing.T) {
 	}
 }
 
-// A matched fact carried by several persons (shared co-actor fact, e.g. a vote)
-// must NEVER become a fold member: 'duplicate' is a global flag, so folding it
-// would remove the fact from every other voter's active set. The new fact goes
-// through normal stance analysis instead.
-func TestFoldRefusedOnSharedMatchedFact(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("a voté POUR le texte.", 3)}}
-	stance := &countingStance{}
-	fi := NewFactInserter(st, stance)
-	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableFolding(st)
-
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
-	if err != nil {
-		t.Fatalf("InsertFacts: %v", err)
-	}
-	if res.Inserted != 1 {
-		t.Fatalf("fact must be inserted normally, got %+v", res)
-	}
-	if len(st.merges) != 0 {
-		t.Fatalf("shared matched fact must not be grouped, got %v", st.merges)
-	}
-	if stance.calls != 1 {
-		t.Fatalf("unfolded fact must go through stance analysis, ran %d times", stance.calls)
-	}
-}
-
-// A NEW fact that itself has co-actors (shared vote fact) must never fold under
-// an existing meta either — same global-duplicate hazard, from the other side.
-func TestFoldRefusedOnNewSharedFact(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
-	stance := &countingStance{}
-	fi := NewFactInserter(st, stance)
-	fi.dedupeJudge = fakeJudge{same: true}
-	fi.EnableFolding(st)
-
-	input := foldInput()
-	input.CoActorIDs = []int64{201, 202}
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
-	if err != nil {
-		t.Fatalf("InsertFacts: %v", err)
-	}
-	if res.Inserted != 1 {
-		t.Fatalf("fact must be inserted normally, got %+v", res)
-	}
-	if len(st.merges) != 0 {
-		t.Fatalf("co-actor fact must not be grouped, got %v", st.merges)
-	}
-	if stance.calls != 1 {
-		t.Fatalf("co-actor fact must go through stance analysis, ran %d times", stance.calls)
-	}
-}
-
-// Without folding enabled, the same-claim fact is not inserted — but its
-// source (and mentions) are attached to the existing fact as additional
-// provenance: the claim is known, where it was said again is new, and
-// provenance-based producers (same séance as a vote) depend on it.
-func TestSameClaimDroppedWhenFoldingDisabled(t *testing.T) {
-	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.", 1)}}
-	fi := NewFactInserter(st, &countingStance{})
-
-	input := foldInput()
-	input.CoActorIDs = []int64{42}
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
-	if err != nil {
-		t.Fatalf("InsertFacts: %v", err)
-	}
-	if res.Inserted != 0 || res.Skipped != 1 {
-		t.Fatalf("fact must be dropped without folding, got %+v", res)
-	}
-	if len(st.linkedSources) != 1 || st.linkedSources[0][0] != int64(7) || st.linkedSources[0][1] != "http://ex/1" {
-		t.Fatalf("the skipped fact's source must be attached to the existing fact 7, got %v", st.linkedSources)
-	}
-	if got := st.mentioned[st.nextSrcID]; len(got) != 2 || got[0] != 1 || got[1] != 42 {
-		t.Fatalf("subject and co-actors must be mentioned on the attached source, got %v", got)
-	}
-}
-
 // flakyJudge fails its first `failures` calls, then answers same.
 type flakyJudge struct {
 	failures int
@@ -239,7 +157,7 @@ type flakyJudge struct {
 	calls    int
 }
 
-func (j *flakyJudge) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
+func (j *flakyJudge) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
 	j.calls++
 	if j.calls <= j.failures {
 		return false, errors.New("llm unavailable")
@@ -248,47 +166,39 @@ func (j *flakyJudge) IsSameClaim(ctx context.Context, subject, factA, factB stri
 }
 
 // A gate call that fails once is retried and its verdict applied: the fact is
-// deduplicated instead of the failure counting as "not a duplicate" forever.
+// grouped instead of the failure counting as "not the same claim" forever.
 func TestDedupeGateRetriesOnceOnError(t *testing.T) {
-	// Two different direct-claim verbs keep the cheap tier out of the way so
-	// the gate is consulted.
-	candidate := matchedFact("Il clame son innocence.", 1)
-	candidate.CanonicalVerb = "CLAIMED"
-	st := &foldFakeStorer{similar: []SimilarFact{candidate}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.")}}
 	fi := NewFactInserter(st, &countingStance{})
 	judge := &flakyJudge{failures: 1, same: true}
 	fi.dedupeJudge = judge
-	input := foldInput()
-	input.CanonicalVerb = "PROMISED"
+	fi.groupStorer = st
 
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
 		t.Fatalf("InsertFacts: %v", err)
 	}
 	if judge.calls != 2 {
 		t.Fatalf("the gate must be asked twice (one failure, one retry), got %d calls", judge.calls)
 	}
-	if res.Inserted != 0 || res.Skipped != 1 {
-		t.Fatalf("the retried verdict must apply (fact dropped), got %+v", res)
+	if res.Inserted != 1 || len(st.merges) != 1 {
+		t.Fatalf("the retried verdict must apply (fact grouped), got res=%+v merges=%v", res, st.merges)
 	}
 }
 
-// Two consecutive failures give up on that candidate and the fact is inserted.
+// Two consecutive failures give up on that candidate and the fact is inserted standalone.
 func TestDedupeGateGivesUpAfterTwoFailures(t *testing.T) {
-	candidate := matchedFact("Il clame son innocence.", 1)
-	candidate.CanonicalVerb = "CLAIMED"
-	st := &foldFakeStorer{similar: []SimilarFact{candidate}}
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il clame son innocence.")}}
 	fi := NewFactInserter(st, &countingStance{})
 	judge := &flakyJudge{failures: 2, same: true}
 	fi.dedupeJudge = judge
-	input := foldInput()
-	input.CanonicalVerb = "PROMISED"
+	fi.groupStorer = st
 
-	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{input})
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()})
 	if err != nil {
 		t.Fatalf("InsertFacts: %v", err)
 	}
-	if judge.calls != 2 || res.Inserted != 1 {
-		t.Fatalf("after two failures the fact is inserted, got calls=%d res=%+v", judge.calls, res)
+	if judge.calls != 2 || res.Inserted != 1 || len(st.merges) != 0 {
+		t.Fatalf("after two failures the fact is inserted standalone, got calls=%d res=%+v merges=%v", judge.calls, res, st.merges)
 	}
 }

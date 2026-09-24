@@ -195,71 +195,34 @@ func TestStoreProcessedLawsTracking(t *testing.T) {
 	assert.Equal(t, 43, info.factsCount, "FactsCount should be updated to new value")
 }
 
-// TestStoreDeletePartialLawData covers the cleanup of a law whose store
-// failed mid-way: its facts, sources and mentions go, unless the law carries
-// the processed_laws completion marker.
-func TestStoreDeletePartialLawData(t *testing.T) {
+// TestStoreStoredLawFactTexts: a law whose store failed part-way resumes from
+// the vote facts already stored for it, and only from that law's.
+func TestStoreStoredLawFactTexts(t *testing.T) {
 	storer, store := setupStoreTest(t)
 	ctx := context.Background()
 	pool := storer.Pool()
 
-	lawKey1 := "16-9001"
-	lawKey2 := "16-9002"
-
-	personID, _, err := storer.AddPerson(ctx, "Test Person")
-	require.NoError(t, err)
-	// lawFact inserts one vote fact carrying law_key in its source metadata,
-	// mentioned by the test person.
-	lawFact := func(text, url, lawKey string) int64 {
-		var id, sid int64
+	lawFact := func(text, url, sourceType, lawKey string) {
+		var id int64
 		require.NoError(t, pool.QueryRow(ctx, "INSERT INTO facts (fact_text) VALUES ($1) RETURNING id", text).Scan(&id))
-		require.NoError(t, pool.QueryRow(ctx,
-			"INSERT INTO fact_sources (fact_id, source_url, source_type, metadata) VALUES ($1, $2, 'assemblee_law_page', jsonb_build_object('law_key', $3::text)) RETURNING id",
-			id, url, lawKey).Scan(&sid))
-		_, err := pool.Exec(ctx, "INSERT INTO fact_mentions (fact_source_id, person_id) VALUES ($1, $2)", sid, personID)
+		_, err := pool.Exec(ctx,
+			"INSERT INTO fact_sources (fact_id, source_url, source_type, metadata) VALUES ($1, $2, $3, jsonb_build_object('law_key', $4::text))",
+			id, url, sourceType, lawKey)
 		require.NoError(t, err)
-		return id
 	}
-	countSources := func(lawKey string) int {
-		var n int
-		require.NoError(t, pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_sources WHERE metadata->>'law_key' = $1", lawKey).Scan(&n))
-		return n
-	}
-	factExists := func(id int64) bool {
-		var exists bool
-		require.NoError(t, pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM facts WHERE id = $1)", id).Scan(&exists))
-		return exists
-	}
+	lawFact("Jean Dupont a voté POUR le texte 9001", "https://test.com/9001", "assemblee_law_page", "16-9001")
+	lawFact("Marie Martin a voté CONTRE le texte 9001", "https://test.com/9001", "assemblee_law_page", "16-9001")
+	lawFact("Jean Dupont a voté POUR le texte 9002", "https://test.com/9002", "assemblee_law_page", "16-9002")
+	lawFact("Jean Dupont a parlé du texte 9001", "https://test.com/debat", "assemblee_debat", "16-9001")
 
-	// Case 1: Create partial facts for law 16-9001 (NOT in processed_laws)
-	factID1 := lawFact("Partial fact 1 for law 16-9001", "https://test.com/9001-1", lawKey1)
-	factID2 := lawFact("Partial fact 2 for law 16-9001", "https://test.com/9001-2", lawKey1)
-	assert.Equal(t, 2, countSources(lawKey1), "Should have 2 fact_sources for law 16-9001")
-
-	// Case 2: Delete partial law data (law NOT in processed_laws)
-	deletedCount, err := store.DeletePartialLawData(ctx, lawKey1)
-	require.NoError(t, err, "DeletePartialLawData should succeed")
-	assert.Equal(t, 2, deletedCount, "Should have deleted 2 facts")
-
-	// Verify facts are gone
-	assert.Equal(t, 0, countSources(lawKey1), "Should have 0 fact_sources after deletion")
-	assert.False(t, factExists(factID1), "Fact 1 should be deleted")
-	assert.False(t, factExists(factID2), "Fact 2 should be deleted")
-	var mentions int
-	require.NoError(t, pool.QueryRow(ctx, "SELECT COUNT(*) FROM fact_mentions WHERE person_id = $1", personID).Scan(&mentions))
-	assert.Equal(t, 0, mentions, "mentions of the deleted sources should be gone")
-
-	// Case 3: Create a fact for law 16-9002 and mark it as complete
-	factID3 := lawFact("Complete fact for law 16-9002", "https://test.com/9002", lawKey2)
-	err = store.MarkLawAsProcessed(ctx, lawKey2, 16, "Complete Law", 1)
+	stored, err := store.StoredLawFactTexts(ctx, "16-9001")
 	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{
+		"Jean Dupont a voté POUR le texte 9001":    true,
+		"Marie Martin a voté CONTRE le texte 9001": true,
+	}, stored)
 
-	// Case 4: Try to delete - should NOT delete because law is marked complete
-	deletedCount, err = store.DeletePartialLawData(ctx, lawKey2)
-	require.NoError(t, err, "DeletePartialLawData should succeed (but not delete)")
-	assert.Equal(t, 0, deletedCount, "Should NOT delete facts for complete law")
-
-	// Verify fact still exists
-	assert.True(t, factExists(factID3), "Fact 3 should still exist (complete law protection)")
-	assert.Equal(t, 1, countSources(lawKey2), "Should still have 1 fact_source for complete law")
+	none, err := store.StoredLawFactTexts(ctx, "16-9999")
+	require.NoError(t, err)
+	assert.Empty(t, none)
 }
