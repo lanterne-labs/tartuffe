@@ -261,3 +261,39 @@ func TestProbePrimary_WarmupExhaustedArmsBreaker(t *testing.T) {
 		t.Error("breaker must be armed after warm-up exhaustion")
 	}
 }
+
+// TestDoRequest_UnavailableOnlyWhenNoEndpointServes: a call fails with
+// ErrUnavailable when the primary is down (breaker open) and the fallback
+// rejects it too, but not when the primary itself rejected the request (a
+// 4xx says nothing about the endpoint).
+func TestDoRequest_UnavailableOnlyWhenNoEndpointServes(t *testing.T) {
+	defer resetBreaker()
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		w.Write([]byte(`{"error":{"message":"Insufficient credits"}}`))
+	}))
+	defer fallback.Close()
+
+	t.Setenv("FALLBACK_URL", fallback.URL)
+	t.Setenv("FALLBACK_CHAT_MODEL", "test-fallback-model")
+	t.Setenv("FALLBACK_KEY", "k")
+	c := NewBaseLLMClient("unavailable-test")
+
+	MarkPrimaryDown("test")
+	_, err := c.DoRequest(context.Background(), primary.URL+"/v1/chat/completions", "k", []byte(`{"model":"m"}`))
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("breaker open + fallback 402: want ErrUnavailable, got %v", err)
+	}
+
+	resetBreaker()
+	_, err = c.DoRequest(context.Background(), primary.URL+"/v1/chat/completions", "k", []byte(`{"model":"m"}`))
+	if err == nil || errors.Is(err, ErrUnavailable) {
+		t.Fatalf("primary 400 + fallback 402: want a plain error, got %v", err)
+	}
+}

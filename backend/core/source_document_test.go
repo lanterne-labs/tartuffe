@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"digital-mirror/backend/llm"
 )
 
 // memDocs is an in-memory DocumentStorer: documents keyed by id, states
@@ -188,5 +190,30 @@ func TestProcessDocuments_RetriesUntilCap(t *testing.T) {
 	st, err := ProcessDocuments(context.Background(), m, "t", 0, boom, ProcessOptions{})
 	if err != nil || st.Pending != 0 {
 		t.Fatalf("after %d attempts the document must be left alone: stats=%+v err=%v", MaxExtractionAttempts, st, err)
+	}
+}
+
+// An unreachable LLM is not the documents' fault: the run still aborts as an
+// outage, but no document is charged an attempt, so a night-long outage
+// cannot use up their retries.
+func TestProcessDocuments_UnavailableLLMKeepsAttempts(t *testing.T) {
+	var long []SourceDocument
+	for i := 1; i <= 30; i++ {
+		long = append(long, fetched(int64(i), fmt.Sprintf("L%02d", i), 1))
+	}
+	m := newMemDocs(long...)
+	down := func(context.Context, []SourceDocument) (map[int64]int, error) {
+		return nil, fmt.Errorf("extracting: %w", fmt.Errorf("%w: primary failed; fallback failed: 402", llm.ErrUnavailable))
+	}
+	for run := 0; run < MaxExtractionAttempts+1; run++ {
+		st, err := ProcessDocuments(context.Background(), m, "t", 0, down, ProcessOptions{MaxConsecutiveFailures: 10})
+		if !errors.Is(err, ErrOutage) || st.Attempted != 10 || st.Pending != 30 {
+			t.Fatalf("run %d: stats=%+v err=%v, want the outage abort after 10 with all 30 pending", run+1, st, err)
+		}
+	}
+	for id := int64(1); id <= 30; id++ {
+		if m.states[id] != DocFetched || m.tries[id] != 0 {
+			t.Fatalf("doc %d: state %s tries %d, want fetched with no attempt charged", id, m.states[id], m.tries[id])
+		}
 	}
 }

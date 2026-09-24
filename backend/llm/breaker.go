@@ -36,6 +36,12 @@ const probeInterval = 10 * time.Minute
 // was skipped because the breaker is open (fallback handles the call).
 var errPrimaryBreakerOpen = errors.New("primary LLM endpoint skipped: circuit breaker open")
 
+// ErrUnavailable marks a call that failed because no endpoint could serve it:
+// the primary was unreachable (or skipped by the open breaker) and the
+// fallback, when configured, failed too. The request itself was not at fault,
+// so callers that count per-item failures must not charge it to the item.
+var ErrUnavailable = errors.New("LLM unavailable")
+
 // PrimaryDown reports whether the primary endpoint is currently considered
 // unreachable. When it returns true, callers with a configured fallback should
 // skip the primary attempt entirely.

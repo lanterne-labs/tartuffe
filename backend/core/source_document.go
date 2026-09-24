@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"errors"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 //	fetched ──extract ok──▶ extracted   (facts_count recorded, content deleted;
 //	   │                                 the row stays: the URL is never fetched again)
 //	   └──extract err─▶ failed ──retry─▶ extracted | failed  (until MaxExtractionAttempts)
+//
+// A failure because the LLM was unreachable (llm.ErrUnavailable) leaves the
+// document as it was: the attempts count only failures of the document.
 //
 // The fetch step saves the document the moment the fetch succeeds, before
 // any extraction; ProcessDocuments drives every unfinished document to
@@ -157,7 +161,15 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 			consecutive++
 			st.Failed += len(batch)
 			metrics.AddDecision(metrics.StageDocumentExtract, metrics.OutcomeDocFailed, int64(len(batch)))
+			// An unreachable LLM is not the document's fault: it keeps its
+			// attempts, so a night-long outage cannot use up its retries.
+			unavailable := errors.Is(err, llm.ErrUnavailable)
 			for _, d := range batch {
+				if unavailable {
+					log.Warn().Err(err).Str("source", sourceType).Str("url", d.URL).
+						Msg("document extraction failed: LLM unavailable; attempt not counted")
+					continue
+				}
 				log.Warn().Err(err).Str("source", sourceType).Str("url", d.URL).Int("attempt", d.Attempts+1).
 					Msg("document extraction failed; left unfinished for the next run")
 				if mErr := storer.MarkDocumentFailed(ctx, d.ID, err); mErr != nil {

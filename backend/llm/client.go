@@ -139,9 +139,13 @@ func (c *BaseLLMClient) DoRequest(ctx context.Context, apiURL, apiKey string, pa
 		fbBody, fbErr := c.sendWithRetry(ctx, "openrouter", c.fallbackURL, c.fallbackKey, nil, fbPayload)
 		if fbErr == nil {
 			body, err = fbBody, nil
+		} else if isEndpointOutage(err) {
+			err = fmt.Errorf("%w: primary failed (%v); fallback failed: %w", ErrUnavailable, err, fbErr)
 		} else {
 			err = fmt.Errorf("primary failed (%v); fallback failed: %w", err, fbErr)
 		}
+	} else if err != nil && ctx.Err() == nil && isEndpointOutage(err) {
+		err = fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 
 	metrics.ObserveLLMRequest("chat", "", time.Since(start), err)
