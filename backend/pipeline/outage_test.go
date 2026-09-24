@@ -44,7 +44,7 @@ func withPlugins(t *testing.T, ps ...plugins.Plugin) {
 // gate for every later LLM phase and names the run's error; other errors
 // leave it open.
 func TestLLMGate(t *testing.T) {
-	var g llmGate
+	var g runGate
 	g.observe("ingest", errors.New("serp quota"))
 	if !g.open("stance-fanout") || g.err() != nil {
 		t.Fatal("a non-LLM failure must not stop the run")
@@ -60,6 +60,41 @@ func TestLLMGate(t *testing.T) {
 	}
 	if want := "LLM unavailable: stopped after phase stance-fanout"; err.Error() != want {
 		t.Errorf("run error = %q, want %q", err, want)
+	}
+}
+
+// TestRunGateDeadline: after the run deadline no phase starts, and the run
+// is not recorded as an outage.
+func TestRunGateDeadline(t *testing.T) {
+	g := runGate{deadline: time.Now().Add(-time.Minute)}
+	if g.open("translate") {
+		t.Fatal("a phase started after the run deadline")
+	}
+	if g.err() != nil {
+		t.Fatalf("a reached deadline is not an error: %v", g.err())
+	}
+	g.deadline = time.Now().Add(time.Hour)
+	if !g.open("translate") {
+		t.Fatal("a phase before the deadline must start")
+	}
+}
+
+// TestRunDeadline: the deadline is the next 23:00 Paris after the start; a
+// run started after 23:00 gets the next day's.
+func TestRunDeadline(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ start, want time.Time }{
+		{time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC), time.Date(2026, 9, 24, 23, 0, 0, 0, paris)},
+		{time.Date(2026, 9, 24, 21, 30, 0, 0, time.UTC), time.Date(2026, 9, 25, 23, 0, 0, 0, paris)},
+	}
+	for _, c := range cases {
+		got, err := runDeadline(c.start)
+		if err != nil || !got.Equal(c.want) {
+			t.Errorf("runDeadline(%v) = %v, %v; want %v", c.start, got, err, c.want)
+		}
 	}
 }
 

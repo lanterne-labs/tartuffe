@@ -23,12 +23,10 @@ type StanceAssignStorer interface {
 }
 
 // StanceFanoutNightlyBudget caps how many (person, fact) stance routings the
-// daily pipeline performs per night. Sized against the serialized local GPU:
-// most routings are a single topic-assignment call, so 250 fits comfortably
-// in the freed re-baseline window. The pending set is derived from the DB, so whatever is
-// not processed tonight simply remains pending for tomorrow (self-draining,
-// self-terminating once the backlog is gone).
-const StanceFanoutNightlyBudget = 250
+// daily pipeline performs per run. The pending set is derived from the DB, so
+// whatever is not processed tonight simply remains pending for tomorrow
+// (self-draining, self-terminating once the backlog is gone).
+const StanceFanoutNightlyBudget = 750
 
 // PersonAssignStats are the counters of one person's orphan assignment.
 type PersonAssignStats struct {

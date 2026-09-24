@@ -26,20 +26,22 @@ import (
 // pending set from the database, so nothing is lost).
 const (
 	// pairRejudgeNightlyBudget caps how many stale negative pair verdicts are
-	// re-opened per night after a rulebook change (~1.5 h of GPU at the
-	// measured pace; the whole backlog cycles in about a week).
-	pairRejudgeNightlyBudget = 1500
+	// re-opened per run after a rulebook change (~4.5 h of GPU at the
+	// measured pace).
+	pairRejudgeNightlyBudget = 4500
 	// translateNightlyLimit caps how many translations the final phase fills
 	// per run, so a large first-time backlog drains over several runs.
-	translateNightlyLimit = 1500
+	translateNightlyLimit = 4500
 	// auditCadence is how often the contradiction auditor re-judges stored
 	// contradictions.
 	auditCadence = 5 * 24 * time.Hour
-	// The backfill phase (the last one) stops starting work at
-	// backfillDeadlineHour in backfillTimezone: the cron starts at 01:00 UTC
-	// and the user chose to let the night run long rather than cap by count.
-	backfillDeadlineHour = 11
-	backfillTimezone     = "Europe/Paris"
+	// No phase starts after runDeadlineHour in runTimezone, and the backfill
+	// (the last phase) stops starting work then: the cron starts at 01:00 UTC
+	// and the user lets the run use the GPU through the day, but it must end
+	// before the next cron — the host skips a scheduled run while the previous
+	// one is still active.
+	runDeadlineHour = 23
+	runTimezone     = "Europe/Paris"
 )
 
 // RunOptions tunes one daily run.
@@ -97,7 +99,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	stepErrs := map[string]error{}
-	var gate llmGate
+	var gate runGate
 	fail := func(step string, err error, msg string) {
 		if err == nil {
 			return
@@ -106,6 +108,13 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		stepErrs[step] = err
 		log.Error().Err(err).Msg("Daily pipeline: " + msg)
 	}
+	deadline, dErr := runDeadline(start)
+	if dErr != nil {
+		// Without a deadline the backfill would run unbounded into the next cron.
+		fail("deadline", dErr, "run deadline unknown; backfill skipped")
+		b.backfill = false
+	}
+	gate.deadline = deadline
 
 	// The judgement counters this run produces are flushed as it goes, not
 	// only at the end: the cron process is not scraped, and a run that dies
@@ -248,15 +257,11 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		if !gate.open("backfill") {
 			only = llmFreeBackfills
 		}
-		if deadline, dErr := backfillDeadline(time.Now()); dErr != nil {
-			fail("backfill", dErr, "backfill deadline")
-		} else {
-			bfErrs := Backfill(ctx, d, deadline, only)
-			for _, pErr := range bfErrs {
-				gate.observe("backfill", pErr)
-			}
-			mergeStepErrs(stepErrs, bfErrs)
+		bfErrs := Backfill(ctx, d, deadline, only)
+		for _, pErr := range bfErrs {
+			gate.observe("backfill", pErr)
 		}
+		mergeStepErrs(stepErrs, bfErrs)
 	}
 	if gErr := gate.err(); gErr != nil {
 		stepErrs["llm"] = gErr
@@ -420,32 +425,36 @@ func runTranslate(ctx context.Context, storer *storage.PostgresStorer, limit int
 	return err
 }
 
-// llmGate stops a run's LLM phases once one of them reports the LLM
-// unavailable (llm.ErrUnavailable).
-type llmGate struct {
-	stoppedAfter string // the phase that hit the outage; "" while the LLM is up
+// runGate decides whether a phase may start: not once a phase reported the
+// LLM unavailable (llm.ErrUnavailable), and not after the run deadline.
+type runGate struct {
+	stoppedAfter string    // the phase that hit the outage; "" while the LLM is up
+	deadline     time.Time // zero: no deadline
 }
 
-// observe records phase as the stopping point when err says the LLM is
-// unavailable and no earlier phase did.
-func (g *llmGate) observe(phase string, err error) {
+func (g *runGate) observe(phase string, err error) {
 	if g.stoppedAfter == "" && errors.Is(err, llm.ErrUnavailable) {
 		g.stoppedAfter = phase
 	}
 }
 
-// open reports whether the LLM phase may start; it logs the skip when not.
-func (g *llmGate) open(phase string) bool {
-	if g.stoppedAfter == "" {
-		return true
+// open reports whether the phase may start; it logs the skip when not.
+func (g *runGate) open(phase string) bool {
+	if g.stoppedAfter != "" {
+		log.Warn().Str("phase", phase).Str("stopped_after", g.stoppedAfter).
+			Msg("Daily pipeline: LLM unavailable; phase not started")
+		return false
 	}
-	log.Warn().Str("phase", phase).Str("stopped_after", g.stoppedAfter).
-		Msg("Daily pipeline: LLM unavailable; phase not started")
-	return false
+	if !g.deadline.IsZero() && time.Now().After(g.deadline) {
+		log.Warn().Str("phase", phase).Time("deadline", g.deadline).
+			Msg("Daily pipeline: run deadline reached; phase not started")
+		return false
+	}
+	return true
 }
 
 // err is the run-level error of a run the gate stopped, nil otherwise.
-func (g *llmGate) err() error {
+func (g *runGate) err() error {
 	if g.stoppedAfter == "" {
 		return nil
 	}
@@ -462,14 +471,18 @@ func mergeStepErrs(dst map[string]error, src StepErrors) {
 	}
 }
 
-// backfillDeadline is today's backfillDeadlineHour in backfillTimezone.
-func backfillDeadline(now time.Time) (time.Time, error) {
-	loc, err := time.LoadLocation(backfillTimezone)
+// runDeadline is the first runDeadlineHour in runTimezone after start.
+func runDeadline(start time.Time) (time.Time, error) {
+	loc, err := time.LoadLocation(runTimezone)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("loading %s timezone: %w", backfillTimezone, err)
+		return time.Time{}, fmt.Errorf("loading %s timezone: %w", runTimezone, err)
 	}
-	now = now.In(loc)
-	return time.Date(now.Year(), now.Month(), now.Day(), backfillDeadlineHour, 0, 0, 0, loc), nil
+	s := start.In(loc)
+	d := time.Date(s.Year(), s.Month(), s.Day(), runDeadlineHour, 0, 0, 0, loc)
+	if !d.After(s) {
+		d = d.AddDate(0, 0, 1)
+	}
+	return d, nil
 }
 
 func notification(status string, smoke bool, elapsed time.Duration, errParts []string, s plugins.IngestStats, audit *contradiction.AuditRunResult) string {

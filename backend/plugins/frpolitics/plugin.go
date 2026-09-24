@@ -23,7 +23,7 @@ func (Plugin) Name() string { return "frpolitics" }
 
 const (
 	// dailyMaxLaws caps the laws summarized per run.
-	dailyMaxLaws = 10
+	dailyMaxLaws = 30
 	// dailyPartyThreshold is the majority share for party-level vote facts.
 	dailyPartyThreshold = 0.8
 	// debatsDailyWindowDays is how far back the daily transcript feed looks.

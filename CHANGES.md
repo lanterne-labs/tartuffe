@@ -2302,3 +2302,12 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   by the stale-verdict re-judge (`fact_pair_checks.dismissed`).
 - Lesson: any "log and continue" around an LLM call is a place where an outage becomes a final
   decision. Propagate ErrUnavailable; fail open only for documented non-outage errors.
+
+## The daily run uses the GPU through the day (2026-09-24)
+
+- One run deadline, 23:00 Europe/Paris (was an 11:00 backfill deadline): no phase starts after
+  it, and the backfill stops starting work then. It ends the run ~4 h before the next 01:00 UTC
+  cron, which the host skips while a run is still active.
+- Per-phase caps tripled (stale-verdict re-judge 4500, translations 4500, stance fan-out 750,
+  vote laws 30). Every phase derives its pending set from the DB, and stopping the LLM mid-run
+  now loses nothing, so the user stops llama-swap whenever the GPU is needed.
