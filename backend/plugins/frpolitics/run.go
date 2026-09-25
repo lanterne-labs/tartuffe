@@ -20,14 +20,15 @@ import (
 
 // parseStats is now defined in types.go as ParseStats
 
-// Run is the main entrypoint for cron execution; it is intentionally thin and orchestrates library calls
-func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) error {
+// Run is the main entrypoint for cron execution; it is intentionally thin and orchestrates library calls.
+// It returns the number of selected laws it went through (MaxLaws slots used), also along with an error.
+func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int, error) {
 	store := NewStore(storer)
 
 	// 1) Discover scrutins -> produce a list of law URLs to process
 	laws, groupStats, eventsByLaw, orgCache, pstats, err := discoverAndParse(ctx, opts)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	log.Info().Int("discovered", len(laws)).Msg("frpolitics: discovery finished")
@@ -40,12 +41,12 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 	}
 	sel, err := selectLaws(ctx, storer, store, laws, groupStats, eventsByLaw, orgCache, threshold, opts)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	aiFilteredLaws, summaries := sel.laws, sel.summaries
 	if len(aiFilteredLaws) == 0 {
 		log.Info().Msg("frpolitics: no law to process")
-		return nil
+		return 0, nil
 	}
 
 	// 4) Build party facts based on majority rule per law, and deputy facts
@@ -171,7 +172,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 			Int("events_complete", pstats.EventsComplete).
 			Int("events_dropped", pstats.EventsDropped).
 			Msg("frpolitics: nothing to store")
-		return nil
+		return 0, nil
 	}
 
 	// Batch insert parties and deputies in one transaction
@@ -179,7 +180,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		log.Info().Int("parties", len(partySeed)).Int("deputies", len(deputySeed)).Msg("frpolitics: batch inserting actors")
 		tx, err := storer.Pool().Begin(ctx)
 		if err != nil {
-			return fmt.Errorf("begin transaction: %w", err)
+			return 0, fmt.Errorf("begin transaction: %w", err)
 		}
 		defer tx.Rollback(ctx)
 
@@ -190,11 +191,11 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		}
 
 		if err := BatchInsertActors(ctx, tx, deputySeed, parties); err != nil {
-			return fmt.Errorf("batch insert actors: %w", err)
+			return 0, fmt.Errorf("batch insert actors: %w", err)
 		}
 
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit actors: %w", err)
+			return 0, fmt.Errorf("commit actors: %w", err)
 		}
 		log.Info().Int("parties", len(partySeed)).Int("deputies", len(deputySeed)).Msg("frpolitics: actors batch inserted successfully")
 	}
@@ -227,16 +228,16 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		}
 		deputyIDs, err := storer.GetPersonIDsByAttribute(ctx, "assemblee_id", assembleeIDs)
 		if err != nil {
-			return fmt.Errorf("resolve deputies for affiliations: %w", err)
+			return 0, fmt.Errorf("resolve deputies for affiliations: %w", err)
 		}
 		partyIDs, err := storer.GetPersonIDsByAttribute(ctx, "organeRef", orgRefs)
 		if err != nil {
-			return fmt.Errorf("resolve parties for affiliations: %w", err)
+			return 0, fmt.Errorf("resolve parties for affiliations: %w", err)
 		}
 
 		tx, err := storer.Pool().Begin(ctx)
 		if err != nil {
-			return fmt.Errorf("begin affiliation transaction: %w", err)
+			return 0, fmt.Errorf("begin affiliation transaction: %w", err)
 		}
 		defer tx.Rollback(ctx)
 
@@ -287,7 +288,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 
 		log.Info().Int("total_affiliations", affiliationsCreated).Msg("frpolitics: committing affiliation transaction")
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit affiliations: %w", err)
+			return 0, fmt.Errorf("commit affiliations: %w", err)
 		}
 		log.Info().Int("total_affiliations", affiliationsCreated).Msg("frpolitics: affiliations committed successfully")
 	}
@@ -300,10 +301,11 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		factsByLawKey[r.LawKey] = append(factsByLawKey[r.LawKey], r)
 	}
 
-	if err := storeLaws(ctx, store, aiFilteredLaws, factsByLawKey, func(ctx context.Context, recs []FactRecord) error {
+	walked, err := storeLaws(ctx, store, aiFilteredLaws, factsByLawKey, func(ctx context.Context, recs []FactRecord) error {
 		return StoreFacts(ctx, storer, recs)
-	}); err != nil {
-		return err
+	})
+	if err != nil {
+		return walked, err
 	}
 	log.Info().
 		Int("laws_discovered", len(laws)).
@@ -318,14 +320,16 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) erro
 		Int("events_dropped", pstats.EventsDropped).
 		Msg("frpolitics: run summary")
 
-	return nil
+	return walked, nil
 }
 
 // storeLaws stores the facts of each selected law with storeFacts and marks
 // the law processed once all its ballots are stored. A law that fails is left
 // for the next run, which resumes after the voters already stored; an
-// unreachable LLM (llm.ErrUnavailable) stops the loop and is returned.
-func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[string][]FactRecord, storeFacts func(context.Context, []FactRecord) error) error {
+// unreachable LLM (llm.ErrUnavailable) stops the loop and is returned. It
+// returns the number of laws it went through before any stop (the
+// interrupted law excluded).
+func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[string][]FactRecord, storeFacts func(context.Context, []FactRecord) error) (int, error) {
 	var processedCount, failedCount, skippedCount int
 	for idx, law := range laws {
 		lawFacts := factsByLawKey[law.Key]
@@ -374,7 +378,7 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 		if err := storeFacts(ctx, pending); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
 				// Every further law would fail the same way.
-				return fmt.Errorf("storing the facts of law %s: %w", law.Key, err)
+				return idx, fmt.Errorf("storing the facts of law %s: %w", law.Key, err)
 			}
 			log.Error().
 				Err(err).
@@ -415,9 +419,9 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 		Msg("frpolitics: law processing complete")
 
 	if failedCount > 0 {
-		return fmt.Errorf("failed to fully process %d/%d laws (will resume on next run)", failedCount, len(laws))
+		return len(laws), fmt.Errorf("failed to fully process %d/%d laws (will resume on next run)", failedCount, len(laws))
 	}
-	return nil
+	return len(laws), nil
 }
 
 // lawSelection is the laws a run processes and what their facts need.
@@ -462,12 +466,12 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 		return nil, err
 	}
 
-	// Default: don't re-scan a law URL more than once a day. An explicitly
+	// Default (0): don't re-scan a law URL more than once a day. An explicitly
 	// NEGATIVE RevisitHours means "always visitable" (IsURLVisitable compares
-	// against a negative window) — the CLI uses it so a law whose store failed
-	// mid-batch can be retried immediately instead of deadlocking behind the
-	// partial fact_sources rows its own failure left behind. 0 keeps the
-	// default so zero-valued Options (the daily pipeline) are unaffected.
+	// against a negative window) — the CLI and the daily ingest use it so a
+	// law whose store failed mid-batch can be retried immediately instead of
+	// deadlocking behind the partial fact_sources rows its own failure left
+	// behind.
 	revisitHours := 24
 	if opts.RevisitHours != 0 {
 		revisitHours = opts.RevisitHours

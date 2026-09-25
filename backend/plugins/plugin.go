@@ -48,6 +48,13 @@ type IngestOptions struct {
 	// laws, transcript documents); 0 = the plugin's own default. Used by the
 	// pipeline's smoke run.
 	MaxItems int
+	// ExtractOnly lists targets (person ids) whose fetch completed in an
+	// earlier call that an LLM outage interrupted (IngestStats.Fetched): the
+	// plugin only extracts their stored items, without fetching again.
+	ExtractOnly []int64
+	// Spent is the part of the plugin's own per-run cap (MaxItems or its
+	// default) earlier calls of the same run used (IngestStats.Spent).
+	Spent int
 }
 
 // IngestStats is what an ingest phase reports for the run summary.
@@ -63,6 +70,17 @@ type IngestStats struct {
 	Errors int
 	// Details are per-target error lines for the run notification.
 	Details []string
+	// Done lists the person ids of the targets this call finished, collected
+	// or failed, even when it returns an error. After an LLM outage the
+	// pipeline runs the plugin again on the other targets only. A plugin with
+	// its own scope leaves it empty.
+	Done []int64
+	// Fetched lists the targets whose fetch completed but whose extraction an
+	// LLM outage interrupted: a retry passes them as IngestOptions.ExtractOnly.
+	Fetched []int64
+	// Spent is the part of the plugin's own per-run cap this call used, even
+	// when it returns an error.
+	Spent int
 }
 
 // Add accumulates o into s.
@@ -72,6 +90,9 @@ func (s *IngestStats) Add(o IngestStats) {
 	s.Facts += o.Facts
 	s.Errors += o.Errors
 	s.Details = append(s.Details, o.Details...)
+	s.Done = append(s.Done, o.Done...)
+	s.Fetched = append(s.Fetched, o.Fetched...)
+	s.Spent += o.Spent
 }
 
 // Ingester collects new facts. targets are the run's queue-scoped persons; a

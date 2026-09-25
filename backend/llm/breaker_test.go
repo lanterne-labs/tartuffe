@@ -297,3 +297,135 @@ func TestDoRequest_UnavailableOnlyWhenNoEndpointServes(t *testing.T) {
 		t.Fatalf("primary 400 + fallback 402: want a plain error, got %v", err)
 	}
 }
+
+// TestWaitForPrimary_ComesBack: the wait polls a primary that is down, returns
+// once it answers, and clears the breaker so calls go to it at once. It
+// probes without a fallback configured.
+func TestWaitForPrimary_ComesBack(t *testing.T) {
+	defer resetBreaker()
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 10 * time.Millisecond
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chat/completions" {
+			w.Write([]byte(`{"choices":[]}`))
+			return
+		}
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("probe path = %s, want /v1/models", r.URL.Path)
+		}
+		if hits.Add(1) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL+"/v1/")
+
+	MarkPrimaryDown("test")
+	back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Minute))
+	if !back || polls != 3 {
+		t.Fatalf("back=%v polls=%d; want back after 3 polls (two down, one up)", back, polls)
+	}
+	if PrimaryDown() {
+		t.Error("the breaker must be cleared once the primary is back")
+	}
+}
+
+// TestWaitForPrimary_FirstProbeAfterInterval: even a healthy endpoint is
+// probed only after one poll interval, so a request that keeps failing on it
+// is not retried in a tight loop.
+func TestWaitForPrimary_FirstProbeAfterInterval(t *testing.T) {
+	defer resetBreaker()
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 50 * time.Millisecond
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL)
+
+	start := time.Now()
+	back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Minute))
+	if !back || polls != 1 {
+		t.Fatalf("back=%v polls=%d; want back on the first poll", back, polls)
+	}
+	if elapsed := time.Since(start); elapsed < waitPollInterval {
+		t.Errorf("first probe after %v, want at least one interval (%v)", elapsed, waitPollInterval)
+	}
+}
+
+// TestWaitForPrimary_Deadline: a primary that never comes back ends the wait
+// at the deadline with false; a cancelled context and a malformed URL end it
+// too.
+func TestWaitForPrimary_Deadline(t *testing.T) {
+	defer resetBreaker()
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 10 * time.Millisecond
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL)
+
+	start := time.Now()
+	if back, _ := WaitForPrimary(context.Background(), start.Add(100*time.Millisecond)); back {
+		t.Fatal("a primary that never answers must not be reported back")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("wait lasted %v past a 100ms deadline", elapsed)
+	}
+	if hits.Load() < 2 {
+		t.Errorf("probes = %d, want the endpoint polled until the deadline", hits.Load())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if back, _ := WaitForPrimary(ctx, time.Now().Add(time.Hour)); back {
+		t.Fatal("a cancelled wait must not report the primary back")
+	}
+
+	t.Setenv("OPEN_AI_API", "http://[::1")
+	if back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Hour)); back || polls != 1 {
+		t.Fatalf("back=%v polls=%d; a malformed URL must end the wait, not count as back", back, polls)
+	}
+}
+
+// TestWaitForPrimary_ChatMustAnswer: /models answering is not enough; a chat
+// model that keeps failing keeps the wait going until the deadline, with one
+// warm-up completion per poll.
+func TestWaitForPrimary_ChatMustAnswer(t *testing.T) {
+	defer resetBreaker()
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 10 * time.Millisecond
+
+	var chats, models atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/chat/completions" {
+			chats.Add(1)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		models.Add(1)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL)
+
+	if back, _ := WaitForPrimary(context.Background(), time.Now().Add(150*time.Millisecond)); back {
+		t.Fatal("a failing chat model must not be reported back")
+	}
+	if chats.Load() == 0 || chats.Load() != models.Load() {
+		t.Errorf("chats=%d models=%d; want one warm-up completion per poll", chats.Load(), models.Load())
+	}
+}

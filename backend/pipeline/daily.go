@@ -67,12 +67,18 @@ type RunOptions struct {
 //  7. translation phase
 //  8. backfill                  — every plugin, deadline-bound
 //
-// Once a phase reports the LLM unavailable (llm.ErrUnavailable) no further
-// LLM phase starts: every item would fail the same way, and walking them
-// only burns scrape credits and hours. The phases that need no LLM still run,
-// and the run is recorded as failed ("LLM unavailable: stopped after phase
-// X"). Every phase derives its pending work from the database, so the next
-// run resumes where this one stopped.
+// When a phase reports the LLM unavailable (llm.ErrUnavailable) the run waits
+// for the LLM (llm.WaitForPrimary) until the run deadline, then runs the phase
+// again: every phase derives its pending work from the database, so the retry
+// resumes where the outage stopped it (ingest and backfill skip the plugins
+// and targets already done; budgets carry what was spent). A run that waited
+// and recovered is not a failed run; its outages and time waited are noted in
+// the notification and the pipeline_runs row. If the LLM is not back before
+// the deadline no further LLM phase (re)starts and the run is recorded as
+// failed ("LLM unavailable: stopped after phase X"); the next run resumes. A
+// phase that keeps failing while the LLM answers is given up after
+// maxQuickRefails retries, as a step error, and the run goes on. A smoke run
+// does not wait.
 func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier, opts RunOptions) error {
 	start := time.Now()
 	log.Info().Bool("smoke", opts.Smoke).Msg("Daily pipeline started")
@@ -100,11 +106,13 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 
 	stepErrs := map[string]error{}
 	var gate runGate
+	if !opts.Smoke {
+		gate.waitLLM = llm.WaitForPrimary
+	}
 	fail := func(step string, err error, msg string) {
 		if err == nil {
 			return
 		}
-		gate.observe(step, err)
 		stepErrs[step] = err
 		log.Error().Err(err).Msg("Daily pipeline: " + msg)
 	}
@@ -132,13 +140,24 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 
 	// Phase 1: ingest. Every plugin collects its new facts; stance routing and
 	// the analyze judge run inline on insert.
-	ingest, ingestErrs, err := Ingest(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
-	fail("ingest", err, "ingest phase failed")
-	for _, pErr := range ingestErrs {
-		gate.observe("ingest", pErr)
+	// A plugin given up (errRefails) is abandoned and the phase goes on with
+	// the next plugins. An outage error is already in ingest.Errs, under its
+	// plugin.
+	var ingest IngestRun
+	for {
+		ingestErr := gate.run(ctx, "ingest", func() error {
+			return ingest.Run(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
+		})
+		if errors.Is(ingestErr, errRefails) && ingest.Abandon() {
+			continue
+		}
+		if !errors.Is(ingestErr, llm.ErrUnavailable) {
+			fail("ingest", ingestErr, "ingest phase failed")
+		}
+		break
 	}
-	mergeStepErrs(stepErrs, ingestErrs)
-	stats := ingest.Total
+	mergeStepErrs(stepErrs, ingest.Errs)
+	stats := ingest.Result.Total
 
 	stanceMgr, err := d.StanceManager()
 	if err != nil {
@@ -155,8 +174,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// self-terminating). Runs before the merge sweep
 		// so freshly created deputy stances get merged the same night, and
 		// before detection so stance-recorded contradictions land first.
-		if rebundle != nil && gate.open("stance-fanout") {
-			fail("stance-fanout", core.RunStanceFanout(ctx, storer, stanceMgr, rebundle, b.fanout), "stance fan-out failed")
+		if rebundle != nil {
+			fail("stance-fanout", gate.run(ctx, "stance-fanout", budgeted(b.fanout, func(left int) (int, error) {
+				return core.RunStanceFanout(ctx, storer, stanceMgr, rebundle, left)
+			})), "stance fan-out failed")
 		}
 
 		// Phase 3: stance merge sweep. Looks for stances that should be merged
@@ -164,12 +185,12 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// contradictions across previously-separated facts. Catches the
 		// cross-stance contradictions our per-fact assignTopic missed by
 		// mis-grouping.
-		if gate.open("stance-merge") {
-			mergeOpts := core.DefaultStanceMergeOptions
-			mergeOpts.MaxPersons = b.maxPersons
-			_, err = core.RunStanceMergeSweep(ctx, storer, stanceMgr, mergeOpts)
-			fail("stance-merge", err, "stance merge sweep failed")
-		}
+		mergeOpts := core.DefaultStanceMergeOptions
+		mergeOpts.MaxPersons = b.maxPersons
+		fail("stance-merge", gate.run(ctx, "stance-merge", func() error {
+			_, err := core.RunStanceMergeSweep(ctx, storer, stanceMgr, mergeOpts)
+			return err
+		}), "stance merge sweep failed")
 	}
 
 	// Phase 4: contradiction detection over unchecked pairs across all
@@ -182,6 +203,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// of the auditor's last_audit_hash for YESes. Self-terminating: with
 	// nothing stale, silent. Skipped with the detection it feeds when the LLM
 	// is unavailable: re-opened pairs would pile onto the next night's budget.
+	// Not repeated when detection is retried after an outage: the re-opened
+	// pairs are still pending, and the budget is per run.
 	detect := gate.open("contradictions")
 	if detect && b.rejudge > 0 {
 		judgeHash := contradiction.JudgeRulebookHash()
@@ -203,8 +226,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	if detect {
-		_, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
-		fail("contradictions", err, "contradiction detection failed")
+		fail("contradictions", gate.retry(ctx, "contradictions", func() error {
+			_, err := contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
+			return err
+		}), "contradiction detection failed")
 	}
 
 	// Phase 5a: repoint contradictions off any facts the contradiction-pass
@@ -220,13 +245,12 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// Phase 5b: regroup contradictions into N-ary groups (one base fact + N
 	// contradicting facts) and (re)generate each group's merged summary. Runs
 	// after detection + duplicate-repointing so it sees the final pairwise
-	// set. Best-effort — failures are logged, never aborting the pipeline,
-	// except an unavailable LLM, which stops the run's LLM phases.
-	if gate.open("regroup") {
-		if regroupErr := contradiction.RunRegroupStep(ctx, storer, b.maxPersons); regroupErr != nil {
-			gate.observe("regroup", regroupErr)
-			log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
-		}
+	// set. Best-effort — failures are logged, never aborting the pipeline;
+	// an unavailable LLM is waited for like in every LLM phase.
+	if regroupErr := gate.run(ctx, "regroup", func() error {
+		return contradiction.RunRegroupStep(ctx, storer, b.maxPersons)
+	}); regroupErr != nil {
+		log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
 	}
 
 	// Phase 6: contradiction auditor (auditCadence). Re-judges previously
@@ -238,34 +262,41 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// error keeps the row and counts it as unstable. Verdicts are also
 	// exposed via the `contradiction_audits_total` Prometheus counter.
 	var auditResult *contradiction.AuditRunResult
-	if b.audit && gate.open("contradiction-audit") {
-		auditResult, err = runAuditIfDue(ctx, storer, auditCadence)
-		fail("contradiction-audit", err, "contradiction audit failed")
+	if b.audit {
+		fail("contradiction-audit", gate.run(ctx, "contradiction-audit", func() error {
+			res, err := runAuditIfDue(ctx, storer, auditCadence)
+			auditResult = mergeAuditTries(auditResult, res)
+			return err
+		}), "contradiction audit failed")
 	}
 
 	// Phase 7: translation — decoupled from generation. Fills missing or
 	// stale translations for facts, stances and contradictions into the
 	// generic translations table for every target language.
-	if gate.open("translate") {
-		fail("translate", runTranslate(ctx, storer, b.translate), "translation phase failed")
-	}
+	fail("translate", gate.run(ctx, "translate", budgeted(b.translate, func(left int) (int, error) {
+		return runTranslate(ctx, storer, left)
+	})), "translation phase failed")
 
-	// Phase 8 (last, deadline-bound): plugin backfills; only those that need
-	// no LLM once it is unavailable.
+	// Phase 8 (last, deadline-bound): plugin backfills. An outage the run did
+	// not recover from is already in backfill.Errs, under its plugin.
 	if b.backfill {
-		var only []string
-		if !gate.open("backfill") {
-			only = llmFreeBackfills
+		var backfill BackfillRun
+		for {
+			bfErr := gate.run(ctx, "backfill", func() error { return backfill.Run(ctx, d, deadline) })
+			if !errors.Is(bfErr, errRefails) || !backfill.Abandon() {
+				break
+			}
 		}
-		bfErrs := Backfill(ctx, d, deadline, only)
-		for _, pErr := range bfErrs {
-			gate.observe("backfill", pErr)
-		}
-		mergeStepErrs(stepErrs, bfErrs)
+		mergeStepErrs(stepErrs, backfill.Errs)
 	}
 	if gErr := gate.err(); gErr != nil {
 		stepErrs["llm"] = gErr
 		log.Error().Err(gErr).Msg("Daily pipeline: LLM unavailable; the next run resumes the skipped phases")
+	}
+	llmNote := gate.note()
+	if llmNote != "" {
+		log.Warn().Int("outages", gate.outages).Dur("waited", gate.waited.Round(time.Second)).
+			Msg("Daily pipeline: waited for the LLM during the run")
 	}
 
 	elapsed := time.Since(start)
@@ -294,7 +325,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	if notifier != nil {
-		if err := notifier.Send(ctx, notification(status, opts.Smoke, elapsed, errParts, stats, auditResult)); err != nil {
+		if err := notifier.Send(ctx, notification(status, opts.Smoke, elapsed, errParts, llmNote, stats, auditResult)); err != nil {
 			log.Error().Err(err).Msg("Failed to send pipeline Telegram notification")
 		}
 	}
@@ -304,18 +335,24 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// the source of truth for pipeline-run history. Best-effort — a write
 	// failure is logged but never fails the run.
 	if !opts.Smoke {
+		// The LLM wait is a note, not an error: it does not count in
+		// StepErrors or change the status.
+		summaryLines := errParts
+		if llmNote != "" {
+			summaryLines = append(summaryLines, llmNote)
+		}
 		summary := storage.PipelineRunSummary{
 			StartedAt:    start,
 			FinishedAt:   time.Now(),
 			Status:       status,
 			StepErrors:   len(errs),
-			ErrorSummary: strings.Join(errParts, "\n"),
+			ErrorSummary: strings.Join(summaryLines, "\n"),
 			// The row's columns keep their historical meaning for the Grafana
 			// dashboards: the queue size, the news plugin's parsed articles and
 			// its scrape errors, not the sums over every plugin.
 			Targets:      len(targets),
-			NewsArticles: ingest.ByPlugin["news"].Items,
-			ScrapeErrors: ingest.ByPlugin["news"].Errors,
+			NewsArticles: ingest.Result.ByPlugin["news"].Items,
+			ScrapeErrors: ingest.Result.ByPlugin["news"].Errors,
 		}
 		if auditResult != nil {
 			summary.AuditChecked = auditResult.Total
@@ -415,27 +452,107 @@ func runAuditIfDue(ctx context.Context, storer *storage.PostgresStorer, cadence 
 }
 
 // runTranslate is the final translation phase; limit caps the fill so a large
-// first-time backlog drains over several runs.
-func runTranslate(ctx context.Context, storer *storage.PostgresStorer, limit int) error {
+// first-time backlog drains over several runs. It returns the translations
+// filled, even along with an error.
+func runTranslate(ctx context.Context, storer *storage.PostgresStorer, limit int) (int, error) {
 	tr, err := translate.NewOpenAITranslatorFromEnv()
 	if err != nil {
-		return fmt.Errorf("translator unavailable: %w", err)
+		return 0, fmt.Errorf("translator unavailable: %w", err)
 	}
-	_, err = translate.Fill(ctx, storer, tr, translate.FillOptions{Limit: limit})
-	return err
+	stats, err := translate.Fill(ctx, storer, tr, translate.FillOptions{Limit: limit})
+	return stats.Filled, err
 }
 
-// runGate decides whether a phase may start: not once a phase reported the
-// LLM unavailable (llm.ErrUnavailable), and not after the run deadline.
+// maxQuickRefails caps how many times in a row a phase is run again after an
+// outage the LLM "recovered" from on the first poll: an endpoint that answers
+// every probe while the phase keeps failing as unavailable is one request
+// failing (a completion Cloudflare cuts at 100s, a prompt the server 500s
+// on), and each retry costs the interrupted item again (a news target's
+// search) until the deadline.
+const maxQuickRefails = 2
+
+// errRefails marks a phase given up because it kept failing as unavailable
+// while the LLM answered (maxQuickRefails). It is a step error of the phase,
+// not a stop of the run.
+var errRefails = errors.New("the phase keeps failing as unavailable while the LLM answers")
+
+// runGate decides whether a phase may start (not after the run deadline, not
+// once the run stopped on an LLM outage) and runs the LLM phases through the
+// outage wait.
 type runGate struct {
-	stoppedAfter string    // the phase that hit the outage; "" while the LLM is up
-	deadline     time.Time // zero: no deadline
+	stoppedAfter string    // the phase the run stopped at; "" while it goes on
+	deadline     time.Time // zero: no deadline, and no wait
+	// waitLLM blocks until the LLM answers again or until passes, and reports
+	// whether it came back and after how many probes (llm.WaitForPrimary).
+	// nil: never wait (smoke run).
+	waitLLM func(ctx context.Context, until time.Time) (back bool, polls int)
+	outages int           // outages waited for
+	waited  time.Duration // total time spent waiting
 }
 
-func (g *runGate) observe(phase string, err error) {
-	if g.stoppedAfter == "" && errors.Is(err, llm.ErrUnavailable) {
-		g.stoppedAfter = phase
+// run runs phase through retry when the gate is open; it returns the phase's
+// error, nil when the phase did not start.
+func (g *runGate) run(ctx context.Context, phase string, fn func() error) error {
+	if !g.open(phase) {
+		return nil
 	}
+	return g.retry(ctx, phase, fn)
+}
+
+// retry runs fn, and while it fails because the LLM is unavailable waits for
+// the LLM until the run deadline and runs fn again: every phase derives its
+// pending work from the database, so the retry resumes where the outage
+// stopped it. When the LLM is not back before the deadline (or the gate
+// cannot wait) the run stops at this phase and fn's error is returned. When
+// fn keeps failing although the LLM answered at once (maxQuickRefails), the
+// phase is given up: its error, wrapping errRefails, is returned and the run
+// goes on.
+func (g *runGate) retry(ctx context.Context, phase string, fn func() error) error {
+	quick := 0
+	for {
+		err := fn()
+		if !errors.Is(err, llm.ErrUnavailable) {
+			return err
+		}
+		back, polls := g.wait(ctx, phase, err)
+		if back && !g.deadline.IsZero() && time.Now().After(g.deadline) {
+			log.Warn().Str("phase", phase).Time("deadline", g.deadline).
+				Msg("Daily pipeline: LLM back after the run deadline; phase not resumed")
+			back = false
+		}
+		if !back {
+			g.stoppedAfter = phase
+			return err
+		}
+		if polls > 1 {
+			quick = 0
+			continue
+		}
+		if quick++; quick > maxQuickRefails {
+			log.Error().Err(err).Str("phase", phase).Int("retries", maxQuickRefails).
+				Msg("Daily pipeline: the LLM answers but the phase keeps failing as unavailable; giving it up")
+			return fmt.Errorf("%w: %w", errRefails, err)
+		}
+	}
+}
+
+// wait waits for the LLM until the run deadline; back is false when the gate
+// cannot wait or the LLM did not come back.
+func (g *runGate) wait(ctx context.Context, phase string, cause error) (back bool, polls int) {
+	if g.waitLLM == nil || g.deadline.IsZero() {
+		return false, 0
+	}
+	g.outages++
+	log.Warn().Err(cause).Str("phase", phase).Int("outage", g.outages).Time("deadline", g.deadline).
+		Msg("Daily pipeline: LLM unavailable; waiting for it to resume the phase")
+	start := time.Now()
+	back, polls = g.waitLLM(ctx, g.deadline)
+	g.waited += time.Since(start)
+	if back {
+		log.Info().Str("phase", phase).Dur("waited", time.Since(start).Round(time.Second)).Int("polls", polls).
+			Msg("Daily pipeline: LLM back; resuming the phase")
+	}
+	return back, polls
 }
 
 // open reports whether the phase may start; it logs the skip when not.
@@ -459,6 +576,49 @@ func (g *runGate) err() error {
 		return nil
 	}
 	return fmt.Errorf("%w: stopped after phase %s", llm.ErrUnavailable, g.stoppedAfter)
+}
+
+// note summarizes the outages the run waited for; "" when none.
+func (g *runGate) note() string {
+	if g.outages == 0 {
+		return ""
+	}
+	return fmt.Sprintf("LLM outages waited for: %d (%s)", g.outages, g.waited.Round(time.Second))
+}
+
+// mergeAuditTries folds the result of an audit try into the earlier tries'
+// (nil when none). A retried audit lists again every row but those the
+// earlier tries deleted, and re-judges or pins them, so the last try's counts
+// stand, plus the earlier deletions.
+func mergeAuditTries(prev, next *contradiction.AuditRunResult) *contradiction.AuditRunResult {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	merged := *next
+	merged.Total += prev.Deleted
+	merged.Remove += prev.Deleted
+	merged.Deleted += prev.Deleted
+	merged.Elapsed += prev.Elapsed
+	return &merged
+}
+
+// budgeted adapts a phase bounded by a per-run budget to runGate.retry: each
+// try gets what the previous tries left (run reports what it used, even along
+// with an error), and no try starts once the budget is spent.
+func budgeted(budget int, run func(left int) (used int, err error)) func() error {
+	used := 0
+	return func() error {
+		left := budget - used
+		if left <= 0 {
+			return nil
+		}
+		n, err := run(left)
+		used += n
+		return err
+	}
 }
 
 func mergeStepErrs(dst map[string]error, src StepErrors) {
@@ -485,7 +645,7 @@ func runDeadline(start time.Time) (time.Time, error) {
 	return d, nil
 }
 
-func notification(status string, smoke bool, elapsed time.Duration, errParts []string, s plugins.IngestStats, audit *contradiction.AuditRunResult) string {
+func notification(status string, smoke bool, elapsed time.Duration, errParts []string, llmNote string, s plugins.IngestStats, audit *contradiction.AuditRunResult) string {
 	prefix := ""
 	if smoke {
 		prefix = "[smoke] "
@@ -507,6 +667,9 @@ func notification(status string, smoke bool, elapsed time.Duration, errParts []s
 		for _, e := range s.Details {
 			msg += "\n  • " + e
 		}
+	}
+	if llmNote != "" {
+		msg += "\n⏸ " + llmNote
 	}
 	if audit != nil && audit.Total > 0 {
 		msg += fmt.Sprintf("\n🔍 audit: %d checked, %d evicted (2-of-2 FP), %d kept (unstable)", audit.Total, audit.Deleted, audit.Unstable)

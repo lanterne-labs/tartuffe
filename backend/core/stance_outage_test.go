@@ -178,9 +178,12 @@ func TestStanceFanout_StopsAtUnavailableLLM(t *testing.T) {
 	rebundled := false
 	rebundle := func(context.Context, PersonRecord) (int64, int64, int64) { rebundled = true; return 0, 0, 0 }
 
-	err := RunStanceFanout(context.Background(), fanoutStorer{}, sm, rebundle, 10)
+	used, err := RunStanceFanout(context.Background(), fanoutStorer{}, sm, rebundle, 10)
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if used != 0 {
+		t.Errorf("used = %d, want 0: the interrupted routing is not charged to the budget", used)
 	}
 	if n := o.count(topicPrompt); n != 1 {
 		t.Errorf("topic assignments = %d, want 1: fact 21 must not be routed after the outage", n)

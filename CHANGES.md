@@ -2311,3 +2311,23 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - Per-phase caps tripled (stale-verdict re-judge 4500, translations 4500, stance fan-out 750,
   vote laws 30). Every phase derives its pending set from the DB, and stopping the LLM mid-run
   now loses nothing, so the user stops llama-swap whenever the GPU is needed.
+
+## The daily run waits out LLM outages (2026-09-25)
+
+- On `llm.ErrUnavailable` a phase no longer stops the run: `runGate.retry` waits for the LLM
+  (`llm.WaitForPrimary`: `/models` plus one chat warm-up per 2-min poll, first poll after one
+  interval, even without a fallback) and reruns the phase from its DB-derived pending set. An
+  LLM still down at the run deadline stops the run as failed; nothing (re)starts after it; a
+  smoke run does not wait.
+- Loop guard: a phase that keeps failing as unavailable while the LLM answers on the first poll
+  (one request Cloudflare cuts or the server 500s on) is given up after 2 retries as a step
+  error, and the run goes on (an ingest/backfill plugin is abandoned, the next ones run).
+- A retry does not redo paid work: `IngestRun`/`BackfillRun` skip finished plugins; plugins
+  report `IngestStats.Done` (targets finished), `Fetched` (fetched, extraction interrupted →
+  `IngestOptions.ExtractOnly`: news extracts the stored documents, no new search) and `Spent`
+  (frpolitics laws against the 30-law cap); fan-out and translation budgets carry over
+  (`budgeted`); the stale-verdict eviction runs once; the daily vote feed ignores the 24h
+  revisit window so a law stopped part-way resumes in the run.
+- A recovered run is not failed: outages and time waited are noted in the log, Telegram and
+  `pipeline_runs.error_summary` (`step_errors` and status unchanged). Why: a 2.5-minute wifi
+  drop stopped a run at 05:39 UTC and wasted the day's GPU window.

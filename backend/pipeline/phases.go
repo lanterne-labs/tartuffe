@@ -61,34 +61,158 @@ type IngestResult struct {
 // the LLM is unavailable (llm.ErrUnavailable) the remaining plugins are not
 // started: their items would fail the same way.
 func Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) (IngestResult, StepErrors, error) {
-	sel, err := selected(only)
-	if err != nil {
+	var in IngestRun
+	if err := in.Run(ctx, d, targets, opts, only); err != nil && !errors.Is(err, llm.ErrUnavailable) {
 		return IngestResult{}, nil, err
 	}
-	res := IngestResult{ByPlugin: map[string]plugins.IngestStats{}}
-	errs := StepErrors{}
+	return in.Result, in.Errs, nil
+}
+
+// IngestRun is an ingest phase that resumes after an LLM outage: calling Run
+// again skips the plugins that finished and runs the interrupted one on the
+// targets it did not report done (plugins.IngestStats.Done), extracting only
+// the stored items of those it had fetched (Fetched → ExtractOnly), with what
+// is left of its own per-run cap (Spent).
+type IngestRun struct {
+	Result      IngestResult
+	Errs        StepErrors
+	finished    map[string]bool
+	interrupted string // the plugin the last Run stopped at; "" when none
+}
+
+// Run runs the ingest phase of every selected plugin not finished yet, and
+// accumulates the stats and per-plugin errors. It stops at the first plugin
+// the LLM became unavailable for and returns that plugin's error (wrapping
+// llm.ErrUnavailable, also kept in Errs until a later Run retries the
+// plugin, which keeps only the other failures of the interrupted call);
+// other plugin failures are only recorded in Errs.
+func (in *IngestRun) Run(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) error {
+	sel, err := selected(only)
+	if err != nil {
+		return err
+	}
+	if in.finished == nil {
+		in.Result.ByPlugin = map[string]plugins.IngestStats{}
+		in.Errs = StepErrors{}
+		in.finished = map[string]bool{}
+	}
 	for _, p := range sel {
+		name := p.Name()
 		ing, ok := p.(plugins.Ingester)
-		if !ok {
+		if !ok || in.finished[name] {
 			continue
 		}
-		if llmDown(errs) {
-			log.Warn().Str("plugin", p.Name()).Msg("Pipeline: LLM unavailable; ingest not started")
-			continue
+		prev := in.Result.ByPlugin[name]
+		left := targetsLeft(targets, prev.Done)
+		callOpts := opts
+		callOpts.ExtractOnly = idsLeft(prev.Fetched, prev.Done)
+		callOpts.Spent = prev.Spent
+		if in.interrupted == name {
+			log.Info().Str("plugin", name).Int("targets_left", len(left)).Int("targets_done", len(targets)-len(left)).
+				Int("extract_only", len(callOpts.ExtractOnly)).Int("spent", callOpts.Spent).
+				Msg("Pipeline: resuming ingest after the LLM outage")
 		}
 		start := time.Now()
-		stats, err := ing.Ingest(ctx, d, targets, opts)
-		res.Total.Add(stats)
-		res.ByPlugin[p.Name()] = stats
+		stats, err := ing.Ingest(ctx, d, left, callOpts)
+		in.Result.Total.Add(stats)
+		prev.Add(stats)
+		in.Result.ByPlugin[name] = prev
 		if err != nil {
-			errs[p.Name()] = err
-			log.Error().Err(err).Str("plugin", p.Name()).Msg("Pipeline: ingest failed")
+			log.Error().Err(err).Str("plugin", name).Msg("Pipeline: ingest failed")
 		}
-		log.Info().Str("plugin", p.Name()).Dur("elapsed", time.Since(start)).
+		setStepErr(in.Errs, name, in.interrupted == name, err)
+		log.Info().Str("plugin", name).Dur("elapsed", time.Since(start)).
 			Int("targets", stats.Targets).Int("items", stats.Items).Int("facts", stats.Facts).Int("errors", stats.Errors).
 			Msg("Pipeline: ingest done")
+		if errors.Is(err, llm.ErrUnavailable) {
+			in.interrupted = name
+			return fmt.Errorf("ingest %s: %w", name, err)
+		}
+		in.interrupted = ""
+		in.finished[name] = true
 	}
-	return res, errs, nil
+	return nil
+}
+
+// Abandon gives up the plugin the last Run stopped at: it counts as finished,
+// its error stays in Errs, and the next Run goes on with the other plugins.
+// It reports whether there was such a plugin.
+func (in *IngestRun) Abandon() bool {
+	if in.interrupted == "" {
+		return false
+	}
+	in.finished[in.interrupted] = true
+	in.interrupted = ""
+	return true
+}
+
+// idsLeft is ids without those in done.
+func idsLeft(ids, done []int64) []int64 {
+	skip := make(map[int64]bool, len(done))
+	for _, id := range done {
+		skip[id] = true
+	}
+	var out []int64
+	for _, id := range ids {
+		if !skip[id] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// setStepErr records a plugin call's error in errs. On the retry of an
+// interrupted plugin the earlier call's failures are kept, but not its
+// outage, which the retry replaces.
+func setStepErr(errs StepErrors, name string, retry bool, err error) {
+	var prev error
+	if retry {
+		prev = withoutOutage(errs[name])
+	}
+	if joined := errors.Join(prev, err); joined != nil {
+		errs[name] = joined
+		return
+	}
+	delete(errs, name)
+}
+
+// withoutOutage is err without its parts that wrap llm.ErrUnavailable
+// (walking errors.Join trees); nil when nothing else is left.
+func withoutOutage(err error) error {
+	if err == nil {
+		return nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var kept []error
+		for _, e := range joined.Unwrap() {
+			if k := withoutOutage(e); k != nil {
+				kept = append(kept, k)
+			}
+		}
+		return errors.Join(kept...)
+	}
+	if errors.Is(err, llm.ErrUnavailable) {
+		return nil
+	}
+	return err
+}
+
+// targetsLeft is targets without the persons in done.
+func targetsLeft(targets []plugins.Target, done []int64) []plugins.Target {
+	if len(done) == 0 {
+		return targets
+	}
+	skip := make(map[int64]bool, len(done))
+	for _, id := range done {
+		skip[id] = true
+	}
+	out := make([]plugins.Target, 0, len(targets))
+	for _, t := range targets {
+		if !skip[t.PersonID] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ProducePairs runs the pair-producing phase of every plugin that has one and
@@ -115,44 +239,62 @@ func ProducePairs(ctx context.Context, d *deps.Deps) (int, StepErrors) {
 	return total, errs
 }
 
-// Backfill runs the backfill phase of every selected plugin that has one, in
-// registration order, each bounded by the same deadline. Like Ingest, it
-// starts no further plugin once one failed because the LLM is unavailable.
-func Backfill(ctx context.Context, d *deps.Deps, deadline time.Time, only []string) StepErrors {
-	sel, err := selected(only)
-	if err != nil {
-		return StepErrors{"backfill": err}
+// BackfillRun is a backfill phase that resumes after an LLM outage: calling
+// Run again skips the plugins that finished.
+type BackfillRun struct {
+	Errs        StepErrors
+	finished    map[string]bool
+	interrupted string // the plugin the last Run stopped at; "" when none
+}
+
+// Run runs the backfill phase of every plugin that has one and did not finish
+// yet, in registration order, each bounded by the same deadline; a plugin
+// reached after the deadline is not started. It stops at the first plugin the
+// LLM became unavailable for and returns that plugin's error (wrapping
+// llm.ErrUnavailable, also kept in Errs until a later Run retries the
+// plugin); other plugin failures are only recorded in Errs.
+func (bf *BackfillRun) Run(ctx context.Context, d *deps.Deps, deadline time.Time) error {
+	if bf.finished == nil {
+		bf.Errs = StepErrors{}
+		bf.finished = map[string]bool{}
 	}
-	errs := StepErrors{}
-	for _, p := range sel {
-		bf, ok := p.(plugins.Backfiller)
-		if !ok {
-			continue
-		}
-		if llmDown(errs) {
-			log.Warn().Str("plugin", p.Name()).Msg("Pipeline: LLM unavailable; backfill not started")
+	for _, p := range Plugins {
+		name := p.Name()
+		b, ok := p.(plugins.Backfiller)
+		if !ok || bf.finished[name] {
 			continue
 		}
 		if time.Now().After(deadline) {
-			log.Info().Str("plugin", p.Name()).Time("deadline", deadline).Msg("Pipeline: backfill window closed; skipping")
+			log.Info().Str("plugin", name).Time("deadline", deadline).Msg("Pipeline: backfill window closed; skipping")
 			continue
 		}
-		start := time.Now()
-		if err := bf.Backfill(ctx, d, deadline); err != nil {
-			errs[p.Name()] = err
-			log.Error().Err(err).Str("plugin", p.Name()).Msg("Pipeline: backfill failed")
+		if bf.interrupted == name {
+			log.Info().Str("plugin", name).Msg("Pipeline: resuming backfill after the LLM outage")
 		}
-		log.Info().Str("plugin", p.Name()).Dur("elapsed", time.Since(start)).Msg("Pipeline: backfill done")
+		start := time.Now()
+		err := b.Backfill(ctx, d, deadline)
+		if err != nil {
+			log.Error().Err(err).Str("plugin", name).Msg("Pipeline: backfill failed")
+		}
+		setStepErr(bf.Errs, name, bf.interrupted == name, err)
+		log.Info().Str("plugin", name).Dur("elapsed", time.Since(start)).Msg("Pipeline: backfill done")
+		if errors.Is(err, llm.ErrUnavailable) {
+			bf.interrupted = name
+			return fmt.Errorf("backfill %s: %w", name, err)
+		}
+		bf.interrupted = ""
+		bf.finished[name] = true
 	}
-	return errs
+	return nil
 }
 
-// llmDown reports whether one of errs says the LLM is unavailable.
-func llmDown(errs StepErrors) bool {
-	for _, err := range errs {
-		if errors.Is(err, llm.ErrUnavailable) {
-			return true
-		}
+// Abandon gives up the plugin the last Run stopped at, like
+// IngestRun.Abandon.
+func (bf *BackfillRun) Abandon() bool {
+	if bf.interrupted == "" {
+		return false
 	}
-	return false
+	bf.finished[bf.interrupted] = true
+	bf.interrupted = ""
+	return true
 }

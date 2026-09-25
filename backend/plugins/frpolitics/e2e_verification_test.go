@@ -56,7 +56,7 @@ func TestE2EPartyFactVerification(t *testing.T) {
 		opts.Since, opts.MaxLaws, opts.MaxVotes, opts.PartyThreshold, opts.Legislatures)
 
 	// Step 1: Run the frpolitics plugin
-	if err := Run(ctx, storer, opts); err != nil {
+	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestRealDataPartyFactVerification(t *testing.T) {
 		RevisitHours:         10000,
 	}
 
-	if err := Run(ctx, storer, opts); err != nil {
+	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run: %v", err)
 	}
 
@@ -390,7 +390,7 @@ func TestPerformanceWithLargeDataset(t *testing.T) {
 
 	// Measure execution time
 	start := time.Now()
-	if err := Run(ctx, storer, opts); err != nil {
+	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run: %v", err)
 	}
 	duration := time.Since(start)

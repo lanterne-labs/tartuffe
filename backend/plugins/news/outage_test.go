@@ -27,7 +27,7 @@ import (
 // loop and is returned with the failures collected before it; any other
 // failure is recorded and the loop goes on.
 func TestIngestTargetsStopsOnUnavailableLLM(t *testing.T) {
-	targets := []plugins.Target{{Name: "A"}, {Name: "B"}, {Name: "C"}, {Name: "D"}}
+	targets := []plugins.Target{{Name: "A", PersonID: 1}, {Name: "B", PersonID: 2}, {Name: "C", PersonID: 3}, {Name: "D", PersonID: 4}}
 	var called []string
 	stats, err := ingestTargets(context.Background(), targets, func(_ context.Context, tg plugins.Target) (*Result, error) {
 		called = append(called, tg.Name)
@@ -40,10 +40,12 @@ func TestIngestTargetsStopsOnUnavailableLLM(t *testing.T) {
 		return &Result{FactsExtracted: 1}, nil
 	})
 	require.ErrorIs(t, err, llm.ErrUnavailable)
-	assert.ErrorContains(t, err, "search quota")
+	assert.NotContains(t, err.Error(), "search quota", "other failures are in the details, not the error")
 	assert.Equal(t, []string{"A", "B", "C"}, called, "no target after the outage")
 	assert.Equal(t, 1, stats.Targets)
 	assert.Equal(t, []string{"A: search quota"}, stats.Details)
+	assert.Equal(t, []int64{1, 2}, stats.Done, "the failed and the collected targets are done, not the interrupted one")
+	assert.Equal(t, []int64{3}, stats.Fetched, "the interrupted target was fetched; only its extraction is left")
 
 	called = nil
 	_, err = ingestTargets(context.Background(), targets[:2], func(_ context.Context, tg plugins.Target) (*Result, error) {
@@ -149,4 +151,46 @@ func TestWindowedCollectionExtractsLeftoversOnce(t *testing.T) {
 	var attempts int
 	require.NoError(t, storer.Pool().QueryRow(ctx, `SELECT attempts FROM source_documents WHERE url = $1`, url).Scan(&attempts))
 	assert.Equal(t, 1, attempts)
+}
+
+// countingSearcher counts searches and returns nothing.
+type countingSearcher struct{ calls int }
+
+func (s *countingSearcher) SearchNews(string, search.NewsSearchOptions) ([]search.NewsResult, error) {
+	s.calls++
+	return nil, nil
+}
+
+// TestResumeCollectExtractsWithoutSearching: a target fetched before an LLM
+// outage (IngestOptions.ExtractOnly) only has its stored documents extracted
+// on the retry: no search (SERP credits), no scrape. Another target is
+// searched as usual.
+func TestResumeCollectExtractsWithoutSearching(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	_, err := storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean reprise", "human")
+	require.NoError(t, err)
+	url := "https://example.test/reprise"
+	_, err = storer.SaveFetchedDocuments(ctx, []core.SourceDocument{{
+		SourceType: "news", URL: url, PersonID: personID, Content: "Un article.",
+	}})
+	require.NoError(t, err)
+
+	ext, emb := stubLLM(t, noFactReply, http.StatusOK, `{}`)
+	searcher := &countingSearcher{}
+	p := NewProvider(searcher, nil, ext, emb, storer, &core.StanceManager{})
+	collect := p.resumeCollect([]int64{personID}, Options{MaxParse: 5})
+
+	_, err = collect(ctx, plugins.Target{Name: "jean reprise", PersonID: personID})
+	require.NoError(t, err)
+	assert.Zero(t, searcher.calls, "a fetched target is not searched again")
+	var state string
+	require.NoError(t, storer.Pool().QueryRow(ctx, `SELECT state FROM source_documents WHERE url = $1`, url).Scan(&state))
+	assert.NotEqual(t, "fetched", state, "the stored document is extracted")
+
+	_, err = collect(ctx, plugins.Target{Name: "autre", PersonID: personID + 1000})
+	require.NoError(t, err)
+	assert.Equal(t, 2, searcher.calls, "any other target is searched (one call per language)")
 }

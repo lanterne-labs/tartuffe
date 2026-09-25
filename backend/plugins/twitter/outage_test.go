@@ -24,7 +24,7 @@ import (
 // recorded and the loop goes on.
 func TestCollectHandlesStopsOnUnavailableLLM(t *testing.T) {
 	handles := []Handle{{Handle: "a", PersonID: 1}, {Handle: "b", PersonID: 2}, {Handle: "c", PersonID: 3}, {Handle: "d", PersonID: 4}}
-	targets := map[int64]bool{1: true, 2: true, 3: true, 4: true}
+	targets := []int64{1, 2, 3, 4, 5}
 	var called []string
 	stats, err := collectHandles(context.Background(), handles, targets, func(_ context.Context, h Handle) (*Result, error) {
 		called = append(called, h.Handle)
@@ -40,6 +40,7 @@ func TestCollectHandlesStopsOnUnavailableLLM(t *testing.T) {
 	assert.ErrorContains(t, err, "fetch quota")
 	assert.Equal(t, []string{"a", "b", "c"}, called, "no handle after the outage")
 	assert.Equal(t, 1, stats.Targets)
+	assert.Equal(t, []int64{1, 2, 5}, stats.Done, "done: the failed and the collected handles' persons, and the target without a handle")
 
 	called = nil
 	_, err = collectHandles(context.Background(), handles[:2], targets, func(_ context.Context, h Handle) (*Result, error) {

@@ -62,7 +62,7 @@ func TestE2EWithSampleData(t *testing.T) {
 	// - Actor Insertion
 	// - Affiliation Creation
 	// - Fact Storage
-	if err := Run(ctx, storer, opts); err != nil {
+	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run failed: %v", err)
 	}
 

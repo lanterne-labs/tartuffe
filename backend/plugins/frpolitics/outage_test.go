@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/plugins"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestStoreLawsStopsOnUnavailableLLM(t *testing.T) {
 
 	t.Run("unavailable", func(t *testing.T) {
 		var called []string
-		err := storeLaws(ctx, store, laws, facts, func(_ context.Context, recs []FactRecord) error {
+		walked, err := storeLaws(ctx, store, laws, facts, func(_ context.Context, recs []FactRecord) error {
 			called = append(called, recs[0].LawKey)
 			if recs[0].LawKey == "16-7002" {
 				return fmt.Errorf("failed to insert facts: %w", llm.ErrUnavailable)
@@ -40,13 +41,14 @@ func TestStoreLawsStopsOnUnavailableLLM(t *testing.T) {
 			return nil
 		})
 		require.ErrorIs(t, err, llm.ErrUnavailable)
+		assert.Equal(t, 1, walked, "the interrupted law is not counted")
 		assert.Equal(t, []string{"16-7001", "16-7002"}, called, "no law after the outage")
 		assert.Equal(t, map[string]bool{"16-7001": true}, processed())
 	})
 
 	t.Run("other failure", func(t *testing.T) {
 		var called []string
-		err := storeLaws(ctx, store, laws, facts, func(_ context.Context, recs []FactRecord) error {
+		walked, err := storeLaws(ctx, store, laws, facts, func(_ context.Context, recs []FactRecord) error {
 			called = append(called, recs[0].LawKey)
 			if recs[0].LawKey == "16-7002" {
 				return errors.New("bad record")
@@ -54,6 +56,7 @@ func TestStoreLawsStopsOnUnavailableLLM(t *testing.T) {
 			return nil
 		})
 		require.Error(t, err)
+		assert.Equal(t, 3, walked)
 		assert.NotErrorIs(t, err, llm.ErrUnavailable)
 		assert.Equal(t, []string{"16-7001", "16-7002", "16-7003"}, called)
 		assert.Equal(t, map[string]bool{"16-7001": true, "16-7003": true}, processed())
@@ -62,16 +65,27 @@ func TestStoreLawsStopsOnUnavailableLLM(t *testing.T) {
 
 // TestIngestSkipsDebatsWhenVotesHitUnavailableLLM: votes stopped by an
 // unreachable LLM skip the transcripts (they need the LLM too); votes failing
-// for another reason do not.
+// for another reason do not. Either way the laws the votes went through are
+// reported as spent.
 func TestIngestSkipsDebatsWhenVotesHitUnavailableLLM(t *testing.T) {
 	var debatsRan bool
 	debats := func() (DebatsStats, error) { debatsRan = true; return DebatsStats{}, nil }
 
-	_, err := ingestVotesThenDebats(func() error { return fmt.Errorf("law 16-1: %w", llm.ErrUnavailable) }, debats)
+	stats, err := ingestVotesThenDebats(func() (int, error) { return 4, fmt.Errorf("law 16-1: %w", llm.ErrUnavailable) }, debats)
 	require.ErrorIs(t, err, llm.ErrUnavailable)
 	assert.False(t, debatsRan)
+	assert.Equal(t, 4, stats.Spent)
 
-	_, err = ingestVotesThenDebats(func() error { return errors.New("download failed") }, debats)
+	stats, err = ingestVotesThenDebats(func() (int, error) { return 0, errors.New("download failed") }, debats)
 	require.Error(t, err)
 	assert.True(t, debatsRan)
+	assert.Zero(t, stats.Spent)
+}
+
+// TestLawsLeft: a retry gets the run's law cap minus the laws earlier calls
+// went through.
+func TestLawsLeft(t *testing.T) {
+	assert.Equal(t, dailyMaxLaws, lawsLeft(plugins.IngestOptions{}))
+	assert.Equal(t, dailyMaxLaws-12, lawsLeft(plugins.IngestOptions{Spent: 12}))
+	assert.Equal(t, 0, lawsLeft(plugins.IngestOptions{MaxItems: 1, Spent: 1}))
 }

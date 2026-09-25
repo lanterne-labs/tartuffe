@@ -72,7 +72,7 @@ func TestConfigBasedRealDataProcessing(t *testing.T) {
 		opts.Since, opts.MaxLaws, opts.MaxVotes, opts.PartyThreshold, opts.Legislatures)
 
 	// Run the plugin
-	err = Run(ctx, storer, opts)
+	_, err = Run(ctx, storer, opts)
 	require.NoError(t, err)
 
 	t.Log("=== Analyzing Results ===")
@@ -186,7 +186,7 @@ func TestDifferentThresholdsWithConfig(t *testing.T) {
 		}
 
 		// Run plugin
-		err = Run(ctx, storer, opts)
+		_, err = Run(ctx, storer, opts)
 		require.NoError(t, err)
 
 		// Count party facts

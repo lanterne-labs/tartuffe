@@ -135,14 +135,15 @@ func AssignOrphansForPerson(
 // the step is idempotent, retries failures on later nights, and goes silent
 // once the backlog is drained and each night's new facts fit the budget.
 // It stops at the first call the LLM could not serve and returns an error
-// wrapping llm.ErrUnavailable.
-func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManager *StanceManager, rebundle PersonRebundler, budget int) error {
+// wrapping llm.ErrUnavailable. It returns the routings it attempted (routed
+// or failed), the part of budget it used, even along with an error.
+func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManager *StanceManager, rebundle PersonRebundler, budget int) (int, error) {
 	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
 	if err != nil {
-		return fmt.Errorf("stance fan-out: listing persons with orphan facts: %w", err)
+		return 0, fmt.Errorf("stance fan-out: listing persons with orphan facts: %w", err)
 	}
 	if len(persons) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// Shuffle so one early-alphabet person with a large (or persistently
@@ -158,7 +159,8 @@ func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManag
 		}
 		ps, err := AssignOrphansForPerson(ctx, storer, stanceManager, rebundle, p, false, &remaining)
 		if errors.Is(err, llm.ErrUnavailable) {
-			return fmt.Errorf("stance fan-out stopped at %s after %d routings: %w", p.Name, routed+ps.OrphansAssigned, err)
+			used := routed + failures + ps.OrphansAssigned + ps.OrphanFailures
+			return int(used), fmt.Errorf("stance fan-out stopped at %s after %d routings: %w", p.Name, routed+ps.OrphansAssigned, err)
 		}
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Stance fan-out failed for person")
@@ -179,5 +181,5 @@ func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManag
 		Int64("contradictions", contradictions).
 		Int("pending_remaining", pending).
 		Msg("Daily pipeline: stance fan-out done")
-	return nil
+	return int(routed + failures), nil
 }

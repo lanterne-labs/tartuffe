@@ -178,7 +178,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		Msg("Starting frpolitics plugin")
 
 	// Run the plugin
-	if err := frpolitics.Run(ctx, storer, opts); err != nil {
+	if _, err := frpolitics.Run(ctx, storer, opts); err != nil {
 		return fmt.Errorf("frpolitics plugin failed: %w", err)
 	}
 

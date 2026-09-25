@@ -35,22 +35,31 @@ const (
 )
 
 // Ingest implements plugins.Ingester: the votes of newly published scrutins,
-// then the transcripts of the last few sitting days.
+// then the transcripts of the last few sitting days. On a retry after an LLM
+// outage the laws earlier calls went through (opts.Spent) come off the
+// per-run law cap, and the votes are skipped once it is used up.
 func (Plugin) Ingest(ctx context.Context, d *deps.Deps, _ []plugins.Target, opts plugins.IngestOptions) (plugins.IngestStats, error) {
-	maxLaws := dailyMaxLaws
-	if opts.MaxItems > 0 {
-		maxLaws = opts.MaxItems
-	}
+	maxLaws := lawsLeft(opts)
 	since := time.Now().AddDate(0, 0, -debatsDailyWindowDays)
 	if opts.Since != nil {
 		since = *opts.Since
 	}
 	return ingestVotesThenDebats(
-		func() error {
+		func() (int, error) {
+			if maxLaws <= 0 {
+				log.Info().Int("laws_done", opts.Spent).Msg("frpolitics: the run's law cap is used up; votes skipped")
+				return 0, nil
+			}
 			return Run(ctx, d.Storer, Options{
 				Since:          opts.Since,
 				MaxLaws:        maxLaws,
 				PartyThreshold: dailyPartyThreshold,
+				// Always visitable: a law whose store stopped part-way (an LLM
+				// outage) resumes on the pipeline's retry of the same run, after
+				// its stored ballots, instead of waiting out the 24h revisit
+				// window behind its own fact_sources rows. Settled laws are
+				// excluded by processed_laws, not by this window.
+				RevisitHours: -1,
 			})
 		},
 		func() (DebatsStats, error) {
@@ -59,12 +68,24 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, _ []plugins.Target, opts
 	)
 }
 
+// lawsLeft is the run's law cap (dailyMaxLaws, or MaxItems) minus the laws
+// earlier calls of the run went through.
+func lawsLeft(opts plugins.IngestOptions) int {
+	maxLaws := dailyMaxLaws
+	if opts.MaxItems > 0 {
+		maxLaws = opts.MaxItems
+	}
+	return maxLaws - opts.Spent
+}
+
 // ingestVotesThenDebats runs the votes, then the transcripts, and returns
-// both failures. Votes that fail on an unreachable LLM (llm.ErrUnavailable)
-// skip the transcripts, which need the LLM too.
-func ingestVotesThenDebats(votes func() error, debats func() (DebatsStats, error)) (plugins.IngestStats, error) {
+// both failures; stats.Spent is the laws the votes went through. Votes that
+// fail on an unreachable LLM (llm.ErrUnavailable) skip the transcripts, which
+// need the LLM too.
+func ingestVotesThenDebats(votes func() (int, error), debats func() (DebatsStats, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
-	votesErr := votes()
+	laws, votesErr := votes()
+	stats.Spent = laws
 	if votesErr != nil {
 		votesErr = fmt.Errorf("votes: %w", votesErr)
 		log.Error().Err(votesErr).Msg("frpolitics: votes failed")

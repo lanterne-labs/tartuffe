@@ -47,10 +47,8 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		log.Info().Msg("twitter: no targets, skipping")
 		return stats, nil
 	}
-	targetIDs := make(map[int64]bool, len(targets))
 	ids := make([]int64, 0, len(targets))
 	for _, t := range targets {
-		targetIDs[t.PersonID] = true
 		ids = append(ids, t.PersonID)
 	}
 
@@ -79,7 +77,7 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		DryRun: opts.DryRun, Force: opts.Force, MaxTweets: opts.MaxItems,
 	}
 
-	stats, err = collectHandles(ctx, handles, targetIDs, func(ctx context.Context, h Handle) (*Result, error) {
+	stats, err = collectHandles(ctx, handles, ids, func(ctx context.Context, h Handle) (*Result, error) {
 		if twOpts.WindowDays > 0 {
 			return provider.CollectFactsWithDateWindows(ctx, h, twOpts)
 		}
@@ -94,13 +92,33 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 // handle is recorded and the loop goes on, except on an unreachable LLM
 // (llm.ErrUnavailable): every further handle would fetch tweets (API credits)
 // only to leave them unextracted, so the loop stops and returns it with the
-// first failure. Otherwise the first failure is returned.
-func collectHandles(ctx context.Context, handles []Handle, targetIDs map[int64]bool, collect func(context.Context, Handle) (*Result, error)) (plugins.IngestStats, error) {
+// first failure. Otherwise the first failure is returned. stats.Done lists
+// the targets whose every handle was collected or failed before the stop.
+func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, collect func(context.Context, Handle) (*Result, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
 	var firstErr error
+	// left counts each target's handles not finished yet.
+	left := make(map[int64]int, len(targetIDs))
+	for _, id := range targetIDs {
+		left[id] = 0
+	}
+	for _, h := range handles {
+		if _, ok := left[h.PersonID]; ok {
+			left[h.PersonID]++
+		}
+	}
+	done := func() []int64 {
+		var out []int64
+		for _, id := range targetIDs {
+			if left[id] == 0 {
+				out = append(out, id)
+			}
+		}
+		return out
+	}
 	seen := make(map[int64]bool)
 	for _, h := range handles {
-		if !targetIDs[h.PersonID] {
+		if _, ok := left[h.PersonID]; !ok {
 			continue
 		}
 		result, err := collect(ctx, h)
@@ -108,13 +126,16 @@ func collectHandles(ctx context.Context, handles []Handle, targetIDs map[int64]b
 			log.Error().Err(err).Str("handle", h.Handle).Msg("twitter: collection failed for handle")
 			stats.Details = append(stats.Details, "@"+h.Handle+": "+err.Error())
 			if errors.Is(err, llm.ErrUnavailable) {
+				stats.Done = done()
 				return stats, errors.Join(firstErr, err)
 			}
 			if firstErr == nil {
 				firstErr = err
 			}
+			left[h.PersonID]--
 			continue
 		}
+		left[h.PersonID]--
 		if !seen[h.PersonID] {
 			seen[h.PersonID] = true
 			stats.Targets++
@@ -125,5 +146,6 @@ func collectHandles(ctx context.Context, handles []Handle, targetIDs map[int64]b
 			stats.Errors += len(result.Errors)
 		}
 	}
+	stats.Done = done()
 	return stats, firstErr
 }

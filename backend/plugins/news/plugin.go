@@ -82,29 +82,50 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		newsOpts.MaxParse = opts.MaxItems
 	}
 
-	return ingestTargets(ctx, targets, func(ctx context.Context, t plugins.Target) (*Result, error) {
-		return provider.collect(ctx, t, newsOpts)
-	})
+	return ingestTargets(ctx, targets, provider.resumeCollect(opts.ExtractOnly, newsOpts))
+}
+
+// resumeCollect is the per-target collection of Ingest: a target in
+// extractOnly (its search and scrape completed before an LLM outage) only has
+// its stored documents extracted, without a new search or scrape.
+func (p *Provider) resumeCollect(extractOnly []int64, opts Options) func(context.Context, plugins.Target) (*Result, error) {
+	fetched := make(map[int64]bool, len(extractOnly))
+	for _, id := range extractOnly {
+		fetched[id] = true
+	}
+	return func(ctx context.Context, t plugins.Target) (*Result, error) {
+		if fetched[t.PersonID] {
+			log.Info().Str("person", t.Name).Msg("news: resuming the extraction of the stored documents")
+			result := &Result{Target: t}
+			return result, p.extractStoredDocuments(ctx, t, p.currentParties(ctx, t), opts, result)
+		}
+		return p.collect(ctx, t, opts)
+	}
 }
 
 // ingestTargets runs collect on every target. Per-target failures are
 // collected in the stats; an unreachable LLM (llm.ErrUnavailable) stops the
-// loop and is returned along with the failures collected so far.
+// loop and is returned. stats.Done lists every target finished before the
+// stop. The LLM is only called after a target's search and scrape (its
+// articles are stored as documents first), so the interrupted target goes to
+// stats.Fetched: a retry only extracts its stored documents. (A date-windowed
+// collection leaves its later windows to the next run.)
 func ingestTargets(ctx context.Context, targets []plugins.Target, collect func(context.Context, plugins.Target) (*Result, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
-	var failures []error
 	for i, t := range targets {
 		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", t.Name).Msg("news: target")
 		result, err := collect(ctx, t)
 		if err != nil {
 			log.Error().Err(err).Str("person", t.Name).Msg("news: target failed")
-			failures = append(failures, fmt.Errorf("%s: %w", t.Name, err))
 			if errors.Is(err, llm.ErrUnavailable) {
-				return stats, errors.Join(failures...)
+				stats.Fetched = append(stats.Fetched, t.PersonID)
+				return stats, fmt.Errorf("%s: %w", t.Name, err)
 			}
 			stats.Details = append(stats.Details, t.Name+": "+err.Error())
+			stats.Done = append(stats.Done, t.PersonID)
 			continue
 		}
+		stats.Done = append(stats.Done, t.PersonID)
 		stats.Targets++
 		if result == nil {
 			continue

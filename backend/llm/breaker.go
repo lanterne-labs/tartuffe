@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -102,32 +104,13 @@ func ProbePrimary(ctx context.Context) bool {
 	if strings.TrimSpace(os.Getenv("FALLBACK_URL")) == "" {
 		return true
 	}
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("OPEN_AI_API")), "/")
+	base := primaryBaseURL()
 	if base == "" {
 		return true
 	}
-	url := base + "/models"
-
-	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	if err != nil {
-		return true // malformed base URL is a config problem, not an outage
-	}
-	if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
-		req.Header.Set("CF-Access-Client-Id", id)
-		req.Header.Set("CF-Access-Client-Secret", os.Getenv("CF_ACCESS_CLIENT_SECRET"))
-	}
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("OPEN_AI_KEY"))
-
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
+	// A malformed base URL is a config problem, not an outage.
+	if err := probeModels(ctx, base); err != nil && !errors.Is(err, errBadBaseURL) {
 		MarkPrimaryDown("start-of-run probe: " + err.Error())
-		return false
-	}
-	resp.Body.Close()
-	if resp.StatusCode >= 500 {
-		MarkPrimaryDown("start-of-run probe: HTTP " + resp.Status)
 		return false
 	}
 
@@ -145,6 +128,142 @@ func ProbePrimary(ctx context.Context) bool {
 	return true
 }
 
+// primaryBaseURL is the primary endpoint's base URL (OPEN_AI_API) without a
+// trailing slash; "" when unset.
+func primaryBaseURL() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("OPEN_AI_API")), "/")
+}
+
+// errBadBaseURL marks a probe that could not be built from OPEN_AI_API.
+var errBadBaseURL = errors.New("malformed OPEN_AI_API")
+
+// primaryRequest builds a request to the primary with the auth and
+// Cloudflare-Access headers; an error wraps errBadBaseURL.
+func primaryRequest(ctx context.Context, method, url string, body []byte) (*http.Request, error) {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, rd)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errBadBaseURL, err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("OPEN_AI_KEY"))
+	if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
+		req.Header.Set("CF-Access-Client-Id", id)
+		req.Header.Set("CF-Access-Client-Secret", os.Getenv("CF_ACCESS_CLIENT_SECRET"))
+	}
+	return req, nil
+}
+
+// probeModels GETs {base}/models with a short timeout. nil means the endpoint
+// answered below 500; a malformed base URL returns an error wrapping
+// errBadBaseURL.
+func probeModels(ctx context.Context, base string) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := primaryRequest(reqCtx, http.MethodGet, base+"/models", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("HTTP %s", resp.Status)
+	}
+	return nil
+}
+
+// warmChatOnce POSTs one 1-token completion at the primary's chat model. Any
+// HTTP status below 500 counts as warm (nil) — the model answered, even if it
+// disliked this particular request; a 5xx (Cloudflare 524 while loading,
+// transient 502) or a transport error is returned, and a malformed base URL
+// returns an error wrapping errBadBaseURL.
+func warmChatOnce(ctx context.Context, base string) error {
+	model := ConfigFromEnv().ChatModel
+	payload := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`)
+	reqCtx, cancel := context.WithTimeout(ctx, 115*time.Second)
+	defer cancel()
+	req, err := primaryRequest(reqCtx, http.MethodPost, ChatCompletionsURL(base), payload)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 115 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("warm-up completion: HTTP %s", resp.Status)
+	}
+	return nil
+}
+
+// waitPollInterval is the pause before each probe of WaitForPrimary.
+// Variable so tests can shrink it.
+var waitPollInterval = 2 * time.Minute
+
+// WaitForPrimary blocks until the primary endpoint answers its /models probe
+// and its chat model answers one warm-up completion (a reachable llama-swap
+// can hide a cold or failing model; the warm-up makes it load the model),
+// probing every waitPollInterval — the first probe too comes after one
+// interval, so a request that keeps failing on a healthy endpoint is not
+// retried in a tight loop. It reports whether the endpoint came back before
+// until (false as well when ctx ends or OPEN_AI_API is unset or malformed) and
+// how many probes it made. Unlike ProbePrimary it probes even without a
+// fallback: the caller waits for the endpoint itself. On success the breaker
+// is cleared, so the next call goes to the primary at once instead of waiting
+// out probeInterval.
+func WaitForPrimary(ctx context.Context, until time.Time) (back bool, polls int) {
+	base := primaryBaseURL()
+	if base == "" {
+		log.Error().Msg("LLM wait: OPEN_AI_API is not set; nothing to wait for")
+		return false, 0
+	}
+	start := time.Now()
+	log.Warn().Time("until", until).Dur("poll_every", waitPollInterval).
+		Msg("LLM unavailable: waiting for the primary endpoint")
+	for {
+		if time.Now().Add(waitPollInterval).After(until) {
+			log.Error().Dur("waited", time.Since(start).Round(time.Second)).Time("until", until).Int("polls", polls).
+				Msg("LLM wait: deadline reached before the primary endpoint came back")
+			return false, polls
+		}
+		select {
+		case <-time.After(waitPollInterval):
+		case <-ctx.Done():
+			log.Error().Err(ctx.Err()).Dur("waited", time.Since(start).Round(time.Second)).
+				Msg("LLM wait: cancelled before the primary endpoint came back")
+			return false, polls
+		}
+		polls++
+		err := probeModels(ctx, base)
+		if err == nil {
+			err = warmChatOnce(ctx, base)
+		}
+		if errors.Is(err, errBadBaseURL) {
+			log.Error().Err(err).Msg("LLM wait: the primary endpoint URL is malformed; it cannot come back")
+			return false, polls
+		}
+		if err == nil {
+			MarkPrimaryUp()
+			log.Info().Dur("outage", time.Since(start).Round(time.Second)).Int("polls", polls).
+				Msg("LLM wait: primary endpoint is back")
+			return true, polls
+		}
+		if polls%5 == 0 {
+			log.Warn().Err(err).Dur("waiting", time.Since(start).Round(time.Second)).Int("polls", polls).
+				Msg("LLM wait: primary endpoint still down")
+		}
+	}
+}
+
 // warmupBudget bounds how long ProbePrimary waits for a cold chat model. A
 // llama-swap load of the 26B NVFP4 takes ~105s; the budget covers two loads
 // (e.g. a swap displacing another model first). Variable so tests can shrink it.
@@ -153,44 +272,20 @@ var warmupBudget = 4 * time.Minute
 // warmupRetryDelay is the pause between warm-up attempts. Variable for tests.
 var warmupRetryDelay = 5 * time.Second
 
-// warmPrimaryChat POSTs 1-token completions at the primary until one answers
-// or the budget runs out. Any HTTP status below 500 counts as warm — the model
-// answered, even if it disliked this particular request. 5xx (Cloudflare 524
-// while loading, transient 502) and transport errors are retried.
+// warmPrimaryChat retries warmChatOnce until the chat model answers or the
+// budget runs out. A malformed base URL is a config problem, not an outage,
+// and counts as warm.
 func warmPrimaryChat(ctx context.Context, base string) bool {
-	model := ConfigFromEnv().ChatModel
-	payload := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"ok"}],"max_tokens":1}`)
-	url := ChatCompletionsURL(base)
-
 	deadline := time.Now().Add(warmupBudget)
 	for attempt := 1; time.Now().Before(deadline) && ctx.Err() == nil; attempt++ {
-		reqCtx, cancel := context.WithTimeout(ctx, 115*time.Second)
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(payload))
-		if err != nil {
-			cancel()
-			return true // malformed URL is a config problem, not an outage
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+os.Getenv("OPEN_AI_KEY"))
-		if id := os.Getenv("CF_ACCESS_CLIENT_ID"); id != "" {
-			req.Header.Set("CF-Access-Client-Id", id)
-			req.Header.Set("CF-Access-Client-Secret", os.Getenv("CF_ACCESS_CLIENT_SECRET"))
-		}
-		resp, err := (&http.Client{Timeout: 115 * time.Second}).Do(req)
-		cancel()
-		if err == nil {
-			status := resp.StatusCode
-			resp.Body.Close()
-			if status < 500 {
-				if attempt > 1 {
-					log.Info().Int("attempts", attempt).Msg("Primary chat model warmed up")
-				}
-				return true
+		err := warmChatOnce(ctx, base)
+		if err == nil || errors.Is(err, errBadBaseURL) {
+			if attempt > 1 {
+				log.Info().Int("attempts", attempt).Msg("Primary chat model warmed up")
 			}
-			log.Warn().Int("status", status).Int("attempt", attempt).Msg("Warm-up completion got 5xx (model likely still loading); retrying")
-		} else {
-			log.Warn().Err(err).Int("attempt", attempt).Msg("Warm-up completion failed; retrying")
+			return true
 		}
+		log.Warn().Err(err).Int("attempt", attempt).Msg("Warm-up completion failed (model likely still loading); retrying")
 		select {
 		case <-time.After(warmupRetryDelay):
 		case <-ctx.Done():

@@ -75,7 +75,8 @@ type Options struct {
 	DisableAIFilter bool
 	// Legislatures enumerates legislature numbers to fetch from (e.g., 16)
 	Legislatures []int
-	// RevisitHours controls source revisit window; 0 means always revisit now
+	// RevisitHours is the law-URL revisit window in hours: 0 means the 24h
+	// default, a negative value means always visitable (see selectLaws)
 	RevisitHours int
 }
 
