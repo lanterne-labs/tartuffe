@@ -70,7 +70,8 @@ const (
 	OutcomeDocSkipped   = "skipped" // empty or too thin to extract from
 
 	// StageFactParse
-	OutcomeProxySpeaker = "proxy_speaker" // an aide's statement credited to the person they work for: dropped
+	OutcomeProxySpeaker    = "proxy_speaker"    // an aide's statement credited to the person they work for: dropped
+	OutcomeSubjectRepaired = "subject_repaired" // a misspelled subject name replaced by the spelling in the source
 )
 
 // DecisionCount is one (stage, outcome) tally.

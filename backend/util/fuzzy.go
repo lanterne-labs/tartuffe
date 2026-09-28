@@ -48,8 +48,8 @@ func NormalizeForFuzzy(s string) string {
 	return strings.Join(filtered, " ")
 }
 
-// levenshteinDistance calculates the Levenshtein distance between two strings.
-func levenshteinDistance(s1, s2 string) int {
+// LevenshteinDistance calculates the Levenshtein distance between two strings (in runes).
+func LevenshteinDistance(s1, s2 string) int {
 	if s1 == s2 {
 		return 0
 	}
@@ -172,7 +172,7 @@ func similarityScore(s1, s2 string) float64 {
 	}
 
 	// Fall back to Levenshtein distance for fuzzy matching
-	distance := levenshteinDistance(n1, n2)
+	distance := LevenshteinDistance(n1, n2)
 	maxLen := len(n1)
 	if len(n2) > maxLen {
 		maxLen = len(n2)

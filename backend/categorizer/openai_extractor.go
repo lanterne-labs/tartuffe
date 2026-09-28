@@ -235,6 +235,9 @@ func (m *OpenAIExtractor) extractChunkWithReactiveRetry(ctx context.Context, cfg
 	prompt := promptrules.BuildFactExtractionPrompt(chunkCfg)
 	facts, err := m.callChatAPIWithPrompt(ctx, prompt, cfg.SourceURL)
 	if err == nil {
+		for i := range facts {
+			groundSubject(&facts[i], chunk, cfg.TargetName)
+		}
 		return facts, nil
 	}
 	if !isContextOverflowError(err) || len(chunk) < 1024 {

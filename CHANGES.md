@@ -2331,3 +2331,20 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - A recovered run is not failed: outages and time waited are noted in the log, Telegram and
   `pipeline_runs.error_summary` (`step_errors` and status unchanged). Why: a 2.5-minute wifi
   drop stopped a run at 05:39 UTC and wasted the day's GPU window.
+
+## Subject names are grounded in the source (2026-09-25, mirror-dm5)
+
+- The extractor misspells subject names ("Édoued Philippe", "jean-1uc melenchon",
+  "manuel b_ompard") and persons match by exact folded name, so every misspelling became
+  a person of its own: ~180 such rows in prod, their facts cut off from the real person
+  and out of reach of contradiction detection. The entity validator did not stop them:
+  its ACCEPT D (close spelling variant) accepts exactly this.
+- `categorizer.groundSubject` runs on every extracted fact: a subject whose normalized
+  name is neither the target nor in the source chunk takes the closest spelling found
+  there (≤2 edits, no word changed by a third of its letters; ≤3 for malformed names
+  with digits, underscores or escapes), and the fact text is rewritten with it.
+  Counted as `fact_parse/subject_repaired`.
+- The budget is tight on purpose: real near-namesakes (Bayrou/Baroin, Le Pen/Le Guen,
+  Marine/Marion) sit 2-3 edits apart, and a false repair moves facts onto another real
+  person, which is worse than a split person. Lesson: fixing a fuzzy-match problem with
+  a fuzzier match needs negative cases from the same domain before the thresholds.

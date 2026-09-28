@@ -67,9 +67,9 @@ func TestLevenshteinDistance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.s1+"_"+tt.s2, func(t *testing.T) {
-			got := levenshteinDistance(tt.s1, tt.s2)
+			got := LevenshteinDistance(tt.s1, tt.s2)
 			if got != tt.expected {
-				t.Errorf("levenshteinDistance(%q, %q) = %d, want %d", tt.s1, tt.s2, got, tt.expected)
+				t.Errorf("LevenshteinDistance(%q, %q) = %d, want %d", tt.s1, tt.s2, got, tt.expected)
 			}
 		})
 	}
