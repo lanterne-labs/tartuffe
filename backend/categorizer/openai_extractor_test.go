@@ -4,6 +4,7 @@ import (
 	"context"
 	"digital-mirror/backend/extractor"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -476,5 +477,71 @@ Elle a déclaré avoir grandi à Hénin-Beaumont dans un quartier populaire, et 
 	}
 	if positionsRuns <= samples/2 {
 		t.Errorf("both real positions survived as separate facts in only %d of %d runs", positionsRuns, samples)
+	}
+}
+
+// TestRemoteLLMExtractor_UnambiguousWords pins the UNAMBIGUOUS WORDS rule
+// (mirror-ezt): contradiction #169 paired Attal's "conseil de discipline dès
+// l'école primaire" with his "une primaire n'est pas possible" because both
+// facts only said "primaire". Each fact must carry its own sense, in the text
+// and in the embedding text. Majority of 3 samples, like the rules above.
+func TestRemoteLLMExtractor_UnambiguousWords(t *testing.T) {
+	loadEnv(t)
+	if os.Getenv("OPEN_AI_KEY") == "" {
+		t.Skip("Skipping unambiguous-words test: OPEN_AI_KEY not set.")
+	}
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Gabriel Attal, entre justice des mineurs et 2027
+
+Gabriel Attal a proposé la création d'un conseil de discipline dès le primaire pour les élèves violents.
+
+Interrogé sur la désignation d'un candidat unique du bloc central pour 2027, il a répondu qu'« une primaire n'est pas possible ».`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/primaire",
+		Title:   "Gabriel Attal, entre justice des mineurs et 2027",
+		Content: mockText,
+	}
+	// "primaire" itself must carry its sense, not merely sit next to words
+	// that hint at it: the judge compares the facts, not their sources.
+	schoolPrimaire := regexp.MustCompile(`[ée]cole[ -]primaire`)
+	electionPrimaire := regexp.MustCompile(`primaire[ -][ée]lectorale|[ée]lection[ -]primaire`)
+	ctx := context.Background()
+	const samples = 3
+	var goodRuns int
+	for run := 1; run <= samples; run++ {
+		facts, err := extractorClient.ExtractFacts(ctx, "Gabriel Attal", mockContent)
+		if err != nil {
+			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
+		}
+		school, election, ambiguous := false, false, false
+		for i, f := range facts {
+			text, emb := strings.ToLower(f.NormalizedFactText), strings.ToLower(f.EmbeddingText)
+			t.Logf("  run %d [%d] %s | embedding=%q", run, i+1, f.NormalizedFactText, f.EmbeddingText)
+			switch {
+			case strings.Contains(text, "discipline"):
+				school = true
+				if !schoolPrimaire.MatchString(text) {
+					t.Logf("  run %d: school fact without its sense: %q / %q", run, f.NormalizedFactText, f.EmbeddingText)
+					ambiguous = true
+				}
+			case strings.Contains(text, "primaire"):
+				election = true
+				if !electionPrimaire.MatchString(text) || !electionPrimaire.MatchString(emb) {
+					t.Logf("  run %d: election fact without its sense: %q / %q", run, f.NormalizedFactText, f.EmbeddingText)
+					ambiguous = true
+				}
+			}
+		}
+		if school && election && !ambiguous {
+			goodRuns++
+		}
+	}
+	if goodRuns <= samples/2 {
+		t.Errorf("both facts carried an unambiguous sense in only %d of %d runs", goodRuns, samples)
 	}
 }

@@ -2348,3 +2348,11 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   Marine/Marion) sit 2-3 edits apart, and a false repair moves facts onto another real
   person, which is worse than a split person. Lesson: fixing a fuzzy-match problem with
   a fuzzier match needs negative cases from the same domain before the thresholds.
+
+## Extraction writes ambiguous words in their unambiguous form (2026-09-25, mirror-ezt)
+
+- New self-consistency rule UNAMBIGUOUS WORDS: « dès le primaire » → « dès l'école
+  primaire », « une primaire » → « une primaire électorale », in the fact text and the
+  embedding text. The homonym clause in the false-positive catalog only helps once a
+  pair reaches a judge; writing the sense into the fact keeps homonyms apart in KNN
+  pairing, stance routing and every judge prompt at once. Golden: old prompt 0/3, new 3/3.
