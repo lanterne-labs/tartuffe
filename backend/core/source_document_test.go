@@ -33,9 +33,12 @@ func (m *memDocs) SaveFetchedDocuments(ctx context.Context, docs []SourceDocumen
 func (m *memDocs) KnownDocumentURLs(ctx context.Context, sourceType string, urls []string) (map[string]bool, error) {
 	return nil, errors.New("not used")
 }
-func (m *memDocs) ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, limit int) ([]SourceDocument, error) {
+func (m *memDocs) ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, publishedSince time.Time, limit int) ([]SourceDocument, error) {
 	var out []SourceDocument
 	for _, d := range m.docs {
+		if !publishedSince.IsZero() && (d.PublishedAt == nil || d.PublishedAt.Before(publishedSince)) {
+			continue
+		}
 		st := m.states[d.ID]
 		if st == DocFetched || (st == DocFailed && m.tries[d.ID] < MaxExtractionAttempts) {
 			out = append(out, d)

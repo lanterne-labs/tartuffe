@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/core"
 
@@ -39,7 +40,7 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unknownType, "known is per source type")
 
-	unfinished, err := storer.ListUnfinishedDocuments(ctx, "news", pid, 10)
+	unfinished, err := storer.ListUnfinishedDocuments(ctx, "news", pid, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Len(t, unfinished, 2)
 	require.Equal(t, "body A", unfinished[0].Content)
@@ -53,7 +54,7 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 
 	require.NoError(t, storer.MarkDocumentExtracted(ctx, id, 3))
 	require.NoError(t, storer.MarkDocumentFailed(ctx, other, errors.New("llm down")))
-	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", pid, 10)
+	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", pid, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Len(t, unfinished, 1, "extracted is finished, failed under the cap is not")
 	require.Equal(t, other, unfinished[0].ID)
@@ -68,7 +69,7 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	for i := 1; i < core.MaxExtractionAttempts; i++ {
 		require.NoError(t, storer.MarkDocumentFailed(ctx, other, errors.New("llm down")))
 	}
-	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", pid, 10)
+	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", pid, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Empty(t, unfinished, "at the attempt cap the document is left alone")
 
@@ -76,7 +77,7 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	again, err := storer.SaveFetchedDocuments(ctx, []core.SourceDocument{{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B v2"}})
 	require.NoError(t, err)
 	require.Equal(t, other, again["https://d.test/b"])
-	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", 0, 10)
+	unfinished, err = storer.ListUnfinishedDocuments(ctx, "news", 0, time.Time{}, 10)
 	require.NoError(t, err)
 	require.Len(t, unfinished, 1)
 	require.Equal(t, "body B v2", unfinished[0].Content)
@@ -88,4 +89,31 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	empty, err := storer.SaveFetchedDocuments(ctx, nil)
 	require.NoError(t, err)
 	require.Empty(t, empty)
+}
+
+// A publication floor keeps a recent-content feed off the backlog: older and
+// undated documents are left to the backfill (mirror-29j: the daily débats feed
+// walked 2,000 old transcripts past the run deadline).
+func TestListUnfinishedDocumentsPublishedSince(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	old, recent := now.AddDate(0, 0, -30), now.AddDate(0, 0, -1)
+	ids, err := storer.SaveFetchedDocuments(ctx, []core.SourceDocument{
+		{SourceType: "assemblee_debat", URL: "https://d.test/old", Content: "old", PublishedAt: &old},
+		{SourceType: "assemblee_debat", URL: "https://d.test/recent", Content: "recent", PublishedAt: &recent},
+		{SourceType: "assemblee_debat", URL: "https://d.test/undated", Content: "undated"},
+	})
+	require.NoError(t, err)
+
+	all, err := storer.ListUnfinishedDocuments(ctx, "assemblee_debat", 0, time.Time{}, 10)
+	require.NoError(t, err)
+	require.Len(t, all, 3, "no floor: every unfinished document")
+
+	windowed, err := storer.ListUnfinishedDocuments(ctx, "assemblee_debat", 0, now.AddDate(0, 0, -4), 10)
+	require.NoError(t, err)
+	require.Len(t, windowed, 1)
+	require.Equal(t, ids["https://d.test/recent"], windowed[0].ID)
 }

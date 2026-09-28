@@ -64,8 +64,8 @@ type DocumentStorer interface {
 	KnownDocumentURLs(ctx context.Context, sourceType string, urls []string) (map[string]bool, error)
 	// ListUnfinishedDocuments returns the documents still to extract (fetched,
 	// or failed with attempts left), oldest fetch first; personID 0 means
-	// every person.
-	ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, limit int) ([]SourceDocument, error)
+	// every person, a zero publishedSince any publication date.
+	ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, publishedSince time.Time, limit int) ([]SourceDocument, error)
 	// MarkDocumentExtracted records a successful extraction and deletes the
 	// raw content.
 	MarkDocumentExtracted(ctx context.Context, id int64, factsCount int) error
@@ -93,6 +93,10 @@ type ProcessOptions struct {
 	Order func(a, b SourceDocument) bool
 	// Limit caps how many unfinished documents are loaded (0 = 2000).
 	Limit int
+	// PublishedSince, when set, leaves out documents published before it
+	// (and undated ones): a feed bounded to recent content must not walk the
+	// backlog of older documents, which is a deadline-bound backfill's job.
+	PublishedSince time.Time
 }
 
 // ProcessStats are the counters of one ProcessDocuments run.
@@ -129,7 +133,7 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 	if limit <= 0 {
 		limit = 2000
 	}
-	docs, err := storer.ListUnfinishedDocuments(ctx, sourceType, personID, limit)
+	docs, err := storer.ListUnfinishedDocuments(ctx, sourceType, personID, opts.PublishedSince, limit)
 	if err != nil {
 		return st, fmt.Errorf("listing unfinished %s documents: %w", sourceType, err)
 	}

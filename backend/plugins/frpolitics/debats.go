@@ -236,6 +236,7 @@ func RunDebats(ctx context.Context, storer *storage.PostgresStorer, opts DebatsO
 	}
 	ps, runErr := core.ProcessDocuments(ctx, storer, debatsSourceType, 0, extract, core.ProcessOptions{
 		Deadline:               opts.Deadline,
+		PublishedSince:         opts.Since,
 		MaxDocs:                opts.MaxDocs,
 		MaxConsecutiveFailures: debatsMaxConsecutiveFailures,
 		Order:                  debateDocumentOrder(opts, priority),

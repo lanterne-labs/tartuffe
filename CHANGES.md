@@ -2356,3 +2356,14 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   embedding text. The homonym clause in the false-positive catalog only helps once a
   pair reaches a judge; writing the sense into the fact keeps homonyms apart in KNN
   pairing, stance routing and every judge prompt at once. Golden: old prompt 0/3, new 3/3.
+
+## The daily débats feed stays in its window (2026-09-27, mirror-29j)
+
+- `ProcessDocuments` lists every unfinished document of a source type, so since the document
+  state machine (e3ae59a) the daily débats feed (`Since` = 4 days, no deadline) walked the
+  whole transcript backlog: run 108 was still in its ingest phase 40 h later, and the host
+  skips the next cron while a run is active. `ProcessOptions.PublishedSince` now floors the
+  listing by publication date; `RunDebats` passes its `Since`. The backlog is only the
+  deadline-bound backfill's job.
+- Lesson: a phase without a deadline must be bounded by its input. When a listing moves to a
+  shared "everything unfinished" query, re-check every caller's implicit bound.

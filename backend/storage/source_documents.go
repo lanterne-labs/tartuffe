@@ -123,17 +123,22 @@ func (s *PostgresStorer) KnownDocumentURLs(ctx context.Context, sourceType strin
 
 // ListUnfinishedDocuments returns the documents still to extract: fetched
 // ones, and failed ones with attempts left, oldest fetch first. personID 0
-// means every person.
-func (s *PostgresStorer) ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, limit int) ([]core.SourceDocument, error) {
+// means every person; a zero publishedSince any publication date.
+func (s *PostgresStorer) ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, publishedSince time.Time, limit int) ([]core.SourceDocument, error) {
+	var since *time.Time
+	if !publishedSince.IsZero() {
+		since = &publishedSince
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, source_type, url, COALESCE(person_id, 0), title, content, published_at, metadata,
 		       fetched_at, state, attempts, facts_count
 		FROM source_documents
 		WHERE source_type = $1 AND ($2 = 0 OR person_id = $2)
 		  AND (state = $3 OR (state = $4 AND attempts < $5))
+		  AND ($7::timestamptz IS NULL OR published_at >= $7)
 		ORDER BY fetched_at, id
 		LIMIT $6`,
-		sourceType, personID, core.DocFetched, core.DocFailed, core.MaxExtractionAttempts, limit)
+		sourceType, personID, core.DocFetched, core.DocFailed, core.MaxExtractionAttempts, limit, since)
 	if err != nil {
 		return nil, fmt.Errorf("listing unfinished %s documents: %w", sourceType, err)
 	}
