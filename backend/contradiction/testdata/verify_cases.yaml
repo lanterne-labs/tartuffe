@@ -464,3 +464,65 @@ cases:
     expect: drop
     bucket: restatements
     notes: "The only 'conflict' is between two wordings of statement A (reporting variance on the amount); statement B does not contradict A. Wordings of one statement are never compared with each other."
+
+  # ---- Prod false positives kept by BOTH judges (audit of 2026-09-25, mirror-733) ----
+
+  # A targeted premium made tax-free is not a general fuel-tax cut: "de manière générale et
+  # indiscriminée" scopes B to the universal measure (DROP).
+  - name: "FP_594_lecornu_taxfree_premium_vs_no_general_fuel_tax_cut"
+    fact_a: "Le Gouvernement simplifie et libéralise la prime carburant en la passant de 300 à 600€, en la rendant totalement défiscalisée et sans condition."
+    fact_b: "Le gouvernement, via Sébastien Lecornu, n'envisage pas de baisse de la fiscalité sur le carburant de manière générale et indiscriminée."
+    claimed_reason: "La décision de doubler la prime et de la rendre totalement défiscalisée contredit la position affirmant que le gouvernement n'envisage pas de baisse de la fiscalité sur le carburant."
+    expect: drop
+    bucket: procedural_scope
+    notes: "The prime carburant is a targeted premium; exempting it from income tax is not a cut of the fuel tax, and B only rules out the general, indiscriminate cut. Same shape as FP_177."
+
+  # Extending TARGETED aid and refusing to reopen GENERALIZED aid are the same line (DROP).
+  - name: "FP_679_lecornu_premium_vs_targeted_aid_extension"
+    fact_a: "Le Gouvernement simplifie et libéralise la prime carburant en la passant de 300 à 600€, en la rendant totalement défiscalisée et sans condition."
+    fact_b: "Sébastien Lecornu a annoncé la prolongation des aides aux filières les plus exposées jusqu'au 31 décembre."
+    also_b:
+      - "Sébastien Lecornu ne veut pas rouvrir les vannes à des aides généralisées pour les carburants."
+      - "Sébastien Lecornu a demandé de prolonger jusqu'au 31 décembre les aides ciblées sur les carburants."
+    claimed_reason: "L'action de doubler et de défiscaliser la prime (A) est une expansion massive des aides qui contredit directement la position de Lecornu refusant de rouvrir les vannes aux aides généralisées (B)."
+    expect: drop
+    bucket: procedural_scope
+    notes: "The premium is a targeted measure (a bonus paid to workers), not a generalized fuel aid; B keeps aid targeted and refuses to generalize it. No reversal."
+
+  # "Premier responsable ... et non un manque de moyens" names the PRIMARY culprit and rules
+  # out one cause (resources); admitting errors and negligence in the chain is a different
+  # cause, compatible with both (DROP). Same shape as FP_156 / FP_166.
+  - name: "FP_262_lecornu_primary_culprit_vs_protection_failures"
+    fact_a: "Sébastien Lecornu a affirmé que le premier responsable du drame de l'affaire Lyhanna est le meurtrier et non un manque de moyens de l'institution judiciaire."
+    fact_b: "Sébastien Lecornu a déclaré que la chaîne de protection a failli dans l'affaire Lyhanna, en raison d'une succession d'erreurs, de négligences, d'inactions et de mauvaises décisions."
+    claimed_reason: "Lecornu a d'abord affirmé que la responsabilité incombait au meurtrier et non à un manque de moyens, puis a déclaré que la chaîne de protection avait failli par des erreurs et négligences."
+    expect: drop
+    bucket: complementary_cause
+    notes: "'Premier responsable' is not 'seul responsable', and 'non un manque de moyens' excludes a budget cause only; errors and negligence are neither. Both judges read A as 'no institutional fault at all'."
+
+  # "Dégager un effort supplémentaire sur les dépenses" is budget French for extra SAVINGS:
+  # it and a spending freeze point the same way (DROP).
+  - name: "FP_691_lecornu_spending_effort_vs_freeze"
+    fact_a: "Sébastien Lecornu a décidé de rouvrir les lettres plafonds afin de dégager un effort supplémentaire sur les dépenses de l'État pour le budget 2027."
+    also_a:
+      - "Sébastien Lecornu a décidé de rouvrir les lettres-plafonds afin de dégager un effort supplémentaire sur les dépenses de l'État."
+    fact_b: "Sébastien Lecornu a demandé à ses ministres un effort supplémentaire sur les dépenses en 2027, afin de les maintenir au même niveau qu'en 2026."
+    also_b:
+      - "Sébastien Lecornu a promis de geler les dépenses de l'Etat, hormis pour plusieurs ministères."
+      - "Sébastien Lecornu a déclaré que les dépenses de l'État resteront stables, hors réarmement et intérêts de la dette, afin d'appliquer une discipline plus forte."
+    claimed_reason: "L'engagement de maintenir les dépenses au même niveau est contredit par la décision de dégager un effort supplémentaire de dépenses."
+    expect: drop
+    bucket: same_direction
+    notes: "An 'effort sur les dépenses' is a spending CUT (savings), not more spending; reopening the ceilings to find it IS how the freeze is enforced. Both judges read 'effort de dépenses' as spending more."
+
+  # Trump honoring HIS commitments vs Trump's new view of RUSSIA's commitments: different
+  # subjects, and Macron praises Trump in both (DROP).
+  - name: "FP_472_macron_trump_reliable_vs_trump_view_of_russia"
+    fact_a: "Emmanuel Macron a déclaré avoir 'toujours eu confiance' en Donald Trump, affirmant que ce dernier a 'toujours fait ce à quoi il s'est engagé'."
+    also_a:
+      - "Emmanuel Macron a affirmé avoir toujours eu confiance en Donald Trump, précisant que ce dernier respecte ses engagements."
+    fact_b: "Emmanuel Macron a estimé que Donald Trump a changé de position en reconnaissant que la Russie ne tenait pas ses engagements."
+    claimed_reason: "Macron affirme que Trump a changé de position sur les engagements de la Russie, ce qui contredit sa déclaration précédente selon laquelle Trump a toujours respecté ses engagements."
+    expect: drop
+    bucket: different_subjects
+    notes: "Whose commitments: Trump's own (A) vs Russia's (B). Trump updating his view of Russia says nothing about Trump breaking his word, and Macron's own position on Trump is unchanged."
