@@ -133,17 +133,29 @@ func groundSubject(fact *backend.Fact, source, target string) bool {
 		}
 	}
 
+	malformed := malformedName(subject)
 	budget := maxRepairEdits
-	if malformedName(subject) {
+	if malformed {
 		budget = maxMalformedEdits
 	}
 	best, bestDist, bestCount := "", budget+1, 0
-	consider := func(spelling string, count int) {
+	consider := func(spelling string, count int, fromTarget bool) {
+		// A source spelling must itself look like a name: not a cut-off span
+		// ("État (DRAC"), not a headline in capitals.
+		if !fromTarget && (malformedName(spelling) || allCaps(spelling)) {
+			return
+		}
 		candKey := nameKey(spelling)
 		if abs(len([]rune(candKey))-len([]rune(key))) > budget {
 			return
 		}
 		d := util.LevenshteinDistance(key, candKey)
+		// Same letters, other separators: a well-formed subject is as likely
+		// right as the source ("Ian Brossat" vs a hashtag "IanBrossat", "le
+		// Gouvernement" vs a URL slug), so only the target may respell it.
+		if d == 0 && !malformed && !fromTarget {
+			return
+		}
 		longer := max(len([]rune(key)), len([]rune(candKey)))
 		if d > budget || float64(d) > maxRepairRatio*float64(longer) {
 			return
@@ -157,10 +169,10 @@ func groundSubject(fact *backend.Fact, source, target string) bool {
 	}
 	// The target first, winning ties: it is the tracked person's name.
 	if target != "" {
-		consider(target, int(^uint(0)>>1))
+		consider(target, int(^uint(0)>>1), true)
 	}
 	for _, spelling := range order {
-		consider(spelling, spans[spelling])
+		consider(spelling, spans[spelling], false)
 	}
 	if best == "" {
 		return false
@@ -168,7 +180,7 @@ func groundSubject(fact *backend.Fact, source, target string) bool {
 	// Same person, better display: the source's own spelling of the target.
 	if best == target {
 		for _, spelling := range order {
-			if util.NormalizePersonName(spelling) == util.NormalizePersonName(target) {
+			if !allCaps(spelling) && util.NormalizePersonName(spelling) == util.NormalizePersonName(target) {
 				best = spelling
 				break
 			}
@@ -197,12 +209,24 @@ func malformedName(name string) bool {
 	for _, r := range name {
 		switch {
 		case unicode.IsLetter(r), unicode.Is(unicode.Mn, r), unicode.IsSpace(r):
-		case strings.ContainsRune("-'’.", r):
+		case strings.ContainsRune("-'’.()", r):
 		default:
 			return true
 		}
 	}
 	return false
+}
+
+// allCaps reports a spelling with letters and no lowercase one: a headline.
+func allCaps(s string) bool {
+	letters := false
+	for _, r := range s {
+		if unicode.IsLower(r) {
+			return false
+		}
+		letters = letters || unicode.IsLetter(r)
+	}
+	return letters
 }
 
 // wordsClose guards a well-formed subject against a near-namesake: word by
