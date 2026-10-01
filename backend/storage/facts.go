@@ -701,6 +701,25 @@ type Restatement struct {
 	OriginalQuote string `json:"original_quote,omitempty"`
 }
 
+// restatementsJSON is the SQL expression (a JSON array) of the claim-group
+// members of the fact whose id is factIDExpr: their texts and first source,
+// oldest first, as decoded into []Restatement.
+func restatementsJSON(factIDExpr string) string {
+	return `COALESCE((
+		SELECT json_agg(json_build_object(
+		           'fact_text', m.fact_text,
+		           'fact_text_en', COALESCE(m.fact_text_en, ''),
+		           'source_url', COALESCE(ms.source_url, ''),
+		           'original_quote', COALESCE(ms.original_quote, ''))
+		       ORDER BY m.id)
+		FROM fact_relations r
+		JOIN facts m ON m.id = r.specific_fact_id
+		LEFT JOIN LATERAL (
+		    SELECT ms.source_url, ms.original_quote FROM fact_sources ms
+		    WHERE ms.fact_id = m.id ORDER BY ms.id LIMIT 1) ms ON true
+		WHERE r.general_fact_id = ` + factIDExpr + ` AND r.relation_type = 'duplicate'), '[]')`
+}
+
 // GetFactsInStance returns the stance's active facts with both native and
 // English text + source info, for the per-stance Facts tab on the person page.
 // A claim group's members are not listed on their own but under their
@@ -710,19 +729,7 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 		SELECT f.id, f.fact_text, COALESCE(f.fact_text_en,'') AS fact_text_en,
 		       COALESCE(f.lang,'') AS lang, COALESCE(f.canonical_verb,'') AS canonical_verb,
 		       src.source_url, COALESCE(src.original_quote,'') AS original_quote, src.archive_url,
-		       COALESCE((
-		           SELECT json_agg(json_build_object(
-		                      'fact_text', m.fact_text,
-		                      'fact_text_en', COALESCE(m.fact_text_en, ''),
-		                      'source_url', COALESCE(ms.source_url, ''),
-		                      'original_quote', COALESCE(ms.original_quote, ''))
-		                  ORDER BY m.id)
-		           FROM fact_relations r
-		           JOIN facts m ON m.id = r.specific_fact_id
-		           LEFT JOIN LATERAL (
-		               SELECT ms.source_url, ms.original_quote FROM fact_sources ms
-		               WHERE ms.fact_id = m.id ORDER BY ms.id LIMIT 1) ms ON true
-		           WHERE r.general_fact_id = f.id AND r.relation_type = 'duplicate'), '[]') AS restatements
+		       ` + restatementsJSON("f.id") + ` AS restatements
 		FROM facts f
 		LEFT JOIN LATERAL (
 		    SELECT fs.source_url, fs.original_quote, fs.archive_url

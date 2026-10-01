@@ -23,6 +23,15 @@ export interface FactWithSource {
 	archive_url?: string | null; // Wayback snapshot URL; null until archived
 }
 
+// Another wording of a fact's claim (a member of its claim group), with its
+// own source.
+export interface Restatement {
+	fact_text: string;
+	fact_text_en?: string;
+	source_url: string;
+	original_quote?: string;
+}
+
 export interface ContradictionWithFacts {
 	id: number;
 	person_id: number;
@@ -67,6 +76,7 @@ export interface ContradictingFact {
 	fact_text_en?: string;
 	fact_date: string | null;
 	source_urls: string[];
+	restatements: Restatement[];
 	reason: string;
 	reason_en?: string;
 }
@@ -80,6 +90,7 @@ export interface ContradictionGroup {
 	base_fact_text_en?: string;
 	base_fact_date: string | null;
 	base_fact_source_urls: string[];
+	base_restatements: Restatement[];
 	summary: string | null;
 	summary_en?: string | null;
 	contradicting_facts: ContradictingFact[];

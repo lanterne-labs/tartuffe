@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -303,11 +304,13 @@ func starPeel(rows []regroupRow) (base map[int64]int64, other map[int64]int64) {
 // ContradictionGroup is one distinct inconsistency: a base fact contradicted by N
 // facts. It replaces the wall of pairwise cards on the person/stance view.
 type ContradictionGroup struct {
-	BaseFactID         int64               `json:"base_fact_id"`
-	BaseFactText       string              `json:"base_fact_text"`
-	BaseFactTextEn     string              `json:"base_fact_text_en,omitempty"`
-	BaseFactDate       *time.Time          `json:"base_fact_date"`
-	BaseFactSourceURLs []string            `json:"base_fact_source_urls"`
+	BaseFactID         int64      `json:"base_fact_id"`
+	BaseFactText       string     `json:"base_fact_text"`
+	BaseFactTextEn     string     `json:"base_fact_text_en,omitempty"`
+	BaseFactDate       *time.Time `json:"base_fact_date"`
+	BaseFactSourceURLs []string   `json:"base_fact_source_urls"`
+	// BaseRestatements are the base fact's other wordings (its claim group).
+	BaseRestatements   []Restatement       `json:"base_restatements"`
 	Summary            *string             `json:"summary"`              // merged reason; nil for single-spoke
 	SummaryEn          *string             `json:"summary_en,omitempty"` // English merged reason
 	ContradictingFacts []ContradictingFact `json:"contradicting_facts"`
@@ -322,8 +325,10 @@ type ContradictingFact struct {
 	FactTextEn      string     `json:"fact_text_en,omitempty"`
 	FactDate        *time.Time `json:"fact_date"`
 	SourceURLs      []string   `json:"source_urls"`
-	Reason          string     `json:"reason"`
-	ReasonEn        string     `json:"reason_en,omitempty"`
+	// Restatements are the fact's other wordings (its claim group).
+	Restatements []Restatement `json:"restatements"`
+	Reason       string        `json:"reason"`
+	ReasonEn     string        `json:"reason_en,omitempty"`
 }
 
 // GetStanceContradictionGroups returns the distinct-inconsistency groups whose BASE
@@ -347,7 +352,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		       fb.fact_text, COALESCE(fb.fact_text_en,''),
 		       sp.fact_text, COALESCE(sp.fact_text_en,''),
 		       COALESCE(fsb.urls, '{}'), fsb.earliest,
-		       COALESCE(fss.urls, '{}'), fss.earliest
+		       COALESCE(fss.urls, '{}'), fss.earliest,
+		       ` + restatementsJSON("g.base_id") + `, ` + restatementsJSON("g.spoke_id") + `
 		FROM g
 		JOIN stance_document_facts sdf ON sdf.fact_id = g.base_id AND sdf.stance_document_id = $1
 		-- Only this stance owner's contradictions: a fact mentioned by several
@@ -383,17 +389,28 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			baseText, baseTextEn, spokeText, spokeTextEn string
 			baseURLs, spokeURLs                          []string
 			baseDate, spokeDate                          *time.Time
+			baseRestatements, spokeRestatements          []byte
 		)
 		if err := rows.Scan(&cid, &baseID, &spokeID, &reason, &reasonEn,
 			&summary, &summaryEn,
 			&baseText, &baseTextEn, &spokeText, &spokeTextEn,
-			&baseURLs, &baseDate, &spokeURLs, &spokeDate); err != nil {
+			&baseURLs, &baseDate, &spokeURLs, &spokeDate,
+			&baseRestatements, &spokeRestatements); err != nil {
 			return nil, fmt.Errorf("scan contradiction group row: %w", err)
+		}
+		var spokeAlso []Restatement
+		if err := json.Unmarshal(spokeRestatements, &spokeAlso); err != nil {
+			return nil, fmt.Errorf("decoding restatements of fact %d: %w", spokeID, err)
 		}
 
 		i, ok := idx[baseID]
 		if !ok {
+			var baseAlso []Restatement
+			if err := json.Unmarshal(baseRestatements, &baseAlso); err != nil {
+				return nil, fmt.Errorf("decoding restatements of fact %d: %w", baseID, err)
+			}
 			groups = append(groups, ContradictionGroup{
+				BaseRestatements:   baseAlso,
 				BaseFactID:         baseID,
 				BaseFactText:       baseText,
 				BaseFactTextEn:     baseTextEn,
@@ -412,6 +429,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			FactTextEn:      spokeTextEn,
 			FactDate:        spokeDate,
 			SourceURLs:      spokeURLs,
+			Restatements:    spokeAlso,
 			Reason:          reason,
 			ReasonEn:        reasonEn,
 		})

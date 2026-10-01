@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { sourceDomain } from '$lib/sources';
+	import FactVersions from './FactVersions.svelte';
 	import type { ContradictionGroup } from '$lib/types';
 	import { TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
@@ -62,6 +63,7 @@
 				<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 			{/each}
 		</div>
+		<FactVersions sourceUrls={g.base_fact_source_urls} restatements={g.base_restatements ?? []} lang={currentLang} />
 	</div>
 
 	<!-- Contradicting facts, each with the reason it conflicts. -->
@@ -79,6 +81,7 @@
 						<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 					{/each}
 				</div>
+				<FactVersions sourceUrls={f.source_urls} restatements={f.restatements ?? []} lang={currentLang} />
 			</div>
 		{/each}
 	</div>

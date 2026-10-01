@@ -96,7 +96,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'person.loading': { fr: 'Chargement…', en: 'Loading…' },
 	'person.source.original': { fr: 'Voir la source', en: 'Show source' },
 	'person.source.archive': { fr: 'Voir l’archive', en: 'Show archive' },
-	'person.fact.stated_n_times': { fr: 'Déclaré {n} fois', en: 'Stated {n} times' },
+	'fact.reported_n_times': { fr: 'Rapporté {n} fois', en: 'Reported {n} times' },
 	'person.show_n_more': { fr: 'Voir {n} de plus', en: 'Show {n} more' },
 	'person.show_all_n': { fr: 'Voir tout ({n})', en: 'Show all {n}' },
 	'person.retry': { fr: 'Réessayer', en: 'Retry' },

@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { sourceDomain } from '$lib/sources';
+	import FactVersions from '$lib/components/FactVersions.svelte';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Restatement } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
@@ -17,13 +18,6 @@
 	});
 
 	// Per-stance Facts cache, fetched lazily when the user opens the Facts tab on a stance.
-	// Another statement of the same claim, with its own source.
-	interface Restatement {
-		fact_text: string;
-		fact_text_en?: string;
-		source_url: string;
-		original_quote?: string;
-	}
 	interface StanceFact {
 		fact_id: number;
 		fact_text: string;
@@ -716,19 +710,7 @@
 														{#if f.original_quote}
 															<div class="quote-block">"{f.original_quote.length > 200 ? f.original_quote.slice(0, 200) + '…' : f.original_quote}"</div>
 														{/if}
-														{#if f.restatements?.length}
-															<details class="restatements" onclick={(e) => e.stopPropagation()}>
-																<summary>{tr('person.fact.stated_n_times', currentLang, { n: f.restatements.length + 1 })}</summary>
-																{#each f.restatements as r, i (i)}
-																	<div class="restatement">
-																		{pickFactText(r)}
-																		{#if r.source_url}
-																			<a href={r.source_url} target="_blank" rel="noopener noreferrer" title={r.source_url}>{sourceDomain(r.source_url)}</a>
-																		{/if}
-																	</div>
-																{/each}
-															</details>
-														{/if}
+														<FactVersions sourceUrls={[f.source_url]} restatements={f.restatements ?? []} lang={currentLang} />
 													</div>
 												{/each}
 											</div>
@@ -1429,23 +1411,6 @@
 	.fact-source a {
 		color: var(--accent);
 		font-size: 0.813rem;
-	}
-
-	.restatements {
-		margin-top: 0.4rem;
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-	}
-	.restatements > summary {
-		cursor: pointer;
-	}
-	.restatement {
-		margin: 0.35rem 0 0 0.75rem;
-		padding-left: 0.5rem;
-		border-left: 2px solid var(--border-card-hover);
-	}
-	.restatement a {
-		margin-left: 0.4rem;
 	}
 
 	.quote-block {

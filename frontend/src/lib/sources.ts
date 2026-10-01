@@ -16,3 +16,15 @@ export function sourceDomain(url: string): string {
 	}
 	return host;
 }
+
+// outletSummary lists the distinct outlets of a claim group's sources, in
+// order, the first max of them plus how many more.
+export function outletSummary(urls: string[], max = 3): { shown: string[]; more: number } {
+	const outlets: string[] = [];
+	for (const url of urls) {
+		if (!url) continue;
+		const d = sourceDomain(url);
+		if (!outlets.includes(d)) outlets.push(d);
+	}
+	return { shown: outlets.slice(0, max), more: Math.max(0, outlets.length - max) };
+}

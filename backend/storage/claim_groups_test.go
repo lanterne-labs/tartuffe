@@ -326,3 +326,53 @@ func TestClaimGroupParent(t *testing.T) {
 		require.Equal(t, tc.want, got, "fact %d", tc.fact)
 	}
 }
+
+// TestStanceContradictionGroupsCarryRestatements: a contradiction card shows
+// the other wordings of its base fact and of each contradicting fact.
+func TestStanceContradictionGroupsCarryRestatements(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+
+	pid, _, err := storer.AddPerson(ctx, "restatements person")
+	require.NoError(t, err)
+	fact := func(text, url string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+		_, err := storer.pool.Exec(ctx, "INSERT INTO fact_sources (fact_id, source_url) VALUES ($1, $2)", id, url)
+		require.NoError(t, err)
+		return id
+	}
+	base := fact("affirms innocence", "https://tf1info.fr/a")
+	ruling := fact("convicted on appeal, 15 months", "https://lemonde.fr/b")
+	sameRuling := fact("convicted on appeal, 45 months of which 30 suspended", "https://liberation.fr/c")
+	require.NoError(t, storer.MergeFactIntoGroup(ctx, sameRuling, ruling))
+
+	stance, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+		PersonID: pid, ClusterLabel: "justice", ClusterEmbedding: mockEmbedding(), Summary: "s",
+		KeyFactIDs: []int64{base, ruling}, FactCount: 2,
+	})
+	require.NoError(t, err)
+	require.NoError(t, storer.AddFactToStance(ctx, stance, base))
+	require.NoError(t, storer.AddFactToStance(ctx, stance, ruling))
+	a, b := base, ruling
+	if a > b {
+		a, b = b, a
+	}
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, base_fact_id, reason) VALUES ($1, $2, $3, $4, 'r')", pid, a, b, base)
+	require.NoError(t, err)
+
+	groups, err := storer.GetStanceContradictionGroups(ctx, stance)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Empty(t, groups[0].BaseRestatements, "the base fact has no other wording")
+	require.Len(t, groups[0].ContradictingFacts, 1)
+	also := groups[0].ContradictingFacts[0].Restatements
+	require.Len(t, also, 1)
+	require.Equal(t, "convicted on appeal, 45 months of which 30 suspended", also[0].FactText)
+	require.Equal(t, "https://liberation.fr/c", also[0].SourceURL)
+}
