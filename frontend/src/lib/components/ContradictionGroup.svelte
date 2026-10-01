@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { sourceDomain } from '$lib/sources';
 	import type { ContradictionGroup } from '$lib/types';
 	import { TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
@@ -57,8 +58,8 @@
 		<div class="comp-text"><span class="fact-id">[{g.base_fact_id}]</span> {pickLang(g.base_fact_text, g.base_fact_text_en, currentLang)}</div>
 		<div class="comp-links">
 			<button class="link-btn" onclick={() => onGoToFact(g.base_fact_id)}>{tr('contradiction.view_in_facts', currentLang)}</button>
-			{#each g.base_fact_source_urls as url, i}
-				<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{g.base_fact_source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+			{#each g.base_fact_source_urls as url}
+				<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 			{/each}
 		</div>
 	</div>
@@ -74,8 +75,8 @@
 						<span class="comp-date">{formatDateWithTime(f.fact_date)}</span>
 					{/if}
 					<button class="link-btn" onclick={() => onGoToFact(f.fact_id)}>{tr('contradiction.view_in_facts', currentLang)}</button>
-					{#each f.source_urls as url, i}
-						<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn">Source{f.source_urls.length > 1 ? ` ${i + 1}` : ''}</a>
+					{#each f.source_urls as url}
+						<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 					{/each}
 				</div>
 			</div>

@@ -304,3 +304,25 @@ func TestMergeFactIntoGroupPromotionTakesVisibleSlot(t *testing.T) {
 		"SELECT count(*) FROM fact_pair_checks WHERE $1 IN (fact_a_id, fact_b_id)", member).Scan(&checks))
 	require.Zero(t, checks, "the new parent's cached verdicts are re-opened")
 }
+
+// TestClaimGroupParent: a member resolves to its group's parent, an
+// ungrouped fact (or a parent) to itself.
+func TestClaimGroupParent(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	fact := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+		return id
+	}
+	parent, member, alone := fact("appeal ruling, 15 months"), fact("appeal ruling, 45 months of which 30 suspended"), fact("other")
+	require.NoError(t, storer.MergeFactIntoGroup(ctx, member, parent))
+
+	for _, tc := range []struct{ fact, want int64 }{{member, parent}, {parent, parent}, {alone, alone}} {
+		got, err := storer.ClaimGroupParent(ctx, tc.fact)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got, "fact %d", tc.fact)
+	}
+}

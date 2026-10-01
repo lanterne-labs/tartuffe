@@ -260,6 +260,51 @@ func TestFactDedupeAdjudicatorGolden(t *testing.T) {
 			want:     true,
 			position: true,
 		},
+		// Reports of ONE event (the 2026-07-07 appeal ruling against Marine
+		// Le Pen, prod facts 9998/9999/10191/10542/10546): an outcome happens
+		// once, so reports of it are one fact even when they count its numbers
+		// differently ("15 mois d'inéligibilité" = "45 mois dont 30 avec sursis").
+		{
+			name:     "fold_same_ruling_numbers_counted_differently",
+			subject:  "Marine Le Pen",
+			factA:    "Marine Le Pen a été reconnue coupable en appel et condamnée à un an sous bracelet électronique et 15 mois d'inéligibilité.",
+			factB:    "Marine Le Pen a été condamnée par la cour d'appel de Paris à une inéligibilité de 45 mois, dont 30 avec sursis, et à trois ans d'emprisonnement, dont un an sous bracelet électronique.",
+			want:     true,
+			position: true,
+		},
+		{
+			name:     "fold_same_ruling_other_details",
+			subject:  "Marine Le Pen",
+			factA:    "Marine Le Pen a été reconnue coupable de détournement de fonds au Parlement européen et condamnée à un an sous bracelet électronique et 15 mois d'inéligibilité le 7 juillet 2026.",
+			factB:    "Marine Le Pen a été condamnée par la cour d'appel de Paris à trois ans de prison, dont un an ferme sous bracelet électronique, pour détournement de fonds publics.",
+			want:     true,
+			position: true,
+		},
+		{
+			name:     "fold_same_ruling_confirmation_wording",
+			subject:  "Marine Le Pen",
+			factA:    "La cour d'appel de Paris a confirmé la condamnation de Marine Le Pen dans l'affaire des assistants parlementaires européens, réduisant son inéligibilité à 45 mois dont 30 avec sursis.",
+			factB:    "Marine Le Pen a été reconnue coupable en appel et condamnée à un an sous bracelet électronique et 15 mois d'inéligibilité.",
+			want:     true,
+			position: true,
+		},
+		// Guards: two occasions of the same affair or the same kind stay apart.
+		{
+			name:     "fold_first_instance_vs_appeal",
+			subject:  "Marine Le Pen",
+			factA:    "Le 31 mars 2025, Marine Le Pen a été condamnée par le tribunal correctionnel de Paris à quatre ans d'emprisonnement, dont deux ans ferme, 100 000 euros d'amende et cinq ans d'inéligibilité.",
+			factB:    "Marine Le Pen a été reconnue coupable en appel et condamnée à un an sous bracelet électronique et 15 mois d'inéligibilité.",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_two_different_votes",
+			subject:  "Jordan Bardella",
+			factA:    "Jordan Bardella a voté contre le projet de loi de finances pour 2026 en lecture définitive.",
+			factB:    "Jordan Bardella a voté contre l'amendement supprimant la hausse de la taxe sur les billets d'avion dans le projet de loi de finances pour 2026.",
+			want:     false,
+			position: true,
+		},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

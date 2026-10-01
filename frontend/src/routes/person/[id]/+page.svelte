@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { sourceDomain } from '$lib/sources';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint } from '$lib/types';
@@ -703,7 +704,7 @@
 														</div>
 														{#if f.source_url}
 															<details class="source-dropdown" onclick={(e) => e.stopPropagation()}>
-																<summary>{tr('person.source', currentLang)}</summary>
+																<summary title={f.source_url}>{sourceDomain(f.source_url)}</summary>
 																<div class="source-dropdown-menu">
 																	<a href={f.source_url} target="_blank" rel="noopener noreferrer">{tr('person.source.original', currentLang)}</a>
 																	{#if f.archive_url}
@@ -722,7 +723,7 @@
 																	<div class="restatement">
 																		{pickFactText(r)}
 																		{#if r.source_url}
-																			<a href={r.source_url} target="_blank" rel="noopener noreferrer">{tr('person.source', currentLang)}</a>
+																			<a href={r.source_url} target="_blank" rel="noopener noreferrer" title={r.source_url}>{sourceDomain(r.source_url)}</a>
 																		{/if}
 																	</div>
 																{/each}

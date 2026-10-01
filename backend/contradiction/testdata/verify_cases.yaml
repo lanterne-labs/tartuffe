@@ -526,3 +526,15 @@ cases:
     expect: drop
     bucket: different_subjects
     notes: "Whose commitments: Trump's own (A) vs Russia's (B). Trump updating his view of Russia says nothing about Trump breaking his word, and Macron's own position on Trump is unchanged."
+
+  # Appealing to the Cour de cassation continues a claim of innocence; the conviction it
+  # mentions is context, not the act. The denial-vs-conviction contradiction is carried by
+  # the conviction facts themselves (DROP). Prod contradiction 294.
+  - name: "FP_294_lepen_innocence_vs_cassation_appeal"
+    fact_a: "Marine Le Pen a affirmé son innocence sur TF1 suite à sa condamnation à un an de prison avec bracelet électronique et 15 mois d'inéligibilité."
+    fact_b: "Marine Le Pen a annoncé son pourvoi en cassation le mardi 7 juillet 2026, suite à sa condamnation en appel pour détournement de fonds publics prévoyant 15 mois d'inéligibilité."
+    claimed_reason: "L'affirmation d'innocence de Marine Le Pen est contredite par sa condamnation pour détournement de fonds publics."
+    expect: drop
+    bucket: coherent_defense
+    judges: [verify]
+    notes: "Contesting a conviction up to the Cour de cassation is consistent with affirming innocence; the conviction mentioned in B is the context of the appeal, not B's act. Verify-only: the verifier drops it 3/3 (it stops such rows at insertion); the auditor keeps it 3/3 (2026-10-01), so the stored row was dismissed by hand."

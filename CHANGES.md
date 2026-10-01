@@ -2398,3 +2398,17 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - Twitter's `last_fetched_at` (where the daily fetch starts) only moves forward: reading an
   older range used to set it to now and the daily fetch skipped the tweets in between.
 - The GPU is the limit: a month of the 24 queue persons costs ~33 h at the 2026-09-28 pace.
+
+## Reports of one event form one claim group; `dm facts group` (2026-10-01)
+
+- The same-position gate (fold) had a rule for "different concrete events" and for
+  "different numbers", none for several reports of ONE event: five articles on Marine Le
+  Pen's 2026-07-07 appeal ruling ("15 mois d'inéligibilité" / "45 mois dont 30 avec
+  sursis") stayed five facts, and her TF1 innocence claim got six contradiction rows.
+- New rule, by kind of fact rather than by domain: an event or outcome happens once, so its
+  reports are one claim whatever details or number framing they use; for a statement or
+  proposal the numbers are the claim itself (Glucksmann 200 € vs 500 € stay apart), and
+  different occasions (first instance vs appeal, two votes) stay apart. Golden 18/18, 3 runs.
+- `dm facts group --facts a,b,… [--apply]` puts chosen facts into one claim group under the
+  most concrete wording, whatever the gate decided (the operator override), then recomputes
+  scores. Existing facts only regroup through `dm facts fold` or this command.

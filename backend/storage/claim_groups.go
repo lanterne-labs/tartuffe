@@ -242,3 +242,17 @@ func (s *PostgresStorer) UngroupFact(ctx context.Context, parentID, factID int64
 	log.Info().Int64("fact_id", factID).Int64("parent_fact_id", parentID).Msg("Ungrouped fact")
 	return nil
 }
+
+// ClaimGroupParent returns the parent of factID's claim group, or factID
+// itself when it is not a member of one (groups are flat).
+func (s *PostgresStorer) ClaimGroupParent(ctx context.Context, factID int64) (int64, error) {
+	var parent int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE((SELECT general_fact_id FROM fact_relations
+		                 WHERE specific_fact_id = $1 AND relation_type = 'duplicate' LIMIT 1), $1)`,
+		factID).Scan(&parent)
+	if err != nil {
+		return 0, fmt.Errorf("finding the claim group of fact %d: %w", factID, err)
+	}
+	return parent, nil
+}

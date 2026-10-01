@@ -10,7 +10,22 @@
 		scoreLabel: string;
 	}
 
-	let { points, lang, scoreLabel }: Props = $props();
+	let { points: allPoints, lang, scoreLabel }: Props = $props();
+
+	// Time range, as on trading charts: the last 3 months by default, the last
+	// year or everything on request. Every point carries its own cumulative and
+	// trailing scores, so a range only chooses which weeks are drawn.
+	type Range = '3m' | '1y' | 'all';
+	const RANGES: Range[] = ['3m', '1y', 'all'];
+	let range: Range = $state('3m');
+	let points = $derived.by(() => {
+		if (range === 'all' || allPoints.length === 0) return allPoints;
+		const last = new Date(allPoints[allPoints.length - 1].date);
+		const from = new Date(last);
+		if (range === '3m') from.setUTCMonth(from.getUTCMonth() - 3);
+		else from.setUTCFullYear(from.getUTCFullYear() - 1);
+		return allPoints.filter((p) => new Date(p.date) >= from);
+	});
 
 	// Geometry: one SVG, two stacked panels sharing the x scale (score on top, facts
 	// per week below) and one hover crosshair across both.
@@ -101,6 +116,13 @@
 </script>
 
 <div class="history-chart" bind:clientWidth={width}>
+	<div class="ranges" role="group" aria-label={tr('person.history.range', lang)}>
+		{#each RANGES as r}
+			<button type="button" class="range" class:active={range === r} aria-pressed={range === r} onclick={() => (range = r)}>
+				{tr(`person.history.range.${r}`, lang)}
+			</button>
+		{/each}
+	</div>
 	<div class="legend">
 		<span class="legend-item"><span class="swatch cumulative"></span>{scoreLabel}</span>
 		<span class="legend-item"><span class="swatch recent"></span>{tr('person.history.recent', lang)}</span>
@@ -175,6 +197,28 @@
 		--hist-facts: #7d7168;
 		position: relative;
 		width: 100%;
+	}
+
+	.ranges {
+		display: inline-flex;
+		gap: 0.25rem;
+		margin-bottom: 0.5rem;
+	}
+	.range {
+		font: inherit;
+		font-size: 0.75rem;
+		padding: 0.15rem 0.55rem;
+		border: 1px solid var(--border-card-hover);
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.range:hover { color: var(--text-primary); }
+	.range.active {
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		border-color: var(--text-muted);
 	}
 
 	.legend {
