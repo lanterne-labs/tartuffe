@@ -38,10 +38,15 @@ type RunStats struct {
 }
 
 // RunForPersons searches and uploads a photo for each person and reports the
-// counts. Per-person failures are logged and counted, never returned.
-func RunForPersons(ctx context.Context, p *Provider, persons []storage.PersonSummary, opts Options) RunStats {
+// counts. Per-person failures are logged and counted, never returned; a
+// cancelled ctx stops it before the next person with an error wrapping
+// ctx.Err().
+func RunForPersons(ctx context.Context, p *Provider, persons []storage.PersonSummary, opts Options) (RunStats, error) {
 	var st RunStats
 	for i, person := range persons {
+		if err := ctx.Err(); err != nil {
+			return st, fmt.Errorf("photos stopped after %d persons: %w", i, err)
+		}
 		log.Info().Int("progress", i+1).Int("total", len(persons)).Str("person", person.Name).Msg("photos: person")
 		result := p.SearchAndUpload(ctx, person, opts)
 		switch {
@@ -58,7 +63,7 @@ func RunForPersons(ctx context.Context, p *Provider, persons []storage.PersonSum
 	}
 	log.Info().Int("total", len(persons)).Int("uploaded", st.Uploaded).Int("skipped", st.Skipped).Int("errors", st.Errors).
 		Msg("photos: run completed")
-	return st
+	return st, nil
 }
 
 // RecordJobMetrics persists the pass counters under jobType.
@@ -88,7 +93,10 @@ func (Plugin) Backfill(ctx context.Context, d *deps.Deps, _ time.Time) error {
 		return nil
 	}
 	log.Info().Int("persons", len(persons)).Msg("photos: backfill started")
-	st := RunForPersons(ctx, provider, persons, Options{})
+	st, err := RunForPersons(ctx, provider, persons, Options{})
+	if err != nil {
+		return err
+	}
 	if err := RecordJobMetrics(ctx, d.Storer, "photos-backfill", st); err != nil {
 		log.Error().Err(err).Msg("photos: failed to record backfill job metrics")
 	}

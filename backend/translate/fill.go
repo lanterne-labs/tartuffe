@@ -40,7 +40,8 @@ type FillStats struct {
 // that is missing or stale (source_hash != current hash), best-effort per
 // language: a failed translation or store is logged and skipped. It stops at
 // the first call the LLM could not serve and returns an error wrapping
-// llm.ErrUnavailable.
+// llm.ErrUnavailable, and when ctx is cancelled with an error wrapping
+// ctx.Err().
 func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOptions) (FillStats, error) {
 	targets := opts.Langs
 	if len(targets) == 0 {
@@ -52,6 +53,9 @@ func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOption
 	}
 	stats := FillStats{Scanned: len(items)}
 	for _, it := range items {
+		if err := ctx.Err(); err != nil {
+			return stats, fmt.Errorf("translation fill stopped after %d translations: %w", stats.Filled, err)
+		}
 		if opts.Limit > 0 && stats.Filled >= opts.Limit {
 			break
 		}
@@ -64,9 +68,12 @@ func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOption
 				done[lang] = true
 			}
 		}
-		results, unavailable := FillMissing(ctx, tr, it.SourceText, it.SrcLang, targets, done)
+		results, stopped := FillMissing(ctx, tr, it.SourceText, it.SrcLang, targets, done)
+		// Translations already produced are stored even when the deadline cut
+		// the rest of the item.
+		keep := context.WithoutCancel(ctx)
 		for lang, txt := range results {
-			if uErr := storer.UpsertTranslation(ctx, it.EntityType, it.EntityID, it.Field, lang, txt, hash); uErr != nil {
+			if uErr := storer.UpsertTranslation(keep, it.EntityType, it.EntityID, it.Field, lang, txt, hash); uErr != nil {
 				log.Warn().Err(uErr).Str("entity", it.EntityType).Int64("id", it.EntityID).
 					Str("field", it.Field).Str("lang", lang).Msg("failed to store translation")
 				continue
@@ -75,13 +82,13 @@ func Fill(ctx context.Context, storer FillStorer, tr Translator, opts FillOption
 			// Backward-compat bridge: keep the legacy _en columns the API/frontend
 			// still read in sync with the generic store (best-effort).
 			if lang == "en" {
-				if lErr := storer.UpdateLegacyEnColumn(ctx, it.EntityType, it.Field, it.EntityID, txt); lErr != nil {
+				if lErr := storer.UpdateLegacyEnColumn(keep, it.EntityType, it.Field, it.EntityID, txt); lErr != nil {
 					log.Warn().Err(lErr).Str("entity", it.EntityType).Int64("id", it.EntityID).Msg("failed to mirror EN into legacy column")
 				}
 			}
 		}
-		if unavailable != nil {
-			return stats, fmt.Errorf("translation fill stopped after %d translations: %w", stats.Filled, unavailable)
+		if stopped != nil {
+			return stats, fmt.Errorf("translation fill stopped after %d translations: %w", stats.Filled, stopped)
 		}
 	}
 	log.Info().Int("filled", stats.Filled).Int("items", stats.Scanned).Msg("Translation fill done")

@@ -216,6 +216,9 @@ func Discover(ctx context.Context, d *deps.Deps, opts DiscoveryOptions) (int, er
 
 	var discovered int
 	for i, person := range persons {
+		if err := ctx.Err(); err != nil {
+			return discovered, fmt.Errorf("twitter discovery stopped: %w", err)
+		}
 		if i > 0 {
 			time.Sleep(1 * time.Second) // rate limit between persons
 		}
@@ -272,7 +275,7 @@ type discoverer struct {
 // same way on the next run and re-spend a web search each time. The only
 // error returned is that unreachable LLM, which aborts the discovery: every
 // further person would burn a web search for nothing, and the person is left
-// to the next run.
+// to the next run; so is an LLM call cut by a cancelled ctx.
 func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, opts DiscoveryOptions) (bool, error) {
 	markSearched := func() {
 		if err := dc.store.MarkSearched(ctx, person.ID); err != nil {
@@ -347,6 +350,10 @@ func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, op
 	})
 	if errors.Is(err, llm.ErrUnavailable) {
 		return false, fmt.Errorf("twitter discovery for %s: %w", person.Name, err)
+	}
+	if err != nil && ctx.Err() != nil {
+		// Cut by the cancelled run: the person is searched again next run.
+		return false, fmt.Errorf("twitter discovery for %s stopped: %w", person.Name, ctx.Err())
 	}
 	markSearched()
 	if err != nil {

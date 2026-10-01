@@ -220,3 +220,36 @@ func TestProcessDocuments_UnavailableLLMKeepsAttempts(t *testing.T) {
 		}
 	}
 }
+
+// A run cut by its deadline stops with the context's error: an expired
+// context attempts nothing, and a batch cut under the cancellation is not
+// charged to its documents, which stay fetched for the next run.
+func TestProcessDocuments_StopsOnDeadline(t *testing.T) {
+	m := newMemDocs(fetched(1, "A", 1), fetched(2, "B", 2))
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	calls := 0
+	st, err := ProcessDocuments(expired, m, "t", 0, func(context.Context, []SourceDocument) (map[int64]int, error) {
+		calls++
+		return nil, nil
+	}, ProcessOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) || calls != 0 || st.Attempted != 0 {
+		t.Fatalf("calls=%d stats=%+v err=%v; want no extract and a deadline error", calls, st, err)
+	}
+
+	ctx, cut := context.WithCancel(context.Background())
+	defer cut()
+	st, err = ProcessDocuments(ctx, m, "t", 0, func(ctx context.Context, batch []SourceDocument) (map[int64]int, error) {
+		calls++
+		cut()
+		return nil, fmt.Errorf("extracting: %w", ctx.Err())
+	}, ProcessOptions{})
+	if !errors.Is(err, context.Canceled) || calls != 1 || st.Attempted != 0 || st.Failed != 0 {
+		t.Fatalf("calls=%d stats=%+v err=%v; want one cut batch, not counted", calls, st, err)
+	}
+	for id := int64(1); id <= 2; id++ {
+		if m.states[id] != DocFetched || m.tries[id] != 0 {
+			t.Fatalf("doc %d: state %s tries %d, want fetched with no attempt charged", id, m.states[id], m.tries[id])
+		}
+	}
+}

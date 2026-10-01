@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/storage"
 
@@ -122,4 +123,18 @@ func TestFill_ListError(t *testing.T) {
 	_, err := Fill(context.Background(), fs, echoTranslator{}, FillOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list translatable items")
+}
+
+func TestFill_StopsAtDeadline(t *testing.T) {
+	fs := &fakeFillStorer{items: []storage.TranslatableItem{
+		{EntityType: "fact", EntityID: 1, Field: "text", SourceText: "a", SrcLang: "fr"},
+	}}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	ft := &fakeTranslator{}
+	stats, err := Fill(ctx, fs, ft, FillOptions{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, 0, stats.Filled)
+	assert.Zero(t, ft.calls, "no translation starts after the deadline")
+	assert.Empty(t, fs.upserts)
 }

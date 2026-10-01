@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/promptrules"
@@ -186,6 +187,25 @@ func TestDecidePair(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("cut by the deadline: nothing recorded, the run stops", func(t *testing.T) {
+		expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		defer cancel()
+		for name, c := range map[string]struct {
+			result   BatchResult
+			verifier fakeVerifier
+			dedupe   sameClaimJudge
+		}{
+			"detector":  {result: BatchResult{Error: expired.Err()}},
+			"verifier":  {result: yes, verifier: fakeVerifier{err: expired.Err()}},
+			"dedup net": {result: no, dedupe: fakeSameClaim{err: expired.Err()}},
+		} {
+			got, err := decidePair(expired, c.verifier, c.dedupe, "p", pair, c.result, false)
+			if !errors.Is(err, context.DeadlineExceeded) || got.decided {
+				t.Errorf("%s: got (%+v, %v); want no decision and the deadline", name, got, err)
+			}
+		}
+	})
 
 	t.Run("dry run never asks the dedup net", func(t *testing.T) {
 		calls := 0

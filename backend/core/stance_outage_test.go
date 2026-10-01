@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/llm"
 )
@@ -193,6 +194,37 @@ func TestStanceFanout_StopsAtUnavailableLLM(t *testing.T) {
 	}
 }
 
+// TestStanceFanout_StopsAtDeadline: an expired context routes nothing and
+// returns the deadline; a run cancelled under a routing stops there without
+// charging the fact as a failure or routing the next one.
+func TestStanceFanout_StopsAtDeadline(t *testing.T) {
+	storer := pensionStorer()
+	ctx, cut := context.WithCancel(context.Background())
+	defer cut()
+	sm, o := newOutageManager(t, storer, func(prompt string) any {
+		if strings.Contains(prompt, topicPrompt) {
+			cut()
+		}
+		return answers(nil)(prompt)
+	})
+	rebundle := func(context.Context, PersonRecord) (int64, int64, int64) { return 0, 0, 0 }
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	used, err := RunStanceFanout(expired, fanoutStorer{}, sm, rebundle, 10)
+	if !errors.Is(err, context.DeadlineExceeded) || used != 0 || o.count(topicPrompt) != 0 {
+		t.Fatalf("used=%d err=%v topic calls=%d; want nothing routed and the deadline", used, err, o.count(topicPrompt))
+	}
+
+	used, err = RunStanceFanout(ctx, fanoutStorer{}, sm, rebundle, 10)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
+	}
+	if used != 0 || o.count(topicPrompt) != 1 || len(storer.facts[1]) != 1 {
+		t.Errorf("used=%d topic calls=%d facts=%+v; want the cut routing uncounted and fact 21 not routed", used, o.count(topicPrompt), storer.facts[1])
+	}
+}
+
 // TestApplyMergeSubgroup_AnalysisBeforeMerge: the post-merge analysis runs
 // before the merge commits, so an LLM outage during it leaves both stances
 // unmerged (the subgroup is proposed again next sweep) instead of deleting
@@ -268,6 +300,52 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 			t.Errorf("merged=%d contradictions=%d recorded=%v", merged, n, storer.contradictions)
 		}
 	})
+}
+
+// sweepStorer lists persons 1 and 2 for the merge sweep and records memos.
+type sweepStorer struct {
+	*reassignStorer
+	memos []int64
+}
+
+func (s *sweepStorer) ListPersonsNeedingMergeSweep(context.Context, string) ([]PersonRecord, error) {
+	return []PersonRecord{{ID: 1, Name: "p"}, {ID: 2, Name: "q"}}, nil
+}
+
+func (s *sweepStorer) RecordMergeSweep(_ context.Context, personID int64, _ string) error {
+	s.memos = append(s.memos, personID)
+	return nil
+}
+
+// TestStanceMergeSweep_StopsAtDeadline: an expired context judges no person;
+// a sweep cancelled under a person stops there, neither memoizing it nor
+// going on to the next person.
+func TestStanceMergeSweep_StopsAtDeadline(t *testing.T) {
+	m := pensionStorer()
+	m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+	m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+	storer := &sweepStorer{reassignStorer: &reassignStorer{mockStanceStorer: m}}
+	ctx, cut := context.WithCancel(context.Background())
+	defer cut()
+	sm, o := newOutageManager(t, storer, func(prompt string) any {
+		cut()
+		return answers(nil)(prompt)
+	})
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	stats, err := RunStanceMergeSweep(expired, storer, sm, DefaultStanceMergeOptions)
+	if !errors.Is(err, context.DeadlineExceeded) || stats.PersonsProcessed != 0 || len(o.prompts) != 0 || len(storer.memos) != 0 {
+		t.Fatalf("stats=%+v err=%v prompts=%d memos=%v; want nothing judged and the deadline", stats, err, len(o.prompts), storer.memos)
+	}
+
+	stats, err = RunStanceMergeSweep(ctx, storer, sm, DefaultStanceMergeOptions)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
+	}
+	if stats.PersonsProcessed != 1 || len(storer.memos) != 0 || len(storer.merges) != 0 {
+		t.Errorf("stats=%+v memos=%v merges=%v; want the sweep stopped at person 1, unmemoized", stats, storer.memos, storer.merges)
+	}
 }
 
 // failingMergeStorer fails the merge of one source stance.
@@ -370,6 +448,23 @@ func TestInsertFacts_KeepsFactLinkedBeforeRefreshOutage(t *testing.T) {
 				t.Errorf("deleted %d facts, want %d", st.deleted, tc.wantDeleted)
 			}
 		})
+	}
+}
+
+// TestInsertFacts_RollsBackFactCutByDeadline: a fact whose stance routing
+// is cut by the run deadline is rolled back although the context is done, so
+// a resumed run does not count it as stored.
+func TestInsertFacts_RollsBackFactCutByDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page"}
+	st := &fakeInserterStorer{}
+	_, err := NewFactInserter(st, stanceErrProcessor{ctx.Err()}).InsertFacts(ctx, []StoreFactInput{input})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	if st.deleted != 1 {
+		t.Errorf("deleted %d facts, want the cut fact rolled back", st.deleted)
 	}
 }
 

@@ -53,6 +53,39 @@ func (s *Store) LogNewsSearch(ctx context.Context, personID int64, query string,
 	return nil
 }
 
+// LogNewsWindow records that a person's news published in [from, to) was
+// searched and every article found was scraped and stored: the window is
+// never searched again (CollectFactsWithDateWindows, the history step).
+// Windows are whole days; date_to is exclusive.
+func (s *Store) LogNewsWindow(ctx context.Context, personID int64, query string, from, to time.Time, resultCount int) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO news_search_log (person_id, query, result_count, date_from, date_to)
+		VALUES ($1, $2, $3, $4::date, $5::date)`, personID, query, resultCount, from, to)
+	if err != nil {
+		return fmt.Errorf("logging news window %s..%s for person %d: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), personID, err)
+	}
+	return nil
+}
+
+// NewsWindowsCover reports whether every day of [from, to) has been searched
+// (LogNewsWindow) for every one of personIDs.
+func (s *Store) NewsWindowsCover(ctx context.Context, personIDs []int64, from, to time.Time) (bool, error) {
+	var missing bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM unnest($1::bigint[]) p(id)
+			CROSS JOIN generate_series($2::date, $3::date - 1, interval '1 day') d(day)
+			WHERE NOT EXISTS (
+				SELECT 1 FROM news_search_log l
+				WHERE l.person_id = p.id AND l.date_from <= d.day::date AND l.date_to > d.day::date))`,
+		personIDs, from, to).Scan(&missing)
+	if err != nil {
+		return false, fmt.Errorf("checking searched news windows %s..%s: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), err)
+	}
+	return !missing, nil
+}
+
 // ShouldSearchNews determines if we should search news for a person based on history.
 // Returns true if:
 // - No previous search exists (first time)

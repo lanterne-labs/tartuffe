@@ -112,12 +112,17 @@ type Result struct {
 	StoryCappedDates []time.Time
 	// StoryCappedTokens holds the unique story_tokens that were capped.
 	StoryCappedTokens []string
+	// WindowsSkipped counts the date windows already searched for the target.
+	WindowsSkipped int
 	// Errors contains any errors encountered during processing.
 	Errors []error
 
 	// storedExtracted records that the target's unfinished documents went
 	// through extraction during this invocation.
 	storedExtracted bool
+	// fetched records that the search answered and every article it found was
+	// scraped and stored (or already was): the search need not run again.
+	fetched bool
 }
 
 // Provider orchestrates news search and fact extraction for any entity.
@@ -256,6 +261,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 		Msg("news: search completed")
 
 	if len(newsResults) == 0 {
+		result.fetched = true
 		// Log that no results were found for prioritization
 		if target.PersonID != 0 {
 			if err := p.store.LogNewsSearch(ctx, target.PersonID, target.Name, 0, 0); err != nil {
@@ -337,6 +343,7 @@ func (p *Provider) CollectFacts(ctx context.Context, target plugins.Target, opts
 	}
 
 	if len(urlsToExtract) == 0 {
+		result.fetched = true
 		log.Info().
 			Str("target", target.Name).
 			Int("skipped_already_processed", result.SkippedAlreadyProcessed).
@@ -603,6 +610,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			return err
 		}
 	}
+	result.fetched = true
 
 	return p.extractStoredDocuments(ctx, target, affiliatedParties, opts, result)
 }
@@ -856,7 +864,7 @@ func (p *Provider) CollectFactsFromCache(ctx context.Context, target plugins.Tar
 // and calls CollectFacts for each window. This works around Google News result caps by
 // making multiple narrower queries. Errors in individual windows are logged and collected
 // but do not stop processing of subsequent windows, except an unreachable LLM
-// (llm.ErrUnavailable), which is returned. The target's documents an earlier run left
+// (llm.ErrUnavailable) or a cancelled ctx, which is returned. The target's documents an earlier run left
 // unfinished are extracted once, after the windows, when no window extracted any.
 func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugins.Target, opts Options) (*Result, error) {
 	if opts.WindowDays <= 0 {
@@ -915,6 +923,22 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 		default:
 		}
 
+		// A window searched and scraped before (for this person) is never
+		// searched again; its stored articles are extracted with the leftovers.
+		logWindows := target.PersonID != 0 && !opts.DryRun && p.store != nil
+		if logWindows {
+			done, err := p.store.NewsWindowsCover(ctx, []int64{target.PersonID}, w.from, w.to)
+			if err != nil {
+				return aggregate, err
+			}
+			if done {
+				log.Debug().Str("target", target.Name).Str("from", w.from.Format("2006-01-02")).
+					Str("to", w.to.Format("2006-01-02")).Msg("news: window already searched; skipping")
+				aggregate.WindowsSkipped++
+				continue
+			}
+		}
+
 		log.Info().
 			Str("target", target.Name).
 			Int("window", i+1).
@@ -934,6 +958,16 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 		result, err := p.CollectFacts(ctx, target, windowOpts)
 		if result != nil && result.storedExtracted {
 			aggregate.storedExtracted = true
+		}
+		if logWindows && result != nil && result.fetched {
+			// Logged with a context that outlives a deadline cut: the
+			// scraping is done and paid for even if extraction was cut.
+			if lErr := p.store.LogNewsWindow(context.WithoutCancel(ctx), target.PersonID, target.Name, w.from, w.to, result.ArticlesFound); lErr != nil {
+				return aggregate, lErr
+			}
+		}
+		if err != nil && ctx.Err() != nil {
+			return aggregate, fmt.Errorf("window %d/%d stopped: %w", i+1, totalWindows, ctx.Err())
 		}
 		if errors.Is(err, llm.ErrUnavailable) {
 			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",
@@ -976,6 +1010,9 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 				reResult, reErr := p.CollectFacts(ctx, target, reQueryOpts)
 				if reResult != nil && reResult.storedExtracted {
 					aggregate.storedExtracted = true
+				}
+				if reErr != nil && ctx.Err() != nil {
+					return aggregate, fmt.Errorf("re-query window %d/%d stopped: %w", i+1, totalWindows, ctx.Err())
 				}
 				if errors.Is(reErr, llm.ErrUnavailable) {
 					return aggregate, fmt.Errorf("re-query window %d/%d: %w", i+1, totalWindows, reErr)

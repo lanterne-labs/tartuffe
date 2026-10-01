@@ -52,6 +52,40 @@ func TestCollectHandlesStopsOnUnavailableLLM(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, called)
 }
 
+// TestCollectHandlesStopsAtDeadline: an expired context fetches no handle; a
+// handle cut by the cancellation is not a failure, its person is not done,
+// and no handle starts after it.
+func TestCollectHandlesStopsAtDeadline(t *testing.T) {
+	handles := []Handle{{Handle: "a", PersonID: 1}, {Handle: "b", PersonID: 2}, {Handle: "c", PersonID: 3}}
+	targets := []int64{1, 2, 3}
+	var called []string
+	collect := func(cut func()) func(context.Context, Handle) (*Result, error) {
+		return func(ctx context.Context, h Handle) (*Result, error) {
+			called = append(called, h.Handle)
+			if h.Handle == "b" {
+				cut()
+				return nil, fmt.Errorf("fetching: %w", ctx.Err())
+			}
+			return &Result{}, nil
+		}
+	}
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	stats, err := collectHandles(expired, handles, targets, collect(func() {}))
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Empty(t, called, "no handle starts after the deadline")
+	assert.Empty(t, stats.Done)
+
+	ctx, cut := context.WithCancel(context.Background())
+	defer cut()
+	stats, err = collectHandles(ctx, handles, targets, collect(cut))
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, []string{"a", "b"}, called, "no handle after the cut")
+	assert.Equal(t, []int64{1}, stats.Done, "the cut handle's person is not done")
+	assert.Empty(t, stats.Details, "the cut handle is not a failure")
+}
+
 // windowFetcher returns one new tweet per fetch and records the start of
 // each fetched window.
 type windowFetcher struct {

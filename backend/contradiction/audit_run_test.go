@@ -119,6 +119,33 @@ func TestRunAudit_CadenceOnlyAfterJudgedRows(t *testing.T) {
 		require.False(t, auditMetricSince(t, storer, start), "an audit that judged nothing must not reset the cadence")
 	})
 
+	t.Run("cut by the deadline", func(t *testing.T) {
+		// The auditor's call hangs until the run deadline cancels it.
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}))
+		t.Cleanup(srv.Close)
+		defer close(release)
+		t.Setenv("OPEN_AI_API", srv.URL+"/v1")
+		start := time.Now()
+
+		expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		defer cancel()
+		_, err := RunAudit(expired, storer, opts)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+
+		cut, cancelCut := context.WithDeadline(ctx, time.Now().Add(300*time.Millisecond))
+		defer cancelCut()
+		res, err := RunAudit(cut, storer, opts)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Zero(t, res.Errors, "a row cut by the deadline is not a verdict error")
+		require.False(t, auditMetricSince(t, storer, start), "a cut audit must not reset the cadence")
+	})
+
 	t.Run("control: rows judged", func(t *testing.T) {
 		t.Setenv("OPEN_AI_API", chatStub(t, http.StatusOK, "REASONING: real reversal.\nRULE: none\nVERDICT: keep"))
 		start := time.Now()

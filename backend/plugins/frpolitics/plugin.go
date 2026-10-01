@@ -22,8 +22,10 @@ type Plugin struct{}
 func (Plugin) Name() string { return "frpolitics" }
 
 const (
-	// dailyMaxLaws caps the laws summarized per run.
-	dailyMaxLaws = 30
+	// dailyMaxLaws caps the laws summarized per run. Every ballot is
+	// stance-routed at insert, ~65 min of GPU per law (run 110: 14 laws in
+	// 15 h); 30 kept the run in ingest for 28 h (run 111).
+	dailyMaxLaws = 10
 	// dailyPartyThreshold is the majority share for party-level vote facts.
 	dailyPartyThreshold = 0.8
 	// debatsDailyWindowDays is how far back the daily transcript feed looks.

@@ -174,7 +174,7 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
 		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
 	}
-	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, time.Now()); err != nil {
+	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, dateTo); err != nil {
 		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
 	}
 
@@ -434,6 +434,9 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, handle Handl
 		result, err := p.CollectFacts(ctx, handle, windowOpts)
 		if result != nil && result.storedExtracted {
 			aggregate.storedExtracted = true
+		}
+		if err != nil && ctx.Err() != nil {
+			return aggregate, fmt.Errorf("window %d/%d stopped: %w", i+1, len(windows), ctx.Err())
 		}
 		if errors.Is(err, llm.ErrUnavailable) {
 			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",

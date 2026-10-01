@@ -101,6 +101,26 @@ type Ingester interface {
 	Ingest(ctx context.Context, d *deps.Deps, targets []Target, opts IngestOptions) (IngestStats, error)
 }
 
+// HistoryReader is an Ingester whose source can be read back in time by date
+// range (IngestOptions.Since/Until/WindowDays). The pipeline's history step
+// reads such plugins further back each run, for the queue-scoped targets.
+type HistoryReader interface {
+	Ingester
+	// HistoryFetched reports whether everything the targets published in
+	// [since, until) has been fetched and stored (from the plugin's own fetch
+	// log): that stretch is never fetched again, and the step moves on.
+	HistoryFetched(ctx context.Context, d *deps.Deps, targets []Target, since, until time.Time) (bool, error)
+}
+
+// TargetIDs returns the person ids of targets.
+func TargetIDs(targets []Target) []int64 {
+	ids := make([]int64, 0, len(targets))
+	for _, t := range targets {
+		ids = append(ids, t.PersonID)
+	}
+	return ids
+}
+
 // PairProducer queues fact pairs for the contradiction detector on grounds the
 // detector cannot see (provenance, structure). Runs after stale-verdict
 // eviction and before detection; returns the number of pairs queued.

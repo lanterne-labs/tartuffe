@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
@@ -30,6 +31,34 @@ func TestStoreLawsStopsOnUnavailableLLM(t *testing.T) {
 		require.NoError(t, err)
 		return settled
 	}
+
+	t.Run("cut by the deadline", func(t *testing.T) {
+		var called []string
+		expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		defer cancel()
+		walked, err := storeLaws(expired, store, laws, facts, func(_ context.Context, recs []FactRecord) error {
+			called = append(called, recs[0].LawKey)
+			return nil
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Zero(t, walked)
+		assert.Empty(t, called, "no law starts after the deadline")
+
+		cutCtx, cut := context.WithCancel(ctx)
+		defer cut()
+		walked, err = storeLaws(cutCtx, store, laws, facts, func(ctx context.Context, recs []FactRecord) error {
+			called = append(called, recs[0].LawKey)
+			if recs[0].LawKey == "16-7002" {
+				cut()
+				return fmt.Errorf("failed to insert facts: %w", ctx.Err())
+			}
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, 1, walked, "the cut law is not counted")
+		assert.Equal(t, []string{"16-7001", "16-7002"}, called, "no law after the cut")
+		assert.Equal(t, map[string]bool{"16-7001": true}, processed(), "the cut law is not marked")
+	})
 
 	t.Run("unavailable", func(t *testing.T) {
 		var called []string

@@ -58,13 +58,19 @@ func LangsToFill(targets []string, srcLang string, existing map[string]bool) []s
 // skipped so one bad language never blocks the others (this runs in the async
 // phase, decoupled from the rest of the pipeline). When the LLM is unavailable
 // it stops and returns the error (wrapping llm.ErrUnavailable) with the
-// translations made so far.
+// translations made so far; so it does when ctx is cancelled, with ctx.Err().
 func FillMissing(ctx context.Context, tr Translator, text, srcLang string, targets []string, existing map[string]bool) (map[string]string, error) {
 	out := make(map[string]string)
 	for _, lang := range LangsToFill(targets, srcLang, existing) {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
 		translated, err := tr.Translate(ctx, text, srcLang, lang)
 		if errors.Is(err, llm.ErrUnavailable) {
 			return out, err
+		}
+		if err != nil && ctx.Err() != nil {
+			return out, ctx.Err()
 		}
 		if err != nil {
 			log.Warn().Err(err).Str("src", srcLang).Str("dst", lang).Msg("translation failed; skipping this language")

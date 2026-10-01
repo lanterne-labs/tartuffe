@@ -150,7 +150,9 @@ func MergeRulebookKey(opts StanceMergeOptions) string {
 // stance fingerprint and rulebook (RecordMergeSweep), so unchanged persons
 // cost the sweep nothing the next night. A per-person failure is logged and
 // skipped, and stays pending. The sweep stops at the first call the LLM could
-// not serve and returns an error wrapping llm.ErrUnavailable.
+// not serve and returns an error wrapping llm.ErrUnavailable, and when ctx is
+// cancelled with an error wrapping ctx.Err(), the person it was on left
+// pending.
 func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *StanceManager, opts StanceMergeOptions) (StanceMergeSweepStats, error) {
 	var stats StanceMergeSweepStats
 	start := time.Now()
@@ -167,10 +169,19 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 	}
 
 	for _, p := range persons {
+		if err := ctx.Err(); err != nil {
+			return stats, fmt.Errorf("stance merge sweep stopped: %w", err)
+		}
 		ps, perr := MergeStancesForPerson(ctx, storer, sm, p, opts)
 		if errors.Is(perr, llm.ErrUnavailable) {
 			stats.Add(ps)
 			return stats, fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, perr)
+		}
+		if err := ctx.Err(); err != nil {
+			// Cut under the person: candidates may have gone unjudged, so it
+			// is not memoized and the next sweep asks again.
+			stats.Add(ps)
+			return stats, fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, err)
 		}
 		if perr != nil {
 			log.Warn().Err(perr).Str("person", p.Name).Msg("Merge sweep: per-person failure (continuing)")

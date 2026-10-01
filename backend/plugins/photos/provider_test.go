@@ -1,12 +1,15 @@
 package photos
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildSearchQuery(t *testing.T) {
@@ -132,4 +135,13 @@ func TestExtensionFromContentType(t *testing.T) {
 	assert.Equal(t, ".webp", extensionFromContentType("image/webp"))
 	assert.Equal(t, ".svg", extensionFromContentType("image/svg+xml"))
 	assert.Equal(t, ".jpg", extensionFromContentType("image/unknown"))
+}
+
+func TestRunForPersonsStopsAtDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	// The provider has no searcher: a person started would panic.
+	st, err := RunForPersons(ctx, &Provider{}, []storage.PersonSummary{{Name: "Marine Le Pen"}}, Options{})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, RunStats{}, st)
 }

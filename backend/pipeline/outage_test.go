@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -359,5 +360,87 @@ func TestBackfillResumesAfterOutage(t *testing.T) {
 	var late BackfillRun
 	if err := late.Run(context.Background(), nil, time.Now().Add(-time.Minute)); err != nil || len(calls) != 0 {
 		t.Errorf("err=%v calls=%v; no backfill starts after the deadline", err, calls)
+	}
+}
+
+// TestPhasesStopAtDeadline: once the context is done no plugin of the ingest
+// or backfill phase starts, and the returned error is a deadline cut.
+func TestPhasesStopAtDeadline(t *testing.T) {
+	var calls []string
+	withPlugins(t, fakePlugin{name: "a", calls: &calls}, fakePlugin{name: "b", calls: &calls})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	var in IngestRun
+	err := in.Run(ctx, nil, []plugins.Target{{PersonID: 1}}, plugins.IngestOptions{}, nil)
+	if cut, rest := splitCut(ctx, err); !cut || rest != nil || len(calls) != 0 {
+		t.Fatalf("err=%v calls=%v; want no ingest started and a deadline cut", err, calls)
+	}
+
+	var bf BackfillRun
+	err = bf.Run(ctx, nil, time.Now().Add(time.Hour))
+	cut, rest := splitCut(ctx, err)
+	errCut, errRest := splitCut(ctx, bf.Errs["a"])
+	if !cut || rest != nil || len(calls) != 0 || !errCut || errRest != nil {
+		t.Fatalf("err=%v calls=%v errs=%v; want no backfill started and a deadline cut", err, calls, bf.Errs)
+	}
+}
+
+// TestSplitCut: only the parts that are the step's own context expiring are a
+// cut; a client's own timeout, or any other failure joined with the cut, stays
+// a step error.
+func TestSplitCut(t *testing.T) {
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	live := context.Background()
+	stopped := fmt.Errorf("frpolitics: votes: %w", fmt.Errorf("law 17-536 stopped: %w", expired.Err()))
+	clientTimeout := fmt.Errorf("downloading archive: %w", context.DeadlineExceeded)
+	scrape := errors.New("scrape failed")
+
+	if cut, rest := splitCut(expired, stopped); !cut || rest != nil {
+		t.Errorf("wrapped expiry: cut=%v rest=%v; want a pure cut", cut, rest)
+	}
+	if cut, rest := splitCut(live, clientTimeout); cut || rest == nil {
+		t.Errorf("client timeout with the step context live: cut=%v rest=%v; want a step error", cut, rest)
+	}
+	if cut, rest := splitCut(expired, errDown); cut || !errors.Is(rest, llm.ErrUnavailable) {
+		t.Errorf("outage: cut=%v rest=%v; want the outage kept", cut, rest)
+	}
+	joined := fmt.Errorf("ingest twitter: %w", errors.Join(scrape, stopped))
+	cut, rest := splitCut(expired, joined)
+	if !cut || rest == nil || !errors.Is(rest, scrape) || errors.Is(rest, context.DeadlineExceeded) {
+		t.Fatalf("joined: cut=%v rest=%v; want the cut split off and the scrape failure kept", cut, rest)
+	}
+	if rest.Error() != "ingest twitter: scrape failed" {
+		t.Errorf("rest = %q; want the wrapper's context kept", rest.Error())
+	}
+}
+
+// TestGateWaitCutByPhaseBudget: a phase whose own budget runs out while it
+// waits for the LLM is cut; the run is not stopped and later phases start.
+func TestGateWaitCutByPhaseBudget(t *testing.T) {
+	waits := 0
+	g := runGate{deadline: time.Now().Add(time.Hour), waitLLM: fakeWait(false, 3, &waits)}
+	phaseCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	err := g.run(phaseCtx, "ingest", func() error { return errDown })
+	if cut, rest := splitCut(phaseCtx, err); !cut || rest != nil {
+		t.Fatalf("err = %v; want a cut of the phase", err)
+	}
+	if g.err() != nil || !g.open("translate") {
+		t.Errorf("gate stopped (%v); a phase budget is not an outage of the run", g.err())
+	}
+}
+
+// TestNotificationNotes: the LLM wait and the deadline cuts are notes of the
+// message, not errors.
+func TestNotificationNotes(t *testing.T) {
+	msg := notification("success", false, time.Hour, nil,
+		[]string{"LLM outages waited for: 1 (5m0s)", "stopped at the deadline (resumed next run): ingest"},
+		plugins.IngestStats{}, nil)
+	for _, want := range []string{"✅", "⏸ LLM outages waited for", "⏸ stopped at the deadline (resumed next run): ingest"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("notification lacks %q:\n%s", want, msg)
+		}
 	}
 }

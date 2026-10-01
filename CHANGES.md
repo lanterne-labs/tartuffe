@@ -2367,3 +2367,34 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   deadline-bound backfill's job.
 - Lesson: a phase without a deadline must be bounded by its input. When a listing moves to a
   shared "everything unfinished" query, re-check every caller's implicit bound.
+
+## One deadline context for the whole run; ingest has its own budget (2026-10-01, mirror-dkc)
+
+- Run 111 stayed 28 h in the ingest phase (one stance routing per ballot, ~65 min of GPU
+  per law, 30 laws per run): the deadline was only checked between phases, so the run
+  never reached detection, the audit or the translations, and the host skipped the next cron.
+- `RunDaily` now derives one `work` context cancelled at the run deadline (23:00 Paris)
+  and gives the ingest phase a child context with `ingestBudget` (12 h). Plugins and phases
+  get no deadline logic of their own: every loop stops at the next item when its context is
+  done, charges nothing to the cut item, and returns the context error wrapped with %w.
+  The pipeline records such a phase as "stopped at the deadline" (a note, not a step error);
+  the next run resumes it from its pending set. Bookkeeping after the phases keeps the
+  original context. `dailyMaxLaws` 30 → 10.
+- Lesson: a pgx write with an expired context fails, which hid most "done marker after
+  cancel" bugs but also broke the one write that must happen: the rollback of a fact whose
+  stance routing was cut now runs under `context.WithoutCancel`.
+
+## History step: news and twitter read back three years, a month per run (2026-10-01)
+
+- A plugin that can read its source by date range implements `plugins.HistoryReader`
+  (news, twitter). Phase 8 walks each one back from its cursor (`history_cursors`), in
+  30-day stretches of 3-day windows for the queue targets, through the ordinary
+  `IngestRun`, until the deadline closes the gate or three years are reached.
+- The plugin's own fetch log decides when a stretch is done (`HistoryFetched`): news logs
+  every window searched and scraped per person (`news_search_log.date_from/date_to`, never
+  searched again), twitter its `twitter_fetch_log`. So a cut read resumes at the next
+  unfetched window the next night, and a stretch with a target the plugin could not fetch
+  (an error, a search quota) is read again, never skipped. Stretches are whole UTC days.
+- Twitter's `last_fetched_at` (where the daily fetch starts) only moves forward: reading an
+  older range used to set it to now and the daily fetch skipped the tweets in between.
+- The GPU is the limit: a month of the 24 queue persons costs ~33 h at the 2026-09-28 pace.

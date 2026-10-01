@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
@@ -18,6 +19,12 @@ type Plugin struct{}
 
 // Name implements plugins.Plugin.
 func (Plugin) Name() string { return "news" }
+
+// HistoryFetched implements plugins.HistoryReader: every day of the stretch
+// has a searched-and-scraped window for every target (LogNewsWindow).
+func (Plugin) HistoryFetched(ctx context.Context, d *deps.Deps, targets []plugins.Target, since, until time.Time) (bool, error) {
+	return NewStore(d.Storer).NewsWindowsCover(ctx, plugins.TargetIDs(targets), since, until)
+}
 
 const (
 	// dailyMaxParse is how many articles a run parses per target.
@@ -104,17 +111,25 @@ func (p *Provider) resumeCollect(extractOnly []int64, opts Options) func(context
 }
 
 // ingestTargets runs collect on every target. Per-target failures are
-// collected in the stats; an unreachable LLM (llm.ErrUnavailable) stops the
-// loop and is returned. stats.Done lists every target finished before the
-// stop. The LLM is only called after a target's search and scrape (its
+// collected in the stats; an unreachable LLM (llm.ErrUnavailable) or a
+// cancelled ctx stops the loop and is returned. stats.Done lists every target
+// finished before the stop. The LLM is only called after a target's search and scrape (its
 // articles are stored as documents first), so the interrupted target goes to
 // stats.Fetched: a retry only extracts its stored documents. (A date-windowed
 // collection leaves its later windows to the next run.)
 func ingestTargets(ctx context.Context, targets []plugins.Target, collect func(context.Context, plugins.Target) (*Result, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
 	for i, t := range targets {
+		if err := ctx.Err(); err != nil {
+			return stats, fmt.Errorf("news stopped before %s: %w", t.Name, err)
+		}
 		log.Info().Int("progress", i+1).Int("total", len(targets)).Str("person", t.Name).Msg("news: target")
 		result, err := collect(ctx, t)
+		if err != nil && ctx.Err() != nil {
+			// Cut under the target: it is not done, and its stored documents
+			// are extracted by the next run.
+			return stats, fmt.Errorf("news stopped at %s: %w", t.Name, ctx.Err())
+		}
 		if err != nil {
 			log.Error().Err(err).Str("person", t.Name).Msg("news: target failed")
 			if errors.Is(err, llm.ErrUnavailable) {

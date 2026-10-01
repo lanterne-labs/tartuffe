@@ -414,9 +414,11 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 
 // compensateDelete rolls back a partially inserted fact. Errors here are logged
 // but cannot be propagated (we are already in the error path). A separate audit
-// metric flags any orphan facts that slip through.
+// metric flags any orphan facts that slip through. The rollback ignores the
+// cancellation of ctx: a run cut under a fact's stance routing must not leave
+// the fact stored, or a resume would count it as done.
 func (fi *FactInserter) compensateDelete(ctx context.Context, factID int64, stage string) {
-	if delErr := fi.storer.DeleteFact(ctx, factID); delErr != nil {
+	if delErr := fi.storer.DeleteFact(context.WithoutCancel(ctx), factID); delErr != nil {
 		log.Error().
 			Err(delErr).
 			Int64("fact_id", factID).

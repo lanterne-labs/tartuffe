@@ -56,6 +56,39 @@ func TestIngestTargetsStopsOnUnavailableLLM(t *testing.T) {
 	assert.Equal(t, []string{"A", "B"}, called)
 }
 
+// TestIngestTargetsStopsAtDeadline: an expired context starts no target; a
+// target cut by the cancellation is neither done nor a failure, and no
+// target starts after it.
+func TestIngestTargetsStopsAtDeadline(t *testing.T) {
+	targets := []plugins.Target{{Name: "A", PersonID: 1}, {Name: "B", PersonID: 2}, {Name: "C", PersonID: 3}}
+	var called []string
+	collect := func(cut func()) func(context.Context, plugins.Target) (*Result, error) {
+		return func(ctx context.Context, tg plugins.Target) (*Result, error) {
+			called = append(called, tg.Name)
+			if tg.Name == "B" {
+				cut()
+				return nil, fmt.Errorf("scraping: %w", ctx.Err())
+			}
+			return &Result{FactsExtracted: 1}, nil
+		}
+	}
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	stats, err := ingestTargets(expired, targets, collect(func() {}))
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Empty(t, called, "no target starts after the deadline")
+	assert.Empty(t, stats.Done)
+
+	ctx, cut := context.WithCancel(context.Background())
+	defer cut()
+	stats, err = ingestTargets(ctx, targets, collect(cut))
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, []string{"A", "B"}, called, "no target after the cut")
+	assert.Equal(t, []int64{1}, stats.Done, "the cut target is not done")
+	assert.Empty(t, stats.Details, "the cut target is not a failure")
+}
+
 // windowSearcher returns one new article per search and records the start
 // of each searched window.
 type windowSearcher struct {

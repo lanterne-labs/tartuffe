@@ -35,13 +35,19 @@ const (
 	// auditCadence is how often the contradiction auditor re-judges stored
 	// contradictions.
 	auditCadence = 5 * 24 * time.Hour
-	// No phase starts after runDeadlineHour in runTimezone, and the backfill
-	// (the last phase) stops starting work then: the cron starts at 01:00 UTC
-	// and the user lets the run use the GPU through the day, but it must end
+	// The run's work context is cancelled at runDeadlineHour in runTimezone:
+	// every phase and every plugin stops where it is, and the next run resumes
+	// from the pending sets in the database. The cron starts at 01:00 UTC and
+	// the user lets the run use the GPU through the day, but it must end
 	// before the next cron — the host skips a scheduled run while the previous
 	// one is still active.
 	runDeadlineHour = 23
-	runTimezone     = "Europe/Paris"
+	// ingestBudget bounds the ingest phase from the run start, so detection,
+	// the audit and the translations get the rest of the day. A vote law
+	// costs ~65 min of GPU (one stance routing per ballot), and an ingest with
+	// no bound of its own ran 28 h (run 111).
+	ingestBudget = 12 * time.Hour
+	runTimezone  = "Europe/Paris"
 )
 
 // RunOptions tunes one daily run.
@@ -65,7 +71,8 @@ type RunOptions struct {
 //  5. duplicate repoint + contradiction regroup
 //  6. contradiction audit (5-day cadence)
 //  7. translation phase
-//  8. backfill                  — every plugin, deadline-bound
+//  8. history                   — date-range plugins, one month further back
+//  9. backfill                  — every plugin, deadline-bound
 //
 // When a phase reports the LLM unavailable (llm.ErrUnavailable) the run waits
 // for the LLM (llm.WaitForPrimary) until the run deadline, then runs the phase
@@ -109,20 +116,48 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	if !opts.Smoke {
 		gate.waitLLM = llm.WaitForPrimary
 	}
-	fail := func(step string, err error, msg string) {
+	var cutSteps []string // phases stopped by their deadline: not errors, resumed next run
+	// fail records a step's error; the parts of it that are the step's
+	// context expiring (ctx: the run's work context, or the ingest phase's)
+	// are a deadline cut, a note, and the rest a step error.
+	fail := func(ctx context.Context, step string, err error, msg string) {
+		cut, err := splitCut(ctx, err)
+		if cut {
+			cutSteps = append(cutSteps, step)
+			log.Warn().Str("step", step).Msg("Daily pipeline: stopped at its deadline; the next run resumes it")
+		}
 		if err == nil {
 			return
 		}
-		stepErrs[step] = err
 		log.Error().Err(err).Msg("Daily pipeline: " + msg)
+		if prev, ok := stepErrs[step]; ok {
+			err = errors.Join(prev, err)
+		}
+		stepErrs[step] = err
+	}
+	mergeErrs := func(ctx context.Context, src StepErrors) {
+		for name, err := range src {
+			fail(ctx, name, err, "step failed")
+		}
 	}
 	deadline, dErr := runDeadline(start)
 	if dErr != nil {
 		// Without a deadline the backfill would run unbounded into the next cron.
-		fail("deadline", dErr, "run deadline unknown; backfill skipped")
+		fail(ctx, "deadline", dErr, "run deadline unknown; history and backfill skipped")
+		b.history = false
 		b.backfill = false
 	}
 	gate.deadline = deadline
+
+	// work is the context of every phase: cancelled at the run deadline, so
+	// a phase or plugin still running then stops where it is. ctx stays live
+	// for the bookkeeping after the phases (notification, pipeline_runs row).
+	work := ctx
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		work, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
 
 	// The judgement counters this run produces are flushed as it goes, not
 	// only at the end: the cron process is not scraped, and a run that dies
@@ -131,8 +166,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 
 	// Targets for the queue-scoped plugins: the search_queue contents (the
 	// "main persons queue"). Plugins with their own scope ignore them.
-	targets, err := QueueTargets(ctx, storer)
-	fail("targets", err, "failed to resolve target persons")
+	targets, err := QueueTargets(work, storer)
+	fail(work, "targets", err, "failed to resolve target persons")
 	if b.maxTargets > 0 && len(targets) > b.maxTargets {
 		targets = targets[:b.maxTargets]
 	}
@@ -143,30 +178,32 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// A plugin given up (errRefails) is abandoned and the phase goes on with
 	// the next plugins. An outage error is already in ingest.Errs, under its
 	// plugin.
+	ingestCtx, cancelIngest := context.WithTimeout(work, ingestBudget)
+	defer cancelIngest()
 	var ingest IngestRun
 	for {
-		ingestErr := gate.run(ctx, "ingest", func() error {
-			return ingest.Run(ctx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
+		ingestErr := gate.run(ingestCtx, "ingest", func() error {
+			return ingest.Run(ingestCtx, d, targets, plugins.IngestOptions{MaxItems: b.maxItems}, nil)
 		})
 		if errors.Is(ingestErr, errRefails) && ingest.Abandon() {
 			continue
 		}
 		if !errors.Is(ingestErr, llm.ErrUnavailable) {
-			fail("ingest", ingestErr, "ingest phase failed")
+			fail(ingestCtx, "ingest", ingestErr, "ingest phase failed")
 		}
 		break
 	}
-	mergeStepErrs(stepErrs, ingest.Errs)
+	mergeErrs(ingestCtx, ingest.Errs)
 	stats := ingest.Result.Total
 
 	stanceMgr, err := d.StanceManager()
 	if err != nil {
 		// Every remaining phase needs the stance manager; record the failure
 		// once and skip them rather than fail each one with the same cause.
-		fail("stance-manager", err, "stance manager unavailable; skipping the stance and detection phases")
+		fail(work, "stance-manager", err, "stance manager unavailable; skipping the stance and detection phases")
 	} else {
 		rebundle, rbErr := personRebundler(d)
-		fail("bundler", rbErr, "contradiction bundler unavailable")
+		fail(work, "bundler", rbErr, "contradiction bundler unavailable")
 
 		// Phase 2: stance fan-out (mirror-py3). Routes every (person, fact)
 		// mention pair missing from that person's stances into their own
@@ -175,8 +212,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// so freshly created deputy stances get merged the same night, and
 		// before detection so stance-recorded contradictions land first.
 		if rebundle != nil {
-			fail("stance-fanout", gate.run(ctx, "stance-fanout", budgeted(b.fanout, func(left int) (int, error) {
-				return core.RunStanceFanout(ctx, storer, stanceMgr, rebundle, left)
+			fail(work, "stance-fanout", gate.run(work, "stance-fanout", budgeted(b.fanout, func(left int) (int, error) {
+				return core.RunStanceFanout(work, storer, stanceMgr, rebundle, left)
 			})), "stance fan-out failed")
 		}
 
@@ -187,8 +224,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// mis-grouping.
 		mergeOpts := core.DefaultStanceMergeOptions
 		mergeOpts.MaxPersons = b.maxPersons
-		fail("stance-merge", gate.run(ctx, "stance-merge", func() error {
-			_, err := core.RunStanceMergeSweep(ctx, storer, stanceMgr, mergeOpts)
+		fail(work, "stance-merge", gate.run(work, "stance-merge", func() error {
+			_, err := core.RunStanceMergeSweep(work, storer, stanceMgr, mergeOpts)
 			return err
 		}), "stance merge sweep failed")
 	}
@@ -208,7 +245,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	detect := gate.open("contradictions")
 	if detect && b.rejudge > 0 {
 		judgeHash := contradiction.JudgeRulebookHash()
-		if deleted, remaining, evErr := storer.EvictStaleJudgedPairs(ctx, judgeHash, b.rejudge); evErr != nil {
+		if deleted, remaining, evErr := storer.EvictStaleJudgedPairs(work, judgeHash, b.rejudge); evErr != nil {
 			log.Error().Err(evErr).Msg("Daily pipeline: stale pair-verdict eviction failed")
 		} else if deleted > 0 || remaining > 0 {
 			log.Info().Int("reopened", deleted).Int("stale_remaining", remaining).Str("judge_hash", judgeHash).
@@ -219,15 +256,15 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// Plugins queue the structural pairs the detector cannot reach by
 	// embedding distance. After the eviction so a re-opened pair is queued
 	// tonight rather than tomorrow.
-	queued, pairErrs := ProducePairs(ctx, d)
-	mergeStepErrs(stepErrs, pairErrs)
-	if total, cErr := storer.CountQueuedPairs(ctx); cErr == nil && (queued > 0 || total > 0) {
+	queued, pairErrs := ProducePairs(work, d)
+	mergeErrs(work, pairErrs)
+	if total, cErr := storer.CountQueuedPairs(work); cErr == nil && (queued > 0 || total > 0) {
 		log.Info().Int("enqueued", queued).Int("queue_size", total).Msg("Daily pipeline: fact pairs queued for detection")
 	}
 
 	if detect {
-		fail("contradictions", gate.retry(ctx, "contradictions", func() error {
-			_, err := contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
+		fail(work, "contradictions", gate.retry(work, "contradictions", func() error {
+			_, err := contradiction.RunDetection(work, storer, contradiction.DetectOptions{MaxPersons: b.maxPersons})
 			return err
 		}), "contradiction detection failed")
 	}
@@ -235,7 +272,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// Phase 5a: repoint contradictions off any facts the contradiction-pass
 	// dedup just marked as duplicates, so the redundant rows stop inflating
 	// scores. Best-effort — failures are logged, never aborting the pipeline.
-	if processed, repointed, dropped, rErr := storer.RepointDuplicates(ctx, true); rErr != nil {
+	if processed, repointed, dropped, rErr := storer.RepointDuplicates(work, true); rErr != nil {
 		log.Error().Err(rErr).Msg("Daily pipeline: repoint-duplicates failed")
 	} else if processed > 0 {
 		log.Info().Int("duplicates", processed).Int("repointed", repointed).Int("dropped", dropped).
@@ -247,10 +284,16 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// after detection + duplicate-repointing so it sees the final pairwise
 	// set. Best-effort — failures are logged, never aborting the pipeline;
 	// an unavailable LLM is waited for like in every LLM phase.
-	if regroupErr := gate.run(ctx, "regroup", func() error {
-		return contradiction.RunRegroupStep(ctx, storer, b.maxPersons)
+	if regroupErr := gate.run(work, "regroup", func() error {
+		return contradiction.RunRegroupStep(work, storer, b.maxPersons)
 	}); regroupErr != nil {
-		log.Error().Err(regroupErr).Msg("Daily pipeline: contradiction regroup failed")
+		cut, rest := splitCut(work, regroupErr)
+		if cut {
+			cutSteps = append(cutSteps, "regroup")
+		}
+		if rest != nil {
+			log.Error().Err(rest).Msg("Daily pipeline: contradiction regroup failed")
+		}
 	}
 
 	// Phase 6: contradiction auditor (auditCadence). Re-judges previously
@@ -263,8 +306,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// exposed via the `contradiction_audits_total` Prometheus counter.
 	var auditResult *contradiction.AuditRunResult
 	if b.audit {
-		fail("contradiction-audit", gate.run(ctx, "contradiction-audit", func() error {
-			res, err := runAuditIfDue(ctx, storer, auditCadence)
+		fail(work, "contradiction-audit", gate.run(work, "contradiction-audit", func() error {
+			res, err := runAuditIfDue(work, storer, auditCadence)
 			auditResult = mergeAuditTries(auditResult, res)
 			return err
 		}), "contradiction audit failed")
@@ -273,27 +316,43 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// Phase 7: translation — decoupled from generation. Fills missing or
 	// stale translations for facts, stances and contradictions into the
 	// generic translations table for every target language.
-	fail("translate", gate.run(ctx, "translate", budgeted(b.translate, func(left int) (int, error) {
-		return runTranslate(ctx, storer, left)
+	fail(work, "translate", gate.run(work, "translate", budgeted(b.translate, func(left int) (int, error) {
+		return runTranslate(work, storer, left)
 	})), "translation phase failed")
 
-	// Phase 8 (last, deadline-bound): plugin backfills. An outage the run did
+	// Phase 8: history. Every plugin that reads its source by date range goes
+	// one month further back for the queue targets (see runHistory). Before
+	// the backfill, which takes whatever time is left.
+	if b.history {
+		mergeErrs(work, runHistory(work, d, storer, targets, start, func(phase string, fn func() error) error {
+			return gate.run(work, phase, fn)
+		}))
+	}
+
+	// Phase 9 (last, deadline-bound): plugin backfills. An outage the run did
 	// not recover from is already in backfill.Errs, under its plugin.
 	if b.backfill {
 		var backfill BackfillRun
 		for {
-			bfErr := gate.run(ctx, "backfill", func() error { return backfill.Run(ctx, d, deadline) })
+			bfErr := gate.run(work, "backfill", func() error { return backfill.Run(work, d, deadline) })
 			if !errors.Is(bfErr, errRefails) || !backfill.Abandon() {
 				break
 			}
 		}
-		mergeStepErrs(stepErrs, backfill.Errs)
+		mergeErrs(work, backfill.Errs)
 	}
 	if gErr := gate.err(); gErr != nil {
 		stepErrs["llm"] = gErr
 		log.Error().Err(gErr).Msg("Daily pipeline: LLM unavailable; the next run resumes the skipped phases")
 	}
 	llmNote := gate.note()
+	var notes []string
+	if llmNote != "" {
+		notes = append(notes, llmNote)
+	}
+	if len(cutSteps) > 0 {
+		notes = append(notes, "stopped at the deadline (resumed next run): "+strings.Join(cutSteps, ", "))
+	}
 	if llmNote != "" {
 		log.Warn().Int("outages", gate.outages).Dur("waited", gate.waited.Round(time.Second)).
 			Msg("Daily pipeline: waited for the LLM during the run")
@@ -325,7 +384,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	if notifier != nil {
-		if err := notifier.Send(ctx, notification(status, opts.Smoke, elapsed, errParts, llmNote, stats, auditResult)); err != nil {
+		if err := notifier.Send(ctx, notification(status, opts.Smoke, elapsed, errParts, notes, stats, auditResult)); err != nil {
 			log.Error().Err(err).Msg("Failed to send pipeline Telegram notification")
 		}
 	}
@@ -335,12 +394,9 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	// the source of truth for pipeline-run history. Best-effort — a write
 	// failure is logged but never fails the run.
 	if !opts.Smoke {
-		// The LLM wait is a note, not an error: it does not count in
-		// StepErrors or change the status.
-		summaryLines := errParts
-		if llmNote != "" {
-			summaryLines = append(summaryLines, llmNote)
-		}
+		// The LLM wait and the deadline cuts are notes, not errors: they do
+		// not count in StepErrors or change the status.
+		summaryLines := append(errParts, notes...)
 		summary := storage.PipelineRunSummary{
 			StartedAt:    start,
 			FinishedAt:   time.Now(),
@@ -376,6 +432,7 @@ type runBudgets struct {
 	rejudge    int  // stale negative verdicts re-opened; 0 = skip
 	audit      bool // run the auditor when due
 	translate  int  // translations filled
+	history    bool // read the history-reading plugins one month further back
 	backfill   bool // run the deadline-bound backfill phase
 }
 
@@ -388,6 +445,7 @@ func budgets(opts RunOptions) runBudgets {
 		rejudge:   pairRejudgeNightlyBudget,
 		audit:     true,
 		translate: translateNightlyLimit,
+		history:   true,
 		backfill:  true,
 	}
 }
@@ -521,6 +579,11 @@ func (g *runGate) retry(ctx context.Context, phase string, fn func() error) erro
 			back = false
 		}
 		if !back {
+			if ctx.Err() != nil {
+				// The phase's own budget ran out during the wait: a cut of
+				// this phase, not an outage that stops the run.
+				return fmt.Errorf("%s stopped while waiting for the LLM: %w", phase, ctx.Err())
+			}
 			g.stoppedAfter = phase
 			return err
 		}
@@ -621,14 +684,41 @@ func budgeted(budget int, run func(left int) (used int, err error)) func() error
 	}
 }
 
-func mergeStepErrs(dst map[string]error, src StepErrors) {
-	for name, err := range src {
-		if prev, ok := dst[name]; ok {
-			dst[name] = errors.Join(prev, err)
-			continue
-		}
-		dst[name] = err
+// splitCut splits err into the deadline cut it carries and the rest: the
+// parts (walking errors.Join trees and %w wrappers) that are ctx's own expiry,
+// and the other failures, nil when none. Without ctx expired nothing is a
+// cut: a client's own timeout also matches context.DeadlineExceeded.
+func splitCut(ctx context.Context, err error) (cut bool, rest error) {
+	if err == nil || ctx.Err() == nil {
+		return false, err
 	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var kept []error
+		for _, e := range joined.Unwrap() {
+			c, r := splitCut(ctx, e)
+			cut = cut || c
+			if r != nil {
+				kept = append(kept, r)
+			}
+		}
+		return cut, errors.Join(kept...)
+	}
+	if inner := errors.Unwrap(err); inner != nil {
+		c, r := splitCut(ctx, inner)
+		switch {
+		case !c:
+			return false, err
+		case r == nil:
+			return true, nil
+		}
+		// Keep the wrapper's context ("ingest twitter: …") on what remains.
+		prefix := strings.TrimSuffix(err.Error(), inner.Error())
+		return true, fmt.Errorf("%s%w", prefix, r)
+	}
+	if errors.Is(err, ctx.Err()) {
+		return true, nil
+	}
+	return false, err
 }
 
 // runDeadline is the first runDeadlineHour in runTimezone after start.
@@ -645,7 +735,7 @@ func runDeadline(start time.Time) (time.Time, error) {
 	return d, nil
 }
 
-func notification(status string, smoke bool, elapsed time.Duration, errParts []string, llmNote string, s plugins.IngestStats, audit *contradiction.AuditRunResult) string {
+func notification(status string, smoke bool, elapsed time.Duration, errParts []string, notes []string, s plugins.IngestStats, audit *contradiction.AuditRunResult) string {
 	prefix := ""
 	if smoke {
 		prefix = "[smoke] "
@@ -668,8 +758,8 @@ func notification(status string, smoke bool, elapsed time.Duration, errParts []s
 			msg += "\n  • " + e
 		}
 	}
-	if llmNote != "" {
-		msg += "\n⏸ " + llmNote
+	for _, n := range notes {
+		msg += "\n⏸ " + n
 	}
 	if audit != nil && audit.Total > 0 {
 		msg += fmt.Sprintf("\n🔍 audit: %d checked, %d evicted (2-of-2 FP), %d kept (unstable)", audit.Total, audit.Deleted, audit.Unstable)

@@ -30,6 +30,11 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int
 	if err != nil {
 		return 0, err
 	}
+	// A download cut by a cancelled ctx is skipped like a failed one: the
+	// discovered set would be partial.
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("frpolitics stopped after discovery: %w", err)
+	}
 
 	log.Info().Int("discovered", len(laws)).Msg("frpolitics: discovery finished")
 
@@ -245,6 +250,9 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int
 		totalAffLaws := len(aiFilteredLaws)
 		affiliationsCreated := 0
 		for affIdx, law := range aiFilteredLaws {
+			if err := ctx.Err(); err != nil {
+				return 0, fmt.Errorf("frpolitics stopped creating affiliations: %w", err)
+			}
 			// Log progress every 10%
 			if totalAffLaws > 10 && affIdx > 0 && affIdx%(totalAffLaws/10) == 0 {
 				log.Info().Int("processed", affIdx).Int("total", totalAffLaws).Int("percent", (affIdx*100)/totalAffLaws).Int("affiliations_created", affiliationsCreated).Msg("frpolitics: affiliation creation progress")
@@ -326,12 +334,15 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int
 // storeLaws stores the facts of each selected law with storeFacts and marks
 // the law processed once all its ballots are stored. A law that fails is left
 // for the next run, which resumes after the voters already stored; an
-// unreachable LLM (llm.ErrUnavailable) stops the loop and is returned. It
-// returns the number of laws it went through before any stop (the
-// interrupted law excluded).
+// unreachable LLM (llm.ErrUnavailable) or a cancelled ctx stops the loop and
+// is returned, the interrupted law left unmarked. It returns the number of
+// laws it went through before any stop (the interrupted law excluded).
 func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[string][]FactRecord, storeFacts func(context.Context, []FactRecord) error) (int, error) {
 	var processedCount, failedCount, skippedCount int
 	for idx, law := range laws {
+		if err := ctx.Err(); err != nil {
+			return idx, fmt.Errorf("frpolitics stopped before law %s: %w", law.Key, err)
+		}
 		lawFacts := factsByLawKey[law.Key]
 		if len(lawFacts) == 0 {
 			skippedCount++
@@ -358,6 +369,9 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 			subjects[i] = r.PersonName
 		}
 		stored, err := store.StoredLawSubjects(ctx, law.Key, subjects)
+		if err != nil && ctx.Err() != nil {
+			return idx, fmt.Errorf("frpolitics stopped at law %s: %w", law.Key, ctx.Err())
+		}
 		if err != nil {
 			log.Error().Err(err).Str("law_key", law.Key).Msg("frpolitics: failed to load the law's stored ballots")
 			failedCount++
@@ -380,6 +394,10 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 				// Every further law would fail the same way.
 				return idx, fmt.Errorf("storing the facts of law %s: %w", law.Key, err)
 			}
+			if ctx.Err() != nil {
+				// Cut part-way: the next run resumes after the ballots stored.
+				return idx, fmt.Errorf("frpolitics stopped storing law %s: %w", law.Key, ctx.Err())
+			}
 			log.Error().
 				Err(err).
 				Int("law_num", idx+1).
@@ -393,6 +411,10 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 		// Mark law as fully processed
 		factsCount := len(lawFacts)
 		if err := store.MarkLawAsProcessed(ctx, law.Key, law.Legislature, law.Title, factsCount); err != nil {
+			if ctx.Err() != nil {
+				// Every ballot is stored: the next run marks the law at once.
+				return idx, fmt.Errorf("frpolitics stopped marking law %s: %w", law.Key, ctx.Err())
+			}
 			log.Error().
 				Err(err).
 				Str("law_key", law.Key).

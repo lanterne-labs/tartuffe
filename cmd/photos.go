@@ -115,9 +115,12 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	st := photos.RunForPersons(ctx, provider, persons, photos.Options{
+	st, err := photos.RunForPersons(ctx, provider, persons, photos.Options{
 		Force: force, DryRun: dryRun, MaxResults: maxResults, MinWidth: minWidth, MinHeight: minHeight,
 	})
+	if err != nil {
+		return err
+	}
 	if !dryRun {
 		if err := photos.RecordJobMetrics(ctx, storer, "photos-search", st); err != nil {
 			log.Error().Err(err).Msg("Failed to record job metrics")

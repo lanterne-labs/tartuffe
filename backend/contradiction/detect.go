@@ -100,7 +100,9 @@ type personPairs struct {
 // walk or every pair with CheckAll, plus the producer queue) and judges them
 // with the LLM detector, the inline verification pass gating each YES before
 // it is recorded. Returns zero counts without touching the LLM when there is
-// nothing new to check.
+// nothing new to check. A cancelled ctx stops it before the next person or
+// batch with an error wrapping ctx.Err(); a pair cut under the cancellation
+// records nothing and is judged by the next run.
 func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions) (DetectResult, error) {
 	persons, err := personsForDetection(ctx, storer, opts)
 	if err != nil {
@@ -115,6 +117,9 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	var allPersonPairs []personPairs
 	totalPairs := 0
 	for _, person := range persons {
+		if err := ctx.Err(); err != nil {
+			return DetectResult{}, fmt.Errorf("contradiction detection stopped collecting pairs: %w", err)
+		}
 		if _, excluded := excludeSet[person.Name]; excluded {
 			log.Info().Str("person", person.Name).Msg("Skipping excluded person")
 			continue
@@ -455,18 +460,23 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 
 	totalContradictions := 0
 	totalPairsChecked := 0
-	// unavailable is set when the LLM went away: the run stops at that pair
-	// and every pair not yet recorded stays pending for the next run.
-	var unavailable error
+	// stopped is set when the LLM went away or ctx was cancelled: the run
+	// stops at that pair and every pair not yet recorded stays pending for
+	// the next run.
+	var stopped error
 
 	for _, pp := range allPersonPairs {
-		if unavailable != nil {
+		if stopped != nil {
 			break
 		}
 		personContradictions := 0
 		batchSize := MaxPairsPerBatchSync
 
 		for i := 0; i < len(pp.pairs); i += batchSize {
+			if err := ctx.Err(); err != nil {
+				stopped = err
+				break
+			}
 			end := i + batchSize
 			if end > len(pp.pairs) {
 				end = len(pp.pairs)
@@ -494,7 +504,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			for j, result := range results {
 				d, dErr := decidePair(ctx, detector, dedupeJudge, pp.personName, batch[j], result, opts.DryRun)
 				if dErr != nil {
-					unavailable = dErr
+					stopped = dErr
 					break
 				}
 				if !d.decided {
@@ -552,7 +562,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 						Msg("Contradiction detected")
 
 					if !opts.DryRun {
-						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(ctx, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason, result.ReasonEn)
+						// A verdict already paid for is recorded even when the deadline
+						// passed meanwhile (the write must not fail on the cancelled ctx).
+						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(context.WithoutCancel(ctx), pp.personID, batch[j].factAID, batch[j].factBID, result.Reason, result.ReasonEn)
 						if err != nil {
 							log.Error().Err(err).Msg("Failed to record contradiction")
 						} else {
@@ -561,7 +573,7 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 								if bErr := resolveBundle(ctx, bundler, pp.personID, contradictionID,
 									batch[j].factAID, batch[j].factBID,
 									batch[j].factAText, batch[j].factBText, result.Reason); bErr != nil {
-									unavailable = bErr
+									stopped = bErr
 									break
 								}
 							}
@@ -571,12 +583,14 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			}
 
 			if !opts.DryRun && len(pairResults) > 0 {
-				if err := storer.RecordPairChecksBatch(ctx, pp.personID, JudgeRulebookHash(), pairResults); err != nil {
+				// The batch's decided pairs are recorded even after a cut: they
+				// would otherwise be re-judged, possibly the other way.
+				if err := storer.RecordPairChecksBatch(context.WithoutCancel(ctx), pp.personID, JudgeRulebookHash(), pairResults); err != nil {
 					log.Error().Err(err).Str("person", pp.personName).Msg("Failed to record pair checks")
 				}
 			}
 
-			if unavailable != nil {
+			if stopped != nil {
 				break
 			}
 
@@ -603,8 +617,8 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	}
 
 	res := DetectResult{PairsChecked: totalPairsChecked, Contradictions: totalContradictions}
-	if unavailable != nil {
-		return res, fmt.Errorf("contradiction detection stopped: %w", unavailable)
+	if stopped != nil {
+		return res, fmt.Errorf("contradiction detection stopped: %w", stopped)
 	}
 	return res, nil
 }
@@ -636,9 +650,9 @@ type bundleResolver interface {
 
 // resolveBundle runs the bundler on a newly recorded contradiction. A failure
 // leaves the row a solo bundle and is only logged, except an unavailable LLM
-// (llm.ErrUnavailable), which is returned so the run stops: the row stays solo
-// until the person's next rebundle (RebundlePerson, run by the stance
-// fan-out for persons with new facts).
+// (llm.ErrUnavailable) or a cancelled ctx, which is returned so the run
+// stops: the row stays solo until the person's next rebundle (RebundlePerson,
+// run by the stance fan-out for persons with new facts).
 func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contradictionID, factAID, factBID int64, factAText, factBText, reason string) error {
 	err := bundler.Resolve(ctx, personID, contradictionID, factAID, factBID, factAText, factBText, reason)
 	if err == nil {
@@ -648,6 +662,9 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 		Msg("Bundler resolution failed; row remains a solo bundle")
 	if errors.Is(err, llm.ErrUnavailable) {
 		return fmt.Errorf("bundling contradiction %d: %w", contradictionID, err)
+	}
+	if ctx.Err() != nil {
+		return fmt.Errorf("bundling contradiction %d: %w", contradictionID, ctx.Err())
 	}
 	return nil
 }
@@ -664,12 +681,19 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 // found it, and a verifier that cannot answer must not silently drop it; the
 // auditor re-judges it later.
 //
+// A failure under a cancelled ctx makes no decision either: a cut verifier
+// call must not keep the YES unverified, nor a cut detector call become a NO.
+//
 // The error is non-nil only when the LLM was unavailable (it wraps
-// llm.ErrUnavailable): the caller stops the run there.
+// llm.ErrUnavailable) or ctx was cancelled (it wraps ctx.Err()): the caller
+// stops the run there.
 func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudge, person string, p pairInfo, r BatchResult, dryRun bool) (pairDecision, error) {
 	if r.Error != nil {
 		if errors.Is(r.Error, llm.ErrUnavailable) {
 			return pairDecision{}, r.Error
+		}
+		if ctx.Err() != nil {
+			return pairDecision{}, fmt.Errorf("judging pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		}
 		log.Error().Err(r.Error).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).Msg("Detector error")
 		return pairDecision{}, nil
@@ -685,6 +709,8 @@ func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudg
 		switch {
 		case errors.Is(err, llm.ErrUnavailable):
 			return pairDecision{}, err
+		case err != nil && ctx.Err() != nil:
+			return pairDecision{}, fmt.Errorf("verifying pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		case err != nil:
 			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
 				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
@@ -704,6 +730,8 @@ func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudg
 		switch {
 		case errors.Is(err, llm.ErrUnavailable):
 			return pairDecision{}, err
+		case err != nil && ctx.Err() != nil:
+			return pairDecision{}, fmt.Errorf("dedup check of pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		case err != nil:
 			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
 				Msg("Contradiction-pass dedup adjudication failed; pair left pending")

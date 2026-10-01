@@ -52,7 +52,8 @@ type PersonAssignStats struct {
 //
 // A failed routing writes nothing (see ProcessNewFact), so the fact stays an
 // orphan for the next run. When the LLM is unavailable the person stops at
-// that fact and the error (wrapping llm.ErrUnavailable) is returned.
+// that fact and the error (wrapping llm.ErrUnavailable) is returned; so does
+// a cancelled ctx, with an error wrapping ctx.Err().
 func AssignOrphansForPerson(
 	ctx context.Context,
 	storer StanceAssignStorer,
@@ -90,9 +91,16 @@ func AssignOrphansForPerson(
 	}
 
 	for _, f := range orphans {
+		if err := ctx.Err(); err != nil {
+			return ps, fmt.Errorf("stance assignment stopped: %w", err)
+		}
 		res, err := stanceManager.ProcessNewFact(ctx, p.ID, f.ID, f.FactText, f.Embedding, f.CanonicalVerb)
 		if errors.Is(err, llm.ErrUnavailable) {
 			return ps, fmt.Errorf("routing fact %d: %w", f.ID, err)
+		}
+		if err != nil && ctx.Err() != nil {
+			// Cut by the cancelled run, not a failure of the fact.
+			return ps, fmt.Errorf("routing fact %d stopped: %w", f.ID, ctx.Err())
 		}
 		if err != nil {
 			log.Warn().Err(err).Str("person", p.Name).Int64("fact_id", f.ID).Msg("ProcessNewFact failed; fact stays orphan")
@@ -135,7 +143,8 @@ func AssignOrphansForPerson(
 // the step is idempotent, retries failures on later nights, and goes silent
 // once the backlog is drained and each night's new facts fit the budget.
 // It stops at the first call the LLM could not serve and returns an error
-// wrapping llm.ErrUnavailable. It returns the routings it attempted (routed
+// wrapping llm.ErrUnavailable, and when ctx is cancelled with an error
+// wrapping ctx.Err(). It returns the routings it attempted (routed
 // or failed), the part of budget it used, even along with an error.
 func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManager *StanceManager, rebundle PersonRebundler, budget int) (int, error) {
 	persons, err := storer.ListPersonsWithOrphanFacts(ctx)
@@ -154,6 +163,9 @@ func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManag
 	remaining := int64(budget)
 	var routed, failures, contradictions int64
 	for _, p := range persons {
+		if err := ctx.Err(); err != nil {
+			return int(routed + failures), fmt.Errorf("stance fan-out stopped after %d routings: %w", routed, err)
+		}
 		if atomic.LoadInt64(&remaining) <= 0 {
 			break
 		}
@@ -161,6 +173,10 @@ func RunStanceFanout(ctx context.Context, storer StanceAssignStorer, stanceManag
 		if errors.Is(err, llm.ErrUnavailable) {
 			used := routed + failures + ps.OrphansAssigned + ps.OrphanFailures
 			return int(used), fmt.Errorf("stance fan-out stopped at %s after %d routings: %w", p.Name, routed+ps.OrphansAssigned, err)
+		}
+		if err != nil && ctx.Err() != nil {
+			used := routed + failures + ps.OrphansAssigned + ps.OrphanFailures
+			return int(used), fmt.Errorf("stance fan-out stopped at %s after %d routings: %w", p.Name, routed+ps.OrphansAssigned, ctx.Err())
 		}
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Stance fan-out failed for person")

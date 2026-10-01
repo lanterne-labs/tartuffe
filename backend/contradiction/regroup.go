@@ -46,7 +46,8 @@ type RegroupResult struct {
 // one bad person never aborts a full sweep. Once the summarizer reports the
 // LLM unavailable it is not called again (the remaining groups keep their
 // summaries), the pass stops after that person, and the error (wrapping
-// llm.ErrUnavailable) is returned.
+// llm.ErrUnavailable) is returned. A cancelled ctx stops the pass before the
+// next person, or at the person it cut, with an error wrapping ctx.Err().
 func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts RegroupOptions) (RegroupResult, error) {
 	personIDs := opts.PersonIDs
 	if len(personIDs) == 0 {
@@ -75,7 +76,13 @@ func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts Regrou
 
 	agg := RegroupResult{Persons: len(personIDs)}
 	for _, pid := range personIDs {
+		if err := ctx.Err(); err != nil {
+			return agg, fmt.Errorf("regroup stopped: %w", err)
+		}
 		res, err := storer.RegroupPersonContradictions(ctx, pid, summarize)
+		if err != nil && ctx.Err() != nil {
+			return agg, fmt.Errorf("regroup stopped at person %d: %w", pid, ctx.Err())
+		}
 		if err != nil {
 			log.Error().Err(err).Int64("person_id", pid).Msg("regroup: person failed, skipping")
 			continue

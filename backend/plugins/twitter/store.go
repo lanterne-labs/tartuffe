@@ -162,9 +162,11 @@ func (s *Store) GetSearchedAt(ctx context.Context, personID int64) (*time.Time, 
 	return t, nil
 }
 
-// UpdateHandleLastFetched updates the last_fetched_at timestamp for a handle.
+// UpdateHandleLastFetched records that a handle's tweets were fetched up to t:
+// last_fetched_at, where the daily fetch starts, only moves forward, so
+// reading an older range (the history step) cannot skip recent tweets.
 func (s *Store) UpdateHandleLastFetched(ctx context.Context, handleID int64, t time.Time) error {
-	stmt := `UPDATE twitter_handles SET last_fetched_at = $2 WHERE id = $1`
+	stmt := `UPDATE twitter_handles SET last_fetched_at = GREATEST(COALESCE(last_fetched_at, $2), $2) WHERE id = $1`
 	_, err := s.pool.Exec(ctx, stmt, handleID, t)
 	if err != nil {
 		return fmt.Errorf("failed to update last_fetched_at for handle %d: %w", handleID, err)
@@ -183,6 +185,27 @@ func (s *Store) LogFetch(ctx context.Context, handleID int64, dateFrom, dateTo t
 		return fmt.Errorf("failed to log twitter fetch for handle %d: %w", handleID, err)
 	}
 	return nil
+}
+
+// HandlesFetchedCover reports whether every day of [from, to) has been
+// fetched (twitter_fetch_log, date_to exclusive) for every active handle of
+// personIDs. A person without a handle has nothing to fetch.
+func (s *Store) HandlesFetchedCover(ctx context.Context, personIDs []int64, from, to time.Time) (bool, error) {
+	var missing bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM twitter_handles h
+			CROSS JOIN generate_series($2::date, $3::date - 1, interval '1 day') d(day)
+			WHERE h.person_id = ANY($1) AND h.active
+			  AND NOT EXISTS (
+				SELECT 1 FROM twitter_fetch_log l
+				WHERE l.handle_id = h.id AND l.date_from <= d.day::date AND l.date_to > d.day::date))`,
+		personIDs, from, to).Scan(&missing)
+	if err != nil {
+		return false, fmt.Errorf("checking fetched tweet ranges %s..%s: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), err)
+	}
+	return !missing, nil
 }
 
 // IsRangeFetched checks if a date range has already been fetched for a handle.

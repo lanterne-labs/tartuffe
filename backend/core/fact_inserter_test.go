@@ -36,6 +36,9 @@ func (f *fakeInserterStorer) InsertFact(ctx context.Context, input StoreFactInpu
 }
 
 func (f *fakeInserterStorer) DeleteFact(ctx context.Context, factID int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.deleted++
 	return nil
 }

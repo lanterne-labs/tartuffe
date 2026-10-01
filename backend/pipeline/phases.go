@@ -85,7 +85,8 @@ type IngestRun struct {
 // the LLM became unavailable for and returns that plugin's error (wrapping
 // llm.ErrUnavailable, also kept in Errs until a later Run retries the
 // plugin, which keeps only the other failures of the interrupted call);
-// other plugin failures are only recorded in Errs.
+// other plugin failures are only recorded in Errs. Once ctx is done no
+// further plugin starts and the returned error wraps ctx.Err().
 func (in *IngestRun) Run(ctx context.Context, d *deps.Deps, targets []plugins.Target, opts plugins.IngestOptions, only []string) error {
 	sel, err := selected(only)
 	if err != nil {
@@ -101,6 +102,9 @@ func (in *IngestRun) Run(ctx context.Context, d *deps.Deps, targets []plugins.Ta
 		ing, ok := p.(plugins.Ingester)
 		if !ok || in.finished[name] {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("ingest stopped before %s: %w", name, err)
 		}
 		prev := in.Result.ByPlugin[name]
 		left := targetsLeft(targets, prev.Done)
@@ -216,7 +220,9 @@ func targetsLeft(targets []plugins.Target, done []int64) []plugins.Target {
 }
 
 // ProducePairs runs the pair-producing phase of every plugin that has one and
-// returns the total pairs queued plus the per-plugin errors.
+// returns the total pairs queued plus the per-plugin errors. Once ctx is done
+// no further plugin starts: the first one not started gets an error wrapping
+// ctx.Err().
 func ProducePairs(ctx context.Context, d *deps.Deps) (int, StepErrors) {
 	total := 0
 	errs := StepErrors{}
@@ -224,6 +230,10 @@ func ProducePairs(ctx context.Context, d *deps.Deps) (int, StepErrors) {
 		pp, ok := p.(plugins.PairProducer)
 		if !ok {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			errs[p.Name()] = fmt.Errorf("pair production stopped: %w", err)
+			break
 		}
 		n, err := pp.ProducePairs(ctx, d)
 		if err != nil {
@@ -252,7 +262,9 @@ type BackfillRun struct {
 // reached after the deadline is not started. It stops at the first plugin the
 // LLM became unavailable for and returns that plugin's error (wrapping
 // llm.ErrUnavailable, also kept in Errs until a later Run retries the
-// plugin); other plugin failures are only recorded in Errs.
+// plugin); other plugin failures are only recorded in Errs. Once ctx is done
+// no further plugin starts: the first one not started gets an error wrapping
+// ctx.Err() in Errs, which is also returned.
 func (bf *BackfillRun) Run(ctx context.Context, d *deps.Deps, deadline time.Time) error {
 	if bf.finished == nil {
 		bf.Errs = StepErrors{}
@@ -263,6 +275,11 @@ func (bf *BackfillRun) Run(ctx context.Context, d *deps.Deps, deadline time.Time
 		b, ok := p.(plugins.Backfiller)
 		if !ok || bf.finished[name] {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			stop := fmt.Errorf("backfill stopped before %s: %w", name, err)
+			setStepErr(bf.Errs, name, false, stop)
+			return stop
 		}
 		if time.Now().After(deadline) {
 			log.Info().Str("plugin", name).Time("deadline", deadline).Msg("Pipeline: backfill window closed; skipping")

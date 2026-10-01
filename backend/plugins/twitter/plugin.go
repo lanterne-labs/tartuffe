@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
@@ -18,6 +19,12 @@ type Plugin struct{}
 
 // Name implements plugins.Plugin.
 func (Plugin) Name() string { return "twitter" }
+
+// HistoryFetched implements plugins.HistoryReader: every day of the stretch
+// is in the fetch log of every active handle of the targets.
+func (Plugin) HistoryFetched(ctx context.Context, d *deps.Deps, targets []plugins.Target, since, until time.Time) (bool, error) {
+	return NewStore(d.Storer).HandlesFetchedCover(ctx, plugins.TargetIDs(targets), since, until)
+}
 
 // NewProviderFromDeps builds a Provider on the shared components. Returns an
 // error when the tweet API key is not configured.
@@ -60,6 +67,9 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 			if errors.Is(err, llm.ErrUnavailable) {
 				return stats, discoverErr
 			}
+			if ctx.Err() != nil {
+				return stats, fmt.Errorf("twitter stopped in discovery: %w", ctx.Err())
+			}
 		}
 	}
 
@@ -92,8 +102,9 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 // handle is recorded and the loop goes on, except on an unreachable LLM
 // (llm.ErrUnavailable): every further handle would fetch tweets (API credits)
 // only to leave them unextracted, so the loop stops and returns it with the
-// first failure. Otherwise the first failure is returned. stats.Done lists
-// the targets whose every handle was collected or failed before the stop.
+// first failure; so does a cancelled ctx, the cut handle not counted as
+// failed. Otherwise the first failure is returned. stats.Done lists the
+// targets whose every handle was collected or failed before the stop.
 func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, collect func(context.Context, Handle) (*Result, error)) (plugins.IngestStats, error) {
 	var stats plugins.IngestStats
 	var firstErr error
@@ -121,7 +132,15 @@ func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, co
 		if _, ok := left[h.PersonID]; !ok {
 			continue
 		}
+		if err := ctx.Err(); err != nil {
+			stats.Done = done()
+			return stats, errors.Join(firstErr, fmt.Errorf("twitter stopped before @%s: %w", h.Handle, err))
+		}
 		result, err := collect(ctx, h)
+		if err != nil && ctx.Err() != nil {
+			stats.Done = done()
+			return stats, errors.Join(firstErr, fmt.Errorf("twitter stopped at @%s: %w", h.Handle, ctx.Err()))
+		}
 		if err != nil {
 			log.Error().Err(err).Str("handle", h.Handle).Msg("twitter: collection failed for handle")
 			stats.Details = append(stats.Details, "@"+h.Handle+": "+err.Error())

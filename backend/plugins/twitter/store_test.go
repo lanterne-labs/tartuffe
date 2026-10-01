@@ -106,3 +106,54 @@ func TestDeleteFactsForPersonResetsFetchLog(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, handles, 1, "handles survive a fact deletion")
 }
+
+// TestLastFetchedOnlyMovesForward: reading an older range (the history step)
+// must not move last_fetched_at, where the daily fetch starts, past tweets it
+// has not read yet, nor back.
+func TestLastFetchedOnlyMovesForward(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	store := NewStore(storer)
+
+	pid, err := storer.FindOrInsertPersonWithType(ctx, "bob history", "human")
+	require.NoError(t, err)
+	require.NoError(t, store.AddHandle(ctx, pid, "bobhistory"))
+	handles, err := store.GetHandlesByPersonID(ctx, pid)
+	require.NoError(t, err)
+	id := handles[0].ID
+
+	daily := time.Date(2026, 10, 1, 4, 0, 0, 0, time.UTC)
+	require.NoError(t, store.UpdateHandleLastFetched(ctx, id, daily))
+	require.NoError(t, store.UpdateHandleLastFetched(ctx, id, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)))
+
+	handles, err = store.GetHandlesByPersonID(ctx, pid)
+	require.NoError(t, err)
+	require.NotNil(t, handles[0].LastFetchedAt)
+	assert.True(t, handles[0].LastFetchedAt.Equal(daily), "an older range left last_fetched_at at %v, want %v", handles[0].LastFetchedAt, daily)
+}
+
+// TestHandlesFetchedCover: a stretch is fetched once every day of it is in the
+// fetch log of every active handle of the persons; a person without a handle
+// has nothing to fetch.
+func TestHandlesFetchedCover(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	store := NewStore(storer)
+	pid, err := storer.FindOrInsertPersonWithType(ctx, "carol cover", "human")
+	require.NoError(t, err)
+	noHandle, err := storer.FindOrInsertPersonWithType(ctx, "dan cover", "human")
+	require.NoError(t, err)
+	require.NoError(t, store.AddHandle(ctx, pid, "carolcover"))
+	handles, err := store.GetHandlesByPersonID(ctx, pid)
+	require.NoError(t, err)
+	d := func(s string) time.Time { t, _ := time.Parse("2006-01-02", s); return t }
+
+	require.NoError(t, store.LogFetch(ctx, handles[0].ID, d("2026-09-01"), d("2026-09-04"), 12))
+	covered, err := store.HandlesFetchedCover(ctx, []int64{pid, noHandle}, d("2026-09-01"), d("2026-09-04"))
+	require.NoError(t, err)
+	assert.True(t, covered)
+
+	covered, err = store.HandlesFetchedCover(ctx, []int64{pid}, d("2026-09-01"), d("2026-09-05"))
+	require.NoError(t, err)
+	assert.False(t, covered, "2026-09-04 was never fetched")
+}

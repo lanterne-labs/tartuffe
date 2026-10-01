@@ -21,8 +21,9 @@ import (
 //	   │                                 the row stays: the URL is never fetched again)
 //	   └──extract err─▶ failed ──retry─▶ extracted | failed  (until MaxExtractionAttempts)
 //
-// A failure because the LLM was unreachable (llm.ErrUnavailable) leaves the
-// document as it was: the attempts count only failures of the document.
+// A failure because the LLM was unreachable (llm.ErrUnavailable), or because
+// the run was cancelled, leaves the document as it was: the attempts count
+// only failures of the document.
 //
 // The fetch step saves the document the moment the fetch succeeds, before
 // any extraction; ProcessDocuments drives every unfinished document to
@@ -126,7 +127,8 @@ func FailsDocument(ctx context.Context, err error) bool {
 
 // ProcessDocuments drives every unfinished document of sourceType (and
 // personID, when non-zero) through extract, recording each document's
-// transition as soon as its batch finishes.
+// transition as soon as its batch finishes. A cancelled ctx stops it before
+// the next batch, or under one, with an error wrapping ctx.Err().
 func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType string, personID int64, extract ExtractBatchFunc, opts ProcessOptions) (ProcessStats, error) {
 	var st ProcessStats
 	limit := opts.Limit
@@ -152,8 +154,8 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 	consecutive := 0
 	var lastErr error
 	for i := 0; i < len(docs); i += batchSize {
-		if ctx.Err() != nil {
-			break
+		if err := ctx.Err(); err != nil {
+			return st, fmt.Errorf("%s documents stopped: %w", sourceType, err)
 		}
 		if !opts.Deadline.IsZero() && time.Now().After(opts.Deadline) {
 			st.DeadlineHit = true
@@ -167,9 +169,14 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 			end = len(docs)
 		}
 		batch := docs[i:end]
-		st.Attempted += len(batch)
 
 		facts, err := extract(ctx, batch)
+		if err != nil && ctx.Err() != nil {
+			// The run was cancelled under the batch: not the documents' fault,
+			// they stay as they were for the next run.
+			return st, fmt.Errorf("%s documents stopped: %w", sourceType, ctx.Err())
+		}
+		st.Attempted += len(batch)
 		if err != nil {
 			lastErr = err
 			consecutive++

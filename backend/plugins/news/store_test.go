@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/plugins"
 	"digital-mirror/backend/storage"
@@ -130,4 +131,32 @@ func TestPrioritizeTargets(t *testing.T) {
 	got, err = provider.PrioritizeTargets(ctx, input, PrioritizationOptions{LookbackDays: 30, SkipNoResults: false, PartiesFirst: false})
 	require.NoError(t, err)
 	assert.Equal(t, []plugins.Target{fresh, empty, covered, adhoc, party}, got)
+}
+
+// TestNewsWindowsCover: a stretch is fetched once every day of it has a
+// logged window for every person; date_to is exclusive.
+func TestNewsWindowsCover(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	store := NewStore(storer)
+	alice, err := storer.FindOrInsertPersonWithType(ctx, "alice window", "human")
+	require.NoError(t, err)
+	bob, err := storer.FindOrInsertPersonWithType(ctx, "bob window", "human")
+	require.NoError(t, err)
+	d := func(s string) time.Time { t, _ := time.Parse("2006-01-02", s); return t }
+
+	require.NoError(t, store.LogNewsWindow(ctx, alice, "alice window", d("2026-09-01"), d("2026-09-04"), 5))
+	require.NoError(t, store.LogNewsWindow(ctx, alice, "alice window", d("2026-09-04"), d("2026-09-07"), 0))
+
+	covered, err := store.NewsWindowsCover(ctx, []int64{alice}, d("2026-09-01"), d("2026-09-07"))
+	require.NoError(t, err)
+	require.True(t, covered, "two adjacent windows cover the stretch")
+
+	covered, err = store.NewsWindowsCover(ctx, []int64{alice}, d("2026-09-01"), d("2026-09-08"))
+	require.NoError(t, err)
+	require.False(t, covered, "2026-09-07 was never searched (date_to is exclusive)")
+
+	covered, err = store.NewsWindowsCover(ctx, []int64{alice, bob}, d("2026-09-01"), d("2026-09-07"))
+	require.NoError(t, err)
+	require.False(t, covered, "bob was never searched")
 }
