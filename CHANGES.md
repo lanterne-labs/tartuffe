@@ -2409,6 +2409,14 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   reports are one claim whatever details or number framing they use; for a statement or
   proposal the numbers are the claim itself (Glucksmann 200 € vs 500 € stay apart), and
   different occasions (first instance vs appeal, two votes) stay apart. Golden 18/18, 3 runs.
+- First prod run of it (2026-10-01, stopped after 18 groups, reviewed by hand): 9 right
+  (one election result, one motion, one ruling reported several times), 9 wrong: votes on
+  different amendments of one bill grouped as "one event", and a compound fact grouped with
+  one of its claims. Rules added: a vote is one ballot on one text; a bundle of claims is
+  never the same as one of them; an appeal ruling and the first-instance ruling are two
+  events. The wrong ones were un-grouped (`dm facts ungroup`). Golden 26 cases, 156/156
+  over two batches. Lesson: sample a few persons dry-run and review before any full run.
 - `dm facts group --facts a,b,… [--apply]` puts chosen facts into one claim group under the
   most concrete wording, whatever the gate decided (the operator override), then recomputes
-  scores. Existing facts only regroup through `dm facts fold` or this command.
+  scores; `dm facts ungroup` takes facts out again. Existing facts only regroup through
+  `dm facts fold` or these commands.

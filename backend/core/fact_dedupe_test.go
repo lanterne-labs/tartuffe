@@ -305,9 +305,76 @@ func TestFactDedupeAdjudicatorGolden(t *testing.T) {
 			want:     false,
 			position: true,
 		},
+		// The 2026-10-01 prod regrouping sample, judged by hand: groups the
+		// same-event rule formed wrongly (must stay apart) and rightly (must
+		// still group).
+		{
+			name:     "fold_votes_on_two_amendments_of_one_bill",
+			subject:  "Abdelkader Lahmar",
+			factA:    "Abdelkader Lahmar a voté CONTRE l'amendement n° 231 (UDR) dont l'objet est : « Le présent amendement propose de remplacer la nationalisation intégrale d’ArcelorMittal par un dispositif plus proportionné, consistant en une prise de participation publique limitée à 30 % du capital. », déposé sur le texte de loi : « Vise la nationalisation d'ArcelorMittal France pour la souveraineté industrielle. »",
+			factB:    "Abdelkader Lahmar a voté CONTRE le sous-amendement n° 358 (RN) dont l'objet est : « Cet ajout permet d’éviter qu’une entreprise puisse soustraire des composants essentiels en réorganisant artificiellement sa chaîne de valeur avant l’opération. », déposé sur le texte de loi : « Prévoit la nationalisation de l'entreprise ArcelorMittal France pour renforcer la souveraineté industrielle de la France. »",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_vote_on_amendment_vs_vote_on_text",
+			subject:  "Alexandre Allegret-Pilot",
+			factA:    "Alexandre Allegret-Pilot a voté POUR l'amendement n° 40 (RN) dont l'objet est : « Le présent amendement vise à supprimer les aménagements de peine ab initio et soumettre l’aménagement à l’exécution minimale du tiers de la peine ferme prononcée. », déposé sur le texte de loi : « Assure l'exécution des peines d'emprisonnement ferme »",
+			factB:    "Alexandre Allegret-Pilot a voté POUR le texte de loi : « Renforce l'exécution des peines d'emprisonnement ferme »",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_compound_vs_one_of_its_claims",
+			subject:  "Alexis Perrier",
+			factA:    "Alexis Perrier a déclaré que l'implantation locale n'est plus une priorité du Rassemblement national et a critiqué le manque de collaboration de Patrice Martin.",
+			factB:    "Alexis Perrier a reproché un manque de collaboration de la part du député Patrice Martin.",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_two_measures_one_policy_field",
+			subject:  "AfD",
+			factA:    "L'AfD prévoit de favoriser l'automobile individuelle et le moteur à explosion, et prévoit notamment l'interdiction des vélos cargo dans le Land.",
+			factB:    "L’AfD exige que l’interdiction des moteurs à combustion soit non seulement reportée, mais bel et bien annulée.",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_two_broadcasting_proposals",
+			subject:  "AfD Saxe-Anhalt",
+			factA:    "L'AfD Saxe-Anhalt a annoncé que son premier acte officiel après les élections serait de dénoncer les traités de radiodiffusion pour exiger une réforme.",
+			factB:    "L'AfD Saxe-Anhalt a proposé de transformer la radiodiffusion publique en un service financé par une taxe audiovisuelle sur le modèle finlandais.",
+			want:     false,
+			position: true,
+		},
+		{
+			name:     "fold_same_election_result_reported_twice",
+			subject:  "Alliance 90/The Greens",
+			factA:    "Alliance 90/The Greens obtained 30.2% of the vote in the Baden-Württemberg state election on March 8, 2026.",
+			factB:    "The Greens won the state election in Baden-Württemberg with 30.2 percent of the second votes.",
+			want:     true,
+			position: true,
+		},
+		{
+			name:     "fold_same_motion_reported_twice",
+			subject:  "AfD Weimarer Land",
+			factA:    "Die AfD Weimarer Land hat die Abwahl der 2024 zuletzt im Amt bestätigten Landrätin beantragt.",
+			factB:    "Die AfD im Weimarer Land hat einen Antrag gestellt, um Landrätin Schmidt-Rose (CDU) abwählen zu lassen, da dem Landratsamt laut AfD die Führung fehle.",
+			want:     true,
+			position: true,
+		},
+		{
+			name:     "fold_same_municipal_result_two_angles",
+			subject:  "Alexandre Gaillat",
+			factA:    "La liste conduite par Alexandre Gaillat, nommée « Bien vivre à Chenu », a obtenu 39,15 % des voix lors de l'élection municipale de Chenu le 15 mars 2026.",
+			factB:    "La liste conduite par Alexandre Gaillat, « Bien vivre à Chenu », a été défaite lors des élections municipales du 15 mars 2026 face à la liste de Maurice Houdin.",
+			want:     true,
+			position: true,
+		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	var passed, failed int

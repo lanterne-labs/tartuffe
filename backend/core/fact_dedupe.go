@@ -64,7 +64,7 @@ SAME position (answer true):
 - The same stance on the same question, in different words or through different facets: "affirms his innocence in the affair", "claims his good faith", "contests the qualification of embezzlement" — all one position ("denies guilt in that affair").
 - The same announcement/position reported with different incidental detail (outlet, phrasing, minor date differences, added color).
 - The same demand/support/opposition restated over time with the same direction and target: "demande la baisse des taxes sur les carburants" / "la France peut baisser la fiscalité sur l'essence dès maintenant".
-- Several reports of ONE event or outcome (the same ruling, vote, result, or announcement, on the same occasion), even when they give different details or count its numbers differently: "condamnée en appel à un an sous bracelet électronique et 15 mois d'inéligibilité" / "condamnée par la cour d'appel à trois ans dont un an sous bracelet, et à 45 mois d'inéligibilité dont 30 avec sursis" are the same appeal ruling.
+- Several reports of ONE event or outcome (the same ruling, vote, result, or announcement, on the same occasion), even when they give different details or count its numbers differently: "condamnée en appel à un an sous bracelet électronique et 15 mois d'inéligibilité" / "condamnée par la cour d'appel à trois ans dont un an sous bracelet, et à 45 mois d'inéligibilité dont 30 avec sursis" are the same appeal ruling — but that appeal ruling and the first-instance ruling before it are two events.
 
 DIFFERENT (answer false — never aggregate):
 - OPPOSING or diverging positions, or a position vs a later change: these are contradiction material and must stay separate.
@@ -75,7 +75,8 @@ DIFFERENT (answer false — never aggregate):
   "veut sortir du nucléaire d'ici 2040" vs "demande un moratoire sur les nouveaux réacteurs" — two measures in one policy field.
   "la guerre doit cesser" vs "l'Europe est incapable de peser sur la guerre" — a wish vs a judgment about actors.
 - Different matters, targets, or questions (two different affairs, laws, elections, policies) — even if thematically close.
-- Different concrete events (two separate votes, two separate trials/instances, two separate polls).
+- Different concrete events (two separate votes, two separate trials/instances, two separate polls). A vote is ONE ballot on ONE text: votes on different amendments or sub-amendments, or on an amendment vs the whole bill, are different events even on the same bill and the same day.
+- A statement that bundles several claims vs one of those claims alone ("X said A and criticised B" vs "X criticised B"): the bundle asserts something the other does not — answer false.
 - Materially different numbers as the substance of a statement or proposal: "une aide de 300 euros par foyer" vs "une aide de 1 000 euros par foyer" are two proposals, not one. (An event reported twice is not two events because its numbers are counted differently.)
 - Different PROCEDURAL STAGES of the same affair: a prosecutor's request (réquisition) vs the court's decision, an indictment vs a verdict, a first-instance ruling vs the appeal — each is its own fact.
 
