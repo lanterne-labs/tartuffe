@@ -2420,3 +2420,16 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   most concrete wording, whatever the gate decided (the operator override), then recomputes
   scores; `dm facts ungroup` takes facts out again. Existing facts only regroup through
   `dm facts fold` or these commands.
+
+## Same-position gate: "same" must hold in both orders (2026-10-02)
+
+- A Bardella dry run (no writes) proposed 53 groups, about half wrong: different claims in
+  one area ("stopping immigration first" / a Channel border promise) and bundles grouped
+  with one of their claims. The gate already did this before the same-event rule.
+- The gate reads the second statement against the first, so a pair where one says more
+  than the other often reads as a restatement one way only. `IsSamePosition` now asks again
+  with the statements swapped and groups only when both say same (one more call, only for
+  pairs the first call groups). Golden: 37 cases, 93/111 → 105/111; the two remaining
+  misses are logged as known gaps (an explicit example for one of them broke three others).
+- The fact extractor asks again once (T=0.3) when a reply is not valid JSON: one malformed
+  reply used to fail a handle's whole tweet batch and charge every tweet an attempt.

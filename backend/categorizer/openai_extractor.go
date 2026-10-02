@@ -278,40 +278,55 @@ func isContextOverflowError(err error) bool {
 		strings.Contains(msg, "context_length_exceeded")
 }
 
-// callChatAPIWithPrompt performs a single call to the Chat API with a pre-formatted prompt.
+// extractionTemperatures are the attempts of one extraction call: a reply
+// that is not valid JSON (the local model now and then breaks a key) is asked
+// again once, slightly hotter, before the call fails. A failed call fails the
+// whole document, every tweet of a batch included, and charges each one an
+// attempt (run 112: one malformed reply failed all of a handle's tweets).
+var extractionTemperatures = []float64{0.1, 0.3}
+
+// callChatAPIWithPrompt calls the Chat API with a pre-formatted prompt and
+// parses the facts, retrying once on a reply that does not parse. An error
+// of the call itself is returned at once: the client already retried it, and
+// an outage must keep its meaning (llm.ErrUnavailable).
 func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPrompt string, sourceURL string) ([]backend.Fact, error) {
-	log.Debug().Str("url", m.client.URL).Int("prompt_chars", len(systemPrompt)).Msg("Attempting LLM chat API call for fact extraction")
-	startTime := time.Now()
+	var parseErr error
+	for i, temperature := range extractionTemperatures {
+		log.Debug().Str("url", m.client.URL).Int("prompt_chars", len(systemPrompt)).Float64("temperature", temperature).Msg("Attempting LLM chat API call for fact extraction")
+		startTime := time.Now()
+		jsonContent, _, err := m.client.Chat(ctx, llm.ChatRequest{
+			Messages: []llm.ChatMessage{
+				{Role: "system", Content: systemPrompt},
+			},
+			Temperature: temperature,
+			// outputBudgetTokens (2048) — see the chunk-sizing constants block at the
+			// top of this file. Changing this value MUST also update outputBudgetTokens
+			// so the dynamic chunk sizer keeps reserving the right amount of headroom.
+			MaxTokens: outputBudgetTokens,
+			// Intentionally NO response_format. Local Gemma (llama.cpp) enforces
+			// {"type":"json_object"} strictly — the root must be a JSON object, not
+			// an array — and collapses the prompt's requested array of facts into a
+			// single object, capping yield at 1 fact per article. ParseFactJSON
+			// already tolerates ```json fences and array/object roots.
+		})
+		duration := time.Since(startTime)
+		if err != nil {
+			// A context-overflow 400 surfaces here as an llm.ClientError whose
+			// message carries the body, which is what isContextOverflowError reads.
+			log.Error().Err(err).Dur("duration", duration).Str("url", m.client.URL).Msg("Chat API call failed")
+			return nil, err
+		}
+		log.Debug().Dur("duration", duration).Int("content_chars", len(jsonContent)).Str("url", m.client.URL).Msg("Chat API call successful")
 
-	jsonContent, _, err := m.client.Chat(ctx, llm.ChatRequest{
-		Messages: []llm.ChatMessage{
-			{Role: "system", Content: systemPrompt},
-		},
-		Temperature: 0.1,
-		// outputBudgetTokens (2048) — see the chunk-sizing constants block at the
-		// top of this file. Changing this value MUST also update outputBudgetTokens
-		// so the dynamic chunk sizer keeps reserving the right amount of headroom.
-		MaxTokens: outputBudgetTokens,
-		// Intentionally NO response_format. Local Gemma (llama.cpp) enforces
-		// {"type":"json_object"} strictly — the root must be a JSON object, not
-		// an array — and collapses the prompt's requested array of facts into a
-		// single object, capping yield at 1 fact per article. ParseFactJSON
-		// already tolerates ```json fences and array/object roots.
-	})
-
-	duration := time.Since(startTime)
-	if err != nil {
-		// A context-overflow 400 surfaces here as an llm.ClientError whose
-		// message carries the body, which is what isContextOverflowError reads.
-		log.Error().Err(err).Dur("duration", duration).Str("url", m.client.URL).Msg("Chat API call failed")
-		return nil, err
+		facts, err := ParseFactJSON([]byte(jsonContent), sourceURL, nil)
+		if err == nil {
+			if i > 0 {
+				log.Info().Str("url", sourceURL).Float64("recovered_at_temperature", temperature).Msg("Fact extraction reply parsed after a retry")
+			}
+			return facts, nil
+		}
+		parseErr = err
+		log.Warn().Err(err).Str("url", sourceURL).Float64("temperature", temperature).Msg("Fact extraction reply is not valid JSON; asking again")
 	}
-	log.Debug().Dur("duration", duration).Int("content_chars", len(jsonContent)).Str("url", m.client.URL).Msg("Chat API call successful")
-
-	chunkFacts, err := ParseFactJSON([]byte(jsonContent), sourceURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse facts from chat response content: %w", err)
-	}
-
-	return chunkFacts, nil
+	return nil, fmt.Errorf("failed to parse facts from chat response content: %w", parseErr)
 }

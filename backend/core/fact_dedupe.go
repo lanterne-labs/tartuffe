@@ -46,9 +46,18 @@ func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA,
 // faith", and "contests the qualification of embezzlement" about the same affair
 // all fold; a commitment vs a contrary action, opposing positions, or different
 // matters never do (those pairs are contradiction material and must stay apart).
+//
+// "Same" must hold in both orders: the gate reads the second statement
+// against the first, so a pair where one says more than the other (a bundle
+// and one of its claims, a broad claim and a narrower one in the same area)
+// often reads as a restatement one way only. A restatement reads the same
+// both ways; the second call is made only when the first says same.
 func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
-	prompt := a.buildSamePositionPrompt(subject, factA, factB)
-	return a.askSameGate(ctx, prompt, 0.0)
+	same, err := a.askSameGate(ctx, a.buildSamePositionPrompt(subject, factA, factB), 0.0)
+	if err != nil || !same {
+		return same, err
+	}
+	return a.askSameGate(ctx, a.buildSamePositionPrompt(subject, factB, factA), 0.0)
 }
 
 // Both gate prompts are laid out rules first, per-call data (person, the two
