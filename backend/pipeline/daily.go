@@ -47,7 +47,12 @@ const (
 	// costs ~65 min of GPU (one stance routing per ballot), and an ingest with
 	// no bound of its own ran 28 h (run 111).
 	ingestBudget = 12 * time.Hour
-	runTimezone  = "Europe/Paris"
+	// mergeBudget bounds the stance merge sweep the same way: it visits every
+	// person and took most of the afternoon of run 112, leaving detection,
+	// the audit and the history no time. Swept persons are memoized, so a cut
+	// sweep resumes with the next person on the next run.
+	mergeBudget = 2 * time.Hour
+	runTimezone = "Europe/Paris"
 )
 
 // RunOptions tunes one daily run.
@@ -224,8 +229,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// mis-grouping.
 		mergeOpts := core.DefaultStanceMergeOptions
 		mergeOpts.MaxPersons = b.maxPersons
-		fail(work, "stance-merge", gate.run(work, "stance-merge", func() error {
-			_, err := core.RunStanceMergeSweep(work, storer, stanceMgr, mergeOpts)
+		mergeCtx, cancelMerge := context.WithTimeout(work, mergeBudget)
+		defer cancelMerge()
+		fail(mergeCtx, "stance-merge", gate.run(mergeCtx, "stance-merge", func() error {
+			_, err := core.RunStanceMergeSweep(mergeCtx, storer, stanceMgr, mergeOpts)
 			return err
 		}), "stance merge sweep failed")
 	}

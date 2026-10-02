@@ -2379,7 +2379,9 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   done, charges nothing to the cut item, and returns the context error wrapped with %w.
   The pipeline records such a phase as "stopped at the deadline" (a note, not a step error);
   the next run resumes it from its pending set. Bookkeeping after the phases keeps the
-  original context. `dailyMaxLaws` 30 → 10.
+  original context. `dailyMaxLaws` 30 → 10. The stance merge sweep got the same treatment
+  (`mergeBudget`, 2 h, 2026-10-02) after it used the afternoon of run 112; swept persons are
+  memoized, so a cut sweep resumes with the next person.
 - Lesson: a pgx write with an expired context fails, which hid most "done marker after
   cancel" bugs but also broke the one write that must happen: the rollback of a fact whose
   stance routing was cut now runs under `context.WithoutCancel`.
