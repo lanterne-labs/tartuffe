@@ -37,7 +37,7 @@ func truncateFanoutTables(t *testing.T, storer *PostgresStorer) {
 // other persons (the old unscoped queries considered it globally stanced),
 // duplicates and embedding-less facts must be excluded, and routing a pair
 // must remove it (idempotent, self-terminating). Also pins
-// CountPendingStanceRoutings to the same definition.
+// the orphan listing the manual `dm facts assign-stances` uses.
 func TestStanceFanoutPendingSet(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()
@@ -131,18 +131,11 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 	require.Len(t, orphansB, 1)
 	require.Equal(t, voteFact, orphansB[0].ID)
 
-	count, err := storer.CountPendingStanceRoutings(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 2, count, "one pending routing per unrouted person")
-
 	// Routing the fact for person B removes exactly B's pending pair.
 	addStanceWithFact(otherB, voteFact, "loi A")
 	orphansB, err = storer.ListOrphanFactsForPerson(ctx, otherB)
 	require.NoError(t, err)
 	require.Empty(t, orphansB, "routed pair leaves the pending set")
-	count, err = storer.CountPendingStanceRoutings(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
 
 	persons, err = storer.ListPersonsWithOrphanFacts(ctx)
 	require.NoError(t, err)

@@ -168,23 +168,22 @@ func (fanoutStorer) ListOrphanFactsForPerson(context.Context, int64) ([]StanceRo
 	}, nil
 }
 
-func (fanoutStorer) CountPendingStanceRoutings(context.Context) (int, error) { return 0, nil }
-
-// TestStanceFanout_StopsAtUnavailableLLM: the fan-out stops at the first
-// routing the LLM could not serve, returns ErrUnavailable, leaves that fact
-// unlinked (pending) and does not walk the remaining facts or rebundle.
-func TestStanceFanout_StopsAtUnavailableLLM(t *testing.T) {
+// TestAssignOrphans_StopsAtUnavailableLLM: the orphan routing stops at the
+// first routing the LLM could not serve, returns ErrUnavailable, leaves that
+// fact unlinked and does not walk the remaining facts or rebundle.
+func TestAssignOrphans_StopsAtUnavailableLLM(t *testing.T) {
 	storer := pensionStorer()
 	sm, o := newOutageManager(t, storer, answers(map[string]any{analyzePrompt: nil}))
 	rebundled := false
 	rebundle := func(context.Context, PersonRecord) (int64, int64, int64) { rebundled = true; return 0, 0, 0 }
 
-	used, err := RunStanceFanout(context.Background(), fanoutStorer{}, sm, rebundle, 10)
+	person := PersonRecord{ID: 1, Name: "p"}
+	ps, err := AssignOrphansForPerson(context.Background(), fanoutStorer{}, sm, rebundle, person, false, nil)
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
-	if used != 0 {
-		t.Errorf("used = %d, want 0: the interrupted routing is not charged to the budget", used)
+	if ps.OrphansAssigned != 0 || ps.OrphanFailures != 0 {
+		t.Errorf("stats = %+v, want nothing counted: the interrupted routing is not a failure", ps)
 	}
 	if n := o.count(topicPrompt); n != 1 {
 		t.Errorf("topic assignments = %d, want 1: fact 21 must not be routed after the outage", n)
@@ -194,10 +193,10 @@ func TestStanceFanout_StopsAtUnavailableLLM(t *testing.T) {
 	}
 }
 
-// TestStanceFanout_StopsAtDeadline: an expired context routes nothing and
+// TestAssignOrphans_StopsAtDeadline: an expired context routes nothing and
 // returns the deadline; a run cancelled under a routing stops there without
 // charging the fact as a failure or routing the next one.
-func TestStanceFanout_StopsAtDeadline(t *testing.T) {
+func TestAssignOrphans_StopsAtDeadline(t *testing.T) {
 	storer := pensionStorer()
 	ctx, cut := context.WithCancel(context.Background())
 	defer cut()
@@ -211,17 +210,18 @@ func TestStanceFanout_StopsAtDeadline(t *testing.T) {
 
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	used, err := RunStanceFanout(expired, fanoutStorer{}, sm, rebundle, 10)
-	if !errors.Is(err, context.DeadlineExceeded) || used != 0 || o.count(topicPrompt) != 0 {
-		t.Fatalf("used=%d err=%v topic calls=%d; want nothing routed and the deadline", used, err, o.count(topicPrompt))
+	person := PersonRecord{ID: 1, Name: "p"}
+	ps, err := AssignOrphansForPerson(expired, fanoutStorer{}, sm, rebundle, person, false, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || ps.OrphansAssigned != 0 || o.count(topicPrompt) != 0 {
+		t.Fatalf("stats=%+v err=%v topic calls=%d; want nothing routed and the deadline", ps, err, o.count(topicPrompt))
 	}
 
-	used, err = RunStanceFanout(ctx, fanoutStorer{}, sm, rebundle, 10)
+	ps, err = AssignOrphansForPerson(ctx, fanoutStorer{}, sm, rebundle, person, false, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want the cancellation", err)
 	}
-	if used != 0 || o.count(topicPrompt) != 1 || len(storer.facts[1]) != 1 {
-		t.Errorf("used=%d topic calls=%d facts=%+v; want the cut routing uncounted and fact 21 not routed", used, o.count(topicPrompt), storer.facts[1])
+	if ps.OrphansAssigned != 0 || ps.OrphanFailures != 0 || o.count(topicPrompt) != 1 || len(storer.facts[1]) != 1 {
+		t.Errorf("stats=%+v topic calls=%d facts=%+v; want the cut routing uncounted and fact 21 not routed", ps, o.count(topicPrompt), storer.facts[1])
 	}
 }
 

@@ -2435,3 +2435,25 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   misses are logged as known gaps (an explicit example for one of them broke three others).
 - The fact extractor asks again once (T=0.3) when a reply is not valid JSON: one malformed
   reply used to fail a handle's whole tweet batch and charge every tweet an attempt.
+
+## The nightly stance fan-out phase is removed (2026-10-03)
+
+- The fan-out routed (person, fact) pairs that were in none of the person's stances. It was
+  added when one vote fact belonged to many persons. Since one fact per voter, insertion routes
+  every fact to its stance or rolls the fact back, so the phase found 2 facts in run 113.
+- An orphan is now an invariant violation: the `facts_without_stance` and
+  `stance_routings_pending_total` gauges report it, and `dm facts assign-stances` fixes it.
+  The pipeline has 8 phases.
+
+## Nested grouping was tried and dropped (2026-10-03)
+
+- Nested rule: a fuller wording that contains another one joins it. Two versions were tried:
+  a difference list ("what only A says, what only B says") and a one-direction question
+  with the fuller statement first.
+- The difference list failed: the local model lists trivial differences ("menaces de mort"
+  vs "menaces de mort explicites"), so no pair groups (golden 69/111).
+- The one-direction question scored 102/111. On a dry run of 5 persons, judged with one
+  definition, it merged different claims in 36 % of its groups; the deployed strict check
+  (both orders must say same) did so in 24 %. The strict check stays.
+- Lesson: compare two rules on the same data with the same judge definition. Two judge
+  runs with two definitions gave numbers that looked comparable and were not.

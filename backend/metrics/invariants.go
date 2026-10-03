@@ -88,8 +88,9 @@ func collectStanceInvariant(ctx context.Context, pool *pgxpool.Pool) {
 			Msg("Facts without a stance detected — invariant violation; run `dm facts assign-stances` (a fact with a NULL embedding is invisible to it — regenerate its embedding first)")
 	}
 
-	// Per-(person, fact) backlog: same definition as the fan-out's pending set
-	// (person-scoped orphan queries). Non-zero while the nightly fan-out drains.
+	// Per-(person, fact) view: a fact not in one of its persons' stances
+	// (person-scoped orphan queries). Non-zero is an invariant violation; run
+	// `dm facts assign-stances`.
 	var pending int64
 	err = pool.QueryRow(queryCtx, `
 		SELECT COUNT(*) FROM (

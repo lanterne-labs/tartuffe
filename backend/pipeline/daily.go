@@ -70,14 +70,13 @@ type RunOptions struct {
 //
 // Phases in order:
 //  1. ingest                    — every plugin (queue-scoped targets)
-//  2. stance fan-out            — unrouted (person, fact) pairs into that person's stances
-//  3. stance merge sweep
-//  4. stale-verdict eviction + plugin pair production + contradiction detection
-//  5. duplicate repoint + contradiction regroup
-//  6. contradiction audit (5-day cadence)
-//  7. translation phase
-//  8. history                   — date-range plugins, one month further back
-//  9. backfill                  — every plugin, deadline-bound
+//  2. stance merge sweep
+//  3. stale-verdict eviction + plugin pair production + contradiction detection
+//  4. duplicate repoint + contradiction regroup
+//  5. contradiction audit (5-day cadence)
+//  6. translation phase
+//  7. history                   — date-range plugins, one month further back
+//  8. backfill                  — every plugin, deadline-bound
 //
 // When a phase reports the LLM unavailable (llm.ErrUnavailable) the run waits
 // for the LLM (llm.WaitForPrimary) until the run deadline, then runs the phase
@@ -207,22 +206,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// once and skip them rather than fail each one with the same cause.
 		fail(work, "stance-manager", err, "stance manager unavailable; skipping the stance and detection phases")
 	} else {
-		rebundle, rbErr := personRebundler(d)
-		fail(work, "bundler", rbErr, "contradiction bundler unavailable")
-
-		// Phase 2: stance fan-out (mirror-py3). Routes every (person, fact)
-		// mention pair missing from that person's stances into their own
-		// stance system (budgeted per night, derived pending set,
-		// self-terminating). Runs before the merge sweep
-		// so freshly created deputy stances get merged the same night, and
-		// before detection so stance-recorded contradictions land first.
-		if rebundle != nil {
-			fail(work, "stance-fanout", gate.run(work, "stance-fanout", budgeted(b.fanout, func(left int) (int, error) {
-				return core.RunStanceFanout(work, storer, stanceMgr, rebundle, left)
-			})), "stance fan-out failed")
-		}
-
-		// Phase 3: stance merge sweep. Looks for stances that should be merged
+		// Phase 2: stance merge sweep. Looks for stances that should be merged
 		// per LLM-vetted centroid clustering, applies the merges, and re-detects
 		// contradictions across previously-separated facts. Catches the
 		// cross-stance contradictions our per-fact assignTopic missed by
@@ -237,7 +221,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "stance merge sweep failed")
 	}
 
-	// Phase 4: contradiction detection over unchecked pairs across all
+	// Phase 3: contradiction detection over unchecked pairs across all
 	// persons, with the inline verification pass gating each YES before it is
 	// recorded. Re-judge of stale negatives: a NO is only final under the
 	// rulebook that produced it. Every negative verdict carries the judge
@@ -276,7 +260,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "contradiction detection failed")
 	}
 
-	// Phase 5a: repoint contradictions off any facts the contradiction-pass
+	// Phase 4a: repoint contradictions off any facts the contradiction-pass
 	// dedup just marked as duplicates, so the redundant rows stop inflating
 	// scores. Best-effort — failures are logged, never aborting the pipeline.
 	if processed, repointed, dropped, rErr := storer.RepointDuplicates(work, true); rErr != nil {
@@ -286,7 +270,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 			Msg("Daily pipeline: repointed contradictions off duplicate facts")
 	}
 
-	// Phase 5b: regroup contradictions into N-ary groups (one base fact + N
+	// Phase 4b: regroup contradictions into N-ary groups (one base fact + N
 	// contradicting facts) and (re)generate each group's merged summary. Runs
 	// after detection + duplicate-repointing so it sees the final pairwise
 	// set. Best-effort — failures are logged, never aborting the pipeline;
@@ -303,7 +287,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}
 	}
 
-	// Phase 6: contradiction auditor (auditCadence). Re-judges previously
+	// Phase 5: contradiction auditor (auditCadence). Re-judges previously
 	// recorded contradictions and AUTO-EVICTS confirmed false positives
 	// (Apply:true). A row is deleted only when THREE signals agree: the audit
 	// verdict is remove, a confirming second audit pass also says remove, and
@@ -320,14 +304,14 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "contradiction audit failed")
 	}
 
-	// Phase 7: translation — decoupled from generation. Fills missing or
+	// Phase 6: translation — decoupled from generation. Fills missing or
 	// stale translations for facts, stances and contradictions into the
 	// generic translations table for every target language.
 	fail(work, "translate", gate.run(work, "translate", budgeted(b.translate, func(left int) (int, error) {
 		return runTranslate(work, storer, left)
 	})), "translation phase failed")
 
-	// Phase 8: history. Every plugin that reads its source by date range goes
+	// Phase 7: history. Every plugin that reads its source by date range goes
 	// one month further back for the queue targets (see runHistory). Before
 	// the backfill, which takes whatever time is left.
 	if b.history {
@@ -336,7 +320,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}))
 	}
 
-	// Phase 9 (last, deadline-bound): plugin backfills. An outage the run did
+	// Phase 8 (last, deadline-bound): plugin backfills. An outage the run did
 	// not recover from is already in backfill.Errs, under its plugin.
 	if b.backfill {
 		var backfill BackfillRun
@@ -434,7 +418,6 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 type runBudgets struct {
 	maxTargets int  // 0 = the whole queue
 	maxItems   int  // per-target item cap for plugins; 0 = plugin default
-	fanout     int  // (person, fact) stance routings
 	maxPersons int  // persons per sweep (merge, detection, regroup); 0 = all
 	rejudge    int  // stale negative verdicts re-opened; 0 = skip
 	audit      bool // run the auditor when due
@@ -445,10 +428,9 @@ type runBudgets struct {
 
 func budgets(opts RunOptions) runBudgets {
 	if opts.Smoke {
-		return runBudgets{maxTargets: 1, maxItems: 1, fanout: 3, maxPersons: 1, translate: 5}
+		return runBudgets{maxTargets: 1, maxItems: 1, maxPersons: 1, translate: 5}
 	}
 	return runBudgets{
-		fanout:    core.StanceFanoutNightlyBudget,
 		rejudge:   pairRejudgeNightlyBudget,
 		audit:     true,
 		translate: translateNightlyLimit,
@@ -468,23 +450,6 @@ func QueueTargets(ctx context.Context, storer *storage.PostgresStorer) ([]plugin
 		targets = append(targets, plugins.Target{PersonID: e.PersonID, Name: e.Name, EntityType: e.EntityType})
 	}
 	return targets, nil
-}
-
-// personRebundler builds the per-person contradiction rebundling callback the
-// stance sweeps take after they change a person's stances.
-func personRebundler(d *deps.Deps) (core.PersonRebundler, error) {
-	embedder, err := d.Embedder()
-	if err != nil {
-		return nil, fmt.Errorf("embedder: %w", err)
-	}
-	bundler, err := contradiction.NewBundlerFromEnv(d.Storer, embedder)
-	if err != nil {
-		return nil, fmt.Errorf("bundler: %w", err)
-	}
-	storer := d.Storer
-	return func(ctx context.Context, p core.PersonRecord) (fast, llm, failed int64) {
-		return contradiction.RebundlePerson(ctx, storer, bundler, storage.PersonInfo{ID: p.ID, Name: p.Name, EntityType: p.EntityType})
-	}, nil
 }
 
 // runAuditIfDue runs the contradiction auditor at most once per cadence. The
