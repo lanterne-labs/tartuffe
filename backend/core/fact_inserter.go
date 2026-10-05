@@ -42,8 +42,8 @@ type StanceProcessor interface {
 type FactInserter struct {
 	storer          Storer
 	stanceProcessor StanceProcessor
-	groupStorer     GroupStorer       // Set by EnableDedupe; stores the group a same-claim fact joins
-	dedupeJudge     SamePositionJudge // Set by EnableDedupe; the mandatory last decider on grouping
+	groupStorer     GroupStorer         // Set by EnableDedupe; stores the group a same-claim fact joins
+	dedupeJudge     SameOccurrenceJudge // Set by EnableDedupe; the mandatory last decider on grouping
 }
 
 // dedupeEmbeddingFloor is the cosine similarity at or above which an existing
@@ -69,11 +69,9 @@ type Storer interface {
 	// FindOrInsertPersonWithType resolves a person name to a person ID with entity type.
 	FindOrInsertPersonWithType(ctx context.Context, name string, entityType string) (int64, error)
 
-	// FindSimilarActiveFacts searches for active (non-duplicate) facts similar to the given embedding.
-	// FindSimilarActiveFacts returns the person's active facts within the
-	// embedding distance threshold OR whose text trigram-matches factText at
-	// least textFloor, closest first.
-	FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error)
+	// FindSimilarActiveFacts returns the active facts that match q, closest
+	// first (see SimilarFactQuery).
+	FindSimilarActiveFacts(ctx context.Context, q SimilarFactQuery) ([]SimilarFact, error)
 
 	// InsertFact inserts a new fact into the database.
 	InsertFact(ctx context.Context, input StoreFactInput) (factID int64, err error)
@@ -94,6 +92,7 @@ type Storer interface {
 // separate from Storer so test fakes and callers that don't group stay
 // untouched.
 type GroupStorer interface {
+	ClaimEvidenceStorer
 	// MostConcreteFact returns, among factIDs, the fact with the most
 	// concrete text: the one a group shows as its parent.
 	MostConcreteFact(ctx context.Context, factIDs []int64) (int64, error)
@@ -118,6 +117,23 @@ type StoreFactInput struct {
 	SourceType           string
 	Metadata             map[string]any
 	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
+}
+
+// SimilarFactQuery selects the grouping candidates of a new fact: the active
+// facts of PersonIDs within MaxDistance (cosine) of Embedding OR whose text
+// trigram-matches Text at least TextFloor. When Evidence is set, a candidate
+// must also meet the evidence rule against the new fact's source (Quote,
+// PublishedAt).
+type SimilarFactQuery struct {
+	PersonIDs   []int64
+	Embedding   []float32
+	MaxDistance float64
+	Text        string
+	TextFloor   float64
+	Evidence    *GroupEvidence
+	Quote       string
+	PublishedAt *time.Time
+	Limit       int
 }
 
 // SimilarFact represents a fact that is similar to a given embedding.
@@ -146,13 +162,13 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 	}
 }
 
-// EnableDedupe turns on claim grouping: an incoming fact that the LLM
-// same-position gate (FactDedupeAdjudicator.IsSamePosition) judges a
-// restatement of one of the subject's active facts is stored (text, source,
-// quote all preserved) and grouped with it; the group's parent is whichever
-// of the two is more concrete. Only the parent is active; every
-// contradiction judge sees the members alongside it. Embedding and text
-// similarity only nominate candidates, the gate always decides. If the
+// EnableDedupe turns on claim grouping: an incoming fact that reports an
+// occurrence one of the subject's active facts already reports (see
+// claim_evidence.go) is stored (text, source, quote all preserved) and
+// grouped with it; the group's parent is whichever of the two is more
+// concrete. Only the parent is active; every contradiction judge sees the
+// members alongside it. Embedding and text similarity only nominate
+// candidates, the gate always decides. If the
 // OPEN_AI_ env is unconfigured it logs and leaves dedupe off: every fact is
 // inserted standalone. Production ingestion paths call this; tests that
 // don't, keep the deterministic no-dedupe behavior.
@@ -254,52 +270,21 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
-	// Same-claim check before inserting: embedding distance and text
-	// similarity nominate the subject's active facts as candidates, and the
-	// LLM same-position gate is the mandatory last decider — the stance-blind
-	// embedding_text puts same-topic-but-different claims well above 0.80
-	// too. A confirmed hit does not drop the fact: groupTarget records the
-	// matched fact and the new one joins its group after insertion.
+	// Same-occurrence check before inserting: embedding distance and text
+	// similarity nominate the subject's active facts as candidates, storage
+	// keeps the ones that meet the evidence rule, and the LLM gate is the
+	// mandatory last decider (see claim_evidence.go). A confirmed hit does
+	// not drop the fact: groupTarget records the matched fact and the new
+	// one joins its group after insertion. Only a free-text fact is grouped:
+	// a vote is its own record.
 	var groupTarget *SimilarFact
-	if len(input.Embedding) > 0 && fi.dedupeEnabled() {
-		similar, err := fi.storer.FindSimilarActiveFacts(ctx, []int64{subjectID}, input.Embedding, 1.0-dedupeEmbeddingFloor, input.NormalizedFactText, dedupeTextSimilarityFloor, 5)
+	groupVerdict := OccurrenceDifferent
+	if len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
+		target, verdict, err := fi.findGroupTarget(ctx, subjectID, input)
 		if err != nil {
-			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
-				Msg("Dedup check failed, proceeding with insertion")
-		} else if len(similar) == 0 {
-			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeNoCandidates)
-		} else {
-			for _, sf := range similar {
-				same, jErr := fi.askDedupeGate(ctx, input, sf.Text)
-				if errors.Is(jErr, llm.ErrUnavailable) {
-					// Dedupe is decided once, at insert time: inserting the
-					// fact ungrouped would make the outage's answer final.
-					return 0, 0, fmt.Errorf("fact-dedupe gate: %w", jErr)
-				}
-				if jErr != nil {
-					log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
-						Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
-					metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
-					continue
-				}
-				if same {
-					log.Info().
-						Int64("existing_fact_id", sf.ID).
-						Float64("distance", sf.Distance).
-						Str("new_verb", input.CanonicalVerb).
-						Str("existing_verb", sf.CanonicalVerb).
-						Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
-						Msg("Same-claim fact (LLM gate)")
-					metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
-					sfCopy := sf
-					groupTarget = &sfCopy
-					break
-				}
-			}
-			if groupTarget == nil {
-				metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDistinct)
-			}
+			return 0, 0, err
 		}
+		groupTarget, groupVerdict = target, verdict
 	}
 
 	// Insert the fact
@@ -336,7 +321,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// matched fact's stance slot. On any fold error we fall through to normal
 	// stance processing (fail-open).
 	if groupTarget != nil {
-		if foldErr := fi.foldNewFact(ctx, subjectID, factID, input, *groupTarget); foldErr != nil {
+		if foldErr := fi.foldNewFact(ctx, subjectID, factID, input, *groupTarget, groupVerdict); foldErr != nil {
 			log.Warn().Err(foldErr).Int64("fact_id", factID).Int64("matched_fact_id", groupTarget.ID).
 				Msg("Grouping failed; falling back to normal stance routing")
 		} else {
@@ -366,32 +351,109 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	return factID, subjectID, nil
 }
 
-// askDedupeGate asks the judge whether existing states the same position as
-// the incoming fact. A failed call is retried once: dedupe is decided exactly
+// findGroupTarget returns the active fact the incoming fact reports again,
+// with the gate's verdict, or nil. An unavailable LLM is an error: grouping
+// is decided once, at insert time, so inserting the fact ungrouped would make
+// the outage's answer final.
+func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, input StoreFactInput) (*SimilarFact, OccurrenceVerdict, error) {
+	rule, err := groupEvidenceRule()
+	if err != nil {
+		return nil, OccurrenceDifferent, err
+	}
+	similar, err := fi.storer.FindSimilarActiveFacts(ctx, SimilarFactQuery{
+		PersonIDs:   []int64{subjectID},
+		Embedding:   input.Embedding,
+		MaxDistance: 1.0 - dedupeEmbeddingFloor,
+		Text:        input.NormalizedFactText,
+		TextFloor:   dedupeTextSimilarityFloor,
+		Evidence:    &rule,
+		Quote:       input.OriginalQuote,
+		PublishedAt: input.PublishedAt,
+		Limit:       5,
+	})
+	if err != nil {
+		log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
+			Msg("Dedup check failed, proceeding with insertion")
+		return nil, OccurrenceDifferent, nil
+	}
+	if len(similar) == 0 {
+		metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeNoCandidates)
+		return nil, OccurrenceDifferent, nil
+	}
+	ids := make([]int64, len(similar))
+	for i, sf := range similar {
+		ids[i] = sf.ID
+	}
+	sources, err := fi.groupStorer.LoadClaimSources(ctx, ids, rule.SourceTypes)
+	if err != nil {
+		log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
+			Msg("Loading candidate sources failed, proceeding with insertion")
+		return nil, OccurrenceDifferent, nil
+	}
+	incoming := ClaimEvidence{Text: input.NormalizedFactText, Sources: []ClaimSource{{
+		Outlet: OutletOf(input.SourceURL), Quote: input.OriginalQuote, PublishedAt: input.PublishedAt,
+	}}}
+	for _, sf := range similar {
+		existing := ClaimEvidence{Text: sf.Text, Sources: sources[sf.ID]}
+		verdict, jErr := fi.askDedupeGate(ctx, existing, incoming)
+		if errors.Is(jErr, llm.ErrUnavailable) {
+			return nil, OccurrenceDifferent, fmt.Errorf("fact-dedupe gate: %w", jErr)
+		}
+		if jErr != nil {
+			log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
+				Msg("LLM fact-dedupe check failed twice, proceeding with insertion")
+			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
+			continue
+		}
+		if verdict.Groupable() {
+			log.Info().
+				Int64("existing_fact_id", sf.ID).
+				Float64("distance", sf.Distance).
+				Bool("contained", verdict == OccurrenceContained).
+				Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
+				Msg("Same-occurrence fact (LLM gate)")
+			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
+			sfCopy := sf
+			return &sfCopy, verdict, nil
+		}
+	}
+	metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDistinct)
+	return nil, OccurrenceDifferent, nil
+}
+
+// askDedupeGate asks the judge whether existing and the incoming fact report
+// one occurrence. A failed call is retried once: grouping is decided exactly
 // once, at insert time, so a transient LLM failure would otherwise be a
 // permanent miss.
-func (fi *FactInserter) askDedupeGate(ctx context.Context, input StoreFactInput, existing string) (bool, error) {
-	same, err := fi.dedupeJudge.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
+func (fi *FactInserter) askDedupeGate(ctx context.Context, existing, incoming ClaimEvidence) (OccurrenceVerdict, error) {
+	verdict, err := fi.dedupeJudge.IsSameOccurrence(ctx, existing, incoming)
 	if err == nil {
-		return same, nil
+		return verdict, nil
 	}
 	log.Warn().Err(err).Msg("LLM fact-dedupe check failed, retrying once")
-	return fi.dedupeJudge.IsSamePosition(ctx, input.SubjectEntity, existing, input.NormalizedFactText)
+	return fi.dedupeJudge.IsSameOccurrence(ctx, existing, incoming)
 }
 
 func (fi *FactInserter) dedupeEnabled() bool {
 	return fi.dedupeJudge != nil && fi.groupStorer != nil
 }
 
-// foldNewFact puts a freshly inserted same-claim fact in one group with the
-// active fact it restates. The more concrete of the two is the group's
-// parent: when the new wording carries more detail it is promoted and the
-// matched fact (with any members) moves under it.
-func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int64, input StoreFactInput, matched SimilarFact) error {
+// foldNewFact puts a freshly inserted fact in one group with the active fact
+// it reports again. The more concrete of the two is the group's parent: when
+// the new wording carries more detail it is promoted and the matched fact
+// (with any members) moves under it. For a contained pair the fuller fact is
+// the parent, so that no claim is hidden.
+func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int64, input StoreFactInput, matched SimilarFact, verdict OccurrenceVerdict) error {
 	gs := fi.groupStorer
-	parent, err := gs.MostConcreteFact(ctx, []int64{matched.ID, newFactID})
-	if err != nil {
-		return err
+	var parent int64
+	if verdict == OccurrenceContained {
+		parent = []int64{matched.ID, newFactID}[fullerFact(matched.Text, input.NormalizedFactText)]
+	} else {
+		var err error
+		parent, err = gs.MostConcreteFact(ctx, []int64{matched.ID, newFactID})
+		if err != nil {
+			return err
+		}
 	}
 	from, into := newFactID, matched.ID
 	if parent == newFactID {

@@ -206,6 +206,75 @@ func (s *PostgresStorer) InvalidateEmbeddings(ctx context.Context) (nulled, stan
 	return updateRes.RowsAffected(), deleteRes.RowsAffected(), nil
 }
 
+// ListGroupEvidencePairs returns the subset of pairs (as given) that meet the
+// evidence rule: each fact has an own source of rule.SourceTypes, and two such
+// sources have quotes of trigram similarity >= rule.QuoteFloor or publication
+// dates at most rule.MaxDateGapDays apart.
+func (s *PostgresStorer) ListGroupEvidencePairs(ctx context.Context, pairs [][2]int64, rule core.GroupEvidence) ([][2]int64, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	as := make([]int64, len(pairs))
+	bs := make([]int64, len(pairs))
+	for i, p := range pairs {
+		as[i], bs[i] = p[0], p[1]
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.a, p.b
+		FROM unnest($1::bigint[], $2::bigint[]) AS p(a, b)
+		WHERE EXISTS (
+		      SELECT 1
+		      FROM fact_sources x
+		      JOIN fact_sources y ON y.fact_id = p.b AND y.source_type = ANY($3)
+		      WHERE x.fact_id = p.a AND x.source_type = ANY($3)
+		        AND (similarity(x.original_quote, y.original_quote) >= $4
+		             OR abs(x.published_at::date - y.published_at::date) <= $5)
+		  )`, as, bs, rule.SourceTypes, rule.QuoteFloor, rule.MaxDateGapDays)
+	if err != nil {
+		return nil, fmt.Errorf("listing group-evidence pairs: %w", err)
+	}
+	defer rows.Close()
+	var out [][2]int64
+	for rows.Next() {
+		var p [2]int64
+		if err := rows.Scan(&p[0], &p[1]); err != nil {
+			return nil, fmt.Errorf("scanning group-evidence pair: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// LoadClaimSources returns, per fact, its sources of sourceTypes as the
+// grouping gate reads them: oldest first, at most 3 per fact.
+func (s *PostgresStorer) LoadClaimSources(ctx context.Context, factIDs []int64, sourceTypes []string) (map[int64][]core.ClaimSource, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT fact_id, source_url, COALESCE(original_quote, ''), published_at
+		FROM (
+			SELECT fs.*, row_number() OVER (PARTITION BY fact_id ORDER BY published_at NULLS LAST, id) AS rn
+			FROM fact_sources fs
+			WHERE fact_id = ANY($1) AND source_type = ANY($2)
+		) t
+		WHERE rn <= 3
+		ORDER BY fact_id, rn`, factIDs, sourceTypes)
+	if err != nil {
+		return nil, fmt.Errorf("loading claim sources: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64][]core.ClaimSource{}
+	for rows.Next() {
+		var id int64
+		var sourceURL string
+		var src core.ClaimSource
+		if err := rows.Scan(&id, &sourceURL, &src.Quote, &src.PublishedAt); err != nil {
+			return nil, fmt.Errorf("scanning claim source: %w", err)
+		}
+		src.Outlet = core.OutletOf(sourceURL)
+		out[id] = append(out[id], src)
+	}
+	return out, rows.Err()
+}
+
 // ListTextSimilarFactPairs returns the pairs among factIDs whose fact_text
 // trigram similarity is at least floor, as [smaller id, larger id]. The
 // pg_trgm similarity runs in SQL over the given ids only.

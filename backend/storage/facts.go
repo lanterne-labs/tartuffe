@@ -75,16 +75,22 @@ func (s *PostgresStorer) LinkPersonsToSourceMention(ctx context.Context, sourceI
 	return nil
 }
 
-// FindSimilarActiveFacts searches for active (non-duplicate) facts similar to the given embedding
-// for the specified persons, using cosine distance threshold.
-// threshold parameter is cosine distance (1 - cosine_similarity), e.g., 0.20 for 80% similarity.
-// Excludes facts that are the specific side of a 'duplicate' relation in fact_relations.
-// Each hit carries its canonical verb.
-// Returns up to limit results (default 20).
-func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]core.SimilarFact, error) {
+// FindSimilarActiveFacts returns the active facts (not the specific side of a
+// 'duplicate' relation) that match q (see core.SimilarFactQuery), closest
+// first. Each hit carries its canonical verb. Returns up to q.Limit results
+// (default 20).
+func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, q core.SimilarFactQuery) ([]core.SimilarFact, error) {
 	timer := metrics.NewQueryTimer("find_similar_active_facts")
 	start := time.Now()
 
+	ev := core.GroupEvidence{}
+	if q.Evidence != nil {
+		ev = *q.Evidence
+		if len(ev.SourceTypes) == 0 {
+			return nil, fmt.Errorf("similar-fact query: the evidence rule needs at least one source type")
+		}
+	}
+	limit := q.Limit
 	if limit <= 0 {
 		limit = 20
 	}
@@ -95,6 +101,8 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	// the same quote embedded at cosine distance 0.47 from itself under two
 	// slugs), so near-verbatim restatements often fall outside the embedding
 	// window while their text still matches; the LLM gate decides either way.
+	// The evidence rule ($7 = true) is applied before the LIMIT, so a near
+	// candidate without evidence does not hide a farther one with it.
 	query := `
 		WITH PersonFacts AS (
 			SELECT DISTINCT fs.fact_id
@@ -114,8 +122,15 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 		),
 		Hits AS (
 			SELECT * FROM Active
-			WHERE distance <= $3
-			   OR ($5 <> '' AND similarity(fact_text, $5) >= $6)
+			WHERE (distance <= $3
+			       OR ($5 <> '' AND similarity(fact_text, $5) >= $6))
+			  AND (NOT $7 OR EXISTS (
+			      SELECT 1 FROM fact_sources qs
+			      WHERE qs.fact_id = Active.id
+			        AND qs.source_type = ANY($8)
+			        AND (similarity(qs.original_quote, $9) >= $10
+			             OR abs(qs.published_at::date - $11::date) <= $12)
+			  ))
 			ORDER BY distance
 			LIMIT $4
 		)
@@ -125,12 +140,18 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, personIDs [
 	`
 
 	rows, err := s.pool.Query(ctx, query,
-		personIDs,
-		pgvector.NewVector(embedding),
-		threshold,
+		q.PersonIDs,
+		pgvector.NewVector(q.Embedding),
+		q.MaxDistance,
 		limit,
-		factText,
-		textFloor,
+		q.Text,
+		q.TextFloor,
+		q.Evidence != nil,
+		ev.SourceTypes,
+		q.Quote,
+		ev.QuoteFloor,
+		q.PublishedAt,
+		ev.MaxDateGapDays,
 	)
 	if err != nil {
 		timer.ObserveDuration(err)

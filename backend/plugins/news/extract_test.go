@@ -72,7 +72,7 @@ func (failingFactStorer) FindOrInsertPersons(context.Context, []string) ([]int64
 func (failingFactStorer) FindOrInsertPersonWithType(context.Context, string, string) (int64, error) {
 	return 0, errStoreDown
 }
-func (failingFactStorer) FindSimilarActiveFacts(context.Context, []int64, []float32, float64, string, float64, int) ([]core.SimilarFact, error) {
+func (failingFactStorer) FindSimilarActiveFacts(context.Context, core.SimilarFactQuery) ([]core.SimilarFact, error) {
 	return nil, errStoreDown
 }
 func (failingFactStorer) InsertFact(context.Context, core.StoreFactInput) (int64, error) {

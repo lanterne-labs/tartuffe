@@ -19,12 +19,15 @@ var (
 
 var factsReviewGroupsCmd = &cobra.Command{
 	Use:   "review-groups",
-	Short: "Re-judge claim-group memberships with the current same-position gate",
-	Long: `Re-checks every claim group that gained a member since --since: each member is
-judged against the group's parent and the members already kept, by majority,
-with order-swap agreement on a "different" verdict. Members that no longer
-belong are un-grouped (--apply): they become active facts again, in the
-parent's stance. Nothing is deleted.
+	Short: "Re-judge claim-group memberships with the current grouping rule",
+	Long: `Re-checks every claim group that gained a member since --since. A member
+needs evidence with another fact of the group: free-text source quotes that
+overlap, or publication dates at most 7 days apart. A member without it (a
+vote, a restatement weeks later) leaves without an LLM call. The other
+members are judged by the occurrence gate, which reads the quotes, dates and
+outlets, against the group's parent and the members already kept, by
+majority. Members that no longer belong are un-grouped (--apply): they become
+active facts again, in the parent's stance. Nothing is deleted.
 
 Examples:
   ./dm facts review-groups --since 2026-09-17
@@ -58,7 +61,7 @@ func runFactsReviewGroups(cmd *cobra.Command, args []string) error {
 
 	judge, err := core.NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
-		return fmt.Errorf("same-position gate required: %w", err)
+		return fmt.Errorf("occurrence gate required: %w", err)
 	}
 
 	stats, err := core.ReviewClaimGroups(ctx, storer, judge, core.GroupReviewOptions{Since: since, OnlyIDs: factsReviewGroupsOnly, Apply: factsReviewGroupsApply})
@@ -70,6 +73,7 @@ func runFactsReviewGroups(cmd *cobra.Command, args []string) error {
 		{Label: "Intact", Value: stats.Intact},
 		{Label: "Trimmed (some members un-grouped)", Value: stats.Trimmed},
 		{Label: "Dissolved (every member un-grouped)", Value: stats.Dissolved},
+		{Label: "Members out: no evidence in the group", Value: stats.NoEvidence},
 		{Label: "Members un-grouped", Value: stats.Ungrouped},
 		{Label: "Gate failures (skipped)", Value: stats.GateFailures},
 	})

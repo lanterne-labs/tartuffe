@@ -50,6 +50,9 @@ Examples:
 
 func init() {
 	ingestCmd.AddCommand(ingestFilesCmd)
+	// The files hold LLM-extracted free text (the news cache): a fact needs a
+	// quote, and it can be grouped like a news fact.
+	core.RequireQuoteForSourceType("file")
 
 	// Source selection (either --dir or --file required)
 	ingestFilesCmd.Flags().String("dir", "", "directory containing JSON files to process")

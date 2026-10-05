@@ -1,0 +1,19 @@
+Two facts about one person belong to one GROUP only when they are two reports of ONE OCCURRENCE: the same claim made, the same act done, or the same event, on the same occasion. A group is shown as "reported N times" with the list of outlets.
+
+SAME (one occurrence):
+- The same statement on the same occasion (same speech, interview, post, letter, session), reported by two outlets or in two wordings or two languages. A direct quote in one and a paraphrase in the other is still the same statement.
+- The same act or event (the same complaint, visit, decree, ruling, poll, agreement), even when the two reports give different details or count its numbers differently.
+- A later article that looks back at that same occurrence ("had announced in June that...") is a report of it.
+- Publication dates a few days apart are normal for one occurrence. A long gap is possible only when the later source clearly looks back at the same occurrence.
+
+DIFFERENT:
+- The same position or demand stated again on ANOTHER occasion (another date, another interview). A restatement months later is a new occurrence, even with the same content.
+- Two different claims on one topic, one affair or one event, even in the same speech or the same post (for example: who is responsible, and what the state will do).
+- Two steps of one process: announce then do, propose then decide, first ruling then appeal.
+- A general attitude and a specific act ("often says X" and "said X to his deputies on 3 August").
+- Different numbers that describe different measures or different dates of effect.
+
+BUNDLE:
+- Same occasion, but one fact holds one claim and the other fact holds that claim plus other distinct claims (a list of measures). Label this "bundle".
+
+Use the evidence: fact text, source quotes, publication dates, outlets. When the evidence does not settle the case, choose the closest label.

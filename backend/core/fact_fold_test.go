@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -12,14 +13,31 @@ import (
 type foldFakeStorer struct {
 	fakeInserterStorer
 	similar []SimilarFact
+	queries []SimilarFactQuery // every candidate lookup
 
 	newIsMoreConcrete bool       // MostConcreteFact picks the new fact over the matched one
 	merges            [][2]int64 // (from, into)
+	sources           map[int64][]ClaimSource
 }
 
-func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, personIDs []int64, embedding []float32, threshold float64, factText string, textFloor float64, limit int) ([]SimilarFact, error) {
+func (f *foldFakeStorer) LoadClaimSources(ctx context.Context, factIDs []int64, sourceTypes []string) (map[int64][]ClaimSource, error) {
+	return f.sources, nil
+}
+
+func (f *foldFakeStorer) ListGroupEvidencePairs(ctx context.Context, pairs [][2]int64, rule GroupEvidence) ([][2]int64, error) {
+	return pairs, nil
+}
+
+func (f *foldFakeStorer) FindSimilarActiveFacts(ctx context.Context, q SimilarFactQuery) ([]SimilarFact, error) {
+	f.queries = append(f.queries, q)
 	return f.similar, nil
 }
+
+// testFreeTextSource is the free-text source type of the core tests: a fact
+// of that type can be grouped.
+const testFreeTextSource = "test_free_text"
+
+func init() { RequireQuoteForSourceType(testFreeTextSource) }
 
 // matchedFact is the similar fact the fixtures return: very close to the
 // input and with the same canonical verb, so only the judge can refuse it.
@@ -48,8 +66,15 @@ func (f *foldFakeStorer) RefreshPersonScore(ctx context.Context, personID int64)
 // membership (embeddings only select candidates).
 type fakeJudge struct{ same bool }
 
-func (j fakeJudge) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
-	return j.same, nil
+func (j fakeJudge) IsSameOccurrence(ctx context.Context, a, b ClaimEvidence) (OccurrenceVerdict, error) {
+	return verdictOf(j.same), nil
+}
+
+func verdictOf(same bool) OccurrenceVerdict {
+	if same {
+		return OccurrenceSame
+	}
+	return OccurrenceDifferent
 }
 
 // countingStance fails the test if stance analysis runs for a folded fact.
@@ -70,7 +95,7 @@ func foldInput() StoreFactInput {
 		OriginalQuote:      "je suis innocent",
 		CanonicalVerb:      "affirmer",
 		SourceURL:          "http://ex/1",
-		SourceType:         "news",
+		SourceType:         testFreeTextSource,
 		PublishedAt:        &now,
 		Lang:               "fr",
 	}
@@ -152,17 +177,23 @@ func TestFoldVetoedByJudge(t *testing.T) {
 
 // flakyJudge fails its first `failures` calls, then answers same.
 type flakyJudge struct {
-	failures int
-	same     bool
-	calls    int
+	failures  int
+	same      bool
+	contained bool // answer "one fact holds the other's claim plus more"
+	calls     int
+	asked     [][2]ClaimEvidence // (existing, incoming) of every call
 }
 
-func (j *flakyJudge) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
+func (j *flakyJudge) IsSameOccurrence(ctx context.Context, a, b ClaimEvidence) (OccurrenceVerdict, error) {
 	j.calls++
+	j.asked = append(j.asked, [2]ClaimEvidence{a, b})
 	if j.calls <= j.failures {
-		return false, errors.New("llm unavailable")
+		return OccurrenceDifferent, errors.New("llm unavailable")
 	}
-	return j.same, nil
+	if j.contained {
+		return OccurrenceContained, nil
+	}
+	return verdictOf(j.same), nil
 }
 
 // A gate call that fails once is retried and its verdict applied: the fact is
@@ -200,5 +231,81 @@ func TestDedupeGateGivesUpAfterTwoFailures(t *testing.T) {
 	}
 	if judge.calls != 2 || res.Inserted != 1 || len(st.merges) != 0 {
 		t.Fatalf("after two failures the fact is inserted standalone, got calls=%d res=%+v merges=%v", judge.calls, res, st.merges)
+	}
+}
+
+// The candidate lookup carries the evidence rule with the new fact's quote
+// and date, and the gate reads both facts with their sources.
+func TestDedupeGateReadsEvidence(t *testing.T) {
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	st := &foldFakeStorer{
+		similar: []SimilarFact{matchedFact("Il clame son innocence.")},
+		sources: map[int64][]ClaimSource{7: {{Outlet: "lemonde.fr", Quote: "je suis innocent, dit-il", PublishedAt: &old}}},
+	}
+	fi := NewFactInserter(st, &countingStance{})
+	judge := &flakyJudge{same: true}
+	fi.dedupeJudge = judge
+	fi.groupStorer = st
+
+	in := foldInput()
+	in.SourceURL = "https://www.liberation.fr/politique/a"
+	if _, err := fi.InsertFacts(context.Background(), []StoreFactInput{in}); err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if len(st.queries) != 1 {
+		t.Fatalf("want one candidate lookup, got %d", len(st.queries))
+	}
+	q := st.queries[0]
+	if q.Evidence == nil || q.Evidence.QuoteFloor != groupQuoteSimilarityFloor || q.Evidence.MaxDateGapDays != groupMaxDateGapDays ||
+		!slices.Contains(q.Evidence.SourceTypes, testFreeTextSource) || q.Quote != "je suis innocent" || q.PublishedAt != in.PublishedAt {
+		t.Fatalf("candidate lookup without the evidence rule: %+v", q)
+	}
+	if len(judge.asked) != 1 {
+		t.Fatalf("want one gate call, got %d", len(judge.asked))
+	}
+	existing, incoming := judge.asked[0][0], judge.asked[0][1]
+	if existing.Text != "Il clame son innocence." || len(existing.Sources) != 1 || existing.Sources[0].Outlet != "lemonde.fr" {
+		t.Fatalf("the gate must read the matched fact with its sources, got %+v", existing)
+	}
+	if len(incoming.Sources) != 1 || incoming.Sources[0].Outlet != "liberation.fr" || incoming.Sources[0].Quote != "je suis innocent" || incoming.Sources[0].PublishedAt != in.PublishedAt {
+		t.Fatalf("the gate must read the new fact with its outlet, quote and date, got %+v", incoming)
+	}
+}
+
+// A contained pair is grouped with the fuller fact as the parent, whatever
+// MostConcreteFact would pick.
+func TestFoldContainedPairKeepsFullerFactAsParent(t *testing.T) {
+	short := matchedFact("Il clame son innocence.")
+	st := &foldFakeStorer{similar: []SimilarFact{short}} // MostConcreteFact would pick the matched fact (7)
+	fi := NewFactInserter(st, &countingStance{})
+	fi.dedupeJudge = &flakyJudge{contained: true}
+	fi.groupStorer = st
+
+	if _, err := fi.InsertFacts(context.Background(), []StoreFactInput{foldInput()}); err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if len(st.merges) != 1 || st.merges[0] != [2]int64{7, 1} {
+		t.Fatalf("the shorter matched fact (7) must move under the fuller new fact (1), got %v", st.merges)
+	}
+}
+
+// A vote (a structured record, not free text) is never grouped: no candidate
+// lookup, no gate call, normal stance routing.
+func TestStructuredFactIsNeverGrouped(t *testing.T) {
+	st := &foldFakeStorer{similar: []SimilarFact{matchedFact("Il a voté POUR le texte.")}}
+	stance := &countingStance{}
+	fi := NewFactInserter(st, stance)
+	judge := &flakyJudge{same: true}
+	fi.dedupeJudge = judge
+	fi.groupStorer = st
+
+	in := foldInput()
+	in.SourceType = "assemblee_law_page"
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{in})
+	if err != nil {
+		t.Fatalf("InsertFacts: %v", err)
+	}
+	if len(st.queries) != 0 || judge.calls != 0 || len(st.merges) != 0 || res.Inserted != 1 || stance.calls != 1 {
+		t.Fatalf("a vote must not be grouped: queries=%d calls=%d merges=%v res=%+v stance calls=%d", len(st.queries), judge.calls, st.merges, res, stance.calls)
 	}
 }

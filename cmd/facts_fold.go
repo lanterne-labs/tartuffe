@@ -26,14 +26,13 @@ var (
 
 var factsFoldCmd = &cobra.Command{
 	Use:   "fold",
-	Short: "Group same-claim facts under their most concrete wording.",
-	Long: `Backfill pass over existing facts: clusters same-claim facts of each person
-(embedding or text similarity + the same LLM gate as insertion), makes each
-cluster one claim group whose parent is its most concrete wording (the others
-are kept as members), moves their contradictions onto the parent (collapsing
-duplicate rows), and recomputes scores. Insertion-time folding handles new facts; this command cleans up the
-piles that accumulated before it existed (e.g. 20 copies of the same
-innocence-vs-conviction contradiction).
+	Short: "Group the facts that report one occurrence under their most concrete wording.",
+	Long: `Backfill pass over existing facts: clusters the facts of each person that
+report one occurrence (candidates by embedding or text similarity, then the
+same evidence rule and LLM gate as insertion), makes each cluster one claim
+group whose parent is its most concrete wording (the others are kept as
+members), moves their contradictions onto the parent (collapsing duplicate
+rows), and recomputes scores. Insertion-time grouping handles new facts.
 
 READ-ONLY by default: prints the clusters it would fold. Pass --apply to write.`,
 	Annotations: map[string]string{"needs_db": "true"},
@@ -44,7 +43,7 @@ func init() {
 	factsCmd.AddCommand(factsFoldCmd)
 	factsFoldCmd.Flags().StringVar(&factsFoldPerson, "person", "", "Restrict to one person (default: all persons)")
 	factsFoldCmd.Flags().BoolVar(&factsFoldApply, "apply", false, "Apply the folds (default is a read-only report)")
-	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", core.DefaultFoldOptions.Floor, "Cosine-similarity floor for same-claim candidates")
+	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", core.DefaultFoldOptions.Floor, "Cosine-similarity floor for grouping candidates")
 	factsFoldCmd.Flags().IntVar(&factsFoldMaxCluster, "max-cluster", core.DefaultFoldOptions.MaxCluster, "Skip clusters larger than this (defense against runaway chaining)")
 	factsFoldCmd.Flags().StringVar(&factsFoldUntil, "until", "", "Stop starting persons after this RFC 3339 time (a long backfill must not overlap the nightly)")
 	factsFoldCmd.Flags().Int64Var(&factsFoldStartAfter, "start-after", 0, "Skip persons up to and including this person id (resume a cut run)")
@@ -63,7 +62,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 
 	judge, err := core.NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
-		return fmt.Errorf("same-claim adjudicator required for folding: %w", err)
+		return fmt.Errorf("occurrence gate required for folding: %w", err)
 	}
 
 	persons, err := personsForCommand(ctx, storer, factsFoldPerson, storer.GetAllPersons)
@@ -103,8 +102,8 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		}
 		for _, cluster := range clusters {
 			totalClusters++
-			fmt.Fprintf(os.Stderr, "\n%s — cluster of %d:\n", p.Name, len(cluster))
-			for _, f := range cluster {
+			fmt.Fprintf(os.Stderr, "\n%s — cluster of %d:\n", p.Name, len(cluster.Facts))
+			for _, f := range cluster.Facts {
 				fmt.Fprintf(os.Stderr, "  [%d] %s\n", f.ID, util.TruncateString(f.Text, 130))
 			}
 			if !factsFoldApply {

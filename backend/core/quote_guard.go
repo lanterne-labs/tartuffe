@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -48,4 +49,18 @@ func isWebExtractedSource(sourceType string) bool {
 // quoteMissing reports whether a web-extracted fact lacks a usable source quote.
 func quoteMissing(input StoreFactInput) bool {
 	return isWebExtractedSource(input.SourceType) && strings.TrimSpace(input.OriginalQuote) == ""
+}
+
+// freeTextSourceTypes returns the registered free-text source types, sorted.
+// Only facts from these sources can be grouped: a structured record (a vote)
+// is identified by its record, so two of them are never one claim.
+func freeTextSourceTypes() []string {
+	quoteRequiredMu.RLock()
+	defer quoteRequiredMu.RUnlock()
+	types := make([]string, 0, len(quoteRequiredSourceTypes))
+	for t := range quoteRequiredSourceTypes {
+		types = append(types, t)
+	}
+	sort.Strings(types)
+	return types
 }

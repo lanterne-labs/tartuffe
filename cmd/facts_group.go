@@ -20,7 +20,7 @@ var (
 var factsGroupCmd = &cobra.Command{
 	Use:   "group",
 	Short: "Put facts that state the same claim into one claim group",
-	Long: `Groups the given facts under one claim group, whatever the same-position gate
+	Long: `Groups the given facts under one claim group, whatever the occurrence gate
 decided: each fact (or the group it already belongs to) joins the group of the
 most concrete of them, which becomes the parent. Their contradictions move to
 the parent (duplicate pairs are dropped) and the honesty scores are recomputed.

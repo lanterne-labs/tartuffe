@@ -23,12 +23,6 @@ type ContradictionFactPair struct {
 	FactBID int64
 }
 
-// SamePositionJudge is the LLM gate deciding whether two statements assert the
-// same position on the same matter (FactDedupeAdjudicator.IsSamePosition).
-type SamePositionJudge interface {
-	IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error)
-}
-
 // FactFoldStorer is the storage view the fold backfill needs.
 // *storage.PostgresStorer implements it.
 type FactFoldStorer interface {
@@ -54,13 +48,26 @@ type FoldOptions struct {
 // insert-time gate, so the backfill reaches the same pairs.
 var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12}
 
-// FoldClustersForPerson finds same-position clusters among a person's active
+// FoldCluster is a set of facts that report one occurrence.
+type FoldCluster struct {
+	Facts []FactForFold
+	// Contained: at least one pair is "one fact holds the other's claim plus
+	// more". The parent is then the fullest fact.
+	Contained bool
+}
+
+// FoldClustersForPerson finds same-occurrence clusters among a person's active
 // facts: candidate pairs by embedding similarity or by trigram text similarity
 // (the embedding slug is nondeterministic across extractions of one quote, so
-// near-verbatim restatements often sit outside the embedding window), each
-// confirmed by the LLM same-position gate, then union-find. Clusters larger
-// than opts.MaxCluster are logged and dropped.
-func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge SamePositionJudge, p PersonRecord, opts FoldOptions) ([][]FactForFold, error) {
+// near-verbatim restatements often sit outside the embedding window). A
+// candidate pair must meet the evidence rule before the LLM occurrence gate
+// confirms it (see claim_evidence.go); then union-find. Clusters larger than
+// opts.MaxCluster are logged and dropped.
+func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge SameOccurrenceJudge, p PersonRecord, opts FoldOptions) ([]FoldCluster, error) {
+	rule, err := groupEvidenceRule()
+	if err != nil {
+		return nil, err
+	}
 	facts, err := storer.GetFoldFactsForPerson(ctx, p.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load facts: %w", err)
@@ -93,7 +100,7 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	// Hard guard: two facts the detector holds as CONTRADICTORY must never fold
 	// into one meta — merging them would erase the contradiction. Deterministic,
 	// no LLM. (Their contradiction still repoints onto metas normally when each
-	// side folds with its OWN same-position group.)
+	// side folds with its OWN group.)
 	contraRows, err := storer.ListContradictionFactPairs(ctx, p.ID)
 	if err != nil {
 		return nil, fmt.Errorf("load contradictions: %w", err)
@@ -102,7 +109,7 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	for _, c := range contraRows {
 		contradicted[key(c.FactAID, c.FactBID)] = c.ID
 	}
-	confirmed := map[pairKey]bool{}
+	confirmed := map[pairKey]OccurrenceVerdict{}
 
 	textPairs := map[pairKey]bool{}
 	if opts.TextFloor > 0 {
@@ -120,6 +127,7 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	// once made the 0.70 floor behave like cosine 0.955 and fold only near-verbatim
 	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - opts.Floor
+	var candidates, contradictedCandidates [][2]int
 	for i := 0; i < len(facts); i++ {
 		for j := i + 1; j < len(facts); j++ {
 			if !textPairs[key(facts[i].ID, facts[j].ID)] {
@@ -131,36 +139,73 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 				}
 			}
 			if cid := contradicted[key(facts[i].ID, facts[j].ID)]; cid != 0 {
-				// The pair never folds — but if the fold gate considers the two
-				// sides the SAME position, the recorded contradiction is almost
-				// certainly a false positive (or the gate is wrong): surface it
-				// loudly for monitoring. The repoint-changed audit hash already
-				// queues such rows for re-judgment at the next audit.
-				same, jErr := judge.IsSamePosition(ctx, p.Name, facts[i].Text, facts[j].Text)
-				if jErr == nil && same {
-					log.Warn().
-						Int64("contradiction_id", cid).
-						Int64("fact_a", facts[i].ID).
-						Int64("fact_b", facts[j].ID).
-						Str("person", p.Name).
-						Msg("CONTRADICTION UNDER SUSPICION: fold gate judges its two sides as the SAME position — likely detector false positive; next audit will re-judge it")
-				}
+				// The pair never folds; if it also passes the evidence rule
+				// and the gate, the log below reports it.
+				contradictedCandidates = append(contradictedCandidates, [2]int{i, j})
 				continue
 			}
-			// The LLM position gate is the MANDATORY last decider on membership:
-			// embeddings only select candidates (the stance-blind embedding_text
-			// puts same-topic-but-different claims above 0.80 too, so no
-			// similarity level is trusted on its own).
-			same, jErr := judge.IsSamePosition(ctx, p.Name, facts[i].Text, facts[j].Text)
-			if jErr != nil {
-				log.Warn().Err(jErr).Int64("fact_a", facts[i].ID).Int64("fact_b", facts[j].ID).
-					Msg("Same-claim gate failed; treating pair as distinct")
-				continue
-			}
-			if same {
-				confirmed[key(facts[i].ID, facts[j].ID)] = true
-				union(i, j)
-			}
+			candidates = append(candidates, [2]int{i, j})
+		}
+	}
+
+	all := append(append([][2]int{}, candidates...), contradictedCandidates...)
+	pairIDs := make([][2]int64, len(all))
+	for n, c := range all {
+		pairIDs[n] = [2]int64{facts[c[0]].ID, facts[c[1]].ID}
+	}
+	evidenceRows, err := storer.ListGroupEvidencePairs(ctx, pairIDs, rule)
+	if err != nil {
+		return nil, fmt.Errorf("load group-evidence pairs: %w", err)
+	}
+	evidence := map[pairKey]bool{}
+	for _, pr := range evidenceRows {
+		evidence[key(pr[0], pr[1])] = true
+	}
+	sources, err := storer.LoadClaimSources(ctx, foldFactIDs(facts), rule.SourceTypes)
+	if err != nil {
+		return nil, fmt.Errorf("load claim sources: %w", err)
+	}
+	ask := func(i, j int) (OccurrenceVerdict, error) {
+		return judge.IsSameOccurrence(ctx,
+			ClaimEvidence{Text: facts[i].Text, Sources: sources[facts[i].ID]},
+			ClaimEvidence{Text: facts[j].Text, Sources: sources[facts[j].ID]})
+	}
+	for _, c := range candidates {
+		i, j := c[0], c[1]
+		if !evidence[key(facts[i].ID, facts[j].ID)] {
+			continue
+		}
+		// The LLM gate is the MANDATORY last decider on membership:
+		// embeddings only select candidates (the stance-blind embedding_text
+		// puts same-topic-but-different claims above 0.80 too, so no
+		// similarity level is trusted on its own).
+		verdict, jErr := ask(i, j)
+		if jErr != nil {
+			log.Warn().Err(jErr).Int64("fact_a", facts[i].ID).Int64("fact_b", facts[j].ID).
+				Msg("Occurrence gate failed; treating pair as distinct")
+			continue
+		}
+		if verdict.Groupable() {
+			confirmed[key(facts[i].ID, facts[j].ID)] = verdict
+			union(i, j)
+		}
+	}
+	// A recorded contradiction whose two sides the gate reads as one
+	// occurrence is almost certainly a false positive (or the gate is wrong):
+	// surface it loudly for monitoring. The repoint-changed audit hash already
+	// queues such rows for re-judgment at the next audit.
+	for _, c := range contradictedCandidates {
+		i, j := c[0], c[1]
+		if !evidence[key(facts[i].ID, facts[j].ID)] {
+			continue
+		}
+		if verdict, jErr := ask(i, j); jErr == nil && verdict.Groupable() {
+			log.Warn().
+				Int64("contradiction_id", contradicted[key(facts[i].ID, facts[j].ID)]).
+				Int64("fact_a", facts[i].ID).
+				Int64("fact_b", facts[j].ID).
+				Str("person", p.Name).
+				Msg("CONTRADICTION UNDER SUSPICION: the grouping gate reads its two sides as one occurrence — likely detector false positive; next audit will re-judge it")
 		}
 	}
 
@@ -169,7 +214,7 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 		root := find(i)
 		groups[root] = append(groups[root], facts[i])
 	}
-	var clusters [][]FactForFold
+	var clusters []FoldCluster
 	for _, g := range groups {
 		if len(g) < 2 {
 			continue
@@ -177,14 +222,14 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 		sort.Slice(g, func(a, b int) bool { return g[a].ID < g[b].ID })
 		// COMPLETE-linkage refinement: union-find is single-linkage and can chain
 		// two opposing positions through a vague bridge fact (the stance-merge
-		// lesson). Keep only members confirmed same-position against EVERY
+		// lesson). Keep only members the gate confirmed against EVERY
 		// already-kept member, and never across a contradicted pair.
 		var clique []FactForFold
 		for _, f := range g {
 			ok := true
 			for _, m := range clique {
 				k := key(m.ID, f.ID)
-				if !confirmed[k] || contradicted[k] != 0 {
+				if !confirmed[k].Groupable() || contradicted[k] != 0 {
 					ok = false
 					break
 				}
@@ -201,20 +246,42 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 				Msg("Skipping oversized fold cluster (raise --max-cluster to include)")
 			continue
 		}
-		clusters = append(clusters, clique)
+		cluster := FoldCluster{Facts: clique}
+		for a := range clique {
+			for b := a + 1; b < len(clique); b++ {
+				if confirmed[key(clique[a].ID, clique[b].ID)] == OccurrenceContained {
+					cluster.Contained = true
+				}
+			}
+		}
+		clusters = append(clusters, cluster)
 	}
-	sort.Slice(clusters, func(a, b int) bool { return clusters[a][0].ID < clusters[b][0].ID })
+	sort.Slice(clusters, func(a, b int) bool { return clusters[a].Facts[0].ID < clusters[b].Facts[0].ID })
 	return clusters, nil
 }
 
-// ApplyFoldCluster groups one cluster of same-claim facts: the most concrete
-// becomes the parent and every other fact (with any members it already had)
+// ApplyFoldCluster groups one cluster of same-occurrence facts: the most
+// concrete becomes the parent (the fullest, for a contained cluster, so that
+// no claim is hidden) and every other fact (with any members it already had)
 // joins its group — contradictions, stance slots and key facts follow the
 // parent (storage.MergeFactIntoGroup).
-func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord, cluster []FactForFold) error {
-	parent, err := storer.MostConcreteFact(ctx, foldFactIDs(cluster))
-	if err != nil {
-		return err
+func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord, c FoldCluster) error {
+	cluster := c.Facts
+	var parent int64
+	if c.Contained {
+		best := 0
+		for i := range cluster {
+			if fullerFact(cluster[best].Text, cluster[i].Text) == 1 {
+				best = i
+			}
+		}
+		parent = cluster[best].ID
+	} else {
+		var err error
+		parent, err = storer.MostConcreteFact(ctx, foldFactIDs(cluster))
+		if err != nil {
+			return err
+		}
 	}
 	for _, f := range cluster {
 		if f.ID == parent {

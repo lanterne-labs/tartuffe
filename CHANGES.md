@@ -2474,3 +2474,31 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   dropped it. The pattern is now in the verifier's YES list.
 - A reason line that names the matching pattern first is worse (38/44): the model picks a
   NO pattern from the long catalog and stops there.
+
+## A group is one occurrence; the gate reads the evidence (2026-10-05)
+
+- A claim group means "one occurrence, reported N times": the same claim, act or event on
+  the same occasion. The same position stated again on another occasion is a new
+  occurrence; the stance holds those together. Votes are never grouped.
+- Why: the old gate saw only the two fact texts. No reader can tell a second report from
+  another statement on the same topic without the quotes, the dates and the outlets. The
+  old "same position" definition also mixed two relations, one factual (same occurrence)
+  and one with no clear limit (same position over time).
+- Rule (`claim_evidence.go`), in insertion, `dm facts fold` and `dm facts review-groups`:
+  - evidence, in SQL: free-text sources only, and quotes with pg_trgm similarity >= 0.30
+    OR publication dates <= 7 days apart;
+  - then the gate `IsSameOccurrence`, which reads each fact with quotes, dates, outlets,
+    and must say groupable in both orders.
+- "Bundle" (one fact holds the other's claim plus more, same occasion) is groupable, with
+  the fuller fact as the parent. This replaces "a bundle is not one of its claims": the
+  model and the labelers could not separate "same" from "bundle" in a stable way.
+- Measured on 207 prod pairs that the old gate grouped (labels made with the evidence):
+  old gate 27 % clear errors; quote overlap alone finds 69 % of the true groups; this rule
+  finds 93 %, with 5 % clear errors and 12 % borderline.
+- Lessons:
+  - Give a judge the evidence a human would use before tuning its prompt.
+  - The model reads two dates 3 weeks apart and still says "same": a rule the model
+    ignores must be code.
+  - Labels made by a blind judge are noise; the prompt tuning against them was a seesaw.
+- Golden: `TestOccurrenceGateGolden` (36 prod pairs with evidence, `testdata/`). The 33
+  text-only fold cases are removed. Existing prod groups are not yet reviewed (mirror-vpj).

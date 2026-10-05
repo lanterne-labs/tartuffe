@@ -1,0 +1,760 @@
+[
+ {
+  "name": "facts_4940_6325",
+  "want": "different",
+  "why": "One claim links the riots to immigration (1 June), the other calls for a penal and security response in an X post (2 June).",
+  "fact_a": "Jordan Bardella a affirmé que les débordements survenus après la victoire du PSG sont liés à l'incapacité de l'État à maîtriser l'immigration et à la politique de sécurité.",
+  "sources_a": [
+   {
+    "outlet": "rmcsport.bfmtv.com",
+    "date": "2026-06-01",
+    "quote": "il y évidemment un lien sur notre incapacité depuis trente ans à maîtriser l'immigration"
+   }
+  ],
+  "fact_b": "Jordan Bardella a affirmé que le système actuel incite à la récidive et a appelé à un sursaut sécuritaire, pénal et migratoire face aux scènes de chaos du samedi 30 mai 2026.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-02",
+    "quote": "Il y a urgence à un sursaut sécuritaire, pénal et migratoire."
+   }
+  ]
+ },
+ {
+  "name": "facts_8018_8110",
+  "want": "bundle",
+  "why": "Same day 14 June; B adds the doubling of magistrates to the national prosecutor office claim.",
+  "fact_a": "Jordan Bardella a préconisé la création d'un parquet national spécialisé pour les victimes mineures.",
+  "sources_a": [
+   {
+    "outlet": "bfmtv.com",
+    "date": "2026-06-14",
+    "quote": "Il faut un parquet national spécialisé dans les victimes mineures”, prône celui qui veut également \"rendre la perpétuité réelle incompressible dans le droit français."
+   }
+  ],
+  "fact_b": "Jordan Bardella a exprimé le souhait de doubler le nombre de magistrats et de créer un Parquet national spécialisé pour les victimes mineures si son camp arrive au pouvoir.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-14",
+    "quote": "Nous souhaitons doubler le nombre de magistrats et créer un Parquet national spécialisé pour les victimes mineures."
+   }
+  ]
+ },
+ {
+  "name": "facts_9722_10655",
+  "want": "different",
+  "why": "Statement of 6 July before the ruling against Paris Match statement of 12 July on judicial uncertainty.",
+  "fact_a": "Jordan Bardella s'est déclaré serein face au procès en appel de Marine Le Pen et a affirmé qu'il continuerait de la soutenir quelle que soit la décision de la justice.",
+  "sources_a": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-07-06",
+    "quote": "«Nous avons anticipé tous les scénarios», a-t-il déclaré. Quelle que soit la décision de la justice, «je continuerai de la soutenir comme je l’ai toujours fait»"
+   }
+  ],
+  "fact_b": "Jordan Bardella a rejeté l'idée d'une incertitude judiciaire concernant la candidature de Marine Le Pen, affirmant que le paramètre a été levé par la cour d'appel.",
+  "sources_b": [
+   {
+    "outlet": "parismatch.com",
+    "date": "2026-07-12",
+    "quote": "On ne peut pas parler […] d'une « incertitude judiciaire », car ce paramètre a été levé par la cour d'appel et par plusieurs déclarations de hauts magistrats français depuis le 7 juillet"
+   }
+  ]
+ },
+ {
+  "name": "facts_12156_12157",
+  "want": "different",
+  "why": "Two distinct claims on the Islamist threat on 26 July: target is freedom, and the words of Père Hamel.",
+  "fact_a": "Jordan Bardella a affirmé que la menace islamiste en Europe vise la liberté, un élément central de la civilisation.",
+  "sources_a": [
+   {
+    "outlet": "x.com",
+    "date": "2026-07-26",
+    "quote": "La menace islamiste reste prégnante en Europe, et continue de viser ce qu'ils haïssent par-dessus tout dans notre civilisation, et que nous chérissons tant : la liberté."
+   }
+  ],
+  "fact_b": "Jordan Bardella a déclaré que les paroles du Père Hamel face à ses assaillants résument la nécessité de faire face sans relâche à la menace islamiste pour la France.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-07-26",
+    "quote": "« Va-t'en, Satan ! » : telle fut la dernière parole qu’il adressa à ses assaillants. Elle résume à elle seule la nécessité de faire face, sans relâche et sans faiblesse, à cette menace existentielle pour notre pays."
+   }
+  ]
+ },
+ {
+  "name": "facts_14198_14200",
+  "want": "same",
+  "why": "The same event of 10 August: sole candidate with 421 sponsorships.",
+  "fact_a": "Jordan Bardella a reçu le soutien de 421 parrainages de cadres de son mouvement pour sa candidature.",
+  "sources_a": [
+   {
+    "outlet": "franceinfo.fr",
+    "date": "2026-08-10",
+    "quote": "Le successeur de Marine Le Pen à la tête du RN a reçu le soutien de la quasi-totalité des cadres de son mouvement, avec 421 parrainages, a précisé l'élu du Gard."
+   }
+  ],
+  "fact_b": "Jordan Bardella est le seul candidat à sa réélection à la tête du Rassemblement national, ayant reçu 421 parrainages.",
+  "sources_b": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-08-10",
+    "quote": "Jordan Bardella seul candidat à sa réélection à la tête du Rassemblement national [...] a reçu le soutien de la quasi-totalité des cadres de son mouvement : 421 parrainages au total."
+   }
+  ]
+ },
+ {
+  "name": "facts_15084_15086",
+  "want": "same",
+  "why": "The same social media post 'Derniers instants de calme'.",
+  "fact_a": "Jordan Bardella a déclaré que ses derniers instants de calme précèdent une « année décisive pour la France ! » le 16 août 2026.",
+  "sources_a": [
+   {
+    "outlet": "gala.fr",
+    "date": "2026-08-17",
+    "quote": "Derniers instants de calme avant une année décisive pour la France !"
+   }
+  ],
+  "fact_b": "Jordan Bardella a écrit sur ses réseaux sociaux le 17 août 2026 qu'il s'agissait des 'derniers instants de calme avant une année décisive pour la France'.",
+  "sources_b": [
+   {
+    "outlet": "public.fr",
+    "date": "2026-08-17",
+    "quote": "Derniers instants de calme avant une année décisive pour la France"
+   }
+  ]
+ },
+ {
+  "name": "facts_19328_24635",
+  "want": "different",
+  "why": "BFM statement of 17 Sept against an X post of 22 Sept with a wider plan.",
+  "fact_a": "Jordan Bardella a affirmé que les familles françaises devraient avoir une priorité sur les logements sociaux par rapport aux étrangers.",
+  "sources_a": [
+   {
+    "outlet": "bfmtv.com",
+    "date": "2026-09-17",
+    "quote": "Jordan Bardella qu'il est \"naturel\" que \"les familles françaises ai une priorité, par rapport aux étrangers\" sur les logements sociaux."
+   }
+  ],
+  "fact_b": "Jordan Bardella a affirmé que son mouvement est le seul à avoir présenté un plan d'action pour simplifier les procédures de construction et appliquer la priorité nationale dans le logement social.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-09-22",
+    "quote": "Nous sommes les seuls à avoir présenté un plan d'action clair : simplifier les procédures et alléger les délais pour construire plus, remettre sur le marché locatif les milliers de logements qu'une vision punitive du DPE a exclus ou va exclure, appliquer la priorité nationale dans le logement social."
+   }
+  ]
+ },
+ {
+  "name": "facts_30731_30997",
+  "want": "same",
+  "why": "Identical sentence from La Seyne-sur-Mer on 27 Sept.",
+  "fact_a": "Jordan Bardella a promis que si Marine Le Pen accède à l'Élysée, il sera un gouvernement d'ouverture.",
+  "sources_a": [
+   {
+    "outlet": "ouest-france.fr",
+    "date": "2026-09-27",
+    "quote": "Si Marine Le Pen accède à l’Élysée, « nous ferons un gouvernement d’ouverture », a promis depuis La-Seyne-sur-Mer (Var) celui qui est destiné à Matignon en cas de victoire du RN."
+   }
+  ],
+  "fact_b": "Jordan Bardella a promis qu'en cas de victoire du RN et d'accession de Marine Le Pen à l'Elysée, il ferait un gouvernement d'ouverture.",
+  "sources_b": [
+   {
+    "outlet": "20minutes.fr",
+    "date": "2026-09-27",
+    "quote": "Si Marine Le Pen accède à l’Elysée, « nous ferons un gouvernement d’ouverture », a promis depuis La-Seyne-sur-Mer (Var) celui qui est destiné à Matignon en cas de victoire du RN."
+   }
+  ]
+ },
+ {
+  "name": "facts_4670_4676",
+  "want": "same",
+  "why": "Same quote on 31 May about the scenes of chaos after the PSG celebrations.",
+  "fact_a": "Marine Le Pen a dénoncé les scènes de chaos et de violences qui se sont multipliées lors des célébrations du PSG le 30 mai, affirmant que les Français ne peuvent plus supporter ces débordements malgré un dispositif de sécurité hors norme.",
+  "sources_a": [
+   {
+    "outlet": "actu.orange.fr",
+    "date": "2026-05-31",
+    "quote": "Les Français n’en peuvent plus de ces scènes de chaos qui se multiplient au moindre prétexte, et ce, malgré un dispositif de sécurité hors norme."
+   }
+  ],
+  "fact_b": "Marine Le Pen a affirmé que les Français ne peuvent plus supporter les scènes de chaos qui se multiplient malgré un dispositif de sécurité hors-norme.",
+  "sources_b": [
+   {
+    "outlet": "jeanmarcmorandini.com",
+    "date": "2026-05-31",
+    "quote": "Les Français n’en peuvent plus de ces scènes de chaos qui se multiplient au moindre prétexte, et ce, malgré un dispositif de sécurité hors-norme."
+   }
+  ]
+ },
+ {
+  "name": "facts_6684_8562",
+  "want": "same",
+  "why": "Same requisition of the prosecution: 4 years, 1 year firm, 5 years of ineligibility.",
+  "fact_a": "Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d’inéligibilité contre Marine Le Pen dans le procès des assistants FN au Parlement européen.",
+  "sources_a": [
+   {
+    "outlet": "lopinion.fr",
+    "date": "2026-06-09",
+    "quote": "Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d’inéligibilité, dans le procès des assistants FN au Parlement européen."
+   }
+  ],
+  "fact_b": "Le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d'inéligibilité contre Marine Le Pen dans l'affaire des assistants parlementaires.",
+  "sources_b": [
+   {
+    "outlet": "midilibre.fr",
+    "date": "2026-06-18",
+    "quote": "le parquet a requis quatre ans de prison, dont un an ferme, et cinq ans d'inéligibilité"
+   }
+  ]
+ },
+ {
+  "name": "facts_7381_8107",
+  "want": "different",
+  "why": "Two X posts on 9 June and 14 June with different lists of measures.",
+  "fact_a": "Marine Le Pen a appelé à revoir le fonctionnement de la justice, à lui redonner des moyens et à changer de philosophie en matière d'insécurité et de criminalité.",
+  "sources_a": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-09",
+    "quote": "Il faut revoir le fonctionnement de la Justice, lui redonner des moyens et revoir le sens des priorités."
+   }
+  ],
+  "fact_b": "Marine Le Pen a appelé à l'embauche de magistrats, à l'augmentation des moyens et à la numérisation de la Justice pour lutter contre la criminalité.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-14",
+    "quote": "Il faut embaucher des magistrats, augmenter les moyens, spécialiser un parquet dans les mineurs victimes, et numériser la Justice."
+   }
+  ]
+ },
+ {
+  "name": "facts_13497_14194",
+  "want": "different",
+  "why": "A is a specific message to her deputies; B is a general habit ('comme elle le dit souvent').",
+  "fact_a": "Marine Le Pen a conseillé à ses députés de se reposer avant la campagne présidentielle, comparant celle-ci à un marathon suivi d'un sprint.",
+  "sources_a": [
+   {
+    "outlet": "leparisien.fr",
+    "date": "2026-08-03",
+    "quote": "Elle a un message à leur faire passer : « Reposez-vous. Une campagne présidentielle est un marathon suivi d’un sprint, il faut recharger les batteries »."
+   }
+  ],
+  "fact_b": "Marine Le Pen décrit souvent ses campagnes présidentielles comme un \"marathon qui se termine par un sprint\".",
+  "sources_b": [
+   {
+    "outlet": "franceinfo.fr",
+    "date": "2026-08-10",
+    "quote": "C'est un \"marathon qui se termine par un sprint\", comme elle le dit souvent."
+   }
+  ]
+ },
+ {
+  "name": "facts_16806_16992",
+  "want": "same",
+  "why": "Same quote on heavier sanctions against traffickers and more powers for the municipal police.",
+  "fact_a": "Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et la vente à la sauvette, ainsi que renforcer les prérogatives des policiers municipaux.",
+  "sources_a": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-09-06",
+    "quote": "qui entend aussi «alourdir fortement les sanctions contre les trafiquants et la vente à la sauvette» et un renforcement des prérogatives des policiers municipaux"
+   }
+  ],
+  "fact_b": "Marine Le Pen a affirmé vouloir alourdir les sanctions contre les trafiquants et renforcer les prérogatives des policiers municipaux pour les saisies de produits illicites.",
+  "sources_b": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-09-07",
+    "quote": "qui entend aussi «alourdir fortement les sanctions contre les trafiquants et la vente à la sauvette» et un renforcement des prérogatives des policiers municipaux pour qu’ils puissent notamment «participer aux saisies de produits illicites»."
+   }
+  ]
+ },
+ {
+  "name": "facts_18005_18358",
+  "want": "different",
+  "why": "A is a satisfaction measure in an Ipsos poll; B is the voting intentions, so the measures differ.",
+  "fact_a": "Selon un sondage Ipsos BVA-Cesi publié le 12 septembre, 36% des sondés seraient satisfaits de voir Marine Le Pen remporter la présidentielle, soit une hausse de 2 points par rapport à l'enquête précédente.",
+  "sources_a": [
+   {
+    "outlet": "rtl.fr",
+    "date": "2026-09-12",
+    "quote": "36% des sondés seraient satisfaits de la voir remporter la présidentielle (+ 2 points)."
+   }
+  ],
+  "fact_b": "Marine Le Pen est créditée d'au moins un tiers des intentions de vote dans toutes les configurations testées lors de l'enquête électorale réalisée du 3 au 9 septembre 2026.",
+  "sources_b": [
+   {
+    "outlet": "lemonde.fr",
+    "date": "2026-09-13",
+    "quote": "Marine Le Pen, candidate du Rassemblement national (RN), est créditée d’au moins un tiers des intentions de vote dans toutes les configurations que nous avons testées."
+   }
+  ]
+ },
+ {
+  "name": "facts_20977_21864",
+  "want": "different",
+  "why": "A is a joint position on the democratic debate; B is her own LCI statement for lower financial aid.",
+  "fact_a": "Marine Le Pen et Jordan Bardella estiment que le débat démocratique doit pouvoir porter sur le niveau du soutien financier accordé à l'Ukraine et sur les conditions de ce soutien.",
+  "sources_a": [
+   {
+    "outlet": "sudouest.fr",
+    "date": "2026-09-19",
+    "quote": "estiment bien que le débat démocratique « doit pouvoir porter » sur « le niveau du soutien financier accordé à l’Ukraine et sur les conditions de ce soutien »."
+   }
+  ],
+  "fact_b": "Marine Le Pen s'est prononcée en faveur d'une baisse des aides financières à l'Ukraine, tout en maintenant la possibilité de continuer la formation de leurs soldats et l'apport de matériel de défense.",
+  "sources_b": [
+   {
+    "outlet": "liberation.fr",
+    "date": "2026-09-21",
+    "quote": "s’était prononcée, sur LCI, en faveur d’une baisse des aides à Kyiv. « On peut continuer à former leurs soldats, leurs armées, on peut continuer à leur apporter du matériel pour pouvoir se défendre. Mais financièrement, nous ne pouvons plus.»"
+   }
+  ]
+ },
+ {
+  "name": "facts_6342_14978",
+  "want": "different",
+  "why": "Two separate X posts, 2 June and 28 August, with different wording.",
+  "fact_a": "Raphaël Glucksmann a affirmé que la gauche démocratique et républicaine va gagner en 2027.",
+  "sources_a": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-02",
+    "quote": "La gauche démocratique et républicaine va gagner en 2027."
+   }
+  ],
+  "fact_b": "Raphael Glucksmann a affirmé que l'on va ensemble refonder la gauche démocratique et gagner l'élection présidentielle.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-08-28",
+    "quote": "Nous allons ensemble refonder la gauche démocratique. Et gagner l’élection présidentielle."
+   }
+  ]
+ },
+ {
+  "name": "facts_4968_4983",
+  "want": "same",
+  "why": "Same press conference of 21 May: refusal of a general cut of fuel prices or fuel tax.",
+  "fact_a": "Sébastien Lecornu a refusé toute baisse généralisée des prix des carburants, arguant que des aides généralisées ne seraient pas tenables pour les finances publiques.",
+  "sources_a": [
+   {
+    "outlet": "ouest-france.fr",
+    "date": "2026-05-21",
+    "quote": "Le Premier ministre évoque aussi l’investissement du gouvernement vers l’électrique comme solution à long terme. [...] Il évoque aussi le refus du gouvernement d'opter pour des aides généralisées, comme une baisse des prix à la pompe, qui serait « inéquitable » et « inefficace »"
+   }
+  ],
+  "fact_b": "Le gouvernement, via Sébastien Lecornu, n'envisage pas de baisse de la fiscalité sur le carburant de manière générale et indiscriminée.",
+  "sources_b": [
+   {
+    "outlet": "rtl.fr",
+    "date": "2026-05-21",
+    "quote": "Le gouvernement ne procédera pas à \"une baisse générale indiscriminée de la fiscalité sur le carburant.\""
+   }
+  ]
+ },
+ {
+  "name": "facts_6247_6250",
+  "want": "same",
+  "why": "Same statement of 2 June on the 'inversion des valeurs' about the police.",
+  "fact_a": "Sébastien Lecornu a dénoncé une « inversion des valeurs » et un « inversion du récit » concernant les débats sur les forces de l'ordre.",
+  "sources_a": [
+   {
+    "outlet": "huffingtonpost.fr",
+    "date": "2026-06-02",
+    "quote": "L’inversion du récit, l’inversion des valeurs est le début du combat politique et culturel qu’il nous faut mener"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a dénoncé l'inversion des valeurs consistant à incriminer les forces de l'ordre, en réponse aux propos de la députée Clémence Guetté.",
+  "sources_b": [
+   {
+    "outlet": "bfmtv.com",
+    "date": "2026-06-02",
+    "quote": "Un nouveau tacle face aux propos tenus par la députée de la France insoumise Clémence Guetté, qui avait accusé les forces de l'ordre d'avoir \"chargé des gens qui ne commettaient aucun débordement\"."
+   }
+  ]
+ },
+ {
+  "name": "facts_7158_7163",
+  "want": "bundle",
+  "why": "Same Figaro report of 8 June; A adds the ministers meeting on Tuesday to the enrich and accelerate claims of B.",
+  "fact_a": "Sébastien Lecornu a annoncé réunir des ministres mardi pour enrichir un projet de loi sur la protection de l'enfance et accélérer l'examen par le Conseil d'État d'une proposition de loi sur les violences sexistes et sexuelles.",
+  "sources_a": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-06-08",
+    "quote": "Sébastien Lecornu va réunir des ministres mardi sur la protection de l’enfance, en réponse à l’affaire Lyhanna, pour prendre de nouvelles mesures législatives, souhaitant «enrichir» un projet de loi déjà déposé et aussi «accélérer» l’examen par le Conseil d’Etat d’une proposition de loi transpartisane sur les violences sexistes et sexuelles"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu souhaite « enrichir » un projet de loi déjà déposé et « accélérer » l’examen par le Conseil d’État d’une proposition de loi transpartisane sur les violences sexistes et sexuelles.",
+  "sources_b": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-06-08",
+    "quote": "Le premier ministre souhaite «enrichir» un projet de loi déjà déposé et aussi «accélérer» l’examen par le Conseil d’État d’une proposition de loi transpartisane sur les violences sexistes et sexuelles."
+   }
+  ]
+ },
+ {
+  "name": "facts_7326_14114",
+  "want": "bundle",
+  "why": "Same proposals of 9 June; A holds the 3-month limit only, B holds it plus the heavier penalties.",
+  "fact_a": "Sébastien Lecornu a proposé d'accélérer les délais d'enquête pour que les procureurs et enquêteurs aient un maximum de trois mois pour effectuer les actes essentiels d'enquête dans les cas de crimes contre les enfants.",
+  "sources_a": [
+   {
+    "outlet": "franceinfo.fr",
+    "date": "2026-06-09",
+    "quote": "Il propose également d'accélérer les délais d'enquête. Dans un cas de crime contre les enfants, lorsqu’un mis en cause sera identifié, les procureurs et enquêteurs auront trois mois maximum dans la loi pour effectuer les actes essentiels d’enquête permettant de placer le suspect en garde à vue."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a proposé de renforcer les peines pour les violeurs en série et d'effectuer les actes d'enquête sous 3 mois.",
+  "sources_b": [
+   {
+    "outlet": "google.com",
+    "date": "2026-06-09",
+    "quote": "Sébastien Lecornu propose de renforcer les peines pour les violeurs en série et d'effectuer les actes d'enquête «sous 3 mois»"
+   }
+  ]
+ },
+ {
+  "name": "facts_7332_7819",
+  "want": "different",
+  "why": "Cautious opening on prescription on 9 June versus a tribune of 17 May attributed to the garde des Sceaux.",
+  "fact_a": "Sébastien Lecornu stated that while there is an important debate, the issue must be approached with much legal and constitutional precaution, but he does not want to close the door on the question of prescription.",
+  "sources_a": [
+   {
+    "outlet": "france24.com",
+    "date": "2026-06-09",
+    "quote": "Il y a un débat important. Il faut le prendre avec beaucoup de précautions juridiques, beaucoup de précautions constitutionnelles, mais je ne veux pas fermer la porte à cette question des prescriptions"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu s'est dit favorable à l'imprescriptibilité des crimes sexuels sur les mineurs dans une tribune publiée le 17 mai 2026.",
+  "sources_b": [
+   {
+    "outlet": "bfmtv.com",
+    "date": "2026-06-12",
+    "quote": "Le garde des Sceaux s'est dit favorable à cette imprescriptibilité dans une tribune publiée dans La Tribune Dimanche, le dimanche 17 mai dernier"
+   }
+  ]
+ },
+ {
+  "name": "facts_7518_7606",
+  "want": "bundle",
+  "why": "Same announcement of 10 June; B adds that the child protection bill will be reinforced.",
+  "fact_a": "Sébastien Lecornu a annoncé qu'il prendrait dans les tout prochains jours un décret afin de rendre obligatoire la motivation des classements sans suite dans les affaires criminelles concernant des mineurs.",
+  "sources_a": [
+   {
+    "outlet": "lemonde.fr",
+    "date": "2026-06-10",
+    "quote": "Un décret sera pris afin de rendre obligatoire la motivation des classements sans suite dans les affaires criminelles concernant des mineurs"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a affirmé que le projet de loi sur la protection de l'enfance sera renforcé et qu'un décret rendra obligatoire la motivation des classements sans suite dans les affaires criminelles concernant des mineurs.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-06-10",
+    "quote": "Le projet de loi sur la protection de l'enfance sera renforcé par de nouvelles dispositions. – Un décret sera pris afin de rendre obligatoire la motivation des classements sans suite dans les affaires criminelles concernant des mineurs."
+   }
+  ]
+ },
+ {
+  "name": "facts_7941_7944",
+  "want": "same",
+  "why": "Same letter to ministers on the 2027 budget requests, reported 13 and 14 June.",
+  "fact_a": "Sébastien Lecornu a demandé à ses ministres de formuler des 'demandes réalistes' et de corriger leurs demandes budgétaires pour le budget 2027 afin de respecter les priorités gouvernementales.",
+  "sources_a": [
+   {
+    "outlet": "actu.orange.fr",
+    "date": "2026-06-13",
+    "quote": "Sébastien Lecornu requiert donc de ses ministres des 'demandes réalistes' avec les objectifs du gouvernement."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a demandé aux ministres de 'corriger' les demandes de leurs administrations et d'identifier de 'réelles priorités politiques' pour le projet de budget 2027, estimant que les demandes actuelles sont 'irréalistes'.",
+  "sources_b": [
+   {
+    "outlet": "boursedirect.fr",
+    "date": "2026-06-14",
+    "quote": "Le Premier ministre Sébastien Lecornu demande aux ministres de 'corriger' les demandes de leurs administrations et d'identifier de 'réelles priorités politiques' pour le projet de budget 2027"
+   }
+  ]
+ },
+ {
+  "name": "facts_9527_15537",
+  "want": "different",
+  "why": "Statements of autumn and March versus a new announcement at the end of August.",
+  "fact_a": "Sébastien Lecornu a affirmé au début de l'automne dernier qu'il n'était pas candidat à la présidentielle, une position qu'il a répétée dans la presse début mars.",
+  "sources_a": [
+   {
+    "outlet": "lejdd.fr",
+    "date": "2026-06-29",
+    "quote": "Lors de son entrée en fonction, au début de l’automne dernier, Sébastien Lecornu glissait à chacun de ses interlocuteurs – journalistes, visiteurs, députés – qu’il n’était pas candidat à la présidentielle. Il l’a répété dans la presse, début mars."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a annoncé qu'il ne serait pas candidat à l'élection présidentielle de 2027 et qu'il ne se 'mêlerait' pas de la campagne.",
+  "sources_b": [
+   {
+    "outlet": "ouest-france.fr",
+    "date": "2026-08-30",
+    "quote": "Sébastien Lecornu annonce ne pas être candidat à l’élection présidentielle 2027 et ne pas se « mêler » de la campagne"
+   }
+  ]
+ },
+ {
+  "name": "facts_9646_9647",
+  "want": "bundle",
+  "why": "Same 29 June statement; A adds the hospital priority to the possible return of the heat wave.",
+  "fact_a": "Sébastien Lecornu a indiqué qu'une reprise d'un épisode caniculaire est possible et qu'il souhaite assurer une situation hospitalière plus douce en cas de reprise du phénomène.",
+  "sources_a": [
+   {
+    "outlet": "leparisien.fr",
+    "date": "2026-06-29",
+    "quote": "« C’est une priorité pour nous absolue, en cas de reprise du phénomène, d’avoir une situation hospitalière qui soit beaucoup plus douce, beaucoup plus amortie », a-t-il affirmé. [...] la perspective d’une reprise d’un épisode caniculaire est possible"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a évoqué la possibilité d'une reprise d'un épisode caniculaire ce lundi 29 juin 2026.",
+  "sources_b": [
+   {
+    "outlet": "actu.orange.fr",
+    "date": "2026-06-29",
+    "quote": "Il a notamment évoqué la possibilité d'\"une reprise d’un épisode caniculaire\"."
+   }
+  ]
+ },
+ {
+  "name": "facts_11146_11147",
+  "want": "different",
+  "why": "The visit itself versus one sentence of a speech during the visit.",
+  "fact_a": "Sébastien Lecornu a effectué une visite officielle à Rabat les 15 et 16 juillet pour marquer une nouvelle étape de la réconciliation entre Paris et Rabat.",
+  "sources_a": [
+   {
+    "outlet": "mediapart.fr",
+    "date": "2026-07-16",
+    "quote": "La visite du chef du gouvernement français, accompagné d’une dizaine de ministres, voulait marquer une nouvelle étape de la réconciliation entre Paris et Rabat."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a déclaré être très heureux de la présence de ses hôtes à Rabat, tant sur le plan protocolaire que personnel.",
+  "sources_b": [
+   {
+    "outlet": "lesechos.fr",
+    "date": "2026-07-17",
+    "quote": "« Du fond du coeur - protocolairement, diplomatiquement mais aussi très personnellement - nous sommes heureux d'être avec vous », a déclaré le Premier ministre lors d'une allocution."
+   }
+  ]
+ },
+ {
+  "name": "facts_11714_14678",
+  "want": "different",
+  "gap": "two steps of one law (vote on 21 July, validation on 14 August) read as one occurrence; the quotes overlap, so the date rule does not stop it (2/2 runs, 2026-10-05)",
+  "why": "Post of 21 July on the vote versus post of 14 August after the Conseil constitutionnel validation.",
+  "fact_a": "Sébastien Lecornu a annoncé que l'Assemblée nationale a adopté le projet de loi d'urgence pour la protection et la souveraineté agricoles, incluant plus de 70 mesures comme la protection contre la concurrence déloyale et la facilitation des projets de stockage d'eau.",
+  "sources_a": [
+   {
+    "outlet": "x.com",
+    "date": "2026-07-21",
+    "quote": "L’Assemblée nationale a adopté le projet de loi d’urgence pour la protection et la souveraineté agricoles. Ce texte apporte plus de 70 mesures concrètes attendues par le monde agricole : contrats d’avenir, protection contre la concurrence déloyale des produits importés, préférence aux produits français et européens dans la restauration collective, facilitation des projets de stockage d’eau et prot"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a affirmé que la loi d'urgence agricole validée par le Conseil constitutionnel vise à lutter contre la concurrence déloyale, instaurer une préférence pour les produits français dans la restauration collective et simplifier les normes pour les agriculteurs.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-08-14",
+    "quote": "En réponse à la crise profonde que traverse l’agriculture française, cette loi apporte des solutions concrètes à nos agricultrices et à nos agriculteurs : •Sortir du “deux poids, deux mesures” face à la concurrence déloyale... •Assumer une préférence renforcée en faveur des produits français et européens dans la restauration collective... •Simplifier les normes qui pèsent sur nos agriculteurs"
+   }
+  ]
+ },
+ {
+  "name": "facts_11805_11946",
+  "want": "bundle",
+  "why": "Same quote on 50 boxes and 25 visits; A adds the lower reimbursement of low-benefit medicines.",
+  "fact_a": "Sébastien Lecornu a proposé de diminuer le remboursement des médicaments ayant un faible bénéfice thérapeutique et a envisagé de demander un effort aux personnes consommant plus de 50 boîtes de médicaments par an ou consultant plus de 25 fois par an.",
+  "sources_a": [
+   {
+    "outlet": "lemonde.fr",
+    "date": "2026-07-22",
+    "quote": "Il a proposé de « diminuer » le remboursement des médicaments qui n’apportent qu’un « bénéfice thérapeutique faible » [...] a envisagé de « demander un effort à ceux qui achètent plus de 50 boîtes de médicaments par an ou vont plus de 25 fois chez le médecin par an » ."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a souhaité demander un effort financier à ceux qui consomment plus de 50 boîtes de médicaments par an ou effectuent plus de 25 visites médicales par an, tout en protégeant les plus fragiles.",
+  "sources_b": [
+   {
+    "outlet": "huffingtonpost.fr",
+    "date": "2026-07-24",
+    "quote": "il souhaite « demander un effort à ceux qui achètent plus de 50 boîtes de médicaments par an ou vont plus de 25 fois chez le médecin par an, tout en protégeant les plus fragiles socialement »"
+   }
+  ]
+ },
+ {
+  "name": "facts_12153_13875",
+  "want": "same",
+  "why": "Both look back at the 8 July warning of a 'très aigu' risk.",
+  "fact_a": "Le 8 juillet, Sébastien Lecornu a prévenu que le risque d'ingérences étrangères serait 'très aigu' avant les échéances électorales de 2027 et 2028.",
+  "sources_a": [
+   {
+    "outlet": "ladepeche.fr",
+    "date": "2026-07-25",
+    "quote": "Le 8 juillet, le Premier ministre Sébastien Lecornu avait prévenu que le risque d'ingérences étrangères serait \"très aigu\" à l'approche des prochaines échéances électorales, qu'il s'agisse de la présidentielle de 2027 ou des élections régionales et départementales de 2028."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a déclaré en juillet s'attendre à un risque très aigu d'ingérences étrangères lors des prochaines échéances électorales en France.",
+  "sources_b": [
+   {
+    "outlet": "google.com",
+    "date": "2026-08-04",
+    "quote": "Le premier ministre, Sébastien Lecornu, disait alors en juillet s’attendre à un risque «très aigu» d’ingérences étrangères dans le cadre des prochaines échéances électorales en France"
+   }
+  ]
+ },
+ {
+  "name": "facts_13488_13723",
+  "want": "same",
+  "why": "Same decree of 2 August on the 10 % threshold for foreign investment.",
+  "fact_a": "Sébastien Lecornu a annoncé que toute prise de participation d'au moins 10 % par un investisseur non européen dans une entreprise française cotée sur un marché réglementé hors de l'Union européenne devra désormais être autorisée par l'État via une procédure accélérée.",
+  "sources_a": [
+   {
+    "outlet": "x.com",
+    "date": "2026-08-02",
+    "quote": "Désormais, toute prise de participation d’au moins 10 % par un investisseur non européen dans une entreprise française cotée sur un marché réglementé hors de l’Union européenne devra être autorisée par l’État, selon une procédure accélérée."
+   }
+  ],
+  "fact_b": "Les services du Premier ministre Sébastien Lecornu ont annoncé le 2 août 2026 la publication d'un décret renforçant la réglementation sur les investissements étrangers en France, abaissant le seuil de contrôle de 25 % à 10 % pour les entreprises sensibles.",
+  "sources_b": [
+   {
+    "outlet": "liberation.fr",
+    "date": "2026-08-03",
+    "quote": "Les services du Premier ministre Sébastien Lecornu ont annoncé, dimanche, la publication d’un décret qui renforce la réglementation sur les investissements étrangers en France. [...] Désormais, ce seuil est porté à 10 %"
+   }
+  ]
+ },
+ {
+  "name": "facts_14454_14537",
+  "want": "same",
+  "why": "Identical text and quote, same date.",
+  "fact_a": "Sébastien Lecornu souhaite désindexer de l'inflation les retraites les plus élevées dans le cadre de l'élaboration du budget 2027.",
+  "sources_a": [
+   {
+    "outlet": "humanite.fr",
+    "date": "2026-08-12",
+    "quote": "Sébastien Lecornu souhaiterait, dans le cadre du budget 2027, désindexer de l’inflation les retraites les plus élevées pour faire des économies."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu souhaite désindexer de l'inflation les retraites les plus élevées dans le cadre de l'élaboration du budget 2027.",
+  "sources_b": [
+   {
+    "outlet": "google.com",
+    "date": "2026-08-12",
+    "quote": "Sébastien Lecornu souhaiterait, dans le cadre du budget 2027, désindexer de l’inflation les retraites les plus élevées pour faire des économies."
+   }
+  ]
+ },
+ {
+  "name": "facts_15763_15885",
+  "want": "different",
+  "gap": "two claims of one post (the promise is kept; the text is first on the agenda) read as one claim (2/2 runs, 2026-10-05)",
+  "why": "Same post but two claims: the promise is kept, and the text is first on the agenda.",
+  "fact_a": "Sébastien Lecornu a affirmé avoir tenu l'engagement pris en juillet de construire une réponse intégrale contre les violences faites aux femmes et aux enfants pour la soumettre au Parlement dès le début du mois d'octobre.",
+  "sources_a": [
+   {
+    "outlet": "cnews.fr",
+    "date": "2026-09-01",
+    "quote": "En juillet, nous avions pris un engagement : travailler tout l’été pour construire une réponse intégrale contre les violences faites aux femmes et aux enfants, et la soumettre au Parlement dès le début du mois d’octobre. Promesse tenue."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a annoncé que la proposition de loi dite « intégrale » contre les violences faites aux femmes et aux enfants sera le premier texte inscrit par le Gouvernement à l’ordre du jour de l’Assemblée nationale à l’ouverture de la session ordinaire en octobre 2026.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-09-01",
+    "quote": "La proposition de loi dite « intégrale » sera le premier texte inscrit par le Gouvernement à l’ordre du jour de l’Assemblée nationale à l’ouverture de la session ordinaire."
+   }
+  ]
+ },
+ {
+  "name": "facts_16846_17617",
+  "want": "same",
+  "why": "Same activation of the Orsan plan at level 3; the September source looks back at 25 June.",
+  "fact_a": "Sébastien Lecornu a activé le plan Orsan au niveau 3, le plus élevé de mobilisation sanitaire.",
+  "sources_a": [
+   {
+    "outlet": "liberation.fr",
+    "date": "2026-06-26",
+    "quote": "Sébastien Lecornu a activé le plan Orsan au niveau 3, le plus élevé de mobilisation sanitaire."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a annoncé l'activation du plan Orsan niveau 3 le 25 juin 2026.",
+  "sources_b": [
+   {
+    "outlet": "rtl.fr",
+    "date": "2026-09-12",
+    "quote": "Sébastien Lecornu a annoncé l\"activation du plan Orsan niveau 3 le 25 juin 2026."
+   }
+  ]
+ },
+ {
+  "name": "facts_17294_17297",
+  "want": "same",
+  "why": "Same information of 9 September from his entourage on the allowance of ministers.",
+  "fact_a": "Sébastien Lecornu envisage de réduire les indemnités des ministres par souci d'exemplarité budgétaire avant la présentation du projet de loi de finances pour 2027.",
+  "sources_a": [
+   {
+    "outlet": "sudouest.fr",
+    "date": "2026-09-09",
+    "quote": "Le Premier ministre, Sébastien Lecorner, envisage de réduire les indemnités des ministres, à titre d’exemplarité en ces temps de disette budgétaire, a indiqué mercredi son entourage."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu envisage de diminuer l'indemnité des ministres de son gouvernement dans le cadre de la préparation du budget 2027.",
+  "sources_b": [
+   {
+    "outlet": "lefigaro.fr",
+    "date": "2026-09-09",
+    "quote": "Sébastien Lecornu envisage de diminuer l’indemnité des ministres de son gouvernement, a appris Le Figaro ce mercredi matin d’une source proche de l’exécutif."
+   }
+  ]
+ },
+ {
+  "name": "facts_17620_17939",
+  "want": "same",
+  "why": "Same announcement of the 'pacte Papin' in the letter to company heads.",
+  "fact_a": "Sébastien Lecornu a annoncé, dans une lettre adressée aux patrons, la création du 'Pacte Papin', un dispositif permettant aux entrepreneurs de céder leur PME à leurs salariés lors du prochain Budget.",
+  "sources_a": [
+   {
+    "outlet": "challenges.fr",
+    "date": "2026-09-11",
+    "quote": "Dans une lettre adressée aux patrons, Sébastien Lecornu a annoncé ce dispositif qui pourrait voir le jour à l’occasion du prochain Budget. Un dispositif qui propulse sous le feu des projecteurs le ministre qui lui a donné son nom."
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a annoncé la création, dans le budget 2027, du « pacte Papin » pour la reprise des entreprises par les salariés.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-09-12",
+    "quote": "créons, dans le budget 2027, le « pacte Papin » pour leur reprise par les salariés."
+   }
+  ]
+ },
+ {
+  "name": "facts_20528_20917",
+  "want": "same",
+  "why": "Same 19 September claim of more than 5 billion euros for local authorities.",
+  "fact_a": "Sébastien Lecornu a affirmé qu'en 2027, l'ensemble des collectivités disposera de plus de 5 milliards d'euros de ressources supplémentaires.",
+  "sources_a": [
+   {
+    "outlet": "ouest-france.fr",
+    "date": "2026-09-19",
+    "quote": "Concrètement, l’ensemble des collectivités disposera en 2027 de plus de 5 milliards d’euros de ressources supplémentaires"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a affirmé qu'en 2027, les ressources des collectivités progresseront de plus de 5 milliards d'euros pour suivre le rythme de l'inflation.",
+  "sources_b": [
+   {
+    "outlet": "x.com",
+    "date": "2026-09-19",
+    "quote": "En 2027, les ressources des collectivités progresseront au rythme de l’inflation : plus de 5 milliards d’euros supplémentaires, après leur contribution à l’effort national."
+   }
+  ]
+ }
+]

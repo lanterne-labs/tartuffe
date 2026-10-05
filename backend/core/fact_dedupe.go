@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"digital-mirror/backend/llm"
+	_ "embed"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -38,66 +40,99 @@ func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA,
 	return a.askSameGate(ctx, prompt, 0.1)
 }
 
-// IsSamePosition is the meta-FOLDING gate: unlike IsSameClaim (which guards a
-// destructive drop and therefore treats any differing specific as distinct),
-// folding keeps every raw fact, so this gate asks the broader question — do the
-// two statements assert the SAME POSITION on the SAME specific matter, differing
-// only in wording, emphasis, or facet? "Affirms his innocence", "claims good
-// faith", and "contests the qualification of embezzlement" about the same affair
-// all fold; a commitment vs a contrary action, opposing positions, or different
-// matters never do (those pairs are contradiction material and must stay apart).
+// IsSameOccurrence is the grouping gate: do the two facts report ONE
+// occurrence (see claim_evidence.go)? The gate reads each fact with its source
+// quotes, publication dates and outlets; two one-sentence summaries alone do
+// not tell a second report of a statement from another statement on the same
+// topic.
 //
-// "Same" must hold in both orders: the gate reads the second statement
-// against the first, so a pair where one says more than the other (a bundle
-// and one of its claims, a broad claim and a narrower one in the same area)
-// often reads as a restatement one way only. A restatement reads the same
-// both ways; the second call is made only when the first says same.
-func (a *FactDedupeAdjudicator) IsSamePosition(ctx context.Context, subject, factA, factB string) (bool, error) {
-	same, err := a.askSameGate(ctx, a.buildSamePositionPrompt(subject, factA, factB), 0.0)
-	if err != nil || !same {
-		return same, err
+// The verdict must hold in both orders: the gate reads the second statement
+// against the first, and a pair of different claims often reads as one
+// occurrence one way only. The second call is made only when the first says
+// groupable. "Same" needs both orders to say same; a "bundle" answer in
+// either order makes the pair contained.
+func (a *FactDedupeAdjudicator) IsSameOccurrence(ctx context.Context, x, y ClaimEvidence) (OccurrenceVerdict, error) {
+	first, err := a.askOccurrenceGate(ctx, x, y)
+	if err != nil || !first.Groupable() {
+		return first, err
 	}
-	return a.askSameGate(ctx, a.buildSamePositionPrompt(subject, factB, factA), 0.0)
+	second, err := a.askOccurrenceGate(ctx, y, x)
+	if err != nil || !second.Groupable() {
+		return second, err
+	}
+	if first == OccurrenceSame && second == OccurrenceSame {
+		return OccurrenceSame, nil
+	}
+	return OccurrenceContained, nil
 }
 
-// Both gate prompts are laid out rules first, per-call data (person, the two
+//go:embed occurrence_rules.txt
+var occurrenceRules string
+
+const occurrenceFormat = `
+Return ONLY strict JSON, nothing else, with the keys in this order:
+{"occasion_a": "<what the person said or did in A, and when/where, from the evidence>", "occasion_b": "<the same for B>", "reasoning": "<one sentence: one occurrence, or not, and the deciding evidence>", "verdict": "same" | "different" | "bundle"}`
+
+// buildOccurrencePrompt lays the prompt out rules first, the two statements
+// next, response format last (see the layout note below).
+func buildOccurrencePrompt(x, y ClaimEvidence) string {
+	var b strings.Builder
+	b.WriteString(occurrenceRules)
+	b.WriteString("\n\n")
+	writeClaimEvidence(&b, "A", x)
+	b.WriteString("\n\n")
+	writeClaimEvidence(&b, "B", y)
+	b.WriteString("\n")
+	b.WriteString(occurrenceFormat)
+	return b.String()
+}
+
+func writeClaimEvidence(b *strings.Builder, name string, e ClaimEvidence) {
+	fmt.Fprintf(b, "Statement %s: %s", name, e.Text)
+	for _, s := range e.Sources {
+		date := "unknown date"
+		if s.PublishedAt != nil {
+			date = s.PublishedAt.Format("2006-01-02")
+		}
+		fmt.Fprintf(b, "\n  source: %s, published %s, quote: \"%s\"", s.Outlet, date, strings.ReplaceAll(s.Quote, "\n", " "))
+	}
+}
+
+type occurrenceReply struct {
+	Verdict string `json:"verdict"`
+}
+
+func (a *FactDedupeAdjudicator) askOccurrenceGate(ctx context.Context, x, y ClaimEvidence) (OccurrenceVerdict, error) {
+	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
+		Messages:       []llm.ChatMessage{{Role: "user", Content: buildOccurrencePrompt(x, y)}},
+		Temperature:    0.0,
+		MaxTokens:      512,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+	})
+	if err != nil {
+		return OccurrenceDifferent, fmt.Errorf("occurrence-gate LLM call failed: %w", err)
+	}
+	reply, err := llm.ParseJSONResponse[occurrenceReply](content)
+	if err != nil {
+		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse occurrence-gate response")
+		return OccurrenceDifferent, fmt.Errorf("failed to parse LLM response: %w", err)
+	}
+	switch reply.Verdict {
+	case "same":
+		return OccurrenceSame, nil
+	case "bundle":
+		return OccurrenceContained, nil
+	case "different":
+		return OccurrenceDifferent, nil
+	default:
+		return OccurrenceDifferent, fmt.Errorf("occurrence gate: unknown verdict %q", reply.Verdict)
+	}
+}
+
+// The gate prompts are laid out rules first, per-call data (person, the two
 // statements) next, response format last: the rule block is byte-identical
 // across calls, so vLLM prefix caching prefills it once per process instead
 // of once per candidate pair (see CHANGES.md, prompt layout).
-func (a *FactDedupeAdjudicator) buildSamePositionPrompt(subject, factA, factB string) string {
-	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they assert the SAME POSITION on the SAME specific matter — so that they can be AGGREGATED under one summary statement. The originals are kept either way.
-
-The MATTER is the specific question a statement answers — NOT its subject area. Two statements about the same area (the same election, the same war, the same adversary, the same budget) that answer DIFFERENT questions are different matters. Test: could a reader who knows A still learn a distinct demand, prediction, assessment, or figure from B? If yes, answer false.
-
-SAME position (answer true):
-- The same stance on the same question, in different words or through different facets: "affirms his innocence in the affair", "claims his good faith", "contests the qualification of embezzlement" — all one position ("denies guilt in that affair").
-- The same announcement/position reported with different incidental detail (outlet, phrasing, minor date differences, added color).
-- The same demand/support/opposition restated over time with the same direction and target: "demande la baisse des taxes sur les carburants" / "la France peut baisser la fiscalité sur l'essence dès maintenant".
-- Several reports of ONE event or outcome (the same ruling, vote, result, or announcement, on the same occasion), even when they give different details or count its numbers differently: "condamnée en appel à un an sous bracelet électronique et 15 mois d'inéligibilité" / "condamnée par la cour d'appel à trois ans dont un an sous bracelet, et à 45 mois d'inéligibilité dont 30 avec sursis" are the same appeal ruling — but that appeal ruling and the first-instance ruling before it are two events.
-
-DIFFERENT (answer false — never aggregate):
-- OPPOSING or diverging positions, or a position vs a later change: these are contradiction material and must stay separate.
-- A commitment/promise/value vs an ACTION or outcome (even one that fulfils it): a statement and a deed are different kinds of facts.
-- Different questions within the same subject area:
-  "annonce sa candidature à la primaire" vs "affirme qu'il gagnera la présidentielle" — a candidacy vs a prediction.
-  "demande la démission du ministre" vs "juge la politique du ministre catastrophique" — a demand vs an assessment, same adversary.
-  "veut sortir du nucléaire d'ici 2040" vs "demande un moratoire sur les nouveaux réacteurs" — two measures in one policy field.
-  "la guerre doit cesser" vs "l'Europe est incapable de peser sur la guerre" — a wish vs a judgment about actors.
-- Different matters, targets, or questions (two different affairs, laws, elections, policies) — even if thematically close.
-- Different concrete events (two separate votes, two separate trials/instances, two separate polls). A vote is ONE ballot on ONE text: votes on different amendments or sub-amendments, or on an amendment vs the whole bill, are different events even on the same bill and the same day.
-- A statement that bundles several claims vs one of those claims alone ("X said A and criticised B" vs "X criticised B"): the bundle asserts something the other does not — answer false.
-- Materially different numbers as the substance of a statement or proposal: "une aide de 300 euros par foyer" vs "une aide de 1 000 euros par foyer" are two proposals, not one. (An event reported twice is not two events because its numbers are counted differently.)
-- Different PROCEDURAL STAGES of the same affair: a prosecutor's request (réquisition) vs the court's decision, an indictment vs a verdict, a first-instance ruling vs the appeal — each is its own fact.
-
-Person: %s
-STATEMENT A: "%s"
-STATEMENT B: "%s"
-
-Return ONLY strict JSON, nothing else:
-{"reasoning": "<one short sentence>", "same": true}
-or
-{"reasoning": "<one short sentence>", "same": false}`, subject, factA, factB)
-}
 
 // askSameGate runs a same/distinct JSON gate prompt at the given temperature
 // and parses the verdict (the PairVerdict same/reasoning shape defined in
