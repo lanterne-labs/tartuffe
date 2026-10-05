@@ -125,7 +125,7 @@ PAIR:
 %s
 
 Return ONLY strict JSON, nothing else:
-{"same": true, "reasoning": "<one short sentence>"}
+{"reasoning": "<one short sentence>", "same": true}
 or
-{"same": false, "reasoning": "<one short sentence>"}`, string(pairJSON))
+{"reasoning": "<one short sentence>", "same": false}`, string(pairJSON))
 }

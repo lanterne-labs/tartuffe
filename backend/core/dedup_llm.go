@@ -144,10 +144,10 @@ Return JSON:
     {"ids": [1, 2], "reasoning": "Same verb DENIED + same topic wrongdoing → duplicate"}
   ],
   "unique_groups": [
-    {"keep_id": 1, "duplicate_ids": [2], "reason": "Same denial in FR/EN"}
+    {"reason": "Same denial in FR/EN", "keep_id": 1, "duplicate_ids": [2]}
   ],
   "invalid_facts": [
-    {"id": 3, "reason": "Opinion, not a verifiable fact"}
+    {"reason": "Opinion, not a verifiable fact", "id": 3}
   ]
 }
 

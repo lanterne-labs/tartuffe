@@ -147,6 +147,7 @@ To trigger the pipeline manually (locally or on the cron service): `./dm pipelin
 
 ## Conventions
 
+- **LLM output order: reasoning first, verdict last.** Every prompt that asks the model for a decision (same/different, keep/drop, yes/no, a label) must make the model write its reasoning BEFORE the decision field, and the decision must be the LAST field of the reply (JSON key order or line order). A model that writes the verdict first decides without reasoning and then justifies it. Parsers read fields by name, so the order costs nothing in code.
 - **Logging**: Use zerolog (`github.com/rs/zerolog/log`) with structured fields
   - **Never silence errors**: All errors must be logged, never swallowed silently
   - Use `log.Error()` for actual failures (red in console)
@@ -159,6 +160,12 @@ To trigger the pipeline manually (locally or on the cron service): `./dm pipelin
 - **Frontend**: TypeScript interfaces in `src/lib/types.ts`, API base in `src/lib/config.ts`
 - **No workarounds**: Fix the root cause of issues rather than creating workarounds to bypass them
 - **Searching**: Use `ack` for searching code - it's faster and smarter than grep, automatically ignores version control directories and binary files
+
+## Headless browser
+
+- Never start Chromium (or any browser) with `--enable-gpu` or `--ignore-gpu-blocklist`. On this machine the AMD iGPU drives the display. On 2026-10-03 and 2026-10-04, a headless Chromium with these flags caused an iGPU page fault. The GPU reset then stopped the compositor and closed the desktop session of the owner.
+- Use software rendering: `--use-angle=swiftshader --enable-unsafe-swiftshader`. WebGL and canvas work on the CPU with these flags.
+- Stop the headless browser when the check ends. Do not leave it running in the background.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->

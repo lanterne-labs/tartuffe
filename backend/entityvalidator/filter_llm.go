@@ -164,7 +164,7 @@ plausible google evidence; lean REJECT when both sources are empty and the
 name reads as a descriptive phrase.
 
 Respond with ONLY this JSON, nothing else:
-{"real": true|false, "reason": "<one short sentence citing the deciding rule (A/B/C/D or R1–R9) and the evidence>"}
+{"reason": "<one short sentence citing the deciding rule (A/B/C/D or R1–R9) and the evidence>", "real": true|false}
 
 INPUT:
 ` + string(inputJSON)

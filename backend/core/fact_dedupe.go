@@ -94,9 +94,9 @@ STATEMENT A: "%s"
 STATEMENT B: "%s"
 
 Return ONLY strict JSON, nothing else:
-{"same": true, "reasoning": "<one short sentence>"}
+{"reasoning": "<one short sentence>", "same": true}
 or
-{"same": false, "reasoning": "<one short sentence>"}`, subject, factA, factB)
+{"reasoning": "<one short sentence>", "same": false}`, subject, factA, factB)
 }
 
 // askSameGate runs a same/distinct JSON gate prompt at the given temperature
@@ -140,7 +140,7 @@ STATEMENT A: "%s"
 STATEMENT B: "%s"
 
 Return ONLY strict JSON, nothing else:
-{"same": true, "reasoning": "<one short sentence>"}
+{"reasoning": "<one short sentence>", "same": true}
 or
-{"same": false, "reasoning": "<one short sentence>"}`, subject, factA, factB)
+{"reasoning": "<one short sentence>", "same": false}`, subject, factA, factB)
 }

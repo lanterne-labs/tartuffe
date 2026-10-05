@@ -771,9 +771,9 @@ TOPIC B: %q
   summary: %s
 
 Return ONLY strict JSON, nothing else:
-{"same": true, "reasoning": "<one short sentence>"}
+{"reasoning": "<one short sentence>", "same": true}
 or
-{"same": false, "reasoning": "<one short sentence>"}`, personName, a.Label, a.Summary, b.Label, b.Summary)
+{"reasoning": "<one short sentence>", "same": false}`, personName, a.Label, a.Summary, b.Label, b.Summary)
 }
 
 // SameSubjectByLabel asks the strict same-subject gate about two stances whose

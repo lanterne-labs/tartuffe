@@ -189,10 +189,9 @@ Summary: %s
 
 Answer YES only if the contradiction is fundamentally about the same underlying issue, promise, or position as the stance — i.e. an additional instance of the same broken promise / reversal / inconsistency, not merely a tangential overlap of vocabulary.
 
-Reply with exactly one line:
-VERDICT: YES
-or
-VERDICT: NO`
+Reply with exactly two lines, in this order:
+REASONING: <one sentence: is the contradiction about the stance's issue?>
+VERDICT: YES or NO`
 
 // askLLMRelated runs a single yes/no LLM check. Tight prompt, low temperature, small
 // max-tokens — this is a classifier call, not generation.
@@ -202,7 +201,9 @@ func (b *Bundler) askLLMRelated(ctx context.Context, bundleText string, cand sto
 	content, _, err := b.client.Chat(ctx, llm.ChatRequest{
 		Messages:    []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
-		MaxTokens:   32,
+		// The reasoning line comes before the verdict (CLAUDE.md: reasoning
+		// first, verdict last), so the reply needs room for one sentence.
+		MaxTokens: 256,
 	})
 	if err != nil {
 		return false, fmt.Errorf("bundler LLM call: %w", err)

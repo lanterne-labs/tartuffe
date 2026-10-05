@@ -304,7 +304,7 @@ const verdictInstruction = `Decide one of three verdicts:
 - "ambiguous": the complaint has merit but isn't clear-cut; keep both for human review.
 
 Respond strictly as a JSON object with no markdown, prose, or commentary:
-{"verdict": "delete_target" | "dismiss_complaint" | "ambiguous", "reason": "<one short sentence>"}`
+{"reason": "<one short sentence>", "verdict": "delete_target" | "dismiss_complaint" | "ambiguous"}`
 
 func buildFactPrompt(fact *core.FactForDedup, urls []string, description string) string {
 	var b strings.Builder

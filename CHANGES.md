@@ -2457,3 +2457,20 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   (both orders must say same) did so in 24 %. The strict check stays.
 - Lesson: compare two rules on the same data with the same judge definition. Two judge
   runs with two definitions gave numbers that looked comparable and were not.
+
+## LLM replies give the reasoning first and the verdict last (2026-10-03)
+
+- Rule (CLAUDE.md, Conventions): every decision prompt asks for the reasoning before the
+  decision field, and the decision is the last field. A verdict written first is a guess,
+  and the reasoning after it only justifies the guess.
+- Changed: fold gate, entity dedupe, stance merge, complaint triage, entity filter,
+  verifier, bundler (it gets a reasoning line and 256 tokens), stance analysis JSON.
+- Measured on the goldens:
+  - fold gate: 105/111 before and after; false merges 2 to 0, missed merges 0 to 2.
+  - analyze: 6/6. Label gate: 10/10.
+  - verifier: 44/44 to 42/44 (TP_114, FP_84 now fail).
+- The verifier had no YES pattern for the self-exempting double standard. The old order
+  passed that case by instinct; with reasoning first the model followed the procedure and
+  dropped it. The pattern is now in the verifier's YES list.
+- A reason line that names the matching pattern first is worse (38/44): the model picks a
+  NO pattern from the long catalog and stops there.

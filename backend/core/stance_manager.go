@@ -1211,15 +1211,15 @@ Compare the NEW FACT against EACH key fact independently before deciding the pri
 Return ONLY valid JSON:
 {
   "reasoning": "1-2 sentences justifying the PRIMARY VERDICT (DUPLICATE / NEW_INFO / CONTRADICTION) for this new fact against the stance as a whole — NOT a list of every contradiction (those have their own reasoning fields below)",
-  "primary_verdict": "DUPLICATE|NEW_INFO|CONTRADICTION",
-  "duplicate_of_key_fact_id": 0,
   "contradictions": [
     {
-      "key_fact_id": <id>,
       "reasoning": "1-2 sentences: restate the NEW FACT's core claim, restate THIS key fact's core claim, then explain why these two are directly opposed when considered in isolation. If you find yourself naming a third key fact's ID to explain the opposition, the DIRECT-EDGE REQUIREMENT fails — drop this entry.",
-      "reason": "1-sentence user-facing summary in French of why these two facts contradict"
+      "reason": "1-sentence user-facing summary in French of why these two facts contradict",
+      "key_fact_id": <id>
     }
-  ]
+  ],
+  "duplicate_of_key_fact_id": 0,
+  "primary_verdict": "DUPLICATE|NEW_INFO|CONTRADICTION"
 }
 
 For DUPLICATE: contradictions MUST be []. Set duplicate_of_key_fact_id to the [ID N] of the key fact the new fact paraphrases.
