@@ -68,6 +68,13 @@ func runFactsReviewGroups(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if factsReviewGroupsApply && stats.Ungrouped > 0 {
+		// An un-grouped fact is active again for every person it mentions;
+		// settle every affected score in one deterministic pass.
+		if _, err := storer.RecomputeAllHonestyScores(ctx, false); err != nil {
+			return fmt.Errorf("recomputing honesty scores after the review: %w", err)
+		}
+	}
 	printResults("CLAIM GROUP REVIEW RESULTS", []resultRow{
 		{Label: "Groups reviewed", Value: stats.Groups},
 		{Label: "Intact", Value: stats.Intact},
