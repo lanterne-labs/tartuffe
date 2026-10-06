@@ -70,6 +70,7 @@ func (v *DedupLLMVerifier) VerifyBatch(ctx context.Context, facts []FactForDedup
 		// model's entire 12k context and was rejected with 400 up front.
 		MaxTokens:      2048,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskDedupBatch,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("LLM dedup verification failed: %w", err)

@@ -23,6 +23,8 @@ type VerdictJudge struct {
 	Client *Client
 	// Name prefixes the corrective-retry warning, e.g. "Fact audit".
 	Name string
+	// Task selects the thinking setting of the judge's calls (task.go).
+	Task Task
 	// Verdicts is the closed VERDICT enum. Verdicts[0] is the "nothing applies"
 	// verdict, the only one allowed (and required) to pair with Rules[0].
 	Verdicts []string
@@ -107,6 +109,7 @@ func (j *VerdictJudge) call(ctx context.Context, messages []ChatMessage) (string
 		Messages:    messages,
 		Temperature: j.Temperature,
 		MaxTokens:   j.MaxTokens,
+		Task:        j.Task,
 	})
 	if err != nil {
 		return "", fmt.Errorf("judge API call failed: %w", err)

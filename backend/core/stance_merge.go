@@ -780,7 +780,7 @@ or
 // labels look alike. It is the first of two gates for label-surfaced merge
 // candidates; the merge decision still has the last word.
 func (sm *StanceManager) SameSubjectByLabel(ctx context.Context, personName string, a, b StanceForMerge) (bool, error) {
-	content, err := sm.callJSONLLM(ctx, "You are a political stance topic classifier. Return only valid JSON.", sameSubjectLabelPrompt(personName, a, b), 0.0, 200)
+	content, err := sm.callJSONLLM(ctx, "You are a political stance topic classifier. Return only valid JSON.", sameSubjectLabelPrompt(personName, a, b), 0.0, 200, llm.TaskStanceMerge)
 	if err != nil {
 		return false, fmt.Errorf("same-subject gate: %w", err)
 	}

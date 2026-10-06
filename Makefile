@@ -92,14 +92,15 @@ test-short:
 
 
 # LLM goldens: every judge's golden set against the model of .env, or against
-# another server and model for one run (see backend/llmtest):
+# another server, model or thinking setting for one run (see backend/llmtest):
 #   make llm-goldens
 #   make llm-goldens LLM_API=http://127.0.0.1:8095/v1 LLM_MODEL=candidate
+#   make llm-goldens LLM_THINK=occurrence,stance-analyze,detect   (tasks in backend/llm/task.go)
 # Packages run one at a time (one GPU slot). The full log is in
 # /tmp/llm-goldens.log; the screen shows one line per golden.
-LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator
-LLM_GOLDEN_RUN := Golden|TestDetectorJudgesGroupsWithTheirRestatements
-LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL))
+LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator ./backend/categorizer
+LLM_GOLDEN_RUN := Golden|TestDetectorJudgesGroupsWithTheirRestatements|TestRemoteLLMExtractor
+LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL)) $(if $(LLM_THINK),-llm-think=$(LLM_THINK))
 llm-goldens:
 	@go test -p 1 -count=1 -v -timeout 6h -run '$(LLM_GOLDEN_RUN)' $(LLM_GOLDEN_PKGS) -args $(LLM_ARGS) 2>&1 \
 		| tee /tmp/llm-goldens.log \

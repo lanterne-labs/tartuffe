@@ -102,17 +102,14 @@ type occurrenceReply struct {
 	Verdict string `json:"verdict"`
 }
 
-// askOccurrenceGate asks the model with thinking on. On 207 labelled prod
-// pairs (Qwen3.8-27B, 2026-10-06), thinking raised the true groups found from
-// 87 % to 95 % with the clear errors at 2 %, and passed all 36 golden cases;
-// most fixes are 1-to-3-day date gaps read as one occasion.
+// askOccurrenceGate is TaskOccurrence, which thinks in production (task.go).
 func (a *FactDedupeAdjudicator) askOccurrenceGate(ctx context.Context, x, y ClaimEvidence) (OccurrenceVerdict, error) {
 	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
-		Messages:           []llm.ChatMessage{{Role: "user", Content: buildOccurrencePrompt(x, y)}},
-		Temperature:        0.0,
-		MaxTokens:          llm.ThinkingMaxTokens,
-		ResponseFormat:     &llm.ResponseFormat{Type: "json_object"},
-		ChatTemplateKwargs: llm.ThinkingKwargs(),
+		Messages:       []llm.ChatMessage{{Role: "user", Content: buildOccurrencePrompt(x, y)}},
+		Temperature:    0.0,
+		MaxTokens:      512,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskOccurrence,
 	})
 	if err != nil {
 		return OccurrenceDifferent, fmt.Errorf("occurrence-gate LLM call failed: %w", err)
@@ -150,6 +147,7 @@ func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string, 
 		Temperature:    temperature,
 		MaxTokens:      256,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskSameClaim,
 	})
 	if err != nil {
 		return false, fmt.Errorf("same-gate LLM call failed: %w", err)

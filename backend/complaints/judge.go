@@ -59,6 +59,7 @@ func (j *OpenAIJudge) Judge(ctx context.Context, prompt string) (VerdictResult, 
 		Temperature:    0.1,
 		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskComplaint,
 	})
 	if err != nil {
 		return VerdictResult{}, fmt.Errorf("judge API call: %w", err)

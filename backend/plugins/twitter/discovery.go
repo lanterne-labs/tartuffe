@@ -347,6 +347,7 @@ func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, op
 			},
 			{Role: "user", Content: buildDiscoveryPrompt(person.Name, results, candidates, wikiSummary)},
 		},
+		Task: llm.TaskHandle,
 	})
 	if errors.Is(err, llm.ErrUnavailable) {
 		return false, fmt.Errorf("twitter discovery for %s: %w", person.Name, err)

@@ -147,6 +147,7 @@ func NewOpenAIFactAuditor(apiKey, apiURL, model string) (*OpenAIFactAuditor, err
 	}
 
 	return &OpenAIFactAuditor{judge: &llm.VerdictJudge{
+		Task:        llm.TaskAudit,
 		Client:      cfg.NewClient("fact-auditor"),
 		Name:        "Fact audit",
 		Verdicts:    []string{string(FactVerdictKeep), string(FactVerdictDelete), string(FactVerdictUnsure)},

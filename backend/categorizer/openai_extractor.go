@@ -308,6 +308,7 @@ func (m *OpenAIExtractor) callChatAPIWithPrompt(ctx context.Context, systemPromp
 			// an array — and collapses the prompt's requested array of facts into a
 			// single object, capping yield at 1 fact per article. ParseFactJSON
 			// already tolerates ```json fences and array/object roots.
+			Task: llm.TaskExtract,
 		})
 		duration := time.Since(startTime)
 		if err != nil {

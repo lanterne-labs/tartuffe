@@ -204,6 +204,7 @@ func (b *Bundler) askLLMRelated(ctx context.Context, bundleText string, cand sto
 		// The reasoning line comes before the verdict (CLAUDE.md: reasoning
 		// first, verdict last), so the reply needs room for one sentence.
 		MaxTokens: 256,
+		Task:      llm.TaskBundle,
 	})
 	if err != nil {
 		return false, fmt.Errorf("bundler LLM call: %w", err)

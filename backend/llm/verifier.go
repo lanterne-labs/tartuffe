@@ -45,6 +45,7 @@ func VerifyContradiction(ctx context.Context, c *Client, a, b promptrules.Statem
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
 		MaxTokens:   verifyMaxTokens,
+		Task:        TaskVerify,
 	})
 	if err != nil {
 		return false, "", fmt.Errorf("verify API call failed: %w", err)

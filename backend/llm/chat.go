@@ -22,11 +22,16 @@ type Client struct {
 // exactly DoRequest's; on top of it Chat fails on an undecodable body, an error
 // envelope, and a reply with no choices or empty content. resp is non-nil
 // whenever the body decoded, so callers can read usage and finish_reason even
-// when the guards fail.
+// when the guards fail. When req.Task thinks (task.go), Chat turns thinking
+// on with a thinking budget on top of MaxTokens. When req asks for a JSON object, the content comes
+// back without a Markdown code fence: some models (Qwen3.8 on llama.cpp)
+// wrap the object in ```json even in JSON mode, and a caller must not have to
+// know it.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatResponse, error) {
 	if req.Model == "" {
 		req.Model = c.Model
 	}
+	applyThinking(&req)
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal chat request: %w", err)
@@ -45,5 +50,12 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatRespon
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		return "", &resp, fmt.Errorf("chat API returned no content (raw: %s)", string(body))
 	}
-	return resp.Choices[0].Message.Content, &resp, nil
+	content := resp.Choices[0].Message.Content
+	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {
+		content = StripJSONCodeFence(content)
+		if content == "" {
+			return "", &resp, fmt.Errorf("chat API returned an empty code fence (raw: %s)", string(body))
+		}
+	}
+	return content, &resp, nil
 }

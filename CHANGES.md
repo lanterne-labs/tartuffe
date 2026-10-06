@@ -2512,10 +2512,13 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   (medium effort) it finds 95 % with 2 % clear errors, and passes all 36 occurrence cases.
   Gemma with thinking did not finish 1 call in 3 within 4,000 tokens: not usable.
   Bonsai 2 27B (ternary Qwen3.8) was faster but less precise; it is removed.
-- Thinking is opt-in per call (`llm.ThinkingKwargs`), off on the server by default. Only the
+- Thinking is set per task: every decision call declares an `llm.Task`, and one table
+  (`backend/llm/task.go`) lists the tasks that think; `-llm-think` / `LLM_THINK` replace the
+  table for one golden run. Thinking is off on the server by default. Only the
   grouping gate thinks today; a thinking call costs about 3 times a plain call (median 820
   output tokens), so the nightly cannot afford thinking on every judge. A thinking call gets
-  at most 4,500 tokens: Cloudflare cuts a request at 100 s (longest gate call seen: 3,319).
+  a 3,000-token thinking budget on top of its answer budget: Cloudflare cuts a request at
+  100 s (longest gate call seen: 3,319 tokens).
 - Production asks for `mirror-llm`; llama-swap maps it to the real model. A model change is
   one llama-swap entry, measured first with `make llm-goldens` / `make llm-eval`
   (`LLM_API`, `LLM_MODEL`), which pass `-llm-api` / `-llm-model` to the goldens. The goldens

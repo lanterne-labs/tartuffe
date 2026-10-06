@@ -177,6 +177,7 @@ INPUT:
 		Temperature:    0.0,
 		MaxTokens:      200,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskEntityFilter,
 	})
 	if err != nil {
 		return FilterResult{Decision: Defer}, fmt.Errorf("llm request: %w", err)

@@ -108,3 +108,23 @@ func TestChat_TransportErrorIsClientError(t *testing.T) {
 		t.Fatalf("a 4xx must surface DoRequest's ClientError with the body, got %v", err)
 	}
 }
+
+// In JSON mode the content comes back without the Markdown code fence some
+// models add around the object; in text mode it is untouched.
+func TestChat_JSONModeStripsCodeFence(t *testing.T) {
+	body := `{"choices":[{"message":{"role":"assistant","content":"` + "```json\\n{\\\"a\\\": 1}\\n```" + `"},"finish_reason":"stop"}]}`
+	c, _ := chatTestClient(t, 200, body)
+	content, _, err := c.Chat(context.Background(), ChatRequest{
+		Messages:       []ChatMessage{{Role: "user", Content: "hi"}},
+		ResponseFormat: &ResponseFormat{Type: "json_object"},
+	})
+	if err != nil || content != `{"a": 1}` {
+		t.Fatalf("JSON mode: content %q, err %v; want the bare object", content, err)
+	}
+
+	c, _ = chatTestClient(t, 200, body)
+	content, _, err = c.Chat(context.Background(), ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "hi"}}})
+	if err != nil || !strings.HasPrefix(content, "```json") {
+		t.Fatalf("text mode: content %q, err %v; want it untouched", content, err)
+	}
+}

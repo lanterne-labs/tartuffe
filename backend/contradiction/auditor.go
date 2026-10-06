@@ -199,6 +199,7 @@ func NewOpenAIContradictionAuditorFromEnv() (*OpenAIContradictionAuditor, error)
 		return nil, err
 	}
 	return &OpenAIContradictionAuditor{judge: &llm.VerdictJudge{
+		Task:          llm.TaskAudit,
 		Client:        client,
 		Name:          "Contradiction audit",
 		Verdicts:      []string{string(VerdictKeep), string(VerdictRemove), string(VerdictAmbiguous)},

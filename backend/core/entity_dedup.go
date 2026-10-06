@@ -52,6 +52,7 @@ func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 Enti
 		Temperature:    0.1,
 		MaxTokens:      256,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskEntityDedup,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("entity-dedup LLM call failed: %w", err)

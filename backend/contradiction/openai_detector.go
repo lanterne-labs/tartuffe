@@ -39,9 +39,9 @@ const (
 	// 4096 that left 7770+4096 = 11866 of 12000 — a 1.1% margin, so any pair
 	// with slightly longer fact text 400'd on context overflow.
 	//
-	// 4096 was sized for Gemma's thinking mode, but AreContradictoryBatch (the
-	// only user of this constant) explicitly disables thinking, so that
-	// headroom protected a mode this path never enters. 1024 is ~7.6x the
+	// 4096 was sized for Gemma's thinking mode. This constant is the answer
+	// budget only: when llm.TaskDetect thinks, the client adds the thinking
+	// budget on top (llm/task.go). 1024 is ~7.6x the
 	// observed maximum and restores ~3000 tokens of prompt headroom. The
 	// "contradiction token usage" log line reports completion_tokens and warns
 	// on finish_reason=="length", so a too-small budget announces itself.
@@ -449,14 +449,14 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 
 	prompt := fmt.Sprintf(contradictionPromptTpl, pairsText.String())
 
-	// Thinking OFF — eval showed it regressed recall on values_based pairs
-	// that the COMPLETENESS rule otherwise catches.
+	// Thinking is set by llm.TaskDetect (llm/task.go).
 	llmResponse, chatResp, err := d.client.Chat(ctx, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
 		Temperature: 0.0,
 		MaxTokens:   contradictionMaxTokens,
+		Task:        llm.TaskDetect,
 	})
 	timer.ObserveDuration(err)
 	if err != nil {
@@ -485,8 +485,8 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		Int("prompt_tokens", chatResp.Usage.PromptTokens).
 		Int("completion_tokens", chatResp.Usage.CompletionTokens).
 		Int("total_tokens", chatResp.Usage.TotalTokens).
-		Int("reserved_max_tokens", contradictionMaxTokens).
-		Int("unused_reservation", contradictionMaxTokens-chatResp.Usage.CompletionTokens).
+		Int("reserved_max_tokens", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens)).
+		Int("unused_reservation", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens)-chatResp.Usage.CompletionTokens).
 		Str("finish_reason", finishReason).
 		Int("pairs", len(pairs)).
 		Msg("contradiction token usage")

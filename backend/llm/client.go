@@ -321,26 +321,33 @@ type ChatRequest struct {
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 	Provider       *ProviderConfig `json:"provider,omitempty"`
 	// ChatTemplateKwargs forwards kwargs to the model's chat template
-	// (llama-server and vLLM pass `chat_template_kwargs` through). Use
-	// ThinkingKwargs() to turn thinking on for one call.
+	// (llama-server and vLLM pass `chat_template_kwargs` through). Chat sets
+	// the thinking switch here from Task; callers do not set it.
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// ThinkingBudgetTokens caps the thinking of a thinking call; the server
+	// then ends the thinking and writes the answer. Chat sets it from Task.
+	ThinkingBudgetTokens int `json:"thinking_budget_tokens,omitempty"`
+	// Task names the job of the call and selects its thinking setting
+	// (task.go). It is not sent to the server.
+	Task Task `json:"-"`
 }
 
-// ThinkingKwargs returns the chat-template kwargs that turn thinking on for
+// thinkingKwargs returns the chat-template kwargs that turn thinking on for
 // one call. The local server keeps thinking off by default (llama-swap entry
 // of mirror-llm), so a call thinks only when it asks. The server returns the
 // thinking in a separate field and `content` holds only the answer, so the
-// parsers do not change. The thinking tokens count against MaxTokens: give a
-// thinking call room for them (ThinkingMaxTokens).
-func ThinkingKwargs() map[string]any { return map[string]any{"enable_thinking": true} }
+// parsers do not change.
+func thinkingKwargs() map[string]any { return map[string]any{"enable_thinking": true} }
 
-// ThinkingMaxTokens is the output budget of a call that thinks. Production
-// reaches the GPU box through Cloudflare, which cuts a request at 100 s (a
-// 524, see breaker.go): at about 59 tokens/s, 4,500 tokens is about 76 s,
-// with room for the prompt. Measured with Qwen3.8-27B at medium effort on the
-// grouping gate (2026-10-06): a median of 820 tokens, 1,500 at the 90th
-// percentile; a call that reaches the cap returns no answer and fails.
-const ThinkingMaxTokens = 4500
+// ThinkingBudgetTokens is the thinking budget of a call that thinks. The
+// server stops the thinking there and the model writes its answer, which keeps
+// its own MaxTokens: a thinking call reserves MaxTokens + ThinkingBudgetTokens.
+// Measured with Qwen3.8-27B at medium effort on the grouping gate
+// (2026-10-06): a median of 820 tokens, 99 % under 2,600. Production reaches
+// the GPU box through Cloudflare, which cuts a request at 100 s (a 524, see
+// breaker.go): at about 59 tokens/s, 3,000 thinking tokens plus the largest
+// answer budget (2,048) is about 85 s.
+const ThinkingBudgetTokens = 3000
 
 // ChatChoice models a single choice in the completion response.
 type ChatChoice struct {

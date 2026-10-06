@@ -3,25 +3,12 @@ package categorizer
 import (
 	"context"
 	"digital-mirror/backend/extractor"
-	"os"
+	"digital-mirror/backend/llmtest"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/joho/godotenv"
 )
-
-// Helper function to load .env for tests
-// Consider moving this to a common test helper package if used in multiple places.
-func loadEnv(t *testing.T) {
-	t.Helper()
-	// Assumes .env is at the project root
-	err := godotenv.Overload("../../.env")
-	if err != nil {
-		t.Log("INFO: .env file not found or failed to load, tests needing env vars might be skipped.")
-	}
-}
 
 // canonicalVerbs is the closed set of verbs allowed in embedding_text.
 var canonicalVerbs = []string{
@@ -48,12 +35,7 @@ func startsWithCanonicalVerb(text string) bool {
 //
 // It requires OPEN_AI_KEY environment variable to be set (e.g., in .env).
 func TestRemoteLLMExtractor_ExtractFacts(t *testing.T) {
-	loadEnv(t)
-
-	apiKey := os.Getenv("OPEN_AI_KEY")
-	if apiKey == "" {
-		t.Skip("Skipping Fact Extraction test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
@@ -203,10 +185,7 @@ pour l'industrie automobile.`
 // specifics appear NOWHERE in the text, so a correctly-grounded extractor cannot
 // produce them. Requires OPEN_AI_KEY (skips otherwise), like the test above.
 func TestRemoteLLMExtractor_NoOverSpecification(t *testing.T) {
-	loadEnv(t)
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping over-specification test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
@@ -269,10 +248,7 @@ les plus dangereux. Il n'a évoqué aucun pays ni aucun modèle pénitentiaire �
 // into "Mélenchon a dénoncé"); (c) scope qualifiers must survive extraction
 // (prod fact dropped "en partie" from "en partie responsable").
 func TestRemoteLLMExtractor_AttributionGrounding(t *testing.T) {
-	loadEnv(t)
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping attribution grounding test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
@@ -331,10 +307,7 @@ d'austérité était « en partie responsable » de la lenteur des secours.`
 // whose subject is a non-political actor (musicians, athletes) must not be
 // extracted, while the political facts in the same article survive.
 func TestRemoteLLMExtractor_ScopeRejection(t *testing.T) {
-	loadEnv(t)
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping scope rejection test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
@@ -405,10 +378,7 @@ Didier Deschamps a annoncé la composition de l'équipe de France pour le match 
 // positions in the same text must survive. Majority of 3 samples, like the
 // scope rule (extraction is one stochastic sample in prod too).
 func TestRemoteLLMExtractor_NonPositionRejection(t *testing.T) {
-	loadEnv(t)
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping non-position rejection test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
 		t.Fatalf("Failed to create OpenAI extractor: %v", err)
@@ -486,10 +456,7 @@ Elle a déclaré avoir grandi à Hénin-Beaumont dans un quartier populaire, et 
 // facts only said "primaire". Each fact must carry its own sense, in the text
 // and in the embedding text. Majority of 3 samples, like the rules above.
 func TestRemoteLLMExtractor_UnambiguousWords(t *testing.T) {
-	loadEnv(t)
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping unambiguous-words test: OPEN_AI_KEY not set.")
-	}
+	llmtest.Setup(t)
 	extractorClient, err := NewOpenAIExtractorFromEnv()
 	if err != nil {
 		t.Fatalf("Failed to create OpenAI extractor: %v", err)
