@@ -13,8 +13,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/llm"
-
-	"github.com/joho/godotenv"
+	"digital-mirror/backend/llmtest"
 )
 
 // dedupeLLMStub is an OpenAI-compatible chat endpoint that records every user
@@ -188,11 +187,7 @@ func TestIsSameOccurrenceNeedsBothOrders(t *testing.T) {
 //
 //	source .env; go test -v -run TestOccurrenceGateGolden ./backend/core/
 func TestOccurrenceGateGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env")
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping occurrence-gate golden test: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 	adj, err := NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
 		t.Fatalf("failed to create adjudicator: %v", err)
@@ -235,7 +230,7 @@ func TestOccurrenceGateGolden(t *testing.T) {
 		return e
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 	var passed, failed, gaps int
 	for _, tc := range cases {
@@ -270,12 +265,7 @@ func TestOccurrenceGateGolden(t *testing.T) {
 //
 //	source .env; go test -v -run TestFactDedupeAdjudicatorGolden ./backend/core/
 func TestFactDedupeAdjudicatorGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env")
-
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping fact-dedupe golden test: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 
 	adj, err := NewFactDedupeAdjudicatorFromEnv()
 	if err != nil {
@@ -321,7 +311,7 @@ func TestFactDedupeAdjudicatorGolden(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
 	var passed, failed int

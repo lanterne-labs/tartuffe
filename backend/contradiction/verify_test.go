@@ -1,14 +1,12 @@
 package contradiction
 
 import (
-	"context"
+	"digital-mirror/backend/llmtest"
 	"digital-mirror/backend/promptrules"
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -65,12 +63,7 @@ type verifyCaseFile struct {
 //
 //	source .env; go test -v -run TestVerifyGolden ./backend/contradiction/
 func TestVerifyGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env") // also try repo-root .env when run from the package dir
-
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping golden verify test: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 
 	raw, err := os.ReadFile("testdata/verify_cases.yaml")
 	if err != nil {
@@ -89,7 +82,7 @@ func TestVerifyGolden(t *testing.T) {
 		t.Fatalf("failed to create detector: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
 	var passed, failed int

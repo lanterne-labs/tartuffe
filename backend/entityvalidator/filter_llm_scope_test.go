@@ -1,13 +1,10 @@
 package entityvalidator
 
 import (
-	"context"
 	"encoding/json"
-	"os"
 	"testing"
-	"time"
 
-	"github.com/joho/godotenv"
+	"digital-mirror/backend/llmtest"
 )
 
 // TestLLMFilter_ScopeGolden locks the R10 out-of-scope rule added after the
@@ -20,17 +17,13 @@ import (
 //
 //	source .env; go test -v -run TestLLMFilter_ScopeGolden ./backend/entityvalidator/
 func TestLLMFilter_ScopeGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env")
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping scope golden: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 
 	f, err := NewLLMFilter()
 	if err != nil {
 		t.Fatalf("NewLLMFilter: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
 	mkPrev := func(pages []WikiPage, hits []GoogleHit) []FilterRun {

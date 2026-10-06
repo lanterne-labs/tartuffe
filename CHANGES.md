@@ -2502,3 +2502,25 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   - Labels made by a blind judge are noise; the prompt tuning against them was a seesaw.
 - Golden: `TestOccurrenceGateGolden` (36 prod pairs with evidence, `testdata/`). The 33
   text-only fold cases are removed. Existing prod groups are not yet reviewed (mirror-vpj).
+
+## Local LLM: Qwen3.8-27B with thinking on the grouping gate; one stable model name (2026-10-06)
+
+- The local model is Qwen3.8-27B (unsloth UD-Q3_K_XL, llama.cpp), not Gemma 4 26B-A4B. It
+  fits in the 16 GB of VRAM (Gemma needed 8 GB of CPU offload) and decodes about 2 times faster.
+- Measured on the RTX 5080 (207 labelled grouping pairs, goldens): without thinking Qwen makes
+  half the wrong groups of Gemma but finds fewer true groups (87 % against 98 %). With thinking
+  (medium effort) it finds 95 % with 2 % clear errors, and passes all 36 occurrence cases.
+  Gemma with thinking did not finish 1 call in 3 within 4,000 tokens: not usable.
+  Bonsai 2 27B (ternary Qwen3.8) was faster but less precise; it is removed.
+- Thinking is opt-in per call (`llm.ThinkingKwargs`), off on the server by default. Only the
+  grouping gate thinks today; a thinking call costs about 3 times a plain call (median 820
+  output tokens), so the nightly cannot afford thinking on every judge. A thinking call gets
+  at most 4,500 tokens: Cloudflare cuts a request at 100 s (longest gate call seen: 3,319).
+- Production asks for `mirror-llm`; llama-swap maps it to the real model. A model change is
+  one llama-swap entry, measured first with `make llm-goldens` / `make llm-eval`
+  (`LLM_API`, `LLM_MODEL`), which pass `-llm-api` / `-llm-model` to the goldens. The goldens
+  take their time limit from `go test -timeout`: the fixed limits broke on a slower model.
+- Lessons:
+  - Thinking was never measured on any judge after one bad result on Gemma; measure each
+    judge, and measure again when the model changes.
+  - Compare models with the same prompt, the same labels and the same thinking setting.

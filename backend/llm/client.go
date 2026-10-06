@@ -320,19 +320,27 @@ type ChatRequest struct {
 	MaxTokens      int             `json:"max_tokens,omitempty"`
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 	Provider       *ProviderConfig `json:"provider,omitempty"`
-	// ChatTemplateKwargs forwards arbitrary kwargs to the upstream model's
-	// HuggingFace chat template (passed through by llama-server / vLLM via
-	// `chat_template_kwargs`). Used today to enable Gemma's thinking mode
-	// for judgment-heavy calls: set `{"enable_thinking": true}` and the
-	// upstream serves the chain-of-thought in the response's `reasoning`
-	// field, keeping `content` clean of the thinking preamble — so our
-	// JSON/regex parsers don't need to change.
-	//
-	// Default empty (no thinking) for fast paths like fact extraction and
-	// label generation. Enable explicitly on stance analyze + contradiction
-	// detection where the reasoning quality matters.
+	// ChatTemplateKwargs forwards kwargs to the model's chat template
+	// (llama-server and vLLM pass `chat_template_kwargs` through). Use
+	// ThinkingKwargs() to turn thinking on for one call.
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
+
+// ThinkingKwargs returns the chat-template kwargs that turn thinking on for
+// one call. The local server keeps thinking off by default (llama-swap entry
+// of mirror-llm), so a call thinks only when it asks. The server returns the
+// thinking in a separate field and `content` holds only the answer, so the
+// parsers do not change. The thinking tokens count against MaxTokens: give a
+// thinking call room for them (ThinkingMaxTokens).
+func ThinkingKwargs() map[string]any { return map[string]any{"enable_thinking": true} }
+
+// ThinkingMaxTokens is the output budget of a call that thinks. Production
+// reaches the GPU box through Cloudflare, which cuts a request at 100 s (a
+// 524, see breaker.go): at about 59 tokens/s, 4,500 tokens is about 76 s,
+// with room for the prompt. Measured with Qwen3.8-27B at medium effort on the
+// grouping gate (2026-10-06): a median of 820 tokens, 1,500 at the 90th
+// percentile; a call that reaches the cap returns no answer and fails.
+const ThinkingMaxTokens = 4500
 
 // ChatChoice models a single choice in the completion response.
 type ChatChoice struct {

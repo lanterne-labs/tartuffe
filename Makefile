@@ -1,4 +1,4 @@
-.PHONY: help test test-short db-reset db-status db-start db-stop setup-test-env
+.PHONY: help test test-short db-reset db-status db-start db-stop setup-test-env llm-goldens llm-eval
 
 # Project-specific settings
 # The project_id from supabase/config.toml - used for container naming
@@ -19,6 +19,8 @@ help:
 	@echo "  make test           - Run all Go tests with proper DATABASE_URL"
 	@echo "  make test-short     - Run tests without verbose output"
 	@echo "  make setup-test-env - Show the DATABASE_URL that would be used for tests"
+	@echo "  make llm-goldens    - Run the LLM goldens (LLM_API=... LLM_MODEL=... to test another model)"
+	@echo "  make llm-eval       - Run the 207-pair grouping eval (about 2 h; same LLM_API / LLM_MODEL)"
 
 # Start Supabase (ensures it's running)
 db-start:
@@ -88,3 +90,23 @@ test-short:
 		go test -p 1 -timeout 40m ./...; \
 	fi
 
+
+# LLM goldens: every judge's golden set against the model of .env, or against
+# another server and model for one run (see backend/llmtest):
+#   make llm-goldens
+#   make llm-goldens LLM_API=http://127.0.0.1:8095/v1 LLM_MODEL=candidate
+# Packages run one at a time (one GPU slot). The full log is in
+# /tmp/llm-goldens.log; the screen shows one line per golden.
+LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator
+LLM_GOLDEN_RUN := Golden|TestDetectorJudgesGroupsWithTheirRestatements
+LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL))
+llm-goldens:
+	@go test -p 1 -count=1 -v -timeout 6h -run '$(LLM_GOLDEN_RUN)' $(LLM_GOLDEN_PKGS) -args $(LLM_ARGS) 2>&1 \
+		| tee /tmp/llm-goldens.log \
+		| grep -E '^(--- (PASS|FAIL|SKIP): Test[A-Za-z_]+ |ok |FAIL|.*=== [A-Z -]+: )' || true
+
+# The 207-pair grouping eval (backend/core/occurrence_eval_test.go): the
+# measure to compare models on grouping. Log in /tmp/llm-eval.log.
+llm-eval:
+	@go test -tags llmeval -count=1 -v -timeout 8h -run 'TestOccurrenceGateEval' ./backend/core -args $(LLM_ARGS) 2>&1 \
+		| tee /tmp/llm-eval.log | grep -E 'OCCURRENCE EVAL|gate error|^(ok|FAIL)' || true

@@ -1,13 +1,12 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/joho/godotenv"
+	"digital-mirror/backend/llmtest"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,11 +22,7 @@ type labelPickCase struct {
 // must be among the picks, and nothing may be picked when no topic fits.
 // LOCAL ONLY: self-skips unless OPEN_AI_KEY is set (the LLM is the local GPU).
 func TestLabelPickGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env")
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping golden label-pick test: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 	raw, err := os.ReadFile("testdata/label_pick_cases.yaml")
 	if err != nil {
 		t.Fatalf("reading label_pick_cases.yaml: %v", err)
@@ -42,7 +37,7 @@ func TestLabelPickGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create stance manager: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
 	var passed, failed int

@@ -1117,7 +1117,6 @@ func (sm *StanceManager) callJSONLLM(
 	systemMsg, userPrompt string,
 	temperature float64,
 	maxTokens int,
-	enableThinking bool,
 ) (string, error) {
 	req := llm.ChatRequest{
 		Messages: []llm.ChatMessage{
@@ -1127,13 +1126,6 @@ func (sm *StanceManager) callJSONLLM(
 		Temperature:    temperature,
 		MaxTokens:      maxTokens,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-	if enableThinking {
-		// Gemma thinking mode: upstream returns the chain-of-thought in
-		// `message.reasoning`, leaves `message.content` clean. Our parsers
-		// only read content, so this is a drop-in quality boost for the
-		// judgment-heavy calls (stance analyze, merge decision).
-		req.ChatTemplateKwargs = map[string]any{"enable_thinking": true}
 	}
 	content, _, err := sm.client.Chat(ctx, req)
 	if err != nil {
@@ -1271,7 +1263,7 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 		// context, leaving no room for key facts and overflowing (facts were
 		// rolled back). chunkKeyFactsByBudget now bounds facts (and thus the
 		// contradiction-entry count) per call, so 2048 is ample.
-		content, err := sm.callJSONLLM(ctx, sys, prompt, t, stanceAnalyzeOutputTokens, false)
+		content, err := sm.callJSONLLM(ctx, sys, prompt, t, stanceAnalyzeOutputTokens)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call: %w", err)
 			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")
@@ -1446,7 +1438,7 @@ EXISTING TOPICS:
 Return ONLY valid JSON:
 {"reasoning": "one sentence", "topic_indexes": [ ... ]}`, labelPickMax, labels.String(), factText)
 	const sys = "You are a political fact topic classifier. Return only valid JSON."
-	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.0, 200, false)
+	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.0, 200)
 	if err != nil {
 		return nil, fmt.Errorf("topic label pass: %w", err)
 	}
@@ -1526,7 +1518,7 @@ Return ONLY valid JSON:
 Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no existing topic fits.`, topicsBuilder.String(), factText, len(candidates))
 
 	const sys = "You are a political fact topic classifier. Return only valid JSON."
-	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.1, 800, false)
+	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.1, 800)
 	if err != nil {
 		return nil, fmt.Errorf("topic assignment: %w", err)
 	}
@@ -1538,7 +1530,7 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 		// the analyze call — during the 2026-07-24 rebuild it orphaned ~11% of
 		// facts (1,243) because a single parse failure skipped the whole fact.
 		log.Warn().Err(err).Str("llm_content", content).Msg("Topic assignment JSON parse failed; retrying once at T=0.3")
-		content, err = sm.callJSONLLM(ctx, sys, prompt, 0.3, 800, false)
+		content, err = sm.callJSONLLM(ctx, sys, prompt, 0.3, 800)
 		if err != nil {
 			return nil, fmt.Errorf("topic assignment (retry): %w", err)
 		}
@@ -1577,7 +1569,7 @@ Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
 
 	const labelSys = "You generate broad topic labels for political facts. Return only valid JSON."
-	content, err := sm.callJSONLLM(ctx, labelSys, prompt, 0.1, 200, false)
+	content, err := sm.callJSONLLM(ctx, labelSys, prompt, 0.1, 200)
 	if err != nil {
 		return "", fmt.Errorf("label generation: %w", err)
 	}
@@ -1585,7 +1577,7 @@ Return ONLY valid JSON:
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		// Same transient-truncation retry as assignTopicFromCandidates.
 		log.Warn().Err(err).Str("llm_content", content).Msg("Label JSON parse failed; retrying once at T=0.3")
-		content, err = sm.callJSONLLM(ctx, labelSys, prompt, 0.3, 200, false)
+		content, err = sm.callJSONLLM(ctx, labelSys, prompt, 0.3, 200)
 		if err != nil {
 			return "", fmt.Errorf("label generation (retry): %w", err)
 		}
@@ -1744,7 +1736,7 @@ NEW FACTS JUST ADDED (one "- " line per fact, with its verb in parentheses when 
 }
 
 func (sm *StanceManager) callRefreshLLM(ctx context.Context, prompt string) (string, string, error) {
-	content, err := sm.callJSONLLM(ctx, "You maintain stance metadata for political facts. Return only valid JSON.", prompt, 0.2, stanceRefreshOutputTokens, false)
+	content, err := sm.callJSONLLM(ctx, "You maintain stance metadata for political facts. Return only valid JSON.", prompt, 0.2, stanceRefreshOutputTokens)
 	if err != nil {
 		return "", "", fmt.Errorf("metadata refresh: %w", err)
 	}
@@ -1826,7 +1818,7 @@ func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName st
 
 	// Thinking OFF (see callLLM comment): same regression pattern observed.
 	// Token cap restored to 800 — no thinking means no need for the headroom.
-	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800, false)
+	content, err := sm.callJSONLLM(ctx, "You are a political fact stance-merge classifier. Return only valid JSON.", prompt, 0.1, 800)
 	if err != nil {
 		return nil, fmt.Errorf("merge decision: %w", err)
 	}

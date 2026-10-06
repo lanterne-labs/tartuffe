@@ -1,15 +1,12 @@
 package contradiction
 
 import (
-	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"digital-mirror/backend/llmtest"
 	"digital-mirror/backend/promptrules"
-
-	"github.com/joho/godotenv"
 )
 
 // A statement standing for a group renders its other wordings on one line
@@ -31,10 +28,7 @@ func TestStatementRender(t *testing.T) {
 // statement are never judged against each other. Majority of 3 per case,
 // like the other judge goldens. Local-only (live LLM).
 func TestDetectorJudgesGroupsWithTheirRestatements(t *testing.T) {
-	_ = godotenv.Overload("../../.env")
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping restatements golden: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 	detector, err := NewOpenAIContradictionDetectorFromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +68,7 @@ func TestDetectorJudgesGroupsWithTheirRestatements(t *testing.T) {
 			want: false,
 		},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

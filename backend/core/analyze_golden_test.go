@@ -1,13 +1,12 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/joho/godotenv"
+	"digital-mirror/backend/llmtest"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,12 +50,7 @@ type analyzeCaseFile struct {
 //
 //	source .env; go test -v -run TestAnalyzeGolden ./backend/core/
 func TestAnalyzeGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env") // repo-root .env when run from the package dir
-
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping golden analyze test: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 
 	raw, err := os.ReadFile("testdata/analyze_cases.yaml")
 	if err != nil {
@@ -75,7 +69,7 @@ func TestAnalyzeGolden(t *testing.T) {
 		t.Fatalf("failed to create stance manager: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
 	var passed, failed int

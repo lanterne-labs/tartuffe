@@ -1,12 +1,9 @@
 package core
 
 import (
-	"context"
-	"os"
 	"testing"
-	"time"
 
-	"github.com/joho/godotenv"
+	"digital-mirror/backend/llmtest"
 )
 
 // TestSameSubjectByLabelGolden pins the strict label gate on prod stance pairs
@@ -14,11 +11,7 @@ import (
 // duplicate topics that must merge and the shared-generic-word pairs that
 // must not. Local-only (live LLM).
 func TestSameSubjectByLabelGolden(t *testing.T) {
-	_ = godotenv.Overload()
-	_ = godotenv.Overload("../../.env")
-	if os.Getenv("OPEN_AI_KEY") == "" {
-		t.Skip("Skipping label-gate golden: OPEN_AI_KEY not set (local-only).")
-	}
+	llmtest.Setup(t)
 	sm, err := NewStanceManagerFromEnv(newMockStanceStorer())
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +95,7 @@ func TestSameSubjectByLabelGolden(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 	var failed int
 	for _, tc := range cases {
