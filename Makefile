@@ -20,7 +20,7 @@ help:
 	@echo "  make test-short     - Run tests without verbose output"
 	@echo "  make setup-test-env - Show the DATABASE_URL that would be used for tests"
 	@echo "  make llm-goldens    - Run the LLM goldens (LLM_API=... LLM_MODEL=... to test another model)"
-	@echo "  make llm-eval       - Run the 207-pair grouping eval (about 2 h; same LLM_API / LLM_MODEL)"
+	@echo "  make llm-eval       - Run the large grouping and detection evals (hours; same LLM_API / LLM_MODEL / LLM_THINK)"
 
 # Start Supabase (ensures it's running)
 db-start:
@@ -106,8 +106,10 @@ llm-goldens:
 		| tee /tmp/llm-goldens.log \
 		| grep -E '^(--- (PASS|FAIL|SKIP): Test[A-Za-z_]+ |ok |FAIL|.*=== [A-Z -]+: )' || true
 
-# The 207-pair grouping eval (backend/core/occurrence_eval_test.go): the
-# measure to compare models on grouping. Log in /tmp/llm-eval.log.
+# The large evals (build tag llmeval): grouping on 207 labelled prod pairs
+# (backend/core/occurrence_eval_test.go) and contradiction detection on 200
+# (backend/contradiction/detect_eval_test.go). The measures to compare models
+# and thinking settings. Log in /tmp/llm-eval.log.
 llm-eval:
-	@go test -tags llmeval -count=1 -v -timeout 8h -run 'TestOccurrenceGateEval' ./backend/core -args $(LLM_ARGS) 2>&1 \
-		| tee /tmp/llm-eval.log | grep -E 'OCCURRENCE EVAL|gate error|^(ok|FAIL)' || true
+	@go test -tags llmeval -p 1 -count=1 -v -timeout 12h -run 'Eval$$' ./backend/core ./backend/contradiction -args $(LLM_ARGS) 2>&1 \
+		| tee /tmp/llm-eval.log | grep -E '(OCCURRENCE|DETECT) EVAL|gate error|detector error|^(ok|FAIL)' || true

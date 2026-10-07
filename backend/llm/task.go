@@ -42,6 +42,7 @@ var AllTasks = []Task{
 // thinking call costs about 3 times a plain call (CLAUDE.md "Local LLM").
 var thinkingTasks = map[Task]bool{
 	TaskOccurrence: true, // 207 labelled pairs: 87 % -> 95 % of true groups, 2 % clear errors
+	TaskDetect:     true, // 60 labelled pairs (2026-10-07): precision 72 % -> 100 %, recall 54 % -> 83 %
 }
 
 var (

@@ -2527,3 +2527,26 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   - Thinking was never measured on any judge after one bad result on Gemma; measure each
     judge, and measure again when the model changes.
   - Compare models with the same prompt, the same labels and the same thinking setting.
+
+## Contradiction detection: position reversals count; the detector thinks (2026-10-07)
+
+- Finding: on 100 contradictions sampled from prod, independent reviewers found only 24 real
+  ones (10 sure); the other 76 broke the project's own rules (complementary causes, forecasts,
+  two different motions or amendments, a vote with no link to the statement). Most came from
+  Gemma and older rules. The 100 pairs the detector rejected held no missed contradiction.
+- Qwen without thinking found only 7 of the 24: it dismissed every change of position as
+  "not a logical contradiction". The detector prompt asked for a "logical" contradiction, and
+  its examples called a reversal "a legitimate change of position" (an exemption meant for
+  unknown dates only).
+- Fix: the detector defines a contradiction as the person's own positions, claims or acts in
+  conflict, with an explicit POSITION REVERSAL rule. It lives in the detector template only:
+  the rule block and the examples (PAIR 1) are shared with the auditor, and an edit there
+  flipped a self-exemption keep case of the audit golden (3/3 runs). The shared rulebook
+  (stance analysis) gets the same rule as temporal rule 5.
+- Measured on 60 labelled pairs (backend/contradiction/testdata/detect_eval_pairs.json):
+  precision 70 % -> 100 %, recall 29 % -> 83 % (sure labels 30 % -> 90 %) with the new
+  prompt and thinking on `detect`. Thinking on audit, verify, stance analyze or assign
+  showed no clear gain on their goldens for 3 to 11 times the time: off.
+- `make llm-eval` runs the grouping, detection and audit evals. Lessons:
+  - A prompt word ("logically") and one stray example can disable a whole class of verdicts.
+  - A rule block shared by two judges changes both: measure both.

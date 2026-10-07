@@ -59,8 +59,9 @@ A breaker does NOT invalidate a promise when:
 **TEMPORAL REASONING:**
 1. Earlier "didn't know" → Later "knew/claimed" = NOT contradiction (learned over time)
 2. Earlier "claimed X" → Later "denied X" = IS contradiction (cannot unknow)
-3. Same date conflicts: analyze carefully for direct logical contradiction
+3. Same date conflicts: analyze carefully; the two must be incompatible, not two different claims
 4. Unknown dates: be SKEPTICAL, only flag if completely irreconcilable regardless of temporal ordering
+5. Both dates known, opposite positions on the SAME question: a POSITION REVERSAL. It IS a contradiction (a stance, demand, intention or refusal, then the opposite). Never dismiss it as "a change of position over time": that exemption exists ONLY for unknown dates (rule 4). It is not a reversal when the two answer different questions, concern different events or texts, or one is a forecast.
 
 **EXAMPLES (positive = YES contradiction, negative = NO):**
 
@@ -104,8 +105,8 @@ PAIR 5b: YES: Blanket "I will campaign regardless" combined with separately stat
 PAIR 7 (Unknown Dates - NO):
 Statement A (dated unknown date): "CEO Jones supported policy X."
 Statement B (dated unknown date): "CEO Jones opposed policy X."
-PAIR 7: REASONING: Both dates unknown. UNKNOWN DATES rule: be skeptical, these could represent a legitimate change of position over time.
-PAIR 7: NO: Without dates, these could represent a legitimate change of position over time.
+PAIR 7: REASONING: Both dates unknown. UNKNOWN DATES rule: the order is unknown, so this cannot be read as a reversal. With both dates known, the same pair would be a POSITION REVERSAL (YES).
+PAIR 7: NO: Without dates, the order of the two positions is unknown.
 
 PAIR 8 (Different Events - NO):
 Statement A (dated March 2022): "Senator Smith voted against bill H.R. 123."

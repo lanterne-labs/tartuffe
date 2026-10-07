@@ -6,22 +6,22 @@ import (
 	"testing"
 )
 
-// The production table: the grouping gate thinks, the other tasks and a call
-// without a task do not.
+// The production table: the grouping gate and the detector think; the other
+// tasks and a call without a task do not.
 func TestThinksProductionTable(t *testing.T) {
-	if !Thinks(TaskOccurrence) || Thinks(TaskDetect) || Thinks("") {
-		t.Fatalf("production table changed: occurrence=%v detect=%v none=%v", Thinks(TaskOccurrence), Thinks(TaskDetect), Thinks(""))
+	if !Thinks(TaskOccurrence) || !Thinks(TaskDetect) || Thinks(TaskAudit) || Thinks("") {
+		t.Fatalf("production table changed: occurrence=%v detect=%v audit=%v none=%v", Thinks(TaskOccurrence), Thinks(TaskDetect), Thinks(TaskAudit), Thinks(""))
 	}
 }
 
 // An override replaces the whole table until restore.
 func TestOverrideThinking(t *testing.T) {
-	restore := OverrideThinking([]Task{TaskDetect})
-	if !Thinks(TaskDetect) || Thinks(TaskOccurrence) {
+	restore := OverrideThinking([]Task{TaskAudit})
+	if !Thinks(TaskAudit) || Thinks(TaskOccurrence) {
 		t.Fatalf("override not applied")
 	}
 	restore()
-	if Thinks(TaskDetect) || !Thinks(TaskOccurrence) {
+	if Thinks(TaskAudit) || !Thinks(TaskOccurrence) {
 		t.Fatalf("restore did not bring the production table back")
 	}
 }
@@ -62,7 +62,7 @@ func TestChatAppliesTaskThinking(t *testing.T) {
 	if _, sent := body["Task"]; sent {
 		t.Fatal("Task must not be sent to the server")
 	}
-	body = send(TaskDetect)
+	body = send(TaskAudit)
 	if _, has := body["chat_template_kwargs"]; has || body["thinking_budget_tokens"] != nil || body["max_tokens"] != float64(256) {
 		t.Fatalf("plain task: body %v", body)
 	}

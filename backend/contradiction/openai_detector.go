@@ -300,9 +300,12 @@ PAIR 36: REASONING: [relative_vote_preference] protects amendment votes ONLY aga
 PAIR 36: YES: Il exige une étude d'impact préalable puis vote contre l'amendement qui l'instaure — son vote contredit sa propre exigence, sans aucune inversion de sens.
 `
 
-var contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if the statements logically contradict each other.
+var contradictionPromptTpl = `You are analyzing pairs of statements for contradictions. For EACH pair, determine if they record a contradiction of the person: the person's own positions, claims, commitments or acts conflict with each other, or an authoritative finding breaks the person's own denial or claim.
 
 ` + ContradictionRulesAndExamples + `
+
+**POSITION REVERSAL — IS A CONTRADICTION:**
+The person states a position, demand, intention or refusal on a question, and on another date states or does the opposite on the SAME question (e.g. "plaide pour une grande primaire" then "ne veut pas de primaire"; "refuse d'appeler X à annuler" then "appelle X à annuler"; "annonce sa démission" then "accepte de rester"). With both dates known, this IS the contradiction this tracker records: do not dismiss it as "a change of position" or "not a logical contradiction". The "legitimate change of position over time" exemption applies ONLY when a date is unknown (TEMPORAL REASONING, rule 4). It is NOT a reversal when the two statements answer different questions, concern different events or texts, or one is a forecast.
 
 ` + promptrules.RestatementsRule + `
 
