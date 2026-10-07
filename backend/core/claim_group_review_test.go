@@ -17,7 +17,16 @@ type reviewStorer struct {
 }
 
 func (r *reviewStorer) ListClaimGroups(ctx context.Context, since time.Time, onlyIDs []int64) ([]ClaimGroup, error) {
-	return r.groups, nil
+	if len(onlyIDs) == 0 {
+		return r.groups, nil
+	}
+	var out []ClaimGroup
+	for _, g := range r.groups {
+		if slices.Contains(onlyIDs, g.ParentID) {
+			out = append(out, g)
+		}
+	}
+	return out, nil
 }
 func (r *reviewStorer) GetGroupMembers(ctx context.Context, parentID int64) ([]FactForFold, error) {
 	return r.members[parentID], nil
@@ -104,5 +113,43 @@ func TestReviewClaimGroups(t *testing.T) {
 	}
 	if st.Ungrouped != 3 || !slices.Equal(store.ungrouped, [][2]int64{{2, 21}, {3, 31}, {7, 71}}) {
 		t.Fatalf("apply: ungrouped=%v stats=%+v, want 21 out of group 2, 31 out of group 3, 71 out of group 7", store.ungrouped, st)
+	}
+}
+
+// countingJudge counts the gate calls and answers "same" for every pair.
+type countingJudge struct{ calls int }
+
+func (j *countingJudge) IsSameOccurrence(ctx context.Context, x, y ClaimEvidence) (OccurrenceVerdict, error) {
+	j.calls++
+	return OccurrenceSame, nil
+}
+
+// The vote stops when the rest cannot change it, and --start-after skips the
+// groups already reviewed.
+func TestReviewClaimGroupsStopsDecidedVotesAndResumes(t *testing.T) {
+	store := &reviewStorer{
+		groups: []ClaimGroup{{ParentID: 1, Text: "p"}, {ParentID: 2, Text: "p"}},
+		members: map[int64][]FactForFold{
+			1: {{ID: 11, Text: "a"}, {ID: 12, Text: "b"}, {ID: 13, Text: "c"}, {ID: 14, Text: "d"}},
+			2: {{ID: 21, Text: "a"}},
+		},
+	}
+	judge := &countingJudge{}
+	st, err := ReviewClaimGroups(context.Background(), store, judge, GroupReviewOptions{StartAfter: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Groups != 1 || judge.calls != 1 {
+		t.Fatalf("start-after: groups=%d calls=%d, want only group 2 with one call", st.Groups, judge.calls)
+	}
+
+	judge = &countingJudge{}
+	if _, err := ReviewClaimGroups(context.Background(), store, judge, GroupReviewOptions{OnlyIDs: []int64{1}}); err != nil {
+		t.Fatal(err)
+	}
+	// Kept grows 1, 2, 3, 4: each member needs ceil(n/2) agreements, so
+	// 1 + 1 + 2 + 2 = 6 calls instead of 1 + 2 + 3 + 4 = 10.
+	if judge.calls != 6 {
+		t.Fatalf("calls=%d, want 6 (the vote stops once decided)", judge.calls)
 	}
 }

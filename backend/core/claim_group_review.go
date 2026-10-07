@@ -40,6 +40,9 @@ type GroupReviewOptions struct {
 	// Apply un-groups the members that no longer belong. Without it the
 	// review only reports.
 	Apply bool
+	// StartAfter skips the groups whose parent id is at most this value, to
+	// resume a cut run (groups are reviewed in parent id order).
+	StartAfter int64
 }
 
 // GroupReviewStats are the counters of one review.
@@ -73,6 +76,15 @@ func ReviewClaimGroups(ctx context.Context, storer GroupReviewStorer, judge Same
 	groups, err := storer.ListClaimGroups(ctx, opts.Since, opts.OnlyIDs)
 	if err != nil {
 		return st, fmt.Errorf("listing claim groups: %w", err)
+	}
+	if opts.StartAfter > 0 {
+		var rest []ClaimGroup
+		for _, g := range groups {
+			if g.ParentID > opts.StartAfter {
+				rest = append(rest, g)
+			}
+		}
+		groups = rest
 	}
 	log.Info().Int("groups", len(groups)).Time("since", opts.Since).Bool("apply", opts.Apply).Msg("Claim group review started")
 
@@ -125,8 +137,13 @@ func ReviewClaimGroups(ctx context.Context, storer GroupReviewStorer, judge Same
 				out = append(out, f)
 				continue
 			}
+			// The member stays when agree >= disagree over the kept facts:
+			// stop as soon as the remaining calls cannot change that.
 			agree, disagree := 0, 0
 			for _, k := range kept {
+				if 2*agree >= len(kept) || 2*disagree > len(kept) {
+					break
+				}
 				verdict, err := judge.IsSameOccurrence(ctx, evidenceOf(k), evidenceOf(f))
 				same := verdict.Groupable()
 				if err != nil {

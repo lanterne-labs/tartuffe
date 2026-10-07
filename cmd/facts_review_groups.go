@@ -12,9 +12,10 @@ import (
 )
 
 var (
-	factsReviewGroupsSince string
-	factsReviewGroupsApply bool
-	factsReviewGroupsOnly  []int64
+	factsReviewGroupsSince      string
+	factsReviewGroupsStartAfter int64
+	factsReviewGroupsApply      bool
+	factsReviewGroupsOnly       []int64
 )
 
 var factsReviewGroupsCmd = &cobra.Command{
@@ -32,7 +33,8 @@ active facts again, in the parent's stance. Nothing is deleted.
 Examples:
   ./dm facts review-groups --since 2026-09-17
   ./dm facts review-groups --since 2026-09-17 --apply
-  ./dm facts review-groups --since 2026-01-01 --groups 12780,21277 --apply`,
+  ./dm facts review-groups --since 2026-01-01 --groups 12780,21277 --apply
+  ./dm facts review-groups --since 2020-01-01 --start-after 15524 --apply`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.NoArgs,
 	RunE:        runFactsReviewGroups,
@@ -43,6 +45,7 @@ func init() {
 	factsReviewGroupsCmd.Flags().StringVar(&factsReviewGroupsSince, "since", "", "Review groups that gained a member on or after YYYY-MM-DD (required)")
 	factsReviewGroupsCmd.Flags().BoolVar(&factsReviewGroupsApply, "apply", false, "Un-group the members that no longer belong")
 	factsReviewGroupsCmd.Flags().Int64SliceVar(&factsReviewGroupsOnly, "groups", nil, "Review only these group parents")
+	factsReviewGroupsCmd.Flags().Int64Var(&factsReviewGroupsStartAfter, "start-after", 0, "Skip the groups whose parent id is at most this value (resume a cut run; groups go in parent id order)")
 	_ = factsReviewGroupsCmd.MarkFlagRequired("since")
 }
 
@@ -64,7 +67,7 @@ func runFactsReviewGroups(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("occurrence gate required: %w", err)
 	}
 
-	stats, err := core.ReviewClaimGroups(ctx, storer, judge, core.GroupReviewOptions{Since: since, OnlyIDs: factsReviewGroupsOnly, Apply: factsReviewGroupsApply})
+	stats, err := core.ReviewClaimGroups(ctx, storer, judge, core.GroupReviewOptions{Since: since, OnlyIDs: factsReviewGroupsOnly, Apply: factsReviewGroupsApply, StartAfter: factsReviewGroupsStartAfter})
 	if err != nil {
 		return err
 	}
