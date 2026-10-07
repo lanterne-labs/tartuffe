@@ -142,6 +142,10 @@ func TestReviewClaimGroupsStopsDecidedVotesAndResumes(t *testing.T) {
 	if st.Groups != 1 || judge.calls != 1 {
 		t.Fatalf("start-after: groups=%d calls=%d, want only group 2 with one call", st.Groups, judge.calls)
 	}
+	st, err = ReviewClaimGroups(context.Background(), store, &countingJudge{}, GroupReviewOptions{EndAt: 1})
+	if err != nil || st.Groups != 1 {
+		t.Fatalf("end-at: groups=%d err=%v, want only group 1", st.Groups, err)
+	}
 
 	judge = &countingJudge{}
 	if _, err := ReviewClaimGroups(context.Background(), store, judge, GroupReviewOptions{OnlyIDs: []int64{1}}); err != nil {

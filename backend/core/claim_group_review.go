@@ -41,8 +41,11 @@ type GroupReviewOptions struct {
 	// review only reports.
 	Apply bool
 	// StartAfter skips the groups whose parent id is at most this value, to
-	// resume a cut run (groups are reviewed in parent id order).
+	// resume a cut run (groups are reviewed in parent id order). EndAt, when
+	// set, skips the groups whose parent id is above it: two runs on disjoint
+	// ranges can share the work.
 	StartAfter int64
+	EndAt      int64
 }
 
 // GroupReviewStats are the counters of one review.
@@ -77,10 +80,10 @@ func ReviewClaimGroups(ctx context.Context, storer GroupReviewStorer, judge Same
 	if err != nil {
 		return st, fmt.Errorf("listing claim groups: %w", err)
 	}
-	if opts.StartAfter > 0 {
+	if opts.StartAfter > 0 || opts.EndAt > 0 {
 		var rest []ClaimGroup
 		for _, g := range groups {
-			if g.ParentID > opts.StartAfter {
+			if g.ParentID > opts.StartAfter && (opts.EndAt == 0 || g.ParentID <= opts.EndAt) {
 				rest = append(rest, g)
 			}
 		}

@@ -14,6 +14,7 @@ import (
 var (
 	factsReviewGroupsSince      string
 	factsReviewGroupsStartAfter int64
+	factsReviewGroupsEndAt      int64
 	factsReviewGroupsApply      bool
 	factsReviewGroupsOnly       []int64
 )
@@ -46,6 +47,7 @@ func init() {
 	factsReviewGroupsCmd.Flags().BoolVar(&factsReviewGroupsApply, "apply", false, "Un-group the members that no longer belong")
 	factsReviewGroupsCmd.Flags().Int64SliceVar(&factsReviewGroupsOnly, "groups", nil, "Review only these group parents")
 	factsReviewGroupsCmd.Flags().Int64Var(&factsReviewGroupsStartAfter, "start-after", 0, "Skip the groups whose parent id is at most this value (resume a cut run; groups go in parent id order)")
+	factsReviewGroupsCmd.Flags().Int64Var(&factsReviewGroupsEndAt, "end-at", 0, "Skip the groups whose parent id is above this value (two runs on disjoint ranges share the work)")
 	_ = factsReviewGroupsCmd.MarkFlagRequired("since")
 }
 
@@ -67,7 +69,7 @@ func runFactsReviewGroups(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("occurrence gate required: %w", err)
 	}
 
-	stats, err := core.ReviewClaimGroups(ctx, storer, judge, core.GroupReviewOptions{Since: since, OnlyIDs: factsReviewGroupsOnly, Apply: factsReviewGroupsApply, StartAfter: factsReviewGroupsStartAfter})
+	stats, err := core.ReviewClaimGroups(ctx, storer, judge, core.GroupReviewOptions{Since: since, OnlyIDs: factsReviewGroupsOnly, Apply: factsReviewGroupsApply, StartAfter: factsReviewGroupsStartAfter, EndAt: factsReviewGroupsEndAt})
 	if err != nil {
 		return err
 	}
