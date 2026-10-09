@@ -1495,6 +1495,8 @@ ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-bucket
   * new fact "remplacer MaPrimeRénov' par un nouveau dispositif de rénovation" + existing "politique du logement" (HLM, loi SRU, accès au logement) → ASSIGN to "politique du logement": a different housing measure is the same domain.
   * new fact "obliger les plateformes à supprimer les fonctions d'addiction" + existing "souveraineté numérique et intelligence artificielle" → ASSIGN: platform regulation is another facet of digital policy.
   * new fact "les sondages à huit mois de l'élection ne disent rien" + existing "candidature à l'élection présidentielle de 2027" → ASSIGN: a remark on the polls of the race the person runs in belongs to the candidacy topic.
+  * new fact "réduire l'usage des pesticides dans les exploitations" + existing "politique agricole" (revenus des agriculteurs, prix planchers) → ASSIGN: farming practices are another facet of agricultural policy.
+  * new fact "livrer des armes à l'Arménie" + existing "relations diplomatiques et politique étrangère" whose facts are about Israel → ASSIGN: another country or another conflict is another facet of foreign policy, not a new domain.
   Reserve a NEW topic for a genuinely different DOMAIN, never for a different facet, event, or wording within the same domain. When an existing focused candidate is a reasonable home, USE IT.
 - A fact that touches SEVERAL subjects (e.g. "contre la TVA sociale et contre l'entrée de l'Ukraine dans l'UE") is assigned by its MAIN subject — the one its first clause is about — to the matching single-subject candidate. NEVER create a multi-subject topic for it.
 

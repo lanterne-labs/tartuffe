@@ -361,7 +361,12 @@ cases:
       - Le tribunal judiciaire de Paris a accordé à Marine Le Pen le droit d'utiliser le mot 'renaissance' sur son affiche de campagne pour l'élection présidentielle de 2027, rejetant les accusations de contrefaçon et de parasitisme.
       - Marine Le Pen a annoncé qu'elle tiendrait son discours de rentrée le samedi 13 septembre à Hénin-Beaumont.
       - Marine Le Pen a exprimé l'espoir que le ministère de l'Intérieur mette en place les conditions permettant à tous les candidats de faire campagne normalement et sans violence.
-    expect: politique du logement
+    # The two housing stances overlap (prod had not merged them yet), and the
+    # narrow one holds this very proposal: either is the housing topic. An
+    # energy topic is wrong.
+    expect_any:
+    - politique du logement
+    - logement, rénovation et normes de l'habitat
   - name: prod_mlp_hlm_expulsions_joins_housing
     new_fact: Marine Le Pen souhaite expulser des familles délinquantes des logements HLM, remplacer MaPrimeRenov’ par un prêt à taux zéro, et supprimer les contraintes liées aux diagnostics de performance énergétique (DPE).
     candidates:

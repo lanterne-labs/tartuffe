@@ -171,7 +171,7 @@ DISTINCT claims (answer false — keep both):
 - The two could be presented as a CONTRADICTION or a change of position: a promise/commitment/stated value vs a later or opposing ACTION (e.g. "promised to keep the retirement age at 62" vs "abandoned the repeal of the move to 64"); a before vs after; "supports X" vs "opposes X". These are NEVER the same — merging them would erase a real contradiction.
 - Different specifics: different policies, dates, people, places, numbers, or scope.
 - A general position vs a specific concrete act that advances it.
-- Any case where B states something A does not, or vice versa.
+- Any case where B states a distinct assertion that A does not, or vice versa. Two wordings of ONE idea inside a statement ("will not give up and will see it through") are one assertion, not an extra one.
 
 Person: %s
 STATEMENT A: "%s"
