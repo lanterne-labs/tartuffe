@@ -1438,7 +1438,7 @@ EXISTING TOPICS:
 Return ONLY valid JSON:
 {"reasoning": "one sentence", "topic_indexes": [ ... ]}`, labelPickMax, labels.String(), factText)
 	const sys = "You are a political fact topic classifier. Return only valid JSON."
-	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.0, 200, llm.TaskStanceAssign)
+	content, err := sm.callJSONLLM(ctx, sys, prompt, 0.0, 512, llm.TaskStanceAssign)
 	if err != nil {
 		return nil, fmt.Errorf("topic label pass: %w", err)
 	}
@@ -1569,7 +1569,7 @@ Return ONLY valid JSON:
 {"label": "subject-area label, max 120 chars"}`, factText)
 
 	const labelSys = "You generate broad topic labels for political facts. Return only valid JSON."
-	content, err := sm.callJSONLLM(ctx, labelSys, prompt, 0.1, 200, llm.TaskStanceLabel)
+	content, err := sm.callJSONLLM(ctx, labelSys, prompt, 0.1, 512, llm.TaskStanceLabel)
 	if err != nil {
 		return "", fmt.Errorf("label generation: %w", err)
 	}
@@ -1577,7 +1577,7 @@ Return ONLY valid JSON:
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		// Same transient-truncation retry as assignTopicFromCandidates.
 		log.Warn().Err(err).Str("llm_content", content).Msg("Label JSON parse failed; retrying once at T=0.3")
-		content, err = sm.callJSONLLM(ctx, labelSys, prompt, 0.3, 200, llm.TaskStanceLabel)
+		content, err = sm.callJSONLLM(ctx, labelSys, prompt, 0.3, 512, llm.TaskStanceLabel)
 		if err != nil {
 			return "", fmt.Errorf("label generation (retry): %w", err)
 		}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/rs/zerolog/log"
 )
 
 // Client is a BaseLLMClient bound to one chat-completions endpoint: the full
@@ -49,6 +51,13 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatRespon
 	}
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
 		return "", &resp, fmt.Errorf("chat API returned no content (raw: %s)", string(body))
+	}
+	if resp.Choices[0].FinishReason == "length" {
+		// The reply hit MaxTokens: a JSON or verdict line is probably cut.
+		// The caller's parse error follows; this names the cause.
+		log.Warn().Str("task", string(req.Task)).Int("max_tokens", req.MaxTokens).
+			Int("completion_tokens", resp.Usage.CompletionTokens).
+			Msg("LLM reply truncated at max_tokens")
 	}
 	content := resp.Choices[0].Message.Content
 	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {

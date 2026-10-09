@@ -203,7 +203,7 @@ func (b *Bundler) askLLMRelated(ctx context.Context, bundleText string, cand sto
 		Temperature: 0.0,
 		// The reasoning line comes before the verdict (CLAUDE.md: reasoning
 		// first, verdict last), so the reply needs room for one sentence.
-		MaxTokens: 256,
+		MaxTokens: 512,
 		Task:      llm.TaskBundle,
 	})
 	if err != nil {

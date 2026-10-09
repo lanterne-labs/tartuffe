@@ -175,7 +175,7 @@ INPUT:
 			{Role: "user", Content: user},
 		},
 		Temperature:    0.0,
-		MaxTokens:      200,
+		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 		Task:           llm.TaskEntityFilter,
 	})

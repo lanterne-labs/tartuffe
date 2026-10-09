@@ -145,7 +145,7 @@ func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string, 
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    temperature,
-		MaxTokens:      256,
+		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 		Task:           llm.TaskSameClaim,
 	})

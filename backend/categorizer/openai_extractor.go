@@ -25,11 +25,12 @@ const (
 	chunkSizeChars         = 16000
 	overlapChars           = 500
 
-	// Model-context budgeting. Matches the local self-hosted Gemma (~12k tokens).
-	// If you swap to a larger-context model, bump maxContextTokens to match —
-	// the dynamic sizer will let chunks grow back toward chunkSizeChars.
-	maxContextTokens    = 12000
-	outputBudgetTokens  = 2048 // mirrors MaxTokens in callChatAPIWithPrompt
+	// Model-context budgeting. The mirror-llm slot holds 16k tokens (llama-swap
+	// entry: -c 32768 -np 2). 14k with a 4,096-token answer keeps the chunk
+	// room of the old 12k / 2,048 split: Qwen3.8 writes longer reasoning per
+	// fact than Gemma, and a 2,048 cap cut a reply mid-JSON (run 118).
+	maxContextTokens    = 14000
+	outputBudgetTokens  = 4096 // mirrors MaxTokens in callChatAPIWithPrompt
 	contextSafetyTokens = 256  // headroom for system framing / role tokens
 	// Conservative chars-per-token ratio. French news typically lands at ~3.5;
 	// 3 over-estimates token cost slightly, which we want (better undershoot

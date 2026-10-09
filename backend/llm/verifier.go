@@ -15,9 +15,12 @@ var verifyVerdictRegex = regexp.MustCompile(`(?i)VERDICT\s*:\s*(YES|NO)`)
 // verifyReasonRegex matches the "REASON: ..." line of the refute prompt.
 var verifyReasonRegex = regexp.MustCompile(`(?i)REASON\s*:\s*(.*)`)
 
-// verifyMaxTokens caps the refute response. The reply is two short lines; 256
-// is ample even with a verbose REASON.
-const verifyMaxTokens = 256
+// verifyMaxTokens caps the refute response: a REASON line, then the VERDICT
+// line. On a hard case Qwen3.8 (no thinking) reasons at length inside the
+// REASON line ("Wait, looking closer...") and 512 tokens cut it before the
+// VERDICT. The verifier runs once per flagged contradiction, so a large cap
+// costs little.
+const verifyMaxTokens = 1536
 
 // VerifyContradiction runs the adversarial refutation pass
 // (promptrules.RefuteContradictionPrompt) over a single claimed contradiction

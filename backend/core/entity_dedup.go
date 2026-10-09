@@ -50,7 +50,7 @@ func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 Enti
 			{Role: "user", Content: prompt},
 		},
 		Temperature:    0.1,
-		MaxTokens:      256,
+		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 		Task:           llm.TaskEntityDedup,
 	})
