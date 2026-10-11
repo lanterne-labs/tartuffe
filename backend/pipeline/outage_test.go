@@ -444,3 +444,26 @@ func TestNotificationNotes(t *testing.T) {
 		}
 	}
 }
+
+// TestGateWaitBudget: the waits of one run share maxLLMWait. A wait ends at
+// the end of the budget when it comes before the deadline, and a run whose
+// budget is spent stops at the next outage without waiting.
+func TestGateWaitBudget(t *testing.T) {
+	var until time.Time
+	g := runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: func(_ context.Context, u time.Time) (bool, int) {
+		until = u
+		return false, 3
+	}}
+	start := time.Now()
+	_ = g.run(context.Background(), "ingest", func() error { return errDown })
+	if until.Before(start.Add(maxLLMWait)) || until.After(time.Now().Add(maxLLMWait)) {
+		t.Fatalf("wait until %v; want the end of the %v budget, not the deadline %v", until, maxLLMWait, g.deadline)
+	}
+
+	var waits int
+	spent := runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: fakeWait(true, 3, &waits), waited: maxLLMWait}
+	err := spent.run(context.Background(), "ingest", func() error { return errDown })
+	if !errors.Is(err, llm.ErrUnavailable) || waits != 0 || spent.open("translate") {
+		t.Fatalf("err=%v waits=%d; a run with a spent budget must stop without waiting", err, waits)
+	}
+}
