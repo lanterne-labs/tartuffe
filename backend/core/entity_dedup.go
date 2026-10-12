@@ -5,8 +5,6 @@ import (
 	"digital-mirror/backend/llm"
 	"encoding/json"
 	"fmt"
-
-	"github.com/rs/zerolog/log"
 )
 
 // EntityRef is a candidate person handed to the dedup adjudicator.
@@ -45,7 +43,7 @@ func NewEntityDedupAdjudicatorFromEnv() (*EntityDedupAdjudicator, error) {
 func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 EntityRef) (*PairVerdict, error) {
 	prompt := a.buildPrompt(b1, b2)
 
-	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
+	verdict, err := llm.ChatJSON[PairVerdict](ctx, a.client, llm.ChatRequest{
 		Messages: []llm.ChatMessage{
 			{Role: "user", Content: prompt},
 		},
@@ -53,15 +51,9 @@ func (a *EntityDedupAdjudicator) AdjudicatePair(ctx context.Context, b1, b2 Enti
 		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 		Task:           llm.TaskEntityDedup,
-	})
+	}, "Entity dedup")
 	if err != nil {
 		return nil, fmt.Errorf("entity-dedup LLM call failed: %w", err)
-	}
-
-	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
-	if err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse entity-dedup response")
-		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
 	return &verdict, nil
 }

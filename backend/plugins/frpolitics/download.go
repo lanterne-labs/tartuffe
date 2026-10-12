@@ -216,3 +216,204 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 	}
 	return data, nil
 }
+
+// resumeBackoff is the wait before each new attempt of downloadResumable.
+// Tests replace it with a function that does not wait.
+var resumeBackoff = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// downloadResumable streams srcURL to destPath and continues a broken
+// transfer at the byte where it stopped. The AN portal drops long transfers
+// and sends 503 under load, and the amendments archive of a legislature is
+// about 350 MB: a download that starts again from byte 0 on each failure does
+// not end. The bytes go to destPath+".part", and each new attempt sends an
+// HTTP Range request from the size of that file. destPath gets the file only
+// when it holds the full body.
+//
+// A sidecar destPath+".part.meta" holds the validator of the file (ETag, else
+// Last-Modified, else Content-Length) from the first response. A resume sends
+// it as If-Range, so a file that changed on the server comes back whole (200)
+// and the part file starts again. A part file that cannot be continued is
+// removed and the download starts again at byte 0. The function stops after
+// 7 attempts in sequence that add no byte, and keeps the part file for a
+// later run. A status that a retry cannot fix stops the download and removes
+// the part file.
+func downloadResumable(ctx context.Context, srcURL, destPath string) error {
+	const (
+		maxStalled     = 7
+		initialBackoff = 2 * time.Second
+		maxBackoff     = 60 * time.Second
+	)
+	part := destPath + ".part"
+	backoff := initialBackoff
+	for stalled := 0; ; {
+		offset := partSize(part)
+		complete, retry, err := fetchFrom(ctx, srcURL, part, offset)
+		if complete {
+			if err := os.Rename(part, destPath); err != nil {
+				return fmt.Errorf("rename %s: %w", part, err)
+			}
+			if err := os.Remove(part + partMetaSuffix); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s: %w", part+partMetaSuffix, err)
+			}
+			return nil
+		}
+		if !retry {
+			if rmErr := removePart(part); rmErr != nil {
+				return fmt.Errorf("%w; %v", err, rmErr)
+			}
+			return err
+		}
+		// A restart makes the part file smaller: that is not progress, so a
+		// server that never lets the download continue stops at maxStalled.
+		if partSize(part) > offset {
+			stalled, backoff = 0, initialBackoff
+		} else {
+			stalled++
+		}
+		if stalled >= maxStalled {
+			return fmt.Errorf("no progress after %d attempts: %w", maxStalled, err)
+		}
+		log.Warn().Err(err).Str("url", srcURL).Int64("bytes", partSize(part)).Int("stalled", stalled).
+			Msg("frpolitics: download attempt failed; resuming")
+		if err := resumeBackoff(ctx, min(backoff, maxBackoff)); err != nil {
+			return err
+		}
+		backoff *= 2
+	}
+}
+
+// partMetaSuffix is the suffix of the sidecar that holds the validator of a
+// part file: "etag <value>", "last-modified <value>" or "length <bytes>".
+const partMetaSuffix = ".meta"
+
+// partSize is the size of the file at p, or 0 when the file does not exist.
+func partSize(p string) int64 {
+	info, err := os.Stat(p)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// removePart removes the part file and its sidecar.
+func removePart(part string) error {
+	for _, p := range []string{part, part + partMetaSuffix} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// responseValidator is the validator of the body in resp, for the sidecar.
+// The value of ETag or Last-Modified is also the If-Range value of a resume.
+// If-Range accepts only a strong ETag (RFC 9110, section 13.1.5): a server
+// answers 200 to a weak one, so a weak ETag is not used.
+func responseValidator(resp *http.Response) string {
+	if v := resp.Header.Get("ETag"); v != "" && !strings.HasPrefix(v, "W/") {
+		return "etag " + v
+	}
+	if v := resp.Header.Get("Last-Modified"); v != "" {
+		return "last-modified " + v
+	}
+	return fmt.Sprintf("length %d", resp.ContentLength)
+}
+
+// fetchFrom sends one GET for srcURL from byte offset and writes the body to
+// part. complete is true when part holds the full body. retry is true when
+// another attempt can succeed: a connection error, a broken body, 429, 5xx,
+// or a part file that was removed because the server cannot continue it.
+func fetchFrom(ctx context.Context, srcURL, part string, offset int64) (complete, retry bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+	if err != nil {
+		return false, false, fmt.Errorf("new request: %w", err)
+	}
+	applyBrowserHeaders(req)
+	// A byte range applies to the raw body only, so ask for no content coding.
+	req.Header.Set("Accept-Encoding", "identity")
+	var validator string
+	if offset > 0 {
+		meta, err := os.ReadFile(part + partMetaSuffix)
+		if err != nil {
+			// A part file without its validator cannot be checked: start again.
+			return false, true, restartPart(part, fmt.Errorf("read %s: %w", part+partMetaSuffix, err))
+		}
+		validator = string(meta)
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+		if kind, value, _ := strings.Cut(validator, " "); kind != "length" {
+			req.Header.Set("If-Range", value)
+		}
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false, true, fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	flags := os.O_WRONLY | os.O_CREATE
+	start, total := int64(0), resp.ContentLength
+	switch {
+	case resp.StatusCode == http.StatusPartialContent:
+		cr := resp.Header.Get("Content-Range")
+		if _, err := fmt.Sscanf(cr, "bytes %d-%d/%d", &start, new(int64), &total); err != nil || start != offset {
+			return false, true, restartPart(part, fmt.Errorf("content-range %q does not continue at byte %d", cr, offset))
+		}
+		// Without ETag or Last-Modified, the server cannot check If-Range:
+		// the size of the file is the only sign of a change.
+		if validator != fmt.Sprintf("length %d", total) && strings.HasPrefix(validator, "length ") {
+			return false, true, restartPart(part, fmt.Errorf("file size changed from %q to %d bytes", validator, total))
+		}
+		flags |= os.O_APPEND
+	case resp.StatusCode == http.StatusOK:
+		// The server sends the full body (first attempt, or the file changed):
+		// write the file again from byte 0.
+		flags |= os.O_TRUNC
+		if err := os.WriteFile(part+partMetaSuffix, []byte(responseValidator(resp)), 0o644); err != nil {
+			return false, false, fmt.Errorf("write %s: %w", part+partMetaSuffix, err)
+		}
+	case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable:
+		// "bytes */<size>": the part file holds the full body when its size is <size>.
+		var size int64
+		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes */%d", &size); err == nil && size == offset {
+			return true, false, nil
+		}
+		return false, true, restartPart(part, fmt.Errorf("range from byte %d not satisfiable (%s)", offset, resp.Header.Get("Content-Range")))
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+		return false, true, fmt.Errorf("retryable status %d", resp.StatusCode)
+	default:
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return false, false, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
+	}
+
+	f, err := os.OpenFile(part, flags, 0o644)
+	if err != nil {
+		return false, false, fmt.Errorf("open %s: %w", part, err)
+	}
+	n, copyErr := io.Copy(f, resp.Body)
+	if err := f.Close(); err != nil {
+		return false, false, fmt.Errorf("close %s: %w", part, err)
+	}
+	if copyErr != nil {
+		return false, true, fmt.Errorf("read body: %w", copyErr)
+	}
+	if total >= 0 && start+n != total {
+		return false, true, fmt.Errorf("body ends at byte %d of %d", start+n, total)
+	}
+	return true, false, nil
+}
+
+// restartPart removes the part file and its sidecar so that the next attempt
+// starts at byte 0, and returns cause with the reason of the restart.
+func restartPart(part string, cause error) error {
+	if err := removePart(part); err != nil {
+		return fmt.Errorf("%w; %v", cause, err)
+	}
+	return fmt.Errorf("%w; download starts again", cause)
+}

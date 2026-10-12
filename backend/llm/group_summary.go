@@ -51,6 +51,7 @@ func SynthesizeContradictionGroupSummary(ctx context.Context, client *Client, ba
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0.0,
 		MaxTokens:   groupSummaryMaxTokens,
+		Task:        TaskGroupSummary,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("group summary API call failed: %w", err)

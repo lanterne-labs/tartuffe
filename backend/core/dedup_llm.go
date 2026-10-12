@@ -123,9 +123,9 @@ func (v *DedupLLMVerifier) buildPrompt(facts []FactForDedup) string {
 	prompt := fmt.Sprintf(`You are a fact quality and deduplication assistant. Each fact has a canonical_verb (the stance) and embedding_text (the topic).
 
 ## STEP 1: Pairwise analysis
-For each potential duplicate pair, reason briefly: same topic AND same stance? Or different actions/dates?
+For each potential duplicate pair, write a short justification of your decision for a human reviewer: same topic AND same stance? Or different actions/dates?
 
-## STEP 2: Based on your analysis, produce the output
+## STEP 2: Based on the analysis, produce the output
 
 ### WHAT IS A VALID FACT?
 ✅ Type 1 — Entity's own positions, promises, claims, denials
@@ -153,7 +153,7 @@ Return JSON:
 }
 
 Rules:
-- analysis is for your reasoning only — it does not affect the output structure
+- analysis is the justification of each pair decision for the reviewer — it does not affect the output structure
 - A fact can appear in only ONE of: unique_groups or invalid_facts
 - Return {"unique_groups": [], "invalid_facts": []} if everything is fine
 

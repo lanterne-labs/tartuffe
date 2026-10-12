@@ -1,7 +1,6 @@
 package contradiction
 
 import (
-	"context"
 	"os"
 	"testing"
 	"time"
@@ -37,10 +36,6 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 
 	detector, err := NewOpenAIContradictionDetectorFromEnv()
 	require.NoError(t, err, "Failed to create OpenAIContradictionDetector from environment")
-
-	// Use a context with a timeout for the API call
-	ctx, cancel := context.WithTimeout(context.Background(), 450*time.Second) // 450-second timeout for 15 sequential API calls
-	defer cancel()
 
 	testCases := []struct {
 		name                    string
@@ -221,7 +216,11 @@ func TestOpenAIContradictionDetector_AreContradictory_Live(t *testing.T) {
 			log.Info().Str("factA", tc.factA).Str("dateA", tc.dateA).Str("factB", tc.factB).Str("dateB", tc.dateB).Msg("Running live contradiction check")
 
 			startTime := time.Now()
-			isContradictory, reason, checkErr := detector.AreContradictory(ctx, tc.factA, dateA, tc.factB, dateB)
+			// Each case has its own context, as each call has in production: the
+			// LLM client bounds one call (llm.NewBaseLLMClient: 300 s for each HTTP attempt).
+			// One deadline for all cases cut the last cases when the detector
+			// started to think (about 30 s for each call).
+			isContradictory, reason, checkErr := detector.AreContradictory(t.Context(), tc.factA, dateA, tc.factB, dateB)
 			duration := time.Since(startTime)
 
 			log.Info().Dur("duration", duration).Bool("isContradictory", isContradictory).Str("reason", reason).Msg("Live contradiction check completed")

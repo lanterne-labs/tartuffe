@@ -2,6 +2,7 @@ package frpolitics
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,10 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 		t.Skip("Amendements_17.json.zip not cached; local-only test")
 	}
 	date := time.Date(2025, 11, 27, 0, 0, 0, 0, time.UTC)
-	info := LookupAmendement(context.Background(), 17, 372, &date)
+	info, err := LookupAmendement(context.Background(), 17, 372, &date)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if info == nil {
 		t.Fatal("sous-amendement 372 (2025-11-27) not found")
 	}
@@ -54,7 +58,10 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 	// Full phrase as the fact text will carry it.
 	law := Law{Title: "le sous-amendement n° 372 de M. Verny à l'amendement n° 96 de M. Bernhardt après l'article premier bis de la proposition de loi visant à la nationalisation d'ArcelorMittal France", Legislature: 17, VoteDate: &date}
 	orgCache := map[string]OrganeInfo{"PO872880": {OrganeRef: "PO872880", ShortName: "UDR"}}
-	amendment, ok := resolveVotedObject(context.Background(), law, orgCache)
+	amendment, ok, err := resolveVotedObject(context.Background(), law, orgCache)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("resolveVotedObject gated a resolvable sous-amendement")
 	}
@@ -64,5 +71,49 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 		if !strings.Contains(phrase, want) {
 			t.Errorf("phrase missing %q: %s", want, phrase)
 		}
+	}
+}
+
+// roundTripFunc makes a function an http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// An amendments archive that is not available is an error, not a gate: a gate
+// would read the failed download as "no amendment" and drop the scrutin
+// without a trace.
+func TestResolveVotedObject_UnavailableArchiveFails(t *testing.T) {
+	t.Setenv("FRPOLITICS_CACHE_DIR", t.TempDir())
+	origClient := httpClient
+	httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody, Header: http.Header{}}, nil
+	})}
+	defer func() { httpClient = origClient }()
+
+	date := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	law := Law{Title: "l'amendement n° 113 de M. Dharréville après l'article premier du projet de loi", Legislature: 99, VoteDate: &date}
+	_, ok, err := resolveVotedObject(context.Background(), law, nil)
+	if err == nil {
+		t.Fatal("expected an error for an unavailable archive")
+	}
+	if ok {
+		t.Fatal("an unresolved amendment must not be ok")
+	}
+}
+
+// A cached archive that is not a zip file is an error, and the file is
+// removed, so the next run downloads the archive again.
+func TestLookupAmendement_BadArchiveRemoved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FRPOLITICS_CACHE_DIR", dir)
+	path := filepath.Join(dir, "Amendements_98.json.zip")
+	if err := os.WriteFile(path, []byte("not a zip file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LookupAmendement(context.Background(), 98, 1, nil); err == nil {
+		t.Fatal("expected an error for a bad archive")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("the bad archive must be removed, stat: %v", err)
 	}
 }

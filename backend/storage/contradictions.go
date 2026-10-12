@@ -336,16 +336,21 @@ type PaginatedContradictions struct {
 // render a "topic A ↔ topic B" header on cross-stance solos and a data-quality badge if either
 // is nil (which means a fact is missing its stance row — should never happen post-migration).
 type ContradictionWithFacts struct {
-	ID                 int64      `json:"id"`
-	PersonID           int64      `json:"person_id"`
-	FactAID            int64      `json:"fact_a_id"`
-	FactBID            int64      `json:"fact_b_id"`
-	FactAText          string     `json:"fact_a_text"`
-	FactAtextEn        string     `json:"fact_a_text_en,omitempty"`
-	FactBText          string     `json:"fact_b_text"`
-	FactBtextEn        string     `json:"fact_b_text_en,omitempty"`
-	FactASourceURLs    []string   `json:"fact_a_source_urls"`
-	FactBSourceURLs    []string   `json:"fact_b_source_urls"`
+	ID              int64    `json:"id"`
+	PersonID        int64    `json:"person_id"`
+	FactAID         int64    `json:"fact_a_id"`
+	FactBID         int64    `json:"fact_b_id"`
+	FactAText       string   `json:"fact_a_text"`
+	FactAtextEn     string   `json:"fact_a_text_en,omitempty"`
+	FactBText       string   `json:"fact_b_text"`
+	FactBtextEn     string   `json:"fact_b_text_en,omitempty"`
+	FactASourceURLs []string `json:"fact_a_source_urls"`
+	FactBSourceURLs []string `json:"fact_b_source_urls"`
+	// FactAQuote and FactBQuote are the source quote of the earliest source of
+	// each fact, "" when no source has one. Only GetContradictionByID fills
+	// them (the complaint judge reads them).
+	FactAQuote         string     `json:"fact_a_quote,omitempty"`
+	FactBQuote         string     `json:"fact_b_quote,omitempty"`
 	FactADate          *time.Time `json:"fact_a_date"`
 	FactBDate          *time.Time `json:"fact_b_date"`
 	Reason             string     `json:"reason"`
@@ -645,24 +650,28 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 }
 
 // GetContradictionByID retrieves a single contradiction enriched with both fact texts,
-// source URLs and earliest dates. Returns pgx.ErrNoRows if not found.
+// source URLs, earliest dates and the quote of the earliest source of each fact.
+// Returns pgx.ErrNoRows if not found.
 func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*ContradictionWithFacts, error) {
 	query := `
 		SELECT c.id, c.person_id, c.fact_a_id, c.fact_b_id,
 		       fa.fact_text, fb.fact_text,
 		       COALESCE(fsa.urls, '{}'), COALESCE(fsb.urls, '{}'),
 		       COALESCE(fsa.earliest, fa.created_at), COALESCE(fsb.earliest, fb.created_at),
+		       COALESCE(fsa.quotes[1], ''), COALESCE(fsb.quotes[1], ''),
 		       c.reason, c.detected_at
 		FROM contradictions c
 		JOIN facts fa ON fa.id = c.fact_a_id
 		JOIN facts fb ON fb.id = c.fact_b_id
 		LEFT JOIN LATERAL (
 			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       array_agg(COALESCE(original_quote, '') ORDER BY published_at ASC NULLS LAST) AS quotes,
 			       MIN(published_at) AS earliest
 			FROM fact_sources WHERE fact_id = fa.id
 		) fsa ON true
 		LEFT JOIN LATERAL (
 			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls,
+			       array_agg(COALESCE(original_quote, '') ORDER BY published_at ASC NULLS LAST) AS quotes,
 			       MIN(published_at) AS earliest
 			FROM fact_sources WHERE fact_id = fb.id
 		) fsb ON true
@@ -674,6 +683,7 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 		&r.FactAText, &r.FactBText,
 		&r.FactASourceURLs, &r.FactBSourceURLs,
 		&r.FactADate, &r.FactBDate,
+		&r.FactAQuote, &r.FactBQuote,
 		&r.Reason, &r.DetectedAt,
 	)
 	if err != nil {

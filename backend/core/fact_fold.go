@@ -30,10 +30,39 @@ type FactFoldStorer interface {
 	// GetFoldFactsForPerson returns the person's active (non-duplicate)
 	// facts with their embeddings.
 	GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error)
-	ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error)
+	ContradictionPairLister
 	// ListTextSimilarFactPairs returns the pairs among factIDs whose texts
 	// have trigram similarity of at least floor, as [smaller id, larger id].
 	ListTextSimilarFactPairs(ctx context.Context, factIDs []int64, floor float64) ([][2]int64, error)
+}
+
+// ContradictionPairLister lists the recorded contradictions of a person.
+type ContradictionPairLister interface {
+	ListContradictionFactPairs(ctx context.Context, personID int64) ([]ContradictionFactPair, error)
+}
+
+// OrderedPair is the key of an unordered fact pair: the smaller id first.
+func OrderedPair(a, b int64) [2]int64 {
+	if a > b {
+		a, b = b, a
+	}
+	return [2]int64{a, b}
+}
+
+// ContradictedPairs returns the recorded contradictions of a person by fact
+// pair (OrderedPair), with their ids. The two facts of a recorded
+// contradiction never go into one group: the group would erase the
+// contradiction.
+func ContradictedPairs(ctx context.Context, storer ContradictionPairLister, personID int64) (map[[2]int64]int64, error) {
+	rows, err := storer.ListContradictionFactPairs(ctx, personID)
+	if err != nil {
+		return nil, fmt.Errorf("load contradictions: %w", err)
+	}
+	out := make(map[[2]int64]int64, len(rows))
+	for _, c := range rows {
+		out[OrderedPair(c.FactAID, c.FactBID)] = c.ID
+	}
+	return out, nil
 }
 
 // FoldOptions tunes the fold clustering.
@@ -90,24 +119,15 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	}
 	union := func(a, b int) { parent[find(a)] = find(b) }
 
-	type pairKey struct{ a, b int64 }
-	key := func(x, y int64) pairKey {
-		if x > y {
-			x, y = y, x
-		}
-		return pairKey{x, y}
-	}
+	type pairKey = [2]int64
+	key := OrderedPair
 	// Hard guard: two facts the detector holds as CONTRADICTORY must never fold
 	// into one meta — merging them would erase the contradiction. Deterministic,
 	// no LLM. (Their contradiction still repoints onto metas normally when each
 	// side folds with its OWN group.)
-	contraRows, err := storer.ListContradictionFactPairs(ctx, p.ID)
+	contradicted, err := ContradictedPairs(ctx, storer, p.ID)
 	if err != nil {
-		return nil, fmt.Errorf("load contradictions: %w", err)
-	}
-	contradicted := map[pairKey]int64{}
-	for _, c := range contraRows {
-		contradicted[key(c.FactAID, c.FactBID)] = c.ID
+		return nil, err
 	}
 	confirmed := map[pairKey]OccurrenceVerdict{}
 
@@ -264,8 +284,8 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 // concrete becomes the parent (the fullest, for a contained cluster, so that
 // no claim is hidden) and every other fact (with any members it already had)
 // joins its group — contradictions, stance slots and key facts follow the
-// parent (storage.MergeFactIntoGroup).
-func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord, c FoldCluster) error {
+// parent (storage.MergeFactIntoGroup). It returns the parent.
+func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord, c FoldCluster) (int64, error) {
 	cluster := c.Facts
 	var parent int64
 	if c.Contained {
@@ -280,7 +300,7 @@ func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord
 		var err error
 		parent, err = storer.MostConcreteFact(ctx, foldFactIDs(cluster))
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	for _, f := range cluster {
@@ -288,15 +308,15 @@ func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord
 			continue
 		}
 		if err := storer.MergeFactIntoGroup(ctx, f.ID, parent); err != nil {
-			return fmt.Errorf("grouping fact %d under %d: %w", f.ID, parent, err)
+			return 0, fmt.Errorf("grouping fact %d under %d: %w", f.ID, parent, err)
 		}
 	}
 	if err := storer.RefreshPersonScore(ctx, p.ID); err != nil {
 		log.Warn().Err(err).Int64("person_id", p.ID).Msg("Failed to refresh fact count")
 	}
 	log.Info().Str("person", p.Name).Int64("parent_fact_id", parent).Int("members", len(cluster)-1).
-		Msg("Grouped same-claim cluster")
-	return nil
+		Msg("Grouped one-occurrence cluster")
+	return parent, nil
 }
 
 func foldFactIDs(facts []FactForFold) []int64 {

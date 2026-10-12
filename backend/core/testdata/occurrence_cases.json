@@ -756,5 +756,68 @@
     "quote": "En 2027, les ressources des collectivités progresseront au rythme de l’inflation : plus de 5 milliards d’euros supplémentaires, après leur contribution à l’effort national."
    }
   ]
+ },
+ {
+  "name": "facts_17974_18633",
+  "want": "same",
+  "why": "The same two pledges (end the ZAN, end the DPE constraints) reported 3 days apart by two outlets: one occurrence. Qwen, Sonnet and Opus grouped it while the old eval label said different (relabelled 2026-10-11).",
+  "fact_a": "Marine Le Pen a promis de supprimer le dispositif ZAN (Zéro artificialisation nette) ainsi que les diagnostics de performance énergétique (DPE).",
+  "sources_a": [
+   {
+    "outlet": "huffingtonpost.fr",
+    "date": "2026-09-13",
+    "quote": "promettant la suppression du dispositif ZAN (Zéro artificialisation nette) né de la Convention citoyenne pour le climat. Marine Le Pen entend également supprimer les diagnostics de performance énergétique (DPE)"
+   }
+  ],
+  "fact_b": "Marine Le Pen a exprimé sa volonté de supprimer la loi ZAN (Zéro artificialisation nette) et de retirer les éléments contraignants du diagnostic de performance énergétique (DPE).",
+  "sources_b": [
+   {
+    "outlet": "tf1info.fr",
+    "date": "2026-09-16",
+    "quote": "Marine Le Pen dit aussi sa volonté de supprimer la loi SRU (qui touche le logement social), l'interdiction de location liée au DPE, le ZAN (Zéro artificialisation nette)."
+   }
+  ]
+ },
+ {
+  "name": "facts_19136_21114",
+  "want": "same",
+  "why": "The same deficit warning (no savings: deficit near or above 6.5 % in 2027) reported 3 days apart: one occurrence (relabelled 2026-10-11).",
+  "fact_a": "Sébastien Lecornu a prévenu que sans mesures d'économies, le déficit en 2027 dépasserait les 6,5% du PIB.",
+  "sources_a": [
+   {
+    "outlet": "rtl.fr",
+    "date": "2026-09-17",
+    "quote": "prévient que, sans mesures d'économies, le déficit en 2027 \"dépasserâit les 6,5%\" du Produit intérieur brut"
+   }
+  ],
+  "fact_b": "Sébastien Lecornu a prévenu que si le budget 2027 ne contenait aucune mesure d'économies, le déficit tutoierait les 6,5% du PIB.",
+  "sources_b": [
+   {
+    "outlet": "lepopulaire.fr",
+    "date": "2026-09-20",
+    "quote": "Au total, si ce budget ne contenait aucune mesure d‘économies, le déficit 2027 tutoierait les 6,5% du PIB\", prévient-il."
+   }
+  ]
+ },
+ {
+  "name": "facts_11656_16837",
+  "want": "same",
+  "why": "Leaving the neonicotinoid decision to Parliament and refusing a fight with the Senate is one position, reported the same afternoon and the next day: one occurrence (relabelled 2026-10-11).",
+  "fact_a": "Sébastien Lecornu avait expliqué qu'il laisserait la main au Parlement pour trancher sur le retour des néonicotinoïdes.",
+  "sources_a": [
+   {
+    "outlet": "mediapart.fr",
+    "date": "2026-07-21",
+    "quote": "Alors que Sébastien Lecornu avait expliqué l’après-midi même qu’il laisserait la main au Parlement pour trancher sur le retour des néonicotinoïdes"
+   }
+  ],
+  "fact_b": "Le premier ministre a refusé d'entamer un bras de fer avec le Sénat sur les néonicotinoïdes.",
+  "sources_b": [
+   {
+    "outlet": "lemonde.fr",
+    "date": "2026-07-22",
+    "quote": "D’où son refus d’entamer un bras de fer avec le Sénat sur les néonicotinoïdes, ce qu’il aurait pu faire."
+   }
+  ]
  }
 ]

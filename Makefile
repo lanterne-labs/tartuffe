@@ -96,13 +96,23 @@ test-short:
 #   make llm-goldens
 #   make llm-goldens LLM_API=http://127.0.0.1:8095/v1 LLM_MODEL=candidate
 #   make llm-goldens LLM_THINK=occurrence,stance-analyze,detect   (tasks in backend/llm/task.go)
+#   make llm-goldens LLM_CLAUDE=claude-haiku-5-5   (Claude Message Batches; ANTHROPIC_API_KEY in .env;
+#                    LLM_CLAUDE_MAX_USD=25 caps the spend, LLM_CLAUDE_CACHE_TTL=5m|1h|off)
+#   make llm-goldens LLM_CLAUDE_TEAM=claude-haiku-5-5   (claude -p on one Team seat; CLAUDE_TEAM_PLAN_TOKENS
+#                    and CLAUDE_TEAM_PLAN_SEAT in .env; not with LLM_CLAUDE)
+#   make llm-goldens LLM_CLAUDE_TEAM=claude-sonnet-5-5 LLM_CLAUDE_MODELS=audit=claude-opus-5-5:high,verify=claude-opus-5-5
+#                    (model, and effort low|medium|high when given, per task on top of LLM_CLAUDE or LLM_CLAUDE_TEAM)
 # Packages run one at a time (one GPU slot). The full log is in
 # /tmp/llm-goldens.log; the screen shows one line per golden.
-LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator ./backend/categorizer
+LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator ./backend/categorizer \
+	./backend/complaints ./backend/plugins/twitter
 LLM_GOLDEN_RUN := Golden|TestDetectorJudgesGroupsWithTheirRestatements|TestRemoteLLMExtractor
-LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL)) $(if $(LLM_THINK),-llm-think=$(LLM_THINK))
+LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL)) $(if $(LLM_THINK),-llm-think=$(LLM_THINK)) \
+	$(if $(LLM_CLAUDE),-llm-claude=$(LLM_CLAUDE)) $(if $(LLM_CLAUDE_MAX_USD),-llm-claude-max-usd=$(LLM_CLAUDE_MAX_USD)) \
+	$(if $(LLM_CLAUDE_CACHE_TTL),-llm-claude-cache-ttl=$(LLM_CLAUDE_CACHE_TTL)) $(if $(LLM_CLAUDE_TEAM),-llm-claude-team=$(LLM_CLAUDE_TEAM)) \
+	$(if $(LLM_CLAUDE_MODELS),-llm-claude-models=$(LLM_CLAUDE_MODELS))
 llm-goldens:
-	@go test -p 1 -count=1 -v -timeout 6h -run '$(LLM_GOLDEN_RUN)' $(LLM_GOLDEN_PKGS) -args $(LLM_ARGS) 2>&1 \
+	@go test -p 1 -count=1 -v -timeout 6h $(if $(LLM_CLAUDE)$(LLM_CLAUDE_TEAM),-parallel 1000) -run '$(LLM_GOLDEN_RUN)' $(LLM_GOLDEN_PKGS) -args $(LLM_ARGS) 2>&1 \
 		| tee /tmp/llm-goldens.log \
 		| grep -E '^(--- (PASS|FAIL|SKIP): Test[A-Za-z_]+ |ok |FAIL|.*=== [A-Z -]+: )' || true
 

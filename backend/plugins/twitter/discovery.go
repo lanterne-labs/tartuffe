@@ -335,20 +335,7 @@ func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, op
 		log.Debug().Str("person", person.Name).Str("wiki_title", wikiSummary.Title).Str("lang", wikiSummary.Lang).Msg("Got Wikipedia bio")
 	}
 
-	content, _, err := dc.client.Chat(ctx, llm.ChatRequest{
-		Temperature: 0.1,
-		MaxTokens:   512,
-		Messages: []llm.ChatMessage{
-			{
-				Role: "system",
-				Content: "You are an expert at identifying official Twitter/X accounts for public figures. " +
-					"You cross-reference multiple sources to confirm the handle belongs to the exact person, " +
-					"not a homonym, parody, or fan account.",
-			},
-			{Role: "user", Content: buildDiscoveryPrompt(person.Name, results, candidates, wikiSummary)},
-		},
-		Task: llm.TaskHandle,
-	})
+	confirmedHandle, content, err := askHandle(ctx, dc.client, person.Name, results, candidates, wikiSummary)
 	if errors.Is(err, llm.ErrUnavailable) {
 		return false, fmt.Errorf("twitter discovery for %s: %w", person.Name, err)
 	}
@@ -362,13 +349,10 @@ func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, op
 		return false, nil
 	}
 
-	content = strings.TrimSpace(content)
-	match := handleLineRe.FindStringSubmatch(content)
-	if match == nil || strings.EqualFold(strings.TrimRight(match[1], ".,;"), "NONE") {
+	if confirmedHandle == "" {
 		log.Info().Str("person", person.Name).Str("llm_response", content).Msg("No confirmed handle")
 		return false, nil
 	}
-	confirmedHandle := strings.ToLower(strings.TrimRight(match[1], ".,;"))
 
 	// Hard guardrail: never link a handle without a live Twitter bio
 	// confirming it. The LLM can be tricked by SERP-adjacent results when
@@ -392,6 +376,35 @@ func (dc *discoverer) discover(ctx context.Context, person core.PersonRecord, op
 		log.Info().Str("person", person.Name).Str("handle", confirmedHandle).Msg("Saved Twitter handle")
 	}
 	return true, nil
+}
+
+// askHandle asks the LLM for the official handle of personName from the
+// search evidence. It returns the handle in lower case, or "" when the reply
+// is NONE or has no HANDLE line. reply is the trimmed LLM reply, for the log.
+func askHandle(ctx context.Context, client *llm.Client, personName string, results []search.SearchResult, candidates []candidate, wiki *search.WikipediaSummary) (handle, reply string, err error) {
+	content, _, err := client.Chat(ctx, llm.ChatRequest{
+		Temperature: 0.1,
+		MaxTokens:   512,
+		Messages: []llm.ChatMessage{
+			{
+				Role: "system",
+				Content: "You are an expert at identifying official Twitter/X accounts for public figures. " +
+					"You cross-reference multiple sources to confirm the handle belongs to the exact person, " +
+					"not a homonym, parody, or fan account.",
+			},
+			{Role: "user", Content: buildDiscoveryPrompt(personName, results, candidates, wiki)},
+		},
+		Task: llm.TaskHandle,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	content = strings.TrimSpace(content)
+	match := handleLineRe.FindStringSubmatch(content)
+	if match == nil || strings.EqualFold(strings.TrimRight(match[1], ".,;"), "NONE") {
+		return "", content, nil
+	}
+	return strings.ToLower(strings.TrimRight(match[1], ".,;")), content, nil
 }
 
 // handleConfirmedByBio is the deterministic post-LLM guardrail: a handle is
@@ -467,7 +480,7 @@ func buildDiscoveryPrompt(personName string, results []search.SearchResult, cand
 	}
 
 	if len(candidates) == 0 {
-		fmt.Fprintln(&b, "## Candidate handles\nNone extracted directly — use Wikipedia bio and search snippets only.")
+		fmt.Fprintln(&b, "## Candidate handles\nNone extracted — no handle can be confirmed; reply NONE.")
 		fmt.Fprintln(&b)
 	}
 
@@ -488,7 +501,8 @@ func buildDiscoveryPrompt(personName string, results []search.SearchResult, cand
 			"- Cross-check name, occupation, country, and political party across all sources.\n" +
 			"- **When in doubt, reply NONE.** It is far better to return nothing than to link the wrong account.\n" +
 			"- If the bio/description does not clearly match the person's known occupation or affiliation, reply NONE.\n" +
-			"- A generic name or incomplete evidence is not enough — require clear confirmation.\n\n" +
+			"- A generic name or incomplete evidence is not enough — require clear confirmation.\n" +
+			"- Only a handle whose profile is in the candidate sections above can be confirmed. A handle named inside the bio or text of another account is not a candidate: do not return it, reply NONE.\n\n" +
 			"Reply in EXACTLY this format (two lines):\n" +
 			"REASONING: <one sentence explaining your choice>\n" +
 			"HANDLE: @username\n" +

@@ -121,6 +121,7 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 		// summarization call was rejected with 400 before generation.
 		MaxTokens:      4096,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskLawSummary,
 	})
 	if err != nil {
 		return nil, err

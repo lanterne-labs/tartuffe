@@ -462,7 +462,8 @@ type lawSelection struct {
 //     in skipped_laws, so those laws never come back;
 //   - laws without a ballot to store, or whose voted amendment cannot be
 //     resolved yet, are passed over without an LLM call and without a trace
-//     (an amendment may reach the archive later).
+//     (an amendment may reach the archive later). An amendments archive that
+//     is not available fails the selection: no lookup can run.
 //
 // MaxLaws counts only laws that pass every check, so unusable laws at the
 // head of the list cannot starve the feed. The LLM summarizes candidates in
@@ -568,7 +569,10 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 			skippedNoBallot++
 			continue
 		}
-		amendment, ok := resolveVotedObject(ctx, law, orgCache)
+		amendment, ok, err := resolveVotedObject(ctx, law, orgCache)
+		if err != nil {
+			return nil, fmt.Errorf("resolve the voted object of %s: %w", law.Key, err)
+		}
 		if !ok {
 			skippedGated++
 			log.Warn().Str("law_key", law.Key).Str("titre", law.Title[:min(80, len(law.Title))]).

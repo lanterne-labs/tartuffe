@@ -1237,21 +1237,26 @@ func (s *PostgresStorer) recomputeScoreAfterFactDeletion(ctx context.Context, tx
 
 // GetFactByID retrieves a single fact by its ID for deduplication.
 func (s *PostgresStorer) GetFactByID(ctx context.Context, factID int64) (*core.FactForDedup, error) {
+	// OriginalQuote is the quote of the earliest source, as in GetContradictionByID.
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
-			   COALESCE(f.canonical_verb, ''), f.embedding,
+			   COALESCE(f.canonical_verb, ''), COALESCE(fs.quotes[1], ''), f.embedding,
 			   NOT EXISTS (
 			       SELECT 1 FROM fact_relations fr
 			       WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
 			   ) AS is_active
 		FROM facts f
+		LEFT JOIN LATERAL (
+			SELECT array_agg(COALESCE(original_quote, '') ORDER BY published_at ASC NULLS LAST) AS quotes
+			FROM fact_sources WHERE fact_id = f.id
+		) fs ON true
 		WHERE f.id = $1`
 
 	var f core.FactForDedup
 	var emb pgvector.Vector
 	var isActive bool
 	err := s.pool.QueryRow(ctx, query, factID).Scan(
-		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &emb, &isActive)
+		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.OriginalQuote, &emb, &isActive)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get fact %d: %w", factID, err)

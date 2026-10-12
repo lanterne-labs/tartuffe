@@ -70,24 +70,32 @@ func TestDetectorJudgesGroupsWithTheirRestatements(t *testing.T) {
 	}
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			yes := 0
-			for run := 0; run < 3; run++ {
-				r := detector.AreContradictoryBatch(ctx, []FactPair{tc.pair})[0]
-				if r.Error != nil {
-					t.Fatalf("run %d: %v", run+1, r.Error)
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				// The 3 runs go first, all at once with -llm-claude (one batch).
+				results := make([]BatchResult, 3)
+				llmtest.ForEach(3, func(i int) {
+					results[i] = detector.AreContradictoryBatch(ctx, []FactPair{tc.pair})[0]
+				})
+				yes := 0
+				for run := 0; run < 3; run++ {
+					r := results[run]
+					if r.Error != nil {
+						t.Fatalf("run %d: %v", run+1, r.Error)
+					}
+					if r.IsContradictory {
+						yes++
+					}
+					t.Logf("run %d: contradictory=%v reason=%s", run+1, r.IsContradictory, strings.TrimSpace(r.Reason))
 				}
-				if r.IsContradictory {
-					yes++
+				if got := yes >= 2; got != tc.want {
+					t.Fatalf("majority verdict = %v (%d/3 yes), want %v", got, yes, tc.want)
 				}
-				t.Logf("run %d: contradictory=%v reason=%s", run+1, r.IsContradictory, strings.TrimSpace(r.Reason))
-			}
-			if got := yes >= 2; got != tc.want {
-				t.Fatalf("majority verdict = %v (%d/3 yes), want %v", got, yes, tc.want)
-			}
-		})
-	}
+			})
+		}
+	})
 
 	// The reason the change exists: the same Bayrou pair without its
 	// restatements. Logged, not asserted — it documents what the judge used

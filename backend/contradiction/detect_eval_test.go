@@ -91,12 +91,22 @@ func TestDetectEval(t *testing.T) {
 	}
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
-	errorsSeen := 0
-	for _, p := range pairs {
-		r := detector.AreContradictoryBatch(ctx, []FactPair{{
+	// The detector calls run first, all at once with -llm-claude (one batch).
+	// The scorecard reads their results by index.
+	factPairs := make([]FactPair, len(pairs))
+	for i, p := range pairs {
+		factPairs[i] = FactPair{
 			TextA: p.TextA, DateA: date(p.DateA), AlsoA: p.AlsoA,
 			TextB: p.TextB, DateB: date(p.DateB), AlsoB: p.AlsoB,
-		}})[0]
+		}
+	}
+	results := make([]BatchResult, len(pairs))
+	llmtest.ForEach(len(pairs), func(i int) {
+		results[i] = detector.AreContradictoryBatch(ctx, []FactPair{factPairs[i]})[0]
+	})
+	errorsSeen := 0
+	for i, p := range pairs {
+		r := results[i]
 		if r.Error != nil {
 			errorsSeen++
 			t.Logf("%s: detector error: %v", p.Name, r.Error)
@@ -149,15 +159,39 @@ func TestAuditEval(t *testing.T) {
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
-	var falseRemoved, falseTotal, realRemoved, realTotal, sureFalseRemoved, sureFalse, sureRealRemoved, sureReal, errorsSeen int
-	for _, p := range loadDetectEvalPairs(t) {
+	// The judge calls run first, all pairs at once with -llm-claude. The
+	// scorecard reads their results by index.
+	pairs := loadDetectEvalPairs(t)
+	type judged struct {
+		dateA, dateB *time.Time
+		res          AuditResult
+		keep         bool
+		verifyReason string
+		err          error
+	}
+	results := make([]judged, len(pairs))
+	for i, p := range pairs {
+		if p.Prod == "kept" {
+			results[i].dateA, results[i].dateB = evalDate(t, p.DateA), evalDate(t, p.DateB)
+		}
+	}
+	llmtest.ForEach(len(pairs), func(i int) {
+		p, r := pairs[i], &results[i]
 		if p.Prod != "kept" {
-			continue
+			return
 		}
 		a := promptrules.Statement{Text: p.TextA, Also: p.AlsoA}
 		b := promptrules.Statement{Text: p.TextB, Also: p.AlsoB}
-		res := auditor.Audit(ctx, a, b, evalDate(t, p.DateA), evalDate(t, p.DateB), p.FlaggedReason)
-		keep, verifyReason, err := detector.VerifyContradiction(ctx, a, b, p.FlaggedReason)
+		r.res = auditor.Audit(ctx, a, b, r.dateA, r.dateB, p.FlaggedReason)
+		r.keep, r.verifyReason, r.err = detector.VerifyContradiction(ctx, a, b, p.FlaggedReason)
+	})
+
+	var falseRemoved, falseTotal, realRemoved, realTotal, sureFalseRemoved, sureFalse, sureRealRemoved, sureReal, errorsSeen int
+	for i, p := range pairs {
+		if p.Prod != "kept" {
+			continue
+		}
+		res, keep, verifyReason, err := results[i].res, results[i].keep, results[i].verifyReason, results[i].err
 		if err != nil {
 			errorsSeen++
 			t.Logf("%s: verify error: %v", p.Name, err)

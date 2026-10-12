@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"digital-mirror/backend/llmtest"
@@ -72,55 +73,62 @@ func TestAnalyzeGolden(t *testing.T) {
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var passed, failed int
-	for _, tc := range cf.Cases {
-		tc := tc
-		t.Run(tc.Name, func(t *testing.T) {
-			keyFacts := make([]StanceFactInfo, 0, len(tc.KeyFacts))
-			for _, kf := range tc.KeyFacts {
-				keyFacts = append(keyFacts, StanceFactInfo{
-					ID:                 kf.ID,
-					CanonicalVerb:      kf.Verb,
-					NormalizedFactText: kf.Text,
-				})
-			}
-
-			agg, err := sm.analyzeAcrossBatches(ctx, tc.Summary, keyFacts, tc.NewFact)
-			if err != nil {
-				t.Fatalf("analyzeAcrossBatches: %v", err)
-			}
-
-			flagged := make(map[int64]string, len(agg.Contradictions))
-			for _, c := range agg.Contradictions {
-				flagged[c.KeyFactID] = c.Reason
-			}
-
-			ok := true
-			if tc.ExpectVerdict != "" && agg.PrimaryVerdict != tc.ExpectVerdict {
-				ok = false
-				t.Errorf("verdict: got=%s want=%s (reasoning: %s)", agg.PrimaryVerdict, tc.ExpectVerdict, agg.Reasoning)
-			}
-			for _, id := range tc.MustFlag {
-				if _, hit := flagged[id]; !hit {
-					ok = false
-					t.Errorf("MISSING edge: key fact %d not flagged (verdict=%s, flagged=%v)", id, agg.PrimaryVerdict, keysOf(flagged))
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cf.Cases {
+			tc := tc
+			t.Run(tc.Name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				keyFacts := make([]StanceFactInfo, 0, len(tc.KeyFacts))
+				for _, kf := range tc.KeyFacts {
+					keyFacts = append(keyFacts, StanceFactInfo{
+						ID:                 kf.ID,
+						CanonicalVerb:      kf.Verb,
+						NormalizedFactText: kf.Text,
+					})
 				}
-			}
-			for _, id := range tc.MustNotFlag {
-				if reason, hit := flagged[id]; hit {
-					ok = false
-					t.Errorf("OVERFIRE edge: key fact %d flagged (reason: %s)", id, reason)
-				}
-			}
 
-			if ok {
-				passed++
-				t.Logf("verdict=%s flagged=%v ✓", agg.PrimaryVerdict, keysOf(flagged))
-			} else {
-				failed++
-			}
-		})
-	}
+				agg, err := sm.analyzeAcrossBatches(ctx, tc.Summary, keyFacts, tc.NewFact)
+				if err != nil {
+					t.Fatalf("analyzeAcrossBatches: %v", err)
+				}
+
+				flagged := make(map[int64]string, len(agg.Contradictions))
+				for _, c := range agg.Contradictions {
+					flagged[c.KeyFactID] = c.Reason
+				}
+
+				ok := true
+				if tc.ExpectVerdict != "" && agg.PrimaryVerdict != tc.ExpectVerdict {
+					ok = false
+					t.Errorf("verdict: got=%s want=%s (reasoning: %s)", agg.PrimaryVerdict, tc.ExpectVerdict, agg.Reasoning)
+				}
+				for _, id := range tc.MustFlag {
+					if _, hit := flagged[id]; !hit {
+						ok = false
+						t.Errorf("MISSING edge: key fact %d not flagged (verdict=%s, flagged=%v)", id, agg.PrimaryVerdict, keysOf(flagged))
+					}
+				}
+				for _, id := range tc.MustNotFlag {
+					if reason, hit := flagged[id]; hit {
+						ok = false
+						t.Errorf("OVERFIRE edge: key fact %d flagged (reason: %s)", id, reason)
+					}
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+				if ok {
+					passed++
+					t.Logf("verdict=%s flagged=%v ✓", agg.PrimaryVerdict, keysOf(flagged))
+				} else {
+					failed++
+				}
+			})
+		}
+	})
 
 	fmt.Fprintf(os.Stderr, "\n=== ANALYZE GOLDEN: %d/%d passed (%d failed) ===\n", passed, passed+failed, failed)
 }

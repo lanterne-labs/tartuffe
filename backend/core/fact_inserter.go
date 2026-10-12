@@ -470,7 +470,7 @@ func (fi *FactInserter) foldNewFact(ctx context.Context, personID, newFactID int
 		Int64("matched_fact_id", matched.ID).
 		Int64("parent_fact_id", into).
 		Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
-		Msg("Grouped same-claim fact")
+		Msg("Grouped one-occurrence fact")
 	return nil
 }
 

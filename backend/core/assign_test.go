@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"digital-mirror/backend/llmtest"
@@ -92,52 +93,59 @@ func TestAssignGolden(t *testing.T) {
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var passed, failed int
-	for _, tc := range cf.Cases {
-		tc := tc
-		t.Run(tc.Name, func(t *testing.T) {
-			// Synthetic IDs 1..N by order so we can map the decision back to a label.
-			candidates := make([]StanceCandidate, len(tc.Candidates))
-			labelByID := make(map[int64]string, len(tc.Candidates))
-			for i, c := range tc.Candidates {
-				id := int64(i + 1)
-				candidates[i] = StanceCandidate{
-					ID:          id,
-					Label:       c.Label,
-					Summary:     c.Summary,
-					FactCount:   len(c.Facts),
-					MemberFacts: c.Facts,
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cf.Cases {
+			tc := tc
+			t.Run(tc.Name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				// Synthetic IDs 1..N by order so we can map the decision back to a label.
+				candidates := make([]StanceCandidate, len(tc.Candidates))
+				labelByID := make(map[int64]string, len(tc.Candidates))
+				for i, c := range tc.Candidates {
+					id := int64(i + 1)
+					candidates[i] = StanceCandidate{
+						ID:          id,
+						Label:       c.Label,
+						Summary:     c.Summary,
+						FactCount:   len(c.Facts),
+						MemberFacts: c.Facts,
+					}
+					labelByID[id] = c.Label
 				}
-				labelByID[id] = c.Label
-			}
 
-			decision, err := sm.assignTopicFromCandidates(ctx, tc.NewFact, candidates)
-			if err != nil {
-				t.Fatalf("assignTopicFromCandidates error: %v", err)
-			}
+				decision, err := sm.assignTopicFromCandidates(ctx, tc.NewFact, candidates)
+				if err != nil {
+					t.Fatalf("assignTopicFromCandidates error: %v", err)
+				}
+				mu.Lock()
+				defer mu.Unlock()
 
-			outcome := "NEW"
-			if !decision.IsNew {
-				outcome = labelByID[decision.AssignedID]
-			}
-			if !tc.accepts(outcome) {
-				failed++
-				got := outcome
+				outcome := "NEW"
+				if !decision.IsNew {
+					outcome = labelByID[decision.AssignedID]
+				}
+				if !tc.accepts(outcome) {
+					failed++
+					got := outcome
+					if decision.IsNew {
+						got = fmt.Sprintf("NEW(%q)", decision.NewLabel)
+					}
+					t.Errorf("got=%s want=%s\n    fact: %s\n    reasoning: %s", got, tc.want(), tc.NewFact, decision.Reasoning)
+					return
+				}
 				if decision.IsNew {
-					got = fmt.Sprintf("NEW(%q)", decision.NewLabel)
+					passed++
+					t.Logf("NEW ✓ label=%q (%s)", decision.NewLabel, decision.Reasoning)
+					return
 				}
-				t.Errorf("got=%s want=%s\n    fact: %s\n    reasoning: %s", got, tc.want(), tc.NewFact, decision.Reasoning)
-				return
-			}
-			if decision.IsNew {
 				passed++
-				t.Logf("NEW ✓ label=%q (%s)", decision.NewLabel, decision.Reasoning)
-				return
-			}
-			passed++
-			t.Logf("ASSIGNED %q ✓  (%s)", outcome, decision.Reasoning)
-		})
-	}
+				t.Logf("ASSIGNED %q ✓  (%s)", outcome, decision.Reasoning)
+			})
+		}
+	})
 
 	// Compact scoreboard so the set's health is obvious at a glance.
 	fmt.Fprintf(os.Stderr, "\n=== ASSIGN GOLDEN: %d/%d passed (%d failed) ===\n", passed, passed+failed, failed)

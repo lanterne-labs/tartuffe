@@ -10,14 +10,8 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// FactDedupeAdjudicator asks an LLM whether two same-subject statements express
-// the SAME claim (one a redundant restatement of the other) or are genuinely
-// distinct. It is consulted only for the "gray zone" of embedding similarity
-// (below the auto-dedup threshold but above the clearly-distinct floor), where
-// cosine similarity alone cannot decide and the verb heuristic is too coarse —
-// e.g. "il ne renoncera pas à sa candidature et ira jusqu'au bout" (PROMISED)
-// vs "sa candidature irait jusqu'au bout" (CLAIMED): the same claim in different
-// words, similarity 0.78, which slips just under the 0.80 auto-dedup line.
+// FactDedupeAdjudicator is the grouping gate: it asks an LLM whether two
+// facts of one person report one occurrence (see claim_evidence.go).
 type FactDedupeAdjudicator struct {
 	client *llm.Client
 }
@@ -29,15 +23,6 @@ func NewFactDedupeAdjudicatorFromEnv() (*FactDedupeAdjudicator, error) {
 		return nil, err
 	}
 	return &FactDedupeAdjudicator{client: client}, nil
-}
-
-// IsSameClaim returns true when factB is a redundant restatement of factA by the
-// same person — i.e. they should be deduplicated. Distinct claims, opposing
-// stances, and different specifics return false. The subject name is passed for
-// context (both facts are about the same person).
-func (a *FactDedupeAdjudicator) IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error) {
-	prompt := a.buildPrompt(subject, factA, factB)
-	return a.askSameGate(ctx, prompt, 0.1)
 }
 
 // IsSameOccurrence is the grouping gate: do the two facts report ONE
@@ -74,7 +59,9 @@ Return ONLY strict JSON, nothing else, with the keys in this order:
 {"occasion_a": "<what the person said or did in A, and when/where, from the evidence>", "occasion_b": "<the same for B>", "reasoning": "<one sentence: one occurrence, or not, and the deciding evidence>", "verdict": "same" | "different" | "bundle"}`
 
 // buildOccurrencePrompt lays the prompt out rules first, the two statements
-// next, response format last (see the layout note below).
+// next, response format last: the rule block is byte-identical across calls,
+// so vLLM prefix caching prefills it once per process instead of once per
+// candidate pair (see CHANGES.md, prompt layout).
 func buildOccurrencePrompt(x, y ClaimEvidence) string {
 	var b strings.Builder
 	b.WriteString(occurrenceRules)
@@ -99,7 +86,10 @@ func writeClaimEvidence(b *strings.Builder, name string, e ClaimEvidence) {
 }
 
 type occurrenceReply struct {
-	Verdict string `json:"verdict"`
+	OccasionA string `json:"occasion_a"`
+	OccasionB string `json:"occasion_b"`
+	Reasoning string `json:"reasoning"`
+	Verdict   string `json:"verdict"`
 }
 
 // askOccurrenceGate is TaskOccurrence, which thinks in production (task.go).
@@ -119,6 +109,8 @@ func (a *FactDedupeAdjudicator) askOccurrenceGate(ctx context.Context, x, y Clai
 		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse occurrence-gate response")
 		return OccurrenceDifferent, fmt.Errorf("failed to parse LLM response: %w", err)
 	}
+	log.Debug().Str("occasion_a", reply.OccasionA).Str("occasion_b", reply.OccasionB).
+		Str("reasoning", reply.Reasoning).Str("verdict", reply.Verdict).Msg("occurrence gate")
 	switch reply.Verdict {
 	case "same":
 		return OccurrenceSame, nil
@@ -129,56 +121,4 @@ func (a *FactDedupeAdjudicator) askOccurrenceGate(ctx context.Context, x, y Clai
 	default:
 		return OccurrenceDifferent, fmt.Errorf("occurrence gate: unknown verdict %q", reply.Verdict)
 	}
-}
-
-// The gate prompts are laid out rules first, per-call data (person, the two
-// statements) next, response format last: the rule block is byte-identical
-// across calls, so vLLM prefix caching prefills it once per process instead
-// of once per candidate pair (see CHANGES.md, prompt layout).
-
-// askSameGate runs a same/distinct JSON gate prompt at the given temperature
-// and parses the verdict (the PairVerdict same/reasoning shape defined in
-// entity_dedup.go).
-func (a *FactDedupeAdjudicator) askSameGate(ctx context.Context, prompt string, temperature float64) (bool, error) {
-	content, _, err := a.client.Chat(ctx, llm.ChatRequest{
-		Messages: []llm.ChatMessage{
-			{Role: "user", Content: prompt},
-		},
-		Temperature:    temperature,
-		MaxTokens:      512,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-		Task:           llm.TaskSameClaim,
-	})
-	if err != nil {
-		return false, fmt.Errorf("same-gate LLM call failed: %w", err)
-	}
-	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
-	if err != nil {
-		log.Error().Err(err).Str("llm_content", content).Msg("Failed to parse fact-dedupe response")
-		return false, fmt.Errorf("failed to parse LLM response: %w", err)
-	}
-	return verdict.Same, nil
-}
-
-func (a *FactDedupeAdjudicator) buildPrompt(subject, factA, factB string) string {
-	return fmt.Sprintf(`Two statements are recorded about the SAME person. Decide whether they are the SAME claim — one a redundant restatement of the other carrying NO new information — so that keeping both would be pure duplication.
-
-This is a deduplication gate, so be CONSERVATIVE: when in doubt, answer false. Wrongly merging two statements deletes real information; keeping a redundant one is harmless. Only answer true when B is essentially A reworded.
-
-SAME claim (answer true): the same assertion in different words — different reporting verb ("promised"/"claimed"/"declared"/"stated"/"affirmed" are interchangeable) or extra incidental wording, but the SAME subject, SAME direction, and SAME substance. e.g. "X will not give up his candidacy and will see it through" vs "X's candidacy would go all the way".
-
-DISTINCT claims (answer false — keep both):
-- The two could be presented as a CONTRADICTION or a change of position: a promise/commitment/stated value vs a later or opposing ACTION (e.g. "promised to keep the retirement age at 62" vs "abandoned the repeal of the move to 64"); a before vs after; "supports X" vs "opposes X". These are NEVER the same — merging them would erase a real contradiction.
-- Different specifics: different policies, dates, people, places, numbers, or scope.
-- A general position vs a specific concrete act that advances it.
-- Any case where B states a distinct assertion that A does not, or vice versa. Two wordings of ONE idea inside a statement ("will not give up and will see it through") are one assertion, not an extra one.
-
-Person: %s
-STATEMENT A: "%s"
-STATEMENT B: "%s"
-
-Return ONLY strict JSON, nothing else:
-{"reasoning": "<one short sentence>", "same": true}
-or
-{"reasoning": "<one short sentence>", "same": false}`, subject, factA, factB)
 }

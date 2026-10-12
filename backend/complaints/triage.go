@@ -306,9 +306,18 @@ const verdictInstruction = `Decide one of three verdicts:
 Respond strictly as a JSON object with no markdown, prose, or commentary:
 {"reason": "<one short sentence>", "verdict": "delete_target" | "dismiss_complaint" | "ambiguous"}`
 
+// factRules are the rules of the fact and contradiction prompts: what a fact
+// of a person is, and who carries the burden of proof.
+const factRules = `Rules:
+- A fact of a person is the person's own position, claim or act, or an authoritative finding about the person (a court ruling, a vote). The opinion of other people about the person is not a fact of the person: a complaint about such a row is delete_target.
+- The burden of proof is on the complaint. A complaint that only denies a sourced fact, with no evidence, is dismiss_complaint: the source stands.
+
+`
+
 func buildFactPrompt(fact *core.FactForDedup, urls []string, description string) string {
 	var b strings.Builder
 	b.WriteString("You are reviewing a user complaint about a FACT stored in a fact-checking database for political figures.\n\n")
+	b.WriteString(factRules)
 	fmt.Fprintf(&b, "Fact #%d: %q\n", fact.ID, fact.NormalizedFactText)
 	if fact.OriginalQuote != "" {
 		fmt.Fprintf(&b, "Original quote: %q\n", fact.OriginalQuote)
@@ -330,12 +339,19 @@ func buildFactPrompt(fact *core.FactForDedup, urls []string, description string)
 func buildContradictionPrompt(contr *storage.ContradictionWithFacts, description string) string {
 	var b strings.Builder
 	b.WriteString("You are reviewing a user complaint about a CONTRADICTION recorded between two facts in a fact-checking database.\n\n")
+	b.WriteString(factRules)
 	fmt.Fprintf(&b, "Contradiction #%d.\n", contr.ID)
 	fmt.Fprintf(&b, "Fact A (#%d, dated %s): %q\n", contr.FactAID, formatDate(contr.FactADate), contr.FactAText)
+	if contr.FactAQuote != "" {
+		fmt.Fprintf(&b, "  Source quote for A: %q\n", contr.FactAQuote)
+	}
 	if len(contr.FactASourceURLs) > 0 {
 		fmt.Fprintf(&b, "  Sources for A: %s\n", strings.Join(contr.FactASourceURLs, ", "))
 	}
 	fmt.Fprintf(&b, "Fact B (#%d, dated %s): %q\n", contr.FactBID, formatDate(contr.FactBDate), contr.FactBText)
+	if contr.FactBQuote != "" {
+		fmt.Fprintf(&b, "  Source quote for B: %q\n", contr.FactBQuote)
+	}
 	if len(contr.FactBSourceURLs) > 0 {
 		fmt.Fprintf(&b, "  Sources for B: %s\n", strings.Join(contr.FactBSourceURLs, ", "))
 	}

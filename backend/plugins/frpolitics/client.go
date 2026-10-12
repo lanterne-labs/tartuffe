@@ -13,8 +13,9 @@ import (
 // bounded by the time to the response headers (30 s); the body is not, because
 // the archives are tens of MB (the debates archive is 56 MB) and a total
 // 30 s timeout killed the read whenever the portal served under ~2 MB/s
-// (pipeline run 103, 2026-09-21). The 10 min cap is the ceiling for a whole
-// download.
+// (pipeline run 103, 2026-09-21). The 10 min cap is the ceiling for one
+// attempt, not for a whole download: downloadResumable continues a cut
+// transfer from its .part file in the next attempt.
 var httpClient = &http.Client{
 	Timeout:   10 * time.Minute,
 	Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second, Proxy: http.ProxyFromEnvironment},

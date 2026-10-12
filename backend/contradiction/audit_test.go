@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend/promptrules"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -51,45 +52,51 @@ func TestAuditGolden(t *testing.T) {
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var keepPass, keepFail, dropPass, dropFail int
-	for _, tc := range cf.Cases {
-		tc := tc
-		if !tc.judgedBy("audit") {
-			continue
-		}
-		wantKeep, err := expectToKeep(tc.Expect)
-		if err != nil {
-			t.Fatalf("case %q: %v", tc.Name, err)
-		}
-		t.Run(tc.Name, func(t *testing.T) {
-			res := auditor.Audit(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, nil, nil, tc.ClaimedReason)
-			if res.Err != nil {
-				t.Fatalf("Audit error: %v", res.Err)
+	count := func(n *int) { mu.Lock(); *n++; mu.Unlock() }
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cf.Cases {
+			tc := tc
+			if !tc.judgedBy("audit") {
+				continue
 			}
-			removed := res.Verdict == VerdictRemove
-			if wantKeep {
-				// Critical: a real contradiction must NOT be auto-removed.
-				if removed {
-					keepFail++
-					t.Errorf("[%s] AUDITOR REMOVED a keep case (rule=%s)\n    A: %s\n    B: %s\n    audit: %s",
-						tc.Bucket, res.Rule, tc.FactA, tc.FactB, res.Reasoning)
+			wantKeep, err := expectToKeep(tc.Expect)
+			if err != nil {
+				t.Fatalf("case %q: %v", tc.Name, err)
+			}
+			t.Run(tc.Name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				res := auditor.Audit(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, nil, nil, tc.ClaimedReason)
+				if res.Err != nil {
+					t.Fatalf("Audit error: %v", res.Err)
+				}
+				removed := res.Verdict == VerdictRemove
+				if wantKeep {
+					// Critical: a real contradiction must NOT be auto-removed.
+					if removed {
+						count(&keepFail)
+						t.Errorf("[%s] AUDITOR REMOVED a keep case (rule=%s)\n    A: %s\n    B: %s\n    audit: %s",
+							tc.Bucket, res.Rule, tc.FactA, tc.FactB, res.Reasoning)
+						return
+					}
+					count(&keepPass)
+					t.Logf("[%s] kept (verdict=%s) ✓", tc.Bucket, res.Verdict)
 					return
 				}
-				keepPass++
-				t.Logf("[%s] kept (verdict=%s) ✓", tc.Bucket, res.Verdict)
-				return
-			}
-			// FP case: the auditor should flag it for removal.
-			if !removed {
-				dropFail++
-				t.Errorf("[%s] auditor did NOT remove an FP (verdict=%s rule=%s)\n    A: %s\n    B: %s\n    audit: %s",
-					tc.Bucket, res.Verdict, res.Rule, tc.FactA, tc.FactB, res.Reasoning)
-				return
-			}
-			dropPass++
-			t.Logf("[%s] removed (rule=%s) ✓", tc.Bucket, res.Rule)
-		})
-	}
+				// FP case: the auditor should flag it for removal.
+				if !removed {
+					count(&dropFail)
+					t.Errorf("[%s] auditor did NOT remove an FP (verdict=%s rule=%s)\n    A: %s\n    B: %s\n    audit: %s",
+						tc.Bucket, res.Verdict, res.Rule, tc.FactA, tc.FactB, res.Reasoning)
+					return
+				}
+				count(&dropPass)
+				t.Logf("[%s] removed (rule=%s) ✓", tc.Bucket, res.Rule)
+			})
+		}
+	})
 
 	fmt.Fprintf(os.Stderr,
 		"\n=== AUDIT GOLDEN: keep %d/%d (must-not-remove), drop %d/%d (should-remove) ===\n",

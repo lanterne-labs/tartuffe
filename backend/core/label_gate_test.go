@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"testing"
 
 	"digital-mirror/backend/llmtest"
@@ -97,18 +98,25 @@ func TestSameSubjectByLabelGolden(t *testing.T) {
 
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
+	// The cases run concurrently with -llm-claude: mu guards the count.
+	var mu sync.Mutex
 	var failed int
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := sm.SameSubjectByLabel(ctx, tc.person, tc.a, tc.b)
-			if err != nil {
-				t.Fatalf("gate error: %v", err)
-			}
-			if got != tc.want {
-				failed++
-				t.Errorf("got same=%v want same=%v\n    A: %s\n    B: %s", got, tc.want, tc.a.Label, tc.b.Label)
-			}
-		})
-	}
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				got, err := sm.SameSubjectByLabel(ctx, tc.person, tc.a, tc.b)
+				if err != nil {
+					t.Fatalf("gate error: %v", err)
+				}
+				if got != tc.want {
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					t.Errorf("got same=%v want same=%v\n    A: %s\n    B: %s", got, tc.want, tc.a.Label, tc.b.Label)
+				}
+			})
+		}
+	})
 	t.Logf("=== LABEL-GATE GOLDEN: %d/%d passed ===", len(cases)-failed, len(cases))
 }

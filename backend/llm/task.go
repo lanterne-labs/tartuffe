@@ -7,13 +7,13 @@ import (
 )
 
 // Task names the job of one LLM call. ChatRequest.Task selects the thinking
-// setting of the call (see thinkingTasks); the server never sees it.
+// setting of the call (see thinkingTasks) and its route (endpoint.go); the
+// server never sees it.
 type Task string
 
-// The tasks with a thinking setting. A call without a Task never thinks.
+// The tasks. A call without a Task never thinks and takes the default route.
 const (
 	TaskOccurrence    Task = "occurrence"     // grouping gate: two facts, one occurrence?
-	TaskSameClaim     Task = "same-claim"     // dedupe drop gate: one claim reworded?
 	TaskDedupBatch    Task = "dedup-batch"    // a batch of facts: duplicate groups and fact quality
 	TaskExtract       Task = "extract"        // fact extraction from a document
 	TaskStanceAnalyze Task = "stance-analyze" // new fact against a stance: duplicate, contradiction
@@ -28,13 +28,17 @@ const (
 	TaskEntityFilter  Task = "entity-filter"  // is the name a real entity?
 	TaskComplaint     Task = "complaint"      // complaint triage
 	TaskHandle        Task = "handle"         // a person's social-media handle, or none
+	TaskTranslate     Task = "translate"      // translation of a statement or a text
+	TaskGroupSummary  Task = "group-summary"  // one summary sentence of a contradiction group
+	TaskLawSummary    Task = "law-summary"    // short titles and summaries of a batch of laws
 )
 
 // AllTasks lists every task, for flag parsing and documentation.
 var AllTasks = []Task{
-	TaskOccurrence, TaskSameClaim, TaskDedupBatch, TaskExtract, TaskStanceAnalyze, TaskStanceAssign,
+	TaskOccurrence, TaskDedupBatch, TaskExtract, TaskStanceAnalyze, TaskStanceAssign,
 	TaskStanceLabel, TaskStanceMerge, TaskDetect, TaskVerify, TaskAudit, TaskBundle,
-	TaskEntityDedup, TaskEntityFilter, TaskComplaint, TaskHandle,
+	TaskEntityDedup, TaskEntityFilter, TaskComplaint, TaskHandle, TaskTranslate, TaskGroupSummary,
+	TaskLawSummary,
 }
 
 // thinkingTasks are the tasks that think in production. A task thinks only
@@ -85,10 +89,7 @@ func ParseTasks(s string) ([]Task, error) {
 	if s == "none" {
 		return []Task{}, nil
 	}
-	known := make(map[Task]bool, len(AllTasks))
-	for _, t := range AllTasks {
-		known[t] = true
-	}
+	known := knownTasks()
 	var out []Task
 	for _, part := range strings.Split(s, ",") {
 		t := Task(strings.TrimSpace(part))
@@ -98,6 +99,14 @@ func ParseTasks(s string) ([]Task, error) {
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+func knownTasks() map[Task]bool {
+	known := make(map[Task]bool, len(AllTasks))
+	for _, t := range AllTasks {
+		known[t] = true
+	}
+	return known
 }
 
 // applyThinking turns thinking on for a request whose task thinks: the

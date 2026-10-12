@@ -69,10 +69,15 @@ type pairInfo struct {
 	// alsoA / alsoB are the other wordings of a statement that stands for a
 	// group of restatements; the judge and its verifier both see them.
 	alsoA, alsoB []string
-	// similarity is the cosine similarity (1 - distance) between the two facts
-	// from the KNN neighbor search, used to gate the dedup-merge check on the
-	// "not a contradiction" path. 0 when unknown (e.g. the --check-all path).
+	// similarity is 1 - the L2 distance (pgvector <->) between the unit
+	// embeddings of the two facts, from the KNN neighbor search. It is not a
+	// cosine: 0.80 is a cosine of about 0.98. It gates the paraphrase skip and
+	// the grouping check. 0 when unknown (e.g. the --check-all path).
 	similarity float64
+	// evidence holds both facts (A, then B) with their sources, as the
+	// grouping gate reads them. attachOccurrenceEvidence sets it only for a
+	// pair that the grouping check can group; it is nil otherwise.
+	evidence *[2]core.ClaimEvidence
 	// queued marks a pair a producer asked for (fact_pair_queue): it bypasses
 	// the external-verb filter — the producer vouches for the pairing.
 	queued bool
@@ -82,12 +87,12 @@ type pairInfo struct {
 // detection consumes per run; the rest stay queued for the next night.
 const queuedPairsPerPersonPerNight = 300
 
-// contradictionDedupSimFloor is the minimum KNN cosine similarity for the
-// contradiction-pass dedup net to even ask the LLM "same claim?" on a
-// non-contradictory pair. Matches the paraphrase-skip threshold used in
-// paraphraseSkip, so we only spend an LLM call on pairs that are genuinely
-// near-duplicate.
-const contradictionDedupSimFloor = 0.80
+// groupingSimFloor is the minimum pair similarity (1 - L2 distance, see
+// pairInfo.similarity; 0.80 is a cosine of about 0.98) for the
+// contradiction-pass grouping check to ask the grouping gate "one
+// occurrence?" on a non-contradictory pair. It is the threshold of
+// paraphraseSkip: only near-identical pairs cost a gate call.
+const groupingSimFloor = 0.80
 
 // personPairs holds collected pairs for a single person, ready for judging.
 type personPairs struct {
@@ -255,20 +260,6 @@ func collectPairsForPerson(ctx context.Context, storer *storage.PostgresStorer, 
 	return filteredPairs
 }
 
-// groupSameClaim puts two active facts found to be the same claim into one
-// claim group headed by the more concrete of the two.
-func groupSameClaim(ctx context.Context, storer *storage.PostgresStorer, a, b int64) error {
-	parent, err := storer.MostConcreteFact(ctx, []int64{a, b})
-	if err != nil {
-		return err
-	}
-	from := a
-	if parent == a {
-		from = b
-	}
-	return storer.MergeFactIntoGroup(ctx, from, parent)
-}
-
 // attachGroupMembers gives every pair side that stands for a group of
 // restatements its other wordings, in one lookup for all the pairs.
 func attachGroupMembers(ctx context.Context, storer *storage.PostgresStorer, pairs []pairInfo) error {
@@ -288,6 +279,126 @@ func attachGroupMembers(ctx context.Context, storer *storage.PostgresStorer, pai
 		pairs[i].alsoB = members[pairs[i].factBID]
 	}
 	return nil
+}
+
+// attachOccurrenceEvidence gives both facts with their sources to every pair
+// at or above groupingSimFloor that meets the evidence rule of
+// grouping (core.LoadPairEvidence), in one lookup for all the pairs. The
+// grouping gate reads only these pairs, as on the insert path. It reports
+// whether a pair got the evidence.
+func attachOccurrenceEvidence(ctx context.Context, storer core.ClaimEvidenceStorer, pairs []pairInfo) (bool, error) {
+	var near [][2]int64
+	for _, p := range pairs {
+		if p.similarity >= groupingSimFloor && p.factAText != "" && p.factBText != "" {
+			near = append(near, [2]int64{p.factAID, p.factBID})
+		}
+	}
+	if len(near) == 0 {
+		return false, nil
+	}
+	met, sources, err := core.LoadPairEvidence(ctx, storer, near)
+	if err != nil {
+		return false, err
+	}
+	groupable := make(map[[2]int64]bool, len(met))
+	for _, m := range met {
+		groupable[m] = true
+	}
+	for i := range pairs {
+		p := &pairs[i]
+		if groupable[[2]int64{p.factAID, p.factBID}] {
+			p.evidence = &[2]core.ClaimEvidence{
+				{Text: p.factAText, Sources: sources[p.factAID]},
+				{Text: p.factBText, Sources: sources[p.factBID]},
+			}
+		}
+	}
+	return len(met) > 0, nil
+}
+
+// pairGrouper writes, for one person, the groups of the pairs that the
+// grouping gate found groupable, and counts what it did.
+type pairGrouper struct {
+	storer core.FactFoldStorer
+	person core.PersonRecord
+	// contradicted holds the recorded contradictions of the person
+	// (core.ContradictedPairs): their two facts never go into one group.
+	contradicted map[[2]int64]int64
+	// members are the facts that this run made members of a group. A pair
+	// that touches one waits for the next run: a fact has one parent.
+	members map[int64]bool
+	// gated, grouped, skippedMember and skippedContradicted are the counts
+	// that logCounts shows.
+	gated, grouped, skippedMember, skippedContradicted int
+}
+
+// newPairGrouper attaches the grouping evidence to the pairs of a person
+// and loads the recorded contradictions of the person when a pair got the
+// evidence: at most 3 queries for all the pairs.
+func newPairGrouper(ctx context.Context, storer core.FactFoldStorer, person core.PersonRecord, pairs []pairInfo) (*pairGrouper, error) {
+	g := &pairGrouper{storer: storer, person: person, members: map[int64]bool{}}
+	found, err := attachOccurrenceEvidence(ctx, storer, pairs)
+	if err != nil || !found {
+		return g, err
+	}
+	g.contradicted, err = core.ContradictedPairs(ctx, storer, person.ID)
+	return g, err
+}
+
+// apply groups the facts of a decided pair when the gate found them
+// groupable. It returns false when the pair check must not be recorded:
+// the pair stays pending, and the next run judges it again.
+func (g *pairGrouper) apply(ctx context.Context, p pairInfo, d pairDecision) bool {
+	if p.evidence == nil || d.contradiction {
+		return true
+	}
+	g.gated++
+	if !d.occurrence.Groupable() {
+		return true
+	}
+	if cid := g.contradicted[core.OrderedPair(p.factAID, p.factBID)]; cid != 0 {
+		g.skippedContradicted++
+		log.Info().Str("person", g.person.Name).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+			Int64("contradiction_id", cid).
+			Msg("Grouping check: the two facts are a recorded contradiction; not grouped")
+		return true
+	}
+	if g.members[p.factAID] || g.members[p.factBID] {
+		g.skippedMember++
+		log.Info().Str("person", g.person.Name).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+			Msg("Grouping check: a fact of the pair joined a group in this run; pair left pending")
+		return false
+	}
+	cluster := core.FoldCluster{
+		Facts: []core.FactForFold{
+			{ID: p.factAID, Text: p.factAText},
+			{ID: p.factBID, Text: p.factBText},
+		},
+		Contained: d.occurrence == core.OccurrenceContained,
+	}
+	// The group write of `dm facts fold`: the parent rule and the score
+	// refresh of the insert path. The verdict is paid for, so a cut ctx must
+	// not stop the write.
+	parent, err := core.ApplyFoldCluster(context.WithoutCancel(ctx), g.storer, g.person, cluster)
+	if err != nil {
+		log.Error().Err(err).Str("person", g.person.Name).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
+			Msg("Failed to group one-occurrence facts; pair left pending")
+		return false
+	}
+	g.grouped++
+	for _, f := range cluster.Facts {
+		if f.ID != parent {
+			g.members[f.ID] = true
+		}
+	}
+	return true
+}
+
+// logCounts logs the counts of the grouping check of the person.
+func (g *pairGrouper) logCounts() {
+	log.Info().Str("person", g.person.Name).Int("gated", g.gated).Int("grouped", g.grouped).
+		Int("skipped_member", g.skippedMember).Int("skipped_contradicted", g.skippedContradicted).
+		Msg("Contradiction-pass grouping check")
 }
 
 // candidatePairs pairs each fact with its KNN neighbors (or every other fact
@@ -314,8 +425,8 @@ func candidatePairs(ctx context.Context, storer *storage.PostgresStorer, person 
 			// of the facts this run walks.
 			continue
 		}
-		// The KNN similarity gates the paraphrase skip here and the dedup net
-		// in judgePairs; check-all pairs carry none (0).
+		// The KNN similarity gates the paraphrase skip here and the grouping
+		// check in judgePairs; check-all pairs carry none (0).
 		similarity := 0.0
 		if !checkAll {
 			similarity = 1.0 - np.Distance
@@ -347,8 +458,8 @@ func candidatePairs(ctx context.Context, storer *storage.PostgresStorer, person 
 }
 
 // paraphraseSkip reports whether a KNN pair is a paraphrase to skip rather
-// than judge: both facts carry a canonical verb, they sit above 0.80 cosine
-// similarity, and either the verbs are the same or both are external
+// than judge: both facts carry a canonical verb, they sit above 0.80
+// similarity (1 - L2 distance), and either the verbs are the same or both are external
 // attributions. bothExternal is returned for logging.
 func paraphraseSkip(verbA, verbB string, similarity float64) (skip, bothExternal bool) {
 	if verbA == "" || verbB == "" || similarity <= 0.80 {
@@ -446,28 +557,39 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		}
 	}
 
-	// Best-effort dedup net for the "not a contradiction" path: a highly similar
-	// non-contradictory pair may be the same claim restated (the embedding is
-	// stance-blind by design, so the judge is the authority). If the adjudicator
-	// confirms they are the same claim, we mark the pair a duplicate so it stops
-	// generating future pairs/contradictions. Nil = disabled (no LLM env).
-	var dedupeJudge sameClaimJudge
+	// Grouping check on the "not a contradiction" path: a near-identical
+	// non-contradictory pair can be two reports of one occurrence that the
+	// insert path did not group. The grouping gate of the insert path decides,
+	// with the same evidence rule (see core/claim_evidence.go); a groupable
+	// pair goes into one claim group. Nil = disabled (no LLM env).
+	var groupJudge core.SameOccurrenceJudge
 	if adj, aErr := core.NewFactDedupeAdjudicatorFromEnv(); aErr != nil {
-		log.Warn().Err(aErr).Msg("Fact-dedupe adjudicator unavailable; contradiction-pass dedup disabled")
+		log.Warn().Err(aErr).Msg("Grouping gate unavailable; contradiction-pass grouping check disabled")
 	} else {
-		dedupeJudge = adj
+		groupJudge = adj
 	}
 
 	totalContradictions := 0
 	totalPairsChecked := 0
-	// stopped is set when the LLM went away or ctx was cancelled: the run
-	// stops at that pair and every pair not yet recorded stays pending for
-	// the next run.
+	// stopped is set when the LLM went away, when ctx was cancelled, or when
+	// the grouping data of a person failed to load (a DB error): the run
+	// stops there and every pair not yet recorded stays pending for the next
+	// run.
 	var stopped error
 
 	for _, pp := range allPersonPairs {
 		if stopped != nil {
 			break
+		}
+		// grouper is nil when the grouping check is off (no gate, dry run).
+		var grouper *pairGrouper
+		if groupJudge != nil && !opts.DryRun {
+			var gErr error
+			grouper, gErr = newPairGrouper(ctx, storer, core.PersonRecord{ID: pp.personID, Name: pp.personName}, pp.pairs)
+			if gErr != nil {
+				stopped = fmt.Errorf("loading the grouping data of %s: %w", pp.personName, gErr)
+				break
+			}
 		}
 		personContradictions := 0
 		batchSize := MaxPairsPerBatchSync
@@ -502,12 +624,15 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 
 			var pairResults []storage.PairCheckResult
 			for j, result := range results {
-				d, dErr := decidePair(ctx, detector, dedupeJudge, pp.personName, batch[j], result, opts.DryRun)
+				d, dErr := decidePair(ctx, detector, groupJudge, pp.personName, batch[j], result, opts.DryRun)
 				if dErr != nil {
 					stopped = dErr
 					break
 				}
 				if !d.decided {
+					continue
+				}
+				if grouper != nil && !grouper.apply(ctx, batch[j], d) {
 					continue
 				}
 				isContra := d.contradiction
@@ -535,20 +660,6 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 					FactBID:         batch[j].factBID,
 					IsContradiction: isContra,
 				})
-
-				if d.sameClaim {
-					if gErr := groupSameClaim(ctx, storer, batch[j].factAID, batch[j].factBID); gErr != nil {
-						log.Error().Err(gErr).
-							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-							Msg("Failed to group same-claim facts")
-					} else {
-						log.Info().
-							Str("person", pp.personName).
-							Int64("fact_a", batch[j].factAID).Int64("fact_b", batch[j].factBID).
-							Float64("similarity", batch[j].similarity).
-							Msg("Grouped same-claim facts (contradiction-pass dedup)")
-					}
-				}
 
 				if isContra {
 					totalContradictions++
@@ -604,6 +715,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 		if personContradictions > 0 {
 			log.Info().Str("person", pp.personName).Int("contradictions", personContradictions).Msg("Contradictions found and saved")
 		}
+		if grouper != nil {
+			grouper.logCounts()
+		}
 	}
 
 	if !opts.DryRun {
@@ -628,19 +742,15 @@ type pairVerifier interface {
 	VerifyContradiction(ctx context.Context, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error)
 }
 
-// sameClaimJudge is the dedup net run on near-identical NOs.
-type sameClaimJudge interface {
-	IsSameClaim(ctx context.Context, subject, factA, factB string) (bool, error)
-}
-
 // pairDecision is what judgePairs records for one judged pair.
 type pairDecision struct {
 	// decided is false when nothing may be recorded: the pair stays pending
 	// and is judged again by the next run.
 	decided       bool
 	contradiction bool
-	// sameClaim asks for the two facts to be grouped as one claim.
-	sameClaim bool
+	// occurrence is the verdict of the grouping gate. A groupable verdict
+	// asks for the two facts to go into one claim group.
+	occurrence core.OccurrenceVerdict
 }
 
 // bundleResolver is the part of *Bundler the detection uses.
@@ -671,12 +781,13 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 
 // decidePair turns the detector's verdict on one pair into the decision to
 // record. A YES goes through the verifier; a NO between near-identical facts
-// through the dedup net (skipped in dry runs).
+// with grouping evidence (p.evidence) goes through the grouping gate (skipped
+// in dry runs).
 //
 // No decision is made when the detector failed, when the LLM was unavailable
-// to the verifier or the dedup net, or when the dedup net failed otherwise: a
-// recorded NO is never judged again, so it would lose the same-claim grouping
-// for good. A verifier failure other than llm.ErrUnavailable keeps the YES
+// to the verifier or the grouping gate, or when the grouping gate failed
+// otherwise: a recorded NO is never judged again, so the pair would lose its
+// grouping for good. A verifier failure other than llm.ErrUnavailable keeps the YES
 // (fail-open, see OpenAIContradictionDetector.VerifyContradiction): the judge
 // found it, and a verifier that cannot answer must not silently drop it; the
 // auditor re-judges it later.
@@ -687,7 +798,7 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 // The error is non-nil only when the LLM was unavailable (it wraps
 // llm.ErrUnavailable) or ctx was cancelled (it wraps ctx.Err()): the caller
 // stops the run there.
-func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudge, person string, p pairInfo, r BatchResult, dryRun bool) (pairDecision, error) {
+func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.SameOccurrenceJudge, person string, p pairInfo, r BatchResult, dryRun bool) (pairDecision, error) {
 	if r.Error != nil {
 		if errors.Is(r.Error, llm.ErrUnavailable) {
 			return pairDecision{}, r.Error
@@ -724,20 +835,19 @@ func decidePair(ctx context.Context, verifier pairVerifier, dedupe sameClaimJudg
 		}
 	}
 
-	if !d.contradiction && dedupe != nil && !dryRun &&
-		p.similarity >= contradictionDedupSimFloor && p.factAText != "" && p.factBText != "" {
-		same, err := dedupe.IsSameClaim(ctx, person, p.factAText, p.factBText)
+	if !d.contradiction && groupJudge != nil && !dryRun && p.evidence != nil {
+		verdict, err := groupJudge.IsSameOccurrence(ctx, p.evidence[0], p.evidence[1])
 		switch {
 		case errors.Is(err, llm.ErrUnavailable):
 			return pairDecision{}, err
 		case err != nil && ctx.Err() != nil:
-			return pairDecision{}, fmt.Errorf("dedup check of pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
+			return pairDecision{}, fmt.Errorf("grouping check of pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		case err != nil:
 			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
-				Msg("Contradiction-pass dedup adjudication failed; pair left pending")
+				Msg("Contradiction-pass grouping check failed; pair left pending")
 			return pairDecision{}, nil
 		}
-		d.sameClaim = same
+		d.occurrence = verdict
 	}
 	return d, nil
 }

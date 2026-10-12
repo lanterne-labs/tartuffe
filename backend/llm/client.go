@@ -328,8 +328,13 @@ type ChatRequest struct {
 	// then ends the thinking and writes the answer. Chat sets it from Task.
 	ThinkingBudgetTokens int `json:"thinking_budget_tokens,omitempty"`
 	// Task names the job of the call and selects its thinking setting
-	// (task.go). It is not sent to the server.
+	// (task.go) and its route (endpoint.go). It is not sent to the server.
 	Task Task `json:"-"`
+}
+
+// wantsJSON reports whether the request asks for a JSON object.
+func (r ChatRequest) wantsJSON() bool {
+	return r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object"
 }
 
 // thinkingKwargs returns the chat-template kwargs that turn thinking on for

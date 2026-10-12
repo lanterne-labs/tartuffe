@@ -121,3 +121,27 @@ type ClaimEvidenceStorer interface {
 	// meet the evidence rule.
 	ListGroupEvidencePairs(ctx context.Context, pairs [][2]int64, rule GroupEvidence) ([][2]int64, error)
 }
+
+// LoadPairEvidence applies the evidence rule to pairs of facts and loads the
+// sources that the gate reads. It returns the pairs (as given) that meet the
+// rule, and the sources of the facts of these pairs. It makes at most 2
+// queries for all the pairs.
+func LoadPairEvidence(ctx context.Context, storer ClaimEvidenceStorer, pairs [][2]int64) ([][2]int64, map[int64][]ClaimSource, error) {
+	rule, err := groupEvidenceRule()
+	if err != nil {
+		return nil, nil, err
+	}
+	met, err := storer.ListGroupEvidencePairs(ctx, pairs, rule)
+	if err != nil || len(met) == 0 {
+		return nil, nil, err
+	}
+	ids := make([]int64, 0, 2*len(met))
+	for _, p := range met {
+		ids = append(ids, p[0], p[1])
+	}
+	sources, err := storer.LoadClaimSources(ctx, ids, rule.SourceTypes)
+	if err != nil {
+		return nil, nil, err
+	}
+	return met, sources, nil
+}

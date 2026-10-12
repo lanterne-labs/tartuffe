@@ -28,8 +28,14 @@ type Client struct {
 // on with a thinking budget on top of MaxTokens. When req asks for a JSON object, the content comes
 // back without a Markdown code fence: some models (Qwen3.8 on llama.cpp)
 // wrap the object in ```json even in JSON mode, and a caller must not have to
-// know it.
+// know it. The active routing (SetRouting) chooses the endpoint of each call
+// from req.Task: on a route that is not local, that endpoint answers the
+// call instead, with the Claude settings of the route.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatResponse, error) {
+	r := activeRouting()
+	if rt := r.Route(req.Task); rt.Endpoint != EndpointLocal {
+		return r.Endpoints[rt.Endpoint].Call(ctx, req, rt.claudeOptions())
+	}
 	if req.Model == "" {
 		req.Model = c.Model
 	}
@@ -60,7 +66,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatRespon
 			Msg("LLM reply truncated at max_tokens")
 	}
 	content := resp.Choices[0].Message.Content
-	if req.ResponseFormat != nil && req.ResponseFormat.Type == "json_object" {
+	if req.wantsJSON() {
 		content = StripJSONCodeFence(content)
 		if content == "" {
 			return "", &resp, fmt.Errorf("chat API returned an empty code fence (raw: %s)", string(body))

@@ -3,8 +3,6 @@ package complaints
 import (
 	"context"
 	"digital-mirror/backend/llm"
-	"digital-mirror/backend/util"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -50,27 +48,24 @@ func NewOpenAIJudgeFromEnv() (*OpenAIJudge, error) {
 	return &OpenAIJudge{client: client}, nil
 }
 
-// Judge calls the LLM and parses the verdict. Returns an error on transport
-// failure or unparseable response; a parsed-but-unknown verdict is returned as
-// VerdictAmbiguous so triage stays conservative.
+// Judge calls the LLM and parses the verdict. A reply that is not valid JSON
+// gets one corrective retry (llm.ChatJSON). Judge returns an error on a
+// transport failure or on a second reply that is not valid JSON. A parsed but
+// unknown verdict becomes VerdictAmbiguous, so triage stays conservative.
 func (j *OpenAIJudge) Judge(ctx context.Context, prompt string) (VerdictResult, error) {
-	content, _, err := j.client.Chat(ctx, llm.ChatRequest{
+	type judgeReply struct {
+		Verdict string `json:"verdict"`
+		Reason  string `json:"reason"`
+	}
+	parsed, err := llm.ChatJSON[judgeReply](ctx, j.client, llm.ChatRequest{
 		Messages:       []llm.ChatMessage{{Role: "user", Content: prompt}},
 		Temperature:    0.1,
 		MaxTokens:      512,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 		Task:           llm.TaskComplaint,
-	})
+	}, "Complaint judge")
 	if err != nil {
-		return VerdictResult{}, fmt.Errorf("judge API call: %w", err)
-	}
-
-	var parsed struct {
-		Verdict string `json:"verdict"`
-		Reason  string `json:"reason"`
-	}
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		return VerdictResult{}, fmt.Errorf("parse judge JSON: %w (raw: %s)", err, util.TruncateString(content, 500))
+		return VerdictResult{}, fmt.Errorf("judge call: %w", err)
 	}
 
 	v := Verdict(strings.ToLower(strings.TrimSpace(parsed.Verdict)))

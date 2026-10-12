@@ -143,6 +143,7 @@ Return ONLY strict JSON, nothing else:
 		Temperature:    0.0,
 		MaxTokens:      1024,
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskTranslate,
 	})
 	if err != nil {
 		return "", fmt.Errorf("translate LLM call failed: %w", err)

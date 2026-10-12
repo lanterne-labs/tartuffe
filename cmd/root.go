@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/llm"
+
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -96,6 +98,14 @@ pipeline, including running periodic jobs, manual testing, and database interact
 
 		// Load .env if available (before migrations need DATABASE_URL)
 		_ = godotenv.Load()
+
+		// The LLM profile routes each LLM task to an endpoint. A bad profile
+		// stops the command here, before it does any work.
+		profile, err := llm.InstallProfileFromEnv()
+		if err != nil {
+			return err
+		}
+		log.Info().Str("llm_profile", profile).Msg("LLM profile installed")
 
 		// Run migrations for DB-dependent commands
 		if cmd.Annotations != nil && cmd.Annotations["needs_db"] == "true" {

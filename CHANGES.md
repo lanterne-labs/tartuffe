@@ -2,6 +2,25 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-11: Three prompt rules from the golden review; the complaint judge reads the source quotes (mirror-rxl.22)
+
+- Bundler gate: a contradiction belongs to the stance whose subject is the broken commitment or
+  claim. A stance that only holds the act that broke it, or that names the affair in passing, is
+  not its home (AfD: the no-new-tax promise against the doubled fire tax goes to the fiscal
+  stance, not to civil protection).
+- Complaint judge, fact and contradiction prompts: a fact of a person is the person's own
+  position, claim or act, or an authoritative finding (court ruling, vote). The opinion of other
+  people about the person is not a fact of the person: delete_target. The burden of proof is on
+  the complaint: a complaint that only denies a sourced fact, with no evidence, is
+  dismiss_complaint.
+- The contradiction prompt now carries the source quote of each fact. `GetContradictionByID`
+  fills `FactAQuote` and `FactBQuote` (the quote of the earliest source) in its one query; the
+  list queries leave them empty. `GetFactByID` now loads `OriginalQuote` the same way: before,
+  the fact complaint prompt of prod never had its "Original quote" line, although the golden
+  had it.
+- Handle discovery: only a handle whose profile is in the candidate list can be confirmed. A
+  handle named inside the bio or text of another account is not a candidate; the reply is NONE.
+
 ## 2026-09-15: Person honesty timeline — statement-time axis, replayed from live rows (mirror-3f9)
 
 - New `GET /api/person/{id}/history` + "Évolution dans le temps" charts on the profile: weekly
@@ -2550,3 +2569,100 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - `make llm-eval` runs the grouping, detection and audit evals. Lessons:
   - A prompt word ("logically") and one stray example can disable a whole class of verdicts.
   - A rule block shared by two judges changes both: measure both.
+
+## Goldens run on Claude through the Message Batches API (2026-10-10, mirror-rxl)
+
+- `make llm-goldens LLM_CLAUDE=<model>` (and `make llm-eval`) sends every judge call to Claude
+  through the Message Batches API (half price). `ANTHROPIC_API_KEY` must be in `.env`. The judges
+  do not change: `llm.ClaudeBatchEndpoint` (an `llm.Endpoint`) answers `Client.Chat`, and the
+  calls that arrive together go into one batch. A judge that calls again (a vote, the second order of a gate)
+  waits for the next batch. The goldens run their cases in parallel in this mode
+  (`llmtest.Group`, `Parallel`, `ForEach`); without the flag, nothing changes.
+- The native Messages API is used, not the OpenAI-compatible endpoint of Anthropic: that
+  endpoint has no prompt cache and ignores `response_format`. On the 5.5 models, a temperature
+  other than the default returns 400 and thinking is adaptive (`effort`), so the Claude request
+  drops the temperature, and a task that thinks runs at effort medium, the others at low.
+- The endpoint puts the cache breakpoints itself: the common prefix of the prompts of one
+  family, cut at a line end. No call site marks its rules.
+- Replies are stored on disk by request (`-llm-claude-store`), so a rerun costs nothing.
+  `LLM_CLAUDE_MAX_USD` caps the spend of the store against a worst case (every reply at
+  max_tokens). The usage report gives tokens and cost per task.
+- Lesson: parallel subtests start only after the parent function returns, which cancels the
+  parent's context and runs its scorecard first. `llmtest.Group` wraps the cases in one
+  subtest to keep both valid.
+
+## Goldens run on Claude through the CLI on one Team seat (2026-10-10, mirror-rxl.19)
+
+- `llm.ClaudeTeamEndpoint` answers each call with one `claude -p` process on one seat of the
+  Team plan. `CLAUDE_TEAM_PLAN_TOKENS` holds the named seat tokens; `CLAUDE_TEAM_PLAN_SEAT` names
+  the only seat in use. The endpoint never changes the seat: a usage limit returns `ErrUnavailable`.
+- The child process gets no parent variable that starts with `ANTHROPIC_`, `CLAUDE_CODE_` or
+  `CLAUDECODE`. These variables can bill the API or a cloud provider instead of the seat, send the
+  seat token to a proxy, or connect the child to a parent session. The flags of the CLI remove its local context (tools,
+  settings, MCP, dynamic prompt): about 560 prompt tokens per call instead of about 100,000.
+- The CLI takes one prompt, so a conversation (the corrective retry of `VerdictJudge`) goes as one
+  user message with a label line per turn.
+- The CLI caches up to the end of the user message. With the static rules at the start of the user
+  message, each call wrote the whole prompt to the cache and read nothing (mirror-rxl.21).
+  The endpoint now sends the learned prefix of the prompt family in `--system-prompt`, and the
+  rest on stdin. The batch and team endpoints learn the prefixes with one type (`prefixCache`).
+- `make llm-goldens LLM_CLAUDE_TEAM=<model>` uses it. It cannot go with `LLM_CLAUDE`.
+
+## LLM routing table per task; LLM_PROFILE (2026-10-10, mirror-rxl.1)
+
+- `Client.Chat` routes each call by `req.Task`. A route names an endpoint (`local`,
+  `claude-batch` or `claude-team`), a Claude model and an effort (`backend/llm/endpoint.go`).
+  A call without a task takes the default route. The local route is the old path of `Chat`, with
+  the same payload, the local thinking table and the failover to OpenRouter.
+- `Chat` reads the route once and gives its model and effort (low, medium or high) to
+  `Endpoint.Call`. The endpoints keep no settings per task: the routing is the only source.
+- `LLM_PROFILE` selects the routing at the start of `dm`. A bad profile, or `claude-team` without a
+  valid seat or without the `claude` CLI on the PATH, stops the command before it does any work:
+  - `local` (default): every task to the local endpoint.
+  - `claude-team`: every task to one Team seat, effort medium for the tasks that think locally and
+    low for the others. Opus 5.5 serves the grouping chain (occurrence, dedup-batch,
+    entity-dedup) and the audit, where it made clearly fewer errors; Sonnet 5.5 serves the rest.
+- `SetRouting` is the only override: it replaces `OverrideEndpoint`. The goldens install a routing
+  from `-llm-claude` or `-llm-claude-team`; `-llm-claude-models` (`LLM_CLAUDE_MODELS`) sets the
+  model per task. The usage reports give one line per task and model.
+- Every `Chat` call has a task now: `translate`, `group-summary` and `law-summary` are new.
+
+## One grouping rule: the detection pass uses the occurrence gate (2026-10-11, mirror-922)
+
+- Before, 2 gates made claim groups. The occurrence gate reads the facts with their quotes, dates
+  and outlets, after the evidence rule. The same-claim gate (`IsSameClaim`) read the texts only.
+  The detection pass used it on near-identical NO pairs, so it could group 2 occasions of one claim.
+- Now the detection pass applies the rule of the insert path: the evidence rule
+  (`core.LoadPairEvidence`), then `IsSameOccurrence`. The evidence and the recorded contradictions
+  of a person cost at most 3 queries. A groupable pair goes into one group through
+  `core.ApplyFoldCluster`, with the parent rule and score refresh of the insert path. A pair that
+  is a recorded contradiction is not grouped. A pair with a fact that became a member in this run
+  stays pending, and a failed group write also leaves the pair pending.
+- `MergeFactIntoGroup` refuses a `from` that is a member of another group: a fact has one parent.
+- `IsSameClaim`, its prompt, `TaskSameClaim` and its golden are removed. The 4 golden cases had no
+  sources, so they are not occurrence cases.
+- Lesson: a group is one occurrence. Every path that makes a group must use the same gate and the
+  same evidence rule.
+
+## JSON corrective retry for the entity-dedup gate and the complaint judge (2026-10-11, mirror-cnp)
+
+- `llm.ChatJSON` decodes a JSON reply. When the reply is not valid JSON, it sends one corrective
+  turn with the bad reply and the parse error, as `VerdictJudge` does. A second bad reply is an error.
+- `EntityDedupAdjudicator.AdjudicatePair` and `complaints.OpenAIJudge` use it: Sonnet 5.5 sometimes
+  answers with prose, or with prose before the JSON object. The retry costs at most 1 extra call.
+
+## The amendments archive download resumes; an unavailable archive fails the votes run (2026-10-11)
+
+- `TestE2EPartyFactVerification` and `TestRealDataPartyFactVerification` found no party fact in a
+  new worktree. The cache had no amendments archive (about 350 MB). The AN portal broke each
+  transfer (503, unexpected EOF), and `downloadCached` started again at byte 0 each time.
+- The selection then gated each amendment scrutin as "no amendment", and each gate tried the
+  download again for about 5 minutes. The run ended without error and without facts.
+- `downloadResumable` writes to a `.part` file and continues with an HTTP Range request. A
+  `.part.meta` sidecar holds the validator of the file (strong ETag, Last-Modified or size); a
+  resume sends it as If-Range, so a file that changed on the server starts again from byte 0.
+  Without ETag and Last-Modified, a Content-Range total that differs from the saved size also
+  starts again from byte 0. Validator guard: never append bytes of a new file to a `.part` file.
+- `LookupAmendement` and `resolveVotedObject` return an error when the archive is not available.
+  `selectLaws` returns it, so the votes run fails. A missing or ambiguous amendment still gates.
+- Lesson: an unavailable data source is an error, not an empty result.

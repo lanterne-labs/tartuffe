@@ -80,25 +80,30 @@ var scrutinNumeroRe = regexp.MustCompile(`n°\s*(\d+)`)
 //     as amendment — because the ballot judges only that modification.
 //     Without resolvable content the scrutin is gated (ok=false): better no
 //     fact than a fact that misstates what was voted.
-func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]OrganeInfo) (amendment string, ok bool) {
+//
+// The error is non-nil only when the amendments archive is not available.
+func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]OrganeInfo) (amendment string, ok bool, err error) {
 	objType := ClassifyScrutinObject(law.Title)
 	if IsTextLevelVote(objType) || objType == ObjectOther {
-		return "", true
+		return "", true, nil
 	}
 
 	m := scrutinNumeroRe.FindStringSubmatch(law.Title)
 	if m == nil {
-		return "", false
+		return "", false, nil
 	}
 	numero := 0
 	fmt.Sscanf(m[1], "%d", &numero)
-	info := LookupAmendement(ctx, law.Legislature, numero, law.VoteDate)
+	info, err := LookupAmendement(ctx, law.Legislature, numero, law.VoteDate)
+	if err != nil {
+		return "", false, err
+	}
 	if info == nil {
-		return "", false
+		return "", false, nil
 	}
 	purpose := purposePhrase(info)
 	if purpose == "" {
-		return "", false
+		return "", false, nil
 	}
 
 	label := "l'amendement"
@@ -115,7 +120,7 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 			group = fmt.Sprintf(" (%s)", name)
 		}
 	}
-	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true
+	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true, nil
 }
 
 // votedObjectPhrase is the voted object's phrase: the bill phrase, preceded

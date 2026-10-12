@@ -53,29 +53,18 @@ func amendementsArchive(ctx context.Context, legislature int) (*zip.ReadCloser, 
 
 	path := filepath.Join(getCacheDir(), fmt.Sprintf("Amendements_%d.json.zip", legislature))
 	if _, err := os.Stat(path); err != nil {
-		// The AN endpoint drops large transfers regularly; downloadCached has no
-		// resume, so retry a few times before declaring the archive unavailable.
 		url := fmt.Sprintf(amendementsURLTpl, legislature)
-		var body []byte
-		var dlErr error
-		for attempt := 1; attempt <= 3; attempt++ {
-			body, dlErr = downloadCached(ctx, url, getCacheDir(), 30*24*time.Hour)
-			if dlErr == nil {
-				break
-			}
-			log.Warn().Err(dlErr).Int("attempt", attempt).Int("legislature", legislature).
-				Msg("frpolitics: amendements archive download failed")
-		}
-		if dlErr != nil {
-			return nil, fmt.Errorf("amendements archive for legislature %d unavailable: %w", legislature, dlErr)
-		}
-		if err := os.WriteFile(path, body, 0o644); err != nil {
-			return nil, fmt.Errorf("caching amendements archive: %w", err)
+		if err := downloadResumable(ctx, url, path); err != nil {
+			return nil, fmt.Errorf("amendements archive for legislature %d unavailable: %w", legislature, err)
 		}
 	}
 
 	r, err := zip.OpenReader(path)
 	if err != nil {
+		// A bad archive must not stay in the cache across runs.
+		if rmErr := os.Remove(path); rmErr != nil {
+			return nil, fmt.Errorf("open amendements archive %s: %w; remove: %v", path, err, rmErr)
+		}
 		return nil, fmt.Errorf("open amendements archive %s: %w", path, err)
 	}
 	if amdArchives.readers == nil {
@@ -89,12 +78,12 @@ func amendementsArchive(ctx context.Context, legislature int) (*zip.ReadCloser, 
 // filename ends in N<numero>.json (the uid encodes texte + numero), then
 // disambiguated by the sort date matching the scrutin date. Returns nil when
 // no candidate — or more than one — matches: an ambiguous voted object must
-// gate, never guess.
-func LookupAmendement(ctx context.Context, legislature, numero int, scrutinDate *time.Time) *AmendementInfo {
+// gate, never guess. Returns an error when the archive is not available: the
+// lookup cannot run, and a gate would hide the failure as "no amendment".
+func LookupAmendement(ctx context.Context, legislature, numero int, scrutinDate *time.Time) (*AmendementInfo, error) {
 	r, err := amendementsArchive(ctx, legislature)
 	if err != nil {
-		log.Warn().Err(err).Msg("frpolitics: amendement lookup impossible")
-		return nil
+		return nil, err
 	}
 	suffix := fmt.Sprintf("N%06d.json", numero)
 	var candidates []*AmendementInfo
@@ -117,9 +106,9 @@ func LookupAmendement(ctx context.Context, legislature, numero int, scrutinDate 
 			log.Warn().Int("numero", numero).Int("candidates", len(candidates)).
 				Msg("frpolitics: ambiguous amendement lookup; gating")
 		}
-		return nil
+		return nil, nil
 	}
-	return candidates[0]
+	return candidates[0], nil
 }
 
 var tagRe = regexp.MustCompile(`<[^>]+>`)

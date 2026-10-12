@@ -124,6 +124,12 @@ GOOGLE_SEARCH_API_KEY=...
 FIRECRAWL_API_KEY=...
 FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
 
+# LLM routing (backend/llm/endpoint.go)
+LLM_PROFILE=local                # local (default) or claude-team; the profile routes each LLM task to an endpoint
+CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs
+CLAUDE_TEAM_PLAN_SEAT=a          # the seat that claude-team uses; the claude CLI must be on the PATH
+ANTHROPIC_API_KEY=sk-ant-...     # Message Batches API key; only the goldens use it (make llm-goldens LLM_CLAUDE=...)
+
 # Search providers — assembled into a chain (tried in this order; whichever key is set is added).
 # Priority: Serper > Brave > SerpAPI. Each is optional; at least one must be set.
 SERPER_API_KEY=...               # https://serper.dev — supports tbs date-range filter

@@ -116,7 +116,7 @@ func TestApplyFoldClusterContainedParent(t *testing.T) {
 	if len(clusters) != 1 || !clusters[0].Contained {
 		t.Fatalf("clusters=%+v, want one contained cluster", clusters)
 	}
-	if err := ApplyFoldCluster(context.Background(), store, p, clusters[0]); err != nil {
+	if _, err := ApplyFoldCluster(context.Background(), store, p, clusters[0]); err != nil {
 		t.Fatal(err)
 	}
 	if len(gs.merges) != 1 || gs.merges[0] != [2]int64{1, 2} {

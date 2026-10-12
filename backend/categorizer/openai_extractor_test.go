@@ -2,6 +2,7 @@ package categorizer
 
 import (
 	"context"
+	"digital-mirror/backend"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/llmtest"
 	"regexp"
@@ -9,6 +10,12 @@ import (
 	"testing"
 	"time"
 )
+
+// extractResult is the reply of one extraction sample.
+type extractResult struct {
+	facts []backend.Fact
+	err   error
+}
 
 // canonicalVerbs is the closed set of verbs allowed in embedding_text.
 var canonicalVerbs = []string{
@@ -337,9 +344,15 @@ Didier Deschamps a annoncé la composition de l'équipe de France pour le match 
 	// the same policy the contradiction judges use (JudgeVotes).
 	ctx := context.Background()
 	const samples = 3
+	// The samples run first, all at once with -llm-claude (one batch). The
+	// checks read their results by index.
+	results := make([]extractResult, samples)
+	llmtest.ForEach(samples, func(i int) {
+		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, "Gérald Darmanin", mockContent)
+	})
 	var leakRuns, darmaninRuns int
 	for run := 1; run <= samples; run++ {
-		facts, err := extractorClient.ExtractFacts(ctx, "Gérald Darmanin", mockContent)
+		facts, err := results[run-1].facts, results[run-1].err
 		if err != nil {
 			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
 		}
@@ -405,9 +418,15 @@ Elle a déclaré avoir grandi à Hénin-Beaumont dans un quartier populaire, et 
 
 	ctx := context.Background()
 	const samples = 3
+	// The samples run first, all at once with -llm-claude (one batch). The
+	// checks read their results by index.
+	results := make([]extractResult, samples)
+	llmtest.ForEach(samples, func(i int) {
+		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, "Marine Tondelier", mockContent)
+	})
 	var leakRuns, positionsRuns int
 	for run := 1; run <= samples; run++ {
-		facts, err := extractorClient.ExtractFacts(ctx, "Marine Tondelier", mockContent)
+		facts, err := results[run-1].facts, results[run-1].err
 		if err != nil {
 			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
 		}
@@ -479,9 +498,15 @@ Interrogé sur la désignation d'un candidat unique du bloc central pour 2027, i
 	electionPrimaire := regexp.MustCompile(`primaire[ -][ée]lectorale|[ée]lection[ -]primaire`)
 	ctx := context.Background()
 	const samples = 3
+	// The samples run first, all at once with -llm-claude (one batch). The
+	// checks read their results by index.
+	results := make([]extractResult, samples)
+	llmtest.ForEach(samples, func(i int) {
+		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, "Gabriel Attal", mockContent)
+	})
 	var goodRuns int
 	for run := 1; run <= samples; run++ {
-		facts, err := extractorClient.ExtractFacts(ctx, "Gabriel Attal", mockContent)
+		facts, err := results[run-1].facts, results[run-1].err
 		if err != nil {
 			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
 		}

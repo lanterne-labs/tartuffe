@@ -109,7 +109,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			if !factsFoldApply {
 				continue
 			}
-			if err := core.ApplyFoldCluster(ctx, storer, p, cluster); err != nil {
+			if _, err := core.ApplyFoldCluster(ctx, storer, p, cluster); err != nil {
 				log.Error().Err(err).Str("person", p.Name).Msg("Failed to apply fold cluster")
 				continue
 			}

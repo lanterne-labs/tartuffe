@@ -114,8 +114,7 @@ func (b *Bundler) Resolve(ctx context.Context, personID int64, contradictionID i
 	// Build the bundle query string. The format is read by the LLM as well as embedded;
 	// keeping both consistent matches the PurposeContradictionBundle instruction's framing
 	// ("claim A versus claim B and the reason they conflict").
-	bundleText := fmt.Sprintf("Claim A: %s\nClaim B: %s\nReason they conflict: %s",
-		strings.TrimSpace(factAText), strings.TrimSpace(factBText), strings.TrimSpace(reason))
+	bundleText := bundleQuery(factAText, factBText, reason)
 
 	embeddings, err := b.embedder.GenerateEmbeddings(ctx, embedding.PurposeContradictionBundle, []string{bundleText})
 	if err != nil {
@@ -178,6 +177,13 @@ func (b *Bundler) Resolve(ctx context.Context, personID int64, contradictionID i
 	return nil
 }
 
+// bundleQuery is the text of a contradiction that the bundler embeds and
+// shows to the LLM.
+func bundleQuery(factAText, factBText, reason string) string {
+	return fmt.Sprintf("Claim A: %s\nClaim B: %s\nReason they conflict: %s",
+		strings.TrimSpace(factAText), strings.TrimSpace(factBText), strings.TrimSpace(reason))
+}
+
 const bundlerLLMPromptTpl = `You judge whether a political contradiction belongs to an existing topic cluster (a "stance") for the same person.
 
 CONTRADICTION (between two of this person's statements):
@@ -188,6 +194,8 @@ Label: %s
 Summary: %s
 
 Answer YES only if the contradiction is fundamentally about the same underlying issue, promise, or position as the stance — i.e. an additional instance of the same broken promise / reversal / inconsistency, not merely a tangential overlap of vocabulary.
+A contradiction belongs to the stance whose subject is what the broken commitment or claim is about. That stance usually holds the commitment, the act, or both: a refusal of a primary and the later candidacy to that primary belong to the stance on the primary. A stance that holds the act under another subject, or that mentions the affair in passing, is not the home.
+Example: a promise of no new tax against the doubling of the fire tax belongs to the fiscal stance, not to the civil protection stance, whose subject is the rescue services.
 
 Reply with exactly two lines, in this order:
 REASONING: <one sentence: is the contradiction about the stance's issue?>

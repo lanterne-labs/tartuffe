@@ -132,6 +132,43 @@ func TestMergeFactIntoGroup(t *testing.T) {
 	require.Equal(t, fresh, most, "'en 2027' has four digits, 'sous 3 %' one")
 }
 
+// A fact has one parent: a member of one group cannot join another group,
+// for example through a second pair of one detection run. A merge into its
+// own parent stays allowed.
+func TestMergeFactIntoGroupRefusesSecondParent(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	fact := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+		return id
+	}
+	parentsOf := func(f int64) []int64 {
+		rows, err := storer.pool.Query(ctx,
+			"SELECT general_fact_id FROM fact_relations WHERE specific_fact_id = $1 AND relation_type = 'duplicate' ORDER BY 1", f)
+		require.NoError(t, err)
+		defer rows.Close()
+		var out []int64
+		for rows.Next() {
+			var id int64
+			require.NoError(t, rows.Scan(&id))
+			out = append(out, id)
+		}
+		return out
+	}
+
+	a := fact("Il veut réduire le déficit.")
+	b := fact("Il veut réduire le déficit en 2027.")
+	c := fact("Il promet de réduire le déficit.")
+	require.NoError(t, storer.MergeFactIntoGroup(ctx, a, b))
+	require.Error(t, storer.MergeFactIntoGroup(ctx, a, c), "a has parent b; a second parent is refused")
+	require.Equal(t, []int64{b}, parentsOf(a), "the refused merge changes nothing")
+	require.NoError(t, storer.MergeFactIntoGroup(ctx, a, b), "a merge into its own parent is allowed")
+	require.Equal(t, []int64{b}, parentsOf(a))
+}
+
 // Members come back most concrete first (digits, then length), deduplicated,
 // within the character budget — the first one always; a fact without members
 // is absent.

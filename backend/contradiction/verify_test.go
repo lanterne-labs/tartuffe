@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend/promptrules"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -85,33 +86,42 @@ func TestVerifyGolden(t *testing.T) {
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
 
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var passed, failed int
-	for _, tc := range cf.Cases {
-		tc := tc
-		if !tc.judgedBy("verify") {
-			continue
-		}
-		wantKeep, err := expectToKeep(tc.Expect)
-		if err != nil {
-			t.Fatalf("case %q: %v", tc.Name, err)
-		}
-		t.Run(tc.Name, func(t *testing.T) {
-			keep, reason, err := detector.VerifyContradiction(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, tc.ClaimedReason)
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cf.Cases {
+			tc := tc
+			if !tc.judgedBy("verify") {
+				continue
+			}
+			wantKeep, err := expectToKeep(tc.Expect)
 			if err != nil {
-				t.Fatalf("VerifyContradiction error: %v", err)
+				t.Fatalf("case %q: %v", tc.Name, err)
 			}
-			got := verdictWord(keep)
-			want := verdictWord(wantKeep)
-			if keep != wantKeep {
-				failed++
-				t.Errorf("[%s] got=%s want=%s\n    A: %s\n    B: %s\n    verifier: %s",
-					tc.Bucket, got, want, tc.FactA, tc.FactB, reason)
-				return
-			}
-			passed++
-			t.Logf("[%s] %s ✓  (%s)", tc.Bucket, got, reason)
-		})
-	}
+			t.Run(tc.Name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				keep, reason, err := detector.VerifyContradiction(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, tc.ClaimedReason)
+				if err != nil {
+					t.Fatalf("VerifyContradiction error: %v", err)
+				}
+				got := verdictWord(keep)
+				want := verdictWord(wantKeep)
+				if keep != wantKeep {
+					mu.Lock()
+					failed++
+					mu.Unlock()
+					t.Errorf("[%s] got=%s want=%s\n    A: %s\n    B: %s\n    verifier: %s",
+						tc.Bucket, got, want, tc.FactA, tc.FactB, reason)
+					return
+				}
+				mu.Lock()
+				passed++
+				mu.Unlock()
+				t.Logf("[%s] %s ✓  (%s)", tc.Bucket, got, reason)
+			})
+		}
+	})
 
 	// A compact scoreboard so it's obvious at a glance how the set is doing.
 	fmt.Fprintf(os.Stderr, "\n=== VERIFY GOLDEN: %d/%d passed (%d failed) ===\n", passed, passed+failed, failed)

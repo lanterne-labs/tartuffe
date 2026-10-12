@@ -42,7 +42,8 @@ func (s *PostgresStorer) MostConcreteFact(ctx context.Context, factIDs []int64) 
 // (a promotion), its own stance links were invisible, so it takes from's
 // visible slot instead. Stance key facts are rewritten from → into and kept
 // to facts the stance actually holds. into must be active (not a member of
-// any other group).
+// any other group), and from must not be a member of a group other than
+// into's: a fact has one parent.
 func (s *PostgresStorer) MergeFactIntoGroup(ctx context.Context, from, into int64) error {
 	if from == into {
 		return fmt.Errorf("merging fact %d into its own group", from)
@@ -62,13 +63,20 @@ func (s *PostgresStorer) MergeFactIntoGroup(ctx context.Context, from, into int6
 		return fmt.Errorf("detaching %d from %d: %w", into, from, err)
 	}
 	promoted := tag.RowsAffected() > 0
-	var intoIsMember bool
+	// A fact has one parent: into must be active, and from must not be a
+	// member of a group other than into's.
+	var intoIsMember, fromIsMemberElsewhere bool
 	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM fact_relations WHERE specific_fact_id = $1 AND relation_type = 'duplicate')`, into).Scan(&intoIsMember); err != nil {
-		return fmt.Errorf("checking %d is active: %w", into, err)
+		SELECT EXISTS (SELECT 1 FROM fact_relations WHERE specific_fact_id = $1 AND relation_type = 'duplicate'),
+		       EXISTS (SELECT 1 FROM fact_relations WHERE specific_fact_id = $2 AND relation_type = 'duplicate' AND general_fact_id <> $1)`,
+		into, from).Scan(&intoIsMember, &fromIsMemberElsewhere); err != nil {
+		return fmt.Errorf("checking %d is active and %d has no other parent: %w", into, from, err)
 	}
 	if intoIsMember {
 		return fmt.Errorf("fact %d is a member of another group; merge into its parent instead", into)
+	}
+	if fromIsMemberElsewhere {
+		return fmt.Errorf("fact %d is a member of another group; merge its parent instead", from)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE fact_relations SET general_fact_id = $2

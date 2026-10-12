@@ -17,8 +17,8 @@ import (
 )
 
 // dedupeLLMStub is an OpenAI-compatible chat endpoint that records every user
-// prompt it receives and answers a fixed same=false / different verdict, so tests can
-// assert the exact bytes the dedupe gates send.
+// prompt it receives and answers a fixed "different" verdict, so tests can
+// assert the exact bytes the grouping gate sends.
 type dedupeLLMStub struct {
 	mu      sync.Mutex
 	prompts []string
@@ -38,7 +38,7 @@ func newDedupeLLMStub(t *testing.T) *dedupeLLMStub {
 		s.prompts = append(s.prompts, req.Messages[len(req.Messages)-1].Content)
 		s.mu.Unlock()
 		resp := map[string]any{
-			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": `{"reasoning": "stub", "same": false, "verdict": "different"}`}}},
+			"choices": []map[string]any{{"message": map[string]string{"role": "assistant", "content": `{"reasoning": "stub", "verdict": "different"}`}}},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -80,10 +80,6 @@ func TestDedupeGatePromptsShareRulePrefix(t *testing.T) {
 		marker, lastStatement string
 		call                  func(a, b string) error
 	}{
-		"IsSameClaim": {"\nPerson: ", "STATEMENT B:", func(a, b string) error {
-			_, err := adj.IsSameClaim(ctx, "Bruno Retailleau", a, b)
-			return err
-		}},
 		"IsSameOccurrence": {"\nStatement A: ", "Statement B:", func(a, b string) error {
 			_, err := adj.IsSameOccurrence(ctx, evidence(a), evidence(b))
 			return err
@@ -214,7 +210,9 @@ func TestOccurrenceGateGolden(t *testing.T) {
 	if err := json.Unmarshal(raw, &cases); err != nil {
 		t.Fatal(err)
 	}
-	evidence := func(text string, sources []source) ClaimEvidence {
+	// evidence takes the t of the case: a case runs on its own goroutine.
+	evidence := func(t *testing.T, text string, sources []source) ClaimEvidence {
+		t.Helper()
 		e := ClaimEvidence{Text: text}
 		for _, s := range sources {
 			cs := ClaimSource{Outlet: s.Outlet, Quote: s.Quote}
@@ -232,104 +230,32 @@ func TestOccurrenceGateGolden(t *testing.T) {
 
 	ctx, cancel := llmtest.Context(t)
 	defer cancel()
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var passed, failed, gaps int
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			got, err := adj.IsSameOccurrence(ctx, evidence(tc.FactA, tc.SourcesA), evidence(tc.FactB, tc.SourcesB))
-			if err != nil {
-				t.Fatalf("gate error: %v", err)
-			}
-			want := tc.Want != "different"
-			switch {
-			case got.Groupable() == want:
-				passed++
-			case tc.Gap != "":
-				gaps++
-				t.Logf("known gap (groupable=%v, label %s): %s", got.Groupable(), tc.Want, tc.Gap)
-			default:
-				failed++
-				t.Errorf("groupable=%v, label %s\n    A: %s\n    B: %s", got.Groupable(), tc.Want, tc.FactA, tc.FactB)
-			}
-		})
-	}
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.Name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				got, err := adj.IsSameOccurrence(ctx, evidence(t, tc.FactA, tc.SourcesA), evidence(t, tc.FactB, tc.SourcesB))
+				if err != nil {
+					t.Fatalf("gate error: %v", err)
+				}
+				want := tc.Want != "different"
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case got.Groupable() == want:
+					passed++
+				case tc.Gap != "":
+					gaps++
+					t.Logf("known gap (groupable=%v, label %s): %s", got.Groupable(), tc.Want, tc.Gap)
+				default:
+					failed++
+					t.Errorf("groupable=%v, label %s\n    A: %s\n    B: %s", got.Groupable(), tc.Want, tc.FactA, tc.FactB)
+				}
+			})
+		}
+	})
 	t.Logf("=== OCCURRENCE GOLDEN: %d passed, %d failed, %d known gaps (of %d) ===", passed, failed, gaps, len(cases))
-}
-
-// TestFactDedupeAdjudicatorGolden is the local-only golden set for the
-// gray-zone fact-dedup adjudicator. It asserts genuine restatements are merged
-// (same=true) and that opposing stances, intention-vs-action pairs, and
-// different-specifics pairs are kept apart (same=false).
-//
-// LOCAL ONLY: self-skips unless OPEN_AI_KEY is set, so it never runs in CI. The
-// endpoint is the local GPU (OPEN_AI_API), so each run is free.
-//
-//	source .env; go test -v -run TestFactDedupeAdjudicatorGolden ./backend/core/
-func TestFactDedupeAdjudicatorGolden(t *testing.T) {
-	llmtest.Setup(t)
-
-	adj, err := NewFactDedupeAdjudicatorFromEnv()
-	if err != nil {
-		t.Fatalf("failed to create adjudicator: %v", err)
-	}
-
-	cases := []struct {
-		name    string
-		subject string
-		factA   string
-		factB   string
-		want    bool // true = same claim (dedup)
-	}{
-		{
-			// The real prod pair (facts 4740 / 4897) — cosine 0.78, verbs
-			// PROMISED vs CLAIMED — that produced duplicate contradiction #146.
-			name:    "retailleau_candidacy_restatement",
-			subject: "Bruno Retailleau",
-			factA:   "Bruno Retailleau a déclaré qu'il ne renoncera pas à sa candidature et qu'il ira jusqu'au bout de sa candidature.",
-			factB:   "Bruno Retailleau a affirmé que sa candidature irait jusqu'au bout.",
-			want:    true,
-		},
-		{
-			name:    "opposing_stance_on_primary",
-			subject: "Bruno Retailleau",
-			factA:   "Bruno Retailleau plaide pour une grande primaire de la droite.",
-			factB:   "Bruno Retailleau a refusé l'idée d'une primaire.",
-			want:    false,
-		},
-		{
-			name:    "intention_vs_contrary_action",
-			subject: "Le Rassemblement national",
-			factA:   "Le Rassemblement national a promis de maintenir l'âge de départ à la retraite à 62 ans.",
-			factB:   "Le Rassemblement national a renoncé à abroger la réforme portant l'âge de la retraite à 64 ans.",
-			want:    false,
-		},
-		{
-			name:    "different_specifics",
-			subject: "Gérald Darmanin",
-			factA:   "Gérald Darmanin a annoncé le retrait du plaider-coupable criminel pour les crimes de sang.",
-			factB:   "Gérald Darmanin présentera son projet de loi le 29 juin devant l'Assemblée nationale.",
-			want:    false,
-		},
-	}
-
-	ctx, cancel := llmtest.Context(t)
-	defer cancel()
-
-	var passed, failed int
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := adj.IsSameClaim(ctx, tc.subject, tc.factA, tc.factB)
-			if err != nil {
-				t.Fatalf("gate error: %v", err)
-			}
-			if got != tc.want {
-				failed++
-				t.Errorf("got same=%v want same=%v\n    A: %s\n    B: %s", got, tc.want, tc.factA, tc.factB)
-				return
-			}
-			passed++
-			t.Logf("same=%v ✓", got)
-		})
-	}
-	t.Logf("=== FACT-DEDUPE GOLDEN: %d/%d passed (%d failed) ===", passed, passed+failed, failed)
 }

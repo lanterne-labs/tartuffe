@@ -2,6 +2,7 @@ package entityvalidator
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"digital-mirror/backend/llmtest"
@@ -72,23 +73,30 @@ func TestLLMFilter_ScopeGolden(t *testing.T) {
 		},
 	}
 
+	// The cases run concurrently with -llm-claude: mu guards the counts.
+	var mu sync.Mutex
 	var passed, failed int
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			res, err := f.Check(ctx, Candidate{Name: tc.name, EntityType: tc.entityType, Previous: mkPrev(tc.pages, tc.hits)})
-			if err != nil {
-				t.Fatalf("Check: %v", err)
-			}
-			gotReal := res.Decision == Approve
-			if gotReal != tc.wantReal {
-				failed++
-				t.Errorf("got decision=%v (real=%v) want real=%v — reason: %s", res.Decision, gotReal, tc.wantReal, res.Reason)
-				return
-			}
-			passed++
-			t.Logf("decision=%v ✓ (%s)", res.Decision, res.Reason)
-		})
-	}
+	llmtest.Group(t, func(t *testing.T) {
+		for _, tc := range cases {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				llmtest.Parallel(t)
+				res, err := f.Check(ctx, Candidate{Name: tc.name, EntityType: tc.entityType, Previous: mkPrev(tc.pages, tc.hits)})
+				if err != nil {
+					t.Fatalf("Check: %v", err)
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				gotReal := res.Decision == Approve
+				if gotReal != tc.wantReal {
+					failed++
+					t.Errorf("got decision=%v (real=%v) want real=%v — reason: %s", res.Decision, gotReal, tc.wantReal, res.Reason)
+					return
+				}
+				passed++
+				t.Logf("decision=%v ✓ (%s)", res.Decision, res.Reason)
+			})
+		}
+	})
 	t.Logf("SCOPE GOLDEN: %d/%d", passed, passed+failed)
 }
