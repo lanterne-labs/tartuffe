@@ -539,3 +539,20 @@ func TestGateStopsAtLateSeatReset(t *testing.T) {
 		t.Fatalf("err=%v run error=%v probes=%d; an unknown reset must stop the run without a probe", err, g.err(), probes.Load())
 	}
 }
+
+// A credit error sends 1 message per provider in a run, with the error text
+// escaped for the HTML of Telegram.
+func TestCreditAlertOncePerProvider(t *testing.T) {
+	var sent []string
+	alert := creditAlert(func(_ context.Context, msg string) error {
+		sent = append(sent, msg)
+		return nil
+	})
+	alert("claude-api", "cap <reached>")
+	alert("claude-api", "cap again")
+	alert("openrouter", "no credit")
+	if len(sent) != 2 || !strings.Contains(sent[0], "claude-api") || !strings.Contains(sent[0], "cap &lt;reached&gt;") ||
+		!strings.Contains(sent[1], "openrouter") {
+		t.Fatalf("sent %q, want 1 escaped message per provider", sent)
+	}
+}

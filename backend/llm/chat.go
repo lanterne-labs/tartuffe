@@ -30,11 +30,12 @@ type Client struct {
 // wrap the object in ```json even in JSON mode, and a caller must not have to
 // know it. The active routing (SetRouting) chooses the endpoint of each call
 // from req.Task: on a route that is not local, that endpoint answers the
-// call instead, with the Claude settings of the route.
+// call instead, with the Claude settings of the route, and the fallback of
+// the route answers when that endpoint is unavailable (Routing.call).
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatResponse, error) {
 	r := activeRouting()
 	if rt := r.Route(req.Task); rt.Endpoint != EndpointLocal {
-		return r.Endpoints[rt.Endpoint].Call(ctx, req, rt.claudeOptions())
+		return r.call(ctx, req, rt)
 	}
 	if req.Model == "" {
 		req.Model = c.Model

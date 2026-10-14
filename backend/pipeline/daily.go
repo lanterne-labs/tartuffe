@@ -5,8 +5,10 @@ import (
 	"digital-mirror/backend/metrics"
 	"errors"
 	"fmt"
+	"html"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"digital-mirror/backend/alerting"
@@ -64,6 +66,32 @@ type RunOptions struct {
 	Smoke bool
 }
 
+// creditAlert returns the llm.OnCreditError hook of a run: the first credit
+// error of each provider sends one message with send. The later ones of the
+// same provider send nothing, so a run with many failed calls does not flood
+// the channel.
+func creditAlert(send func(context.Context, string) error) func(provider, errMsg string) {
+	var mu sync.Mutex
+	sent := map[string]bool{}
+	return func(provider, errMsg string) {
+		mu.Lock()
+		first := !sent[provider]
+		sent[provider] = true
+		mu.Unlock()
+		if !first {
+			return
+		}
+		if len(errMsg) > 300 {
+			errMsg = errMsg[:300] + "..."
+		}
+		// Telegram parses the message as HTML: the error text is escaped.
+		msg := fmt.Sprintf("<b>LLM credit error</b>\nProvider: %s\nError: %s", html.EscapeString(provider), html.EscapeString(errMsg))
+		if err := send(context.Background(), msg); err != nil {
+			log.Error().Err(err).Str("provider", provider).Msg("Failed to send the LLM credit alert")
+		}
+	}
+}
+
 // RunDaily executes the daily pipeline once and returns an aggregated error
 // if any step failed. Designed to be invoked by `dm pipeline daily`, which
 // the host cron triggers.
@@ -94,6 +122,14 @@ type RunOptions struct {
 func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier, opts RunOptions) error {
 	start := time.Now()
 	log.Info().Bool("smoke", opts.Smoke).Msg("Daily pipeline started")
+	// The tokens and the cost per task of the Claude endpoints of the run.
+	defer llm.LogUsage()
+	// A credit error of an LLM provider (or the spend cap of the Claude API)
+	// sends 1 Telegram message per provider, as the web service does.
+	if notifier != nil {
+		llm.OnCreditError = creditAlert(notifier.Send)
+		defer func() { llm.OnCreditError = nil }()
+	}
 	d := deps.New(storer)
 	b := budgets(opts)
 

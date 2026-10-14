@@ -15,7 +15,7 @@ type claudePrice struct {
 // a second price above 100,000 prompt tokens (claudeLongPrices).
 var claudePrices = map[string]claudePrice{
 	"claude-opus-5-5":   {input: 4, output: 20, cacheWrite5m: 5, cacheWrite1h: 8, cacheRead: 0.20},
-	"claude-sonnet-5-5": {input: 2, output: 10, cacheWrite5m: 2.50, cacheWrite1h: 4, cacheRead: 0.10},
+	"claude-sonnet-5-5": {input: 2, output: 10, cacheWrite5m: 2.50, cacheWrite1h: 4, cacheRead: 0.20},
 	"claude-haiku-5-5":  {input: 0.10, output: 0.50, cacheWrite5m: 0.125, cacheWrite1h: 0.20, cacheRead: 0.01},
 }
 
