@@ -85,6 +85,7 @@ func TestClaudeTeamEndpoint_Success(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("CLAUDE_TEAM_PLAN_TOKENS", "alice=tok-alice,bob=tok-bob")
 	t.Setenv("KEEP_ME", "yes")
+	t.Setenv("DISABLE_AUTOUPDATER", "0")
 	e := teamEndpoint(bin)
 	text, resp, err := teamCall(e, context.Background(), ChatRequest{
 		Task:           TaskDetect,
@@ -121,7 +122,7 @@ func TestClaudeTeamEndpoint_Success(t *testing.T) {
 		env[k] = v
 	}
 	for name := range env {
-		if name == "CLAUDE_CODE_OAUTH_TOKEN" || name == "CLAUDE_CODE_MAX_OUTPUT_TOKENS" {
+		if name == "CLAUDE_CODE_OAUTH_TOKEN" || name == "CLAUDE_CODE_MAX_OUTPUT_TOKENS" || name == "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" {
 			continue
 		}
 		for _, prefix := range []string{"ANTHROPIC_", "CLAUDE_CODE_", "CLAUDECODE", "CLAUDE_TEAM_PLAN_"} {
@@ -135,6 +136,10 @@ func TestClaudeTeamEndpoint_Success(t *testing.T) {
 	}
 	if env["CLAUDE_CODE_OAUTH_TOKEN"] != "tok-alice" {
 		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN = %q, want the seat token", env["CLAUDE_CODE_OAUTH_TOKEN"])
+	}
+	if env["DISABLE_AUTOUPDATER"] != "1" || env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] != "1" {
+		t.Errorf("DISABLE_AUTOUPDATER = %q, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = %q; want 1 and 1",
+			env["DISABLE_AUTOUPDATER"], env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"])
 	}
 	if env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] != "1200" {
 		t.Errorf("CLAUDE_CODE_MAX_OUTPUT_TOKENS = %q, want MaxTokens + ThinkingTokens", env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
@@ -301,6 +306,7 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 		stderr      string
 		code        int
 		unavailable bool
+		noRetryAt   bool // a reset text that does not parse
 		contains    []string
 		once        string // a text that the error holds 1 time
 	}{
@@ -333,6 +339,14 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 			code:        1,
 			unavailable: true,
 			contains:    []string{"it resets at 2025-10-09T08:53:20Z"},
+		},
+		{
+			name:        "limit text, reset that does not parse",
+			stdout:      `{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit · resets Monday","usage":{}}`,
+			code:        1,
+			unavailable: true,
+			noRetryAt:   true,
+			contains:    []string{"it resets Monday"},
 		},
 		{
 			name:     "context limit",
@@ -391,6 +405,13 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 			if got := errors.Is(err, ErrUnavailable); got != c.unavailable {
 				t.Fatalf("errors.Is(err, ErrUnavailable) = %v: %v", got, err)
 			}
+			var ue *UnavailableError
+			if got := errors.As(err, &ue); got != c.unavailable {
+				t.Fatalf("errors.As(err, *UnavailableError) = %v: %v", got, err)
+			}
+			if c.unavailable && (ue.Endpoint != EndpointClaudeTeam || ue.RetryAt.IsZero() != c.noRetryAt) {
+				t.Fatalf("a seat limit must name the team endpoint, and a retry time unless its reset does not parse: %+v", ue)
+			}
 			for _, s := range c.contains {
 				if !strings.Contains(err.Error(), s) {
 					t.Errorf("error %q has no %q", err, s)
@@ -406,6 +427,48 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 				t.Fatalf("report:\n%s", e.UsageReport())
 			}
 		})
+	}
+}
+
+// The reset time of a seat limit gives the retry time of the wait, 1 min
+// after the reset: the next time of the clock (and of the date) after now, in
+// the zone of the text, else in the local zone. A reset in the last hour gives
+// now + claudeRetryDelay. A text that does not parse gives no time.
+func TestClaudeReset(t *testing.T) {
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 14, 14, 0, 0, 0, paris)
+	cases := []struct {
+		text, reset string
+		at          time.Time
+	}{
+		{"You've hit your limit · resets 3pm (Europe/Paris)", "3pm (Europe/Paris)", time.Date(2026, 10, 14, 15, 1, 0, 0, paris)},
+		{"You've hit your limit · resets 1:15am (Europe/Paris)", "1:15am (Europe/Paris)", time.Date(2026, 10, 15, 1, 16, 0, 0, paris)},
+		{"You've hit your limit · resets 12pm (Europe/Paris)", "12pm (Europe/Paris)", time.Date(2026, 10, 15, 12, 1, 0, 0, paris)},
+		{"You've hit your limit · resets 1.30pm (Europe/Paris)", "1.30pm (Europe/Paris)", now.Add(claudeRetryDelay)},
+		{"You've hit your limit · resets 2pm (Europe/Paris)", "2pm (Europe/Paris)", now.Add(claudeRetryDelay)},
+		{"You've hit your limit · resets Oct 16, 9am (Europe/Paris)", "Oct 16, 9am (Europe/Paris)", time.Date(2026, 10, 16, 9, 1, 0, 0, paris)},
+		{"You've hit your limit · resets Oct 14, 9am (Europe/Paris)", "Oct 14, 9am (Europe/Paris)", time.Date(2027, 10, 14, 9, 1, 0, 0, paris)},
+		{"You've hit your limit · resets Oct 14, 1:30pm (Europe/Paris)", "Oct 14, 1:30pm (Europe/Paris)", now.Add(claudeRetryDelay)},
+		{"Claude AI usage limit reached|1760000000", "at 2025-10-09T08:53:20Z", time.Unix(1760000000+60, 0)},
+		{"You've hit your limit · resets Feb 30, 9am (Europe/Paris)", "Feb 30, 9am (Europe/Paris)", time.Time{}},
+		{"You've hit your limit · resets Foo 3, 9am (Europe/Paris)", "Foo 3, 9am (Europe/Paris)", time.Time{}},
+		{"You've hit your limit · resets 3pm (Mars/Olympus)", "3pm (Mars/Olympus)", time.Time{}},
+		{"You've hit your limit · resets Monday", "Monday", time.Time{}},
+		{"API Error: 429", "", time.Time{}},
+	}
+	for _, c := range cases {
+		reset, at := claudeReset(c.text, now)
+		if reset != c.reset || !at.Equal(c.at) {
+			t.Errorf("claudeReset(%q) = (%q, %v), want (%q, %v)", c.text, reset, at, c.reset, c.at)
+		}
+	}
+	local := time.Date(2026, 10, 14, 14, 0, 0, 0, time.Local)
+	reset, at := claudeReset("Usage limit reached. Your limit resets at 3.30pm.", local)
+	if want := time.Date(2026, 10, 14, 15, 31, 0, 0, time.Local); reset != "3.30pm" || !at.Equal(want) {
+		t.Errorf("a clock without a zone: (%q, %v), want (\"3.30pm\", %v)", reset, at, want)
 	}
 }
 

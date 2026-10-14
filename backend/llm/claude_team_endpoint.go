@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // ClaudeTeamEndpoint answers each call with one `claude -p` process (the
@@ -260,8 +262,11 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system
 }
 
 // childEnv returns the environment of the CLI: the parent environment
-// without the variables of the CLI and of the seats, plus the seat token and
-// the output limit. A parent variable can change the bill or leak the token:
+// without the variables of the CLI and of the seats, plus the seat token, the
+// output limit and 2 fixed variables of the CLI. DISABLE_AUTOUPDATER=1 stops
+// the CLI from updating the pinned binary. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+// stops its telemetry and other traffic that a call does not need. A parent
+// variable can change the bill or leak the token:
 //   - ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN bills the API, not the seat.
 //   - CLAUDE_CODE_USE_BEDROCK, _VERTEX or _FOUNDRY bills a cloud provider.
 //   - ANTHROPIC_BASE_URL sends the seat token to another server.
@@ -280,6 +285,8 @@ func (t *ClaudeTeamEndpoint) childEnv(maxTokens int) []string {
 	return append(env,
 		"CLAUDE_CODE_OAUTH_TOKEN="+t.token,
 		"CLAUDE_CODE_MAX_OUTPUT_TOKENS="+strconv.Itoa(maxTokens),
+		"DISABLE_AUTOUPDATER=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	)
 }
 
@@ -313,10 +320,21 @@ func claudeTeamPrompt(messages []claudeMessage) (string, error) {
 func (t *ClaudeTeamEndpoint) answer(res claudeCLIResult, wantJSON bool) (string, error) {
 	if res.IsError || res.Subtype != "success" {
 		if (res.APIErrorStatus != nil && *res.APIErrorStatus == 429) || claudeLimitText.MatchString(res.Result) {
-			if reset := claudeResetTime(res.Result); reset != "" {
-				return "", fmt.Errorf("%w: claude seat %q reached its usage limit; it resets %s", ErrUnavailable, t.Seat, reset)
+			// No reset text: retry after claudeRetryDelay. A reset text that
+			// does not parse: RetryAt stays zero, and the run does not wait.
+			reset, at := claudeReset(res.Result, time.Now())
+			switch {
+			case reset == "":
+				at = time.Now().Add(claudeRetryDelay)
+			case at.IsZero():
+				log.Warn().Str("seat", t.Seat).Str("reset", reset).
+					Msg("claude seat: the reset time does not parse; the run will not wait for it")
 			}
-			return "", fmt.Errorf("%w: claude seat %q reached its usage limit: %s", ErrUnavailable, t.Seat, outputSnippet(res.Result))
+			err := fmt.Errorf("%w: claude seat %q reached its usage limit: %s", ErrUnavailable, t.Seat, outputSnippet(res.Result))
+			if reset != "" {
+				err = fmt.Errorf("%w: claude seat %q reached its usage limit; it resets %s", ErrUnavailable, t.Seat, reset)
+			}
+			return "", &UnavailableError{Endpoint: EndpointClaudeTeam, RetryAt: at, Err: err}
 		}
 		return "", fmt.Errorf("claude seat %q: %s error: %s", t.Seat, res.Subtype, outputSnippet(res.Result))
 	}
@@ -335,16 +353,83 @@ var (
 	claudeResetUnix = regexp.MustCompile(`\|(\d{10})\b`)
 )
 
-// claudeResetTime returns the reset time that text gives, or "".
-func claudeResetTime(text string) string {
+// claudeClockText finds the reset time in a reset text, as in "3pm",
+// "3.30pm", "3:30pm (Europe/Paris)" or "Oct 16, 9am (Europe/Paris)": an
+// optional date, the clock time and an optional time zone.
+var claudeClockText = regexp.MustCompile(`(?i)^(?:([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)\b(?:\s*\(([^)]+)\))?`)
+
+// claudeResetMargin is added to a parsed reset time: the seat must be reset
+// when the next call starts.
+const claudeResetMargin = time.Minute
+
+// claudeResetSkew is how long a reset time can be in the past and still be
+// the current reset (clock skew, a time rounded down by the CLI). A reset in
+// this window gives now + claudeRetryDelay. An older reset is the next one:
+// the next day, or the next year for a text with a date.
+const claudeResetSkew = time.Hour
+
+// claudeReset returns the reset time that text gives: reset is the text for
+// the error, "" when text gives none, and at is the time of the next call,
+// zero when reset does not parse. A time without a time zone is in the local
+// zone: the CLI runs on the same host and prints its local time.
+func claudeReset(text string, now time.Time) (reset string, at time.Time) {
 	if m := claudeResetUnix.FindStringSubmatch(text); m != nil {
 		sec, _ := strconv.ParseInt(m[1], 10, 64) // 10 digits always parse
-		return "at " + time.Unix(sec, 0).UTC().Format(time.RFC3339)
+		at = time.Unix(sec, 0).UTC()
+		return "at " + at.Format(time.RFC3339), at.Add(claudeResetMargin)
 	}
-	if m := claudeResetText.FindStringSubmatch(text); m != nil {
-		return strings.TrimSpace(m[1])
+	m := claudeResetText.FindStringSubmatch(text)
+	if m == nil {
+		return "", time.Time{}
 	}
-	return ""
+	reset = strings.TrimSpace(m[1])
+	c := claudeClockText.FindStringSubmatch(reset)
+	if c == nil {
+		return reset, time.Time{}
+	}
+	hour, _ := strconv.Atoi(c[3])   // 1 or 2 digits always parse
+	minute, _ := strconv.Atoi(c[4]) // no minutes ("") gives 0
+	if hour < 1 || hour > 12 || minute > 59 {
+		return reset, time.Time{}
+	}
+	hour %= 12
+	if strings.EqualFold(c[5], "pm") {
+		hour += 12
+	}
+	loc := time.Local
+	if c[6] != "" {
+		var err error
+		if loc, err = time.LoadLocation(c[6]); err != nil {
+			return reset, time.Time{}
+		}
+	}
+	local := now.In(loc)
+	year, month, day := local.Date()
+	if c[1] != "" {
+		mon, err := time.Parse("Jan", strings.ToUpper(c[1][:1])+strings.ToLower(c[1][1:]))
+		if err != nil {
+			return reset, time.Time{}
+		}
+		month = mon.Month()
+		day, _ = strconv.Atoi(c[2]) // 1 or 2 digits always parse
+		if day < 1 || day > 31 {
+			return reset, time.Time{}
+		}
+	}
+	at = time.Date(year, month, day, hour, minute, 0, 0, loc)
+	if at.Day() != day {
+		return reset, time.Time{} // a day that the month does not have
+	}
+	switch {
+	case at.After(now):
+	case now.Sub(at) <= claudeResetSkew:
+		return reset, now.Add(claudeRetryDelay)
+	case c[1] != "":
+		at = at.AddDate(1, 0, 0)
+	default:
+		at = at.AddDate(0, 0, 1)
+	}
+	return reset, at.Add(claudeResetMargin)
 }
 
 // UsageReport returns one line per task and model: calls, failures, tokens

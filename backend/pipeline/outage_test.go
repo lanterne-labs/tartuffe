@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,8 +80,8 @@ func withPlugins(t *testing.T, ps ...plugins.Plugin) {
 
 // fakeWait is a runGate.waitLLM that reports back (after polls probes) and
 // counts its calls.
-func fakeWait(back bool, polls int, calls *int) func(context.Context, time.Time) (bool, int) {
-	return func(context.Context, time.Time) (bool, int) {
+func fakeWait(back bool, polls int, calls *int) func(context.Context, error, time.Time) (bool, int) {
+	return func(context.Context, error, time.Time) (bool, int) {
 		*calls++
 		return back, polls
 	}
@@ -158,7 +161,7 @@ func TestGateGivesUpQuickRefails(t *testing.T) {
 	}
 
 	polls := []int{1, 1, 4, 1, 1}
-	g = runGate{deadline: time.Now().Add(time.Hour), waitLLM: func(context.Context, time.Time) (bool, int) {
+	g = runGate{deadline: time.Now().Add(time.Hour), waitLLM: func(context.Context, error, time.Time) (bool, int) {
 		p := polls[0]
 		polls = polls[1:]
 		return true, p
@@ -178,7 +181,7 @@ func TestGateGivesUpQuickRefails(t *testing.T) {
 // TestGateNoResumeAfterDeadline: an LLM back only after the run deadline does
 // not resume the phase; the run stops there.
 func TestGateNoResumeAfterDeadline(t *testing.T) {
-	g := runGate{deadline: time.Now().Add(20 * time.Millisecond), waitLLM: func(context.Context, time.Time) (bool, int) {
+	g := runGate{deadline: time.Now().Add(20 * time.Millisecond), waitLLM: func(context.Context, error, time.Time) (bool, int) {
 		time.Sleep(40 * time.Millisecond)
 		return true, 3
 	}}
@@ -450,7 +453,7 @@ func TestNotificationNotes(t *testing.T) {
 // budget is spent stops at the next outage without waiting.
 func TestGateWaitBudget(t *testing.T) {
 	var until time.Time
-	g := runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: func(_ context.Context, u time.Time) (bool, int) {
+	g := runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: func(_ context.Context, _ error, u time.Time) (bool, int) {
 		until = u
 		return false, 3
 	}}
@@ -465,5 +468,74 @@ func TestGateWaitBudget(t *testing.T) {
 	err := spent.run(context.Background(), "ingest", func() error { return errDown })
 	if !errors.Is(err, llm.ErrUnavailable) || waits != 0 || spent.open("translate") {
 		t.Fatalf("err=%v waits=%d; a run with a spent budget must stop without waiting", err, waits)
+	}
+}
+
+// seatLimit is the error of a Claude seat at its usage limit until retryAt.
+func seatLimit(retryAt time.Time) error {
+	return &llm.UnavailableError{
+		Endpoint: llm.EndpointClaudeTeam,
+		RetryAt:  retryAt,
+		Err:      fmt.Errorf("%w: claude seat %q reached its usage limit", llm.ErrUnavailable, "alice"),
+	}
+}
+
+// gpuProbes points OPEN_AI_API at a healthy server and counts its requests.
+func gpuProbes(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL)
+	return &hits
+}
+
+// TestGateWaitsForSeatReset: a phase stopped by a Claude seat limit runs
+// again at the reset time of the seat. The gate does not probe the local GPU.
+func TestGateWaitsForSeatReset(t *testing.T) {
+	probes := gpuProbes(t)
+	g := runGate{deadline: time.Now().Add(time.Hour), waitLLM: llm.WaitForEndpoint}
+	retryAt := time.Now().Add(100 * time.Millisecond)
+	var tries int
+	var retried time.Time
+	err := g.run(context.Background(), "contradictions", func() error {
+		if tries++; tries == 1 {
+			return fmt.Errorf("detect pair 3: %w", seatLimit(retryAt))
+		}
+		retried = time.Now()
+		return nil
+	})
+	if err != nil || tries != 2 || retried.Before(retryAt) {
+		t.Fatalf("err=%v tries=%d retried=%v; want 1 retry at or after %v", err, tries, retried, retryAt)
+	}
+	if probes.Load() != 0 || g.outages != 1 || g.err() != nil {
+		t.Fatalf("probes=%d outages=%d run error=%v; want no GPU probe and 1 outage", probes.Load(), g.outages, g.err())
+	}
+}
+
+// TestGateStopsAtLateSeatReset: a seat that resets after the end of the wait
+// budget, or at a time that is not known, stops the run at the phase at once;
+// the next run resumes it.
+func TestGateStopsAtLateSeatReset(t *testing.T) {
+	probes := gpuProbes(t)
+	g := runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: llm.WaitForEndpoint}
+	start := time.Now()
+	err := g.run(context.Background(), "contradictions", func() error { return seatLimit(time.Now().Add(3 * time.Hour)) })
+	if !errors.Is(err, llm.ErrUnavailable) || g.err() == nil || g.open("translate") {
+		t.Fatalf("err=%v run error=%v; want the run stopped at the phase", err, g.err())
+	}
+	if time.Since(start) > time.Second || probes.Load() != 0 {
+		t.Fatalf("stopped after %v with %d GPU probes; want at once and no probe", time.Since(start), probes.Load())
+	}
+
+	// A reset text that does not parse gives no RetryAt: the run stops too.
+	g = runGate{deadline: time.Now().Add(10 * time.Hour), waitLLM: llm.WaitForEndpoint}
+	err = g.run(context.Background(), "contradictions", func() error { return seatLimit(time.Time{}) })
+	if !errors.Is(err, llm.ErrUnavailable) || g.err() == nil || probes.Load() != 0 {
+		t.Fatalf("err=%v run error=%v probes=%d; an unknown reset must stop the run without a probe", err, g.err(), probes.Load())
 	}
 }

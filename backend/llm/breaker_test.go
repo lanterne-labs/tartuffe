@@ -326,7 +326,7 @@ func TestWaitForPrimary_ComesBack(t *testing.T) {
 	t.Setenv("OPEN_AI_API", srv.URL+"/v1/")
 
 	MarkPrimaryDown("test")
-	back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Minute))
+	back, polls := waitForPrimary(context.Background(), time.Now().Add(time.Minute))
 	if !back || polls != 3 {
 		t.Fatalf("back=%v polls=%d; want back after 3 polls (two down, one up)", back, polls)
 	}
@@ -351,7 +351,7 @@ func TestWaitForPrimary_FirstProbeAfterInterval(t *testing.T) {
 	t.Setenv("OPEN_AI_API", srv.URL)
 
 	start := time.Now()
-	back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Minute))
+	back, polls := waitForPrimary(context.Background(), time.Now().Add(time.Minute))
 	if !back || polls != 1 {
 		t.Fatalf("back=%v polls=%d; want back on the first poll", back, polls)
 	}
@@ -378,7 +378,7 @@ func TestWaitForPrimary_Deadline(t *testing.T) {
 	t.Setenv("OPEN_AI_API", srv.URL)
 
 	start := time.Now()
-	if back, _ := WaitForPrimary(context.Background(), start.Add(100*time.Millisecond)); back {
+	if back, _ := waitForPrimary(context.Background(), start.Add(100*time.Millisecond)); back {
 		t.Fatal("a primary that never answers must not be reported back")
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
@@ -390,12 +390,12 @@ func TestWaitForPrimary_Deadline(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if back, _ := WaitForPrimary(ctx, time.Now().Add(time.Hour)); back {
+	if back, _ := waitForPrimary(ctx, time.Now().Add(time.Hour)); back {
 		t.Fatal("a cancelled wait must not report the primary back")
 	}
 
 	t.Setenv("OPEN_AI_API", "http://[::1")
-	if back, polls := WaitForPrimary(context.Background(), time.Now().Add(time.Hour)); back || polls != 1 {
+	if back, polls := waitForPrimary(context.Background(), time.Now().Add(time.Hour)); back || polls != 1 {
 		t.Fatalf("back=%v polls=%d; a malformed URL must end the wait, not count as back", back, polls)
 	}
 }
@@ -422,10 +422,109 @@ func TestWaitForPrimary_ChatMustAnswer(t *testing.T) {
 	t.Setenv("FALLBACK_URL", "")
 	t.Setenv("OPEN_AI_API", srv.URL)
 
-	if back, _ := WaitForPrimary(context.Background(), time.Now().Add(150*time.Millisecond)); back {
+	if back, _ := waitForPrimary(context.Background(), time.Now().Add(150*time.Millisecond)); back {
 		t.Fatal("a failing chat model must not be reported back")
 	}
 	if chats.Load() == 0 || chats.Load() != models.Load() {
 		t.Errorf("chats=%d models=%d; want one warm-up completion per poll", chats.Load(), models.Load())
+	}
+}
+
+// seatLimit is the error of a Claude seat at its usage limit until retryAt.
+func seatLimit(retryAt time.Time) error {
+	return &UnavailableError{
+		Endpoint: EndpointClaudeTeam,
+		RetryAt:  retryAt,
+		Err:      fmt.Errorf("%w: claude seat %q reached its usage limit", ErrUnavailable, "alice"),
+	}
+}
+
+// countingPrimary points OPEN_AI_API at a healthy server and counts its
+// requests.
+func countingPrimary(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Write([]byte(`{"data":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FALLBACK_URL", "")
+	t.Setenv("OPEN_AI_API", srv.URL)
+	return &hits
+}
+
+// TestWaitForEndpoint_SeatWaitsForRetryAt: a seat limit waits until its
+// retry time and does not probe the local endpoint. A retry time after the
+// end of the wait, or a retry time that is not known, gives false at once.
+func TestWaitForEndpoint_SeatWaitsForRetryAt(t *testing.T) {
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 10 * time.Millisecond
+	hits := countingPrimary(t)
+
+	retryAt := time.Now().Add(100 * time.Millisecond)
+	cause := fmt.Errorf("phase: %w", seatLimit(retryAt))
+	back, polls := WaitForEndpoint(context.Background(), cause, time.Now().Add(time.Minute))
+	if !back || polls != 1 || time.Now().Before(retryAt) {
+		t.Fatalf("back=%v polls=%d at %v; want back after 1 poll, not before %v", back, polls, time.Now(), retryAt)
+	}
+
+	start := time.Now()
+	back, _ = WaitForEndpoint(context.Background(), seatLimit(time.Now().Add(3*time.Hour)), time.Now().Add(30*time.Minute))
+	if back || time.Since(start) > time.Second {
+		t.Fatalf("back=%v after %v; a reset after the end of the wait must give false at once", back, time.Since(start))
+	}
+	start = time.Now()
+	back, _ = WaitForEndpoint(context.Background(), seatLimit(time.Time{}), time.Now().Add(30*time.Minute))
+	if back || time.Since(start) > time.Second {
+		t.Fatalf("back=%v after %v; a reset time that is not known must give false at once", back, time.Since(start))
+	}
+	if hits.Load() != 0 {
+		t.Errorf("the local endpoint got %d probes for a seat limit; want 0", hits.Load())
+	}
+}
+
+// TestWaitForEndpoint_LocalErrorProbes: an outage without an UnavailableError
+// is a local outage: the wait probes the local endpoint.
+func TestWaitForEndpoint_LocalErrorProbes(t *testing.T) {
+	defer resetBreaker()
+	defer func(d time.Duration) { waitPollInterval = d }(waitPollInterval)
+	waitPollInterval = 10 * time.Millisecond
+	hits := countingPrimary(t)
+
+	cause := fmt.Errorf("%w: primary down", ErrUnavailable)
+	back, polls := WaitForEndpoint(context.Background(), cause, time.Now().Add(time.Minute))
+	if !back || polls != 1 || hits.Load() == 0 {
+		t.Fatalf("back=%v polls=%d probes=%d; want the local endpoint probed and back", back, polls, hits.Load())
+	}
+}
+
+// TestBreakerIgnoresClaude: a Claude failure does not open the breaker of the
+// local endpoint, and an open breaker does not stop the Claude calls.
+func TestBreakerIgnoresClaude(t *testing.T) {
+	c, _ := chatTestClient(t, 200, `{"choices":[{"message":{"role":"assistant","content":"server"},"finish_reason":"stop"}]}`)
+	t.Setenv("FALLBACK_URL", "http://127.0.0.1:1")
+	t.Setenv("FALLBACK_CHAT_MODEL", "fb")
+	req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskDetect}
+
+	limited, _ := fakeClaude(t, `{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit · resets 3pm (Europe/Paris)","usage":{}}`, "", 1)
+	setRouting(t, ClaudeRouting(EndpointClaudeTeam, teamEndpoint(limited), "claude-sonnet-5-5"))
+	_, _, err := c.Chat(context.Background(), req)
+	var ue *UnavailableError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want a seat limit", err)
+	}
+	if PrimaryDown() {
+		t.Fatal("a seat limit opened the breaker of the local endpoint")
+	}
+
+	MarkPrimaryDown("test")
+	bin, _ := fakeClaude(t, teamSuccess, "", 0)
+	setRouting(t, ClaudeRouting(EndpointClaudeTeam, teamEndpoint(bin), "claude-sonnet-5-5"))
+	if _, _, err := c.Chat(context.Background(), req); err != nil {
+		t.Fatalf("an open breaker stopped a Claude call: %v", err)
+	}
+	if !PrimaryDown() {
+		t.Fatal("a Claude success cleared the breaker of the local endpoint")
 	}
 }

@@ -2666,3 +2666,21 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - `LookupAmendement` and `resolveVotedObject` return an error when the archive is not available.
   `selectLaws` returns it, so the votes run fails. A missing or ambiguous amendment still gates.
 - Lesson: an unavailable data source is an error, not an empty result.
+
+## The outage wait targets the endpoint that failed; the image has the Claude CLI (2026-10-14, mirror-rxl.4)
+
+- Before, the daily run waited for the local GPU after each `ErrUnavailable`. On `claude-team`, a
+  seat limit thus gave a retry after 1 GPU poll (2 min), and the phase was given up after
+  `maxQuickRefails`.
+- A Claude endpoint now returns `llm.UnavailableError`, which wraps `ErrUnavailable` and holds
+  `RetryAt`. The team endpoint reads `RetryAt` from the reset time of the CLI text (clock time,
+  optional date and zone), plus 1 min. A reset in the last hour gives a retry 5 min later. Without
+  a reset text, `RetryAt` is 5 min later. A reset text that does not parse gives no `RetryAt`.
+- `llm.WaitForEndpoint` is the wait of the gate; the GPU wait is internal now. For an
+  `UnavailableError`, it sleeps until `RetryAt` and does not probe the GPU. For other errors, it
+  probes the GPU as before.
+- The 30 min wait budget of a run stays. A seat that resets after the budget, or at a time that is
+  not known, stops the run at the phase at once. The next night resumes the work.
+- The CLI child always gets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
+- The root `Dockerfile` copies the native `claude` binary (npm `@anthropic-ai/claude-code`, pinned)
+  into the final image. The image grows by about 250 MB.

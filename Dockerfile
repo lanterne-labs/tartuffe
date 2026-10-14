@@ -11,6 +11,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o dm .
 
+# Claude Code CLI stage. The team endpoint (LLM_PROFILE=claude-team) runs
+# `claude -p`. The npm package installs the native binary of the platform
+# (linux-x64-musl here) at bin/claude.exe. The binary needs only the musl
+# libc, so the final stage copies it without Node.
+FROM node:22-alpine AS claude
+RUN npm install -g @anthropic-ai/claude-code@2.1.296
+
 # Final stage
 FROM alpine:3.19
 
@@ -20,6 +27,8 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata bash
 
 COPY --from=builder /app/dm /usr/local/bin/dm
+COPY --from=claude /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude
+RUN claude --version
 COPY --from=builder /app/supabase/migrations /migrations
 
 ENV MIGRATIONS_DIR=/migrations

@@ -79,19 +79,18 @@ type RunOptions struct {
 //  8. backfill                  — every plugin, deadline-bound
 //
 // When a phase reports the LLM unavailable (llm.ErrUnavailable) the run waits
-// for the LLM (llm.WaitForPrimary) until the run deadline, at most maxLLMWait
-// over the whole run, then runs the phase again: every phase derives its
-// pending work from the database, so the retry resumes where the outage
-// stopped it (ingest and backfill skip the plugins and targets already done;
-// budgets carry what was spent). A run that waited and recovered is not a
-// failed run; its outages and time waited are noted in the notification and
-// the pipeline_runs row. If the LLM is not back before the deadline or the
-// end of the wait budget, no further LLM phase (re)starts and the run is
-// recorded as failed ("LLM unavailable: stopped after phase X"); the next run
-// resumes. A
-// phase that keeps failing while the LLM answers is given up after
-// maxQuickRefails retries, as a step error, and the run goes on. A smoke run
-// does not wait.
+// for the endpoint that failed (llm.WaitForEndpoint) until the run deadline,
+// at most maxLLMWait over the whole run, then runs the phase again: every
+// phase derives its pending work from the database, so the retry resumes
+// where the outage stopped it (ingest and backfill skip the plugins and
+// targets already done; budgets carry what was spent). A run that waited and
+// recovered is not a failed run; its outages and time waited are noted in the
+// notification and the pipeline_runs row. If the LLM is not back before the
+// deadline or the end of the wait budget, no further LLM phase (re)starts and
+// the run is recorded as failed ("LLM unavailable: stopped after phase X");
+// the next run resumes. A phase that keeps failing while the LLM answers is
+// given up after maxQuickRefails retries, as a step error, and the run goes
+// on. A smoke run does not wait.
 func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *alerting.TelegramNotifier, opts RunOptions) error {
 	start := time.Now()
 	log.Info().Bool("smoke", opts.Smoke).Msg("Daily pipeline started")
@@ -120,7 +119,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	stepErrs := map[string]error{}
 	var gate runGate
 	if !opts.Smoke {
-		gate.waitLLM = llm.WaitForPrimary
+		gate.waitLLM = llm.WaitForEndpoint
 	}
 	var cutSteps []string // phases stopped by their deadline: not errors, resumed next run
 	// fail records a step's error; the parts of it that are the step's
@@ -514,10 +513,11 @@ var errRefails = errors.New("the phase keeps failing as unavailable while the LL
 type runGate struct {
 	stoppedAfter string    // the phase the run stopped at; "" while it goes on
 	deadline     time.Time // zero: no deadline, and no wait
-	// waitLLM blocks until the LLM answers again or until passes, and reports
-	// whether it came back and after how many probes (llm.WaitForPrimary).
+	// waitLLM blocks until the endpoint of cause (an error that wraps
+	// llm.ErrUnavailable) can serve again or until passes, and reports
+	// whether it came back and after how many probes (llm.WaitForEndpoint).
 	// nil: never wait (smoke run).
-	waitLLM func(ctx context.Context, until time.Time) (back bool, polls int)
+	waitLLM func(ctx context.Context, cause error, until time.Time) (back bool, polls int)
 	outages int           // outages waited for
 	waited  time.Duration // total time spent waiting
 }
@@ -576,7 +576,9 @@ func (g *runGate) retry(ctx context.Context, phase string, fn func() error) erro
 // maxLLMWait is the total time a run waits for the LLM over all its outages.
 // After it, the run stops at the phase and the next run resumes the work: an
 // endpoint that is down for good must not keep the cron container up until
-// the run deadline.
+// the run deadline. A Claude seat at its usage limit that resets after the
+// end of the budget (for example 3 h later) also stops the run at the phase:
+// this is the intended behavior, and the next night resumes the work.
 const maxLLMWait = 30 * time.Minute
 
 // wait waits for the LLM until the run deadline or the end of maxLLMWait,
@@ -600,7 +602,7 @@ func (g *runGate) wait(ctx context.Context, phase string, cause error) (back boo
 	log.Warn().Err(cause).Str("phase", phase).Int("outage", g.outages).Time("until", until).
 		Msg("Daily pipeline: LLM unavailable; waiting for it to resume the phase")
 	start := time.Now()
-	back, polls = g.waitLLM(ctx, until)
+	back, polls = g.waitLLM(ctx, cause, until)
 	g.waited += time.Since(start)
 	if back {
 		log.Info().Str("phase", phase).Dur("waited", time.Since(start).Round(time.Second)).Int("polls", polls).

@@ -44,6 +44,25 @@ var errPrimaryBreakerOpen = errors.New("primary LLM endpoint skipped: circuit br
 // so callers that count per-item failures must not charge it to the item.
 var ErrUnavailable = errors.New("LLM unavailable")
 
+// UnavailableError is the error of a Claude endpoint that cannot serve calls
+// before RetryAt: a Team seat at its usage limit, or a failed batch API call.
+// A zero RetryAt means that the reset time is not known (a reset text that
+// does not parse). Err wraps ErrUnavailable. WaitForEndpoint reads it to wait
+// for the endpoint that failed. A local outage has no UnavailableError: the
+// wait probes the local endpoint.
+type UnavailableError struct {
+	Endpoint EndpointName
+	RetryAt  time.Time
+	Err      error
+}
+
+func (e *UnavailableError) Error() string { return e.Err.Error() }
+func (e *UnavailableError) Unwrap() error { return e.Err }
+
+// claudeRetryDelay is the wait before the next call to a Claude endpoint
+// that failed as unavailable and gave no reset time.
+const claudeRetryDelay = 5 * time.Minute
+
 // PrimaryDown reports whether the primary endpoint is currently considered
 // unreachable. When it returns true, callers with a configured fallback should
 // skip the primary attempt entirely.
@@ -205,11 +224,47 @@ func warmChatOnce(ctx context.Context, base string) error {
 	return nil
 }
 
-// waitPollInterval is the pause before each probe of WaitForPrimary.
+// WaitForEndpoint waits for the endpoint of cause, an error that wraps
+// ErrUnavailable. The wait ends at until at the latest. It reports whether
+// the endpoint can serve again and after how many probes:
+//   - An UnavailableError (a Claude endpoint): the wait sleeps until its
+//     RetryAt and reports back after 1 probe. With polls=1, the gate of the
+//     daily run counts the retry as a quick refail, so a reset time that is
+//     wrong cannot make a phase retry without end. The wait does not probe
+//     the local endpoint, which can be up while the Claude seat is at its
+//     limit.
+//   - A RetryAt after until, or a zero RetryAt (reset time not known), gives
+//     false at once: the run stops at its phase and the next run continues
+//     it. With the wait budget of the daily run (30 min), a seat that resets
+//     3 h later thus stops the run.
+//   - Any other error: waitForPrimary.
+func WaitForEndpoint(ctx context.Context, cause error, until time.Time) (back bool, polls int) {
+	var ue *UnavailableError
+	if !errors.As(cause, &ue) {
+		return waitForPrimary(ctx, until)
+	}
+	if ue.RetryAt.IsZero() || ue.RetryAt.After(until) {
+		log.Error().Str("endpoint", string(ue.Endpoint)).Time("retry_at", ue.RetryAt).Time("until", until).
+			Msg("LLM wait: the reset time of the endpoint is not known or is after the end of the wait")
+		return false, 0
+	}
+	log.Warn().Str("endpoint", string(ue.Endpoint)).Time("retry_at", ue.RetryAt).
+		Msg("LLM unavailable: waiting for the reset of the endpoint")
+	select {
+	case <-time.After(time.Until(ue.RetryAt)):
+		return true, 1
+	case <-ctx.Done():
+		log.Error().Err(ctx.Err()).Str("endpoint", string(ue.Endpoint)).
+			Msg("LLM wait: cancelled before the reset of the endpoint")
+		return false, 0
+	}
+}
+
+// waitPollInterval is the pause before each probe of waitForPrimary.
 // Variable so tests can shrink it.
 var waitPollInterval = 2 * time.Minute
 
-// WaitForPrimary blocks until the primary endpoint answers its /models probe
+// waitForPrimary blocks until the primary endpoint answers its /models probe
 // and its chat model answers one warm-up completion (a reachable llama-swap
 // can hide a cold or failing model; the warm-up makes it load the model),
 // probing every waitPollInterval — the first probe too comes after one
@@ -220,7 +275,7 @@ var waitPollInterval = 2 * time.Minute
 // fallback: the caller waits for the endpoint itself. On success the breaker
 // is cleared, so the next call goes to the primary at once instead of waiting
 // out probeInterval.
-func WaitForPrimary(ctx context.Context, until time.Time) (back bool, polls int) {
+func waitForPrimary(ctx context.Context, until time.Time) (back bool, polls int) {
 	base := primaryBaseURL()
 	if base == "" {
 		log.Error().Msg("LLM wait: OPEN_AI_API is not set; nothing to wait for")

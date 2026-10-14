@@ -159,21 +159,31 @@ func (t *ClaudeBatchEndpoint) flush() {
 	if len(calls) == 0 {
 		return
 	}
+	// A breakpoint error is local: it is not an outage of the API.
 	err := t.placeBreakpoints(calls)
+	if err != nil {
+		err = fmt.Errorf("claude batch: %w", err)
+	}
 	var results map[string]ClaudeJobResult
 	if err == nil {
 		jobs := make([]ClaudeJob, len(calls))
 		for i, c := range calls {
 			jobs[i] = c.job
 		}
-		results, err = t.Runner.Run(context.Background(), jobs)
+		if results, err = t.Runner.Run(context.Background(), jobs); err != nil {
+			// The batch API itself failed: no request was at fault.
+			err = &UnavailableError{
+				Endpoint: EndpointClaudeBatch,
+				RetryAt:  time.Now().Add(claudeRetryDelay),
+				Err:      fmt.Errorf("%w: claude batch: %w", ErrUnavailable, err),
+			}
+		}
 	}
 	for _, c := range calls {
 		var r batchReply
 		switch {
 		case err != nil:
-			// The batch API itself failed: no request was at fault.
-			r.err = fmt.Errorf("%w: claude batch: %w", ErrUnavailable, err)
+			r.err = err
 		default:
 			r = t.reply(c, results[c.job.Key])
 		}
