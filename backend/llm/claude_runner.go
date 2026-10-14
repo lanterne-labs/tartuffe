@@ -152,7 +152,7 @@ func (r *ClaudeBatchRunner) checkBudget(items []ClaudeBatchItem) error {
 	}
 	var worst float64
 	for _, it := range items {
-		c, err := worstCaseCostUSD(it.Params)
+		c, err := worstCaseCostUSD(it.Params, true)
 		if err != nil {
 			return err
 		}
@@ -167,8 +167,9 @@ func (r *ClaudeBatchRunner) checkBudget(items []ClaudeBatchItem) error {
 
 // worstCaseCostUSD estimates the input at 3 characters per token (the
 // conservative ratio of the local chunker), every input token a 1h cache
-// write (the highest input price), and the output at max_tokens.
-func worstCaseCostUSD(p ClaudeRequest) (float64, error) {
+// write (the highest input price), and the output at max_tokens. batch
+// applies the discount of the Message Batches API.
+func worstCaseCostUSD(p ClaudeRequest, batch bool) (float64, error) {
 	chars := 0
 	for _, b := range p.System {
 		chars += len(b.Text)
@@ -180,7 +181,7 @@ func worstCaseCostUSD(p ClaudeRequest) (float64, error) {
 	}
 	u := ClaudeUsage{CacheCreationInputTokens: chars / 3, OutputTokens: p.MaxTokens}
 	u.CacheCreation.Ephemeral1h = chars / 3
-	return ClaudeCostUSD(p.Model, u, true)
+	return ClaudeCostUSD(p.Model, u, batch)
 }
 
 // runBatch submits the items as one batch and waits for it.

@@ -19,7 +19,7 @@ func setRouting(t *testing.T, r *Routing) {
 
 func TestRoutingRoute(t *testing.T) {
 	r := ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{}, "claude-sonnet-5-5")
-	if got := r.Route(TaskDetect); got != (Route{EndpointClaudeTeam, "claude-sonnet-5-5", EffortMedium}) {
+	if got := r.Route(TaskDetect); got != (Route{Endpoint: EndpointClaudeTeam, Model: "claude-sonnet-5-5", Effort: EffortMedium}) {
 		t.Fatalf("detect thinks locally: want effort medium, got %v", got)
 	}
 	if got := r.Route(TaskAudit); got.Effort != EffortLow {
@@ -29,7 +29,7 @@ func TestRoutingRoute(t *testing.T) {
 	if got := r.Route(TaskAudit); got != r.Default {
 		t.Fatalf("a task without an entry takes the default route, got %v", got)
 	}
-	if got := r.Route(""); got != (Route{EndpointClaudeTeam, "claude-sonnet-5-5", EffortLow}) {
+	if got := r.Route(""); got != (Route{Endpoint: EndpointClaudeTeam, Model: "claude-sonnet-5-5", Effort: EffortLow}) {
 		t.Fatalf("a call without a task takes the default route, got %v", got)
 	}
 }
@@ -41,10 +41,10 @@ func TestRoutingApplyOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	for task, want := range map[Task]Route{
-		TaskAudit:  {EndpointClaudeBatch, "claude-opus-5-5", EffortHigh},
-		TaskDetect: {EndpointClaudeBatch, "claude-sonnet-5-5", EffortLow},
-		TaskVerify: {EndpointClaudeBatch, "claude-opus-5-5", EffortLow},  // no effort: the effort rule
-		TaskBundle: {EndpointClaudeBatch, "claude-haiku-5-5", EffortLow}, // no override
+		TaskAudit:  {Endpoint: EndpointClaudeBatch, Model: "claude-opus-5-5", Effort: EffortHigh},
+		TaskDetect: {Endpoint: EndpointClaudeBatch, Model: "claude-sonnet-5-5", Effort: EffortLow},
+		TaskVerify: {Endpoint: EndpointClaudeBatch, Model: "claude-opus-5-5", Effort: EffortLow},  // no effort: the effort rule
+		TaskBundle: {Endpoint: EndpointClaudeBatch, Model: "claude-haiku-5-5", Effort: EffortLow}, // no override
 	} {
 		if got := r.Route(task); got != want {
 			t.Errorf("%s: got %v, want %v", task, got, want)
@@ -72,13 +72,34 @@ func TestRoutingApplyOverrides(t *testing.T) {
 func TestSetRoutingValidates(t *testing.T) {
 	team := Route{Endpoint: EndpointClaudeTeam, Model: "claude-opus-5-5", Effort: EffortLow}
 	bad := map[string]*Routing{
-		"unknown endpoint":    {Default: Route{Endpoint: "gpu2"}},
-		"local with a model":  {Default: Route{Endpoint: EndpointLocal, Model: "claude-opus-5-5"}},
-		"no instance":         {Default: team},
-		"unknown task":        {Default: Route{Endpoint: EndpointLocal}, Tasks: map[Task]Route{"typo": {Endpoint: EndpointLocal}}},
-		"unknown effort":      {Default: Route{EndpointClaudeTeam, "claude-opus-5-5", "max"}, Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
-		"local instance":      {Default: Route{Endpoint: EndpointLocal}, Endpoints: map[EndpointName]Endpoint{EndpointLocal: &ClaudeTeamEndpoint{}}},
-		"instance wrong type": {Default: team, Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeBatchEndpoint{}}},
+		"unknown endpoint":     {Default: Route{Endpoint: "gpu2"}},
+		"local with a model":   {Default: Route{Endpoint: EndpointLocal, Model: "claude-opus-5-5"}},
+		"no instance":          {Default: team},
+		"unknown task":         {Default: Route{Endpoint: EndpointLocal}, Tasks: map[Task]Route{"typo": {Endpoint: EndpointLocal}}},
+		"unknown effort":       {Default: Route{Endpoint: EndpointClaudeTeam, Model: "claude-opus-5-5", Effort: "max"}, Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
+		"local instance":       {Default: Route{Endpoint: EndpointLocal}, Endpoints: map[EndpointName]Endpoint{EndpointLocal: &ClaudeTeamEndpoint{}}},
+		"instance wrong type":  {Default: team, Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeBatchEndpoint{}}},
+		"api wrong type":       {Default: team, Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}, EndpointClaudeAPI: &ClaudeTeamEndpoint{}}},
+		"local fallback":       {Default: withFallback(team, EndpointLocal), Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
+		"unknown fallback":     {Default: withFallback(team, "gpu2"), Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
+		"fallback no instance": {Default: withFallback(team, EndpointClaudeAPI), Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
+		"fallback to itself":   {Default: withFallback(team, EndpointClaudeTeam), Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}}},
+		"local route with a fallback": {
+			Default:   Route{Endpoint: EndpointLocal, Fallback: EndpointClaudeAPI},
+			Endpoints: map[EndpointName]Endpoint{EndpointClaudeAPI: &ClaudeAPIEndpoint{}},
+		},
+		"task route with a bad fallback": {
+			Default:   team,
+			Tasks:     map[Task]Route{TaskAudit: withFallback(team, EndpointClaudeBatch)},
+			Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}},
+		},
+	}
+	good := &Routing{
+		Default:   withFallback(team, EndpointClaudeAPI),
+		Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}, EndpointClaudeAPI: &ClaudeAPIEndpoint{}},
+	}
+	if err := good.validate(); err != nil {
+		t.Fatalf("a seat with the API as fallback is valid: %v", err)
 	}
 	for name, r := range bad {
 		if _, err := SetRouting(r); err == nil {
@@ -88,6 +109,11 @@ func TestSetRoutingValidates(t *testing.T) {
 	if got := activeRouting().Route(TaskAudit); got.Endpoint != EndpointLocal {
 		t.Fatalf("a rejected routing must not be installed, got %v", got)
 	}
+}
+
+func withFallback(rt Route, fallback EndpointName) Route {
+	rt.Fallback = fallback
+	return rt
 }
 
 func TestProfileRouting(t *testing.T) {
@@ -103,24 +129,47 @@ func TestProfileRouting(t *testing.T) {
 	t.Setenv("PATH", dir)
 	t.Setenv("CLAUDE_TEAM_PLAN_TOKENS", "alice=tok-alice")
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "alice")
-	r, err = profileRouting(profileClaudeTeam)
-	if err != nil {
-		t.Fatal(err)
-	}
 	opus := map[Task]bool{TaskOccurrence: true, TaskDedupBatch: true, TaskEntityDedup: true, TaskAudit: true}
-	for _, task := range AllTasks {
-		model := "claude-sonnet-5-5"
-		if opus[task] {
-			model = "claude-opus-5-5"
+	for _, key := range []string{"", "sk-test"} {
+		t.Setenv("ANTHROPIC_API_KEY", key)
+		r, err = profileRouting(profileClaudeTeam)
+		if err != nil {
+			t.Fatal(err)
 		}
-		want := Route{Endpoint: EndpointClaudeTeam, Model: model, Effort: claudeEffort(task)}
-		if got := r.Route(task); got != want {
-			t.Errorf("claude-team profile, task %s: got %v, want %v", task, got, want)
+		// With an API key, every route overflows to the API with the same
+		// model and effort; without one, no route has a fallback.
+		fallback := EndpointName("")
+		if key != "" {
+			fallback = EndpointClaudeAPI
+		}
+		for _, task := range AllTasks {
+			model := "claude-sonnet-5-5"
+			if opus[task] {
+				model = "claude-opus-5-5"
+			}
+			want := Route{Endpoint: EndpointClaudeTeam, Model: model, Effort: claudeEffort(task), Fallback: fallback}
+			if got := r.Route(task); got != want {
+				t.Errorf("claude-team profile (key %q), task %s: got %v, want %v", key, task, got, want)
+			}
+		}
+		if got := r.Route("").Fallback; got != fallback {
+			t.Errorf("claude-team profile (key %q): the default route has fallback %q", key, got)
+		}
+		if _, ok := r.Endpoints[EndpointClaudeAPI].(*ClaudeAPIEndpoint); ok != (key != "") {
+			t.Errorf("claude-team profile (key %q): API instance present = %v", key, ok)
+		}
+		if err := r.validate(); err != nil {
+			t.Fatal(err)
+		}
+		over, err := r.ApplyOverrides("detect=claude-opus-5-5")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := over.Route(TaskDetect); got.Model != "claude-opus-5-5" || got.Fallback != fallback {
+			t.Errorf("an override keeps the fallback of the profile (key %q), got %v", key, got)
 		}
 	}
-	if err := r.validate(); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "")
 	if _, err := profileRouting(profileClaudeTeam); err == nil {

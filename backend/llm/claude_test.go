@@ -137,8 +137,8 @@ func TestClaudeCostUSD(t *testing.T) {
 		batch bool
 		want  float64
 	}{
-		{"claude-sonnet-5-5", false, 2 + 10 + 0.10 + 2.50 + 4},
-		{"claude-sonnet-5-5", true, (2 + 10 + 0.10 + 2.50 + 4) / 2},
+		{"claude-sonnet-5-5", false, 2 + 10 + 0.20 + 2.50 + 4},
+		{"claude-sonnet-5-5", true, (2 + 10 + 0.20 + 2.50 + 4) / 2},
 		{"claude-opus-5-5-20261001", false, 4 + 20 + 0.20 + 5 + 8},
 		// 4 M prompt tokens: above the 100k threshold of Haiku.
 		{"claude-haiku-5-5", false, 0.50 + 2.50 + 0.05 + 0.625 + 1},

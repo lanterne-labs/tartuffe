@@ -30,6 +30,28 @@ func promptFamily(task Task, r ClaudeRequest) (family, text string, ok bool) {
 // endpoint.
 type prefixCache struct {
 	prefixes map[string][]string // prompt family -> learned prefixes
+	last     map[string]string   // prompt family -> last text with no known prefix
+}
+
+// next returns the known prefix of family that starts text. When there is
+// none, next learns a prefix from text and the last text of family with no
+// known prefix. When it learns none, next keeps text as that last text and
+// returns "". An endpoint that gets its calls one at a time (the CLI of a
+// seat, the sync API) thus caches from the second call of a family.
+func (c *prefixCache) next(family, text string) string {
+	if p := c.known(family, text); p != "" {
+		return p
+	}
+	if prev, seen := c.last[family]; seen {
+		if p := c.learn(family, []string{prev, text}); p != "" {
+			return p
+		}
+	}
+	if c.last == nil {
+		c.last = map[string]string{}
+	}
+	c.last[family] = text
+	return ""
 }
 
 // known returns the longest learned prefix of family that starts text, or "".

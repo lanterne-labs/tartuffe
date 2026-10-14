@@ -2708,3 +2708,30 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   and 1 h per run (`RefreshPendingStances`). Facts that go through `ProcessNewFact` keep the inline refresh.
 - Lesson: a source of structured facts that repeat one subject needs a placement of its own. The
   generic routing pays the full LLM cost again for each fact.
+
+## The seat overflows to the Claude API, up to a cap per run (2026-10-14, mirror-rxl.24)
+
+- `ClaudeAPIEndpoint` (`claude-api`) sends each call as one sync `POST /v1/messages` with
+  `ANTHROPIC_API_KEY`. It uses the HTTP retry rules of the batch client (`claudeHTTP.do`), the
+  learned prefix of the prompt family as a 5 min cache breakpoint, and the list price.
+- `Route.Fallback` names a second Claude endpoint. When the endpoint of the route returns an
+  `UnavailableError`, `Client.Chat` sends the call once to the fallback, with the same model and
+  effort. Any other error does not go to the fallback. The first switch of each task logs 1 warning.
+- After an `UnavailableError`, the routes with a fallback skip that endpoint until its `RetryAt`
+  (15 min when `RetryAt` is zero). Then 1 call tries the endpoint again. A route without a
+  fallback always calls its endpoint, so the gate still gets the error and waits.
+- Profile `claude-team`: with `ANTHROPIC_API_KEY`, every route has `claude-api` as its fallback.
+  Without the key, the seat has no overflow, and the profile logs this at start.
+- The API endpoint has a cap of 25 USD per process (`claudeAPIRunCapUSD`). Each call reserves its
+  worst-case cost first, and a reply replaces it with the real cost. A call without a reply keeps
+  the reservation, so the cap holds for concurrent calls and for calls the API can have billed.
+- The endpoint stops for the rest of the process in 3 cases:
+  - The reserved spend passes the cap.
+  - A credit error: a 402, or a 429 for the spend limit.
+  - The API refuses the key or the URL: a 401, 403 or 404.
+- A stopped endpoint returns an `UnavailableError` with a zero `RetryAt`. When the seat failed with
+  a known `RetryAt`, `Client.Chat` returns the error of the seat. The gate then waits for the
+  reset of the seat. Without a known reset, the gate stops the run at its phase.
+- `dm pipeline daily` sends 1 Telegram message per provider for a credit error or the cap. At the
+  end of the run, it logs the usage report (tokens and USD per task and model) of each endpoint.
+- The cache read price of Sonnet 5.5 is 0.20 USD per million tokens, not 0.10.

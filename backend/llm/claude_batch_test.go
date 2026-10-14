@@ -39,7 +39,7 @@ func newFakeBatchAPI(t *testing.T) *fakeBatchAPI {
 }
 
 func (f *fakeBatchAPI) client() *ClaudeBatchClient {
-	return &ClaudeBatchClient{httpClient: &http.Client{Timeout: 2 * time.Second}, baseURL: f.srv.URL, key: "k"}
+	return &ClaudeBatchClient{claudeHTTP{httpClient: &http.Client{Timeout: 2 * time.Second}, baseURL: f.srv.URL, key: "k"}}
 }
 
 func (f *fakeBatchAPI) serve(w http.ResponseWriter, r *http.Request) {

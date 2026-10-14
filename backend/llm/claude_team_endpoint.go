@@ -38,7 +38,6 @@ type ClaudeTeamEndpoint struct {
 	mu       sync.Mutex
 	usage    map[usageKey]*TaskUsage
 	prefixes prefixCache
-	last     map[string]string // prompt family -> last prompt with no known prefix
 }
 
 const defaultClaudeTeamProcs = 4
@@ -190,18 +189,9 @@ func (t *ClaudeTeamEndpoint) cachePrefix(task Task, creq ClaudeRequest) string {
 		return ""
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	p := t.prefixes.known(family, text)
+	p := t.prefixes.next(family, text)
+	t.mu.Unlock()
 	if p == "" {
-		if prev, seen := t.last[family]; seen {
-			p = t.prefixes.learn(family, []string{prev, text})
-		}
-	}
-	if p == "" {
-		if t.last == nil {
-			t.last = map[string]string{}
-		}
-		t.last[family] = text
 		return ""
 	}
 	// Two equal prompts (the votes of a judge) can learn the whole prompt.

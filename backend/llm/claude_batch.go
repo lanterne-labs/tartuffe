@@ -18,27 +18,44 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// ClaudeBatchClient talks to the Message Batches API
-// (https://platform.claude.com/docs/en/build-with-claude/batch-processing):
-// create a batch, read its status, read its results. A batch costs half the
-// price of the same sync calls and ends within 24 h.
-type ClaudeBatchClient struct {
+// claudeHTTP sends HTTP requests to the Claude API with the key of the
+// account. The batch client and the sync endpoint (ClaudeAPIEndpoint) share
+// it.
+type claudeHTTP struct {
 	httpClient *http.Client
 	baseURL    string
 	key        string
 }
 
-// NewClaudeBatchClientFromEnv reads ANTHROPIC_API_KEY.
-func NewClaudeBatchClientFromEnv() (*ClaudeBatchClient, error) {
+// newClaudeHTTPFromEnv reads ANTHROPIC_API_KEY. timeout is the limit of one
+// HTTP request.
+func newClaudeHTTPFromEnv(timeout time.Duration) (claudeHTTP, error) {
 	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	if key == "" {
-		return nil, errors.New("ANTHROPIC_API_KEY environment variable not set")
+		return claudeHTTP{}, errors.New("ANTHROPIC_API_KEY environment variable not set")
 	}
-	return &ClaudeBatchClient{
-		httpClient: &http.Client{Timeout: 5 * time.Minute},
+	return claudeHTTP{
+		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    claudeBaseURL,
 		key:        key,
 	}, nil
+}
+
+// ClaudeBatchClient talks to the Message Batches API
+// (https://platform.claude.com/docs/en/build-with-claude/batch-processing):
+// create a batch, read its status, read its results. A batch costs half the
+// price of the same sync calls and ends within 24 h.
+type ClaudeBatchClient struct {
+	claudeHTTP
+}
+
+// NewClaudeBatchClientFromEnv reads ANTHROPIC_API_KEY.
+func NewClaudeBatchClientFromEnv() (*ClaudeBatchClient, error) {
+	h, err := newClaudeHTTPFromEnv(5 * time.Minute)
+	if err != nil {
+		return nil, err
+	}
+	return &ClaudeBatchClient{claudeHTTP: h}, nil
 }
 
 // ClaudeBatchItem is one request of a batch. CustomID must match
@@ -166,11 +183,16 @@ func (c *ClaudeBatchClient) doJSON(ctx context.Context, method, url string, body
 	return nil
 }
 
+// errClaudeCredit marks the error of a 402 or of a 429 for the spend limit:
+// the account has no credit left, or reached its spend limit.
+var errClaudeCredit = errors.New("claude account: no credit or spend limit reached")
+
 // do sends one HTTP request with retry. It retries a transport error, a 5xx
 // (529 is "overloaded") and a 429, which waits the retry-after header first.
 // Every other 4xx is a permanent *ClientError. A 402, and a 429 for the spend
-// limit, also call OnCreditError: no retry helps until the account changes.
-func (c *ClaudeBatchClient) do(ctx context.Context, method, url string, body []byte) ([]byte, error) {
+// limit, also call OnCreditError and wrap errClaudeCredit: no retry helps
+// until the account changes.
+func (c claudeHTTP) do(ctx context.Context, method, url string, body []byte) ([]byte, error) {
 	var out []byte
 	op := func() error {
 		var rd io.Reader
@@ -208,7 +230,8 @@ func (c *ClaudeBatchClient) do(ctx context.Context, method, url string, body []b
 				if OnCreditError != nil {
 					OnCreditError("claude", snippet)
 				}
-				return backoff.Permanent(&ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: snippet})
+				return backoff.Permanent(fmt.Errorf("%w: %w", errClaudeCredit,
+					&ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: snippet}))
 			}
 			wait := retryAfter(resp.Header.Get("retry-after"))
 			log.Warn().Str("request_id", reqID).Dur("retry_after", wait).Msg("claude rate limit, will retry")
@@ -222,11 +245,15 @@ func (c *ClaudeBatchClient) do(ctx context.Context, method, url string, body []b
 			log.Warn().Str("request_id", reqID).Int("status_code", resp.StatusCode).Str("body", snippet).Msg("claude server error, will retry")
 			return fmt.Errorf("claude server error: %s (%s)", resp.Status, snippet)
 		default:
-			if resp.StatusCode == http.StatusPaymentRequired && OnCreditError != nil {
-				OnCreditError("claude", snippet)
-			}
 			log.Error().Str("request_id", reqID).Int("status_code", resp.StatusCode).Str("body", snippet).Msg("claude request rejected")
-			return backoff.Permanent(&ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: snippet})
+			var err error = &ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: snippet}
+			if resp.StatusCode == http.StatusPaymentRequired {
+				if OnCreditError != nil {
+					OnCreditError("claude", snippet)
+				}
+				err = fmt.Errorf("%w: %w", errClaudeCredit, err)
+			}
+			return backoff.Permanent(err)
 		}
 	}
 	notify := func(err error, d time.Duration) {
