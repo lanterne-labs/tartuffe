@@ -28,6 +28,7 @@ type StanceStorer interface {
 	UpdateStanceMetadata(ctx context.Context, id int64, label, summary string, consumedFactIDs []int64) error
 	AddFactToStance(ctx context.Context, stanceID int64, factID int64) error
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]StanceDocument, error)
+	GetStanceDocument(ctx context.Context, id int64) (StanceDocument, error)
 	// ShortlistStancesByNearestFact ranks the person's stances by their
 	// nearest member fact and returns the topK with up to factsPerStance
 	// member facts each as evidence. excludeFactID (0 = none) hides one fact
@@ -108,6 +109,29 @@ type StanceProcessResult struct {
 	Contradictions []StanceContradictionEntry // empty unless Verdict==CONTRADICTION
 }
 
+// The verdicts of a stance decision.
+const (
+	VerdictNewStance     = "NEW_STANCE"
+	VerdictDuplicate     = "DUPLICATE"
+	VerdictNewInfo       = "NEW_INFO"
+	VerdictContradiction = "CONTRADICTION"
+)
+
+// StanceDecision is where a fact goes and what it does to its stance, decided
+// before anything is written. ApplyStanceDecision writes it.
+//   - VerdictNewStance: a new stance labelled NewLabel (NewLabelEn optional).
+//   - VerdictDuplicate, VerdictNewInfo: the fact joins stance StanceID.
+//   - VerdictContradiction: the fact joins stance StanceID, and each entry of
+//     Contradictions is recorded. The entries must be verified already.
+type StanceDecision struct {
+	StanceID       int64
+	NewLabel       string
+	NewLabelEn     string
+	Verdict        string
+	Contradictions []StanceContradictionEntry
+	Reasoning      string
+}
+
 // stanceLLMResponse is the expected JSON response from the stance analysis LLM call.
 // The schema returns ONE primary verdict for the new fact's relationship to the
 // stance as a whole, plus a LIST of zero-to-many contradictions (one per key
@@ -146,9 +170,7 @@ type topicAssignmentDecision struct {
 	ViaLabelPass bool
 }
 
-// generalLabelResponse is the response from generateGeneralLabel — a thin
-// helper used to recover from cases where assignTopic somehow returned an
-// empty NewTopicLabel.
+// generalLabelResponse is the response from SubjectLabel.
 type generalLabelResponse struct {
 	Label flexibleString `json:"label"`
 }
@@ -246,74 +268,13 @@ var ErrStanceRefreshPending = errors.New("fact linked to its stance; label and s
 // ErrStanceRefreshPending means the fact was routed and only that refresh
 // failed.
 func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
-	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
+	decision, matched, err := sm.assignStance(ctx, personID, factID, factText, embedding)
 	if err != nil {
-		return nil, fmt.Errorf("getting stances for person: %w", err)
+		return nil, err
 	}
-
-	// Always go through assignTopic — even when no stances exist, the LLM emits a
-	// general topic label per the LABEL RULES instead of falling back to fact text.
-	// When the fact has an embedding, assignTopic shortlists candidate stances by
-	// their NEAREST member fact and shows the LLM that concrete evidence.
-	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding, assignExclude{})
-	if err != nil {
-		return nil, fmt.Errorf("topic assignment: %w", err)
+	if decision.Verdict == VerdictNewStance {
+		return sm.ApplyStanceDecision(ctx, personID, factID, factText, embedding, decision)
 	}
-
-	// New topic: create a new stance with the LLM-generated general label
-	if assignment.IsNew {
-		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceNew)
-		label := assignment.NewLabel
-		labelEn := assignment.NewLabelEn
-		if label == "" {
-			// Defensive: assignTopic didn't emit a usable label. Ask explicitly via
-			// generateGeneralLabel so we never store fact text as a stance label.
-			label, err = sm.generateGeneralLabel(ctx, factText)
-			if err != nil {
-				return nil, fmt.Errorf("generating fallback general label: %w", err)
-			}
-		}
-		log.Info().
-			Str("new_topic", label).
-			Int64("fact_id", factID).
-			Str("reasoning", assignment.Reasoning).
-			Msg("LLM assigned fact to new topic")
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, labelEn)
-	}
-
-	// Find the matched stance by the resolved stance ID.
-	var matched *StanceDocument
-	for i := range stances {
-		if stances[i].ID == assignment.AssignedID {
-			matched = &stances[i]
-			break
-		}
-	}
-	if matched == nil {
-		log.Warn().
-			Int64("assigned_stance_id", assignment.AssignedID).
-			Int("total_stances", len(stances)).
-			Msg("LLM-assigned stance ID not found among person's stances, creating new stance")
-		label, err := sm.generateGeneralLabel(ctx, factText)
-		if err != nil {
-			return nil, fmt.Errorf("generating fallback general label: %w", err)
-		}
-		return sm.createNewStance(ctx, personID, factID, factText, embedding, label, "")
-	}
-
-	metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceJoined)
-	if assignment.ViaLabelPass {
-		// The embedding shortlist did not contain this stance; only the label
-		// pass surfaced it. Counts how much recall that pass actually buys.
-		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceLabelRescue)
-	}
-	log.Info().
-		Int64("stance_id", matched.ID).
-		Str("topic", matched.ClusterLabel).
-		Int64("fact_id", factID).
-		Str("reasoning", assignment.Reasoning).
-		Bool("via_label_pass", assignment.ViaLabelPass).
-		Msg("LLM assigned fact to existing topic")
 
 	// Get key facts for the matched stance and analyze relationship.
 	keyFacts, err := sm.storer.GetFactsForStance(ctx, matched.ID)
@@ -332,6 +293,150 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	}
 
 	return sm.handleVerdict(ctx, matched, personID, factID, factText, keyFacts, embedding, agg)
+}
+
+// AssignStance decides the stance of a fact of the person without the
+// analysis against the facts of that stance: Verdict is VerdictNewStance
+// (with a label) or VerdictNewInfo (with StanceID). It writes nothing; give
+// the decision to ApplyStanceDecision. A caller uses it when its facts need no
+// stance analysis, for example a source whose pairs the detection judges.
+func (sm *StanceManager) AssignStance(ctx context.Context, personID, factID int64, factText string, embedding []float32) (StanceDecision, error) {
+	decision, _, err := sm.assignStance(ctx, personID, factID, factText, embedding)
+	return decision, err
+}
+
+// assignStance routes the fact to one of the person's stances or to a new
+// stance. For an existing stance it also returns that stance. factID is only
+// logged.
+func (sm *StanceManager) assignStance(ctx context.Context, personID, factID int64, factText string, embedding []float32) (StanceDecision, *StanceDocument, error) {
+	stances, err := sm.storer.GetStanceDocumentsForPerson(ctx, personID)
+	if err != nil {
+		return StanceDecision{}, nil, fmt.Errorf("getting stances for person: %w", err)
+	}
+
+	// Always go through assignTopic — even when no stances exist, the LLM emits a
+	// general topic label per the LABEL RULES instead of falling back to fact text.
+	// When the fact has an embedding, assignTopic shortlists candidate stances by
+	// their NEAREST member fact and shows the LLM that concrete evidence.
+	assignment, err := sm.assignTopic(ctx, personID, stances, factText, embedding, assignExclude{})
+	if err != nil {
+		return StanceDecision{}, nil, fmt.Errorf("topic assignment: %w", err)
+	}
+
+	// New topic: create a new stance with the LLM-generated general label
+	if assignment.IsNew {
+		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceNew)
+		label := assignment.NewLabel
+		if label == "" {
+			// Defensive: assignTopic didn't emit a usable label. Ask explicitly via
+			// SubjectLabel so we never store fact text as a stance label.
+			label, err = sm.SubjectLabel(ctx, factText)
+			if err != nil {
+				return StanceDecision{}, nil, fmt.Errorf("generating fallback general label: %w", err)
+			}
+		}
+		log.Info().
+			Str("new_topic", label).
+			Int64("fact_id", factID).
+			Str("reasoning", assignment.Reasoning).
+			Msg("LLM assigned fact to new topic")
+		return StanceDecision{Verdict: VerdictNewStance, NewLabel: label, NewLabelEn: assignment.NewLabelEn, Reasoning: assignment.Reasoning}, nil, nil
+	}
+
+	// Find the matched stance by the resolved stance ID.
+	var matched *StanceDocument
+	for i := range stances {
+		if stances[i].ID == assignment.AssignedID {
+			matched = &stances[i]
+			break
+		}
+	}
+	if matched == nil {
+		log.Warn().
+			Int64("assigned_stance_id", assignment.AssignedID).
+			Int("total_stances", len(stances)).
+			Msg("LLM-assigned stance ID not found among person's stances, creating new stance")
+		label, err := sm.SubjectLabel(ctx, factText)
+		if err != nil {
+			return StanceDecision{}, nil, fmt.Errorf("generating fallback general label: %w", err)
+		}
+		return StanceDecision{Verdict: VerdictNewStance, NewLabel: label}, nil, nil
+	}
+
+	metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceJoined)
+	if assignment.ViaLabelPass {
+		// The embedding shortlist did not contain this stance; only the label
+		// pass surfaced it. Counts how much recall that pass actually buys.
+		metrics.RecordDecision(metrics.StageStanceAssign, metrics.OutcomeStanceLabelRescue)
+	}
+	log.Info().
+		Int64("stance_id", matched.ID).
+		Str("topic", matched.ClusterLabel).
+		Int64("fact_id", factID).
+		Str("reasoning", assignment.Reasoning).
+		Bool("via_label_pass", assignment.ViaLabelPass).
+		Msg("LLM assigned fact to existing topic")
+	return StanceDecision{StanceID: matched.ID, Verdict: VerdictNewInfo, Reasoning: assignment.Reasoning}, matched, nil
+}
+
+// ApplyStanceDecision writes decision d for the fact factID of the person: the
+// stance membership, the fact count, centroid and key facts of the stance, and
+// the contradictions of d. It makes no LLM call. It does not refresh the label
+// and summary of the stance: the new membership stays pending (summarized_at)
+// for RefreshStanceMetadata or RefreshPendingStances.
+func (sm *StanceManager) ApplyStanceDecision(ctx context.Context, personID, factID int64, factText string, embedding []float32, d StanceDecision) (*StanceProcessResult, error) {
+	if d.Verdict == VerdictNewStance {
+		if len(d.Contradictions) > 0 {
+			return nil, fmt.Errorf("a %s decision for fact %d has %d contradictions", d.Verdict, factID, len(d.Contradictions))
+		}
+		return sm.createNewStance(ctx, personID, factID, factText, embedding, d.NewLabel, d.NewLabelEn)
+	}
+	matched, err := sm.storer.GetStanceDocument(ctx, d.StanceID)
+	if err != nil {
+		return nil, err
+	}
+	if matched.PersonID != personID {
+		return nil, fmt.Errorf("stance %d belongs to person %d, not to person %d", matched.ID, matched.PersonID, personID)
+	}
+	return sm.applyToStance(ctx, &matched, personID, factID, embedding, d)
+}
+
+// applyToStance writes decision d for a fact that joins the existing stance
+// matched. A duplicate only joins; new info and a contradiction also update
+// the counters, centroid and key facts of the stance.
+func (sm *StanceManager) applyToStance(ctx context.Context, matched *StanceDocument, personID, factID int64, embedding []float32, d StanceDecision) (*StanceProcessResult, error) {
+	switch d.Verdict {
+	case VerdictDuplicate, VerdictNewInfo:
+		if len(d.Contradictions) > 0 {
+			return nil, fmt.Errorf("a %s decision for fact %d has %d contradictions", d.Verdict, factID, len(d.Contradictions))
+		}
+	case VerdictContradiction:
+		if len(d.Contradictions) == 0 {
+			return nil, fmt.Errorf("a %s decision for fact %d has no contradiction", d.Verdict, factID)
+		}
+	default:
+		return nil, fmt.Errorf("unexpected stance verdict: %q", d.Verdict)
+	}
+
+	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
+		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
+	}
+	result := &StanceProcessResult{Verdict: d.Verdict, StanceID: matched.ID, Reasoning: d.Reasoning, Contradictions: d.Contradictions}
+	if d.Verdict == VerdictDuplicate {
+		return result, nil
+	}
+	if d.Verdict == VerdictContradiction {
+		recorded := sm.recordStanceContradictions(ctx, personID, factID, matched.ID, d.Contradictions)
+		log.Warn().
+			Int64("stance_id", matched.ID).
+			Int64("fact_id", factID).
+			Int("contradictions_recorded", recorded).
+			Msg("Recorded contradictions in stance")
+	}
+	if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // keyTextByID builds a lookup of fact ID → normalized fact text from a slice of
@@ -502,21 +607,15 @@ func chunkKeyFactsByBudget(stanceSummary, newFactText string, facts []StanceFact
 }
 
 // createNewStance creates a new stance document for a fact. The label MUST be
-// non-empty — callers route through assignTopic / generateGeneralLabel to
-// obtain a general topic label. If the supplied label is empty we error rather
-// than falling back to fact text (which historically produced quoted-statement
+// non-empty — callers route through assignTopic / SubjectLabel to obtain a
+// general topic label. If the supplied label is empty we error rather than
+// falling back to fact text (which historically produced quoted-statement
 // labels that fragmented stances).
 func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, label, labelEn string) (*StanceProcessResult, error) {
 	label = strings.TrimSpace(label)
 	labelEn = strings.TrimSpace(labelEn)
 	if label == "" {
-		// Last-ditch defensive call — shouldn't happen given ProcessNewFact's flow,
-		// but if it does, generate a label rather than store fact text.
-		generated, err := sm.generateGeneralLabel(ctx, factText)
-		if err != nil {
-			return nil, fmt.Errorf("createNewStance: missing label and generateGeneralLabel failed: %w", err)
-		}
-		label = generated
+		return nil, fmt.Errorf("new stance for fact %d has no label", factID)
 	}
 	if r := []rune(label); len(r) > 120 {
 		label = string(r[:120])
@@ -555,43 +654,45 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 		Msg("Created new stance document")
 
 	return &StanceProcessResult{
-		Verdict:  "NEW_STANCE",
+		Verdict:  VerdictNewStance,
 		StanceID: stanceID,
 	}, nil
 }
 
 // handleVerdict processes the aggregated analyze result: it verifies the
-// flagged contradictions, then adds the fact to the stance, updates the stance
-// counters/centroid/key_facts as appropriate, records every verified
-// contradiction, and triggers a label+summary refresh for non-duplicate
-// verdicts. Nothing is written before the verification succeeded, so a failed
-// verifier call leaves the fact out of the stance, still pending.
+// flagged contradictions, writes the decision (applyToStance), and triggers a
+// label+summary refresh for non-duplicate verdicts. Nothing is written before
+// the verification succeeded, so a failed verifier call leaves the fact out
+// of the stance, still pending.
 func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
-	result := &StanceProcessResult{
-		StanceID:  matched.ID,
-		Reasoning: agg.Reasoning,
-	}
-
-	var verified []StanceContradictionEntry
+	decision := StanceDecision{StanceID: matched.ID, Verdict: agg.PrimaryVerdict, Reasoning: agg.Reasoning}
 	switch agg.PrimaryVerdict {
-	case "DUPLICATE", "NEW_INFO":
-	case "CONTRADICTION":
-		var err error
-		if verified, err = sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions); err != nil {
+	case VerdictDuplicate, VerdictNewInfo:
+	case VerdictContradiction:
+		// Adversarial verification pass: survivors only — refuted pairs are
+		// never recorded, so they never dent the honesty score. If every pair
+		// is refuted the fact is just new info for the stance.
+		verified, err := sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		if err != nil {
 			return nil, err
+		}
+		if len(verified) > 0 {
+			decision.Contradictions = verified
+		} else {
+			decision.Verdict = VerdictNewInfo
 		}
 	default:
 		return nil, fmt.Errorf("unexpected LLM verdict: %q", agg.PrimaryVerdict)
 	}
 
-	if err := sm.storer.AddFactToStance(ctx, matched.ID, factID); err != nil {
-		return nil, fmt.Errorf("adding fact to stance %d: %w", matched.ID, err)
+	result, err := sm.applyToStance(ctx, matched, personID, factID, embedding, decision)
+	if err != nil {
+		return nil, err
 	}
 
 	switch agg.PrimaryVerdict {
-	case "DUPLICATE":
+	case VerdictDuplicate:
 		metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeDuplicate)
-		result.Verdict = "DUPLICATE"
 		log.Info().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
@@ -599,45 +700,23 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Str("reasoning", agg.Reasoning).
 			Msg("Fact is duplicate of existing stance")
 
-	case "NEW_INFO":
+	case VerdictNewInfo:
 		metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeNewInfo)
-		result.Verdict = "NEW_INFO"
-		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
-			return nil, err
-		}
 		log.Info().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
 			Int("new_fact_count", matched.FactCount+1).
 			Msg("Added new info to existing stance")
 
-	case "CONTRADICTION":
-		// Adversarial verification pass (above): survivors only — refuted
-		// pairs are never recorded, so they never dent the honesty score. If
-		// every pair is refuted the fact is just new info for the stance, so
-		// relabel as NEW_INFO (the stance still absorbs the fact via
-		// applyStanceUpdate).
-		result.Contradictions = verified
-
-		recorded := 0
-		if len(verified) > 0 {
+	case VerdictContradiction:
+		if result.Verdict == VerdictContradiction {
 			metrics.RecordDecision(metrics.StageStanceAnalyze, metrics.OutcomeAnalyzeContradiction)
-			result.Verdict = "CONTRADICTION"
-			recorded = sm.recordStanceContradictions(ctx, personID, factID, matched.ID, verified)
-		} else {
-			result.Verdict = "NEW_INFO"
 		}
-
-		if err := sm.applyStanceUpdate(ctx, matched, factID, embedding); err != nil {
-			return nil, err
-		}
-
 		log.Warn().
 			Int64("stance_id", matched.ID).
 			Int64("fact_id", factID).
-			Int("contradictions_recorded", recorded).
 			Int("contradictions_flagged", len(agg.Contradictions)).
-			Int("contradictions_verified", len(verified)).
+			Int("contradictions_verified", len(result.Contradictions)).
 			Str("reasoning", agg.Reasoning).
 			Msg("Contradictions detected in stance")
 	}
@@ -648,7 +727,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	// still correct, just using its prior label/summary until the next refresh
 	// picks the fact up via summarized_at); an unavailable LLM is returned,
 	// marked ErrStanceRefreshPending, so the run stops.
-	if (result.Verdict == "NEW_INFO" || result.Verdict == "CONTRADICTION") && !refreshDeferred(ctx) {
+	if (result.Verdict == VerdictNewInfo || result.Verdict == VerdictContradiction) && !refreshDeferred(ctx) {
 		if err := sm.refreshAfterVerdict(ctx, matched, factID, result.Contradictions, keyTextByID(keyFacts)); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
 				return nil, fmt.Errorf("%w: stance %d: %w", ErrStanceRefreshPending, matched.ID, err)
@@ -857,7 +936,7 @@ type deferRefreshKey struct{}
 //
 // Safe to call on a context already wrapped with WithDeferRefresh — idempotent.
 // Live ingest (FactInserter) does NOT wrap the context, so refresh remains
-// inline for new-fact-via-news/twitter/frpolitics flows.
+// inline for the facts that go through ProcessNewFact (news, twitter).
 func WithDeferRefresh(ctx context.Context) context.Context {
 	return context.WithValue(ctx, deferRefreshKey{}, true)
 }
@@ -1555,11 +1634,11 @@ Set assigned_topic_index to the number of the matching topic (1-%d), or 0 if no 
 	return decision, nil
 }
 
-// generateGeneralLabel produces a general subject-area label for a single fact.
-// Used as a defensive fallback in createNewStance and ProcessNewFact when
-// assignTopic somehow returns an empty NewTopicLabel — keeps the system from
-// ever falling back to the fact text as a stance label.
-func (sm *StanceManager) generateGeneralLabel(ctx context.Context, factText string) (string, error) {
+// SubjectLabel gives the general subject-area label of a fact, under the
+// label rules of every stance label. The stance routing uses it when the
+// assignment gives no usable label. A plugin can use it to give the same
+// subject to facts on one matter, for example the ballots of one scrutin.
+func (sm *StanceManager) SubjectLabel(ctx context.Context, factText string) (string, error) {
 	prompt := fmt.Sprintf(`Generate a single GENERAL topic label for a political fact. The label is a NEUTRAL SUBJECT AREA broad enough that 5-20 related future facts — including facts that take OPPOSITE positions on this subject — can all fit under it. The FACT is given after the rules.
 
 `+stanceLabelRules+`

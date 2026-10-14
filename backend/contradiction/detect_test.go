@@ -92,6 +92,7 @@ func TestPairParaphraseSkip(t *testing.T) {
 		{"different direct verbs", "CLAIMED", "DENIED", 0.95, false, false},
 		{"missing verb", "", "CLAIMED", 0.95, false, false},
 		{"unknown verbs count as external", "MUMBLED", "WHISPERED", 0.9, true, true},
+		{"two ballots are judged", "VOTED_FOR", "VOTED_FOR", 0.95, false, false},
 	}
 	for _, tc := range cases {
 		skip, bothExternal := paraphraseSkip(tc.verbA, tc.verbB, tc.similarity)

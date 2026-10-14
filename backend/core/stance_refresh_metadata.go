@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
+	"errors"
+	"fmt"
 
 	"github.com/rs/zerolog/log"
 )
@@ -55,4 +58,42 @@ func (sm *StanceManager) RefreshMetadataForPersons(ctx context.Context, persons 
 		}
 	}
 	return stats
+}
+
+// PendingRefreshStorer lists the stances whose label and summary have not
+// absorbed all their facts (see storage.ListStancesPendingRefresh).
+type PendingRefreshStorer interface {
+	ListStancesPendingRefresh(ctx context.Context, limit int) ([]int64, error)
+}
+
+// RefreshPendingStances refreshes the label and summary of up to budget
+// stances with pending facts, and returns the number of stances it tried.
+// ApplyStanceDecision leaves the refresh to this step, so a stance that got
+// many facts in one run is refreshed once. An unavailable LLM or the end of
+// ctx stops the step and is returned. Another failure is logged, and the
+// stance keeps its previous label and summary until the next run.
+func RefreshPendingStances(ctx context.Context, storer PendingRefreshStorer, sm *StanceManager, budget int) (int, error) {
+	if budget <= 0 {
+		return 0, nil
+	}
+	ids, err := storer.ListStancesPendingRefresh(ctx, budget)
+	if err != nil {
+		return 0, err
+	}
+	failed := 0
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return i, fmt.Errorf("stance refresh stopped: %w", err)
+		}
+		err := sm.RefreshStanceMetadata(ctx, id)
+		if err != nil && (errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil) {
+			return i, fmt.Errorf("refreshing stance %d: %w", id, err)
+		}
+		if err != nil {
+			failed++
+			log.Warn().Err(err).Int64("stance_id", id).Msg("Stance refresh failed; the stance keeps its previous label and summary")
+		}
+	}
+	log.Info().Int("stances", len(ids)).Int("failed", failed).Msg("Refreshed the stances with pending facts")
+	return len(ids), nil
 }

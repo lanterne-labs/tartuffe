@@ -27,8 +27,10 @@ type InsertResult struct {
 }
 
 // StanceProcessor routes a newly inserted fact to its (existing or new) stance.
-// The production implementation is *StanceManager (LLM-backed); tests may
-// supply a stub that satisfies the invariant without an LLM round-trip.
+// The general implementation is *StanceManager (LLM-backed). A plugin can
+// supply its own placement that writes through
+// StanceManager.ApplyStanceDecision; tests may supply a stub that satisfies
+// the invariant without an LLM round-trip.
 type StanceProcessor interface {
 	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error)
 }

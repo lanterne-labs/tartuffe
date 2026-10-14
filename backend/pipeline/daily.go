@@ -32,6 +32,10 @@ const (
 	// translateNightlyLimit caps how many translations the final phase fills
 	// per run, so a large first-time backlog drains over several runs.
 	translateNightlyLimit = 4500
+	// stanceRefreshNightlyBudget caps how many stances the refresh phase
+	// brings up to date per run (one LLM call each). The stances touched by
+	// the ingest come first; an older backlog drains over several runs.
+	stanceRefreshNightlyBudget = 2000
 	// auditCadence is how often the contradiction auditor re-judges stored
 	// contradictions.
 	auditCadence = 5 * 24 * time.Hour
@@ -44,15 +48,22 @@ const (
 	runDeadlineHour = 23
 	// ingestBudget bounds the ingest phase from the run start, so detection,
 	// the audit and the translations get the rest of the day. A vote law
-	// costs ~65 min of GPU (one stance routing per ballot), and an ingest with
-	// no bound of its own ran 28 h (run 111).
+	// cost ~65 min of GPU when every ballot had the full stance routing, and
+	// an ingest with no bound of its own ran 28 h (run 111).
 	ingestBudget = 12 * time.Hour
 	// mergeBudget bounds the stance merge sweep the same way: it visits every
 	// person and took most of the afternoon of run 112, leaving detection,
 	// the audit and the history no time. Swept persons are memoized, so a cut
 	// sweep resumes with the next person on the next run.
 	mergeBudget = 2 * time.Hour
-	runTimezone = "Europe/Paris"
+	// stanceRefreshBudget bounds the stance refresh phase in time, on top of
+	// stanceRefreshNightlyBudget. A refresh is one LLM call of about 1.5 s on
+	// the local GPU (a vote law of ~577 ballots at 4 to 7 calls each took ~65
+	// min), so 2000 stances take about 50 min. With ingest (12 h) and merge
+	// (2 h), at least 5 h of the 20 h run stay for detection, the audit and
+	// the translations, also on a slower endpoint.
+	stanceRefreshBudget = 1 * time.Hour
+	runTimezone         = "Europe/Paris"
 )
 
 // RunOptions tunes one daily run.
@@ -70,13 +81,14 @@ type RunOptions struct {
 //
 // Phases in order:
 //  1. ingest                    — every plugin (queue-scoped targets)
-//  2. stance merge sweep
-//  3. stale-verdict eviction + plugin pair production + contradiction detection
-//  4. duplicate repoint + contradiction regroup
-//  5. contradiction audit (5-day cadence)
-//  6. translation phase
-//  7. history                   — date-range plugins, one month further back
-//  8. backfill                  — every plugin, deadline-bound
+//  2. stance refresh            — the stances with pending facts
+//  3. stance merge sweep
+//  4. stale-verdict eviction + plugin pair production + contradiction detection
+//  5. duplicate repoint + contradiction regroup
+//  6. contradiction audit (5-day cadence)
+//  7. translation phase
+//  8. history                   — date-range plugins, one month further back
+//  9. backfill                  — every plugin, deadline-bound
 //
 // When a phase reports the LLM unavailable (llm.ErrUnavailable) the run waits
 // for the endpoint that failed (llm.WaitForEndpoint) until the run deadline,
@@ -178,8 +190,11 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 	log.Info().Int("targets", len(targets)).Msg("Daily pipeline: target persons resolved")
 
-	// Phase 1: ingest. Every plugin collects its new facts; stance routing and
-	// the analyze judge run inline on insert.
+	// Phase 1: ingest. Every plugin collects its new facts; stance routing
+	// runs on insert. The analyze judge and the refresh of the label and
+	// summary run inline, except for a plugin that places its facts with
+	// ApplyStanceDecision (frpolitics votes): their stances are refreshed in
+	// phase 2.
 	// A plugin given up (errRefails) is abandoned and the phase goes on with
 	// the next plugins. An outage error is already in ingest.Errs, under its
 	// plugin.
@@ -207,7 +222,16 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		// once and skip them rather than fail each one with the same cause.
 		fail(work, "stance-manager", err, "stance manager unavailable; skipping the stance and detection phases")
 	} else {
-		// Phase 2: stance merge sweep. Looks for stances that should be merged
+		// Phase 2: stance refresh. It brings the label and summary of each
+		// stance with pending facts up to date once per run, before the merge
+		// sweep reads them. Bounded by count and by time.
+		refreshCtx, cancelRefresh := context.WithTimeout(work, stanceRefreshBudget)
+		defer cancelRefresh()
+		fail(refreshCtx, "stance-refresh", gate.run(refreshCtx, "stance-refresh", budgeted(b.refresh, func(left int) (int, error) {
+			return core.RefreshPendingStances(refreshCtx, storer, stanceMgr, left)
+		})), "stance refresh failed")
+
+		// Phase 3: stance merge sweep. Looks for stances that should be merged
 		// per LLM-vetted centroid clustering, applies the merges, and re-detects
 		// contradictions across previously-separated facts. Catches the
 		// cross-stance contradictions our per-fact assignTopic missed by
@@ -222,7 +246,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "stance merge sweep failed")
 	}
 
-	// Phase 3: contradiction detection over unchecked pairs across all
+	// Phase 4: contradiction detection over unchecked pairs across all
 	// persons, with the inline verification pass gating each YES before it is
 	// recorded. Re-judge of stale negatives: a NO is only final under the
 	// rulebook that produced it. Every negative verdict carries the judge
@@ -261,7 +285,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "contradiction detection failed")
 	}
 
-	// Phase 4a: repoint contradictions off any facts the contradiction-pass
+	// Phase 5a: repoint contradictions off any facts the contradiction-pass
 	// dedup just marked as duplicates, so the redundant rows stop inflating
 	// scores. Best-effort — failures are logged, never aborting the pipeline.
 	if processed, repointed, dropped, rErr := storer.RepointDuplicates(work, true); rErr != nil {
@@ -271,7 +295,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 			Msg("Daily pipeline: repointed contradictions off duplicate facts")
 	}
 
-	// Phase 4b: regroup contradictions into N-ary groups (one base fact + N
+	// Phase 5b: regroup contradictions into N-ary groups (one base fact + N
 	// contradicting facts) and (re)generate each group's merged summary. Runs
 	// after detection + duplicate-repointing so it sees the final pairwise
 	// set. Best-effort — failures are logged, never aborting the pipeline;
@@ -288,7 +312,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}
 	}
 
-	// Phase 5: contradiction auditor (auditCadence). Re-judges previously
+	// Phase 6: contradiction auditor (auditCadence). Re-judges previously
 	// recorded contradictions and AUTO-EVICTS confirmed false positives
 	// (Apply:true). A row is deleted only when THREE signals agree: the audit
 	// verdict is remove, a confirming second audit pass also says remove, and
@@ -305,14 +329,14 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}), "contradiction audit failed")
 	}
 
-	// Phase 6: translation — decoupled from generation. Fills missing or
+	// Phase 7: translation — decoupled from generation. Fills missing or
 	// stale translations for facts, stances and contradictions into the
 	// generic translations table for every target language.
 	fail(work, "translate", gate.run(work, "translate", budgeted(b.translate, func(left int) (int, error) {
 		return runTranslate(work, storer, left)
 	})), "translation phase failed")
 
-	// Phase 7: history. Every plugin that reads its source by date range goes
+	// Phase 8: history. Every plugin that reads its source by date range goes
 	// one month further back for the queue targets (see runHistory). Before
 	// the backfill, which takes whatever time is left.
 	if b.history {
@@ -321,7 +345,7 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}))
 	}
 
-	// Phase 8 (last, deadline-bound): plugin backfills. An outage the run did
+	// Phase 9 (last, deadline-bound): plugin backfills. An outage the run did
 	// not recover from is already in backfill.Errs, under its plugin.
 	if b.backfill {
 		var backfill BackfillRun
@@ -423,18 +447,20 @@ type runBudgets struct {
 	rejudge    int  // stale negative verdicts re-opened; 0 = skip
 	audit      bool // run the auditor when due
 	translate  int  // translations filled
+	refresh    int  // stances refreshed
 	history    bool // read the history-reading plugins one month further back
 	backfill   bool // run the deadline-bound backfill phase
 }
 
 func budgets(opts RunOptions) runBudgets {
 	if opts.Smoke {
-		return runBudgets{maxTargets: 1, maxItems: 1, maxPersons: 1, translate: 5}
+		return runBudgets{maxTargets: 1, maxItems: 1, maxPersons: 1, translate: 5, refresh: 1}
 	}
 	return runBudgets{
 		rejudge:   pairRejudgeNightlyBudget,
 		audit:     true,
 		translate: translateNightlyLimit,
+		refresh:   stanceRefreshNightlyBudget,
 		history:   true,
 		backfill:  true,
 	}

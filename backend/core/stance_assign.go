@@ -100,13 +100,13 @@ func AssignOrphansForPerson(
 		}
 		ps.OrphansAssigned++
 		switch res.Verdict {
-		case "NEW_STANCE":
+		case VerdictNewStance:
 			ps.VerdictNewStance++
-		case "DUPLICATE":
+		case VerdictDuplicate:
 			ps.VerdictDuplicate++
-		case "NEW_INFO":
+		case VerdictNewInfo:
 			ps.VerdictNewInfo++
-		case "CONTRADICTION":
+		case VerdictContradiction:
 			ps.VerdictContradiction++
 		}
 	}

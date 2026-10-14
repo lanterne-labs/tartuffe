@@ -46,7 +46,7 @@ func TestDerivePartyMajorityFactsNameTheParty(t *testing.T) {
 }
 
 // Every record becomes its own single-subject input; records on one scrutin
-// share the embedding of their common EmbeddingText.
+// share the embedding of their common EmbeddingText and the vote subject.
 func TestBuildVoteFactInputsOnePerRecord(t *testing.T) {
 	law := Law{Key: "17-1", URL: "https://an.test/17-1", SeanceRef: "S1"}
 	records := deriveDeputyFacts(law, []VoteEvent{
@@ -55,7 +55,7 @@ func TestBuildVoteFactInputsOnePerRecord(t *testing.T) {
 	}, LawSummary{}, testObjectPhrase)
 	emb := []float32{1, 0, 0}
 
-	inputs, err := buildVoteFactInputs(records, map[string][]float32{testObjectPhrase: emb})
+	inputs, err := buildVoteFactInputs(records, map[string][]float32{testObjectPhrase: emb}, "politique budgétaire")
 	require.NoError(t, err)
 
 	require.Len(t, inputs, 2)
@@ -66,6 +66,7 @@ func TestBuildVoteFactInputsOnePerRecord(t *testing.T) {
 		require.Equal(t, emb, in.Embedding)
 		require.Equal(t, "17-1", in.Metadata["law_key"])
 		require.Equal(t, "S1", in.Metadata["seance_ref"])
+		require.Equal(t, "politique budgétaire", in.Metadata["vote_subject"])
 	}
 	require.NotEqual(t, inputs[0].NormalizedFactText, inputs[1].NormalizedFactText, "same ballot, two voters, two facts")
 }
@@ -74,6 +75,6 @@ func TestBuildVoteFactInputsOnePerRecord(t *testing.T) {
 // without a vector.
 func TestBuildVoteFactInputsMissingEmbedding(t *testing.T) {
 	records := []FactRecord{{PersonName: "Jean Dupont", FactText: "Jean Dupont a voté POUR x", EmbeddingText: "x", LawKey: "17-1"}}
-	_, err := buildVoteFactInputs(records, map[string][]float32{})
+	_, err := buildVoteFactInputs(records, map[string][]float32{}, "s")
 	require.Error(t, err)
 }

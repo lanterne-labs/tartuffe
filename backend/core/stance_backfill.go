@@ -134,13 +134,13 @@ func BackfillStancesForPerson(
 			log.Error().Err(err).Str("person", p.Name).Int64("fact_id", rep.ID).Msg("ProcessNewFact failed; skipping group")
 			continue
 		}
-		if res.Verdict == "NEW_STANCE" {
+		if res.Verdict == VerdictNewStance {
 			stats.StancesCreated++
 		}
-		if res.Verdict == "CONTRADICTION" {
+		if res.Verdict == VerdictContradiction {
 			stats.ContradictionsDetected++
 		}
-		if res.Verdict == "NEW_INFO" || res.Verdict == "CONTRADICTION" {
+		if res.Verdict == VerdictNewInfo || res.Verdict == VerdictContradiction {
 			stancesNeedingRefresh[res.StanceID] = struct{}{}
 		}
 

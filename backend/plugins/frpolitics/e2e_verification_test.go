@@ -59,6 +59,7 @@ func TestE2EPartyFactVerification(t *testing.T) {
 	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run: %v", err)
 	}
+	requireEveryFactHasAStance(t, storer.Pool())
 
 	// Step 2: Extract data for verification
 	_, _, eventsByLaw, orgCache, _, err := discoverAndParse(ctx, opts)
@@ -210,6 +211,7 @@ func TestRealDataPartyFactVerification(t *testing.T) {
 	if _, err := Run(ctx, storer, opts); err != nil {
 		t.Fatalf("frpolitics run: %v", err)
 	}
+	requireEveryFactHasAStance(t, storer.Pool())
 
 	// Verify results
 	partyFacts := extractPartyFactsFromDB(t, storer)

@@ -2,6 +2,7 @@ package frpolitics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -154,4 +156,56 @@ func (s *Store) GetPersonsByAssembleeID(ctx context.Context) (map[string]storage
 		}
 	}
 	return out, rows.Err()
+}
+
+// StoredVoteSubject returns the vote subject already stored on a ballot of
+// scope, the oldest one, or "" when no ballot of scope has one.
+func (s *Store) StoredVoteSubject(ctx context.Context, scope subjectScope) (string, error) {
+	query := `
+		SELECT metadata->>'vote_subject' FROM fact_sources
+		WHERE source_type = 'assemblee_law_page' AND source_url = $1 AND metadata->>'vote_subject' <> ''
+		ORDER BY id LIMIT 1`
+	if scope.byScrutin {
+		query = `
+		SELECT metadata->>'vote_subject' FROM fact_sources
+		WHERE source_type = 'assemblee_law_page' AND metadata->>'law_key' = $1 AND metadata->>'vote_subject' <> ''
+		ORDER BY id LIMIT 1`
+	}
+	var subject string
+	err := s.pool.QueryRow(ctx, query, scope.key).Scan(&subject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("loading the stored vote subject of %s: %w", scope.key, err)
+	}
+	return subject, nil
+}
+
+// VoteSubjectStances returns, per person, the stance that holds the person's
+// ballots with the vote subject subject (the vote_subject of the source
+// metadata). When the ballots of a person are in more than one stance, the
+// stance with the most of them wins, then the lowest id.
+func (s *Store) VoteSubjectStances(ctx context.Context, subject string) (map[int64]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (sd.person_id) sd.person_id, sd.id
+		FROM fact_sources fs
+		JOIN stance_document_facts sdf ON sdf.fact_id = fs.fact_id
+		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
+		WHERE fs.source_type = 'assemblee_law_page' AND fs.metadata->>'vote_subject' = $1
+		GROUP BY sd.person_id, sd.id
+		ORDER BY sd.person_id, count(*) DESC, sd.id`, subject)
+	if err != nil {
+		return nil, fmt.Errorf("loading the stances of vote subject %q: %w", subject, err)
+	}
+	defer rows.Close()
+	stances := make(map[int64]int64)
+	for rows.Next() {
+		var personID, stanceID int64
+		if err := rows.Scan(&personID, &stanceID); err != nil {
+			return nil, fmt.Errorf("scanning the stance of vote subject %q: %w", subject, err)
+		}
+		stances[personID] = stanceID
+	}
+	return stances, rows.Err()
 }

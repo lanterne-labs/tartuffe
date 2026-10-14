@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -82,6 +83,14 @@ func (m *mockStanceStorer) GetStanceDocumentsForPerson(ctx context.Context, pers
 		}
 	}
 	return result, nil
+}
+
+func (m *mockStanceStorer) GetStanceDocument(ctx context.Context, id int64) (StanceDocument, error) {
+	doc, ok := m.stances[id]
+	if !ok {
+		return StanceDocument{}, fmt.Errorf("stance %d not found", id)
+	}
+	return doc, nil
 }
 
 func (m *mockStanceStorer) StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error) {

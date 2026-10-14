@@ -11,6 +11,7 @@ import (
 	"digital-mirror/backend/storage"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -460,9 +461,15 @@ func candidatePairs(ctx context.Context, storer *storage.PostgresStorer, person 
 // paraphraseSkip reports whether a KNN pair is a paraphrase to skip rather
 // than judge: both facts carry a canonical verb, they sit above 0.80
 // similarity (1 - L2 distance), and either the verbs are the same or both are external
-// attributions. bothExternal is returned for logging.
+// attributions. bothExternal is returned for logging. Two ballots (VOTED_*)
+// are never skipped: a person has one ballot per scrutin, so the pair is two
+// scrutins, and two votes that read alike (keep an article, remove it) can
+// be a reversal.
 func paraphraseSkip(verbA, verbB string, similarity float64) (skip, bothExternal bool) {
 	if verbA == "" || verbB == "" || similarity <= 0.80 {
+		return false, false
+	}
+	if strings.HasPrefix(verbA, "VOTED_") && strings.HasPrefix(verbB, "VOTED_") {
 		return false, false
 	}
 	bothExternal = !categorizer.IsDirectClaimVerb(verbA) && !categorizer.IsDirectClaimVerb(verbB)

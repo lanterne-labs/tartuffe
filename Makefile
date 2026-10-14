@@ -105,7 +105,7 @@ test-short:
 # Packages run one at a time (one GPU slot). The full log is in
 # /tmp/llm-goldens.log; the screen shows one line per golden.
 LLM_GOLDEN_PKGS := ./backend/core ./backend/contradiction ./backend/entityvalidator ./backend/categorizer \
-	./backend/complaints ./backend/plugins/twitter
+	./backend/complaints ./backend/plugins/twitter ./backend/plugins/frpolitics
 LLM_GOLDEN_RUN := Golden|TestDetectorJudgesGroupsWithTheirRestatements|TestRemoteLLMExtractor
 LLM_ARGS = $(if $(LLM_API),-llm-api=$(LLM_API)) $(if $(LLM_MODEL),-llm-model=$(LLM_MODEL)) $(if $(LLM_THINK),-llm-think=$(LLM_THINK)) \
 	$(if $(LLM_CLAUDE),-llm-claude=$(LLM_CLAUDE)) $(if $(LLM_CLAUDE_MAX_USD),-llm-claude-max-usd=$(LLM_CLAUDE_MAX_USD)) \

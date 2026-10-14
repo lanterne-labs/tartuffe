@@ -2684,3 +2684,27 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
 - The CLI child always gets `DISABLE_AUTOUPDATER=1` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
 - The root `Dockerfile` copies the native `claude` binary (npm `@anthropic-ai/claude-code`, pinned)
   into the final image. The image grows by about 250 MB.
+
+## frpolitics places its ballots; the stance refresh runs once per run (2026-10-14, mirror-rxl.23)
+
+- Before, each ballot went through the full stance routing: label pass, assignment, analysis
+  (3 votes per batch), verification and an inline refresh. That was 4 to 7 LLM calls per ballot,
+  about 10 h of GPU per night for about 1200 ballots. The nightly stopped before detection.
+- Core: `StanceDecision` and `ApplyStanceDecision` write a stance decision without an LLM call.
+  `ProcessNewFact` (through `handleVerdict`) and the plugins use this one apply function.
+  `AssignStance` (assignment only) and `SubjectLabel` (the old `generateGeneralLabel`) are exported.
+- frpolitics (`placement.go`): each ballot gets a `vote_subject` in its source metadata. One
+  query per scrutin finds, for each voter, the stance that holds a ballot with this subject. A hit
+  joins that stance without an LLM call. A miss calls `AssignStance`. No ballot gets the stance
+  analysis: the detection judges the vote pairs, and a VOTED_* pair is never skipped as a paraphrase.
+- The subject is computed once per scope and read back from the stored ballots after that:
+  - an ordinary law: one subject for all its scrutins (scope: the dossier URL);
+  - a budget law (a title with "loi de finances" or "financement de la sécurité sociale"): one
+    subject per scrutin (scope: `law_key`), because one budget law covers many subjects.
+- Lesson: an LLM label is not a stable key. Claude Sonnet gave 2 labels to 2 scrutins of one law.
+  Key the reuse on a stable identity (the dossier), and let the LLM label only once.
+- `ApplyStanceDecision` does not refresh the label and summary. The daily run refreshes the stances
+  with pending facts (`summarized_at`) after the ingest, before the merge sweep, at most 2000 stances
+  and 1 h per run (`RefreshPendingStances`). Facts that go through `ProcessNewFact` keep the inline refresh.
+- Lesson: a source of structured facts that repeat one subject needs a placement of its own. The
+  generic routing pays the full LLM cost again for each fact.

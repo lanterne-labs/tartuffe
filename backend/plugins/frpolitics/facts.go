@@ -42,10 +42,11 @@ type FactRecord struct {
 	PublishedAt *time.Time
 }
 
-// StoreFacts stores one fact per record, its subject being the record's
-// PersonName. Embeddings are generated once per unique EmbeddingText and
-// shared by every ballot on the same scrutin. The subject's fact_count and
-// score are refreshed by the mention insert, as for any other fact.
+// StoreFacts stores the ballots of one scrutin: one fact per record, its
+// subject being the record's PersonName. Embeddings are generated once per
+// unique EmbeddingText and shared by every ballot on the same scrutin. The
+// subject's fact_count and score are refreshed by the mention insert, as for
+// any other fact.
 func StoreFacts(ctx context.Context, storer *storage.PostgresStorer, records []FactRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -107,21 +108,40 @@ func StoreFacts(ctx context.Context, storer *storage.PostgresStorer, records []F
 		}
 	}
 
-	inputs, err := buildVoteFactInputs(records, embeddingsMap)
-	if err != nil {
-		return err
-	}
-
 	stanceMgr, err := core.NewStanceManagerFromEnv(storer)
 	if err != nil {
 		return fmt.Errorf("stance manager required for fact ingestion: %w", err)
 	}
-	inserter := core.NewFactInserter(storer, stanceMgr)
+	return storeBallots(ctx, storer, stanceMgr, records, embeddingsMap)
+}
+
+// storeBallots inserts the ballots of one scrutin and places each one in a
+// stance of its voter (votePlacer). Every record must have the voted object
+// of the scrutin as its EmbeddingText.
+func storeBallots(ctx context.Context, storer *storage.PostgresStorer, stancer voteStancer, records []FactRecord, embeddings map[string][]float32) error {
+	objectPhrase := records[0].EmbeddingText
+	for _, rec := range records {
+		if rec.EmbeddingText != objectPhrase {
+			return fmt.Errorf("ballots of more than one scrutin: %q (law %s) and %q (law %s)", objectPhrase, records[0].LawKey, rec.EmbeddingText, rec.LawKey)
+		}
+	}
+	placer, err := newVotePlacer(ctx, NewStore(storer), stancer, records[0])
+	if err != nil {
+		return err
+	}
+	inputs, err := buildVoteFactInputs(records, embeddings, placer.subject)
+	if err != nil {
+		return err
+	}
+
+	inserter := core.NewFactInserter(storer, placer)
 	inserter.EnableDedupe(storer)
 
 	log.Info().
 		Int("total_facts", len(inputs)).
-		Msg("frpolitics: starting fact insertion with similarity detection")
+		Str("vote_subject", placer.subject).
+		Int("voters_with_subject_stance", len(placer.known)).
+		Msg("frpolitics: starting fact insertion")
 
 	if _, err := inserter.InsertFacts(ctx, inputs); err != nil {
 		return fmt.Errorf("failed to insert facts: %w", err)
@@ -134,8 +154,9 @@ func StoreFacts(ctx context.Context, storer *storage.PostgresStorer, records []F
 }
 
 // buildVoteFactInputs turns each record into one inserter input whose subject
-// is the record's PersonName, attaching the embedding of its EmbeddingText.
-func buildVoteFactInputs(records []FactRecord, embeddings map[string][]float32) ([]core.StoreFactInput, error) {
+// is the record's PersonName, attaching the embedding of its EmbeddingText and
+// the vote subject of the scrutin (metadata vote_subject).
+func buildVoteFactInputs(records []FactRecord, embeddings map[string][]float32, voteSubject string) ([]core.StoreFactInput, error) {
 	inputs := make([]core.StoreFactInput, 0, len(records))
 	for _, rec := range records {
 		emb, ok := embeddings[rec.EmbeddingText]
@@ -149,6 +170,7 @@ func buildVoteFactInputs(records []FactRecord, embeddings map[string][]float32) 
 			"law_title":       rec.LawTitle,
 			"law_short_title": rec.LawShortTitle,
 			"law_summary":     rec.LawSummary,
+			"vote_subject":    voteSubject,
 		}
 		if rec.SourceURL != "" {
 			metadata["source_url"] = rec.SourceURL

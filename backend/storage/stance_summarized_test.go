@@ -142,3 +142,66 @@ func TestGetStanceTensions(t *testing.T) {
 	require.Equal(t, []core.StanceTension{{FactID: fB, OtherFactText: "promised X", Reason: "walked back"}}, tensions[fB])
 	require.Empty(t, tensions[fC])
 }
+
+// TestListStancesPendingRefresh: a stance with two or more facts and a
+// membership after summarized_at is listed, the most recent first; a
+// singleton and a summarized stance are not. GetStanceDocument loads one
+// stance by id.
+func TestListStancesPendingRefresh(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	truncateFanoutTables(t, storer)
+
+	personID, _, err := storer.AddPerson(ctx, "Pending Refresh")
+	require.NoError(t, err)
+	insertFact := func(text string) int64 {
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			"INSERT INTO facts (fact_text) VALUES ($1) RETURNING id", text).Scan(&id))
+		return id
+	}
+	mkStance := func(label string, factIDs ...int64) int64 {
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+			PersonID: personID, ClusterLabel: label, ClusterEmbedding: makeUnitEmbedding(0),
+			Summary: "placeholder", KeyFactIDs: factIDs, FactCount: len(factIDs),
+		})
+		require.NoError(t, err)
+		for _, f := range factIDs {
+			require.NoError(t, storer.AddFactToStance(ctx, id, f))
+		}
+		return id
+	}
+
+	older := mkStance("older", insertFact("o1"), insertFact("o2"))
+	_, err = storer.pool.Exec(ctx,
+		"UPDATE stance_document_facts SET added_at = NOW() - INTERVAL '1 day' WHERE stance_document_id = $1", older)
+	require.NoError(t, err)
+	mkStance("singleton", insertFact("s1"))
+	f1, f2 := insertFact("d1"), insertFact("d2")
+	done := mkStance("summarized", f1, f2)
+	require.NoError(t, storer.UpdateStanceMetadata(ctx, done, "summarized", "summary", []int64{f1, f2}))
+	newer := mkStance("newer", insertFact("n1"), insertFact("n2"))
+
+	ids, err := storer.ListStancesPendingRefresh(ctx, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{newer, older}, ids)
+
+	ids, err = storer.ListStancesPendingRefresh(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, []int64{newer}, ids, "the limit keeps the most recent")
+
+	require.NoError(t, storer.AddFactToStance(ctx, done, insertFact("d3")))
+	ids, err = storer.ListStancesPendingRefresh(ctx, 10)
+	require.NoError(t, err)
+	require.Equal(t, []int64{done, newer, older}, ids, "a new membership makes a summarized stance pending again")
+
+	doc, err := storer.GetStanceDocument(ctx, newer)
+	require.NoError(t, err)
+	require.Equal(t, personID, doc.PersonID)
+	require.Equal(t, "newer", doc.ClusterLabel)
+	require.Equal(t, 2, doc.FactCount)
+	require.Len(t, doc.ClusterEmbedding, len(makeUnitEmbedding(0)))
+	_, err = storer.GetStanceDocument(ctx, 999999)
+	require.Error(t, err)
+}

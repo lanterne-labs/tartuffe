@@ -237,6 +237,58 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 	return docs, nil
 }
 
+// GetStanceDocument returns one stance document by id.
+func (s *PostgresStorer) GetStanceDocument(ctx context.Context, id int64) (core.StanceDocument, error) {
+	var doc core.StanceDocument
+	var vec pgvector.Vector
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, person_id, cluster_label, COALESCE(label_en,''), cluster_embedding,
+		       summary, COALESCE(summary_en,''), key_fact_ids, fact_count, last_updated_at, created_at
+		FROM stance_documents
+		WHERE id = $1`, id).Scan(
+		&doc.ID, &doc.PersonID, &doc.ClusterLabel, &doc.LabelEn, &vec,
+		&doc.Summary, &doc.SummaryEn, &doc.KeyFactIDs, &doc.FactCount, &doc.LastUpdatedAt, &doc.CreatedAt,
+	)
+	if err != nil {
+		return core.StanceDocument{}, fmt.Errorf("loading stance document %d: %w", id, err)
+	}
+	doc.ClusterEmbedding = vec.Slice()
+	return doc, nil
+}
+
+// ListStancesPendingRefresh returns up to limit stances whose label and
+// summary have not absorbed all their facts: a membership was added after
+// summarized_at, or the stance was never summarized. A stance with one fact
+// is left out: its label comes from the assignment and its summary is the
+// fact text. The stances with the most recent pending membership come first.
+func (s *PostgresStorer) ListStancesPendingRefresh(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sd.id
+		FROM stance_documents sd
+		JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
+		GROUP BY sd.id, sd.summarized_at
+		HAVING count(*) >= 2
+		   AND (sd.summarized_at IS NULL OR max(sdf.added_at) > sd.summarized_at)
+		ORDER BY max(sdf.added_at) DESC, sd.id
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing stances pending refresh: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning stance pending refresh: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating stances pending refresh: %w", err)
+	}
+	return ids, nil
+}
+
 // ShortlistStancesByNearestFact ranks a person's stances by their nearest member
 // fact's distance to factEmbedding and returns the top-K, each with its
 // factsPerStance nearest member fact texts (closest first). Duplicate facts are

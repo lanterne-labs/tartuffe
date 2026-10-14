@@ -80,6 +80,7 @@ func TestE2EWithSampleData(t *testing.T) {
 	if factCount == 0 || partyCount == 0 || humanCount == 0 {
 		t.Fatalf("Mission failed: missing data in database (Facts: %d, Parties: %d, Deputies: %d)", factCount, partyCount, humanCount)
 	}
+	requireEveryFactHasAStance(t, pool)
 
 	// Print Party Extracts (Verifying majority derivation via structure)
 	t.Log("\n--- Derived Party Vote Extracts ---")
