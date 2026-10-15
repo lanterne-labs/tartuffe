@@ -504,10 +504,20 @@ func cliRuns(t *testing.T, count string) int {
 const seatLimitedNoReset = `{"type":"result","subtype":"success","is_error":true,"result":"Claude usage limit reached","usage":{}}`
 
 // expireSkip ends the skip window of the seat in r, as if RetryAt passed.
+// expireSkip ends the skip of the Team endpoint of r, and the down time of
+// its seats: the window of the seat is over.
 func expireSkip(r *Routing) {
 	r.skips.mu.Lock()
 	r.skips.m[EndpointClaudeTeam].until = time.Now().Add(-time.Second)
 	r.skips.mu.Unlock()
+	e := r.Endpoints[EndpointClaudeTeam].(*ClaudeTeamEndpoint)
+	e.mu.Lock()
+	for i := range e.seats {
+		if !e.seats[i].down.IsZero() {
+			e.seats[i].down = time.Now().Add(-time.Second)
+		}
+	}
+	e.mu.Unlock()
 }
 
 func TestChatSkipsTheSeatUntilRetryAt(t *testing.T) {
@@ -593,20 +603,34 @@ func TestChatZeroRetryAtSkipsForAFixedTime(t *testing.T) {
 	}
 }
 
+// A route without a fallback always calls the endpoint: the routing keeps no
+// skip. The endpoint itself keeps its seat down until the reset, so the
+// second call fails at once without a process; after the window, the call
+// runs the seat again.
 func TestChatWithoutFallbackDoesNotSkip(t *testing.T) {
 	c, _ := chatTestClient(t, 200, `{}`)
 	bin, count := countingClaude(t, seatLimitedNoReset, 1)
-	setRouting(t, ClaudeRouting(EndpointClaudeTeam, teamEndpoint(bin), "claude-sonnet-5-5"))
+	r := ClaudeRouting(EndpointClaudeTeam, teamEndpoint(bin), "claude-sonnet-5-5")
+	setRouting(t, r)
 	req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskDetect}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
+		if i == 2 {
+			e := r.Endpoints[EndpointClaudeTeam].(*ClaudeTeamEndpoint)
+			e.mu.Lock()
+			e.seats[0].down = time.Now().Add(-time.Second)
+			e.mu.Unlock()
+		}
 		_, _, err := c.Chat(context.Background(), req)
 		var ue *UnavailableError
-		if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeTeam {
-			t.Fatalf("call %d: want the seat limit, got %v", i+1, err)
+		if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeTeam || ue.RetryAt.IsZero() {
+			t.Fatalf("call %d: want the seat limit with its retry time, got %v", i+1, err)
 		}
 	}
 	if n := cliRuns(t, count); n != 2 {
-		t.Fatalf("the seat ran %d times, want 2: a route without a fallback always calls it", n)
+		t.Fatalf("the seat ran %d times, want 2: the call in the window fails without a process, the call after it runs the seat", n)
+	}
+	if r.skips.m[EndpointClaudeTeam] != nil {
+		t.Fatal("a route without a fallback must keep no skip")
 	}
 }
 

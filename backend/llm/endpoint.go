@@ -15,7 +15,7 @@ import (
 
 // Endpoint is an AI endpoint that answers a call instead of the
 // OpenAI-compatible server of the Client: the Message Batches API
-// (ClaudeBatchEndpoint), the claude CLI on a Team seat (ClaudeTeamEndpoint)
+// (ClaudeBatchEndpoint), the claude CLI on the Team seats (ClaudeTeamEndpoint)
 // or the sync Messages API (ClaudeAPIEndpoint). opts are the Claude settings
 // of the route of the call; Client.Chat gets them from the active routing.
 // UsageReport gives the tokens and the cost per task and model.
@@ -485,11 +485,13 @@ var claudeTeamOpusTasks = []Task{TaskOccurrence, TaskDedupBatch, TaskEntityDedup
 // profileRouting builds the routing of a profile, with the endpoints that it
 // needs:
 //   - local: every task to the local endpoint.
-//   - claude-team: every task to one Team seat (CLAUDE_TEAM_PLAN_TOKENS and
-//     CLAUDE_TEAM_PLAN_SEAT), with the claude CLI on the PATH. When
+//   - claude-team: every task to the Team seats (CLAUDE_TEAM_PLAN_TOKENS; a
+//     seat at its usage limit gives way to the next), with the claude CLI on
+//     the PATH. When
 //     ANTHROPIC_API_KEY is set, every route has the sync API as its
-//     fallback, with the same model and effort: a seat at its usage limit
-//     then overflows to the API, up to claudeAPIRunCapUSD per run.
+//     fallback, with the same model and effort: when every seat is at its
+//     usage limit, the call overflows to the API, up to claudeAPIRunCapUSD
+//     per run.
 func profileRouting(profile string) (*Routing, error) {
 	switch profile {
 	case profileLocal:

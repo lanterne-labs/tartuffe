@@ -51,7 +51,7 @@ func readFile(t *testing.T, path string) string {
 }
 
 func teamEndpoint(bin string) *ClaudeTeamEndpoint {
-	return &ClaudeTeamEndpoint{Seat: "alice", Binary: bin, token: "tok-alice"}
+	return &ClaudeTeamEndpoint{Binary: bin, seats: []claudeSeat{{name: "alice", token: "tok-alice"}}}
 }
 
 // teamOpts are the Claude settings of the calls of the team tests.
@@ -306,7 +306,8 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 		stderr      string
 		code        int
 		unavailable bool
-		noRetryAt   bool // a reset text that does not parse
+		retryDelay  bool // no reset text: RetryAt is now + claudeRetryDelay
+		noRetryAt   bool // a reset text that does not parse: zero RetryAt
 		contains    []string
 		once        string // a text that the error holds 1 time
 	}{
@@ -315,7 +316,8 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 			stdout:      `{"type":"result","subtype":"success","is_error":true,"result":"API Error: 429","api_error_status":429,"usage":{}}`,
 			code:        1,
 			unavailable: true,
-			contains:    []string{`seat "alice"`},
+			retryDelay:  true,
+			contains:    []string{`seat "alice"`, "every claude seat (1) is at its usage limit"},
 		},
 		{
 			name:        "limit text",
@@ -346,7 +348,7 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 			code:        1,
 			unavailable: true,
 			noRetryAt:   true,
-			contains:    []string{"it resets Monday"},
+			contains:    []string{"it resets Monday", "the first resets at a time that is not known"},
 		},
 		{
 			name:     "context limit",
@@ -398,6 +400,7 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			bin, _ := fakeClaude(t, c.stdout, c.stderr, c.code)
 			e := teamEndpoint(bin)
+			start := time.Now()
 			_, _, err := teamCall(e, context.Background(), req)
 			if err == nil {
 				t.Fatal("want an error")
@@ -411,6 +414,14 @@ func TestClaudeTeamEndpoint_Errors(t *testing.T) {
 			}
 			if c.unavailable && (ue.Endpoint != EndpointClaudeTeam || ue.RetryAt.IsZero() != c.noRetryAt) {
 				t.Fatalf("a seat limit must name the team endpoint, and a retry time unless its reset does not parse: %+v", ue)
+			}
+			if c.noRetryAt {
+				if down := e.seats[0].down; down.Before(start.Add(unknownResetSkip)) || down.After(time.Now().Add(unknownResetSkip)) {
+					t.Fatalf("an unparsed reset must put the seat down for unknownResetSkip, got %v", down)
+				}
+			}
+			if c.retryDelay && (ue.RetryAt.Before(start.Add(claudeRetryDelay)) || ue.RetryAt.After(time.Now().Add(claudeRetryDelay))) {
+				t.Fatalf("an unknown reset must retry after claudeRetryDelay, got %v", ue.RetryAt)
 			}
 			for _, s := range c.contains {
 				if !strings.Contains(err.Error(), s) {
@@ -505,7 +516,7 @@ func TestClaudeTeamEndpoint_RefusesBeforeTheCLI(t *testing.T) {
 		msgs []ChatMessage
 		want string
 	}{
-		{"struct literal", func(e *ClaudeTeamEndpoint) { e.token = "" }, opts, user, "no token"},
+		{"struct literal", func(e *ClaudeTeamEndpoint) { e.seats = nil }, opts, user, "no seat"},
 		{"no effort", func(*ClaudeTeamEndpoint) {}, ClaudeOptions{Model: "m"}, user, "has no effort"},
 		{"last turn assistant", func(*ClaudeTeamEndpoint) {}, opts, []ChatMessage{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}, `last turn is "assistant"`},
 	}
@@ -619,18 +630,31 @@ cat "$d/stdout"
 	}
 }
 
-func TestClaudeSeatToken(t *testing.T) {
-	if got, err := claudeSeatToken(" alice = tok-a ,bob=tok=b", "bob"); err != nil || got != "tok=b" {
-		t.Fatalf("got %q, %v", got, err)
+// The seats keep the order of the list; a first seat moves to the front and
+// the seats before it follow the others.
+func TestClaudeSeats(t *testing.T) {
+	for _, c := range []struct {
+		first string
+		want  []claudeSeat
+	}{
+		{"", []claudeSeat{{name: "alice", token: "tok-a"}, {name: "bob", token: "tok=b"}, {name: "carol", token: "tok-c"}}},
+		{"alice", []claudeSeat{{name: "alice", token: "tok-a"}, {name: "bob", token: "tok=b"}, {name: "carol", token: "tok-c"}}},
+		{"bob", []claudeSeat{{name: "bob", token: "tok=b"}, {name: "carol", token: "tok-c"}, {name: "alice", token: "tok-a"}}},
+		{"carol", []claudeSeat{{name: "carol", token: "tok-c"}, {name: "alice", token: "tok-a"}, {name: "bob", token: "tok=b"}}},
+	} {
+		got, err := claudeSeats(" alice = tok-a ,bob=tok=b, carol=tok-c", c.first)
+		if err != nil || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("first %q: got %v, %v; want %v", c.first, got, err, c.want)
+		}
 	}
 	for _, c := range []struct{ tokens, seat, want string }{
 		{"alice=tok-a", "bob", `seat "bob" is not in`},
-		{"alice=tok-a,tok-b", "alice", "entry 2 is not name=token"},
+		{"alice=tok-a,tok-b", "", "entry 2 is not name=token"},
 		{"alice=tok-a,=tok-b", "alice", "entry 2 is not name=token"},
-		{"alice=", "alice", "entry 1 is not name=token"},
+		{"alice=", "", "entry 1 is not name=token"},
 		{"alice=tok-a,alice=tok-b", "alice", `seat "alice" is in the list 2 times`},
 	} {
-		_, err := claudeSeatToken(c.tokens, c.seat)
+		_, err := claudeSeats(c.tokens, c.seat)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%q / %q: error %v, want %q", c.tokens, c.seat, err, c.want)
 			continue
@@ -650,8 +674,8 @@ func TestNewClaudeTeamEndpointFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Seat != "bob" || e.token != "tok-b" || e.Binary != bin {
-		t.Fatalf("seat %q, binary %q", e.Seat, e.Binary)
+	if want := []string{"bob", "alice"}; !reflect.DeepEqual(e.SeatNames(), want) || e.seats[0].token != "tok-b" || e.Binary != bin {
+		t.Fatalf("seats %q, binary %q", e.SeatNames(), e.Binary)
 	}
 	t.Setenv("PATH", t.TempDir())
 	if _, err := NewClaudeTeamEndpointFromEnv(); err == nil {
@@ -663,12 +687,192 @@ func TestNewClaudeTeamEndpointFromEnv(t *testing.T) {
 		t.Fatal("an unknown seat must fail")
 	}
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "")
-	if _, err := NewClaudeTeamEndpointFromEnv(); err == nil {
-		t.Fatal("no seat must fail")
+	e, err = NewClaudeTeamEndpointFromEnv()
+	if want := []string{"alice", "bob"}; err != nil || !reflect.DeepEqual(e.SeatNames(), want) {
+		t.Fatalf("no first seat: seats %q, %v; want the order of the list", e.SeatNames(), err)
 	}
-	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "bob")
 	t.Setenv("CLAUDE_TEAM_PLAN_TOKENS", "")
 	if _, err := NewClaudeTeamEndpointFromEnv(); err == nil {
 		t.Fatal("no tokens must fail")
+	}
+}
+
+const teamLimit = `{"type":"result","subtype":"success","is_error":true,"result":"You've hit your limit · resets 3pm (Europe/Paris)","usage":{}}`
+
+// rotatingClaude writes a fake CLI that answers with the result limit on the
+// seats whose token is in a "limited" file of dir (one token per line), and
+// with teamSuccess on the others. It appends the token of each call to
+// "tokens" in dir.
+func rotatingClaude(t *testing.T, limit string) (bin, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	for name, content := range map[string]string{"stdout": teamSuccess, "limit": limit, "limited": ""} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+d=%q
+cat > /dev/null
+echo "$CLAUDE_CODE_OAUTH_TOKEN" >> "$d/tokens"
+if grep -qx "$CLAUDE_CODE_OAUTH_TOKEN" "$d/limited"; then cat "$d/limit"; exit 1; fi
+cat "$d/stdout"
+`, dir)
+	bin = filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, dir
+}
+
+// A seat at its usage limit gives way to the next seat in the same call, and
+// stays down until its reset. When every seat is down, the call fails with
+// ErrUnavailable and the earliest reset; a seat whose reset passed serves
+// again.
+func TestClaudeTeamEndpoint_Rotation(t *testing.T) {
+	bin, dir := rotatingClaude(t, teamLimit)
+	e := &ClaudeTeamEndpoint{Binary: bin, seats: []claudeSeat{
+		{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}, {name: "carol", token: "tok-carol"},
+	}}
+	req := ChatRequest{MaxTokens: 10, ResponseFormat: &ResponseFormat{Type: "json_object"}, Messages: []ChatMessage{{Role: "user", Content: "q"}}}
+	tokens := func() []string {
+		b, err := os.ReadFile(filepath.Join(dir, "tokens"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Split(strings.TrimSpace(string(b)), "\n")
+	}
+	limit := func(tokens ...string) {
+		if err := os.WriteFile(filepath.Join(dir, "limited"), []byte(strings.Join(tokens, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	limit("tok-alice")
+	if text, _, err := teamCall(e, context.Background(), req); err != nil || text != `{"ok":true}` {
+		t.Fatalf("call 1: %q, %v; want the reply of bob", text, err)
+	}
+	if want := []string{"tok-alice", "tok-bob"}; !reflect.DeepEqual(tokens(), want) {
+		t.Fatalf("call 1 used %q, want alice then bob", tokens())
+	}
+	if _, _, err := teamCall(e, context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"tok-alice", "tok-bob", "tok-bob"}; !reflect.DeepEqual(tokens(), want) {
+		t.Fatalf("call 2 used %q, want bob only: alice is down", tokens())
+	}
+
+	limit("tok-alice", "tok-bob", "tok-carol")
+	e.seats[0].down = time.Now().Add(-time.Second) // the reset of alice passed
+	_, _, err := teamCall(e, context.Background(), req)
+	var ue *UnavailableError
+	if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeTeam {
+		t.Fatalf("call 3: %v; want every seat down", err)
+	}
+	if want := []string{"tok-alice", "tok-bob", "tok-bob", "tok-alice", "tok-bob", "tok-carol"}; !reflect.DeepEqual(tokens(), want) {
+		t.Fatalf("call 3 used %q, want alice, bob and carol one time each", tokens())
+	}
+	for _, s := range []string{`seat "carol" reached its usage limit; it resets 3pm (Europe/Paris)`, "every claude seat (3) is at its usage limit; the first resets at"} {
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("error %q has no %q", err, s)
+		}
+	}
+	if strings.Contains(err.Error(), "tok-") {
+		t.Fatalf("the error shows a token: %v", err)
+	}
+	earliest := e.seats[0]
+	for _, seat := range e.seats[1:] {
+		if seat.down.Before(earliest.down) {
+			earliest = seat
+		}
+	}
+	if earliest.reset.IsZero() || !earliest.reset.Equal(earliest.down) || !ue.RetryAt.Equal(earliest.reset) {
+		t.Fatalf("RetryAt %v, want the earliest reset %+v", ue.RetryAt, earliest)
+	}
+	// No seat is up: the call fails without a process.
+	_, _, err = teamCall(e, context.Background(), req)
+	if !errors.As(err, &ue) || !strings.HasPrefix(err.Error(), "LLM unavailable: every claude seat (3)") || len(tokens()) != 6 {
+		t.Fatalf("call 4: %v with %d processes; want every seat down and no process", err, len(tokens()))
+	}
+
+	limit()
+	e.seats[1].down = time.Now().Add(-time.Second) // the reset of bob passed
+	if _, _, err := teamCall(e, context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if got := tokens(); got[len(got)-1] != "tok-bob" || len(got) != 7 {
+		t.Fatalf("call 5 used %q, want bob", got)
+	}
+	if !strings.Contains(e.UsageReport(), "calls=5 failed=2") || !strings.Contains(e.UsageReport(), "seats (alice,bob,carol)") {
+		t.Fatalf("report:\n%s", e.UsageReport())
+	}
+}
+
+// A limit whose reset is not after now (a Unix time in the past, or no reset
+// text) puts the seat down for claudeRetryDelay, and the call moves to the
+// next seat.
+func TestClaudeTeamEndpoint_RotationPastReset(t *testing.T) {
+	for _, limit := range []string{
+		`{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1760000000","usage":{}}`,
+		`{"type":"result","subtype":"success","is_error":true,"result":"API Error: 429","api_error_status":429,"usage":{}}`,
+	} {
+		bin, dir := rotatingClaude(t, limit)
+		if err := os.WriteFile(filepath.Join(dir, "limited"), []byte("tok-alice\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		e := &ClaudeTeamEndpoint{Binary: bin, seats: []claudeSeat{{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}}}
+		start := time.Now()
+		if _, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}}); err != nil {
+			t.Fatalf("%s: %v; want the reply of bob", limit, err)
+		}
+		if got := readFile(t, filepath.Join(dir, "tokens")); got != "tok-alice\ntok-bob\n" {
+			t.Fatalf("%s: used %q, want alice then bob", limit, got)
+		}
+		if down := e.seats[0].down; down.Before(start.Add(claudeRetryDelay)) || down.After(time.Now().Add(claudeRetryDelay)) {
+			t.Fatalf("%s: alice is down until %v, want now + claudeRetryDelay", limit, down)
+		}
+	}
+}
+
+// Concurrent calls on a limited first seat all succeed on the next seat; the
+// limited seat runs at most MaxProcs processes (the calls in flight when the
+// first limit comes back).
+func TestClaudeTeamEndpoint_RotationConcurrent(t *testing.T) {
+	bin, dir := rotatingClaude(t, teamLimit)
+	if err := os.WriteFile(filepath.Join(dir, "limited"), []byte("tok-alice\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &ClaudeTeamEndpoint{Binary: bin, MaxProcs: 4, seats: []claudeSeat{{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}}}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	tokens := strings.Split(strings.TrimSpace(readFile(t, filepath.Join(dir, "tokens"))), "\n")
+	alice, bob := 0, 0
+	for _, tok := range tokens {
+		switch tok {
+		case "tok-alice":
+			alice++
+		case "tok-bob":
+			bob++
+		default:
+			t.Fatalf("unknown token in %q", tokens)
+		}
+	}
+	if alice < 1 || alice > 4 || bob != 8 {
+		t.Fatalf("alice ran %d times, bob %d; want 1 to 4 and 8", alice, bob)
 	}
 }

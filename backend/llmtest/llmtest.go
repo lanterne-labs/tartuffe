@@ -17,9 +17,9 @@
 // spend of that store. The cases of a golden run concurrently (Group,
 // Parallel; ForEach for an eval) to fill a batch.
 //
-// -llm-claude-team=<model> sends every call through `claude -p` on one seat
-// of the Team plan instead (CLAUDE_TEAM_PLAN_TOKENS and CLAUDE_TEAM_PLAN_SEAT
-// of .env), with the same effort rule. The cases run concurrently too; the
+// -llm-claude-team=<model> sends every call through `claude -p` on the seats
+// of the Team plan instead (CLAUDE_TEAM_PLAN_TOKENS of .env; a seat at its
+// usage limit gives way to the next), with the same effort rule. The cases run concurrently too; the
 // endpoint limits the number of CLI processes. It cannot go with -llm-claude.
 //
 // -llm-claude-models=task=model[:effort],... changes the model, and the
@@ -58,7 +58,7 @@ var (
 	// The batch doc recommends 1h; the pilot measures 5m too.
 	claudeCacheTTL = flag.String("llm-claude-cache-ttl", "1h", "LLM goldens: TTL of the Claude cache breakpoints: 5m, 1h or off")
 
-	claudeTeamFlag = flag.String("llm-claude-team", "", "LLM goldens: Claude model; every call goes through `claude -p` on the Team seat of CLAUDE_TEAM_PLAN_SEAT")
+	claudeTeamFlag = flag.String("llm-claude-team", "", "LLM goldens: Claude model; every call goes through `claude -p` on the Team seats of CLAUDE_TEAM_PLAN_TOKENS")
 
 	claudeModelsFlag = flag.String("llm-claude-models", "", "LLM goldens: per-task Claude models on top of -llm-claude or -llm-claude-team: task=model[:effort],task=model[:effort]")
 )
@@ -74,7 +74,7 @@ var (
 )
 
 // Claude reports whether the run sends its calls to Claude: through the
-// batches (-llm-claude) or through the CLI on a Team seat (-llm-claude-team).
+// batches (-llm-claude) or through the CLI on the Team seats (-llm-claude-team).
 // Both runs need concurrent cases.
 func Claude() bool { return *claudeFlag != "" || *claudeTeamFlag != "" }
 
@@ -175,7 +175,7 @@ func Setup(t *testing.T) {
 		}
 		routing = llm.ClaudeRouting(llm.EndpointClaudeTeam, e, *claudeTeamFlag)
 		t.Cleanup(func() {
-			t.Logf("claude team usage (seat %s, cumulative in this test binary):\n%s", e.Seat, e.UsageReport())
+			t.Logf("claude team usage (cumulative in this test binary):\n%s", e.UsageReport())
 		})
 	case *claudeFlag != "":
 		e, err := claudeBatchEndpoint()
@@ -231,8 +231,8 @@ func claudeBatchEndpoint() (*llm.ClaudeBatchEndpoint, error) {
 	return claudeEndpoint, claudeErr
 }
 
-// newClaudeTeamEndpoint builds the one Team-seat endpoint of the test
-// binary: the process limit and the usage span every test.
+// newClaudeTeamEndpoint builds the one Team endpoint of the test binary: the
+// process limit, the seats that are down and the usage span every test.
 func newClaudeTeamEndpoint() (*llm.ClaudeTeamEndpoint, error) {
 	claudeTeamOnce.Do(func() {
 		claudeTeamEndpoint, claudeTeamErr = llm.NewClaudeTeamEndpointFromEnv()

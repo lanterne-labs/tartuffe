@@ -18,24 +18,23 @@ import (
 )
 
 // ClaudeTeamEndpoint answers each call with one `claude -p` process (the
-// Claude Code CLI) on one seat of the Team plan. The seat pays no token price:
-// it has a usage limit per time window. When the seat reaches its limit, a
-// call fails with ErrUnavailable. The endpoint never changes to another seat:
-// the seat changes only when the operator changes CLAUDE_TEAM_PLAN_SEAT.
+// Claude Code CLI) on a seat of the Team plan. A seat pays no token price: it
+// has a usage limit per time window. A call goes to the first seat of
+// CLAUDE_TEAM_PLAN_TOKENS that is not at its limit. When a seat reaches its
+// limit, the seat is down until its reset time and the call moves to the next
+// seat. When every seat is down, the call fails with ErrUnavailable and the
+// earliest reset time.
 type ClaudeTeamEndpoint struct {
-	// Seat names the seat in CLAUDE_TEAM_PLAN_TOKENS. The errors name it.
-	Seat string
 	// Binary is the path of the CLI to run.
 	Binary string
 	// MaxProcs is the maximum number of CLI processes at one time. 0 means
 	// defaultClaudeTeamProcs.
 	MaxProcs int
 
-	token string // the OAuth token of the seat; never logged
-
 	semOnce  sync.Once
 	sem      chan struct{}
 	mu       sync.Mutex
+	seats    []claudeSeat // in the order of use; the tokens are never logged
 	usage    map[usageKey]*TaskUsage
 	prefixes prefixCache
 }
@@ -51,19 +50,27 @@ const claudeTeamSystemPrompt = "Follow the instructions of the user message."
 // maxOutputSnippet is the length of the stderr or stdout part of an error.
 const maxOutputSnippet = 500
 
-// NewClaudeTeamEndpointFromEnv builds the endpoint of the seat that
-// CLAUDE_TEAM_PLAN_SEAT names. CLAUDE_TEAM_PLAN_TOKENS holds the named tokens
-// of the seats: name=token,name=token. The claude CLI must be on the PATH.
+// claudeSeat is one seat of the Team plan. A seat at its usage limit is down
+// until down: its reset time, or now + unknownResetSkip when the CLI gives a
+// reset text that does not parse (reset is then zero, and the error of the
+// endpoint gives a zero RetryAt, as before the seats).
+type claudeSeat struct {
+	name  string
+	token string    // the OAuth token of the seat; never logged
+	down  time.Time // zero: the seat serves calls; else: the seat is down until this time
+	reset time.Time // the reset time to report while the seat is down; zero: not known
+}
+
+// NewClaudeTeamEndpointFromEnv builds the endpoint of the seats of
+// CLAUDE_TEAM_PLAN_TOKENS: name=token,name=token, in the order of use. When
+// CLAUDE_TEAM_PLAN_SEAT names a seat, the order starts at that seat. The
+// claude CLI must be on the PATH.
 func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
-	seat := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_PLAN_SEAT"))
-	if seat == "" {
-		return nil, errors.New("CLAUDE_TEAM_PLAN_SEAT environment variable not set")
-	}
 	tokens := os.Getenv("CLAUDE_TEAM_PLAN_TOKENS")
 	if strings.TrimSpace(tokens) == "" {
 		return nil, errors.New("CLAUDE_TEAM_PLAN_TOKENS environment variable not set")
 	}
-	token, err := claudeSeatToken(tokens, seat)
+	seats, err := claudeSeats(tokens, strings.TrimSpace(os.Getenv("CLAUDE_TEAM_PLAN_SEAT")))
 	if err != nil {
 		return nil, err
 	}
@@ -71,30 +78,47 @@ func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude team endpoint: %w", err)
 	}
-	return &ClaudeTeamEndpoint{Seat: seat, Binary: bin, token: token}, nil
+	return &ClaudeTeamEndpoint{Binary: bin, seats: seats}, nil
 }
 
-// claudeSeatToken parses name=token,name=token and returns the token of
-// seat. The errors give the position of a bad entry, never its text: the
-// text holds a token.
-func claudeSeatToken(tokens, seat string) (string, error) {
-	seats := map[string]string{}
+// claudeSeats parses name=token,name=token into the seats, in the order of
+// the list. A first seat ("" for none) moves to the front; the seats before it
+// follow the others. The errors give the position of a bad entry, never its
+// text: the text holds a token.
+func claudeSeats(tokens, first string) ([]claudeSeat, error) {
+	var seats []claudeSeat
+	names := map[string]bool{}
 	for i, entry := range strings.Split(tokens, ",") {
 		name, token, ok := strings.Cut(entry, "=")
 		name, token = strings.TrimSpace(name), strings.TrimSpace(token)
 		if !ok || name == "" || token == "" {
-			return "", fmt.Errorf("CLAUDE_TEAM_PLAN_TOKENS: entry %d is not name=token", i+1)
+			return nil, fmt.Errorf("CLAUDE_TEAM_PLAN_TOKENS: entry %d is not name=token", i+1)
 		}
-		if _, dup := seats[name]; dup {
-			return "", fmt.Errorf("CLAUDE_TEAM_PLAN_TOKENS: seat %q is in the list 2 times", name)
+		if names[name] {
+			return nil, fmt.Errorf("CLAUDE_TEAM_PLAN_TOKENS: seat %q is in the list 2 times", name)
 		}
-		seats[name] = token
+		names[name] = true
+		seats = append(seats, claudeSeat{name: name, token: token})
 	}
-	token, ok := seats[seat]
-	if !ok {
-		return "", fmt.Errorf("CLAUDE_TEAM_PLAN_SEAT: seat %q is not in CLAUDE_TEAM_PLAN_TOKENS", seat)
+	if first == "" {
+		return seats, nil
 	}
-	return token, nil
+	for i, seat := range seats {
+		if seat.name == first {
+			return append(seats[i:len(seats):len(seats)], seats[:i]...), nil
+		}
+	}
+	return nil, fmt.Errorf("CLAUDE_TEAM_PLAN_SEAT: seat %q is not in CLAUDE_TEAM_PLAN_TOKENS", first)
+}
+
+// SeatNames returns the names of the seats, in the order of use. The names
+// never change: no lock.
+func (t *ClaudeTeamEndpoint) SeatNames() []string {
+	names := make([]string, len(t.seats))
+	for i := range t.seats {
+		names[i] = t.seats[i].name
+	}
+	return names
 }
 
 // claudeCLIResult is the JSON object that `claude -p --output-format json`
@@ -110,15 +134,15 @@ type claudeCLIResult struct {
 	Usage          ClaudeUsage `json:"usage"`
 }
 
-// Call runs one CLI process for the call and waits for its reply. Only an
-// endpoint from NewClaudeTeamEndpointFromEnv has a token: a struct literal
-// fails here.
+// Call runs one CLI process for the call on a seat that is not at its limit
+// and waits for its reply. Only an endpoint from NewClaudeTeamEndpointFromEnv
+// has seats: a struct literal fails here.
 func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts ClaudeOptions) (string, *ChatResponse, error) {
-	if t.token == "" {
-		return "", nil, fmt.Errorf("claude seat %q: no token; use NewClaudeTeamEndpointFromEnv", t.Seat)
+	if len(t.seats) == 0 {
+		return "", nil, errors.New("claude team: no seat; use NewClaudeTeamEndpointFromEnv")
 	}
 	if opts.Effort == "" {
-		return "", nil, fmt.Errorf("claude seat %q: task %q has no effort", t.Seat, req.Task)
+		return "", nil, fmt.Errorf("claude team: task %q has no effort", req.Task)
 	}
 	creq, err := NewClaudeRequest(req, opts)
 	if err != nil {
@@ -147,29 +171,119 @@ func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts Cla
 	select {
 	case t.sem <- struct{}{}:
 	case <-ctx.Done():
-		return "", nil, fmt.Errorf("claude seat %q: %w", t.Seat, ctx.Err())
+		return "", nil, fmt.Errorf("claude team: %w", ctx.Err())
 	}
 	defer func() { <-t.sem }()
 
 	t.mu.Lock()
 	u := countTaskCall(&t.usage, req.Task, creq.Model)
 	t.mu.Unlock()
-	res, err := t.run(ctx, creq, system, prompt)
-	var text string
-	if err == nil {
-		t.mu.Lock()
-		u.Usage = u.Usage.Add(res.Usage)
-		u.CostUSD += res.TotalCostUSD
-		t.mu.Unlock()
-		text, err = t.answer(res, req.wantsJSON())
-	}
+	text, res, err := t.callSeats(ctx, creq, system, prompt, req.wantsJSON())
+	t.mu.Lock()
+	u.Usage = u.Usage.Add(res.Usage)
+	u.CostUSD += res.TotalCostUSD
 	if err != nil {
-		t.mu.Lock()
 		u.Failed++
-		t.mu.Unlock()
+	}
+	t.mu.Unlock()
+	if err != nil {
 		return "", nil, err
 	}
 	return text, claudeChatResponse(text, res.Usage), nil
+}
+
+// callSeats runs the call on the first seat that is not down. A seat that
+// reaches its usage limit is down until its reset time, and the call moves to
+// the next seat. When every seat is down, the call fails with the
+// UnavailableError of the earliest reset. The result is the one of the last
+// process, zero when none ran.
+func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, system, prompt string, wantJSON bool) (string, claudeCLIResult, error) {
+	var res claudeCLIResult
+	var last *UnavailableError // the limit error of the last seat
+	// One try per seat: a seat that fails here is down until a time after
+	// now (answer), so pickSeat never returns it again in this call.
+	for range t.seats {
+		seat, earliest, ok := t.pickSeat(time.Now())
+		if !ok {
+			return "", res, t.unavailable(earliest, last)
+		}
+		var err error
+		res, err = t.run(ctx, seat, creq, system, prompt)
+		if err != nil {
+			return "", res, err
+		}
+		text, err := t.answer(seat, res, wantJSON)
+		if !errors.As(err, &last) {
+			return text, res, err
+		}
+		now := time.Now()
+		down := last.RetryAt
+		if down.IsZero() {
+			down = now.Add(unknownResetSkip)
+		}
+		t.seatDown(seat.name, down, last.RetryAt, now)
+	}
+	if _, earliest, ok := t.pickSeat(time.Now()); !ok {
+		return "", res, t.unavailable(earliest, last)
+	}
+	return "", res, last // a seat came back during the call; the next call uses it
+}
+
+// pickSeat returns the first seat that is not down at now. When every seat is
+// down, ok is false and earliest is the seat that comes back first.
+func (t *ClaudeTeamEndpoint) pickSeat(now time.Time) (seat claudeSeat, earliest claudeSeat, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range t.seats {
+		seat := &t.seats[i]
+		if seat.down.IsZero() || !now.Before(seat.down) {
+			seat.down, seat.reset = time.Time{}, time.Time{}
+			return *seat, claudeSeat{}, true
+		}
+		if earliest.down.IsZero() || seat.down.Before(earliest.down) {
+			earliest = *seat
+		}
+	}
+	return claudeSeat{}, earliest, false
+}
+
+// unavailable returns the error of a call when every seat is down, and
+// earliest is the seat that comes back first: its reset is the RetryAt (zero
+// when not known). cause is the limit error of the last seat that the call
+// tried, nil when the call tried none.
+func (t *ClaudeTeamEndpoint) unavailable(earliest claudeSeat, cause *UnavailableError) error {
+	first := "at " + earliest.reset.Format(time.RFC3339)
+	if earliest.reset.IsZero() {
+		first = "at a time that is not known"
+	}
+	var err error
+	if cause == nil {
+		err = fmt.Errorf("%w: every claude seat (%d) is at its usage limit; the first resets %s",
+			ErrUnavailable, len(t.seats), first)
+	} else {
+		err = fmt.Errorf("%w; every claude seat (%d) is at its usage limit; the first resets %s",
+			cause.Err, len(t.seats), first)
+	}
+	return &UnavailableError{Endpoint: EndpointClaudeTeam, RetryAt: earliest.reset, Err: err}
+}
+
+// seatDown marks the seat named name as down until down, with reset as its
+// reset time (zero when not known), and logs the first seat that is up at
+// now ("" when every seat is down).
+func (t *ClaudeTeamEndpoint) seatDown(name string, down, reset, now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	next := ""
+	for i := range t.seats {
+		seat := &t.seats[i]
+		if seat.name == name {
+			seat.down, seat.reset = down, reset
+		} else if next == "" && (seat.down.IsZero() || !now.Before(seat.down)) {
+			next = seat.name
+		}
+	}
+	log.Warn().Str("seat", name).Time("down_until", down).Str("next_seat", next).
+		Msg("claude seat: usage limit reached; the seat is down until its reset")
 }
 
 // cachePrefix returns the learned static prefix of the prompt of creq, or "".
@@ -207,11 +321,11 @@ func (t *ClaudeTeamEndpoint) cachePrefix(task Task, creq ClaudeRequest) string {
 // open cannot then hold a cancelled call.
 const claudeTeamWaitDelay = 5 * time.Second
 
-// run starts the CLI with system as its system prompt and prompt on stdin,
-// and decodes its result. The flags keep the local context of the CLI out of
-// the call: without them, the CLI sent about 100,000 tokens of tools,
+// run starts the CLI on seat with system as its system prompt and prompt on
+// stdin, and decodes its result. The flags keep the local context of the CLI
+// out of the call: without them, the CLI sent about 100,000 tokens of tools,
 // settings and memory per call; with them, about 560 tokens.
-func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system, prompt string) (claudeCLIResult, error) {
+func (t *ClaudeTeamEndpoint) run(ctx context.Context, seat claudeSeat, creq ClaudeRequest, system, prompt string) (claudeCLIResult, error) {
 	cmd := exec.CommandContext(ctx, t.Binary,
 		"-p",
 		"--output-format", "json",
@@ -225,7 +339,7 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system
 		"--disable-slash-commands",
 		"--exclude-dynamic-system-prompt-sections",
 	)
-	cmd.Env = t.childEnv(creq.MaxTokens)
+	cmd.Env = childEnv(seat.token, creq.MaxTokens)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.WaitDelay = claudeTeamWaitDelay
 	var stdout, stderr bytes.Buffer
@@ -233,7 +347,7 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 	if err := ctx.Err(); err != nil {
-		return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w", t.Seat, err)
+		return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w", seat.name, err)
 	}
 	output := func() string {
 		return fmt.Sprintf("(stderr: %s; stdout: %s)", outputSnippet(stderr.String()), outputSnippet(stdout.String()))
@@ -241,19 +355,19 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system
 	var res claudeCLIResult
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil || res.Type != "result" {
 		if runErr != nil {
-			return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w %s", t.Seat, runErr, output())
+			return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w %s", seat.name, runErr, output())
 		}
-		return claudeCLIResult{}, fmt.Errorf("claude seat %q: stdout is not a result object %s", t.Seat, output())
+		return claudeCLIResult{}, fmt.Errorf("claude seat %q: stdout is not a result object %s", seat.name, output())
 	}
 	if runErr != nil && !res.IsError {
-		return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w with a success result %s", t.Seat, runErr, output())
+		return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w with a success result %s", seat.name, runErr, output())
 	}
 	return res, nil
 }
 
 // childEnv returns the environment of the CLI: the parent environment
-// without the variables of the CLI and of the seats, plus the seat token, the
-// output limit and 2 fixed variables of the CLI. DISABLE_AUTOUPDATER=1 stops
+// without the variables of the CLI and of the seats, plus the seat token
+// token, the output limit and 2 fixed variables of the CLI. DISABLE_AUTOUPDATER=1 stops
 // the CLI from updating the pinned binary. CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 // stops its telemetry and other traffic that a call does not need. A parent
 // variable can change the bill or leak the token:
@@ -262,7 +376,7 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, creq ClaudeRequest, system
 //   - ANTHROPIC_BASE_URL sends the seat token to another server.
 //   - CLAUDECODE and CLAUDE_CODE_ENTRYPOINT or _SSE_PORT connect the child to
 //     a parent session.
-func (t *ClaudeTeamEndpoint) childEnv(maxTokens int) []string {
+func childEnv(token string, maxTokens int) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -273,7 +387,7 @@ func (t *ClaudeTeamEndpoint) childEnv(maxTokens int) []string {
 		env = append(env, kv)
 	}
 	return append(env,
-		"CLAUDE_CODE_OAUTH_TOKEN="+t.token,
+		"CLAUDE_CODE_OAUTH_TOKEN="+token,
 		"CLAUDE_CODE_MAX_OUTPUT_TOKENS="+strconv.Itoa(maxTokens),
 		"DISABLE_AUTOUPDATER=1",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
@@ -304,31 +418,35 @@ func claudeTeamPrompt(messages []claudeMessage) (string, error) {
 	return b.String(), nil
 }
 
-// answer returns the text of a result, or the error of the CLI. The wording
-// of the usage-limit message of the CLI is not documented: the endpoint
-// assumes HTTP status 429 or a text that matches claudeLimitText.
-func (t *ClaudeTeamEndpoint) answer(res claudeCLIResult, wantJSON bool) (string, error) {
+// answer returns the text of a result of seat, or the error of the CLI. The
+// wording of the usage-limit message of the CLI is not documented: the
+// endpoint assumes HTTP status 429 or a text that matches claudeLimitText. A
+// usage limit gives an UnavailableError whose RetryAt is the reset time of
+// the seat: the parsed reset text, now + claudeRetryDelay when the text gives
+// no reset or a reset that is not after now (a Unix time in the past), or
+// zero when the reset text does not parse. RetryAt is thus never in the
+// past: callSeats never tries the seat again in the same call.
+func (t *ClaudeTeamEndpoint) answer(seat claudeSeat, res claudeCLIResult, wantJSON bool) (string, error) {
 	if res.IsError || res.Subtype != "success" {
 		if (res.APIErrorStatus != nil && *res.APIErrorStatus == 429) || claudeLimitText.MatchString(res.Result) {
-			// No reset text: retry after claudeRetryDelay. A reset text that
-			// does not parse: RetryAt stays zero, and the run does not wait.
-			reset, at := claudeReset(res.Result, time.Now())
+			now := time.Now()
+			reset, at := claudeReset(res.Result, now)
 			switch {
-			case reset == "":
-				at = time.Now().Add(claudeRetryDelay)
-			case at.IsZero():
-				log.Warn().Str("seat", t.Seat).Str("reset", reset).
-					Msg("claude seat: the reset time does not parse; the run will not wait for it")
+			case reset != "" && at.IsZero():
+				log.Warn().Str("seat", seat.name).Str("reset", reset).
+					Msg("claude seat: the reset time does not parse")
+			case !at.After(now):
+				at = now.Add(claudeRetryDelay)
 			}
-			err := fmt.Errorf("%w: claude seat %q reached its usage limit: %s", ErrUnavailable, t.Seat, outputSnippet(res.Result))
+			err := fmt.Errorf("%w: claude seat %q reached its usage limit: %s", ErrUnavailable, seat.name, outputSnippet(res.Result))
 			if reset != "" {
-				err = fmt.Errorf("%w: claude seat %q reached its usage limit; it resets %s", ErrUnavailable, t.Seat, reset)
+				err = fmt.Errorf("%w: claude seat %q reached its usage limit; it resets %s", ErrUnavailable, seat.name, reset)
 			}
 			return "", &UnavailableError{Endpoint: EndpointClaudeTeam, RetryAt: at, Err: err}
 		}
-		return "", fmt.Errorf("claude seat %q: %s error: %s", t.Seat, res.Subtype, outputSnippet(res.Result))
+		return "", fmt.Errorf("claude seat %q: %s error: %s", seat.name, res.Subtype, outputSnippet(res.Result))
 	}
-	return claudeAnswer(fmt.Sprintf("claude seat %q", t.Seat), res.StopReason, res.Result, res.Usage.OutputTokens, wantJSON)
+	return claudeAnswer(fmt.Sprintf("claude seat %q", seat.name), res.StopReason, res.Result, res.Usage.OutputTokens, wantJSON)
 }
 
 var (
@@ -423,11 +541,12 @@ func claudeReset(text string, now time.Time) (reset string, at time.Time) {
 }
 
 // UsageReport returns one line per task and model: calls, failures, tokens
-// and cost. The cost is the list price that the CLI reports; the seat does not pay it.
+// and cost. The cost is the list price that the CLI reports; the seats do not
+// pay it.
 func (t *ClaudeTeamEndpoint) UsageReport() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return usageReport(t.usage, false, "list price as the CLI reports it; the seat does not pay it")
+	return usageReport(t.usage, false, "list price as the CLI reports it; the seats ("+strings.Join(t.SeatNames(), ",")+") do not pay it")
 }
 
 // outputSnippet returns the first maxOutputSnippet bytes of s.

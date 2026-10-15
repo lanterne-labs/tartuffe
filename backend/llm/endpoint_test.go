@@ -172,12 +172,12 @@ func TestProfileRouting(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "")
-	if _, err := profileRouting(profileClaudeTeam); err == nil {
-		t.Fatal("claude-team without CLAUDE_TEAM_PLAN_SEAT must fail")
+	if _, err := profileRouting(profileClaudeTeam); err != nil {
+		t.Fatalf("claude-team without CLAUDE_TEAM_PLAN_SEAT must use the seats in the order of the list: %v", err)
 	}
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "bob")
 	if _, err := profileRouting(profileClaudeTeam); err == nil {
-		t.Fatal("claude-team with a seat that has no token must fail")
+		t.Fatal("claude-team with a first seat that has no token must fail")
 	}
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "alice")
 	t.Setenv("PATH", t.TempDir())

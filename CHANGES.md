@@ -2591,6 +2591,23 @@ Replaced the self-hosted LiteLLM sidecar (a ~1 GB Python service, the largest th
   parent's context and runs its scorecard first. `llmtest.Group` wraps the cases in one
   subtest to keep both valid.
 
+## Claude Team seats rotate at the usage limit (2026-10-14, mirror-5ye)
+
+- `ClaudeTeamEndpoint` holds every seat of `CLAUDE_TEAM_PLAN_TOKENS`, in the order of the
+  list. A call goes to the first seat that is not down. A seat at its usage limit is down
+  until its reset time (the parsed reset text, or 5 min when the text gives none), and the
+  call moves to the next seat in the same call. The call fails with `ErrUnavailable` only
+  when every seat is down; its `RetryAt` is the earliest reset, so the nightly waits for the
+  first seat that comes back, and the API fallback takes over only then.
+- `CLAUDE_TEAM_PLAN_SEAT` is now optional: it names the seat to use first, and the order
+  wraps around. Without it, the order is the one of the list.
+- The endpoint remembers a limit: a call on a seat that is down fails at once, without a
+  process, until the reset. A reset text that does not parse keeps a zero `RetryAt` (the
+  routing skips the endpoint for 15 min, the run without a fallback stops); the seat is down
+  for the same 15 min.
+- Lesson: `git diff` in this repo renders through difftastic. A patch for `git apply` needs
+  `git diff --no-ext-diff`; a difftastic file does not apply and the work is lost.
+
 ## Goldens run on Claude through the CLI on one Team seat (2026-10-10, mirror-rxl.19)
 
 - `llm.ClaudeTeamEndpoint` answers each call with one `claude -p` process on one seat of the

@@ -45,9 +45,9 @@ var errPrimaryBreakerOpen = errors.New("primary LLM endpoint skipped: circuit br
 var ErrUnavailable = errors.New("LLM unavailable")
 
 // UnavailableError is the error of a Claude endpoint that cannot serve calls
-// before RetryAt: a Team seat at its usage limit, or a failed batch API call.
-// A zero RetryAt means that the reset time is not known (a reset text that
-// does not parse). Err wraps ErrUnavailable. WaitForEndpoint reads it to wait
+// before RetryAt: every Team seat at its usage limit, or a failed batch API
+// call. A zero RetryAt means that the reset time is not known (a reset text
+// that does not parse). Err wraps ErrUnavailable. WaitForEndpoint reads it to wait
 // for the endpoint that failed. A local outage has no UnavailableError: the
 // wait probes the local endpoint.
 type UnavailableError struct {

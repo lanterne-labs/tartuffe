@@ -98,8 +98,8 @@ test-short:
 #   make llm-goldens LLM_THINK=occurrence,stance-analyze,detect   (tasks in backend/llm/task.go)
 #   make llm-goldens LLM_CLAUDE=claude-haiku-5-5   (Claude Message Batches; ANTHROPIC_API_KEY in .env;
 #                    LLM_CLAUDE_MAX_USD=25 caps the spend, LLM_CLAUDE_CACHE_TTL=5m|1h|off)
-#   make llm-goldens LLM_CLAUDE_TEAM=claude-haiku-5-5   (claude -p on one Team seat; CLAUDE_TEAM_PLAN_TOKENS
-#                    and CLAUDE_TEAM_PLAN_SEAT in .env; not with LLM_CLAUDE)
+#   make llm-goldens LLM_CLAUDE_TEAM=claude-haiku-5-5   (claude -p on the Team seats of CLAUDE_TEAM_PLAN_TOKENS
+#                    in .env; a seat at its usage limit gives way to the next; not with LLM_CLAUDE)
 #   make llm-goldens LLM_CLAUDE_TEAM=claude-sonnet-5-5 LLM_CLAUDE_MODELS=audit=claude-opus-5-5:high,verify=claude-opus-5-5
 #                    (model, and effort low|medium|high when given, per task on top of LLM_CLAUDE or LLM_CLAUDE_TEAM)
 # Packages run one at a time (one GPU slot). The full log is in

@@ -126,8 +126,9 @@ FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the
 
 # LLM routing (backend/llm/endpoint.go)
 LLM_PROFILE=local                # local (default) or claude-team; the profile routes each LLM task to an endpoint
-CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs
-CLAUDE_TEAM_PLAN_SEAT=a          # the seat that claude-team uses; the claude CLI must be on the PATH
+CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs, in the order of use:
+                                 # a seat at its usage limit gives way to the next; the claude CLI must be on the PATH
+CLAUDE_TEAM_PLAN_SEAT=a          # optional: the seat to use first (the order then wraps around)
 ANTHROPIC_API_KEY=sk-ant-...     # Message Batches API key; only the goldens use it (make llm-goldens LLM_CLAUDE=...)
 
 # Search providers — assembled into a chain (tried in this order; whichever key is set is added).
