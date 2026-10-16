@@ -44,7 +44,7 @@
       "targets": [
         {
           "expr": "go_goroutines",
-          "legendFormat": "Goroutines",
+          "legendFormat": "{{job}} Goroutines",
           "refId": "A"
         }
       ]
@@ -84,22 +84,22 @@
       "targets": [
         {
           "expr": "go_memstats_heap_alloc_bytes",
-          "legendFormat": "Heap Alloc",
+          "legendFormat": "{{job}} Heap Alloc",
           "refId": "A"
         },
         {
           "expr": "go_memstats_heap_inuse_bytes",
-          "legendFormat": "Heap In Use",
+          "legendFormat": "{{job}} Heap In Use",
           "refId": "B"
         },
         {
           "expr": "go_memstats_sys_bytes",
-          "legendFormat": "Sys",
+          "legendFormat": "{{job}} Sys",
           "refId": "C"
         },
         {
           "expr": "go_memstats_stack_inuse_bytes",
-          "legendFormat": "Stack In Use",
+          "legendFormat": "{{job}} Stack In Use",
           "refId": "D"
         }
       ]
@@ -139,7 +139,7 @@
       "targets": [
         {
           "expr": "rate(go_gc_duration_seconds_sum[5m])",
-          "legendFormat": "GC Duration Rate",
+          "legendFormat": "{{job}} GC Duration Rate",
           "refId": "A"
         }
       ]
@@ -179,7 +179,7 @@
       "targets": [
         {
           "expr": "rate(go_gc_duration_seconds_count[5m])",
-          "legendFormat": "GC Cycles/s",
+          "legendFormat": "{{job}} GC Cycles/s",
           "refId": "A"
         }
       ]
@@ -219,7 +219,7 @@
       "targets": [
         {
           "expr": "rate(process_cpu_seconds_total[5m])",
-          "legendFormat": "CPU Seconds/s",
+          "legendFormat": "{{job}} CPU Seconds/s",
           "refId": "A"
         }
       ]
@@ -259,12 +259,12 @@
       "targets": [
         {
           "expr": "process_resident_memory_bytes",
-          "legendFormat": "Resident Memory",
+          "legendFormat": "{{job}} Resident Memory",
           "refId": "A"
         },
         {
           "expr": "process_virtual_memory_bytes",
-          "legendFormat": "Virtual Memory",
+          "legendFormat": "{{job}} Virtual Memory",
           "refId": "B"
         }
       ]
@@ -312,6 +312,7 @@
       "targets": [
         {
           "expr": "process_open_fds",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ]
@@ -351,6 +352,7 @@
       "targets": [
         {
           "expr": "go_threads",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ]
@@ -390,6 +392,7 @@
       "targets": [
         {
           "expr": "process_max_fds",
+          "legendFormat": "{{job}}",
           "refId": "A"
         }
       ]
@@ -429,12 +432,12 @@
       "targets": [
         {
           "expr": "go_memstats_heap_objects",
-          "legendFormat": "Heap Objects",
+          "legendFormat": "{{job}} Heap Objects",
           "refId": "A"
         },
         {
           "expr": "go_memstats_mallocs_total - go_memstats_frees_total",
-          "legendFormat": "Live Objects",
+          "legendFormat": "{{job}} Live Objects",
           "refId": "B"
         }
       ]

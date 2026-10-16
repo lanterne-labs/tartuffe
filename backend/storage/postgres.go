@@ -68,7 +68,7 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 
 // Close flushes what this process counted and closes the connection pool.
 // Every process ends through here, so a CLI job's judgement counts reach the
-// database even though only the web process is scraped.
+// database, which keeps the all-time totals.
 func (s *PostgresStorer) Close() {
 	if s.pool == nil {
 		return
@@ -108,9 +108,10 @@ func scanInt64Set(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]
 
 // StartMetricsCollectors runs the Prometheus gauge loops (pool statistics
 // every 15 s, the "every fact has a stance" invariant every 5 min) until ctx
-// is cancelled. Only the web process is scraped, so only it calls this; a
-// collector in every CLI, cron and test process was wasted queries and, in
-// tests, a deadlock source against TRUNCATE.
+// is cancelled. Only the web process calls this: the gauges read the
+// database, so one exporter is enough. A collector in every CLI, cron and
+// test process was wasted queries and, in tests, a deadlock source against
+// TRUNCATE.
 func (s *PostgresStorer) StartMetricsCollectors(ctx context.Context) {
 	metrics.StartPoolStatsCollector(ctx, s.pool, 15*time.Second)
 	metrics.StartStanceInvariantCollector(ctx, s.pool, 5*time.Minute)

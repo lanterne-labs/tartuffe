@@ -40,11 +40,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "Total Facts Extracted",
+      "title": "Facts Extracted (range)",
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(digital_mirror_facts_extracted_total)",
+          "expr": "round(sum(increase(digital_mirror_facts_extracted_total[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -73,11 +74,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "Total Contradictions",
+      "title": "Contradictions (range)",
       "type": "stat",
       "targets": [
         {
-          "expr": "digital_mirror_contradictions_detected_total",
+          "expr": "round(sum(increase(digital_mirror_contradictions_detected_total[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -106,11 +108,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "News Articles Processed",
+      "title": "News Articles Processed (range)",
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(digital_mirror_news_articles_processed_total)",
+          "expr": "round(sum(increase(digital_mirror_news_articles_processed_total[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -139,11 +142,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "Tweets Processed",
+      "title": "Tweets Processed (range)",
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(digital_mirror_tweets_processed_total)",
+          "expr": "round(sum(increase(digital_mirror_tweets_processed_total[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -245,7 +249,8 @@
       "type": "gauge",
       "targets": [
         {
-          "expr": "sum(digital_mirror_facts_extracted_total{is_canonical=\"true\"}) / sum(digital_mirror_facts_extracted_total)",
+          "expr": "sum(increase(digital_mirror_facts_extracted_total{is_canonical=\"true\"}[$__range])) / sum(increase(digital_mirror_facts_extracted_total[$__range]))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -397,7 +402,8 @@
       "type": "gauge",
       "targets": [
         {
-          "expr": "sum(digital_mirror_news_articles_processed_total{status=\"parsed\"}) / (sum(digital_mirror_news_articles_processed_total{status=\"parsed\"}) + sum(digital_mirror_news_articles_processed_total{status=\"parsed_no_facts\"}))",
+          "expr": "sum(increase(digital_mirror_news_articles_processed_total{status=\"parsed\"}[$__range])) / (sum(increase(digital_mirror_news_articles_processed_total{status=\"parsed\"}[$__range])) + sum(increase(digital_mirror_news_articles_processed_total{status=\"parsed_no_facts\"}[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]
@@ -566,7 +572,8 @@
       "type": "gauge",
       "targets": [
         {
-          "expr": "sum(digital_mirror_tweets_processed_total{status=\"parsed\"}) / (sum(digital_mirror_tweets_processed_total{status=\"parsed\"}) + sum(digital_mirror_tweets_processed_total{status=\"parsed_no_facts\"}))",
+          "expr": "sum(increase(digital_mirror_tweets_processed_total{status=\"parsed\"}[$__range])) / (sum(increase(digital_mirror_tweets_processed_total{status=\"parsed\"}[$__range])) + sum(increase(digital_mirror_tweets_processed_total{status=\"parsed_no_facts\"}[$__range])))",
+          "instant": true,
           "refId": "A"
         }
       ]

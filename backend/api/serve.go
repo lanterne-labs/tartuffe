@@ -12,7 +12,6 @@ import (
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 )
 
@@ -33,8 +32,7 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 	storer.StartMetricsCollectors(ctx)
 
 	// Start internal metrics server on a separate port
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", promhttp.HandlerFor(metrics.Registry, promhttp.HandlerOpts{}))
+	metricsMux := metrics.NewServeMux()
 	metricsMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := storer.Ping(r.Context()); err != nil {
@@ -51,15 +49,8 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 	})
 
 	go func() {
-		// Bind the IPv6 wildcard (dual-stack) rather than loopback: the
-		// observability service's Prometheus scrapes us at
-		// mirror.host.internal:9090, and the host's private network is
-		// IPv6-only (the *.host.internal DNS returns AAAA records). A
-		// 127.0.0.1 bind is unreachable cross-service. The port has no public
-		// domain, so it stays private to the host project network.
-		metricsAddr := "[::]:" + cfg.MetricsPort
 		log.Info().Str("port", cfg.MetricsPort).Msg("Starting internal metrics server")
-		if err := http.ListenAndServe(metricsAddr, metricsMux); err != nil {
+		if err := metrics.ListenAndServe(cfg.MetricsPort, metricsMux); err != nil {
 			log.Error().Err(err).Msg("Metrics server failed")
 		}
 	}()

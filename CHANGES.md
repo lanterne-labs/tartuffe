@@ -2,6 +2,20 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-16: Prometheus scrapes the nightly while it runs (mirror-zvy)
+
+- `dm pipeline daily` serves `/metrics` on `METRICS_PORT`, as the web service does.
+  Prometheus scrapes `daily-pipeline.host.internal:9090`, so the fact, news, tweet and LLM
+  counters of a run show as the events happen. Before, the code assumed the cron process was
+  too short to scrape, and these counters were never exported: a run lasts up to 20 h.
+- Every LLM chat call counts once in `llm_requests_total`, in `Client.Chat`: a routed call (the
+  Claude endpoints) under the model of its route. Before, routed calls counted only in the
+  contradiction detector, which also counted each local detect call twice.
+- The counters of a process restart at 0. The total and ratio panels use `increase()` over the
+  range of the dashboard, not the raw counter.
+- Lesson: check a premise such as "this process cannot be scraped" against the facts (the
+  duration of a run) before you build a workaround on it.
+
 ## 2026-10-11: Three prompt rules from the golden review; the complaint judge reads the source quotes (mirror-rxl.22)
 
 - Bundler gate: a contradiction belongs to the stance whose subject is the broken commitment or

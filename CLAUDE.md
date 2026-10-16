@@ -155,8 +155,8 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
 Three services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
-- **`mirror-cron`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (e.g. `0 4 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. Shares the same env vars as `mirror` except no HTTP `PORT`/`METRICS_PORT`.
-- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` every 15s. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
+- **`daily pipeline`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (`0 1 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. A run lasts until its deadline (23:00 Europe/Paris) at most. It serves Prometheus metrics on `METRICS_PORT` (default 9090) while it runs. Shares the same env vars as `mirror` except no HTTP `PORT`.
+- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `daily-pipeline.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
 
 To trigger the pipeline manually (locally or on the cron service): `./dm pipeline daily`.
 

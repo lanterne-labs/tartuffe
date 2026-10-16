@@ -438,8 +438,6 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		return results
 	}
 
-	timer := metrics.NewLLMTimer("chat", d.client.Model)
-
 	// Build the pairs section of the prompt
 	var pairsText strings.Builder
 	for i, pair := range pairs {
@@ -461,7 +459,6 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 		MaxTokens:   contradictionMaxTokens,
 		Task:        llm.TaskDetect,
 	})
-	timer.ObserveDuration(err)
 	if err != nil {
 		log.Error().Err(err).Int("pairs", len(pairs)).Msg("Batch contradiction check API call failed")
 		for i := range results {

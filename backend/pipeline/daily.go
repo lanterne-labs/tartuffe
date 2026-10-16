@@ -213,8 +213,8 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 	}
 
 	// The judgement counters this run produces are flushed as it goes, not
-	// only at the end: the cron process is not scraped, and a run that dies
-	// mid-night (an outage) would otherwise take the night's counts with it.
+	// only at the end: a run that dies mid-night (an outage, a deploy) would
+	// otherwise take the night's counts with it.
 	metrics.StartDecisionFlusher(ctx, storer, time.Minute)
 
 	// Targets for the queue-scoped plugins: the search_queue contents (the
@@ -441,10 +441,10 @@ func RunDaily(ctx context.Context, storer *storage.PostgresStorer, notifier *ale
 		}
 	}
 
-	// Persist a durable per-run summary for Grafana (Postgres datasource). The
-	// cron process is ephemeral so Prometheus cannot scrape it; this row is
-	// the source of truth for pipeline-run history. Best-effort — a write
-	// failure is logged but never fails the run.
+	// Persist a durable per-run summary for Grafana (Postgres datasource).
+	// Prometheus has the counters of a run only while its process lives; this
+	// row is the source of truth for pipeline-run history. Best-effort — a
+	// write failure is logged but never fails the run.
 	if !opts.Smoke {
 		// The LLM wait and the deadline cuts are notes, not errors: they do
 		// not count in StepErrors or change the status.

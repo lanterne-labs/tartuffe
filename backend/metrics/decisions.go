@@ -12,9 +12,9 @@ import (
 // Every judgement call the pipeline makes is counted here: which way each
 // gate and judge went, so "how often does this happen?" is a query instead
 // of a guess. The counts are accumulated in memory and flushed to the
-// database, because most judgements happen in the cron process, which
-// Prometheus cannot scrape; the web service exports the database totals
-// (see StartDecisionCollector).
+// database, so the all-time totals survive the end of each process (a run, a
+// deploy); the web service exports the database totals (see
+// StartDecisionCollector).
 const (
 	StageEntityGate      = "entity_gate"      // a new subject entity: kept or rejected as out of scope
 	StageFactDedupe      = "fact_dedupe"      // a new fact against the person's similar facts
@@ -197,8 +197,8 @@ type DecisionReader interface {
 }
 
 // StartDecisionCollector refreshes the decision gauges from the database
-// every interval until ctx is cancelled. Only the scraped (web) process runs
-// it; the counts it exports are those every process wrote.
+// every interval until ctx is cancelled. Only the web process runs it; the
+// counts it exports are those every process wrote.
 func StartDecisionCollector(ctx context.Context, reader DecisionReader, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)

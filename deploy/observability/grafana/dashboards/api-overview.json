@@ -224,7 +224,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "digital_mirror_http_requests_in_flight",
+          "expr": "digital_mirror_http_requests_in_flight{job=\"mirror\"}",
           "refId": "A"
         }
       ]
@@ -277,7 +277,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "digital_mirror_sse_connections_active",
+          "expr": "digital_mirror_sse_connections_active{job=\"mirror\"}",
           "refId": "A"
         }
       ]

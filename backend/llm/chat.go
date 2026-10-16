@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
+	"digital-mirror/backend/metrics"
 
 	"github.com/rs/zerolog/log"
 )
@@ -31,11 +34,16 @@ type Client struct {
 // know it. The active routing (SetRouting) chooses the endpoint of each call
 // from req.Task: on a route that is not local, that endpoint answers the
 // call instead, with the Claude settings of the route, and the fallback of
-// the route answers when that endpoint is unavailable (Routing.call).
+// the route answers when that endpoint is unavailable (Routing.call). A
+// routed call counts in the LLM request metrics under the model of its route,
+// as DoRequest counts a local call.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, *ChatResponse, error) {
 	r := activeRouting()
 	if rt := r.Route(req.Task); rt.Endpoint != EndpointLocal {
-		return r.call(ctx, req, rt)
+		start := time.Now()
+		content, resp, err := r.call(ctx, req, rt)
+		metrics.ObserveLLMRequest("chat", rt.Model, time.Since(start), err)
+		return content, resp, err
 	}
 	if req.Model == "" {
 		req.Model = c.Model

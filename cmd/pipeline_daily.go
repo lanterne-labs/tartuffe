@@ -6,6 +6,7 @@ import (
 
 	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/pipeline"
 
 	"github.com/joho/godotenv"
@@ -49,6 +50,17 @@ func runPipelineDaily(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 	defer storer.Close()
+
+	// Prometheus scrapes the run while it lasts (daily-pipeline.host.internal
+	// on the host), so the counters of the night show as the events happen. A
+	// failed listener costs the metrics of the run, not the run.
+	go func() {
+		port := metricsPort()
+		log.Info().Str("port", port).Msg("Starting internal metrics server")
+		if err := metrics.ListenAndServe(port, metrics.NewServeMux()); err != nil {
+			log.Error().Err(err).Msg("Metrics server failed; the run goes on without its metrics")
+		}
+	}()
 
 	notifier := alerting.NewTelegramNotifierFromEnv()
 	return pipeline.RunDaily(ctx, storer, notifier, pipeline.RunOptions{Smoke: pipelineDailySmoke})

@@ -58,10 +58,14 @@ func executeServe(cmd *cobra.Command, args []string) error {
 	}
 	defer storer.Close()
 
-	metricsPort := "9090"
-	if v := os.Getenv("METRICS_PORT"); v != "" {
-		metricsPort = v
-	}
+	return api.Serve(ctx, storer, api.Config{Port: port, MetricsPort: metricsPort()})
+}
 
-	return api.Serve(ctx, storer, api.Config{Port: port, MetricsPort: metricsPort})
+// metricsPort is the port of the internal /metrics server: METRICS_PORT, or
+// 9090. The web service and the daily pipeline serve on it.
+func metricsPort() string {
+	if v := os.Getenv("METRICS_PORT"); v != "" {
+		return v
+	}
+	return "9090"
 }

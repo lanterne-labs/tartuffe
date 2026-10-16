@@ -119,11 +119,12 @@
         "y": 8
       },
       "id": 3,
-      "title": "Total LLM Requests",
+      "title": "LLM Requests (range)",
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(digital_mirror_llm_requests_total) by (status)",
+          "expr": "round(sum(increase(digital_mirror_llm_requests_total[$__range])) by (status))",
+          "instant": true,
           "legendFormat": "{{status}}",
           "refId": "A"
         }
