@@ -101,6 +101,17 @@ func TestClaudeReply_Text(t *testing.T) {
 	if err != nil || got != `{"a":1}` {
 		t.Fatalf("text = %q, %v; want the JSON without the fence and the thinking", got, err)
 	}
+	// Run 126: a note after the object made every parser of the callers fail.
+	noted := "{\"reasoning\": \"same topic\", \"assigned_topic_index\": 1}\n\nCorrection: the topic is number 1 in the list, so the assignment is correct."
+	if got, err := reply("end_turn", "text", noted).Text(true); err != nil || got != `{"reasoning": "same topic", "assigned_topic_index": 1}` {
+		t.Fatalf("text = %q, %v; want the JSON object without the note", got, err)
+	}
+	if got, err := reply("end_turn", "text", "```json\n{\"a\":1}\n```\nDone.").Text(true); err != nil || got != `{"a":1}` {
+		t.Fatalf("text = %q, %v; want the JSON object without the fence and the note", got, err)
+	}
+	if got, err := reply("end_turn", "text", "Here: {\"a\":1}").Text(true); err != nil || got != `Here: {"a":1}` {
+		t.Fatalf("text = %q, %v; want a reply that does not start with JSON untouched", got, err)
+	}
 	if got, err := reply("end_turn", "text", "  plain ").Text(false); err != nil || got != "  plain " {
 		t.Fatalf("text = %q, %v; want the text untouched", got, err)
 	}

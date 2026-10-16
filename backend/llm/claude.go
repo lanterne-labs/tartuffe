@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 // The Claude endpoint is the native Messages API
@@ -81,7 +83,8 @@ type ClaudeRequest struct {
 //     models (https://platform.claude.com/docs/en/build-with-claude/thinking).
 //     The votes of a judge sample at the default temperature.
 //   - ResponseFormat: Claude has no JSON mode without a schema. The prompts
-//     ask for JSON, and ClaudeReply.Text strips a code fence as Chat does.
+//     ask for JSON, and ClaudeReply.Text keeps the first JSON value of the
+//     reply (claudeAnswer).
 //   - The thinking fields of the local server (ChatTemplateKwargs,
 //     ThinkingBudgetTokens): Claude thinks adaptively at opts.Effort.
 func NewClaudeRequest(req ChatRequest, opts ClaudeOptions) (ClaudeRequest, error) {
@@ -270,8 +273,15 @@ func (r ClaudeReply) Text(wantJSON bool) (string, error) {
 }
 
 // claudeAnswer checks the stop reason of a Claude answer and returns its
-// text. source names the reply in the errors. The Message Batches API and
-// the claude CLI (ClaudeTeamEndpoint) share it.
+// text. source names the reply in the errors. The Messages API, the Message
+// Batches API and the claude CLI (ClaudeTeamEndpoint) share it.
+//
+// A JSON answer loses its code fence and keeps only its first JSON value.
+// Without a JSON mode, Claude can write a note after the object ("Correction:
+// the index is 1, so the assignment is correct."), and the parsers of the
+// callers reject text after the value. A warning logs the dropped note. An
+// answer that does not start with a JSON value stays unchanged: the parser of
+// the caller rejects it.
 func claudeAnswer(source, stopReason, text string, outputTokens int, wantJSON bool) (string, error) {
 	switch stopReason {
 	case "end_turn", "stop_sequence":
@@ -281,12 +291,33 @@ func claudeAnswer(source, stopReason, text string, outputTokens int, wantJSON bo
 		return "", fmt.Errorf("%s: stop_reason %q", source, stopReason)
 	}
 	if wantJSON {
-		text = StripJSONCodeFence(text)
+		text = firstJSONValue(source, StripJSONCodeFence(text))
 	}
 	if strings.TrimSpace(text) == "" {
 		return "", fmt.Errorf("%s: no text", source)
 	}
 	return text, nil
+}
+
+// firstJSONValue returns the first JSON value of text, and logs the text
+// after it. Text that does not start with a JSON value comes back unchanged.
+func firstJSONValue(source, text string) string {
+	dec := json.NewDecoder(strings.NewReader(text))
+	var v json.RawMessage
+	if err := dec.Decode(&v); err != nil {
+		return text
+	}
+	rest := strings.TrimSpace(text[dec.InputOffset():])
+	if rest == "" {
+		return text
+	}
+	note := rest
+	if len(note) > 300 {
+		note = note[:300] + "..."
+	}
+	log.Warn().Str("source", source).Int("dropped_bytes", len(rest)).Str("dropped", note).
+		Msg("Claude wrote text after the JSON answer; the answer keeps the JSON value only")
+	return string(v)
 }
 
 // claudeChatResponse returns the ChatResponse of a Claude answer. The prompt
