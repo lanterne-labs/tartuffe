@@ -93,9 +93,27 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		}
 		return provider.CollectFacts(ctx, h, twOpts)
 	})
+	// A target without a handle has nothing to fetch: the run says so, so a
+	// collection task done with nothing fetched is not taken for a success.
+	stats.Details = append(stats.Details, withoutHandle(targets, handles)...)
 	log.Info().Int("handles", len(handles)).Int("persons", stats.Targets).Int("tweets", stats.Items).Int("facts", stats.Facts).
 		Msg("twitter: collection completed")
 	return stats, errors.Join(discoverErr, err)
+}
+
+// withoutHandle lists, one line per target, the targets with no active handle.
+func withoutHandle(targets []plugins.Target, handles []Handle) []string {
+	has := make(map[int64]bool, len(handles))
+	for _, h := range handles {
+		has[h.PersonID] = true
+	}
+	var out []string
+	for _, t := range targets {
+		if !has[t.PersonID] {
+			out = append(out, t.Name+": no twitter handle")
+		}
+	}
+	return out
 }
 
 // collectHandles runs collect on the handles of the target persons. A failed

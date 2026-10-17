@@ -258,12 +258,14 @@ func runOne(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Opt
 		}
 		return errWaited
 	case err == nil && out.Covered:
-		logger.Info().Dur("elapsed", elapsed).Int("items", out.Items).Int("facts", out.Facts).Msg("Worker: task done")
+		logger.Info().Dur("elapsed", elapsed).Int("items", out.Items).Int("facts", out.Facts).Strs("notes", out.Details).Msg("Worker: task done")
 		metrics.CollectionTaskAttemptsTotal.WithLabelValues(task.Plugin, storage.TaskDone).Inc()
 		if idle != nil {
 			idle.FactsAdded(out.Facts)
 		}
-		return tasks.FinishCollectionTask(wctx, task.ID, storage.TaskDone, "", out.Items, out.Facts)
+		// The notes of a done task (a person without a handle) go in its
+		// last_error column, so the list says why nothing was fetched.
+		return tasks.FinishCollectionTask(wctx, task.ID, storage.TaskDone, strings.Join(out.Details, "; "), out.Items, out.Facts)
 	}
 	if idle != nil {
 		idle.FactsAdded(out.Facts)

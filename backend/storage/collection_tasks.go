@@ -136,8 +136,9 @@ func (s *PostgresStorer) HeartbeatCollectionTask(ctx context.Context, id int64) 
 var errTaskNotRunning = errors.New("the task is no longer running (cancelled, or claimed by another worker)")
 
 // FinishCollectionTask closes a running task as done or failed, with its
-// counts and, for a failure, its error. A task that is no longer running is
-// left as it is, with an error.
+// counts and its last_error: the error of a failure, or the notes of a done
+// task (a person without a handle). A task that is no longer running is left
+// as it is, with an error.
 func (s *PostgresStorer) FinishCollectionTask(ctx context.Context, id int64, status, lastError string, items, facts int) error {
 	if status != TaskDone && status != TaskFailed {
 		return fmt.Errorf("finishing collection task %d: status %q is not done or failed", id, status)

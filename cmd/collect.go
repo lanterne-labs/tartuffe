@@ -153,7 +153,7 @@ func runCollectList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%-6s %-9s %-8s %-28s %-10s %-10s %4s %6s %6s  %s\n", "ID", "STATUS", "PLUGIN", "PERSON", "FROM", "TO", "TRY", "ITEMS", "FACTS", "ERROR")
+	fmt.Printf("%-6s %-9s %-8s %-28s %-10s %-10s %4s %6s %6s  %s\n", "ID", "STATUS", "PLUGIN", "PERSON", "FROM", "TO", "TRY", "ITEMS", "FACTS", "NOTE")
 	for _, t := range tasks {
 		errText := t.LastError
 		if len(errText) > 60 {

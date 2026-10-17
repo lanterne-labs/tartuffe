@@ -14,6 +14,7 @@ import (
 	"digital-mirror/backend/categorizer"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/plugins"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -237,4 +238,13 @@ func TestCollectFactsFetchesADenseRangeWhole(t *testing.T) {
 	fetched, err := store.IsRangeFetched(ctx, handles[0].ID, from, to)
 	require.NoError(t, err)
 	assert.True(t, fetched, "the whole range is logged once every tweet is in")
+}
+
+// TestWithoutHandle: the targets with no active handle are named, so a
+// collection task done with nothing fetched says why.
+func TestWithoutHandle(t *testing.T) {
+	targets := []plugins.Target{{PersonID: 1, Name: "a"}, {PersonID: 2, Name: "b"}, {PersonID: 3, Name: "c"}}
+	handles := []Handle{{PersonID: 2, Handle: "bb"}, {PersonID: 9, Handle: "other"}}
+	assert.Equal(t, []string{"a: no twitter handle", "c: no twitter handle"}, withoutHandle(targets, handles))
+	assert.Nil(t, withoutHandle(targets[1:2], handles))
 }
