@@ -288,6 +288,33 @@ func TestApplyMergeSubgroup_AnalysisBeforeMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("deadline", func(t *testing.T) {
+		// Run 128 (2026-10-17): the phase deadline cut the analysis. Each
+		// fact after it failed too, was counted "merged unchecked", and its
+		// call was retried. The cut must stop the subgroup: no merge, no
+		// failure counted, no retry.
+		storer := newStorer()
+		ctx, cut := context.WithCancel(context.Background())
+		defer cut()
+		sm, o := newOutageManager(t, storer, func(prompt string) any {
+			if strings.Contains(prompt, analyzePrompt) {
+				cut()
+			}
+			return answers(nil)(prompt)
+		})
+		byID := map[int64]StanceDocument{1: storer.stances[1], 2: storer.stances[2]}
+		merged, n, failures, err := applyMergeSubgroup(ctx, storer, sm, 1, byID, sub)
+		if err == nil {
+			t.Fatal("want the error of the cut analysis")
+		}
+		if merged != 0 || n != 0 || failures != 0 || len(storer.merges) != 0 {
+			t.Errorf("merged=%d contradictions=%d failures=%d merges=%v: a cut merges nothing and counts no failure", merged, n, failures, storer.merges)
+		}
+		if got := o.count(analyzePrompt); got != 1 {
+			t.Errorf("analyze calls = %d, want 1: no retry after the cut", got)
+		}
+	})
+
 	t.Run("control", func(t *testing.T) {
 		storer := newStorer()
 		sm, _ := newOutageManager(t, storer, answers(nil))
@@ -488,5 +515,51 @@ func TestProcessNewFact_LabelPassUnavailable(t *testing.T) {
 	}
 	if len(storer.stances) != shortlistTopK+1 || len(storer.facts[1]) != 1 {
 		t.Errorf("stances=%d facts=%+v: nothing may be written", len(storer.stances), storer.facts[1])
+	}
+}
+
+// TestAnalyzeAcrossBatches_ParallelInBatchOrder: the batches of one analysis
+// run at the same time, and the result lists the contradictions in batch
+// order, whatever the order in which the batches finish.
+func TestAnalyzeAcrossBatches_ParallelInBatchOrder(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, maxInFlight := 0, 0
+	sm, o := newOutageManager(t, newMockStanceStorer(), func(prompt string) any {
+		mu.Lock()
+		inFlight++
+		maxInFlight = max(maxInFlight, inFlight)
+		mu.Unlock()
+		// The first key fact of the batch: the first batch answers last.
+		var first int64
+		facts := prompt[strings.Index(prompt, "\n- [ID "):]
+		_, _ = fmt.Sscanf(facts, "\n- [ID %d]", &first)
+		time.Sleep(time.Duration(200/max(first, 1)) * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return map[string]any{"reasoning": "stub", "primary_verdict": "CONTRADICTION",
+			"contradictions": []map[string]any{{"key_fact_id": first, "reason": "r"}}}
+	})
+	var facts []StanceFactInfo
+	for id := int64(1); id <= 3*keyFactBatchSize; id++ {
+		facts = append(facts, StanceFactInfo{ID: id, NormalizedFactText: fmt.Sprintf("fait %d", id)})
+	}
+	agg, err := sm.analyzeAcrossBatches(context.Background(), "résumé", facts, "nouveau fait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int64
+	for _, c := range agg.Contradictions {
+		got = append(got, c.KeyFactID)
+	}
+	want := []int64{1, keyFactBatchSize + 1, 2*keyFactBatchSize + 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) || agg.PrimaryVerdict != "CONTRADICTION" {
+		t.Errorf("contradictions = %v (%s), want %v in batch order", got, agg.PrimaryVerdict, want)
+	}
+	if maxInFlight < 2 {
+		t.Errorf("at most %d batch at one time, want the batches in parallel", maxInFlight)
+	}
+	if n := o.count(analyzePrompt); n != 2*len(want) {
+		t.Errorf("analyze calls = %d, want 2 agreeing votes per batch", n)
 	}
 }

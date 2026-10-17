@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // StanceStorer defines the storage interface for stance operations.
@@ -458,11 +459,6 @@ type aggregatedAnalysis struct {
 	Contradictions []StanceContradictionEntry // deduped by key_fact_id
 }
 
-// analyzeAcrossBatches splits keyFacts into batches of at most keyFactBatchSize
-// and calls callLLM once per batch with the same summary + new fact. Across all
-// batches the contradictions list is unioned (deduped by KeyFactID). The
-// primary verdict is CONTRADICTION if any batch returned contradictions, else
-// DUPLICATE if any batch returned DUPLICATE, else NEW_INFO.
 // AnalyzeVotes is the majority-vote count for the stance analyze judge
 // (judge #1, the only edge creator). 1 = historical single-sample behaviour.
 var AnalyzeVotes = 3
@@ -479,6 +475,21 @@ func analyzeVoteKey(r *stanceLLMResponse) string {
 	return r.PrimaryVerdict + "|" + strconv.FormatInt(r.DuplicateOf, 10) + "|" + strings.Join(ids, ",")
 }
 
+// analyzeBatchParallelism is the number of batches of one analysis that run at
+// one time. The Claude Team endpoint runs 4 CLI processes at one time
+// (llm.defaultClaudeTeamProcs); the local server serves one request at a time
+// and queues the others, well within the 300 s timeout of the client.
+const analyzeBatchParallelism = 4
+
+// analyzeAcrossBatches splits keyFacts into batches (chunkKeyFactsByBudget)
+// and calls callLLM once per batch with the same summary + new fact. The
+// batches run in parallel (analyzeBatchParallelism); the first failed batch
+// stops the others and its error is returned. The answers are aggregated in
+// batch order, so the result does not depend on the order of completion.
+// Across all batches the contradictions list is unioned (deduped by
+// KeyFactID). The primary verdict is CONTRADICTION if any batch returned
+// contradictions, else DUPLICATE if any batch returned DUPLICATE, else
+// NEW_INFO.
 func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
 	batches := chunkKeyFactsByBudget(stanceSummary, newFactText, keyFacts)
 	if len(batches) == 0 {
@@ -488,23 +499,36 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 		return &aggregatedAnalysis{PrimaryVerdict: "NEW_INFO"}, nil
 	}
 
+	resps := make([]*stanceLLMResponse, len(batches))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(analyzeBatchParallelism)
+	for batchIdx, batch := range batches {
+		g.Go(func() error {
+			// The analyze verdict is a sample, and this judge CREATES contradiction
+			// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
+			// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
+			// single-sample). Early exit keeps the usual cost at 2 calls.
+			resp, err := llm.MajorityVote(AnalyzeVotes,
+				func() (*stanceLLMResponse, error) { return sm.callLLM(gctx, stanceSummary, batch, newFactText) },
+				analyzeVoteKey,
+			)
+			if err != nil {
+				return fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
+			}
+			resps[batchIdx] = resp
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
 	agg := &aggregatedAnalysis{}
 	seen := make(map[int64]bool)
 	var hasDuplicate, hasNewInfo bool
 	var reasoningParts []string
 
-	for batchIdx, batch := range batches {
-		// The analyze verdict is a sample, and this judge CREATES contradiction
-		// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
-		// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
-		// single-sample). Early exit keeps the usual cost at 2 calls.
-		resp, err := llm.MajorityVote(AnalyzeVotes,
-			func() (*stanceLLMResponse, error) { return sm.callLLM(ctx, stanceSummary, batch, newFactText) },
-			analyzeVoteKey,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
-		}
+	for _, resp := range resps {
 		if resp.Reasoning != "" {
 			reasoningParts = append(reasoningParts, resp.Reasoning)
 		}
@@ -1345,6 +1369,10 @@ func (sm *StanceManager) callStanceJSONWithRetry(ctx context.Context, prompt str
 		content, err := sm.callJSONLLM(ctx, sys, prompt, t, stanceAnalyzeOutputTokens, llm.TaskStanceAnalyze)
 		if err != nil {
 			lastErr = fmt.Errorf("LLM call: %w", err)
+			if ctx.Err() != nil {
+				// A deadline or a cancel cut the call: a retry fails the same way.
+				return nil, lastErr
+			}
 			log.Warn().Err(err).Int("attempt", i+1).Float64("temperature", t).Msg("Stance LLM call failed; retrying")
 			continue
 		}

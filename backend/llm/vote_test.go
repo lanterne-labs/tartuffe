@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -114,6 +115,17 @@ func TestMajorityVote(t *testing.T) {
 		}
 		if calls != 2 {
 			t.Errorf("calls = %d, want 2 — no sample is drawn after the LLM went away", calls)
+		}
+	})
+
+	t.Run("a cut context ends the vote without a verdict", func(t *testing.T) {
+		calls := 0
+		_, err := MajorityVote(3, func() (string, error) {
+			calls++
+			return "", fmt.Errorf("claude team: %w", context.DeadlineExceeded)
+		}, id)
+		if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+			t.Fatalf("err = %v after %d calls; want the deadline after 1 call", err, calls)
 		}
 	})
 }

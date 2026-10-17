@@ -356,7 +356,7 @@ func MergeStancesForPerson(
 			}
 			ps.PostMergeContradictions += int64(contradictions)
 			ps.PostMergeAnalyzeFailures += int64(analyzeFailures)
-			if errors.Is(err, llm.ErrUnavailable) {
+			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
 				return ps, err
 			}
 			if err != nil {
@@ -553,10 +553,10 @@ func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, 
 //
 // The analysis runs BEFORE the merge commits: a merge deletes its source
 // stances, after which nothing tells which facts still await their
-// cross-stance analysis. When the LLM is unavailable (llm.ErrUnavailable)
-// nothing is merged or recorded and the error is returned; the subgroup is
-// proposed again by the next sweep. Any other analysis failure only skips
-// that fact's cross-stance check. A label + summary refresh that fails on an
+// cross-stance analysis. When the LLM is unavailable (llm.ErrUnavailable) or
+// ctx ends (the deadline of the phase), nothing is merged or recorded and the
+// error is returned; the subgroup is proposed again by the next sweep. Any
+// other analysis failure only skips that fact's cross-stance check. A label + summary refresh that fails on an
 // unavailable LLM after the merge committed is returned too, with the
 // counts of the committed merge. Contradictions are recorded only for the
 // facts of the srcs whose merge committed, and only against facts now in dst.
@@ -647,7 +647,8 @@ func applyMergeSubgroup(
 	// stance's other facts. Recording is idempotent on (fact_a_id, fact_b_id),
 	// so re-analyzing a pair already detected within its original stance is
 	// safe. A fact whose analysis fails for another reason than an
-	// unreachable LLM is merged without its cross-stance check (counted).
+	// unreachable LLM or a cut context is merged without its cross-stance
+	// check (counted).
 	analysisStance := StanceDocument{ID: dst.ID, PersonID: dst.PersonID, ClusterLabel: sub.Label, Summary: sub.Summary}
 	found := make(map[int64][]StanceContradictionEntry)
 	for _, src := range srcs {
@@ -659,7 +660,9 @@ func applyMergeSubgroup(
 				}
 			}
 			entries, aErr := stanceManager.verifiedContradictionsInStance(ctx, analysisStance, fact, others)
-			if errors.Is(aErr, llm.ErrUnavailable) {
+			if errors.Is(aErr, llm.ErrUnavailable) || ctx.Err() != nil {
+				// An unreachable LLM, or the deadline of the phase: nothing is
+				// merged, and the next sweep proposes the subgroup again.
 				return 0, 0, 0, fmt.Errorf("post-merge analysis of fact %d: %w", fact.ID, aErr)
 			}
 			if aErr != nil {

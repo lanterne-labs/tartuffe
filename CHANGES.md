@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-17: The stance analysis runs its batches in parallel; a cut stops the merge (mirror-yrr, mirror-v6b)
+
+- `analyzeAcrossBatches` runs up to 4 batches of one analysis at one time, and aggregates the
+  answers in batch order, so the verdict does not change. The Team endpoint runs 4 CLI
+  processes at one time, but the phases sent one call at a time: one merge into a stance of 13
+  batches took 39 min in run 128.
+- At the deadline of a phase, the post-merge analysis stops the subgroup: no merge, no
+  "merged unchecked" count. The stance call does not retry, and a majority vote ends, on a cut
+  context. Before, every remaining fact failed, counted as merged unchecked, and retried.
+- Lesson: a failure from a cut context is not a failure of the item. Treat it like
+  `llm.ErrUnavailable`: stop, record nothing, and let the next run resume.
+
 ## 2026-10-16: Prometheus scrapes the nightly while it runs (mirror-zvy)
 
 - `dm pipeline daily` serves `/metrics` on `METRICS_PORT`, as the web service does.

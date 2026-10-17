@@ -1,6 +1,9 @@
 package llm
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // MajorityVote calls once() up to `votes` times and returns a result from the
 // largest agreeing group, where agreement is defined by key(). It stops as
@@ -8,7 +11,9 @@ import "errors"
 // votes=3). A call that fails with ErrUnavailable ends the vote with that
 // error and no verdict: the samples taken before the LLM went away are a
 // reduced quorum, and the caller must record nothing so the item is judged
-// again later. Any other failed call (an unparseable answer) casts no vote; if
+// again later. A call cut by its context (a deadline, a cancel) ends the vote
+// the same way: the calls after it fail too. Any other failed call (an
+// unparseable answer) casts no vote; if
 // every call errors the last error is returned. Ties resolve to the first
 // verdict seen.
 //
@@ -29,7 +34,7 @@ func MajorityVote[T any](votes int, once func() (T, error), key func(T) string) 
 	for i := 0; i < votes; i++ {
 		v, err := once()
 		if err != nil {
-			if errors.Is(err, ErrUnavailable) {
+			if errors.Is(err, ErrUnavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				var zero T
 				return zero, err
 			}
