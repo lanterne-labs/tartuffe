@@ -476,6 +476,7 @@ func (p *Provider) bilingualSearch(ctx context.Context, target plugins.Target, b
 
 	seen := make(map[string]bool)
 	var merged []search.NewsResult
+	var failed []error
 	for _, lang := range langs {
 		callOpts := baseOpts
 		callOpts.Language = lang
@@ -484,6 +485,7 @@ func (p *Provider) bilingualSearch(ctx context.Context, target plugins.Target, b
 			// Don't fail the whole bilingual search if one language errors —
 			// surface the error only when ALL language passes failed.
 			log.Warn().Err(err).Str("target", target.Name).Str("lang", lang).Msg("news: per-language search failed; continuing with other languages")
+			failed = append(failed, fmt.Errorf("%s: %w", lang, err))
 			continue
 		}
 		for _, r := range results {
@@ -494,12 +496,14 @@ func (p *Provider) bilingualSearch(ctx context.Context, target plugins.Target, b
 			merged = append(merged, r)
 		}
 	}
-	if len(merged) == 0 && len(langs) > 0 {
-		// All language passes returned zero results (or errored). Surface as
-		// an empty result, not an error — matches the legacy SearchNews
-		// "no results" behaviour the callers already handle gracefully.
-		return nil, nil
+	if len(failed) == len(langs) && len(langs) > 0 {
+		// Every language pass failed (a quota, an outage): nothing was
+		// searched. The caller must not take this for "no results", or it
+		// would log the window as searched and never search it again.
+		return nil, errors.Join(failed...)
 	}
+	// Zero results from passes that answered is an empty result, not an
+	// error: the callers handle it as "no news".
 	return merged, nil
 }
 

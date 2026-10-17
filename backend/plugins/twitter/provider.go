@@ -97,11 +97,21 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 	}
 
 	query := "from:" + handle.Handle
-	tweets, err := p.Fetcher.FetchTweets(ctx, query, fetchOpts)
+	tweets, coveredFrom, err := p.fetchRange(ctx, query, fetchOpts, dateFrom)
 	if err != nil {
 		return result, p.extractLeftovers(ctx, handle, batchSize, opts, result,
 			fmt.Errorf("failed to fetch tweets for @%s: %w", handle.Handle, err))
 	}
+	if coveredFrom.After(dateFrom) {
+		// The range is not fully fetched: only the covered part is logged,
+		// and the rest is fetched again by a later run.
+		log.Warn().Str("handle", handle.Handle).Int("tweets", len(tweets)).
+			Str("from", dateFrom.Format("2006-01-02")).Str("covered_from", coveredFrom.Format("2006-01-02")).
+			Msg("twitter: range too dense to fetch whole; the part before covered_from stays unfetched")
+		dateFrom = coveredFrom
+	}
+	// Nothing covered (a dense last day): nothing to log.
+	logRange := dateFrom.Before(dateTo)
 
 	result.TweetsFetched = len(tweets)
 	log.Info().
@@ -171,11 +181,13 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 	if _, err := p.Storer.SaveFetchedDocuments(ctx, docs); err != nil {
 		return result, fmt.Errorf("saving tweets: %w", err)
 	}
-	if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
-		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
-	}
-	if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, dateTo); err != nil {
-		log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
+	if logRange {
+		if err := p.Store.LogFetch(ctx, handle.ID, dateFrom, dateTo, result.TweetsFetched); err != nil {
+			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to log twitter fetch")
+		}
+		if err := p.Store.UpdateHandleLastFetched(ctx, handle.ID, dateTo); err != nil {
+			log.Warn().Err(err).Int64("handle_id", handle.ID).Msg("Failed to update last_fetched_at")
+		}
 	}
 
 	if err := p.extractStoredTweets(ctx, handle, batchSize, result); err != nil {
@@ -191,6 +203,59 @@ func (p *Provider) CollectFacts(ctx context.Context, handle Handle, opts Options
 		Msg("twitter: collection completed")
 
 	return result, nil
+}
+
+// maxFetchRounds bounds the fetches of one range: a round fetches the
+// MaxTweets newest tweets before the end of what is left of the range.
+const maxFetchRounds = 20
+
+// fetchRange fetches every tweet of [opts.DateFrom, opts.DateTo). The API
+// returns the newest tweets first and at most MaxTweets per fetch, so a range
+// with more tweets than that is fetched in rounds, each one ending where the
+// previous round stopped (the oldest tweet it returned). Returns the tweets
+// and the start of the part of the range that is fully fetched: dateFrom
+// when the whole range is, else the day after the oldest tweet fetched (a
+// round could not be made before maxFetchRounds, or the fetch of a round
+// failed after the first). An error in the first round is returned.
+func (p *Provider) fetchRange(ctx context.Context, query string, opts FetchOptions, dateFrom time.Time) ([]Tweet, time.Time, error) {
+	var all []Tweet
+	seen := make(map[string]bool)
+	until := *opts.DateTo
+	for round := 0; round < maxFetchRounds; round++ {
+		roundOpts := opts
+		roundOpts.DateTo = &until
+		tweets, err := p.Fetcher.FetchTweets(ctx, query, roundOpts)
+		if err != nil {
+			if round == 0 {
+				return nil, dateFrom, err
+			}
+			log.Warn().Err(err).Int("round", round+1).Msg("twitter: fetch round failed; the part before it stays unfetched")
+			return all, dayAfter(until), nil
+		}
+		var oldest *time.Time
+		for _, tw := range tweets {
+			if seen[tw.ID] {
+				continue
+			}
+			seen[tw.ID] = true
+			all = append(all, tw)
+			if tw.CreatedAt != nil && (oldest == nil || tw.CreatedAt.Before(*oldest)) {
+				oldest = tw.CreatedAt
+			}
+		}
+		if len(tweets) < opts.MaxTweets || oldest == nil || !oldest.After(dateFrom) {
+			return all, dateFrom, nil
+		}
+		// One second after the oldest, so that another tweet of the same
+		// second is not lost; the oldest itself comes again and seen drops it.
+		until = oldest.Add(time.Second)
+	}
+	return all, dayAfter(until), nil
+}
+
+// dayAfter returns the start of the day after t (UTC).
+func dayAfter(t time.Time) time.Time {
+	return t.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
 }
 
 // extractStoredTweets is the extract step of the document state machine for

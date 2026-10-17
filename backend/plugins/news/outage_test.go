@@ -227,3 +227,37 @@ func TestResumeCollectExtractsWithoutSearching(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, searcher.calls, "any other target is searched (one call per language)")
 }
+
+// failingSearcher fails every search, as a provider out of quota does.
+type failingSearcher struct{ calls int }
+
+func (s *failingSearcher) SearchNews(string, search.NewsSearchOptions) ([]search.NewsResult, error) {
+	s.calls++
+	return nil, errors.New("search quota")
+}
+
+// TestWindowedCollectionDoesNotLogAFailedSearch: a window whose search failed
+// in every language is not logged as searched, so a later run searches it.
+// Before, the failure counted as "no results" and the window was never
+// searched again.
+func TestWindowedCollectionDoesNotLogAFailedSearch(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean quota", "human")
+	require.NoError(t, err)
+	_, emb := stubLLM(t, noFactReply, http.StatusOK, `{}`)
+	ext, err := categorizer.NewOpenAIExtractorFromEnv()
+	require.NoError(t, err)
+	searcher := &failingSearcher{}
+	p := NewProvider(searcher, longPage{}, ext, emb, storer, &core.StanceManager{})
+
+	from, to := time.Now().AddDate(0, 0, -6), time.Now()
+	target := plugins.Target{Name: "jean quota", PersonID: personID}
+	res, err := p.CollectFactsWithDateWindows(ctx, target, Options{DateFrom: &from, DateTo: &to, WindowDays: 3, MaxParse: 5})
+	require.NoError(t, err, "a failed window is recorded and the collection goes on")
+	assert.Len(t, res.Errors, 2, "one failure per window")
+	assert.Equal(t, 4, searcher.calls, "2 windows, 2 languages each")
+	covered, err := NewStore(storer).NewsWindowsCover(ctx, []int64{personID}, from, to)
+	require.NoError(t, err)
+	assert.False(t, covered, "a failed window is not logged as searched")
+}

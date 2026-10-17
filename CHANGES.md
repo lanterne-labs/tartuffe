@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-17: Collection tasks and the worker (mirror-4bt, step 1)
+
+- `dm collect add <person> --from --to` creates one task per period plugin (news, twitter) in
+  `collection_tasks`; `dm worker run` (new host service `worker`) claims them one at a time
+  with `FOR UPDATE SKIP LOCKED`, runs the plugin ingest over the period in 3-day windows, and
+  closes the task as done only when the plugin's fetch log covers the whole period. A failed
+  attempt is retried after a backoff, 3 attempts; an LLM outage or a stop (deploy) puts the task
+  back without using an attempt, and the worker waits for the reset. A cancel stops a running
+  task at its next heartbeat. The nightly keeps the maintenance phases until step 2.
+- Never rescrape: a fetched period is final. Two coverage bugs made the log lie and are fixed: a
+  news search that failed in every language counted as "no results" and logged its window as
+  searched; twitter stopped at 50 tweets per window and logged the whole window. The news
+  search now fails the window; twitter fetches a dense window in rounds until every tweet is in.
+- Lesson: a "done" marker must be written by the code path that proves the work, never by the
+  one that swallowed the error. Check every fetch log writer against its failure paths.
+
 ## 2026-10-17: The stance analysis runs its batches in parallel; a cut stops the merge (mirror-yrr, mirror-v6b)
 
 - `analyzeAcrossBatches` runs up to 4 batches of one analysis at one time, and aggregates the

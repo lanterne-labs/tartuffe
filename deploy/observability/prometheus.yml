@@ -18,6 +18,13 @@ scrape_configs:
     metrics_path: /metrics
     scheme: http
 
+  # The worker (`dm worker run`) serves /metrics while it runs.
+  - job_name: 'worker'
+    static_configs:
+      - targets: ['worker.host.internal:9090']
+    metrics_path: /metrics
+    scheme: http
+
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']

@@ -40,6 +40,15 @@ func selected(names []string) ([]plugins.Plugin, error) {
 	return out, nil
 }
 
+// Find returns the registered plugin of that name.
+func Find(name string) (plugins.Plugin, error) {
+	sel, err := selected([]string{name})
+	if err != nil {
+		return nil, err
+	}
+	return sel[0], nil
+}
+
 // Names lists the registered plugin names in run order.
 func Names() []string {
 	out := make([]string, 0, len(Plugins))

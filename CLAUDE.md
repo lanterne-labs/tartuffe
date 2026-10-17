@@ -32,6 +32,16 @@ go build -o dm .                                # Build binary
 ./dm facts delete --person "Name"               # Delete all facts for a person
 ```
 
+### Collection tasks
+```bash
+# Ask the plugins that read by period (news, twitter) for the facts of a person over a period.
+# The worker runs the tasks as soon as it is free. A period a plugin has fetched is never fetched again.
+./dm collect add "Marine Le Pen" --from 2024-01-01 --to 2024-07-01   # --to defaults to today
+./dm collect list --status pending
+./dm collect cancel 12 13
+./dm worker run                                  # the long-lived worker (the host service `worker`)
+```
+
 ### News Search
 ```bash
 # Search news and scrape articles (uses SerpAPI + webcrawler)
@@ -152,9 +162,10 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
 
 ## Deployment (the host)
 
-Three services on the host:
+Services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
+- **`worker`** — long-lived `dm worker run` (root `Dockerfile`). Claims the collection tasks (`dm collect add`) one at a time and runs the ingest of their plugin for their person and period. Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `daily pipeline`. On a deploy the task it is on goes back to pending and resumes where its fetch log stopped.
 - **`daily pipeline`** — cron-scheduled service (root `Dockerfile`). Start command: `dm pipeline daily`. Cron schedule (UTC) configured in the host service settings (`0 1 * * *`). Runs the daily pipeline once and exits — the host marks the run failed if exit code ≠ 0. A run lasts until its deadline (23:00 Europe/Paris) at most. It serves Prometheus metrics on `METRICS_PORT` (default 9090) while it runs. Shares the same env vars as `mirror` except no HTTP `PORT`.
 - **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `daily-pipeline.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
 

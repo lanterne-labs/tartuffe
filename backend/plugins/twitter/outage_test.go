@@ -174,3 +174,67 @@ func TestWindowedCollectionExtractsLeftoversOnce(t *testing.T) {
 	require.NoError(t, storer.Pool().QueryRow(ctx, `SELECT attempts FROM source_documents WHERE url = $1`, url).Scan(&attempts))
 	assert.Equal(t, 1, attempts)
 }
+
+// denseFetcher holds one tweet per hour over its range and answers each
+// fetch with the MaxTweets newest tweets before opts.DateTo, as the API does.
+type denseFetcher struct {
+	tweets []Tweet // newest first
+	calls  int
+}
+
+func newDenseFetcher(from, to time.Time) *denseFetcher {
+	f := &denseFetcher{}
+	for at := to.Add(-time.Hour); !at.Before(from); at = at.Add(-time.Hour) {
+		at := at
+		id := fmt.Sprint(at.Unix())
+		f.tweets = append(f.tweets, Tweet{ID: id, Text: "Nous baisserons la TVA " + id, URL: "https://x.com/jeandense/status/" + id, CreatedAt: &at})
+	}
+	return f
+}
+
+func (f *denseFetcher) FetchTweets(_ context.Context, _ string, opts FetchOptions) ([]Tweet, error) {
+	f.calls++
+	var out []Tweet
+	for _, tw := range f.tweets {
+		if !tw.CreatedAt.Before(*opts.DateTo) || tw.CreatedAt.Before(*opts.DateFrom) {
+			continue
+		}
+		out = append(out, tw)
+		if len(out) == opts.MaxTweets {
+			break
+		}
+	}
+	return out, nil
+}
+
+// TestCollectFactsFetchesADenseRangeWhole: a range with more tweets than one
+// fetch returns is fetched in rounds until every tweet is in, and only then
+// logged as fetched. Before, the fetch stopped at the cap and the whole range
+// was logged: the older tweets were never fetched.
+func TestCollectFactsFetchesADenseRangeWhole(t *testing.T) {
+	storer := setupTestDB(t)
+	ctx := context.Background()
+	_, err := storer.Pool().Exec(ctx, "TRUNCATE TABLE source_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	store := NewStore(storer)
+	personID, err := storer.FindOrInsertPersonWithType(ctx, "jean dense", "human")
+	require.NoError(t, err)
+	require.NoError(t, store.AddHandle(ctx, personID, "jeandense"))
+	handles, err := store.GetHandlesByPersonID(ctx, personID)
+	require.NoError(t, err)
+	_, emb := stubLLM(t, noFactReply, http.StatusOK, `{}`)
+	ext, err := categorizer.NewOpenAIExtractorFromEnv()
+	require.NoError(t, err)
+
+	to := time.Now().UTC().Truncate(24 * time.Hour)
+	from := to.AddDate(0, 0, -2) // 48 tweets
+	fetcher := newDenseFetcher(from, to)
+	p := &Provider{Fetcher: fetcher, FactExtractor: ext, Embedder: emb, Storer: storer, Store: store}
+	res, err := p.CollectFacts(ctx, handles[0], Options{DateFrom: &from, DateTo: &to, MaxTweets: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 48, res.TweetsFetched, "every tweet of the range")
+	assert.GreaterOrEqual(t, fetcher.calls, 5, "at least 4 full rounds and a last one under the cap")
+	fetched, err := store.IsRangeFetched(ctx, handles[0].ID, from, to)
+	require.NoError(t, err)
+	assert.True(t, fetched, "the whole range is logged once every tweet is in")
+}
