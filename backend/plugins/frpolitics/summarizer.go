@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,7 +98,11 @@ func buildBatchedSummaryPrompt(laws []Law) string {
 	b.WriteString("  * 0.8-1.0: Clear, explicit policy direction\n")
 	b.WriteString("\n")
 	b.WriteString("CRITICAL: If you cannot determine the DIRECTION of the policy change from the title,\n")
-	b.WriteString("you MUST set confidence < 0.5. Never silently infer ambiguous content.\n\n")
+	b.WriteString("you MUST set confidence < 0.5. Never silently infer ambiguous content.\n")
+	b.WriteString("simple_statement is embedded verbatim in the sentence 'X a voté POUR le texte de loi : « ... »'.\n")
+	b.WriteString("It states only what the law does. It NEVER carries a remark about the title, the article, your\n")
+	b.WriteString("certainty or what cannot be determined ('mais le contenu précis de l'article 7 n'est pas\n")
+	b.WriteString("déterminable à partir du titre'): such a doubt goes in confidence, never in the text.\n\n")
 	b.WriteString("Laws to summarize:\n")
 	for _, law := range laws {
 		b.WriteString(fmt.Sprintf("- Key: %s\n  Title: %s\n  Legislature: %d\n", law.Key, law.Title, law.Legislature))
@@ -139,12 +144,31 @@ func callBatchedSummaryJSON(ctx context.Context, laws []Law) (map[string]LawSumm
 
 	summaries := make(map[string]LawSummary)
 	for key, out := range rawResult {
+		confidence := out.Confidence
+		if metaStatement(out.SimpleStatement) {
+			// The statement is embedded in every ballot of the law: a remark
+			// about what the model could not determine must not be. The law
+			// is skipped as a low-confidence one.
+			log.Warn().Str("law_key", key).Str("statement", out.SimpleStatement).
+				Msg("frpolitics: the law statement carries a remark on the title; skipping the law")
+			confidence = 0
+		}
 		summaries[key] = LawSummary{
 			ShortTitle:      out.ShortTitle,
 			SimpleStatement: out.SimpleStatement,
-			Confidence:      out.Confidence,
+			Confidence:      confidence,
 		}
 	}
 
 	return summaries, nil
+}
+
+// metaStatementRe matches a statement that talks about the summarization
+// (what the title does or does not say) instead of the law.
+var metaStatementRe = regexp.MustCompile(`(?i)d[ée]terminable|à partir du titre|(im)?possible de d[ée]terminer|le titre ne (permet|précise|dit)|contenu (précis|exact) (de l'article|du texte|de l'amendement) n'est pas`)
+
+// metaStatement reports whether statement talks about the title or the
+// summarization instead of the law.
+func metaStatement(statement string) bool {
+	return metaStatementRe.MatchString(statement)
 }
