@@ -4,16 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"text/tabwriter"
-	"time"
 
 	"digital-mirror/backend/deps"
-	"digital-mirror/backend/pipeline"
-	"digital-mirror/backend/plugins"
 
 	"github.com/joho/godotenv"
-	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
 )
 
@@ -54,31 +49,13 @@ var queueListCmd = &cobra.Command{
 	RunE:        runQueueList,
 }
 
-// queueProcessCmd processes the search queue
-var queueProcessCmd = &cobra.Command{
-	Use:         "process",
-	Short:       "Run the ingest phase of the selected plugins over the search queue",
-	Long:        `Process persons in the search queue through the ingest phase of the selected plugins. Plugin-specific tuning lives on each plugin's own command.`,
-	Annotations: map[string]string{"needs_db": "true"},
-	Args:        cobra.NoArgs,
-	RunE:        runQueueProcess,
-}
-
 func init() {
 	rootCmd.AddCommand(queueCmd)
 
 	queueCmd.AddCommand(queueAddCmd)
 	queueCmd.AddCommand(queueRemoveCmd)
 	queueCmd.AddCommand(queueListCmd)
-	queueCmd.AddCommand(queueProcessCmd)
 
-	queueProcessCmd.Flags().Int("limit", 0, "maximum number of persons to process (0 = all)")
-	queueProcessCmd.Flags().String("since", "", "only search content published after YYYY-MM-DD")
-	queueProcessCmd.Flags().Int("days", 0, "only search content from last N days (alternative to --since)")
-	queueProcessCmd.Flags().Int("window-days", 0, "break date range into windows of N days (requires --since or --days, 0=disabled)")
-	queueProcessCmd.Flags().StringSlice("plugins", []string{"news", "twitter"}, "plugins to run (registered: "+strings.Join(pipeline.Names(), ", ")+")")
-	queueProcessCmd.Flags().Bool("force", false, "bypass the plugins' already-processed checks")
-	queueProcessCmd.Flags().Bool("dry-run", false, "fetch and extract without storing anything")
 }
 
 func runQueueAdd(cmd *cobra.Command, args []string) error {
@@ -151,85 +128,5 @@ func runQueueList(cmd *cobra.Command, args []string) error {
 	}
 	w.Flush()
 	fmt.Printf("\nTotal: %d persons in queue\n", len(queue))
-	return nil
-}
-
-func runQueueProcess(cmd *cobra.Command, args []string) error {
-	_ = godotenv.Load()
-	ctx := context.Background()
-
-	limit, _ := cmd.Flags().GetInt("limit")
-	sinceStr, _ := cmd.Flags().GetString("since")
-	days, _ := cmd.Flags().GetInt("days")
-	windowDays, _ := cmd.Flags().GetInt("window-days")
-	pluginNames, _ := cmd.Flags().GetStringSlice("plugins")
-	force, _ := cmd.Flags().GetBool("force")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-
-	if sinceStr != "" && days > 0 {
-		return fmt.Errorf("--since and --days are mutually exclusive, use only one")
-	}
-	var since *time.Time
-	if sinceStr != "" {
-		t, err := time.Parse("2006-01-02", sinceStr)
-		if err != nil {
-			return fmt.Errorf("invalid --since format (expected YYYY-MM-DD): %w", err)
-		}
-		since = &t
-	} else if days > 0 {
-		t := time.Now().AddDate(0, 0, -days)
-		since = &t
-		log.Info().Int("days", days).Time("since", t).Msg("Calculated since date from --days flag")
-	}
-	if windowDays > 0 && since == nil {
-		return fmt.Errorf("--window-days requires --since or --days to be set")
-	}
-
-	storer, err := deps.OpenStorer(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to initialize database: %w", err)
-	}
-	defer storer.Close()
-
-	targets, err := pipeline.QueueTargets(ctx, storer)
-	if err != nil {
-		return fmt.Errorf("failed to get search queue: %w", err)
-	}
-	if len(targets) == 0 {
-		log.Info().Msg("Search queue is empty")
-		return nil
-	}
-	if limit > 0 && len(targets) > limit {
-		targets = targets[:limit]
-	}
-	log.Info().Int("queue_size", len(targets)).Strs("plugins", pluginNames).Msg("Starting queue processing")
-
-	opts := plugins.IngestOptions{Since: since, WindowDays: windowDays, Force: force, DryRun: dryRun}
-	ingest, stepErrs, err := pipeline.Ingest(ctx, deps.New(storer), targets, opts, pluginNames)
-	if err != nil {
-		return err
-	}
-	stats := ingest.Total
-
-	fmt.Printf("\nProcessing complete:\n")
-	fmt.Printf("  Plugins: %s\n", strings.Join(pluginNames, ", "))
-	fmt.Printf("  Targets: %d\n", stats.Targets)
-	fmt.Printf("  Items: %d\n", stats.Items)
-	fmt.Printf("  Facts: %d\n", stats.Facts)
-	fmt.Printf("  Item errors: %d\n", stats.Errors)
-	for name, perr := range stepErrs {
-		fmt.Printf("  %s failed: %v\n", name, perr)
-	}
-
-	if !dryRun {
-		recordJobMetrics(ctx, storer, jobMetrics("queue-process", "", map[string]float64{
-			"targets": float64(stats.Targets),
-			"facts":   float64(stats.Facts),
-			"errors":  float64(stats.Errors + len(stepErrs)),
-		}))
-	}
-	if len(stepErrs) > 0 {
-		return fmt.Errorf("%d plugin(s) failed", len(stepErrs))
-	}
 	return nil
 }

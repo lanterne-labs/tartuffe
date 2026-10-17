@@ -26,7 +26,7 @@ contradictions (reason), and for each target language that is missing or whose
 source text changed (source_hash mismatch), produces a translation and stores it
 in the generic translations table. Idempotent and safe to re-run.
 
-This is the LAST step of 'dm pipeline daily' and never blocks generation; it can
+This is the last step of the maintenance pass of the worker and never blocks generation; it can
 also be run standalone.`,
 	RunE: runTranslateRunCmd,
 }

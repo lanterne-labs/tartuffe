@@ -164,11 +164,10 @@ SELECT p.name, c.created_at::date, left(c.reason, 90) AS reason
 FROM contradictions c JOIN persons p ON p.id = c.person_id
 ORDER BY c.created_at DESC LIMIT 10;
 
-\echo '=== [8] PIPELINE HEALTH: recent runs ==='
-SELECT id, started_at::timestamp(0), finished_at::timestamp(0), status,
-       facts_extracted, contradictions_found, audit_checked, audit_flagged, step_errors,
-       left(coalesce(error_summary,''), 60) AS error_summary
-FROM pipeline_runs ORDER BY started_at DESC LIMIT 8;
+\echo '=== [8] WORKER: recent collection tasks ==='
+SELECT t.id, p.name, t.plugin, t.since, t.until, t.status, t.attempts, t.items, t.facts,
+       t.started_at::timestamp(0), t.finished_at::timestamp(0), left(coalesce(t.last_error,''), 60) AS last_error
+FROM collection_tasks t JOIN persons p ON p.id = t.person_id ORDER BY t.created_at DESC LIMIT 8;
 
 \echo '=== [8b] CONTRADICTION-RELATED JOB METRICS (last runs; audit evictions show here) ==='
 SELECT job_type, target, metric, value, created_at::timestamp(0)

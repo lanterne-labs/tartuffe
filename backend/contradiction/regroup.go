@@ -103,11 +103,11 @@ func RunRegroup(ctx context.Context, storer *storage.PostgresStorer, opts Regrou
 	return agg, nil
 }
 
-// RunRegroupStep is the daily-pipeline entry point: regroup every person with
-// contradictions (the first maxPersons of them when > 0), generating merged
-// summaries via the LLM. Best-effort — a nil detector (no LLM env) downgrades
-// to base-only rather than failing the pipeline.
-func RunRegroupStep(ctx context.Context, storer *storage.PostgresStorer, maxPersons int) error {
+// RunRegroupStep is the entry point of the maintenance pass: regroup the
+// persons of personIDs (every person with contradictions when empty),
+// generating merged summaries via the LLM. Best-effort — a nil detector (no
+// LLM env) downgrades to base-only rather than failing the pass.
+func RunRegroupStep(ctx context.Context, storer *storage.PostgresStorer, personIDs []int64) error {
 	var summarize storage.GroupSummarizer
 	if detector, dErr := NewOpenAIContradictionDetectorFromEnv(); dErr != nil {
 		log.Warn().Err(dErr).Msg("regroup: no LLM detector; setting group bases without summaries")
@@ -115,7 +115,7 @@ func RunRegroupStep(ctx context.Context, storer *storage.PostgresStorer, maxPers
 		summarize = GroupSummarizer(detector)
 	}
 
-	agg, err := RunRegroup(ctx, storer, RegroupOptions{Summarize: summarize, MaxPersons: maxPersons})
+	agg, err := RunRegroup(ctx, storer, RegroupOptions{PersonIDs: personIDs, Summarize: summarize})
 	if err != nil {
 		return err
 	}
@@ -124,6 +124,6 @@ func RunRegroupStep(ctx context.Context, storer *storage.PostgresStorer, maxPers
 	}
 	log.Info().Int("persons", agg.Persons).Int("rebased", agg.Rebased).
 		Int("groups", agg.Groups).Int("summaries", agg.SummariesWrote).
-		Int("summary_failures", agg.SummariesFailed).Msg("Daily pipeline: contradiction regroup done")
+		Int("summary_failures", agg.SummariesFailed).Msg("Maintenance: contradiction regroup done")
 	return nil
 }

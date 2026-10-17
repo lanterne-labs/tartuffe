@@ -12,6 +12,7 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
 )
@@ -38,6 +39,20 @@ func selected(names []string) ([]plugins.Plugin, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// QueueTargets converts the search_queue contents (the watch list) into
+// plugin targets.
+func QueueTargets(ctx context.Context, storer *storage.PostgresStorer) ([]plugins.Target, error) {
+	queue, err := storer.GetSearchQueue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]plugins.Target, 0, len(queue))
+	for _, e := range queue {
+		targets = append(targets, plugins.Target{PersonID: e.PersonID, Name: e.Name, EntityType: e.EntityType})
+	}
+	return targets, nil
 }
 
 // Find returns the registered plugin of that name.

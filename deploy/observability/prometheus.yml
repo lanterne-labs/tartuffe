@@ -9,16 +9,9 @@ scrape_configs:
     metrics_path: /metrics
     scheme: http
 
-  # The daily pipeline (cron, `dm pipeline daily`) serves /metrics while a run
-  # lasts. Between two runs the target is down (up == 0); the counters of a
-  # run restart at 0, so the dashboards read them with rate() or increase().
-  - job_name: 'daily-pipeline'
-    static_configs:
-      - targets: ['daily-pipeline.host.internal:9090']
-    metrics_path: /metrics
-    scheme: http
-
-  # The worker (`dm worker run`) serves /metrics while it runs.
+  # The worker (`dm worker run`) runs the collection tasks and the maintenance
+  # pass. Its counters restart with each deploy, so the dashboards read them
+  # with rate() or increase().
   - job_name: 'worker'
     static_configs:
       - targets: ['worker.host.internal:9090']

@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-17: The worker replaces the nightly cron (mirror-4bt, step 2)
+
+- `dm pipeline daily`, the run gate, the per-phase budgets, the 23:00 deadline, the history
+  step (`history_cursors`), `pipeline_runs`, the pipeline watchdog and `dm queue process` are
+  gone. The worker does the housekeeping when no task is pending: the daily feed after 03:00
+  UTC (frpolitics, the backfills for 1 h, one watch-list task per person for yesterday) and the
+  maintenance pass (stance refresh and merge, detection over the persons with new facts, repoint,
+  regroup of the persons with new contradictions, audit every 5 days, translations) after facts
+  were added and at least every 6 h. `job_metrics` remembers the last feed and the last pass.
+- Detection and regroup now have a memo: they judge the persons with new facts or contradictions
+  since the start of the last pass (every person after a rulebook change). Before, each nightly
+  ran the nearest-neighbour search over every person and one summary per contradiction group.
+- Grafana: the Daily Pipeline dashboard became Worker Tasks (`collection_tasks`, `job_metrics`).
+- Lesson: when a process becomes long-lived, every "once per run" step needs a memo or a
+  cadence, or it runs without end.
+
 ## 2026-10-17: Collection tasks and the worker (mirror-4bt, step 1)
 
 - `dm collect add <person> --from --to` creates one task per period plugin (news, twitter) in

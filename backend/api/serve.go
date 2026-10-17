@@ -65,22 +65,8 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 		log.Info().Msg("Balance alerting enabled (Telegram + poller)")
 	}
 
-	// Pipeline watchdog: pages via Telegram when the daily pipeline goes silent
-	// (>30h without a successful run), a run is stuck in 'running', or runs
-	// errored — the Jul 22-23 outage produced none of these signals anywhere
-	// (mirror-1ir). Lives here because the web service is the only long-lived
-	// process; the cron container is ephemeral.
-	if tn := alerting.NewTelegramNotifierFromEnv(); tn != nil {
-		go alerting.StartPipelineWatchdog(ctx, tn, func(c context.Context) (alerting.PipelineHealth, error) {
-			h, err := storer.GetPipelineHealth(c)
-			return alerting.PipelineHealth{LastOKStart: h.LastOKStart, StuckRunning: h.StuckRunning, RecentFailed: h.RecentFailed}, err
-		})
-	} else {
-		log.Info().Msg("Pipeline watchdog disabled (Telegram not configured)")
-	}
-
-	// Daily pipeline runs as a separate the host cron service (`dm pipeline daily`),
-	// not in-process. See CLAUDE.md → Deployment.
+	// The collection tasks and the maintenance pass run in the worker service
+	// (`dm worker run`), not in-process. See CLAUDE.md → Deployment.
 
 	// Background archiver: politely submits fact source URLs to the Wayback Machine
 	// so snapshots survive paywalls/deletions. Decoupled from ingestion.

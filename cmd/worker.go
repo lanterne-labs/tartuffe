@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/worker"
 
@@ -26,8 +29,12 @@ var workerRunCmd = &cobra.Command{
 	Short: "Claim and run the collection tasks until stopped",
 	Long: `Run as a long-lived service. The worker claims the pending tasks one at a
 time, by priority then age, and runs the ingest of the task's plugin for its
-person and period. It serves Prometheus metrics on METRICS_PORT (default
-9090). On SIGTERM the task it is on goes back to pending.`,
+person and period. When no task is pending it does the housekeeping: the
+daily feed (frpolitics, the backfills, one task per watched person for the
+previous day) and the maintenance pass (stance refresh and merge,
+contradiction detection, regroup, audit, translations). It serves Prometheus
+metrics on METRICS_PORT (default 9090). On SIGTERM the task it is on goes back
+to pending.`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.NoArgs,
 	RunE:        runWorker,
@@ -67,7 +74,24 @@ func runWorker(cmd *cobra.Command, args []string) error {
 	if err := opts.Validate(); err != nil {
 		return err
 	}
-	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: deps.New(storer)}, opts)
+	if notifier := alerting.NewTelegramNotifierFromEnv(); notifier != nil {
+		opts.Notify = notifier.Send
+		// The first credit error of each LLM provider sends one message.
+		llm.OnCreditError = worker.CreditAlert(notifier.Send)
+	}
+	// The judgement counters reach the database as the work goes, not only
+	// when the process ends.
+	metrics.StartDecisionFlusher(ctx, storer, time.Minute)
+	// With the home GPU unreachable, every call goes straight to the fallback
+	// instead of waiting out the retry backoff per call.
+	if !llm.ProbePrimary(ctx) {
+		log.Warn().Msg("Worker: primary LLM endpoint unreachable; routing the calls to the fallback")
+	}
+
+	d := deps.New(storer)
+	house := worker.DefaultHousekeeping
+	house.Storer, house.Deps = storer, d
+	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, &house, opts)
 	if errors.Is(err, context.Canceled) {
 		log.Info().Msg("Worker stopped")
 		return nil

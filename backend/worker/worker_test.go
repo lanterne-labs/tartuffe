@@ -83,7 +83,7 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 	opts := Options{Poll: 20 * time.Millisecond, Lease: time.Minute, MaxAttempts: 1, Backoff: time.Hour, MaxLLMWait: time.Second}
 	runCtx, stop := context.WithCancel(ctx)
 	errc := make(chan error, 1)
-	go func() { errc <- Run(runCtx, storer, runner, opts) }()
+	go func() { errc <- Run(runCtx, storer, runner, nil, opts) }()
 	select {
 	case <-runner.done:
 	case <-time.After(10 * time.Second):
@@ -134,7 +134,7 @@ func TestWorkerCancelStopsTheAttempt(t *testing.T) {
 	defer stop()
 	errc := make(chan error, 1)
 	opts := Options{Poll: 20 * time.Millisecond, Lease: 150 * time.Millisecond, MaxAttempts: 3, Backoff: time.Hour, MaxLLMWait: time.Second}
-	go func() { errc <- Run(runCtx, storer, runner, opts) }()
+	go func() { errc <- Run(runCtx, storer, runner, nil, opts) }()
 	id := <-started
 	n, err := storer.CancelCollectionTasks(ctx, []int64{id})
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestWorkerStopReleasesTheTask(t *testing.T) {
 		},
 	}}
 	errc := make(chan error, 1)
-	go func() { errc <- Run(runCtx, storer, runner, DefaultOptions) }()
+	go func() { errc <- Run(runCtx, storer, runner, nil, DefaultOptions) }()
 	<-started
 	stop()
 	require.ErrorIs(t, <-errc, context.Canceled)

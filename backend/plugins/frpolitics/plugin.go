@@ -29,8 +29,9 @@ const (
 	// dailyPartyThreshold is the majority share for party-level vote facts.
 	dailyPartyThreshold = 0.8
 	// debatsDailyWindowDays is how far back the daily transcript feed looks.
-	// The AN archive is refreshed around 02:05 UTC and the run starts at
-	// 01:00 UTC, so "yesterday" is often only available the following night.
+	// The AN archive is refreshed around 02:05 UTC and the feed of the worker
+	// runs at 03:00 UTC, so a day the archive publishes late is read the
+	// following day.
 	debatsDailyWindowDays = 4
 	// debatsBackfillSince is the start of the session the backfill covers.
 	debatsBackfillSince = "2025-10-01"
