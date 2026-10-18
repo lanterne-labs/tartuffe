@@ -66,6 +66,7 @@ func TestRearticleBallots(t *testing.T) {
 		return []string{"PIONANR5L99BTC1364"}, nil
 	}
 	r.readText = func(context.Context, string, string) (string, error) { return texte1364, nil }
+	r.crTexts = func(context.Context, int, string) ([]string, error) { return nil, nil }
 	r.statement = func(context.Context, string, string, string) (LawSummary, error) {
 		return LawSummary{SimpleStatement: "Permet l'administration de la substance létale en dehors du domicile.", Confidence: 0.9}, nil
 	}

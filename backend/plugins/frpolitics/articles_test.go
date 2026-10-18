@@ -131,6 +131,7 @@ func TestArticleResolver(t *testing.T) {
 		{Key: "99-2004", Title: "l'amendement n° 44 de M. Y à l'article 3 de la proposition de loi relative au droit à l'aide à mourir des mineurs (première lecture).", Legislature: 99, VoteDate: &date, SeanceRef: seance},
 		{Key: "99-2010", Title: "l'article 3 du projet de loi d'urgence pour Mayotte (première lecture).", Legislature: 99, VoteDate: &date, SeanceRef: "RUANR5L99S2025IDS2"},
 	}
+	mayotte := laws[4]
 	// Amendment 96 has the same number in two texts; 97 names the text alone:
 	// the text every amendment of the séance names is the one.
 	texts := map[int][]string{96: {"PIONANR5L99BTC1364", "PRJLANR5L99BTC0500"}, 97: {"PIONANR5L99BTC1364"}, 12: {"PRJLANR5L99BTC0500"}, 44: {"PIONANR5L99BTC0777"}}
@@ -139,6 +140,13 @@ func TestArticleResolver(t *testing.T) {
 	r := newArticleResolver(store, laws, nil)
 	r.lookup = func(_ context.Context, legislature, numero int, _ *time.Time) ([]string, error) {
 		return texts[numero], nil
+	}
+	// The transcript names text 2222 for the séance without amendments.
+	r.crTexts = func(_ context.Context, _ int, seanceRef string) ([]string, error) {
+		if seanceRef == "RUANR5L99S2025IDS2" {
+			return []string{"2222"}, nil
+		}
+		return nil, nil
 	}
 	r.readText = func(_ context.Context, _, url string) (string, error) {
 		reads++
@@ -173,9 +181,32 @@ func TestArticleResolver(t *testing.T) {
 		t.Errorf("second resolve: (%q, %v, %v) statements=%d reads=%d; want the stored statement", object2, ok, err, statements, reads)
 	}
 
-	// No amendment of the séance on this bill: gated.
-	_, ok, err = r.resolve(ctx, laws[3])
-	if err != nil || ok {
+	// No amendment of the séance on this bill: the transcript names the
+	// text; the page of the commission text does not exist, the deposited
+	// text does.
+	urls := []string{}
+	r.readText = func(_ context.Context, _, url string) (string, error) {
+		urls = append(urls, url)
+		if !strings.Contains(url, "l99b2222_projet-loi") {
+			return "", fmt.Errorf("%w: unexpected status 404", errNotFound)
+		}
+		return "   Article 3\n  Fixe la durée.\n   Article 4\n  Autre.", nil
+	}
+	r.statement = func(_ context.Context, bill, article, text string) (LawSummary, error) {
+		return LawSummary{SimpleStatement: "Fixe la durée de l'état d'urgence.", Confidence: 0.9}, nil
+	}
+	object, ok, err = r.resolve(ctx, mayotte)
+	if err != nil || !ok || object != "l'article 3 (« Fixe la durée de l'état d'urgence »)" {
+		t.Errorf("an article whose text the transcript names: (%q, %v, %v)", object, ok, err)
+	}
+	if len(urls) != 3 || !strings.Contains(urls[0], "texte-adopte-commission") || !strings.Contains(urls[2], "l99b2222_projet-loi") {
+		t.Errorf("urls tried = %v; want the commission text, then the deposited texts until one exists", urls)
+	}
+	// A séance with neither amendments nor a transcript: gated.
+	r.crTexts = func(context.Context, int, string) ([]string, error) { return nil, nil }
+	gated := mayotte
+	gated.Key = "99-2011"
+	if _, ok, err := r.resolve(ctx, gated); err != nil || ok {
 		t.Errorf("an article without a text in its séance: ok=%v err=%v, want gated", ok, err)
 	}
 	// A statement under the confidence: gated, and kept so it is not asked again.

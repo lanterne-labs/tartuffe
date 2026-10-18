@@ -1,6 +1,7 @@
 package frpolitics
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -26,10 +27,10 @@ import (
 // statement of what the article does.
 //
 // The scrutin does not name its text. The amendments voted in the same
-// séance on the same bill do (amendement.texteLegislatifRef), and an article
-// vote always follows amendment votes on it. The text is the PDF the
-// Assemblée publishes for every texte (texte de la commission, texte déposé),
-// read with pdftotext.
+// séance on the same bill do (amendement.texteLegislatifRef), and the
+// transcript of the séance names the texts it discussed (the ordre du jour
+// points). The text is the PDF the Assemblée publishes for every texte (texte
+// de la commission, texte déposé), read with pdftotext.
 
 // articleStatementMinConfidence is the confidence under which the statement
 // of an article does not make a fact.
@@ -51,13 +52,25 @@ type articleResolver struct {
 	statement func(ctx context.Context, bill, article, text string) (LawSummary, error)
 	// readText returns the text of the PDF at url (pdfText).
 	readText func(ctx context.Context, cacheDir, url string) (string, error)
+	// crTexts returns the numbers of the texts the transcript of a séance
+	// discussed (transcriptTexts).
+	crTexts func(ctx context.Context, legislature int, seanceRef string) ([]string, error)
 
 	bySeance map[string][]Law
+	// crIndex is, per legislature, the text numbers per séance of the
+	// transcripts archive, built on the first need.
+	crIndex map[int]map[string][]string
 }
+
+// textSlugs are the pages a text can have when only its number is known:
+// the text of the commission is what a séance votes on, the deposited text
+// when the commission adopted none.
+var textSlugs = []string{"texte-adopte-commission", "proposition-loi", "projet-loi"}
 
 func newArticleResolver(store *Store, laws []Law, orgCache map[string]OrganeInfo) *articleResolver {
 	r := &articleResolver{store: store, laws: laws, orgCache: orgCache, cacheDir: getCacheDir(),
-		lookup: LookupTexteRefs, statement: articleStatement, readText: pdfText, bySeance: map[string][]Law{}}
+		lookup: LookupTexteRefs, statement: articleStatement, readText: pdfText, bySeance: map[string][]Law{}, crIndex: map[int]map[string][]string{}}
+	r.crTexts = r.transcriptTexts
 	for _, l := range laws {
 		if l.SeanceRef != "" {
 			r.bySeance[l.SeanceRef] = append(r.bySeance[l.SeanceRef], l)
@@ -82,25 +95,26 @@ func (r *articleResolver) resolve(ctx context.Context, law Law) (object string, 
 		log.Warn().Str("law_key", law.Key).Str("object", article).Msg("frpolitics: a vote on a part of the text; gating")
 		return "", false, nil
 	}
-	ref, ok, err := r.seanceText(ctx, law, bill)
+	num, slugs, ok, err := r.seanceText(ctx, law, bill)
 	if err != nil || !ok {
 		return "", ok, err
-	}
-	num, slug, ok := textPage(ref)
-	if !ok {
-		log.Warn().Str("law_key", law.Key).Str("texte_ref", ref).Msg("frpolitics: the text reference of the séance has no known page; gating")
-		return "", false, nil
 	}
 	summary, found, err := r.store.StoredArticleStatement(ctx, law.Legislature, num, article)
 	if err != nil {
 		return "", false, err
 	}
 	if !found {
-		text, err := r.readText(ctx, r.cacheDir, textPDFURL(law.Legislature, num, slug))
+		var text string
+		for _, slug := range slugs {
+			text, err = r.readText(ctx, r.cacheDir, textPDFURL(law.Legislature, num, slug))
+			if !errors.Is(err, errNotFound) {
+				break
+			}
+		}
 		if errors.Is(err, errNotFound) {
-			// The page of the text is not where its reference says: this
-			// scrutin is gated, the run goes on.
-			log.Warn().Str("law_key", law.Key).Int("texte", num).Str("slug", slug).Msg("frpolitics: the PDF of the text does not exist; gating")
+			// No page of the text where its reference says: this scrutin is
+			// gated, the run goes on.
+			log.Warn().Str("law_key", law.Key).Int("texte", num).Strs("slugs", slugs).Msg("frpolitics: the PDF of the text does not exist; gating")
 			return "", false, nil
 		}
 		if err != nil {
@@ -127,19 +141,24 @@ func (r *articleResolver) resolve(ctx context.Context, law Law) (object string, 
 	return fmt.Sprintf("%s (« %s »)", article, strings.TrimSuffix(summary.SimpleStatement, ".")), true, nil
 }
 
-// seanceText returns the text reference (texteLegislatifRef) the séance of
-// law voted on: the one the amendments voted in the same séance on the same
-// bill belong to. The bill is the tail of an amendment title ("... à
-// l'article 7 de la proposition de loi relative ..."), so the match is a
-// suffix: a bill whose title extends another's does not pass for it. An
-// amendment number can name several texts (the same number in several
-// texts, sorted the same day): the text of the séance is the one every
-// amendment of it names. ok is false when no amendment of the séance names
-// a text, or when they do not agree on one.
-func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) (string, bool, error) {
+// seanceText returns the text the séance of law voted on: its number and
+// the page slugs to try. Two sources name it:
+//   - the amendments voted in the same séance on the same bill
+//     (texteLegislatifRef). The bill is the tail of an amendment title ("...
+//     à l'article 7 de la proposition de loi relative ..."), so the match is a
+//     suffix: a bill whose title extends another's does not pass for it. An
+//     amendment number can name several texts (the same number in several
+//     texts, sorted the same day): the text of the séance is the one every
+//     amendment of it names;
+//   - the transcript of the séance, which lists the texts it discussed by
+//     number. It narrows the amendments' texts to the ones discussed, and
+//     names the text alone when the séance voted no amendment.
+//
+// ok is false when the two sources leave no text, or several.
+func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) (num int, slugs []string, ok bool, err error) {
 	if law.SeanceRef == "" {
 		log.Warn().Str("law_key", law.Key).Msg("frpolitics: article vote without a séance; gating")
-		return "", false, nil
+		return 0, nil, false, nil
 	}
 	billKey := billTitleKey(bill)
 	// common holds the texts every amendment so far names; nil before the first.
@@ -163,7 +182,7 @@ func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) 
 		numero, _ := strconv.Atoi(m[1])
 		refs, err := r.lookup(ctx, sibling.Legislature, numero, sibling.VoteDate)
 		if err != nil {
-			return "", false, err
+			return 0, nil, false, err
 		}
 		if len(refs) == 0 {
 			continue // not in the archive yet: no signal
@@ -182,17 +201,89 @@ func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) 
 			}
 		}
 	}
+	if len(common) != 1 {
+		// The transcript of the séance: the texts it discussed, by number.
+		nums, err := r.crTexts(ctx, law.Legislature, law.SeanceRef)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		discussed := map[int]bool{}
+		for _, n := range nums {
+			if v, err := strconv.Atoi(n); err == nil {
+				discussed[v] = true
+			}
+		}
+		switch {
+		case len(common) > 1:
+			for ref := range common {
+				if n, _, ok := textPage(ref); !ok || !discussed[n] {
+					delete(common, ref)
+				}
+			}
+		case len(common) == 0 && len(discussed) == 1:
+			for n := range discussed {
+				return n, textSlugs, true, nil
+			}
+		}
+	}
 	switch len(common) {
 	case 1:
 		for ref := range common {
-			return ref, true, nil
+			n, slug, ok := textPage(ref)
+			if !ok {
+				log.Warn().Str("law_key", law.Key).Str("texte_ref", ref).Msg("frpolitics: the text reference of the séance has no known page; gating")
+				return 0, nil, false, nil
+			}
+			return n, []string{slug}, true, nil
 		}
 	case 0:
-		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Msg("frpolitics: no amendment of the séance names the text; gating the article vote")
+		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Msg("frpolitics: neither the amendments nor the transcript of the séance name its text; gating the article vote")
 	default:
-		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Int("texts", len(common)).Msg("frpolitics: the amendments of the séance name several texts; gating the article vote")
+		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Int("texts", len(common)).Msg("frpolitics: the séance names several texts; gating the article vote")
 	}
-	return "", false, nil
+	return 0, nil, false, nil
+}
+
+// transcriptTexts returns the numbers of the texts the transcript of the
+// séance discussed (the ordre du jour points of the compte rendu). The index
+// of a legislature is built from the transcripts archive on the first need.
+func (r *articleResolver) transcriptTexts(ctx context.Context, legislature int, seanceRef string) ([]string, error) {
+	idx, ok := r.crIndex[legislature]
+	if !ok {
+		body, err := downloadCached(ctx, fmt.Sprintf(debatsArchiveURLTpl, legislature), r.cacheDir, debatsCacheMaxAge)
+		if err != nil {
+			return nil, fmt.Errorf("transcripts of legislature %d: %w", legislature, err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+		if err != nil {
+			return nil, fmt.Errorf("transcripts of legislature %d: %w", legislature, err)
+		}
+		idx = map[string][]string{}
+		for _, f := range zr.File {
+			if !strings.HasSuffix(strings.ToLower(f.Name), ".xml") {
+				continue
+			}
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			cr, err := parseCompteRendu(rc)
+			rc.Close()
+			if err != nil || cr.SeanceRef == "" {
+				continue
+			}
+			seen := map[string]bool{}
+			for _, p := range cr.Points {
+				if p.TexteNum != "" && !seen[p.TexteNum] {
+					seen[p.TexteNum] = true
+					idx[cr.SeanceRef] = append(idx[cr.SeanceRef], p.TexteNum)
+				}
+			}
+		}
+		r.crIndex[legislature] = idx
+		log.Info().Int("legislature", legislature).Int("seances", len(idx)).Msg("frpolitics: transcripts indexed by séance for the article votes")
+	}
+	return idx[seanceRef], nil
 }
 
 // billTitleKey reduces a bill title to the words that identify the bill, for
