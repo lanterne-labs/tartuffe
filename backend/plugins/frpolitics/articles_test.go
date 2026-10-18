@@ -65,6 +65,14 @@ func TestExtractArticle(t *testing.T) {
 	if got := extractArticle("  Article 24\n Texte.\n Chapitre II\n Suite.", "l'article 24 (examen prioritaire)"); got != "Texte." {
 		t.Errorf("article 24 (examen prioritaire) = %q", got)
 	}
+	// A new article of the commission text: "Article 4 (nouveau)"; the next
+	// heading with a note ends it.
+	if got := extractArticle("  Article 3\n Trois.\n  Article 4 (nouveau)\n Quatre.\n  Article 4 bis (nouveau)\n Suite.", "l'article 4"); got != "Quatre." {
+		t.Errorf("article 4 (nouveau) = %q", got)
+	}
+	if got := extractArticle("  Article 4 (nouveau)\n Quatre.\n  Article 4 bis (nouveau)\n Suite.\n  Article 5\n Cinq.", "l'article 4 bis"); got != "Suite." {
+		t.Errorf("article 4 bis (nouveau) = %q", got)
+	}
 }
 
 func TestTextPage(t *testing.T) {

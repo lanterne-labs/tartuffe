@@ -369,9 +369,13 @@ func pdfText(ctx context.Context, cacheDir, url string) (string, error) {
 }
 
 // articleHeadingRe matches a line that opens an article or a division of the
-// text: "Article 7", "Article 1er bis A", "Article premier", "TITRE II",
-// "Chapitre III", "Section 2".
-var articleHeadingRe = regexp.MustCompile(`^\s*(Article\s+\S+(\s+(bis|ter|quater|quinquies|sexies|septies|octies|nonies|decies|[A-Z]))*|TITRE\s+\S+|Titre\s+\S+|CHAPITRE\s+\S+|Chapitre\s+\S+|Section\s+\S+)\s*$`)
+// text: "Article 7", "Article 1er bis A", "Article 4 (nouveau)", "Article
+// premier", "TITRE II", "Chapitre III", "Section 2".
+var articleHeadingRe = regexp.MustCompile(`^\s*(Article\s+\S+(\s+(bis|ter|quater|quinquies|sexies|septies|octies|nonies|decies|[A-Z]))*(\s*\([^)]*\))?|TITRE\s+\S+|Titre\s+\S+|CHAPITRE\s+\S+|Chapitre\s+\S+|Section\s+\S+)\s*$`)
+
+// headingNoteRe matches the note after an article heading: "(nouveau)",
+// "(Supprimé)", "(Non modifié)".
+var headingNoteRe = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
 
 // pageMarkRe matches the page number line of a PDF: "– 8 –".
 var pageMarkRe = regexp.MustCompile(`^\s*[–-]\s*\d+\s*[–-]\s*$`)
@@ -388,7 +392,7 @@ func extractArticle(text, article string) string {
 	lines := strings.Split(text, "\n")
 	start := -1
 	for i, line := range lines {
-		h := strings.Join(strings.Fields(line), " ")
+		h := headingNoteRe.ReplaceAllString(strings.Join(strings.Fields(line), " "), "")
 		for _, id := range ids {
 			if strings.EqualFold(h, "Article "+id) {
 				start = i
