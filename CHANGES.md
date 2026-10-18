@@ -22,6 +22,10 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
   dehors du domicile ») du texte de loi : « Crée un droit à l'aide à mourir »". A séance whose
   amendments name no text or several, an article absent from the text, or a statement under 0.5
   confidence gates the scrutin.
+- The transcript of the séance (the debats archive) is the second source of the text: its ordre
+  du jour names the texts discussed by number. It narrows the amendments' texts and names the
+  text alone when the séance voted no amendment. The backfill (`--mode rearticle`) rewrote 50 of
+  the 55 article scrutins of the 17th legislature; the 5 others have no transcript yet.
 - Lesson: a fact must describe the object that was voted. When the source does not give it,
   find the source that does (here the amendments archive and the text PDF) instead of
   describing the container.
