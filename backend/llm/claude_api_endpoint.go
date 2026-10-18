@@ -16,28 +16,32 @@ import (
 // on the Claude API, with the key of ANTHROPIC_API_KEY. The claude-team
 // profile uses it as the fallback of the seat: the calls go to the API when
 // the seat reaches its usage limit. The API bills each call at the list
-// price, so the endpoint stops when the spend of the process reaches its cap.
+// price, so the endpoint stops when the spend of the day (UTC) reaches its
+// cap, and serves again the next day.
 type ClaudeAPIEndpoint struct {
 	api    claudeHTTP
 	maxUSD float64
+	now    func() time.Time // nil: time.Now
 
 	mu       sync.Mutex
 	usage    map[usageKey]*TaskUsage
 	prefixes prefixCache
+	// day is the UTC day spentUSD and stop belong to; a new day resets them.
+	day time.Time
 	// spentUSD is the cost of the replies plus the reserved worst case of the
 	// calls in flight and of the calls that the API can have billed without
 	// a reply (a timeout, a transport error).
 	spentUSD float64
-	stop     *UnavailableError // set when the endpoint stops for the rest of the process
+	stop     *UnavailableError // set when the endpoint stops for the rest of the day
 }
 
-// claudeAPIRunCapUSD is the spend cap of the API endpoint in one process (one
-// daily run). A sync call costs about 0.01 USD on Sonnet 5.5 and 0.02 USD on
-// Opus 5.5 (the batch pilot of 2026-10-10: 0.01 USD per occurrence pair on
-// Opus at half price). A full nightly makes about 2,000 calls, about 30 USD on
-// the API. The seat serves the first part of the night, so 25 USD lets the
-// overflow finish most nights. A bad night (a loop, a prompt that grows)
-// costs 25 USD at most, and the next night resumes the work.
+// claudeAPIRunCapUSD is the spend cap of the API endpoint per UTC day. A sync
+// call costs about 0.01 USD on Sonnet 5.5 and 0.02 USD on Opus 5.5 (the
+// batch pilot of 2026-10-10: 0.01 USD per occurrence pair on Opus at half
+// price). A day of the worker makes about 2,000 calls, about 30 USD on the
+// API. The seats serve first, so 25 USD lets the overflow finish most days. A
+// bad day (a loop, a prompt that grows) costs 25 USD at most, and the next
+// day resumes the work.
 const claudeAPIRunCapUSD = 25.0
 
 // claudeAPITimeout is the limit of one HTTP request, the default of the
@@ -149,14 +153,16 @@ func (t *ClaudeAPIEndpoint) Call(ctx context.Context, req ChatRequest, opts Clau
 }
 
 // admit reserves cost for a call, or returns the stop error of the endpoint.
-// It stops the endpoint when the reservation would pass the cap. The first
-// stop by the cap calls OnCreditError, as an account without credit does.
+// It stops the endpoint when the reservation would pass the cap of the day,
+// until the next day. The first stop by the cap calls OnCreditError, as an
+// account without credit does.
 func (t *ClaudeAPIEndpoint) admit(cost float64) error {
 	t.mu.Lock()
+	t.rollDay()
 	first := false
 	if t.stop == nil && t.spentUSD+cost > t.maxUSD {
-		first = t.halt(fmt.Errorf("%w: claude api: the spend of this run (%.2f USD) plus the worst case of the next call (%.4f USD) passes the cap of %.2f USD",
-			ErrUnavailable, t.spentUSD, cost, t.maxUSD))
+		first = t.halt(fmt.Errorf("%w: claude api: the spend of the day (%.2f USD) plus the worst case of the next call (%.4f USD) passes the cap of %.2f USD",
+			ErrUnavailable, t.spentUSD, cost, t.maxUSD), t.day.AddDate(0, 0, 1))
 	}
 	stop := t.stop
 	if stop == nil {
@@ -179,16 +185,34 @@ func (t *ClaudeAPIEndpoint) settle(reserved, cost float64) {
 	t.mu.Unlock()
 }
 
-// halt stops the endpoint with err for the rest of the process and logs it
-// once. It reports whether this call stopped the endpoint. The caller holds
-// t.mu.
-func (t *ClaudeAPIEndpoint) halt(err error) bool {
+// rollDay resets the spend and the stop when the UTC day changed. The caller
+// holds t.mu.
+func (t *ClaudeAPIEndpoint) rollDay() {
+	now := time.Now
+	if t.now != nil {
+		now = t.now
+	}
+	day := now().UTC().Truncate(24 * time.Hour)
+	if day.Equal(t.day) {
+		return
+	}
+	if !t.day.IsZero() {
+		log.Info().Float64("spent_usd", t.spentUSD).Bool("was_stopped", t.stop != nil).
+			Msg("claude api: a new day; the spend and the stop of the endpoint are reset")
+	}
+	t.day, t.spentUSD, t.stop = day, 0, nil
+}
+
+// halt stops the endpoint with err until retryAt (zero: not known) and logs
+// it once. The stop ends at the latest with the day (rollDay). It reports
+// whether this call stopped the endpoint. The caller holds t.mu.
+func (t *ClaudeAPIEndpoint) halt(err error, retryAt time.Time) bool {
 	if t.stop != nil {
 		return false
 	}
-	t.stop = &UnavailableError{Endpoint: EndpointClaudeAPI, Err: err}
-	log.Error().Err(err).Float64("spent_usd", t.spentUSD).
-		Msg("claude api: endpoint stopped for the rest of the run; the next run resumes the work")
+	t.stop = &UnavailableError{Endpoint: EndpointClaudeAPI, RetryAt: retryAt, Err: err}
+	log.Error().Err(err).Float64("spent_usd", t.spentUSD).Time("retry_at", retryAt).
+		Msg("claude api: endpoint stopped for the rest of the day")
 	return true
 }
 
@@ -212,7 +236,9 @@ func (t *ClaudeAPIEndpoint) callError(ctx context.Context, err error) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.halt(fmt.Errorf("%w: claude api: %w", ErrUnavailable, err))
+	// No credit: the reset time is not known; the day's end clears the stop
+	// and the next call probes the account again.
+	t.halt(fmt.Errorf("%w: claude api: %w", ErrUnavailable, err), time.Time{})
 	return t.stop
 }
 
@@ -238,5 +264,5 @@ func (t *ClaudeAPIEndpoint) withPrefix(task Task, creq ClaudeRequest) (ClaudeReq
 func (t *ClaudeAPIEndpoint) UsageReport() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return usageReport(t.usage, true, fmt.Sprintf("list price; cap %.2f USD per run", t.maxUSD))
+	return usageReport(t.usage, true, fmt.Sprintf("list price; cap %.2f USD per day", t.maxUSD))
 }

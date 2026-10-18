@@ -161,14 +161,19 @@ func TestClaudeAPIEndpoint_NeedsTheKey(t *testing.T) {
 	}
 }
 
-// wantStopped checks that err stops the run: an UnavailableError of the API
-// endpoint with a zero RetryAt.
-func wantStopped(t *testing.T, err error) {
+// wantStopped checks that err stops the endpoint: an UnavailableError of the
+// API endpoint with retryAt as its RetryAt (zero when not known).
+func wantStopped(t *testing.T, err error, retryAt time.Time) {
 	t.Helper()
 	var ue *UnavailableError
-	if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeAPI || !ue.RetryAt.IsZero() || !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("err = %v, want an UnavailableError of %s with a zero RetryAt", err, EndpointClaudeAPI)
+	if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeAPI || !ue.RetryAt.Equal(retryAt) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want an UnavailableError of %s with RetryAt %s", err, EndpointClaudeAPI, retryAt)
 	}
+}
+
+// nextDay is the start of the next UTC day: the RetryAt of a stop by the cap.
+func nextDay() time.Time {
+	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
 }
 
 // apiReserve returns the worst-case cost that the endpoint reserves for req.
@@ -208,7 +213,7 @@ func TestClaudeAPIEndpoint_SpendCapStopsTheRun(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		_, _, err := e.Call(context.Background(), req, apiOpts)
-		wantStopped(t, err)
+		wantStopped(t, err, nextDay())
 	}
 	if n := len(f.requests()); n != 2 {
 		t.Fatalf("%d requests, want 2: a call past the cap must send nothing", n)
@@ -234,7 +239,7 @@ func TestClaudeAPIEndpoint_SpendCapHoldsForConcurrentCalls(t *testing.T) {
 		}()
 	}
 	for i := 0; i < 2; i++ {
-		wantStopped(t, <-errs) // 2 calls pass the cap at once
+		wantStopped(t, <-errs, nextDay()) // 2 calls pass the cap at once
 	}
 	for i := 0; i < 3; i++ {
 		<-f.arrived
@@ -317,7 +322,7 @@ func TestClaudeAPIEndpoint_CreditErrorStopsTheRun(t *testing.T) {
 			e := f.endpoint()
 			req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskAudit}
 			_, _, err := e.Call(context.Background(), req, apiOpts)
-			wantStopped(t, err)
+			wantStopped(t, err, time.Time{})
 			wantAlert := "claude" // the credit alert of do
 			if c.status != http.StatusPaymentRequired && c.status != http.StatusTooManyRequests {
 				wantAlert = ""
@@ -326,7 +331,7 @@ func TestClaudeAPIEndpoint_CreditErrorStopsTheRun(t *testing.T) {
 				t.Fatalf("credit alert %q, want %q", credit, wantAlert)
 			}
 			_, _, err = e.Call(context.Background(), req, apiOpts)
-			wantStopped(t, err)
+			wantStopped(t, err, time.Time{})
 			if n := len(f.requests()); n != 1 {
 				t.Fatalf("%d requests, want 1: a stopped endpoint must send nothing", n)
 			}
@@ -728,5 +733,35 @@ func TestSkipIgnoresALateCall(t *testing.T) {
 	s.release(EndpointClaudeTeam, probe)
 	if ok, tok, _ := s.try(EndpointClaudeTeam); !ok || tok.probe {
 		t.Fatal("the success of the probe ends the skip")
+	}
+}
+
+// TestClaudeAPIEndpoint_CapResetsWithTheDay: the worker lives for days; a cap
+// reached today stops the endpoint until the next UTC day, then the spend
+// starts again at 0.
+func TestClaudeAPIEndpoint_CapResetsWithTheDay(t *testing.T) {
+	f := newFakeMessagesAPI(t)
+	e := f.endpoint()
+	clock := time.Date(2026, 10, 18, 23, 50, 0, 0, time.UTC)
+	e.now = func() time.Time { return clock }
+	req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskAudit}
+	e.maxUSD = apiReplyCost + apiReserve(t, req)
+	for i := 0; i < 2; i++ {
+		if _, _, err := e.Call(context.Background(), req, apiOpts); err != nil {
+			t.Fatalf("call %d is under the cap: %v", i+1, err)
+		}
+	}
+	_, _, err := e.Call(context.Background(), req, apiOpts)
+	wantStopped(t, err, time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC))
+
+	clock = clock.Add(20 * time.Minute) // 00:10 the next day
+	if _, _, err := e.Call(context.Background(), req, apiOpts); err != nil {
+		t.Fatalf("the next day serves again: %v", err)
+	}
+	if math.Abs(e.spentUSD-apiReplyCost) > 1e-12 {
+		t.Fatalf("spent %.6f USD, want the cost of the 1 reply of the new day", e.spentUSD)
+	}
+	if n := len(f.requests()); n != 3 {
+		t.Fatalf("%d requests, want 3", n)
 	}
 }

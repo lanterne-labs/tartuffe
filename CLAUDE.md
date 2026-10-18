@@ -138,11 +138,15 @@ FIRECRAWL_API_KEY=...
 FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the host volume mount)
 
 # LLM routing (backend/llm/endpoint.go)
-LLM_PROFILE=local                # local (default) or claude-team; the profile routes each LLM task to an endpoint
+LLM_PROFILE=local                # local (default) or claude-team; the profile routes each LLM task to an endpoint.
+                                 # local: the GPU box (OPEN_AI_API) with the OpenRouter fallback, as before.
+                                 # claude-team: the Team seats first; when every seat is at its usage limit, the
+                                 # Claude API (ANTHROPIC_API_KEY) serves, capped at 25 USD per UTC day.
 CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs, in the order of use:
                                  # a seat at its usage limit gives way to the next; the claude CLI must be on the PATH
 CLAUDE_TEAM_PLAN_SEAT=a          # optional: the seat to use first (the order then wraps around)
-ANTHROPIC_API_KEY=sk-ant-...     # Message Batches API key; only the goldens use it (make llm-goldens LLM_CLAUDE=...)
+ANTHROPIC_API_KEY=sk-ant-...     # Claude API key: the overflow of the seats on claude-team (optional: without it the
+                                 # worker waits for the seat reset), and the goldens (make llm-goldens LLM_CLAUDE=...)
 
 # Search providers — assembled into a chain (tried in this order; whichever key is set is added).
 # Priority: Serper > Brave > SerpAPI. Each is optional; at least one must be set.

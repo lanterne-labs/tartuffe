@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-18: The Claude API spend cap is per day
+
+- On `LLM_PROFILE=claude-team` the Team seats serve first and the Claude API (`ANTHROPIC_API_KEY`)
+  serves when every seat is at its usage limit. The API cap of 25 USD was per process, written
+  for a nightly run; the worker lives for days, so a cap reached once stopped the API until the
+  next deploy. The cap is now per UTC day: a stop by the cap carries the next midnight as its
+  reset time, and the spend starts again at 0 with the day.
+
 ## 2026-10-18: A vote on an article of a bill names the article
 
 - The summarizer read the scrutin title of an article vote ("l'article 7 de la proposition de
