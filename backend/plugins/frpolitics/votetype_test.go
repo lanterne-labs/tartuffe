@@ -83,20 +83,16 @@ func TestVotedObjectPhraseArticle(t *testing.T) {
 	}
 }
 
-// TestResolveVotedObjectArticle: a scrutin on an article names the article;
-// an article title that does not split is gated, like an amendment without
-// content, so no fact misstates what was voted. No archive is read.
+// TestResolveVotedObjectArticle: resolveVotedObject gates every article
+// vote, with no archive read: the articleResolver, which reads the text, is
+// the only path to a ballot on an article.
 func TestResolveVotedObjectArticle(t *testing.T) {
 	object, ok, err := resolveVotedObject(context.Background(), Law{Title: "l’article 7 de la proposition de loi relative au droit à l’aide à mourir (première lecture)."}, nil)
-	if err != nil || !ok || object != "l’article 7" {
-		t.Fatalf("article vote: (%q, %v, %v), want (l’article 7, true, nil)", object, ok, err)
+	if err != nil || ok || object != "" {
+		t.Fatalf("article vote: (%q, %v, %v), want gated", object, ok, err)
 	}
-	if !isArticlePhrase(object) {
+	if !isArticlePhrase("l’article 7") {
 		t.Error("the curly apostrophe is an article phrase too")
-	}
-	_, ok, err = resolveVotedObject(context.Background(), Law{Title: "l'article 2 de la loi du 9 décembre 1905"}, nil)
-	if err != nil || ok {
-		t.Fatalf("an article title that does not split: ok=%v err=%v, want gated", ok, err)
 	}
 	if got := votedObjectPhrase("la première partie", LawSummary{}); got != "la première partie du texte de loi" {
 		t.Errorf("part phrase without a statement = %q", got)

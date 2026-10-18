@@ -111,9 +111,10 @@ var scrutinNumeroRe = regexp.MustCompile(`n°\s*(\d+)`)
 //
 //   - ensemble/motion/declaration votes and unclassified scrutins keep the
 //     bill phrase: the ballot IS a position on the text.
-//   - article votes name the article before the bill phrase ("l'article 7
-//     du texte de loi : « ... »"): the ballot judges that article of the
-//     bill, which the summarizer describes from the bill's title.
+//   - article votes name the article and what it does before the bill
+//     phrase ("l'article 7 (« Permet ... ») du texte de loi : « ... »"): the
+//     ballot judges that article of the bill. articleResolver reads the
+//     article in the text of the bill; here the article alone.
 //   - amendement / sous-amendement votes describe the modification itself —
 //     number, author group, purpose from the AN amendments archive, returned
 //     as amendment — because the ballot judges only that modification.
@@ -125,10 +126,10 @@ var scrutinNumeroRe = regexp.MustCompile(`n°\s*(\d+)`)
 func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]OrganeInfo) (object string, ok bool, err error) {
 	objType := ClassifyScrutinObject(law.Title)
 	if objType == ObjectArticle {
-		// A title that does not split would send the article to the
-		// summarizer again: gated, like an amendment without content.
-		article, _, ok := splitArticle(law.Title)
-		return article, ok, nil
+		// An article vote is resolved by articleResolver, which reads what
+		// the article does in the text. Without it the ballot would carry
+		// the bill's purpose for one article: gated.
+		return "", false, nil
 	}
 	if IsTextLevelVote(objType) || objType == ObjectOther {
 		return "", true, nil

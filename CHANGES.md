@@ -10,6 +10,22 @@ This file tracks high-level changes to the codebase, lessons learned, and mistak
   next deploy. The cap is now per UTC day: a stop by the cap carries the next midnight as its
   reset time, and the spend starts again at 0 with the day.
 
+## 2026-10-18: A ballot on an article carries what the article does (articles.go)
+
+- The root cause of the article-vote false positives: the fact carried the bill's purpose where the
+  ballot judged one article, so "voted FOR article 14" and "voted AGAINST article 1" of one bill
+  read as a reversal (120 of 619 contradictions). The scrutin does not name its text, so the
+  resolver takes it from the amendments voted in the same séance on the same bill
+  (texteLegislatifRef), reads the article in the PDF of the text (pdftotext, poppler-utils in
+  the image), asks the model for one statement of the article, and caches it in `vote_articles`.
+  The fact reads "a voté POUR l'article 7 (« Permet l'administration de la substance létale en
+  dehors du domicile ») du texte de loi : « Crée un droit à l'aide à mourir »". A séance whose
+  amendments name no text or several, an article absent from the text, or a statement under 0.5
+  confidence gates the scrutin.
+- Lesson: a fact must describe the object that was voted. When the source does not give it,
+  find the source that does (here the amendments archive and the text PDF) instead of
+  describing the container.
+
 ## 2026-10-18: A vote on an article of a bill names the article
 
 - The summarizer read the scrutin title of an article vote ("l'article 7 de la proposition de

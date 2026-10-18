@@ -450,7 +450,7 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 type lawSelection struct {
 	laws       []Law
 	summaries  map[string]LawSummary
-	amendments map[string]string // law key → resolveVotedObject's object: the amendment or the article ("" for the whole text)
+	amendments map[string]string // law key → the voted object: the amendment or the article with its statement ("" for the whole text)
 }
 
 // selectLaws walks the discovered laws in order and keeps the ones the run
@@ -472,6 +472,7 @@ type lawSelection struct {
 // relevance.
 func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Store, laws []Law, groupStats map[string]LawGroupStats, eventsByLaw LawEventMap, orgCache OrganeInfoMap, threshold float64, opts Options) (*lawSelection, error) {
 	sel := &lawSelection{summaries: make(map[string]LawSummary), amendments: make(map[string]string)}
+	articles := newArticleResolver(store, laws, orgCache)
 
 	keys := make([]string, len(laws))
 	for i, law := range laws {
@@ -569,17 +570,25 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 			skippedNoBallot++
 			continue
 		}
-		amendment, ok, err := resolveVotedObject(ctx, law, orgCache)
+		// An article vote carries what the article does (articleResolver);
+		// the other objects come from the scrutin and the amendments archive.
+		var object string
+		var ok bool
+		if ClassifyScrutinObject(law.Title) == ObjectArticle {
+			object, ok, err = articles.resolve(ctx, law)
+		} else {
+			object, ok, err = resolveVotedObject(ctx, law, orgCache)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve the voted object of %s: %w", law.Key, err)
 		}
 		if !ok {
 			skippedGated++
 			log.Warn().Str("law_key", law.Key).Str("titre", law.Title[:min(80, len(law.Title))]).
-				Msg("frpolitics: voted object unresolved (amendement content unavailable, or an article title that does not split); gating this scrutin (no facts)")
+				Msg("frpolitics: voted object unresolved; gating this scrutin (no facts)")
 			continue
 		}
-		sel.amendments[law.Key] = amendment
+		sel.amendments[law.Key] = object
 		batch = append(batch, law)
 		if len(batch) >= summarizeBatchSize || (opts.MaxLaws > 0 && len(sel.laws)+len(batch) >= opts.MaxLaws) {
 			if err := judge(); err != nil {

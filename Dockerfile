@@ -24,7 +24,8 @@ FROM alpine:3.19
 # bash: alpine ships only busybox /bin/sh, which the host's `host ssh`
 # shell-probe fails to detect (reports "no shell (bash or sh)"). Debian-based
 # service images like postgres have bash and ssh fine, so install it here.
-RUN apk add --no-cache ca-certificates tzdata bash
+# poppler-utils: pdftotext reads the texts of the bills (frpolitics articles).
+RUN apk add --no-cache ca-certificates tzdata bash poppler-utils
 
 COPY --from=builder /app/dm /usr/local/bin/dm
 COPY --from=claude /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude

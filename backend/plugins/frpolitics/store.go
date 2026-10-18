@@ -209,3 +209,113 @@ func (s *Store) VoteSubjectStances(ctx context.Context, subject string) (map[int
 	}
 	return stances, rows.Err()
 }
+
+// StoredArticleStatement returns the statement of article in text texte_num
+// of the legislature, when the model stated it before.
+func (s *Store) StoredArticleStatement(ctx context.Context, legislature, texteNum int, article string) (LawSummary, bool, error) {
+	var summary LawSummary
+	err := s.pool.QueryRow(ctx, `
+		SELECT statement, confidence FROM vote_articles
+		WHERE legislature = $1 AND texte_num = $2 AND article = $3`, legislature, texteNum, article).Scan(&summary.SimpleStatement, &summary.Confidence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LawSummary{}, false, nil
+	}
+	if err != nil {
+		return LawSummary{}, false, fmt.Errorf("loading the statement of %s of text %d: %w", article, texteNum, err)
+	}
+	return summary, true, nil
+}
+
+// StoreArticleStatement keeps the statement of an article.
+func (s *Store) StoreArticleStatement(ctx context.Context, legislature, texteNum int, article string, summary LawSummary) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO vote_articles (legislature, texte_num, article, statement, confidence)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (legislature, texte_num, article) DO UPDATE SET statement = EXCLUDED.statement, confidence = EXCLUDED.confidence`,
+		legislature, texteNum, article, summary.SimpleStatement, summary.Confidence)
+	if err != nil {
+		return fmt.Errorf("storing the statement of %s of text %d: %w", article, texteNum, err)
+	}
+	return nil
+}
+
+// BallotsNamingArticle counts the ballots of the scrutin lawKey whose text
+// names the article alone ("l'article 7 du texte de loi : « ... »"). The
+// scrutin is the law_key of the source: the source URL is the dossier's,
+// shared by every scrutin of the bill.
+func (s *Store) BallotsNamingArticle(ctx context.Context, lawKey, article string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.metadata->>'law_key' = $1 AND f.fact_text LIKE '% ' || $2 || ' du texte de loi : «%'`, lawKey, article).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting the ballots of %s naming %s: %w", lawKey, article, err)
+	}
+	return n, nil
+}
+
+// RearticleBallots rewrites the ballots of the scrutin lawKey that name the
+// article alone with object, the article and what it does, and returns the
+// ids of the facts it rewrote. The English text is reset: the translation
+// repair fills it again from the new text.
+func (s *Store) RearticleBallots(ctx context.Context, lawKey, article, object string) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE facts f
+		SET fact_text = replace(f.fact_text, ' ' || $2 || ' du texte de loi : «', ' ' || $3 || ' du texte de loi : «'),
+		    fact_text_en = NULL, updated_at = now()
+		FROM fact_sources fs
+		WHERE fs.fact_id = f.id AND fs.metadata->>'law_key' = $1 AND f.fact_text LIKE '% ' || $2 || ' du texte de loi : «%'
+		RETURNING f.id`, lawKey, article, object)
+	if err != nil {
+		return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ReopenPairsOf removes the contradictions on the facts and the verdicts of
+// their pairs, so the detector judges the pairs again, and returns the
+// persons whose contradictions changed with the number of contradictions
+// removed.
+func (s *Store) ReopenPairsOf(ctx context.Context, factIDs []int64) (persons []int64, removed int, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reopening pairs: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `
+		DELETE FROM contradictions WHERE fact_a_id = ANY($1) OR fact_b_id = ANY($1) RETURNING person_id`, factIDs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("reopening pairs: removing the contradictions: %w", err)
+	}
+	seen := map[int64]bool{}
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			rows.Close()
+			return nil, 0, fmt.Errorf("reopening pairs: %w", err)
+		}
+		removed++
+		if !seen[pid] {
+			seen[pid] = true
+			persons = append(persons, pid)
+		}
+	}
+	rows.Close()
+	if _, err := tx.Exec(ctx, `DELETE FROM fact_pair_checks WHERE fact_a_id = ANY($1) OR fact_b_id = ANY($1)`, factIDs); err != nil {
+		return nil, 0, fmt.Errorf("reopening pairs: removing the verdicts: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, fmt.Errorf("reopening pairs: %w", err)
+	}
+	return persons, removed, nil
+}

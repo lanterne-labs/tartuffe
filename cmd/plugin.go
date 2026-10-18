@@ -35,7 +35,8 @@ func init() {
 	pluginCmd.AddCommand(frpoliticsCmd)
 
 	// Flags for frpolitics
-	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'debats' (séance transcripts), or 'backfill-seance-ref' (stamp seance_ref on old vote sources + queue same-séance pairs)")
+	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'debats' (séance transcripts), 'backfill-seance-ref' (stamp seance_ref on old vote sources + queue same-séance pairs), or 'rearticle' (rewrite the ballots of the article scrutins with what the article does)")
+	frpoliticsCmd.Flags().Bool("rejudge", false, "rearticle mode: remove the contradictions on the rewritten ballots and the verdicts of their pairs, so they are judged again")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
 	frpoliticsCmd.Flags().Bool("prioritize-press", false, "debats mode: speakers with news/twitter facts first (backfill order)")
@@ -73,8 +74,8 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	legsStr, _ := cmd.Flags().GetString("legislatures")
 
 	// Validate mode
-	if mode != "votes" && mode != "debats" && mode != "backfill-seance-ref" {
-		return fmt.Errorf("invalid mode %q: must be 'votes', 'debats' or 'backfill-seance-ref'", mode)
+	if mode != "votes" && mode != "debats" && mode != "backfill-seance-ref" && mode != "rearticle" {
+		return fmt.Errorf("invalid mode %q: must be 'votes', 'debats', 'backfill-seance-ref' or 'rearticle'", mode)
 	}
 
 	// Parse since date (--since takes priority; --last-years and --from-year are convenience shorthands)
@@ -109,6 +110,20 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 				log.Warn().Str("leg", p).Msg("invalid legislature")
 			}
 		}
+	}
+
+	// The ballots of the article scrutins stored before the articles were
+	// resolved name the article alone: rewrite them with what the article
+	// does. Discovery reads the scrutins of --since / --legislatures.
+	if mode == "rearticle" {
+		rejudge, _ := cmd.Flags().GetBool("rejudge")
+		res, err := frpolitics.BackfillArticles(ctx, storer, frpolitics.Options{Since: since, Legislatures: legs}, rejudge)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%d article scrutins rewritten, %d ballots; %d scrutins gated (%s); %d contradictions reopened\n",
+			res.Scrutins, res.Ballots, len(res.Gated), strings.Join(res.Gated, ", "), res.Reopened)
+		return nil
 	}
 
 	// One-off: stamp seance_ref on vote sources ingested before the key

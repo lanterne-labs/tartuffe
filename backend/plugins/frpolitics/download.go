@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -82,6 +83,9 @@ func cacheFilename(srcURL string) string {
 // If maxAge > 0, cached files older than maxAge are considered stale and re-downloaded.
 // If maxAge == 0, cached files are returned regardless of age (no expiry).
 // If re-download fails but a stale cache exists, the stale content is returned with a warning.
+// errNotFound marks a download of a page that does not exist (404).
+var errNotFound = errors.New("not found")
+
 func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge time.Duration) ([]byte, error) {
 	filename := cacheFilename(srcURL)
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
@@ -186,7 +190,12 @@ func downloadCached(ctx context.Context, srcURL string, cacheDir string, maxAge 
 				return
 			}
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-			lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
+			if resp.StatusCode == http.StatusNotFound {
+				// A caller can tell a page that does not exist from a failure.
+				lastErr = fmt.Errorf("%w: unexpected status 404: %s", errNotFound, string(b))
+			} else {
+				lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(b))
+			}
 		}()
 		if lastErr == nil && len(data) > 0 {
 			break

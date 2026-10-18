@@ -100,7 +100,7 @@ go test -v ./backend/storage -run TestSpecificName
 
 - **`backend/storage/postgres.go`**: Core data layer - facts, persons, contradictions, affiliations, event logging. All DB operations go through here.
 
-- **`backend/plugins/frpolitics/`**: French politics plugin - downloads vote data from Assemblée Nationale APIs, creates deputies/parties, generates facts from voting records. Entry point is `run.go`.
+- **`backend/plugins/frpolitics/`**: French politics plugin - downloads vote data from Assemblée Nationale APIs, creates deputies/parties, generates facts from voting records. Entry point is `run.go`. A ballot on an article of a bill carries what the article does (`articles.go`): the text of the séance comes from the amendments voted in it, the article from the PDF of the text (`pdftotext`, poppler-utils in the image), the statement from the LLM, cached in `vote_articles`. `dm plugin frpolitics --mode rearticle [--rejudge]` rewrites the ballots stored before. A local votes run needs `pdftotext` on the PATH (poppler).
 
 - **`backend/contradiction/`**: LLM-based contradiction detection. Uses semantic similarity (pgvector) to find candidate facts, then LLM to judge contradiction.
 
