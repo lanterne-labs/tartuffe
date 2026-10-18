@@ -44,8 +44,9 @@ type articleResolver struct {
 	laws     []Law // every scrutin of the run: the siblings of a séance
 	orgCache map[string]OrganeInfo
 	cacheDir string
-	// lookup finds an amendment in the archive (LookupAmendement).
-	lookup func(ctx context.Context, legislature, numero int, scrutinDate *time.Time) (*AmendementInfo, error)
+	// lookup returns the texts an amendment scrutin can have voted on
+	// (LookupTexteRefs).
+	lookup func(ctx context.Context, legislature, numero int, scrutinDate *time.Time) ([]string, error)
 	// statement asks the model what an article does (articleStatement).
 	statement func(ctx context.Context, bill, article, text string) (LawSummary, error)
 	// readText returns the text of the PDF at url (pdfText).
@@ -56,7 +57,7 @@ type articleResolver struct {
 
 func newArticleResolver(store *Store, laws []Law, orgCache map[string]OrganeInfo) *articleResolver {
 	r := &articleResolver{store: store, laws: laws, orgCache: orgCache, cacheDir: getCacheDir(),
-		lookup: LookupAmendement, statement: articleStatement, readText: pdfText, bySeance: map[string][]Law{}}
+		lookup: LookupTexteRefs, statement: articleStatement, readText: pdfText, bySeance: map[string][]Law{}}
 	for _, l := range laws {
 		if l.SeanceRef != "" {
 			r.bySeance[l.SeanceRef] = append(r.bySeance[l.SeanceRef], l)
@@ -130,16 +131,19 @@ func (r *articleResolver) resolve(ctx context.Context, law Law) (object string, 
 // law voted on: the one the amendments voted in the same séance on the same
 // bill belong to. The bill is the tail of an amendment title ("... à
 // l'article 7 de la proposition de loi relative ..."), so the match is a
-// suffix: a bill whose title extends another's does not pass for it. ok is
-// false when no amendment of the séance names a text, or when they name
-// several.
+// suffix: a bill whose title extends another's does not pass for it. An
+// amendment number can name several texts (the same number in several
+// texts, sorted the same day): the text of the séance is the one every
+// amendment of it names. ok is false when no amendment of the séance names
+// a text, or when they do not agree on one.
 func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) (string, bool, error) {
 	if law.SeanceRef == "" {
 		log.Warn().Str("law_key", law.Key).Msg("frpolitics: article vote without a séance; gating")
 		return "", false, nil
 	}
 	billKey := billTitleKey(bill)
-	refs := map[string]bool{}
+	// common holds the texts every amendment so far names; nil before the first.
+	var common map[string]bool
 	for _, sibling := range r.bySeance[law.SeanceRef] {
 		if sibling.Legislature != law.Legislature {
 			continue
@@ -157,23 +161,36 @@ func (r *articleResolver) seanceText(ctx context.Context, law Law, bill string) 
 			continue
 		}
 		numero, _ := strconv.Atoi(m[1])
-		info, err := r.lookup(ctx, sibling.Legislature, numero, sibling.VoteDate)
+		refs, err := r.lookup(ctx, sibling.Legislature, numero, sibling.VoteDate)
 		if err != nil {
 			return "", false, err
 		}
-		if info != nil && info.TexteRef != "" {
-			refs[info.TexteRef] = true
+		if len(refs) == 0 {
+			continue // not in the archive yet: no signal
+		}
+		named := map[string]bool{}
+		for _, ref := range refs {
+			named[ref] = true
+		}
+		if common == nil {
+			common = named
+			continue
+		}
+		for ref := range common {
+			if !named[ref] {
+				delete(common, ref)
+			}
 		}
 	}
-	switch len(refs) {
+	switch len(common) {
 	case 1:
-		for ref := range refs {
+		for ref := range common {
 			return ref, true, nil
 		}
 	case 0:
 		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Msg("frpolitics: no amendment of the séance names the text; gating the article vote")
 	default:
-		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Int("texts", len(refs)).Msg("frpolitics: the amendments of the séance name several texts; gating the article vote")
+		log.Warn().Str("law_key", law.Key).Str("seance", law.SeanceRef).Int("texts", len(common)).Msg("frpolitics: the amendments of the séance name several texts; gating the article vote")
 	}
 	return "", false, nil
 }

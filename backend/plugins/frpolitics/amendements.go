@@ -81,6 +81,24 @@ func amendementsArchive(ctx context.Context, legislature int) (*zip.ReadCloser, 
 // gate, never guess. Returns an error when the archive is not available: the
 // lookup cannot run, and a gate would hide the failure as "no amendment".
 func LookupAmendement(ctx context.Context, legislature, numero int, scrutinDate *time.Time) (*AmendementInfo, error) {
+	candidates, err := amendementCandidates(ctx, legislature, numero, scrutinDate)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) != 1 {
+		if len(candidates) > 1 {
+			log.Warn().Int("numero", numero).Int("candidates", len(candidates)).
+				Msg("frpolitics: ambiguous amendement lookup; gating")
+		}
+		return nil, nil
+	}
+	return candidates[0], nil
+}
+
+// amendementCandidates returns the amendments of the archive with the number
+// numero whose sort fell on scrutinDate (every one when the date is not
+// known). Several texts can hold an amendment with the same number.
+func amendementCandidates(ctx context.Context, legislature, numero int, scrutinDate *time.Time) ([]*AmendementInfo, error) {
 	r, err := amendementsArchive(ctx, legislature)
 	if err != nil {
 		return nil, err
@@ -101,14 +119,28 @@ func LookupAmendement(ctx context.Context, legislature, numero int, scrutinDate 
 		}
 		candidates = append(candidates, info)
 	}
-	if len(candidates) != 1 {
-		if len(candidates) > 1 {
-			log.Warn().Int("numero", numero).Int("candidates", len(candidates)).
-				Msg("frpolitics: ambiguous amendement lookup; gating")
-		}
-		return nil, nil
+	return candidates, nil
+}
+
+// LookupTexteRefs returns the distinct text references (texteLegislatifRef)
+// of the amendments with the number numero sorted on scrutinDate: the texts
+// an amendment scrutin can have voted on. An ambiguous number still names a
+// few texts, which the article resolver narrows with the other scrutins of
+// the séance.
+func LookupTexteRefs(ctx context.Context, legislature, numero int, scrutinDate *time.Time) ([]string, error) {
+	candidates, err := amendementCandidates(ctx, legislature, numero, scrutinDate)
+	if err != nil {
+		return nil, err
 	}
-	return candidates[0], nil
+	seen := map[string]bool{}
+	var refs []string
+	for _, c := range candidates {
+		if c.TexteRef != "" && !seen[c.TexteRef] {
+			seen[c.TexteRef] = true
+			refs = append(refs, c.TexteRef)
+		}
+	}
+	return refs, nil
 }
 
 var tagRe = regexp.MustCompile(`<[^>]+>`)

@@ -131,14 +131,14 @@ func TestArticleResolver(t *testing.T) {
 		{Key: "99-2004", Title: "l'amendement n° 44 de M. Y à l'article 3 de la proposition de loi relative au droit à l'aide à mourir des mineurs (première lecture).", Legislature: 99, VoteDate: &date, SeanceRef: seance},
 		{Key: "99-2010", Title: "l'article 3 du projet de loi d'urgence pour Mayotte (première lecture).", Legislature: 99, VoteDate: &date, SeanceRef: "RUANR5L99S2025IDS2"},
 	}
-	texts := map[int]string{96: "PIONANR5L99BTC1364", 12: "PRJLANR5L99BTC0500", 44: "PIONANR5L99BTC0777"}
+	// Amendment 96 has the same number in two texts; 97 names the text alone:
+	// the text every amendment of the séance names is the one.
+	texts := map[int][]string{96: {"PIONANR5L99BTC1364", "PRJLANR5L99BTC0500"}, 97: {"PIONANR5L99BTC1364"}, 12: {"PRJLANR5L99BTC0500"}, 44: {"PIONANR5L99BTC0777"}}
+	laws = append(laws, Law{Key: "99-2005", Title: "l'amendement n° 97 de M. Z à l'article 7 de la proposition de loi relative au droit à l'aide à mourir (première lecture).", Legislature: 99, VoteDate: &date, SeanceRef: seance})
 	var statements, reads int
 	r := newArticleResolver(store, laws, nil)
-	r.lookup = func(_ context.Context, legislature, numero int, _ *time.Time) (*AmendementInfo, error) {
-		if ref, ok := texts[numero]; ok {
-			return &AmendementInfo{Numero: numero, TexteRef: ref}, nil
-		}
-		return nil, nil
+	r.lookup = func(_ context.Context, legislature, numero int, _ *time.Time) ([]string, error) {
+		return texts[numero], nil
 	}
 	r.readText = func(_ context.Context, _, url string) (string, error) {
 		reads++

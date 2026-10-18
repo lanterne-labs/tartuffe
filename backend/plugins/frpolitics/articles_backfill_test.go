@@ -62,8 +62,8 @@ func TestRearticleBallots(t *testing.T) {
 		{Key: "99-0001", URL: "u2", Title: "l'ensemble de la proposition de loi X", Legislature: 99, VoteDate: &date, SeanceRef: "S1"},
 	}
 	r := newArticleResolver(store, laws, nil)
-	r.lookup = func(_ context.Context, _, numero int, _ *time.Time) (*AmendementInfo, error) {
-		return &AmendementInfo{Numero: numero, TexteRef: "PIONANR5L99BTC1364"}, nil
+	r.lookup = func(_ context.Context, _, numero int, _ *time.Time) ([]string, error) {
+		return []string{"PIONANR5L99BTC1364"}, nil
 	}
 	r.readText = func(context.Context, string, string) (string, error) { return texte1364, nil }
 	r.statement = func(context.Context, string, string, string) (LawSummary, error) {
