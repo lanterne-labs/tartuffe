@@ -2,6 +2,18 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-10-18: A vote on an article of a bill names the article
+
+- The summarizer read the scrutin title of an article vote ("l'article 7 de la proposition de
+  loi ...") and was asked to describe a text it could not see. On Claude it said so in the
+  statement, and 299 ballots carried "mais le contenu précis de l'article 7 n'est pas
+  déterminable à partir du titre". Now the summarizer reads the bill's title, the articles of
+  one bill share one summary, and the fact reads "a voté POUR l'article 7 du texte de loi :
+  « ... »". The ballots of one bill keep one vote subject and one stance. An article title that
+  does not split is gated. A statement with a remark on the title sets the confidence to 0.
+- Lesson: never ask the model to describe a text it cannot see. Give it the text it can see,
+  and put the part it cannot see in the fact as a plain reference.
+
 ## 2026-10-17: The worker replaces the nightly cron (mirror-4bt, step 2)
 
 - `dm pipeline daily`, the run gate, the per-phase budgets, the 23:00 deadline, the history

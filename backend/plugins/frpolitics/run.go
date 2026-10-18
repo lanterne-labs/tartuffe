@@ -90,7 +90,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int
 		}
 		summary, ok := summaries[law.Key]
 		if !ok {
-			summary = LawSummary{SimpleStatement: law.Title}
+			summary = LawSummary{SimpleStatement: summaryTitle(law)}
 		}
 		// Describe the voted OBJECT (mirror-f28/mirror-0dj): a ballot on an
 		// amendement judges the modification only, so its fact text says what
@@ -450,7 +450,7 @@ func storeLaws(ctx context.Context, store *Store, laws []Law, factsByLawKey map[
 type lawSelection struct {
 	laws       []Law
 	summaries  map[string]LawSummary
-	amendments map[string]string // law key → resolveVotedObject's amendment ("" for a text-level vote)
+	amendments map[string]string // law key → resolveVotedObject's object: the amendment or the article ("" for the whole text)
 }
 
 // selectLaws walks the discovered laws in order and keeps the ones the run
@@ -576,7 +576,7 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 		if !ok {
 			skippedGated++
 			log.Warn().Str("law_key", law.Key).Str("titre", law.Title[:min(80, len(law.Title))]).
-				Msg("frpolitics: amendement content unavailable; gating this scrutin (no facts)")
+				Msg("frpolitics: voted object unresolved (amendement content unavailable, or an article title that does not split); gating this scrutin (no facts)")
 			continue
 		}
 		sel.amendments[law.Key] = amendment

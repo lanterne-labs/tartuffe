@@ -18,9 +18,25 @@ const summarizeBatchSize = 10
 
 // SummarizeLaws produces the LLM summary of every law, in batches. A failed
 // batch fails the call: its confidence would otherwise read as 0 and the AI
-// filter would record the laws as irrelevant for good.
+// filter would record the laws as irrelevant for good. The scrutins that
+// summarize one title (the articles of one bill) get one summary: one call,
+// and one wording in the facts of the bill.
 func SummarizeLaws(ctx context.Context, laws []Law) (map[string]LawSummary, error) {
 	result := make(map[string]LawSummary, len(laws))
+	// One representative per title; the others take its summary.
+	sameTitle := make(map[string][]string, len(laws)) // representative key → the keys of the others
+	seen := make(map[string]string, len(laws))        // title → representative key
+	var distinct []Law
+	for _, law := range laws {
+		title := summaryTitle(law)
+		if rep, ok := seen[title]; ok {
+			sameTitle[rep] = append(sameTitle[rep], law.Key)
+			continue
+		}
+		seen[title] = law.Key
+		distinct = append(distinct, law)
+	}
+	laws = distinct
 
 	batchSize := summarizeBatchSize
 	totalBatches := (len(laws) + batchSize - 1) / batchSize
@@ -56,6 +72,9 @@ func SummarizeLaws(ctx context.Context, laws []Law) (map[string]LawSummary, erro
 
 		for key, summary := range summaries {
 			result[key] = summary
+			for _, other := range sameTitle[key] {
+				result[other] = summary
+			}
 		}
 
 		// Add small delay between batches to avoid rate limiting (skip on last batch)
@@ -105,7 +124,7 @@ func buildBatchedSummaryPrompt(laws []Law) string {
 	b.WriteString("déterminable à partir du titre'): such a doubt goes in confidence, never in the text.\n\n")
 	b.WriteString("Laws to summarize:\n")
 	for _, law := range laws {
-		b.WriteString(fmt.Sprintf("- Key: %s\n  Title: %s\n  Legislature: %d\n", law.Key, law.Title, law.Legislature))
+		b.WriteString(fmt.Sprintf("- Key: %s\n  Title: %s\n  Legislature: %d\n", law.Key, summaryTitle(law), law.Legislature))
 	}
 	return b.String()
 }
