@@ -6,9 +6,11 @@ import (
 	"time"
 )
 
-// PersonsWithFactsSince lists the persons with a fact created after since, by
-// name: the persons the maintenance pass of the worker judges again. A zero
-// since lists every person with a fact.
+// PersonsWithFactsSince lists the persons with a fact created or changed
+// after since, by name: the persons the maintenance pass of the worker judges
+// again. A fact whose text was rewritten (a ballot that gained the statement
+// of its article) counts as changed. A zero since lists every person with a
+// fact.
 func (s *PostgresStorer) PersonsWithFactsSince(ctx context.Context, since time.Time) ([]PersonInfo, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
@@ -17,7 +19,7 @@ func (s *PostgresStorer) PersonsWithFactsSince(ctx context.Context, since time.T
 			SELECT 1 FROM fact_mentions fm
 			JOIN fact_sources fs ON fs.id = fm.fact_source_id
 			JOIN facts f ON f.id = fs.fact_id
-			WHERE fm.person_id = p.id AND f.created_at > $1)
+			WHERE fm.person_id = p.id AND (f.created_at > $1 OR f.updated_at > $1))
 		ORDER BY p.name`, since)
 	if err != nil {
 		return nil, fmt.Errorf("persons with facts since %s: %w", since.Format(time.RFC3339), err)
