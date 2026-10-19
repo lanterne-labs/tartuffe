@@ -12,6 +12,7 @@ supabase/*
 dm
 digital-mirror
 *.exe
+cmd/plugin_fr_politics/plugin_fr_politics
 
 # Local data
 scraped_content/
@@ -37,16 +38,8 @@ facts_rebuild_progress.json
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
 
-# frpolitics downloaded AN archives (hundreds of MB; downloadCached rebuilds them)
-backend/plugins/frpolitics/asset/cache/*_Scrutins.json.zip
-backend/plugins/frpolitics/asset/cache/*_syseron.xml.zip
-backend/plugins/frpolitics/asset/cache/Amendements_*.json.zip
-scoped_persons*.txt
-
-# frpolitics downloaded AN archives (hundreds of MB; downloadCached rebuilds them)
-backend/plugins/frpolitics/asset/cache/*_Scrutins.json.zip
-backend/plugins/frpolitics/asset/cache/*_syseron.xml.zip
-backend/plugins/frpolitics/asset/cache/Amendements_*.json.zip
+# frpolitics AN open-data archives: downloadCached fetches and caches them at runtime, never commit them
+backend/plugins/frpolitics/asset/cache/
 scoped_persons*.txt
 
 # Go test binaries (go test -c)
