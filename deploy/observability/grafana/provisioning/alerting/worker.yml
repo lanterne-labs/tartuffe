@@ -1,0 +1,98 @@
+apiVersion: 1
+
+# The worker alerts on the job_metrics rows of the application Postgres: they
+# say when the feed and the maintenance pass last ended, also when the worker
+# itself is down. The alerts go to the Telegram chat of the worker; the
+# observability service needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+# (e.g. ${{worker.TELEGRAM_BOT_TOKEN}}), or Grafana fails to provision.
+
+contactPoints:
+  - orgId: 1
+    name: telegram
+    receivers:
+      - uid: telegram
+        type: telegram
+        settings:
+          bottoken: ${TELEGRAM_BOT_TOKEN}
+          chatid: ${TELEGRAM_CHAT_ID}
+
+policies:
+  - orgId: 1
+    receiver: telegram
+    group_by: ['alertname']
+    group_wait: 1m
+    group_interval: 30m
+    repeat_interval: 12h
+
+groups:
+  - orgId: 1
+    name: worker
+    folder: Alerts
+    interval: 5m
+    rules:
+      # The feed runs after 03:00 UTC (the AN archive is refreshed around
+      # 02:05); by 06:00 the feed of the day has ended.
+      - uid: worker-feed-missing
+        title: Feed of the day missing after 06:00 UTC
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: mirrordb
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: |
+                SELECT CASE
+                  WHEN now() >= (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '6 hours') AT TIME ZONE 'UTC'
+                   AND coalesce(max(created_at), 'epoch'::timestamptz) < (date_trunc('day', now() AT TIME ZONE 'UTC') + interval '3 hours') AT TIME ZONE 'UTC'
+                  THEN 1 ELSE 0 END AS feed_missing
+                FROM job_metrics WHERE job_type = 'feed'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        labels: {severity: warning}
+        annotations:
+          summary: The feed of today has not ended. The worker runs it when no task is pending; a task or a maintenance pass that does not end holds it.
+      # A pass judges at most detectBudget pairs (about 2 h) and records a
+      # row at its end; 12 h without one is a pass that does not end, or a
+      # worker that does not get to it.
+      - uid: worker-maintenance-stale
+        title: No maintenance pass ended for 12 h
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: mirrordb
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: |
+                SELECT extract(epoch FROM now() - coalesce(max(created_at), 'epoch'::timestamptz)) / 3600 AS hours_since_pass
+                FROM job_metrics WHERE job_type = 'maintenance' AND metric = 'duration_seconds'
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: {type: gt, params: [12]}
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 0s
+        labels: {severity: warning}
+        annotations:
+          summary: No maintenance pass recorded its end for 12 h. Look at the worker logs (host logs --service worker).

@@ -2,6 +2,9 @@ package frpolitics
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -10,8 +13,13 @@ import (
 // from the cached zip (preferred) or remote if not cached.
 func TestDownloadAndParseActors(t *testing.T) {
 	ctx := context.Background()
-	// Only read local cache; do NOT download
-	m, err := loadActorNameMapFromPath(ctx, "asset/cache/Organes.json.zip")
+	// Only read local cache; do NOT download. The archive is fetched at
+	// runtime and never committed, so a checkout without it skips.
+	const local = "asset/cache/Organes.json.zip"
+	if _, err := os.Stat(local); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("%s not cached (downloaded at runtime, not committed)", local)
+	}
+	m, err := loadActorNameMapFromPath(ctx, local)
 	if err != nil {
 		t.Fatalf("failed to read local actors mapping zip: %v", err)
 	}

@@ -27,6 +27,12 @@ type DetectOptions struct {
 	// MaxPersons bounds the run to the first N persons of the set above, in
 	// its order (0 = all).
 	MaxPersons int
+	// MaxPairs bounds the pairs a run judges (0 = all): the run stops
+	// collecting once the persons collected hold that many pairs. The persons
+	// after keep their pairs, queued ones included, for the next run; the
+	// pairs of the last person collected are all judged, so a run can go past
+	// the bound by one person.
+	MaxPairs int
 	// DryRun judges pairs but records nothing: no contradictions, pair checks,
 	// duplicate marks, queued-pair consumption or job metrics.
 	DryRun bool
@@ -41,6 +47,8 @@ type DetectOptions struct {
 type DetectResult struct {
 	PairsChecked   int
 	Contradictions int
+	// Cut is set when MaxPairs stopped the collection before the last person.
+	Cut bool
 }
 
 // PairVerdict is one judged pair as reported to DetectOptions.OnVerdict.
@@ -122,9 +130,16 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 
 	var allPersonPairs []personPairs
 	totalPairs := 0
-	for _, person := range persons {
+	cut := false
+	for i, person := range persons {
 		if err := ctx.Err(); err != nil {
 			return DetectResult{}, fmt.Errorf("contradiction detection stopped collecting pairs: %w", err)
+		}
+		if opts.MaxPairs > 0 && totalPairs >= opts.MaxPairs {
+			log.Info().Int("max_pairs", opts.MaxPairs).Int("pairs", totalPairs).Int("persons_left", len(persons)-i).
+				Msg("Pair budget reached; the persons left wait for the next run")
+			cut = true
+			break
 		}
 		if _, excluded := excludeSet[person.Name]; excluded {
 			log.Info().Str("person", person.Name).Msg("Skipping excluded person")
@@ -142,10 +157,12 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	}
 
 	if totalPairs == 0 {
-		return DetectResult{}, nil
+		return DetectResult{Cut: cut}, nil
 	}
 
-	return judgePairs(ctx, storer, allPersonPairs, opts)
+	res, err := judgePairs(ctx, storer, allPersonPairs, opts)
+	res.Cut = cut
+	return res, err
 }
 
 func personsForDetection(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions) ([]storage.PersonInfo, error) {
