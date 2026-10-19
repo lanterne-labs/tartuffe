@@ -134,7 +134,7 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 		return "", false, nil
 	}
 	if objType == ObjectMotion {
-		if object, ok := censureObject(law); ok {
+		if object, ok := motionObject(law); ok {
 			return object, true, nil
 		}
 	}
@@ -182,8 +182,30 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 // Constitution").
 var censureAlineaRe = regexp.MustCompile(`article 49, alinéa (\d)`)
 
-// censurePrefix starts the object phrase of a censure motion.
-const censurePrefix = "la motion de censure"
+// censurePrefix starts the object phrase of a censure motion; motionPrefix
+// the one of any motion.
+const (
+	censurePrefix = "la motion de censure"
+	motionPrefix  = "la motion"
+)
+
+// motionObject names the motion a scrutin voted on: a censure motion by its
+// date and paragraph of article 49 (censureObject), any other motion by its
+// title, which names the motion, who filed it and the text it targets ("la
+// motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi
+// ..."). With the bill phrase alone, a vote CONTRE a motion to reject read as
+// a vote against the bill: 76 false contradictions (17-7988 against the final
+// vote 17-8279). ok is false when the title does not start with the motion.
+func motionObject(law Law) (object string, ok bool) {
+	if object, ok := censureObject(law); ok {
+		return object, true
+	}
+	title := strings.TrimSuffix(strings.TrimSpace(law.Title), ".")
+	if !strings.HasPrefix(strings.ToLower(title), motionPrefix) {
+		return "", false
+	}
+	return title, true
+}
 
 // censureObject names a censure motion by its date and the paragraph of
 // article 49 it was filed under. Every censure motion has one purpose,
@@ -216,8 +238,9 @@ func frenchDate(t time.Time) string {
 }
 
 // votedObjectPhrase is the voted object's phrase: the bill phrase, preceded
-// by the article or the amendment when the ballot judged one, or the censure
-// motion followed by its purpose (see resolveVotedObject).
+// by the article or the amendment when the ballot judged one; the censure
+// motion followed by its purpose; any other motion alone (see
+// resolveVotedObject).
 func votedObjectPhrase(object string, summary LawSummary) string {
 	billPhrase := prepareLawPhrase(summary.SimpleStatement)
 	switch {
@@ -225,6 +248,10 @@ func votedObjectPhrase(object string, summary LawSummary) string {
 		return billPhrase
 	case strings.HasPrefix(object, censurePrefix):
 		return object + strings.TrimPrefix(billPhrase, "le texte de loi")
+	case strings.HasPrefix(strings.ToLower(object), motionPrefix):
+		// The title names the text; a summary of the bill would read as
+		// the object of the vote.
+		return object
 	case isArticlePhrase(object):
 		return object + " du " + strings.TrimPrefix(billPhrase, "le ")
 	default:
