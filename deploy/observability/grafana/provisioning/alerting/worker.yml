@@ -13,8 +13,10 @@ contactPoints:
       - uid: telegram
         type: telegram
         settings:
-          bottoken: ${TELEGRAM_BOT_TOKEN}
-          chatid: ${TELEGRAM_CHAT_ID}
+          bottoken: "${TELEGRAM_BOT_TOKEN}"
+          # Grafana parses the value again after it expands the variable: the
+          # inner quotes keep a numeric chat ID a string.
+          chatid: "'${TELEGRAM_CHAT_ID}'"
 
 policies:
   - orgId: 1
