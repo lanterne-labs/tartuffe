@@ -3,6 +3,7 @@ package frpolitics
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"digital-mirror/backend/storage"
 
@@ -92,43 +93,68 @@ func BackfillArticles(ctx context.Context, storer *storage.PostgresStorer, opts 
 	return RearticleBallots(ctx, storer, store, newArticleResolver(store, laws, orgCache), laws, rejudge)
 }
 
-// RecensureBallots rewrites the ballots of the censure motions among laws
-// that still carry the bill phrase alone with the motion's name (date and
-// paragraph of article 49, censureObject), and returns the motions and the
-// ballots rewritten. The pair verdicts stay: the new text says the same vote,
-// it only tells two motions apart.
-func RecensureBallots(ctx context.Context, store *Store, laws []Law) (scrutins, ballots int, err error) {
+// RemotionResult is what RemotionBallots did.
+type RemotionResult struct {
+	// Scrutins and Ballots count the motions and the ballots rewritten.
+	Scrutins int
+	Ballots  int
+	// Reopened is the number of contradictions on the rewritten ballots of
+	// the motions other than censure that were removed with the verdicts of
+	// their pairs: they were judged on a text that said the bill was voted.
+	Reopened int
+}
+
+// RemotionBallots rewrites the ballots of the motions among laws that still
+// carry the bill phrase with the motion (motionObject). A censure motion
+// keeps its purpose and its pair verdicts: the new text says the same vote,
+// it only tells two motions apart. Any other motion loses the bill phrase,
+// which read as the object of the vote, and its pairs are reopened.
+func RemotionBallots(ctx context.Context, storer *storage.PostgresStorer, store *Store, laws []Law) (RemotionResult, error) {
+	var res RemotionResult
 	for _, law := range laws {
 		if err := ctx.Err(); err != nil {
-			return scrutins, ballots, err
+			return res, err
 		}
 		if ClassifyScrutinObject(law.Title) != ObjectMotion {
 			continue
 		}
-		object, ok := censureObject(law)
+		object, ok := motionObject(law)
 		if !ok {
 			continue
 		}
-		ids, err := store.RecensureBallots(ctx, law.Key, object)
+		censure := strings.HasPrefix(object, censurePrefix)
+		ids, err := store.RemotionBallots(ctx, law.Key, object, censure)
 		if err != nil {
-			return scrutins, ballots, err
+			return res, err
 		}
 		if len(ids) == 0 {
 			continue
 		}
-		scrutins++
-		ballots += len(ids)
-		log.Info().Str("law_key", law.Key).Str("object", object).Int("ballots", len(ids)).Msg("frpolitics: ballots of the censure motion rewritten")
+		res.Scrutins++
+		res.Ballots += len(ids)
+		if !censure {
+			persons, reopened, err := store.ReopenPairsOf(ctx, ids)
+			if err != nil {
+				return res, err
+			}
+			res.Reopened += reopened
+			for _, pid := range persons {
+				if err := storer.RefreshPersonScore(ctx, pid); err != nil {
+					return res, fmt.Errorf("refreshing the score of person %d: %w", pid, err)
+				}
+			}
+		}
+		log.Info().Str("law_key", law.Key).Str("object", object).Int("ballots", len(ids)).Msg("frpolitics: ballots of the motion rewritten")
 	}
-	return scrutins, ballots, nil
+	return res, nil
 }
 
-// BackfillCensures discovers the scrutins of opts (Since, Legislatures) and
-// rewrites the ballots of their censure motions (RecensureBallots).
-func BackfillCensures(ctx context.Context, storer *storage.PostgresStorer, opts Options) (scrutins, ballots int, err error) {
+// BackfillMotions discovers the scrutins of opts (Since, Legislatures) and
+// rewrites the ballots of their motions (RemotionBallots).
+func BackfillMotions(ctx context.Context, storer *storage.PostgresStorer, opts Options) (RemotionResult, error) {
 	laws, _, _, _, _, err := discoverAndParse(ctx, opts)
 	if err != nil {
-		return 0, 0, err
+		return RemotionResult{}, err
 	}
-	return RecensureBallots(ctx, NewStore(storer), laws)
+	return RemotionBallots(ctx, storer, NewStore(storer), laws)
 }

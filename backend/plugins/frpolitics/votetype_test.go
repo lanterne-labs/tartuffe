@@ -131,8 +131,15 @@ func TestCensureObject(t *testing.T) {
 	if got := votedObjectPhrase(o2, LawSummary{}); got != o2 {
 		t.Errorf("phrase without a statement = %q", got)
 	}
-	// Another motion keeps the bill phrase.
-	if o, ok, err := resolveVotedObject(context.Background(), Law{Title: "la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi de finances pour 2026"}, nil); err != nil || !ok || o != "" {
-		t.Errorf("rejet préalable: (%q, %v, %v), want the bill phrase", o, ok, err)
+	// Another motion is named by its title, without the bill summary: a
+	// vote CONTRE a motion to reject is not a vote against the bill.
+	rejet := Law{Title: "la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi visant à offrir des réponses immédiates aux phénomènes troublant l'ordre public (première lecture)."}
+	o, ok, err := resolveVotedObject(context.Background(), rejet, nil)
+	if err != nil || !ok {
+		t.Fatalf("rejet préalable: (%q, %v, %v), want resolved", o, ok, err)
+	}
+	want = "la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi visant à offrir des réponses immédiates aux phénomènes troublant l'ordre public (première lecture)"
+	if got := votedObjectPhrase(o, LawSummary{SimpleStatement: "Offre des réponses immédiates aux phénomènes troublant l'ordre public."}); got != want {
+		t.Errorf("rejet phrase = %q\nwant         %q", got, want)
 	}
 }
