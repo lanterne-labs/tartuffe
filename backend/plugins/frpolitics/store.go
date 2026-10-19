@@ -282,19 +282,24 @@ func (s *Store) RearticleBallots(ctx context.Context, lawKey, article, object st
 	return ids, rows.Err()
 }
 
-// RecensureBallots rewrites the ballots of the censure motion lawKey that
-// name the bill phrase alone ("a voté POUR le texte de loi : « Vise à
-// renverser le gouvernement ... »") with object, the motion named by its date
-// and paragraph of article 49, and returns the ids of the facts it rewrote.
-// The English text is reset: the translation repair fills it again.
-func (s *Store) RecensureBallots(ctx context.Context, lawKey, object string) ([]int64, error) {
+// RemotionBallots rewrites the ballots of the motion lawKey that name the
+// bill phrase ("a voté CONTRE le texte de loi : « ... »") with the motion,
+// and returns the ids of the facts it rewrote. The bill phrase ends the
+// ballot text, the party ballots' too; with keepPurpose its quote (" : « ...
+// »") stays after the motion. The English text is reset: the translation
+// repair fills it again.
+func (s *Store) RemotionBallots(ctx context.Context, lawKey, object string, keepPurpose bool) ([]int64, error) {
+	replacement := " " + object
+	if keepPurpose {
+		replacement += `\1`
+	}
 	rows, err := s.pool.Query(ctx, `
 		UPDATE facts f
-		SET fact_text = replace(f.fact_text, ' le texte de loi : «', ' ' || $2 || ' : «'),
+		SET fact_text = regexp_replace(f.fact_text, ' le texte de loi( : «.*»)?$', $2),
 		    fact_text_en = NULL, updated_at = now()
 		FROM fact_sources fs
-		WHERE fs.fact_id = f.id AND fs.metadata->>'law_key' = $1 AND f.fact_text LIKE '% le texte de loi : «%'
-		RETURNING f.id`, lawKey, object)
+		WHERE fs.fact_id = f.id AND fs.metadata->>'law_key' = $1 AND f.fact_text ~ ' le texte de loi( : «.*»)?$'
+		RETURNING f.id`, lawKey, replacement)
 	if err != nil {
 		return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
 	}
