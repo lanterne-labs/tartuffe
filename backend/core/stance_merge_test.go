@@ -3,6 +3,7 @@ package core
 import (
 	"digital-mirror/backend/util"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -93,5 +94,52 @@ func TestGroupByConfirmedSimilarPairs_LabelCandidates(t *testing.T) {
 	}
 	if asked[[3]int{0, 2, 1}] != 1 || asked[[3]int{1, 3, 1}] != 1 {
 		t.Fatalf("label-only pairs must be asked with viaLabel: %v", asked)
+	}
+}
+
+// TestSameSubjectLookupPrompt pins the layout: rules, then the person's
+// stances (shared by every lookup of the person), then the small stance, and
+// the answer's id after its reasoning.
+func TestSameSubjectLookupPrompt(t *testing.T) {
+	others := []StanceDocument{{ID: 18881, ClusterLabel: "politique française sur la guerre en Ukraine", FactCount: 53}}
+	p := sameSubjectLookupPrompt("marine le pen", StanceForMerge{ID: 21882, Label: "guerre en Ukraine et diplomatie", Summary: "s"}, others)
+	list := strings.Index(p, "- id=18881 (53 facts)")
+	small := strings.Index(p, "SMALL STANCE:")
+	person := strings.Index(p, "Person: marine le pen")
+	if person < 0 || list < person || small < list {
+		t.Fatalf("layout: person %d, list %d, small stance %d\n%s", person, list, small, p)
+	}
+	if strings.Index(p, `"reasoning"`) > strings.Index(p, `"id": 12345`) {
+		t.Error("the reasoning must come before the id")
+	}
+}
+
+// The lookup fingerprint changes with the small stance and with the set of
+// stances it could join, not with their labels or counts.
+func TestLookupFingerprint(t *testing.T) {
+	small := StanceDocument{ID: 1, ClusterLabel: "guerre en Ukraine et diplomatie", Summary: "s", FactCount: 1}
+	big := StanceDocument{ID: 2, ClusterLabel: "politique française sur la guerre en Ukraine", FactCount: 53}
+	tiny := StanceDocument{ID: 3, ClusterLabel: "football", FactCount: 1}
+	fp := lookupFingerprint("k", small, []StanceDocument{small, big, tiny}, 3)
+
+	refreshed := big
+	refreshed.ClusterLabel, refreshed.FactCount = "guerre en Ukraine", 54
+	if lookupFingerprint("k", small, []StanceDocument{small, refreshed, tiny}, 3) != fp {
+		t.Error("a refreshed label or count of a joinable stance must keep the memo")
+	}
+	if lookupFingerprint("k", small, []StanceDocument{small, big}, 3) != fp {
+		t.Error("a small stance that cannot be joined must not change the memo")
+	}
+	grown := StanceDocument{ID: 4, ClusterLabel: "diplomatie européenne", FactCount: 9}
+	if lookupFingerprint("k", small, []StanceDocument{small, big, grown}, 3) == fp {
+		t.Error("a new joinable stance must ask again")
+	}
+	edited := small
+	edited.Summary = "s2"
+	if lookupFingerprint("k", edited, []StanceDocument{edited, big}, 3) == fp {
+		t.Error("an edited small stance must ask again")
+	}
+	if lookupFingerprint("k2", small, []StanceDocument{small, big}, 3) == fp {
+		t.Error("another rulebook must ask again")
 	}
 }

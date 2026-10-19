@@ -12,12 +12,13 @@ import (
 )
 
 var (
-	stancesMergePerson      string
-	stancesMergePersonsFile string
-	stancesMergeRecallSim   float64
-	stancesMergeLabelSim    float64
-	stancesMergeParallel    int
-	stancesMergeDryRun      bool
+	stancesMergePerson         string
+	stancesMergePersonsFile    string
+	stancesMergeRecallSim      float64
+	stancesMergeLabelSim       float64
+	stancesMergeParallel       int
+	stancesMergeLookupMaxFacts int
+	stancesMergeDryRun         bool
 )
 
 var stancesMergeCmd = &cobra.Command{
@@ -52,6 +53,7 @@ func init() {
 	stancesMergeCmd.Flags().StringVar(&stancesMergePersonsFile, "persons-file", "", "Path to a file with one person name per line")
 	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", core.DefaultStanceMergeOptions.RecallSim, "Cosine-similarity floor for surfacing candidate pairs (the LLM gates each)")
 	stancesMergeCmd.Flags().Float64Var(&stancesMergeLabelSim, "label-threshold", core.DefaultStanceMergeOptions.LabelSim, "Trigram floor on stance labels for a second candidate source (0 = off; a stricter gate vets each)")
+	stancesMergeCmd.Flags().IntVar(&stancesMergeLookupMaxFacts, "lookup-max-facts", core.DefaultStanceMergeOptions.LookupMaxFacts, "Stances of at most this many facts are looked up against the person's other stances by the LLM (0 = off)")
 	stancesMergeCmd.Flags().IntVar(&stancesMergeParallel, "parallel", 1, "Number of persons to merge concurrently")
 	stancesMergeCmd.Flags().BoolVar(&stancesMergeDryRun, "dry-run", false, "Log proposed merges without writing to the database")
 }
@@ -107,9 +109,10 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 
 	processOne := func(p core.PersonRecord) {
 		ps, err := core.MergeStancesForPerson(ctx, storer, stanceManager, p, core.StanceMergeOptions{
-			RecallSim: stancesMergeRecallSim,
-			LabelSim:  stancesMergeLabelSim,
-			DryRun:    stancesMergeDryRun,
+			RecallSim:      stancesMergeRecallSim,
+			LabelSim:       stancesMergeLabelSim,
+			LookupMaxFacts: stancesMergeLookupMaxFacts,
+			DryRun:         stancesMergeDryRun,
 		})
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("LLM-merge failed for person")

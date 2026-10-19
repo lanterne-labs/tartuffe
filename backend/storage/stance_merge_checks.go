@@ -51,3 +51,49 @@ func (s *PostgresStorer) RecordMergeSweep(ctx context.Context, personID int64, r
 	}
 	return nil
 }
+
+// GetStanceLookups returns the memo of the stance lookups of stanceIDs whose
+// fingerprint is still the given one: stance id -> the named stance (0:
+// none). A stance absent from the map is looked up again.
+func (s *PostgresStorer) GetStanceLookups(ctx context.Context, fingerprints map[int64]string) (map[int64]int64, error) {
+	if len(fingerprints) == 0 {
+		return map[int64]int64{}, nil
+	}
+	ids := make([]int64, 0, len(fingerprints))
+	fps := make([]string, 0, len(fingerprints))
+	for id, fp := range fingerprints {
+		ids = append(ids, id)
+		fps = append(fps, fp)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.stance_id, COALESCE(c.named_id, 0)
+		FROM stance_lookup_checks c
+		JOIN unnest($1::bigint[], $2::text[]) AS w(id, fp) ON w.id = c.stance_id AND w.fp = c.fingerprint`, ids, fps)
+	if err != nil {
+		return nil, fmt.Errorf("loading stance lookups: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var id, named int64
+		if err := rows.Scan(&id, &named); err != nil {
+			return nil, fmt.Errorf("loading stance lookups: %w", err)
+		}
+		out[id] = named
+	}
+	return out, rows.Err()
+}
+
+// RecordStanceLookup memoizes the lookup of stanceID under fingerprint:
+// namedID is the stance the LLM named, 0 for none.
+func (s *PostgresStorer) RecordStanceLookup(ctx context.Context, stanceID int64, fingerprint string, namedID int64) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO stance_lookup_checks (stance_id, fingerprint, named_id, checked_at)
+		VALUES ($1, $2, NULLIF($3, 0), NOW())
+		ON CONFLICT (stance_id) DO UPDATE SET fingerprint = EXCLUDED.fingerprint, named_id = EXCLUDED.named_id, checked_at = EXCLUDED.checked_at`,
+		stanceID, fingerprint, namedID)
+	if err != nil {
+		return fmt.Errorf("recording the lookup of stance %d: %w", stanceID, err)
+	}
+	return nil
+}

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -33,6 +34,11 @@ type StanceMergeStorer interface {
 	// RecordMergeSweep memoizes that the person's current stance set was
 	// judged under rulebookKey.
 	RecordMergeSweep(ctx context.Context, personID int64, rulebookKey string) error
+	// GetStanceLookups returns the memoized lookups whose fingerprint is
+	// still the given one (stance id -> named stance, 0 for none);
+	// RecordStanceLookup memoizes one.
+	GetStanceLookups(ctx context.Context, fingerprints map[int64]string) (map[int64]int64, error)
+	RecordStanceLookup(ctx context.Context, stanceID int64, fingerprint string, namedID int64) error
 }
 
 // StanceMergeOptions tunes the per-person merge and the sweep over persons.
@@ -48,7 +54,14 @@ type StanceMergeOptions struct {
 	// 0.64), so they pass a stricter same-subject gate before the merge
 	// decision (see sameSubjectLabelPrompt).
 	LabelSim float64
-	DryRun   bool
+	// LookupMaxFacts is the size at or below which a stance is looked up
+	// against the person's other stances by the LLM (0 = off): a third
+	// candidate source for the fragments the two floors above miss. Le Pen's
+	// "guerre en Ukraine et diplomatie" (1 fact) beside "politique française
+	// sur la guerre en Ukraine" (53) sat at cosine 0.55 and trigram 0.31. A
+	// lookup names one candidate; the overlap gate confirms it.
+	LookupMaxFacts int
+	DryRun         bool
 	// MaxPersons caps how many candidate persons RunStanceMergeSweep processes
 	// (0 = all), taken in the order storage lists them. Bounded smoke runs use it.
 	MaxPersons int
@@ -70,8 +83,15 @@ var DefaultStanceMergeOptions = StanceMergeOptions{
 	// 0.40 reaches the known duplicates (0.43-0.77 on prod) at ~220 candidate
 	// pairs over the whole table; the gate carries the precision.
 	LabelSim: 0.40,
-	DryRun:   false,
+	// 3 covers the fragments (51% of the stances hold one fact) without a
+	// lookup for every grown stance.
+	LookupMaxFacts: 3,
+	DryRun:         false,
 }
+
+// lookupCandidatesCap bounds the stances listed to a lookup, the largest
+// first: a fragment belongs to a grown subject.
+const lookupCandidatesCap = 150
 
 // allStancesLLMCap is the per-person stance count at or below which we skip
 // Phase-A clustering and hand every stance to the merge LLM in one call.
@@ -138,7 +158,9 @@ func MergeRulebookKey(opts StanceMergeOptions) string {
 	h := sha256.New()
 	h.Write([]byte(mergeDecisionPrompt("\x00", []StanceForMerge{{ID: 0, Label: "\x00", Summary: "\x00"}})))
 	h.Write([]byte(sameSubjectLabelPrompt("\x00", StanceForMerge{Label: "\x00", Summary: "\x00"}, StanceForMerge{Label: "\x00", Summary: "\x00"})))
-	fmt.Fprintf(h, "|recall=%g|label=%g|cap=%d", opts.RecallSim, opts.LabelSim, allStancesLLMCap)
+	h.Write([]byte(sameSubjectLookupPrompt("\x00", StanceForMerge{Label: "\x00", Summary: "\x00"}, []StanceDocument{{ClusterLabel: "\x00"}})))
+	h.Write([]byte(sameQuestionsPrompt("\x00", StanceForMerge{Label: "\x00"}, StanceForMerge{Label: "\x00"}, nil, nil)))
+	fmt.Fprintf(h, "|recall=%g|label=%g|cap=%d|lookup=%d", opts.RecallSim, opts.LabelSim, allStancesLLMCap, opts.LookupMaxFacts)
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -270,8 +292,30 @@ func MergeStancesForPerson(
 				return ps, fmt.Errorf("loading label-similar stance pairs: %w", err)
 			}
 		}
+		var lookupPairs [][2]int64
+		if opts.LookupMaxFacts > 0 {
+			var luCalls, luFails int
+			lookupPairs, luCalls, luFails, err = lookupFragments(ctx, storer, stanceManager, p.Name, docs, opts, !opts.DryRun)
+			ps.LLMCalls += int64(luCalls)
+			ps.LLMFailures += int64(luFails)
+			if err != nil {
+				return ps, err
+			}
+		}
+		factsOf := func(stanceID int64) []string {
+			facts, err := storer.GetFactsForStance(ctx, stanceID)
+			if err != nil {
+				log.Warn().Err(err).Int64("stance_id", stanceID).Msg("Loading the facts of a stance for the overlap gate failed; the gate sees the label only")
+				return nil
+			}
+			out := make([]string, 0, overlapGateFacts)
+			for _, f := range facts[:min(len(facts), overlapGateFacts)] {
+				out = append(out, f.NormalizedFactText)
+			}
+			return out
+		}
 		var pwCalls, pwFails int
-		candidateClusters, pwCalls, pwFails, err = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim, labelPairs)
+		candidateClusters, pwCalls, pwFails, err = pairwiseGroupStances(ctx, stanceManager, p.Name, docs, opts.RecallSim, labelPairs, lookupPairs, factsOf)
 		ps.LLMCalls += int64(pwCalls)
 		ps.LLMFailures += int64(pwFails)
 		if err != nil {
@@ -397,8 +441,15 @@ func MergeStancesForPerson(
 // llm.ErrUnavailable) is returned.
 // labelPairs are extra candidates by label similarity (stance ids); each is
 // confirmed by the stricter same-subject gate first, then by the merge
-// decision like an embedding candidate.
-func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName string, docs []StanceDocument, candidateSim float64, labelPairs [][2]int64) (groups [][]int, llmCalls, llmFailures int, err error) {
+// decision like an embedding candidate. lookupPairs are [small, named]
+// pairs of lookupFragments; each is confirmed by the overlap gate alone
+// (SameQuestions), which reads some facts of both stances (factsOf).
+// Measured on Le Pen and Faure (2026-10-19): the merge decision alone folded
+// wide neighbours ("campagne 2027" absorbing "financement des partis", 5 of
+// 20 groups); the label gate refused a case inside its subject ("fiscalité
+// du tabac" / "fiscalité"); a fragment gate on labels chained five countries
+// into "politique étrangère" (6 of 11 right for Faure).
+func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName string, docs []StanceDocument, candidateSim float64, labelPairs, lookupPairs [][2]int64, factsOf func(stanceID int64) []string) (groups [][]int, llmCalls, llmFailures int, err error) {
 	embeddings := make([][]float32, len(docs))
 	idx := make(map[int64]int, len(docs))
 	for i, d := range docs {
@@ -412,6 +463,19 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		if okI && okJ {
 			extra = append(extra, [2]int{i, j})
 		}
+	}
+	// named maps an index pair, smaller first, to the [small, named] indexes
+	// of its lookup.
+	named := map[[2]int][2]int{}
+	for _, pr := range lookupPairs {
+		s, okS := idx[pr[0]]
+		n, okN := idx[pr[1]]
+		if !okS || !okN || s == n {
+			continue
+		}
+		key := [2]int{min(s, n), max(s, n)}
+		named[key] = [2]int{s, n}
+		extra = append(extra, key)
 	}
 	forMerge := func(i int) StanceForMerge {
 		return StanceForMerge{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary}
@@ -428,6 +492,20 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 	confirm := func(i, j int, viaLabel bool) bool {
 		if unavailable != nil {
 			return false
+		}
+		if pr, ok := named[[2]int{min(i, j), max(i, j)}]; ok {
+			a, b := forMerge(pr[0]), forMerge(pr[1])
+			same, err := sm.SameQuestions(ctx, personName, a, b, factsOf(a.ID), factsOf(b.ID))
+			llmCalls++
+			if err != nil {
+				return failed(err)
+			}
+			if !same {
+				metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeMergeLookupRejected)
+				return false
+			}
+			metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeMergeViaLookup)
+			return true
 		}
 		rejected, confirmed := metrics.OutcomeMergeRejected, metrics.OutcomeMergeConfirmed
 		if viaLabel {
@@ -465,10 +543,10 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 
 // groupByConfirmedSimilarPairs is the pure grouping core of pairwiseGroupStances:
 // it forms candidate index pairs whose (L2-normalised) embeddings are at least
-// candidateSim similar, plus the extra pairs (label candidates, asked after
-// the embedding ones and flagged viaLabel unless the embedding also
-// surfaced them), asks confirm() for each — most-similar first, skipping pairs
-// already linked transitively — and union-finds the confirmed pairs into
+// candidateSim similar, plus the extra pairs (label and lookup candidates,
+// asked after the embedding ones and flagged viaLabel unless the embedding
+// also surfaced them), asks confirm() for each — most-similar first, skipping
+// pairs already linked transitively — and union-finds the confirmed pairs into
 // groups of size >= 2 (sorted by size desc, then first index). Separated from
 // the LLM call so it can be unit-tested with a fake predicate.
 func groupByConfirmedSimilarPairs(embeddings [][]float32, candidateSim float64, extra [][2]int, confirm func(i, j int, viaLabel bool) bool) [][]int {
@@ -791,5 +869,198 @@ func (sm *StanceManager) SameSubjectByLabel(ctx context.Context, personName stri
 	if err != nil {
 		return false, fmt.Errorf("same-subject gate: parsing response: %w", err)
 	}
+	return verdict.Same, nil
+}
+
+// lookupFragments asks, for every stance of at most opts.LookupMaxFacts
+// facts, which other stance of the person covers its subject
+// (SameSubjectLookup), and returns the named pairs as stance ids. It is the
+// candidate source for the fragments whose centroid and label sit far from
+// their subject's stance. A lookup is memoized (lookupFingerprint): it runs
+// again only when the small stance, the stances it could join or the
+// rulebook change; with record false (a dry run) the answers are not
+// memoized. When the LLM is unavailable no further stance is asked and the
+// error is returned; any other failure only skips that stance.
+func lookupFragments(ctx context.Context, storer StanceMergeStorer, sm *StanceManager, personName string, docs []StanceDocument, opts StanceMergeOptions, record bool) (pairs [][2]int64, llmCalls, llmFailures int, err error) {
+	maxFacts := opts.LookupMaxFacts
+	key := MergeRulebookKey(opts)
+	fingerprints := map[int64]string{}
+	for _, d := range docs {
+		if d.FactCount <= maxFacts {
+			fingerprints[d.ID] = lookupFingerprint(key, d, docs, maxFacts)
+		}
+	}
+	memo, err := storer.GetStanceLookups(ctx, fingerprints)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("loading the stance lookups: %w", err)
+	}
+	inDocs := make(map[int64]bool, len(docs))
+	for _, d := range docs {
+		inDocs[d.ID] = true
+	}
+	for _, d := range docs {
+		if d.FactCount > maxFacts {
+			continue
+		}
+		if named, ok := memo[d.ID]; ok {
+			if named != 0 && inDocs[named] {
+				pairs = append(pairs, [2]int64{d.ID, named})
+			}
+			continue
+		}
+		others := make([]StanceDocument, 0, len(docs)-1)
+		for _, o := range docs {
+			if o.ID != d.ID {
+				others = append(others, o)
+			}
+		}
+		sort.SliceStable(others, func(a, b int) bool { return others[a].FactCount > others[b].FactCount })
+		if len(others) > lookupCandidatesCap {
+			others = others[:lookupCandidatesCap]
+		}
+		target := StanceForMerge{ID: d.ID, Label: d.ClusterLabel, Summary: d.Summary}
+		id, lErr := sm.SameSubjectLookup(ctx, personName, target, others)
+		llmCalls++
+		if lErr != nil {
+			llmFailures++
+			metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeError)
+			if errors.Is(lErr, llm.ErrUnavailable) {
+				return pairs, llmCalls, llmFailures, lErr
+			}
+			log.Warn().Err(lErr).Str("person", personName).Int64("stance_id", d.ID).Msg("Stance lookup failed; stance not proposed")
+			continue
+		}
+		if id != 0 {
+			log.Info().Str("person", personName).Int64("stance_id", d.ID).Str("label", d.ClusterLabel).Int64("same_as", id).Msg("Stance lookup: same subject as another stance")
+			pairs = append(pairs, [2]int64{d.ID, id})
+		}
+		if record {
+			if err := storer.RecordStanceLookup(ctx, d.ID, fingerprints[d.ID], id); err != nil {
+				log.Error().Err(err).Int64("stance_id", d.ID).Msg("Recording the stance lookup failed; it runs again next sweep")
+			}
+		}
+	}
+	return pairs, llmCalls, llmFailures, nil
+}
+
+// lookupFingerprint is the memo key of the lookup of d: the rulebook, the
+// label and summary of d, and the ids of the stances it could join (those
+// above maxFacts, the ones a lookup lists first). Their labels and counts
+// are left out: they change with every refresh, and a fragment names the
+// same subject stance across them.
+func lookupFingerprint(rulebookKey string, d StanceDocument, docs []StanceDocument, maxFacts int) string {
+	var ids []int64
+	for _, o := range docs {
+		if o.ID != d.ID && o.FactCount > maxFacts {
+			ids = append(ids, o.ID)
+		}
+	}
+	sort.Slice(ids, func(a, b int) bool { return ids[a] < ids[b] })
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x1f%s\x1f%s\x1f%v", rulebookKey, d.ClusterLabel, d.Summary, ids)
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// sameSubjectLookupPrompt asks which of the person's stances covers the
+// subject of target. Rules first, the person's stances next (the same for
+// every lookup of the person), the target last (prefix caching).
+func sameSubjectLookupPrompt(personName string, target StanceForMerge, others []StanceDocument) string {
+	var list strings.Builder
+	for _, o := range others {
+		fmt.Fprintf(&list, "- id=%d (%d facts): %q\n", o.ID, o.FactCount, o.ClusterLabel)
+	}
+	return fmt.Sprintf(`A stance is a NEUTRAL SUBJECT AREA of one person: the facts for and against one subject belong to one stance. A small stance may be a fragment of another stance of the person, the same subject recorded under another label. Find that stance.
+
+SAME subject: the same policy field, war, country relation, institution, election or affair, whatever the wording or the direction of the facts. "guerre en Ukraine et diplomatie" belongs to "politique française sur la guerre en Ukraine"; "réforme des retraites de 2023" belongs to "politique des retraites"; "aide à mourir" belongs to "fin de vie et aide à mourir".
+NOT the same: a neighbouring field ("politique économique" / "politique sociale"; "immigration" / "identité nationale"), another country or institution ("relations France-Italie" / "relations France-Espagne"), or a wide catch-all that only shares a context word ("élection présidentielle 2027" does not absorb every subject a candidate speaks about).
+
+Person: %s
+
+THE PERSON'S STANCES:
+%s
+SMALL STANCE:
+label: %q
+summary: %s
+
+Name the one stance above that covers the same subject, or 0 when none does. Return ONLY strict JSON, the reasoning first:
+{"reasoning": "<one short sentence>", "id": 12345}`, personName, list.String(), target.Label, target.Summary)
+}
+
+// stanceLookupReply is the answer of sameSubjectLookupPrompt.
+type stanceLookupReply struct {
+	Reasoning string `json:"reasoning"`
+	ID        int64  `json:"id"`
+}
+
+// SameSubjectLookup returns the id of the stance of others that covers the
+// subject of target, or 0. An id outside others counts as 0.
+func (sm *StanceManager) SameSubjectLookup(ctx context.Context, personName string, target StanceForMerge, others []StanceDocument) (int64, error) {
+	content, err := sm.callJSONLLM(ctx, "You are a political stance topic classifier. Return only valid JSON.", sameSubjectLookupPrompt(personName, target, others), 0.0, 512, llm.TaskStanceMerge)
+	if err != nil {
+		return 0, fmt.Errorf("stance lookup: %w", err)
+	}
+	reply, err := llm.ParseJSONResponse[stanceLookupReply](content)
+	if err != nil {
+		return 0, fmt.Errorf("stance lookup: parsing response: %w", err)
+	}
+	for _, o := range others {
+		if o.ID == reply.ID {
+			return reply.ID, nil
+		}
+	}
+	if reply.ID != 0 {
+		log.Warn().Int64("id", reply.ID).Str("person", personName).Msg("Stance lookup named a stance not in the list; ignored")
+	}
+	return 0, nil
+}
+
+// overlapGateFacts is how many facts of each stance the overlap gate reads.
+const overlapGateFacts = 5
+
+// sameQuestionsPrompt is the gate of a lookup pair: do the two stances
+// overlap enough that a fact of one could confirm or contradict a fact of
+// the other? That is what a stance is for: the contradictions are looked
+// for inside it. Rules first, the two stances next, the response format last
+// (prefix caching).
+func sameQuestionsPrompt(personName string, a, b StanceForMerge, factsA, factsB []string) string {
+	facts := func(fs []string) string {
+		if len(fs) == 0 {
+			return "  (no facts loaded)\n"
+		}
+		var out strings.Builder
+		for _, f := range fs {
+			fmt.Fprintf(&out, "  - %s\n", f)
+		}
+		return out.String()
+	}
+	return fmt.Sprintf(`Two stances of the same person were matched as possibly one subject. A stance gathers the facts on which the person's statements and votes can confirm or contradict each other. Decide whether the two stances OVERLAP: the facts of one answer the same questions as the facts of the other (the same war, reform, budget, negotiation, affair, country relation or institution), so that a fact of one could confirm or contradict a fact of the other.
+
+OVERLAP (answer true): "guerre en Ukraine et diplomatie" and "politique française sur la guerre en Ukraine" (both say what France should do in that war); "fiscalité du tabac" and "fiscalité des ménages et des entreprises" (a tax freeze on tobacco answers the tax question); "cadre financier pluriannuel 2028-2034" and "contribution française au budget de l'Union européenne".
+
+NO OVERLAP (answer false): the facts of one can never confirm or contradict the facts of the other, even under a common heading. A fact on Algeria never contradicts a fact on Israel or Taiwan; "accords de défense bilatéraux" and "sécurité au Proche-Orient"; "racisme et contrôles policiers" and "relations avec les ONG". A stance that gathers many subjects (foreign policy in general, a campaign, the person's image) overlaps a specific stance only when its facts already answer the specific stance's questions.
+
+Judge on the facts, not on the labels.
+
+Person: %s
+STANCE A: %q
+%sSTANCE B: %q
+%s
+Return ONLY strict JSON, the reasoning first:
+{"reasoning": "<one short sentence>", "same": true}
+or
+{"reasoning": "<one short sentence>", "same": false}`, personName, a.Label, facts(factsA), b.Label, facts(factsB))
+}
+
+// SameQuestions asks the overlap gate about a lookup pair.
+func (sm *StanceManager) SameQuestions(ctx context.Context, personName string, a, b StanceForMerge, factsA, factsB []string) (bool, error) {
+	content, err := sm.callJSONLLM(ctx, "You are a political stance topic classifier. Return only valid JSON.", sameQuestionsPrompt(personName, a, b, factsA, factsB), 0.0, 512, llm.TaskStanceMerge)
+	if err != nil {
+		return false, fmt.Errorf("overlap gate: %w", err)
+	}
+	verdict, err := llm.ParseJSONResponse[PairVerdict](content)
+	if err != nil {
+		return false, fmt.Errorf("overlap gate: parsing response: %w", err)
+	}
+	log.Info().Str("person", personName).Str("a", a.Label).Str("b", b.Label).Bool("same", verdict.Same).Str("reasoning", verdict.Reasoning).Msg("Stance overlap gate")
 	return verdict.Same, nil
 }

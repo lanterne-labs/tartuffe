@@ -63,3 +63,45 @@ func TestMergeSweepMemo(t *testing.T) {
 	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT count(*) FROM stance_merge_checks").Scan(&n))
 	require.Equal(t, 1, n)
 }
+
+// The stance-lookup memo: a lookup is returned only under its fingerprint,
+// "none" is kept as 0, a new answer replaces the old one, and the memo goes
+// with its stance.
+func TestStanceLookupMemo(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_lookup_checks, stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	person, _, err := storer.AddPerson(ctx, "lookup memo person")
+	require.NoError(t, err)
+	stance := func(label string) int64 {
+		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+			PersonID: person, ClusterLabel: label, ClusterEmbedding: mockEmbedding(), Summary: "s", KeyFactIDs: []int64{},
+		})
+		require.NoError(t, err)
+		return id
+	}
+	big, small, lone := stance("politique française sur la guerre en Ukraine"), stance("guerre en Ukraine et diplomatie"), stance("football")
+
+	require.NoError(t, storer.RecordStanceLookup(ctx, small, "fp1", big))
+	require.NoError(t, storer.RecordStanceLookup(ctx, lone, "fp1", 0))
+	got, err := storer.GetStanceLookups(ctx, map[int64]string{small: "fp1", lone: "fp1"})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int64{small: big, lone: 0}, got)
+
+	got, err = storer.GetStanceLookups(ctx, map[int64]string{small: "fp2"})
+	require.NoError(t, err)
+	require.Empty(t, got, "another fingerprint asks again")
+
+	require.NoError(t, storer.RecordStanceLookup(ctx, small, "fp2", 0))
+	got, err = storer.GetStanceLookups(ctx, map[int64]string{small: "fp2"})
+	require.NoError(t, err)
+	require.Equal(t, map[int64]int64{small: 0}, got)
+
+	_, err = storer.pool.Exec(ctx, "DELETE FROM stance_documents WHERE id = $1", small)
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM stance_lookup_checks WHERE stance_id = $1", small).Scan(&n))
+	require.Zero(t, n, "the memo goes with its stance")
+}

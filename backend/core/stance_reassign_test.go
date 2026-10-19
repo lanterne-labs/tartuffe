@@ -54,6 +54,14 @@ func (r *reassignStorer) RecordMergeSweep(ctx context.Context, personID int64, r
 	return nil
 }
 
+func (r *reassignStorer) GetStanceLookups(ctx context.Context, fingerprints map[int64]string) (map[int64]int64, error) {
+	return map[int64]int64{}, nil
+}
+
+func (r *reassignStorer) RecordStanceLookup(ctx context.Context, stanceID int64, fingerprint string, namedID int64) error {
+	return nil
+}
+
 func (r *reassignStorer) ListPersonsWithSingletonStances(ctx context.Context) ([]PersonRecord, error) {
 	return []PersonRecord{{ID: 1, Name: "p"}}, nil
 }

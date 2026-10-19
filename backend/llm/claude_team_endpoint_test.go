@@ -577,6 +577,38 @@ cat "$d/stdout"
 	}
 }
 
+// A CLI that does not reply within CallTimeout is killed: the call fails
+// with the seat named, and the slot is free again.
+func TestClaudeTeamEndpoint_CallTimeout(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "stdout"), []byte(teamSuccess), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+d=%q
+if [ "$(cat)" = slow ]; then exec sleep 30; fi
+cat "$d/stdout"
+`, dir)
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := teamEndpoint(bin)
+	e.MaxProcs = 1
+	e.CallTimeout = 200 * time.Millisecond
+	start := time.Now()
+	_, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "slow"}}})
+	if err == nil || !strings.Contains(err.Error(), `seat "alice": no reply within`) {
+		t.Fatalf("want the timeout error with the seat, got %v", err)
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("the call took %s, want it cut at the timeout", took)
+	}
+	if _, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}}); err != nil {
+		t.Fatalf("the slot of the timed-out call must be free: %v", err)
+	}
+}
+
 // At most MaxProcs processes run at one time. Each fake CLI counts the
 // running processes when it starts; the test fails only on a count above
 // MaxProcs, so a slow machine cannot fail it.
