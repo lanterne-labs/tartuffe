@@ -188,7 +188,7 @@ func TestRemotionBallots(t *testing.T) {
 	if got, want := text(rejet), "Remotion Person a voté CONTRE la motion de rejet préalable, déposée par Mme Z, du projet de loi visant à répondre à l'ordre public (première lecture)"; got != want {
 		t.Errorf("rejet = %q\nwant    %q", got, want)
 	}
-	if got := text(final); strings.Contains(got, "motion") {
+	if got := text(final); got != "Remotion Person a voté POUR le texte de loi : « Offre des réponses à l'ordre public. »" {
 		t.Errorf("the ballot of another scrutin changed: %q", got)
 	}
 	var textEn *string
