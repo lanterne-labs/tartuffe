@@ -115,3 +115,66 @@ func TestRearticleBallots(t *testing.T) {
 		t.Errorf("second run: %+v, %v; want nothing rewritten", res, err)
 	}
 }
+
+// TestRecensureBallots: the ballots of a censure motion that carry the bill
+// phrase alone are rewritten with the motion's name; other scrutins and
+// rewritten ballots are left alone.
+func TestRecensureBallots(t *testing.T) {
+	storer, store := setupStoreTest(t)
+	ctx := context.Background()
+	pool := storer.Pool()
+	insertBallot := func(text, lawKey string) int64 {
+		var id int64
+		if err := pool.QueryRow(ctx, "INSERT INTO facts (fact_text, fact_text_en, embedding_text) VALUES ($1, 'old english', 'motion') RETURNING id", text).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "INSERT INTO fact_sources (fact_id, source_url, source_type, metadata) VALUES ($1, 'https://www.assemblee-nationale.fr/dyn/99/scrutins/' || $2::text, 'assemblee_law_page', jsonb_build_object('law_key', $2::text))", id, lawKey); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	purpose := " le texte de loi : « Vise à renverser le gouvernement. »"
+	a := insertBallot("Recensure Person a voté POUR"+purpose, "99-9001")
+	party := insertBallot("Groupe X a collectivement voté CONTRE"+purpose, "99-9001")
+	other := insertBallot("Recensure Person a voté POUR le texte de loi : « Crée un droit. »", "99-9002")
+	d := time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)
+	laws := []Law{
+		{Key: "99-9001", Title: "la motion de censure déposée en application de l'article 49, alinéa 3, de la Constitution par M. Y et 110 députés.", Legislature: 99, VoteDate: &d},
+		{Key: "99-9002", Title: "l'ensemble de la proposition de loi X", Legislature: 99, VoteDate: &d},
+	}
+
+	scrutins, ballots, err := RecensureBallots(ctx, store, laws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scrutins != 1 || ballots != 2 {
+		t.Fatalf("rewrote %d scrutins, %d ballots; want 1 and 2", scrutins, ballots)
+	}
+	var text string
+	var textEn *string
+	if err := pool.QueryRow(ctx, "SELECT fact_text, fact_text_en FROM facts WHERE id = $1", a).Scan(&text, &textEn); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Recensure Person a voté POUR la motion de censure du 2 février 2026 (article 49, alinéa 3, de la Constitution) : « Vise à renverser le gouvernement. »"; text != want {
+		t.Errorf("text = %q\nwant   %q", text, want)
+	}
+	if textEn != nil {
+		t.Errorf("fact_text_en = %q, want reset for the translation repair", *textEn)
+	}
+	if err := pool.QueryRow(ctx, "SELECT fact_text FROM facts WHERE id = $1", party).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "collectivement voté CONTRE la motion de censure du 2 février 2026") {
+		t.Errorf("party ballot = %q", text)
+	}
+	if err := pool.QueryRow(ctx, "SELECT fact_text FROM facts WHERE id = $1", other).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "motion") {
+		t.Errorf("the ballot of another scrutin changed: %q", text)
+	}
+	// A second run finds nothing to rewrite.
+	if scrutins, ballots, err = RecensureBallots(ctx, store, laws); err != nil || scrutins != 0 || ballots != 0 {
+		t.Errorf("second run: %d, %d, %v; want nothing rewritten", scrutins, ballots, err)
+	}
+}

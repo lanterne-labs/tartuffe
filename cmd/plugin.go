@@ -35,7 +35,7 @@ func init() {
 	pluginCmd.AddCommand(frpoliticsCmd)
 
 	// Flags for frpolitics
-	frpoliticsCmd.Flags().String("mode", "votes", "operation mode: 'votes' (process official votes), 'debats' (séance transcripts), 'backfill-seance-ref' (stamp seance_ref on old vote sources + queue same-séance pairs), or 'rearticle' (rewrite the ballots of the article scrutins with what the article does)")
+	frpoliticsCmd.Flags().String("mode", "votes", frpolitics.ModeHelp())
 	frpoliticsCmd.Flags().Bool("rejudge", false, "rearticle mode: remove the contradictions on the rewritten ballots and the verdicts of their pairs, so they are judged again")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
@@ -73,11 +73,6 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	threshold, _ := cmd.Flags().GetFloat64("party-threshold")
 	legsStr, _ := cmd.Flags().GetString("legislatures")
 
-	// Validate mode
-	if mode != "votes" && mode != "debats" && mode != "backfill-seance-ref" && mode != "rearticle" {
-		return fmt.Errorf("invalid mode %q: must be 'votes', 'debats', 'backfill-seance-ref' or 'rearticle'", mode)
-	}
-
 	// Parse since date (--since takes priority; --last-years and --from-year are convenience shorthands)
 	var since *time.Time
 	if sinceStr != "" {
@@ -112,91 +107,19 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// The ballots of the article scrutins stored before the articles were
-	// resolved name the article alone: rewrite them with what the article
-	// does. Discovery reads the scrutins of --since / --legislatures.
-	if mode == "rearticle" {
-		rejudge, _ := cmd.Flags().GetBool("rejudge")
-		res, err := frpolitics.BackfillArticles(ctx, storer, frpolitics.Options{Since: since, Legislatures: legs}, rejudge)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%d article scrutins rewritten, %d ballots; %d scrutins gated (%s); %d contradictions reopened\n",
-			res.Scrutins, res.Ballots, len(res.Gated), strings.Join(res.Gated, ", "), res.Reopened)
-		return nil
-	}
-
-	// One-off: stamp seance_ref on vote sources ingested before the key
-	// existed, then queue the same-séance pairs.
-	if mode == "backfill-seance-ref" {
-		leg := 17
-		if len(legs) == 1 {
-			leg = legs[0]
-		}
-		n, err := frpolitics.BackfillVoteSeanceRefs(ctx, storer, leg)
-		if err != nil {
-			return err
-		}
-		q, err := frpolitics.EnqueueSameSeancePairs(ctx, storer)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("seance_ref backfilled on %d vote sources; %d same-séance pairs queued\n", n, q)
-		return nil
-	}
-
-	// Séance transcripts: separate engine, shares the AN actor ids with the
-	// votes path. --since bounds the séance dates; --max-docs / --newest-first
-	// drive a manual backfill chunk.
-	if mode == "debats" {
-		maxDocs, _ := cmd.Flags().GetInt("max-docs")
-		newestFirst, _ := cmd.Flags().GetBool("newest-first")
-		prioritizePress, _ := cmd.Flags().GetBool("prioritize-press")
-		dopts := frpolitics.DebatsOptions{MaxDocs: maxDocs, NewestFirst: newestFirst, PrioritizePress: prioritizePress}
-		if since != nil {
-			dopts.Since = *since
-		}
-		if len(legs) > 1 {
-			return fmt.Errorf("--mode debats processes one legislature per run, got %v", legs)
-		}
-		if len(legs) == 1 {
-			dopts.Legislature = legs[0]
-		}
-		stats, err := frpolitics.RunDebats(ctx, storer, dopts)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("\n=== DEBATS RESULTS ===\nSéances in range: %d\nDocuments: %d (pending before: %d)\nAttempted: %d, processed: %d, facts: %d (skipped %d, dropped non-speaker subject %d), no-fact docs: %d, errors: %d\nPending after: %d, deadline hit: %v, elapsed: %.0fs\n",
-			stats.Seances, stats.Documents, stats.Pending, stats.Attempted, stats.Processed, stats.Facts, stats.FactsSkipped, stats.FactsDroppedSubject, stats.NoFacts, stats.Errors, stats.PendingAfter, stats.DeadlineHit, stats.ElapsedSeconds)
-		return nil
-	}
-
-	// Set up options
-	opts := frpolitics.Options{
-		Since:          since,
-		MaxLaws:        maxLaws,
-		PartyThreshold: threshold,
-		Legislatures:   legs,
-		RevisitHours:   -1, // negative = always visitable: retry laws whose store failed (0 would coerce to the 24h default)
-	}
-
-	sinceLog := ""
-	if since != nil {
-		sinceLog = since.Format("2006-01-02")
-	}
-	log.Info().
-		Str("mode", mode).
-		Str("since", sinceLog).
-		Int("max_laws", maxLaws).
-		Float64("party_threshold", threshold).
-		Ints("legislatures", legs).
-		Msg("Starting frpolitics plugin")
-
-	// Run the plugin
-	if _, err := frpolitics.Run(ctx, storer, opts); err != nil {
-		return fmt.Errorf("frpolitics plugin failed: %w", err)
-	}
-
-	log.Info().Msg("Frpolitics plugin completed successfully")
-	return nil
+	rejudge, _ := cmd.Flags().GetBool("rejudge")
+	maxDocs, _ := cmd.Flags().GetInt("max-docs")
+	newestFirst, _ := cmd.Flags().GetBool("newest-first")
+	prioritizePress, _ := cmd.Flags().GetBool("prioritize-press")
+	return frpolitics.RunMode(ctx, storer, frpolitics.CLIOptions{
+		Mode:            mode,
+		Since:           since,
+		Legislatures:    legs,
+		MaxLaws:         maxLaws,
+		PartyThreshold:  threshold,
+		Rejudge:         rejudge,
+		MaxDocs:         maxDocs,
+		NewestFirst:     newestFirst,
+		PrioritizePress: prioritizePress,
+	})
 }

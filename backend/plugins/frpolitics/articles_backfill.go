@@ -91,3 +91,44 @@ func BackfillArticles(ctx context.Context, storer *storage.PostgresStorer, opts 
 	store := NewStore(storer)
 	return RearticleBallots(ctx, storer, store, newArticleResolver(store, laws, orgCache), laws, rejudge)
 }
+
+// RecensureBallots rewrites the ballots of the censure motions among laws
+// that still carry the bill phrase alone with the motion's name (date and
+// paragraph of article 49, censureObject), and returns the motions and the
+// ballots rewritten. The pair verdicts stay: the new text says the same vote,
+// it only tells two motions apart.
+func RecensureBallots(ctx context.Context, store *Store, laws []Law) (scrutins, ballots int, err error) {
+	for _, law := range laws {
+		if err := ctx.Err(); err != nil {
+			return scrutins, ballots, err
+		}
+		if ClassifyScrutinObject(law.Title) != ObjectMotion {
+			continue
+		}
+		object, ok := censureObject(law)
+		if !ok {
+			continue
+		}
+		ids, err := store.RecensureBallots(ctx, law.Key, object)
+		if err != nil {
+			return scrutins, ballots, err
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		scrutins++
+		ballots += len(ids)
+		log.Info().Str("law_key", law.Key).Str("object", object).Int("ballots", len(ids)).Msg("frpolitics: ballots of the censure motion rewritten")
+	}
+	return scrutins, ballots, nil
+}
+
+// BackfillCensures discovers the scrutins of opts (Since, Legislatures) and
+// rewrites the ballots of their censure motions (RecensureBallots).
+func BackfillCensures(ctx context.Context, storer *storage.PostgresStorer, opts Options) (scrutins, ballots int, err error) {
+	laws, _, _, _, _, err := discoverAndParse(ctx, opts)
+	if err != nil {
+		return 0, 0, err
+	}
+	return RecensureBallots(ctx, NewStore(storer), laws)
+}
