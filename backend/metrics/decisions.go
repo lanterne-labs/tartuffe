@@ -54,10 +54,12 @@ const (
 	OutcomeError                = "error"
 
 	// StageStanceMerge
-	OutcomeMergeConfirmed     = "confirmed"
-	OutcomeMergeRejected      = "rejected"
-	OutcomeMergeViaLabel      = "confirmed_via_label" // surfaced by label similarity, not embeddings
-	OutcomeMergeLabelRejected = "rejected_via_label"
+	OutcomeMergeConfirmed      = "confirmed"
+	OutcomeMergeRejected       = "rejected"
+	OutcomeMergeViaLabel       = "confirmed_via_label" // surfaced by label similarity, not embeddings
+	OutcomeMergeLabelRejected  = "rejected_via_label"
+	OutcomeMergeViaLookup      = "confirmed_via_lookup" // named by the stance lookup, confirmed by the overlap gate
+	OutcomeMergeLookupRejected = "rejected_via_lookup"
 
 	// StageStanceReassign
 	OutcomeReassignJoined = "joined" // the singleton's fact found a home

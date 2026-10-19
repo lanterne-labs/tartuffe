@@ -30,6 +30,8 @@ type ClaudeTeamEndpoint struct {
 	// MaxProcs is the maximum number of CLI processes at one time. 0 means
 	// defaultClaudeTeamProcs.
 	MaxProcs int
+	// CallTimeout bounds one CLI process. 0 means claudeTeamCallTimeout.
+	CallTimeout time.Duration
 
 	semOnce  sync.Once
 	sem      chan struct{}
@@ -40,6 +42,12 @@ type ClaudeTeamEndpoint struct {
 }
 
 const defaultClaudeTeamProcs = 4
+
+// claudeTeamCallTimeout is the limit of one CLI process, the limit of a sync
+// API request (claudeAPITimeout): a reply with a long thinking takes minutes.
+// Without it, a CLI that hung held its caller: a stance merge waited 40 min
+// on one call (2026-10-19).
+const claudeTeamCallTimeout = claudeAPITimeout
 
 // claudeTeamSystemPrompt is the system prompt of a request with no system
 // message (the fact extractor sends its prompt as the user message). Without
@@ -326,7 +334,13 @@ const claudeTeamWaitDelay = 5 * time.Second
 // out of the call: without them, the CLI sent about 100,000 tokens of tools,
 // settings and memory per call; with them, about 560 tokens.
 func (t *ClaudeTeamEndpoint) run(ctx context.Context, seat claudeSeat, creq ClaudeRequest, system, prompt string) (claudeCLIResult, error) {
-	cmd := exec.CommandContext(ctx, t.Binary,
+	limit := t.CallTimeout
+	if limit <= 0 {
+		limit = claudeTeamCallTimeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	cmd := exec.CommandContext(callCtx, t.Binary,
 		"-p",
 		"--output-format", "json",
 		"--model", creq.Model,
@@ -348,6 +362,9 @@ func (t *ClaudeTeamEndpoint) run(ctx context.Context, seat claudeSeat, creq Clau
 	runErr := cmd.Run()
 	if err := ctx.Err(); err != nil {
 		return claudeCLIResult{}, fmt.Errorf("claude seat %q: %w", seat.name, err)
+	}
+	if callCtx.Err() != nil {
+		return claudeCLIResult{}, fmt.Errorf("claude seat %q: no reply within %s", seat.name, limit)
 	}
 	output := func() string {
 		return fmt.Sprintf("(stderr: %s; stdout: %s)", outputSnippet(stderr.String()), outputSnippet(stdout.String()))

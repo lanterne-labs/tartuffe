@@ -16,7 +16,7 @@ import (
 type CLIOptions struct {
 	Mode string
 	// Since and Legislatures bound the scrutins (votes, rearticle,
-	// remotion) or the séances (debats).
+	// recensure) or the séances (debats).
 	Since        *time.Time
 	Legislatures []int
 	// votes
@@ -43,7 +43,7 @@ var cliModes = []cliMode{
 	{"debats", "séance transcripts", runDebatsMode},
 	{"backfill-seance-ref", "stamp seance_ref on old vote sources + queue same-séance pairs", runSeanceRefMode},
 	{"rearticle", "rewrite the ballots of the article scrutins with what the article does", runRearticleMode},
-	{"remotion", "name the motion in the stored ballots of the motion scrutins; reopens the pairs of the motions other than censure", runRemotionMode},
+	{"recensure", "name the censure motions of the stored ballots by date and paragraph of article 49", runRecensureMode},
 }
 
 // ModeHelp describes the modes for the --mode flag.
@@ -142,14 +142,14 @@ func runRearticleMode(ctx context.Context, storer *storage.PostgresStorer, opts 
 	return nil
 }
 
-// runRemotionMode names the motion in the ballots of the motion scrutins
-// stored with the bill phrase, which read as votes on the bill. Discovery
-// reads the scrutins of Since / Legislatures.
-func runRemotionMode(ctx context.Context, storer *storage.PostgresStorer, opts CLIOptions) error {
-	res, err := BackfillMotions(ctx, storer, Options{Since: opts.Since, Legislatures: opts.Legislatures})
+// runRecensureMode names the censure motions of the ballots stored with the
+// bill phrase alone, which read the same for every motion. Discovery reads
+// the scrutins of Since / Legislatures.
+func runRecensureMode(ctx context.Context, storer *storage.PostgresStorer, opts CLIOptions) error {
+	scrutins, ballots, err := BackfillCensures(ctx, storer, Options{Since: opts.Since, Legislatures: opts.Legislatures})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%d motions rewritten, %d ballots; %d contradictions reopened\n", res.Scrutins, res.Ballots, res.Reopened)
+	fmt.Printf("%d censure motions rewritten, %d ballots\n", scrutins, ballots)
 	return nil
 }
