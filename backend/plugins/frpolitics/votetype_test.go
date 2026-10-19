@@ -3,6 +3,7 @@ package frpolitics
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // Titles are real prod scrutin titles (legislature 16/17).
@@ -99,5 +100,39 @@ func TestResolveVotedObjectArticle(t *testing.T) {
 	}
 	if got := summaryTitle(Law{Title: "la première partie du projet de loi de finances pour 2026 (première lecture)."}); got != "projet de loi de finances pour 2026 (première lecture)." {
 		t.Errorf("summaryTitle of a budget part = %q", got)
+	}
+}
+
+// TestCensureObject: a censure motion is named by its date and the paragraph
+// of article 49; two motions with one purpose no longer share a ballot text.
+func TestCensureObject(t *testing.T) {
+	d2 := time.Date(2025, 10, 16, 0, 0, 0, 0, time.UTC)
+	d3 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	m2 := Law{Title: "la motion de censure déposée en application de l'article 49, alinéa 2, de la Constitution par Mme Mathilde Panot et 86 députés.", VoteDate: &d2}
+	m3 := Law{Title: "la motion de censure déposée en application de l'article 49, alinéa 3, de la Constitution par M. Stéphane Peu, Mme Mathilde Panot, Mme Cyrielle Chatelain et 110 députés.", VoteDate: &d3}
+	summary := LawSummary{SimpleStatement: "Vise à renverser le gouvernement en engageant sa responsabilité par une motion de censure."}
+
+	o2, ok, err := resolveVotedObject(context.Background(), m2, nil)
+	if err != nil || !ok {
+		t.Fatalf("censure motion: (%q, %v, %v), want resolved", o2, ok, err)
+	}
+	if o2 != "la motion de censure du 16 octobre 2025 (article 49, alinéa 2, de la Constitution)" {
+		t.Errorf("object = %q", o2)
+	}
+	o3, _, _ := resolveVotedObject(context.Background(), m3, nil)
+	p2, p3 := votedObjectPhrase(o2, summary), votedObjectPhrase(o3, summary)
+	if p2 == p3 {
+		t.Fatalf("two motions share the phrase %q", p2)
+	}
+	want := "la motion de censure du 1er février 2026 (article 49, alinéa 3, de la Constitution) : « Vise à renverser le gouvernement en engageant sa responsabilité par une motion de censure. »"
+	if p3 != want {
+		t.Errorf("phrase = %q\nwant     %q", p3, want)
+	}
+	if got := votedObjectPhrase(o2, LawSummary{}); got != o2 {
+		t.Errorf("phrase without a statement = %q", got)
+	}
+	// Another motion keeps the bill phrase.
+	if o, ok, err := resolveVotedObject(context.Background(), Law{Title: "la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi de finances pour 2026"}, nil); err != nil || !ok || o != "" {
+		t.Errorf("rejet préalable: (%q, %v, %v), want the bill phrase", o, ok, err)
 	}
 }

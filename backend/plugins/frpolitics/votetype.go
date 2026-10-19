@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // ScrutinObjectType classifies WHAT a scrutin voted on. Scrutin titles are
@@ -131,6 +133,11 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 		// the bill's purpose for one article: gated.
 		return "", false, nil
 	}
+	if objType == ObjectMotion {
+		if object, ok := censureObject(law); ok {
+			return object, true, nil
+		}
+	}
 	if IsTextLevelVote(objType) || objType == ObjectOther {
 		return "", true, nil
 	}
@@ -170,14 +177,54 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true, nil
 }
 
+// censureAlineaRe pulls the paragraph of article 49 out of a censure motion
+// title ("déposée en application de l'article 49, alinéa 3, de la
+// Constitution").
+var censureAlineaRe = regexp.MustCompile(`article 49, alinéa (\d)`)
+
+// censurePrefix starts the object phrase of a censure motion.
+const censurePrefix = "la motion de censure"
+
+// censureObject names a censure motion by its date and the paragraph of
+// article 49 it was filed under. Every censure motion has one purpose,
+// overturning the government, so with the bill phrase alone the ballots of
+// two motions had one text (17-3058 and 17-5284). ok is false for any other
+// scrutin.
+func censureObject(law Law) (object string, ok bool) {
+	if !strings.Contains(strings.ToLower(law.Title), "motion de censure") {
+		return "", false
+	}
+	object = censurePrefix
+	if law.VoteDate != nil {
+		object += " du " + frenchDate(*law.VoteDate)
+	}
+	if m := censureAlineaRe.FindStringSubmatch(law.Title); m != nil {
+		object += fmt.Sprintf(" (article 49, alinéa %s, de la Constitution)", m[1])
+	}
+	return object, true
+}
+
+var frenchMonths = [...]string{"janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+
+// frenchDate writes t as "2 février 2026" ("1er" for the first day).
+func frenchDate(t time.Time) string {
+	day := strconv.Itoa(t.Day())
+	if t.Day() == 1 {
+		day = "1er"
+	}
+	return fmt.Sprintf("%s %s %d", day, frenchMonths[t.Month()-1], t.Year())
+}
+
 // votedObjectPhrase is the voted object's phrase: the bill phrase, preceded
-// by the article or the amendment when the ballot judged one (see
-// resolveVotedObject).
+// by the article or the amendment when the ballot judged one, or the censure
+// motion followed by its purpose (see resolveVotedObject).
 func votedObjectPhrase(object string, summary LawSummary) string {
 	billPhrase := prepareLawPhrase(summary.SimpleStatement)
 	switch {
 	case object == "":
 		return billPhrase
+	case strings.HasPrefix(object, censurePrefix):
+		return object + strings.TrimPrefix(billPhrase, "le texte de loi")
 	case isArticlePhrase(object):
 		return object + " du " + strings.TrimPrefix(billPhrase, "le ")
 	default:
