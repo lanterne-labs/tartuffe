@@ -439,6 +439,27 @@ var (
 	routing   = localRouting()
 )
 
+// concurrentEndpoint is an endpoint that serves more than one call at a
+// time.
+type concurrentEndpoint interface {
+	Concurrency() int
+}
+
+// Concurrency is the number of calls the default route of the active routing
+// serves at one time: what a caller may send at once. The local endpoint
+// serves one (the GPU box runs one request), as does any endpoint that does
+// not say otherwise.
+func Concurrency() int {
+	r := activeRouting()
+	if r == nil {
+		return 1
+	}
+	if e, ok := r.Endpoints[r.Default.Endpoint].(concurrentEndpoint); ok {
+		return max(1, e.Concurrency())
+	}
+	return 1
+}
+
 func activeRouting() *Routing {
 	routingMu.RLock()
 	defer routingMu.RUnlock()

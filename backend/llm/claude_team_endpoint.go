@@ -43,6 +43,15 @@ type ClaudeTeamEndpoint struct {
 
 const defaultClaudeTeamProcs = 4
 
+// Concurrency is the number of CLI processes that run at one time
+// (MaxProcs).
+func (t *ClaudeTeamEndpoint) Concurrency() int {
+	if t.MaxProcs > 0 {
+		return t.MaxProcs
+	}
+	return defaultClaudeTeamProcs
+}
+
 // claudeTeamCallTimeout is the limit of one CLI process, the limit of a sync
 // API request (claudeAPITimeout): a reply with a long thinking takes minutes.
 // Without it, a CLI that hung held its caller: a stance merge waited 40 min

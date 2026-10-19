@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // InsertedFactMeta holds metadata about a successfully inserted fact.
@@ -191,50 +192,107 @@ func (fi *FactInserter) EnableDedupe(groups GroupStorer) {
 // grouped with the same-claim fact it restates (when dedupe is enabled) or
 // routed through the stance manager. If stance processing fails for any fact, the fact (and its source/
 // mention rows) is deleted and the batch fails — there is no silent fallback.
+//
+// The facts of one subject are processed in order: two of them at once could
+// both open a stance on one subject, or miss each other as a same claim. The
+// subjects run at once up to llm.Concurrency(), the number of calls the
+// endpoint serves together (1 on the local profile: one fact at a time). A
+// scrutin is one ballot per voter, so its ballots run that many at once.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
-	result := &InsertResult{}
-	for i, fact := range facts {
-		log.Debug().
-			Int("index", i+1).
-			Int("total", len(facts)).
-			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
-			Msg("Processing fact for insertion")
-
-		factID, personID, err := fi.insertSingleFact(ctx, fact)
-		if err != nil {
-			// Entity-validator rejection means the subject isn't a real entity —
-			// not a pipeline failure, just a per-fact skip. Don't abort the batch.
-			if IsEntityRejected(err) {
-				log.Info().
-					Err(err).
-					Str("subject", fact.SubjectEntity).
-					Str("subject_type", fact.SubjectEntityType).
-					Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
-					Msg("Skipping fact: subject entity rejected by validator")
-				result.Skipped++
-				continue
-			}
-			// Web-extracted fact with no source quote: unverifiable, skip it
-			// without aborting the batch (mirrors the entity-rejected skip above).
-			if isQuoteMissing(err) {
-				log.Warn().
-					Str("source_type", fact.SourceType).
-					Str("source_url", fact.SourceURL).
-					Str("subject", fact.SubjectEntity).
-					Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
-					Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
-				result.Skipped++
-				continue
-			}
-			return result, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, len(facts), err)
+	var order []string
+	bySubject := map[string][]int{}
+	for i, f := range facts {
+		if _, ok := bySubject[f.SubjectEntity]; !ok {
+			order = append(order, f.SubjectEntity)
 		}
-		result.Inserted++
-		result.InsertedMeta = append(result.InsertedMeta, InsertedFactMeta{
-			FactID:   factID,
-			PersonID: personID,
-		})
+		bySubject[f.SubjectEntity] = append(bySubject[f.SubjectEntity], i)
 	}
-	return result, nil
+	outcomes := make([]factOutcome, len(facts))
+	insertSubject := func(ctx context.Context, idxs []int) error {
+		for _, i := range idxs {
+			out, err := fi.insertOne(ctx, i, len(facts), facts[i])
+			if err != nil {
+				return err
+			}
+			outcomes[i] = out
+		}
+		return nil
+	}
+
+	var err error
+	if workers := llm.Concurrency(); workers <= 1 || len(order) <= 1 {
+		// One at a time, in the order given.
+		all := make([]int, len(facts))
+		for i := range facts {
+			all[i] = i
+		}
+		err = insertSubject(ctx, all)
+	} else {
+		g, gctx := errgroup.WithContext(ctx)
+		g.SetLimit(workers)
+		for _, subject := range order {
+			idxs := bySubject[subject]
+			g.Go(func() error { return insertSubject(gctx, idxs) })
+		}
+		err = g.Wait()
+	}
+
+	result := &InsertResult{}
+	for _, out := range outcomes {
+		switch {
+		case out.skipped:
+			result.Skipped++
+		case out.meta != nil:
+			result.Inserted++
+			result.InsertedMeta = append(result.InsertedMeta, *out.meta)
+		}
+	}
+	return result, err
+}
+
+// factOutcome is what insertOne did with one fact: inserted (meta), skipped,
+// or nothing yet (the batch stopped before it).
+type factOutcome struct {
+	meta    *InsertedFactMeta
+	skipped bool
+}
+
+// insertOne inserts fact i of n. A subject rejected by the entity validator
+// or a web fact without its quote is a skip, not a failure of the batch.
+func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactInput) (factOutcome, error) {
+	log.Debug().
+		Int("index", i+1).
+		Int("total", n).
+		Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
+		Msg("Processing fact for insertion")
+
+	factID, personID, err := fi.insertSingleFact(ctx, fact)
+	if err == nil {
+		return factOutcome{meta: &InsertedFactMeta{FactID: factID, PersonID: personID}}, nil
+	}
+	// Entity-validator rejection means the subject isn't a real entity —
+	// not a pipeline failure, just a per-fact skip. Don't abort the batch.
+	if IsEntityRejected(err) {
+		log.Info().
+			Err(err).
+			Str("subject", fact.SubjectEntity).
+			Str("subject_type", fact.SubjectEntityType).
+			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
+			Msg("Skipping fact: subject entity rejected by validator")
+		return factOutcome{skipped: true}, nil
+	}
+	// Web-extracted fact with no source quote: unverifiable, skip it
+	// without aborting the batch (mirrors the entity-rejected skip above).
+	if isQuoteMissing(err) {
+		log.Warn().
+			Str("source_type", fact.SourceType).
+			Str("source_url", fact.SourceURL).
+			Str("subject", fact.SubjectEntity).
+			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
+			Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
+		return factOutcome{skipped: true}, nil
+	}
+	return factOutcome{}, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, n, err)
 }
 
 // insertSingleFact handles insertion of a single fact and its mandatory stance
