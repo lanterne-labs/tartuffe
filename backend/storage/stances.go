@@ -51,14 +51,15 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc core.Stan
 	return id, nil
 }
 
-// UpdateStanceDocument updates an existing stance document's summary, embedding, key facts, and count.
-func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
+// UpdateStanceDocument updates an existing stance document's summary, embedding and key facts.
+// fact_count follows the stance_document_facts rows (trigger stance_document_facts_count).
+func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, summary string, summaryEn string, embedding []float32, keyFactIDs []int64) error {
 	query := `
 		UPDATE stance_documents
-		SET summary = $1, summary_en = NULLIF($2,''), cluster_embedding = $3, key_fact_ids = $4, fact_count = $5, last_updated_at = NOW()
-		WHERE id = $6`
+		SET summary = $1, summary_en = NULLIF($2,''), cluster_embedding = $3, key_fact_ids = $4, last_updated_at = NOW()
+		WHERE id = $5`
 
-	_, err := s.pool.Exec(ctx, query, summary, summaryEn, pgvector.NewVector(embedding), keyFactIDs, factCount, id)
+	_, err := s.pool.Exec(ctx, query, summary, summaryEn, pgvector.NewVector(embedding), keyFactIDs, id)
 	if err != nil {
 		return fmt.Errorf("updating stance document %d: %w", id, err)
 	}
