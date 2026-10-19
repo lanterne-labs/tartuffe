@@ -21,7 +21,7 @@ import (
 // StanceStorer defines the storage interface for stance operations.
 type StanceStorer interface {
 	InsertStanceDocument(ctx context.Context, doc StanceDocument) (int64, error)
-	UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error
+	UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64) error
 	// UpdateStanceMetadata stores a refreshed label + summary and advances the
 	// stance's summarized_at cursor to the newest membership among
 	// consumedFactIDs (the facts the refresh actually absorbed), so a fact
@@ -765,17 +765,17 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 	return result, nil
 }
 
-// applyStanceUpdate writes the centroid + fact count + key fact IDs for a
-// stance after a fact has joined. Summary is left as the existing one — the
-// refresh call (triggerStanceRefresh) is responsible for regenerating it.
+// applyStanceUpdate writes the centroid + key fact IDs for a stance after a
+// fact has joined; the fact count follows the joined row in the database.
+// Summary is left as the existing one — the refresh call
+// (triggerStanceRefresh) is responsible for regenerating it.
 func (sm *StanceManager) applyStanceUpdate(ctx context.Context, matched *StanceDocument, factID int64, embedding []float32) error {
 	newCentroid := updateCentroid(matched.ClusterEmbedding, embedding, matched.FactCount)
-	newFactCount := matched.FactCount + 1
 	keyFactIDs := matched.KeyFactIDs
 	if len(keyFactIDs) < 10 {
 		keyFactIDs = append(keyFactIDs, factID)
 	}
-	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, matched.SummaryEn, newCentroid, keyFactIDs, newFactCount)
+	return sm.storer.UpdateStanceDocument(ctx, matched.ID, matched.Summary, matched.SummaryEn, newCentroid, keyFactIDs)
 }
 
 // verifiedContradictionsInStance treats `fact` as if it just arrived in

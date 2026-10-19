@@ -70,7 +70,7 @@ func TestStanceDocumentCRUD(t *testing.T) {
 
 	// Update the stance
 	newEmb := makeMixedEmbedding(0, 1, 0.9, 0.1)
-	err = storer.UpdateStanceDocument(ctx, stanceID, "Updated summary.", "", newEmb, []int64{1, 2, 3, 4}, 4)
+	err = storer.UpdateStanceDocument(ctx, stanceID, "Updated summary.", "", newEmb, []int64{1, 2, 3, 4})
 	require.NoError(t, err)
 
 	// Verify update
@@ -78,14 +78,29 @@ func TestStanceDocumentCRUD(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stances, 1)
 	assert.Equal(t, "Updated summary.", stances[0].Summary)
-	assert.Equal(t, 4, stances[0].FactCount)
+	assert.Equal(t, 3, stances[0].FactCount, "the update leaves the count to the stance's rows")
 	assert.Equal(t, []int64{1, 2, 3, 4}, stances[0].KeyFactIDs)
+
+	// The count follows the rows: two facts join, one leaves.
+	f1 := insertDatedFact(t, storer, personID, "Test Person a voté pour le texte A.", nil)
+	f2 := insertDatedFact(t, storer, personID, "Test Person a voté contre le texte B.", nil)
+	require.NoError(t, storer.AddFactToStance(ctx, stanceID, f1))
+	require.NoError(t, storer.AddFactToStance(ctx, stanceID, f2))
+	require.NoError(t, storer.AddFactToStance(ctx, stanceID, f2), "a fact already held is not counted twice")
+	stances, err = storer.GetStanceDocumentsForPerson(ctx, personID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, stances[0].FactCount)
+	_, err = storer.pool.Exec(ctx, "DELETE FROM stance_document_facts WHERE fact_id = $1", f1)
+	require.NoError(t, err)
+	stances, err = storer.GetStanceDocumentsForPerson(ctx, personID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stances[0].FactCount)
 
 	// Counts
 	totalStances, totalFacts, err := storer.GetStanceDocumentCounts(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 1, totalStances)
-	assert.Equal(t, 4, totalFacts)
+	assert.Equal(t, 1, totalFacts)
 
 	// Delete
 	err = storer.DeleteStanceDocumentsForPerson(ctx, personID)

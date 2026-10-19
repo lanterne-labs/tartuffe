@@ -41,7 +41,7 @@ func (m *mockStanceStorer) InsertStanceDocument(ctx context.Context, doc StanceD
 	return id, nil
 }
 
-func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64, factCount int) error {
+func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, summary, summaryEn string, embedding []float32, keyFactIDs []int64) error {
 	doc, ok := m.stances[id]
 	if !ok {
 		return nil
@@ -49,7 +49,6 @@ func (m *mockStanceStorer) UpdateStanceDocument(ctx context.Context, id int64, s
 	doc.Summary = summary
 	doc.ClusterEmbedding = embedding
 	doc.KeyFactIDs = keyFactIDs
-	doc.FactCount = factCount
 	m.stances[id] = doc
 	return nil
 }
@@ -70,8 +69,13 @@ func (m *mockStanceStorer) GetStanceTensions(ctx context.Context, stanceID int64
 	return m.tensions, nil
 }
 
+// AddFactToStance counts the fact as the database trigger does.
 func (m *mockStanceStorer) AddFactToStance(ctx context.Context, stanceID int64, factID int64) error {
 	m.facts[stanceID] = append(m.facts[stanceID], StanceFactInfo{ID: factID})
+	if doc, ok := m.stances[stanceID]; ok {
+		doc.FactCount = len(m.facts[stanceID])
+		m.stances[stanceID] = doc
+	}
 	return nil
 }
 
