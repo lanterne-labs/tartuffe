@@ -1990,9 +1990,11 @@ func (sm *StanceManager) MergeClusterDecision(ctx context.Context, personName st
 // per process instead of once per person (see CHANGES.md, prompt layout).
 func mergeDecisionPrompt(personName string, cluster []StanceForMerge) string {
 	var stancesBuilder strings.Builder
-	for i, s := range cluster {
-		stancesBuilder.WriteString(fmt.Sprintf("[%d] id=%d, label=%q, summary=%q\n",
-			i+1, s.ID, s.Label, truncate(s.Summary, 400)))
+	// The lines carry no list position: a model given "[1] id=12491" answered
+	// with the positions, which name no stance of the cluster.
+	for _, s := range cluster {
+		stancesBuilder.WriteString(fmt.Sprintf("- id=%d, label=%q, summary=%q\n",
+			s.ID, s.Label, truncate(s.Summary, 400)))
 	}
 
 	return fmt.Sprintf(`You are deciding which subsets of the listed stance documents about one person should be merged because they cover the SAME NEUTRAL SUBJECT AREA. A stance is defined as a neutral subject container — both supportive and opposing facts on that subject belong inside it.
@@ -2053,11 +2055,11 @@ PERSON: %s
 STANCES IN THIS CANDIDATE CLUSTER:
 %s
 
-Return ONLY valid JSON:
+Return ONLY valid JSON. stance_ids are the id= values of the stances above:
 {
   "reasoning": "1-3 sentences explaining your decision",
   "merges": [
-    {"stance_ids": [12, 34], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
+    {"stance_ids": [12491, 12534], "summary": "unified 1-3 sentence summary", "label": "specific subject label"}
   ]
 }
 

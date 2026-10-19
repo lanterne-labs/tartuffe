@@ -41,7 +41,11 @@ func TestMergeDecisionPromptSharesRulePrefix(t *testing.T) {
 	if stances := strings.Index(p1, "STANCES IN THIS CANDIDATE CLUSTER:"); format < 0 || format < stances {
 		t.Errorf("response format must come after the stances (format at %d, stances at %d)", format, stances)
 	}
-	if !strings.Contains(p1, "[2] id=2, label=\"âge légal de départ\"") {
+	if !strings.Contains(p1, "- id=2, label=\"âge légal de départ\"") {
 		t.Errorf("stance listing missing from prompt")
+	}
+	// A list position next to the ID made the model answer with positions.
+	if strings.Contains(p1, "[1] id=") {
+		t.Errorf("stance listing numbers the stances; the model must see the IDs only")
 	}
 }

@@ -331,6 +331,7 @@ func claudeChatResponse(text string, u ClaudeUsage) *ChatResponse {
 		},
 	}
 	resp.Usage.TotalTokens = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
+	resp.Usage.PromptTokensDetails.CachedTokens = u.CacheReadInputTokens
 	return resp
 }
 

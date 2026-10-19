@@ -43,7 +43,7 @@ go build -o dm .                                # Build binary
 ./dm worker run                                  # the long-lived worker (the host service `worker`)
 ```
 
-The worker (`backend/worker`) replaces the nightly cron. When no task is pending it does the housekeeping: the daily feed after 03:00 UTC (frpolitics votes and transcripts, the backfills for 1 h, the watch list tasks), and the maintenance pass (stance refresh, stance merge, contradiction detection over the persons with new facts, duplicate repoint, regroup, audit every 5 days, translations) after facts were added and at least every 6 h. The pass judges what changed since the start of the last one (`job_metrics`, job `maintenance`).
+The worker (`backend/worker`) replaces the nightly cron. When no task is pending it does the housekeeping: the daily feed after 03:00 UTC (frpolitics votes and transcripts, the backfills for 1 h, the watch list tasks), and the maintenance pass (stance refresh, stance merge, contradiction detection over the persons with new facts, duplicate repoint, regroup, audit every 5 days, translations) after facts were added and at least every 6 h. The pass judges what changed since the start of the last one (`job_metrics`, job `maintenance`). Its detection judges at most 2000 pairs (about 2 h); a pass cut there records `cut_since_unix`, and the next pass goes on over the same persons once the tasks and the feed left room.
 
 ### News Search
 ```bash
@@ -173,7 +173,7 @@ Services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
 - **`worker`** — long-lived `dm worker run` (root `Dockerfile`, start command set in the service settings). Claims the collection tasks (`dm collect add`) one at a time and runs the ingest of their plugin for their person and period; when idle, the daily feed and the maintenance pass. Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `mirror` except no HTTP `PORT`. On a deploy the task it is on goes back to pending and resumes where its fetch log stopped.
-- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`).
+- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`). Grafana alerts (`grafana/provisioning/alerting/worker.yml`: feed missing after 06:00 UTC, no maintenance pass ended for 12 h) go to Telegram: the service needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before it is deployed.
 
 To collect facts, add tasks with `./dm collect add`; the worker runs them.
 

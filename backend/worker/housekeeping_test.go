@@ -63,6 +63,30 @@ func TestHousekeepingDue(t *testing.T) {
 	due, _, err = h.maintenanceDue(ctx)
 	require.NoError(t, err)
 	assert.True(t, due, "MaintenanceEvery passed")
+
+	// A pass over what changed after a day, cut at detectBudget.
+	from := clock.Add(-24 * time.Hour).Truncate(time.Second)
+	record(maintenanceJob, "duration_seconds", 600, clock)
+	record(maintenanceJob, "cut_since_unix", float64(from.Unix()), clock)
+	due, since, err = h.maintenanceDue(ctx)
+	require.NoError(t, err)
+	assert.True(t, due, "a cut pass is followed by the next one")
+	assert.Equal(t, from, since.UTC(), "the next pass goes on over what the cut one was judging")
+	// A cut pass over everyone.
+	clock = clock.Add(time.Hour)
+	record(maintenanceJob, "duration_seconds", 600, clock)
+	record(maintenanceJob, "cut_since_unix", 0, clock)
+	due, since, err = h.maintenanceDue(ctx)
+	require.NoError(t, err)
+	assert.True(t, due)
+	assert.True(t, since.IsZero(), "the next pass goes on over everyone")
+	// The pass that ends the detection records no cut.
+	clock = clock.Add(time.Hour)
+	record(maintenanceJob, "duration_seconds", 600, clock)
+	due, since, err = h.maintenanceDue(ctx)
+	require.NoError(t, err)
+	assert.False(t, due, "the detection ended")
+	assert.Equal(t, clock.Add(-10*time.Minute), since.UTC())
 }
 
 // fakeIdle records the idle calls and the facts reported.

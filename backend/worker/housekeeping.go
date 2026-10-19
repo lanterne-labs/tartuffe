@@ -30,6 +30,11 @@ const (
 	// refreshBudget caps how many stances a pass brings up to date (one LLM
 	// call each).
 	refreshBudget = 2000
+	// detectBudget caps how many pairs a pass judges (one LLM call each, about
+	// 4 s): a pass that judges every person (the first one, a rulebook change)
+	// is cut into passes of about 2 h, so the feed and the tasks run between
+	// them.
+	detectBudget = 2000
 	// auditCadence is how often the contradiction auditor re-judges the
 	// stored contradictions.
 	auditCadence = 5 * 24 * time.Hour
@@ -52,7 +57,9 @@ const (
 // persons with new facts, the duplicate repoint, the regroup of the persons
 // with new contradictions, the audit when due, and the translations. It runs
 // when facts were added since the last pass, and at least every
-// MaintenanceEvery (the audit cadence, a backlog cut by a cap).
+// MaintenanceEvery (the audit cadence, a backlog cut by a cap). A pass whose
+// detection stopped at detectBudget is followed by the next one as soon as
+// the tasks and the feed leave room, over the same persons.
 type Housekeeping struct {
 	Storer *storage.PostgresStorer
 	Deps   *deps.Deps
@@ -227,28 +234,54 @@ func (h *Housekeeping) watchTasks(ctx context.Context) (int, error) {
 	return added, nil
 }
 
-// maintenanceDue reports whether a pass is due, and the start of the last
-// pass (zero when none ran): the pass judges what changed after it.
+// maintenanceDue reports whether a pass is due, and what it judges: what
+// changed after the start of the last pass (everything when none ran), or,
+// after a pass cut at detectBudget, what that pass was judging.
 func (h *Housekeeping) maintenanceDue(ctx context.Context) (bool, time.Time, error) {
-	last, since, err := h.lastMaintenance(ctx)
+	last, err := h.lastMaintenance(ctx)
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	due := h.dirty || last.IsZero() || h.now().Sub(last) >= h.MaintenanceEvery
-	return due, since, nil
+	if last.cut {
+		return true, last.since, nil
+	}
+	due := h.dirty || last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery
+	return due, last.start, nil
 }
 
-// lastMaintenance returns the end and the start of the last pass (zero when
-// none ran). The pass records its duration, so its start is the end minus it.
-func (h *Housekeeping) lastMaintenance(ctx context.Context) (end, start time.Time, err error) {
+// lastPass is what the last maintenance pass recorded.
+type lastPass struct {
+	// end and start are zero when no pass ran. The pass records its
+	// duration, so its start is the end minus it.
+	end, start time.Time
+	// cut is set when the detection stopped at detectBudget; since is then
+	// what that pass was judging (zero: everything).
+	cut   bool
+	since time.Time
+}
+
+// lastMaintenance returns what the last pass recorded.
+func (h *Housekeeping) lastMaintenance(ctx context.Context) (lastPass, error) {
 	at, seconds, ok, err := h.Storer.LastJobMetric(ctx, maintenanceJob, "duration_seconds")
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("last maintenance pass: %w", err)
+		return lastPass{}, fmt.Errorf("last maintenance pass: %w", err)
 	}
 	if !ok {
-		return time.Time{}, time.Time{}, nil
+		return lastPass{}, nil
 	}
-	return at, at.Add(-time.Duration(seconds * float64(time.Second))), nil
+	p := lastPass{end: at, start: at.Add(-time.Duration(seconds * float64(time.Second)))}
+	// The rows of one pass are inserted together, so they share created_at.
+	cutAt, sinceUnix, ok, err := h.Storer.LastJobMetric(ctx, maintenanceJob, "cut_since_unix")
+	if err != nil {
+		return lastPass{}, fmt.Errorf("last maintenance pass: %w", err)
+	}
+	if ok && cutAt.Equal(at) {
+		p.cut = true
+		if sinceUnix != 0 {
+			p.since = time.Unix(int64(sinceUnix), 0)
+		}
+	}
+	return p, nil
 }
 
 // maintenance runs one pass over what changed after since (everything when
@@ -311,11 +344,14 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 			return err
 		}
 	}
+	cut := false
 	if all || len(persons) > 0 {
-		_, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{Persons: persons})
+		var res contradiction.DetectResult
+		res, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{Persons: persons, MaxPairs: detectBudget})
 		if err := step("detection", err); err != nil {
 			return err
 		}
+		cut = res.Cut
 	}
 	// 4. Contradictions move off the facts the detection marked as duplicates.
 	if processed, repointed, dropped, err := storer.RepointDuplicates(ctx, true); err != nil {
@@ -323,15 +359,21 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	} else if processed > 0 {
 		log.Info().Int("duplicates", processed).Int("repointed", repointed).Int("dropped", dropped).Msg("Maintenance: repointed contradictions off duplicate facts")
 	}
-	// 5. The contradiction groups of the persons with new contradictions.
+	// 5. The contradiction groups of the persons with new contradictions. A
+	// cut pass over everyone regroups the persons of this pass only; the pass
+	// that ends the detection regroups everyone.
 	var ids []int64
-	if !all {
-		ids, err = storer.PersonIDsWithContradictionsSince(ctx, since)
+	if !all || cut {
+		from := since
+		if all {
+			from = start
+		}
+		ids, err = storer.PersonIDsWithContradictionsSince(ctx, from)
 		if err := step("persons with new contradictions", err); err != nil {
 			return err
 		}
 	}
-	if all || len(ids) > 0 {
+	if (all && !cut) || len(ids) > 0 {
 		if err := step("regroup", contradiction.RunRegroupStep(ctx, storer, ids)); err != nil {
 			return err
 		}
@@ -347,11 +389,21 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 
 	h.dirty = false
 	elapsed := h.now().Sub(start)
-	if err := storer.RecordJobMetrics(ctx, []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}); err != nil {
+	rows := []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}
+	if cut {
+		// The next pass goes on with the persons of this one: everyone (0)
+		// when this pass judged everyone, else what changed after since.
+		var sinceUnix float64
+		if !all {
+			sinceUnix = float64(since.Unix())
+		}
+		rows = append(rows, storage.JobMetric{JobType: maintenanceJob, Metric: "cut_since_unix", Value: sinceUnix})
+	}
+	if err := storer.RecordJobMetrics(ctx, rows); err != nil {
 		errs = append(errs, fmt.Errorf("recording the pass: %w", err))
 	}
 	log.Info().Dur("elapsed", elapsed.Round(time.Second)).Int("persons_detected", len(persons)).Int("persons_regrouped", len(ids)).
-		Int("errors", len(errs)).Msg("Maintenance pass done")
+		Bool("detection_cut", cut).Int("errors", len(errs)).Msg("Maintenance pass done")
 	llm.LogUsage()
 	return errors.Join(errs...)
 }

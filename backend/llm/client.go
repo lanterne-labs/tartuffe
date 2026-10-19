@@ -369,6 +369,11 @@ type ChatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// PromptTokensDetails.CachedTokens is the part of PromptTokens read from
+	// the prompt cache (OpenAI schema; Claude: cache_read_input_tokens).
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
 }
 
 // ChatResponse is the OpenAI-compatible completion response envelope.

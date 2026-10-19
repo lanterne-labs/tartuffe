@@ -483,6 +483,7 @@ func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context,
 	}
 	usageEvt.
 		Int("prompt_tokens", chatResp.Usage.PromptTokens).
+		Int("cached_prompt_tokens", chatResp.Usage.PromptTokensDetails.CachedTokens).
 		Int("completion_tokens", chatResp.Usage.CompletionTokens).
 		Int("total_tokens", chatResp.Usage.TotalTokens).
 		Int("reserved_max_tokens", llm.ReservedTokens(llm.TaskDetect, contradictionMaxTokens)).
