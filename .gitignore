@@ -44,3 +44,7 @@ scoped_persons*.txt
 
 # Go test binaries (go test -c)
 *.test
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
+*.gate.lock*
