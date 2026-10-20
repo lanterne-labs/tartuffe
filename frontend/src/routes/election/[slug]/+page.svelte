@@ -5,6 +5,8 @@
 	import { lang, tr } from '$lib/i18n';
 	import { session, signInOpen, authFetch, errorText } from '$lib/auth';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
+	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
+	import { replaceState } from '$app/navigation';
 	import type { PollResponse, CandidateResult, Ballot } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -18,6 +20,20 @@
 	let loadError: string | null = $state(null);
 	let notFound = $state(false);
 	let sortBy: 'preference' | 'honesty' = $state('preference');
+
+	// Three views: the votes only, both side by side, the honesty only. The
+	// view is kept in the URL (?vue=) so a link shares it.
+	type View = 'vote' | 'both' | 'honesty';
+	const VIEWS: View[] = ['vote', 'both', 'honesty'];
+	let view: View = $state('both');
+
+	function setView(v: View) {
+		view = v;
+		const url = new URL(window.location.href);
+		if (v === 'both') url.searchParams.delete('vue');
+		else url.searchParams.set('vue', v);
+		replaceState(url, {});
+	}
 
 	// The ballot being edited (person ids, first choice first) and the saved one.
 	let choice: number[] = $state([]);
@@ -47,7 +63,8 @@
 	let sorted = $derived.by(() => {
 		const list = [...(results?.candidates ?? [])];
 		const name = (a: CandidateResult, b: CandidateResult) => a.name.localeCompare(b.name, 'fr');
-		if (sortBy === 'honesty' || results?.hidden) {
+		const by = view === 'vote' ? 'preference' : view === 'honesty' ? 'honesty' : sortBy;
+		if (by === 'honesty' || results?.hidden) {
 			return list.sort((a, b) => a.honesty_rank - b.honesty_rank || name(a, b));
 		}
 		return list.sort((a, b) => (a.preference_rank ?? 1e9) - (b.preference_rank ?? 1e9) || name(a, b));
@@ -169,6 +186,8 @@
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 	onMount(async () => {
+		const v = new URL(window.location.href).searchParams.get('vue') as View | null;
+		if (v && VIEWS.includes(v)) view = v;
 		await load();
 		realtimeManager.connect();
 		if (event) {
@@ -294,8 +313,78 @@
 		</section>
 	{/if}
 
+	{#snippet pickButton(c: CandidateResult)}
+		{#if results?.open}
+			{@const mine = choice.indexOf(c.person_id)}
+			{#if mine >= 0}
+				<button class="pick pick--mine" onclick={() => remove(c.person_id)}>{tr('poll.ballot.added', currentLang, { n: mine + 1 })} ✓</button>
+			{:else}
+				<button class="pick" onclick={() => pick(c.person_id)} disabled={signedIn && choice.length >= maxChoices}>
+					{signedIn && choice.length >= maxChoices ? tr('poll.ballot.full', currentLang) : tr('poll.ballot.add', currentLang)}
+				</button>
+			{/if}
+		{/if}
+	{/snippet}
+
+	{#snippet who(c: CandidateResult)}
+		<a href="/person/{c.person_id}" class="who">
+			{#if c.image_url}
+				<img src={c.image_url} alt="" class="photo" />
+			{:else}
+				<span class="photo photo--empty">{c.name.charAt(0).toUpperCase()}</span>
+			{/if}
+			<span class="name">{c.name}</span>
+		</a>
+	{/snippet}
+
+	<div class="views" role="tablist" aria-label={tr('poll.view', currentLang)}>
+		{#each ['vote', 'both', 'honesty'] as const as v}
+			<button class="view-tab" class:active={view === v} role="tab" aria-selected={view === v} onclick={() => setView(v)}>
+				{tr(`poll.view.${v}`, currentLang)}
+			</button>
+		{/each}
+	</div>
+
 	{#if sorted.length === 0}
 		<p class="state">{tr('poll.no_candidates', currentLang)}</p>
+	{:else if view === 'vote'}
+		<ol class="vote-list">
+			{#each sorted as c (c.person_id)}
+				<li class="vote-row" class:vote-row--mine={choice.includes(c.person_id)}>
+					<span class="vote-rank">{c.preference_rank ?? '—'}</span>
+					{@render who(c)}
+					<div class="vote-bar">
+						{#if c.first_choice_share === null}
+							<span class="value value--muted">—</span>
+							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
+						{:else}
+							<div class="vote-bar-line">
+								<div class="bar bar--wide" aria-hidden="true">
+									<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
+								</div>
+								<span class="value">{pct(c.first_choice_share)}</span>
+							</div>
+							<span class="meta">{tr('poll.gauge.votes', currentLang, { n: c.first_choices ?? 0 })} · {tr('poll.top_n_short', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</span>
+						{/if}
+					</div>
+					<div class="vote-pick">{@render pickButton(c)}</div>
+				</li>
+			{/each}
+		</ol>
+		<p class="board-note">{tr('poll.note.vote', currentLang)}</p>
+	{:else if view === 'honesty'}
+		<div class="gauge-grid">
+			{#each sorted as c (c.person_id)}
+				<article class="gauge-card" class:gauge-card--mine={choice.includes(c.person_id)}>
+					<span class="gauge-rank">{ordinal(c.honesty_rank)}</span>
+					{@render who(c)}
+					<HonestyGauge score={c.honesty_score} size={200} label={c.name} />
+					<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })} · {tr('poll.gauge.contradictions', currentLang, { n: c.contradiction_count })}</span>
+					{@render pickButton(c)}
+				</article>
+			{/each}
+		</div>
+		<p class="board-note">{tr('poll.note.honesty', currentLang)}</p>
 	{:else}
 		<div class="board" role="table" aria-label={currentLang === 'en' ? event.title_en : event.title_fr}>
 			<div class="board-head" role="row">
@@ -322,8 +411,7 @@
 			</div>
 
 			{#each sorted as c (c.person_id)}
-				{@const mine = choice.indexOf(c.person_id)}
-				<div class="board-row" class:board-row--mine={mine >= 0} role="row">
+				<div class="board-row" class:board-row--mine={choice.includes(c.person_id)} role="row">
 					<div class="cell cell--vote" role="cell">
 						{#if c.first_choice_share === null}
 							<span class="value value--muted">—</span>
@@ -334,41 +422,20 @@
 								<span class="value">{pct(c.first_choice_share)}</span>
 							</div>
 							<div class="bar bar--vote" aria-hidden="true">
-								<span style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
+								<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
 							</div>
 							<span class="meta">{tr('poll.top_n_short', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</span>
 						{/if}
 					</div>
 
 					<div class="cell cell--name" role="cell">
-						<a href="/person/{c.person_id}" class="who">
-							{#if c.image_url}
-								<img src={c.image_url} alt="" class="photo" />
-							{:else}
-								<span class="photo photo--empty">{c.name.charAt(0).toUpperCase()}</span>
-							{/if}
-							<span class="name">{c.name}</span>
-						</a>
-						{#if results.open}
-							{#if mine >= 0}
-								<button class="pick pick--mine" onclick={() => remove(c.person_id)}>{tr('poll.ballot.added', currentLang, { n: mine + 1 })} ✓</button>
-							{:else}
-								<button class="pick" onclick={() => pick(c.person_id)} disabled={signedIn && choice.length >= maxChoices}>
-									{signedIn && choice.length >= maxChoices ? tr('poll.ballot.full', currentLang) : tr('poll.ballot.add', currentLang)}
-								</button>
-							{/if}
-						{/if}
+						{@render who(c)}
+						{@render pickButton(c)}
 					</div>
 
 					<div class="cell cell--honesty" role="cell">
-						<div class="value-line">
-							<span class="value" style="color: {honestyColor(c.honesty_score)}">{Math.round(c.honesty_score * 100)}<small>/100</small></span>
-							<span class="rank">{ordinal(c.honesty_rank)}</span>
-						</div>
-						<div class="bar bar--honesty" aria-hidden="true">
-							<span style="width: {Math.round(c.honesty_score * 100)}%; background: {honestyColor(c.honesty_score)}"></span>
-						</div>
-						<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })}</span>
+						<HonestyGauge score={c.honesty_score} size={130} label={c.name} />
+						<span class="meta">{ordinal(c.honesty_rank)} · {tr('poll.gauge.facts', currentLang, { n: c.fact_count })}</span>
 					</div>
 				</div>
 			{/each}
@@ -622,6 +689,126 @@
 		border-color: var(--accent-hover);
 	}
 
+	.views {
+		display: flex;
+		justify-content: center;
+		gap: 3px;
+		width: fit-content;
+		margin: 0 auto 1.25rem;
+		padding: 4px;
+		background: var(--bg-card);
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+	}
+	.view-tab {
+		padding: 0.45rem 1.1rem;
+		border: none;
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+	.view-tab:hover {
+		color: var(--text-primary);
+	}
+	.view-tab.active {
+		background: var(--accent);
+		color: white;
+	}
+
+	.vote-list {
+		list-style: none;
+		max-width: 52rem;
+		margin: 0 auto;
+		padding: 0;
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+		overflow: hidden;
+	}
+	.vote-row {
+		display: grid;
+		grid-template-columns: 2.5rem 12rem 1fr auto;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.9rem 1.25rem;
+		border-bottom: 1px solid var(--border-card);
+	}
+	.vote-row:last-child {
+		border-bottom: none;
+	}
+	.vote-row--mine {
+		background: var(--accent-glow);
+	}
+	.vote-rank {
+		font-size: 1.25rem;
+		font-weight: 700;
+		color: var(--text-muted);
+		text-align: center;
+		font-variant-numeric: tabular-nums;
+	}
+	.vote-row .who {
+		flex-direction: row;
+		gap: 0.6rem;
+		text-align: left;
+	}
+	.vote-row .photo {
+		width: 44px;
+		height: 44px;
+		flex-shrink: 0;
+	}
+	.vote-bar {
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+	.vote-bar-line {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.vote-bar .value {
+		min-width: 3.5rem;
+		text-align: right;
+	}
+	.vote-bar .meta {
+		text-align: left;
+	}
+
+	.gauge-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+		gap: 1rem;
+		max-width: 60rem;
+		margin: 0 auto;
+	}
+	.gauge-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 1.25rem 1rem 1rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+	}
+	.gauge-card--mine {
+		border-color: var(--accent);
+	}
+	.gauge-rank {
+		position: absolute;
+		top: 0.75rem;
+		left: 0.9rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
 	.board {
 		max-width: 60rem;
 		margin: 0 auto;
@@ -716,12 +903,6 @@
 		font-variant-numeric: tabular-nums;
 		color: var(--text-primary);
 	}
-	.value small {
-		font-size: 0.7rem;
-		font-weight: 600;
-		color: var(--text-muted);
-		margin-left: 0.1rem;
-	}
 	.value--muted {
 		color: var(--text-muted);
 	}
@@ -748,7 +929,12 @@
 	.bar--vote {
 		justify-content: flex-end;
 	}
-	.bar--vote span {
+	.bar--wide {
+		max-width: none;
+		flex: 1;
+		height: 12px;
+	}
+	.bar-fill--vote {
 		background: var(--poll-blue);
 	}
 	.meta {
@@ -870,6 +1056,18 @@
 		.photo {
 			width: 48px;
 			height: 48px;
+		}
+		.vote-row {
+			grid-template-columns: 1.6rem 1fr;
+			gap: 0.4rem 0.75rem;
+			padding: 0.8rem 0.9rem;
+		}
+		.vote-bar {
+			grid-column: 1 / -1;
+		}
+		.vote-pick {
+			grid-column: 1 / -1;
+			justify-self: start;
 		}
 		.name {
 			font-size: 0.82rem;
