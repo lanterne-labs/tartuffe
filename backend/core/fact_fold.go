@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend/util"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -14,6 +15,7 @@ type FactForFold struct {
 	ID        int64
 	Text      string
 	Embedding []float32
+	CreatedAt time.Time
 }
 
 // ContradictionFactPair identifies a recorded contradiction by its two facts.
@@ -70,12 +72,22 @@ type FoldOptions struct {
 	Floor      float64 // cosine-similarity floor for same-claim candidates
 	TextFloor  float64 // trigram-similarity floor for same-claim candidates (0 = embedding only)
 	MaxCluster int     // clusters larger than this are skipped (defense against runaway chaining)
+	// JudgedSince: a fact inserted at or after it went through the
+	// insert-time gate under the current grouping rule, so a pair of two
+	// such facts is not asked again (the gate's answer at insertion stands;
+	// asking again only replays its variance). Zero: every pair is asked.
+	JudgedSince time.Time
 }
+
+// groupingRuleSince is when the insert-time gate took the current grouping
+// rule (one occurrence, read from quotes, dates and outlets) on the Claude
+// endpoints.
+var groupingRuleSince = time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 
 // DefaultFoldOptions are the thresholds `dm facts fold` uses. TextFloor is
 // the inserter's dedupeTextSimilarityFloor: the two candidate sources of the
 // insert-time gate, so the backfill reaches the same pairs.
-var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12}
+var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12, JudgedSince: groupingRuleSince}
 
 // FoldCluster is a set of facts that report one occurrence.
 type FoldCluster struct {
@@ -148,8 +160,14 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - opts.Floor
 	var candidates, contradictedCandidates [][2]int
+	judgedAtInsert := func(f FactForFold) bool {
+		return !opts.JudgedSince.IsZero() && !f.CreatedAt.Before(opts.JudgedSince)
+	}
 	for i := 0; i < len(facts); i++ {
 		for j := i + 1; j < len(facts); j++ {
+			if judgedAtInsert(facts[i]) && judgedAtInsert(facts[j]) {
+				continue
+			}
 			if !textPairs[key(facts[i].ID, facts[j].ID)] {
 				if len(facts[i].Embedding) == 0 || len(facts[j].Embedding) == 0 {
 					continue
