@@ -52,6 +52,8 @@ type Storer interface {
 	CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	GetSessionUser(ctx context.Context, tokenHash []byte) (*storage.AppUser, error)
 	DeleteUserSession(ctx context.Context, tokenHash []byte) error
+	CreateAuthChallenge(ctx context.Context, provider, challenge string, expiresAt time.Time) error
+	ConsumeAuthChallenge(ctx context.Context, provider, challenge string) (bool, error)
 }
 
 // Server holds the HTTP router and its dependencies.
@@ -192,6 +194,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/events", s.handleEventsSSE)
 
 		r.Get("/auth/providers", s.handleAuthProviders)
+		r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
 		r.Get("/auth/me", s.requireUser(s.handleAuthMe))
 		r.Post("/auth/signout", s.requireUser(s.handleAuthSignOut))

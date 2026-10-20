@@ -360,6 +360,7 @@
 			<li>{@html tr('poll.how.honesty', currentLang)}</li>
 			<li>{@html tr('poll.how.compare', currentLang)}</li>
 			<li>{tr('poll.how.facts', currentLang)}</li>
+			<li>{@html tr('poll.how.verification', currentLang)}</li>
 			<li>{tr('poll.how.privacy', currentLang)}</li>
 		</ul>
 	</section>

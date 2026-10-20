@@ -16,8 +16,10 @@ func TestPollBallotsAndTallies(t *testing.T) {
 	storer, cleanup := setupTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	_, err := storer.pool.Exec(ctx, "TRUNCATE app_users, poll_events RESTART IDENTITY CASCADE")
+	_, err := storer.pool.Exec(ctx, "TRUNCATE app_users, poll_events, auth_challenges RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
+	var firstEvent int64
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM event_log`).Scan(&firstEvent))
 
 	closes := time.Now().Add(time.Hour)
 	eventID, err := storer.SavePollEvent(ctx, PollEvent{Slug: "test-poll", TitleFR: "Test", TitleEN: "Test",
@@ -105,6 +107,22 @@ func TestPollBallotsAndTallies(t *testing.T) {
 	assert.Equal(t, 0, voters)
 
 	var updates int
-	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT COUNT(*) FROM event_log WHERE topic = 'poll_updated' AND entity_id = $1`, eventID).Scan(&updates))
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT COUNT(*) FROM event_log WHERE topic = 'poll_updated' AND entity_id = $1 AND id > $2`, eventID, firstEvent).Scan(&updates))
 	assert.Equal(t, 3, updates, "one event per saved ballot")
+
+	// A challenge serves once, for its provider, before it expires.
+	require.NoError(t, storer.CreateAuthChallenge(ctx, "zkpassport", "c1", time.Now().Add(time.Minute)))
+	require.NoError(t, storer.CreateAuthChallenge(ctx, "zkpassport", "old", time.Now().Add(-time.Minute)))
+	ok, err := storer.ConsumeAuthChallenge(ctx, "noop", "c1")
+	require.NoError(t, err)
+	assert.False(t, ok, "another provider's challenge")
+	ok, err = storer.ConsumeAuthChallenge(ctx, "zkpassport", "c1")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	ok, err = storer.ConsumeAuthChallenge(ctx, "zkpassport", "c1")
+	require.NoError(t, err)
+	assert.False(t, ok, "used once already")
+	ok, err = storer.ConsumeAuthChallenge(ctx, "zkpassport", "old")
+	require.NoError(t, err)
+	assert.False(t, ok, "expired")
 }

@@ -337,3 +337,27 @@ func (s *PostgresStorer) PurgeAppUsers(ctx context.Context, provider string) (in
 	}
 	return tag.RowsAffected(), nil
 }
+
+// CreateAuthChallenge stores a one-time sign-in challenge of the provider;
+// expired challenges are dropped on the way.
+func (s *PostgresStorer) CreateAuthChallenge(ctx context.Context, provider, challenge string, expiresAt time.Time) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM auth_challenges WHERE expires_at <= now()`); err != nil {
+		return fmt.Errorf("drop expired auth challenges: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO auth_challenges (challenge, provider, expires_at) VALUES ($1, $2, $3)`,
+		challenge, provider, expiresAt); err != nil {
+		return fmt.Errorf("create auth challenge: %w", err)
+	}
+	return nil
+}
+
+// ConsumeAuthChallenge deletes the challenge and tells whether it was a live
+// challenge of the provider: a challenge serves once.
+func (s *PostgresStorer) ConsumeAuthChallenge(ctx context.Context, provider, challenge string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM auth_challenges WHERE challenge = $1 AND provider = $2 AND expires_at > now()`,
+		challenge, provider)
+	if err != nil {
+		return false, fmt.Errorf("consume auth challenge: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

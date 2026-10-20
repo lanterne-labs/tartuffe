@@ -17,6 +17,7 @@
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.49.1",
 		"@sveltejs/vite-plugin-svelte": "^6.2.1",
+		"@types/qrcode": "^1.5.5",
 		"svelte": "^5.45.6",
 		"svelte-check": "^4.3.4",
 		"typescript": "^5.9.3",
@@ -29,7 +30,9 @@
 	"dependencies": {
 		"@sveltejs/adapter-node": "^5.0.0",
 		"@types/dompurify": "^3.0.5",
+		"@zkpassport/sdk": "0.18.2",
 		"dompurify": "^3.4.7",
-		"marked": "^18.0.4"
+		"marked": "^18.0.4",
+		"qrcode": "^1.5.4"
 	}
 }

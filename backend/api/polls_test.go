@@ -19,6 +19,7 @@ import (
 // memPolls is an in-memory pre-poll store: one event, its candidates, the
 // users, sessions and ballots.
 type memPolls struct {
+	challenges map[string]string
 	event      *storage.PollEvent
 	candidates []storage.PollCandidateTally
 	users      map[string]*storage.AppUser
@@ -119,6 +120,22 @@ func (m *memPolls) GetSessionUser(_ context.Context, hash []byte) (*storage.AppU
 		}
 	}
 	return nil, nil
+}
+
+func (m *memPolls) CreateAuthChallenge(_ context.Context, provider, challenge string, _ time.Time) error {
+	if m.challenges == nil {
+		m.challenges = map[string]string{}
+	}
+	m.challenges[challenge] = provider
+	return nil
+}
+
+func (m *memPolls) ConsumeAuthChallenge(_ context.Context, provider, challenge string) (bool, error) {
+	if m.challenges[challenge] != provider {
+		return false, nil
+	}
+	delete(m.challenges, challenge)
+	return true, nil
 }
 
 func (m *memPolls) DeleteUserSession(_ context.Context, hash []byte) error {
@@ -247,4 +264,46 @@ func TestClosedPoll(t *testing.T) {
 	token := signIn(t, h, "alice")
 	assert.Equal(t, http.StatusForbidden, do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/ballot", token,
 		map[string]any{"person_ids": []int64{10}, "consent": true}).Code)
+}
+
+// challengeProvider is a Challenger that accepts any payload naming the
+// challenge it was given.
+type challengeProvider struct{}
+
+func (challengeProvider) Name() string { return "zkfake" }
+func (challengeProvider) Info() auth.ProviderInfo {
+	return auth.ProviderInfo{Name: "zkfake", Verified: true}
+}
+func (challengeProvider) ChallengeTTL() time.Duration { return time.Minute }
+func (challengeProvider) Verify(_ context.Context, payload json.RawMessage) (auth.Identity, error) {
+	var p struct {
+		Subject string `json:"subject"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	return auth.Identity{Provider: "zkfake", Subject: p.Subject}, nil
+}
+
+// TestChallengeFlow: a challenger's sign-in needs a challenge it issued, once.
+func TestChallengeFlow(t *testing.T) {
+	fs := pollFixture()
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{}, challengeProvider{})).Handler()
+
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/challenge/noop", "", nil).Code, "noop takes no challenge")
+
+	rec := do(t, h, http.MethodPost, "/api/auth/challenge/zkfake", "", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var c struct {
+		Challenge string `json:"challenge"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &c))
+	require.NotEmpty(t, c.Challenge)
+
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s"}).Code, "no challenge")
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": "forged"}).Code)
+	ok := do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": c.Challenge})
+	assert.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": c.Challenge}).Code, "a challenge serves once")
+
+	rec = do(t, h, http.MethodGet, "/api/auth/providers", "", nil)
+	assert.JSONEq(t, `[{"name":"zkfake","verified":true},{"name":"noop","verified":false}]`, rec.Body.String(), "verified providers first")
 }

@@ -45,6 +45,21 @@ go build -o dm .                                # Build binary
 
 The worker (`backend/worker`) replaces the nightly cron. When no task is pending it does the housekeeping: the daily feed after 03:00 UTC (frpolitics votes and transcripts, the backfills for 1 h, the watch list tasks), and the maintenance pass (stance refresh, stance merge, contradiction detection over the persons with new facts, duplicate repoint, regroup, audit every 5 days, translations) after facts were added and at least every 6 h. The pass judges what changed since the start of the last one (`job_metrics`, job `maintenance`). Its detection judges at most 2000 pairs (about 2 h); a pass cut there records `cut_since_unix`, and the next pass goes on over the same persons once the tasks and the feed left room.
 
+### Pre-polls (presidential election) and voter sign-in
+```bash
+./dm poll list                                              # events, state, voters
+./dm poll event set presidentielle-2027 --min-voters 50 --featured   # create/change an event (flags given only)
+./dm poll candidate add presidentielle-2027 "Marine Le Pen" "Jordan Bardella"
+./dm poll candidate remove presidentielle-2027 "Name"
+./dm poll blackout add presidentielle-2027 --from 2027-04-15T22:00:00Z --to 2027-04-18T18:00:00Z
+./dm poll results presidentielle-2027                       # counts even while the site hides them
+./dm poll purge-users --provider noop --yes                 # drop the test accounts and their ballots
+```
+
+An event (`poll_events`, seeded: `presidentielle-2027`) lists candidates among the tracked persons. A signed-in user ranks up to `max_choices` of them (`poll_choices`). The page `/election/[slug]` shows per candidate the share of first choices (neutral blue) and the honesty score /100 (red to green), sortable by either; the shares are hidden below `min_voters` ballots and during a blackout (polling law: the day before and the day of a vote). A saved ballot logs `poll_updated` so open pages refresh over SSE. The first ballot needs the user's consent (a ballot is a political opinion, GDPR art. 9).
+
+Sign-in is pluggable (`backend/auth`, `AUTH_PROVIDERS`): `noop` (test accounts, a pseudonym, no proof) and `zkpassport` (the user scans the chip of their passport or ID card with the ZKPassport app; the phone proves in zero knowledge "adult, French" and gives an identifier unique per document for this domain and scope; nothing else leaves the phone). The proof carries a one-time server challenge (`auth_challenges`, bound as `custom_data`). The API verifies the proofs itself with `zkverifier/verify.mjs` (Node, the open-source verifier of `@zkpassport/sdk`, `verifierMode: "local"`, no ZKPassport account or key); run `npm ci` in `zkverifier/` for a local zkpassport sign-in. Sessions are bearer tokens (hashed in `user_sessions`). Removing a provider from `AUTH_PROVIDERS` ends its sessions at once. The explainer for users is `/verification`.
+
 ### News Search
 ```bash
 # Search news and scrape articles (uses SerpAPI + webcrawler)
@@ -172,6 +187,7 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
 Services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
+  Voter sign-in on `mirror`: `AUTH_PROVIDERS` (unset on the host = voting closed; `noop,zkpassport` to test, `zkpassport` alone for real results) and `ZKPASSPORT_DOMAIN` = the frontend's host name. The image ships Node and `zkverifier/` for the proof verification.
 - **`worker`** — long-lived `dm worker run` (root `Dockerfile`, start command set in the service settings). Claims the collection tasks (`dm collect add`) one at a time and runs the ingest of their plugin for their person and period; when idle, the daily feed and the maintenance pass. Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `mirror` except no HTTP `PORT`. On a deploy the task it is on goes back to pending and resumes where its fetch log stopped.
 - **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`). Grafana alerts (`grafana/provisioning/alerting/worker.yml`: feed missing after 06:00 UTC, no maintenance pass ended for 12 h) go to Telegram: the service needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before it is deployed.
 

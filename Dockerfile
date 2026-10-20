@@ -18,6 +18,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o dm .
 FROM node:22-alpine AS claude
 RUN npm install -g @anthropic-ai/claude-code@2.1.296
 
+# ZKPassport verifier (zkverifier/verify.mjs): the API runs it with Node to
+# check the passport proofs of a sign-in (AUTH_PROVIDERS=zkpassport).
+FROM node:22-alpine AS zkverifier
+WORKDIR /app/zkverifier
+COPY zkverifier/package.json zkverifier/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY zkverifier/verify.mjs ./
+
 # Final stage
 FROM alpine:3.19
 
@@ -25,11 +33,13 @@ FROM alpine:3.19
 # shell-probe fails to detect (reports "no shell (bash or sh)"). Debian-based
 # service images like postgres have bash and ssh fine, so install it here.
 # poppler-utils: pdftotext reads the texts of the bills (frpolitics articles).
-RUN apk add --no-cache ca-certificates tzdata bash poppler-utils
+# nodejs: runs the ZKPassport verifier (Node 20 on alpine 3.19).
+RUN apk add --no-cache ca-certificates tzdata bash poppler-utils nodejs
 
 COPY --from=builder /app/dm /usr/local/bin/dm
 COPY --from=claude /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude
 RUN claude --version
+COPY --from=zkverifier /app/zkverifier /app/zkverifier
 COPY --from=builder /app/supabase/migrations /migrations
 
 ENV MIGRATIONS_DIR=/migrations

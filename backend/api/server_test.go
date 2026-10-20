@@ -122,6 +122,7 @@ func TestRoutes(t *testing.T) {
 		"GET /api/stances/{id}/facts",
 		"GET /api/events",
 		"GET /api/auth/providers",
+		"POST /api/auth/challenge/{provider}",
 		"POST /api/auth/signin/{provider}",
 		"GET /api/auth/me",
 		"POST /api/auth/signout",

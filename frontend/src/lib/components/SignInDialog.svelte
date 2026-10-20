@@ -4,6 +4,7 @@
 	import { signInOpen, loadProviders, signIn } from '$lib/auth';
 	import { lang, tr } from '$lib/i18n';
 	import type { AuthProvider } from '$lib/types';
+	import ZKPassportSignIn from './ZKPassportSignIn.svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -67,7 +68,9 @@
 		<p class="muted">{tr('auth.none', currentLang)}</p>
 	{:else}
 		{#each providers as p (p.name)}
-			{#if p.name === 'noop'}
+			{#if p.name === 'zkpassport'}
+				<ZKPassportSignIn config={p.config ?? {}} lang={currentLang} onDone={close} />
+			{:else if p.name === 'noop'}
 				<section class="provider">
 					<h3>{tr('auth.noop.title', currentLang)}</h3>
 					<p class="muted">{tr('auth.noop.hint', currentLang)}</p>
@@ -96,6 +99,9 @@
 
 <style>
 	.signin {
+		margin: auto;
+		max-height: calc(100vh - 2rem);
+		overflow-y: auto;
 		width: min(440px, calc(100vw - 2rem));
 		padding: 1.25rem 1.5rem 1.5rem;
 		background: var(--bg-secondary);
@@ -141,7 +147,7 @@
 		border-radius: var(--radius-md);
 		background: var(--bg-card);
 	}
-	.provider + .provider {
+	.signin :global(section + section) {
 		margin-top: 0.75rem;
 	}
 	.muted {
