@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -558,6 +559,37 @@ func dropCheckedPairs(person string, allPairs []pairInfo, checkedPairs map[strin
 	return filteredPairs
 }
 
+// judgeConcurrently asks the detector for the verdicts of pairs, batchSize
+// pairs per call, every call at once. The results are in pair order.
+func judgeConcurrently(ctx context.Context, detector *OpenAIContradictionDetector, pairs []pairInfo, batchSize int) []BatchResult {
+	results := make([]BatchResult, len(pairs))
+	var wg sync.WaitGroup
+	for i := 0; i < len(pairs); i += batchSize {
+		end := min(i+batchSize, len(pairs))
+		batch := pairs[i:end]
+		factPairs := make([]FactPair, len(batch))
+		for j, p := range batch {
+			factPairs[j] = FactPair{
+				IndexA: j,
+				TextA:  p.factAText,
+				DateA:  p.factADate,
+				IndexB: j,
+				TextB:  p.factBText,
+				DateB:  p.factBDate,
+				AlsoA:  p.alsoA,
+				AlsoB:  p.alsoB,
+			}
+		}
+		wg.Add(1)
+		go func(at int) {
+			defer wg.Done()
+			copy(results[at:], detector.AreContradictoryBatch(ctx, factPairs))
+		}(i)
+	}
+	wg.Wait()
+	return results
+}
+
 // judgePairs runs the detector over every collected pair, verifies each YES,
 // records verdicts, contradictions and duplicates, and writes the job metrics.
 func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPairs []personPairs, opts DetectOptions) (DetectResult, error) {
@@ -616,34 +648,23 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 			}
 		}
 		personContradictions := 0
-		batchSize := MaxPairsPerBatchSync
+		// The verdicts of up to llm.Concurrency() calls are asked at once;
+		// what follows them (verification, recording, grouping) runs in
+		// pair order. Locally one call at a time.
+		step := MaxPairsPerBatchSync * llm.Concurrency()
 
-		for i := 0; i < len(pp.pairs); i += batchSize {
+		for i := 0; i < len(pp.pairs); i += step {
 			if err := ctx.Err(); err != nil {
 				stopped = err
 				break
 			}
-			end := i + batchSize
+			end := i + step
 			if end > len(pp.pairs) {
 				end = len(pp.pairs)
 			}
 			batch := pp.pairs[i:end]
 
-			factPairs := make([]FactPair, len(batch))
-			for j, p := range batch {
-				factPairs[j] = FactPair{
-					IndexA: j,
-					TextA:  p.factAText,
-					DateA:  p.factADate,
-					IndexB: j,
-					TextB:  p.factBText,
-					DateB:  p.factBDate,
-					AlsoA:  p.alsoA,
-					AlsoB:  p.alsoB,
-				}
-			}
-
-			results := detector.AreContradictoryBatch(ctx, factPairs)
+			results := judgeConcurrently(ctx, detector, batch, MaxPairsPerBatchSync)
 			totalPairsChecked += len(batch)
 
 			var pairResults []storage.PairCheckResult
