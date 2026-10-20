@@ -78,3 +78,55 @@ func TestRecordContradiction_CrossPersonGuard(t *testing.T) {
 	assert.Greater(t, cid2, int64(0), "same-person contradiction must be recorded")
 	assert.Equal(t, 1, countPair(factA2, factA3), "same-person contradiction row exists")
 }
+
+// TestRecordContradiction_GroupParent records a contradiction on the parents
+// of the claim groups: a member stands for its parent, and two facts of one
+// group are no contradiction.
+func TestRecordContradiction_GroupParent(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	var person int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO persons (name, entity_type) VALUES ('group parent person', 'human') RETURNING id`,
+	).Scan(&person))
+	insertFact := func(text string) int64 {
+		t.Helper()
+		var id int64
+		require.NoError(t, storer.pool.QueryRow(ctx,
+			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
+			text, pgvector.NewVector(mockEmbedding()),
+		).Scan(&id))
+		_, err := storer.pool.Exec(ctx,
+			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, $2, $3, 'test')`,
+			id, fmt.Sprintf("http://ex/%d", id), text)
+		require.NoError(t, err)
+		_, err = storer.pool.Exec(ctx,
+			`INSERT INTO fact_mentions (fact_source_id, person_id) SELECT id, $2 FROM fact_sources WHERE fact_id = $1`,
+			id, person)
+		require.NoError(t, err)
+		return id
+	}
+	parent := insertFact("grp: reserve Schengen to Europeans (le Figaro)")
+	member := insertFact("grp: reserve Schengen to Europeans (X)")
+	other := insertFact("grp: leave Schengen")
+	_, err := storer.pool.Exec(ctx,
+		`INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type, reason) VALUES ($1, $2, 'duplicate', 'same claim')`,
+		parent, member)
+	require.NoError(t, err)
+
+	cid, _, err := storer.RecordContradictionImmediate(ctx, person, member, other, "reform vs leave", "")
+	require.NoError(t, err)
+	require.Greater(t, cid, int64(0))
+	cid2, _, err := storer.RecordContradictionImmediate(ctx, person, parent, other, "reform vs leave", "")
+	require.NoError(t, err)
+	assert.Equal(t, cid, cid2, "the member's pair is the parent's pair")
+	var a, b int64
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT fact_a_id, fact_b_id FROM contradictions WHERE id = $1`, cid).Scan(&a, &b))
+	assert.ElementsMatch(t, []int64{parent, other}, []int64{a, b})
+
+	cid3, _, err := storer.RecordContradictionImmediate(ctx, person, member, parent, "one claim", "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), cid3, "two facts of one group are no contradiction")
+}
