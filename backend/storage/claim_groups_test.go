@@ -86,8 +86,14 @@ func TestMergeFactIntoGroup(t *testing.T) {
 
 	// 1. A fresh restatement joins x's group.
 	fresh := fact("Il veut réduire le déficit, en 2027.")
+	_, err = storer.pool.Exec(ctx, "UPDATE facts SET updated_at = NOW() - interval '1 day' WHERE id = $1", x)
+	require.NoError(t, err)
 	require.NoError(t, storer.MergeFactIntoGroup(ctx, fresh, x))
 	require.Equal(t, []int64{fresh}, members(x))
+	var marked bool
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		"SELECT updated_at > NOW() - interval '1 minute' FROM facts WHERE id = $1", x).Scan(&marked))
+	require.True(t, marked, "the parent is marked so the next pass re-detects its person")
 	var inStance bool
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		"SELECT EXISTS (SELECT 1 FROM stance_document_facts WHERE fact_id = $1)", fresh).Scan(&inStance))
