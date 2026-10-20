@@ -52,7 +52,7 @@ func (s *PostgresStorer) RepointDuplicates(ctx context.Context, apply bool) (pro
 // with their embeddings, in the shape the fold pass needs.
 func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]core.FactForFold, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.fact_text, f.embedding
+		SELECT f.id, f.fact_text, f.embedding, f.created_at
 		FROM facts f
 		WHERE EXISTS (
 		      SELECT 1 FROM fact_sources fs
@@ -72,7 +72,7 @@ func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int
 	for rows.Next() {
 		var f core.FactForFold
 		var vec pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.Text, &vec); err != nil {
+		if err := rows.Scan(&f.ID, &f.Text, &vec, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning fold fact: %w", err)
 		}
 		f.Embedding = vec.Slice()
