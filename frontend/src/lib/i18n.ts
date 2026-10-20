@@ -177,7 +177,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'zk.title': { fr: 'Passeport ou carte d’identité', en: 'Passport or ID card' },
 	'zk.badge': { fr: '1 personne = 1 voix', en: '1 person = 1 vote' },
 	'zk.lead': { fr: 'Prouvez que vous êtes un électeur français majeur sans révéler qui vous êtes : votre téléphone lit la puce de votre document et n’envoie qu’une preuve mathématique.', en: 'Prove you are an adult French voter without revealing who you are: your phone reads your document’s chip and sends only a mathematical proof.' },
-	'zk.step1': { fr: 'Installez l’app gratuite ZKPassport (iOS ou Android).', en: 'Install the free ZKPassport app (iOS or Android).' },
+	'zk.step1': { fr: 'Installez l’app ZKPassport (iOS ou Android).', en: 'Install the ZKPassport app (iOS or Android).' },
 	'zk.step2': { fr: 'Scannez le QR code, puis posez votre passeport ou carte d’identité à puce contre le téléphone.', en: 'Scan the QR code, then hold your chip passport or ID card against the phone.' },
 	'zk.step3': { fr: 'Acceptez : la preuve est calculée sur le téléphone et vérifiée par nos serveurs.', en: 'Accept: the proof is computed on the phone and checked by our servers.' },
 	'zk.start': { fr: 'Vérifier avec mon document', en: 'Verify with my document' },

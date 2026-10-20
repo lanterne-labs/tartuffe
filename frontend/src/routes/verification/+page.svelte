@@ -15,7 +15,7 @@
 			stepsTitle: 'Comment ça se passe',
 			steps: [
 				['Le site prépare une demande', 'Il demande seulement : « majeur ? », « nationalité française ? », et y attache un code à usage unique pour que la preuve ne serve qu’une fois.'],
-				['Votre téléphone lit la puce', 'Avec l’app gratuite ZKPassport, vous scannez le QR code puis posez votre passeport ou votre carte d’identité biométrique contre le téléphone (NFC). La puce contient vos données signées par l’État qui a émis le document.'],
+				['Votre téléphone lit la puce', 'Avec l’app ZKPassport, vous scannez le QR code puis posez votre passeport ou votre carte d’identité biométrique contre le téléphone (NFC). La puce contient vos données signées par l’État qui a émis le document.'],
 				['La preuve est calculée sur le téléphone', 'Vos données ne quittent pas le téléphone. Il calcule une preuve mathématique qui dit : « ce document est authentique, signé par l’État, non expiré ; son titulaire a plus de 18 ans et est français ».'],
 				['Nos serveurs vérifient la preuve', 'Nous vérifions la preuve nous-mêmes, avec le vérificateur open source de ZKPassport. Si elle est valide, vous êtes connecté et pouvez voter.']
 			],
@@ -67,7 +67,7 @@
 			stepsTitle: 'What happens',
 			steps: [
 				['The site prepares a request', 'It only asks: “adult?”, “French national?”, and attaches a one-time code so the proof can serve only once.'],
-				['Your phone reads the chip', 'With the free ZKPassport app, you scan the QR code and hold your passport or biometric ID card against the phone (NFC). The chip holds your data, signed by the State that issued the document.'],
+				['Your phone reads the chip', 'With the ZKPassport app, you scan the QR code and hold your passport or biometric ID card against the phone (NFC). The chip holds your data, signed by the State that issued the document.'],
 				['The proof is computed on the phone', 'Your data never leaves the phone. It computes a mathematical proof saying: “this document is genuine, signed by the State, not expired; its holder is over 18 and French”.'],
 				['Our servers check the proof', 'We check the proof ourselves, with ZKPassport’s open-source verifier. If it is valid, you are signed in and can vote.']
 			],
