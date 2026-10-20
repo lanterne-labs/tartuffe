@@ -4,6 +4,11 @@
 	import { page } from '$app/stores';
 	import { fly } from 'svelte/transition';
 	import { lang, setLang, tr } from '$lib/i18n';
+	import { onMount } from 'svelte';
+	import { API_BASE } from '$lib/config';
+	import { session, signOut } from '$lib/auth';
+	import SignInDialog from '$lib/components/SignInDialog.svelte';
+	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
 
@@ -11,6 +16,22 @@
 	$effect(() => {
 		const unsub = lang.subscribe((v) => (currentLang = v));
 		return unsub;
+	});
+
+	let userName = $state<string | null>(null);
+	$effect(() => session.subscribe((s) => (userName = s ? s.user.display_name || tr('auth.anonymous', currentLang) : null)));
+
+	// The featured pre-poll gets a link in the nav.
+	let featured = $state<PollEvent | null>(null);
+	onMount(async () => {
+		try {
+			const res = await fetch(`${API_BASE}/api/polls`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const events: PollEvent[] = await res.json();
+			featured = events.find((e) => e.featured) ?? null;
+		} catch (err) {
+			console.error('failed to load the featured poll', err);
+		}
 	});
 </script>
 
@@ -48,10 +69,23 @@
 					title="English"
 				>EN</button>
 			</div>
-			<a href="/" class="nav-link">{tr('nav.dashboard', currentLang)}</a>
+			{#if featured}
+				<a href="/election/{featured.slug}" class="nav-link nav-link--poll" class:active={$page.url.pathname.startsWith('/election/')}>
+					{currentLang === 'en' ? featured.title_en : featured.title_fr}
+				</a>
+			{/if}
+			<a href="/" class="nav-link nav-link--home">{tr('nav.dashboard', currentLang)}</a>
+			{#if userName}
+				<span class="nav-user" title={tr('auth.signed_in_as', currentLang, { name: userName })}>
+					<span class="nav-user-name">{userName}</span>
+					<button class="nav-signout" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
+				</span>
+			{/if}
 		</div>
 	</div>
 </nav>
+
+<SignInDialog />
 
 {#key $page.url.pathname}
 	<main class="page-content" in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>
@@ -149,6 +183,51 @@
 		color: var(--text-primary);
 	}
 
+	.nav-link--poll {
+		white-space: nowrap;
+		color: var(--text-primary);
+		padding: 0.3rem 0.75rem;
+		border: 1px solid var(--accent);
+		border-radius: var(--radius-full);
+		background: var(--accent-glow);
+	}
+
+	.nav-link--poll:hover,
+	.nav-link--poll.active {
+		background: var(--accent);
+		color: white;
+	}
+
+	.nav-user {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.nav-user-name {
+		max-width: 10rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--text-secondary);
+	}
+
+	.nav-signout {
+		background: none;
+		border: none;
+		padding: 0;
+		font-size: 0.75rem;
+		color: var(--text-muted);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.nav-signout:hover {
+		color: var(--text-primary);
+	}
+
 	.lang-toggle {
 		display: inline-flex;
 		gap: 2px;
@@ -191,6 +270,17 @@
 		}
 		.brand-subtitle {
 			display: none;
+		}
+		.nav-right {
+			gap: 0.6rem;
+		}
+		.nav-user-name,
+		.nav-link--home {
+			display: none;
+		}
+		.nav-link--poll {
+			font-size: 0.8rem;
+			padding: 0.25rem 0.6rem;
 		}
 	}
 

@@ -1,0 +1,339 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// PollEvent is one pre-poll (the presidential election first): the users rank
+// up to MaxChoices of its candidates.
+type PollEvent struct {
+	ID            int64          `json:"id"`
+	Slug          string         `json:"slug"`
+	TitleFR       string         `json:"title_fr"`
+	TitleEN       string         `json:"title_en"`
+	DescriptionFR string         `json:"description_fr"`
+	DescriptionEN string         `json:"description_en"`
+	MaxChoices    int            `json:"max_choices"`
+	MinVoters     int            `json:"min_voters"`
+	OpensAt       time.Time      `json:"opens_at"`
+	ClosesAt      *time.Time     `json:"closes_at,omitempty"`
+	Featured      bool           `json:"featured"`
+	Blackouts     []PollBlackout `json:"blackouts"`
+}
+
+// PollBlackout is a period when the results of an event are not shown.
+type PollBlackout struct {
+	StartsAt time.Time `json:"starts_at"`
+	EndsAt   time.Time `json:"ends_at"`
+}
+
+// PollCandidateTally is a candidate of an event with its honesty record and
+// how many ballots rank them first, and at all.
+type PollCandidateTally struct {
+	PersonID           int64
+	Name               string
+	ImageURL           *string
+	HonestyScore       float64
+	FactCount          int
+	ContradictionCount int
+	FirstChoices       int
+	Chosen             int
+}
+
+// AppUser is a signed-in user: one identity of one auth provider.
+type AppUser struct {
+	ID          int64      `json:"id"`
+	Provider    string     `json:"provider"`
+	DisplayName string     `json:"display_name"`
+	ConsentAt   *time.Time `json:"consent_at,omitempty"`
+}
+
+const pollEventColumns = `id, slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at, featured`
+
+func scanPollEvent(row pgx.Row) (*PollEvent, error) {
+	var e PollEvent
+	if err := row.Scan(&e.ID, &e.Slug, &e.TitleFR, &e.TitleEN, &e.DescriptionFR, &e.DescriptionEN,
+		&e.MaxChoices, &e.MinVoters, &e.OpensAt, &e.ClosesAt, &e.Featured); err != nil {
+		return nil, err
+	}
+	e.Blackouts = []PollBlackout{}
+	return &e, nil
+}
+
+// ListPollEvents returns every event, the featured ones first, then the newest.
+func (s *PostgresStorer) ListPollEvents(ctx context.Context) ([]PollEvent, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+pollEventColumns+` FROM poll_events ORDER BY featured DESC, opens_at DESC, id DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("list poll events: %w", err)
+	}
+	defer rows.Close()
+	events := []PollEvent{}
+	for rows.Next() {
+		e, err := scanPollEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan poll event: %w", err)
+		}
+		events = append(events, *e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list poll events: %w", err)
+	}
+	for i := range events {
+		if events[i].Blackouts, err = s.pollBlackouts(ctx, events[i].ID); err != nil {
+			return nil, err
+		}
+	}
+	return events, nil
+}
+
+// GetPollEvent returns the event of that slug, or nil.
+func (s *PostgresStorer) GetPollEvent(ctx context.Context, slug string) (*PollEvent, error) {
+	e, err := scanPollEvent(s.pool.QueryRow(ctx, `SELECT `+pollEventColumns+` FROM poll_events WHERE slug = $1`, slug))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get poll event %s: %w", slug, err)
+	}
+	if e.Blackouts, err = s.pollBlackouts(ctx, e.ID); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+func (s *PostgresStorer) pollBlackouts(ctx context.Context, eventID int64) ([]PollBlackout, error) {
+	rows, err := s.pool.Query(ctx, `SELECT starts_at, ends_at FROM poll_blackouts WHERE event_id = $1 ORDER BY starts_at`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("poll blackouts of event %d: %w", eventID, err)
+	}
+	defer rows.Close()
+	out := []PollBlackout{}
+	for rows.Next() {
+		var b PollBlackout
+		if err := rows.Scan(&b.StartsAt, &b.EndsAt); err != nil {
+			return nil, fmt.Errorf("scan poll blackout: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// SavePollEvent creates the event of e.Slug or updates it, blackouts left
+// as they are, and returns its id. A featured event unfeatures the others.
+func (s *PostgresStorer) SavePollEvent(ctx context.Context, e PollEvent) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("save poll event: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var id int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO poll_events (slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at, featured)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (slug) DO UPDATE SET
+			title_fr = EXCLUDED.title_fr, title_en = EXCLUDED.title_en,
+			description_fr = EXCLUDED.description_fr, description_en = EXCLUDED.description_en,
+			max_choices = EXCLUDED.max_choices, min_voters = EXCLUDED.min_voters,
+			opens_at = EXCLUDED.opens_at, closes_at = EXCLUDED.closes_at, featured = EXCLUDED.featured
+		RETURNING id`,
+		e.Slug, e.TitleFR, e.TitleEN, e.DescriptionFR, e.DescriptionEN, e.MaxChoices, e.MinVoters, e.OpensAt, e.ClosesAt, e.Featured).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("save poll event %s: %w", e.Slug, err)
+	}
+	if e.Featured {
+		if _, err := tx.Exec(ctx, `UPDATE poll_events SET featured = false WHERE id <> $1 AND featured`, id); err != nil {
+			return 0, fmt.Errorf("unfeature other poll events: %w", err)
+		}
+	}
+	return id, tx.Commit(ctx)
+}
+
+// AddPollBlackout hides the results of the event over [from, to).
+func (s *PostgresStorer) AddPollBlackout(ctx context.Context, eventID int64, from, to time.Time) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO poll_blackouts (event_id, starts_at, ends_at) VALUES ($1, $2, $3)
+		ON CONFLICT (event_id, starts_at) DO UPDATE SET ends_at = EXCLUDED.ends_at`, eventID, from, to)
+	if err != nil {
+		return fmt.Errorf("add poll blackout: %w", err)
+	}
+	return nil
+}
+
+// ClearPollBlackouts removes every blackout of the event.
+func (s *PostgresStorer) ClearPollBlackouts(ctx context.Context, eventID int64) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM poll_blackouts WHERE event_id = $1`, eventID)
+	if err != nil {
+		return 0, fmt.Errorf("clear poll blackouts: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// AddPollCandidate makes the person a candidate of the event; false when they
+// already were.
+func (s *PostgresStorer) AddPollCandidate(ctx context.Context, eventID, personID int64) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `INSERT INTO poll_candidates (event_id, person_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, eventID, personID)
+	if err != nil {
+		return false, fmt.Errorf("add poll candidate: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// RemovePollCandidate removes the candidate and their place on every ballot;
+// the ballots that ranked them below keep their order.
+func (s *PostgresStorer) RemovePollCandidate(ctx context.Context, eventID, personID int64) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM poll_candidates WHERE event_id = $1 AND person_id = $2`, eventID, personID)
+	if err != nil {
+		return false, fmt.Errorf("remove poll candidate: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// GetPollTallies returns the candidates of the event with their counts, and
+// the number of ballots. A ballot's first choice is its lowest rank, so a
+// ballot whose rank 1 candidate was removed counts for its next one.
+func (s *PostgresStorer) GetPollTallies(ctx context.Context, eventID int64) ([]PollCandidateTally, int, error) {
+	rows, err := s.pool.Query(ctx, `
+		WITH firsts AS (
+			SELECT DISTINCT ON (user_id) user_id, person_id
+			FROM poll_choices WHERE event_id = $1
+			ORDER BY user_id, rank
+		)
+		SELECT p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
+			(SELECT COUNT(*) FROM contradictions c WHERE c.person_id = p.id),
+			(SELECT COUNT(*) FROM firsts f WHERE f.person_id = p.id),
+			(SELECT COUNT(*) FROM poll_choices pc WHERE pc.event_id = $1 AND pc.person_id = p.id)
+		FROM poll_candidates pc0
+		JOIN persons p ON p.id = pc0.person_id
+		WHERE pc0.event_id = $1
+		ORDER BY p.name`, eventID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("poll tallies of event %d: %w", eventID, err)
+	}
+	defer rows.Close()
+	out := []PollCandidateTally{}
+	for rows.Next() {
+		var c PollCandidateTally
+		if err := rows.Scan(&c.PersonID, &c.Name, &c.ImageURL, &c.HonestyScore, &c.FactCount,
+			&c.ContradictionCount, &c.FirstChoices, &c.Chosen); err != nil {
+			return nil, 0, fmt.Errorf("scan poll tally: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("poll tallies of event %d: %w", eventID, err)
+	}
+	var voters int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM poll_choices WHERE event_id = $1`, eventID).Scan(&voters); err != nil {
+		return nil, 0, fmt.Errorf("poll voters of event %d: %w", eventID, err)
+	}
+	return out, voters, nil
+}
+
+// GetPollBallot returns the person ids the user ranked, first choice first.
+func (s *PostgresStorer) GetPollBallot(ctx context.Context, eventID, userID int64) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT person_id FROM poll_choices WHERE event_id = $1 AND user_id = $2 ORDER BY rank`, eventID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("poll ballot: %w", err)
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan poll ballot: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SavePollBallot replaces the user's ballot with personIDs (first choice
+// first; empty withdraws it), records the user's consent, and logs a
+// poll_updated event so the open result pages refresh. The caller checks the
+// ballot against the event.
+func (s *PostgresStorer) SavePollBallot(ctx context.Context, eventID, userID int64, personIDs []int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("save poll ballot: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE app_users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("record consent: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM poll_choices WHERE event_id = $1 AND user_id = $2`, eventID, userID); err != nil {
+		return fmt.Errorf("clear poll ballot: %w", err)
+	}
+	for i, pid := range personIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO poll_choices (event_id, user_id, rank, person_id) VALUES ($1, $2, $3, $4)`,
+			eventID, userID, i+1, pid); err != nil {
+			return fmt.Errorf("save poll choice %d: %w", i+1, err)
+		}
+	}
+	if err := s.insertEvent(ctx, tx, "poll_updated", "poll_event", eventID, map[string]interface{}{}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// UpsertAppUser returns the user of the identity, created on first sign-in.
+func (s *PostgresStorer) UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*AppUser, error) {
+	var u AppUser
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO app_users (provider, subject, display_name) VALUES ($1, $2, $3)
+		ON CONFLICT (provider, subject) DO UPDATE SET last_seen_at = now()
+		RETURNING id, provider, display_name, consent_at`, provider, subject, displayName).
+		Scan(&u.ID, &u.Provider, &u.DisplayName, &u.ConsentAt)
+	if err != nil {
+		return nil, fmt.Errorf("upsert app user: %w", err)
+	}
+	return &u, nil
+}
+
+// CreateUserSession stores a session of the user by its token hash.
+func (s *PostgresStorer) CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)`,
+		tokenHash, userID, expiresAt); err != nil {
+		return fmt.Errorf("create user session: %w", err)
+	}
+	return nil
+}
+
+// GetSessionUser returns the user of a live session, or nil.
+func (s *PostgresStorer) GetSessionUser(ctx context.Context, tokenHash []byte) (*AppUser, error) {
+	var u AppUser
+	err := s.pool.QueryRow(ctx, `
+		SELECT u.id, u.provider, u.display_name, u.consent_at
+		FROM user_sessions us JOIN app_users u ON u.id = us.user_id
+		WHERE us.token_hash = $1 AND us.expires_at > now()`, tokenHash).
+		Scan(&u.ID, &u.Provider, &u.DisplayName, &u.ConsentAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("session user: %w", err)
+	}
+	return &u, nil
+}
+
+// DeleteUserSession ends a session; expired sessions are dropped on the way.
+func (s *PostgresStorer) DeleteUserSession(ctx context.Context, tokenHash []byte) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM user_sessions WHERE token_hash = $1 OR expires_at <= now()`, tokenHash); err != nil {
+		return fmt.Errorf("delete user session: %w", err)
+	}
+	return nil
+}
+
+// PurgeAppUsers deletes the users of a provider with their sessions and
+// ballots (for instance the noop test users before a launch).
+func (s *PostgresStorer) PurgeAppUsers(ctx context.Context, provider string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM app_users WHERE provider = $1`, provider)
+	if err != nil {
+		return 0, fmt.Errorf("purge app users of %s: %w", provider, err)
+	}
+	return tag.RowsAffected(), nil
+}

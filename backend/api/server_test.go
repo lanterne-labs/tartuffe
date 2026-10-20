@@ -20,6 +20,8 @@ import (
 // fakeStorer records the arguments the handlers pass to storage and returns
 // canned data; every method not exercised by a test returns zero values.
 type fakeStorer struct {
+	memPolls
+
 	history []storage.HistoryPoint
 	pingErr error
 
@@ -104,7 +106,7 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 }
 
 func TestRoutes(t *testing.T) {
-	routes, err := NewServer(&fakeStorer{}).Routes()
+	routes, err := NewServer(&fakeStorer{}, nil).Routes()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"GET /health",
@@ -119,21 +121,29 @@ func TestRoutes(t *testing.T) {
 		"GET /api/stances/{id}/contradictions",
 		"GET /api/stances/{id}/facts",
 		"GET /api/events",
+		"GET /api/auth/providers",
+		"POST /api/auth/signin/{provider}",
+		"GET /api/auth/me",
+		"POST /api/auth/signout",
+		"GET /api/polls",
+		"GET /api/polls/{slug}",
+		"GET /api/polls/{slug}/ballot",
+		"POST /api/polls/{slug}/ballot",
 	}, routes)
 }
 
 func TestHealth(t *testing.T) {
-	rec := get(t, NewServer(&fakeStorer{}).Handler(), "/health")
+	rec := get(t, NewServer(&fakeStorer{}, nil).Handler(), "/health")
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"status":"ok"}`, rec.Body.String())
 
-	rec = get(t, NewServer(&fakeStorer{pingErr: errors.New("down")}).Handler(), "/health")
+	rec = get(t, NewServer(&fakeStorer{pingErr: errors.New("down")}, nil).Handler(), "/health")
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.JSONEq(t, `{"status":"error"}`, rec.Body.String())
 }
 
 func TestSecurityHeaders(t *testing.T) {
-	rec := get(t, NewServer(&fakeStorer{}).Handler(), "/health")
+	rec := get(t, NewServer(&fakeStorer{}, nil).Handler(), "/health")
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	assert.Equal(t, "strict-origin-when-cross-origin", rec.Header().Get("Referrer-Policy"))
@@ -144,7 +154,7 @@ func TestSecurityHeaders(t *testing.T) {
 func TestGetPersons_MinFactsFloorAndPagination(t *testing.T) {
 	name := "party"
 	fs := &fakeStorer{ranked: []storage.PersonSummary{{ID: 7, Name: "X", EntityType: &name, HonestyScore: 0.9, FactCount: 12}}}
-	h := NewServer(fs).Handler()
+	h := NewServer(fs, nil).Handler()
 
 	rec := get(t, h, "/api/persons")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -176,7 +186,7 @@ func TestGetPersons_MinFactsFloorAndPagination(t *testing.T) {
 func TestGetPersonMembers(t *testing.T) {
 	img := "https://img/x.png"
 	fs := &fakeStorer{members: []storage.MemberInfo{{ID: 3, Name: "Dep", EntityType: "human", HonestyScore: 0.5, ImageURL: &img}}}
-	h := NewServer(fs).Handler()
+	h := NewServer(fs, nil).Handler()
 
 	rec := get(t, h, "/api/person/1/members")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -202,7 +212,7 @@ func TestGetPersonStances_ScoreAndCounts(t *testing.T) {
 		stanceCounts: map[int64]int{10: 3},
 		groupCounts:  map[int64]int{10: 2},
 	}
-	rec := get(t, NewServer(fs).Handler(), "/api/person/1/stances")
+	rec := get(t, NewServer(fs, nil).Handler(), "/api/person/1/stances")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var got []StanceResponse

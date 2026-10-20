@@ -110,6 +110,75 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'contradiction.facts_in_tension': { fr: '{n} faits en tension', en: '{n} facts in tension' },
 	'contradiction.base_fact': { fr: 'Affirmation de base', en: 'Base claim' },
 
+	// Pre-poll (election page)
+	'nav.election': { fr: 'Présidentielle 2027', en: '2027 election' },
+	'poll.kicker': { fr: 'Pré-sondage citoyen', en: 'Citizen pre-poll' },
+	'poll.disclaimer': { fr: 'Consultation des utilisateurs de tartuffe.me, non représentative de la population. Ce n’est pas un sondage.', en: 'A consultation of tartuffe.me users, not representative of the population. This is not an opinion poll.' },
+	'poll.voters': { fr: '{n} votants', en: '{n} voters' },
+	'poll.voter': { fr: '1 votant', en: '1 voter' },
+	'poll.closes': { fr: 'Vote ouvert jusqu’au {d}', en: 'Voting open until {d}' },
+	'poll.closed': { fr: 'Le vote est clos.', en: 'Voting is closed.' },
+	'poll.hidden.too_few_voters': { fr: 'Les résultats s’affichent à partir de {min} votants ({n} pour l’instant). Votez et partagez !', en: 'Results show from {min} voters ({n} so far). Vote and share!' },
+	'poll.hidden.blackout': { fr: 'Résultats masqués : la loi interdit leur publication la veille et le jour du scrutin.', en: 'Results hidden: the law forbids publishing them the day before and the day of the vote.' },
+	'poll.sort': { fr: 'Classer par', en: 'Order by' },
+	'poll.sort.preference': { fr: 'Préférence', en: 'Preference' },
+	'poll.sort.honesty': { fr: 'Honnêteté', en: 'Honesty' },
+	'poll.gauge.preference': { fr: 'Choisi en 1er', en: 'First choice' },
+	'poll.gauge.honesty': { fr: 'Honnêteté /100', en: 'Honesty /100' },
+	'poll.gauge.votes': { fr: '{n} voix', en: '{n} votes' },
+	'poll.gauge.facts': { fr: '{n} faits', en: '{n} facts' },
+	'poll.gauge.hidden': { fr: 'masqué', en: 'hidden' },
+	'poll.rank.preference': { fr: '{n}e en préférence', en: '#{n} by preference' },
+	'poll.rank.preference_first': { fr: '1er en préférence', en: '#1 by preference' },
+	'poll.rank.honesty': { fr: '{n}e en honnêteté', en: '#{n} by honesty' },
+	'poll.rank.honesty_first': { fr: '1er en honnêteté', en: '#1 by honesty' },
+	'poll.top_n': { fr: 'Dans le top {k} de {p} des votants', en: 'In the top {k} of {p} of voters' },
+	'poll.no_candidates': { fr: 'Les candidats seront ajoutés dès leur déclaration.', en: 'Candidates are added as soon as they declare.' },
+	'poll.ballot.title': { fr: 'Mon classement', en: 'My ranking' },
+	'poll.ballot.hint': { fr: 'Choisissez jusqu’à {n} candidats, dans l’ordre de votre préférence. Seul votre 1er choix compte dans le pourcentage ; le reste sert au « top {n} ».', en: 'Pick up to {n} candidates, in order of preference. Only your first choice counts in the percentage; the others count in the “top {n}”.' },
+	'poll.ballot.sign_in': { fr: 'Se connecter pour voter', en: 'Sign in to vote' },
+	'poll.ballot.empty': { fr: 'Aucun candidat choisi. Utilisez « Choisir » sur les cartes ci-dessous.', en: 'No candidate yet. Use “Pick” on the cards below.' },
+	'poll.ballot.add': { fr: 'Choisir', en: 'Pick' },
+	'poll.ballot.added': { fr: 'Choix n°{n}', en: 'Choice #{n}' },
+	'poll.ballot.full': { fr: 'Classement complet', en: 'Ranking full' },
+	'poll.ballot.up': { fr: 'Monter', en: 'Move up' },
+	'poll.ballot.down': { fr: 'Descendre', en: 'Move down' },
+	'poll.ballot.remove': { fr: 'Retirer', en: 'Remove' },
+	'poll.ballot.consent': { fr: 'J’accepte que mon classement, une opinion politique, soit enregistré sous mon identifiant anonyme. Il n’est jamais publié seul : seuls les totaux le sont. Je peux le retirer à tout moment.', en: 'I agree that my ranking, a political opinion, is stored under my anonymous identifier. It is never published on its own: only the totals are. I can withdraw it at any time.' },
+	'poll.ballot.save': { fr: 'Enregistrer mon vote', en: 'Save my vote' },
+	'poll.ballot.saving': { fr: 'Enregistrement…', en: 'Saving…' },
+	'poll.ballot.saved': { fr: 'Vote enregistré. Vous pouvez le changer jusqu’à la clôture.', en: 'Vote saved. You can change it until voting closes.' },
+	'poll.ballot.withdraw': { fr: 'Retirer mon vote', en: 'Withdraw my vote' },
+	'poll.ballot.unsaved': { fr: 'Modifications non enregistrées', en: 'Unsaved changes' },
+	'poll.ballot.test_account': { fr: 'Compte de test : ce vote n’est pas vérifié.', en: 'Test account: this vote is not verified.' },
+	'poll.how.title': { fr: 'Comment lire cette page', en: 'How to read this page' },
+	'poll.how.preference': { fr: '<strong>Choisi en 1er</strong> : la part des votants qui placent ce candidat en tête de leur classement. La somme sur tous les candidats fait 100 %.', en: '<strong>First choice</strong>: the share of voters who put this candidate at the top of their ranking. It adds up to 100% across candidates.' },
+	'poll.how.honesty': { fr: '<strong>Score d’honnêteté</strong> : calculé à partir des contradictions trouvées dans les déclarations et les votes publics du candidat, sur 100. Ce n’est pas un pourcentage de mensonges : chaque point se vérifie sur sa fiche, sources à l’appui.', en: '<strong>Honesty score</strong>: computed from the contradictions found in the candidate’s public statements and votes, out of 100. It is not a percentage of lies: every point can be checked on their page, with sources.' },
+	'poll.how.compare': { fr: 'Les deux nombres ne se comparent pas directement : comparez plutôt les <strong>rangs</strong>. Un candidat 1er en préférence mais 6e en honnêteté est plus populaire que son bilan.', en: 'The two numbers do not compare directly: compare the <strong>ranks</strong> instead. A candidate #1 by preference but #6 by honesty is more popular than their record.' },
+	'poll.how.facts': { fr: 'Le nombre de faits indique la couverture : un score qui repose sur peu de faits est moins sûr.', en: 'The number of facts shows the coverage: a score built on few facts is less certain.' },
+	'poll.how.privacy': { fr: 'Votre vote est enregistré sous un identifiant anonyme, jamais publié seul. Les totaux s’affichent à partir d’un nombre minimum de votants et sont masqués pendant la période d’interdiction légale.', en: 'Your vote is stored under an anonymous identifier and never published on its own. Totals show from a minimum number of voters and are hidden during the legal blackout.' },
+	'poll.error': { fr: 'Impossible de charger le pré-sondage.', en: 'Could not load the pre-poll.' },
+	'poll.not_found': { fr: 'Ce pré-sondage n’existe pas.', en: 'This pre-poll does not exist.' },
+
+	// Home promotion of the featured pre-poll
+	'home.poll.kicker': { fr: 'Présidentielle 2027', en: '2027 presidential election' },
+	'home.poll.title': { fr: 'Votre candidat dit-il vrai\u00a0?', en: 'Does your candidate tell the truth?' },
+	'home.poll.lead': { fr: 'Classez vos candidats préférés et voyez, à côté, leur score d’honnêteté mesuré sur leurs propres déclarations et votes.', en: 'Rank your favourite candidates and see, right next to it, their honesty score measured on their own statements and votes.' },
+	'home.poll.cta': { fr: 'Voter et comparer', en: 'Vote and compare' },
+	'home.poll.candidates': { fr: '{n} candidats', en: '{n} candidates' },
+
+	// Sign-in
+	'auth.title': { fr: 'Se connecter', en: 'Sign in' },
+	'auth.signed_in_as': { fr: 'Connecté : {name}', en: 'Signed in: {name}' },
+	'auth.sign_out': { fr: 'Se déconnecter', en: 'Sign out' },
+	'auth.close': { fr: 'Fermer', en: 'Close' },
+	'auth.none': { fr: 'Le vote n’est pas encore ouvert : aucune méthode de connexion n’est activée.', en: 'Voting is not open yet: no sign-in method is enabled.' },
+	'auth.noop.title': { fr: 'Compte de test', en: 'Test account' },
+	'auth.noop.hint': { fr: 'Pour les tests uniquement : choisissez un pseudonyme, sans vérification. Le même pseudonyme retrouve le même compte.', en: 'For testing only: pick a pseudonym, with no check. The same pseudonym gets the same account back.' },
+	'auth.noop.placeholder': { fr: 'Pseudonyme', en: 'Pseudonym' },
+	'auth.noop.submit': { fr: 'Continuer', en: 'Continue' },
+	'auth.anonymous': { fr: 'votant anonyme', en: 'anonymous voter' },
+
 	// Counts (singular/plural — caller picks the form, but we expose both)
 	'count.fact': { fr: 'fait', en: 'fact' },
 	'count.facts': { fr: 'faits', en: 'facts' },
@@ -128,7 +197,7 @@ export function tr(key: string, currentLang: Lang, vars?: Record<string, string 
 	let s = entry[currentLang] ?? entry.fr ?? key;
 	if (vars) {
 		for (const [k, v] of Object.entries(vars)) {
-			s = s.replace('{' + k + '}', String(v));
+			s = s.replaceAll('{' + k + '}', String(v));
 		}
 	}
 	return s;

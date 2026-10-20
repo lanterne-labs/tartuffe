@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/auth"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -40,16 +41,29 @@ type Storer interface {
 	GetFactsInStance(ctx context.Context, stanceID int64) ([]storage.FactInStance, error)
 	GetMaxEventID(ctx context.Context) (int64, error)
 	GetEventsAfter(ctx context.Context, sinceID int64, limit int) ([]storage.Event, error)
+
+	// Pre-polls and their signed-in users.
+	ListPollEvents(ctx context.Context) ([]storage.PollEvent, error)
+	GetPollEvent(ctx context.Context, slug string) (*storage.PollEvent, error)
+	GetPollTallies(ctx context.Context, eventID int64) ([]storage.PollCandidateTally, int, error)
+	GetPollBallot(ctx context.Context, eventID, userID int64) ([]int64, error)
+	SavePollBallot(ctx context.Context, eventID, userID int64, personIDs []int64) error
+	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)
+	CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
+	GetSessionUser(ctx context.Context, tokenHash []byte) (*storage.AppUser, error)
+	DeleteUserSession(ctx context.Context, tokenHash []byte) error
 }
 
 // Server holds the HTTP router and its dependencies.
 type Server struct {
-	storer Storer
-	router *chi.Mux
+	storer    Storer
+	providers *auth.Registry
+	router    *chi.Mux
 }
 
-// NewServer builds the router with its middleware stack and routes.
-func NewServer(storer Storer) *Server {
+// NewServer builds the router with its middleware stack and routes. providers
+// are the enabled sign-in methods (none: nobody can sign in to vote).
+func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r := chi.NewRouter()
 
 	// Parse rate limit from env (default: 100 req/min per IP)
@@ -78,8 +92,9 @@ func NewServer(storer Storer) *Server {
 	r.Use(metrics.Middleware)
 
 	server := &Server{
-		storer: storer,
-		router: r,
+		storer:    storer,
+		providers: providers,
+		router:    r,
 	}
 
 	server.setupRoutes()
@@ -175,5 +190,15 @@ func (s *Server) setupRoutes() {
 		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
 		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
 		r.Get("/events", s.handleEventsSSE)
+
+		r.Get("/auth/providers", s.handleAuthProviders)
+		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
+		r.Get("/auth/me", s.requireUser(s.handleAuthMe))
+		r.Post("/auth/signout", s.requireUser(s.handleAuthSignOut))
+
+		r.Get("/polls", s.handleListPolls)
+		r.Get("/polls/{slug}", s.handleGetPoll)
+		r.Get("/polls/{slug}/ballot", s.requireUser(s.handleGetBallot))
+		r.Post("/polls/{slug}/ballot", s.requireUser(s.handleSaveBallot))
 	})
 }

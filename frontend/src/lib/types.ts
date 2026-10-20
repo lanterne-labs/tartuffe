@@ -131,3 +131,73 @@ export interface HistoryPoint {
 	score: number;
 	recent_score: number;
 }
+
+// Pre-polls (backend/poll, backend/api/polls.go)
+
+export interface PollBlackout {
+	starts_at: string;
+	ends_at: string;
+}
+
+export interface PollEvent {
+	id: number;
+	slug: string;
+	title_fr: string;
+	title_en: string;
+	description_fr: string;
+	description_en: string;
+	max_choices: number;
+	min_voters: number;
+	opens_at: string;
+	closes_at?: string;
+	featured: boolean;
+	blackouts: PollBlackout[];
+}
+
+// One candidate's line of the results. The counts, shares and preference rank
+// are null while the results are hidden.
+export interface CandidateResult {
+	person_id: number;
+	name: string;
+	image_url?: string;
+	honesty_score: number;
+	fact_count: number;
+	contradiction_count: number;
+	first_choices: number | null;
+	first_choice_share: number | null;
+	chosen_share: number | null;
+	preference_rank: number | null;
+	honesty_rank: number;
+}
+
+export interface PollResults {
+	voters: number;
+	open: boolean;
+	hidden?: 'too_few_voters' | 'blackout';
+	candidates: CandidateResult[];
+}
+
+export interface PollResponse {
+	event: PollEvent;
+	results: PollResults;
+}
+
+export interface Ballot {
+	person_ids: number[];
+	consented: boolean;
+}
+
+// Sign-in (backend/auth)
+
+export interface AuthProvider {
+	name: string;
+	verified: boolean;
+	config?: Record<string, unknown>;
+}
+
+export interface AppUser {
+	id: number;
+	provider: string;
+	display_name: string;
+	consent_at?: string;
+}
