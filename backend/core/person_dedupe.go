@@ -219,7 +219,7 @@ func DedupePersons(ctx context.Context, storer PersonDedupStorer, adjudicator En
 // PersonUnaccentGroup is one set of person rows colliding on the canonical
 // name form.
 type PersonUnaccentGroup struct {
-	Canonical string
+	Canonical string // the name key the members share
 	Members   []PersonDedupMember
 	Survivor  PersonDedupMember // zero when Skipped
 	FromIDs   []int64           // members merged (or to merge) into the survivor
@@ -235,10 +235,11 @@ type PersonUnaccentResult struct {
 	Renamed    int
 }
 
-// UnaccentPersons merges person rows that collide on the canonical person-name
-// form (util.NormalizePersonName) and, with apply, rewrites every name to that
-// form, so accent, curly-apostrophe, fancy-dash and whitespace variants can
-// never split a person. Without apply it only reports the groups.
+// UnaccentPersons merges person rows that collide on the separator-free name
+// key (util.PersonNameKey) and, with apply, rewrites every name to the
+// canonical form (util.NormalizePersonName), so accent, curly-apostrophe,
+// fancy-dash, whitespace and cut-word variants ("olivier fa-ure") can never
+// split a person. Without apply it only reports the groups.
 func UnaccentPersons(ctx context.Context, storer PersonDedupStorer, apply bool) (PersonUnaccentResult, error) {
 	var res PersonUnaccentResult
 
@@ -247,10 +248,14 @@ func UnaccentPersons(ctx context.Context, storer PersonDedupStorer, apply bool) 
 		return res, fmt.Errorf("failed to load persons: %w", err)
 	}
 
-	// Group by the canonical form — IDENTICAL to what names are stored under.
+	// Group by the name key, the one the insert paths resolve names by; a
+	// name without one (only separators) groups under its canonical form.
 	byCanonical := map[string][]PersonDedupMember{}
 	for _, m := range members {
-		k := util.NormalizePersonName(m.Name)
+		k := util.PersonNameKey(m.Name)
+		if k == "" {
+			k = util.NormalizePersonName(m.Name)
+		}
 		byCanonical[k] = append(byCanonical[k], m)
 	}
 

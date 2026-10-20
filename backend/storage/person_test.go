@@ -61,6 +61,18 @@ func TestPersonEntryPointsShareOneLookup(t *testing.T) {
 	assert.False(t, inserted)
 	assert.Equal(t, idL, got)
 
+	// A word cut or joined in the source resolves by the name key to the
+	// person with the most facts.
+	idF, inserted, err := storer.AddPerson(ctx, "Olivier Testfaure")
+	require.NoError(t, err)
+	require.True(t, inserted)
+	for _, variant := range []string{"olivier test-faure", "olivier testfa\u00adure", "oliviertestfaure_"} {
+		got, inserted, err = storer.AddPerson(ctx, variant)
+		require.NoError(t, err)
+		assert.False(t, inserted, variant)
+		assert.Equal(t, idF, got, variant)
+	}
+
 	_, err = storer.GetPersonIDByName(ctx, "Nobody Testperson")
 	require.Error(t, err)
 }

@@ -20,10 +20,9 @@ var personsUnaccentApply bool
 var personsUnaccentCmd = &cobra.Command{
 	Use:   "unaccent",
 	Short: "Merge variant-duplicate persons and rewrite all names to the canonical form.",
-	Long: `Finds person rows whose names collide under util.NormalizePersonName (the same
-canonical form names are stored under: lowercase, accent-stripped, typographic
-punctuation folded to ASCII, whitespace collapsed) — e.g. "éric ciotti" + "eric ciotti",
-or "d'azur" + "d'azur". Merges each group into a single survivor (curated/most-facts
+	Long: `Finds person rows whose names collide under util.PersonNameKey (lowercase,
+accent-stripped, every space and punctuation mark removed) — e.g. "éric ciotti" +
+"eric ciotti", "d'azur" + "d'azur", or "olivier fa-ure" + "olivier faure". Merges each group into a single survivor (curated/most-facts
 wins, via ChooseCanonical), then rewrites every remaining name to its canonical form.
 
 Dry-run by default — prints what WOULD merge/rename. Pass --apply to mutate.`,

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/util"
 	"errors"
 	"fmt"
 
@@ -21,16 +22,32 @@ import (
 // fold also collapses typographic punctuation and whitespace, which unaccent
 // does not, and since the SQL fold is idempotent every match the older
 // column-only form found is still found.
+//
+// When no name folds to the same key, a name with the same separator-free key
+// (person_name_key, util.PersonNameKey) is the person: "olivier fa-ure" is
+// "olivier faure". Among several, the one with the most facts.
 func personIDByFoldedName(ctx context.Context, q rowQueryer, name string) (int64, error) {
 	var id int64
 	err := q.QueryRow(ctx,
 		`SELECT id FROM persons WHERE lower(immutable_unaccent(name)) = lower(immutable_unaccent($1)) LIMIT 1`,
 		name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return 0, fmt.Errorf("failed to look up person %q by name: %w", name, err)
+	}
+	if util.PersonNameKey(name) == "" {
+		return 0, nil
+	}
+	err = q.QueryRow(ctx,
+		`SELECT id FROM persons WHERE person_name_key(name) = person_name_key($1) ORDER BY fact_count DESC, id LIMIT 1`,
+		name).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to look up person %q by name: %w", name, err)
+		return 0, fmt.Errorf("failed to look up person %q by name key: %w", name, err)
 	}
 	return id, nil
 }

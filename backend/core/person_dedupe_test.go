@@ -218,3 +218,23 @@ func TestUnaccentPersons(t *testing.T) {
 		t.Fatalf("expected only the curly apostrophe name to be canonicalized, got renamed=%v (%d)", st.renamed, res.Renamed)
 	}
 }
+
+// TestUnaccentPersonsCutWords merges the names that differ only by a cut or
+// joined word into the person with the most facts.
+func TestUnaccentPersonsCutWords(t *testing.T) {
+	st := &fakePersonDedupStorer{
+		members: map[int64]PersonDedupMember{
+			1: {ID: 1, Name: "olivier fa-ure", FactCount: 1},
+			2: {ID: 2, Name: "olivier faure", FactCount: 798},
+			3: {ID: 3, Name: "g7"},
+			4: {ID: 4, Name: "g20"},
+		},
+	}
+	res, err := UnaccentPersons(context.Background(), st, true)
+	if err != nil {
+		t.Fatalf("UnaccentPersons: %v", err)
+	}
+	if res.MergedAway != 1 || len(st.merged) != 1 || st.merged[0] != [2]int64{1, 2} {
+		t.Fatalf("expected 1 merged into 2, got %+v merged=%v", res, st.merged)
+	}
+}
