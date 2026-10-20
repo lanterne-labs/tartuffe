@@ -137,6 +137,11 @@ func (s *PostgresStorer) MergeFactIntoGroup(ctx context.Context, from, into int6
 	if _, err := tx.Exec(ctx, `DELETE FROM fact_pair_checks WHERE fact_a_id = $1 OR fact_b_id = $1`, into); err != nil {
 		return fmt.Errorf("re-opening the pair verdicts of %d: %w", into, err)
 	}
+	// The re-opened pairs are judged by the next maintenance pass, which
+	// takes the persons with a fact created or updated since the last one.
+	if _, err := tx.Exec(ctx, `UPDATE facts SET updated_at = NOW() WHERE id = $1`, into); err != nil {
+		return fmt.Errorf("marking %d for re-detection: %w", into, err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE contradictions SET base_fact_id = $2 WHERE base_fact_id = $1`, from, into); err != nil {
 		return fmt.Errorf("moving contradiction group bases off %d: %w", from, err)
 	}
