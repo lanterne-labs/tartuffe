@@ -28,3 +28,28 @@ func NormalizePersonName(s string) string {
 	s = personPunct.Replace(s)
 	return strings.Join(strings.Fields(s), " ")
 }
+
+// PersonNameKey is NormalizePersonName with every separator removed: spaces,
+// ASCII punctuation and symbols, the soft hyphen and the zero-width marks.
+// Letters (of any script) and digits stay. Two names with the same key differ
+// only by where a word was cut or joined ("olivier fa-ure", "jean- luc",
+// "marionmarechal_"), so they name one person. The SQL function
+// person_name_key folds the stored names the same way. A name made only of
+// separators has an empty key.
+func PersonNameKey(s string) string {
+	var b strings.Builder
+	for _, r := range NormalizePersonName(s) {
+		if nameSeparator(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func nameSeparator(r rune) bool {
+	if r < 0x80 {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	}
+	return r == 0xAD || r >= 0x200B && r <= 0x200F
+}

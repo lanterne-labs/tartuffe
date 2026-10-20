@@ -55,3 +55,32 @@ func TestNormalizeToDirName(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonNameKey(t *testing.T) {
+	same := [][2]string{
+		{"olivier fa-ure", "Olivier Faure"},
+		{"jean- luc melenchon", "Jean-Luc Mélenchon"},
+		{"marionmarechal_", "marion marechal"},
+		{"clem'ence guette", "Clémence Guette"},
+		{"olivier fa­ure", "olivier faure"},
+		{"j.d. vance", "jd vance"},
+	}
+	for _, p := range same {
+		if a, b := PersonNameKey(p[0]), PersonNameKey(p[1]); a != b {
+			t.Errorf("PersonNameKey(%q) = %q, PersonNameKey(%q) = %q, want equal", p[0], a, p[1], b)
+		}
+	}
+	differ := [][2]string{
+		{"g7", "g20"},
+		{"marion marechal", "marion marechal-le pen"},
+		{"이재명", "김수현"},
+	}
+	for _, p := range differ {
+		if PersonNameKey(p[0]) == PersonNameKey(p[1]) {
+			t.Errorf("PersonNameKey(%q) == PersonNameKey(%q), want different", p[0], p[1])
+		}
+	}
+	if k := PersonNameKey("!! -"); k != "" {
+		t.Errorf("PersonNameKey of separators = %q, want empty", k)
+	}
+}
