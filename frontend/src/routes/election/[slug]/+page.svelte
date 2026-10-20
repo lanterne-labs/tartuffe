@@ -5,7 +5,6 @@
 	import { lang, tr } from '$lib/i18n';
 	import { session, signInOpen, authFetch, errorText } from '$lib/auth';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
-	import RingGauge from '$lib/components/RingGauge.svelte';
 	import type { PollResponse, CandidateResult, Ballot } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -147,8 +146,18 @@
 		return v === null ? '—' : `${Math.round(v * 100)}%`;
 	}
 
-	function rankText(kind: 'preference' | 'honesty', n: number): string {
-		return n === 1 ? tr(`poll.rank.${kind}_first`, currentLang) : tr(`poll.rank.${kind}`, currentLang, { n });
+	// The vote bars are drawn relative to the leader: with many candidates the
+	// shares are small, and a bar on a 0–100 % scale would be nearly empty for all.
+	let leaderShare = $derived(Math.max(0, ...(results?.candidates ?? []).map((c) => c.first_choice_share ?? 0)));
+
+	function barWidth(share: number | null, leader: number): number {
+		if (share === null || leader <= 0) return 0;
+		return Math.round((share / leader) * 100);
+	}
+
+	function ordinal(n: number): string {
+		if (currentLang === 'en') return `#${n}`;
+		return n === 1 ? '1er' : `${n}e`;
 	}
 
 	function closesText(iso: string): string {
@@ -285,72 +294,86 @@
 		</section>
 	{/if}
 
-	<div class="toolbar">
-		<span class="toolbar-label">{tr('poll.sort', currentLang)}</span>
-		<div class="pills" role="group" aria-label={tr('poll.sort', currentLang)}>
-			<button class="pill" class:active={sortBy === 'preference'} aria-pressed={sortBy === 'preference'} onclick={() => (sortBy = 'preference')} disabled={!!results.hidden}>
-				{tr('poll.sort.preference', currentLang)}
-			</button>
-			<button class="pill" class:active={sortBy === 'honesty' || !!results.hidden} aria-pressed={sortBy === 'honesty' || !!results.hidden} onclick={() => (sortBy = 'honesty')}>
-				{tr('poll.sort.honesty', currentLang)}
-			</button>
-		</div>
-	</div>
-
 	{#if sorted.length === 0}
 		<p class="state">{tr('poll.no_candidates', currentLang)}</p>
 	{:else}
-		<div class="grid">
+		<div class="board" role="table" aria-label={currentLang === 'en' ? event.title_en : event.title_fr}>
+			<div class="board-head" role="row">
+				<button
+					class="col-head col-head--vote"
+					class:active={sortBy === 'preference' && !results.hidden}
+					onclick={() => (sortBy = 'preference')}
+					disabled={!!results.hidden}
+					role="columnheader"
+					aria-sort={sortBy === 'preference' && !results.hidden ? 'descending' : 'none'}
+				>
+					{tr('poll.col.vote', currentLang)}{#if sortBy === 'preference' && !results.hidden} ↓{/if}
+				</button>
+				<span class="col-head col-head--name" role="columnheader">{tr('poll.col.candidate', currentLang)}</span>
+				<button
+					class="col-head col-head--honesty"
+					class:active={sortBy === 'honesty' || !!results.hidden}
+					onclick={() => (sortBy = 'honesty')}
+					role="columnheader"
+					aria-sort={sortBy === 'honesty' || results.hidden ? 'descending' : 'none'}
+				>
+					{tr('poll.col.honesty', currentLang)}{#if sortBy === 'honesty' || results.hidden} ↓{/if}
+				</button>
+			</div>
+
 			{#each sorted as c (c.person_id)}
 				{@const mine = choice.indexOf(c.person_id)}
-				<article class="cand" class:cand--mine={mine >= 0}>
-					<a class="cand-head" href="/person/{c.person_id}">
-						{#if c.image_url}
-							<img src={c.image_url} alt={c.name} class="avatar" />
+				<div class="board-row" class:board-row--mine={mine >= 0} role="row">
+					<div class="cell cell--vote" role="cell">
+						{#if c.first_choice_share === null}
+							<span class="value value--muted">—</span>
+							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
 						{:else}
-							<div class="avatar avatar-placeholder">{c.name.charAt(0).toUpperCase()}</div>
+							<div class="value-line">
+								<span class="rank">{ordinal(c.preference_rank ?? 0)}</span>
+								<span class="value">{pct(c.first_choice_share)}</span>
+							</div>
+							<div class="bar bar--vote" aria-hidden="true">
+								<span style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
+							</div>
+							<span class="meta">{tr('poll.top_n_short', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</span>
 						{/if}
-						<div class="cand-id">
-							<h3>{c.name}</h3>
-							<p class="ranks">
-								{#if c.preference_rank !== null}<span>{rankText('preference', c.preference_rank)}</span><span class="sep">·</span>{/if}<span>{rankText('honesty', c.honesty_rank)}</span>
-							</p>
-						</div>
-					</a>
-
-					<div class="gauges">
-						<RingGauge
-							value={c.first_choice_share}
-							text={pct(c.first_choice_share)}
-							color="var(--poll-blue)"
-							caption={tr('poll.gauge.preference', currentLang)}
-							sub={c.first_choices === null ? tr('poll.gauge.hidden', currentLang) : tr('poll.gauge.votes', currentLang, { n: c.first_choices })}
-						/>
-						<RingGauge
-							value={c.honesty_score}
-							text={String(Math.round(c.honesty_score * 100))}
-							color={honestyColor(c.honesty_score)}
-							caption={tr('poll.gauge.honesty', currentLang)}
-							sub={tr('poll.gauge.facts', currentLang, { n: c.fact_count })}
-						/>
 					</div>
 
-					{#if c.chosen_share !== null}
-						<p class="topn">{tr('poll.top_n', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</p>
-					{/if}
-
-					{#if results.open}
-						{#if mine >= 0}
-							<button class="btn btn-block btn-mine" onclick={() => remove(c.person_id)}>{tr('poll.ballot.added', currentLang, { n: mine + 1 })} ✓</button>
-						{:else}
-							<button class="btn btn-block" onclick={() => pick(c.person_id)} disabled={signedIn && choice.length >= maxChoices}>
-								{signedIn && choice.length >= maxChoices ? tr('poll.ballot.full', currentLang) : tr('poll.ballot.add', currentLang)}
-							</button>
+					<div class="cell cell--name" role="cell">
+						<a href="/person/{c.person_id}" class="who">
+							{#if c.image_url}
+								<img src={c.image_url} alt="" class="photo" />
+							{:else}
+								<span class="photo photo--empty">{c.name.charAt(0).toUpperCase()}</span>
+							{/if}
+							<span class="name">{c.name}</span>
+						</a>
+						{#if results.open}
+							{#if mine >= 0}
+								<button class="pick pick--mine" onclick={() => remove(c.person_id)}>{tr('poll.ballot.added', currentLang, { n: mine + 1 })} ✓</button>
+							{:else}
+								<button class="pick" onclick={() => pick(c.person_id)} disabled={signedIn && choice.length >= maxChoices}>
+									{signedIn && choice.length >= maxChoices ? tr('poll.ballot.full', currentLang) : tr('poll.ballot.add', currentLang)}
+								</button>
+							{/if}
 						{/if}
-					{/if}
-				</article>
+					</div>
+
+					<div class="cell cell--honesty" role="cell">
+						<div class="value-line">
+							<span class="value" style="color: {honestyColor(c.honesty_score)}">{Math.round(c.honesty_score * 100)}<small>/100</small></span>
+							<span class="rank">{ordinal(c.honesty_rank)}</span>
+						</div>
+						<div class="bar bar--honesty" aria-hidden="true">
+							<span style="width: {Math.round(c.honesty_score * 100)}%; background: {honestyColor(c.honesty_score)}"></span>
+						</div>
+						<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })}</span>
+					</div>
+				</div>
 			{/each}
 		</div>
+		<p class="board-note">{tr('poll.board_note', currentLang)}</p>
 	{/if}
 
 	<section class="how">
@@ -598,126 +621,209 @@
 		background: var(--accent-hover);
 		border-color: var(--accent-hover);
 	}
-	.btn-block {
-		width: 100%;
-		margin-top: auto;
-	}
-	.btn-mine {
-		background: var(--accent-glow);
-		border-color: var(--accent);
-	}
 
-	.toolbar {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		margin-bottom: 1rem;
-		flex-wrap: wrap;
-	}
-	.toolbar-label {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-	}
-	.pills {
-		display: inline-flex;
-		gap: 2px;
-		padding: 3px;
-		background: var(--bg-card);
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-	}
-	.pill {
-		padding: 0.35rem 0.9rem;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-secondary);
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.pill.active {
-		background: var(--accent);
-		color: white;
-	}
-	.pill:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-		gap: 1rem;
-	}
-	.cand {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		padding: 1.1rem;
-		background: var(--bg-card);
+	.board {
+		max-width: 60rem;
+		margin: 0 auto;
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
-		transition: border-color var(--transition-normal);
+		background: var(--bg-card);
+		overflow: hidden;
 	}
-	.cand:hover {
-		border-color: var(--border-card-hover);
-	}
-	.cand--mine {
-		border-color: var(--accent);
-	}
-	.cand-head {
-		display: flex;
+	.board-head,
+	.board-row {
+		display: grid;
+		grid-template-columns: 1fr minmax(9rem, 14rem) 1fr;
 		align-items: center;
-		gap: 0.75rem;
-		color: inherit;
 	}
-	.cand-head:hover h3 {
+	.board-head {
+		border-bottom: 1px solid var(--glass-border);
+		background: var(--bg-secondary);
+	}
+	.col-head {
+		padding: 0.8rem 1.25rem;
+		background: none;
+		border: none;
+		font: inherit;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+	button.col-head {
+		cursor: pointer;
+		transition: color var(--transition-fast);
+	}
+	button.col-head:hover:not(:disabled),
+	.col-head.active {
+		color: var(--text-primary);
+	}
+	button.col-head:disabled {
+		cursor: default;
+	}
+	.col-head--vote {
+		text-align: right;
+	}
+	.col-head--name {
+		text-align: center;
+	}
+	.col-head--honesty {
+		text-align: left;
+	}
+
+	.board-row {
+		border-bottom: 1px solid var(--border-card);
+		transition: background var(--transition-fast);
+	}
+	.board-row:last-child {
+		border-bottom: none;
+	}
+	.board-row:hover {
+		background: var(--bg-card-hover);
+	}
+	.board-row--mine {
+		background: var(--accent-glow);
+	}
+	.board-row--mine:hover {
+		background: var(--accent-glow);
+	}
+
+	.cell {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 1rem 1.25rem;
+		min-width: 0;
+	}
+	/* The bars grow outwards from the central column. */
+	.cell--vote {
+		align-items: flex-end;
+		text-align: right;
+	}
+	.cell--honesty {
+		align-items: flex-start;
+	}
+	.value-line {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	.value {
+		font-size: 1.5rem;
+		font-weight: 700;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-primary);
+	}
+	.value small {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		margin-left: 0.1rem;
+	}
+	.value--muted {
+		color: var(--text-muted);
+	}
+	.rank {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--text-muted);
+	}
+	.bar {
+		display: flex;
+		width: 100%;
+		max-width: 16rem;
+		height: 8px;
+		border-radius: var(--radius-full);
+		background: var(--bg-secondary);
+		overflow: hidden;
+	}
+	.bar span {
+		display: block;
+		height: 100%;
+		border-radius: var(--radius-full);
+		transition: width var(--transition-slow);
+	}
+	.bar--vote {
+		justify-content: flex-end;
+	}
+	.bar--vote span {
+		background: var(--poll-blue);
+	}
+	.meta {
+		font-size: 0.72rem;
+		color: var(--text-muted);
+	}
+
+	.cell--name {
+		align-items: center;
+		text-align: center;
+		gap: 0.5rem;
+		border-left: 1px solid var(--border-card);
+		border-right: 1px solid var(--border-card);
+	}
+	.who {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.45rem;
+		color: var(--text-primary);
+	}
+	.who:hover .name {
 		color: var(--accent-hover);
 	}
-	.avatar {
-		width: 48px;
-		height: 48px;
+	.photo {
+		width: 64px;
+		height: 64px;
 		border-radius: 50%;
 		object-fit: cover;
-		flex-shrink: 0;
+		border: 2px solid var(--glass-border);
 	}
-	.avatar-placeholder {
+	.photo--empty {
 		display: grid;
 		place-items: center;
 		background: var(--bg-secondary);
 		color: var(--text-secondary);
 		font-weight: 700;
-		font-size: 1.2rem;
+		font-size: 1.4rem;
 	}
-	.cand-id {
-		min-width: 0;
-	}
-	.cand h3 {
-		font-size: 1.05rem;
-		margin: 0;
+	.name {
+		font-weight: 600;
+		font-size: 0.95rem;
+		line-height: 1.25;
 		transition: color var(--transition-fast);
 	}
-	.ranks {
+	.pick {
+		padding: 0.25rem 0.8rem;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--text-secondary);
 		font-size: 0.75rem;
-		color: var(--text-muted);
-		margin: 0.15rem 0 0;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all var(--transition-fast);
 	}
-	.ranks .sep {
-		margin: 0 0.35rem;
+	.pick:hover:not(:disabled) {
+		border-color: var(--accent);
+		color: var(--text-primary);
 	}
-	.gauges {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.5rem;
+	.pick:disabled {
+		opacity: 0.4;
+		cursor: default;
 	}
-	.topn {
+	.pick--mine {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: white;
+	}
+	.board-note {
+		max-width: 60rem;
+		margin: 0.6rem auto 0;
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		text-align: center;
-		margin: -0.4rem 0 0;
 	}
 
 	.how {
@@ -749,8 +855,24 @@
 		.ballot {
 			padding: 1rem;
 		}
-		.grid {
-			grid-template-columns: 1fr;
+		.board-head,
+		.board-row {
+			grid-template-columns: 1fr 7.5rem 1fr;
+		}
+		.cell,
+		.col-head {
+			padding-left: 0.6rem;
+			padding-right: 0.6rem;
+		}
+		.value {
+			font-size: 1.15rem;
+		}
+		.photo {
+			width: 48px;
+			height: 48px;
+		}
+		.name {
+			font-size: 0.82rem;
 		}
 	}
 </style>
