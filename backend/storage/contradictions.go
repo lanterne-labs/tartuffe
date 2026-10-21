@@ -420,7 +420,12 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 		args = append(args, limit)
 		orderClause += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
+	return s.listContradictions(ctx, whereClause, orderClause, args)
+}
 
+// listContradictions runs the ListContradictions query with the given WHERE
+// and ORDER BY clauses (c is contradictions, p persons).
+func (s *PostgresStorer) listContradictions(ctx context.Context, whereClause, orderClause string, args []any) ([]ContradictionAuditRow, error) {
 	query := fmt.Sprintf(`
 		SELECT c.id, c.person_id, p.name AS person_name,
 		       c.fact_a_id, c.fact_b_id,
