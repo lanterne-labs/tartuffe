@@ -179,6 +179,7 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		httpInternalError(w, err, "failed to delete account")
 		return
 	}
+	s.results.invalidate(0)
 	log.Info().Int64("user_id", user.ID).Str("provider", user.Provider).Msg("user deleted their account")
 	w.WriteHeader(http.StatusNoContent)
 }

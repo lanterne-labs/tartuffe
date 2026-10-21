@@ -44,7 +44,7 @@ func (s *Server) handleGetPoll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tallies, voters, err := s.storer.GetPollTallies(r.Context(), e.ID)
+	tallies, voters, err := s.results.get(r.Context(), e.ID, s.storer.GetPollTallies)
 	if err != nil {
 		httpInternalError(w, err, "failed to get poll tallies")
 		return
@@ -140,6 +140,7 @@ func (s *Server) changeBallot(w http.ResponseWriter, r *http.Request, e *storage
 	consented := user.ConsentAt != nil || consent
 	switch {
 	case err == nil:
+		s.results.invalidate(e.ID)
 		writeJSON(w, http.StatusOK, newBallotResponse(e, ids, consented))
 	case errors.Is(err, poll.ErrFull), errors.Is(err, poll.ErrNotOnBallot):
 		b := newBallotResponse(e, stored, user.ConsentAt != nil)

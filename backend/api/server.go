@@ -8,7 +8,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +63,9 @@ type Server struct {
 	storer    Storer
 	providers *auth.Registry
 	router    *chi.Mux
+	results   *resultsCache
+	// keyIP keys the rate limits by client address.
+	keyIP func(r *http.Request) (string, error)
 }
 
 // NewServer builds the router with its middleware stack and routes. providers
@@ -71,13 +73,9 @@ type Server struct {
 func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r := chi.NewRouter()
 
-	// Parse rate limit from env (default: 100 req/min per IP)
-	rateLimit := 100
-	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			rateLimit = parsed
-		}
-	}
+	// Rate limit from env (default: 100 req/min per client address)
+	rateLimit := envLimit("RATE_LIMIT_PER_MINUTE", 100)
+	keyIP := keyByClientIP(clientIPHeader())
 
 	// Middleware — applied in order:
 	// securityHeaders → Logger → Recoverer → Timeout → RateLimit → CORS → metrics
@@ -85,7 +83,7 @@ func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
-	r.Use(httprate.LimitByIP(rateLimit, 1*time.Minute))
+	r.Use(httprate.Limit(rateLimit, 1*time.Minute, httprate.WithKeyFuncs(keyIP)))
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  corsOriginFunc(),
 		AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
@@ -100,6 +98,8 @@ func NewServer(storer Storer, providers *auth.Registry) *Server {
 		storer:    storer,
 		providers: providers,
 		router:    r,
+		results:   newResultsCache(resultsTTL),
+		keyIP:     keyIP,
 	}
 
 	server.setupRoutes()
@@ -197,8 +197,13 @@ func (s *Server) setupRoutes() {
 		r.Get("/events", s.handleEventsSSE)
 
 		r.Get("/auth/providers", s.handleAuthProviders)
-		r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
-		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
+		// A sign-in proof costs a verification: a tighter limit, shared
+		// by the challenge and the sign-in (default 10 per minute).
+		r.Group(func(r chi.Router) {
+			r.Use(httprate.Limit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 10), time.Minute, httprate.WithKeyFuncs(s.keyIP)))
+			r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
+			r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
+		})
 		r.Get("/auth/me", s.requireUser(s.handleAuthMe))
 		r.Delete("/auth/me", s.requireUser(s.handleDeleteAccount))
 		r.Get("/me/votes", s.requireUser(s.handleMyVotes))
