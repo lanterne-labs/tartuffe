@@ -60,10 +60,11 @@ func (m *memPolls) ListCorrections(context.Context, int64, int) ([]storage.Corre
 	return out, nil
 }
 
-func (m *memPolls) GetFeed(_ context.Context, kind string, after *storage.FeedCursor, limit, _ int) ([]storage.FeedItem, error) {
+func (m *memPolls) GetFeed(_ context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, _ int) ([]storage.FeedItem, error) {
+	m.lastFeedFilter = f
 	out := []storage.FeedItem{}
 	for _, it := range m.feed {
-		if kind != "" && it.Kind != kind {
+		if f.Kind != "" && it.Kind != f.Kind {
 			continue
 		}
 		if after != nil && !it.At.Before(after.At) {
@@ -196,6 +197,18 @@ func TestFeedPages(t *testing.T) {
 	rec = do(t, h, http.MethodGet, "/api/feed?kind=fact", "", nil)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
 	assert.Len(t, page.Items, 2)
+
+	rec = do(t, h, http.MethodGet, "/api/feed?person=12&from=2020-01-01&to=2020-12-31", "", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	ff := fs.lastFeedFilter
+	assert.Equal(t, int64(12), ff.PersonID)
+	require.NotNil(t, ff.From)
+	require.NotNil(t, ff.To)
+	assert.Equal(t, "2020-01-01", ff.From.Format("2006-01-02"))
+	assert.Equal(t, "2021-01-01", ff.To.Format("2006-01-02"), "to includes its whole day")
+	for _, bad := range []string{"person=x", "person=-1", "from=2020-13-01", "to=yesterday", "from=2021-01-01&to=2020-01-01"} {
+		assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?"+bad, "", nil).Code, bad)
+	}
 
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?after=nope", "", nil).Code)
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?kind=stance", "", nil).Code)

@@ -32,8 +32,10 @@ type memPolls struct {
 	// targets are the facts and contradictions that exist, as "kind:id".
 	targets map[string]bool
 	feed    []storage.FeedItem
-	share   map[string]*storage.ShareTarget
-	scores  map[int64]*storage.ScoreExplanation
+	// lastFeedFilter is the filter of the last GetFeed.
+	lastFeedFilter storage.FeedFilter
+	share          map[string]*storage.ShareTarget
+	scores         map[int64]*storage.ScoreExplanation
 }
 
 func (m *memPolls) init() {

@@ -54,7 +54,8 @@ func decodeFeedCursor(s string) (*storage.FeedCursor, error) {
 }
 
 // handleFeed lists the newest contradictions and facts, newest first
-// (?kind=contradiction|fact, ?after=<cursor>, ?limit=).
+// (?kind=contradiction|fact, ?person=<id>, ?from=, ?to= the days of the
+// statements, ?after=<cursor>, ?limit=).
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
 	if kind != "" && kind != storage.FeedFact && kind != storage.FeedContradiction {
@@ -69,8 +70,39 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	f := storage.FeedFilter{Kind: kind}
+	if v := r.URL.Query().Get("person"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad person")
+			return
+		}
+		f.PersonID = id
+	}
+	// from and to are days (YYYY-MM-DD), both included.
+	for _, d := range []struct {
+		name string
+		dst  **time.Time
+		add  int
+	}{{"from", &f.From, 0}, {"to", &f.To, 1}} {
+		v := r.URL.Query().Get(d.name)
+		if v == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, d.name+" is a date (YYYY-MM-DD)")
+			return
+		}
+		t = t.AddDate(0, 0, d.add)
+		*d.dst = &t
+	}
+	if f.From != nil && f.To != nil && !f.From.Before(*f.To) {
+		writeError(w, http.StatusBadRequest, "from is after to")
+		return
+	}
 	limit := queryInt(r, "limit", 20, 50)
-	items, err := s.storer.GetFeed(r.Context(), kind, after, limit, publicMinFacts)
+	items, err := s.storer.GetFeed(r.Context(), f, after, limit, publicMinFacts)
 	if err != nil {
 		httpInternalError(w, err, "failed to get feed")
 		return

@@ -38,24 +38,23 @@
 			metaDesc:
 				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule un score de cohérence. Méthode, limites et neutralité.',
 			kicker: 'À propos',
-			title: 'Un miroir public de ce que disent et votent les responsables politiques',
-			lead: 'tartuffe.me rassemble les votes et les déclarations des responsables politiques français, les range par sujet et montre quand une même personne a dit, ou voté, une chose et son contraire. Chaque élément renvoie à sa source.',
-			heroPills: ['Votes', 'Déclarations', 'Sources', 'Contradictions'],
+			title: 'Ils disent. Ils votent. On compare.',
+			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
+			heroPills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
 
 			howKicker: 'Méthode',
 			howTitle: 'Comment ça marche',
-			howLead: 'Tout le parcours est automatique et identique pour chacun : des sources publiques jusqu’au score.',
+			howLead: 'Des sources publiques au score. Automatique, identique pour tous.',
 
-			sortTitle: 'Le tri d’une contradiction',
+			sortTitle: 'Une vraie contradiction, pas une nuance',
 			sortBody: [
-				'Se contredire, ce n’est pas évoluer sur un point de détail ni préciser sa pensée. Une contradiction n’est retenue que lorsque deux faits d’une même personne, sur un même sujet, ne peuvent pas tenir ensemble.',
-				'Chaque contradiction affichée montre les deux faits côte à côte, avec leurs dates, leurs citations et leurs sources.'
+				'Préciser sa pensée n’est pas se contredire. On ne retient que deux faits qui ne peuvent pas être vrais en même temps.',
+				'Les deux faits côte à côte, datés, cités, sourcés.'
 			],
 
 			scoreKicker: 'Le score',
-			scoreTitle: 'Un score de cohérence, sur 100',
-			scoreLead:
-				'Le score dit combien une personne se contredit au regard de tout ce que l’on sait d’elle. Il part de 100 et baisse à chaque contradiction distincte.',
+			scoreTitle: 'Un score sur 100',
+			scoreLead: 'On part de 100. Chaque contradiction distincte fait baisser le score.',
 			formulaLabel: 'La formule',
 			defs: [
 				['F', 'le nombre de faits connus sur la personne'],
@@ -73,35 +72,35 @@
 			tryTitle: 'Essayez',
 			readTitle: 'Comment le lire',
 			readLow: 'Un score bas',
-			readLowBody: 'signifie beaucoup de contradictions par rapport à ce que l’on sait de la personne.',
+			readLowBody: ': beaucoup de contradictions pour ce que l’on sait.',
 			readHigh: 'Un score élevé avec peu de faits',
-			readHighBody: 'veut dire « on en sait peu », pas « cette personne est honnête ». Regardez toujours le nombre de faits à côté du score.',
+			readHighBody: ': on en sait peu, pas « honnête ». Regardez le nombre de faits.',
 
-			limitsKicker: 'Limites',
-			limitsTitle: 'Ce que le site ne fait pas, honnêtement',
+			limitsKicker: 'Fiabilité',
+			limitsTitle: 'L’IA détecte, vous corrigez',
 			limits: [
-				['La détection automatique se trompe parfois.', 'Une IA peut mal comprendre un contexte, une ironie ou un vote technique. Les vérifications successives réduisent les erreurs, elles ne les suppriment pas.'],
-				['Vous pouvez signaler une erreur.', 'Toute personne connectée peut signaler une contradiction ou un fait qu’elle estime faux. Une IA réexamine le signalement et retire l’élément si le signalement est fondé.'],
-				['Les corrections sont publiques.', 'Chaque correction acceptée est listée sur la page des corrections.'],
-				['Le score mesure la cohérence, pas la vérité.', 'Il ne dit pas si une personne a raison, ni si elle est compétente : seulement si ses paroles et ses votes tiennent ensemble.']
+				['Tout est sourcé.', 'Date, citation exacte, lien vers l’original.'],
+				['Vérifié deux fois.', 'Chaque contradiction est relue avant d’être publiée, puis auditée régulièrement.'],
+				['Vous avez le dernier mot.', 'Un fait ou une contradiction faux ? Signalez-le : s’il est fondé, il disparaît.'],
+				['Corrections publiques.', 'Chaque retrait est affiché, avec sa raison.']
 			],
 			correctionsLink: 'Voir les corrections',
 
 			neutralKicker: 'Neutralité',
-			neutralTitle: 'Les mêmes règles pour tout le monde',
+			neutralTitle: 'Gauche, droite : même traitement',
 			neutral: [
-				['Le même code pour chacun', 'Les mêmes règles et le même programme s’appliquent à chaque personne et à chaque parti, quelle que soit sa couleur politique.'],
-				['Rien à la main', 'Personne n’est ajouté, retiré ou noté à la main. Le score sort du calcul, et de rien d’autre.'],
-				['Aucun argent politique', 'Le site ne reçoit d’argent d’aucun parti ni d’aucun candidat, et n’affiche aucune publicité.'],
-				['Indépendant et collaboratif', 'tartuffe.me est un projet indépendant et collaboratif, porté par sa communauté.']
+				['Même code pour tous', 'Mêmes règles pour chaque élu et chaque parti.'],
+				['Zéro intervention', 'Personne n’est noté à la main.'],
+				['Zéro argent politique', 'Aucun parti, aucun candidat, aucune pub.'],
+				['Indépendant', 'Un projet collaboratif, porté par sa communauté.']
 			],
 
 			pollKicker: 'Pré-sondage',
-			pollTitle: 'Le pré-sondage de la présidentielle 2027',
+			pollTitle: 'Présidentielle 2027 : votez, comparez',
 			pollBody: [
-				'Ce n’est pas un sondage au sens de la loi du 19 juillet 1977. C’est une consultation ouverte des utilisateurs connectés et vérifiés, pas un échantillon représentatif des Français.',
-				'Les résultats restent masqués tant qu’il n’y a pas assez de votants, et pendant la période de silence légal qui précède chaque tour.',
-				'Pour voter, il faut prouver avec ZKPassport que l’on est un citoyen français majeur. Aucune autre donnée personnelle n’est transmise.'
+				'Votre choix, face au score de chaque candidat.',
+				'Un vote par citoyen français majeur, prouvé par ZKPassport. Aucune autre donnée transmise.',
+				'Consultation ouverte, pas un sondage au sens de la loi du 19 juillet 1977. Résultats masqués sous un seuil de votants et pendant le silence électoral.'
 			],
 			pollLink: 'Aller au pré-sondage',
 			verifLink: 'Comment marche la vérification'
@@ -111,24 +110,23 @@
 			metaDesc:
 				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes a consistency score. Method, limits and neutrality.',
 			kicker: 'About',
-			title: 'A public mirror of what politicians say and vote',
-			lead: 'tartuffe.me gathers the votes and statements of French politicians, sorts them by topic and shows when the same person has said, or voted, one thing and its opposite. Every item links back to its source.',
-			heroPills: ['Votes', 'Statements', 'Sources', 'Contradictions'],
+			title: 'They say. They vote. We compare.',
+			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
+			heroPills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 
 			howKicker: 'Method',
 			howTitle: 'How it works',
-			howLead: 'The whole path is automatic and the same for everyone: from public sources to the score.',
+			howLead: 'From public sources to the score. Automatic, the same for all.',
 
-			sortTitle: 'How a contradiction is sorted',
+			sortTitle: 'A real contradiction, not a nuance',
 			sortBody: [
-				'Contradicting oneself is not shifting on a detail or clarifying one’s view. A contradiction is kept only when two facts of the same person, on the same topic, cannot both hold.',
-				'Each contradiction shown puts the two facts side by side, with their dates, quotes and sources.'
+				'Clarifying is not contradicting. We keep only two facts that cannot both be true.',
+				'Both facts side by side, dated, quoted, sourced.'
 			],
 
 			scoreKicker: 'The score',
-			scoreTitle: 'A consistency score, out of 100',
-			scoreLead:
-				'The score says how much a person contradicts themselves, measured against everything we know about them. It starts at 100 and drops with each distinct contradiction.',
+			scoreTitle: 'A score out of 100',
+			scoreLead: 'It starts at 100. Each distinct contradiction lowers it.',
 			formulaLabel: 'The formula',
 			defs: [
 				['F', 'the number of known facts about the person'],
@@ -146,35 +144,35 @@
 			tryTitle: 'Try it',
 			readTitle: 'How to read it',
 			readLow: 'A low score',
-			readLowBody: 'means many contradictions relative to what we know about the person.',
+			readLowBody: ': many contradictions for what we know.',
 			readHigh: 'A high score with few facts',
-			readHighBody: 'means “we know little”, not “this person is honest”. Always look at the number of facts next to the score.',
+			readHighBody: ': we know little, not “honest”. Check the number of facts.',
 
-			limitsKicker: 'Limits',
-			limitsTitle: 'What the site does not do, honestly',
+			limitsKicker: 'Reliability',
+			limitsTitle: 'The AI detects, you correct',
 			limits: [
-				['Automatic detection makes mistakes.', 'An AI can misread a context, irony or a procedural vote. The successive checks reduce errors; they do not remove them.'],
-				['You can report a mistake.', 'Anyone signed in can report a contradiction or a fact they think is wrong. An AI re-examines the report and removes the item if the report is right.'],
-				['Corrections are public.', 'Every accepted correction is listed on the corrections page.'],
-				['The score measures consistency, not truth.', 'It does not say whether a person is right, or competent: only whether their words and votes hold together.']
+				['Everything is sourced.', 'Date, exact quote, link to the original.'],
+				['Checked twice.', 'Each contradiction is reread before it is published, then audited regularly.'],
+				['You have the last word.', 'A wrong fact or contradiction? Report it: if you are right, it goes.'],
+				['Public corrections.', 'Every removal is shown, with its reason.']
 			],
 			correctionsLink: 'See the corrections',
 
 			neutralKicker: 'Neutrality',
-			neutralTitle: 'The same rules for everyone',
+			neutralTitle: 'Left or right: same treatment',
 			neutral: [
-				['The same code for all', 'The same rules and the same program apply to every person and every party, whatever their side.'],
-				['Nothing by hand', 'Nobody is added, removed or scored by hand. The score comes from the computation, and nothing else.'],
-				['No political money', 'The site takes no money from any party or candidate, and shows no ads.'],
-				['Independent and collaborative', 'tartuffe.me is an independent, collaborative project, driven by its community.']
+				['Same code for all', 'Same rules for every politician and every party.'],
+				['Zero intervention', 'Nobody is scored by hand.'],
+				['Zero political money', 'No party, no candidate, no ads.'],
+				['Independent', 'A collaborative project, driven by its community.']
 			],
 
 			pollKicker: 'Pre-poll',
-			pollTitle: 'The 2027 presidential pre-poll',
+			pollTitle: '2027 presidential: vote, compare',
 			pollBody: [
-				'It is not a poll (sondage) in the sense of the French law of 19 July 1977. It is an open consultation of the verified, signed-in users, not a representative sample of the French population.',
-				'Results stay hidden until there are enough voters, and during the legal blackout before each round.',
-				'To vote, you prove with ZKPassport that you are an adult French citizen. No other personal data is sent.'
+				'Your choice, next to each candidate’s score.',
+				'One vote per adult French citizen, proved with ZKPassport. No other data sent.',
+				'An open consultation, not a poll under the French law of 19 July 1977. Results hidden below a voter threshold and during the electoral blackout.'
 			],
 			pollLink: 'Go to the pre-poll',
 			verifLink: 'How the verification works'
@@ -306,7 +304,7 @@
 	</section>
 
 	<!-- Limits -->
-	<section id="limits" use:reveal>
+	<section id="trust" use:reveal>
 		<span class="kicker">{c.limitsKicker}</span>
 		<h2>{c.limitsTitle}</h2>
 		<ol class="limits">

@@ -55,7 +55,7 @@ type Storer interface {
 	ListCorrections(ctx context.Context, beforeID int64, limit int) ([]storage.Correction, error)
 
 	// The feed, the shared links and the score explanations.
-	GetFeed(ctx context.Context, kind string, after *storage.FeedCursor, limit, minFacts int) ([]storage.FeedItem, error)
+	GetFeed(ctx context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, minFacts int) ([]storage.FeedItem, error)
 	GetShareTarget(ctx context.Context, kind string, id, personID int64) (*storage.ShareTarget, error)
 	GetScoreExplanation(ctx context.Context, personID int64) (*storage.ScoreExplanation, error)
 	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)

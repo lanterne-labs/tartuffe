@@ -492,6 +492,8 @@
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
 						{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
+						<span class="dot">·</span>
+						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
 				</div>
 			</div>
@@ -1649,5 +1651,9 @@
 		box-shadow: 0 0 0 3px var(--accent-glow);
 		border-color: var(--accent);
 		transition: box-shadow 0.6s ease;
+	}
+	.feed-link {
+		color: var(--accent-hover);
+		white-space: nowrap;
 	}
 </style>

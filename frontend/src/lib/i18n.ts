@@ -349,19 +349,20 @@ const dict: Record<string, { fr: string; en: string }> = {
 
 	// Feed
 	'feed.title': { fr: 'Le fil', en: 'The feed' },
-	'feed.intro': { fr: 'Tout ce qui entre dans le miroir, au fil de l’eau : les nouvelles contradictions et les nouveaux faits, avec leurs sources.', en: 'Everything that enters the mirror, as it comes: the new contradictions and the new facts, with their sources.' },
 	'feed.all': { fr: 'Tout', en: 'All' },
 	'feed.contradictions': { fr: 'Contradictions', en: 'Contradictions' },
 	'feed.facts': { fr: 'Faits', en: 'Facts' },
-	'feed.contradiction': { fr: 'Contradiction', en: 'Contradiction' },
-	'feed.fact': { fr: 'Nouveau fait', en: 'New fact' },
-	'feed.then': { fr: 'puis', en: 'then' },
-	'feed.why': { fr: 'Pourquoi c’est contradictoire', en: 'Why it contradicts' },
-	'feed.open': { fr: 'Voir sur sa page', en: 'See on their page' },
+	'feed.person': { fr: 'Son fil', en: 'Their feed' },
 	'feed.empty': { fr: 'Rien pour l’instant.', en: 'Nothing yet.' },
 	'feed.end': { fr: 'Vous êtes arrivé au bout.', en: 'You reached the end.' },
 	'feed.error': { fr: 'Le fil n’a pas pu être chargé.', en: 'The feed could not be loaded.' },
 	'feed.new': { fr: '{n} nouveaux éléments — afficher', en: '{n} new items — show' },
+	'feed.filter.person': { fr: 'Filtrer par personne…', en: 'Filter by person…' },
+	'feed.filter.clear_person': { fr: 'Retirer le filtre de personne', en: 'Remove the person filter' },
+	'feed.filter.from': { fr: 'Du', en: 'From' },
+	'feed.filter.to': { fr: 'au', en: 'to' },
+	'feed.filter.reset': { fr: 'Effacer les filtres', en: 'Clear filters' },
+	'feed.empty_filtered': { fr: 'Rien pour ces filtres.', en: 'Nothing for these filters.' },
 	'feed.more': { fr: 'Charger la suite', en: 'Load more' },
 
 	// Corrections

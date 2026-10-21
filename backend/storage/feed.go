@@ -51,6 +51,15 @@ type FeedItem struct {
 	ReasonEn      *string       `json:"reason_en,omitempty"`
 }
 
+// FeedFilter narrows the feed: Kind to one kind ("": both), PersonID to one
+// person (0: all), From and To to the statements made in that period (nil:
+// open). A contradiction is in the period when its later fact is.
+type FeedFilter struct {
+	Kind     string
+	PersonID int64
+	From, To *time.Time
+}
+
 // FeedCursor is the position after the last item of a page: the items
 // strictly older than (At, Kind, ID).
 type FeedCursor struct {
@@ -71,11 +80,12 @@ func factSidesLateral(f, p string) string {
 }
 
 // GetFeed returns the newest contradictions and facts, newest first, after
-// the cursor (nil: from the newest). kind limits the feed to one kind ("":
-// both). A fact is listed with its person's first stance; a fact in no
-// stance yet (being grouped) is not listed, nor are the items of a person
-// with fewer than minFacts facts (the public floor).
-func (s *PostgresStorer) GetFeed(ctx context.Context, kind string, after *FeedCursor, limit, minFacts int) ([]FeedItem, error) {
+// the cursor (nil: from the newest), narrowed by the filter. A fact is listed
+// with its person's first stance; a fact in no stance yet (being grouped) is
+// not listed, nor are the items of a person with fewer than minFacts facts
+// (the public floor).
+func (s *PostgresStorer) GetFeed(ctx context.Context, f FeedFilter, after *FeedCursor, limit, minFacts int) ([]FeedItem, error) {
+	kind := f.Kind
 	// The cursor compares (at, kind, id) in that order: within one instant,
 	// "fact" < "contradiction" is false, so the kinds interleave stably.
 	at, ckind, cid := time.Now().Add(time.Hour), "~", int64(0)
@@ -84,14 +94,14 @@ func (s *PostgresStorer) GetFeed(ctx context.Context, kind string, after *FeedCu
 	}
 	var out []FeedItem
 	if kind == "" || kind == FeedContradiction {
-		items, err := s.feedContradictions(ctx, at, ckind, cid, limit, minFacts)
+		items, err := s.feedContradictions(ctx, f, at, ckind, cid, limit, minFacts)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, items...)
 	}
 	if kind == "" || kind == FeedFact {
-		items, err := s.feedFacts(ctx, at, ckind, cid, limit, minFacts)
+		items, err := s.feedFacts(ctx, f, at, ckind, cid, limit, minFacts)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +132,7 @@ func sortFeed(items []FeedItem) {
 	}
 }
 
-func (s *PostgresStorer) feedContradictions(ctx context.Context, at time.Time, ckind string, cid int64, limit, minFacts int) ([]FeedItem, error) {
+func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, at time.Time, ckind string, cid int64, limit, minFacts int) ([]FeedItem, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score,
 		       sd.id, sd.cluster_label, sd.label_en,
@@ -137,9 +147,12 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, at time.Time, c
 		`+factSidesLateral("fa", "sa")+`
 		`+factSidesLateral("fb", "sb")+`
 		WHERE c.detected_at IS NOT NULL AND p.fact_count >= $5
+		  AND ($6::bigint = 0 OR c.person_id = $6)
+		  AND ($7::timestamptz IS NULL OR GREATEST(sa.earliest, sb.earliest) >= $7)
+		  AND ($8::timestamptz IS NULL OR GREATEST(sa.earliest, sb.earliest) < $8)
 		  AND (c.detected_at < $1 OR (c.detected_at = $1 AND ('contradiction' < $2 OR ('contradiction' = $2 AND c.id < $3))))
 		ORDER BY c.detected_at DESC, c.id DESC
-		LIMIT $4`, at, ckind, cid, limit, minFacts)
+		LIMIT $4`, at, ckind, cid, limit, minFacts, f.PersonID, f.From, f.To)
 	if err != nil {
 		return nil, fmt.Errorf("feed contradictions: %w", err)
 	}
@@ -164,7 +177,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, at time.Time, c
 	return out, rows.Err()
 }
 
-func (s *PostgresStorer) feedFacts(ctx context.Context, at time.Time, ckind string, cid int64, limit, minFacts int) ([]FeedItem, error) {
+func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, at time.Time, ckind string, cid int64, limit, minFacts int) ([]FeedItem, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score,
 		       sd.id, sd.cluster_label, sd.label_en,
@@ -174,16 +187,24 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, at time.Time, ckind stri
 			SELECT sd.id, sd.cluster_label, sd.label_en, sd.person_id
 			FROM stance_document_facts sdf
 			JOIN stance_documents sd ON sd.id = sdf.stance_document_id
-			WHERE sdf.fact_id = f.id
+			WHERE sdf.fact_id = f.id AND ($6::bigint = 0 OR sd.person_id = $6)
 			ORDER BY sdf.added_at LIMIT 1
 		) sd ON true
 		JOIN persons p ON p.id = sd.person_id
 		`+factSidesLateral("f", "sf")+`
 		WHERE f.created_at IS NOT NULL AND p.fact_count >= $5
+		  -- One person's facts are read from their stances, not found by
+		  -- walking every fact.
+		  AND ($6::bigint = 0 OR f.id IN (
+			SELECT sdf.fact_id FROM stance_document_facts sdf
+			JOIN stance_documents sd2 ON sd2.id = sdf.stance_document_id
+			WHERE sd2.person_id = $6))
+		  AND ($7::timestamptz IS NULL OR sf.earliest >= $7)
+		  AND ($8::timestamptz IS NULL OR sf.earliest < $8)
 		  AND (f.created_at < $1 OR (f.created_at = $1 AND ('fact' < $2 OR ('fact' = $2 AND f.id < $3))))
 		  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		ORDER BY f.created_at DESC, f.id DESC
-		LIMIT $4`, at, ckind, cid, limit, minFacts)
+		LIMIT $4`, at, ckind, cid, limit, minFacts, f.PersonID, f.From, f.To)
 	if err != nil {
 		return nil, fmt.Errorf("feed facts: %w", err)
 	}

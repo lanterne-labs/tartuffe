@@ -1,7 +1,8 @@
 <script lang="ts">
 	// The feed: every new contradiction and fact, newest first, in an endless
-	// scroll (GET /api/feed). A new contradiction while the page is open shows
-	// a banner to load it.
+	// scroll (GET /api/feed), filtered by kind, person and the dates of the
+	// statements, all kept in the URL so a filtered feed can be shared. A new
+	// contradiction while the page is open shows a banner to load it.
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -12,14 +13,79 @@
 	import { realtimeManager, subscribeToPersonEvents } from '$lib/realtime';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
-	import type { FeedItem, FeedPage } from '$lib/types';
+	import type { FeedItem, FeedPage, PersonSummary } from '$lib/types';
 
 	type Filter = '' | 'contradiction' | 'fact';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
+	const isDay = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
 	let filter = $derived(($page.url.searchParams.get('kind') ?? '') as Filter);
+	let personFilter = $derived(/^\d+$/.test($page.url.searchParams.get('person') ?? '') ? Number($page.url.searchParams.get('person')) : 0);
+	let fromDay = $derived(isDay($page.url.searchParams.get('from')));
+	let toDay = $derived(isDay($page.url.searchParams.get('to')));
+	// What the list is loaded for: a change reloads it from the top.
+	let filterKey = $derived(`${filter}|${personFilter}|${fromDay}|${toDay}`);
+	let filtered = $derived(!!(personFilter || fromDay || toDay));
+
+	// The person picker: the chosen person's name, and the matches of a search.
+	let personName = $state('');
+	let query = $state('');
+	let matches: PersonSummary[] = $state([]);
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const id = personFilter;
+		if (!id) {
+			personName = '';
+			return;
+		}
+		if (items.find((it) => it.person.id === id)) {
+			personName = items.find((it) => it.person.id === id)!.person.name;
+			return;
+		}
+		fetch(`${API_BASE}/api/person/${id}`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((p: PersonSummary | null) => {
+				if (personFilter === id) personName = p?.name ?? `#${id}`;
+			})
+			.catch((err) => console.error('failed to load the person', err));
+	});
+
+	function onSearch() {
+		clearTimeout(searchTimer);
+		const q = query.trim();
+		if (q.length < 2) {
+			matches = [];
+			return;
+		}
+		searchTimer = setTimeout(async () => {
+			try {
+				const res = await fetch(`${API_BASE}/api/persons?search=${encodeURIComponent(q)}&limit=8`);
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				const found: PersonSummary[] = await res.json();
+				if (query.trim() === q) matches = found ?? [];
+			} catch (err) {
+				console.error('person search failed', err);
+			}
+		}, 200);
+	}
+
+	function setParams(changes: Record<string, string>) {
+		const url = new URL($page.url);
+		for (const [k, v] of Object.entries(changes)) {
+			if (v) url.searchParams.set(k, v);
+			else url.searchParams.delete(k);
+		}
+		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+	}
+
+	function pickPerson(p: PersonSummary) {
+		personName = p.name;
+		query = '';
+		matches = [];
+		setParams({ person: String(p.id) });
+	}
 	let items: FeedItem[] = $state([]);
 	let next: string | undefined = $state(undefined);
 	let loading = $state(false);
@@ -38,6 +104,9 @@
 		try {
 			const q = new URLSearchParams({ limit: '20' });
 			if (filter) q.set('kind', filter);
+			if (personFilter) q.set('person', String(personFilter));
+			if (fromDay) q.set('from', fromDay);
+			if (toDay) q.set('to', toDay);
 			if (!reset && next) q.set('after', next);
 			const res = await fetch(`${API_BASE}/api/feed?${q}`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -57,9 +126,9 @@
 	}
 
 	// The filter is in the URL: a change reloads from the top.
-	let loadedFilter: Filter | null = null;
+	let loadedFilter: string | null = null;
 	$effect(() => {
-		const f = filter;
+		const f = filterKey;
 		if (f === loadedFilter) return;
 		loadedFilter = f;
 		next = undefined;
@@ -68,10 +137,7 @@
 	});
 
 	function setFilter(f: Filter) {
-		const url = new URL($page.url);
-		if (f) url.searchParams.set('kind', f);
-		else url.searchParams.delete('kind');
-		goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+		setParams({ kind: f });
 	}
 
 	// The next page loads when the end of the list comes near.
@@ -104,9 +170,8 @@
 		return rtf.format(Math.round(v), 'year');
 	}
 
-	function day(iso: string | null | undefined): string {
-		if (!iso) return '';
-		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+	function year(iso: string | null | undefined): string {
+		return iso ? String(new Date(iso).getFullYear()) : '';
 	}
 
 	function scoreColor(s: number): string {
@@ -119,7 +184,7 @@
 	onMount(() => {
 		realtimeManager.connect();
 		unsub = subscribeToPersonEvents(-1, (e) => {
-			if (e.type === 'contradiction_added' && filter !== 'fact') fresh++;
+			if (e.type === 'contradiction_added' && filter !== 'fact' && (!personFilter || e.personId === personFilter)) fresh++;
 		});
 	});
 	onDestroy(() => {
@@ -135,7 +200,6 @@
 <div class="feed">
 	<header class="feed-head">
 		<h1>{tr('feed.title', currentLang)}</h1>
-		<p class="intro">{tr('feed.intro', currentLang)}</p>
 		<div class="tabs" role="tablist">
 			{#each [['', 'feed.all'], ['contradiction', 'feed.contradictions'], ['fact', 'feed.facts']] as [f, key] (f)}
 				<button role="tab" class="tab" class:active={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
@@ -145,81 +209,96 @@
 		</div>
 	</header>
 
+	<div class="filters">
+		<div class="picker">
+			{#if personFilter}
+				<span class="chip">
+					<span class="chip-name">{personName}</span>
+					<button onclick={() => setParams({ person: '' })} aria-label={tr('feed.filter.clear_person', currentLang)}>×</button>
+				</span>
+			{:else}
+				<input
+					type="search"
+					bind:value={query}
+					oninput={onSearch}
+					onkeydown={(e) => {
+						if (e.key === 'Enter' && matches[0]) pickPerson(matches[0]);
+						if (e.key === 'Escape') matches = [];
+					}}
+					placeholder={tr('feed.filter.person', currentLang)}
+					aria-label={tr('feed.filter.person', currentLang)}
+					autocomplete="off"
+				/>
+				{#if matches.length > 0}
+					<ul class="matches" role="listbox">
+						{#each matches as m (m.id)}
+							<li><button role="option" aria-selected="false" onclick={() => pickPerson(m)}>{m.name}</button></li>
+						{/each}
+					</ul>
+				{/if}
+			{/if}
+		</div>
+		<label class="day">
+			<span>{tr('feed.filter.from', currentLang)}</span>
+			<input type="date" value={fromDay} max={toDay || undefined} onchange={(e) => setParams({ from: (e.currentTarget as HTMLInputElement).value })} />
+		</label>
+		<label class="day">
+			<span>{tr('feed.filter.to', currentLang)}</span>
+			<input type="date" value={toDay} min={fromDay || undefined} onchange={(e) => setParams({ to: (e.currentTarget as HTMLInputElement).value })} />
+		</label>
+		{#if filtered}
+			<button class="reset" onclick={() => setParams({ person: '', from: '', to: '' })}>{tr('feed.filter.reset', currentLang)}</button>
+		{/if}
+	</div>
+
 	{#if fresh > 0}
 		<button class="fresh" onclick={showFresh}>{tr('feed.new', currentLang, { n: fresh })}</button>
 	{/if}
 
 	{#if items.length === 0 && loading}
-		{#each Array(4) as _}
-			<div class="card skeleton-card"><div class="sk sk-head"></div><div class="sk sk-line"></div><div class="sk sk-line short"></div></div>
+		{#each Array(5) as _}
+			<div class="item skeleton-card"><div class="sk sk-head"></div><div class="sk sk-line"></div></div>
 		{/each}
 	{:else if items.length === 0 && error}
-		<div class="card state"><p>{tr('feed.error', currentLang)}</p><button class="btn" onclick={() => load(true)}>{tr('home.retry', currentLang)}</button></div>
+		<div class="state"><p>{tr('feed.error', currentLang)}</p><button class="btn" onclick={() => load(true)}>{tr('home.retry', currentLang)}</button></div>
 	{:else if items.length === 0}
-		<p class="state muted">{tr('feed.empty', currentLang)}</p>
+		<p class="state muted">{tr(filtered ? 'feed.empty_filtered' : 'feed.empty', currentLang)}</p>
 	{/if}
 
 	<ol class="items">
 		{#each items as it (it.kind + it.id)}
 			{@const topic = pickLang(it.stance_label, it.stance_label_en, currentLang)}
 			{@const link = sharePath(it.kind, it.id, it.person.id)}
-			<li class="card item" class:is-contradiction={it.kind === 'contradiction'}>
-				<div class="item-head">
+			<li class="item" class:is-contradiction={it.kind === 'contradiction'}>
+				<div class="head">
 					<a href="/person/{it.person.id}" class="who">
 						{#if it.person.image_url}
 							<img src={it.person.image_url} alt="" class="avatar" loading="lazy" />
 						{:else}
 							<span class="avatar avatar-ph">{it.person.name.charAt(0).toUpperCase()}</span>
 						{/if}
-						<span class="who-text">
-							<span class="name">{it.person.name}</span>
-							<span class="meta">
-								<span class="score" style="color: {scoreColor(it.person.honesty_score)}">{Math.round(it.person.honesty_score * 100)}/100</span>
-								<span aria-hidden="true">·</span>
-								<time datetime={it.at} title={new Date(it.at).toLocaleString()}>{ago(it.at)}</time>
-							</span>
-						</span>
+						<span class="name">{it.person.name}</span>
 					</a>
-					<span class="kind" class:kind-c={it.kind === 'contradiction'}>{tr(it.kind === 'contradiction' ? 'feed.contradiction' : 'feed.fact', currentLang)}</span>
+					<span class="score" style="color: {scoreColor(it.person.honesty_score)}">{Math.round(it.person.honesty_score * 100)}</span>
+					{#if topic}
+						<a class="topic" href={it.stance_id ? `/person/${it.person.id}?stance=${it.stance_id}` : `/person/${it.person.id}`}>{topic}</a>
+					{/if}
+					<time datetime={it.at} title={new Date(it.at).toLocaleString()}>{ago(it.at)}</time>
 				</div>
-				{#if topic}
-					<a class="topic" href={it.stance_id ? `/person/${it.person.id}?stance=${it.stance_id}` : `/person/${it.person.id}`}>{topic}</a>
-				{/if}
 
-				{#if it.kind === 'contradiction' && it.other}
-					<div class="pair">
-						<blockquote>
-							{#if it.fact.date}<span class="when">{day(it.fact.date)}</span>{/if}
-							{pickLang(it.fact.text, it.fact.text_en, currentLang)}
-						</blockquote>
-						<span class="then">{tr('feed.then', currentLang)}</span>
-						<blockquote>
-							{#if it.other.date}<span class="when">{day(it.other.date)}</span>{/if}
-							{pickLang(it.other.text, it.other.text_en, currentLang)}
-						</blockquote>
-					</div>
-					{#if it.reason}
-						<p class="why"><strong>{tr('feed.why', currentLang)} :</strong> {pickLang(it.reason, it.reason_en, currentLang)}</p>
+				<a href={link} class="body">
+					{#if it.kind === 'contradiction' && it.other}
+						<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+						<p class="line line-b"><span class="yr">{year(it.other.date)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+					{:else}
+						<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 					{/if}
-					<div class="sources">
-						{#each [...it.fact.source_urls.slice(0, 2), ...it.other.source_urls.slice(0, 2)] as url (url)}
-							<a href={url} target="_blank" rel="noopener noreferrer" title={url}>{sourceDomain(url)}</a>
-						{/each}
-					</div>
-				{:else}
-					<p class="fact-text">{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
-					{#if it.fact.quote}
-						<blockquote class="quote">« {it.fact.quote.length > 280 ? it.fact.quote.slice(0, 280) + '…' : it.fact.quote} »</blockquote>
-					{/if}
-					<div class="sources">
-						{#each it.fact.source_urls.slice(0, 3) as url (url)}
-							<a href={url} target="_blank" rel="noopener noreferrer" title={url}>{sourceDomain(url)}</a>
-						{/each}
-					</div>
-				{/if}
+				</a>
 
-				<div class="actions">
-					<a href={link} class="open">{tr('feed.open', currentLang)} →</a>
+				<div class="foot">
+					{#each (it.other ? [it.fact.source_urls[0], it.other.source_urls[0]] : [it.fact.source_urls[0]]).filter(Boolean) as url, i (i)}
+						<a href={url} class="src" target="_blank" rel="noopener noreferrer" title={url}>{sourceDomain(url)}</a>
+					{/each}
 					<span class="spacer"></span>
 					<ShareMenu
 						item={{
@@ -232,11 +311,7 @@
 							other: it.other ? pickLang(it.other.text, it.other.text_en, currentLang) : undefined
 						}}
 					/>
-					<ReportButton
-						kind={it.kind}
-						targetId={it.id}
-						preview={it.other ? `${it.fact.text}\n⟷\n${it.other.text}` : it.fact.text}
-					/>
+					<ReportButton kind={it.kind} targetId={it.id} preview={it.other ? `${it.fact.text}\n⟷\n${it.other.text}` : it.fact.text} />
 				</div>
 			</li>
 		{/each}
@@ -247,7 +322,7 @@
 		{#if loading}
 			<p class="state muted">{tr('person.loading', currentLang)}</p>
 		{:else if error}
-			<div class="state"><p class="muted">{tr('feed.error', currentLang)}</p><button class="btn" onclick={() => load(false)}>{tr('home.retry', currentLang)}</button></div>
+			<div class="state"><button class="btn" onclick={() => load(false)}>{tr('home.retry', currentLang)}</button></div>
 		{:else if ended}
 			<p class="state muted">{tr('feed.end', currentLang)}</p>
 		{:else}
@@ -258,36 +333,35 @@
 
 <style>
 	.feed {
-		max-width: 40rem;
-		margin: 1rem auto 3rem;
+		max-width: 38rem;
+		margin: 0.5rem auto 3rem;
+	}
+	.feed-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.5rem 1rem;
+		margin-bottom: 0.75rem;
 	}
 	h1 {
 		font-family: var(--font-serif);
-		font-size: clamp(2rem, 5vw, 2.75rem);
+		font-size: 2rem;
 		font-weight: 600;
 		margin: 0;
 	}
-	.intro {
-		color: var(--text-secondary);
-		line-height: 1.5;
-		margin: 0.4rem 0 1rem;
-	}
-	.feed-head {
-		margin-bottom: 1rem;
-	}
 	.tabs {
 		display: flex;
-		gap: 0.4rem;
-		flex-wrap: wrap;
+		gap: 0.3rem;
 	}
 	.tab {
-		padding: 0.4rem 0.9rem;
+		padding: 0.3rem 0.75rem;
 		border-radius: var(--radius-full);
 		border: 1px solid var(--glass-border);
 		background: transparent;
 		color: var(--text-secondary);
 		font: inherit;
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 	}
 	.tab.active {
@@ -295,19 +369,125 @@
 		border-color: var(--accent);
 		color: #fff;
 	}
+	.filters {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem 0.6rem;
+		margin-bottom: 0.75rem;
+		font-size: 0.8rem;
+	}
+	.picker {
+		position: relative;
+		flex: 1 1 12rem;
+		min-width: 0;
+	}
+	.picker input,
+	.day input {
+		width: 100%;
+		box-sizing: border-box;
+		height: 30px;
+		padding: 0 0.6rem;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		font: inherit;
+		color-scheme: dark;
+	}
+	.picker input:focus,
+	.day input:focus {
+		outline: 2px solid var(--accent);
+		outline-offset: 1px;
+	}
+	.matches {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: 0;
+		right: 0;
+		z-index: 30;
+		list-style: none;
+		margin: 0;
+		padding: 0.25rem;
+		background: var(--bg-primary);
+		border: 1px solid var(--border-card-hover);
+		border-radius: var(--radius-md);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+	}
+	.matches button {
+		display: block;
+		width: 100%;
+		padding: 0.4rem 0.6rem;
+		background: none;
+		border: none;
+		border-radius: var(--radius-sm);
+		color: var(--text-primary);
+		font: inherit;
+		text-align: left;
+		text-transform: capitalize;
+		cursor: pointer;
+	}
+	.matches button:hover {
+		background: var(--bg-secondary);
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		max-width: 100%;
+		height: 30px;
+		padding: 0 0.3rem 0 0.7rem;
+		background: var(--accent);
+		color: #fff;
+		border-radius: var(--radius-full);
+	}
+	.chip-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		text-transform: capitalize;
+	}
+	.chip button {
+		width: 22px;
+		height: 22px;
+		border: none;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.2);
+		color: #fff;
+		font-size: 0.9rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.day {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		color: var(--text-muted);
+	}
+	.day input {
+		width: 9.5rem;
+	}
+	.reset {
+		background: none;
+		border: none;
+		color: var(--accent-hover);
+		font: inherit;
+		cursor: pointer;
+		padding: 0.2rem;
+	}
 	.fresh {
 		position: sticky;
 		top: 4.5rem;
 		z-index: 20;
 		display: block;
-		margin: 0 auto 1rem;
-		padding: 0.5rem 1rem;
+		margin: 0 auto 0.75rem;
+		padding: 0.4rem 0.9rem;
 		border-radius: var(--radius-full);
 		border: none;
 		background: var(--accent);
 		color: #fff;
 		font: inherit;
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 		cursor: pointer;
 		box-shadow: var(--shadow-card);
 	}
@@ -317,37 +497,39 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.9rem;
+		gap: 0.5rem;
 	}
-	.card {
-		padding: 1rem 1.15rem;
+	.item {
+		padding: 0.6rem 0.8rem 0.45rem;
 		background: var(--bg-card);
 		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
+		border-left: 3px solid var(--border-card-hover);
+		border-radius: var(--radius-md);
 	}
 	.item.is-contradiction {
-		border-left: 3px solid var(--red);
+		border-left-color: var(--red);
 	}
-	.item-head {
+	.head {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
+		gap: 0.45rem;
+		min-width: 0;
+		font-size: 0.8rem;
 	}
 	.who {
 		display: flex;
 		align-items: center;
-		gap: 0.65rem;
+		gap: 0.4rem;
 		min-width: 0;
-		color: inherit;
+		color: var(--text-primary);
 		text-decoration: none;
 	}
 	.who:hover .name {
 		color: var(--accent-hover);
 	}
 	.avatar {
-		width: 40px;
-		height: 40px;
+		width: 22px;
+		height: 22px;
 		border-radius: 50%;
 		object-fit: cover;
 		flex-shrink: 0;
@@ -358,135 +540,101 @@
 		justify-content: center;
 		background: var(--bg-secondary);
 		color: var(--text-secondary);
+		font-size: 0.7rem;
 		font-weight: 600;
-	}
-	.who-text {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
 	}
 	.name {
 		font-weight: 600;
 		text-transform: capitalize;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.score {
+		font-weight: 700;
+		font-size: 0.75rem;
+		flex-shrink: 0;
+	}
+	.topic {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-	.meta {
-		display: flex;
-		gap: 0.35rem;
-		font-size: 0.78rem;
 		color: var(--text-muted);
-	}
-	.score {
-		font-weight: 600;
-	}
-	.kind {
-		flex-shrink: 0;
-		font-size: 0.7rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--text-muted);
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		padding: 0.15rem 0.55rem;
-	}
-	.kind-c {
-		color: var(--red);
-		border-color: var(--error-border);
-	}
-	.topic {
-		display: inline-block;
-		margin-top: 0.65rem;
-		font-size: 0.78rem;
-		color: var(--text-secondary);
-		background: var(--bg-secondary);
-		border-radius: var(--radius-full);
-		padding: 0.15rem 0.6rem;
 		text-decoration: none;
+	}
+	.topic::before {
+		content: '·';
+		margin-right: 0.45rem;
 	}
 	.topic:hover {
 		color: var(--text-primary);
 	}
-	.pair {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-		margin-top: 0.75rem;
-	}
-	blockquote {
-		margin: 0;
-		padding: 0.6rem 0.8rem;
-		background: var(--bg-secondary);
-		border-radius: var(--radius-sm);
-		line-height: 1.5;
-		font-size: 0.92rem;
-	}
-	.when {
-		display: block;
-		font-size: 0.72rem;
+	time {
+		margin-left: auto;
+		flex-shrink: 0;
 		color: var(--text-muted);
-		margin-bottom: 0.15rem;
-	}
-	.then {
-		align-self: center;
-		font-size: 0.72rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--red);
-	}
-	.why {
-		margin: 0.6rem 0 0;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
-		line-height: 1.5;
-	}
-	.fact-text {
-		margin: 0.7rem 0 0;
-		line-height: 1.55;
-	}
-	.quote {
-		margin-top: 0.5rem;
-		font-style: italic;
-		color: var(--text-secondary);
-		font-size: 0.85rem;
-	}
-	.sources {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-		margin-top: 0.6rem;
-	}
-	.sources a {
 		font-size: 0.75rem;
-		color: var(--text-secondary);
-		border: 1px solid var(--border-card-hover);
-		border-radius: var(--radius-sm);
-		padding: 0.15rem 0.45rem;
+	}
+	.body {
+		display: block;
+		margin-top: 0.4rem;
+		color: var(--text-primary);
 		text-decoration: none;
 	}
-	.sources a:hover {
-		color: var(--accent-hover);
+	.line {
+		margin: 0;
+		font-size: 0.9rem;
+		line-height: 1.4;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
-	.actions {
+	.line-b {
+		margin-top: 0.3rem;
+		padding-top: 0.3rem;
+		border-top: 1px dashed var(--error-border);
+	}
+	.yr {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-muted);
+		margin-right: 0.4rem;
+	}
+	.yr:empty {
+		display: none;
+	}
+	.foot {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
-		margin-top: 0.75rem;
-		padding-top: 0.6rem;
-		border-top: 1px solid var(--border-card);
+		gap: 0.3rem;
+		margin-top: 0.3rem;
+		min-width: 0;
 	}
-	.open {
-		font-size: 0.82rem;
-		color: var(--accent-hover);
+	.src {
+		font-size: 0.7rem;
+		color: var(--text-muted);
 		text-decoration: none;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 11rem;
+	}
+	.src + .src::before {
+		content: '·';
+		margin-right: 0.3rem;
+	}
+	.src:hover {
+		color: var(--accent-hover);
 	}
 	.spacer {
 		flex: 1;
 	}
 	.state {
 		text-align: center;
-		margin: 1.5rem 0;
+		margin: 1.25rem 0;
 	}
 	.muted {
 		color: var(--text-secondary);
@@ -495,7 +643,7 @@
 		height: 1px;
 	}
 	.skeleton-card {
-		margin-bottom: 0.9rem;
+		margin-bottom: 0.5rem;
 	}
 	.sk {
 		background: var(--bg-secondary);
@@ -503,16 +651,12 @@
 		animation: pulse 1.4s ease-in-out infinite;
 	}
 	.sk-head {
-		height: 40px;
-		width: 50%;
-		margin-bottom: 0.75rem;
+		height: 0.9rem;
+		width: 45%;
+		margin-bottom: 0.5rem;
 	}
 	.sk-line {
-		height: 0.9rem;
-		margin-top: 0.5rem;
-	}
-	.sk-line.short {
-		width: 60%;
+		height: 2.2rem;
 	}
 	@keyframes pulse {
 		50% {
@@ -522,11 +666,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.sk {
 			animation: none;
-		}
-	}
-	@media (max-width: 560px) {
-		.card {
-			padding: 0.85rem 0.9rem;
 		}
 	}
 </style>

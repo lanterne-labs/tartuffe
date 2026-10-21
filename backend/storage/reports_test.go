@@ -163,7 +163,7 @@ func TestFeed(t *testing.T) {
 	var all []FeedItem
 	var after *FeedCursor
 	for {
-		page, err := storer.GetFeed(ctx, "", after, 2, 4)
+		page, err := storer.GetFeed(ctx, FeedFilter{}, after, 2, 4)
 		require.NoError(t, err)
 		all = append(all, page...)
 		if len(page) < 2 {
@@ -194,11 +194,28 @@ func TestFeed(t *testing.T) {
 	assert.Equal(t, []string{fmt.Sprintf("http://ex/%d", f.facts[0])}, c.Fact.SourceURLs)
 	assert.Equal(t, "60 ans puis 65 ans.", deref(c.Reason))
 
-	only, err := storer.GetFeed(ctx, FeedContradiction, nil, 10, 4)
+	only, err := storer.GetFeed(ctx, FeedFilter{Kind: FeedContradiction}, nil, 10, 4)
 	require.NoError(t, err)
 	assert.Len(t, only, 1)
 
-	hidden, err := storer.GetFeed(ctx, "", nil, 10, 5)
+	// One person, and the statements of a period: facts 2021-2022, the
+	// contradiction by its later fact (2021).
+	mine, err := storer.GetFeed(ctx, FeedFilter{PersonID: f.person}, nil, 10, 4)
+	require.NoError(t, err)
+	assert.Len(t, mine, 4)
+	nobody, err := storer.GetFeed(ctx, FeedFilter{PersonID: f.person + 1}, nil, 10, 4)
+	require.NoError(t, err)
+	assert.Empty(t, nobody)
+	from, to := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+	period, err := storer.GetFeed(ctx, FeedFilter{From: &from, To: &to}, nil, 10, 4)
+	require.NoError(t, err)
+	var keys []string
+	for _, it := range period {
+		keys = append(keys, fmt.Sprintf("%s:%d", it.Kind, it.ID))
+	}
+	assert.ElementsMatch(t, []string{fmt.Sprintf("fact:%d", f.facts[1]), fmt.Sprintf("fact:%d", f.facts[2]), fmt.Sprintf("contradiction:%d", f.contradiction)}, keys)
+
+	hidden, err := storer.GetFeed(ctx, FeedFilter{}, nil, 10, 5)
 	require.NoError(t, err)
 	assert.Empty(t, hidden, "a person under the floor is not in the feed")
 }
