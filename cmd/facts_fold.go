@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
 
 	"github.com/joho/godotenv"
@@ -94,26 +96,41 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 	if factsFoldAskAll {
 		opts.JudgedSince = time.Time{}
 	}
-	totalClusters, totalFolded := 0, 0
-	var lastDone int64
+	// The persons are folded as many at once as the endpoint serves
+	// (llm.ForEach): each person's clusters are independent of the others'.
+	// The persons start in order, so at the deadline every person before the
+	// first one skipped is done.
+	var (
+		mu                         sync.Mutex
+		totalClusters, totalFolded int
+		firstSkipped               = -1
+	)
+	index := make(map[int64]int, len(persons))
 	for i, p := range persons {
+		index[p.ID] = i
+	}
+	err = llm.ForEach(ctx, persons, func(ctx context.Context, p core.PersonRecord) error {
 		if !deadline.IsZero() && time.Now().After(deadline) {
-			log.Info().Int("done", i).Int("left", len(persons)-i).Int64("last_person_id", lastDone).
-				Msg("Fold: deadline reached; the rest stays pending (resume with --start-after)")
-			break
+			mu.Lock()
+			if i := index[p.ID]; firstSkipped < 0 || i < firstSkipped {
+				firstSkipped = i
+			}
+			mu.Unlock()
+			return nil
 		}
-		lastDone = p.ID
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Fold clustering failed; skipping person")
-			continue
+			return nil
 		}
 		for _, cluster := range clusters {
+			mu.Lock()
 			totalClusters++
 			fmt.Fprintf(os.Stderr, "\n%s — cluster of %d:\n", p.Name, len(cluster.Facts))
 			for _, f := range cluster.Facts {
 				fmt.Fprintf(os.Stderr, "  [%d] %s\n", f.ID, util.TruncateString(f.Text, 130))
 			}
+			mu.Unlock()
 			if !factsFoldApply {
 				continue
 			}
@@ -121,8 +138,22 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 				log.Error().Err(err).Str("person", p.Name).Msg("Failed to apply fold cluster")
 				continue
 			}
+			mu.Lock()
 			totalFolded++
+			mu.Unlock()
 		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if firstSkipped >= 0 {
+		var lastDone int64
+		if firstSkipped > 0 {
+			lastDone = persons[firstSkipped-1].ID
+		}
+		log.Info().Int("done", firstSkipped).Int("left", len(persons)-firstSkipped).Int64("last_person_id", lastDone).
+			Msg("Fold: deadline reached; the rest stays pending (resume with --start-after)")
 	}
 
 	if factsFoldApply && totalFolded > 0 {

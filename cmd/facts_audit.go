@@ -29,7 +29,6 @@ var (
 	factsAuditEndpoint string
 	factsAuditModel    string
 	factsAuditAPIKey   string
-	factsAuditParallel int
 )
 
 var factsAuditCmd = &cobra.Command{
@@ -82,7 +81,6 @@ func init() {
 	factsAuditCmd.Flags().StringVar(&factsAuditEndpoint, "endpoint", "", "Override OPEN_AI_API for this run (e.g. http://cachy:4000/v1)")
 	factsAuditCmd.Flags().StringVar(&factsAuditModel, "model", "", "Override OPEN_AI_CHAT_MODEL for this run")
 	factsAuditCmd.Flags().StringVar(&factsAuditAPIKey, "apikey", "", "Override OPEN_AI_KEY for this run (some local gateways use a fixed token)")
-	factsAuditCmd.Flags().IntVar(&factsAuditParallel, "parallel", 1, "Number of facts to audit concurrently (1 = sequential). Local LLM gateways like vLLM/llama-swap usually handle 16+ in parallel.")
 }
 
 // factAuditPerson is the JSON shape of one mentioned person in the audit row.
@@ -158,15 +156,9 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 
-	parallelism := factsAuditParallel
-	if parallelism < 1 {
-		parallelism = 1
-	}
-
 	startedAt := time.Now()
 	log.Info().
 		Int("total", len(rows)).
-		Int("parallel", parallelism).
 		Bool("random", factsAuditRandom).
 		Str("scope", factsAuditScopeDescription()).
 		Str("model", auditor.Model()).
@@ -195,7 +187,7 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		rowByID[row.ID] = row
 	}
 
-	tally, err := core.RunFactAudit(ctx, auditor, jobs, parallelism, func(o core.FactAuditOutcome) error {
+	tally, err := core.RunFactAudit(ctx, auditor, jobs, func(o core.FactAuditOutcome) error {
 		row := rowByID[o.FactID]
 		line := factAuditOutputLine{
 			FactID:         row.ID,

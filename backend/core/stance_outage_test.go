@@ -518,10 +518,11 @@ func TestProcessNewFact_LabelPassUnavailable(t *testing.T) {
 	}
 }
 
-// TestAnalyzeAcrossBatches_ParallelInBatchOrder: the batches of one analysis
-// run at the same time, and the result lists the contradictions in batch
-// order, whatever the order in which the batches finish.
-func TestAnalyzeAcrossBatches_ParallelInBatchOrder(t *testing.T) {
+// TestAnalyzeAcrossBatches_InBatchOrder: the result lists the contradictions
+// in batch order, whatever the order in which the batches finish. The batches
+// run as many at once as the endpoint serves (llm.ForEach): one at a time on
+// the local endpoint of this test.
+func TestAnalyzeAcrossBatches_InBatchOrder(t *testing.T) {
 	var mu sync.Mutex
 	inFlight, maxInFlight := 0, 0
 	sm, o := newOutageManager(t, newMockStanceStorer(), func(prompt string) any {
@@ -556,8 +557,8 @@ func TestAnalyzeAcrossBatches_ParallelInBatchOrder(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) || agg.PrimaryVerdict != "CONTRADICTION" {
 		t.Errorf("contradictions = %v (%s), want %v in batch order", got, agg.PrimaryVerdict, want)
 	}
-	if maxInFlight < 2 {
-		t.Errorf("at most %d batch at one time, want the batches in parallel", maxInFlight)
+	if maxInFlight != 1 {
+		t.Errorf("%d batches at one time, want 1 on the local endpoint", maxInFlight)
 	}
 	if n := o.count(analyzePrompt); n != 2*len(want) {
 		t.Errorf("analyze calls = %d, want 2 agreeing votes per batch", n)

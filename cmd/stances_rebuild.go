@@ -6,8 +6,8 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/llm"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
@@ -19,7 +19,6 @@ var (
 	stancesRebuildPersonsFile string
 	stancesRebuildDryRun      bool
 	stancesRebuildResume      bool
-	stancesRebuildParallel    int
 )
 
 var stancesRebuildCmd = &cobra.Command{
@@ -38,8 +37,8 @@ Examples:
   # Rebuild all stances
   ./dm stances rebuild
 
-  # Rebuild all stances with 8 persons in flight at once
-  ./dm stances rebuild --resume --parallel 8
+  # Resume a cut rebuild
+  ./dm stances rebuild --resume
 
   # Dry run
   ./dm stances rebuild --person "Marine Le Pen" --dry-run`,
@@ -53,7 +52,6 @@ func init() {
 	stancesRebuildCmd.Flags().StringVar(&stancesRebuildPersonsFile, "persons-file", "", "Path to a file with one person name per line (mutually exclusive with --person)")
 	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildDryRun, "dry-run", false, "Show what would be done without writing to database")
 	stancesRebuildCmd.Flags().BoolVar(&stancesRebuildResume, "resume", false, "Skip persons that already have at least one stance document (for resuming an interrupted rebuild)")
-	stancesRebuildCmd.Flags().IntVar(&stancesRebuildParallel, "parallel", 1, "Number of persons to rebuild concurrently (default 1, sequential). Each in-flight person consumes 1-2 chat-LLM slots.")
 }
 
 func runStancesRebuild(cmd *cobra.Command, args []string) error {
@@ -101,13 +99,8 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if stancesRebuildParallel < 1 {
-		stancesRebuildParallel = 1
-	}
-
 	log.Info().
 		Int("person_count", len(persons)).
-		Int("parallel", stancesRebuildParallel).
 		Bool("dry_run", stancesRebuildDryRun).
 		Msg("Starting stance rebuild")
 
@@ -142,22 +135,11 @@ func runStancesRebuild(cmd *cobra.Command, args []string) error {
 		atomic.AddInt64(&totalBundleFailed, st.BundleFailed)
 	}
 
-	jobs := make(chan core.PersonRecord)
-	var wg sync.WaitGroup
-	for i := 0; i < stancesRebuildParallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for p := range jobs {
-				processOne(p)
-			}
-		}()
-	}
-	for _, p := range persons {
-		jobs <- p
-	}
-	close(jobs)
-	wg.Wait()
+	// As many persons at once as the endpoint serves (llm.ForEach).
+	_ = llm.ForEach(ctx, persons, func(ctx context.Context, p core.PersonRecord) error {
+		processOne(p)
+		return nil
+	})
 
 	processed := int64(len(persons)) - skipped
 	rows := []resultRow{

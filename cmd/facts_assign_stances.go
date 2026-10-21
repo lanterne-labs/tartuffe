@@ -6,9 +6,9 @@ import (
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/embedding"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
@@ -18,7 +18,6 @@ import (
 var (
 	assignStancesPerson            string
 	assignStancesPersonsFile       string
-	assignStancesParallel          int
 	assignStancesLimit             int
 	assignStancesDryRun            bool
 	assignStancesSkipFinalRebundle bool
@@ -47,8 +46,8 @@ constrained on (fact_a_id, fact_b_id)). Re-running picks up exactly the
 still-orphan facts.
 
 Examples:
-  # Assign all orphan facts across the DB, 4 persons in flight
-  ./dm facts assign-stances --parallel 4
+  # Assign all orphan facts across the DB
+  ./dm facts assign-stances
 
   # Single person
   ./dm facts assign-stances --person "Marine Le Pen"
@@ -63,7 +62,6 @@ func init() {
 	factsCmd.AddCommand(factsAssignStancesCmd)
 	factsAssignStancesCmd.Flags().StringVar(&assignStancesPerson, "person", "", "Specific person name (mutually exclusive with --persons-file)")
 	factsAssignStancesCmd.Flags().StringVar(&assignStancesPersonsFile, "persons-file", "", "Path to a file with one person name per line")
-	factsAssignStancesCmd.Flags().IntVar(&assignStancesParallel, "parallel", 1, "Number of persons to process concurrently (default 1)")
 	factsAssignStancesCmd.Flags().IntVar(&assignStancesLimit, "limit", 0, "Max (person, fact) routings this run (0 = no cap); leftovers stay pending")
 	factsAssignStancesCmd.Flags().BoolVar(&assignStancesDryRun, "dry-run", false, "Show planned work without writing to the database")
 	factsAssignStancesCmd.Flags().BoolVar(&assignStancesSkipFinalRebundle, "skip-final-rebundle", false, "Skip the DB-wide rebundle pass at the end")
@@ -128,13 +126,8 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if assignStancesParallel < 1 {
-		assignStancesParallel = 1
-	}
-
 	log.Info().
 		Int("person_count", len(persons)).
-		Int("parallel", assignStancesParallel).
 		Bool("dry_run", assignStancesDryRun).
 		Bool("skip_final_rebundle", assignStancesSkipFinalRebundle).
 		Msg("Starting orphan-fact stance assignment")
@@ -169,22 +162,11 @@ func runFactsAssignStances(cmd *cobra.Command, args []string) error {
 		atomic.AddInt64(&stats.rebundleSolosLeft, ps.RebundleSolosLeft)
 	}
 
-	jobs := make(chan core.PersonRecord)
-	var wg sync.WaitGroup
-	for i := 0; i < assignStancesParallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for p := range jobs {
-				processOne(p)
-			}
-		}()
-	}
-	for _, p := range persons {
-		jobs <- p
-	}
-	close(jobs)
-	wg.Wait()
+	// As many persons at once as the endpoint serves (llm.ForEach).
+	_ = llm.ForEach(ctx, persons, func(ctx context.Context, p core.PersonRecord) error {
+		processOne(p)
+		return nil
+	})
 
 	rows := []resultRow{
 		{Label: "Persons processed", Value: stats.personsProcessed},

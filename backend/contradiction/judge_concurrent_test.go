@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-// TestJudgeConcurrently asks the verdicts of all pairs at once and returns
-// them in pair order.
+// TestJudgeConcurrently returns the verdicts in pair order. On the local
+// endpoint, which serves one call, the calls go one at a time (llm.ForEach;
+// its own test covers an endpoint that serves several).
 func TestJudgeConcurrently(t *testing.T) {
 	var inFlight, peak atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +62,7 @@ func TestJudgeConcurrently(t *testing.T) {
 			t.Errorf("pair %d: contradictory=%v, want %v", i, r.IsContradictory, want)
 		}
 	}
-	if peak.Load() < 2 {
-		t.Errorf("peak in-flight calls = %d, want the calls at once", peak.Load())
+	if peak.Load() != 1 {
+		t.Errorf("peak in-flight calls = %d, want 1 on the local endpoint", peak.Load())
 	}
 }

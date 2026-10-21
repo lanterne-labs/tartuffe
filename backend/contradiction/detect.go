@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -560,13 +559,18 @@ func dropCheckedPairs(person string, allPairs []pairInfo, checkedPairs map[strin
 }
 
 // judgeConcurrently asks the detector for the verdicts of pairs, batchSize
-// pairs per call, every call at once. The results are in pair order.
+// pairs per call, as many calls at once as the endpoint serves
+// (llm.ForEach). The results are in pair order.
 func judgeConcurrently(ctx context.Context, detector *OpenAIContradictionDetector, pairs []pairInfo, batchSize int) []BatchResult {
 	results := make([]BatchResult, len(pairs))
-	var wg sync.WaitGroup
+	var starts []int
 	for i := 0; i < len(pairs); i += batchSize {
-		end := min(i+batchSize, len(pairs))
-		batch := pairs[i:end]
+		starts = append(starts, i)
+	}
+	// The detector reports its failures in the results: no call returns an
+	// error, so every batch runs.
+	_ = llm.ForEach(ctx, starts, func(ctx context.Context, at int) error {
+		batch := pairs[at:min(at+batchSize, len(pairs))]
 		factPairs := make([]FactPair, len(batch))
 		for j, p := range batch {
 			factPairs[j] = FactPair{
@@ -580,13 +584,9 @@ func judgeConcurrently(ctx context.Context, detector *OpenAIContradictionDetecto
 				AlsoB:  p.alsoB,
 			}
 		}
-		wg.Add(1)
-		go func(at int) {
-			defer wg.Done()
-			copy(results[at:], detector.AreContradictoryBatch(ctx, factPairs))
-		}(i)
-	}
-	wg.Wait()
+		copy(results[at:], detector.AreContradictoryBatch(ctx, factPairs))
+		return nil
+	})
 	return results
 }
 

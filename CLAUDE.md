@@ -190,6 +190,7 @@ The Grafana dashboard **Quality** (`deploy/observability/grafana/dashboards/qual
 ## Conventions
 
 - **LLM output order: reasoning first, verdict last.** Every prompt that asks the model for a decision (same/different, keep/drop, yes/no, a label) must make the model write its reasoning BEFORE the decision field, and the decision must be the LAST field of the reply (JSON key order or line order). A model that writes the verdict first decides without reasoning and then justifies it. Parsers read fields by name, so the order costs nothing in code.
+- **How much LLM work runs at once is the endpoint's call.** Work made of LLM calls (facts, pairs, persons) goes through `llm.ForEach`: as many items at once as the active endpoint serves (`llm.Concurrency()`: 1 on the local GPU box, the seats' process count on claude-team). No `--parallel` flag, no constant, no hand-made goroutine pool for LLM work.
 - **Logging**: Use zerolog (`github.com/rs/zerolog/log`) with structured fields
   - **Never silence errors**: All errors must be logged, never swallowed silently
   - Use `log.Error()` for actual failures (red in console)
