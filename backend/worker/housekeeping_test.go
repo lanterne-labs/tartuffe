@@ -58,7 +58,7 @@ func TestHousekeepingDue(t *testing.T) {
 	due, _, err = h.maintenanceDue(ctx)
 	require.NoError(t, err)
 	assert.True(t, due, "facts were added")
-	h.dirty = false
+	h.dirty.Store(false)
 	clock = clock.Add(7 * time.Hour)
 	due, _, err = h.maintenanceDue(ctx)
 	require.NoError(t, err)

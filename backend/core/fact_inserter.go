@@ -193,7 +193,8 @@ func (fi *FactInserter) EnableDedupe(groups GroupStorer) {
 // mention rows) is deleted and the batch fails — there is no silent fallback.
 //
 // The facts of one subject are processed in order: two of them at once could
-// both open a stance on one subject, or miss each other as a same claim. The
+// both open a stance on one subject, or miss each other as a same claim; that
+// holds across the batches inserted at once in the process (subjectLocks). The
 // subjects run as many at once as the endpoint serves (llm.ForEach; on the
 // local profile one subject at a time, in the order of their first fact). A
 // scrutin is one ballot per voter, so its ballots run that many at once.
@@ -207,7 +208,9 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 		bySubject[f.SubjectEntity] = append(bySubject[f.SubjectEntity], i)
 	}
 	outcomes := make([]factOutcome, len(facts))
-	insertSubject := func(ctx context.Context, idxs []int) error {
+	insertSubject := func(ctx context.Context, subject string, idxs []int) error {
+		unlock := subjectLocks.Lock(subjectKey(subject))
+		defer unlock()
 		for _, i := range idxs {
 			out, err := fi.insertOne(ctx, i, len(facts), facts[i])
 			if err != nil {
@@ -219,7 +222,7 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 	}
 
 	err := llm.ForEach(ctx, order, func(ctx context.Context, subject string) error {
-		return insertSubject(ctx, bySubject[subject])
+		return insertSubject(ctx, subject, bySubject[subject])
 	})
 
 	result := &InsertResult{}
