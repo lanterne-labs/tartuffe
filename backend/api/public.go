@@ -10,10 +10,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"digital-mirror/backend/auth"
 	"digital-mirror/backend/storage"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // queryInt reads a positive integer query parameter, def when absent or
@@ -53,24 +55,42 @@ func decodeFeedCursor(s string) (*storage.FeedCursor, error) {
 	return &storage.FeedCursor{At: time.Unix(0, ns), Kind: parts[1], ID: id}, nil
 }
 
-// handleFeed lists the newest contradictions and facts, newest first
+// maxHotItems ends the hot feed: past it, the newest-first feed goes on.
+const maxHotItems = 200
+
+// handleFeed lists the contradictions and facts, newest first or in the hot
+// order (?sort=new|hot), with the likes of the signed-in viewer marked
 // (?kind=contradiction|fact, ?person=<id>, ?from=, ?to= the days of the
-// statements, ?after=<cursor>, ?limit=).
+// statements, ?after=<cursor>, ?limit=). The cursor of the hot order is the
+// offset of the next page.
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
 	if kind != "" && kind != storage.FeedFact && kind != storage.FeedContradiction {
 		writeError(w, http.StatusBadRequest, "kind is contradiction or fact")
 		return
 	}
+	sort := r.URL.Query().Get("sort")
+	if sort != "" && sort != "new" && sort != "hot" {
+		writeError(w, http.StatusBadRequest, "sort is new or hot")
+		return
+	}
+	f := storage.FeedFilter{Kind: kind, Hot: sort == "hot", ViewerID: s.viewerID(r)}
 	var after *storage.FeedCursor
 	if c := r.URL.Query().Get("after"); c != "" {
 		var err error
-		if after, err = decodeFeedCursor(c); err != nil {
+		if f.Hot {
+			f.Offset, err = strconv.Atoi(c)
+			if err != nil || f.Offset < 0 || f.Offset >= maxHotItems {
+				err = errors.New("bad cursor")
+			}
+		} else {
+			after, err = decodeFeedCursor(c)
+		}
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	f := storage.FeedFilter{Kind: kind}
 	if v := r.URL.Query().Get("person"); v != "" {
 		id, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || id <= 0 {
@@ -108,10 +128,67 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := feedPage{Items: items}
-	if len(items) == limit {
+	switch {
+	case len(items) < limit:
+	case f.Hot && f.Offset+limit < maxHotItems:
+		page.Next = strconv.Itoa(f.Offset + limit)
+	case !f.Hot:
 		page.Next = encodeFeedCursor(items[len(items)-1])
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// viewerID is the signed-in user of a public request, 0 when signed out or
+// when the session cannot be read (the page then shows no likes as theirs).
+func (s *Server) viewerID(r *http.Request) int64 {
+	token := bearerToken(r)
+	if token == "" {
+		return 0
+	}
+	user, err := s.storer.GetSessionUser(r.Context(), auth.HashToken(token))
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to read the viewer's session")
+		return 0
+	}
+	if user == nil {
+		return 0
+	}
+	if _, ok := s.providers.Get(user.Provider); !ok {
+		return 0
+	}
+	return user.ID
+}
+
+// likeState is the count of likes of a target, and whether the user gave one.
+type likeState struct {
+	Likes int  `json:"likes"`
+	Liked bool `json:"liked"`
+}
+
+// handleLike gives (PUT) or takes back (DELETE) the signed-in user's +1 on a
+// fact or a contradiction (/api/likes/{kind}/{id}).
+func (s *Server) handleLike(w http.ResponseWriter, r *http.Request) {
+	kind := chi.URLParam(r, "kind")
+	if kind != storage.FeedFact && kind != storage.FeedContradiction {
+		writeError(w, http.StatusBadRequest, "kind is contradiction or fact")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	on := r.Method == http.MethodPut
+	n, err := s.storer.SetLike(r.Context(), userFrom(r).ID, kind, id, on)
+	if errors.Is(err, storage.ErrLikeTarget) {
+		writeError(w, http.StatusNotFound, "no such item")
+		return
+	}
+	if err != nil {
+		httpInternalError(w, err, "failed to record like")
+		return
+	}
+	writeJSON(w, http.StatusOK, likeState{Likes: n, Liked: on})
 }
 
 // handleShare returns what a shared link points at, for its preview and to

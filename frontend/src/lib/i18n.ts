@@ -349,9 +349,17 @@ const dict: Record<string, { fr: string; en: string }> = {
 
 	// Feed
 	'feed.title': { fr: 'Le fil', en: 'The feed' },
+	'feed.sort.hot': { fr: 'À la une', en: 'Top' },
+	'feed.sort.new': { fr: 'Récent', en: 'Latest' },
+	'feed.hot_end': { fr: 'C’est tout pour la une.', en: 'That’s all for the top.' },
+	'feed.hot_empty': { fr: 'Rien de neuf ces deux dernières semaines.', en: 'Nothing new in the last two weeks.' },
+	'feed.see_new': { fr: 'Voir tout, du plus récent au plus ancien', en: 'See everything, latest first' },
+	'like.do': { fr: '+1 : à mettre en avant', en: '+1: worth seeing' },
+	'like.undo': { fr: 'Retirer mon +1', en: 'Take back my +1' },
 	'feed.all': { fr: 'Tout', en: 'All' },
 	'feed.contradictions': { fr: 'Contradictions', en: 'Contradictions' },
 	'feed.facts': { fr: 'Faits', en: 'Facts' },
+	'feed.tag.contradiction': { fr: 'Se contredit', en: 'Contradicts' },
 	'feed.person': { fr: 'Son fil', en: 'Their feed' },
 	'feed.empty': { fr: 'Rien pour l’instant.', en: 'Nothing yet.' },
 	'feed.end': { fr: 'Vous êtes arrivé au bout.', en: 'You reached the end.' },

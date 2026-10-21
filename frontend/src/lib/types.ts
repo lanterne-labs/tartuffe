@@ -274,6 +274,9 @@ export interface FeedItem {
 	other?: FeedFactSide | null;
 	reason?: string | null;
 	reason_en?: string | null;
+	// likes counts the +1 of the users; liked says the viewer gave one.
+	likes: number;
+	liked: boolean;
 }
 
 export interface FeedPage {

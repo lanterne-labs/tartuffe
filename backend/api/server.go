@@ -56,6 +56,7 @@ type Storer interface {
 
 	// The feed, the shared links and the score explanations.
 	GetFeed(ctx context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, minFacts int) ([]storage.FeedItem, error)
+	SetLike(ctx context.Context, userID int64, kind string, targetID int64, on bool) (int, error)
 	GetShareTarget(ctx context.Context, kind string, id, personID int64) (*storage.ShareTarget, error)
 	GetScoreExplanation(ctx context.Context, personID int64) (*storage.ScoreExplanation, error)
 	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)
@@ -95,7 +96,7 @@ func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  corsOriginFunc(),
-		AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
@@ -213,6 +214,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/corrections", s.handleCorrections)
 		r.Post("/reports", s.requireUser(s.handleCreateReport))
 		r.Get("/me/reports", s.requireUser(s.handleMyReports))
+		r.Put("/likes/{kind}/{id}", s.requireUser(s.handleLike))
+		r.Delete("/likes/{kind}/{id}", s.requireUser(s.handleLike))
 
 		r.Get("/auth/providers", s.handleAuthProviders)
 		// A sign-in proof costs a verification: a tighter limit, shared

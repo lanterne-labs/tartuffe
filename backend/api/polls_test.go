@@ -36,6 +36,8 @@ type memPolls struct {
 	lastFeedFilter storage.FeedFilter
 	share          map[string]*storage.ShareTarget
 	scores         map[int64]*storage.ScoreExplanation
+	// likes are the users who liked each target, as "kind:id".
+	likes map[string]map[int64]bool
 }
 
 func (m *memPolls) init() {
@@ -517,7 +519,7 @@ func TestChallengeFlow(t *testing.T) {
 // (DELETE) needs the CORS preflight to allow the method.
 func TestVotePreflight(t *testing.T) {
 	h := NewServer(pollFixture(), auth.NewRegistry(auth.Noop{})).Handler()
-	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(http.MethodOptions, "/api/polls/presidentielle-2027/votes/10", nil)
 		req.Header.Set("Origin", "http://localhost:3000")
 		req.Header.Set("Access-Control-Request-Method", method)

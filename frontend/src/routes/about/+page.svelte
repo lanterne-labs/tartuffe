@@ -38,7 +38,7 @@
 			metaDesc:
 				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule un score de cohérence. Méthode, limites et neutralité.',
 			kicker: 'À propos',
-			title: 'Ils disent. Ils votent. On compare.',
+			title: 'Ils disent. Ils agissent. On compare.',
 			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
 			heroPills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
 
@@ -110,7 +110,7 @@
 			metaDesc:
 				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes a consistency score. Method, limits and neutrality.',
 			kicker: 'About',
-			title: 'They say. They vote. We compare.',
+			title: 'They say. They act. We compare.',
 			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
 			heroPills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 

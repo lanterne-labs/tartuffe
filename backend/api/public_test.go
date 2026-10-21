@@ -63,6 +63,7 @@ func (m *memPolls) ListCorrections(context.Context, int64, int) ([]storage.Corre
 func (m *memPolls) GetFeed(_ context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, _ int) ([]storage.FeedItem, error) {
 	m.lastFeedFilter = f
 	out := []storage.FeedItem{}
+	skip := f.Offset
 	for _, it := range m.feed {
 		if f.Kind != "" && it.Kind != f.Kind {
 			continue
@@ -70,12 +71,37 @@ func (m *memPolls) GetFeed(_ context.Context, f storage.FeedFilter, after *stora
 		if after != nil && !it.At.Before(after.At) {
 			continue
 		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		users := m.likes[fmt.Sprintf("%s:%d", it.Kind, it.ID)]
+		it.Likes, it.Liked = len(users), users[f.ViewerID]
 		out = append(out, it)
 		if len(out) == limit {
 			break
 		}
 	}
 	return out, nil
+}
+
+func (m *memPolls) SetLike(_ context.Context, userID int64, kind string, targetID int64, on bool) (int, error) {
+	key := fmt.Sprintf("%s:%d", kind, targetID)
+	if !m.targets[key] {
+		return 0, storage.ErrLikeTarget
+	}
+	if m.likes == nil {
+		m.likes = map[string]map[int64]bool{}
+	}
+	if m.likes[key] == nil {
+		m.likes[key] = map[int64]bool{}
+	}
+	if on {
+		m.likes[key][userID] = true
+	} else {
+		delete(m.likes[key], userID)
+	}
+	return len(m.likes[key]), nil
 }
 
 func (m *memPolls) GetShareTarget(_ context.Context, kind string, id, _ int64) (*storage.ShareTarget, error) {
@@ -212,6 +238,77 @@ func TestFeedPages(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?after=nope", "", nil).Code)
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?kind=stance", "", nil).Code)
+}
+
+// TestFeedHot: the hot order pages by offset and stops at maxHotItems.
+func TestFeedHot(t *testing.T) {
+	fs := pollFixture()
+	for i := range 5 {
+		fs.feed = append(fs.feed, storage.FeedItem{Kind: storage.FeedFact, ID: int64(i + 1), At: time.Now().Add(-time.Duration(i) * time.Minute)})
+	}
+	h := NewServer(fs, nil).Handler()
+
+	var page feedPage
+	rec := do(t, h, http.MethodGet, "/api/feed?sort=hot&limit=2", "", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	assert.True(t, fs.lastFeedFilter.Hot)
+	assert.Equal(t, "2", page.Next)
+	rec = do(t, h, http.MethodGet, "/api/feed?sort=hot&limit=2&after=2", "", nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	assert.Equal(t, 2, fs.lastFeedFilter.Offset)
+	assert.Equal(t, []int64{3, 4}, []int64{page.Items[0].ID, page.Items[1].ID})
+	assert.Equal(t, "4", page.Next)
+
+	for _, bad := range []string{"sort=top", "sort=hot&after=-1", "sort=hot&after=x", fmt.Sprintf("sort=hot&after=%d", maxHotItems)} {
+		assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodGet, "/api/feed?"+bad, "", nil).Code, bad)
+	}
+	rec = do(t, h, http.MethodGet, fmt.Sprintf("/api/feed?sort=hot&limit=2&after=%d", maxHotItems-2), "", nil)
+	page = feedPage{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &page))
+	assert.Empty(t, page.Next, "the hot feed ends at maxHotItems")
+}
+
+// TestLikes: only a signed-in user gives a +1, once; the feed marks the
+// viewer's.
+func TestLikes(t *testing.T) {
+	fs := pollFixture()
+	fs.targets = map[string]bool{"fact:9": true}
+	fs.feed = []storage.FeedItem{{Kind: storage.FeedFact, ID: 9, At: time.Now()}}
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
+
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPut, "/api/likes/fact/9", "", nil).Code)
+	alice, bob := signIn(t, h, "alice"), signIn(t, h, "bob")
+	var st likeState
+	for range 2 {
+		rec := do(t, h, http.MethodPut, "/api/likes/fact/9", alice, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+		assert.Equal(t, likeState{Likes: 1, Liked: true}, st, "a second +1 counts once")
+	}
+	rec := do(t, h, http.MethodPut, "/api/likes/fact/9", bob, nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	assert.Equal(t, 2, st.Likes)
+
+	feedOf := func(token string) storage.FeedItem {
+		var page feedPage
+		require.NoError(t, json.Unmarshal(do(t, h, http.MethodGet, "/api/feed", token, nil).Body.Bytes(), &page))
+		require.Len(t, page.Items, 1)
+		return page.Items[0]
+	}
+	assert.True(t, feedOf(alice).Liked)
+	assert.False(t, feedOf("").Liked)
+	assert.False(t, feedOf("not-a-session").Liked, "a bad session reads as signed out")
+	assert.Equal(t, 2, feedOf("").Likes)
+
+	rec = do(t, h, http.MethodDelete, "/api/likes/fact/9", alice, nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &st))
+	assert.Equal(t, likeState{Likes: 1, Liked: false}, st)
+	assert.False(t, feedOf(alice).Liked)
+
+	assert.Equal(t, http.StatusNotFound, do(t, h, http.MethodPut, "/api/likes/fact/10", alice, nil).Code)
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPut, "/api/likes/stance/9", alice, nil).Code)
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPut, "/api/likes/fact/x", alice, nil).Code)
 }
 
 func TestFeedCursorRoundTrip(t *testing.T) {
