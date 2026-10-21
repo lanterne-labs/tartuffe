@@ -3,6 +3,7 @@
 	// what happens, what the site receives, what it never sees, and the limits.
 	import { lang } from '$lib/i18n';
 	import { signInOpen } from '$lib/auth';
+	import ZKProofAnimation from '$lib/components/ZKProofAnimation.svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -122,6 +123,7 @@
 		<span class="kicker">ZKPassport</span>
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
+		<div class="anim"><ZKProofAnimation lang={currentLang} /></div>
 		<button class="cta" onclick={() => signInOpen.set(true)}>{c.cta}</button>
 	</header>
 
@@ -211,6 +213,10 @@
 		color: var(--text-secondary);
 		line-height: 1.55;
 		margin: 0 0 1.25rem;
+	}
+	.anim {
+		max-width: 460px;
+		margin: 0 auto 1.25rem;
 	}
 	.cta {
 		padding: 0.75rem 1.5rem;

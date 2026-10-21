@@ -183,7 +183,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	// ZKPassport sign-in
 	'zk.title': { fr: 'Passeport ou carte d’identité', en: 'Passport or ID card' },
 	'zk.badge': { fr: '1 personne = 1 voix', en: '1 person = 1 vote' },
-	'zk.lead': { fr: 'Prouvez que vous êtes un électeur français majeur sans révéler qui vous êtes : votre téléphone lit la puce de votre document et n’envoie qu’une preuve mathématique.', en: 'Prove you are an adult French voter without revealing who you are: your phone reads your document’s chip and sends only a mathematical proof.' },
 	'zk.step1': { fr: 'Installez l’app ZKPassport (iOS ou Android).', en: 'Install the ZKPassport app (iOS or Android).' },
 	'zk.step2': { fr: 'Scannez le QR code, puis posez votre passeport ou carte d’identité à puce contre le téléphone.', en: 'Scan the QR code, then hold your chip passport or ID card against the phone.' },
 	'zk.step3': { fr: 'Acceptez : la preuve est calculée sur le téléphone et vérifiée par nos serveurs.', en: 'Accept: the proof is computed on the phone and checked by our servers.' },
@@ -203,6 +202,18 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'zk.error': { fr: 'La vérification a échoué.', en: 'Verification failed.' },
 	'zk.retry': { fr: 'Recommencer', en: 'Start again' },
 	'zk.purpose': { fr: 'Prouver que vous êtes un électeur français majeur pour voter au pré-sondage de tartuffe.me, sans révéler votre identité.', en: 'Prove you are an adult French voter to vote in the tartuffe.me pre-poll, without revealing your identity.' },
+	'zk.anim.alt': { fr: 'Animation : votre téléphone lit votre document, n’en garde que « Français » et « 18 ans et + », les scelle dans une preuve et envoie seulement la preuve à nos serveurs.', en: 'Animation: your phone reads your document, keeps only “French” and “18+”, seals them in a proof and sends only the proof to our servers.' },
+	'zk.anim.doc': { fr: 'Votre document', en: 'Your document' },
+	'zk.anim.stays': { fr: 'reste sur le téléphone', en: 'stays on the phone' },
+	'zk.anim.french': { fr: 'Français', en: 'French' },
+	'zk.anim.adult': { fr: '18 ans et +', en: '18+' },
+	'zk.anim.proof': { fr: 'Preuve', en: 'Proof' },
+	'zk.anim.sealed': { fr: 'Preuve scellée', en: 'Sealed proof' },
+	'zk.anim.server': { fr: 'Nos serveurs', en: 'Our servers' },
+	'zk.anim.never': { fr: 'Nous ne lisons jamais votre passeport.', en: 'We never read your passport.' },
+	'zk.anim.only': { fr: 'Nous recevons seulement :', en: 'All we receive:' },
+	'zk.anim.and': { fr: 'et', en: 'and' },
+	'zk.anim.note': { fr: 'Plus un identifiant anonyme propre à ce site, pour qu’un document ne vote qu’une fois. Nom, photo, date de naissance et numéro ne quittent jamais votre téléphone.', en: 'Plus an anonymous identifier unique to this site, so one document votes once. Name, photo, birth date and number never leave your phone.' },
 	'zk.dev_mode': { fr: 'Mode test : les documents fictifs de l’app sont acceptés.', en: 'Test mode: the app’s mock documents are accepted.' },
 
 	// Sign-in

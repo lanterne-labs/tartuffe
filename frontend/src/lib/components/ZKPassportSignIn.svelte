@@ -7,6 +7,7 @@
 	import { authFetch, errorText, signIn } from '$lib/auth';
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
+	import ZKProofAnimation from './ZKProofAnimation.svelte';
 
 	interface Props {
 		config: Record<string, unknown>;
@@ -98,9 +99,8 @@
 		<h3>{tr('zk.title', lang)}</h3>
 		<span class="badge">{tr('zk.badge', lang)}</span>
 	</div>
-	<p class="muted">{tr('zk.lead', lang)}</p>
-
 	{#if step === 'idle'}
+		<ZKProofAnimation {lang} />
 		<ol class="steps">
 			<li>{tr('zk.step1', lang)}</li>
 			<li>{tr('zk.step2', lang)}</li>
