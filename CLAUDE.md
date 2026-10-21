@@ -34,7 +34,7 @@ go build -o dm .                                # Build binary
 
 ### Collection tasks and the worker
 ```bash
-# Ask the plugins that read by period (news, twitter) for the facts of a person over a period.
+# Ask the plugins that read by period (news, twitter, viepublique) for the facts of a person over a period.
 # The worker runs the tasks as soon as it is free. A period a plugin has fetched is never fetched again.
 ./dm collect add "Marine Le Pen" --from 2024-01-01 --to 2024-07-01   # --to defaults to today
 ./dm collect list --status pending
@@ -101,6 +101,8 @@ go test -v ./backend/storage -run TestSpecificName
 - **`backend/storage/postgres.go`**: Core data layer - facts, persons, contradictions, affiliations, event logging. All DB operations go through here.
 
 - **`backend/plugins/frpolitics/`**: French politics plugin - downloads vote data from Assemblée Nationale APIs, creates deputies/parties, generates facts from voting records. Entry point is `run.go`. A ballot on an article of a bill carries what the article does (`articles.go`): the text of the séance comes from the amendments voted in it, the article from the PDF of the text (`pdftotext`, poppler-utils in the image), the statement from the LLM, cached in `vote_articles`. `dm plugin frpolitics --mode rearticle [--rejudge]` rewrites the ballots stored before. A local votes run needs `pdftotext` on the PATH (poppler).
+
+- **`backend/plugins/viepublique/`**: the speeches, interviews, press conferences and communiqués of the executive on vie-publique.fr (DILA open data, Etalab licence v2: the facts carry the attribution). The daily index (`vp_discours.json`, about 240 MB, cached 12 h in `VIEPUBLIQUE_CACHE_DIR`, else the temp dir) names the speakers and dates; the page holds the text. A task over a period takes the speeches of the person given or put online in it (most go online days later), never those where the person is listed as a journalist. Only the person's own turns are extracted, each after the question it answers. One document per speech and person; a window is logged (`viepublique_fetch_log`) once all its pages are stored, so a site outage leaves it open.
 
 - **`backend/contradiction/`**: LLM-based contradiction detection. Uses semantic similarity (pgvector) to find candidate facts, then LLM to judge contradiction.
 
