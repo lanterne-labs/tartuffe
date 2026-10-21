@@ -1,0 +1,285 @@
+{
+  "uid": "operations",
+  "title": "Digital Mirror - Operations",
+  "tags": [
+    "digital-mirror",
+    "operations"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-3d",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Operations",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH latest AS ( SELECT DISTINCT ON (target) target, created_at FROM job_metrics WHERE job_type = 'progress' ORDER BY target, created_at DESC ), now_ AS ( SELECT l.target AS operation, l.created_at AS updated, MAX(m.value) FILTER (WHERE m.metric = 'done') AS done, MAX(m.value) FILTER (WHERE m.metric = 'total') AS total FROM latest l JOIN job_metrics m ON m.job_type = 'progress' AND m.target = l.target AND m.created_at = l.created_at GROUP BY 1, 2 ), before AS ( SELECT DISTINCT ON (target) target AS operation, value AS done, created_at AS at FROM job_metrics WHERE job_type = 'progress' AND metric = 'done' AND created_at <= now() - interval '3 hours' ORDER BY target, created_at DESC ), progress AS ( SELECT n.operation, 'persons' AS unit, n.done, n.total, n.updated, (n.done - b.done) / NULLIF(EXTRACT(EPOCH FROM n.updated - b.at) / 3600, 0) AS per_hour FROM now_ n LEFT JOIN before b ON b.operation = n.operation ), collect AS ( SELECT 'collect: ' || operation AS operation, 'tasks' AS unit, COUNT(*) FILTER (WHERE status IN ('done', 'failed', 'cancelled'))::float8 AS done, COUNT(*)::float8 AS total, MAX(COALESCE(finished_at, started_at, created_at)) AS updated, COUNT(*) FILTER (WHERE finished_at > now() - interval '3 hours') / 3.0 AS per_hour FROM collection_tasks WHERE operation IS NOT NULL GROUP BY operation ) SELECT operation, unit, done, total, 100.0 * done / NULLIF(total, 0) AS progress, per_hour, CASE WHEN done >= total THEN 'done' WHEN per_hour > 0 THEN to_char(now() + (total - done) / per_hour * interval '1 hour', 'YYYY-MM-DD HH24:MI') ELSE '?' END AS eta, updated FROM (SELECT * FROM progress UNION ALL SELECT * FROM collect) o ORDER BY (done >= total), updated DESC",
+          "refId": "A"
+        }
+      ],
+      "description": "Each long operation: how far it is, its speed over the last 3 hours, and when it should end at that speed. The fold and the detection over every person count persons; a collection operation (dm collect add --operation) counts its tasks.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "progress"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "per_hour"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "displayName",
+                "value": "per hour"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eta"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "end (at this speed)"
+              }
+            ]
+          }
+        ]
+      },
+      "id": 1
+    },
+    {
+      "type": "timeseries",
+      "title": "Progress over time",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT d.created_at AS time, d.target AS metric, 100.0 * d.value / NULLIF(t.value, 0) AS value FROM job_metrics d JOIN job_metrics t ON t.job_type = d.job_type AND t.target = d.target AND t.created_at = d.created_at AND t.metric = 'total' WHERE d.job_type = 'progress' AND d.metric = 'done' AND $__timeFilter(d.created_at) UNION ALL SELECT finished_at AS time, 'collect: ' || operation AS metric, 100.0 * ROW_NUMBER() OVER (PARTITION BY operation ORDER BY finished_at) / (SELECT COUNT(*) FROM collection_tasks c WHERE c.operation = t.operation) AS value FROM collection_tasks t WHERE operation IS NOT NULL AND finished_at IS NOT NULL AND $__timeFilter(finished_at) ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Pairs judged per hour (detection)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', checked_at) AS time, COUNT(*) AS pairs FROM fact_pair_checks WHERE $__timeFilter(checked_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Every pair the detector judged, whatever the verdict.",
+      "id": 3
+    },
+    {
+      "type": "timeseries",
+      "title": "Contradictions found per hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, COUNT(*) AS contradictions FROM contradictions WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Their precision is on the Quality dashboard.",
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Claim groups formed per hour (fold and insertion)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, COUNT(*) AS grouped FROM fact_relations WHERE relation_type = 'duplicate' AND $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Facts joined to a claim group: one statement reported by several sources.",
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Facts stored per hour (collection)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', created_at) AS time, COUNT(*) AS facts FROM facts WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "table",
+      "title": "Failed tasks of the collection operations",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT t.operation, p.name AS person, t.plugin, t.since, t.until, t.attempts, t.finished_at, t.last_error FROM collection_tasks t JOIN persons p ON p.id = t.person_id WHERE t.operation IS NOT NULL AND t.status = 'failed' ORDER BY t.finished_at DESC LIMIT 100",
+          "refId": "A"
+        }
+      ],
+      "id": 7
+    }
+  ]
+}

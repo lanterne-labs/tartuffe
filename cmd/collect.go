@@ -60,6 +60,7 @@ func init() {
 	collectAddCmd.Flags().String("to", "", "day after the last day of the period, YYYY-MM-DD (default: today)")
 	collectAddCmd.Flags().StringSlice("plugins", nil, "plugins to ask (default: every plugin that reads by period)")
 	collectAddCmd.Flags().Int("priority", 0, "tasks of a higher priority run first")
+	collectAddCmd.Flags().String("operation", "", "name of the batch the tasks belong to, followed as one whole in Grafana (Operations), e.g. \"backfill 2y\"")
 	_ = collectAddCmd.MarkFlagRequired("from")
 	collectListCmd.Flags().String("status", "", "only this status (pending, running, done, failed, cancelled)")
 	collectListCmd.Flags().Int("limit", 50, "maximum number of tasks")
@@ -72,6 +73,7 @@ func runCollectAdd(cmd *cobra.Command, args []string) error {
 	toStr, _ := cmd.Flags().GetString("to")
 	names, _ := cmd.Flags().GetStringSlice("plugins")
 	priority, _ := cmd.Flags().GetInt("priority")
+	operation, _ := cmd.Flags().GetString("operation")
 
 	since, err := time.Parse("2006-01-02", fromStr)
 	if err != nil {
@@ -111,7 +113,7 @@ func runCollectAdd(cmd *cobra.Command, args []string) error {
 
 	tasks := make([]storage.NewCollectionTask, 0, len(names))
 	for _, n := range names {
-		tasks = append(tasks, storage.NewCollectionTask{PersonID: person.ID, Plugin: n, Since: since, Until: until, Priority: priority, RequestedBy: requester()})
+		tasks = append(tasks, storage.NewCollectionTask{PersonID: person.ID, Plugin: n, Since: since, Until: until, Priority: priority, RequestedBy: requester(), Operation: strings.TrimSpace(operation)})
 	}
 	added, err := storer.AddCollectionTasks(ctx, tasks)
 	if err != nil {

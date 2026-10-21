@@ -183,6 +183,11 @@ The Grafana dashboard **Quality** (`deploy/observability/grafana/dashboards/qual
 - the quality gauges: stances, one-fact stances, claim groups, contradictions per score bundle. They are rows of `job_metrics` under the job `quality`, recorded at the end of each maintenance pass, or now with `dm quality record`;
 - the verdicts of the periodic LLM audit.
 
+### Operations tracking
+The Grafana dashboard **Operations** (`operations.json`) shows where each long operation stands: how far it is, its speed over the last 3 hours, when it should end at that speed, and what it produces (pairs judged, contradictions, claim groups, facts).
+- The fold (`dm facts fold --apply` over everyone) and the detection over every person record their progress in persons, as `job_metrics` rows under the job `progress` (`storage.RecordProgress`). A new long operation without a table of its own records its progress the same way.
+- A collection batch is named at its creation: `dm collect add "Name" --from 2024-10-01 --operation "backfill 2y"`. Its progress is its tasks (`collection_tasks.operation`).
+
 ## Development Status
 
 **Nothing is in production yet.** Don't worry about backward compatibility - if something breaks, fix it. This is pre-production development.

@@ -27,6 +27,9 @@ var (
 	factsFoldAskAll     bool
 )
 
+// foldOperation names the fold in the progress records.
+const foldOperation = "fold"
+
 var factsFoldCmd = &cobra.Command{
 	Use:   "fold",
 	Short: "Group the facts that report one occurrence under their most concrete wording.",
@@ -83,6 +86,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid --until (expected RFC 3339, e.g. 2026-09-22T00:45:00Z): %w", err)
 		}
 	}
+	total := len(persons)
 	if factsFoldStartAfter != 0 {
 		for i, p := range persons {
 			if p.ID == factsFoldStartAfter {
@@ -104,7 +108,19 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		mu                         sync.Mutex
 		totalClusters, totalFolded int
 		firstSkipped               = -1
+		// The persons before --start-after were done by the run it resumes.
+		personsDone = total - len(persons)
 	)
+	// progress records how far the whole fold is (Grafana, Operations); a
+	// dry run is not the operation.
+	progress := func(ctx context.Context) {
+		if !factsFoldApply || factsFoldPerson != "" {
+			return
+		}
+		if err := storer.RecordProgress(ctx, foldOperation, personsDone, total); err != nil {
+			log.Warn().Err(err).Msg("Fold: recording the progress failed")
+		}
+	}
 	index := make(map[int64]int, len(persons))
 	for i, p := range persons {
 		index[p.ID] = i
@@ -118,6 +134,12 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			mu.Unlock()
 			return nil
 		}
+		defer func() {
+			mu.Lock()
+			personsDone++
+			progress(ctx)
+			mu.Unlock()
+		}()
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Fold clustering failed; skipping person")
