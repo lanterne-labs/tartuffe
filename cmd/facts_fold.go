@@ -22,6 +22,7 @@ var (
 	factsFoldMaxCluster int
 	factsFoldUntil      string
 	factsFoldStartAfter int64
+	factsFoldAskAll     bool
 )
 
 var factsFoldCmd = &cobra.Command{
@@ -33,6 +34,9 @@ same evidence rule and LLM gate as insertion), makes each cluster one claim
 group whose parent is its most concrete wording (the others are kept as
 members), moves their contradictions onto the parent (collapsing duplicate
 rows), and recomputes scores. Insertion-time grouping handles new facts.
+
+A pair of two facts inserted under the current grouping rule (since
+2026-10-12) keeps its insert-time verdict; --ask-all asks the gate about it too.
 
 READ-ONLY by default: prints the clusters it would fold. Pass --apply to write.`,
 	Annotations: map[string]string{"needs_db": "true"},
@@ -46,6 +50,7 @@ func init() {
 	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", core.DefaultFoldOptions.Floor, "Cosine-similarity floor for grouping candidates")
 	factsFoldCmd.Flags().IntVar(&factsFoldMaxCluster, "max-cluster", core.DefaultFoldOptions.MaxCluster, "Skip clusters larger than this (defense against runaway chaining)")
 	factsFoldCmd.Flags().StringVar(&factsFoldUntil, "until", "", "Stop starting persons after this RFC 3339 time (a long backfill must not overlap the nightly)")
+	factsFoldCmd.Flags().BoolVar(&factsFoldAskAll, "ask-all", false, "Also ask the gate about pairs of facts inserted under the current grouping rule (by default their insert-time verdict stands)")
 	factsFoldCmd.Flags().Int64Var(&factsFoldStartAfter, "start-after", 0, "Skip persons up to and including this person id (resume a cut run)")
 }
 
@@ -85,7 +90,10 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster}
+	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster, JudgedSince: core.DefaultFoldOptions.JudgedSince}
+	if factsFoldAskAll {
+		opts.JudgedSince = time.Time{}
+	}
 	totalClusters, totalFolded := 0, 0
 	var lastDone int64
 	for i, p := range persons {

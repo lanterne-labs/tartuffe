@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 )
 
 // foldClusterStorer is a FactFoldStorer over in-memory facts: no shared
@@ -121,5 +122,30 @@ func TestApplyFoldClusterContainedParent(t *testing.T) {
 	}
 	if len(gs.merges) != 1 || gs.merges[0] != [2]int64{1, 2} {
 		t.Fatalf("merges=%v, want fact 1 under the fuller fact 2", gs.merges)
+	}
+}
+
+// A pair of two facts inserted under the current rule keeps its insert-time
+// verdict: the gate is asked only about pairs with an older fact.
+func TestFoldClustersSkipsPairsJudgedAtInsert(t *testing.T) {
+	since := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
+	old, recent := since.Add(-time.Hour), since.Add(time.Hour)
+	store := &foldClusterStorer{facts: []FactForFold{
+		{ID: 1, Text: "A", Embedding: []float32{1, 0, 0}, CreatedAt: old},
+		{ID: 2, Text: "B", Embedding: []float32{1, 0, 0}, CreatedAt: recent},
+		{ID: 3, Text: "C", Embedding: []float32{1, 0, 0}, CreatedAt: recent},
+	}}
+	judge := &sameAlwaysJudge{}
+	opts := FoldOptions{Floor: 0.70, MaxCluster: 12, JudgedSince: since}
+	if _, err := FoldClustersForPerson(context.Background(), store, judge, PersonRecord{ID: 1, Name: "p"}, opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range judge.asked {
+		if a == [2]string{"B", "C"} || a == [2]string{"C", "B"} {
+			t.Fatalf("the gate was asked about B-C, two facts judged at insertion: %v", judge.asked)
+		}
+	}
+	if len(judge.asked) != 2 {
+		t.Fatalf("asked %v, want A-B and A-C", judge.asked)
 	}
 }

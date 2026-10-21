@@ -402,6 +402,10 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	if err := storer.RecordJobMetrics(ctx, rows); err != nil {
 		errs = append(errs, fmt.Errorf("recording the pass: %w", err))
 	}
+	// The quality gauges after each pass make their history (Grafana, Quality).
+	if _, err := storer.RecordQualityMetrics(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	log.Info().Dur("elapsed", elapsed.Round(time.Second)).Int("persons_detected", len(persons)).Int("persons_regrouped", len(ids)).
 		Bool("detection_cut", cut).Int("errors", len(errs)).Msg("Maintenance pass done")
 	llm.LogUsage()

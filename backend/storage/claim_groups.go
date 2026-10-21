@@ -137,6 +137,11 @@ func (s *PostgresStorer) MergeFactIntoGroup(ctx context.Context, from, into int6
 	if _, err := tx.Exec(ctx, `DELETE FROM fact_pair_checks WHERE fact_a_id = $1 OR fact_b_id = $1`, into); err != nil {
 		return fmt.Errorf("re-opening the pair verdicts of %d: %w", into, err)
 	}
+	// The re-opened pairs are judged by the next maintenance pass, which
+	// takes the persons with a fact created or updated since the last one.
+	if _, err := tx.Exec(ctx, `UPDATE facts SET updated_at = NOW() WHERE id = $1`, into); err != nil {
+		return fmt.Errorf("marking %d for re-detection: %w", into, err)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE contradictions SET base_fact_id = $2 WHERE base_fact_id = $1`, from, into); err != nil {
 		return fmt.Errorf("moving contradiction group bases off %d: %w", from, err)
 	}
@@ -254,8 +259,12 @@ func (s *PostgresStorer) UngroupFact(ctx context.Context, parentID, factID int64
 // ClaimGroupParent returns the parent of factID's claim group, or factID
 // itself when it is not a member of one (groups are flat).
 func (s *PostgresStorer) ClaimGroupParent(ctx context.Context, factID int64) (int64, error) {
+	return claimGroupParent(ctx, s.pool, factID)
+}
+
+func claimGroupParent(ctx context.Context, q rowQueryer, factID int64) (int64, error) {
 	var parent int64
-	err := s.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT COALESCE((SELECT general_fact_id FROM fact_relations
 		                 WHERE specific_fact_id = $1 AND relation_type = 'duplicate' LIMIT 1), $1)`,
 		factID).Scan(&parent)

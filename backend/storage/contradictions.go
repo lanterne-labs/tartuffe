@@ -161,6 +161,23 @@ func (s *PostgresStorer) RecordContradictionImmediate(ctx context.Context, perso
 func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, personID int64, factAID int64, factBID int64, reason string, reasonEn string) (int64, bool, *int64, error) {
 	timer := metrics.NewQueryTimer("record_contradiction")
 
+	// A contradiction points at the parents of the claim groups: a member
+	// stands for its parent, so two members of one group, or a member and
+	// its parent's other wordings, give one row. A path that judged a member
+	// (the stance path reads a stance's key facts) lands on the parent.
+	var err error
+	if factAID, err = claimGroupParent(ctx, tx, factAID); err != nil {
+		return 0, false, nil, err
+	}
+	if factBID, err = claimGroupParent(ctx, tx, factBID); err != nil {
+		return 0, false, nil, err
+	}
+	if factAID == factBID {
+		log.Info().Int64("person_id", personID).Int64("fact_id", factAID).
+			Msg("Skipped contradiction: both facts are in one claim group")
+		return 0, false, nil, nil
+	}
+
 	// Ensure consistent ordering of fact IDs to prevent duplicates like (1,2) and (2,1)
 	if factAID > factBID {
 		factAID, factBID = factBID, factAID
@@ -214,7 +231,7 @@ func (s *PostgresStorer) RecordContradiction(ctx context.Context, tx pgx.Tx, per
 	var contradictionID int64
 	var wasInserted bool
 	var bundleStanceID *int64
-	err := tx.QueryRow(ctx, query, personID, factAID, factBID, reason, reasonEn).Scan(&contradictionID, &wasInserted, &bundleStanceID)
+	err = tx.QueryRow(ctx, query, personID, factAID, factBID, reason, reasonEn).Scan(&contradictionID, &wasInserted, &bundleStanceID)
 	timer.ObserveDuration(err)
 
 	if err == pgx.ErrNoRows {
@@ -403,7 +420,12 @@ func (s *PostgresStorer) ListContradictions(ctx context.Context, personID *int64
 		args = append(args, limit)
 		orderClause += fmt.Sprintf(" LIMIT $%d", len(args))
 	}
+	return s.listContradictions(ctx, whereClause, orderClause, args)
+}
 
+// listContradictions runs the ListContradictions query with the given WHERE
+// and ORDER BY clauses (c is contradictions, p persons).
+func (s *PostgresStorer) listContradictions(ctx context.Context, whereClause, orderClause string, args []any) ([]ContradictionAuditRow, error) {
 	query := fmt.Sprintf(`
 		SELECT c.id, c.person_id, p.name AS person_name,
 		       c.fact_a_id, c.fact_b_id,

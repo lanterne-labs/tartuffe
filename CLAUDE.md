@@ -193,6 +193,12 @@ Services on the host:
 
 To collect facts, add tasks with `./dm collect add`; the worker runs them.
 
+### Quality tracking
+The Grafana dashboard **Quality** (`deploy/observability/grafana/dashboards/quality.json`, from the application DB) draws:
+- the precision of the detection, from the verdicts in `contradiction_reviews`. To review, run `dm contradictions review sample --reviewer <name> --max 30 > todo.jsonl`, add `"verdict"` (real, debatable, false) and an optional `"note"` to each line, then run `dm contradictions review record --reviewer <name> < todo.jsonl`. A review keeps the facts as they were reviewed: it survives a reset or an audit, and it counts in the week the contradiction was detected;
+- the quality gauges: stances, one-fact stances, claim groups, contradictions per score bundle. They are rows of `job_metrics` under the job `quality`, recorded at the end of each maintenance pass, or now with `dm quality record`;
+- the verdicts of the periodic LLM audit.
+
 ## Development Status
 
 **Nothing is in production yet.** Don't worry about backward compatibility - if something breaks, fix it. This is pre-production development.
