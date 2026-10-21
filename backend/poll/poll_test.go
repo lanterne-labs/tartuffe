@@ -97,3 +97,30 @@ func TestCheckBallot(t *testing.T) {
 	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, e.ClosesAt.Add(time.Second)), ErrClosed)
 	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, e.OpensAt.Add(-time.Second)), ErrClosed)
 }
+
+// TestAddRemoveVote: a vote goes after the others until the credits are used;
+// a replace takes the rank of the vote it replaces; a repeated vote and a
+// removal of a vote not cast change nothing.
+func TestAddRemoveVote(t *testing.T) {
+	e := event()
+	b, err := AddVote(e, []int64{}, 1, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{1}, b)
+	b, err = AddVote(e, b, 1, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{1}, b)
+	ballot := []int64{1, 2, 3}
+	_, err = AddVote(e, ballot, 4, 0)
+	assert.ErrorIs(t, err, ErrFull)
+	assert.ErrorIs(t, err, ErrBallot)
+	b, err = AddVote(e, ballot, 4, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{1, 4, 3}, b)
+	assert.Equal(t, []int64{1, 2, 3}, ballot, "the ballot given is not changed")
+	_, err = AddVote(e, ballot, 4, 9)
+	assert.ErrorIs(t, err, ErrNotOnBallot)
+
+	assert.Equal(t, []int64{1, 3}, RemoveVote(ballot, 2))
+	assert.Equal(t, []int64{1, 2, 3}, RemoveVote(ballot, 9))
+	assert.Equal(t, []int64{1, 2, 3}, ballot)
+}

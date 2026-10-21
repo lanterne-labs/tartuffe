@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strconv"
 	"time"
 
 	"digital-mirror/backend/poll"
@@ -53,11 +55,38 @@ func (s *Server) handleGetPoll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ballotResponse is the signed-in user's ballot.
+// ballotResponse is the signed-in user's ballot: PersonIDs are their votes,
+// first choice first, out of MaxChoices.
 type ballotResponse struct {
-	PersonIDs []int64 `json:"person_ids"`
-	Consented bool    `json:"consented"`
+	PersonIDs  []int64 `json:"person_ids"`
+	Consented  bool    `json:"consented"`
+	MaxChoices int     `json:"max_choices"`
+	Open       bool    `json:"open"`
 }
+
+func newBallotResponse(e *storage.PollEvent, ids []int64, consented bool) ballotResponse {
+	return ballotResponse{PersonIDs: ids, Consented: consented, MaxChoices: e.MaxChoices, Open: poll.IsOpen(e, time.Now())}
+}
+
+// ballotErrorResponse refuses a ballot change; Ballot is the ballot as
+// stored when the refusal concerns it (ballot_full, not_on_ballot), so the
+// page can show what to remove.
+type ballotErrorResponse struct {
+	Error  string          `json:"error"`
+	Code   string          `json:"code"`
+	Ballot *ballotResponse `json:"ballot,omitempty"`
+}
+
+// Codes of a refused ballot change.
+const (
+	codeClosed          = "closed"
+	codeBallotFull      = "ballot_full"
+	codeNotOnBallot     = "not_on_ballot"
+	codeConsentRequired = "consent_required"
+	codeInvalid         = "invalid_ballot"
+)
+
+var errConsentRequired = errors.New("consent required: a ballot is a political opinion, it is stored only with your consent")
 
 func (s *Server) handleGetBallot(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.pollEvent(w, r)
@@ -70,54 +99,176 @@ func (s *Server) handleGetBallot(w http.ResponseWriter, r *http.Request) {
 		httpInternalError(w, err, "failed to get ballot")
 		return
 	}
-	writeJSON(w, http.StatusOK, ballotResponse{PersonIDs: ids, Consented: user.ConsentAt != nil})
+	writeJSON(w, http.StatusOK, newBallotResponse(e, ids, user.ConsentAt != nil))
+}
+
+// changeBallot applies edit to the user's ballot of the event and answers
+// with the ballot as stored, or with the reason of the refusal. A ballot that
+// gains a vote needs the user's consent (given before, or now with consent);
+// one that only loses votes does not.
+func (s *Server) changeBallot(w http.ResponseWriter, r *http.Request, e *storage.PollEvent, consent bool, edit func(current []int64) ([]int64, error)) {
+	ctx := r.Context()
+	user := userFrom(r)
+	if !poll.IsOpen(e, time.Now()) {
+		writeJSON(w, http.StatusForbidden, ballotErrorResponse{Error: poll.ErrClosed.Error(), Code: codeClosed})
+		return
+	}
+	candidates, err := s.storer.GetPollCandidateIDs(ctx, e.ID)
+	if err != nil {
+		httpInternalError(w, err, "failed to get poll candidates")
+		return
+	}
+	var stored []int64
+	ids, err := s.storer.UpdatePollBallot(ctx, e.ID, user.ID, consent, func(current []int64) ([]int64, error) {
+		stored = current
+		next, err := edit(current)
+		if err != nil {
+			return nil, err
+		}
+		limits := e
+		if !gainsVote(current, next) {
+			// Removals and reorders: allowed even on a ballot above a
+			// max_choices lowered since it was cast.
+			relaxed := *e
+			relaxed.MaxChoices = max(e.MaxChoices, len(current))
+			limits = &relaxed
+		} else if user.ConsentAt == nil && !consent {
+			return nil, errConsentRequired
+		}
+		return next, poll.CheckBallot(limits, candidates, next, time.Now())
+	})
+	consented := user.ConsentAt != nil || consent
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, newBallotResponse(e, ids, consented))
+	case errors.Is(err, poll.ErrFull), errors.Is(err, poll.ErrNotOnBallot):
+		b := newBallotResponse(e, stored, user.ConsentAt != nil)
+		code := codeBallotFull
+		if errors.Is(err, poll.ErrNotOnBallot) {
+			code = codeNotOnBallot
+		}
+		writeJSON(w, http.StatusConflict, ballotErrorResponse{Error: err.Error(), Code: code, Ballot: &b})
+	case errors.Is(err, errConsentRequired):
+		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeConsentRequired})
+	case errors.Is(err, poll.ErrClosed):
+		writeJSON(w, http.StatusForbidden, ballotErrorResponse{Error: err.Error(), Code: codeClosed})
+	case errors.Is(err, poll.ErrBallot), errors.Is(err, storage.ErrNotCandidate):
+		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeInvalid})
+	default:
+		httpInternalError(w, err, "failed to save ballot")
+	}
+}
+
+// gainsVote tells whether next votes for someone current does not.
+func gainsVote(current, next []int64) bool {
+	for _, id := range next {
+		if !slices.Contains(current, id) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleSaveBallot replaces the user's ballot: {"person_ids": [first, ...],
-// "consent": true}. The first ballot needs the consent to store a political
-// opinion; an empty list withdraws the ballot.
+// "consent": true}. It serves to reorder the votes; an empty list withdraws
+// them all.
 func (s *Server) handleSaveBallot(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
 	e, ok := s.pollEvent(w, r)
 	if !ok {
 		return
 	}
-	user := userFrom(r)
 	var req struct {
 		PersonIDs []int64 `json:"person_ids"`
 		Consent   bool    `json:"consent"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ballot")
-		return
-	}
-	if user.ConsentAt == nil && !req.Consent {
-		writeError(w, http.StatusBadRequest, "consent required")
-		return
-	}
-	candidates, _, err := s.storer.GetPollTallies(ctx, e.ID)
-	if err != nil {
-		httpInternalError(w, err, "failed to get poll candidates")
-		return
-	}
-	ids := make([]int64, len(candidates))
-	for i, c := range candidates {
-		ids[i] = c.PersonID
-	}
-	if err := poll.CheckBallot(e, ids, req.PersonIDs, time.Now()); err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, poll.ErrClosed) {
-			status = http.StatusForbidden
-		}
-		writeError(w, status, err.Error())
-		return
-	}
-	if err := s.storer.SavePollBallot(ctx, e.ID, user.ID, req.PersonIDs); err != nil {
-		httpInternalError(w, err, "failed to save ballot")
+		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "invalid ballot", Code: codeInvalid})
 		return
 	}
 	if req.PersonIDs == nil {
 		req.PersonIDs = []int64{}
 	}
-	writeJSON(w, http.StatusOK, ballotResponse{PersonIDs: req.PersonIDs, Consented: true})
+	s.changeBallot(w, r, e, req.Consent, func([]int64) ([]int64, error) { return req.PersonIDs, nil })
+}
+
+// handleAddVote casts one vote: {"person_id": id, "consent": true}, after the
+// votes already cast. With "replace": other_id the vote takes the place (and
+// rank) of the vote for other_id. When every vote is used the answer is 409
+// ballot_full with the ballot, so the page can ask which vote to give up.
+func (s *Server) handleAddVote(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.pollEvent(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		PersonID int64 `json:"person_id"`
+		Replace  int64 `json:"replace"`
+		Consent  bool  `json:"consent"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || req.PersonID <= 0 {
+		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "person_id required", Code: codeInvalid})
+		return
+	}
+	s.changeBallot(w, r, e, req.Consent, func(current []int64) ([]int64, error) {
+		return poll.AddVote(e, current, req.PersonID, req.Replace)
+	})
+}
+
+// handleRemoveVote takes back the vote for {personID}; the votes below move
+// up a rank. Removing a vote not cast changes nothing.
+func (s *Server) handleRemoveVote(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.pollEvent(w, r)
+	if !ok {
+		return
+	}
+	personID, err := strconv.ParseInt(chi.URLParam(r, "personID"), 10, 64)
+	if err != nil || personID <= 0 {
+		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "invalid person id", Code: codeInvalid})
+		return
+	}
+	s.changeBallot(w, r, e, false, func(current []int64) ([]int64, error) {
+		return poll.RemoveVote(current, personID), nil
+	})
+}
+
+// myEventVotes is one event on the profile page with the user's votes.
+type myEventVotes struct {
+	Event *storage.PollEvent       `json:"event"`
+	Open  bool                     `json:"open"`
+	Votes []storage.UserPollChoice `json:"votes"`
+}
+
+// handleMyVotes lists the user's votes per event: every open event (with no
+// vote yet, it shows the votes left), and the closed ones they voted in.
+func (s *Server) handleMyVotes(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user := userFrom(r)
+	events, err := s.storer.ListPollEvents(ctx)
+	if err != nil {
+		httpInternalError(w, err, "failed to list polls")
+		return
+	}
+	choices, err := s.storer.GetUserPollChoices(ctx, user.ID)
+	if err != nil {
+		httpInternalError(w, err, "failed to get votes")
+		return
+	}
+	byEvent := map[int64][]storage.UserPollChoice{}
+	for _, c := range choices {
+		byEvent[c.EventID] = append(byEvent[c.EventID], c)
+	}
+	now := time.Now()
+	out := []myEventVotes{}
+	for i := range events {
+		e := &events[i]
+		votes, open := byEvent[e.ID], poll.IsOpen(e, now)
+		if !open && len(votes) == 0 {
+			continue
+		}
+		if votes == nil {
+			votes = []storage.UserPollChoice{}
+		}
+		out = append(out, myEventVotes{Event: e, Open: open, Votes: votes})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "consented": user.ConsentAt != nil, "events": out})
 }

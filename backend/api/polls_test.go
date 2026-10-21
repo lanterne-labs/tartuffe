@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ type memPolls struct {
 	users      map[string]*storage.AppUser
 	sessions   map[string]int64
 	ballots    map[int64][]int64
+	nextUser   int64
 }
 
 func (m *memPolls) init() {
@@ -79,15 +81,63 @@ func (m *memPolls) GetPollBallot(_ context.Context, _ int64, userID int64) ([]in
 	return []int64{}, nil
 }
 
-func (m *memPolls) SavePollBallot(_ context.Context, _ int64, userID int64, ids []int64) error {
+func (m *memPolls) GetPollCandidateIDs(context.Context, int64) ([]int64, error) {
+	ids := []int64{}
+	for _, c := range m.candidates {
+		ids = append(ids, c.PersonID)
+	}
+	return ids, nil
+}
+
+func (m *memPolls) UpdatePollBallot(_ context.Context, _ int64, userID int64, consent bool, edit func([]int64) ([]int64, error)) ([]int64, error) {
 	m.init()
-	m.ballots[userID] = ids
+	current := slices.Clone(m.ballots[userID])
+	if current == nil {
+		current = []int64{}
+	}
+	next, err := edit(current)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Equal(current, next) {
+		return current, nil
+	}
+	m.ballots[userID] = next
 	for _, u := range m.users {
-		if u.ID == userID && u.ConsentAt == nil {
+		if consent && u.ID == userID && u.ConsentAt == nil {
 			now := time.Now()
 			u.ConsentAt = &now
 		}
 	}
+	return next, nil
+}
+
+func (m *memPolls) GetUserPollChoices(_ context.Context, userID int64) ([]storage.UserPollChoice, error) {
+	m.init()
+	out := []storage.UserPollChoice{}
+	for i, id := range m.ballots[userID] {
+		for _, c := range m.candidates {
+			if c.PersonID == id {
+				out = append(out, storage.UserPollChoice{EventID: m.event.ID, Rank: i + 1, PersonID: id, Name: c.Name, HonestyScore: c.HonestyScore})
+			}
+		}
+	}
+	return out, nil
+}
+
+func (m *memPolls) DeleteAppUser(_ context.Context, userID int64) error {
+	m.init()
+	for k, u := range m.users {
+		if u.ID == userID {
+			delete(m.users, k)
+		}
+	}
+	for h, id := range m.sessions {
+		if id == userID {
+			delete(m.sessions, h)
+		}
+	}
+	delete(m.ballots, userID)
 	return nil
 }
 
@@ -97,7 +147,8 @@ func (m *memPolls) UpsertAppUser(_ context.Context, provider, subject, name stri
 	if u, ok := m.users[key]; ok {
 		return u, nil
 	}
-	u := &storage.AppUser{ID: int64(len(m.users) + 1), Provider: provider, DisplayName: name}
+	m.nextUser++
+	u := &storage.AppUser{ID: m.nextUser, Provider: provider, DisplayName: name}
 	m.users[key] = u
 	return u, nil
 }
@@ -205,7 +256,7 @@ func TestPollFlow(t *testing.T) {
 		map[string]any{"person_ids": []int64{10, 20, 30}}).Code, "too many choices")
 
 	rec = do(t, h, http.MethodGet, "/api/polls/presidentielle-2027/ballot", alice, nil)
-	assert.JSONEq(t, `{"person_ids":[10,20],"consented":true}`, rec.Body.String())
+	assert.JSONEq(t, `{"person_ids":[10,20],"consented":true,"max_choices":2,"open":true}`, rec.Body.String())
 
 	type pollResponse struct {
 		Results struct {
@@ -266,6 +317,151 @@ func TestClosedPoll(t *testing.T) {
 		map[string]any{"person_ids": []int64{10}, "consent": true}).Code)
 }
 
+// ballotOf decodes a ballot answer.
+func ballotOf(t *testing.T, rec *httptest.ResponseRecorder) ballotResponse {
+	t.Helper()
+	var b ballotResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &b), rec.Body.String())
+	return b
+}
+
+// TestVoteCredits: votes are cast one at a time up to max_choices; one more is
+// refused with the ballot so the page can ask which vote to give up, and a
+// replace swaps it in at the same rank. Removing frees a credit.
+func TestVoteCredits(t *testing.T) {
+	fs := pollFixture()
+	fs.candidates = append(fs.candidates, storage.PollCandidateTally{PersonID: 30, Name: "Chloé", HonestyScore: 0.7})
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
+	votes := "/api/polls/presidentielle-2027/votes"
+	alice := signIn(t, h, "alice")
+
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, votes, "", map[string]any{"person_id": 10}).Code)
+	rec := do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 10})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"code":"consent_required"`)
+
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 10, "consent": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []int64{10}, ballotOf(t, rec).PersonIDs)
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 10})
+	assert.Equal(t, []int64{10}, ballotOf(t, rec).PersonIDs, "a repeated vote changes nothing")
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 20})
+	assert.Equal(t, []int64{10, 20}, ballotOf(t, rec).PersonIDs, "consent is asked once")
+
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 30})
+	require.Equal(t, http.StatusConflict, rec.Code, "every vote is used")
+	var full ballotErrorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &full))
+	assert.Equal(t, codeBallotFull, full.Code)
+	require.NotNil(t, full.Ballot)
+	assert.Equal(t, []int64{10, 20}, full.Ballot.PersonIDs)
+	assert.Equal(t, 2, full.Ballot.MaxChoices)
+
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 30, "replace": 99})
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), codeNotOnBallot)
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 30, "replace": 10})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []int64{30, 20}, ballotOf(t, rec).PersonIDs, "the new vote takes the rank of the one replaced")
+
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 77, "replace": 20})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "not a candidate")
+
+	rec = do(t, h, http.MethodDelete, votes+"/30", alice, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []int64{20}, ballotOf(t, rec).PersonIDs, "the vote below moves up")
+	rec = do(t, h, http.MethodDelete, votes+"/30", alice, nil)
+	assert.Equal(t, http.StatusOK, rec.Code, "removing twice is harmless")
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodDelete, votes+"/abc", alice, nil).Code)
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 10})
+	assert.Equal(t, []int64{20, 10}, ballotOf(t, rec).PersonIDs, "a freed credit can be used again")
+
+	rec = do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/ballot", alice, map[string]any{"person_ids": []int64{10, 10}})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a reorder cannot rank one candidate twice")
+	rec = do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/ballot", alice, map[string]any{"person_ids": []int64{10, 20}})
+	assert.Equal(t, []int64{10, 20}, ballotOf(t, rec).PersonIDs, "reorder")
+
+	// max_choices lowered after the ballot was cast: the votes can still be
+	// reordered and removed, not added.
+	fs.event.MaxChoices = 1
+	rec = do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/ballot", alice, map[string]any{"person_ids": []int64{20, 10}})
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = do(t, h, http.MethodPost, votes, alice, map[string]any{"person_id": 30, "replace": 10})
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a replace on an over-full ballot must remove first")
+	rec = do(t, h, http.MethodDelete, votes+"/10", alice, nil)
+	assert.Equal(t, []int64{20}, ballotOf(t, rec).PersonIDs)
+}
+
+// TestClosedVotes: once voting closes, the votes can be neither cast nor
+// removed, and the profile still lists them.
+func TestClosedVotes(t *testing.T) {
+	fs := pollFixture()
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
+	alice := signIn(t, h, "alice")
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/votes", alice, map[string]any{"person_id": 10, "consent": true}).Code)
+
+	past := time.Now().Add(-time.Minute)
+	fs.event.ClosesAt = &past
+	rec := do(t, h, http.MethodDelete, "/api/polls/presidentielle-2027/votes/10", alice, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), codeClosed)
+	assert.Equal(t, http.StatusForbidden, do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/votes", alice, map[string]any{"person_id": 20}).Code)
+
+	rec = do(t, h, http.MethodGet, "/api/me/votes", alice, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var mine struct {
+		Events []myEventVotes `json:"events"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &mine))
+	require.Len(t, mine.Events, 1)
+	assert.False(t, mine.Events[0].Open)
+	require.Len(t, mine.Events[0].Votes, 1)
+	assert.Equal(t, "Alice", mine.Events[0].Votes[0].Name)
+
+	bruno := signIn(t, h, "bruno")
+	rec = do(t, h, http.MethodGet, "/api/me/votes", bruno, nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &mine))
+	assert.Empty(t, mine.Events, "a closed event without a vote is not listed")
+}
+
+// TestMyVotesAndDeleteAccount: the profile lists the open event even with no
+// vote; deleting the account erases the votes and ends the session.
+func TestMyVotesAndDeleteAccount(t *testing.T) {
+	fs := pollFixture()
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodGet, "/api/me/votes", "", nil).Code)
+	alice := signIn(t, h, "alice")
+
+	var mine struct {
+		Consented bool           `json:"consented"`
+		Events    []myEventVotes `json:"events"`
+	}
+	rec := do(t, h, http.MethodGet, "/api/me/votes", alice, nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &mine))
+	require.Len(t, mine.Events, 1)
+	assert.True(t, mine.Events[0].Open)
+	assert.Empty(t, mine.Events[0].Votes)
+	assert.False(t, mine.Consented)
+
+	require.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/votes", alice, map[string]any{"person_id": 20, "consent": true}).Code)
+	rec = do(t, h, http.MethodGet, "/api/me/votes", alice, nil)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &mine))
+	assert.True(t, mine.Consented)
+	require.Len(t, mine.Events[0].Votes, 1)
+	assert.Equal(t, int64(20), mine.Events[0].Votes[0].PersonID)
+
+	assert.Equal(t, http.StatusNoContent, do(t, h, http.MethodDelete, "/api/auth/me", alice, nil).Code)
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodGet, "/api/me/votes", alice, nil).Code)
+	_, voters, err := fs.GetPollTallies(context.Background(), 1)
+	require.NoError(t, err)
+	assert.Zero(t, voters, "the deleted user's votes are gone")
+
+	again := signIn(t, h, "alice")
+	rec = do(t, h, http.MethodGet, "/api/polls/presidentielle-2027/ballot", again, nil)
+	assert.Empty(t, ballotOf(t, rec).PersonIDs, "signing in again starts an empty account")
+	assert.False(t, ballotOf(t, rec).Consented)
+}
+
 // challengeProvider is a Challenger that accepts any payload naming the
 // challenge it was given.
 type challengeProvider struct{}
@@ -306,4 +502,20 @@ func TestChallengeFlow(t *testing.T) {
 
 	rec = do(t, h, http.MethodGet, "/api/auth/providers", "", nil)
 	assert.JSONEq(t, `[{"name":"zkfake","verified":true},{"name":"noop","verified":false}]`, rec.Body.String(), "verified providers first")
+}
+
+// TestVotePreflight: the frontend is on another origin, so removing a vote
+// (DELETE) needs the CORS preflight to allow the method.
+func TestVotePreflight(t *testing.T) {
+	h := NewServer(pollFixture(), auth.NewRegistry(auth.Noop{})).Handler()
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		req := httptest.NewRequest(http.MethodOptions, "/api/polls/presidentielle-2027/votes/10", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", method)
+		req.Header.Set("Access-Control-Request-Headers", "Authorization")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, "http://localhost:3000", rec.Header().Get("Access-Control-Allow-Origin"), method)
+		assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), method)
+	}
 }

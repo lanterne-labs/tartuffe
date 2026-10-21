@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PollEvent is one pre-poll (the presidential election first): the users rank
@@ -193,6 +195,19 @@ func (s *PostgresStorer) RemovePollCandidate(ctx context.Context, eventID, perso
 	return tag.RowsAffected() == 1, nil
 }
 
+// GetPollCandidateIDs returns the person ids of the event's candidates.
+func (s *PostgresStorer) GetPollCandidateIDs(ctx context.Context, eventID int64) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT person_id FROM poll_candidates WHERE event_id = $1 ORDER BY person_id`, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("poll candidates of event %d: %w", eventID, err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, fmt.Errorf("poll candidates of event %d: %w", eventID, err)
+	}
+	return ids, nil
+}
+
 // GetPollTallies returns the candidates of the event with their counts, and
 // the number of ballots. A ballot's first choice is its lowest rank, so a
 // ballot whose rank 1 candidate was removed counts for its next one.
@@ -236,46 +251,149 @@ func (s *PostgresStorer) GetPollTallies(ctx context.Context, eventID int64) ([]P
 
 // GetPollBallot returns the person ids the user ranked, first choice first.
 func (s *PostgresStorer) GetPollBallot(ctx context.Context, eventID, userID int64) ([]int64, error) {
-	rows, err := s.pool.Query(ctx, `SELECT person_id FROM poll_choices WHERE event_id = $1 AND user_id = $2 ORDER BY rank`, eventID, userID)
+	return pollBallot(ctx, s.pool, eventID, userID)
+}
+
+func pollBallot(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, eventID, userID int64) ([]int64, error) {
+	rows, err := q.Query(ctx, `SELECT person_id FROM poll_choices WHERE event_id = $1 AND user_id = $2 ORDER BY rank`, eventID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("poll ballot: %w", err)
 	}
-	defer rows.Close()
-	ids := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan poll ballot: %w", err)
-		}
-		ids = append(ids, id)
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, fmt.Errorf("poll ballot: %w", err)
 	}
-	return ids, rows.Err()
+	if ids == nil {
+		ids = []int64{}
+	}
+	return ids, nil
 }
 
-// SavePollBallot replaces the user's ballot with personIDs (first choice
-// first; empty withdraws it), records the user's consent, and logs a
-// poll_updated event so the open result pages refresh. The caller checks the
-// ballot against the event.
-func (s *PostgresStorer) SavePollBallot(ctx context.Context, eventID, userID int64, personIDs []int64) error {
+// ErrNotCandidate is returned when a ballot names a person who is not (or
+// no longer) a candidate of the event.
+var ErrNotCandidate = errors.New("not a candidate of the event")
+
+// UpdatePollBallot changes the user's ballot (person ids, first choice first)
+// in one transaction: edit gets the ballot as stored and returns the new one
+// (empty withdraws it), or an error that cancels the change and is returned
+// as is. The user's row is locked first, so two requests of one user (two
+// tabs, a double click) apply one after the other, each on the other's
+// result. A changed ballot records the user's consent when consent is set,
+// and logs a poll_updated event so the open result pages refresh. It returns
+// the ballot as stored.
+func (s *PostgresStorer) UpdatePollBallot(ctx context.Context, eventID, userID int64, consent bool, edit func(current []int64) ([]int64, error)) ([]int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("save poll ballot: %w", err)
+		return nil, fmt.Errorf("update poll ballot: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE app_users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, userID); err != nil {
-		return fmt.Errorf("record consent: %w", err)
+	var locked int64
+	if err := tx.QueryRow(ctx, `SELECT id FROM app_users WHERE id = $1 FOR UPDATE`, userID).Scan(&locked); err != nil {
+		return nil, fmt.Errorf("lock app user %d: %w", userID, err)
+	}
+	current, err := pollBallot(ctx, tx, eventID, userID)
+	if err != nil {
+		return nil, err
+	}
+	next, err := edit(current)
+	if err != nil {
+		return nil, err
+	}
+	if slices.Equal(current, next) {
+		return current, nil
+	}
+	if consent {
+		if _, err := tx.Exec(ctx, `UPDATE app_users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, userID); err != nil {
+			return nil, fmt.Errorf("record consent: %w", err)
+		}
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM poll_choices WHERE event_id = $1 AND user_id = $2`, eventID, userID); err != nil {
-		return fmt.Errorf("clear poll ballot: %w", err)
+		return nil, fmt.Errorf("clear poll ballot: %w", err)
 	}
-	for i, pid := range personIDs {
+	for i, pid := range next {
 		if _, err := tx.Exec(ctx, `INSERT INTO poll_choices (event_id, user_id, rank, person_id) VALUES ($1, $2, $3, $4)`,
 			eventID, userID, i+1, pid); err != nil {
-			return fmt.Errorf("save poll choice %d: %w", i+1, err)
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+				return nil, fmt.Errorf("person %d: %w", pid, ErrNotCandidate)
+			}
+			return nil, fmt.Errorf("save poll choice %d: %w", i+1, err)
 		}
 	}
 	if err := s.insertEvent(ctx, tx, "poll_updated", "poll_event", eventID, map[string]interface{}{}); err != nil {
-		return err
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("update poll ballot: %w", err)
+	}
+	if next == nil {
+		next = []int64{}
+	}
+	return next, nil
+}
+
+// UserPollChoice is one vote of a user, with the candidate it goes to.
+type UserPollChoice struct {
+	EventID      int64   `json:"event_id"`
+	Rank         int     `json:"rank"`
+	PersonID     int64   `json:"person_id"`
+	Name         string  `json:"name"`
+	ImageURL     *string `json:"image_url,omitempty"`
+	HonestyScore float64 `json:"honesty_score"`
+	FactCount    int     `json:"fact_count"`
+}
+
+// GetUserPollChoices returns every vote of the user, by event then rank.
+func (s *PostgresStorer) GetUserPollChoices(ctx context.Context, userID int64) ([]UserPollChoice, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT pc.event_id, pc.rank, p.id, p.name, p.image_url, p.honesty_score, p.fact_count
+		FROM poll_choices pc JOIN persons p ON p.id = pc.person_id
+		WHERE pc.user_id = $1
+		ORDER BY pc.event_id, pc.rank`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("poll choices of user %d: %w", userID, err)
+	}
+	defer rows.Close()
+	out := []UserPollChoice{}
+	for rows.Next() {
+		var c UserPollChoice
+		if err := rows.Scan(&c.EventID, &c.Rank, &c.PersonID, &c.Name, &c.ImageURL, &c.HonestyScore, &c.FactCount); err != nil {
+			return nil, fmt.Errorf("scan poll choice: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("poll choices of user %d: %w", userID, err)
+	}
+	return out, nil
+}
+
+// DeleteAppUser erases the user with their sessions and ballots (the right to
+// erasure: nothing of theirs is kept), and logs a poll_updated event for each
+// event they had voted in so the open result pages refresh.
+func (s *PostgresStorer) DeleteAppUser(ctx context.Context, userID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("delete app user: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT DISTINCT event_id FROM poll_choices WHERE user_id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("poll events of user %d: %w", userID, err)
+	}
+	events, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return fmt.Errorf("poll events of user %d: %w", userID, err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM app_users WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("delete app user %d: %w", userID, err)
+	}
+	for _, id := range events {
+		if err := s.insertEvent(ctx, tx, "poll_updated", "poll_event", id, map[string]interface{}{}); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

@@ -171,6 +171,18 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, userFrom(r))
 }
 
+// handleDeleteAccount erases the signed-in user: their votes, sessions and
+// consent. Signing in again with the same document starts a new, empty account.
+func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
+	user := userFrom(r)
+	if err := s.storer.DeleteAppUser(r.Context(), user.ID); err != nil {
+		httpInternalError(w, err, "failed to delete account")
+		return
+	}
+	log.Info().Int64("user_id", user.ID).Str("provider", user.Provider).Msg("user deleted their account")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleAuthSignOut(w http.ResponseWriter, r *http.Request) {
 	if err := s.storer.DeleteUserSession(r.Context(), auth.HashToken(bearerToken(r))); err != nil {
 		httpInternalError(w, err, "failed to end session")

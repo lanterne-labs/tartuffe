@@ -77,7 +77,10 @@
 			<a href="/" class="nav-link nav-link--home">{tr('nav.dashboard', currentLang)}</a>
 			{#if userName}
 				<span class="nav-user" title={tr('auth.signed_in_as', currentLang, { name: userName })}>
-					<span class="nav-user-name">{userName}</span>
+					<a href="/profile" class="nav-user-link" class:active={$page.url.pathname === '/profile'} aria-label={tr('nav.profile', currentLang)}>
+						<span class="nav-user-name">{userName}</span>
+						<span class="nav-user-short">{tr('nav.profile', currentLang)}</span>
+					</a>
 					<button class="nav-signout" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
 				</span>
 			{/if}
@@ -214,6 +217,26 @@
 		color: var(--text-secondary);
 	}
 
+	.nav-user-link {
+		display: inline-flex;
+		color: var(--text-secondary);
+		text-decoration: none;
+	}
+
+	.nav-user-link:hover .nav-user-name,
+	.nav-user-link.active .nav-user-name,
+	.nav-user-link:hover .nav-user-short,
+	.nav-user-link.active .nav-user-short {
+		color: var(--text-primary);
+		text-decoration: underline;
+	}
+
+	.nav-user-short {
+		display: none;
+		white-space: nowrap;
+		color: var(--text-secondary);
+	}
+
 	.nav-signout {
 		background: none;
 		border: none;
@@ -259,7 +282,7 @@
 	@media (max-width: 560px) {
 		.nav-content {
 			padding: 0.75rem 1rem;
-			gap: 1rem;
+			gap: 0.6rem;
 		}
 		.mask-glyph {
 			width: 30px;
@@ -273,12 +296,23 @@
 		}
 		.nav-right {
 			gap: 0.6rem;
+			min-width: 0;
 		}
 		.nav-user-name,
 		.nav-link--home {
 			display: none;
 		}
+		.nav-user-short {
+			display: inline;
+		}
+		/* On a phone, sign out from the profile page. */
+		.nav-signout {
+			display: none;
+		}
 		.nav-link--poll {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
 			font-size: 0.8rem;
 			padding: 0.25rem 0.6rem;
 		}

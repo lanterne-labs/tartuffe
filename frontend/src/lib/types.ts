@@ -182,9 +182,37 @@ export interface PollResponse {
 	results: PollResults;
 }
 
+// The signed-in user's votes of an event: person_ids, first choice first,
+// out of max_choices.
 export interface Ballot {
 	person_ids: number[];
 	consented: boolean;
+	max_choices: number;
+	open: boolean;
+}
+
+// One vote of the user, with the candidate it goes to (the profile page).
+export interface UserVote {
+	event_id: number;
+	rank: number;
+	person_id: number;
+	name: string;
+	image_url?: string;
+	honesty_score: number;
+	fact_count: number;
+}
+
+export interface MyEventVotes {
+	event: PollEvent;
+	open: boolean;
+	votes: UserVote[];
+}
+
+// GET /api/me/votes: every open event, and the closed ones voted in.
+export interface MyVotes {
+	user: AppUser;
+	consented: boolean;
+	events: MyEventVotes[];
 }
 
 // Sign-in (backend/auth)

@@ -7,6 +7,7 @@ package poll
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -161,4 +162,39 @@ func CheckBallot(e *storage.PollEvent, candidates []int64, personIDs []int64, no
 		seen[id] = true
 	}
 	return nil
+}
+
+// ErrFull refuses a new vote when every vote of the ballot is used: one must
+// be removed (or replaced) first.
+var ErrFull = fmt.Errorf("%w: every vote is used, remove one first", ErrBallot)
+
+// ErrNotOnBallot refuses to replace a vote the ballot does not hold.
+var ErrNotOnBallot = fmt.Errorf("%w: this vote is not on the ballot", ErrBallot)
+
+// AddVote returns the ballot with a vote for personID: in place of replace
+// when replace is not zero, else after the votes already cast. A vote already
+// cast leaves the ballot as it is, so a repeated request is harmless.
+func AddVote(e *storage.PollEvent, ballot []int64, personID, replace int64) ([]int64, error) {
+	if slices.Contains(ballot, personID) {
+		return ballot, nil
+	}
+	if replace != 0 {
+		i := slices.Index(ballot, replace)
+		if i < 0 {
+			return nil, ErrNotOnBallot
+		}
+		next := slices.Clone(ballot)
+		next[i] = personID
+		return next, nil
+	}
+	if len(ballot) >= e.MaxChoices {
+		return nil, ErrFull
+	}
+	return append(slices.Clone(ballot), personID), nil
+}
+
+// RemoveVote returns the ballot without the vote for personID; the votes
+// below it move up a rank.
+func RemoveVote(ballot []int64, personID int64) []int64 {
+	return slices.DeleteFunc(slices.Clone(ballot), func(id int64) bool { return id == personID })
 }

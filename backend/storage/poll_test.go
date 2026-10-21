@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,9 +59,28 @@ func TestPollBallotsAndTallies(t *testing.T) {
 	u2, err := storer.UpsertAppUser(ctx, "zkpassport", "two", "")
 	require.NoError(t, err)
 
-	require.NoError(t, storer.SavePollBallot(ctx, eventID, u1.ID, []int64{b}))
-	require.NoError(t, storer.SavePollBallot(ctx, eventID, u1.ID, []int64{a, b}), "replaces the first ballot")
-	require.NoError(t, storer.SavePollBallot(ctx, eventID, u2.ID, []int64{a}))
+	set := func(ids ...int64) func([]int64) ([]int64, error) {
+		return func([]int64) ([]int64, error) { return ids, nil }
+	}
+	_, err = storer.UpdatePollBallot(ctx, eventID, u1.ID, true, set(b))
+	require.NoError(t, err)
+	got, err := storer.UpdatePollBallot(ctx, eventID, u1.ID, true, func(current []int64) ([]int64, error) {
+		assert.Equal(t, []int64{b}, current, "edit gets the stored ballot")
+		return []int64{a, b}, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []int64{a, b}, got)
+	_, err = storer.UpdatePollBallot(ctx, eventID, u1.ID, true, set(a, b))
+	require.NoError(t, err, "an unchanged ballot logs no event")
+	refused := errors.New("refused")
+	_, err = storer.UpdatePollBallot(ctx, eventID, u1.ID, true, func([]int64) ([]int64, error) { return nil, refused })
+	assert.ErrorIs(t, err, refused)
+	other, err := storer.FindOrInsertPersonWithType(ctx, "not a candidate", "human")
+	require.NoError(t, err)
+	_, err = storer.UpdatePollBallot(ctx, eventID, u1.ID, true, set(other))
+	assert.ErrorIs(t, err, ErrNotCandidate)
+	_, err = storer.UpdatePollBallot(ctx, eventID, u2.ID, true, set(a))
+	require.NoError(t, err)
 	ballot, err := storer.GetPollBallot(ctx, eventID, u1.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []int64{a, b}, ballot)
@@ -125,4 +146,80 @@ func TestPollBallotsAndTallies(t *testing.T) {
 	ok, err = storer.ConsumeAuthChallenge(ctx, "zkpassport", "old")
 	require.NoError(t, err)
 	assert.False(t, ok, "expired")
+}
+
+// TestPollBallotConcurrentVotes: the votes one user casts at once (two tabs)
+// apply one after the other, so the ballot never holds more than the votes
+// allowed, and erasing the user drops their ballot and refreshes the pages.
+func TestPollBallotConcurrentVotes(t *testing.T) {
+	storer, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE app_users, poll_events, auth_challenges RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	eventID, err := storer.SavePollEvent(ctx, PollEvent{Slug: "race-poll", TitleFR: "Race", TitleEN: "Race",
+		MaxChoices: 3, MinVoters: 1, OpensAt: time.Now().Add(-time.Hour)})
+	require.NoError(t, err)
+	var candidates []int64
+	for _, name := range []string{"race a", "race b", "race c", "race d", "race e", "race f"} {
+		id, err := storer.FindOrInsertPersonWithType(ctx, name, "human")
+		require.NoError(t, err)
+		_, err = storer.AddPollCandidate(ctx, eventID, id)
+		require.NoError(t, err)
+		candidates = append(candidates, id)
+	}
+	u, err := storer.UpsertAppUser(ctx, "noop", "racer", "Racer")
+	require.NoError(t, err)
+
+	full := errors.New("full")
+	var wg sync.WaitGroup
+	errs := make(chan error, len(candidates))
+	for _, id := range candidates {
+		wg.Add(1)
+		go func(id int64) {
+			defer wg.Done()
+			_, err := storer.UpdatePollBallot(ctx, eventID, u.ID, true, func(current []int64) ([]int64, error) {
+				if len(current) >= 3 {
+					return nil, full
+				}
+				return append(current, id), nil
+			})
+			errs <- err
+		}(id)
+	}
+	wg.Wait()
+	close(errs)
+	refusedFull := 0
+	for err := range errs {
+		if errors.Is(err, full) {
+			refusedFull++
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	assert.Equal(t, 3, refusedFull, "three votes fit, three are refused")
+	ballot, err := storer.GetPollBallot(ctx, eventID, u.ID)
+	require.NoError(t, err)
+	assert.Len(t, ballot, 3)
+
+	choices, err := storer.GetUserPollChoices(ctx, u.ID)
+	require.NoError(t, err)
+	require.Len(t, choices, 3)
+	for i, c := range choices {
+		assert.Equal(t, ballot[i], c.PersonID)
+		assert.Equal(t, i+1, c.Rank)
+		assert.NotEmpty(t, c.Name)
+	}
+
+	var before int64
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM event_log`).Scan(&before))
+	require.NoError(t, storer.DeleteAppUser(ctx, u.ID))
+	choices, err = storer.GetUserPollChoices(ctx, u.ID)
+	require.NoError(t, err)
+	assert.Empty(t, choices)
+	var updates int
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT COUNT(*) FROM event_log WHERE topic = 'poll_updated' AND entity_id = $1 AND id > $2`, eventID, before).Scan(&updates))
+	assert.Equal(t, 1, updates)
+	_, err = storer.UpdatePollBallot(ctx, eventID, u.ID, true, func(c []int64) ([]int64, error) { return c, nil })
+	assert.Error(t, err, "a deleted user has no ballot to change")
 }

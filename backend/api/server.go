@@ -47,7 +47,10 @@ type Storer interface {
 	GetPollEvent(ctx context.Context, slug string) (*storage.PollEvent, error)
 	GetPollTallies(ctx context.Context, eventID int64) ([]storage.PollCandidateTally, int, error)
 	GetPollBallot(ctx context.Context, eventID, userID int64) ([]int64, error)
-	SavePollBallot(ctx context.Context, eventID, userID int64, personIDs []int64) error
+	GetPollCandidateIDs(ctx context.Context, eventID int64) ([]int64, error)
+	UpdatePollBallot(ctx context.Context, eventID, userID int64, consent bool, edit func(current []int64) ([]int64, error)) ([]int64, error)
+	GetUserPollChoices(ctx context.Context, userID int64) ([]storage.UserPollChoice, error)
+	DeleteAppUser(ctx context.Context, userID int64) error
 	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)
 	CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	GetSessionUser(ctx context.Context, tokenHash []byte) (*storage.AppUser, error)
@@ -85,7 +88,7 @@ func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r.Use(httprate.LimitByIP(rateLimit, 1*time.Minute))
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  corsOriginFunc(),
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
@@ -197,11 +200,15 @@ func (s *Server) setupRoutes() {
 		r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
 		r.Get("/auth/me", s.requireUser(s.handleAuthMe))
+		r.Delete("/auth/me", s.requireUser(s.handleDeleteAccount))
+		r.Get("/me/votes", s.requireUser(s.handleMyVotes))
 		r.Post("/auth/signout", s.requireUser(s.handleAuthSignOut))
 
 		r.Get("/polls", s.handleListPolls)
 		r.Get("/polls/{slug}", s.handleGetPoll)
 		r.Get("/polls/{slug}/ballot", s.requireUser(s.handleGetBallot))
 		r.Post("/polls/{slug}/ballot", s.requireUser(s.handleSaveBallot))
+		r.Post("/polls/{slug}/votes", s.requireUser(s.handleAddVote))
+		r.Delete("/polls/{slug}/votes/{personID}", s.requireUser(s.handleRemoveVote))
 	})
 }

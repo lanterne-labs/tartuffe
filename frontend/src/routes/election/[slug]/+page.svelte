@@ -3,9 +3,12 @@
 	import { page } from '$app/stores';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr } from '$lib/i18n';
-	import { session, signInOpen, authFetch, errorText } from '$lib/auth';
+	import { session, signInOpen } from '$lib/auth';
+	import { addVote, removeVote, saveBallot, getBallot, onBallotChanged, BallotError } from '$lib/ballot';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import VoteList from '$lib/components/VoteList.svelte';
 	import { replaceState } from '$app/navigation';
 	import type { PollResponse, CandidateResult, Ballot } from '$lib/types';
 
@@ -35,23 +38,41 @@
 		replaceState(url, {});
 	}
 
-	// The ballot being edited (person ids, first choice first) and the saved one.
-	let choice: number[] = $state([]);
-	let saved: number[] = $state([]);
+	// The user's votes as stored (person ids, first choice first). Every
+	// change is saved at once and the page shows the ballot the API returns.
+	let ballot: number[] = $state([]);
 	let consented = $state(false);
-	let consent = $state(false);
-	let saving = $state(false);
-	let saveError: string | null = $state(null);
-	let justSaved = $state(false);
+	let busy = $state(false);
+	let actionError: string | null = $state(null);
+	let flash: string | null = $state(null);
+	let flashTimer: ReturnType<typeof setTimeout> | null = null;
+	// Each ballot request takes a number: an answer older than the last change
+	// is dropped, so a slow reload never undoes a vote.
+	let ballotSeq = 0;
+	let ballotLoaded = $state(false);
+
+	// The vote waiting for a step before it is cast: the sign-in, the consent,
+	// or the choice of the vote to give up when every vote is used.
+	let pending: number | null = $state(null);
+	let consentOpen = $state(false);
+	let changeOpen = $state(false);
+	let withdrawOpen = $state(false);
 
 	let event = $derived(data?.event ?? null);
 	let results = $derived(data?.results ?? null);
 	let maxChoices = $derived(event?.max_choices ?? 3);
-	let dirty = $derived(choice.length !== saved.length || choice.some((id, i) => saved[i] !== id));
+	let full = $derived(ballot.length >= maxChoices);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
+	let pendingName = $derived(pending !== null ? (byId.get(pending)?.name ?? '') : '');
+	let ballotVotes = $derived(
+		ballot.map((id) => {
+			const c = byId.get(id);
+			return { person_id: id, name: c?.name ?? `#${id}`, image_url: c?.image_url };
+		})
+	);
 
-	// The ballot loads once per session and event: the live refreshes of the
-	// results must not overwrite choices not saved yet.
+	// The ballot loads once per session and event, then again when another
+	// tab or device may have changed it.
 	let ballotKey = '';
 	$effect(() => {
 		const key = $session && event ? `${$session.token}:${event.id}` : '';
@@ -59,6 +80,13 @@
 		ballotKey = key;
 		untrack(() => (key ? loadBallot() : resetBallot()));
 	});
+
+	// A sign-in dialog closed without signing in drops the vote it was for.
+	$effect(() =>
+		signInOpen.subscribe((isOpen) => {
+			if (!isOpen && !$session) untrack(() => (pending = null));
+		})
+	);
 
 	let sorted = $derived.by(() => {
 		const list = [...(results?.candidates ?? [])];
@@ -71,7 +99,6 @@
 	});
 
 	async function load() {
-		loadError = null;
 		try {
 			const res = await fetch(`${API_BASE}/api/polls/${encodeURIComponent(slug)}`);
 			if (res.status === 404) {
@@ -80,76 +107,159 @@
 			}
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			data = await res.json();
+			loadError = null;
 		} catch (err) {
 			console.error('failed to load poll', err);
-			loadError = tr('poll.error', currentLang);
+			// A failed live refresh keeps the results shown.
+			if (!data) loadError = tr('poll.error', currentLang);
 		}
 	}
 
+	function showBallot(b: Ballot) {
+		ballot = b.person_ids;
+		consented = b.consented;
+	}
+
 	async function loadBallot() {
+		const seq = ++ballotSeq;
 		try {
-			const res = await authFetch(`/api/polls/${encodeURIComponent(slug)}/ballot`);
-			if (!res.ok) throw new Error(await errorText(res));
-			const b: Ballot = await res.json();
-			saved = b.person_ids;
-			choice = [...b.person_ids];
-			consented = b.consented;
+			const b = await getBallot(slug);
+			if (seq !== ballotSeq) return;
+			showBallot(b);
+			ballotLoaded = true;
+			// The vote that asked for the sign-in goes on now.
+			if (pending !== null && !consentOpen && !changeOpen) pick(pending);
 		} catch (err) {
 			console.error('failed to load ballot', err);
 		}
 	}
 
 	function resetBallot() {
-		choice = [];
-		saved = [];
+		ballotSeq++;
+		ballot = [];
 		consented = false;
-		consent = false;
+		ballotLoaded = false;
+		consentOpen = changeOpen = withdrawOpen = false;
 	}
 
+	function say(msg: string) {
+		flash = msg;
+		if (flashTimer) clearTimeout(flashTimer);
+		flashTimer = setTimeout(() => (flash = null), 4000);
+	}
+
+	// change runs one ballot request; while it runs the vote buttons wait.
+	// It tells whether the change was saved.
+	async function change(request: () => Promise<Ballot>, done: string): Promise<boolean> {
+		if (busy) return false;
+		busy = true;
+		actionError = null;
+		const seq = ++ballotSeq;
+		try {
+			const b = await request();
+			if (seq === ballotSeq) showBallot(b);
+			say(done);
+			load();
+			return true;
+		} catch (err) {
+			if (!(err instanceof BallotError)) {
+				actionError = err instanceof Error ? err.message : String(err);
+				return false;
+			}
+			if (err.ballot && seq === ballotSeq) showBallot(err.ballot);
+			switch (err.code) {
+				case 'ballot_full':
+					// Another tab used the last vote first: ask which to give up.
+					changeOpen = pending !== null;
+					break;
+				case 'consent_required':
+					consented = false;
+					consentOpen = pending !== null;
+					break;
+				case 'closed':
+					actionError = tr('vote.error.closed', currentLang);
+					load();
+					break;
+				case 'signed_out':
+					actionError = tr('vote.error.signed_out', currentLang);
+					break;
+				case 'not_on_ballot':
+					actionError = tr('vote.error.not_on_ballot', currentLang);
+					break;
+				default:
+					actionError = err.message;
+			}
+			return false;
+		} finally {
+			busy = false;
+		}
+	}
+
+	// pick is a click on "Vote" for a candidate: it signs in, asks the
+	// consent, or asks which vote to give up first, as needed.
 	function pick(id: number) {
+		pending = id;
 		if (!signedIn) {
 			signInOpen.set(true);
 			return;
 		}
-		if (choice.includes(id) || choice.length >= maxChoices) return;
-		choice = [...choice, id];
-		justSaved = false;
+		if (!ballotLoaded) return; // goes on once the ballot is loaded
+		if (busy || ballot.includes(id)) {
+			pending = null;
+			return;
+		}
+		if (!consented) {
+			consentOpen = true;
+			return;
+		}
+		if (full) {
+			changeOpen = true;
+			return;
+		}
+		cast(id);
+	}
+
+	async function cast(id: number, replace?: number) {
+		const name = byId.get(id)?.name ?? '';
+		await change(() => addVote(slug, id, { replace, consent: true }), tr('vote.done.added', currentLang, { name }));
+		// A refusal that needs an answer (the consent, the vote to give up)
+		// keeps the vote pending for its dialog.
+		if (!consentOpen && !changeOpen) pending = null;
+	}
+
+	function acceptConsent() {
+		consentOpen = false;
+		if (pending === null) return;
+		if (full) changeOpen = true;
+		else cast(pending);
+	}
+
+	function replaceWith(old: number) {
+		changeOpen = false;
+		if (pending !== null) cast(pending, old);
+	}
+
+	function cancelPending() {
+		consentOpen = changeOpen = false;
+		pending = null;
 	}
 
 	function remove(id: number) {
-		choice = choice.filter((x) => x !== id);
-		justSaved = false;
+		const name = byId.get(id)?.name ?? '';
+		change(() => removeVote(slug, id), tr('vote.done.removed', currentLang, { name }));
 	}
 
 	function move(i: number, delta: number) {
 		const j = i + delta;
-		if (j < 0 || j >= choice.length) return;
-		const next = [...choice];
+		if (j < 0 || j >= ballot.length) return;
+		const next = [...ballot];
 		[next[i], next[j]] = [next[j], next[i]];
-		choice = next;
-		justSaved = false;
+		change(() => saveBallot(slug, next), tr('vote.done.moved', currentLang));
 	}
 
-	async function save(ids: number[]) {
-		saving = true;
-		saveError = null;
-		try {
-			const res = await authFetch(`/api/polls/${encodeURIComponent(slug)}/ballot`, {
-				method: 'POST',
-				body: JSON.stringify({ person_ids: ids, consent: consented || consent })
-			});
-			if (!res.ok) throw new Error(await errorText(res));
-			const b: Ballot = await res.json();
-			saved = b.person_ids;
-			choice = [...b.person_ids];
-			consented = b.consented;
-			justSaved = true;
-			await load();
-		} catch (err) {
-			saveError = err instanceof Error ? err.message : String(err);
-		} finally {
-			saving = false;
-		}
+	async function withdrawAll() {
+		withdrawOpen = false;
+		await change(() => saveBallot(slug, []), tr('vote.done.withdrawn', currentLang));
 	}
 
 	// The honesty colour follows the score: red at 20 and below, green at 80
@@ -183,12 +293,16 @@
 	}
 
 	let unsubscribe: (() => void) | null = null;
+	let unwatchBallot: (() => void) | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 	onMount(async () => {
 		const v = new URL(window.location.href).searchParams.get('vue') as View | null;
 		if (v && VIEWS.includes(v)) view = v;
 		await load();
+		unwatchBallot = onBallotChanged(() => {
+			if ($session && event && !busy) loadBallot();
+		});
 		realtimeManager.connect();
 		if (event) {
 			unsubscribe = subscribeToPollEvents(event.id, () => {
@@ -204,7 +318,9 @@
 
 	onDestroy(() => {
 		unsubscribe?.();
+		unwatchBallot?.();
 		if (refreshTimer) clearTimeout(refreshTimer);
+		if (flashTimer) clearTimeout(flashTimer);
 		realtimeManager.disconnect();
 		clearOldEvents();
 	});
@@ -253,74 +369,94 @@
 		</div>
 	{/if}
 
-	{#if results.open}
+	{#if results.open || ballot.length > 0}
 		<section class="ballot" aria-labelledby="ballot-title">
 			<div class="ballot-head">
-				<h2 id="ballot-title">{tr('poll.ballot.title', currentLang)}</h2>
+				<h2 id="ballot-title">{tr('vote.title', currentLang)}</h2>
 				{#if !signedIn}
 					<button class="btn btn-primary" onclick={() => signInOpen.set(true)}>{tr('poll.ballot.sign_in', currentLang)}</button>
+				{:else}
+					<a href="/profile" class="profile-link">{tr('vote.profile_link', currentLang)}</a>
 				{/if}
 			</div>
-			<p class="hint">{tr('poll.ballot.hint', currentLang, { n: maxChoices })}</p>
+			{#if results.open}
+				<p class="hint">{tr('vote.hint', currentLang, { n: maxChoices })}</p>
+			{:else}
+				<p class="hint">{tr('vote.closed_hint', currentLang)}</p>
+			{/if}
 
 			{#if signedIn}
 				{#if provider === 'noop'}
 					<p class="test-account">{tr('poll.ballot.test_account', currentLang)}</p>
 				{/if}
-				{#if choice.length === 0}
-					<p class="empty">{tr('poll.ballot.empty', currentLang)}</p>
-				{:else}
-					<ol class="choice-list">
-						{#each choice as id, i (id)}
-							{@const c = byId.get(id)}
-							<li class="choice">
-								<span class="choice-rank">{i + 1}</span>
-								<span class="choice-name">{c?.name ?? id}</span>
-								<span class="choice-actions">
-									<button class="icon" onclick={() => move(i, -1)} disabled={i === 0} aria-label={tr('poll.ballot.up', currentLang)} title={tr('poll.ballot.up', currentLang)}>↑</button>
-									<button class="icon" onclick={() => move(i, 1)} disabled={i === choice.length - 1} aria-label={tr('poll.ballot.down', currentLang)} title={tr('poll.ballot.down', currentLang)}>↓</button>
-									<button class="icon" onclick={() => remove(id)} aria-label={tr('poll.ballot.remove', currentLang)} title={tr('poll.ballot.remove', currentLang)}>×</button>
-								</span>
-							</li>
-						{/each}
-					</ol>
+				<VoteList votes={ballotVotes} max={maxChoices} lang={currentLang} editable={results.open} {busy} onmove={move} onremove={remove} />
+				{#if ballot.length === 0 && results.open}
+					<p class="empty">{tr('vote.empty', currentLang)}</p>
 				{/if}
-
-				{#if !consented}
-					<label class="consent">
-						<input type="checkbox" bind:checked={consent} />
-						<span>{tr('poll.ballot.consent', currentLang)}</span>
-					</label>
-				{/if}
-
-				<div class="ballot-actions">
-					<button class="btn btn-primary" onclick={() => save(choice)} disabled={saving || !dirty || choice.length === 0 || (!consented && !consent)}>
-						{saving ? tr('poll.ballot.saving', currentLang) : tr('poll.ballot.save', currentLang)}
-					</button>
-					{#if saved.length > 0}
-						<button class="btn" onclick={() => save([])} disabled={saving}>{tr('poll.ballot.withdraw', currentLang)}</button>
+				<div class="ballot-actions" aria-live="polite">
+					{#if results.open && ballot.length > 0}
+						<button class="btn" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
 					{/if}
-					{#if dirty && saved.length > 0}
-						<span class="status">{tr('poll.ballot.unsaved', currentLang)}</span>
-					{:else if justSaved && saved.length > 0}
-						<span class="status status--ok">{tr('poll.ballot.saved', currentLang)}</span>
+					{#if busy}
+						<span class="status">{tr('poll.ballot.saving', currentLang)}</span>
+					{:else if flash}
+						<span class="status status--ok">{flash}</span>
 					{/if}
 				</div>
-				{#if saveError}
-					<p class="save-error">{saveError}</p>
+				{#if actionError}
+					<p class="save-error" role="alert">{actionError}</p>
 				{/if}
 			{/if}
 		</section>
 	{/if}
 
+	<Modal open={consentOpen} title={tr('vote.consent.title', currentLang)} onclose={cancelPending} closeLabel={tr('auth.close', currentLang)}>
+		<p class="dialog-text">{tr('poll.ballot.consent', currentLang)}</p>
+		{#snippet actions()}
+			<button class="btn" onclick={cancelPending}>{tr('vote.cancel', currentLang)}</button>
+			<button class="btn btn-primary" onclick={acceptConsent}>{tr('vote.consent.accept', currentLang, { name: pendingName })}</button>
+		{/snippet}
+	</Modal>
+
+	<Modal open={changeOpen} title={tr('vote.change.title', currentLang)} onclose={cancelPending} closeLabel={tr('auth.close', currentLang)}>
+		<p class="dialog-text">{tr('vote.change.text', currentLang, { n: ballot.length, name: pendingName })}</p>
+		<ul class="swap-list">
+			{#each ballot as id, i (id)}
+				{@const c = byId.get(id)}
+				<li class="swap">
+					<span class="swap-rank">{i + 1}</span>
+					<span class="swap-name">{c?.name ?? `#${id}`}</span>
+					<button class="btn btn-danger" onclick={() => replaceWith(id)} disabled={busy}>
+						{tr('vote.change.remove', currentLang)}
+					</button>
+				</li>
+			{/each}
+		</ul>
+		<p class="dialog-note">{tr('vote.change.note', currentLang, { name: pendingName })}</p>
+		{#snippet actions()}
+			<a href="/profile" class="btn">{tr('vote.profile_link', currentLang)}</a>
+			<button class="btn" onclick={cancelPending}>{tr('vote.change.keep', currentLang)}</button>
+		{/snippet}
+	</Modal>
+
+	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
+		<p class="dialog-text">{tr('vote.withdraw.text', currentLang, { n: ballot.length })}</p>
+		{#snippet actions()}
+			<button class="btn" onclick={() => (withdrawOpen = false)}>{tr('vote.cancel', currentLang)}</button>
+			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+		{/snippet}
+	</Modal>
+
 	{#snippet pickButton(c: CandidateResult)}
 		{#if results?.open}
-			{@const mine = choice.indexOf(c.person_id)}
+			{@const mine = ballot.indexOf(c.person_id)}
 			{#if mine >= 0}
-				<button class="pick pick--mine" onclick={() => remove(c.person_id)}>{tr('poll.ballot.added', currentLang, { n: mine + 1 })} ✓</button>
+				<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.remove_named', currentLang, { name: c.name })}>
+					{tr('vote.mine', currentLang, { n: mine + 1 })} ✓
+				</button>
 			{:else}
-				<button class="pick" onclick={() => pick(c.person_id)} disabled={signedIn && choice.length >= maxChoices}>
-					{signedIn && choice.length >= maxChoices ? tr('poll.ballot.full', currentLang) : tr('poll.ballot.add', currentLang)}
+				<button class="pick" class:pick--full={signedIn && full} onclick={() => pick(c.person_id)} disabled={busy}>
+					{signedIn && full ? tr('vote.change_button', currentLang) : tr('vote.add', currentLang)}
 				</button>
 			{/if}
 		{/if}
@@ -350,7 +486,7 @@
 	{:else if view === 'vote'}
 		<ol class="vote-list">
 			{#each sorted as c (c.person_id)}
-				<li class="vote-row" class:vote-row--mine={choice.includes(c.person_id)}>
+				<li class="vote-row" class:vote-row--mine={ballot.includes(c.person_id)}>
 					<span class="vote-rank">{c.preference_rank ?? '—'}</span>
 					{@render who(c)}
 					<div class="vote-bar">
@@ -375,7 +511,7 @@
 	{:else if view === 'honesty'}
 		<div class="gauge-grid">
 			{#each sorted as c (c.person_id)}
-				<article class="gauge-card" class:gauge-card--mine={choice.includes(c.person_id)}>
+				<article class="gauge-card" class:gauge-card--mine={ballot.includes(c.person_id)}>
 					<span class="gauge-rank">{ordinal(c.honesty_rank)}</span>
 					{@render who(c)}
 					<HonestyGauge score={c.honesty_score} size={200} label={c.name} />
@@ -411,7 +547,7 @@
 			</div>
 
 			{#each sorted as c (c.person_id)}
-				<div class="board-row" class:board-row--mine={choice.includes(c.person_id)} role="row">
+				<div class="board-row" class:board-row--mine={ballot.includes(c.person_id)} role="row">
 					<div class="cell cell--vote" role="cell">
 						{#if c.first_choice_share === null}
 							<span class="value value--muted">—</span>
@@ -571,25 +707,43 @@
 		color: var(--text-muted);
 		margin: 0 0 0.75rem;
 	}
-	.choice-list {
-		list-style: none;
+	.profile-link {
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.profile-link:hover {
+		color: var(--text-primary);
+	}
+	.dialog-text {
+		font-size: 0.9rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
 		margin: 0 0 0.75rem;
+	}
+	.dialog-note {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin: 0.75rem 0 0;
+	}
+	.swap-list {
+		list-style: none;
+		margin: 0;
 		padding: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 0.4rem;
 	}
-	.choice {
+	.swap {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg-secondary);
+		padding: 0.45rem 0.75rem;
+		background: var(--bg-card);
 		border-radius: var(--radius-sm);
 	}
-	.choice-rank {
-		width: 1.6rem;
-		height: 1.6rem;
+	.swap-rank {
+		width: 1.5rem;
+		height: 1.5rem;
 		flex-shrink: 0;
 		display: grid;
 		place-items: center;
@@ -597,9 +751,9 @@
 		background: var(--accent);
 		color: white;
 		font-weight: 700;
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 	}
-	.choice-name {
+	.swap-name {
 		flex: 1;
 		min-width: 0;
 		font-weight: 500;
@@ -607,40 +761,10 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.choice-actions {
+	a.btn {
+		text-decoration: none;
 		display: inline-flex;
-		gap: 0.25rem;
-	}
-	.icon {
-		width: 1.9rem;
-		height: 1.9rem;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-sm);
-		background: transparent;
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-	.icon:hover:not(:disabled) {
-		color: var(--text-primary);
-		border-color: var(--text-muted);
-	}
-	.icon:disabled {
-		opacity: 0.3;
-		cursor: default;
-	}
-	.consent {
-		display: flex;
-		gap: 0.6rem;
-		align-items: flex-start;
-		font-size: 0.8rem;
-		line-height: 1.45;
-		color: var(--text-secondary);
-		margin: 0 0 0.9rem;
-		cursor: pointer;
-	}
-	.consent input {
-		margin-top: 0.2rem;
-		accent-color: var(--accent);
+		align-items: center;
 	}
 	.ballot-actions {
 		display: flex;
@@ -659,34 +783,6 @@
 		color: var(--red);
 		font-size: 0.85rem;
 		margin: 0.6rem 0 0;
-	}
-
-	.btn {
-		padding: 0.5rem 1rem;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-sm);
-		background: var(--bg-secondary);
-		color: var(--text-primary);
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-	.btn:hover:not(:disabled) {
-		border-color: var(--text-muted);
-	}
-	.btn:disabled {
-		opacity: 0.45;
-		cursor: default;
-	}
-	.btn-primary {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: white;
-	}
-	.btn-primary:hover:not(:disabled) {
-		background: var(--accent-hover);
-		border-color: var(--accent-hover);
 	}
 
 	.views {
@@ -998,6 +1094,9 @@
 	.pick:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+	.pick--full {
+		border-style: dashed;
 	}
 	.pick--mine {
 		background: var(--accent);
