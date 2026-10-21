@@ -109,6 +109,8 @@ export interface StanceDocument {
 	summary_en?: string;
 	fact_count: number;
 	contradiction_count: number;
+	// The raw pair count the stance score is computed from.
+	contradiction_pairs?: number;
 	score: number;
 	updated_at: string;
 }
@@ -228,4 +230,109 @@ export interface AppUser {
 	provider: string;
 	display_name: string;
 	consent_at?: string;
+}
+
+// GET /api/person/{id}/score: every input of the honesty score.
+export interface ScoreExplanation {
+	person_id: number;
+	entity_type: string;
+	facts: number;
+	bundles: number;
+	pairs: number;
+	extras: number;
+	denominator: number;
+	min_denominator: number;
+	ratio_decay: number;
+	absolute_decay: number;
+	extra_decay: number;
+	own_score: number;
+	members_score?: number | null;
+	members: number;
+	score: number;
+}
+
+// One fact of a feed item.
+export interface FeedFactSide {
+	id: number;
+	text: string;
+	text_en?: string | null;
+	date?: string | null;
+	source_urls: string[];
+	quote?: string;
+}
+
+// GET /api/feed: a new contradiction or a new fact.
+export interface FeedItem {
+	kind: 'contradiction' | 'fact';
+	id: number;
+	at: string;
+	person: { id: number; name: string; image_url?: string | null; honesty_score: number };
+	stance_id?: number | null;
+	stance_label?: string | null;
+	stance_label_en?: string | null;
+	fact: FeedFactSide;
+	other?: FeedFactSide | null;
+	reason?: string | null;
+	reason_en?: string | null;
+}
+
+export interface FeedPage {
+	items: FeedItem[];
+	next?: string;
+}
+
+export type ShareKind = 'person' | 'stance' | 'contradiction' | 'fact';
+
+// GET /api/share/{kind}/{id}: what a shared link points at.
+export interface ShareTarget {
+	kind: ShareKind;
+	id: number;
+	person_id: number;
+	person_name: string;
+	image_url?: string | null;
+	honesty_score: number;
+	fact_count: number;
+	contradiction_count: number;
+	stance_id?: number | null;
+	stance_label?: string | null;
+	stance_label_en?: string | null;
+	text: string;
+	text_en?: string | null;
+	other?: string | null;
+	quote?: string;
+}
+
+export type ReportKind = 'fact' | 'contradiction';
+export type ReportStatus = 'pending' | 'accepted' | 'rejected' | 'ambiguous' | 'stale';
+
+// A signed-in user's report (POST /api/reports, GET /api/me/reports).
+export interface UserReport {
+	id: number;
+	target_kind: ReportKind;
+	target_id: number;
+	person_id: number;
+	person_name: string;
+	target_text: string;
+	reason: string;
+	status: ReportStatus;
+	verdict_reason: string;
+	created_at: string;
+	judged_at?: string | null;
+}
+
+export interface MyReports {
+	reports: UserReport[];
+	reported: string[];
+}
+
+// GET /api/corrections: an accepted report in the public log.
+export interface Correction {
+	id: number;
+	target_kind: ReportKind;
+	person_id: number;
+	person_name: string;
+	target_text: string;
+	verdict_reason: string;
+	reported_at: string;
+	corrected_at: string;
 }

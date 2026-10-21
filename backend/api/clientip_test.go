@@ -71,3 +71,20 @@ func TestSignInRateLimit(t *testing.T) {
 	h.ServeHTTP(rec, r)
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
+
+// TestRateLimitKeepsCORS: a request over the limit gets a 429 the page can
+// read, with its CORS headers.
+func TestRateLimitKeepsCORS(t *testing.T) {
+	t.Setenv("RATE_LIMIT_PER_MINUTE", "2")
+	t.Setenv("CLIENT_IP_HEADER", "none")
+	h := NewServer(pollFixture(), nil).Handler()
+	var rec *httptest.ResponseRecorder
+	for range 3 {
+		r := httptest.NewRequest(http.MethodGet, "/api/polls", nil)
+		r.Header.Set("Origin", "http://localhost:3000")
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+	}
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Equal(t, "http://localhost:3000", rec.Header().Get("Access-Control-Allow-Origin"))
+}

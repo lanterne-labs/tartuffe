@@ -1,17 +1,22 @@
 <script lang="ts">
 	import { sourceDomain } from '$lib/sources';
 	import FactVersions from './FactVersions.svelte';
+	import ShareMenu from './ShareMenu.svelte';
+	import ReportButton from './ReportButton.svelte';
 	import type { ContradictionGroup } from '$lib/types';
-	import { TALLY_FORM_ID } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 
 	interface Props {
 		g: ContradictionGroup;
+		// The person and the topic, for the shared links.
+		person: { id: number; name: string };
+		topic: string;
 		onGoToFact: (id: number) => void;
-		onReport: (g: ContradictionGroup) => void;
+		// highlight is the contradiction a link points at.
+		highlight?: number | null;
 	}
 
-	let { g, onGoToFact, onReport }: Props = $props();
+	let { g, person, topic, onGoToFact, highlight = null }: Props = $props();
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -33,15 +38,6 @@
 <div class="group">
 	<div class="group-header">
 		<span class="group-count">{tr('contradiction.facts_in_tension', currentLang, { n: g.contradicting_facts.length + 1 })}</span>
-		{#if TALLY_FORM_ID}
-			<button class="report-btn-inline" title="Report this contradiction" aria-label="Report this contradiction" onclick={() => onReport(g)}>
-				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-					<line x1="12" y1="9" x2="12" y2="13"/>
-					<line x1="12" y1="17" x2="12.01" y2="17"/>
-				</svg>
-			</button>
-		{/if}
 	</div>
 
 	{#if g.summary}
@@ -62,6 +58,9 @@
 			{#each g.base_fact_source_urls as url}
 				<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 			{/each}
+			<span class="spacer"></span>
+			<ShareMenu item={{ kind: 'fact', id: g.base_fact_id, personId: person.id, personName: person.name, topic, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang) }} />
+			<ReportButton kind="fact" targetId={g.base_fact_id} preview={g.base_fact_text} />
 		</div>
 		<FactVersions sourceUrls={g.base_fact_source_urls} restatements={g.base_restatements ?? []} lang={currentLang} />
 	</div>
@@ -69,7 +68,7 @@
 	<!-- Contradicting facts, each with the reason it conflicts. -->
 	<div class="spokes">
 		{#each g.contradicting_facts as f (f.contradiction_id)}
-			<div class="spoke">
+			<div class="spoke" id="c-{f.contradiction_id}" class:highlight={highlight === f.contradiction_id}>
 				<div class="spoke-reason">{pickLang(f.reason, f.reason_en, currentLang)}</div>
 				<div class="comp-text"><span class="fact-id">[{f.fact_id}]</span> {pickLang(f.fact_text, f.fact_text_en, currentLang)}</div>
 				<div class="comp-links">
@@ -80,6 +79,19 @@
 					{#each f.source_urls as url}
 						<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 					{/each}
+					<span class="spacer"></span>
+					<ShareMenu
+						item={{
+							kind: 'contradiction',
+							id: f.contradiction_id,
+							personId: person.id,
+							personName: person.name,
+							topic,
+							text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang),
+							other: pickLang(f.fact_text, f.fact_text_en, currentLang)
+						}}
+					/>
+					<ReportButton kind="contradiction" targetId={f.contradiction_id} preview={`${g.base_fact_text}\n⟷\n${f.fact_text}`} />
 				</div>
 				<FactVersions sourceUrls={f.source_urls} restatements={f.restatements ?? []} lang={currentLang} />
 			</div>
@@ -185,21 +197,12 @@
 	.link-btn:hover {
 		border-color: var(--accent);
 	}
-	.report-btn-inline {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		color: var(--text-secondary);
-		opacity: 0.6;
-		cursor: pointer;
+	.spacer {
+		flex: 1;
 	}
-	.report-btn-inline:hover {
-		color: var(--red);
-		opacity: 1;
+	.spoke.highlight {
+		border-color: var(--accent);
+		box-shadow: 0 0 0 3px var(--accent-glow);
+		transition: box-shadow 0.6s ease;
 	}
 </style>

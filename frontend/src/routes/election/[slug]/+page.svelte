@@ -7,6 +7,7 @@
 	import { addVote, removeVote, saveBallot, getBallot, onBallotChanged, BallotError } from '$lib/ballot';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
+	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import VoteList from '$lib/components/VoteList.svelte';
 	import { replaceState } from '$app/navigation';
@@ -515,7 +516,7 @@
 					<span class="gauge-rank">{ordinal(c.honesty_rank)}</span>
 					{@render who(c)}
 					<HonestyGauge score={c.honesty_score} size={200} label={c.name} />
-					<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })} · {tr('poll.gauge.contradictions', currentLang, { n: c.contradiction_count })}</span>
+					<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })} · {tr('poll.gauge.contradictions', currentLang, { n: c.contradiction_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
 					{@render pickButton(c)}
 				</article>
 			{/each}
@@ -571,7 +572,7 @@
 
 					<div class="cell cell--honesty" role="cell">
 						<HonestyGauge score={c.honesty_score} size={130} label={c.name} />
-						<span class="meta">{ordinal(c.honesty_rank)} · {tr('poll.gauge.facts', currentLang, { n: c.fact_count })}</span>
+						<span class="meta">{ordinal(c.honesty_rank)} · {tr('poll.gauge.facts', currentLang, { n: c.fact_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
 					</div>
 				</div>
 			{/each}

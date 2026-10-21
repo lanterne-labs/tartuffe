@@ -168,3 +168,8 @@ a:hover {
   background: var(--error-bg);
   border-color: var(--red);
 }
+
+/* Anchors (#score, a shared stance) clear the sticky nav. */
+html {
+	scroll-padding-top: 5.5rem;
+}

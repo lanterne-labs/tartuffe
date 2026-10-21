@@ -12,6 +12,14 @@
 
 	let { children } = $props();
 
+	// The link preview of the page (X, WhatsApp, search engines): a page sets
+	// it with `meta` in the data of its load, the others get the site's.
+	const defaultMeta = {
+		title: 'tartuffe.me',
+		description: 'Un miroir public de ce que disent et votent les responsables politiques : leurs faits, leurs positions, leurs contradictions, avec les sources.'
+	};
+	let meta = $derived({ ...defaultMeta, ...(($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}) });
+
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => {
 		const unsub = lang.subscribe((v) => (currentLang = v));
@@ -37,6 +45,20 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<meta name="description" content={meta.description} />
+	<meta property="og:site_name" content="tartuffe.me" />
+	<meta property="og:type" content="website" />
+	<meta property="og:locale" content="fr_FR" />
+	<meta property="og:url" content={$page.url.href} />
+	<meta property="og:title" content={meta.title} />
+	<meta property="og:description" content={meta.description} />
+	{#if meta.image}
+		<meta property="og:image" content={meta.image} />
+		<meta name="twitter:image" content={meta.image} />
+	{/if}
+	<meta name="twitter:card" content="summary" />
+	<meta name="twitter:title" content={meta.title} />
+	<meta name="twitter:description" content={meta.description} />
 </svelte:head>
 
 <nav class="nav-bar">
@@ -74,7 +96,9 @@
 					{currentLang === 'en' ? featured.title_en : featured.title_fr}
 				</a>
 			{/if}
+			<a href="/feed" class="nav-link nav-link--feed" class:active={$page.url.pathname === '/feed'}>{tr('nav.feed', currentLang)}</a>
 			<a href="/" class="nav-link nav-link--home">{tr('nav.dashboard', currentLang)}</a>
+			<a href="/about" class="nav-link nav-link--about" class:active={$page.url.pathname === '/about'}>{tr('nav.about', currentLang)}</a>
 			{#if userName}
 				<span class="nav-user" title={tr('auth.signed_in_as', currentLang, { name: userName })}>
 					<a href="/profile" class="nav-user-link" class:active={$page.url.pathname === '/profile'} aria-label={tr('nav.profile', currentLang)}>
@@ -95,6 +119,16 @@
 		{@render children()}
 	</main>
 {/key}
+
+<footer class="site-footer">
+	<a href="/about">{tr('nav.about', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/corrections">{tr('corrections.title', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/feed">{tr('nav.feed', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/verification">{tr('footer.verification', currentLang)}</a>
+</footer>
 
 <style>
 	.nav-bar {
@@ -279,6 +313,31 @@
 		color: white;
 	}
 
+	.site-footer {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem 0.75rem;
+		max-width: 1200px;
+		margin: 3rem auto 0;
+		padding: 1.5rem 1rem 2rem;
+		border-top: 1px solid var(--glass-border);
+		color: var(--text-muted);
+		font-size: 0.8rem;
+	}
+	.site-footer a {
+		color: var(--text-secondary);
+	}
+	.site-footer a:hover {
+		color: var(--accent-hover);
+	}
+
+	@media (max-width: 860px) {
+		.nav-link--about {
+			display: none;
+		}
+	}
+
 	@media (max-width: 560px) {
 		.nav-content {
 			padding: 0.75rem 1rem;
@@ -299,7 +358,9 @@
 			min-width: 0;
 		}
 		.nav-user-name,
-		.nav-link--home {
+		.nav-link--home,
+		.nav-link--feed,
+		.nav-link--about {
 			display: none;
 		}
 		.nav-user-short {
@@ -322,5 +383,10 @@
 		max-width: 1200px;
 		margin: 0 auto;
 		padding: 2rem;
+	}
+	@media (max-width: 560px) {
+		.page-content {
+			padding: 1.25rem 1rem;
+		}
 	}
 </style>

@@ -5,11 +5,16 @@
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Restatement } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
-	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
+	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
+	import ShareMenu from '$lib/components/ShareMenu.svelte';
+	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
+	import ReportButton from '$lib/components/ReportButton.svelte';
+	import type { ShareTarget } from '$lib/types';
+	import { tick } from 'svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -126,25 +131,77 @@
 		}
 	}
 
-	async function goToFact(factId: number) {
-		factsExpanded = true;
+	// The item a shared link points at (?stance=, ?c=, ?fact=), highlighted
+	// for a moment once its stance is open.
+	let highlightContradiction: number | null = $state(null);
+	let highlightStance: number | null = $state(null);
 
-		const factExists = facts.some(f => f.fact_id === factId);
-		if (!factExists) {
-			await loadFacts(0);
+	function flash(elementId: string, clear: () => void) {
+		tick().then(() => {
+			const el = document.getElementById(elementId);
+			el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			setTimeout(clear, 2500);
+		});
+	}
+
+	async function openStance(stanceId: number, tab: StanceTab = 'contradictions') {
+		if (!stances.some((s) => s.id === stanceId)) return false;
+		stanceTab[stanceId] = tab;
+		if (!expandedStances[stanceId]) await toggleStance(stanceId);
+		if (tab === 'facts' && stanceFacts[stanceId] === undefined) await loadStanceFacts(stanceId);
+		return true;
+	}
+
+	// goToFact opens the facts of the stance that holds the fact (inStance
+	// when it does, else the fact's own stance of this person) and shows it.
+	async function goToFact(factId: number, inStance?: number) {
+		let stanceId = inStance;
+		if (stanceId !== undefined) {
+			if (stanceFacts[stanceId] === undefined) await loadStanceFacts(stanceId);
+			if (!stanceFacts[stanceId]?.some((f) => f.fact_id === factId)) stanceId = undefined;
 		}
-
+		if (stanceId === undefined) {
+			const t = await shareTarget('fact', factId);
+			stanceId = t?.stance_id ?? undefined;
+		}
+		if (stanceId === undefined || !(await openStance(stanceId, 'facts'))) return;
 		highlightedFactId = factId;
+		flash(`fact-${factId}`, () => (highlightedFactId = null));
+	}
 
-		setTimeout(() => {
-			const element = document.getElementById(`fact-${factId}`);
-			if (element) {
-				element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	async function shareTarget(kind: 'stance' | 'contradiction' | 'fact', id: number): Promise<ShareTarget | null> {
+		try {
+			const res = await fetch(`${API_BASE}/api/share/${kind}/${id}?person=${personId}`);
+			if (!res.ok) return null;
+			const t: ShareTarget = await res.json();
+			return t.person_id === personId ? t : null;
+		} catch (err) {
+			console.error('failed to resolve the shared item', err);
+			return null;
+		}
+	}
+
+	// openPointed opens what the link of the page points at.
+	async function openPointed() {
+		const q = $page.url.searchParams;
+		const num = (k: string) => (/^\d+$/.test(q.get(k) ?? '') ? Number(q.get(k)) : null);
+		const c = num('c'), f = num('fact'), st = num('stance');
+		if (c !== null) {
+			const t = await shareTarget('contradiction', c);
+			if (t?.stance_id && (await openStance(t.stance_id))) {
+				// The contradiction may sit past the first few shown.
+				const items = stanceContradictions[t.stance_id] ?? [];
+				const at = items.findIndex((g) => g.contradicting_facts.some((x) => x.contradiction_id === c));
+				if (at >= (stanceContradictionsShown[t.stance_id] ?? INITIAL_CONTRADICTIONS_SHOWN)) stanceContradictionsShown[t.stance_id] = at + 1;
+				highlightContradiction = c;
+				flash(`c-${c}`, () => (highlightContradiction = null));
 			}
-			setTimeout(() => {
-				highlightedFactId = null;
-			}, 2000);
-		}, 100);
+		} else if (f !== null) {
+			await goToFact(f);
+		} else if (st !== null && (await openStance(st))) {
+			highlightStance = st;
+			flash(`stance-${st}`, () => (highlightStance = null));
+		}
 	}
 
 	async function loadPerson() {
@@ -266,6 +323,7 @@
 		}
 
 		loading = false;
+		await openPointed();
 	}
 
 	async function loadHistory() {
@@ -345,65 +403,6 @@
 		});
 	}
 
-	// --- User-complaints (Tally) ---
-	// One helper per kind so call sites read as `reportFact(fact)` etc., with no
-	// string-typed kind parameter to get wrong. The Tally popup carries the kind +
-	// the relevant id as hidden fields; the triage CLI reads them back via the API.
-	function openTally(hiddenFields: Record<string, string | number>) {
-		if (!TALLY_FORM_ID) {
-			console.warn('VITE_TALLY_FORM_ID is not set; report button is a no-op.');
-			return;
-		}
-		// Tally embed.js is loaded async from app.html; the global may not exist yet
-		// on a very early click. Bail gracefully — the user can re-click.
-		const tally = (window as any).Tally;
-		if (!tally?.openPopup) {
-			console.warn('Tally widget is still loading; please retry in a moment.');
-			return;
-		}
-		tally.openPopup(TALLY_FORM_ID, {
-			layout: 'modal',
-			width: 460,
-			hiddenFields
-		});
-	}
-
-	function reportFact(fact: FactWithSource) {
-		const previewSrc = pickFactText(fact);
-		const preview = previewSrc.length > 80 ? previewSrc.slice(0, 80) + '…' : previewSrc;
-		openTally({
-			target_kind: 'fact',
-			fact_id: fact.fact_id,
-			contradiction_id: '',
-			stance_id: '',
-			target_label: `Fact #${fact.fact_id}: ${preview}`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
-	function reportContradiction(g: ContradictionGroup) {
-		openTally({
-			target_kind: 'contradiction',
-			contradiction_id: g.contradicting_facts[0]?.contradiction_id ?? '',
-			fact_id: '',
-			stance_id: '',
-			target_label: `Contradiction group (base fact #${g.base_fact_id}, ${g.contradicting_facts.length} conflicting)`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
-	function reportStance(s: StanceDocument) {
-		const preview = s.label.length > 60 ? s.label.slice(0, 60) + '…' : s.label;
-		openTally({
-			target_kind: 'stance',
-			stance_id: s.id,
-			fact_id: '',
-			contradiction_id: '',
-			target_label: `Stance #${s.id}: ${preview}`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
 	function handleRealtimeEvent(_event: any) {
 		// Refresh the headline view (person counts + stance scores). Stance contradictions
 		// and the facts list are reloaded lazily on next expand to avoid clobbering the
@@ -436,7 +435,7 @@
 </script>
 
 <svelte:head>
-	<title>{person?.name || 'Person'} - Digital Mirror</title>
+	<title>{person?.name ?? tr('person.loading', currentLang)} — tartuffe.me</title>
 </svelte:head>
 
 <div class="detail-page">
@@ -485,7 +484,10 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					<p class="hero-label">{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</p>
+					<div class="hero-label">
+						<span>{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</span>
+						<ScoreHelp name={person.name} personId={person.id} />
+					</div>
 					<p class="hero-summary">
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
@@ -495,6 +497,7 @@
 			</div>
 			<div class="hero-gauge">
 				<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
+				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
 			</div>
 		</div>
 
@@ -587,7 +590,8 @@
 						{@const items = stanceContradictions[stance.id] ?? []}
 						{@const shown = stanceContradictionsShown[stance.id] ?? INITIAL_CONTRADICTIONS_SHOWN}
 						{@const remaining = Math.max(0, items.length - shown)}
-						<div class="card stance-card" class:open={isOpen}>
+						{@const topic = pickLang(stance.label, stance.label_en, currentLang)}
+						<div class="card stance-card" class:open={isOpen} class:highlight={highlightStance === stance.id} id="stance-{stance.id}">
 							<!-- The whole header is one click target — tap anywhere on the card top to
 							     toggle. Interactive children inside (the report button) stop propagation
 							     so they don't also flip the toggle. The contradictions panel below sits
@@ -624,23 +628,13 @@
 											{#if !hasContradictions}
 												<span class="no-contradictions-chip">{tr('person.no_contradictions_chip', currentLang)}</span>
 											{/if}
-											{#if TALLY_FORM_ID}
-												<button
-													class="meta-report-btn"
-													title="Report this stance"
-													aria-label="Report this stance"
-													onclick={(e) => { e.stopPropagation(); reportStance(stance); }}
-												>
-													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-														<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-														<line x1="12" y1="9" x2="12" y2="13"/>
-														<line x1="12" y1="17" x2="12.01" y2="17"/>
-													</svg>
-												</button>
-											{/if}
+											<ShareMenu item={{ kind: 'stance', id: stance.id, personId: person.id, personName: person.name, topic }} />
 										</div>
 									</div>
-									<ScoreGauge score={stance.score} size={56} />
+									<div class="stance-gauge">
+										<ScoreGauge score={stance.score} size={56} />
+										<ScoreHelp name={person.name} stance={{ label: topic, facts: stance.fact_count, pairs: stance.contradiction_pairs ?? stance.contradiction_count }} />
+									</div>
 								</div>
 							</div>
 
@@ -668,7 +662,13 @@
 											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
 										{:else if items.length > 0}
 											{#each items.slice(0, shown) as g (g.base_fact_id)}
-												<ContradictionGroupCard {g} onGoToFact={goToFact} onReport={reportContradiction} />
+												<ContradictionGroupCard
+													{g}
+													person={{ id: person.id, name: person.name }}
+													{topic}
+													onGoToFact={(id) => goToFact(id, stance.id)}
+													highlight={highlightContradiction}
+												/>
 											{/each}
 											{#if remaining > 0}
 												<div class="stance-more-row">
@@ -691,7 +691,7 @@
 										{:else if (stanceFacts[stance.id]?.length ?? 0) > 0}
 											<div class="stance-facts-list">
 												{#each stanceFacts[stance.id] as f (f.fact_id)}
-													<div class="stance-fact-row">
+													<div class="stance-fact-row" id="fact-{f.fact_id}" class:highlight={highlightedFactId === f.fact_id}>
 														<div class="stance-fact-text">
 															<span class="fact-id">[{f.fact_id}]</span>
 															{pickFactText(f)}
@@ -711,6 +711,10 @@
 															<div class="quote-block">"{f.original_quote.length > 200 ? f.original_quote.slice(0, 200) + '…' : f.original_quote}"</div>
 														{/if}
 														<FactVersions sourceUrls={[f.source_url]} restatements={f.restatements ?? []} lang={currentLang} />
+														<div class="fact-actions">
+															<ShareMenu item={{ kind: 'fact', id: f.fact_id, personId: person.id, personName: person.name, topic, text: pickFactText(f) }} />
+															<ReportButton kind="fact" targetId={f.fact_id} preview={f.fact_text} />
+														</div>
 													</div>
 												{/each}
 											</div>
@@ -1614,5 +1618,36 @@
 			flex-direction: column-reverse;
 			align-items: flex-start;
 		}
+	}
+
+	.hero-label {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.hero-gauge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.stance-gauge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.3rem;
+		flex-shrink: 0;
+	}
+	.fact-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.25rem;
+		margin-top: 0.35rem;
+	}
+	.stance-card.highlight,
+	.stance-fact-row.highlight {
+		box-shadow: 0 0 0 3px var(--accent-glow);
+		border-color: var(--accent);
+		transition: box-shadow 0.6s ease;
 	}
 </style>

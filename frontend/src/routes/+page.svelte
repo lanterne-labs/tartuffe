@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
@@ -269,6 +270,7 @@
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<div class="rank-score rank-score--good">{(person.honesty_score * 100).toFixed(0)}</div>
+								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
 					{/each}
@@ -311,6 +313,7 @@
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<div class="rank-score rank-score--bad">{(person.honesty_score * 100).toFixed(0)}</div>
+								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
 					{/each}
@@ -384,6 +387,7 @@
 									{(person.honesty_score * 100).toFixed(0)}
 								</text>
 							</svg>
+							<ScoreHelp name={person.name} personId={person.id} />
 						</div>
 					</div>
 				</a>
@@ -565,11 +569,12 @@
 
 	@media (max-width: 720px) {
 		.ranking-panels {
-			grid-template-columns: 1fr;
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 
 	.rank-panel {
+		min-width: 0;
 		border-radius: var(--radius-md);
 		padding: 1.25rem;
 		backdrop-filter: var(--glass-blur);
@@ -836,6 +841,9 @@
 	/* Score Ring */
 	.score-ring-wrapper {
 		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
 	}
 
 	.score-ring {

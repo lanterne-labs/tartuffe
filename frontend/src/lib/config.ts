@@ -18,9 +18,3 @@ const computeDefaultApiBase = () => {
 
 export const API_BASE =
 	import.meta.env.VITE_API_BASE?.replace(/\/$/, '') ?? computeDefaultApiBase();
-
-// Tally form id for the user-complaints flow. Public-safe (it's used as the
-// form's URL slug). When unset, the report buttons are hidden so the dev
-// experience doesn't open a broken popup.
-export const TALLY_FORM_ID: string = import.meta.env.VITE_TALLY_FORM_ID ?? '';
-

@@ -232,13 +232,15 @@ func (s *Server) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) 
 // Score reuses the global ComputeHonestyScore formula scoped to this stance, so it lives on the
 // same 0..1 scale as the headline person score.
 type StanceResponse struct {
-	ID                 int64     `json:"id"`
-	Label              string    `json:"label"`
-	LabelEn            string    `json:"label_en,omitempty"`
-	Summary            string    `json:"summary"`
-	SummaryEn          string    `json:"summary_en,omitempty"`
-	FactCount          int       `json:"fact_count"`
-	ContradictionCount int       `json:"contradiction_count"`
+	ID                 int64  `json:"id"`
+	Label              string `json:"label"`
+	LabelEn            string `json:"label_en,omitempty"`
+	Summary            string `json:"summary"`
+	SummaryEn          string `json:"summary_en,omitempty"`
+	FactCount          int    `json:"fact_count"`
+	ContradictionCount int    `json:"contradiction_count"`
+	// ContradictionPairs is the raw pair count the score is computed from.
+	ContradictionPairs int       `json:"contradiction_pairs"`
 	Score              float64   `json:"score"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -345,6 +347,7 @@ func (s *Server) handleGetPersonStances(w http.ResponseWriter, r *http.Request) 
 			SummaryEn:          d.SummaryEn,
 			FactCount:          d.FactCount,
 			ContradictionCount: groupCounts[d.ID],
+			ContradictionPairs: counts[d.ID],
 			Score:              stanceScore(d.FactCount, counts[d.ID]),
 			UpdatedAt:          d.LastUpdatedAt,
 		}

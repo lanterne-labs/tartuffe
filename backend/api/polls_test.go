@@ -27,6 +27,13 @@ type memPolls struct {
 	sessions   map[string]int64
 	ballots    map[int64][]int64
 	nextUser   int64
+
+	reports []storage.UserReport
+	// targets are the facts and contradictions that exist, as "kind:id".
+	targets map[string]bool
+	feed    []storage.FeedItem
+	share   map[string]*storage.ShareTarget
+	scores  map[int64]*storage.ScoreExplanation
 }
 
 func (m *memPolls) init() {

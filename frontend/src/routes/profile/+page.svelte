@@ -7,12 +7,15 @@
 	import { getMyVotes, removeVote, saveBallot, deleteAccount, onBallotChanged, BallotError } from '$lib/ballot';
 	import Modal from '$lib/components/Modal.svelte';
 	import VoteList from '$lib/components/VoteList.svelte';
-	import type { MyVotes, MyEventVotes } from '$lib/types';
+	import { getMyReports } from '$lib/reports';
+	import type { MyVotes, MyEventVotes, UserReport } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
 	let mine: MyVotes | null = $state(null);
+	let reports: UserReport[] | null = $state(null);
+	let reportsError = $state(false);
 	let loadError: string | null = $state(null);
 	// The event whose votes are being changed (one change at a time).
 	let busySlug: string | null = $state(null);
@@ -35,9 +38,11 @@
 			if (token) {
 				deleted = false;
 				load();
+				loadReports();
 			} else {
 				seq++;
 				mine = null;
+				reports = null;
 			}
 		});
 	});
@@ -53,6 +58,20 @@
 			if (n !== seq) return;
 			console.error('failed to load my votes', err);
 			if (!(err instanceof BallotError && err.code === 'signed_out')) loadError = tr('profile.error', currentLang);
+		}
+	}
+
+	async function loadReports() {
+		const n = seq;
+		try {
+			const r = await getMyReports();
+			if (n !== seq) return;
+			reports = r.reports;
+			reportsError = false;
+		} catch (err) {
+			if (n !== seq) return;
+			console.error('failed to load my reports', err);
+			reportsError = true;
 		}
 	}
 
@@ -198,6 +217,35 @@
 			{/each}
 		{/if}
 
+		<h2 class="section-title">{tr('profile.reports', currentLang)}</h2>
+		{#if reportsError}
+			<div class="card">
+				<p class="error">{tr('profile.error', currentLang)}</p>
+				<button class="btn" onclick={loadReports}>{tr('home.retry', currentLang)}</button>
+			</div>
+		{:else if !reports}
+			<p class="muted">{tr('person.loading', currentLang)}</p>
+		{:else if reports.length === 0}
+			<p class="muted">{tr('profile.reports.none', currentLang)}</p>
+		{:else}
+			<ul class="reports">
+				{#each reports as r (r.id)}
+					<li class="card report">
+						<div class="report-head">
+							<span class="status status--{r.status}">{tr(`report.status.${r.status}`, currentLang)}</span>
+							<a href="/person/{r.person_id}">{r.person_name}</a>
+							<span class="small">{dateText(r.created_at)}</span>
+						</div>
+						<blockquote>{r.target_text}</blockquote>
+						<p class="muted small">« {r.reason} »</p>
+						{#if r.verdict_reason && r.status !== 'pending'}
+							<p class="muted small"><strong>{tr('profile.reports.judge', currentLang)}</strong> {r.verdict_reason}</p>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+
 		<section class="card danger" aria-labelledby="danger-title">
 			<h2 id="danger-title">{tr('profile.danger', currentLang)}</h2>
 			<p class="muted">{tr('profile.danger_text', currentLang)}</p>
@@ -301,6 +349,54 @@
 		color: var(--red);
 		font-size: 0.85rem;
 		margin: 0 0 0.75rem;
+	}
+	.reports {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.report-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.35rem 0.75rem;
+		margin-bottom: 0.5rem;
+		font-size: 0.85rem;
+	}
+	.report-head a {
+		color: var(--text-primary);
+		text-transform: capitalize;
+	}
+	.report blockquote {
+		margin: 0 0 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--bg-secondary);
+		border-radius: var(--radius-sm);
+		font-size: 0.88rem;
+		line-height: 1.5;
+	}
+	.report .muted {
+		margin-bottom: 0.35rem;
+	}
+	.status {
+		font-size: 0.72rem;
+		font-weight: 600;
+		padding: 0.15rem 0.55rem;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--glass-border);
+		color: var(--text-secondary);
+	}
+	.status--accepted {
+		color: var(--green);
+		border-color: var(--green);
+	}
+	.status--rejected {
+		color: var(--text-muted);
+	}
+	.status--ambiguous,
+	.status--pending {
+		color: var(--amber);
+		border-color: var(--amber);
 	}
 	.danger {
 		margin-top: 2rem;

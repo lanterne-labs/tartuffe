@@ -134,6 +134,12 @@ func TestRoutes(t *testing.T) {
 		"POST /api/polls/{slug}/ballot",
 		"POST /api/polls/{slug}/votes",
 		"DELETE /api/polls/{slug}/votes/{personID}",
+		"GET /api/person/{id}/score",
+		"GET /api/feed",
+		"GET /api/share/{kind}/{id}",
+		"GET /api/corrections",
+		"POST /api/reports",
+		"GET /api/me/reports",
 	}, routes)
 }
 

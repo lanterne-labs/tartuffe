@@ -50,6 +50,14 @@ type Storer interface {
 	UpdatePollBallot(ctx context.Context, eventID, userID int64, consent bool, edit func(current []int64) ([]int64, error)) ([]int64, error)
 	GetUserPollChoices(ctx context.Context, userID int64) ([]storage.UserPollChoice, error)
 	DeleteAppUser(ctx context.Context, userID int64) error
+	CreateUserReport(ctx context.Context, userID int64, kind string, targetID int64, reason string) (*storage.UserReport, error)
+	GetUserReports(ctx context.Context, userID int64) ([]storage.UserReport, error)
+	ListCorrections(ctx context.Context, beforeID int64, limit int) ([]storage.Correction, error)
+
+	// The feed, the shared links and the score explanations.
+	GetFeed(ctx context.Context, kind string, after *storage.FeedCursor, limit, minFacts int) ([]storage.FeedItem, error)
+	GetShareTarget(ctx context.Context, kind string, id, personID int64) (*storage.ShareTarget, error)
+	GetScoreExplanation(ctx context.Context, personID int64) (*storage.ScoreExplanation, error)
 	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)
 	CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	GetSessionUser(ctx context.Context, tokenHash []byte) (*storage.AppUser, error)
@@ -73,17 +81,18 @@ type Server struct {
 func NewServer(storer Storer, providers *auth.Registry) *Server {
 	r := chi.NewRouter()
 
-	// Rate limit from env (default: 100 req/min per client address)
-	rateLimit := envLimit("RATE_LIMIT_PER_MINUTE", 100)
+	// Rate limit from env (default: 600 req/min per client address). A page
+	// view makes about ten requests, and a mobile carrier puts many users
+	// behind one address: the limit stops floods, not readers.
+	rateLimit := envLimit("RATE_LIMIT_PER_MINUTE", 600)
 	keyIP := keyByClientIP(clientIPHeader())
 
 	// Middleware — applied in order:
-	// securityHeaders → Logger → Recoverer → Timeout → RateLimit → CORS → metrics
+	// securityHeaders → Logger → Recoverer → Timeout → CORS → RateLimit → metrics
 	r.Use(securityHeaders)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
-	r.Use(httprate.Limit(rateLimit, 1*time.Minute, httprate.WithKeyFuncs(keyIP)))
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  corsOriginFunc(),
 		AllowedMethods:   []string{"GET", "POST", "DELETE", "OPTIONS"},
@@ -92,6 +101,9 @@ func NewServer(storer Storer, providers *auth.Registry) *Server {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	// After CORS, so a refused request still carries its CORS headers: the
+	// page then sees a 429, not an opaque network error.
+	r.Use(httprate.Limit(rateLimit, 1*time.Minute, httprate.WithKeyFuncs(keyIP)))
 	r.Use(metrics.Middleware)
 
 	server := &Server{
@@ -194,13 +206,20 @@ func (s *Server) setupRoutes() {
 		r.Get("/person/{id}/stances", s.handleGetPersonStances)
 		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
 		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
+		r.Get("/person/{id}/score", s.handleScoreExplanation)
 		r.Get("/events", s.handleEventsSSE)
+		r.Get("/feed", s.handleFeed)
+		r.Get("/share/{kind}/{id}", s.handleShare)
+		r.Get("/corrections", s.handleCorrections)
+		r.Post("/reports", s.requireUser(s.handleCreateReport))
+		r.Get("/me/reports", s.requireUser(s.handleMyReports))
 
 		r.Get("/auth/providers", s.handleAuthProviders)
 		// A sign-in proof costs a verification: a tighter limit, shared
-		// by the challenge and the sign-in (default 10 per minute).
+		// by the challenge and the sign-in (default 30 per minute: a sign-in is two
+		// requests, and users behind one carrier address share it).
 		r.Group(func(r chi.Router) {
-			r.Use(httprate.Limit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 10), time.Minute, httprate.WithKeyFuncs(s.keyIP)))
+			r.Use(httprate.Limit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), time.Minute, httprate.WithKeyFuncs(s.keyIP)))
 			r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 			r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
 		})
