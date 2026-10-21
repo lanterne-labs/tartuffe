@@ -6,6 +6,7 @@ import (
 	"digital-mirror/backend/plugins/news"
 	"digital-mirror/backend/plugins/photos"
 	"digital-mirror/backend/plugins/twitter"
+	"digital-mirror/backend/plugins/viepublique"
 )
 
 // Plugins is the run order. Ingest runs press sources before official
@@ -14,6 +15,7 @@ import (
 var Plugins = []plugins.Plugin{
 	news.Plugin{},
 	twitter.Plugin{},
+	viepublique.Plugin{},
 	photos.Plugin{},
 	frpolitics.Plugin{},
 }
