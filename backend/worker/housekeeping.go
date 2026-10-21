@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"digital-mirror/backend/contradiction"
@@ -72,15 +73,19 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
-	dirty bool
+	dirty atomic.Bool // facts were added since the last pass (set by the tasks run at once)
 }
 
-// DefaultHousekeeping are the settings of `dm worker run`.
-var DefaultHousekeeping = Housekeeping{
-	MaintenanceEvery: 6 * time.Hour,
-	// The AN archive is refreshed around 02:05 UTC.
-	FeedHourUTC: 3,
-	BackfillCap: time.Hour,
+// NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
+func NewHousekeeping(storer *storage.PostgresStorer, d *deps.Deps) *Housekeeping {
+	return &Housekeeping{
+		Storer:           storer,
+		Deps:             d,
+		MaintenanceEvery: 6 * time.Hour,
+		// The AN archive is refreshed around 02:05 UTC.
+		FeedHourUTC: 3,
+		BackfillCap: time.Hour,
+	}
 }
 
 func (h *Housekeeping) now() time.Time {
@@ -94,7 +99,7 @@ func (h *Housekeeping) now() time.Time {
 // runs a maintenance pass.
 func (h *Housekeeping) FactsAdded(n int) {
 	if n > 0 {
-		h.dirty = true
+		h.dirty.Store(true)
 	}
 }
 
@@ -245,7 +250,7 @@ func (h *Housekeeping) maintenanceDue(ctx context.Context) (bool, time.Time, err
 	if last.cut {
 		return true, last.since, nil
 	}
-	due := h.dirty || last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery
+	due := h.dirty.Load() || last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery
 	return due, last.start, nil
 }
 
@@ -288,7 +293,7 @@ func (h *Housekeeping) lastMaintenance(ctx context.Context) (lastPass, error) {
 // since is zero).
 func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	start := h.now()
-	log.Info().Time("since", since).Bool("facts_added", h.dirty).Msg("Maintenance pass started")
+	log.Info().Time("since", since).Bool("facts_added", h.dirty.Load()).Msg("Maintenance pass started")
 	var errs []error
 	step := func(name string, err error) error {
 		if err == nil {
@@ -387,7 +392,7 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 		return err
 	}
 
-	h.dirty = false
+	h.dirty.Store(false)
 	elapsed := h.now().Sub(start)
 	rows := []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}
 	if cut {

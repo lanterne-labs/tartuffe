@@ -95,57 +95,104 @@ func (o Options) Validate() error {
 	return nil
 }
 
-// Run claims and runs tasks until ctx ends, and returns ctx.Err(). A task the
-// worker is on when ctx ends goes back to pending at once. When no task is
-// pending, idle does the housekeeping (nil: none).
+// Run claims and runs tasks until ctx ends, and returns ctx.Err(). It runs as
+// many tasks at once as the LLM endpoint serves (llm.Concurrency(): one on the
+// local GPU box): a task spends most of its time on LLM calls made one after
+// the other (the facts of one person go in order), so the tasks of different
+// persons fill the endpoint together. The tasks the worker is on when ctx ends
+// go back to pending at once. When no task is pending and none runs, idle
+// does the housekeeping (nil: none).
 func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Options) error {
 	if err := opts.Validate(); err != nil {
 		return err
 	}
-	log.Info().Dur("poll", opts.Poll).Dur("lease", opts.Lease).Msg("Worker started")
-	quickRefails := 0
-	for {
-		task, err := tasks.ClaimCollectionTask(ctx, opts.Lease)
-		switch {
-		case err != nil:
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			log.Error().Err(err).Msg("Worker: claiming a task failed; retrying after the poll pause")
-		case task != nil:
-			err = runOne(ctx, tasks, runner, idle, opts, *task)
-			if err != nil && !errors.Is(err, errWaited) && !errors.Is(err, errRecovered) && ctx.Err() == nil {
-				log.Error().Err(err).Int64("task", task.ID).Msg("Worker: recording the attempt failed; the lease of the task expires")
-			}
-		case idle != nil:
-			err = runIdle(ctx, idle, opts)
+	lanes := llm.Concurrency()
+	log.Info().Dur("poll", opts.Poll).Dur("lease", opts.Lease).Int("tasks_at_once", lanes).Msg("Worker started")
+	done := make(chan error, lanes)
+	running := 0
+	// The tasks running when Run returns finish their bookkeeping first.
+	defer func() {
+		for ; running > 0; running-- {
+			<-done
 		}
+	}()
+	quickRefails := 0
+	// settle applies the outcome of a task or a housekeeping to the loop: it
+	// returns how long to wait before the next claim.
+	settle := func(err error, task bool) time.Duration {
+		if errors.Is(err, errRecovered) {
+			quickRefails++
+			if quickRefails < maxQuickRefails {
+				return 0 // the LLM is back: the same work at once
+			}
+			// Work that keeps failing as unavailable while the LLM answers is
+			// not run again at every poll.
+			log.Error().Int("refails", quickRefails).Msg("Worker: the LLM answers but the work keeps failing as unavailable; pausing")
+			quickRefails = 0
+			return opts.Backoff
+		}
+		if err == nil {
+			quickRefails = 0
+			if task {
+				return 0 // the next task at once
+			}
+		}
+		if errors.Is(err, errIdleFailed) {
+			return opts.Backoff
+		}
+		return opts.Poll
+	}
+	var resume time.Time // no claim before it
+	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if errors.Is(err, errRecovered) {
-			quickRefails++
-		} else if err == nil {
-			quickRefails = 0
-		}
-		if errors.Is(err, errRecovered) && quickRefails < maxQuickRefails {
-			continue // the LLM is back: the same work at once
-		}
-		if task != nil && err == nil {
-			continue // the next task at once
-		}
-		pause := opts.Poll
-		if errors.Is(err, errIdleFailed) || errors.Is(err, errRecovered) {
-			// A failed housekeeping, or work that keeps failing as unavailable
-			// while the LLM answers, is not run again at every poll.
-			if errors.Is(err, errRecovered) {
-				log.Error().Int("refails", quickRefails).Msg("Worker: the LLM answers but the work keeps failing as unavailable; pausing")
-				quickRefails = 0
+		// Fill the free lanes.
+		for running < lanes && !time.Now().Before(resume) {
+			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				log.Error().Err(err).Msg("Worker: claiming a task failed; retrying after the poll pause")
+				resume = time.Now().Add(opts.Poll)
+				break
 			}
-			pause = opts.Backoff
+			if task == nil {
+				break
+			}
+			running++
+			go func(task storage.CollectionTask) {
+				err := runOne(ctx, tasks, runner, idle, opts, task)
+				if err != nil && !errors.Is(err, errWaited) && !errors.Is(err, errRecovered) && ctx.Err() == nil {
+					log.Error().Err(err).Int64("task", task.ID).Msg("Worker: recording the attempt failed; the lease of the task expires")
+				}
+				done <- err
+			}(*task)
+		}
+		var wait time.Duration
+		switch {
+		case running > 0:
+			// A lane frees, or the poll looks for tasks added meanwhile.
+			wait = opts.Poll
+			if d := time.Until(resume); d > 0 {
+				wait = d
+			}
+		case time.Now().Before(resume):
+			wait = time.Until(resume)
+		case idle != nil:
+			resume = time.Now().Add(settle(runIdle(ctx, idle, opts), false))
+			continue
+		default:
+			wait = opts.Poll
 		}
 		select {
-		case <-time.After(pause):
+		case err := <-done:
+			running--
+			if pause := settle(err, true); pause > 0 {
+				resume = time.Now().Add(pause)
+			}
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
