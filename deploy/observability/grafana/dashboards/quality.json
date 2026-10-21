@@ -1,0 +1,465 @@
+{
+  "uid": "quality",
+  "title": "Digital Mirror - Quality",
+  "tags": [
+    "digital-mirror",
+    "quality"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-90d",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Precision, 30 days (real)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 100.0 * COUNT(*) FILTER (WHERE verdict = 'real') / NULLIF(COUNT(*), 0) AS precision FROM contradiction_reviews WHERE detected_at > now() - interval '30 days'",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of the reviewed contradictions detected in the last 30 days that are real.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Precision, 30 days (real + debatable)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 100.0 * COUNT(*) FILTER (WHERE verdict <> 'false') / NULLIF(COUNT(*), 0) AS precision FROM contradiction_reviews WHERE detected_at > now() - interval '30 days'",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of the reviewed contradictions detected in the last 30 days that are not false.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Reviews, 30 days",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) FROM contradiction_reviews WHERE detected_at > now() - interval '30 days'",
+          "refId": "A"
+        }
+      ],
+      "description": "Reviewed contradictions detected in the last 30 days (dm contradictions review).",
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Stances",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT MAX(value) FILTER (WHERE metric = 'stances') FROM (SELECT metric, value FROM job_metrics WHERE job_type = 'quality' AND created_at = (SELECT MAX(created_at) FROM job_metrics WHERE job_type = 'quality')) l",
+          "refId": "A"
+        }
+      ],
+      "description": "At the last quality measure (end of a maintenance pass).",
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "One-fact stances",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 100.0 * MAX(value) FILTER (WHERE metric = 'stance_singletons') / NULLIF(MAX(value) FILTER (WHERE metric = 'stances'), 0) FROM (SELECT metric, value FROM job_metrics WHERE job_type = 'quality' AND created_at = (SELECT MAX(created_at) FROM job_metrics WHERE job_type = 'quality')) l",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of the stances that hold a single fact: fragmentation.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "Contradictions per score bundle",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT MAX(value) FILTER (WHERE metric = 'contradictions') / NULLIF(MAX(value) FILTER (WHERE metric = 'contradiction_bundles'), 0) FROM (SELECT metric, value FROM job_metrics WHERE job_type = 'quality' AND created_at = (SELECT MAX(created_at) FROM job_metrics WHERE job_type = 'quality')) l",
+          "refId": "A"
+        }
+      ],
+      "description": "Contradiction rows per bundle the honesty score counts: repeats of one contradiction.",
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Precision by detection week",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('week', detected_at) AS time, 100.0 * COUNT(*) FILTER (WHERE verdict = 'real') / COUNT(*) AS real, 100.0 * COUNT(*) FILTER (WHERE verdict <> 'false') / COUNT(*) AS \"real + debatable\" FROM contradiction_reviews WHERE $__timeFilter(detected_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Reviews grouped by the week the contradiction was detected: the rules in force then.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Reviews by verdict, per detection week",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('week', detected_at) AS time, COUNT(*) FILTER (WHERE verdict = 'real') AS real, COUNT(*) FILTER (WHERE verdict = 'debatable') AS debatable, COUNT(*) FILTER (WHERE verdict = 'false') AS false FROM contradiction_reviews WHERE $__timeFilter(detected_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "id": 8
+    },
+    {
+      "type": "timeseries",
+      "title": "Stances",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS time, MAX(value) FILTER (WHERE metric = 'stances') AS stances, MAX(value) FILTER (WHERE metric = 'stance_singletons') AS \"one-fact stances\" FROM job_metrics WHERE job_type = 'quality' AND $__timeFilter(created_at) GROUP BY created_at ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "id": 9
+    },
+    {
+      "type": "timeseries",
+      "title": "Stance fragmentation",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS time, 100.0 * MAX(value) FILTER (WHERE metric = 'stance_singletons') / NULLIF(MAX(value) FILTER (WHERE metric = 'stances'), 0) AS \"one-fact share %\", MAX(value) FILTER (WHERE metric = 'stances') / NULLIF(MAX(value) FILTER (WHERE metric = 'stance_persons'), 0) AS \"stances per person\" FROM job_metrics WHERE job_type = 'quality' AND $__timeFilter(created_at) GROUP BY created_at ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Share of one-fact stances, and stances per person with a stance.",
+      "id": 10
+    },
+    {
+      "type": "timeseries",
+      "title": "Claim groups",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS time, MAX(value) FILTER (WHERE metric = 'claim_groups') AS groups, MAX(value) FILTER (WHERE metric = 'claim_group_members') AS members, MAX(value) FILTER (WHERE metric = 'facts') AS facts FROM job_metrics WHERE job_type = 'quality' AND $__timeFilter(created_at) GROUP BY created_at ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "A claim group is one statement reported by several sources: its parent stands for its members.",
+      "id": 11
+    },
+    {
+      "type": "timeseries",
+      "title": "Contradictions and score bundles",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS time, MAX(value) FILTER (WHERE metric = 'contradictions') AS contradictions, MAX(value) FILTER (WHERE metric = 'contradiction_bundles') AS bundles, MAX(value) FILTER (WHERE metric = 'contradiction_persons') AS persons FROM job_metrics WHERE job_type = 'quality' AND $__timeFilter(created_at) GROUP BY created_at ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM audit verdicts per run",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT created_at AS time, MAX(value) FILTER (WHERE metric = 'keep') AS keep, MAX(value) FILTER (WHERE metric = 'remove') AS remove, MAX(value) FILTER (WHERE metric = 'ambiguous') AS ambiguous, MAX(value) FILTER (WHERE metric = 'deleted') AS deleted, MAX(value) FILTER (WHERE metric = 'cached') AS cached FROM job_metrics WHERE job_type = 'contradiction-audit' AND $__timeFilter(created_at) GROUP BY created_at ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "The periodic audit re-judges the stored contradictions; deleted counts the confirmed false positives.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8
+          }
+        },
+        "overrides": []
+      },
+      "id": 13
+    },
+    {
+      "type": "table",
+      "title": "Latest reviews",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT reviewed_at, reviewer, verdict, person_name AS person, fact_a_text AS fact_a, fact_b_text AS fact_b, note, detected_at, contradiction_id FROM contradiction_reviews ORDER BY reviewed_at DESC LIMIT 200",
+          "refId": "A"
+        }
+      ],
+      "id": 14
+    }
+  ]
+}
