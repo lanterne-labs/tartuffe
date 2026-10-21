@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"golang.org/x/sync/errgroup"
 )
 
 // InsertedFactMeta holds metadata about a successfully inserted fact.
@@ -195,8 +194,8 @@ func (fi *FactInserter) EnableDedupe(groups GroupStorer) {
 //
 // The facts of one subject are processed in order: two of them at once could
 // both open a stance on one subject, or miss each other as a same claim. The
-// subjects run at once up to llm.Concurrency(), the number of calls the
-// endpoint serves together (1 on the local profile: one fact at a time). A
+// subjects run as many at once as the endpoint serves (llm.ForEach; on the
+// local profile one subject at a time, in the order of their first fact). A
 // scrutin is one ballot per voter, so its ballots run that many at once.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
 	var order []string
@@ -219,23 +218,9 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 		return nil
 	}
 
-	var err error
-	if workers := llm.Concurrency(); workers <= 1 || len(order) <= 1 {
-		// One at a time, in the order given.
-		all := make([]int, len(facts))
-		for i := range facts {
-			all[i] = i
-		}
-		err = insertSubject(ctx, all)
-	} else {
-		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(workers)
-		for _, subject := range order {
-			idxs := bySubject[subject]
-			g.Go(func() error { return insertSubject(gctx, idxs) })
-		}
-		err = g.Wait()
-	}
+	err := llm.ForEach(ctx, order, func(ctx context.Context, subject string) error {
+		return insertSubject(ctx, bySubject[subject])
+	})
 
 	result := &InsertResult{}
 	for _, out := range outcomes {

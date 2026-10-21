@@ -96,22 +96,32 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 	if factsFoldAskAll {
 		opts.JudgedSince = time.Time{}
 	}
-	// The persons are folded llm.Concurrency() at a time (one on a local
-	// model): each person's clusters are independent of the others'.
+	// The persons are folded as many at once as the endpoint serves
+	// (llm.ForEach): each person's clusters are independent of the others'.
+	// The persons start in order, so at the deadline every person before the
+	// first one skipped is done.
 	var (
 		mu                         sync.Mutex
-		wg                         sync.WaitGroup
 		totalClusters, totalFolded int
-		lastStarted                int64
+		firstSkipped               = -1
 	)
-	slots := make(chan struct{}, llm.Concurrency())
-	foldPerson := func(p core.PersonRecord) {
-		defer wg.Done()
-		defer func() { <-slots }()
+	index := make(map[int64]int, len(persons))
+	for i, p := range persons {
+		index[p.ID] = i
+	}
+	err = llm.ForEach(ctx, persons, func(ctx context.Context, p core.PersonRecord) error {
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			mu.Lock()
+			if i := index[p.ID]; firstSkipped < 0 || i < firstSkipped {
+				firstSkipped = i
+			}
+			mu.Unlock()
+			return nil
+		}
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Fold clustering failed; skipping person")
-			return
+			return nil
 		}
 		for _, cluster := range clusters {
 			mu.Lock()
@@ -132,22 +142,19 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			totalFolded++
 			mu.Unlock()
 		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	for i, p := range persons {
-		if !deadline.IsZero() && time.Now().After(deadline) {
-			// The persons started before the deadline finish first, so every
-			// person up to last_person_id is done.
-			wg.Wait()
-			log.Info().Int("done", i).Int("left", len(persons)-i).Int64("last_person_id", lastStarted).
-				Msg("Fold: deadline reached; the rest stays pending (resume with --start-after)")
-			break
+	if firstSkipped >= 0 {
+		var lastDone int64
+		if firstSkipped > 0 {
+			lastDone = persons[firstSkipped-1].ID
 		}
-		slots <- struct{}{}
-		lastStarted = p.ID
-		wg.Add(1)
-		go foldPerson(p)
+		log.Info().Int("done", firstSkipped).Int("left", len(persons)-firstSkipped).Int64("last_person_id", lastDone).
+			Msg("Fold: deadline reached; the rest stays pending (resume with --start-after)")
 	}
-	wg.Wait()
 
 	if factsFoldApply && totalFolded > 0 {
 		// Folding changes active-fact counts and collapses contradictions; settle

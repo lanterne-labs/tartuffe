@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"golang.org/x/sync/errgroup"
 )
 
 // StanceStorer defines the storage interface for stance operations.
@@ -475,16 +474,10 @@ func analyzeVoteKey(r *stanceLLMResponse) string {
 	return r.PrimaryVerdict + "|" + strconv.FormatInt(r.DuplicateOf, 10) + "|" + strings.Join(ids, ",")
 }
 
-// analyzeBatchParallelism is the number of batches of one analysis that run at
-// one time. The Claude Team endpoint runs 4 CLI processes at one time
-// (llm.defaultClaudeTeamProcs); the local server serves one request at a time
-// and queues the others, well within the 300 s timeout of the client.
-const analyzeBatchParallelism = 4
-
 // analyzeAcrossBatches splits keyFacts into batches (chunkKeyFactsByBudget)
 // and calls callLLM once per batch with the same summary + new fact. The
-// batches run in parallel (analyzeBatchParallelism); the first failed batch
-// stops the others and its error is returned. The answers are aggregated in
+// batches run as many at once as the endpoint serves (llm.ForEach); after the
+// first failed batch no other starts, and its error is returned. The answers are aggregated in
 // batch order, so the result does not depend on the order of completion.
 // Across all batches the contradictions list is unioned (deduped by
 // KeyFactID). The primary verdict is CONTRADICTION if any batch returned
@@ -500,26 +493,28 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 	}
 
 	resps := make([]*stanceLLMResponse, len(batches))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(analyzeBatchParallelism)
-	for batchIdx, batch := range batches {
-		g.Go(func() error {
-			// The analyze verdict is a sample, and this judge CREATES contradiction
-			// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
-			// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
-			// single-sample). Early exit keeps the usual cost at 2 calls.
-			resp, err := llm.MajorityVote(AnalyzeVotes,
-				func() (*stanceLLMResponse, error) { return sm.callLLM(gctx, stanceSummary, batch, newFactText) },
-				analyzeVoteKey,
-			)
-			if err != nil {
-				return fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
-			}
-			resps[batchIdx] = resp
-			return nil
-		})
+	idxs := make([]int, len(batches))
+	for i := range idxs {
+		idxs[i] = i
 	}
-	if err := g.Wait(); err != nil {
+	err := llm.ForEach(ctx, idxs, func(ctx context.Context, batchIdx int) error {
+		// The analyze verdict is a sample, and this judge CREATES contradiction
+		// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
+		// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
+		// single-sample). Early exit keeps the usual cost at 2 calls.
+		resp, err := llm.MajorityVote(AnalyzeVotes,
+			func() (*stanceLLMResponse, error) {
+				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText)
+			},
+			analyzeVoteKey,
+		)
+		if err != nil {
+			return fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
+		}
+		resps[batchIdx] = resp
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 

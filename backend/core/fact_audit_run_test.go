@@ -30,7 +30,7 @@ func TestRunFactAudit_TallyAndDelivery(t *testing.T) {
 	}
 
 	var seen []int64
-	tally, err := RunFactAudit(context.Background(), auditor, jobs, 3, func(o FactAuditOutcome) error {
+	tally, err := RunFactAudit(context.Background(), auditor, jobs, func(o FactAuditOutcome) error {
 		seen = append(seen, o.FactID)
 		return nil
 	})
@@ -54,7 +54,7 @@ func TestRunFactAudit_OnResultErrorAborts(t *testing.T) {
 	auditor := fakeAuditor{verdicts: map[string]FactAuditResult{"x": {Verdict: FactVerdictKeep, Rule: "none"}}}
 	jobs := []FactAuditJob{{FactID: 1, Input: FactAuditInput{NormalizedFact: "x"}}}
 	want := errors.New("encode failed")
-	_, err := RunFactAudit(context.Background(), auditor, jobs, 1, func(FactAuditOutcome) error { return want })
+	_, err := RunFactAudit(context.Background(), auditor, jobs, func(FactAuditOutcome) error { return want })
 	if !errors.Is(err, want) {
 		t.Fatalf("expected the onResult error to surface, got %v", err)
 	}
