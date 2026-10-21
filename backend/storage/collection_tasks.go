@@ -35,6 +35,7 @@ type CollectionTask struct {
 	NotBefore   time.Time
 	LastError   string
 	RequestedBy string
+	Operation   string
 	Items       int
 	Facts       int
 	CreatedAt   time.Time
@@ -50,16 +51,18 @@ type NewCollectionTask struct {
 	Until       time.Time
 	Priority    int
 	RequestedBy string
+	// Operation names the batch the task belongs to ("" for none).
+	Operation string
 }
 
 const collectionTaskColumns = `t.id, t.person_id, p.name, COALESCE(p.entity_type, 'human'), t.plugin, t.since, t.until,
-	t.status, t.priority, t.attempts, t.not_before, COALESCE(t.last_error, ''), COALESCE(t.requested_by, ''),
+	t.status, t.priority, t.attempts, t.not_before, COALESCE(t.last_error, ''), COALESCE(t.requested_by, ''), COALESCE(t.operation, ''),
 	t.items, t.facts, t.created_at, t.started_at, t.finished_at`
 
 func scanCollectionTask(row pgx.Row) (*CollectionTask, error) {
 	var t CollectionTask
 	err := row.Scan(&t.ID, &t.PersonID, &t.PersonName, &t.EntityType, &t.Plugin, &t.Since, &t.Until,
-		&t.Status, &t.Priority, &t.Attempts, &t.NotBefore, &t.LastError, &t.RequestedBy,
+		&t.Status, &t.Priority, &t.Attempts, &t.NotBefore, &t.LastError, &t.RequestedBy, &t.Operation,
 		&t.Items, &t.Facts, &t.CreatedAt, &t.StartedAt, &t.FinishedAt)
 	if err != nil {
 		return nil, err
@@ -76,10 +79,10 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 			return added, fmt.Errorf("collection task: since %s is not before until %s", t.Since.Format("2006-01-02"), t.Until.Format("2006-01-02"))
 		}
 		tag, err := s.pool.Exec(ctx, `
-			INSERT INTO collection_tasks (person_id, plugin, since, until, priority, requested_by)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))
+			INSERT INTO collection_tasks (person_id, plugin, since, until, priority, requested_by, operation)
+			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''))
 			ON CONFLICT DO NOTHING`,
-			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy)
+			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy, t.Operation)
 		if err != nil {
 			return added, fmt.Errorf("adding collection task: %w", err)
 		}

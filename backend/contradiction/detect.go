@@ -131,6 +131,7 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	var allPersonPairs []personPairs
 	totalPairs := 0
 	cut := false
+	reached := len(persons)
 	for i, person := range persons {
 		if err := ctx.Err(); err != nil {
 			return DetectResult{}, fmt.Errorf("contradiction detection stopped collecting pairs: %w", err)
@@ -139,6 +140,7 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 			log.Info().Int("max_pairs", opts.MaxPairs).Int("pairs", totalPairs).Int("persons_left", len(persons)-i).
 				Msg("Pair budget reached; the persons left wait for the next run")
 			cut = true
+			reached = i
 			break
 		}
 		if _, excluded := excludeSet[person.Name]; excluded {
@@ -157,12 +159,33 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	}
 
 	if totalPairs == 0 {
+		recordDetectionProgress(ctx, storer, opts, reached, len(persons))
 		return DetectResult{Cut: cut}, nil
 	}
 
 	res, err := judgePairs(ctx, storer, allPersonPairs, opts)
 	res.Cut = cut
+	if err == nil {
+		recordDetectionProgress(ctx, storer, opts, reached, len(persons))
+	}
 	return res, err
+}
+
+// detectionAllOperation names the detection over every person in the
+// progress records.
+const detectionAllOperation = "detection: all persons"
+
+// recordDetectionProgress records how far a detection over every person is
+// (Grafana, Operations): the persons the passes reached, judged. A pass
+// reaches further than the one before, since the persons it judged have no
+// new pair left. A detection over a list of persons is not that operation.
+func recordDetectionProgress(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions, reached, total int) {
+	if len(opts.Persons) > 0 || opts.MaxPersons > 0 || opts.DryRun {
+		return
+	}
+	if err := storer.RecordProgress(ctx, detectionAllOperation, reached, total); err != nil {
+		log.Warn().Err(err).Msg("Detection: recording the progress failed")
+	}
 }
 
 func personsForDetection(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions) ([]storage.PersonInfo, error) {
