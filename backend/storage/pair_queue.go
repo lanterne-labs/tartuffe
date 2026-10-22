@@ -57,6 +57,21 @@ func (s *PostgresStorer) EnqueueFactPairsBySharedSourceKey(ctx context.Context, 
 	return int(res.RowsAffected()), nil
 }
 
+// EnqueueFactPair asks the detector to judge one pair of the person's facts
+// (in either order). A pair already queued stays as it is.
+func (s *PostgresStorer) EnqueueFactPair(ctx context.Context, personID, factA, factB int64, source string) error {
+	if factA > factB {
+		factA, factB = factB, factA
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO fact_pair_queue (person_id, fact_a_id, fact_b_id, source) VALUES ($1, $2, $3, $4)
+		ON CONFLICT DO NOTHING`, personID, factA, factB, source)
+	if err != nil {
+		return fmt.Errorf("queueing pair %d-%d: %w", factA, factB, err)
+	}
+	return nil
+}
+
 // ConsumeQueuedPairsForPerson atomically takes (returns and deletes) up to
 // limit of the person's oldest queued pairs. The queue is transient: whatever
 // the detector does with them next, they are gone — a pair that does not end

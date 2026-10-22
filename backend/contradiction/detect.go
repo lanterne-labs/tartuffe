@@ -855,10 +855,9 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 // No decision is made when the detector failed, when the LLM was unavailable
 // to the verifier or the grouping gate, or when the grouping gate failed
 // otherwise: a recorded NO is never judged again, so the pair would lose its
-// grouping for good. A verifier failure other than llm.ErrUnavailable keeps the YES
-// (fail-open, see OpenAIContradictionDetector.VerifyContradiction): the judge
-// found it, and a verifier that cannot answer must not silently drop it; the
-// auditor re-judges it later.
+// grouping for good. A verifier failure makes no decision either: a YES is
+// never recorded unverified, and the pair, left unjudged, comes back in the
+// next pass.
 //
 // A failure under a cancelled ctx makes no decision either: a cut verifier
 // call must not keep the YES unverified, nor a cut detector call become a NO.
@@ -879,9 +878,12 @@ func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.Same
 	}
 
 	d := pairDecision{decided: true, contradiction: r.IsContradictory}
-	// A pair whose fact text is empty (deleted mid-run) cannot be verified;
-	// the YES is kept, mirroring the stance path.
-	if d.contradiction && p.factAText != "" && p.factBText != "" {
+	// A pair whose fact text is empty (deleted mid-run) cannot be verified:
+	// no decision, as the stance path records nothing unverified.
+	if d.contradiction && (p.factAText == "" || p.factBText == "") {
+		return pairDecision{}, nil
+	}
+	if d.contradiction {
 		keep, refutation, err := verifier.VerifyContradiction(ctx,
 			promptrules.Statement{Text: p.factAText, Also: p.alsoA},
 			promptrules.Statement{Text: p.factBText, Also: p.alsoB}, r.Reason)
@@ -892,7 +894,8 @@ func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.Same
 			return pairDecision{}, fmt.Errorf("verifying pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		case err != nil:
 			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
-				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+				Msg("Contradiction verification failed; pair left pending")
+			return pairDecision{}, nil
 		case !keep:
 			d.contradiction = false
 			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)
