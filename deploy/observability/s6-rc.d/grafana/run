@@ -1,6 +1,15 @@
 #!/bin/sh
 # The host injects PORT for the public-facing process; fall back to 3000 locally.
 export GF_SERVER_HTTP_PORT="${PORT:-3000}"
+# GF_SECURITY_ADMIN_PASSWORD sets the admin password only when Grafana
+# creates its database; after that the password lives in /data. Reset it at
+# every start, so the host variable is the password.
+if [ -n "$GF_SECURITY_ADMIN_PASSWORD" ]; then
+  s6-setuidgid grafana /usr/share/grafana/bin/grafana cli \
+    --homepath=/usr/share/grafana --config=/etc/grafana/grafana.ini \
+    admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD" >/dev/null \
+    || echo "grafana: resetting the admin password failed" >&2
+fi
 exec s6-setuidgid grafana /usr/share/grafana/bin/grafana server \
   --homepath=/usr/share/grafana \
   --config=/etc/grafana/grafana.ini

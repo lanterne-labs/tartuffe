@@ -1,22 +1,28 @@
 {
   "uid": "tasks",
-  "title": "Digital Mirror - Worker Tasks",
+  "title": "Digital Mirror - Tasks",
   "tags": [
     "digital-mirror",
-    "worker"
+    "tasks"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "1m",
+  "refresh": "30s",
   "time": {
-    "from": "now-7d",
+    "from": "now-2d",
     "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
   },
   "panels": [
     {
       "type": "stat",
-      "title": "Pending tasks",
+      "title": "Running",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -35,14 +41,36 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'pending'",
+          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'running'",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Tasks the worker is on now (as many at once as the LLM endpoint serves).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 1
     },
     {
       "type": "stat",
-      "title": "Running",
+      "title": "Ready",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -61,14 +89,36 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'running'",
+          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'pending' AND (not_before IS NULL OR not_before <= now())",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Pending tasks the worker can claim now.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 2
     },
     {
       "type": "stat",
-      "title": "Done (24 h)",
+      "title": "Waiting",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -87,14 +137,36 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'done' AND finished_at > now() - interval '24 hours'",
+          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'pending' AND not_before > now()",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Pending tasks put back for later (a quota, an outage): they wait for their not_before.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 3
     },
     {
       "type": "stat",
-      "title": "Failed (24 h)",
+      "title": "Done (24 h)",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -113,32 +185,35 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'failed' AND finished_at > now() - interval '24 hours'",
+          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'done' AND finished_at > now() - interval '24 hours'",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
           }
         },
         "overrides": []
-      }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 4
     },
     {
       "type": "stat",
-      "title": "Facts (24 h)",
+      "title": "Failed (24 h)",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -157,14 +232,35 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM facts WHERE created_at > now() - interval '24 hours'",
+          "rawSql": "SELECT COUNT(*) FROM collection_tasks WHERE status = 'failed' AND finished_at > now() - interval '24 hours'",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 5
     },
     {
       "type": "stat",
-      "title": "Contradictions (24 h)",
+      "title": "Facts from tasks (24 h)",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -183,21 +279,42 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM contradictions WHERE created_at > now() - interval '24 hours'",
+          "rawSql": "SELECT COALESCE(SUM(facts), 0) FROM collection_tasks WHERE finished_at > now() - interval '24 hours'",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "id": 6
     },
     {
-      "type": "timeseries",
-      "title": "Facts per hour",
+      "type": "table",
+      "title": "Queue: running, then in the order the worker takes them",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 14,
+        "w": 24,
         "x": 0,
         "y": 4
       },
@@ -207,16 +324,110 @@
             "type": "postgres",
             "uid": "mirrordb"
           },
-          "format": "time_series",
+          "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('hour', created_at) AS time, COUNT(*) AS facts FROM facts WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT CASE WHEN t.status = 'running' THEN NULL ELSE ROW_NUMBER() OVER (PARTITION BY t.status = 'running' ORDER BY (t.not_before > now()) NULLS FIRST, t.priority DESC, t.created_at) END AS \"#\", CASE WHEN t.status = 'running' THEN 'running' WHEN t.not_before > now() THEN 'waiting' ELSE 'ready' END AS state, p.name AS person, t.plugin, t.since, t.until, t.priority, COALESCE(t.operation, '') AS operation, t.attempts, t.started_at, t.heartbeat_at AS heartbeat, t.not_before, t.items, t.facts, COALESCE(t.last_error, '') AS last_error FROM collection_tasks t JOIN persons p ON p.id = t.person_id WHERE t.status IN ('running', 'pending') ORDER BY t.status = 'running' DESC, (t.not_before > now()) NULLS FIRST, t.priority DESC, t.created_at LIMIT 1000",
           "refId": "A"
         }
-      ]
+      ],
+      "description": "Running tasks first, then the pending ones in claim order: highest priority, then oldest. A waiting task was put back until its not_before. items and facts of a running task are those of its earlier attempts.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "state"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "running": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "ready": {
+                        "color": "blue",
+                        "index": 1
+                      },
+                      "waiting": {
+                        "color": "orange",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "#"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 60
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": true,
+          "reducer": [
+            "count"
+          ],
+          "fields": [
+            "person"
+          ]
+        }
+      },
+      "id": 7
+    },
+    {
+      "type": "table",
+      "title": "Pending tasks per operation and plugin",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(operation, '(watch list and by hand)') AS operation, plugin, MAX(priority) AS priority, COUNT(*) FILTER (WHERE status = 'running') AS running, COUNT(*) FILTER (WHERE status = 'pending') AS pending, COUNT(*) FILTER (WHERE status = 'done') AS done, COUNT(*) FILTER (WHERE status = 'failed') AS failed FROM collection_tasks GROUP BY 1, 2 HAVING COUNT(*) FILTER (WHERE status IN ('running', 'pending')) > 0 ORDER BY 3 DESC, 1, 2",
+          "refId": "A"
+        }
+      ],
+      "id": 8
     },
     {
       "type": "timeseries",
-      "title": "Contradictions per day",
+      "title": "Tasks finished per hour",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -225,7 +436,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 18
       },
       "targets": [
         {
@@ -235,23 +446,35 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) AS contradictions FROM contradictions WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('hour', finished_at) AS time, plugin || ' ' || status AS metric, COUNT(*) AS value FROM collection_tasks WHERE finished_at IS NOT NULL AND $__timeFilter(finished_at) GROUP BY 1, 2 ORDER BY 1",
           "refId": "A"
         }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "id": 9
     },
     {
       "type": "table",
-      "title": "Recent tasks",
+      "title": "Finished recently",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
       },
       "gridPos": {
-        "h": 12,
+        "h": 10,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 26
       },
       "targets": [
         {
@@ -261,42 +484,53 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT t.id, t.status, t.plugin, p.name AS person, t.since, t.until, t.attempts, t.items, t.facts, t.requested_by,\n  t.created_at, t.started_at, t.finished_at, t.last_error\nFROM collection_tasks t JOIN persons p ON p.id = t.person_id\nORDER BY t.created_at DESC LIMIT 50",
+          "rawSql": "SELECT t.finished_at, t.status, p.name AS person, t.plugin, t.since, t.until, COALESCE(t.operation, '') AS operation, t.items, t.facts, t.finished_at - t.started_at AS took, t.attempts, COALESCE(t.last_error, '') AS last_error FROM collection_tasks t JOIN persons p ON p.id = t.person_id WHERE t.finished_at IS NOT NULL ORDER BY t.finished_at DESC LIMIT 200",
           "refId": "A"
         }
-      ]
-    },
-    {
-      "type": "table",
-      "title": "Housekeeping (job_metrics)",
-      "datasource": {
-        "type": "postgres",
-        "uid": "mirrordb"
+      ],
+      "description": "The last 200 tasks that ended: done, failed or cancelled.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "done": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "cancelled": {
+                        "color": "gray",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "mirrordb"
-          },
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT created_at, job_type, metric, value FROM job_metrics\nWHERE job_type IN ('maintenance', 'feed', 'contradiction-audit') ORDER BY created_at DESC LIMIT 30",
-          "refId": "A"
-        }
-      ]
+      "id": 10
     }
-  ],
-  "templating": {
-    "list": []
-  },
-  "annotations": {
-    "list": []
-  }
+  ]
 }
