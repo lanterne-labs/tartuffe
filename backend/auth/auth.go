@@ -1,8 +1,10 @@
 // Package auth signs users in through pluggable providers. A provider checks
-// what the browser brings back (a pseudonym for noop, a zero-knowledge proof
-// for zkpassport) and names the identity it proves; the API then opens a
-// session for the app user of that identity. Nothing else about the person is
-// kept.
+// what the browser brings back (an ID token for google, a pseudonym for noop,
+// a zero-knowledge proof for zkpassport) and names the identity it proves.
+// An account provider (google) opens a session for the app user of that
+// identity; a verification provider (zkpassport) attaches its identity, a
+// document, to the signed-in account, which may then vote. Nothing else about
+// the person is kept.
 package auth
 
 import (
@@ -45,11 +47,24 @@ type Provider interface {
 	Verify(ctx context.Context, payload json.RawMessage) (Identity, error)
 }
 
+// Provider roles.
+const (
+	// RoleAccount providers open accounts (google).
+	RoleAccount = "account"
+	// RoleVerification providers prove one document per account (zkpassport).
+	RoleVerification = "verification"
+	// RoleTest providers do both, with no proof (noop): never where the
+	// results must mean something.
+	RoleTest = "test"
+)
+
 // ProviderInfo describes a provider to the frontend.
 type ProviderInfo struct {
 	Name string `json:"name"`
-	// Verified is true when the provider proves one real person per account
-	// (zkpassport); false for test providers (noop).
+	// Role is RoleAccount, RoleVerification or RoleTest.
+	Role string `json:"role"`
+	// Verified is true when the provider proves one real person per document
+	// (zkpassport outside dev mode).
 	Verified bool `json:"verified"`
 	// Config is provider-specific public configuration for the frontend.
 	Config map[string]any `json:"config,omitempty"`
@@ -76,6 +91,18 @@ func (r *Registry) Get(name string) (Provider, bool) {
 	}
 	p, ok := r.providers[name]
 	return p, ok
+}
+
+// Opens says the provider may open an account.
+func Opens(p Provider) bool {
+	r := p.Info().Role
+	return r == RoleAccount || r == RoleTest
+}
+
+// Verifies says the provider may attach a document to an account.
+func Verifies(p Provider) bool {
+	r := p.Info().Role
+	return r == RoleVerification || r == RoleTest
 }
 
 // Infos lists the enabled providers, verified ones first, then by name.

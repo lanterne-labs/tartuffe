@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/poll"
 	"digital-mirror/backend/storage"
 
@@ -84,6 +85,9 @@ const (
 	codeNotOnBallot     = "not_on_ballot"
 	codeConsentRequired = "consent_required"
 	codeInvalid         = "invalid_ballot"
+	// codeVerificationRequired: an account without a verified identity
+	// cannot vote.
+	codeVerificationRequired = "verification_required"
 )
 
 var errConsentRequired = errors.New("consent required: a ballot is a political opinion, it is stored only with your consent")
@@ -132,12 +136,16 @@ func (s *Server) changeBallot(w http.ResponseWriter, r *http.Request, e *storage
 			relaxed := *e
 			relaxed.MaxChoices = max(e.MaxChoices, len(current))
 			limits = &relaxed
+		} else if !user.Verified {
+			return nil, storage.ErrNotVerified
 		} else if user.ConsentAt == nil && !consent {
 			return nil, errConsentRequired
 		}
 		return next, poll.CheckBallot(limits, candidates, next, time.Now())
 	})
 	consented := user.ConsentAt != nil || consent
+	outcome := "ok"
+	defer func() { metrics.BallotChangesTotal.WithLabelValues(outcome).Inc() }()
 	switch {
 	case err == nil:
 		s.results.invalidate(e.ID)
@@ -148,14 +156,22 @@ func (s *Server) changeBallot(w http.ResponseWriter, r *http.Request, e *storage
 		if errors.Is(err, poll.ErrNotOnBallot) {
 			code = codeNotOnBallot
 		}
+		outcome = code
 		writeJSON(w, http.StatusConflict, ballotErrorResponse{Error: err.Error(), Code: code, Ballot: &b})
+	case errors.Is(err, storage.ErrNotVerified):
+		outcome = codeVerificationRequired
+		writeJSON(w, http.StatusForbidden, ballotErrorResponse{Error: err.Error(), Code: codeVerificationRequired})
 	case errors.Is(err, errConsentRequired):
+		outcome = codeConsentRequired
 		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeConsentRequired})
 	case errors.Is(err, poll.ErrClosed):
+		outcome = codeClosed
 		writeJSON(w, http.StatusForbidden, ballotErrorResponse{Error: err.Error(), Code: codeClosed})
 	case errors.Is(err, poll.ErrBallot), errors.Is(err, storage.ErrNotCandidate):
+		outcome = codeInvalid
 		writeJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeInvalid})
 	default:
+		outcome = "error"
 		httpInternalError(w, err, "failed to save ballot")
 	}
 }

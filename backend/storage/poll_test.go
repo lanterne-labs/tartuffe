@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"sync"
 	"testing"
@@ -56,8 +57,15 @@ func TestPollBallotsAndTallies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, u1.ID, again.ID)
 	assert.Nil(t, u1.ConsentAt)
-	u2, err := storer.UpsertAppUser(ctx, "zkpassport", "two", "")
+	u2, err := storer.UpsertAppUser(ctx, "google", "two", "")
 	require.NoError(t, err)
+	// Without a verified identity, an account votes for nobody.
+	_, err = storer.UpdatePollBallot(ctx, eventID, u1.ID, true, func([]int64) ([]int64, error) { return []int64{a}, nil })
+	require.ErrorIs(t, err, ErrNotVerified)
+	for i, u := range []*AppUser{u1, u2} {
+		_, err = storer.AttachVerification(ctx, u.ID, fmt.Sprintf("noop:doc%d", i))
+		require.NoError(t, err)
+	}
 
 	set := func(ids ...int64) func([]int64) ([]int64, error) {
 		return func([]int64) ([]int64, error) { return ids, nil }
@@ -169,6 +177,8 @@ func TestPollBallotConcurrentVotes(t *testing.T) {
 		candidates = append(candidates, id)
 	}
 	u, err := storer.UpsertAppUser(ctx, "noop", "racer", "Racer")
+	require.NoError(t, err)
+	_, err = storer.AttachVerification(ctx, u.ID, "noop:racer")
 	require.NoError(t, err)
 
 	full := errors.New("full")

@@ -62,6 +62,7 @@ type Storer interface {
 	UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*storage.AppUser, error)
 	CreateUserSession(ctx context.Context, userID int64, tokenHash []byte, expiresAt time.Time) error
 	GetSessionUser(ctx context.Context, tokenHash []byte) (*storage.AppUser, error)
+	AttachVerification(ctx context.Context, userID int64, subject string) (int64, error)
 	DeleteUserSession(ctx context.Context, tokenHash []byte) error
 	CreateAuthChallenge(ctx context.Context, provider, challenge string, expiresAt time.Time) error
 	ConsumeAuthChallenge(ctx context.Context, provider, challenge string) (bool, error)
@@ -225,6 +226,7 @@ func (s *Server) setupRoutes() {
 			r.Use(httprate.Limit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), time.Minute, httprate.WithKeyFuncs(s.keyIP)))
 			r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 			r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
+			r.Post("/me/verify/{provider}", s.requireUser(s.handleVerify))
 		})
 		r.Get("/auth/me", s.requireUser(s.handleAuthMe))
 		r.Delete("/auth/me", s.requireUser(s.handleDeleteAccount))

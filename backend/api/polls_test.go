@@ -38,6 +38,8 @@ type memPolls struct {
 	scores         map[int64]*storage.ScoreExplanation
 	// likes are the users who liked each target, as "kind:id".
 	likes map[string]map[int64]bool
+	// verified holds the account of each verified subject.
+	verified map[string]int64
 }
 
 func (m *memPolls) init() {
@@ -164,6 +166,36 @@ func (m *memPolls) UpsertAppUser(_ context.Context, provider, subject, name stri
 	return u, nil
 }
 
+func (m *memPolls) AttachVerification(_ context.Context, userID int64, subject string) (int64, error) {
+	m.init()
+	if m.verified == nil {
+		m.verified = map[string]int64{}
+	}
+	for sub, id := range m.verified {
+		if id == userID {
+			if sub == subject {
+				return 0, nil
+			}
+			return 0, storage.ErrOtherDocument
+		}
+	}
+	from := m.verified[subject]
+	if from != 0 {
+		m.ballots[userID] = m.ballots[from]
+		delete(m.ballots, from)
+	}
+	m.verified[subject] = userID
+	for _, u := range m.users {
+		switch u.ID {
+		case userID:
+			u.Verified = true
+		case from:
+			u.Verified = false
+		}
+	}
+	return from, nil
+}
+
 func (m *memPolls) CreateUserSession(_ context.Context, userID int64, hash []byte, _ time.Time) error {
 	m.init()
 	m.sessions[string(hash)] = userID
@@ -221,7 +253,18 @@ func do(t *testing.T, h http.Handler, method, path, token string, body any) *htt
 	return rec
 }
 
+// signIn opens a noop account and verifies it with the noop document of the
+// same pseudonym: the account may vote.
 func signIn(t *testing.T, h http.Handler, pseudonym string) string {
+	t.Helper()
+	token := signInUnverified(t, h, pseudonym)
+	rec := do(t, h, http.MethodPost, "/api/me/verify/noop", token, map[string]string{"pseudonym": pseudonym})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	return token
+}
+
+// signInUnverified opens a noop account with no verified identity.
+func signInUnverified(t *testing.T, h http.Handler, pseudonym string) string {
 	t.Helper()
 	rec := do(t, h, http.MethodPost, "/api/auth/signin/noop", "", map[string]string{"pseudonym": pseudonym})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -252,7 +295,7 @@ func TestPollFlow(t *testing.T) {
 	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
 
 	rec := do(t, h, http.MethodGet, "/api/auth/providers", "", nil)
-	assert.JSONEq(t, `[{"name":"noop","verified":false}]`, rec.Body.String())
+	assert.JSONEq(t, `[{"name":"noop","role":"test","verified":false}]`, rec.Body.String())
 
 	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/ballot", "", map[string]any{"person_ids": []int64{10}}).Code)
 
@@ -479,7 +522,7 @@ type challengeProvider struct{}
 
 func (challengeProvider) Name() string { return "zkfake" }
 func (challengeProvider) Info() auth.ProviderInfo {
-	return auth.ProviderInfo{Name: "zkfake", Verified: true}
+	return auth.ProviderInfo{Name: "zkfake", Role: auth.RoleVerification, Verified: true}
 }
 func (challengeProvider) ChallengeTTL() time.Duration { return time.Minute }
 func (challengeProvider) Verify(_ context.Context, payload json.RawMessage) (auth.Identity, error) {
@@ -490,29 +533,93 @@ func (challengeProvider) Verify(_ context.Context, payload json.RawMessage) (aut
 	return auth.Identity{Provider: "zkfake", Subject: p.Subject}, nil
 }
 
-// TestChallengeFlow: a challenger's sign-in needs a challenge it issued, once.
+// TestChallengeFlow: a challenger's verification needs a challenge it
+// issued, once; a verification provider opens no account.
 func TestChallengeFlow(t *testing.T) {
 	fs := pollFixture()
 	h := NewServer(fs, auth.NewRegistry(auth.Noop{}, challengeProvider{})).Handler()
 
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/challenge/noop", "", nil).Code, "noop takes no challenge")
 
-	rec := do(t, h, http.MethodPost, "/api/auth/challenge/zkfake", "", nil)
-	require.Equal(t, http.StatusOK, rec.Code)
-	var c struct {
-		Challenge string `json:"challenge"`
+	challenge := func() string {
+		rec := do(t, h, http.MethodPost, "/api/auth/challenge/zkfake", "", nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var c struct {
+			Challenge string `json:"challenge"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &c))
+		require.NotEmpty(t, c.Challenge)
+		return c.Challenge
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &c))
-	require.NotEmpty(t, c.Challenge)
+	c := challenge()
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": c}).Code, "a verification opens no account")
 
-	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s"}).Code, "no challenge")
-	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": "forged"}).Code)
-	ok := do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": c.Challenge})
+	alice := signInUnverified(t, h, "alice")
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, "/api/me/verify/zkfake", "", map[string]string{"subject": "s", "challenge": c}).Code)
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/me/verify/zkfake", alice, map[string]string{"subject": "s"}).Code, "no challenge")
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/me/verify/zkfake", alice, map[string]string{"subject": "s", "challenge": "forged"}).Code)
+	ok := do(t, h, http.MethodPost, "/api/me/verify/zkfake", alice, map[string]string{"subject": "s", "challenge": c})
 	assert.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
-	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/auth/signin/zkfake", "", map[string]string{"subject": "s", "challenge": c.Challenge}).Code, "a challenge serves once")
+	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPost, "/api/me/verify/zkfake", alice, map[string]string{"subject": "s", "challenge": c}).Code, "a challenge serves once")
+	assert.Equal(t, "zkfake:s", findSubject(fs, alice, t), "the subject is namespaced by its provider")
 
-	rec = do(t, h, http.MethodGet, "/api/auth/providers", "", nil)
-	assert.JSONEq(t, `[{"name":"zkfake","verified":true},{"name":"noop","verified":false}]`, rec.Body.String(), "verified providers first")
+	rec := do(t, h, http.MethodGet, "/api/auth/providers", "", nil)
+	assert.JSONEq(t, `[{"name":"zkfake","role":"verification","verified":true},{"name":"noop","role":"test","verified":false}]`, rec.Body.String(), "verified providers first")
+}
+
+// findSubject is the verified subject of the token's account.
+func findSubject(fs *fakeStorer, token string, t *testing.T) string {
+	t.Helper()
+	id := fs.sessions[string(auth.HashToken(token))]
+	for sub, uid := range fs.verified {
+		if uid == id {
+			return sub
+		}
+	}
+	return ""
+}
+
+// TestVerification: an account votes only once verified; a document shown
+// on another account moves there with its ballot; an account keeps its
+// document.
+func TestVerification(t *testing.T) {
+	fs := pollFixture()
+	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
+	vote := func(token string, person int64) *httptest.ResponseRecorder {
+		return do(t, h, http.MethodPost, "/api/polls/presidentielle-2027/votes", token, map[string]any{"person_id": person, "consent": true})
+	}
+	verify := func(token, doc string) *httptest.ResponseRecorder {
+		return do(t, h, http.MethodPost, "/api/me/verify/noop", token, map[string]string{"pseudonym": doc})
+	}
+
+	first := signInUnverified(t, h, "first")
+	rec := vote(first, 10)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), codeVerificationRequired)
+
+	require.Equal(t, http.StatusOK, verify(first, "doc").Code)
+	require.Equal(t, http.StatusOK, vote(first, 10).Code)
+	rec = verify(first, "doc")
+	require.Equal(t, http.StatusOK, rec.Code, "the same document again")
+	assert.Contains(t, rec.Body.String(), `"moved":false`)
+	rec = verify(first, "other")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), codeOtherDocument)
+
+	second := signInUnverified(t, h, "second")
+	rec = verify(second, "doc")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"moved":true`)
+	assert.Equal(t, []int64{10}, ballotOf(t, do(t, h, http.MethodGet, "/api/polls/presidentielle-2027/ballot", second, nil)).PersonIDs, "the ballot moved")
+	assert.Empty(t, ballotOf(t, do(t, h, http.MethodGet, "/api/polls/presidentielle-2027/ballot", first, nil)).PersonIDs)
+	assert.Equal(t, http.StatusForbidden, vote(first, 20).Code, "the first account lost the right to vote")
+	_, voters, err := fs.GetPollTallies(context.Background(), 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, voters, "still one vote for the document")
+
+	var me storage.AppUser
+	require.NoError(t, json.Unmarshal(do(t, h, http.MethodGet, "/api/auth/me", second, nil).Body.Bytes(), &me))
+	assert.True(t, me.Verified)
 }
 
 // TestVotePreflight: the frontend is on another origin, so removing a vote

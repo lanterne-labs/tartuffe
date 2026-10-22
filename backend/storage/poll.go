@@ -47,12 +47,25 @@ type PollCandidateTally struct {
 	Chosen             int
 }
 
-// AppUser is a signed-in user: one identity of one auth provider.
+// AppUser is a signed-in user: one identity of one account provider.
+// Verified says a passport proof is attached: the account may vote.
 type AppUser struct {
 	ID          int64      `json:"id"`
 	Provider    string     `json:"provider"`
 	DisplayName string     `json:"display_name"`
 	ConsentAt   *time.Time `json:"consent_at,omitempty"`
+	Verified    bool       `json:"verified"`
+}
+
+// appUserColumns read an AppUser of the alias u.
+const appUserColumns = `u.id, u.provider, u.display_name, u.consent_at, u.verified_subject IS NOT NULL`
+
+func scanAppUser(row pgx.Row) (*AppUser, error) {
+	var u AppUser
+	if err := row.Scan(&u.ID, &u.Provider, &u.DisplayName, &u.ConsentAt, &u.Verified); err != nil {
+		return nil, err
+	}
+	return &u, nil
 }
 
 const pollEventColumns = `id, slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at, featured`
@@ -289,8 +302,10 @@ func (s *PostgresStorer) UpdatePollBallot(ctx context.Context, eventID, userID i
 		return nil, fmt.Errorf("update poll ballot: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	var locked int64
-	if err := tx.QueryRow(ctx, `SELECT id FROM app_users WHERE id = $1 FOR UPDATE`, userID).Scan(&locked); err != nil {
+	// The lock also reads whether the account still holds a passport: a
+	// passport moved to another account takes the right to vote with it.
+	var verified bool
+	if err := tx.QueryRow(ctx, `SELECT verified_subject IS NOT NULL FROM app_users WHERE id = $1 FOR UPDATE`, userID).Scan(&verified); err != nil {
 		return nil, fmt.Errorf("lock app user %d: %w", userID, err)
 	}
 	current, err := pollBallot(ctx, tx, eventID, userID)
@@ -303,6 +318,9 @@ func (s *PostgresStorer) UpdatePollBallot(ctx context.Context, eventID, userID i
 	}
 	if slices.Equal(current, next) {
 		return current, nil
+	}
+	if !verified && slices.ContainsFunc(next, func(id int64) bool { return !slices.Contains(current, id) }) {
+		return nil, ErrNotVerified
 	}
 	if consent {
 		if _, err := tx.Exec(ctx, `UPDATE app_users SET consent_at = COALESCE(consent_at, now()) WHERE id = $1`, userID); err != nil {
@@ -400,16 +418,14 @@ func (s *PostgresStorer) DeleteAppUser(ctx context.Context, userID int64) error 
 
 // UpsertAppUser returns the user of the identity, created on first sign-in.
 func (s *PostgresStorer) UpsertAppUser(ctx context.Context, provider, subject, displayName string) (*AppUser, error) {
-	var u AppUser
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO app_users (provider, subject, display_name) VALUES ($1, $2, $3)
+	u, err := scanAppUser(s.pool.QueryRow(ctx, `
+		INSERT INTO app_users AS u (provider, subject, display_name) VALUES ($1, $2, $3)
 		ON CONFLICT (provider, subject) DO UPDATE SET last_seen_at = now()
-		RETURNING id, provider, display_name, consent_at`, provider, subject, displayName).
-		Scan(&u.ID, &u.Provider, &u.DisplayName, &u.ConsentAt)
+		RETURNING `+appUserColumns, provider, subject, displayName))
 	if err != nil {
 		return nil, fmt.Errorf("upsert app user: %w", err)
 	}
-	return &u, nil
+	return u, nil
 }
 
 // CreateUserSession stores a session of the user by its token hash.
@@ -423,19 +439,17 @@ func (s *PostgresStorer) CreateUserSession(ctx context.Context, userID int64, to
 
 // GetSessionUser returns the user of a live session, or nil.
 func (s *PostgresStorer) GetSessionUser(ctx context.Context, tokenHash []byte) (*AppUser, error) {
-	var u AppUser
-	err := s.pool.QueryRow(ctx, `
-		SELECT u.id, u.provider, u.display_name, u.consent_at
+	u, err := scanAppUser(s.pool.QueryRow(ctx, `
+		SELECT `+appUserColumns+`
 		FROM user_sessions us JOIN app_users u ON u.id = us.user_id
-		WHERE us.token_hash = $1 AND us.expires_at > now()`, tokenHash).
-		Scan(&u.ID, &u.Provider, &u.DisplayName, &u.ConsentAt)
+		WHERE us.token_hash = $1 AND us.expires_at > now()`, tokenHash))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("session user: %w", err)
 	}
-	return &u, nil
+	return u, nil
 }
 
 // DeleteUserSession ends a session; expired sessions are dropped on the way.

@@ -15,7 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// ZKPassportName signs in with the ZKPassport app: the user scans the chip of
+// ZKPassportName verifies an account with the ZKPassport app: the user scans the chip of
 // their passport or ID card with their phone, the app proves in zero
 // knowledge that the holder is an adult (and of the configured nationality),
 // and the proof carries a unique identifier per document for this site and
@@ -132,7 +132,7 @@ func (z *ZKPassport) ChallengeTTL() time.Duration { return ChallengeTTL }
 // Info gives the frontend what it needs to build the same request as the
 // verifier rebuilds.
 func (z *ZKPassport) Info() ProviderInfo {
-	return ProviderInfo{Name: ZKPassportName, Verified: !z.DevMode, Config: map[string]any{
+	return ProviderInfo{Name: ZKPassportName, Role: RoleVerification, Verified: !z.DevMode, Config: map[string]any{
 		"domain":      z.Domain,
 		"scope":       z.Scope,
 		"min_age":     z.MinAge,

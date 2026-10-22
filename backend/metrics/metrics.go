@@ -67,4 +67,15 @@ func init() {
 		FactsWithoutStance,
 		StanceRoutingsPending,
 	)
+
+	// Register the users' metrics
+	Registry.MustRegister(
+		AuthChallengesTotal,
+		AuthSignInsTotal,
+		VerificationsTotal,
+		BallotChangesTotal,
+		FeedLikesTotal,
+		UserReportsTotal,
+		AccountsDeletedTotal,
+	)
 }

@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"digital-mirror/backend/auth"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -188,6 +189,11 @@ func (s *Server) handleLike(w http.ResponseWriter, r *http.Request) {
 		httpInternalError(w, err, "failed to record like")
 		return
 	}
+	action := "unlike"
+	if on {
+		action = "like"
+	}
+	metrics.FeedLikesTotal.WithLabelValues(kind, action).Inc()
 	writeJSON(w, http.StatusOK, likeState{Likes: n, Liked: on})
 }
 
@@ -297,18 +303,24 @@ func (s *Server) handleCreateReport(w http.ResponseWriter, r *http.Request) {
 	}
 	user := userFrom(r)
 	rep, err := s.storer.CreateUserReport(r.Context(), user.ID, req.Kind, req.TargetID, req.Reason)
+	outcome := "created"
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusCreated, rep)
 	case errors.Is(err, storage.ErrAlreadyReported):
+		outcome = codeAlreadyReported
 		writeJSON(w, http.StatusConflict, codedError{Error: err.Error(), Code: codeAlreadyReported})
 	case errors.Is(err, storage.ErrTooManyReports):
+		outcome = codeTooManyReports
 		writeJSON(w, http.StatusTooManyRequests, codedError{Error: err.Error(), Code: codeTooManyReports})
 	case errors.Is(err, storage.ErrReportTarget):
+		outcome = codeNoTarget
 		writeJSON(w, http.StatusNotFound, codedError{Error: err.Error(), Code: codeNoTarget})
 	default:
+		outcome = "error"
 		httpInternalError(w, err, "failed to record report")
 	}
+	metrics.UserReportsTotal.WithLabelValues(req.Kind, outcome).Inc()
 }
 
 // myReports are the signed-in user's reports, and the targets they

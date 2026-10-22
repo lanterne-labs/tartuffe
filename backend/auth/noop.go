@@ -17,7 +17,7 @@ type Noop struct{}
 
 func (Noop) Name() string { return NoopName }
 
-func (Noop) Info() ProviderInfo { return ProviderInfo{Name: NoopName, Verified: false} }
+func (Noop) Info() ProviderInfo { return ProviderInfo{Name: NoopName, Role: RoleTest, Verified: false} }
 
 // Verify reads {"pseudonym": "..."}: 1 to 40 characters once trimmed.
 func (Noop) Verify(_ context.Context, payload json.RawMessage) (Identity, error) {

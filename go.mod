@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/coreos/go-oidc/v3 v3.15.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
@@ -20,6 +21,11 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.0
 	golang.org/x/text v0.27.0
+)
+
+require (
+	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
+	golang.org/x/oauth2 v0.28.0 // indirect
 )
 
 require (
@@ -51,11 +57,10 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jalaali/go-jalaali v0.0.0-20210801064154-80525e88d958 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/markusmobius/go-dateparser v1.2.3 // indirect
 	github.com/markusmobius/go-domdistiller v0.0.0-20240926050704-25b8d046ffb4 // indirect
 	github.com/markusmobius/go-htmldate v1.9.1 // indirect
-	github.com/markusmobius/go-trafilatura v1.12.2 // indirect
+	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/matttproud/golang_protobuf_extensions/v2 v2.0.0 // indirect
@@ -83,5 +88,5 @@ require (
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 )

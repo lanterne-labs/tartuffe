@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/auth"
+	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
 
 	"github.com/go-chi/chi/v5"
@@ -104,21 +105,18 @@ func (s *Server) handleAuthChallenge(w http.ResponseWriter, r *http.Request) {
 		httpInternalError(w, err, "failed to store challenge")
 		return
 	}
+	metrics.AuthChallengesTotal.WithLabelValues(p.Name()).Inc()
 	writeJSON(w, http.StatusOK, map[string]any{"challenge": challenge, "expires_at": expires})
 }
 
-// handleAuthSignIn checks the provider's payload and opens a session.
-func (s *Server) handleAuthSignIn(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	p, ok := s.providers.Get(chi.URLParam(r, "provider"))
-	if !ok {
-		writeError(w, http.StatusNotFound, "unknown sign-in method")
-		return
-	}
+// readProof reads the payload a provider checks, after consuming its
+// one-time challenge (auth.Challenger). It answers the refusal itself and
+// returns false then.
+func (s *Server) readProof(w http.ResponseWriter, r *http.Request, p auth.Provider) ([]byte, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAuthBody))
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "payload too large")
-		return
+		return nil, false
 	}
 	if _, ok := p.(auth.Challenger); ok {
 		var c struct {
@@ -126,53 +124,144 @@ func (s *Server) handleAuthSignIn(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.Unmarshal(body, &c); err != nil || c.Challenge == "" {
 			writeError(w, http.StatusBadRequest, "challenge required")
-			return
+			return nil, false
 		}
-		live, err := s.storer.ConsumeAuthChallenge(ctx, p.Name(), c.Challenge)
+		live, err := s.storer.ConsumeAuthChallenge(r.Context(), p.Name(), c.Challenge)
 		if err != nil {
 			httpInternalError(w, err, "failed to check challenge")
-			return
+			return nil, false
 		}
 		if !live {
 			writeError(w, http.StatusBadRequest, "challenge expired or already used: start again")
-			return
+			return nil, false
 		}
+	}
+	return body, true
+}
+
+// handleAuthSignIn checks the payload of an account provider and opens a
+// session.
+func (s *Server) handleAuthSignIn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	p, ok := s.providers.Get(chi.URLParam(r, "provider"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown sign-in method")
+		return
+	}
+	if !auth.Opens(p) {
+		writeError(w, http.StatusBadRequest, "this method verifies an account: sign in first")
+		return
+	}
+	body, ok := s.readProof(w, r, p)
+	if !ok {
+		metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "refused").Inc()
+		return
 	}
 	id, err := p.Verify(ctx, body)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidProof) {
+			metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "refused").Inc()
 			log.Warn().Err(err).Str("provider", p.Name()).Msg("sign-in refused")
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "error").Inc()
 		httpInternalError(w, err, "sign-in verification failed")
 		return
 	}
 	user, err := s.storer.UpsertAppUser(ctx, id.Provider, id.Subject, id.DisplayName)
 	if err != nil {
+		metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "error").Inc()
 		httpInternalError(w, err, "failed to save user")
 		return
 	}
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {
+		metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "error").Inc()
 		httpInternalError(w, err, "failed to create session token")
 		return
 	}
 	expires := time.Now().Add(auth.SessionTTL)
 	if err := s.storer.CreateUserSession(ctx, user.ID, hash, expires); err != nil {
+		metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "error").Inc()
 		httpInternalError(w, err, "failed to create session")
 		return
 	}
+	metrics.AuthSignInsTotal.WithLabelValues(p.Name(), "ok").Inc()
 	log.Info().Str("provider", p.Name()).Int64("user_id", user.ID).Msg("user signed in")
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expires_at": expires, "user": user})
+}
+
+// Code of a verification refused because the account holds another document.
+const codeOtherDocument = "other_document"
+
+// handleVerify attaches a verified identity to the signed-in account
+// (POST /api/me/verify/{provider}): the document of a verification provider,
+// which gives the right to vote. A document held by another account moves
+// here with its ballots.
+func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	p, ok := s.providers.Get(chi.URLParam(r, "provider"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "unknown verification method")
+		return
+	}
+	if !auth.Verifies(p) {
+		writeError(w, http.StatusBadRequest, "this method opens an account, it does not verify one")
+		return
+	}
+	count := func(outcome string) { metrics.VerificationsTotal.WithLabelValues(p.Name(), outcome).Inc() }
+	body, ok := s.readProof(w, r, p)
+	if !ok {
+		count("refused")
+		return
+	}
+	id, err := p.Verify(ctx, body)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidProof) {
+			count("refused")
+			log.Warn().Err(err).Str("provider", p.Name()).Msg("verification refused")
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		count("error")
+		httpInternalError(w, err, "verification failed")
+		return
+	}
+	user := userFrom(r)
+	from, err := s.storer.AttachVerification(ctx, user.ID, p.Name()+":"+id.Subject)
+	switch {
+	case errors.Is(err, storage.ErrOtherDocument):
+		count(codeOtherDocument)
+		writeJSON(w, http.StatusConflict, codedError{Error: "this account is already verified with another document", Code: codeOtherDocument})
+		return
+	case err != nil:
+		count("error")
+		httpInternalError(w, err, "failed to attach verification")
+		return
+	}
+	outcome := "ok"
+	if from != 0 {
+		outcome = "moved"
+		s.results.invalidate(0)
+		log.Info().Str("provider", p.Name()).Int64("user_id", user.ID).Int64("from_user_id", from).Msg("verified identity moved to another account")
+	} else if user.Verified {
+		outcome = "again"
+	}
+	count(outcome)
+	log.Info().Str("provider", p.Name()).Int64("user_id", user.ID).Str("outcome", outcome).Msg("account verified")
+	verified := *user
+	verified.Verified = true
+	writeJSON(w, http.StatusOK, map[string]any{"user": verified, "moved": from != 0})
 }
 
 func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, userFrom(r))
 }
 
-// handleDeleteAccount erases the signed-in user: their votes, sessions and
-// consent. Signing in again with the same document starts a new, empty account.
+// handleDeleteAccount erases the signed-in user: their votes, sessions,
+// consent and verified identity. Signing in again starts a new, empty
+// account, which the same document verifies again.
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	user := userFrom(r)
 	if err := s.storer.DeleteAppUser(r.Context(), user.ID); err != nil {
@@ -180,6 +269,7 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.results.invalidate(0)
+	metrics.AccountsDeletedTotal.Inc()
 	log.Info().Int64("user_id", user.ID).Str("provider", user.Provider).Msg("user deleted their account")
 	w.WriteHeader(http.StatusNoContent)
 }
