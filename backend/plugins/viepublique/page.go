@@ -1,23 +1,22 @@
 package viepublique
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"digital-mirror/backend/util"
+	"digital-mirror/backend/webfetch"
 
 	"golang.org/x/net/html"
 )
 
-const userAgent = "digital-mirror/1.0 (+https://github.com/lanterne-labs/mirror)"
-
 // errGone marks a page that does not exist (404, 410): final, not retried.
-var errGone = errors.New("page gone")
+var errGone = webfetch.ErrGone
 
 // Turn is one speaking turn of the text: the speaker's label as the
 // transcript prints it ("LAURENT NUNEZ"), empty when the text has none.
@@ -27,30 +26,23 @@ type Turn struct {
 }
 
 // fetchPage returns the turns of the full text of a speech page.
-func fetchPage(ctx context.Context, client *http.Client, pageURL string) ([]Turn, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := client.Do(req)
+func fetchPage(ctx context.Context, pageURL, person string) ([]Turn, error) {
+	p, err := webfetch.Fetch(ctx, webfetch.Request{URL: pageURL, Source: sourceType, Purpose: "speech", Person: person})
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", pageURL, err)
 	}
-	defer resp.Body.Close()
-	switch {
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
-		return nil, fmt.Errorf("fetching %s: HTTP %d: %w", pageURL, resp.StatusCode, errGone)
-	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("fetching %s: HTTP %d", pageURL, resp.StatusCode)
+	turns, err := parsePage(bytes.NewReader(p.Body))
+	if err != nil {
+		webfetch.Note(ctx, sourceType, pageURL, "no_text")
+		return nil, fmt.Errorf("%s: %w", pageURL, err)
 	}
-	return parsePage(io.LimitReader(resp.Body, 16<<20))
+	return turns, nil
 }
 
 // parsePage reads the full text block of a speech page (the field
-// "texte intégral") into turns. A paragraph whose first line is a label in
-// capitals, followed by a line break, starts the turn of that speaker; any
-// other paragraph goes on the current turn.
+// "texte intégral") into turns. A paragraph whose first line is a speaker
+// label, alone or followed by a line break, starts the turn of that speaker;
+// any other paragraph goes on the current turn.
 func parsePage(r io.Reader) ([]Turn, error) {
 	doc, err := html.Parse(r)
 	if err != nil {
@@ -62,7 +54,7 @@ func parsePage(r io.Reader) ([]Turn, error) {
 	}
 	var turns []Turn
 	for _, lines := range paragraphs(body) {
-		if len(lines) > 1 && isLabel(lines[0]) {
+		if isLabel(lines[0]) {
 			turns = append(turns, Turn{Label: lines[0], Text: strings.Join(lines[1:], "\n")})
 			continue
 		}
@@ -71,7 +63,10 @@ func parsePage(r io.Reader) ([]Turn, error) {
 			turns = append(turns, Turn{Text: text})
 			continue
 		}
-		turns[len(turns)-1].Text += "\n" + text
+		if turns[len(turns)-1].Text != "" {
+			text = turns[len(turns)-1].Text + "\n" + text
+		}
+		turns[len(turns)-1].Text = text
 	}
 	return turns, nil
 }
@@ -142,41 +137,86 @@ func isBlock(tag string) bool {
 	return false
 }
 
-// isLabel reports whether a line is a speaker label: short, without a
-// lowercase letter, with at least two letters ("LAURENT NUNEZ", "M. LE
-// PRÉSIDENT").
+// isLabel reports whether a line is a speaker label: a name in which the
+// surname is in capitals ("LAURENT NUNEZ", "Gérald DARMANIN", "M. LE
+// PRÉSIDENT"), optionally followed by a comma and the speaker's role ("Maud
+// BREGEON, ministre déléguée, porte-parole du Gouvernement").
 func isLabel(s string) bool {
-	if len([]rune(s)) > 60 {
+	name := labelName(s)
+	if genericLabels[util.PersonNameKey(name)] {
+		return true
+	}
+	if len([]rune(s)) > 160 || len([]rune(name)) > 50 {
 		return false
 	}
-	letters := 0
-	for _, r := range s {
-		if unicode.IsLower(r) {
+	words := strings.Fields(name)
+	// A name has two words at least: a lone "OK" or "NON" is an answer.
+	if len(words) < 2 || len(words) > 6 {
+		return false
+	}
+	capitals := false
+	for _, w := range words {
+		letters, upper := 0, 0
+		for _, r := range w {
+			if unicode.IsLetter(r) {
+				letters++
+				if unicode.IsUpper(r) {
+					upper++
+				}
+			}
+		}
+		first, _ := utf8.DecodeRuneInString(w)
+		switch {
+		case letters >= 2 && upper == letters:
+			capitals = true
+		case letters == 0 || unicode.IsUpper(first) || particles[strings.ToLower(w)]:
+		default:
 			return false
 		}
-		if unicode.IsLetter(r) {
-			letters++
+	}
+	return capitals && !strings.ContainsAny(name, "?!;«»\"")
+}
+
+// genericLabels are the labels of a speaker the transcript does not name:
+// never the person's.
+var genericLabels = map[string]bool{"journaliste": true, "journalistes": true, "unjournaliste": true, "unejournaliste": true,
+	"question": true, "questions": true, "intervenant": true, "intervenante": true, "public": true, "uneintervenante": true, "unintervenant": true}
+
+var particles = map[string]bool{"de": true, "du": true, "des": true, "le": true, "la": true, "d'": true, "von": true, "van": true}
+
+// labelName is the name part of a label, before the role.
+func labelName(label string) string {
+	name, _, _ := strings.Cut(label, ",")
+	return strings.TrimSpace(strings.TrimRight(strings.TrimSpace(name), ":"))
+}
+
+// roleLabels are the labels that name a function, not a person: the
+// person's own when the person is the text's only speaker besides
+// journalists.
+var roleLabels = []string{"lepresident", "lapresidente", "lepremierministre", "lapremiereministre", "leministre", "laministre", "leporteparole", "laporteparole", "lasecretairedetat", "lesecretairedetat"}
+
+func isRoleLabel(key string) bool {
+	key = strings.TrimPrefix(strings.TrimPrefix(key, "mme"), "m")
+	for _, r := range roleLabels {
+		if strings.HasPrefix(key, r) {
+			return true
 		}
 	}
-	return letters >= 2
+	return false
 }
 
 // ownTurns returns, for each turn of the person, the turn before it when
-// someone else spoke it (the question), then the person's turn. A text
-// without labels is the person's own when the person is its only speaker
-// besides journalists; so is a turn whose label names no speaker of the
-// index (LE PRÉSIDENT), in that case.
+// someone else spoke it (the question), then the person's turn. A label is
+// the person's when it names the person, or names a function (LE
+// PRÉSIDENT) while the person is the only speaker besides journalists; any
+// other label is someone else's, listed in the index or not (a journalist).
+// A text without any label is the person's in that case too.
 func ownTurns(turns []Turn, speech Speech, person string) []exchange {
 	key := util.PersonNameKey(person)
+	surname := surnameKey(person)
 	solo := true
-	var others []string
 	for _, s := range speech.Speakers {
-		k := util.PersonNameKey(s.Name)
-		if k == key {
-			continue
-		}
-		others = append(others, k)
-		if !s.IsJournalist() {
+		if util.PersonNameKey(s.Name) != key && !s.IsJournalist() {
 			solo = false
 		}
 	}
@@ -184,23 +224,18 @@ func ownTurns(turns []Turn, speech Speech, person string) []exchange {
 		if t.Label == "" {
 			return solo
 		}
-		lk := util.PersonNameKey(t.Label)
-		if strings.HasPrefix(lk, "question") || strings.HasPrefix(lk, "journaliste") {
-			return false
-		}
-		if namesSpeaker(lk, key) {
+		lk := util.PersonNameKey(labelName(t.Label))
+		switch {
+		case lk == key || (surname != "" && strings.HasSuffix(lk, surname)):
 			return true
+		case isRoleLabel(lk):
+			return solo
 		}
-		for _, o := range others {
-			if namesSpeaker(lk, o) {
-				return false
-			}
-		}
-		return solo
+		return false
 	}
 	var out []exchange
 	for i, t := range turns {
-		if !owner(t) {
+		if !owner(t) || strings.TrimSpace(t.Text) == "" {
 			continue
 		}
 		ex := exchange{Answer: t}
@@ -212,10 +247,18 @@ func ownTurns(turns []Turn, speech Speech, person string) []exchange {
 	return out
 }
 
-// namesSpeaker reports whether a label key names the speaker of key: the
-// full name, or a label ending in it ("M. LAURENT NUNEZ").
-func namesSpeaker(label, key string) bool {
-	return key != "" && strings.HasSuffix(label, key)
+// surnameKey is the key of the person's surname: the last word, with the
+// particle before it ("Marine Le Pen" → "lepen").
+func surnameKey(person string) string {
+	words := strings.Fields(person)
+	if len(words) < 2 {
+		return ""
+	}
+	last := words[len(words)-1]
+	if len(words) >= 3 && particles[strings.ToLower(words[len(words)-2])] {
+		last = words[len(words)-2] + last
+	}
+	return util.PersonNameKey(last)
 }
 
 // exchange is one turn of the person with the question it answers.

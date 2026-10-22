@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/util"
+	"digital-mirror/backend/webfetch"
 
 	"github.com/rs/zerolog/log"
 )
@@ -138,14 +139,14 @@ var indexMu sync.Mutex
 
 // openIndex returns the index file, downloaded again when the copy on disk
 // is older than indexMaxAge. A failed download falls back on the old copy.
-func openIndex(ctx context.Context, client *http.Client) (*os.File, error) {
+func openIndex(ctx context.Context) (*os.File, error) {
 	indexMu.Lock()
 	defer indexMu.Unlock()
 	dir := cacheDir()
 	path := filepath.Join(dir, "vp_discours.json")
 	info, statErr := os.Stat(path)
 	if statErr != nil || time.Since(info.ModTime()) > indexMaxAge {
-		if err := download(ctx, client, indexURL, dir, path); err != nil {
+		if err := download(ctx, indexURL, dir, path); err != nil {
 			if statErr != nil {
 				return nil, err
 			}
@@ -155,7 +156,9 @@ func openIndex(ctx context.Context, client *http.Client) (*os.File, error) {
 	return os.Open(path)
 }
 
-func download(ctx context.Context, client *http.Client, src, dir, path string) error {
+func download(ctx context.Context, src, dir, path string) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("index cache dir: %w", err)
 	}
@@ -163,8 +166,7 @@ func download(ctx context.Context, client *http.Client, src, dir, path string) e
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := client.Do(req)
+	resp, err := webfetch.Shared().Do(webfetch.WithSource(ctx, sourceType), req)
 	if err != nil {
 		return fmt.Errorf("downloading the index: %w", err)
 	}

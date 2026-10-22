@@ -13,6 +13,7 @@ import (
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
+	"digital-mirror/backend/webfetch"
 	"errors"
 	"fmt"
 	"os"
@@ -570,6 +571,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)
 			metrics.IncrementNewsArticles("error")
+			webfetch.Note(ctx, "news", article.Link, "article_failed")
 			continue
 		}
 		if content == nil {
@@ -594,12 +596,15 @@ func (p *Provider) extractAndInsertFromArticles(
 		case text == "":
 			log.Debug().Str("url", article.Link).Msg("news: no content extracted")
 			metrics.IncrementNewsArticles("skipped_empty_content")
+			webfetch.Note(ctx, "news", article.Link, "article_empty")
 		case len(text) < minArticleContentLen:
 			log.Warn().Str("url", article.Link).Int("content_len", len(content.Content)).
 				Msg("news: scraped content too thin after cleaning — skipping extraction")
 			metrics.IncrementNewsArticles("skipped_thin_content")
 			result.SkippedThinContent++
+			webfetch.Note(ctx, "news", article.Link, "article_thin")
 		default:
+			webfetch.Note(ctx, "news", article.Link, "article_ok")
 			continue
 		}
 		nothingToExtract = append(nothingToExtract, article.Link)

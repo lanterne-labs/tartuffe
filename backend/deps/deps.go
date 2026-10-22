@@ -19,6 +19,7 @@ import (
 	"digital-mirror/backend/objectstore"
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/webfetch"
 
 	"github.com/rs/zerolog/log"
 )
@@ -34,6 +35,8 @@ func OpenStorer(ctx context.Context) (*storage.PostgresStorer, error) {
 		return nil, err
 	}
 	storer.SetPersonGate(PersonGateFromEnv())
+	// Every request to a site we read is recorded for the Sources page.
+	webfetch.SetRecorder(storage.NewFetchLog(context.Background(), storer))
 	return storer, nil
 }
 

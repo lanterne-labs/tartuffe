@@ -10,9 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"digital-mirror/backend"
@@ -26,19 +26,22 @@ import (
 	"digital-mirror/backend/util"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
 	sourceType = "viepublique"
-	// attribution is the mention the licence asks for.
+	// attribution is the mention the licence asks for, in the rendered
+	// text; a fact carries the full one (factAttribution).
 	attribution = "Source : DILA, vie-publique.fr (Licence Ouverte v2)"
 	// minOwnChars leaves out the texts where the person only greets or
 	// thanks.
 	minOwnChars = 200
 	// maxQuestionChars bounds the question kept as context of an answer.
 	maxQuestionChars = 700
-	// pageDelay spaces the page fetches.
-	pageDelay = 500 * time.Millisecond
+	// pagesAtOnce is how many pages of a person are asked at once; the site
+	// paces them (site.go).
+	pagesAtOnce = 4
 	// defaultDays is the window of a run without dates.
 	defaultDays = 3
 	// maxConsecutiveFailures stops a run whose documents fail back to back:
@@ -57,11 +60,6 @@ func (Plugin) Name() string { return "viepublique" }
 func (Plugin) HistoryFetched(ctx context.Context, d *deps.Deps, targets []plugins.Target, since, until time.Time) (bool, error) {
 	return NewStore(d.Storer).WindowsCover(ctx, plugins.TargetIDs(targets), since, until)
 }
-
-var (
-	pageClient  = &http.Client{Timeout: time.Minute}
-	indexClient = &http.Client{Timeout: 15 * time.Minute}
-)
 
 // Ingest implements plugins.Ingester: the speeches of each target given or
 // put online in the window are fetched, saved and extracted.
@@ -89,9 +87,13 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 		return stats, nil
 	}
 
-	f, err := openIndex(ctx, indexClient)
+	f, err := openIndex(ctx)
 	if err != nil {
 		return stats, fmt.Errorf("viepublique: %w", err)
+	}
+	var indexDate time.Time
+	if info, err := f.Stat(); err == nil {
+		indexDate = info.ModTime().UTC()
 	}
 	speeches, err := SpeechesOf(f, keys, since, until)
 	f.Close()
@@ -103,6 +105,7 @@ func (Plugin) Ingest(ctx context.Context, d *deps.Deps, targets []plugins.Target
 	if err != nil {
 		return stats, fmt.Errorf("viepublique: %w", err)
 	}
+	ing.indexDate = indexDate
 	extractOnly := map[int64]bool{}
 	for _, id := range opts.ExtractOnly {
 		extractOnly[id] = true
@@ -137,6 +140,8 @@ type ingester struct {
 	extractor *categorizer.OpenAIExtractor
 	embedder  *embedding.OpenAIEmbeddingGenerator
 	inserter  *core.FactInserter
+	// indexDate is the date of the index file the speeches come from.
+	indexDate time.Time
 }
 
 func newIngester(d *deps.Deps) (*ingester, error) {
@@ -202,7 +207,8 @@ func (ing *ingester) target(ctx context.Context, t plugins.Target, list []Speech
 
 // fetch reads the pages of the speeches not stored yet and saves them. A
 // page that is gone is saved empty, so it is not asked again; any other
-// failure (the site down) stops the fetch, and the window stays open.
+// failure (the site down, its check changed) stops the fetch, and the window
+// stays open.
 func (ing *ingester) fetch(ctx context.Context, t plugins.Target, list []Speech, opts plugins.IngestOptions) (int, error) {
 	sort.Slice(list, func(i, j int) bool { return list[i].Spoken.Before(list[j].Spoken) })
 	if opts.MaxItems > 0 && len(list) > opts.MaxItems {
@@ -216,8 +222,7 @@ func (ing *ingester) fetch(ctx context.Context, t plugins.Target, list []Speech,
 	if err != nil {
 		return 0, fmt.Errorf("filtering stored speeches: %w", err)
 	}
-	var fresh []core.SourceDocument
-	var fetchErr error
+	var todo []Speech
 	for i, s := range list {
 		if known[keys[i]] {
 			continue
@@ -226,23 +231,46 @@ func (ing *ingester) fetch(ctx context.Context, t plugins.Target, list []Speech,
 			log.Info().Str("person", t.Name).Str("url", s.URL).Str("title", util.TruncateString(s.Title, 120)).Msg("viepublique: would fetch")
 			continue
 		}
-		if len(fresh) > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(pageDelay):
-			}
-		}
-		turns, err := fetchPage(ctx, pageClient, s.URL)
-		if errors.Is(err, errGone) {
-			log.Warn().Err(err).Str("person", t.Name).Msg("viepublique: page gone")
-			fresh = append(fresh, document(s, t, nil))
-			continue
-		}
-		if err != nil {
-			fetchErr = err
+		todo = append(todo, s)
+	}
+	// The pages are asked a few at once, in order; after a failure other than
+	// a gone page (the site down, its check changed) no new page is asked.
+	docs := make([]*core.SourceDocument, len(todo))
+	errs := make([]error, len(todo))
+	var failed atomic.Bool
+	var g errgroup.Group
+	g.SetLimit(pagesAtOnce)
+	for i, s := range todo {
+		if failed.Load() || ctx.Err() != nil {
 			break
 		}
-		fresh = append(fresh, document(s, t, turns))
+		g.Go(func() error {
+			turns, err := fetchPage(ctx, s.URL, t.Name)
+			switch {
+			case errors.Is(err, errGone):
+				log.Warn().Err(err).Str("person", t.Name).Msg("viepublique: page gone")
+				d := document(s, t, nil, ing.indexDate)
+				docs[i] = &d
+			case err != nil:
+				errs[i] = err
+				failed.Store(true)
+			default:
+				d := document(s, t, turns, ing.indexDate)
+				docs[i] = &d
+			}
+			return nil
+		})
+	}
+	g.Wait()
+	var fresh []core.SourceDocument
+	var fetchErr error
+	for i := range todo {
+		if docs[i] != nil {
+			fresh = append(fresh, *docs[i])
+		}
+		if errs[i] != nil && fetchErr == nil {
+			fetchErr = errs[i]
+		}
 	}
 	if len(fresh) > 0 {
 		if _, err := ing.d.Storer.SaveFetchedDocuments(ctx, fresh); err != nil {
@@ -259,7 +287,7 @@ func documentKey(s Speech, personID int64) string {
 
 // document is the stored form of the person's part of a speech: the rendered
 // turns as content, empty when the person says too little in it.
-func document(s Speech, t plugins.Target, turns []Turn) core.SourceDocument {
+func document(s Speech, t plugins.Target, turns []Turn, indexDate time.Time) core.SourceDocument {
 	content := render(s, t.Name, ownTurns(turns, s, t.Name))
 	spoken := s.Spoken
 	if spoken.IsZero() {
@@ -278,8 +306,15 @@ func document(s Speech, t plugins.Target, turns []Turn) core.SourceDocument {
 			"speech_type": s.Type,
 			"media":       s.Media,
 			"person_name": t.Name,
+			"index_date":  indexDate.Format("2006-01-02"),
 		},
 	}
+}
+
+// factAttribution is the mention the licence asks for: the author, the URL of
+// the download, the file and its date.
+func factAttribution(indexDate string) string {
+	return fmt.Sprintf("DILA, vie-publique.fr, Licence Ouverte v2.0 ; %s, fichier vp_discours.json du %s", indexURL, indexDate)
 }
 
 // render is the text handed to the extractor: a header naming the speech,
@@ -393,7 +428,7 @@ func (ing *ingester) extract(ctx context.Context, t plugins.Target, doc core.Sou
 				"speech_id":   doc.Metadata["speech_id"],
 				"speech_type": doc.Metadata["speech_type"],
 				"media":       doc.Metadata["media"],
-				"attribution": attribution,
+				"attribution": factAttribution(fmt.Sprint(doc.Metadata["index_date"])),
 			},
 		}
 		r, err := ing.inserter.InsertFacts(ctx, []core.StoreFactInput{input})

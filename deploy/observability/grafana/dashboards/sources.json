@@ -1,0 +1,516 @@
+{
+  "uid": "sources",
+  "title": "Digital Mirror - Sources",
+  "tags": [
+    "digital-mirror",
+    "sources"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "table",
+      "title": "Sources: requests and pages",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT source, COUNT(*) FILTER (WHERE NOT note) AS requests, 100.0 * COUNT(*) FILTER (WHERE NOT note AND outcome = 'ok') / NULLIF(COUNT(*) FILTER (WHERE NOT note), 0) AS \"ok %\", COUNT(*) FILTER (WHERE NOT note AND outcome = 'throttled') AS throttled, COUNT(*) FILTER (WHERE NOT note AND outcome = 'refused') AS refused, COUNT(*) FILTER (WHERE NOT note AND outcome = 'gone') AS gone, COUNT(*) FILTER (WHERE NOT note AND outcome IN ('server_error', 'client_error')) AS \"http errors\", COUNT(*) FILTER (WHERE NOT note AND outcome IN ('timeout', 'network')) AS \"timeouts, network\", COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') AS \"articles ok\", COUNT(*) FILTER (WHERE note AND outcome = 'article_failed') AS \"articles failed\", COUNT(*) FILTER (WHERE note AND outcome IN ('article_thin', 'article_empty', 'no_text')) AS \"empty, thin\", COUNT(*) FILTER (WHERE note AND outcome = 'challenge') AS \"bot check\", 100.0 * COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') / NULLIF(COUNT(*) FILTER (WHERE note AND outcome LIKE 'article_%'), 0) AS \"articles ok %\", ROUND(AVG(duration_ms) FILTER (WHERE NOT note AND outcome = 'ok')) AS \"ms (ok)\", MAX(at) AS \"last request\" FROM fetch_log WHERE $__timeFilter(at) GROUP BY source ORDER BY requests DESC",
+          "refId": "A"
+        }
+      ],
+      "description": "One row per source, over the time range. Requests: what the sites answered. Articles (news): the pages that gave an article, those that failed every extractor, those empty or too thin to extract. Twitter goes through its API: see the documents below.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "articles ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "id": 1
+    },
+    {
+      "type": "table",
+      "title": "Documents and facts per source",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT d.source_type AS source, COUNT(*) AS documents, COUNT(*) FILTER (WHERE d.state = 'extracted') AS extracted, COUNT(*) FILTER (WHERE d.state = 'fetched') AS \"to extract\", COUNT(*) FILTER (WHERE d.state = 'failed') AS failed, (SELECT COUNT(*) FROM fact_sources s WHERE s.source_type = d.source_type AND $__timeFilter(s.scraped_at)) AS facts FROM source_documents d WHERE $__timeFilter(d.fetched_at) GROUP BY d.source_type ORDER BY documents DESC",
+          "refId": "A"
+        }
+      ],
+      "description": "Documents fetched over the time range (articles, tweets, speeches, debate interventions), where they are in the extraction, and the facts stored.",
+      "id": 2
+    },
+    {
+      "type": "timeseries",
+      "title": "Failed requests per hour, per source",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', at) AS time, source || ' ' || outcome AS metric, COUNT(*) AS value FROM fetch_log WHERE NOT note AND outcome <> 'ok' AND $__timeFilter(at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "id": 3
+    },
+    {
+      "type": "table",
+      "title": "News: every site",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT * FROM (SELECT domain AS site, COUNT(*) FILTER (WHERE NOT note) AS requests, 100.0 * COUNT(*) FILTER (WHERE NOT note AND outcome = 'ok') / NULLIF(COUNT(*) FILTER (WHERE NOT note), 0) AS \"ok %\", COUNT(*) FILTER (WHERE NOT note AND outcome = 'throttled') AS throttled, COUNT(*) FILTER (WHERE NOT note AND outcome = 'refused') AS refused, COUNT(*) FILTER (WHERE NOT note AND outcome = 'gone') AS gone, COUNT(*) FILTER (WHERE NOT note AND outcome IN ('server_error', 'client_error')) AS \"http errors\", COUNT(*) FILTER (WHERE NOT note AND outcome IN ('timeout', 'network')) AS \"timeouts, network\", COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') AS \"articles ok\", COUNT(*) FILTER (WHERE note AND outcome = 'article_failed') AS \"articles failed\", COUNT(*) FILTER (WHERE note AND outcome IN ('article_thin', 'article_empty', 'no_text')) AS \"empty, thin\", COUNT(*) FILTER (WHERE note AND outcome = 'challenge') AS \"bot check\", 100.0 * COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') / NULLIF(COUNT(*) FILTER (WHERE note AND outcome LIKE 'article_%'), 0) AS \"articles ok %\", ROUND(AVG(duration_ms) FILTER (WHERE NOT note AND outcome = 'ok')) AS \"ms (ok)\", MAX(at) AS \"last request\" FROM fetch_log WHERE source = 'news' AND $__timeFilter(at) GROUP BY domain) s ORDER BY \"articles failed\" + \"empty, thin\" DESC, requests DESC LIMIT 500",
+          "refId": "A"
+        }
+      ],
+      "description": "Every site the news search led to, over the time range, the ones that fail most first. A site with a low 'articles ok %' gives us nothing: a paywall, an anti-bot, a page made of video.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "articles ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "requests",
+            "articles ok",
+            "articles failed",
+            "empty, thin"
+          ]
+        }
+      },
+      "id": 4
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per hour, per source",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', at) AS time, source AS metric, COUNT(*) AS value FROM fetch_log WHERE NOT note AND $__timeFilter(at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "timeseries",
+      "title": "Facts stored per hour, per source",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', scraped_at) AS time, source_type AS metric, COUNT(*) AS value FROM fact_sources WHERE $__timeFilter(scraped_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "table",
+      "title": "Sites of the other sources",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT source, domain AS site, COUNT(*) FILTER (WHERE NOT note) AS requests, 100.0 * COUNT(*) FILTER (WHERE NOT note AND outcome = 'ok') / NULLIF(COUNT(*) FILTER (WHERE NOT note), 0) AS \"ok %\", COUNT(*) FILTER (WHERE NOT note AND outcome = 'throttled') AS throttled, COUNT(*) FILTER (WHERE NOT note AND outcome = 'refused') AS refused, COUNT(*) FILTER (WHERE NOT note AND outcome = 'gone') AS gone, COUNT(*) FILTER (WHERE NOT note AND outcome IN ('server_error', 'client_error')) AS \"http errors\", COUNT(*) FILTER (WHERE NOT note AND outcome IN ('timeout', 'network')) AS \"timeouts, network\", COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') AS \"articles ok\", COUNT(*) FILTER (WHERE note AND outcome = 'article_failed') AS \"articles failed\", COUNT(*) FILTER (WHERE note AND outcome IN ('article_thin', 'article_empty', 'no_text')) AS \"empty, thin\", COUNT(*) FILTER (WHERE note AND outcome = 'challenge') AS \"bot check\", 100.0 * COUNT(*) FILTER (WHERE note AND outcome = 'article_ok') / NULLIF(COUNT(*) FILTER (WHERE note AND outcome LIKE 'article_%'), 0) AS \"articles ok %\", ROUND(AVG(duration_ms) FILTER (WHERE NOT note AND outcome = 'ok')) AS \"ms (ok)\", MAX(at) AS \"last request\" FROM fetch_log WHERE source <> 'news' AND $__timeFilter(at) GROUP BY source, domain ORDER BY requests DESC LIMIT 200",
+          "refId": "A"
+        }
+      ],
+      "description": "vie-publique, the Assemblée nationale, the photos, the archive: per site.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "articles ok %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 50
+                    },
+                    {
+                      "color": "green",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "id": 7
+    }
+  ]
+}

@@ -142,7 +142,7 @@ func TestSpeechesOf(t *testing.T) {
 // it is not fetched again and costs no LLM call.
 func TestDocument(t *testing.T) {
 	target := plugins.Target{PersonID: 42, Name: "Laurent Nuñez"}
-	doc := document(nunezInterview, target, []Turn{{Label: "SIMON LE BARON", Text: "Bonjour"}, {Label: "LAURENT NUNEZ", Text: "Bonjour,"}})
+	doc := document(nunezInterview, target, []Turn{{Label: "SIMON LE BARON", Text: "Bonjour"}, {Label: "LAURENT NUNEZ", Text: "Bonjour,"}}, day("2026-10-22"))
 	if doc.URL != "viepublique:263000054/42" || doc.Content != "" || !doc.PublishedAt.Equal(day("2025-12-30")) {
 		t.Errorf("greeting only: %+v", doc)
 	}
@@ -150,8 +150,32 @@ func TestDocument(t *testing.T) {
 		t.Errorf("source url: %v", doc.Metadata["source_url"])
 	}
 	long := strings.Repeat("Nous renforcerons les contrôles aux frontières. ", 6)
-	doc = document(nunezInterview, target, []Turn{{Label: "SIMON LE BARON", Text: "Que ferez-vous ?"}, {Label: "LAURENT NUNEZ", Text: long}})
+	doc = document(nunezInterview, target, []Turn{{Label: "SIMON LE BARON", Text: "Que ferez-vous ?"}, {Label: "LAURENT NUNEZ", Text: long}}, day("2026-10-22"))
 	if !strings.Contains(doc.Content, "Question (SIMON LE BARON) : Que ferez-vous ?") {
 		t.Errorf("content: %s", doc.Content)
+	}
+}
+
+// TestLabels: the label formats of the live pages.
+func TestLabels(t *testing.T) {
+	for _, l := range []string{"LAURENT NUNEZ", "Gérald DARMANIN", "Maud BREGEON, ministre déléguée, porte-parole du Gouvernement", "Bernard MARCHANT", "M. LE PRÉSIDENT", "Journaliste", "Cyril ADRIAENS-ALLEMAND", "Marine LE PEN"} {
+		if !isLabel(l) {
+			t.Errorf("%q is a label", l)
+		}
+	}
+	for _, l := range []string{"Merci beaucoup.", "Je vais donc laisser la parole dans un premier temps à Stéphanie RIST.", "Bonjour,", "La TVA sociale", "OK"} {
+		if isLabel(l) {
+			t.Errorf("%q is not a label", l)
+		}
+	}
+	// A journalist the index does not list is not the person, even alone.
+	solo := Speech{Speakers: []Speaker{{Name: "Emmanuel Macron", Role: "Président de la République"}}}
+	turns := []Turn{{Label: "Bernard MARCHANT", Text: "Monsieur le Président..."}, {Label: "Emmanuel MACRON", Text: "Merci."}, {Label: "Journaliste", Text: "Et l'agriculture ?"}, {Label: "Emmanuel MACRON", Text: "Nous tiendrons."}}
+	got := ownTurns(turns, solo, "Emmanuel Macron")
+	if len(got) != 2 || got[0].Question.Label != "Bernard MARCHANT" || got[1].Question.Text != "Et l'agriculture ?" {
+		t.Errorf("own turns: %+v", got)
+	}
+	if k := surnameKey("Marine Le Pen"); k != "lepen" {
+		t.Errorf("surname of Marine Le Pen: %q", k)
 	}
 }
