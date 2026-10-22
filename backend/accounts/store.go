@@ -24,6 +24,10 @@ type User struct {
 // identity is shown another document.
 var ErrOtherDocument = errors.New("the account holds another document")
 
+// ErrHeldElsewhere is returned when the document is another account's and
+// the move was not asked for: the user confirms it first.
+var ErrHeldElsewhere = errors.New("the document is held by another account")
+
 // Store is what the accounts keep: the users, their sessions, the one-time
 // challenges of the providers and the verified identities. It owns the
 // tables app_users, user_sessions and auth_challenges.
@@ -34,7 +38,10 @@ type Store interface {
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	CreateChallenge(ctx context.Context, provider, challenge string, expiresAt time.Time) error
 	ConsumeChallenge(ctx context.Context, provider, challenge string) (bool, error)
-	AttachVerification(ctx context.Context, userID int64, subject string) (int64, error)
+	AttachVerification(ctx context.Context, userID int64, subject string, move bool) (int64, error)
+	CreateMove(ctx context.Context, userID int64, subject string, tokenHash []byte, expiresAt time.Time) error
+	ConsumeMove(ctx context.Context, userID int64, tokenHash []byte) (string, bool, error)
+	SetDisplayName(ctx context.Context, userID int64, name string) error
 	DeleteUser(ctx context.Context, userID int64) error
 	PurgeUsers(ctx context.Context, provider string) (int64, error)
 }
@@ -150,11 +157,13 @@ func (s *PGStore) ConsumeChallenge(ctx context.Context, provider, challenge stri
 // AttachVerification gives the account a verified identity: the subject
 // "<provider>:<id>" names one document (a passport for zkpassport), which
 // gives the right to vote. When another account holds it, the identity
-// moves: the Moved hooks carry what it holds (the ballots) to this account,
-// and the other account loses the right to vote. It returns the account it
+// moves only with move set (the user confirmed): the Moved hooks carry what
+// it holds (the ballots) to this account, and the other account loses the
+// right to vote; without move nothing changes and the error is
+// ErrHeldElsewhere. It returns the account the identity is (or would be)
 // moved from (0: none). Showing the account's own document again changes
 // nothing; another document is ErrOtherDocument.
-func (s *PGStore) AttachVerification(ctx context.Context, userID int64, subject string) (int64, error) {
+func (s *PGStore) AttachVerification(ctx context.Context, userID int64, subject string, move bool) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("attach verification: %w", err)
@@ -187,6 +196,9 @@ func (s *PGStore) AttachVerification(ctx context.Context, userID int64, subject 
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return 0, fmt.Errorf("find identity holder: %w", err)
 	}
+	if from != 0 && !move {
+		return from, ErrHeldElsewhere
+	}
 	if from != 0 {
 		if _, err := tx.Exec(ctx, `UPDATE app_users SET verified_subject = NULL, verified_at = NULL WHERE id = $1`, from); err != nil {
 			return 0, fmt.Errorf("detach identity from %d: %w", from, err)
@@ -204,6 +216,44 @@ func (s *PGStore) AttachVerification(ctx context.Context, userID int64, subject 
 		return 0, fmt.Errorf("attach verification: %w", err)
 	}
 	return from, nil
+}
+
+// CreateMove keeps a move the user is asked to confirm: the document proved
+// and the account, under the hash of a one-time token, until expiresAt.
+// Expired moves are dropped on the way.
+func (s *PGStore) CreateMove(ctx context.Context, userID int64, subject string, tokenHash []byte, expiresAt time.Time) error {
+	if _, err := s.pool.Exec(ctx, `DELETE FROM identity_moves WHERE expires_at <= now()`); err != nil {
+		return fmt.Errorf("drop expired identity moves: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO identity_moves (token_hash, user_id, subject, expires_at) VALUES ($1, $2, $3, $4)`,
+		tokenHash, userID, subject, expiresAt); err != nil {
+		return fmt.Errorf("create identity move: %w", err)
+	}
+	return nil
+}
+
+// ConsumeMove deletes the user's move of that token and returns its
+// document, false when there is no live one: a token serves once.
+func (s *PGStore) ConsumeMove(ctx context.Context, userID int64, tokenHash []byte) (string, bool, error) {
+	var subject string
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM identity_moves WHERE token_hash = $1 AND user_id = $2 AND expires_at > now()
+		RETURNING subject`, tokenHash, userID).Scan(&subject)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("consume identity move: %w", err)
+	}
+	return subject, true, nil
+}
+
+// SetDisplayName sets the pseudonym the user chose: shown to them alone.
+func (s *PGStore) SetDisplayName(ctx context.Context, userID int64, name string) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE app_users SET display_name = $2 WHERE id = $1`, userID, name); err != nil {
+		return fmt.Errorf("set display name of %d: %w", userID, err)
+	}
+	return nil
 }
 
 // DeleteUser erases the user with their sessions and all that references

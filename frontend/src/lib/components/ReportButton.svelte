@@ -33,7 +33,7 @@
 	let length = $derived(reason.trim().length);
 
 	$effect(() => {
-		if (waitingSignIn && $session) {
+		if (waitingSignIn && $session && !$signInOpen) {
 			waitingSignIn = false;
 			open = true;
 		}

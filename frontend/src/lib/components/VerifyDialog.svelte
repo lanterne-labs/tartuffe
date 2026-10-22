@@ -9,7 +9,7 @@
 	// document to vote, once (POST /api/me/verify/{provider}). One section per
 	// enabled verification provider: ZKPassport, and the test document where
 	// noop is on. Open it with verifyOpen.set(true).
-	import { verifyOpen, loadProviders, verify, VerifyError } from '$lib/auth';
+	import { verifyOpen, loadProviders, verify, VerifyError, pendingMove, confirmMove } from '$lib/auth';
 	import { lang, tr } from '$lib/i18n';
 	import type { AuthProvider } from '$lib/types';
 	import ZKPassportVerify from './ZKPassportVerify.svelte';
@@ -44,7 +44,21 @@
 	});
 
 	function close() {
+		pendingMove.set(null);
 		verifyOpen.set(false);
+	}
+
+	async function move() {
+		busy = true;
+		error = null;
+		try {
+			const { moved } = await confirmMove();
+			done(moved);
+		} catch (err) {
+			error = err instanceof VerifyError && err.code === 'no_move' ? tr('verify.move_expired', currentLang) : err instanceof Error ? err.message : String(err);
+		} finally {
+			busy = false;
+		}
 	}
 
 	function done(moved: boolean) {
@@ -61,6 +75,7 @@
 			pseudonym = '';
 			done(moved);
 		} catch (err) {
+			if (err instanceof VerifyError && err.code === 'document_elsewhere') return;
 			error = err instanceof VerifyError && err.code === 'other_document' ? tr('verify.other_document', currentLang) : err instanceof Error ? err.message : String(err);
 		} finally {
 			busy = false;
@@ -73,6 +88,17 @@
 		<h2 id="verify-title">{tr('verify.title', currentLang)}</h2>
 		<button class="close" onclick={close} aria-label={tr('auth.close', currentLang)}>×</button>
 	</header>
+	{#if $pendingMove}
+		<section class="provider move">
+			<h3>{tr('verify.move.title', currentLang)}</h3>
+			<p>{tr('verify.move.text', currentLang)}</p>
+			<p class="muted">{tr('verify.move.note', currentLang)}</p>
+			<div class="move-actions">
+				<button class="primary" onclick={move} disabled={busy}>{tr('verify.move.confirm', currentLang)}</button>
+				<button class="secondary" onclick={close} disabled={busy}>{tr('verify.move.cancel', currentLang)}</button>
+			</div>
+		</section>
+	{:else}
 	<p class="lead">{tr('verify.lead', currentLang)}</p>
 
 	{#if loadError}
@@ -99,6 +125,7 @@
 			{/if}
 		{/each}
 	{/if}
+	{/if}
 
 	{#if error}
 		<p class="error">{error}</p>
@@ -106,6 +133,24 @@
 </dialog>
 
 <style>
+	.move p {
+		margin: 0 0 0.75rem;
+		line-height: 1.5;
+	}
+	.move-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+	.secondary {
+		padding: 0.55rem 1rem;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--glass-border);
+		background: transparent;
+		color: var(--text-secondary);
+		font: inherit;
+		cursor: pointer;
+	}
 	.lead {
 		margin: 0 0 1rem;
 		color: var(--text-secondary);

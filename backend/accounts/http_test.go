@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,8 +70,8 @@ func TestChallengeFlow(t *testing.T) {
 	assert.JSONEq(t, `[{"name":"zkfake","role":"verification","verified":true},{"name":"noop","role":"test","verified":false}]`, rec.Body.String(), "verified providers first")
 }
 
-// TestVerification: a document shown on another account moves there; an
-// account keeps its document.
+// TestVerification: a document shown on another account moves there only
+// once the user confirms; an account keeps its document.
 func TestVerification(t *testing.T) {
 	store := accountstest.NewMemStore()
 	var moved [][2]int64
@@ -88,18 +90,53 @@ func TestVerification(t *testing.T) {
 	require.NoError(t, json.Unmarshal(do(t, h, http.MethodGet, "/api/auth/me", first, nil).Body.Bytes(), &me))
 	assert.False(t, me.Verified)
 
-	assert.Equal(t, false, verify(first, "doc")["moved"])
-	assert.Equal(t, false, verify(first, "doc")["moved"], "the same document again")
+	assert.Equal(t, float64(http.StatusOK), verify(first, "doc")["status"])
+	assert.Equal(t, float64(http.StatusOK), verify(first, "doc")["status"], "the same document again")
 	other := verify(first, "other")
 	assert.Equal(t, float64(http.StatusConflict), other["status"])
 	assert.Equal(t, "other_document", other["code"])
 
 	second := accountstest.SignInUnverified(t, h, "second")
-	assert.Equal(t, true, verify(second, "doc")["moved"])
+	held := verify(second, "doc")
+	assert.Equal(t, float64(http.StatusConflict), held["status"])
+	assert.Equal(t, "document_elsewhere", held["code"])
+	token, _ := held["move_token"].(string)
+	require.NotEmpty(t, token)
+	assert.Empty(t, moved, "nothing moves before the user confirms")
+	assert.True(t, store.Verified(store.UserOfToken(first)))
+
+	confirm := func(as, tok string) *httptest.ResponseRecorder {
+		return do(t, h, http.MethodPost, "/api/me/verify/move", as, map[string]string{"move_token": tok})
+	}
+	assert.Equal(t, http.StatusBadRequest, confirm(first, token).Code, "another account's move")
+	assert.Equal(t, http.StatusBadRequest, confirm(second, "forged").Code)
+	rec := confirm(second, token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"moved":true`)
+	assert.Equal(t, http.StatusBadRequest, confirm(second, token).Code, "a move serves once")
 	assert.Equal(t, [][2]int64{{store.UserOfToken(first), store.UserOfToken(second)}}, moved, "the hooks follow the move")
 	assert.False(t, store.Verified(store.UserOfToken(first)))
 	require.NoError(t, json.Unmarshal(do(t, h, http.MethodGet, "/api/auth/me", second, nil).Body.Bytes(), &me))
 	assert.True(t, me.Verified)
+}
+
+// TestDisplayName: the user sets their pseudonym, trimmed, 1 to 40
+// characters.
+func TestDisplayName(t *testing.T) {
+	store := accountstest.NewMemStore()
+	h := newRouter(store, providers.Noop{})
+	alice := accountstest.SignInUnverified(t, h, "alice")
+	set := func(name string) *httptest.ResponseRecorder {
+		return do(t, h, http.MethodPatch, "/api/auth/me", alice, map[string]string{"display_name": name})
+	}
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPatch, "/api/auth/me", "", map[string]string{"display_name": "x"}).Code)
+	rec := set("  Le   Citoyen ")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var me accounts.User
+	require.NoError(t, json.Unmarshal(do(t, h, http.MethodGet, "/api/auth/me", alice, nil).Body.Bytes(), &me))
+	assert.Equal(t, "Le Citoyen", me.DisplayName)
+	assert.Equal(t, http.StatusBadRequest, set("   ").Code)
+	assert.Equal(t, http.StatusBadRequest, set(strings.Repeat("é", 41)).Code)
 }
 
 // TestDisabledProvider: when a provider is turned off its sessions stop working.

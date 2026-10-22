@@ -22,7 +22,7 @@
 	let waitingSignIn = $state(false);
 
 	$effect(() => {
-		if (waitingSignIn && $session) {
+		if (waitingSignIn && $session && !$signInOpen) {
 			waitingSignIn = false;
 			if (!liked) toggle();
 		}

@@ -67,6 +67,37 @@ func TestStoreSessionsAndChallenges(t *testing.T) {
 	assert.False(t, ok, "expired")
 }
 
+// TestStoreMoves: a pending move serves once, for its user, before it
+// expires; the pseudonym is the user's.
+func TestStoreMoves(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	a, err := s.UpsertUser(ctx, "google", "a", "")
+	require.NoError(t, err)
+	b, err := s.UpsertUser(ctx, "google", "b", "")
+	require.NoError(t, err)
+	require.NoError(t, s.CreateMove(ctx, a.ID, "zkpassport:doc", []byte("tok-live"), time.Now().Add(time.Minute)))
+	require.NoError(t, s.CreateMove(ctx, a.ID, "zkpassport:doc", []byte("tok-old"), time.Now().Add(-time.Minute)))
+	_, ok, err := s.ConsumeMove(ctx, b.ID, []byte("tok-live"))
+	require.NoError(t, err)
+	assert.False(t, ok, "another user's move")
+	sub, ok, err := s.ConsumeMove(ctx, a.ID, []byte("tok-live"))
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "zkpassport:doc", sub)
+	_, ok, err = s.ConsumeMove(ctx, a.ID, []byte("tok-live"))
+	require.NoError(t, err)
+	assert.False(t, ok, "used once already")
+	_, ok, err = s.ConsumeMove(ctx, a.ID, []byte("tok-old"))
+	require.NoError(t, err)
+	assert.False(t, ok, "expired")
+
+	require.NoError(t, s.SetDisplayName(ctx, a.ID, "Le Citoyen"))
+	again, err := s.UpsertUser(ctx, "google", "a", "")
+	require.NoError(t, err)
+	assert.Equal(t, "Le Citoyen", again.DisplayName, "a sign-in keeps the chosen pseudonym")
+}
+
 // TestStoreVerification: an account keeps its document; the document moves
 // to the account that shows it last.
 func TestStoreVerification(t *testing.T) {
@@ -77,16 +108,19 @@ func TestStoreVerification(t *testing.T) {
 	b, err := s.UpsertUser(ctx, "google", "b", "")
 	require.NoError(t, err)
 
-	from, err := s.AttachVerification(ctx, a.ID, "zkpassport:doc")
+	from, err := s.AttachVerification(ctx, a.ID, "zkpassport:doc", true)
 	require.NoError(t, err)
 	assert.Zero(t, from)
-	from, err = s.AttachVerification(ctx, a.ID, "zkpassport:doc")
+	from, err = s.AttachVerification(ctx, a.ID, "zkpassport:doc", true)
 	require.NoError(t, err)
 	assert.Zero(t, from, "the same document again")
-	_, err = s.AttachVerification(ctx, a.ID, "zkpassport:other")
+	_, err = s.AttachVerification(ctx, a.ID, "zkpassport:other", true)
 	assert.ErrorIs(t, err, accounts.ErrOtherDocument)
 
-	from, err = s.AttachVerification(ctx, b.ID, "zkpassport:doc")
+	from, err = s.AttachVerification(ctx, b.ID, "zkpassport:doc", false)
+	assert.ErrorIs(t, err, accounts.ErrHeldElsewhere, "no move unless asked")
+	assert.Equal(t, a.ID, from)
+	from, err = s.AttachVerification(ctx, b.ID, "zkpassport:doc", true)
 	require.NoError(t, err)
 	assert.Equal(t, a.ID, from)
 	hash := []byte("abcdef0123456789abcdef0123456789")
@@ -94,7 +128,7 @@ func TestStoreVerification(t *testing.T) {
 	su, err := s.SessionUser(ctx, hash)
 	require.NoError(t, err)
 	assert.False(t, su.Verified, "the old account lost the identity")
-	from, err = s.AttachVerification(ctx, a.ID, "zkpassport:other")
+	from, err = s.AttachVerification(ctx, a.ID, "zkpassport:other", true)
 	require.NoError(t, err, "and may take another document")
 	assert.Zero(t, from)
 }

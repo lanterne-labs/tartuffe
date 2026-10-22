@@ -102,7 +102,7 @@ func TestBallotsAndTallies(t *testing.T) {
 	_, err = s.polls.UpdateBallot(ctx, eventID, u1.ID, true, set(a))
 	require.ErrorIs(t, err, polls.ErrNotVerified, "without a verified identity, an account votes for nobody")
 	for i, u := range []*accounts.User{u1, u2} {
-		_, err = s.acc.AttachVerification(ctx, u.ID, []string{"noop:doc1", "noop:doc2"}[i])
+		_, err = s.acc.AttachVerification(ctx, u.ID, []string{"noop:doc1", "noop:doc2"}[i], true)
 		require.NoError(t, err)
 	}
 
@@ -185,7 +185,7 @@ func TestConcurrentVotes(t *testing.T) {
 	}
 	u, err := s.acc.UpsertUser(ctx, "noop", "racer", "Racer")
 	require.NoError(t, err)
-	_, err = s.acc.AttachVerification(ctx, u.ID, "noop:racer")
+	_, err = s.acc.AttachVerification(ctx, u.ID, "noop:racer", true)
 	require.NoError(t, err)
 
 	full := errors.New("full")
@@ -252,7 +252,7 @@ func TestIdentityMove(t *testing.T) {
 
 	old, err := s.acc.UpsertUser(ctx, "google", "old", "")
 	require.NoError(t, err)
-	from, err := s.acc.AttachVerification(ctx, old.ID, "zkpassport:doc")
+	from, err := s.acc.AttachVerification(ctx, old.ID, "zkpassport:doc", true)
 	require.NoError(t, err)
 	assert.Zero(t, from)
 	_, err = s.polls.UpdateBallot(ctx, eventID, old.ID, true, set(a))
@@ -261,7 +261,7 @@ func TestIdentityMove(t *testing.T) {
 	fresh, err := s.acc.UpsertUser(ctx, "google", "new", "")
 	require.NoError(t, err)
 	before := s.lastEvent(t)
-	from, err = s.acc.AttachVerification(ctx, fresh.ID, "zkpassport:doc")
+	from, err = s.acc.AttachVerification(ctx, fresh.ID, "zkpassport:doc", true)
 	require.NoError(t, err)
 	assert.Equal(t, old.ID, from)
 	ballot, err := s.polls.Ballot(ctx, eventID, fresh.ID)

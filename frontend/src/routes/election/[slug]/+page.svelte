@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, untrack } from 'svelte';
+	import { get } from 'svelte/store';
 	import { page } from '$app/stores';
 	import { API_BASE } from '$lib/config';
 	import { displayName } from '$lib/share';
@@ -89,7 +90,11 @@
 	// A sign-in dialog closed without signing in drops the vote it was for.
 	$effect(() =>
 		signInOpen.subscribe((isOpen) => {
-			if (!isOpen && !$session) untrack(() => (pending = null));
+			if (isOpen) return;
+			untrack(() => {
+				if (!$session) pending = null;
+				else if (pending !== null && ballotLoaded && !consentOpen && !changeOpen) pick(pending);
+			});
 		})
 	);
 	// So does a verification dialog closed without verifying; once verified,
@@ -154,8 +159,9 @@
 			if (seq !== ballotSeq) return;
 			showBallot(b);
 			ballotLoaded = true;
-			// The vote that asked for the sign-in goes on now.
-			if (pending !== null && !consentOpen && !changeOpen) pick(pending);
+			// The vote that asked for the sign-in goes on now (once the sign-in
+			// dialog, which may still ask for a pseudonym, is closed).
+			if (pending !== null && !consentOpen && !changeOpen && !get(signInOpen)) pick(pending);
 		} catch (err) {
 			console.error('failed to load ballot', err);
 		}

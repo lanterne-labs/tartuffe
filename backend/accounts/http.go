@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"digital-mirror/backend/accounts/providers"
 	"digital-mirror/backend/httpx"
@@ -182,10 +183,22 @@ func (s *Service) handleAuthSignIn(w http.ResponseWriter, r *http.Request) {
 // Code of a verification refused because the account holds another document.
 const codeOtherDocument = "other_document"
 
+// Codes of a verification that is not done.
+const (
+	// codeHeldElsewhere: the document is another account's; the answer
+	// carries the move_token that confirms its move here.
+	codeHeldElsewhere = "document_elsewhere"
+	codeNoMove        = "no_move"
+)
+
+// MoveTTL is how long the user has to confirm a move.
+const MoveTTL = 10 * time.Minute
+
 // handleVerify attaches a verified identity to the signed-in account
 // (POST /api/me/verify/{provider}): the document of a verification provider,
-// which gives the right to vote. A document held by another account moves
-// here with its ballots.
+// which gives the right to vote. A document held by another account does
+// not move at once: the answer is 409 document_elsewhere with a move_token,
+// and the move happens when the user confirms it (handleConfirmMove).
 func (s *Service) handleVerify(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p, ok := s.providers.Get(chi.URLParam(r, "provider"))
@@ -216,8 +229,23 @@ func (s *Service) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := UserFrom(r)
-	from, err := s.store.AttachVerification(ctx, user.ID, p.Name()+":"+id.Subject)
+	subject := p.Name() + ":" + id.Subject
+	_, err = s.store.AttachVerification(ctx, user.ID, subject, false)
 	switch {
+	case errors.Is(err, ErrHeldElsewhere):
+		token, hash, err := providers.NewSessionToken()
+		if err == nil {
+			err = s.store.CreateMove(ctx, user.ID, subject, hash, time.Now().Add(MoveTTL))
+		}
+		if err != nil {
+			count("error")
+			httpx.InternalError(w, err, "failed to keep the move")
+			return
+		}
+		count(codeHeldElsewhere)
+		httpx.WriteJSON(w, http.StatusConflict, map[string]string{
+			"error": "this document is another account's: confirm to move it here", "code": codeHeldElsewhere, "move_token": token})
+		return
 	case errors.Is(err, ErrOtherDocument):
 		count(codeOtherDocument)
 		httpx.WriteJSON(w, http.StatusConflict, httpx.CodedError{Error: "this account is already verified with another document", Code: codeOtherDocument})
@@ -228,18 +256,88 @@ func (s *Service) handleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome := "ok"
-	if from != 0 {
-		outcome = "moved"
-		s.changed()
-		log.Info().Str("provider", p.Name()).Int64("user_id", user.ID).Int64("from_user_id", from).Msg("verified identity moved to another account")
-	} else if user.Verified {
+	if user.Verified {
 		outcome = "again"
 	}
 	count(outcome)
 	log.Info().Str("provider", p.Name()).Int64("user_id", user.ID).Str("outcome", outcome).Msg("account verified")
 	verified := *user
 	verified.Verified = true
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user": verified, "moved": false})
+}
+
+// handleConfirmMove moves to the signed-in account the document its last
+// verification found on another account (POST /api/me/verify/move
+// {"move_token"}): the votes of the other account come with it, and it
+// loses the right to vote.
+func (s *Service) handleConfirmMove(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req struct {
+		MoveToken string `json:"move_token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || req.MoveToken == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "move_token required")
+		return
+	}
+	user := UserFrom(r)
+	subject, ok, err := s.store.ConsumeMove(ctx, user.ID, providers.HashToken(req.MoveToken))
+	if err != nil {
+		httpx.InternalError(w, err, "failed to read the move")
+		return
+	}
+	if !ok {
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: "the move expired or was used: verify again", Code: codeNoMove})
+		return
+	}
+	provider, _, _ := strings.Cut(subject, ":")
+	from, err := s.store.AttachVerification(ctx, user.ID, subject, true)
+	switch {
+	case errors.Is(err, ErrOtherDocument):
+		metrics.VerificationsTotal.WithLabelValues(provider, codeOtherDocument).Inc()
+		httpx.WriteJSON(w, http.StatusConflict, httpx.CodedError{Error: "this account is already verified with another document", Code: codeOtherDocument})
+		return
+	case err != nil:
+		metrics.VerificationsTotal.WithLabelValues(provider, "error").Inc()
+		httpx.InternalError(w, err, "failed to move the verification")
+		return
+	}
+	if from != 0 {
+		s.changed()
+	}
+	metrics.VerificationsTotal.WithLabelValues(provider, "moved").Inc()
+	log.Info().Str("provider", provider).Int64("user_id", user.ID).Int64("from_user_id", from).Msg("verified identity moved to another account")
+	verified := *user
+	verified.Verified = true
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user": verified, "moved": from != 0})
+}
+
+// maxDisplayName bounds a pseudonym, in characters.
+const maxDisplayName = 40
+
+// handleSetDisplayName sets the pseudonym of the signed-in user (PATCH
+// /api/auth/me {"display_name"}), 1 to 40 characters: the user alone sees
+// it, no route shows it to anyone else.
+func (s *Service) handleSetDisplayName(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "display_name required")
+		return
+	}
+	name := strings.Join(strings.Fields(req.DisplayName), " ")
+	if n := utf8.RuneCountInString(name); n == 0 || n > maxDisplayName {
+		httpx.WriteError(w, http.StatusBadRequest, "the pseudonym takes 1 to 40 characters")
+		return
+	}
+	user := UserFrom(r)
+	if err := s.store.SetDisplayName(r.Context(), user.ID, name); err != nil {
+		httpx.InternalError(w, err, "failed to set the pseudonym")
+		return
+	}
+	named := *user
+	named.DisplayName = name
+	httpx.WriteJSON(w, http.StatusOK, named)
 }
 
 func (s *Service) handleAuthMe(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,7 @@
 	// /api/auth/providers): Google, and the test account where noop is on.
 	// Open it from anywhere with signInOpen.set(true). Verifying the account
 	// for a vote is another dialog (VerifyDialog).
-	import { signInOpen, loadProviders, signIn } from '$lib/auth';
+	import { signInOpen, loadProviders, signIn, session, setDisplayName } from '$lib/auth';
 	import { signInWithGoogle, GoogleClosed } from '$lib/google';
 	import { lang, tr } from '$lib/i18n';
 	import type { AuthProvider } from '$lib/types';
@@ -38,20 +38,42 @@
 	});
 
 	function close() {
+		naming = false;
 		signInOpen.set(false);
 	}
+
+	// naming: the Google account has no pseudonym yet (Google gives none):
+	// the dialog asks for one before it closes.
+	let naming = $state(false);
+	let chosen = $state('');
 
 	async function google(p: AuthProvider) {
 		busy = true;
 		error = null;
 		try {
 			await signInWithGoogle(String(p.config?.client_id ?? ''));
-			close();
+			if ($session && !$session.user.display_name) naming = true;
+			else close();
 		} catch (err) {
 			if (!(err instanceof GoogleClosed)) {
 				console.error('Google sign-in failed', err);
 				error = err instanceof Error ? err.message : String(err);
 			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function submitName(event: SubmitEvent) {
+		event.preventDefault();
+		busy = true;
+		error = null;
+		try {
+			await setDisplayName(chosen.trim());
+			chosen = '';
+			close();
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
 		} finally {
 			busy = false;
 		}
@@ -79,7 +101,16 @@
 		<button class="close" onclick={close} aria-label={tr('auth.close', currentLang)}>×</button>
 	</header>
 
-	{#if loadError}
+	{#if naming}
+		<section class="provider">
+			<h3>{tr('auth.name.title', currentLang)}</h3>
+			<p class="muted">{tr('auth.name.hint', currentLang)}</p>
+			<form onsubmit={submitName}>
+				<input type="text" bind:value={chosen} maxlength="40" required placeholder={tr('auth.name.placeholder', currentLang)} autocomplete="nickname" />
+				<button type="submit" class="primary" disabled={busy || chosen.trim() === ''}>{tr('auth.name.submit', currentLang)}</button>
+			</form>
+		</section>
+	{:else if loadError}
 		<p class="error">{loadError}</p>
 	{:else if providers === null}
 		<p class="muted">{tr('person.loading', currentLang)}</p>

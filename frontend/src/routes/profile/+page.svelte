@@ -3,7 +3,7 @@
 	// which they can reorder or take back while the event is open.
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
-	import { session, signInOpen, signOut, verifyOpen } from '$lib/auth';
+	import { session, signInOpen, signOut, verifyOpen, setDisplayName } from '$lib/auth';
 	import { getMyVotes, removeVote, saveBallot, deleteAccount, onBallotChanged, BallotError } from '$lib/ballot';
 	import Modal from '$lib/components/Modal.svelte';
 	import VoteList from '$lib/components/VoteList.svelte';
@@ -126,6 +126,21 @@
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
 
+	// The pseudonym, shown to the user alone; editing it in place.
+	let editingName = $state(false);
+	let newName = $state('');
+	let nameError: string | null = $state(null);
+	async function saveName(event: SubmitEvent) {
+		event.preventDefault();
+		nameError = null;
+		try {
+			await setDisplayName(newName.trim());
+			editingName = false;
+		} catch (err) {
+			nameError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
 	function providerText(p: string): string {
 		if (p === 'google') return tr('profile.google', currentLang);
 		if (p === 'noop') return tr('profile.test', currentLang);
@@ -160,7 +175,20 @@
 	{:else}
 		<section class="card" aria-labelledby="account-title">
 			<h2 id="account-title">{tr('profile.account', currentLang)}</h2>
-			<p class="account-name">{user.display_name || tr('auth.anonymous', currentLang)}</p>
+			{#if editingName}
+				<form class="name-form" onsubmit={saveName}>
+					<input type="text" bind:value={newName} maxlength="40" required placeholder={tr('auth.name.placeholder', currentLang)} autocomplete="nickname" />
+					<button type="submit" class="btn btn-primary" disabled={newName.trim() === ''}>{tr('auth.name.submit', currentLang)}</button>
+					<button type="button" class="btn" onclick={() => (editingName = false)}>{tr('vote.cancel', currentLang)}</button>
+				</form>
+				{#if nameError}<p class="error">{nameError}</p>{/if}
+			{:else}
+				<p class="account-name">
+					{user.display_name || tr('auth.anonymous', currentLang)}
+					<button class="link" onclick={() => { newName = user.display_name; editingName = true; }}>{tr('profile.rename', currentLang)}</button>
+				</p>
+			{/if}
+			<p class="muted small">{tr('auth.name.hint', currentLang)}</p>
 			<p class="muted" class:warn={user.provider === 'noop'}>{providerText(user.provider)}</p>
 			{#if user.verified}
 				<p class="muted">{tr('profile.verified', currentLang)}</p>
@@ -333,6 +361,33 @@
 	.account-name {
 		font-weight: 600;
 		margin: 0 0 0.25rem;
+	}
+	.link {
+		margin-left: 0.5rem;
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--accent-hover);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 400;
+		cursor: pointer;
+	}
+	.name-form {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.4rem;
+	}
+	.name-form input {
+		flex: 1 1 12rem;
+		min-width: 0;
+		padding: 0.5rem 0.7rem;
+		background: var(--bg-secondary);
+		color: var(--text-primary);
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-md);
+		font: inherit;
 	}
 	.muted {
 		color: var(--text-secondary);

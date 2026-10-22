@@ -49,7 +49,9 @@
 				{
 					title: 'Se connecter avec Google',
 					get: [
-						'Un identifiant opaque de votre compte Google. Nous ne le gardons pas tel quel, mais son empreinte chiffrée avec une clé secrète : notre base seule ne permet pas de retrouver votre compte.'
+						'Un identifiant de votre compte Google : une suite de chiffres, sans votre nom ni votre e-mail.',
+						'Nous ne le gardons même pas tel quel. Nous le passons dans une « moulinette » à sens unique, avec une clé secrète que nous seuls avons : il en sort une empreinte. Quand vous revenez, la même moulinette redonne la même empreinte, et nous vous reconnaissons. Mais de l’empreinte, impossible de revenir à l’identifiant : si notre base fuitait un jour, personne ne pourrait relier un compte du site à un compte Google.',
+						'Le pseudo que vous choisissez, que vous seul voyez.'
 					],
 					never: [
 						'Votre e-mail, votre nom, votre photo, vos contacts.',
@@ -67,7 +69,7 @@
 						'Votre nom, votre prénom, votre date de naissance, votre photo, le numéro de votre document.',
 						'Ils ne quittent pas votre téléphone : l’app ZKPassport y calcule une preuve mathématique, que nous vérifions nous-mêmes.'
 					],
-					note: 'La demande passe par le relais de ZKPassport, chiffrée de bout en bout.',
+					note: 'La demande passe par le relais de ZKPassport, chiffrée de bout en bout. Si votre document est déjà lié à un autre compte (un ancien compte Google, par exemple), nous vous demandons avant de le transférer, avec ses votes.',
 					link: ['/verification', 'Comment marche la vérification']
 				},
 				{
@@ -76,7 +78,8 @@
 						'Vos choix (vos candidats, dans votre ordre), rattachés à votre compte, seulement après votre accord : un vote est une opinion politique, une donnée sensible.'
 					],
 					never: [
-						'Votre vote n’est jamais montré seul : seuls les totaux s’affichent, à partir d’un nombre minimum de votants, et jamais pendant la période d’interdiction légale.'
+						'Votre vote n’est jamais montré seul : seuls les totaux s’affichent, à partir d’un nombre minimum de votants, et jamais pendant la période d’interdiction légale.',
+						'Aucune page ni aucune requête ne donne le vote, le pseudo ou les +1 d’une autre personne.'
 					],
 					note: 'Vous changez ou retirez vos votes à tout moment jusqu’à la clôture.'
 				},
@@ -129,7 +132,9 @@
 				{
 					title: 'Signing in with Google',
 					get: [
-						'An opaque identifier of your Google account. We don’t keep it as is but its fingerprint under a secret key: our database alone cannot find your account.'
+						'An identifier of your Google account: a string of digits, without your name or e-mail.',
+						'We don’t even keep it as is. We put it through a one-way “mill” with a secret key only we have: out comes a fingerprint. When you come back, the same mill gives the same fingerprint, and we recognize you. But from the fingerprint there is no way back to the identifier: if our database ever leaked, nobody could tie an account of the site to a Google account.',
+						'The pseudonym you choose, which only you see.'
 					],
 					never: ['Your e-mail, your name, your photo, your contacts.', 'We ask Google only for the “openid” right, the smallest there is: Google’s screen shows it.'],
 					note: 'Google knows you sign in to tartuffe.me, as with any “Continue with Google” button.'
@@ -144,13 +149,16 @@
 						'Your name, your first name, your birth date, your photo, your document number.',
 						'They never leave your phone: the ZKPassport app computes a mathematical proof there, which we check ourselves.'
 					],
-					note: 'The request goes through ZKPassport’s relay, end-to-end encrypted.',
+					note: 'The request goes through ZKPassport’s relay, end-to-end encrypted. If your document is already tied to another account (an old Google account, say), we ask you before moving it, with its votes.',
 					link: ['/verification', 'How the verification works']
 				},
 				{
 					title: 'Voting',
 					get: ['Your choices (your candidates, in your order), tied to your account, only after you agree: a vote is a political opinion, sensitive data.'],
-					never: ['Your vote is never shown on its own: only the totals are, from a minimum number of voters, and never during the legal silence period.'],
+					never: [
+						'Your vote is never shown on its own: only the totals are, from a minimum number of voters, and never during the legal silence period.',
+						'No page and no request gives another person’s vote, pseudonym or +1.'
+					],
 					note: 'You change or take back your votes at any time until voting closes.'
 				},
 				{

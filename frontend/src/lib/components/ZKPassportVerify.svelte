@@ -76,6 +76,11 @@
 					const { moved } = await verify('zkpassport', { challenge, proofs, result });
 					onDone(moved);
 				} catch (err) {
+					// A document of another account: the dialog asks before moving it.
+					if (err instanceof VerifyError && err.code === 'document_elsewhere') {
+						reset();
+						return;
+					}
 					error = err instanceof VerifyError && err.code === 'other_document' ? tr('verify.other_document', lang) : err instanceof Error ? err.message : String(err);
 					step = 'error';
 				}

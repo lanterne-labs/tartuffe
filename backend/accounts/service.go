@@ -46,9 +46,11 @@ func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 		r.Use(signin)
 		r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
+		r.Post("/me/verify/move", s.RequireUser(s.handleConfirmMove))
 		r.Post("/me/verify/{provider}", s.RequireUser(s.handleVerify))
 	})
 	r.Get("/auth/me", s.RequireUser(s.handleAuthMe))
+	r.Patch("/auth/me", s.RequireUser(s.handleSetDisplayName))
 	r.Delete("/auth/me", s.RequireUser(s.handleDeleteAccount))
 	r.Post("/auth/signout", s.RequireUser(s.handleAuthSignOut))
 }

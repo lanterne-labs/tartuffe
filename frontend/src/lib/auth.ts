@@ -52,6 +52,10 @@ export const signInOpen = writable(false);
 // Whether the identity verification dialog is open (asked before a vote).
 export const verifyOpen = writable(false);
 
+// pendingMove is the token of a document found on another account: the
+// verification dialog asks the user before it moves here (confirmMove).
+export const pendingMove = writable<string | null>(null);
+
 let providersLoad: Promise<AuthProvider[]> | null = null;
 
 // loadProviders lists the enabled providers, once per page load.
@@ -105,14 +109,8 @@ export class VerifyError extends Error {
 	}
 }
 
-// verify attaches the document a verification provider proves (the passport
-// proof for zkpassport, a pseudonym for noop) to the signed-in account. It
-// tells whether the document came from another account (its votes follow).
-export async function verify(provider: string, payload: unknown): Promise<{ moved: boolean }> {
-	const res = await authFetch(`/api/me/verify/${encodeURIComponent(provider)}`, {
-		method: 'POST',
-		body: JSON.stringify(payload)
-	});
+async function verifyCall(path: string, payload: unknown): Promise<{ moved: boolean }> {
+	const res = await authFetch(path, { method: 'POST', body: JSON.stringify(payload) });
 	if (!res.ok) {
 		let code = 'error';
 		let msg = `HTTP ${res.status}`;
@@ -120,12 +118,37 @@ export async function verify(provider: string, payload: unknown): Promise<{ move
 			const body = await res.json();
 			code = body.code ?? code;
 			msg = body.error ?? msg;
+			if (code === 'document_elsewhere' && body.move_token) pendingMove.set(body.move_token);
 		} catch {}
 		throw new VerifyError(msg, code);
 	}
 	const out = (await res.json()) as { user: AppUser; moved: boolean };
 	setUser(out.user);
 	return { moved: out.moved };
+}
+
+// verify attaches the document a verification provider proves (the passport
+// proof for zkpassport, a pseudonym for noop) to the signed-in account. A
+// document another account holds is not moved: the error's code is
+// document_elsewhere and pendingMove holds the token to confirm the move.
+export function verify(provider: string, payload: unknown): Promise<{ moved: boolean }> {
+	return verifyCall(`/api/me/verify/${encodeURIComponent(provider)}`, payload);
+}
+
+// confirmMove moves here the document pendingMove names, with the votes of
+// the account that held it.
+export async function confirmMove(): Promise<{ moved: boolean }> {
+	const token = get(pendingMove);
+	pendingMove.set(null);
+	if (!token) throw new VerifyError('no move to confirm', 'no_move');
+	return verifyCall('/api/me/verify/move', { move_token: token });
+}
+
+// setDisplayName sets the pseudonym the user sees on their account.
+export async function setDisplayName(name: string): Promise<void> {
+	const res = await authFetch('/api/auth/me', { method: 'PATCH', body: JSON.stringify({ display_name: name }) });
+	if (!res.ok) throw new Error(await errorText(res));
+	setUser(await res.json());
 }
 
 // setUser replaces the user of the session (after a verification, or a

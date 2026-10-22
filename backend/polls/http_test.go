@@ -398,7 +398,7 @@ func TestVotingNeedsVerification(t *testing.T) {
 	require.Equal(t, http.StatusOK, vote(first, 10).Code)
 
 	second := accountstest.SignInUnverified(t, h, "second")
-	require.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/api/me/verify/noop", second, map[string]string{"pseudonym": "doc"}).Code)
+	accountstest.MoveHere(t, h, second, "doc")
 	b := ballotOf(t, do(t, h, http.MethodGet, "/api/polls/presidentielle-2027/ballot", second, nil))
 	assert.Equal(t, []int64{10}, b.PersonIDs, "the ballot moved")
 	assert.True(t, b.Consented, "with its consent")
