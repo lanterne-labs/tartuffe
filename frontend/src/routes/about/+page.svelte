@@ -87,6 +87,15 @@
 			],
 			correctionsLink: 'Voir les corrections',
 
+			privacyKicker: 'Confidentialité',
+			privacyTitle: 'Nous ne savons pas qui vous êtes',
+			privacy: [
+				['Pas d’e-mail.', 'Google ne nous transmet ni votre e-mail ni votre nom.'],
+				['Pas d’identité.', 'Votre passeport prouve « Français, majeur » sans quitter votre téléphone.'],
+				['Pas de traceur.', 'Ni pub, ni mesure d’audience, ni adresse IP gardée.']
+			],
+			privacyLink: 'Tout le détail',
+
 			neutralKicker: 'Neutralité',
 			neutralTitle: 'Gauche, droite : même traitement',
 			neutral: [
@@ -158,6 +167,15 @@
 				['Public corrections.', 'Every removal is shown, with its reason.']
 			],
 			correctionsLink: 'See the corrections',
+
+			privacyKicker: 'Privacy',
+			privacyTitle: 'We don’t know who you are',
+			privacy: [
+				['No e-mail.', 'Google gives us neither your e-mail nor your name.'],
+				['No identity.', 'Your passport proves “French, adult” without leaving your phone.'],
+				['No tracker.', 'No ads, no audience measurement, no IP address kept.']
+			],
+			privacyLink: 'All the details',
 
 			neutralKicker: 'Neutrality',
 			neutralTitle: 'Left or right: same treatment',
@@ -281,6 +299,18 @@
 			{/each}
 		</ol>
 		<p class="more"><a href="/corrections">{c.correctionsLink} →</a></p>
+	</section>
+
+	<!-- Privacy -->
+	<section id="privacy" use:reveal>
+		<span class="kicker">{c.privacyKicker}</span>
+		<h2>{c.privacyTitle}</h2>
+		<ol class="limits">
+			{#each c.privacy as [head, body]}
+				<li><strong>{head}</strong> {body}</li>
+			{/each}
+		</ol>
+		<p class="more"><a href="/about/privacy">{c.privacyLink} →</a></p>
 	</section>
 
 	<!-- Neutrality -->

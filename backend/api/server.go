@@ -57,9 +57,9 @@ func NewServer(db Pinger, acc *accounts.Service, m *mirror.Service, p *polls.Ser
 	keyIP := keyByClientIP(clientIPHeader())
 
 	// Middleware — applied in order:
-	// securityHeaders → Logger → Recoverer → Timeout → CORS → RateLimit → metrics
+	// securityHeaders → accessLog → Recoverer → Timeout → CORS → RateLimit → metrics
 	r.Use(securityHeaders)
-	r.Use(middleware.Logger)
+	r.Use(accessLog)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(cors.Handler(cors.Options{

@@ -28,6 +28,8 @@
 		"node": ">=22"
 	},
 	"dependencies": {
+		"@fontsource/cormorant-garamond": "5.3.0",
+		"@fontsource/inter": "5.3.0",
 		"@sveltejs/adapter-node": "^5.0.0",
 		"@types/dompurify": "^3.0.5",
 		"@zkpassport/sdk": "0.18.2",

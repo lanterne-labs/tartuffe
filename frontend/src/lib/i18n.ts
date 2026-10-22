@@ -299,6 +299,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	// Nav
 	'nav.feed': { fr: 'Le fil', en: 'Feed' },
 	'nav.about': { fr: 'À propos', en: 'About' },
+	'nav.privacy': { fr: 'Confidentialité', en: 'Privacy' },
 	'footer.verification': { fr: 'Vérification d’identité', en: 'Identity check' },
 
 	// Share

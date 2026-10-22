@@ -1,4 +1,13 @@
 <script lang="ts">
+	// The fonts are served by the site itself: no request leaves for a font
+	// host (privacy: Google Fonts would see every visitor's address).
+	import '@fontsource/inter/400.css';
+	import '@fontsource/inter/500.css';
+	import '@fontsource/inter/600.css';
+	import '@fontsource/inter/700.css';
+	import '@fontsource/cormorant-garamond/500.css';
+	import '@fontsource/cormorant-garamond/600.css';
+	import '@fontsource/cormorant-garamond/700.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { page } from '$app/stores';
@@ -100,7 +109,13 @@
 			{/if}
 			<a href="/feed" class="nav-link nav-link--feed" class:active={$page.url.pathname === '/feed'}>{tr('nav.feed', currentLang)}</a>
 			<a href="/dashboard" class="nav-link nav-link--home" class:active={$page.url.pathname === "/dashboard"}>{tr('nav.dashboard', currentLang)}</a>
-			<a href="/about" class="nav-link nav-link--about" class:active={$page.url.pathname === '/about'}>{tr('nav.about', currentLang)}</a>
+			<!-- About opens a small menu on hover or focus: its subpages. -->
+			<div class="nav-about nav-link--about">
+				<a href="/about" class="nav-link" class:active={$page.url.pathname.startsWith('/about')} aria-haspopup="true">{tr('nav.about', currentLang)}</a>
+				<div class="nav-menu">
+					<a href="/about/privacy" class:active={$page.url.pathname === '/about/privacy'}>{tr('nav.privacy', currentLang)}</a>
+				</div>
+			</div>
 			{#if userName}
 				<span class="nav-user" title={tr('auth.signed_in_as', currentLang, { name: userName })}>
 					<a href="/profile" class="nav-user-link" class:active={$page.url.pathname === '/profile'} aria-label={tr('nav.profile', currentLang)}>
@@ -125,6 +140,8 @@
 
 <footer class="site-footer">
 	<a href="/about">{tr('nav.about', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/about/privacy">{tr('nav.privacy', currentLang)}</a>
 	<span aria-hidden="true">·</span>
 	<a href="/corrections">{tr('corrections.title', currentLang)}</a>
 	<span aria-hidden="true">·</span>
@@ -204,6 +221,44 @@
 		gap: 1rem;
 	}
 
+	.nav-about {
+		position: relative;
+	}
+	.nav-menu {
+		position: absolute;
+		top: 100%;
+		right: -0.6rem;
+		padding-top: 0.6rem;
+		opacity: 0;
+		visibility: hidden;
+		transform: translateY(-4px);
+		transition:
+			opacity 0.15s ease,
+			transform 0.15s ease,
+			visibility 0.15s;
+	}
+	.nav-about:hover .nav-menu,
+	.nav-about:focus-within .nav-menu {
+		opacity: 1;
+		visibility: visible;
+		transform: none;
+	}
+	.nav-menu a {
+		display: block;
+		white-space: nowrap;
+		padding: 0.55rem 0.9rem;
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+		border: 1px solid var(--glass-border);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+		text-decoration: none;
+	}
+	.nav-menu a:hover,
+	.nav-menu a.active {
+		color: var(--text-primary);
+	}
 	.nav-link {
 		font-size: 0.875rem;
 		font-weight: 500;
