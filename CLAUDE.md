@@ -185,6 +185,11 @@ The Grafana dashboard **Quality** (`deploy/observability/grafana/dashboards/qual
 - the quality gauges: stances, one-fact stances, claim groups, contradictions per score bundle. They are rows of `job_metrics` under the job `quality`, recorded at the end of each maintenance pass, or now with `dm quality record`;
 - the verdicts of the periodic LLM audit.
 
+### Tasks
+The Grafana dashboard **Tasks** (`tasks.json`) lists the collection tasks: the ones running, then the pending ones in the order the worker takes them (highest priority, then oldest; a task put back waits for its `not_before`), the pending tasks per operation and plugin, and the tasks that ended recently with their facts and errors.
+
+The admin password of Grafana is the service variable `GF_SECURITY_ADMIN_PASSWORD`: the start script resets it at every start (`s6-rc.d/grafana/run`).
+
 ### Operations tracking
 The Grafana dashboard **Operations** (`operations.json`) shows where each long operation stands: how far it is, its speed over the last 3 hours, when it should end at that speed, and what it produces (pairs judged, contradictions, claim groups, facts).
 - The fold (`dm facts fold --apply` over everyone) and the detection over every person record their progress in persons, as `job_metrics` rows under the job `progress` (`storage.RecordProgress`). A new long operation without a table of its own records its progress the same way.
