@@ -52,6 +52,8 @@ type StanceStorer interface {
 	// of the person in its own transaction and returns its id and whether the
 	// bundler still has to resolve its stance.
 	RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (contradictionID int64, needsBundler bool, err error)
+	// EnqueueFactPair asks the contradiction detector to judge a pair.
+	EnqueueFactPair(ctx context.Context, personID, factA, factB int64, source string) error
 }
 
 // StanceDocument is the core type for stance documents.
@@ -691,7 +693,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		// Adversarial verification pass: survivors only — refuted pairs are
 		// never recorded, so they never dent the honesty score. If every pair
 		// is refuted the fact is just new info for the stance.
-		verified, err := sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		verified, err := sm.verifyEntries(ctx, personID, factID, newFactText, keyTextByID(keyFacts), agg.Contradictions)
 		if err != nil {
 			return nil, err
 		}
@@ -799,7 +801,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	}
 	// Adversarial verification pass (same gate as the live ingest path in
 	// handleVerdict).
-	return sm.verifyEntries(ctx, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
+	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
 }
 
 // VerifyContradiction runs the adversarial refutation pass over a single
@@ -818,15 +820,20 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 }
 
 // verifyEntries runs the adversarial refutation pass over each flagged
-// contradiction entry and returns only the survivors. newFactText is the text
-// of the fact being processed; keyTexts maps each candidate key-fact ID to
-// its text. An entry whose key-fact text is missing is kept unchecked (we
-// cannot verify what we cannot read). On a verifier error other than
-// llm.ErrUnavailable the entry is kept (fail-open, as on the detector path)
-// and logged; on an explicit refutation (keep=false) it is dropped and logged
-// at INFO. When the LLM is unavailable nothing is decided: the error (wrapping
+// contradiction entry and returns only the survivors. factID and newFactText
+// are the fact being processed; keyTexts maps each key fact the analysis was
+// shown to its text. Nothing is recorded unverified:
+//   - an entry whose key fact the analysis was not shown is dropped: the
+//     model gave an ID it cannot have read (prod #1205 paired a fact with the
+//     reason of another);
+//   - on a verifier error other than llm.ErrUnavailable the entry is not
+//     kept but queued for the contradiction detector (fact_pair_queue), which
+//     judges and verifies the pair on its own;
+//   - an explicit refutation (keep=false) drops it.
+//
+// When the LLM is unavailable nothing is decided: the error (wrapping
 // llm.ErrUnavailable) is returned and the caller must record nothing.
-func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
+func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
@@ -834,8 +841,8 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 	for _, c := range entries {
 		keyText, ok := keyTexts[c.KeyFactID]
 		if !ok || strings.TrimSpace(keyText) == "" {
-			// No text to verify against — keep it; the recorder still guards on KeyFactID.
-			survivors = append(survivors, c)
+			log.Warn().Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Str("flagged_reason", c.Reason).
+				Msg("Contradiction with a key fact the analysis was not shown; dropping")
 			continue
 		}
 		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
@@ -843,10 +850,11 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 			return nil, fmt.Errorf("verifying contradiction with key fact %d: %w", c.KeyFactID, err)
 		}
 		if err != nil {
-			log.Warn().Err(err).
-				Int64("key_fact_id", c.KeyFactID).
-				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
-			survivors = append(survivors, c)
+			log.Warn().Err(err).Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).
+				Msg("Contradiction verification failed; the pair goes to the detector")
+			if qErr := sm.storer.EnqueueFactPair(ctx, personID, factID, c.KeyFactID, "stance:unverified"); qErr != nil {
+				log.Warn().Err(qErr).Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Msg("Queueing the unverified pair failed")
+			}
 			continue
 		}
 		if !keep {

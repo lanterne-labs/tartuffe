@@ -564,3 +564,27 @@ func TestAnalyzeAcrossBatches_InBatchOrder(t *testing.T) {
 		t.Errorf("analyze calls = %d, want 2 agreeing votes per batch", n)
 	}
 }
+
+// TestVerifyEntries_NothingUnverified: a contradiction with a key fact the
+// analysis was not shown is dropped (prod #1205 got the reason of another
+// pair), and one whose verification fails goes to the detector's queue
+// instead of being recorded.
+func TestVerifyEntries_NothingUnverified(t *testing.T) {
+	storer := newMockStanceStorer()
+	sm, _ := newOutageManager(t, storer, answers(map[string]any{verifyPrompt: "no verdict here"}))
+	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans."}
+	entries := []StanceContradictionEntry{
+		{KeyFactID: 10, Reason: "62 vs 64"},
+		{KeyFactID: 99, Reason: "a fact the analysis was not shown"},
+	}
+	got, err := sm.verifyEntries(context.Background(), 7, 5, "Il vote la retraite à 64 ans.", keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("survivors: %+v, want none", got)
+	}
+	if len(storer.queued) != 1 || storer.queued[0] != [2]int64{5, 10} {
+		t.Errorf("queued for the detector: %v, want the unverified pair 5-10", storer.queued)
+	}
+}

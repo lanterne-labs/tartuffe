@@ -538,3 +538,12 @@ cases:
     bucket: coherent_defense
     judges: [verify]
     notes: "Contesting a conviction up to the Cour de cassation is consistent with affirming innocence; the conviction mentioned in B is the context of the appeal, not B's act. Verify-only: the verifier drops it 3/3 (it stops such rows at insertion); the auditor keeps it 3/3 (2026-10-01), so the stored row was dismissed by hand."
+
+  # ---- The claimed reason describes another pair (stance analysis, prod #1205) ----
+  - name: "FP_1205_melenchon_reason_of_another_pair"
+    fact_a: "Jean-Luc Mélenchon a démenti les propos de Marine Le Pen en affirmant qu'il n'avait ni majordome, ni chauffeur, ni aucun autre avantage pour lequel elle a été condamnée."
+    fact_b: "Jean-Luc Mélenchon a appelé les militants de La France insoumise à ne pas verser dans l'injure, le sexisme ou les insultes sur les réseaux sociaux, notamment envers Marine Le Pen."
+    claimed_reason: "Il prône l'absence d'insultes envers Marine Le Pen après l'avoir lui-même qualifiée de « minable »."
+    expect: drop
+    bucket: reason_of_another_pair
+    notes: "The stance analysis gave one reason for two key facts: the reason (« minable ») is about another fact. Neither statement here contains it; the two are unrelated."

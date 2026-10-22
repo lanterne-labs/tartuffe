@@ -52,7 +52,9 @@ func (f *FetchLog) run(ctx context.Context) {
 	tick := time.NewTicker(fetchLogFlushEvery)
 	defer tick.Stop()
 	var batch []webfetch.Outcome
-	lastPrune := time.Time{}
+	// The first prune waits a day of uptime: a short CLI run closes its pool
+	// before its first tick, and the long-lived services prune for it.
+	lastPrune := time.Now()
 	for {
 		select {
 		case o := <-f.ch:
