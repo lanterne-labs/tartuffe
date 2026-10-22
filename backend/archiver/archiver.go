@@ -8,11 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
 
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/webfetch"
 
 	"github.com/rs/zerolog/log"
 )
@@ -26,7 +28,6 @@ type Storer interface {
 const (
 	batchSize       = 10
 	httpTimeout     = 30 * time.Second
-	userAgent       = "digital-mirror/1.0 (fact-checking; https://github.com/lanterne-labs/mirror)"
 	availabilityAPI = "https://archive.org/wayback/available?url="
 	saveAPI         = "https://web.archive.org/save/"
 )
@@ -34,7 +35,10 @@ const (
 // Archiver submits source URLs to the Wayback Machine and records the snapshot URLs.
 type Archiver struct {
 	storer Storer
-	client *http.Client
+	// client is the shared webfetch client (tests swap in an *http.Client).
+	client interface {
+		Do(req *http.Request) (*http.Response, error)
+	}
 	// requestDelay is the polite gap between archive.org requests; recheckDelay is
 	// how long we wait after a save before re-checking availability. Fields (not
 	// constants) so tests can shrink them.
@@ -46,10 +50,36 @@ type Archiver struct {
 func New(storer Storer) *Archiver {
 	return &Archiver{
 		storer:       storer,
-		client:       &http.Client{Timeout: httpTimeout},
+		client:       archiveClient{},
 		requestDelay: 2 * time.Second,
 		recheckDelay: 3 * time.Second,
 	}
+}
+
+// archiveClient sends a request through the shared webfetch client, under
+// httpTimeout: the common headers, the record for the Sources page.
+type archiveClient struct{}
+
+func (archiveClient) Do(req *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithTimeout(webfetch.WithSource(req.Context(), "archive"), httpTimeout)
+	resp, err := webfetch.Shared().Do(ctx, req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelOnClose{resp.Body, cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // Run starts a background loop that archives a small batch of sources on each tick.
@@ -151,7 +181,6 @@ func (a *Archiver) checkAvailable(ctx context.Context, sourceURL string) (string
 	if err != nil {
 		return "", false
 	}
-	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -178,7 +207,6 @@ func (a *Archiver) requestSave(ctx context.Context, sourceURL string) error {
 	if err != nil {
 		return fmt.Errorf("build save request: %w", err)
 	}
-	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
