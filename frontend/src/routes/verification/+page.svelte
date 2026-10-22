@@ -11,7 +11,7 @@
 	const content = {
 		fr: {
 			title: 'Vérifier sans s’identifier',
-			lead: 'Pour que le pré-sondage compte une voix par personne, chaque votant prouve qu’il est un électeur français majeur. Sans compte, sans e-mail, sans donner son nom : avec une preuve à divulgation nulle de connaissance.',
+			lead: 'Pourquoi un document d’identité ? Pour qu’une personne ne vote qu’une fois : sans cela, n’importe qui pourrait créer cent comptes et fausser les résultats. Votre document prouve seulement que vous êtes un électeur français majeur. Ni nom, ni photo, ni e-mail.',
 			cta: 'Vérifier mon document',
 			stepsTitle: 'Comment ça se passe',
 			steps: [
@@ -63,7 +63,7 @@
 		},
 		en: {
 			title: 'Verified without being identified',
-			lead: 'So that the pre-poll counts one vote per person, each voter proves they are an adult French voter. No account, no email, no name: with a zero-knowledge proof.',
+			lead: 'Why an ID document? So that each person votes only once: without it, anyone could create a hundred accounts and skew the results. Your document only proves you are an adult French voter. No name, no photo, no email.',
 			cta: 'Verify my document',
 			stepsTitle: 'What happens',
 			steps: [

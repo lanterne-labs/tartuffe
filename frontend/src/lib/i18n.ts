@@ -224,6 +224,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	// ZKPassport sign-in
 	'zk.title': { fr: 'Passeport ou carte d’identité', en: 'Passport or ID card' },
 	'zk.badge': { fr: '1 personne = 1 voix', en: '1 person = 1 vote' },
+	'zk.why': { fr: 'Pourquoi un document d’identité ? Pour qu’une personne ne vote qu’une fois. Sans cela, n’importe qui pourrait créer cent comptes et fausser les résultats. Nous ne voyons ni votre nom ni votre photo.', en: 'Why an ID document? So that each person votes only once. Without it, anyone could create a hundred accounts and skew the results. We never see your name or photo.' },
 	'zk.step1': { fr: 'Installez l’app ZKPassport (iOS ou Android).', en: 'Install the ZKPassport app (iOS or Android).' },
 	'zk.step2': { fr: 'Scannez le QR code, puis posez votre passeport ou carte d’identité à puce contre le téléphone.', en: 'Scan the QR code, then hold your chip passport or ID card against the phone.' },
 	'zk.step3': { fr: 'Acceptez : la preuve est calculée sur le téléphone et vérifiée par nos serveurs.', en: 'Accept: the proof is computed on the phone and checked by our servers.' },

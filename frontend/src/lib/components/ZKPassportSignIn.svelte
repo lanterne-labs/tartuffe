@@ -99,6 +99,7 @@
 		<h3>{tr('zk.title', lang)}</h3>
 		<span class="badge">{tr('zk.badge', lang)}</span>
 	</div>
+	<p class="why">{tr('zk.why', lang)}</p>
 	{#if step === 'idle'}
 		<ZKProofAnimation {lang} />
 		<ol class="steps">
@@ -156,6 +157,12 @@
 	h3 {
 		font-size: 0.95rem;
 		margin: 0;
+	}
+	.why {
+		margin: 0 0 0.75rem;
+		font-size: 0.9rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
 	}
 	.badge {
 		font-size: 0.65rem;
