@@ -23,7 +23,9 @@ package promptrules
 var RefuteContradictionPrompt = `You are auditing a *claimed* contradiction for a politician honesty tracker. Decide whether it is a REAL contradiction (keep) or a FALSE POSITIVE (drop). Weigh both sides fairly: do not rubber-stamp a weak claim, but do not reflexively dismiss a genuine reversal either.
 
 A REAL contradiction (answer YES) is the person's own statements or actions conflicting with each other, or with an authoritative finding about them. Recognise these real patterns — they ARE contradictions:
-  - POSITION / ATTITUDE REVERSAL, even in different words: "very motivated" then "not particularly enthusiastic" about the same thing; "I support X" then "I oppose X"; "this is my priority" then "this is not desirable". Different wording for opposite stances on the same subject still counts.
+  - POSITION / ATTITUDE REVERSAL, even in different words: "very motivated" then "not particularly enthusiastic" about the same thing; "I support X" then "I oppose X"; "this is my priority" then "this is not desirable"; "there will never be an alliance with X" then a call to unite with X, whatever form the union takes. Different wording for opposite stances on the same subject still counts.
+  - DENYING ONE'S OWN EARLIER POSITION: the person refused, said or claimed X, and later says they never refused, never said or never claimed it ("refused the idea of a primary" then "never said no to a primary on principle"). Claiming X then denying X is a contradiction, even when the later statement adds nuance.
+  - STATED-CONDITION WALK-BACK: "I will not do X if Y happens" (or "I will not do X under Y"), Y happened, and the person announces, keeps or pursues X anyway ("I will not campaign with an electronic bracelet", then a candidacy announced after a sentence to a bracelet). Do not ask for proof that the sanction is being carried out at that moment.
   - DENIAL vs AUTHORITATIVE FINDING: the person denied wrongdoing / denied personal profit / claimed innocence, and a court conviction or official investigation conclusion in that SAME matter establishes the opposite. A criminal conviction is an authoritative finding that breaks a personal denial of wrongdoing.
   - STATED OPPOSITION / WARNING then OPPOSING ACTION: the person warned an action was harmful or opposed it, then voted for or carried out that very action.
   - COMMITMENT vs CONTRARY ACTION: a stated value, promise, or commitment by the person, broken by the person's OWN material action in the opposite direction (e.g. promised to keep retirement at 62, then abandoned the repeal that would have undone the move to 64).
@@ -34,10 +36,12 @@ A REAL contradiction (answer YES) is the person's own statements or actions conf
 ` + FalsePositivePatterns + `
 ` + RestatementsRule + `
 
+The reason it was flagged is a hint from another model, not evidence: judge the two statements as written. If the reason relies on words, facts or events that NEITHER statement contains, it may describe another pair: answer NO unless the two statements contradict each other on their own.
+
 Decision procedure:
   - If the case clearly matches one of the NO patterns above, answer NO.
-  - Otherwise, if it clearly matches one of the YES patterns (reversal, denial-vs-finding, warned-then-acted, commitment-vs-action, denounce-then-ally, vote against one's own demand, self-exempting double standard), answer YES.
-  - Only if it fits NEITHER and you genuinely cannot tell, answer NO.
+  - Otherwise, if it clearly matches one of the YES patterns (reversal, denial of one's own position, stated-condition walk-back, denial-vs-finding, warned-then-acted, commitment-vs-action, denounce-then-ally, vote against one's own demand, self-exempting double standard), answer YES.
+  - Only if it fits NEITHER and you genuinely cannot tell, answer NO. A mere "tension" between two statements that can both be true as written is a NO.
 
 CLAIMED CONTRADICTION UNDER REVIEW:
 Statement A: %s
