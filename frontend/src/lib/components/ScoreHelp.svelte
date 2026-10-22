@@ -4,7 +4,7 @@
 	import Modal from './Modal.svelte';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
-	import { scoreTerms, stanceInputs, RATIO_DECAY, ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR } from '$lib/score';
+	import { scoreTerms, stanceInputs } from '$lib/score';
 	import { displayName } from '$lib/share';
 	import type { ScoreExplanation } from '$lib/types';
 
@@ -51,21 +51,7 @@
 	let inputs = $derived(
 		stance ? stanceInputs(stance.facts, stance.pairs) : expl ? { facts: expl.facts, bundles: expl.bundles, pairs: expl.pairs } : null
 	);
-	let terms = $derived(inputs ? scoreTerms(inputs) : null);
-	let pct = (x: number) => Math.round(x * 100);
-	let fmt = (x: number) => x.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { maximumFractionDigits: 3 });
-
-	// What the number says, in words.
-	let reading = $derived.by(() => {
-		if (!inputs || !terms) return '';
-		if (inputs.facts === 0) return tr('score.read.nothing', currentLang);
-		if (inputs.bundles === 0) {
-			return tr(inputs.facts < MIN_DENOMINATOR ? 'score.read.clean_few' : 'score.read.clean_many', currentLang, { f: inputs.facts });
-		}
-		const one = inputs.bundles === 1 ? '_one' : '';
-		if (inputs.facts < MIN_DENOMINATOR) return tr(`score.read.few${one}`, currentLang, { f: inputs.facts, b: inputs.bundles });
-		return tr(`score.read.ratio${one}`, currentLang, { f: inputs.facts, b: inputs.bundles, r: Math.max(1, Math.round(inputs.facts / inputs.bundles)) });
-	});
+	let score = $derived(stance ? (inputs ? scoreTerms(inputs).score : null) : (expl?.score ?? null));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -74,36 +60,21 @@
 	<Modal {open} title={tr(stance ? 'score.title.stance' : 'score.title', currentLang, { name: displayName(name), topic: stance?.label ?? '' })} onclose={() => (open = false)} closeLabel={tr('auth.close', currentLang)}>
 		{#if loadError}
 			<p class="err">{tr('score.error', currentLang)}</p>
-		{:else if !inputs || !terms}
+		{:else if !inputs || score == null}
 			<p class="muted">{tr('person.loading', currentLang)}</p>
 		{:else}
-			<p class="big"><strong>{pct(stance ? terms.score : (expl?.score ?? terms.score))}</strong>/100</p>
-			<p class="reading">{reading}</p>
+			<p class="big"><strong>{Math.round((score ?? 0) * 100)}</strong>/100</p>
+			<p class="what">{tr('score.what', currentLang)}</p>
 
 			<dl class="inputs">
 				<div><dt>{tr('score.facts', currentLang)}</dt><dd>{inputs.facts}</dd></div>
-				<div><dt>{tr('score.bundles', currentLang)}</dt><dd>{inputs.bundles}</dd></div>
-				<div><dt>{tr('score.extras', currentLang)}</dt><dd>{terms.extras}</dd></div>
+				<div><dt>{tr('score.contradictions', currentLang)}</dt><dd>{inputs.bundles}</dd></div>
+				{#if expl && expl.members_score != null}
+					<div><dt>{tr('score.members', currentLang)}</dt><dd>{expl.members}</dd></div>
+				{/if}
 			</dl>
 
-			<div class="formula" aria-label={tr('score.formula', currentLang)}>
-				<code>exp(−{RATIO_DECAY} × {inputs.bundles} / {terms.denominator} − {ABSOLUTE_DECAY} × {inputs.bundles} − {EXTRA_DECAY} × ln(1 + {terms.extras}))</code>
-				<code>= exp(−{fmt(terms.ratioTerm)} − {fmt(terms.absoluteTerm)} − {fmt(terms.extraTerm)}) = {fmt(terms.score)}</code>
-			</div>
-			<ul class="notes">
-				<li>{tr('score.note.bundle', currentLang)}</li>
-				<li>{tr('score.note.floor', currentLang, { n: MIN_DENOMINATOR })}</li>
-				{#if stance}
-					<li>{tr('score.note.stance', currentLang)}</li>
-				{/if}
-			</ul>
-
-			{#if expl && expl.members_score != null}
-				<div class="party">
-					<p>{tr('score.party', currentLang, { own: pct(expl.own_score), members: pct(expl.members_score), n: expl.members, total: pct(expl.score) })}</p>
-				</div>
-			{/if}
-			<p class="muted small">{tr('score.consistency', currentLang)} <a href="/about#score">{tr('score.more', currentLang)}</a></p>
+			<p class="muted small"><a href="/about#score">{tr('score.more', currentLang)}</a></p>
 		{/if}
 	</Modal>
 </span>
@@ -135,14 +106,14 @@
 		margin: 0;
 		line-height: 1.1;
 	}
-	.reading {
+	.what {
 		color: var(--text-primary);
 		line-height: 1.5;
-		margin: 0.25rem 0 1rem;
+		margin: 0.5rem 0 1rem;
 	}
 	.inputs {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
 		gap: 0.5rem;
 		margin: 0 0 1rem;
 	}
@@ -159,29 +130,6 @@
 		margin: 0.1rem 0 0;
 		font-size: 1.1rem;
 		font-weight: 600;
-	}
-	.formula {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		margin-bottom: 0.75rem;
-		overflow-x: auto;
-	}
-	code {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-		white-space: nowrap;
-	}
-	.notes {
-		margin: 0 0 0.75rem;
-		padding-left: 1.1rem;
-		color: var(--text-secondary);
-		font-size: 0.82rem;
-		line-height: 1.5;
-	}
-	.party p {
-		font-size: 0.85rem;
-		line-height: 1.5;
 	}
 	.muted {
 		color: var(--text-secondary);
