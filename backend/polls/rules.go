@@ -1,8 +1,8 @@
-// Package poll computes the results of a pre-poll and checks the ballots.
+// The rules of a poll: its results and the checks of a ballot.
 // The results put two numbers side by side for each candidate: the share of
 // voters who ranked them first, and their honesty score. Each orders the
 // candidates on its own; the two are never mixed into one number.
-package poll
+package polls
 
 import (
 	"errors"
@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"digital-mirror/backend/storage"
 )
 
 // Why the shares of an event are not shown.
@@ -50,12 +48,12 @@ type Results struct {
 }
 
 // IsOpen tells whether the event takes ballots at now.
-func IsOpen(e *storage.PollEvent, now time.Time) bool {
+func IsOpen(e *Event, now time.Time) bool {
 	return !now.Before(e.OpensAt) && (e.ClosesAt == nil || now.Before(*e.ClosesAt))
 }
 
 // InBlackout tells whether the results of the event are under a blackout at now.
-func InBlackout(e *storage.PollEvent, now time.Time) bool {
+func InBlackout(e *Event, now time.Time) bool {
 	for _, b := range e.Blackouts {
 		if !now.Before(b.StartsAt) && now.Before(b.EndsAt) {
 			return true
@@ -66,7 +64,7 @@ func InBlackout(e *storage.PollEvent, now time.Time) bool {
 
 // Compute builds the results from the tallies of the event's candidates and
 // its number of voters.
-func Compute(e *storage.PollEvent, tallies []storage.PollCandidateTally, voters int, now time.Time) Results {
+func Compute(e *Event, tallies []CandidateTally, voters int, now time.Time) Results {
 	r := Results{Voters: voters, Open: IsOpen(e, now), Candidates: make([]CandidateResult, 0, len(tallies))}
 	switch {
 	case InBlackout(e, now):
@@ -140,7 +138,7 @@ var ErrClosed = fmt.Errorf("%w: the event does not take ballots now", ErrBallot)
 
 // CheckBallot checks a ballot (first choice first) against the event and its
 // candidates. An empty ballot withdraws the user's choices.
-func CheckBallot(e *storage.PollEvent, candidates []int64, personIDs []int64, now time.Time) error {
+func CheckBallot(e *Event, candidates []int64, personIDs []int64, now time.Time) error {
 	if !IsOpen(e, now) {
 		return ErrClosed
 	}
@@ -174,7 +172,7 @@ var ErrNotOnBallot = fmt.Errorf("%w: this vote is not on the ballot", ErrBallot)
 // AddVote returns the ballot with a vote for personID: in place of replace
 // when replace is not zero, else after the votes already cast. A vote already
 // cast leaves the ballot as it is, so a repeated request is harmless.
-func AddVote(e *storage.PollEvent, ballot []int64, personID, replace int64) ([]int64, error) {
+func AddVote(e *Event, ballot []int64, personID, replace int64) ([]int64, error) {
 	if slices.Contains(ballot, personID) {
 		return ballot, nil
 	}

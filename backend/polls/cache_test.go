@@ -1,4 +1,4 @@
-package api
+package polls
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"digital-mirror/backend/storage"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +17,7 @@ func TestResultsCacheSharesOneQuery(t *testing.T) {
 	c := newResultsCache(time.Minute)
 	var calls atomic.Int32
 	release := make(chan struct{})
-	load := func(context.Context, int64) ([]storage.PollCandidateTally, int, error) {
+	load := func(context.Context, int64) ([]CandidateTally, int, error) {
 		calls.Add(1)
 		<-release
 		return nil, 7, nil
@@ -49,7 +47,7 @@ func TestResultsCacheSharesOneQuery(t *testing.T) {
 func TestResultsCacheInvalidate(t *testing.T) {
 	c := newResultsCache(time.Minute)
 	voters := 1
-	load := func(context.Context, int64) ([]storage.PollCandidateTally, int, error) { return nil, voters, nil }
+	load := func(context.Context, int64) ([]CandidateTally, int, error) { return nil, voters, nil }
 	_, got, _ := c.get(context.Background(), 1, load)
 	assert.Equal(t, 1, got)
 
@@ -67,7 +65,7 @@ func TestResultsCacheInvalidate(t *testing.T) {
 
 	// A query in flight while the ballot changes.
 	started, release := make(chan struct{}), make(chan struct{})
-	slow := func(context.Context, int64) ([]storage.PollCandidateTally, int, error) {
+	slow := func(context.Context, int64) ([]CandidateTally, int, error) {
 		close(started)
 		<-release
 		return nil, 3, nil
@@ -92,14 +90,14 @@ func TestResultsCacheInvalidate(t *testing.T) {
 func TestResultsCacheTTL(t *testing.T) {
 	c := newResultsCache(20 * time.Millisecond)
 	voters := 1
-	load := func(context.Context, int64) ([]storage.PollCandidateTally, int, error) { return nil, voters, nil }
+	load := func(context.Context, int64) ([]CandidateTally, int, error) { return nil, voters, nil }
 	c.get(context.Background(), 1, load)
 	voters = 2
 	time.Sleep(30 * time.Millisecond)
 	_, got, _ := c.get(context.Background(), 1, load)
 	assert.Equal(t, 2, got)
 
-	failing := func(context.Context, int64) ([]storage.PollCandidateTally, int, error) {
+	failing := func(context.Context, int64) ([]CandidateTally, int, error) {
 		return nil, 0, assert.AnError
 	}
 	_, _, err := c.get(context.Background(), 2, failing)

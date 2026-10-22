@@ -1,5 +1,5 @@
 // verify.mjs checks the ZKPassport proofs of one sign-in. The API
-// (backend/auth/zkpassport.go) runs it once per sign-in: the request is one
+// (backend/accounts/providers/zkpassport.go) runs it once per verification: the request is one
 // JSON object on stdin, the answer one JSON object on stdout.
 //
 // stdin:  { proofs, result, challenge, domain, scope, minAge, nationality, devMode, rpcUrl }

@@ -3,7 +3,7 @@
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
-	"description": "Verifies the ZKPassport proofs of a sign-in, run by the API (backend/auth/zkpassport.go).",
+	"description": "Verifies the ZKPassport proofs of an identity verification, run by the API (backend/accounts/providers/zkpassport.go).",
 	"license": "UNLICENSED",
 	"engines": {
 		"node": ">=20"

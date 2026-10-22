@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"digital-mirror/backend/accounts"
+	"digital-mirror/backend/api"
 	"digital-mirror/backend/deps"
-	"digital-mirror/backend/poll"
+	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
 
 	"github.com/joho/godotenv"
@@ -144,8 +146,13 @@ func openPollStorer(ctx context.Context) (*storage.PostgresStorer, error) {
 	return storer, nil
 }
 
-func mustPollEvent(ctx context.Context, storer *storage.PostgresStorer, slug string) (*storage.PollEvent, error) {
-	e, err := storer.GetPollEvent(ctx, slug)
+// pollStore is the polls' store on the database of storer.
+func pollStore(storer *storage.PostgresStorer) *polls.PGStore {
+	return polls.NewPGStore(storer.Pool(), accounts.LockVerified)
+}
+
+func mustPollEvent(ctx context.Context, storer *storage.PostgresStorer, slug string) (*polls.Event, error) {
+	e, err := pollStore(storer).GetEvent(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -162,22 +169,22 @@ func runPollList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer storer.Close()
-	events, err := storer.ListPollEvents(ctx)
+	events, err := pollStore(storer).ListEvents(ctx)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
 	fmt.Printf("%-24s %-30s %-8s %5s %5s %6s %6s  %s\n", "SLUG", "TITLE", "STATE", "MAX", "MIN", "CANDS", "VOTERS", "CLOSES")
 	for _, e := range events {
-		tallies, voters, err := storer.GetPollTallies(ctx, e.ID)
+		tallies, voters, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
 		if err != nil {
 			return err
 		}
 		state := "closed"
-		if poll.IsOpen(&e, now) {
+		if polls.IsOpen(&e, now) {
 			state = "open"
 		}
-		if poll.InBlackout(&e, now) {
+		if polls.InBlackout(&e, now) {
 			state += "/bl"
 		}
 		closes := "never"
@@ -201,7 +208,7 @@ func runPollEventSet(cmd *cobra.Command, args []string) error {
 	}
 	defer storer.Close()
 	slug := args[0]
-	e, err := storer.GetPollEvent(ctx, slug)
+	e, err := pollStore(storer).GetEvent(ctx, slug)
 	if err != nil {
 		return err
 	}
@@ -210,7 +217,7 @@ func runPollEventSet(cmd *cobra.Command, args []string) error {
 		if !f.Changed("title-fr") || !f.Changed("title-en") {
 			return fmt.Errorf("a new event needs --title-fr and --title-en")
 		}
-		e = &storage.PollEvent{Slug: slug, MaxChoices: 3, MinVoters: 50, OpensAt: time.Now()}
+		e = &polls.Event{Slug: slug, MaxChoices: 3, MinVoters: 50, OpensAt: time.Now()}
 	}
 	str := func(name string, dst *string) {
 		if f.Changed(name) {
@@ -248,7 +255,7 @@ func runPollEventSet(cmd *cobra.Command, args []string) error {
 			e.ClosesAt = &t
 		}
 	}
-	id, err := storer.SavePollEvent(ctx, *e)
+	id, err := pollStore(storer).SaveEvent(ctx, *e)
 	if err != nil {
 		return err
 	}
@@ -280,7 +287,7 @@ func runPollBlackoutAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := storer.AddPollBlackout(ctx, e.ID, from, to); err != nil {
+	if err := pollStore(storer).AddBlackout(ctx, e.ID, from, to); err != nil {
 		return err
 	}
 	fmt.Printf("results of %s hidden from %s to %s\n", e.Slug, from.Format(time.RFC3339), to.Format(time.RFC3339))
@@ -298,7 +305,7 @@ func runPollBlackoutClear(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	n, err := storer.ClearPollBlackouts(ctx, e.ID)
+	n, err := pollStore(storer).ClearBlackouts(ctx, e.ID)
 	if err != nil {
 		return err
 	}
@@ -308,7 +315,7 @@ func runPollBlackoutClear(cmd *cobra.Command, args []string) error {
 
 func runPollCandidateAdd(cmd *cobra.Command, args []string) error {
 	return pollCandidates(args, func(ctx context.Context, storer *storage.PostgresStorer, eventID, personID int64) (string, error) {
-		added, err := storer.AddPollCandidate(ctx, eventID, personID)
+		added, err := pollStore(storer).AddCandidate(ctx, eventID, personID)
 		if added {
 			return "added", err
 		}
@@ -318,7 +325,7 @@ func runPollCandidateAdd(cmd *cobra.Command, args []string) error {
 
 func runPollCandidateRemove(cmd *cobra.Command, args []string) error {
 	return pollCandidates(args, func(ctx context.Context, storer *storage.PostgresStorer, eventID, personID int64) (string, error) {
-		removed, err := storer.RemovePollCandidate(ctx, eventID, personID)
+		removed, err := pollStore(storer).RemoveCandidate(ctx, eventID, personID)
 		if removed {
 			return "removed", err
 		}
@@ -367,11 +374,11 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	tallies, voters, err := storer.GetPollTallies(ctx, e.ID)
+	tallies, voters, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
 	if err != nil {
 		return err
 	}
-	r := poll.Compute(e, tallies, voters, time.Now())
+	r := polls.Compute(e, tallies, voters, time.Now())
 	fmt.Printf("%s: %d voter(s), %s", e.TitleFR, r.Voters, map[bool]string{true: "open", false: "closed"}[r.Open])
 	if r.Hidden != "" {
 		fmt.Printf(", results hidden on the site (%s)", r.Hidden)
@@ -380,7 +387,7 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	// The operator sees the counts even while the site hides them.
 	full := *e
 	full.MinVoters, full.Blackouts = 0, nil
-	r = poll.Compute(&full, tallies, voters, time.Now())
+	r = polls.Compute(&full, tallies, voters, time.Now())
 	fmt.Printf("%4s %-30s %7s %7s %7s  %5s %7s %5s\n", "PREF", "CANDIDATE", "FIRST", "SHARE", "TOP-N", "HON", "HONESTY", "FACTS")
 	for _, c := range r.Candidates {
 		pref, first, share, top := "-", "-", "-", "-"
@@ -410,7 +417,7 @@ func runPollPurgeUsers(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer storer.Close()
-	n, err := storer.PurgeAppUsers(ctx, provider)
+	n, err := api.NewAccountStore(storer, pollStore(storer)).PurgeUsers(ctx, provider)
 	if err != nil {
 		return err
 	}

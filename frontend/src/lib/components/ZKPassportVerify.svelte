@@ -1,10 +1,12 @@
 <script lang="ts">
-	// Sign-in with the ZKPassport app. The server issues a one-time challenge;
-	// the request built here asks the app to prove the holder's age (and
-	// nationality) and binds the challenge into the proof; the proofs then go
-	// to the API, which verifies them itself (backend/auth/zkpassport.go).
+	// Verifies the signed-in account with the ZKPassport app. The server
+	// issues a one-time challenge; the request built here asks the app to
+	// prove the holder's age (and nationality) and binds the challenge into
+	// the proof; the proofs then go to the API, which checks them itself and
+	// attaches the document to the account
+	// (backend/accounts/providers/zkpassport.go).
 	import { onDestroy } from 'svelte';
-	import { authFetch, errorText, signIn } from '$lib/auth';
+	import { authFetch, errorText, verify, VerifyError, verifyOpen } from '$lib/auth';
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
 	import ZKProofAnimation from './ZKProofAnimation.svelte';
@@ -12,7 +14,8 @@
 	interface Props {
 		config: Record<string, unknown>;
 		lang: Lang;
-		onDone: () => void;
+		// onDone gets whether the document came from another account.
+		onDone: (moved: boolean) => void;
 	}
 
 	let { config, lang, onDone }: Props = $props();
@@ -70,15 +73,15 @@
 				if (cancelled) return;
 				step = 'verifying';
 				try {
-					await signIn('zkpassport', { challenge, proofs, result });
-					onDone();
+					const { moved } = await verify('zkpassport', { challenge, proofs, result });
+					onDone(moved);
 				} catch (err) {
-					error = err instanceof Error ? err.message : String(err);
+					error = err instanceof VerifyError && err.code === 'other_document' ? tr('verify.other_document', lang) : err instanceof Error ? err.message : String(err);
 					step = 'error';
 				}
 			});
 		} catch (err) {
-			console.error('zkpassport sign-in failed', err);
+			console.error('zkpassport verification failed', err);
 			error = err instanceof Error ? err.message : String(err);
 			step = 'error';
 		}
@@ -108,7 +111,7 @@
 			<li>{tr('zk.step3', lang)}</li>
 		</ol>
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
-		<a class="more" href="/verification" onclick={onDone}>{tr('zk.how', lang)}</a>
+		<a class="more" href="/verification" onclick={() => verifyOpen.set(false)}>{tr('zk.how', lang)}</a>
 	{:else if step === 'starting'}
 		<p class="status">{tr('zk.starting', lang)}</p>
 	{:else if step === 'scan'}

@@ -19,16 +19,16 @@ func TestFeedHot(t *testing.T) {
 	f := newReportFixture(t, storer, 3)
 	_, err := storer.pool.Exec(ctx, `UPDATE persons SET fact_count = 4 WHERE id = $1`, f.person)
 	require.NoError(t, err)
-	other, err := storer.UpsertAppUser(ctx, "noop", "liker", "Liker")
+	other, err := testUser(ctx, storer, "liker")
 	require.NoError(t, err)
 
 	_, err = storer.SetLike(ctx, f.user, FeedFact, 1<<40, true)
 	assert.ErrorIs(t, err, ErrLikeTarget)
-	for _, u := range []int64{f.user, other.ID, f.user} {
+	for _, u := range []int64{f.user, other, f.user} {
 		_, err = storer.SetLike(ctx, u, FeedFact, f.facts[0], true)
 		require.NoError(t, err)
 	}
-	n, err := storer.SetLike(ctx, other.ID, FeedContradiction, f.contradiction, true)
+	n, err := storer.SetLike(ctx, other, FeedContradiction, f.contradiction, true)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 

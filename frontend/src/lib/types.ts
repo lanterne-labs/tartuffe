@@ -134,7 +134,7 @@ export interface HistoryPoint {
 	recent_score: number;
 }
 
-// Pre-polls (backend/poll, backend/api/polls.go)
+// Polls (backend/polls)
 
 export interface PollBlackout {
 	starts_at: string;
@@ -217,10 +217,15 @@ export interface MyVotes {
 	events: MyEventVotes[];
 }
 
-// Sign-in (backend/auth)
+// Accounts (backend/accounts): an account provider (google) opens the
+// account, a verification provider (zkpassport) attaches a document to it,
+// which gives the right to vote; noop (tests) does both.
+
+export type ProviderRole = 'account' | 'verification' | 'test';
 
 export interface AuthProvider {
 	name: string;
+	role: ProviderRole;
 	verified: boolean;
 	config?: Record<string, unknown>;
 }
@@ -229,7 +234,8 @@ export interface AppUser {
 	id: number;
 	provider: string;
 	display_name: string;
-	consent_at?: string;
+	// verified: a document is attached, the account may vote.
+	verified: boolean;
 }
 
 // GET /api/person/{id}/score: every input of the honesty score.

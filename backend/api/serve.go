@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"digital-mirror/backend/accounts/providers"
 	"digital-mirror/backend/alerting"
 	"digital-mirror/backend/archiver"
-	"digital-mirror/backend/auth"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -29,16 +29,17 @@ type Config struct {
 // poller, pipeline watchdog, source archiver). Blocks until the API listener
 // fails.
 func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) error {
-	providers, err := auth.RegistryFromEnv()
+	reg, err := providers.RegistryFromEnv()
 	if err != nil {
 		return err
 	}
 	names := []string{}
-	for _, p := range providers.Infos() {
+	for _, p := range reg.Infos() {
 		names = append(names, p.Name)
 	}
 	log.Info().Strs("auth_providers", names).Msg("Sign-in providers enabled")
-	server := NewServer(storer, providers)
+	acc, m, p := Wire(storer, reg)
+	server := NewServer(storer, acc, m, p)
 	storer.StartMetricsCollectors(ctx)
 
 	// Start internal metrics server on a separate port

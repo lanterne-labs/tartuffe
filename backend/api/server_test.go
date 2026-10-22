@@ -2,99 +2,64 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"digital-mirror/backend/core"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/accounts"
+	"digital-mirror/backend/accounts/accountstest"
+	"digital-mirror/backend/accounts/providers"
+	"digital-mirror/backend/mirror"
+	"digital-mirror/backend/polls"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeStorer records the arguments the handlers pass to storage and returns
-// canned data; every method not exercised by a test returns zero values.
-type fakeStorer struct {
-	memPolls
+// pinger answers /health.
+type pinger struct{ err error }
 
-	history []storage.HistoryPoint
-	pingErr error
+func (p pinger) Ping(context.Context) error { return p.err }
 
-	rankedArgs struct {
-		limit, offset, minFacts  int
-		entityType, search, sort string
+// onePoll is a polls store with one open event and no ballot, and no card:
+// the server's tests check the assembly, not the parts.
+type onePoll struct{}
+
+func (onePoll) event() *polls.Event {
+	return &polls.Event{ID: 1, Slug: "presidentielle-2027", MaxChoices: 3, MinVoters: 1, OpensAt: time.Now().Add(-time.Hour)}
+}
+func (p onePoll) ListEvents(context.Context) ([]polls.Event, error) {
+	return []polls.Event{*p.event()}, nil
+}
+func (p onePoll) GetEvent(_ context.Context, slug string) (*polls.Event, error) {
+	if slug != "presidentielle-2027" {
+		return nil, nil
 	}
-	ranked []storage.PersonSummary
-
-	members    []storage.MemberInfo
-	membersErr error
-
-	stances      []core.StanceDocument
-	stanceCounts map[int64]int
-	groupCounts  map[int64]int
+	return p.event(), nil
+}
+func (onePoll) CandidateIDs(context.Context, int64) ([]int64, error) { return []int64{}, nil }
+func (onePoll) Tallies(context.Context, int64) ([]polls.CandidateTally, int, error) {
+	return []polls.CandidateTally{}, 0, nil
+}
+func (onePoll) Ballot(context.Context, int64, int64) ([]int64, error) { return []int64{}, nil }
+func (onePoll) Consented(context.Context, int64) (bool, error)        { return false, nil }
+func (onePoll) UpdateBallot(context.Context, int64, int64, bool, func([]int64) ([]int64, error)) ([]int64, error) {
+	return []int64{}, nil
+}
+func (onePoll) UserChoices(context.Context, int64) ([]polls.UserChoice, error) {
+	return []polls.UserChoice{}, nil
+}
+func (onePoll) Cards(context.Context, []int64) (map[int64]polls.Card, error) {
+	return map[int64]polls.Card{}, nil
 }
 
-func (f *fakeStorer) Ping(context.Context) error { return f.pingErr }
-
-func (f *fakeStorer) GetPersonsRankedByScore(_ context.Context, limit, offset int, entityType, search, sort string, minFacts int) ([]storage.PersonSummary, error) {
-	f.rankedArgs.limit, f.rankedArgs.offset, f.rankedArgs.minFacts = limit, offset, minFacts
-	f.rankedArgs.entityType, f.rankedArgs.search, f.rankedArgs.sort = entityType, search, sort
-	return f.ranked, nil
-}
-
-func (f *fakeStorer) GetPersonByID(context.Context, int64) (*storage.PersonSummary, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetPersonFacts(context.Context, int64, int, int) (*storage.PaginatedFacts, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetPersonContradictions(context.Context, int64, int, int) (*storage.PaginatedContradictions, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetPersonMembers(context.Context, int64) ([]storage.MemberInfo, error) {
-	return f.members, f.membersErr
-}
-
-func (f *fakeStorer) GetPersonHistory(context.Context, int64) ([]storage.HistoryPoint, error) {
-	return f.history, nil
-}
-
-func (f *fakeStorer) GetFactPersons(context.Context, int64, int, int) ([]storage.PersonSummary, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetStanceDocumentsForPerson(context.Context, int64) ([]core.StanceDocument, error) {
-	return f.stances, nil
-}
-
-func (f *fakeStorer) GetStanceContradictionCounts(context.Context, int64) (map[int64]int, error) {
-	return f.stanceCounts, nil
-}
-
-func (f *fakeStorer) GetStanceGroupCounts(context.Context, int64) (map[int64]int, error) {
-	return f.groupCounts, nil
-}
-
-func (f *fakeStorer) GetStanceContradictionGroups(context.Context, int64) ([]storage.ContradictionGroup, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetFactsInStance(context.Context, int64) ([]storage.FactInStance, error) {
-	return nil, nil
-}
-
-func (f *fakeStorer) GetMaxEventID(context.Context) (int64, error) { return 0, nil }
-
-func (f *fakeStorer) GetEventsAfter(context.Context, int64, int) ([]storage.Event, error) {
-	return nil, nil
+// newServer assembles the three parts on test stores (the mirror's is never
+// reached by these tests), with noop sign-in.
+func newServer(pingErr error) *Server {
+	acc := accounts.NewService(accountstest.NewMemStore(), providers.NewRegistry(providers.Noop{}))
+	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, onePoll{}, acc))
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -106,7 +71,7 @@ func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 }
 
 func TestRoutes(t *testing.T) {
-	routes, err := NewServer(&fakeStorer{}, nil).Routes()
+	routes, err := newServer(nil).Routes()
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"GET /health",
@@ -147,17 +112,17 @@ func TestRoutes(t *testing.T) {
 }
 
 func TestHealth(t *testing.T) {
-	rec := get(t, NewServer(&fakeStorer{}, nil).Handler(), "/health")
+	rec := get(t, newServer(nil).Handler(), "/health")
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.JSONEq(t, `{"status":"ok"}`, rec.Body.String())
 
-	rec = get(t, NewServer(&fakeStorer{pingErr: errors.New("down")}, nil).Handler(), "/health")
+	rec = get(t, newServer(errors.New("down")).Handler(), "/health")
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.JSONEq(t, `{"status":"error"}`, rec.Body.String())
 }
 
 func TestSecurityHeaders(t *testing.T) {
-	rec := get(t, NewServer(&fakeStorer{}, nil).Handler(), "/health")
+	rec := get(t, newServer(nil).Handler(), "/health")
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
 	assert.Equal(t, "strict-origin-when-cross-origin", rec.Header().Get("Referrer-Policy"))
@@ -165,92 +130,18 @@ func TestSecurityHeaders(t *testing.T) {
 	assert.Empty(t, rec.Header().Get("Strict-Transport-Security"), "HSTS only behind https")
 }
 
-func TestGetPersons_MinFactsFloorAndPagination(t *testing.T) {
-	name := "party"
-	fs := &fakeStorer{ranked: []storage.PersonSummary{{ID: 7, Name: "X", EntityType: &name, HonestyScore: 0.9, FactCount: 12}}}
-	h := NewServer(fs, nil).Handler()
-
-	rec := get(t, h, "/api/persons")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, 50, fs.rankedArgs.limit)
-	assert.Equal(t, 0, fs.rankedArgs.offset)
-	assert.Equal(t, publicMinFacts, fs.rankedArgs.minFacts, "default floor")
-	assert.Equal(t, "public, max-age=60, stale-while-revalidate=300", rec.Header().Get("Cache-Control"))
-
-	var got []storage.PersonSummary
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	require.Len(t, got, 1)
-	assert.Equal(t, int64(7), got[0].ID)
-
-	// A caller may raise the floor, never lower it; out-of-range paging falls back.
-	get(t, h, "/api/persons?min_facts=1&limit=5000&offset=-3")
-	assert.Equal(t, publicMinFacts, fs.rankedArgs.minFacts)
-	assert.Equal(t, 50, fs.rankedArgs.limit)
-	assert.Equal(t, 0, fs.rankedArgs.offset)
-
-	get(t, h, "/api/persons?min_facts=10&limit=20&offset=40&entity_type=human&search=ma&sort=honesty_asc")
-	assert.Equal(t, 10, fs.rankedArgs.minFacts)
-	assert.Equal(t, 20, fs.rankedArgs.limit)
-	assert.Equal(t, 40, fs.rankedArgs.offset)
-	assert.Equal(t, "human", fs.rankedArgs.entityType)
-	assert.Equal(t, "ma", fs.rankedArgs.search)
-	assert.Equal(t, "honesty_asc", fs.rankedArgs.sort)
-}
-
-func TestGetPersonMembers(t *testing.T) {
-	img := "https://img/x.png"
-	fs := &fakeStorer{members: []storage.MemberInfo{{ID: 3, Name: "Dep", EntityType: "human", HonestyScore: 0.5, ImageURL: &img}}}
-	h := NewServer(fs, nil).Handler()
-
-	rec := get(t, h, "/api/person/1/members")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-	assert.JSONEq(t, `[{"id":3,"name":"Dep","entity_type":"human","honesty_score":0.5,"image_url":"https://img/x.png"}]`, rec.Body.String())
-
-	rec = get(t, h, "/api/person/abc/members")
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	fs.membersErr = errors.New("boom")
-	rec = get(t, h, "/api/person/1/members")
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Equal(t, "Internal server error\n", rec.Body.String(), "internal details must not leak")
-}
-
-func TestGetPersonStances_ScoreAndCounts(t *testing.T) {
-	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
-	fs := &fakeStorer{
-		stances: []core.StanceDocument{
-			{ID: 10, ClusterLabel: "A", Summary: "sa", FactCount: 20, LastUpdatedAt: now},
-			{ID: 11, ClusterLabel: "B", LabelEn: "B-en", Summary: "sb", SummaryEn: "sb-en", FactCount: 5, LastUpdatedAt: now},
-		},
-		stanceCounts: map[int64]int{10: 3},
-		groupCounts:  map[int64]int{10: 2},
+// TestVotePreflight: the frontend is on another origin, so removing a vote
+// (DELETE) or giving a +1 (PUT) needs the CORS preflight to allow the method.
+func TestVotePreflight(t *testing.T) {
+	h := newServer(nil).Handler()
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(http.MethodOptions, "/api/polls/presidentielle-2027/votes/10", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", method)
+		req.Header.Set("Access-Control-Request-Headers", "Authorization")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, "http://localhost:3000", rec.Header().Get("Access-Control-Allow-Origin"), method)
+		assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), method)
 	}
-	rec := get(t, NewServer(fs, nil).Handler(), "/api/person/1/stances")
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var got []StanceResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
-	require.Len(t, got, 2)
-
-	// Stance with contradictions: one bundle + 2 extras, per stanceScore.
-	assert.Equal(t, 2, got[0].ContradictionCount, "badge shows the group count")
-	assert.InDelta(t, core.ComputeHonestyScore(20, core.ContradictionStats{Bundles: 1, Total: 3}), got[0].Score, 1e-12)
-	assert.Equal(t, "", got[0].LabelEn)
-
-	// Clean stance: score 1.0, zero counts, translations passed through.
-	assert.Equal(t, 0, got[1].ContradictionCount)
-	assert.InDelta(t, 1.0, got[1].Score, 1e-12)
-	assert.Equal(t, "B-en", got[1].LabelEn)
-	assert.Equal(t, "sb-en", got[1].SummaryEn)
-}
-
-func TestStanceScore(t *testing.T) {
-	assert.Equal(t, 1.0, stanceScore(10, 0))
-	assert.Equal(t, 1.0, stanceScore(0, 5), "no facts: benefit of the doubt")
-	one := stanceScore(10, 1)
-	three := stanceScore(10, 3)
-	assert.Less(t, one, 1.0)
-	assert.Less(t, three, one, "extras add a repetition penalty")
-	assert.False(t, math.IsNaN(three))
 }

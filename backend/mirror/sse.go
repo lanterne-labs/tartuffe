@@ -1,4 +1,4 @@
-package api
+package mirror
 
 import (
 	"encoding/json"
@@ -16,7 +16,7 @@ import (
 const sseEventBatch = 100
 
 // handleEventsSSE streams events via Server-Sent Events
-func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Track active SSE connections
@@ -33,7 +33,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Fresh connection — start from latest, only show new events
-		maxID, err := s.storer.GetMaxEventID(ctx)
+		maxID, err := s.store.GetMaxEventID(ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("Failed to query max event ID, starting from 0")
 			maxID = 0
@@ -67,7 +67,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		default:
 			// Query for new events since the last ID
-			events, err := s.storer.GetEventsAfter(ctx, sinceID, sseEventBatch)
+			events, err := s.store.GetEventsAfter(ctx, sinceID, sseEventBatch)
 			if err != nil {
 				log.Error().Err(err).Msg("Error querying events")
 				time.Sleep(5 * time.Second) // Back off on error

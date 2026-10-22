@@ -11,6 +11,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
+	github.com/go-jose/go-jose/v4 v4.1.1
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/johannesboyne/gofakes3 v0.0.0-20260208201424-4c385a1f6a73
 	github.com/joho/godotenv v1.5.1
@@ -23,10 +24,7 @@ require (
 	golang.org/x/text v0.27.0
 )
 
-require (
-	github.com/go-jose/go-jose/v4 v4.1.1 // indirect
-	golang.org/x/oauth2 v0.28.0 // indirect
-)
+require golang.org/x/oauth2 v0.28.0 // indirect
 
 require (
 	github.com/RadhiFadlillah/whatlanggo v0.0.0-20240916001553-aac1f0f737fc // indirect

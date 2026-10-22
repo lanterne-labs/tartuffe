@@ -1,4 +1,4 @@
-package api
+package mirror
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"digital-mirror/backend/auth"
+	"digital-mirror/backend/accounts/accountstest"
 	"digital-mirror/backend/storage"
 
 	"github.com/jackc/pgx/v5"
@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func (m *memPolls) CreateUserReport(_ context.Context, userID int64, kind string, targetID int64, reason string) (*storage.UserReport, error) {
+func (m *fakeStore) CreateUserReport(_ context.Context, userID int64, kind string, targetID int64, reason string) (*storage.UserReport, error) {
 	if !m.targets[fmt.Sprintf("%s:%d", kind, targetID)] {
 		return nil, storage.ErrReportTarget
 	}
@@ -40,7 +40,7 @@ func (m *memPolls) CreateUserReport(_ context.Context, userID int64, kind string
 	return &r, nil
 }
 
-func (m *memPolls) GetUserReports(_ context.Context, userID int64) ([]storage.UserReport, error) {
+func (m *fakeStore) GetUserReports(_ context.Context, userID int64) ([]storage.UserReport, error) {
 	out := []storage.UserReport{}
 	for _, r := range m.reports {
 		if r.ID/1000 == userID {
@@ -50,7 +50,7 @@ func (m *memPolls) GetUserReports(_ context.Context, userID int64) ([]storage.Us
 	return out, nil
 }
 
-func (m *memPolls) ListCorrections(context.Context, int64, int) ([]storage.Correction, error) {
+func (m *fakeStore) ListCorrections(context.Context, int64, int) ([]storage.Correction, error) {
 	out := []storage.Correction{}
 	for _, r := range m.reports {
 		if r.Status == storage.ReportAccepted {
@@ -60,7 +60,7 @@ func (m *memPolls) ListCorrections(context.Context, int64, int) ([]storage.Corre
 	return out, nil
 }
 
-func (m *memPolls) GetFeed(_ context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, _ int) ([]storage.FeedItem, error) {
+func (m *fakeStore) GetFeed(_ context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, _ int) ([]storage.FeedItem, error) {
 	m.lastFeedFilter = f
 	out := []storage.FeedItem{}
 	skip := f.Offset
@@ -85,7 +85,7 @@ func (m *memPolls) GetFeed(_ context.Context, f storage.FeedFilter, after *stora
 	return out, nil
 }
 
-func (m *memPolls) SetLike(_ context.Context, userID int64, kind string, targetID int64, on bool) (int, error) {
+func (m *fakeStore) SetLike(_ context.Context, userID int64, kind string, targetID int64, on bool) (int, error) {
 	key := fmt.Sprintf("%s:%d", kind, targetID)
 	if !m.targets[key] {
 		return 0, storage.ErrLikeTarget
@@ -104,14 +104,14 @@ func (m *memPolls) SetLike(_ context.Context, userID int64, kind string, targetI
 	return len(m.likes[key]), nil
 }
 
-func (m *memPolls) GetShareTarget(_ context.Context, kind string, id, _ int64) (*storage.ShareTarget, error) {
+func (m *fakeStore) GetShareTarget(_ context.Context, kind string, id, _ int64) (*storage.ShareTarget, error) {
 	if t, ok := m.share[fmt.Sprintf("%s:%d", kind, id)]; ok {
 		return t, nil
 	}
 	return nil, storage.ErrNoShareTarget
 }
 
-func (m *memPolls) GetScoreExplanation(_ context.Context, id int64) (*storage.ScoreExplanation, error) {
+func (m *fakeStore) GetScoreExplanation(_ context.Context, id int64) (*storage.ScoreExplanation, error) {
 	if e, ok := m.scores[id]; ok {
 		return e, nil
 	}
@@ -121,9 +121,8 @@ func (m *memPolls) GetScoreExplanation(_ context.Context, id int64) (*storage.Sc
 // TestReports: only a signed-in user reports, once per target, with a
 // reason; the user sees their reports.
 func TestReports(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	fs.targets = map[string]bool{"contradiction:7": true, "fact:9": true}
-	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
 	body := func(kind string, id int64, reason string) map[string]any {
 		return map[string]any{"kind": kind, "target_id": id, "reason": reason}
 	}
@@ -131,7 +130,7 @@ func TestReports(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, "/api/reports", "", body("contradiction", 7, why)).Code)
 
-	alice := signIn(t, h, "alice")
+	alice := accountstest.SignIn(t, h, "alice")
 	for _, c := range []struct {
 		name string
 		body map[string]any
@@ -153,7 +152,7 @@ func TestReports(t *testing.T) {
 		}
 	}
 
-	bruno := signIn(t, h, "bruno")
+	bruno := accountstest.SignIn(t, h, "bruno")
 	assert.Equal(t, http.StatusCreated, do(t, h, http.MethodPost, "/api/reports", bruno, body("contradiction", 7, why)).Code,
 		"another user reports the same target")
 
@@ -168,13 +167,12 @@ func TestReports(t *testing.T) {
 
 // TestReportCap: a user cannot queue more than MaxPendingReportsPerUser.
 func TestReportCap(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	fs.targets = map[string]bool{}
 	for i := range storage.MaxPendingReportsPerUser + 1 {
 		fs.targets[fmt.Sprintf("fact:%d", i+1)] = true
 	}
-	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
-	alice := signIn(t, h, "alice")
+	alice := accountstest.SignIn(t, h, "alice")
 	for i := range storage.MaxPendingReportsPerUser {
 		require.Equal(t, http.StatusCreated, do(t, h, http.MethodPost, "/api/reports", alice,
 			map[string]any{"kind": "fact", "target_id": i + 1, "reason": "Ce fait est mal attribué."}).Code)
@@ -187,7 +185,7 @@ func TestReportCap(t *testing.T) {
 
 // TestFeedPages: the feed pages with an opaque cursor, and refuses a bad one.
 func TestFeedPages(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	for i := range 5 {
 		kind := storage.FeedFact
@@ -196,7 +194,6 @@ func TestFeedPages(t *testing.T) {
 		}
 		fs.feed = append(fs.feed, storage.FeedItem{Kind: kind, ID: int64(i + 1), At: t0.Add(-time.Duration(i) * time.Minute)})
 	}
-	h := NewServer(fs, nil).Handler()
 
 	var page feedPage
 	rec := do(t, h, http.MethodGet, "/api/feed?limit=2", "", nil)
@@ -242,11 +239,10 @@ func TestFeedPages(t *testing.T) {
 
 // TestFeedHot: the hot order pages by offset and stops at maxHotItems.
 func TestFeedHot(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	for i := range 5 {
 		fs.feed = append(fs.feed, storage.FeedItem{Kind: storage.FeedFact, ID: int64(i + 1), At: time.Now().Add(-time.Duration(i) * time.Minute)})
 	}
-	h := NewServer(fs, nil).Handler()
 
 	var page feedPage
 	rec := do(t, h, http.MethodGet, "/api/feed?sort=hot&limit=2", "", nil)
@@ -272,13 +268,12 @@ func TestFeedHot(t *testing.T) {
 // TestLikes: only a signed-in user gives a +1, once; the feed marks the
 // viewer's.
 func TestLikes(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	fs.targets = map[string]bool{"fact:9": true}
 	fs.feed = []storage.FeedItem{{Kind: storage.FeedFact, ID: 9, At: time.Now()}}
-	h := NewServer(fs, auth.NewRegistry(auth.Noop{})).Handler()
 
 	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPut, "/api/likes/fact/9", "", nil).Code)
-	alice, bob := signIn(t, h, "alice"), signIn(t, h, "bob")
+	alice, bob := accountstest.SignIn(t, h, "alice"), accountstest.SignIn(t, h, "bob")
 	var st likeState
 	for range 2 {
 		rec := do(t, h, http.MethodPut, "/api/likes/fact/9", alice, nil)
@@ -325,11 +320,10 @@ func TestFeedCursorRoundTrip(t *testing.T) {
 }
 
 func TestShareAndScore(t *testing.T) {
-	fs := pollFixture()
+	fs, h := newFixture()
 	sid := int64(3)
 	fs.share = map[string]*storage.ShareTarget{"contradiction:7": {Kind: "contradiction", ID: 7, PersonID: 10, StanceID: &sid}}
 	fs.scores = map[int64]*storage.ScoreExplanation{10: {PersonID: 10, Facts: 80, Bundles: 2, Score: 0.9}}
-	h := NewServer(fs, nil).Handler()
 
 	rec := do(t, h, http.MethodGet, "/api/share/contradiction/7", "", nil)
 	require.Equal(t, http.StatusOK, rec.Code)

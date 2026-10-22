@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"digital-mirror/backend/auth"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -51,7 +49,7 @@ func TestSignInRateLimit(t *testing.T) {
 	t.Setenv("SIGNIN_RATE_LIMIT_PER_MINUTE", "3")
 	t.Setenv("DM_PRODUCTION", "production")
 	t.Setenv("CLIENT_IP_HEADER", "")
-	h := NewServer(pollFixture(), auth.NewRegistry(auth.Noop{})).Handler()
+	h := newServer(nil).Handler()
 	post := func(path, ip string) int {
 		r := httptest.NewRequest(http.MethodPost, path, nil)
 		r.Header.Set("X-Real-IP", ip)
@@ -77,7 +75,7 @@ func TestSignInRateLimit(t *testing.T) {
 func TestRateLimitKeepsCORS(t *testing.T) {
 	t.Setenv("RATE_LIMIT_PER_MINUTE", "2")
 	t.Setenv("CLIENT_IP_HEADER", "none")
-	h := NewServer(pollFixture(), nil).Handler()
+	h := newServer(nil).Handler()
 	var rec *httptest.ResponseRecorder
 	for range 3 {
 		r := httptest.NewRequest(http.MethodGet, "/api/polls", nil)

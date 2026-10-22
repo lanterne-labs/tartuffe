@@ -44,10 +44,12 @@ func TestJudgeReportsDB(t *testing.T) {
 	var before float64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT honesty_score FROM persons WHERE id = $1`, person).Scan(&before))
 
-	u, err := st.UpsertAppUser(ctx, "noop", "judged-reporter", "")
-	require.NoError(t, err)
-	defer st.DeleteAppUser(ctx, u.ID)
-	_, err = st.CreateUserReport(ctx, u.ID, storage.ReportKindContradiction, cid, "Ce ne sont pas les mêmes lois : RIGHT")
+	// The reporter's account row (the accounts' table, which the mirror only
+	// references).
+	var userID int64
+	require.NoError(t, st.Pool().QueryRow(ctx, `INSERT INTO app_users (provider, subject) VALUES ('noop', 'judged-reporter') RETURNING id`).Scan(&userID))
+	defer st.Pool().Exec(ctx, `DELETE FROM app_users WHERE id = $1`, userID)
+	_, err = st.CreateUserReport(ctx, userID, storage.ReportKindContradiction, cid, "Ce ne sont pas les mêmes lois : RIGHT")
 	require.NoError(t, err)
 
 	j := &fakeJudge{verdicts: map[string]Verdict{"RIGHT": VerdictDeleteTarget}}

@@ -1,14 +1,15 @@
-package api
+package mirror
 
 import (
-	"digital-mirror/backend/core"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
 
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/httpx"
+
 	"github.com/go-chi/chi/v5"
-	"github.com/rs/zerolog/log"
 )
 
 // publicMinFacts is the floor on fact_count for entities shown on the public
@@ -16,27 +17,8 @@ import (
 // mentions and incidentally-created junk entities never appear.
 const publicMinFacts = 4
 
-// handleHealth checks database connectivity and returns server health status.
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := s.storer.Ping(ctx); err != nil {
-		log.Error().Err(err).Msg("health check: db ping failed")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "error",
-		})
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "ok",
-	})
-}
-
 // handleGetPersons returns persons ranked by fact count and honesty score
-func (s *Server) handleGetPersons(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Parse pagination parameters
@@ -72,9 +54,9 @@ func (s *Server) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	persons, err := s.storer.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts)
+	persons, err := s.store.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts)
 	if err != nil {
-		httpInternalError(w, err, "failed to get persons")
+		httpx.InternalError(w, err, "failed to get persons")
 		return
 	}
 
@@ -84,7 +66,7 @@ func (s *Server) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetPerson returns basic person information
-func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
 
@@ -94,9 +76,9 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	person, err := s.storer.GetPersonByID(ctx, personID)
+	person, err := s.store.GetPersonByID(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get person")
+		httpx.InternalError(w, err, "failed to get person")
 		return
 	}
 
@@ -110,7 +92,7 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetPersonFacts returns facts for a specific person
-func (s *Server) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
 
@@ -138,9 +120,9 @@ func (s *Server) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.storer.GetPersonFacts(ctx, personID, limit, offset)
+	result, err := s.store.GetPersonFacts(ctx, personID, limit, offset)
 	if err != nil {
-		httpInternalError(w, err, "failed to get facts")
+		httpx.InternalError(w, err, "failed to get facts")
 		return
 	}
 
@@ -149,7 +131,7 @@ func (s *Server) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetPersonContradictions returns contradictions for a specific person
-func (s *Server) handleGetPersonContradictions(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersonContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
 
@@ -177,9 +159,9 @@ func (s *Server) handleGetPersonContradictions(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	result, err := s.storer.GetPersonContradictions(ctx, personID, limit, offset)
+	result, err := s.store.GetPersonContradictions(ctx, personID, limit, offset)
 	if err != nil {
-		httpInternalError(w, err, "failed to get contradictions")
+		httpx.InternalError(w, err, "failed to get contradictions")
 		return
 	}
 
@@ -188,7 +170,7 @@ func (s *Server) handleGetPersonContradictions(w http.ResponseWriter, r *http.Re
 }
 
 // handleGetPersonHistory returns the weekly honesty timeline of a person (statement-time axis).
-func (s *Server) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -196,9 +178,9 @@ func (s *Server) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	points, err := s.storer.GetPersonHistory(ctx, personID)
+	points, err := s.store.GetPersonHistory(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get person history")
+		httpx.InternalError(w, err, "failed to get person history")
 		return
 	}
 
@@ -207,7 +189,7 @@ func (s *Server) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleGetPersonMembers returns persons affiliated with an entity (e.g., deputies in a party)
-func (s *Server) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
 
@@ -217,9 +199,9 @@ func (s *Server) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	members, err := s.storer.GetPersonMembers(ctx, personID)
+	members, err := s.store.GetPersonMembers(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get members")
+		httpx.InternalError(w, err, "failed to get members")
 		return
 	}
 
@@ -264,7 +246,7 @@ func stanceScore(factCount, contradictionTotal int) float64 {
 
 // handleGetStanceFacts returns all facts attached to a stance, with both native and
 // English text so the frontend language toggle can swap per-fact without a second round trip.
-func (s *Server) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
 	stanceID, err := strconv.ParseInt(stanceIDStr, 10, 64)
@@ -272,9 +254,9 @@ func (s *Server) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid stance ID", http.StatusBadRequest)
 		return
 	}
-	items, err := s.storer.GetFactsInStance(ctx, stanceID)
+	items, err := s.store.GetFactsInStance(ctx, stanceID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stance facts")
+		httpx.InternalError(w, err, "failed to get stance facts")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -285,7 +267,7 @@ func (s *Server) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 // fact belongs to this stance — one base fact + its N contradicting facts each, so the
 // UI shows one card per inconsistency instead of a wall of pairwise rows. Used by the
 // profile UI when a stance card is expanded.
-func (s *Server) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
 
@@ -295,9 +277,9 @@ func (s *Server) handleGetStanceContradictions(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	items, err := s.storer.GetStanceContradictionGroups(ctx, stanceID)
+	items, err := s.store.GetStanceContradictionGroups(ctx, stanceID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stance contradiction groups")
+		httpx.InternalError(w, err, "failed to get stance contradiction groups")
 		return
 	}
 
@@ -307,7 +289,7 @@ func (s *Server) handleGetStanceContradictions(w http.ResponseWriter, r *http.Re
 
 // handleGetPersonStances returns stance documents for a specific person, with a per-stance
 // honesty score and contradiction count attached.
-func (s *Server) handleGetPersonStances(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetPersonStances(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	personIDStr := chi.URLParam(r, "id")
 
@@ -317,23 +299,23 @@ func (s *Server) handleGetPersonStances(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	docs, err := s.storer.GetStanceDocumentsForPerson(ctx, personID)
+	docs, err := s.store.GetStanceDocumentsForPerson(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stances")
+		httpx.InternalError(w, err, "failed to get stances")
 		return
 	}
 
 	// Two per-stance numbers: the bundle-based total drives the honesty score (kept
 	// unchanged), while the group count (distinct base facts) is what the badge shows
 	// so users see one count per distinct inconsistency, not the inflated pairwise total.
-	counts, err := s.storer.GetStanceContradictionCounts(ctx, personID)
+	counts, err := s.store.GetStanceContradictionCounts(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stance contradiction counts")
+		httpx.InternalError(w, err, "failed to get stance contradiction counts")
 		return
 	}
-	groupCounts, err := s.storer.GetStanceGroupCounts(ctx, personID)
+	groupCounts, err := s.store.GetStanceGroupCounts(ctx, personID)
 	if err != nil {
-		httpInternalError(w, err, "failed to get stance group counts")
+		httpx.InternalError(w, err, "failed to get stance group counts")
 		return
 	}
 
@@ -358,7 +340,7 @@ func (s *Server) handleGetPersonStances(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleGetFactPersons returns persons who have a fact related to the given fact
-func (s *Server) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
+func (s *Service) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	factIDStr := chi.URLParam(r, "id")
 
@@ -390,9 +372,9 @@ func (s *Server) handleGetFactPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	persons, err := s.storer.GetFactPersons(ctx, factID, limit, offset)
+	persons, err := s.store.GetFactPersons(ctx, factID, limit, offset)
 	if err != nil {
-		httpInternalError(w, err, "failed to get persons for fact")
+		httpx.InternalError(w, err, "failed to get persons for fact")
 		return
 	}
 

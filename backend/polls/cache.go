@@ -1,12 +1,10 @@
-package api
+package polls
 
 import (
 	"context"
 	"strconv"
 	"sync"
 	"time"
-
-	"digital-mirror/backend/storage"
 
 	"golang.org/x/sync/singleflight"
 )
@@ -16,9 +14,9 @@ import (
 // replica, a candidate's score updated by the worker) shows within it.
 const resultsTTL = 2 * time.Second
 
-// tallies are the counts of one event as GetPollTallies returns them.
+// tallies are the counts of one event, with the candidates' cards.
 type tallies struct {
-	candidates []storage.PollCandidateTally
+	candidates []CandidateTally
 	voters     int
 	at         time.Time
 }
@@ -44,7 +42,7 @@ func newResultsCache(ttl time.Duration) *resultsCache {
 
 // get returns the tallies of the event, querying them with load when the
 // cached ones are older than the TTL or were invalidated.
-func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context.Context, int64) ([]storage.PollCandidateTally, int, error)) ([]storage.PollCandidateTally, int, error) {
+func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context.Context, int64) ([]CandidateTally, int, error)) ([]CandidateTally, int, error) {
 	c.mu.Lock()
 	e, ok := c.entries[eventID]
 	gen, allGen := c.gen[eventID], c.allGen

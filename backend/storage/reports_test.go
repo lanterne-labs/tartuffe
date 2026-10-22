@@ -51,10 +51,18 @@ func newReportFixture(t *testing.T, storer *PostgresStorer, factCount int) repor
 	_, err = storer.pool.Exec(ctx, `UPDATE contradictions SET bundle_stance_id = $1, detected_at = $2 WHERE id = $3`,
 		f.stance, time.Date(2026, 10, 1, 12, 1, 0, 0, time.UTC), f.contradiction)
 	require.NoError(t, err)
-	u, err := storer.UpsertAppUser(ctx, "noop", "reporter", "Reporter")
+	u, err := testUser(ctx, storer, "reporter")
 	require.NoError(t, err)
-	f.user = u.ID
+	f.user = u
 	return f
+}
+
+// testUser inserts an account row (the accounts' table, which the mirror
+// only references) and returns its id.
+func testUser(ctx context.Context, storer *PostgresStorer, subject string) (int64, error) {
+	var id int64
+	err := storer.pool.QueryRow(ctx, `INSERT INTO app_users (provider, subject) VALUES ('noop', $1) RETURNING id`, subject).Scan(&id)
+	return id, err
 }
 
 // TestUserReports: a report keeps its target's text and person; a user
@@ -82,9 +90,9 @@ func TestUserReports(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Il a voté la réforme.", fr.TargetText)
 
-	other, err := storer.UpsertAppUser(ctx, "noop", "other", "Other")
+	other, err := testUser(ctx, storer, "other")
 	require.NoError(t, err)
-	r2, err := storer.CreateUserReport(ctx, other.ID, ReportKindContradiction, f.contradiction, "Deux contextes différents.")
+	r2, err := storer.CreateUserReport(ctx, other, ReportKindContradiction, f.contradiction, "Deux contextes différents.")
 	require.NoError(t, err)
 
 	keys, err := storer.GetUserReportedTargets(ctx, f.user)
@@ -97,7 +105,7 @@ func TestUserReports(t *testing.T) {
 	assert.Equal(t, r.ID, pending[0].ID, "oldest first")
 
 	require.NoError(t, storer.RecordUserReportVerdict(ctx, r.ID, ReportAccepted, "The two facts are years apart."))
-	mine, err := storer.GetUserReports(ctx, other.ID)
+	mine, err := storer.GetUserReports(ctx, other)
 	require.NoError(t, err)
 	require.Len(t, mine, 1)
 	assert.Equal(t, r2.ID, mine[0].ID)
@@ -112,7 +120,7 @@ func TestUserReports(t *testing.T) {
 
 	// Failed judgings: past the cap the report waits for a person.
 	require.NoError(t, storer.CountUserReportAttempt(ctx, fr.ID, "boom", 2))
-	r3, err := storer.CreateUserReport(ctx, other.ID, ReportKindFact, f.facts[2], "Il a voté contre, pas pour.")
+	r3, err := storer.CreateUserReport(ctx, other, ReportKindFact, f.facts[2], "Il a voté contre, pas pour.")
 	require.NoError(t, err)
 	require.NoError(t, storer.CountUserReportAttempt(ctx, r3.ID, "boom", 2))
 	require.NoError(t, storer.CountUserReportAttempt(ctx, r3.ID, "boom", 2))
@@ -123,7 +131,8 @@ func TestUserReports(t *testing.T) {
 	assert.Equal(t, "judge failed: boom", got[0].VerdictReason)
 
 	// Erasing the account keeps the report, without the user.
-	require.NoError(t, storer.DeleteAppUser(ctx, f.user))
+	_, err = storer.pool.Exec(ctx, `DELETE FROM app_users WHERE id = $1`, f.user)
+	require.NoError(t, err)
 	corrections, err = storer.ListCorrections(ctx, 0, 10)
 	require.NoError(t, err)
 	assert.Len(t, corrections, 1)
@@ -135,9 +144,9 @@ func TestUserReportCap(t *testing.T) {
 	ctx := context.Background()
 	f := newReportFixture(t, storer, 3)
 	for i := range MaxPendingReportsPerUser {
-		u, err := storer.UpsertAppUser(ctx, "noop", fmt.Sprintf("u%d", i), "")
+		u, err := testUser(ctx, storer, fmt.Sprintf("u%d", i))
 		require.NoError(t, err)
-		_, err = storer.CreateUserReport(ctx, u.ID, ReportKindFact, f.facts[0], "Ce fait est mal attribué.")
+		_, err = storer.CreateUserReport(ctx, u, ReportKindFact, f.facts[0], "Ce fait est mal attribué.")
 		require.NoError(t, err, "other users are not capped by one user's reports")
 	}
 	_, err := storer.pool.Exec(ctx, `

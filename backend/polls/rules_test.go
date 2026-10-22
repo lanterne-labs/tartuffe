@@ -1,11 +1,9 @@
-package poll
+package polls
 
 import (
 	"errors"
 	"testing"
 	"time"
-
-	"digital-mirror/backend/storage"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,24 +11,24 @@ import (
 
 var now = time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 
-func event() *storage.PollEvent {
+func event() *Event {
 	closes := now.Add(24 * time.Hour)
-	return &storage.PollEvent{Slug: "e", MaxChoices: 3, MinVoters: 2, OpensAt: now.Add(-time.Hour), ClosesAt: &closes}
+	return &Event{Slug: "e", MaxChoices: 3, MinVoters: 2, OpensAt: now.Add(-time.Hour), ClosesAt: &closes}
 }
 
-func tallies() []storage.PollCandidateTally {
-	return []storage.PollCandidateTally{
-		{PersonID: 1, Name: "Alice", HonestyScore: 0.58, FirstChoices: 2, Chosen: 3},
-		{PersonID: 2, Name: "Bruno", HonestyScore: 0.81, FirstChoices: 1, Chosen: 2},
-		{PersonID: 3, Name: "Chloé", HonestyScore: 0.58, FirstChoices: 1, Chosen: 2},
-		{PersonID: 4, Name: "David", HonestyScore: 0.30, FirstChoices: 0, Chosen: 1},
+func sampleTallies() []CandidateTally {
+	return []CandidateTally{
+		{PersonID: 1, Card: Card{Name: "Alice", HonestyScore: 0.58}, FirstChoices: 2, Chosen: 3},
+		{PersonID: 2, Card: Card{Name: "Bruno", HonestyScore: 0.81}, FirstChoices: 1, Chosen: 2},
+		{PersonID: 3, Card: Card{Name: "Chloé", HonestyScore: 0.58}, FirstChoices: 1, Chosen: 2},
+		{PersonID: 4, Card: Card{Name: "David", HonestyScore: 0.30}, FirstChoices: 0, Chosen: 1},
 	}
 }
 
 // TestComputeRanks: preference orders by first choices, then by how often a
 // candidate is chosen at all; honesty by score. Equal values share a rank.
 func TestComputeRanks(t *testing.T) {
-	r := Compute(event(), tallies(), 4, now)
+	r := Compute(event(), sampleTallies(), 4, now)
 	require.Empty(t, r.Hidden)
 	assert.True(t, r.Open)
 	require.Len(t, r.Candidates, 4)
@@ -57,13 +55,13 @@ func TestComputeRanks(t *testing.T) {
 // TestComputeHidden: under min_voters or in a blackout no count, share or
 // preference rank leaves the server; the honesty ranks still do.
 func TestComputeHidden(t *testing.T) {
-	r := Compute(event(), tallies(), 1, now)
+	r := Compute(event(), sampleTallies(), 1, now)
 	assert.Equal(t, HiddenTooFewVoters, r.Hidden)
 	assert.Equal(t, 1, r.Voters)
 
 	e := event()
-	e.Blackouts = []storage.PollBlackout{{StartsAt: now.Add(-time.Minute), EndsAt: now.Add(time.Minute)}}
-	r = Compute(e, tallies(), 4, now)
+	e.Blackouts = []Blackout{{StartsAt: now.Add(-time.Minute), EndsAt: now.Add(time.Minute)}}
+	r = Compute(e, sampleTallies(), 4, now)
 	assert.Equal(t, HiddenBlackout, r.Hidden)
 	assert.Equal(t, "Bruno", r.Candidates[0].Name, "by honesty while hidden")
 	for _, c := range r.Candidates {
@@ -76,7 +74,7 @@ func TestComputeHidden(t *testing.T) {
 
 	e.MinVoters = 0
 	e.Blackouts = nil
-	assert.Equal(t, HiddenTooFewVoters, Compute(e, tallies(), 0, now).Hidden, "no ballot at all: nothing to share")
+	assert.Equal(t, HiddenTooFewVoters, Compute(e, sampleTallies(), 0, now).Hidden, "no ballot at all: nothing to share")
 }
 
 func TestCheckBallot(t *testing.T) {

@@ -4,7 +4,8 @@
 	import { API_BASE } from '$lib/config';
 	import { displayName } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
-	import { session, signInOpen } from '$lib/auth';
+	import { session, signInOpen, verifyOpen, setUser } from '$lib/auth';
+	import { movedNote } from '$lib/components/VerifyDialog.svelte';
 	import { addVote, removeVote, saveBallot, getBallot, onBallotChanged, BallotError } from '$lib/ballot';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
@@ -18,6 +19,8 @@
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
 	let signedIn = $derived($session !== null);
+	// verified: the account holds a document, it may vote.
+	let verified = $derived($session?.user.verified ?? false);
 	let provider = $derived($session?.user.provider ?? null);
 
 	let slug = $derived($page.params.slug ?? '');
@@ -87,6 +90,28 @@
 	$effect(() =>
 		signInOpen.subscribe((isOpen) => {
 			if (!isOpen && !$session) untrack(() => (pending = null));
+		})
+	);
+	// So does a verification dialog closed without verifying; once verified,
+	// the vote goes on.
+	$effect(() =>
+		verifyOpen.subscribe((isOpen) => {
+			if (isOpen) return;
+			untrack(() => {
+				if (!verified) pending = null;
+				else if (pending !== null && ballotLoaded) pick(pending);
+			});
+		})
+	);
+	// A document that brought its votes from another account: show them.
+	$effect(() =>
+		movedNote.subscribe((moved) => {
+			if (!moved) return;
+			untrack(() => {
+				movedNote.set(false);
+				say(tr('verify.moved', currentLang));
+				loadBallot();
+			});
 		})
 	);
 
@@ -178,6 +203,11 @@
 					consented = false;
 					consentOpen = pending !== null;
 					break;
+				case 'verification_required':
+					// The document moved to another account meanwhile.
+					if ($session) setUser({ ...$session.user, verified: false });
+					if (pending !== null) verifyOpen.set(true);
+					break;
 				case 'closed':
 					actionError = tr('vote.error.closed', currentLang);
 					load();
@@ -203,6 +233,10 @@
 		pending = id;
 		if (!signedIn) {
 			signInOpen.set(true);
+			return;
+		}
+		if (!verified) {
+			verifyOpen.set(true);
 			return;
 		}
 		if (!ballotLoaded) return; // goes on once the ballot is loaded
@@ -377,6 +411,8 @@
 				<h2 id="ballot-title">{tr('vote.title', currentLang)}</h2>
 				{#if !signedIn}
 					<button class="btn btn-primary" onclick={() => signInOpen.set(true)}>{tr('poll.ballot.sign_in', currentLang)}</button>
+				{:else if !verified}
+					<button class="btn btn-primary" onclick={() => verifyOpen.set(true)}>{tr('poll.ballot.verify', currentLang)}</button>
 				{:else}
 					<a href="/profile" class="profile-link">{tr('vote.profile_link', currentLang)}</a>
 				{/if}

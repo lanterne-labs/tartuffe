@@ -1,4 +1,4 @@
-// The signed-in user's votes (backend/api/polls.go). Every change is saved at
+// The signed-in user's votes (backend/polls). Every change is saved at
 // once; the API answers with the ballot as stored, which the pages show as is.
 // A refused change carries a code (ballot_full, consent_required, closed...)
 // and, for ballot_full and not_on_ballot, the stored ballot.
@@ -6,7 +6,15 @@
 import { authFetch } from './auth';
 import type { Ballot, MyVotes } from './types';
 
-export type BallotErrorCode = 'ballot_full' | 'not_on_ballot' | 'consent_required' | 'closed' | 'invalid_ballot' | 'signed_out' | 'error';
+export type BallotErrorCode =
+	| 'ballot_full'
+	| 'not_on_ballot'
+	| 'consent_required'
+	| 'verification_required'
+	| 'closed'
+	| 'invalid_ballot'
+	| 'signed_out'
+	| 'error';
 
 export class BallotError extends Error {
 	constructor(

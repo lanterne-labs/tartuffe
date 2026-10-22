@@ -1,11 +1,10 @@
-// Package auth signs users in through pluggable providers. A provider checks
-// what the browser brings back (an ID token for google, a pseudonym for noop,
-// a zero-knowledge proof for zkpassport) and names the identity it proves.
-// An account provider (google) opens a session for the app user of that
-// identity; a verification provider (zkpassport) attaches its identity, a
-// document, to the signed-in account, which may then vote. Nothing else about
-// the person is kept.
-package auth
+// Package providers are the ways to prove who one is to the site. A provider
+// checks what the browser brings back (an ID token for google, a pseudonym
+// for noop, a zero-knowledge proof for zkpassport) and names the identity it
+// proves. An account provider (google) opens an account; a verification
+// provider (zkpassport) proves a document, which the accounts package
+// attaches to the signed-in account. Nothing else about the person is kept.
+package providers
 
 import (
 	"context"

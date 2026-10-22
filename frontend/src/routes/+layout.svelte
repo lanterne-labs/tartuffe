@@ -6,8 +6,9 @@
 	import { lang, setLang, tr } from '$lib/i18n';
 	import { onMount } from 'svelte';
 	import { API_BASE } from '$lib/config';
-	import { session, signOut } from '$lib/auth';
+	import { session, signOut, refreshUser } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
+	import VerifyDialog from '$lib/components/VerifyDialog.svelte';
 	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
@@ -32,6 +33,8 @@
 	// The featured pre-poll gets a link in the nav.
 	let featured = $state<PollEvent | null>(null);
 	onMount(async () => {
+		// The stored session may be stale: its document may have moved.
+		refreshUser();
 		try {
 			const res = await fetch(`${API_BASE}/api/polls`);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -112,6 +115,7 @@
 </nav>
 
 <SignInDialog />
+<VerifyDialog />
 
 {#key $page.url.pathname}
 	<main class="page-content" in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>

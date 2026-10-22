@@ -90,9 +90,10 @@ func (s *PostgresStorer) CreateUserReport(ctx context.Context, userID int64, kin
 	}
 	defer tx.Rollback(ctx)
 
-	// The user's row serializes their reports, so two tabs cannot pass the cap.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM app_users WHERE id = $1 FOR UPDATE`, userID); err != nil {
-		return nil, fmt.Errorf("lock user %d: %w", userID, err)
+	// A lock per user serializes their reports, so two tabs cannot pass the
+	// cap (an advisory lock: the accounts' table is not the mirror's).
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('user_reports:' || $1::bigint::text, 0))`, userID); err != nil {
+		return nil, fmt.Errorf("lock reports of user %d: %w", userID, err)
 	}
 	var pending int
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM user_reports WHERE user_id = $1 AND status = 'pending'`, userID).Scan(&pending); err != nil {

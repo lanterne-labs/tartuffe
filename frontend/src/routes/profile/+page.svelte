@@ -3,7 +3,7 @@
 	// which they can reorder or take back while the event is open.
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
-	import { session, signInOpen, signOut } from '$lib/auth';
+	import { session, signInOpen, signOut, verifyOpen } from '$lib/auth';
 	import { getMyVotes, removeVote, saveBallot, deleteAccount, onBallotChanged, BallotError } from '$lib/ballot';
 	import Modal from '$lib/components/Modal.svelte';
 	import VoteList from '$lib/components/VoteList.svelte';
@@ -127,7 +127,7 @@
 	}
 
 	function providerText(p: string): string {
-		if (p === 'zkpassport') return tr('profile.verified', currentLang);
+		if (p === 'google') return tr('profile.google', currentLang);
 		if (p === 'noop') return tr('profile.test', currentLang);
 		return tr('profile.provider_other', currentLang, { p });
 	}
@@ -162,8 +162,14 @@
 			<h2 id="account-title">{tr('profile.account', currentLang)}</h2>
 			<p class="account-name">{user.display_name || tr('auth.anonymous', currentLang)}</p>
 			<p class="muted" class:warn={user.provider === 'noop'}>{providerText(user.provider)}</p>
-			{#if mine?.user.consent_at}
-				<p class="muted small">{tr('profile.consent_given', currentLang, { d: dateText(mine.user.consent_at) })}</p>
+			{#if user.verified}
+				<p class="muted">{tr('profile.verified', currentLang)}</p>
+			{:else}
+				<p class="muted">{tr('profile.unverified', currentLang)}</p>
+				<button class="btn btn-primary" onclick={() => verifyOpen.set(true)}>{tr('poll.ballot.verify', currentLang)}</button>
+			{/if}
+			{#if mine?.consented}
+				<p class="muted small">{tr('profile.consent_given', currentLang)}</p>
 			{/if}
 			<button class="btn" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
 		</section>
