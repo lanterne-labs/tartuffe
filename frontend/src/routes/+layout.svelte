@@ -97,7 +97,7 @@
 				</a>
 			{/if}
 			<a href="/feed" class="nav-link nav-link--feed" class:active={$page.url.pathname === '/feed'}>{tr('nav.feed', currentLang)}</a>
-			<a href="/" class="nav-link nav-link--home">{tr('nav.dashboard', currentLang)}</a>
+			<a href="/dashboard" class="nav-link nav-link--home" class:active={$page.url.pathname === "/dashboard"}>{tr('nav.dashboard', currentLang)}</a>
 			<a href="/about" class="nav-link nav-link--about" class:active={$page.url.pathname === '/about'}>{tr('nav.about', currentLang)}</a>
 			{#if userName}
 				<span class="nav-user" title={tr('auth.signed_in_as', currentLang, { name: userName })}>

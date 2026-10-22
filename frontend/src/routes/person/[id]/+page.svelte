@@ -439,7 +439,7 @@
 </svelte:head>
 
 <div class="detail-page">
-	<a href="/" class="back-link">
+	<a href="/dashboard" class="back-link">
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 			<path d="m15 18-6-6 6-6"/>
 		</svg>

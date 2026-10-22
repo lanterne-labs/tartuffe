@@ -9,7 +9,7 @@
 <div class="error-page">
 	<div class="error-code">{$page.status}</div>
 	<p class="error-message">{$page.error?.message || 'Something went wrong'}</p>
-	<a href="/" class="back-btn">Back to Dashboard</a>
+	<a href="/dashboard" class="back-btn">Back to Dashboard</a>
 </div>
 
 <style>
