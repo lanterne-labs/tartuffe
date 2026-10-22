@@ -547,3 +547,53 @@ cases:
     expect: drop
     bucket: reason_of_another_pair
     notes: "The stance analysis gave one reason for two key facts: the reason (« minable ») is about another fact. Neither statement here contains it; the two are unrelated."
+
+  # ---- Prod re-verification of 2026-10-22: what the verifier must keep ----
+  - name: "TP_1262_lepen_bracelet_condition_walk_back"
+    fact_a: "Marine Le Pen a annoncé sa candidature à l'élection présidentielle le 7 juillet 2026, malgré sa condamnation en appel à trois ans d'emprisonnement, dont un an ferme sous bracelet électronique, pour détournement de fonds européens au profit de son parti."
+    fact_b: "Marine Le Pen a déclaré : « je ne ferai pas campagne avec un bracelet électronique »."
+    claimed_reason: "Elle refusait de faire campagne avec un bracelet électronique, mais a ensuite annoncé sa candidature malgré sa condamnation à un an ferme sous bracelet."
+    expect: keep
+    bucket: stated_condition_walk_back
+    notes: "The condition she named (a bracelet sentence) occurred, and she runs anyway. The verifier dropped it asking for proof she wears it while campaigning."
+
+  - name: "TP_1242_wauquiez_never_ally_then_union"
+    fact_a: "Laurent Wauquiez a lancé un appel à l'union des trois candidats de la droite et du centre : Édouard Philippe, Gabriel Attal et Bruno Retailleau."
+    fact_b: "Laurent Wauquiez avait affirmé à plusieurs reprises qu'il n'y 'aurait jamais d'alliance entre lui et Édouard Philippe'."
+    claimed_reason: "Il excluait toute alliance avec Philippe mais lance ensuite un appel à l'union incluant Édouard Philippe."
+    expect: keep
+    bucket: position_reversal
+    notes: "'Never an alliance with X' then a call to unite with X: a reversal toward one named person, whatever the form of the union."
+
+  - name: "TP_1175_retailleau_denies_own_refusal_of_primary"
+    fact_a: "Bruno Retailleau a affirmé qu'il irait au bout de sa démarche et a refusé l'idée d'une primaire."
+    fact_b: "Bruno Retailleau a affirmé qu'il n'avait jamais dit non par principe à une primaire à droite et qu'il l'affronterait s'il y en avait une, tout en précisant qu'il n'y croit pas."
+    claimed_reason: "Il a d'abord refusé l'idée d'une primaire, puis a affirmé qu'il l'affronterait, ce qui constitue un renversement de position sur la même question."
+    expect: keep
+    bucket: position_reversal
+    notes: "He refused the idea of a primary, then says he never said no to one: he denies his own earlier position (claimed X, then denied X)."
+
+  # ---- Prod re-verification of 2026-10-22: false positives ----
+  - name: "FP_1243_retailleau_derogation_vs_no_national_addition"
+    fact_a: "Bruno Retailleau veut instaurer un régime expérimental de dérogation à l'AI Act d'une durée de trois ans pour des projets de recherche, de test ou d'innovation à fort enjeu stratégique."
+    fact_b: "Bruno Retailleau demande que toute règle numérique soit strictement limitée à ce que prévoient les textes européens, sans ajout national."
+    claimed_reason: "Il demande de s'en tenir strictement aux textes européens sans ajout national, mais propose un régime national de dérogation au RGPD."
+    expect: drop
+    bucket: same_direction
+    notes: "A derogation loosens a rule, it adds none: both push toward less regulation. The reason also names the RGPD, which neither fact does."
+
+  - name: "FP_1178_retailleau_revise_constitution_not_now"
+    fact_a: "Bruno Retailleau a affirmé qu'il révisera la Constitution."
+    fact_b: "Bruno Retailleau a estimé qu'il n'est pas nécessaire de créer de nouvelles brèches d'instabilité en révisant la Constitution dans la période actuelle."
+    claimed_reason: "Après avoir affirmé qu'il réviserait la Constitution, Retailleau juge ensuite qu'il ne faut pas la réviser actuellement, ce qui renverse sa position sur la même question."
+    expect: drop
+    bucket: timing
+    notes: "A future intention, no date, and 'not in the current period': compatible."
+
+  - name: "FP_1169_bardella_meta_extraction"
+    fact_a: "Jordan Bardella a assuré que l'extraction des messages sur les serveurs de Meta a été faite le 16 août."
+    fact_b: "Jordan Bardella a affirmé qu'il lui était impossible de demander à Meta d'extraire ses anciennes conversations car il n'a pas de compte Facebook."
+    claimed_reason: "Bardella affirme qu'une extraction des messages chez Meta a eu lieu le 16 août, puis qu'il était impossible d'en demander une faute de compte Facebook."
+    expect: drop
+    bucket: different_subjects
+    notes: "That an extraction took place and that he could not request one himself are compatible: someone else did."
