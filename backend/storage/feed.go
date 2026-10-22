@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"digital-mirror/backend/core"
@@ -52,9 +53,18 @@ type FeedItem struct {
 	// Likes counts the +1 of the users; Liked says the viewer gave one.
 	Likes int  `json:"likes"`
 	Liked bool `json:"liked"`
-	// rank orders the hot feed.
-	rank float64
+	// ScoreEffect is what the item does to the person's score today, in
+	// percent of the score without it (a contradiction lowers it, a fact
+	// without one may raise it); nil below MinScoreEffect.
+	ScoreEffect *float64 `json:"score_effect,omitempty"`
+	// rank orders the hot feed; bundleSize is the contradictions of the
+	// contradiction's bundle (it alone: 1).
+	rank       float64
+	bundleSize int
 }
+
+// MinScoreEffect is the smallest effect on a score the feed shows, in percent.
+const MinScoreEffect = 0.1
 
 // FeedFilter narrows the feed: Kind to one kind ("": both), PersonID to one
 // person (0: all), From and To to the statements made in that period (nil:
@@ -163,7 +173,72 @@ func (s *PostgresStorer) GetFeed(ctx context.Context, f FeedFilter, after *FeedC
 	if len(out) > limit {
 		out = out[:limit]
 	}
+	if err := s.feedScoreEffects(ctx, out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// feedScoreEffects sets the effect of each item on its person's score as it
+// is today: the score with the item against the score without it (the fact
+// counted one less, or the contradiction taken out of its bundle). A party's
+// score is half its own: the item moves that half.
+func (s *PostgresStorer) feedScoreEffects(ctx context.Context, items []FeedItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return fmt.Errorf("begin feed score effects: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	type inputs struct {
+		facts   int
+		stats   core.ContradictionStats
+		members *float64
+	}
+	byPerson := map[int64]*inputs{}
+	for i := range items {
+		id := items[i].Person.ID
+		in, ok := byPerson[id]
+		if !ok {
+			in = &inputs{}
+			if in.facts, err = s.getPersonFactsCount(ctx, tx, id); err != nil {
+				return err
+			}
+			if in.stats, err = s.getPersonContradictionStats(ctx, tx, id); err != nil {
+				return err
+			}
+			if in.members, err = s.computeMembersScore(ctx, tx, id); err != nil {
+				return err
+			}
+			byPerson[id] = in
+		}
+		without := *in
+		if items[i].Kind == FeedContradiction {
+			if in.stats.Total == 0 {
+				continue
+			}
+			without.stats.Total--
+			if items[i].bundleSize <= 1 {
+				without.stats.Bundles = max(0, without.stats.Bundles-1)
+			}
+		} else {
+			if in.facts == 0 {
+				continue
+			}
+			without.facts--
+		}
+		now := core.ComputeAggregateScore(core.ComputeHonestyScore(in.facts, in.stats), in.members)
+		before := core.ComputeAggregateScore(core.ComputeHonestyScore(without.facts, without.stats), without.members)
+		if before <= 0 {
+			continue
+		}
+		if effect := 100 * (now - before) / before; math.Abs(effect) >= MinScoreEffect {
+			items[i].ScoreEffect = &effect
+		}
+	}
+	return nil
 }
 
 // feedQuery holds the bounds of the queries of one page: the cursor (at,
@@ -206,6 +281,9 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score,
 		       lk.n::int, lk.mine, `+hotRank("c.detected_at")+` AS rank,
+		       CASE WHEN c.bundle_stance_id IS NULL THEN 1 ELSE (
+		         SELECT COUNT(*) FROM contradictions c2
+		         WHERE c2.person_id = c.person_id AND c2.bundle_stance_id = c.bundle_stance_id) END,
 		       sd.id, sd.cluster_label, sd.label_en,
 		       c.reason, c.reason_en,
 		       fa.id, fa.fact_text, fa.fact_text_en, sa.earliest, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
@@ -235,7 +313,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		it := FeedItem{Kind: FeedContradiction, Other: &FeedFactSide{}}
 		var reason, reasonEn *string
 		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore,
-			&it.Likes, &it.Liked, &it.rank,
+			&it.Likes, &it.Liked, &it.rank, &it.bundleSize,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn,
 			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote,
 			&it.Other.ID, &it.Other.Text, &it.Other.TextEn, &it.Other.Date, &it.Other.SourceURLs, &it.Other.Quote); err != nil {

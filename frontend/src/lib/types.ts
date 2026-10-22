@@ -283,6 +283,9 @@ export interface FeedItem {
 	// likes counts the +1 of the users; liked says the viewer gave one.
 	likes: number;
 	liked: boolean;
+	// score_effect: what the item does to the person's score today, in
+	// percent (absent when under 0.1 %).
+	score_effect?: number | null;
 }
 
 export interface FeedPage {

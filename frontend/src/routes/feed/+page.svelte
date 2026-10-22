@@ -186,6 +186,16 @@
 		return iso ? String(new Date(iso).getFullYear()) : '';
 	}
 
+	// move is a market-style move of the score: "+0,5 %", "−1,3 %".
+	function move(pct: number): string {
+		return new Intl.NumberFormat(currentLang === 'en' ? 'en-GB' : 'fr-FR', {
+			style: 'percent',
+			minimumFractionDigits: 1,
+			maximumFractionDigits: 1,
+			signDisplay: 'exceptZero'
+		}).format(pct / 100);
+	}
+
 	function scoreColor(s: number): string {
 		if (s >= 0.8) return 'var(--green)';
 		if (s >= 0.4) return 'var(--amber)';
@@ -322,6 +332,17 @@
 					<div class="head">
 						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
 						<span class="score" style="color: {scoreColor(it.person.honesty_score)}">{Math.round(it.person.honesty_score * 100)}</span>
+						{#if it.score_effect != null}
+							<span
+								class="ticker"
+								class:down={it.score_effect < 0}
+								title={tr('feed.effect', currentLang, { name: it.person.name })}
+								aria-label={`${tr('feed.effect', currentLang, { name: it.person.name })} : ${move(it.score_effect)}`}
+							>
+								<span aria-hidden="true">{it.score_effect < 0 ? '▼' : '▲'}</span>
+								{move(it.score_effect)}
+							</span>
+						{/if}
 						{#if it.kind === 'contradiction'}
 							<span class="tag">{tr('feed.tag.contradiction', currentLang)}</span>
 						{/if}
@@ -701,6 +722,22 @@
 		font-size: 0.8rem;
 		flex-shrink: 0;
 	}
+	.ticker {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: var(--green);
+	}
+	.ticker.down {
+		color: var(--red);
+	}
+	.ticker span {
+		font-size: 0.6rem;
+	}
 	.tag {
 		flex-shrink: 0;
 		padding: 0.05rem 0.5rem;
@@ -799,6 +836,10 @@
 		margin-bottom: 0.5rem;
 	}
 	@media (max-width: 480px) {
+		/* The red move and the red dot on the photo say it already. */
+		.tag {
+			display: none;
+		}
 		.item {
 			grid-template-columns: 36px minmax(0, 1fr);
 			gap: 0.7rem;

@@ -365,6 +365,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'feed.all': { fr: 'Tout', en: 'All' },
 	'feed.contradictions': { fr: 'Contradictions', en: 'Contradictions' },
 	'feed.facts': { fr: 'Faits', en: 'Facts' },
+	'feed.effect': { fr: 'Effet sur le score de {name} aujourd’hui', en: 'Effect on {name}’s score today' },
 	'feed.tag.contradiction': { fr: 'Se contredit', en: 'Contradicts' },
 	'feed.person': { fr: 'Son fil', en: 'Their feed' },
 	'feed.empty': { fr: 'Rien pour l’instant.', en: 'Nothing yet.' },

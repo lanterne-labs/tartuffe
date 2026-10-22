@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"digital-mirror/backend/core"
 	"fmt"
 	"testing"
 	"time"
@@ -194,6 +195,13 @@ func TestFeed(t *testing.T) {
 	}, got)
 
 	c := all[2]
+	// The contradiction costs its person's score today; a fact among so few
+	// does not move it (the formula counts at least 75 facts).
+	require.NotNil(t, c.ScoreEffect)
+	want := 100 * (core.ComputeHonestyScore(3, core.ContradictionStats{Bundles: 1, Total: 1}) - 1)
+	assert.InDelta(t, want, *c.ScoreEffect, 1e-9)
+	assert.Less(t, *c.ScoreEffect, -1.0)
+	assert.Nil(t, all[0].ScoreEffect)
 	assert.Equal(t, "report person", c.Person.Name)
 	require.NotNil(t, c.StanceLabel)
 	assert.Equal(t, "Retraites", *c.StanceLabel)
