@@ -34,6 +34,9 @@
 	let token = $derived($session?.token ?? '');
 	let filterKey = $derived(`${sort}|${filter}|${personFilter}|${fromDay}|${toDay}|${token}`);
 	let filtered = $derived(!!(personFilter || fromDay || toDay));
+	// The filters hide behind an icon; its badge counts the active ones.
+	let active = $derived([filter, personFilter, fromDay, toDay].filter(Boolean).length);
+	let showFilters = $state(false);
 
 	// The person picker: the chosen person's name, and the matches of a search.
 	let personName = $state('');
@@ -209,6 +212,7 @@
 <div class="feed">
 	<header class="feed-head">
 		<h1>{tr('feed.title', currentLang)}</h1>
+		<div class="head-right">
 		<div class="sorts" role="tablist">
 			{#each ['hot', 'new'] as s (s)}
 				<button role="tab" class="sort" class:active={sort === s} aria-selected={sort === s} onclick={() => setParams({ sort: s === 'new' ? 'new' : '' })}>
@@ -216,8 +220,23 @@
 				</button>
 			{/each}
 		</div>
+		<button
+			class="filter-btn"
+			class:on={showFilters || active > 0}
+			aria-expanded={showFilters}
+			aria-controls="feed-filters"
+			aria-label={tr('feed.filter.open', currentLang)}
+			title={tr('feed.filter.open', currentLang)}
+			onclick={() => (showFilters = !showFilters)}
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+			{#if active > 0}<span class="badge">{active}</span>{/if}
+		</button>
+		</div>
 	</header>
 
+	{#if showFilters}
+	<div class="panel" id="feed-filters">
 	<div class="tabs" role="tablist">
 		{#each [['', 'feed.all'], ['contradiction', 'feed.contradictions'], ['fact', 'feed.facts']] as [f, key] (f)}
 			<button role="tab" class="tab" class:active={filter === f} aria-selected={filter === f} onclick={() => setFilter(f as Filter)}>
@@ -263,10 +282,12 @@
 			<span>{tr('feed.filter.to', currentLang)}</span>
 			<input type="date" value={toDay} min={fromDay || undefined} onchange={(e) => setParams({ to: (e.currentTarget as HTMLInputElement).value })} />
 		</label>
-		{#if filtered}
-			<button class="reset" onclick={() => setParams({ person: '', from: '', to: '' })}>{tr('feed.filter.reset', currentLang)}</button>
+		{#if active > 0}
+			<button class="reset" onclick={() => setParams({ kind: '', person: '', from: '', to: '' })}>{tr('feed.filter.reset', currentLang)}</button>
 		{/if}
 	</div>
+	</div>
+	{/if}
 
 	{#if fresh > 0}
 		<button class="fresh" onclick={showFresh}>{tr('feed.new', currentLang, { n: fresh })}</button>
@@ -378,6 +399,61 @@
 		font-size: 2rem;
 		font-weight: 600;
 		margin: 0;
+	}
+	.head-right {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.filter-btn {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 38px;
+		height: 38px;
+		border-radius: 50%;
+		border: 1px solid var(--glass-border);
+		background: transparent;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.filter-btn:hover,
+	.filter-btn.on {
+		color: var(--text-primary);
+		border-color: var(--border-card-hover);
+	}
+	.filter-btn svg {
+		width: 18px;
+		height: 18px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.badge {
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		min-width: 16px;
+		height: 16px;
+		padding: 0 4px;
+		border-radius: var(--radius-full);
+		background: var(--accent);
+		color: #fff;
+		font-size: 0.65rem;
+		font-weight: 700;
+		line-height: 16px;
+	}
+	.panel {
+		margin-bottom: 1rem;
+		padding: 0.9rem;
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+	}
+	.panel .filters {
+		margin-bottom: 0;
 	}
 	.sorts {
 		display: flex;

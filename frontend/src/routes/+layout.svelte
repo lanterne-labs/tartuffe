@@ -71,7 +71,6 @@
 			</svg>
 			<span class="brand-text">
 				<span class="brand-name">tartuffe<span class="brand-dot">.</span>me</span>
-				<span class="brand-subtitle">{tr('nav.brand_subtitle', currentLang)}</span>
 			</span>
 		</a>
 		<div class="nav-right">
@@ -194,14 +193,6 @@
 		color: var(--accent);
 	}
 
-	.brand-subtitle {
-		font-family: var(--font-serif);
-		font-size: 1rem;
-		font-weight: 400;
-		font-style: italic;
-		letter-spacing: 0.01em;
-		color: var(--text-muted);
-	}
 
 	.nav-right {
 		display: inline-flex;
@@ -349,9 +340,6 @@
 		}
 		.brand-name {
 			font-size: 1.25rem;
-		}
-		.brand-subtitle {
-			display: none;
 		}
 		.nav-right {
 			gap: 0.6rem;

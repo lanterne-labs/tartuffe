@@ -376,11 +376,6 @@
 		await loadFactPersons(factId, nextPage);
 	}
 
-	function getHonestyLabel(score: number, l: Lang): string {
-		if (score >= 0.8) return tr('person.honest', l);
-		if (score >= 0.4) return tr('person.mixed', l);
-		return tr('person.dishonest', l);
-	}
 
 	function getHonestyColor(score: number): string {
 		if (score >= 0.8) return 'var(--green)';
@@ -388,8 +383,13 @@
 		return 'var(--red)';
 	}
 
+	// A label as a sentence: its first letter upper case.
+	function sentence(s: string | null | undefined): string {
+		return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+	}
+
 	function formatDate(dateString: string): string {
-		return new Date(dateString).toLocaleDateString();
+		return new Date(dateString).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
 
 	function formatDateWithTime(dateString: string): string {
@@ -443,7 +443,7 @@
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 			<path d="m15 18-6-6 6-6"/>
 		</svg>
-		Back to Dashboard
+		{tr('nav.dashboard', currentLang)}
 	</a>
 
 	{#if loading && !person}
@@ -484,10 +484,6 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					<div class="hero-label">
-						<span>{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</span>
-						<ScoreHelp name={person.name} personId={person.id} />
-					</div>
 					<p class="hero-summary">
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
@@ -498,16 +494,19 @@
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
+				<div class="gauge-row">
+					<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
+					<ScoreHelp name={person.name} personId={person.id} />
+				</div>
 				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
 			</div>
 		</div>
 
 		{#if person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
-				<ScoreGauge score={person.own_score ?? person.honesty_score} size={56} showLabel label="Own Score" />
-				<ScoreGauge score={person.members_score} size={56} showLabel label="Members Score" />
-				<ScoreGauge score={person.honesty_score} size={56} showLabel label="Aggregate" />
+				<ScoreGauge score={person.own_score ?? person.honesty_score} size={56} showLabel label={tr('person.own_score', currentLang)} />
+				<ScoreGauge score={person.members_score} size={56} showLabel label={tr('person.members_score', currentLang)} />
+				<ScoreGauge score={person.honesty_score} size={56} showLabel label={tr('person.aggregate', currentLang)} />
 			</div>
 		{/if}
 
@@ -517,7 +516,7 @@
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="chevron" class:expanded={membersExpanded}>
 						<path d="m9 18 6-6-6-6"/>
 					</svg>
-					{members.length} members
+					{members.length} {tr('score.members', currentLang).toLowerCase()}
 				</button>
 
 				{#if membersExpanded}
@@ -613,7 +612,7 @@
 								<div class="stance-top">
 									<div class="stance-main">
 										<div class="stance-label-row">
-											<span class="stance-label">{pickLang(stance.label, stance.label_en, currentLang)}</span>
+											<span class="stance-label">{sentence(pickLang(stance.label, stance.label_en, currentLang))}</span>
 											<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 												<path d="m6 9 6 6 6-6"/>
 											</svg>
@@ -809,11 +808,6 @@
 		text-transform: capitalize;
 	}
 
-	.hero-label {
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-		margin-top: 0.25rem;
-	}
 
 	.hero-summary {
 		color: var(--text-muted);
@@ -839,6 +833,11 @@
 		border-radius: var(--radius-full);
 	}
 
+	.gauge-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.3rem;
+	}
 	.hero-gauge {
 		flex-shrink: 0;
 	}
@@ -1201,7 +1200,6 @@
 		font-size: 0.938rem;
 		font-weight: 600;
 		color: var(--text-primary);
-		text-transform: capitalize;
 	}
 
 	.stance-chevron {
@@ -1622,11 +1620,6 @@
 		}
 	}
 
-	.hero-label {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
 	.hero-gauge {
 		display: flex;
 		flex-direction: column;

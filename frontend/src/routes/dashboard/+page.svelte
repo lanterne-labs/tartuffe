@@ -129,11 +129,6 @@
 		loadPersons(currentPage + 1);
 	}
 
-	function getHonestyLabel(score: number): string {
-		if (score >= 0.8) return 'Honest';
-		if (score >= 0.4) return 'Mixed';
-		return 'Dishonest';
-	}
 
 	function getHonestyColor(score: number): string {
 		if (score >= 0.8) return 'var(--green)';
@@ -178,7 +173,6 @@
 			<div class="poll-hero-text">
 				<span class="poll-hero-kicker">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
 				<h1 class="poll-hero-title">{tr('home.poll.title', currentLang)}</h1>
-				<p class="poll-hero-lead">{tr('home.poll.lead', currentLang)}</p>
 				{#if featuredVoters !== null}
 					<p class="poll-hero-meta">
 						{featuredVoters === 1 ? tr('poll.voter', currentLang) : tr('poll.voters', currentLang, { n: featuredVoters })}
@@ -238,7 +232,6 @@
 		<section class="rank-panel rank-panel--best">
 			<header class="rank-panel-header">
 				<h2>{tr('home.most_honest', currentLang)}</h2>
-				<span class="rank-panel-sub">{tr('home.top_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
 			</header>
 			{#if panelsLoading && topHonest.length === 0}
 				<ul class="rank-list">
@@ -281,7 +274,6 @@
 		<section class="rank-panel rank-panel--worst">
 			<header class="rank-panel-header">
 				<h2>{tr('home.least_honest', currentLang)}</h2>
-				<span class="rank-panel-sub">{tr('home.bottom_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
 			</header>
 			{#if panelsLoading && topDishonest.length === 0}
 				<ul class="rank-list">
@@ -360,9 +352,7 @@
 									{/if}
 								</div>
 								<div class="card-meta">
-									{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}
-									<span class="dot"></span>
-									{getHonestyLabel(person.honesty_score)}
+									{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
 								</div>
 							</div>
 						</div>
@@ -582,14 +572,10 @@
 		box-shadow: var(--shadow-card);
 	}
 
-	.rank-panel--best {
-		background: linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.04));
-		border: 1px solid rgba(34, 197, 94, 0.35);
-	}
-
+	.rank-panel--best,
 	.rank-panel--worst {
-		background: linear-gradient(180deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
-		border: 1px solid rgba(239, 68, 68, 0.35);
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
 	}
 
 	.rank-panel-header {
@@ -608,10 +594,6 @@
 	.rank-panel--best .rank-panel-header h2 { color: var(--green); }
 	.rank-panel--worst .rank-panel-header h2 { color: var(--red); }
 
-	.rank-panel-sub {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-	}
 
 	.rank-list {
 		list-style: none;
@@ -983,12 +965,6 @@
 		margin: 0.25rem 0 0.5rem;
 	}
 
-	.poll-hero-lead {
-		max-width: 40rem;
-		margin: 0;
-		color: var(--text-secondary);
-		line-height: 1.5;
-	}
 
 	.poll-hero-meta {
 		display: flex;

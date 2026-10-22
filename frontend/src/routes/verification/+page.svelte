@@ -157,30 +157,32 @@
 		</div>
 	</section>
 
-	<section>
-		<h2>{c.zkTitle}</h2>
-		{#each c.zk as p}<p>{p}</p>{/each}
-	</section>
+	<div class="mores">
+		<details class="more">
+			<summary>{c.zkTitle}</summary>
+			{#each c.zk as p}<p>{p}</p>{/each}
+		</details>
 
-	<section>
-		<h2>{c.idTitle}</h2>
-		{#each c.id as p}<p>{p}</p>{/each}
-	</section>
+		<details class="more">
+			<summary>{c.idTitle}</summary>
+			{#each c.id as p}<p>{p}</p>{/each}
+		</details>
 
-	<section>
-		<h2>{c.limitsTitle}</h2>
-		<ul class="limits">
-			{#each c.limits as line}<li>{line}</li>{/each}
-		</ul>
-	</section>
+		<details class="more">
+			<summary>{c.limitsTitle}</summary>
+			<ul class="limits">
+				{#each c.limits as line}<li>{line}</li>{/each}
+			</ul>
+		</details>
 
-	<section>
-		<h2>{c.techTitle}</h2>
-		<p>{c.techNote}</p>
-		<ul>
-			{#each c.tech as [label, href]}<li><a {href} target="_blank" rel="noopener">{label}</a></li>{/each}
-		</ul>
-	</section>
+		<details class="more">
+			<summary>{c.techTitle}</summary>
+			<p>{c.techNote}</p>
+			<ul>
+				{#each c.tech as [label, href]}<li><a {href} target="_blank" rel="noopener">{label}</a></li>{/each}
+			</ul>
+		</details>
+	</div>
 
 	<p class="back"><a href="/election/presidentielle-2027">← {c.back}</a></p>
 </article>
@@ -239,6 +241,23 @@
 		font-size: 1.5rem;
 		font-weight: 600;
 		margin: 0 0 0.75rem;
+	}
+	.mores {
+		margin-bottom: 2.25rem;
+		border-top: 1px solid var(--glass-border);
+	}
+	.more {
+		padding: 0.9rem 0;
+		border-bottom: 1px solid var(--glass-border);
+	}
+	.more summary {
+		font-family: var(--font-serif);
+		font-size: 1.2rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.more[open] summary {
+		margin-bottom: 0.75rem;
 	}
 	h3 {
 		font-size: 1rem;

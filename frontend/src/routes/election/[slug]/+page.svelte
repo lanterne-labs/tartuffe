@@ -2,6 +2,7 @@
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { API_BASE } from '$lib/config';
+	import { displayName } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
 	import { session, signInOpen } from '$lib/auth';
 	import { addVote, removeVote, saveBallot, getBallot, onBallotChanged, BallotError } from '$lib/ballot';
@@ -470,7 +471,7 @@
 			{:else}
 				<span class="photo photo--empty">{c.name.charAt(0).toUpperCase()}</span>
 			{/if}
-			<span class="name">{c.name}</span>
+			<span class="name">{displayName(c.name)}</span>
 		</a>
 	{/snippet}
 
@@ -515,7 +516,7 @@
 				<article class="gauge-card" class:gauge-card--mine={ballot.includes(c.person_id)}>
 					<span class="gauge-rank">{ordinal(c.honesty_rank)}</span>
 					{@render who(c)}
-					<HonestyGauge score={c.honesty_score} size={200} label={c.name} />
+					<HonestyGauge score={c.honesty_score} size={200} label={displayName(c.name)} />
 					<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })} · {tr('poll.gauge.contradictions', currentLang, { n: c.contradiction_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
 					{@render pickButton(c)}
 				</article>
@@ -571,17 +572,16 @@
 					</div>
 
 					<div class="cell cell--honesty" role="cell">
-						<HonestyGauge score={c.honesty_score} size={130} label={c.name} />
+						<HonestyGauge score={c.honesty_score} size={130} label={displayName(c.name)} />
 						<span class="meta">{ordinal(c.honesty_rank)} · {tr('poll.gauge.facts', currentLang, { n: c.fact_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
 					</div>
 				</div>
 			{/each}
 		</div>
-		<p class="board-note">{tr('poll.board_note', currentLang)}</p>
 	{/if}
 
-	<section class="how">
-		<h2>{tr('poll.how.title', currentLang)}</h2>
+	<details class="how">
+		<summary>{tr('poll.how.title', currentLang)}</summary>
 		<ul>
 			<li>{@html tr('poll.how.preference', currentLang)}</li>
 			<li>{@html tr('poll.how.honesty', currentLang)}</li>
@@ -590,7 +590,7 @@
 			<li>{@html tr('poll.how.verification', currentLang)}</li>
 			<li>{tr('poll.how.privacy', currentLang)}</li>
 		</ul>
-	</section>
+	</details>
 {/if}
 
 <style>
@@ -1104,13 +1104,6 @@
 		border-color: var(--accent);
 		color: white;
 	}
-	.board-note {
-		max-width: 60rem;
-		margin: 0.6rem auto 0;
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		text-align: center;
-	}
 
 	.how {
 		max-width: 46rem;
@@ -1118,10 +1111,17 @@
 		padding: 1.25rem 1.5rem;
 		border-top: 1px solid var(--glass-border);
 	}
-	.how h2 {
+	.how summary {
 		font-family: var(--font-serif);
-		font-size: 1.4rem;
-		margin: 0 0 0.75rem;
+		font-size: 1.2rem;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+	.how summary:hover {
+		color: var(--text-primary);
+	}
+	.how[open] summary {
+		margin-bottom: 0.75rem;
 	}
 	.how ul {
 		margin: 0;
