@@ -1,8 +1,13 @@
 <script lang="ts">
-	// The landing page: the slogan, one made-up example of a contradiction and
-	// its score, and the three things the site offers (the ranking, the feed,
-	// the pre-poll). The ranking itself is at /dashboard.
+	// The landing page: the contradiction checker first (the slogan, one
+	// made-up example of a contradiction and its score, the ranking and the
+	// feed), then the lab's temporary event, the private presidential vote,
+	// in its own colour with its end date, then the lab itself. The ranking is
+	// at /dashboard.
+	import { onMount } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
+	import { API_BASE } from '$lib/config';
+	import type { PollEvent } from '$lib/types';
 	import Mirror from '$lib/components/about/Mirror.svelte';
 
 	let currentLang = $state<Lang>('fr');
@@ -28,6 +33,19 @@
 	}
 
 	const POLL = '/election/presidentielle-2027';
+	let featured = $state<PollEvent | null>(null);
+	onMount(async () => {
+		try {
+			const res = await fetch(`${API_BASE}/api/polls`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			featured = ((await res.json()) as PollEvent[]).find((e) => e.featured) ?? null;
+		} catch (err) {
+			console.error('failed to load the featured poll', err);
+		}
+	});
+	function dateText(iso: string): string {
+		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+	}
 	// The score of the example: one contradiction among few facts.
 	const SCORE = 92;
 
@@ -37,7 +55,7 @@
 			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
 			pills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
 			ctaMain: 'Voir le classement',
-			ctaPoll: 'Présidentielle 2027',
+			ctaFeed: 'Lire le fil',
 
 			exKicker: 'En un coup d’œil',
 			exTitle: 'Une contradiction, un score',
@@ -56,21 +74,32 @@
 			],
 			exNote: 'Cohérence, pas vérité.',
 
-			svcKicker: 'Trois façons de s’en servir',
+			svcKicker: 'Deux façons de s’en servir',
 			svcTitle: 'Tout est public',
 			services: [
 				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Tous les élus et partis, notés sur 100. Cherchez, comparez.', cta: 'Ouvrir' },
-				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, en direct. Un +1 les fait remonter.', cta: 'Lire' },
-				{ href: POLL, icon: 'poll', title: 'Présidentielle 2027', body: 'Votez pour votre candidat, voyez son score juste à côté.', cta: 'Voter' }
+				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, en direct. Un +1 les fait remonter.', cta: 'Lire' }
 			],
-			aboutLink: 'Comment on calcule le score'
+			aboutLink: 'Comment on calcule le score',
+
+			evTag: 'Expérience temporaire du labo',
+			evTitle: 'Présidentielle 2027 : le vote en ligne, vraiment privé',
+			evBody: 'Votez pour votre candidat, ou blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
+			evEnds: 'Jusqu’au {d}',
+			evCta: 'Voter',
+			evMore: 'Pourquoi cette expérience',
+
+			labKicker: 'Le labo',
+			labTitle: 'Un laboratoire pour la démocratie',
+			labBody: 'tartuffe.me est un laboratoire de recherche et développement des outils démocratiques : plus de transparence, plus de redevabilité, des preuves plutôt que des opinions. Le détecteur de contradictions est notre premier produit ; le vote privé, notre première expérience.',
+			labCta: 'Découvrir le labo'
 		},
 		en: {
 			title: 'They say. They act. We compare.',
 			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
 			pills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 			ctaMain: 'See the ranking',
-			ctaPoll: 'Presidential 2027',
+			ctaFeed: 'Read the feed',
 
 			exKicker: 'At a glance',
 			exTitle: 'One contradiction, one score',
@@ -89,14 +118,25 @@
 			],
 			exNote: 'Consistency, not truth.',
 
-			svcKicker: 'Three ways to use it',
+			svcKicker: 'Two ways to use it',
 			svcTitle: 'Everything is public',
 			services: [
 				{ href: '/dashboard', icon: 'rank', title: 'The ranking', body: 'Every politician and party, scored out of 100. Search, compare.', cta: 'Open' },
-				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' },
-				{ href: POLL, icon: 'poll', title: 'Presidential 2027', body: 'Vote for your candidate, see their score right beside.', cta: 'Vote' }
+				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' }
 			],
-			aboutLink: 'How the score is computed'
+			aboutLink: 'How the score is computed',
+
+			evTag: 'A temporary experiment of the lab',
+			evTitle: 'Presidential 2027: online voting, truly private',
+			evBody: 'Vote for your candidate, or blank, with your passport or ID card. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
+			evEnds: 'Until {d}',
+			evCta: 'Vote',
+			evMore: 'Why this experiment',
+
+			labKicker: 'The lab',
+			labTitle: 'A lab for democracy',
+			labBody: 'tartuffe.me is a research and development lab for democratic tools: more transparency, more accountability, evidence rather than opinions. The contradiction checker is our first product; the private vote, our first experiment.',
+			labCta: 'Discover the lab'
 		}
 	};
 	let c = $derived(content[currentLang]);
@@ -130,7 +170,7 @@
 		</ul>
 		<div class="ctas">
 			<a class="cta" href="/dashboard">{c.ctaMain}</a>
-			<a class="cta cta-ghost" href={POLL}>{c.ctaPoll} →</a>
+			<a class="cta cta-ghost" href="/feed">{c.ctaFeed} →</a>
 		</div>
 	</header>
 
@@ -197,9 +237,102 @@
 		</div>
 		<p class="more"><a href="/about">{c.aboutLink} →</a></p>
 	</section>
+
+	<section class="event" use:reveal>
+		<div class="ev-head">
+			<span class="ev-tag">{c.evTag}</span>
+			{#if featured?.closes_at}
+				<span class="ev-ends">{c.evEnds.replace('{d}', dateText(featured.closes_at))}</span>
+			{/if}
+		</div>
+		<h2>{c.evTitle}</h2>
+		<p>{c.evBody}</p>
+		<div class="ev-actions">
+			<a class="ev-cta" href={featured ? `/election/${featured.slug}` : POLL}>{c.evCta} →</a>
+			<a class="ev-more" href="/lab">{c.evMore}</a>
+		</div>
+	</section>
+
+	<section class="lab-teaser" use:reveal>
+		<span class="kicker">{c.labKicker}</span>
+		<h2>{c.labTitle}</h2>
+		<p>{c.labBody}</p>
+		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+	</section>
 </article>
 
 <style>
+	.event {
+		margin: 4.5rem 0 0;
+		padding: 1.6rem 1.75rem;
+		border: 1px dashed var(--event);
+		border-radius: var(--radius-lg);
+		background: color-mix(in oklch, var(--event) 7%, var(--bg-card));
+	}
+	.ev-head {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+		align-items: center;
+	}
+	.ev-tag {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--event);
+	}
+	.ev-ends {
+		font-size: 0.8rem;
+		font-weight: 600;
+		padding: 0.2rem 0.65rem;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--event);
+		color: var(--text-primary);
+	}
+	.event h2 {
+		margin: 0.6rem 0 0.6rem;
+		text-align: left;
+	}
+	.event p {
+		margin: 0 0 1.1rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		max-width: 40rem;
+	}
+	.ev-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem 1.25rem;
+	}
+	.ev-cta {
+		padding: 0.6rem 1.25rem;
+		border-radius: var(--radius-full);
+		background: var(--event-strong);
+		color: white;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.ev-cta:hover {
+		background: var(--event);
+	}
+	.ev-more {
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+	}
+	.lab-teaser {
+		margin: 4.5rem 0 1rem;
+		text-align: center;
+	}
+	.lab-teaser p {
+		max-width: 38rem;
+		margin: 0 auto 0.75rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		text-wrap: balance;
+	}
 	.landing {
 		max-width: 52rem;
 		margin: 0 auto;
@@ -472,7 +605,7 @@
 	/* The services */
 	.svc-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 1rem;
 		text-align: left;
 	}

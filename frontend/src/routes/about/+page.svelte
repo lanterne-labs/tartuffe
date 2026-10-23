@@ -39,6 +39,8 @@
 			metaDesc:
 				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule un score de cohérence. Méthode, limites et neutralité.',
 			kicker: 'À propos',
+			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire de R&D pour des démocraties plus transparentes.',
+			labLink: 'Le labo',
 			title: 'Ils disent. Ils agissent. On compare.',
 			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
 			heroPills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
@@ -120,6 +122,8 @@
 			metaDesc:
 				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes a consistency score. Method, limits and neutrality.',
 			kicker: 'About',
+			labLine: 'Tartuffe is the first product of the tartuffe.me lab, an R&D lab for more transparent democracies.',
+			labLink: 'The lab',
 			title: 'They say. They act. We compare.',
 			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
 			heroPills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
@@ -225,6 +229,7 @@
 		<span class="kicker">{c.kicker}</span>
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
+		<p class="lab-line">{c.labLine} <a href="/lab">{c.labLink} →</a></p>
 		<ul class="pills">
 			{#each c.heroPills as p}<li>{p}</li>{/each}
 		</ul>
@@ -341,6 +346,12 @@
 </article>
 
 <style>
+	.lab-line {
+		margin: 0.75rem auto 0;
+		font-size: 0.9rem;
+		color: var(--text-muted);
+		text-align: center;
+	}
 	.page {
 		max-width: 46rem;
 		margin: 0 auto;

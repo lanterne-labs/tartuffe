@@ -13,6 +13,11 @@
   --accent: #9a2640;
   --accent-hover: #b8324f;
   --accent-glow: rgba(154, 38, 64, 0.35);
+  /* The lab's temporary events (the presidential vote): their own colour, so
+     they never read as the contradiction checker itself. */
+  --event: #7f9fd6;
+  --event-strong: #5b7fc0;
+  --event-glow: rgba(127, 159, 214, 0.14);
   --green: #5fa56a;
   --amber: #d4923a;
   --red: #c2334a;

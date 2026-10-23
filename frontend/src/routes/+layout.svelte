@@ -18,6 +18,8 @@
 	import { session, signOut, refreshUser } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
 	import VoterKeyDialog from '$lib/components/VoterKeyDialog.svelte';
+	import EventBanner from '$lib/components/EventBanner.svelte';
+	import { voterKey } from '$lib/voter';
 	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
@@ -26,7 +28,7 @@
 	// it with `meta` in the data of its load, the others get the site's.
 	const defaultMeta = {
 		title: 'tartuffe.me',
-		description: 'Un miroir public de ce que disent et votent les responsables politiques : leurs faits, leurs positions, leurs contradictions, avec les sources.'
+		description: 'Le labo tartuffe.me construit des outils pour des démocraties plus transparentes : le détecteur de contradictions des responsables politiques, et des expériences de vote en ligne privé.'
 	};
 	let meta = $derived({ ...defaultMeta, ...(($page.data as { meta?: { title?: string; description?: string; image?: string } })?.meta ?? {}) });
 
@@ -39,10 +41,11 @@
 	let userName = $state<string | null>(null);
 	$effect(() => session.subscribe((s) => (userName = s ? s.user.display_name || tr('auth.anonymous', currentLang) : null)));
 
-	// The featured pre-poll gets a link in the nav.
+	// The featured pre-poll, the lab's temporary event, gets a link in the
+	// nav with its end date, and a card in a corner (EventBanner).
 	let featured = $state<PollEvent | null>(null);
 	onMount(async () => {
-		// The stored session may be stale: its document may have moved.
+		// The stored session may be stale: its pseudonym may have changed.
 		refreshUser();
 		try {
 			const res = await fetch(`${API_BASE}/api/polls`);
@@ -103,7 +106,8 @@
 				>EN</button>
 			</div>
 			{#if featured}
-				<a href="/election/{featured.slug}" class="nav-link nav-link--poll" class:active={$page.url.pathname.startsWith('/election/')}>
+				<a href="/election/{featured.slug}" class="nav-link nav-link--poll" class:active={$page.url.pathname.startsWith('/election/')} title={tr('event.label', currentLang)}>
+					<span class="poll-tag">{tr('event.tag_short', currentLang)}</span>
 					{currentLang === 'en' ? featured.title_en : featured.title_fr}
 				</a>
 			{/if}
@@ -113,6 +117,7 @@
 			<div class="nav-about nav-link--about">
 				<a href="/about" class="nav-link" class:active={$page.url.pathname.startsWith('/about')} aria-haspopup="true">{tr('nav.about', currentLang)}</a>
 				<div class="nav-menu">
+					<a href="/lab" class:active={$page.url.pathname === '/lab'}>{tr('nav.lab', currentLang)}</a>
 					<a href="/about/privacy" class:active={$page.url.pathname === '/about/privacy'}>{tr('nav.privacy', currentLang)}</a>
 				</div>
 			</div>
@@ -124,6 +129,8 @@
 					</a>
 					<button class="nav-signout" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
 				</span>
+			{:else if $voterKey}
+				<a href="/profile" class="nav-link" class:active={$page.url.pathname === '/profile'}>{tr('nav.profile', currentLang)}</a>
 			{/if}
 		</div>
 	</div>
@@ -131,6 +138,9 @@
 
 <SignInDialog />
 <VoterKeyDialog />
+{#if featured}
+	<EventBanner event={featured} lang={currentLang} />
+{/if}
 
 {#key $page.url.pathname}
 	<main class="page-content" in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>
@@ -139,6 +149,9 @@
 {/key}
 
 <footer class="site-footer">
+	<p class="footer-lab">{tr('footer.lab', currentLang)}</p>
+	<a href="/lab">{tr('nav.lab', currentLang)}</a>
+	<span aria-hidden="true">·</span>
 	<a href="/about">{tr('nav.about', currentLang)}</a>
 	<span aria-hidden="true">·</span>
 	<a href="/about/privacy">{tr('nav.privacy', currentLang)}</a>
@@ -271,18 +284,40 @@
 	}
 
 	.nav-link--poll {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
 		white-space: nowrap;
 		color: var(--text-primary);
-		padding: 0.3rem 0.75rem;
-		border: 1px solid var(--accent);
+		padding: 0.25rem 0.75rem 0.25rem 0.3rem;
+		border: 1px solid var(--event);
 		border-radius: var(--radius-full);
-		background: var(--accent-glow);
+		background: var(--event-glow);
+	}
+
+	.poll-tag {
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		padding: 0.12rem 0.45rem;
+		border-radius: var(--radius-full);
+		background: var(--event-strong);
+		color: white;
 	}
 
 	.nav-link--poll:hover,
 	.nav-link--poll.active {
-		background: var(--accent);
+		background: var(--event-strong);
 		color: white;
+	}
+
+	.footer-lab {
+		flex-basis: 100%;
+		margin: 0 0 0.4rem;
+		text-align: center;
+		color: var(--text-muted);
+		font-size: 0.8rem;
 	}
 
 	.nav-user {
@@ -415,6 +450,9 @@
 		}
 		/* On a phone, sign out from the profile page. */
 		.nav-signout {
+			display: none;
+		}
+		.poll-tag {
 			display: none;
 		}
 		.nav-link--poll {

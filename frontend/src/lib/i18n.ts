@@ -265,6 +265,18 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'verify.noop.hint': { fr: 'Mode test : un nom suffit comme « document ». Le même nom sur deux comptes déplace les votes.', en: 'Test mode: a name stands for the “document”. The same name on two accounts moves the votes.' },
 	'verify.noop.placeholder': { fr: 'Nom du document de test', en: 'Test document name' },
 	'verify.noop.submit': { fr: 'Vérifier', en: 'Verify' },
+	// The lab and its temporary events
+	'nav.lab': { fr: 'Le labo', en: 'The lab' },
+	'footer.lab': { fr: 'tartuffe.me, un laboratoire de R&D pour des démocraties plus transparentes et plus redevables.', en: 'tartuffe.me, an R&D lab for more transparent and accountable democracies.' },
+	'event.label': { fr: 'Expérience temporaire du labo', en: 'Temporary experiment of the lab' },
+	'event.tag': { fr: 'Expérience temporaire', en: 'Temporary experiment' },
+	'event.tag_short': { fr: 'Événement', en: 'Event' },
+	'event.pitch': { fr: 'Votez en ligne avec votre passeport, sans que personne, ni nous ni l’État, ne sache qui a voté quoi.', en: 'Vote online with your passport, without anyone, neither we nor the State, knowing who voted what.' },
+	'event.ends': { fr: 'Se termine le {d} (J-{n}).', en: 'Ends on {d} ({n} days left).' },
+	'event.cta': { fr: 'Voter', en: 'Vote' },
+	'event.strip': { fr: 'Une expérience du labo tartuffe.me : le vote en ligne, vraiment privé.', en: 'An experiment of the tartuffe.me lab: online voting, truly private.' },
+	'event.strip.ends': { fr: 'Une expérience du labo tartuffe.me, jusqu’au {d}.', en: 'An experiment of the tartuffe.me lab, until {d}.' },
+	'event.strip.why': { fr: 'Pourquoi', en: 'Why' },
 	// The voting key (lib/voter.ts)
 	'poll.ballot.get_key': { fr: 'Obtenir ma clé de vote', en: 'Get my voting key' },
 	'key.title': { fr: 'Ma clé de vote', en: 'My voting key' },
