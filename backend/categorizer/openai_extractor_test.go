@@ -608,3 +608,98 @@ Il a tenu son meeting de rentrée à Montpellier et a nommé Aurore Lalucq porte
 		t.Errorf("logistics (meeting, spokesperson) leaked in %d of %d runs", leakRuns, samples)
 	}
 }
+
+// TestRemoteLLMExtractor_SecondHandClaims pins three cases a review found
+// outside the goldens (mirror-ds6): a claim of the entourage taken as the
+// person's own (fact 95098), a journalist's elliptic summary taken as the
+// person's proposal (fact 14498, and wrong: she opposed 65), and what the
+// person did not say taken as a fact (fact 15000). Each article also holds a
+// real position, which must survive. Majority of 3 samples per article.
+func TestRemoteLLMExtractor_SecondHandClaims(t *testing.T) {
+	llmtest.Setup(t)
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+	cases := []struct {
+		name, person, title, text string
+		leak                      *regexp.Regexp // a fact matching it is the bad case
+		keep                      *regexp.Regexp // the real position that must stay
+	}{
+		{
+			name:   "entourage",
+			person: "Jordan Bardella",
+			title:  "Propos attribués à Jordan Bardella : il va porter plainte",
+			text: `Après de nouvelles révélations du Canard enchaîné sur des messages antisémites publiés sous un pseudonyme, Jordan Bardella a annoncé mardi qu'il porterait plainte en diffamation contre l'hebdomadaire.
+
+« Je n'ai jamais écrit ces messages, c'est une calomnie », a déclaré le président du RN devant la presse.
+
+Son entourage assure par ailleurs que Jordan Bardella ne s'est jamais connecté à ce compte Facebook ni n'a supprimé aucun message. Selon un proche, l'équipe juridique du parti étudie aussi une action contre les auteurs des captures d'écran.`,
+			leak: regexp.MustCompile(`(?i)facebook|connect|supprim`),
+			keep: regexp.MustCompile(`(?i)plainte|jamais écrit|calomnie`),
+		},
+		{
+			name:   "journalist summary",
+			person: "Marine Le Pen",
+			title:  "Présidentielle 2022 : Marine Le Pen, la prudence en campagne",
+			text: `Dès son allocution de Vincennes, elle mise sur un front anti-Macron : la candidate du peuple « face au pouvoir de l'argent » et la retraite à 65 ans, que l'adversaire défend et dont elle fait un repoussoir.
+
+Ce soir-là, Marine Le Pen promet devant ses partisans : « Je baisserai la TVA sur l'énergie de 20 % à 5,5 % dès l'été. »
+
+Au fil des semaines, la candidate du RN évite les sujets qui fâchent et soigne son image de présidente apaisée.`,
+			leak: regexp.MustCompile(`(?i)65`),
+			keep: regexp.MustCompile(`(?i)tva`),
+		},
+		{
+			name:   "absence",
+			person: "Marine Le Pen",
+			title:  "Marine Le Pen dévoile son programme économique",
+			text: `Invitée de France 2 jeudi soir, Marine Le Pen a promis de supprimer l'impôt sur le revenu pour les moins de 30 ans. « C'est la mesure de justice que la jeunesse attend », a-t-elle affirmé.
+
+Elle n'a pas fait de reniement sur la retraite à 60 ans pour ceux qui ont commencé à travailler tôt, et n'a pas mentionné la TVA sociale lors de son intervention. Les économistes interrogés jugent son chiffrage incomplet.`,
+			leak: regexp.MustCompile(`(?i)reniement|renié|pas mentionné|tva sociale|60 ans`),
+			keep: regexp.MustCompile(`(?i)impôt sur le revenu`),
+		},
+	}
+	ctx := context.Background()
+	const samples = 3
+	results := make([]extractResult, samples*len(cases))
+	llmtest.ForEach(len(results), func(i int) {
+		c := cases[i/samples]
+		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, c.person, extractor.ExtractedContent{
+			URL: "http://example.com/" + strings.ReplaceAll(c.name, " ", "-"), Title: c.title, Content: c.text,
+		})
+	})
+	for ci, c := range cases {
+		var leakRuns, keepRuns int
+		for run := 0; run < samples; run++ {
+			r := results[ci*samples+run]
+			if r.err != nil {
+				t.Fatalf("%s: ExtractFacts failed (run %d): %v", c.name, run+1, r.err)
+			}
+			leaked, kept := false, false
+			for i, f := range r.facts {
+				t.Logf("  %s run %d [%d] %s", c.name, run+1, i+1, f.NormalizedFactText)
+				if c.leak.MatchString(f.NormalizedFactText) {
+					t.Logf("  %s run %d: second-hand claim leaked: %q", c.name, run+1, f.NormalizedFactText)
+					leaked = true
+				}
+				if c.keep.MatchString(f.NormalizedFactText) {
+					kept = true
+				}
+			}
+			if leaked {
+				leakRuns++
+			}
+			if kept {
+				keepRuns++
+			}
+		}
+		if leakRuns > samples/2 {
+			t.Errorf("%s: the second-hand claim became a fact in %d of %d runs", c.name, leakRuns, samples)
+		}
+		if keepRuns <= samples/2 {
+			t.Errorf("%s: the real position survived in only %d of %d runs", c.name, keepRuns, samples)
+		}
+	}
+}
