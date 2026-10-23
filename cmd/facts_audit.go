@@ -5,8 +5,10 @@ import (
 	"context"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -108,7 +110,7 @@ type factAuditOutputLine struct {
 	Error          string            `json:"error,omitempty"`
 }
 
-func runFactsAudit(cmd *cobra.Command, args []string) error {
+func runFactsAudit(cmd *cobra.Command, args []string) (runErr error) {
 	ctx := context.Background()
 
 	if err := godotenv.Load(); err != nil {
@@ -239,8 +241,19 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		printFactAuditTextRow(os.Stdout, line)
 		return nil
 	})
-	if err != nil {
+	// An LLM that cannot serve stops the run: the verdicts given still apply,
+	// and the command fails so the facts left are audited again later.
+	stopped := errors.Is(err, llm.ErrUnavailable)
+	if err != nil && !stopped {
 		return err
+	}
+	if stopped {
+		fmt.Fprintf(os.Stderr, "\nThe audit stopped, the LLM cannot serve: %v\n", err)
+		defer func() {
+			if runErr == nil {
+				runErr = fmt.Errorf("fact audit stopped before the end: %w", err)
+			}
+		}()
 	}
 
 	printFactAuditSummary(os.Stderr, len(rows), tally.Keep, tally.Delete, tally.Unsure, tally.Errors, time.Since(startedAt))

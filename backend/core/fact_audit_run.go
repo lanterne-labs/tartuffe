@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -54,7 +55,11 @@ func FactAuditSubjectLabel(personNames []string) string {
 // (llm.ForEach), hands each outcome to onResult in completion order (one at a
 // time, so onResult needs no locking), and returns the tally. An auditor
 // error is logged, counted, and still delivered to onResult; an onResult
-// error aborts the run.
+// error aborts the run. An LLM that cannot serve (llm.ErrUnavailable: every
+// seat at its limit, the API cap) stops the run with that error and the tally
+// of the facts judged: the facts left were not audited, and a caller that
+// took the run as done would never audit them (prod 2026-10-23: September
+// 21-30 "audited" in 2 s, every call refused).
 func RunFactAudit(ctx context.Context, auditor FactAuditor, jobs []FactAuditJob, onResult func(FactAuditOutcome) error) (FactAuditTally, error) {
 	var (
 		mu    sync.Mutex
@@ -63,6 +68,9 @@ func RunFactAudit(ctx context.Context, auditor FactAuditor, jobs []FactAuditJob,
 	)
 	err := llm.ForEach(ctx, jobs, func(ctx context.Context, j FactAuditJob) error {
 		result := auditor.Audit(ctx, j.Input)
+		if errors.Is(result.Err, llm.ErrUnavailable) {
+			return result.Err
+		}
 		if result.Err != nil {
 			log.Error().Err(result.Err).Int64("fact_id", j.FactID).Msg("Fact audit error")
 		}
