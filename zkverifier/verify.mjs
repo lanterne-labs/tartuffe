@@ -2,7 +2,7 @@
 // (backend/accounts/providers/zkpassport.go) runs it once per verification: the request is one
 // JSON object on stdin, the answer one JSON object on stdout.
 //
-// stdin:  { proofs, result, challenge, domain, scope, minAge, nationality, devMode, rpcUrl }
+// stdin:  { proofs, result, challenge (the custom data the proof binds), domain, scope, minAge, nationality, devMode, rpcUrl }
 // stdout: { verified, uniqueIdentifier, errors }
 //
 // The query is rebuilt here from the server's own settings and the one-time

@@ -24,6 +24,9 @@ type Service struct {
 	// Changed runs after a verified identity moved or an account was
 	// deleted (for instance to drop cached poll results).
 	Changed []func()
+	// SubjectKey keys the HMAC of the document identifiers ProveDocument
+	// gives (AUTH_SUBJECT_KEY).
+	SubjectKey []byte
 }
 
 // NewService serves the accounts of the store, signed in with the enabled
@@ -53,6 +56,7 @@ func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 	r.Patch("/auth/me", s.RequireUser(s.handleSetDisplayName))
 	r.Delete("/auth/me", s.RequireUser(s.handleDeleteAccount))
 	r.Post("/auth/signout", s.RequireUser(s.handleAuthSignOut))
+	r.Post("/auth/sessions", s.RequireUser(s.handleNewSession))
 }
 
 // SignInLimit is the default limit of the proof checks: 30 per minute and

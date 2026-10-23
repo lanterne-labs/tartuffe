@@ -3,12 +3,11 @@ package polls
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
-	"slices"
 	"strconv"
 	"time"
 
-	"digital-mirror/backend/accounts"
 	"digital-mirror/backend/httpx"
 	"digital-mirror/backend/metrics"
 
@@ -39,268 +38,320 @@ func (s *Service) pollEvent(w http.ResponseWriter, r *http.Request) (*Event, boo
 	return e, true
 }
 
-// handleGetPoll returns the event and its results.
+// handleGetPoll returns the event, its results and the open windows.
 func (s *Service) handleGetPoll(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.pollEvent(w, r)
 	if !ok {
 		return
 	}
-	tallies, voters, err := s.results.get(r.Context(), e.ID, s.tallies)
+	tallies, turnout, err := s.results.get(r.Context(), e.ID, s.tallies)
 	if err != nil {
 		httpx.InternalError(w, err, "failed to get poll tallies")
 		return
 	}
+	now := time.Now()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"event":   e,
-		"results": Compute(e, tallies, voters, time.Now()),
+		"results": Compute(e, tallies, turnout, now),
+		"windows": windowsResponse(now),
 	})
 }
 
-// ballotResponse is the signed-in user's ballot: PersonIDs are their votes,
-// first choice first, out of MaxChoices.
-type ballotResponse struct {
-	PersonIDs  []int64 `json:"person_ids"`
-	Consented  bool    `json:"consented"`
-	MaxChoices int     `json:"max_choices"`
-	Open       bool    `json:"open"`
+// windowInfo is an open window: its scope is what the browser proves under.
+type windowInfo struct {
+	Window
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
 }
 
-func newBallotResponse(e *Event, ids []int64, consented bool) ballotResponse {
-	return ballotResponse{PersonIDs: ids, Consented: consented, MaxChoices: e.MaxChoices, Open: IsOpen(e, time.Now())}
+func windowsResponse(now time.Time) []windowInfo {
+	out := []windowInfo{}
+	for _, w := range OpenWindows(now) {
+		out = append(out, windowInfo{Window: w, Start: w.Start(), End: w.End()})
+	}
+	return out
 }
 
-// ballotErrorResponse refuses a ballot change; Ballot is the ballot as
-// stored when the refusal concerns it (ballot_full, not_on_ballot), so the
-// page can show what to remove.
-type ballotErrorResponse struct {
-	Error  string          `json:"error"`
-	Code   string          `json:"code"`
-	Ballot *ballotResponse `json:"ballot,omitempty"`
-}
-
-// Codes of a refused ballot change.
+// Codes of a refused ballot.
 const (
-	codeClosed          = "closed"
-	codeBallotFull      = "ballot_full"
-	codeNotOnBallot     = "not_on_ballot"
-	codeConsentRequired = "consent_required"
-	codeInvalid         = "invalid_ballot"
-	// codeVerificationRequired: an account without a verified identity
-	// cannot vote.
-	codeVerificationRequired = "verification_required"
+	codeClosed      = "closed"
+	codeInvalid     = "invalid_ballot"
+	codeStaleSeq    = "stale_seq"
+	codeUnknownRoot = "unknown_root"
 )
 
-var errConsentRequired = errors.New("consent required: a ballot is a political opinion, it is stored only with your consent")
+// maxBallotBody bounds a ballot (a proof and a few ids).
+const maxBallotBody = 16 << 10
 
-func (s *Service) handleGetBallot(w http.ResponseWriter, r *http.Request) {
+// handleCastBallot takes an anonymous ballot. It asks nothing of who sends
+// it: the proof says a voter of the window cast it, and nothing else.
+func (s *Service) handleCastBallot(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.pollEvent(w, r)
 	if !ok {
 		return
 	}
-	user := accounts.UserFrom(r)
-	ids, err := s.store.Ballot(r.Context(), e.ID, user.ID)
+	count := func(outcome string) { metrics.BallotChangesTotal.WithLabelValues(outcome).Inc() }
+	var b AnonBallot
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBallotBody)).Decode(&b); err != nil {
+		count(codeInvalid)
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: "invalid ballot: " + err.Error(), Code: codeInvalid})
+		return
+	}
+	candidates, err := s.store.CandidateIDs(r.Context(), e.ID)
 	if err != nil {
-		httpx.InternalError(w, err, "failed to get ballot")
+		httpx.InternalError(w, err, "failed to get candidates")
 		return
-	}
-	consented, err := s.store.Consented(r.Context(), user.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get consent")
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, newBallotResponse(e, ids, consented))
-}
-
-// changeBallot applies edit to the user's ballot of the event and answers
-// with the ballot as stored, or with the reason of the refusal. A ballot that
-// gains a vote needs the user's consent (given before, or now with consent);
-// one that only loses votes does not.
-func (s *Service) changeBallot(w http.ResponseWriter, r *http.Request, e *Event, consent bool, edit func(current []int64) ([]int64, error)) {
-	ctx := r.Context()
-	user := accounts.UserFrom(r)
-	if !IsOpen(e, time.Now()) {
-		httpx.WriteJSON(w, http.StatusForbidden, ballotErrorResponse{Error: ErrClosed.Error(), Code: codeClosed})
-		return
-	}
-	candidates, err := s.store.CandidateIDs(ctx, e.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get poll candidates")
-		return
-	}
-	consentedBefore, err := s.store.Consented(ctx, user.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get consent")
-		return
-	}
-	var stored []int64
-	ids, err := s.store.UpdateBallot(ctx, e.ID, user.ID, consent, func(current []int64) ([]int64, error) {
-		stored = current
-		next, err := edit(current)
-		if err != nil {
-			return nil, err
-		}
-		limits := e
-		if !gainsVote(current, next) {
-			// Removals and reorders: allowed even on a ballot above a
-			// max_choices lowered since it was cast.
-			relaxed := *e
-			relaxed.MaxChoices = max(e.MaxChoices, len(current))
-			limits = &relaxed
-		} else if !user.Verified {
-			return nil, ErrNotVerified
-		} else if !consentedBefore && !consent {
-			return nil, errConsentRequired
-		}
-		return next, CheckBallot(limits, candidates, next, time.Now())
-	})
-	consented := consentedBefore || consent
-	outcome := "ok"
-	defer func() { metrics.BallotChangesTotal.WithLabelValues(outcome).Inc() }()
-	switch {
-	case err == nil:
-		s.results.invalidate(e.ID)
-		httpx.WriteJSON(w, http.StatusOK, newBallotResponse(e, ids, consented))
-	case errors.Is(err, ErrFull), errors.Is(err, ErrNotOnBallot):
-		b := newBallotResponse(e, stored, consentedBefore)
-		code := codeBallotFull
-		if errors.Is(err, ErrNotOnBallot) {
-			code = codeNotOnBallot
-		}
-		outcome = code
-		httpx.WriteJSON(w, http.StatusConflict, ballotErrorResponse{Error: err.Error(), Code: code, Ballot: &b})
-	case errors.Is(err, ErrNotVerified):
-		outcome = codeVerificationRequired
-		httpx.WriteJSON(w, http.StatusForbidden, ballotErrorResponse{Error: err.Error(), Code: codeVerificationRequired})
-	case errors.Is(err, errConsentRequired):
-		outcome = codeConsentRequired
-		httpx.WriteJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeConsentRequired})
-	case errors.Is(err, ErrClosed):
-		outcome = codeClosed
-		httpx.WriteJSON(w, http.StatusForbidden, ballotErrorResponse{Error: err.Error(), Code: codeClosed})
-	case errors.Is(err, ErrBallot), errors.Is(err, ErrNotCandidate):
-		outcome = codeInvalid
-		httpx.WriteJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: err.Error(), Code: codeInvalid})
-	default:
-		outcome = "error"
-		httpx.InternalError(w, err, "failed to save ballot")
-	}
-}
-
-// gainsVote tells whether next votes for someone current does not.
-func gainsVote(current, next []int64) bool {
-	for _, id := range next {
-		if !slices.Contains(current, id) {
-			return true
-		}
-	}
-	return false
-}
-
-// handleSaveBallot replaces the user's ballot: {"person_ids": [first, ...],
-// "consent": true}. It serves to reorder the votes; an empty list withdraws
-// them all.
-func (s *Service) handleSaveBallot(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.pollEvent(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		PersonIDs []int64 `json:"person_ids"`
-		Consent   bool    `json:"consent"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "invalid ballot", Code: codeInvalid})
-		return
-	}
-	if req.PersonIDs == nil {
-		req.PersonIDs = []int64{}
-	}
-	s.changeBallot(w, r, e, req.Consent, func([]int64) ([]int64, error) { return req.PersonIDs, nil })
-}
-
-// handleAddVote casts one vote: {"person_id": id, "consent": true}, after the
-// votes already cast. With "replace": other_id the vote takes the place (and
-// rank) of the vote for other_id. When every vote is used the answer is 409
-// ballot_full with the ballot, so the page can ask which vote to give up.
-func (s *Service) handleAddVote(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.pollEvent(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		PersonID int64 `json:"person_id"`
-		Replace  int64 `json:"replace"`
-		Consent  bool  `json:"consent"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || req.PersonID <= 0 {
-		httpx.WriteJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "person_id required", Code: codeInvalid})
-		return
-	}
-	s.changeBallot(w, r, e, req.Consent, func(current []int64) ([]int64, error) {
-		return AddVote(e, current, req.PersonID, req.Replace)
-	})
-}
-
-// handleRemoveVote takes back the vote for {personID}; the votes below move
-// up a rank. Removing a vote not cast changes nothing.
-func (s *Service) handleRemoveVote(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.pollEvent(w, r)
-	if !ok {
-		return
-	}
-	personID, err := strconv.ParseInt(chi.URLParam(r, "personID"), 10, 64)
-	if err != nil || personID <= 0 {
-		httpx.WriteJSON(w, http.StatusBadRequest, ballotErrorResponse{Error: "invalid person id", Code: codeInvalid})
-		return
-	}
-	s.changeBallot(w, r, e, false, func(current []int64) ([]int64, error) {
-		return RemoveVote(current, personID), nil
-	})
-}
-
-// myEventVotes is one event on the profile page with the user's votes.
-type myEventVotes struct {
-	Event *Event       `json:"event"`
-	Open  bool         `json:"open"`
-	Votes []UserChoice `json:"votes"`
-}
-
-// handleMyVotes lists the user's votes per event: every open event (with no
-// vote yet, it shows the votes left), and the closed ones they voted in.
-func (s *Service) handleMyVotes(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	user := accounts.UserFrom(r)
-	events, err := s.store.ListEvents(ctx)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to list polls")
-		return
-	}
-	choices, err := s.choices(ctx, user.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get votes")
-		return
-	}
-	byEvent := map[int64][]UserChoice{}
-	for _, c := range choices {
-		byEvent[c.EventID] = append(byEvent[c.EventID], c)
 	}
 	now := time.Now()
-	out := []myEventVotes{}
-	for i := range events {
-		e := &events[i]
-		votes, open := byEvent[e.ID], IsOpen(e, now)
-		if !open && len(votes) == 0 {
-			continue
+	if err := CheckAnonBallot(e, candidates, b, now); err != nil {
+		code := codeInvalid
+		if errors.Is(err, ErrClosed) {
+			code = codeClosed
 		}
-		if votes == nil {
-			votes = []UserChoice{}
-		}
-		out = append(out, myEventVotes{Event: e, Open: open, Votes: votes})
-	}
-	consented, err := s.store.Consented(ctx, user.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get consent")
+		count(code)
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: code})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user": user, "consented": consented, "events": out})
+	err = s.box.Cast(r.Context(), b)
+	var stale *StaleSeqError
+	switch {
+	case errors.As(err, &stale):
+		count(codeStaleSeq)
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": codeStaleSeq, "last_seq": stale.Last})
+		return
+	case errors.Is(err, ErrUnknownRoot):
+		count(codeUnknownRoot)
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: codeUnknownRoot})
+		return
+	case errors.Is(err, ErrBallot):
+		count(codeInvalid)
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: codeInvalid})
+		return
+	case err != nil:
+		httpx.InternalError(w, err, "failed to cast ballot")
+		return
+	}
+	count("ok")
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "waiting", "published_by": s.batches.nextBatch(now)})
+}
+
+// publicBallot is a published ballot as anyone reads it.
+type publicBallot struct {
+	Nullifier string  `json:"nullifier"`
+	Seq       int     `json:"seq"`
+	Kind      string  `json:"kind"`
+	Choices   []int64 `json:"choices"`
+}
+
+// handleListBallots lists the published ballots of an open window, the last
+// of each voter: the browser finds its own by its nullifier.
+func (s *Service) handleListBallots(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.pollEvent(w, r)
+	if !ok {
+		return
+	}
+	win, ok := windowParam(w, r)
+	if !ok {
+		return
+	}
+	ballots, err := s.box.Ballots(r.Context(), e.ID, win)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to list ballots")
+		return
+	}
+	out := make([]publicBallot, len(ballots))
+	for i, b := range ballots {
+		out[i] = publicBallot{Nullifier: b.Proof.Nullifier, Seq: b.Seq, Kind: b.Kind, Choices: b.Choices}
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// windowParam reads the {series} and {window} path parameters.
+func windowParam(w http.ResponseWriter, r *http.Request) (Window, bool) {
+	series, err1 := strconv.Atoi(chi.URLParam(r, "series"))
+	index, err2 := strconv.Atoi(chi.URLParam(r, "window"))
+	if err1 != nil || err2 != nil || series < 0 || series >= Series {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid window")
+		return Window{}, false
+	}
+	return Window{Series: series, Index: index}, true
+}
+
+// handleVoterTree returns every commitment of an open window, in order.
+func (s *Service) handleVoterTree(w http.ResponseWriter, r *http.Request) {
+	win, ok := windowParam(w, r)
+	if !ok {
+		return
+	}
+	t, err := s.box.Tree(r.Context(), win)
+	if errors.Is(err, ErrWindowNotOpen) {
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get voter tree")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, t)
+}
+
+// handleRegister admits a voting key: the request carries the commitment
+// and the proof of a document that binds it (ZKPassport), never an account.
+func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
+	document, provider, body, ok := s.accounts.ProveDocument(w, r)
+	if !ok {
+		return
+	}
+	var p struct {
+		Commitment string `json:"commitment"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil || p.Commitment == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "commitment required")
+		return
+	}
+	reg, err := s.box.Register(r.Context(), document, provider, p.Commitment)
+	switch {
+	case errors.Is(err, ErrCommitmentTaken):
+		metrics.VoterRegistrationsTotal.WithLabelValues(provider, "taken").Inc()
+		httpx.WriteJSON(w, http.StatusConflict, httpx.CodedError{Error: err.Error(), Code: "commitment_taken"})
+		return
+	case errors.Is(err, ErrBallot):
+		metrics.VoterRegistrationsTotal.WithLabelValues(provider, "invalid").Inc()
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
+		httpx.InternalError(w, err, "failed to register voter")
+		return
+	}
+	metrics.VoterRegistrationsTotal.WithLabelValues(provider, reg.Status).Inc()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"status": reg.Status,
+		"from":   []windowInfo{{reg.From[0], reg.From[0].Start(), reg.From[0].End()}, {reg.From[1], reg.From[1].Start(), reg.From[1].End()}},
+	})
+}
+
+// handleLog returns the public log after ?after (a seq), at most ?limit
+// entries.
+func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	entries, err := s.box.Log(r.Context(), after, limit)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to read vote log")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, entries)
+}
+
+// readCiphertext reads {"ciphertext"} and the other named fields of a vault
+// or link request.
+func readCiphertext(w http.ResponseWriter, r *http.Request, into any) bool {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2*maxCiphertext))
+	if err != nil {
+		httpx.WriteError(w, http.StatusRequestEntityTooLarge, "payload too large")
+		return false
+	}
+	if err := json.Unmarshal(raw, into); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid payload")
+		return false
+	}
+	return true
+}
+
+func nameParam(w http.ResponseWriter, r *http.Request, key string) (string, bool) {
+	v := chi.URLParam(r, key)
+	if !vaultName.MatchString(v) {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid "+key)
+		return "", false
+	}
+	return v, true
+}
+
+func (s *Service) handleVaultGet(w http.ResponseWriter, r *http.Request) {
+	lookup, ok := nameParam(w, r, "lookup")
+	if !ok {
+		return
+	}
+	c, err := s.box.VaultGet(r.Context(), lookup)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to read vault")
+		return
+	}
+	if c == "" {
+		httpx.WriteError(w, http.StatusNotFound, "nothing under this passkey")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"ciphertext": c})
+}
+
+func (s *Service) handleVaultPut(w http.ResponseWriter, r *http.Request) {
+	lookup, ok := nameParam(w, r, "lookup")
+	if !ok {
+		return
+	}
+	var p struct {
+		Ciphertext string `json:"ciphertext"`
+		WriteToken string `json:"write_token"`
+	}
+	if !readCiphertext(w, r, &p) {
+		return
+	}
+	if p.Ciphertext == "" || len(p.Ciphertext) > maxCiphertext || !vaultName.MatchString(p.WriteToken) {
+		httpx.WriteError(w, http.StatusBadRequest, "ciphertext and write_token required")
+		return
+	}
+	err := s.box.VaultPut(r.Context(), lookup, p.Ciphertext, p.WriteToken)
+	if errors.Is(err, ErrVaultWrite) {
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err != nil {
+		httpx.InternalError(w, err, "failed to write vault")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleLinkPut(w http.ResponseWriter, r *http.Request) {
+	channel, ok := nameParam(w, r, "channel")
+	if !ok {
+		return
+	}
+	var p struct {
+		Ciphertext string `json:"ciphertext"`
+	}
+	if !readCiphertext(w, r, &p) {
+		return
+	}
+	if p.Ciphertext == "" || len(p.Ciphertext) > maxCiphertext {
+		httpx.WriteError(w, http.StatusBadRequest, "ciphertext required")
+		return
+	}
+	err := s.box.LinkPut(r.Context(), channel, p.Ciphertext)
+	if errors.Is(err, ErrLinkUsed) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		httpx.InternalError(w, err, "failed to answer link")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Service) handleLinkTake(w http.ResponseWriter, r *http.Request) {
+	channel, ok := nameParam(w, r, "channel")
+	if !ok {
+		return
+	}
+	c, err := s.box.LinkTake(r.Context(), channel)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to read link")
+		return
+	}
+	if c == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"ciphertext": c})
 }

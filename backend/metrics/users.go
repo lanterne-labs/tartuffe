@@ -32,14 +32,22 @@ var (
 		Help:      "Identity verifications by provider and outcome (ok, moved, again, other_document, refused, error)",
 	}, []string{"provider", "outcome"})
 
-	// BallotChangesTotal counts the ballot changes by outcome (ok, or the
-	// code of the refusal: verification_required, consent_required, closed,
-	// ballot_full, ...).
+	// BallotChangesTotal counts the anonymous ballots cast by outcome (ok,
+	// or the code of the refusal: closed, invalid_ballot, stale_seq,
+	// unknown_root).
 	BallotChangesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: Namespace,
 		Name:      "ballot_changes_total",
 		Help:      "Ballot changes by outcome (ok or the refusal code)",
 	}, []string{"outcome"})
+
+	// VoterRegistrationsTotal counts the voting keys registered by provider
+	// and outcome (registered, replaced, already, taken, invalid).
+	VoterRegistrationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: Namespace,
+		Name:      "voter_registrations_total",
+		Help:      "Voting keys registered by provider and outcome (registered, replaced, already, taken, invalid)",
+	}, []string{"provider", "outcome"})
 
 	// FeedLikesTotal counts the +1 given and taken back, by item kind.
 	FeedLikesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

@@ -17,7 +17,7 @@ const resultsTTL = 2 * time.Second
 // tallies are the counts of one event, with the candidates' cards.
 type tallies struct {
 	candidates []CandidateTally
-	voters     int
+	turnout    Turnout
 	at         time.Time
 }
 
@@ -42,13 +42,13 @@ func newResultsCache(ttl time.Duration) *resultsCache {
 
 // get returns the tallies of the event, querying them with load when the
 // cached ones are older than the TTL or were invalidated.
-func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context.Context, int64) ([]CandidateTally, int, error)) ([]CandidateTally, int, error) {
+func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context.Context, int64) ([]CandidateTally, Turnout, error)) ([]CandidateTally, Turnout, error) {
 	c.mu.Lock()
 	e, ok := c.entries[eventID]
 	gen, allGen := c.gen[eventID], c.allGen
 	c.mu.Unlock()
 	if ok && time.Since(e.at) < c.ttl {
-		return e.candidates, e.voters, nil
+		return e.candidates, e.turnout, nil
 	}
 	key := strconv.FormatInt(eventID, 10) + "/" + strconv.FormatUint(gen, 10) + "/" + strconv.FormatUint(allGen, 10)
 	v, err, _ := c.group.Do(key, func() (any, error) {
@@ -56,7 +56,7 @@ func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context
 		// waiting on it must not fail because that one was cancelled.
 		t := tallies{at: time.Now()}
 		var err error
-		t.candidates, t.voters, err = load(context.WithoutCancel(ctx), eventID)
+		t.candidates, t.turnout, err = load(context.WithoutCancel(ctx), eventID)
 		if err != nil {
 			return nil, err
 		}
@@ -68,10 +68,10 @@ func (c *resultsCache) get(ctx context.Context, eventID int64, load func(context
 		return t, nil
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, Turnout{}, err
 	}
 	t := v.(tallies)
-	return t.candidates, t.voters, nil
+	return t.candidates, t.turnout, nil
 }
 
 // invalidate drops the tallies of the event (eventID 0: of every event).

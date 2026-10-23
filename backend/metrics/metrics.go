@@ -74,6 +74,7 @@ func init() {
 		AuthSignInsTotal,
 		VerificationsTotal,
 		BallotChangesTotal,
+		VoterRegistrationsTotal,
 		FeedLikesTotal,
 		UserReportsTotal,
 		AccountsDeletedTotal,

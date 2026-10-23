@@ -17,10 +17,10 @@ func TestResultsCacheSharesOneQuery(t *testing.T) {
 	c := newResultsCache(time.Minute)
 	var calls atomic.Int32
 	release := make(chan struct{})
-	load := func(context.Context, int64) ([]CandidateTally, int, error) {
+	load := func(context.Context, int64) ([]CandidateTally, Turnout, error) {
 		calls.Add(1)
 		<-release
-		return nil, 7, nil
+		return nil, Turnout{Voters: 7}, nil
 	}
 	var wg sync.WaitGroup
 	for range 50 {
@@ -29,7 +29,7 @@ func TestResultsCacheSharesOneQuery(t *testing.T) {
 			defer wg.Done()
 			_, voters, err := c.get(context.Background(), 1, load)
 			assert.NoError(t, err)
-			assert.Equal(t, 7, voters)
+			assert.Equal(t, Turnout{Voters: 7}, voters)
 		}()
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -47,28 +47,30 @@ func TestResultsCacheSharesOneQuery(t *testing.T) {
 func TestResultsCacheInvalidate(t *testing.T) {
 	c := newResultsCache(time.Minute)
 	voters := 1
-	load := func(context.Context, int64) ([]CandidateTally, int, error) { return nil, voters, nil }
+	load := func(context.Context, int64) ([]CandidateTally, Turnout, error) {
+		return nil, Turnout{Voters: voters}, nil
+	}
 	_, got, _ := c.get(context.Background(), 1, load)
-	assert.Equal(t, 1, got)
+	assert.Equal(t, Turnout{Voters: 1}, got)
 
 	voters = 2
 	_, got, _ = c.get(context.Background(), 1, load)
-	assert.Equal(t, 1, got, "cached")
+	assert.Equal(t, Turnout{Voters: 1}, got, "cached")
 	c.invalidate(1)
 	_, got, _ = c.get(context.Background(), 1, load)
-	assert.Equal(t, 2, got)
+	assert.Equal(t, Turnout{Voters: 2}, got)
 
 	voters = 3
 	c.invalidate(0)
 	_, got, _ = c.get(context.Background(), 1, load)
-	assert.Equal(t, 3, got, "invalidating every event")
+	assert.Equal(t, Turnout{Voters: 3}, got, "invalidating every event")
 
 	// A query in flight while the ballot changes.
 	started, release := make(chan struct{}), make(chan struct{})
-	slow := func(context.Context, int64) ([]CandidateTally, int, error) {
+	slow := func(context.Context, int64) ([]CandidateTally, Turnout, error) {
 		close(started)
 		<-release
-		return nil, 3, nil
+		return nil, Turnout{Voters: 3}, nil
 	}
 	c.invalidate(1)
 	done := make(chan struct{})
@@ -82,7 +84,7 @@ func TestResultsCacheInvalidate(t *testing.T) {
 	<-done
 	voters = 4
 	_, got, _ = c.get(context.Background(), 1, load)
-	assert.Equal(t, 4, got, "the stale query was not stored")
+	assert.Equal(t, Turnout{Voters: 4}, got, "the stale query was not stored")
 }
 
 // TestResultsCacheTTL: counts changed elsewhere show once the TTL passes,
@@ -90,19 +92,21 @@ func TestResultsCacheInvalidate(t *testing.T) {
 func TestResultsCacheTTL(t *testing.T) {
 	c := newResultsCache(20 * time.Millisecond)
 	voters := 1
-	load := func(context.Context, int64) ([]CandidateTally, int, error) { return nil, voters, nil }
+	load := func(context.Context, int64) ([]CandidateTally, Turnout, error) {
+		return nil, Turnout{Voters: voters}, nil
+	}
 	c.get(context.Background(), 1, load)
 	voters = 2
 	time.Sleep(30 * time.Millisecond)
 	_, got, _ := c.get(context.Background(), 1, load)
-	assert.Equal(t, 2, got)
+	assert.Equal(t, Turnout{Voters: 2}, got)
 
-	failing := func(context.Context, int64) ([]CandidateTally, int, error) {
-		return nil, 0, assert.AnError
+	failing := func(context.Context, int64) ([]CandidateTally, Turnout, error) {
+		return nil, Turnout{Voters: 0}, assert.AnError
 	}
 	_, _, err := c.get(context.Background(), 2, failing)
 	assert.ErrorIs(t, err, assert.AnError)
 	_, got, err = c.get(context.Background(), 2, load)
 	require.NoError(t, err)
-	assert.Equal(t, 2, got)
+	assert.Equal(t, Turnout{Voters: 2}, got)
 }

@@ -12,6 +12,7 @@ require (
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
 	github.com/go-jose/go-jose/v4 v4.1.1
+	github.com/iden3/go-iden3-crypto v0.0.17
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/johannesboyne/gofakes3 v0.0.0-20260208201424-4c385a1f6a73
 	github.com/joho/godotenv v1.5.1
@@ -21,10 +22,25 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.0
+	github.com/vocdoni/circom2gnark v1.0.0
 	golang.org/x/text v0.27.0
 )
 
-require golang.org/x/oauth2 v0.28.0 // indirect
+require (
+	github.com/bits-and-blooms/bitset v1.14.2 // indirect
+	github.com/blang/semver/v4 v4.0.0 // indirect
+	github.com/consensys/bavard v0.1.13 // indirect
+	github.com/consensys/gnark v0.11.0 // indirect
+	github.com/consensys/gnark-crypto v0.14.0 // indirect
+	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
+	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
+	github.com/ingonyama-zk/icicle v1.1.0 // indirect
+	github.com/ingonyama-zk/iciclegnark v0.1.0 // indirect
+	github.com/mmcloughlin/addchain v0.4.0 // indirect
+	github.com/ronanh/intcomp v1.1.0 // indirect
+	golang.org/x/oauth2 v0.28.0 // indirect
+	rsc.io/tmplfunc v0.0.3 // indirect
+)
 
 require (
 	github.com/RadhiFadlillah/whatlanggo v0.0.0-20240916001553-aac1f0f737fc // indirect
@@ -79,7 +95,7 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.40.0 // indirect
+	golang.org/x/crypto v0.40.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sync v0.16.0

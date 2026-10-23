@@ -40,16 +40,8 @@ func (p onePoll) GetEvent(_ context.Context, slug string) (*polls.Event, error) 
 	return p.event(), nil
 }
 func (onePoll) CandidateIDs(context.Context, int64) ([]int64, error) { return []int64{}, nil }
-func (onePoll) Tallies(context.Context, int64) ([]polls.CandidateTally, int, error) {
-	return []polls.CandidateTally{}, 0, nil
-}
-func (onePoll) Ballot(context.Context, int64, int64) ([]int64, error) { return []int64{}, nil }
-func (onePoll) Consented(context.Context, int64) (bool, error)        { return false, nil }
-func (onePoll) UpdateBallot(context.Context, int64, int64, bool, func([]int64) ([]int64, error)) ([]int64, error) {
-	return []int64{}, nil
-}
-func (onePoll) UserChoices(context.Context, int64) ([]polls.UserChoice, error) {
-	return []polls.UserChoice{}, nil
+func (onePoll) Tallies(context.Context, int64) ([]polls.CandidateTally, polls.Turnout, error) {
+	return []polls.CandidateTally{}, polls.Turnout{}, nil
 }
 func (onePoll) Cards(context.Context, []int64) (map[int64]polls.Card, error) {
 	return map[int64]polls.Card{}, nil
@@ -59,7 +51,7 @@ func (onePoll) Cards(context.Context, []int64) (map[int64]polls.Card, error) {
 // reached by these tests), with noop sign-in.
 func newServer(pingErr error) *Server {
 	acc := accounts.NewService(accountstest.NewMemStore(), providers.NewRegistry(providers.Noop{}))
-	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, onePoll{}, acc))
+	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, nil, onePoll{}, acc, polls.DefaultBatches))
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -94,14 +86,19 @@ func TestRoutes(t *testing.T) {
 		"PATCH /api/auth/me",
 		"GET /api/auth/me",
 		"DELETE /api/auth/me",
-		"GET /api/me/votes",
 		"POST /api/auth/signout",
+		"POST /api/auth/sessions",
 		"GET /api/polls",
 		"GET /api/polls/{slug}",
-		"GET /api/polls/{slug}/ballot",
-		"POST /api/polls/{slug}/ballot",
-		"POST /api/polls/{slug}/votes",
-		"DELETE /api/polls/{slug}/votes/{personID}",
+		"POST /api/polls/{slug}/ballots",
+		"GET /api/polls/{slug}/ballots/{series}/{window}",
+		"GET /api/voters/trees/{series}/{window}",
+		"POST /api/voters/register/{provider}",
+		"GET /api/vote-log",
+		"GET /api/vault/{lookup}",
+		"PUT /api/vault/{lookup}",
+		"POST /api/links/{channel}",
+		"GET /api/links/{channel}",
 		"GET /api/person/{id}/score",
 		"GET /api/feed",
 		"GET /api/share/{kind}/{id}",

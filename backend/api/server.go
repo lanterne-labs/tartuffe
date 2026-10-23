@@ -152,8 +152,9 @@ func (s *Server) setupRoutes() {
 		s.mirror.Routes(r)
 		// A proof costs a check: a tighter limit, shared by the challenges,
 		// the sign-ins and the verifications.
-		s.accounts.Routes(r, accounts.SignInLimit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), s.keyIP))
-		s.polls.Routes(r)
+		signin := accounts.SignInLimit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), s.keyIP)
+		s.accounts.Routes(r, signin)
+		s.polls.Routes(r, signin)
 	})
 }
 

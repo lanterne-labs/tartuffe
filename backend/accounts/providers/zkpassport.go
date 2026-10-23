@@ -3,6 +3,8 @@ package providers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -148,13 +150,26 @@ type zkVerifierOutput struct {
 	Errors           json.RawMessage `json:"errors"`
 }
 
-// Verify reads {"challenge", "proofs", "result"} (the challenge is already
-// consumed by the API) and runs the verifier on it.
+// Binding is the custom data a proof binds: the challenge alone, or with a
+// voting key's commitment H(challenge, commitment) as hex, so the proof
+// admits that commitment and no other.
+func Binding(challenge, commitment string) string {
+	if commitment == "" {
+		return challenge
+	}
+	h := sha256.Sum256([]byte(challenge + ":" + commitment))
+	return hex.EncodeToString(h[:])
+}
+
+// Verify reads {"challenge", "proofs", "result"} and, to register a voting
+// key, "commitment" (the challenge is already consumed by the API), and runs
+// the verifier on it.
 func (z *ZKPassport) Verify(ctx context.Context, payload json.RawMessage) (Identity, error) {
 	var p struct {
-		Challenge string          `json:"challenge"`
-		Proofs    json.RawMessage `json:"proofs"`
-		Result    json.RawMessage `json:"result"`
+		Challenge  string          `json:"challenge"`
+		Commitment string          `json:"commitment"`
+		Proofs     json.RawMessage `json:"proofs"`
+		Result     json.RawMessage `json:"result"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return Identity{}, fmt.Errorf("%w: %v", ErrInvalidProof, err)
@@ -165,7 +180,7 @@ func (z *ZKPassport) Verify(ctx context.Context, payload json.RawMessage) (Ident
 	in, err := json.Marshal(map[string]any{
 		"proofs":      p.Proofs,
 		"result":      p.Result,
-		"challenge":   p.Challenge,
+		"challenge":   Binding(p.Challenge, p.Commitment),
 		"domain":      z.Domain,
 		"scope":       z.Scope,
 		"minAge":      z.MinAge,

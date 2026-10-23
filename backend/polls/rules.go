@@ -7,7 +7,6 @@ package polls
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -37,7 +36,15 @@ type CandidateResult struct {
 
 // Results is the state of an event at one moment.
 type Results struct {
+	// Voters counts the ballots, blank votes included: the shares are of
+	// them, so a blank vote weighs like any other.
 	Voters int `json:"voters"`
+	// Blank and BlankShare count the blank votes (nil while hidden).
+	Blank      *int     `json:"blank"`
+	BlankShare *float64 `json:"blank_share"`
+	// Window is the window the results count, and Until when it ends.
+	Window Window    `json:"window"`
+	Until  time.Time `json:"until"`
 	// Open is true while ballots are taken.
 	Open bool `json:"open"`
 	// Hidden is set (HiddenTooFewVoters, HiddenBlackout) when the shares are
@@ -63,9 +70,11 @@ func InBlackout(e *Event, now time.Time) bool {
 }
 
 // Compute builds the results from the tallies of the event's candidates and
-// its number of voters.
-func Compute(e *Event, tallies []CandidateTally, voters int, now time.Time) Results {
-	r := Results{Voters: voters, Open: IsOpen(e, now), Candidates: make([]CandidateResult, 0, len(tallies))}
+// its turnout, counted in the results' window at now.
+func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time) Results {
+	voters := turnout.Voters
+	w := ResultWindow(now)
+	r := Results{Voters: voters, Open: IsOpen(e, now), Window: w, Until: w.End(), Candidates: make([]CandidateResult, 0, len(tallies))}
 	switch {
 	case InBlackout(e, now):
 		r.Hidden = HiddenBlackout
@@ -104,6 +113,8 @@ func Compute(e *Event, tallies []CandidateTally, voters int, now time.Time) Resu
 	if r.Hidden != "" {
 		return r
 	}
+	blank, blankShare := turnout.Blank, float64(turnout.Blank)/float64(voters)
+	r.Blank, r.BlankShare = &blank, &blankShare
 
 	// Preference ranks: most first choices first, then most chosen at all;
 	// equal on both share a rank.
@@ -160,39 +171,4 @@ func CheckBallot(e *Event, candidates []int64, personIDs []int64, now time.Time)
 		seen[id] = true
 	}
 	return nil
-}
-
-// ErrFull refuses a new vote when every vote of the ballot is used: one must
-// be removed (or replaced) first.
-var ErrFull = fmt.Errorf("%w: every vote is used, remove one first", ErrBallot)
-
-// ErrNotOnBallot refuses to replace a vote the ballot does not hold.
-var ErrNotOnBallot = fmt.Errorf("%w: this vote is not on the ballot", ErrBallot)
-
-// AddVote returns the ballot with a vote for personID: in place of replace
-// when replace is not zero, else after the votes already cast. A vote already
-// cast leaves the ballot as it is, so a repeated request is harmless.
-func AddVote(e *Event, ballot []int64, personID, replace int64) ([]int64, error) {
-	if slices.Contains(ballot, personID) {
-		return ballot, nil
-	}
-	if replace != 0 {
-		i := slices.Index(ballot, replace)
-		if i < 0 {
-			return nil, ErrNotOnBallot
-		}
-		next := slices.Clone(ballot)
-		next[i] = personID
-		return next, nil
-	}
-	if len(ballot) >= e.MaxChoices {
-		return nil, ErrFull
-	}
-	return append(slices.Clone(ballot), personID), nil
-}
-
-// RemoveVote returns the ballot without the vote for personID; the votes
-// below it move up a rank.
-func RemoveVote(ballot []int64, personID int64) []int64 {
-	return slices.DeleteFunc(slices.Clone(ballot), func(id int64) bool { return id == personID })
 }

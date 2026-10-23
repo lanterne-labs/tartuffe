@@ -28,7 +28,7 @@ func sampleTallies() []CandidateTally {
 // TestComputeRanks: preference orders by first choices, then by how often a
 // candidate is chosen at all; honesty by score. Equal values share a rank.
 func TestComputeRanks(t *testing.T) {
-	r := Compute(event(), sampleTallies(), 4, now)
+	r := Compute(event(), sampleTallies(), Turnout{Voters: 4}, now)
 	require.Empty(t, r.Hidden)
 	assert.True(t, r.Open)
 	require.Len(t, r.Candidates, 4)
@@ -55,13 +55,13 @@ func TestComputeRanks(t *testing.T) {
 // TestComputeHidden: under min_voters or in a blackout no count, share or
 // preference rank leaves the server; the honesty ranks still do.
 func TestComputeHidden(t *testing.T) {
-	r := Compute(event(), sampleTallies(), 1, now)
+	r := Compute(event(), sampleTallies(), Turnout{Voters: 1}, now)
 	assert.Equal(t, HiddenTooFewVoters, r.Hidden)
 	assert.Equal(t, 1, r.Voters)
 
 	e := event()
 	e.Blackouts = []Blackout{{StartsAt: now.Add(-time.Minute), EndsAt: now.Add(time.Minute)}}
-	r = Compute(e, sampleTallies(), 4, now)
+	r = Compute(e, sampleTallies(), Turnout{Voters: 4}, now)
 	assert.Equal(t, HiddenBlackout, r.Hidden)
 	assert.Equal(t, "Bruno", r.Candidates[0].Name, "by honesty while hidden")
 	for _, c := range r.Candidates {
@@ -74,7 +74,7 @@ func TestComputeHidden(t *testing.T) {
 
 	e.MinVoters = 0
 	e.Blackouts = nil
-	assert.Equal(t, HiddenTooFewVoters, Compute(e, sampleTallies(), 0, now).Hidden, "no ballot at all: nothing to share")
+	assert.Equal(t, HiddenTooFewVoters, Compute(e, sampleTallies(), Turnout{Voters: 0}, now).Hidden, "no ballot at all: nothing to share")
 }
 
 func TestCheckBallot(t *testing.T) {
@@ -96,29 +96,12 @@ func TestCheckBallot(t *testing.T) {
 	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, e.OpensAt.Add(-time.Second)), ErrClosed)
 }
 
-// TestAddRemoveVote: a vote goes after the others until the credits are used;
-// a replace takes the rank of the vote it replaces; a repeated vote and a
-// removal of a vote not cast change nothing.
-func TestAddRemoveVote(t *testing.T) {
-	e := event()
-	b, err := AddVote(e, []int64{}, 1, 0)
-	require.NoError(t, err)
-	assert.Equal(t, []int64{1}, b)
-	b, err = AddVote(e, b, 1, 0)
-	require.NoError(t, err)
-	assert.Equal(t, []int64{1}, b)
-	ballot := []int64{1, 2, 3}
-	_, err = AddVote(e, ballot, 4, 0)
-	assert.ErrorIs(t, err, ErrFull)
-	assert.ErrorIs(t, err, ErrBallot)
-	b, err = AddVote(e, ballot, 4, 2)
-	require.NoError(t, err)
-	assert.Equal(t, []int64{1, 4, 3}, b)
-	assert.Equal(t, []int64{1, 2, 3}, ballot, "the ballot given is not changed")
-	_, err = AddVote(e, ballot, 4, 9)
-	assert.ErrorIs(t, err, ErrNotOnBallot)
-
-	assert.Equal(t, []int64{1, 3}, RemoveVote(ballot, 2))
-	assert.Equal(t, []int64{1, 2, 3}, RemoveVote(ballot, 9))
-	assert.Equal(t, []int64{1, 2, 3}, ballot)
+// TestComputeBlank: a blank vote counts in the voters and has its share.
+func TestComputeBlank(t *testing.T) {
+	r := Compute(event(), sampleTallies(), Turnout{Voters: 5, Blank: 1}, time.Now())
+	require.NotNil(t, r.Blank)
+	assert.Equal(t, 1, *r.Blank)
+	assert.InDelta(t, 0.2, *r.BlankShare, 1e-9)
+	hidden := Compute(event(), sampleTallies(), Turnout{Voters: 0}, time.Now())
+	assert.Nil(t, hidden.Blank, "hidden with the shares")
 }

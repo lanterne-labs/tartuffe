@@ -1,17 +1,23 @@
 // Package polls is the site's votes: the polls (the 2027 presidential
-// pre-poll first, any question later), their ballots, the consent to keep
-// them, and their results. It serves /api/polls/* and /api/me/votes. Who is
-// signed in, and whether their identity is verified, comes from accounts;
-// who the candidates are comes from People. The polls keep only ids of both.
+// pre-poll first, any question later), their anonymous ballots and their
+// results. A document (accounts.ProveDocument) admits a voter's commitment;
+// a ballot proves that one of the admitted voters cast it, never which
+// (package semaphore); every registration, ballot and tally goes to a public
+// log anyone can recount. It serves /api/polls/*, /api/voters/*,
+// /api/vote-log, /api/vault/* and /api/links/*. Who the candidates are comes
+// from People: the polls keep only their ids. No ballot names an account.
 package polls
 
 import (
 	"context"
+	"net/http"
 	"sort"
+	"time"
 
 	"digital-mirror/backend/accounts"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 )
 
 // People gives the cards of the candidates (persons of the mirror today).
@@ -21,44 +27,90 @@ type People interface {
 
 // Service serves the polls.
 type Service struct {
-	store    Store
+	store Store
+	// box keeps the anonymous ballots: the voters' commitments, the
+	// ballots, the public log, the vault and the device links.
+	box      *PGStore
 	people   People
 	accounts *accounts.Service
 	results  *resultsCache
+	batches  BatchConfig
 }
 
-// NewService serves the polls of the store, for the users of accounts.
-func NewService(store Store, people People, acc *accounts.Service) *Service {
-	return &Service{store: store, people: people, accounts: acc, results: newResultsCache(resultsTTL)}
+// BatchConfig says when the waiting ballots are published: every Interval,
+// once at least Min wait, or whatever waits once the oldest waited MaxWait.
+type BatchConfig struct {
+	Interval time.Duration
+	Min      int
+	MaxWait  time.Duration
 }
 
-// Changed drops the cached results: ballots changed out of the polls' sight
-// (an identity moved, an account deleted).
-func (s *Service) Changed() { s.results.invalidate(0) }
+// DefaultBatches publishes hourly, at least 3 ballots at once, none waiting
+// more than 6 hours.
+var DefaultBatches = BatchConfig{Interval: time.Hour, Min: 3, MaxWait: 6 * time.Hour}
 
-// Routes mounts the polls' endpoints on the /api router.
-func (s *Service) Routes(r chi.Router) {
-	need := s.accounts.RequireUser
+// nextBatch is when a ballot cast at now is published at the latest.
+func (c BatchConfig) nextBatch(now time.Time) time.Time {
+	return now.Truncate(c.Interval).Add(c.Interval).Add(c.MaxWait)
+}
+
+// NewService serves the polls of the store and the ballots of the box (the
+// same PGStore, but in tests); acc checks the documents.
+func NewService(store Store, box *PGStore, people People, acc *accounts.Service, batches BatchConfig) *Service {
+	return &Service{store: store, box: box, people: people, accounts: acc, results: newResultsCache(resultsTTL), batches: batches}
+}
+
+// Routes mounts the polls' endpoints on the /api router. signin limits the
+// registrations (each costs a document proof check).
+func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 	r.Get("/polls", s.handleListPolls)
 	r.Get("/polls/{slug}", s.handleGetPoll)
-	r.Get("/polls/{slug}/ballot", need(s.handleGetBallot))
-	r.Post("/polls/{slug}/ballot", need(s.handleSaveBallot))
-	r.Post("/polls/{slug}/votes", need(s.handleAddVote))
-	r.Delete("/polls/{slug}/votes/{personID}", need(s.handleRemoveVote))
-	r.Get("/me/votes", need(s.handleMyVotes))
+	r.Post("/polls/{slug}/ballots", s.handleCastBallot)
+	r.Get("/polls/{slug}/ballots/{series}/{window}", s.handleListBallots)
+	r.Get("/voters/trees/{series}/{window}", s.handleVoterTree)
+	r.With(signin).Post("/voters/register/{provider}", s.handleRegister)
+	r.Get("/vote-log", s.handleLog)
+	r.Get("/vault/{lookup}", s.handleVaultGet)
+	r.With(signin).Put("/vault/{lookup}", s.handleVaultPut)
+	r.With(signin).Post("/links/{channel}", s.handleLinkPut)
+	r.Get("/links/{channel}", s.handleLinkTake)
+}
+
+// Run publishes the waiting ballots in batches until ctx ends.
+func (s *Service) Run(ctx context.Context) {
+	tick := time.NewTicker(s.batches.Interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			events, err := s.box.PublishBatch(ctx, s.batches.Min, s.batches.MaxWait)
+			if err != nil {
+				log.Error().Err(err).Msg("publish ballots")
+				continue
+			}
+			for _, e := range events {
+				s.results.invalidate(e)
+			}
+			if len(events) > 0 {
+				log.Info().Int("polls", len(events)).Msg("ballots published")
+			}
+		}
+	}
 }
 
 // tallies are the event's counts with the candidates' cards, by name.
-func (s *Service) tallies(ctx context.Context, eventID int64) ([]CandidateTally, int, error) {
+func (s *Service) tallies(ctx context.Context, eventID int64) ([]CandidateTally, Turnout, error) {
 	return TalliesWithCards(ctx, s.store, s.people, eventID)
 }
 
 // TalliesWithCards are the event's counts of the store with the candidates'
 // cards of people, by name.
-func TalliesWithCards(ctx context.Context, store Store, people People, eventID int64) ([]CandidateTally, int, error) {
-	out, voters, err := store.Tallies(ctx, eventID)
+func TalliesWithCards(ctx context.Context, store Store, people People, eventID int64) ([]CandidateTally, Turnout, error) {
+	out, turnout, err := store.Tallies(ctx, eventID)
 	if err != nil {
-		return nil, 0, err
+		return nil, Turnout{}, err
 	}
 	ids := make([]int64, len(out))
 	for i, c := range out {
@@ -66,32 +118,11 @@ func TalliesWithCards(ctx context.Context, store Store, people People, eventID i
 	}
 	cards, err := people.Cards(ctx, ids)
 	if err != nil {
-		return nil, 0, err
+		return nil, Turnout{}, err
 	}
 	for i := range out {
 		out[i].Card = cards[out[i].PersonID]
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, voters, nil
-}
-
-// choices are the user's votes with the candidates' cards.
-func (s *Service) choices(ctx context.Context, userID int64) ([]UserChoice, error) {
-	out, err := s.store.UserChoices(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]int64, len(out))
-	for i, c := range out {
-		ids[i] = c.PersonID
-	}
-	cards, err := s.people.Cards(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range out {
-		c := cards[out[i].PersonID]
-		out[i].Name, out[i].ImageURL, out[i].HonestyScore, out[i].FactCount = c.Name, c.ImageURL, c.HonestyScore, c.FactCount
-	}
-	return out, nil
+	return out, turnout, nil
 }

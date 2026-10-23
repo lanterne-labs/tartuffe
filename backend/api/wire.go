@@ -2,6 +2,10 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
 
 	"digital-mirror/backend/accounts"
 	"digital-mirror/backend/accounts/providers"
@@ -10,25 +14,41 @@ import (
 	"digital-mirror/backend/storage"
 )
 
-// Wire builds the three parts on the database of storer: the polls follow
-// the accounts through their hooks (a document moving takes its ballots, a
-// deleted account refreshes the results), and get the candidates' cards
-// from the mirror.
-func Wire(storer *storage.PostgresStorer, reg *providers.Registry) (*accounts.Service, *mirror.Service, *polls.Service) {
-	pollStore := polls.NewPGStore(storer.Pool(), accounts.LockVerified)
-	acc := accounts.NewService(NewAccountStore(storer, pollStore), reg)
-	p := polls.NewService(pollStore, PersonCards{storer}, acc)
-	acc.Changed = append(acc.Changed, p.Changed)
+// Wire builds the three parts on the database of storer: the polls check
+// the voters' documents through the accounts (never their accounts: no
+// ballot names one), and get the candidates' cards from the mirror.
+func Wire(storer *storage.PostgresStorer, reg *providers.Registry, batches polls.BatchConfig) (*accounts.Service, *mirror.Service, *polls.Service) {
+	acc := accounts.NewService(accounts.NewPGStore(storer.Pool(), accounts.Hooks{}), reg)
+	acc.SubjectKey = []byte(os.Getenv("AUTH_SUBJECT_KEY"))
+	store := polls.NewPGStore(storer.Pool())
+	p := polls.NewService(store, store, PersonCards{storer}, acc, batches)
 	return acc, mirror.NewService(storer, acc), p
 }
 
-// NewAccountStore keeps the accounts on the database of storer, with the
-// polls' hooks.
-func NewAccountStore(storer *storage.PostgresStorer, pollStore *polls.PGStore) *accounts.PGStore {
-	return accounts.NewPGStore(storer.Pool(), accounts.Hooks{
-		Moved:    []accounts.MovedHook{pollStore.MoveBallots},
-		Deleting: []accounts.DeletingHook{pollStore.ForgetUser},
-	})
+// BatchesFromEnv reads VOTE_BATCH_INTERVAL, VOTE_BATCH_MIN and
+// VOTE_BATCH_MAX_WAIT (polls.DefaultBatches when unset).
+func BatchesFromEnv() (polls.BatchConfig, error) {
+	c := polls.DefaultBatches
+	for _, d := range []struct {
+		key string
+		v   *time.Duration
+	}{{"VOTE_BATCH_INTERVAL", &c.Interval}, {"VOTE_BATCH_MAX_WAIT", &c.MaxWait}} {
+		if s := os.Getenv(d.key); s != "" {
+			v, err := time.ParseDuration(s)
+			if err != nil || v <= 0 {
+				return c, fmt.Errorf("%s: %q is not a duration", d.key, s)
+			}
+			*d.v = v
+		}
+	}
+	if s := os.Getenv("VOTE_BATCH_MIN"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			return c, fmt.Errorf("VOTE_BATCH_MIN: %q is not a count", s)
+		}
+		c.Min = n
+	}
+	return c, nil
 }
 
 // PersonCards gives the polls the cards of the mirror's persons.

@@ -100,18 +100,31 @@ var pollResultsCmd = &cobra.Command{
 
 var pollPurgeUsersCmd = &cobra.Command{
 	Use:   "purge-users",
-	Short: "Delete the users of a sign-in provider with their ballots",
-	Long: `Delete every user of --provider with their sessions and ballots. Run it
-with --provider noop before a launch, once AUTH_PROVIDERS no longer names noop,
-so the test ballots do not count.`,
+	Short: "Delete the users of a sign-in provider",
+	Long: `Delete every user of --provider with their sessions. Run it with
+--provider noop before a launch, once AUTH_PROVIDERS no longer names noop.
+Their ballots are anonymous and cannot be found: dm poll reset-votes clears
+the test ballots.`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.NoArgs,
 	RunE:        runPollPurgeUsers,
 }
 
+var pollResetVotesCmd = &cobra.Command{
+	Use:   "reset-votes",
+	Short: "Delete every voting key, ballot and log entry (before a launch)",
+	Long: `Delete the registered voting keys, the ballots and the public log. A ballot
+is anonymous: the test ballots (noop voters) cannot be told from the others, so
+before a launch everything goes. Never once real voters have voted.`,
+	Annotations: map[string]string{"needs_db": "true"},
+	Args:        cobra.NoArgs,
+	RunE:        runPollResetVotes,
+}
+
 func init() {
 	rootCmd.AddCommand(pollCmd)
-	pollCmd.AddCommand(pollListCmd, pollEventCmd, pollBlackoutCmd, pollCandidateCmd, pollResultsCmd, pollPurgeUsersCmd)
+	pollCmd.AddCommand(pollListCmd, pollEventCmd, pollBlackoutCmd, pollCandidateCmd, pollResultsCmd, pollPurgeUsersCmd, pollResetVotesCmd)
+	pollResetVotesCmd.Flags().Bool("yes", false, "confirm")
 	pollEventCmd.AddCommand(pollEventSetCmd)
 	pollBlackoutCmd.AddCommand(pollBlackoutAddCmd, pollBlackoutClearCmd)
 	pollCandidateCmd.AddCommand(pollCandidateAddCmd, pollCandidateRemoveCmd)
@@ -148,7 +161,7 @@ func openPollStorer(ctx context.Context) (*storage.PostgresStorer, error) {
 
 // pollStore is the polls' store on the database of storer.
 func pollStore(storer *storage.PostgresStorer) *polls.PGStore {
-	return polls.NewPGStore(storer.Pool(), accounts.LockVerified)
+	return polls.NewPGStore(storer.Pool())
 }
 
 func mustPollEvent(ctx context.Context, storer *storage.PostgresStorer, slug string) (*polls.Event, error) {
@@ -176,7 +189,7 @@ func runPollList(cmd *cobra.Command, args []string) error {
 	now := time.Now()
 	fmt.Printf("%-24s %-30s %-8s %5s %5s %6s %6s  %s\n", "SLUG", "TITLE", "STATE", "MAX", "MIN", "CANDS", "VOTERS", "CLOSES")
 	for _, e := range events {
-		tallies, voters, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
+		tallies, turnout, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
 		if err != nil {
 			return err
 		}
@@ -195,7 +208,7 @@ func runPollList(cmd *cobra.Command, args []string) error {
 		if e.Featured {
 			title = "★ " + title
 		}
-		fmt.Printf("%-24s %-30.30s %-8s %5d %5d %6d %6d  %s\n", e.Slug, title, state, e.MaxChoices, e.MinVoters, len(tallies), voters, closes)
+		fmt.Printf("%-24s %-30.30s %-8s %5d %5d %6d %6d  %s\n", e.Slug, title, state, e.MaxChoices, e.MinVoters, len(tallies), turnout.Voters, closes)
 	}
 	return nil
 }
@@ -374,12 +387,13 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	tallies, voters, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
+	tallies, turnout, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
 	if err != nil {
 		return err
 	}
-	r := polls.Compute(e, tallies, voters, time.Now())
-	fmt.Printf("%s: %d voter(s), %s", e.TitleFR, r.Voters, map[bool]string{true: "open", false: "closed"}[r.Open])
+	r := polls.Compute(e, tallies, turnout, time.Now())
+	fmt.Printf("%s: %d voter(s), %d blank, window %d/%d until %s, %s", e.TitleFR, r.Voters, turnout.Blank,
+		r.Window.Series, r.Window.Index, r.Until.UTC().Format(time.RFC3339), map[bool]string{true: "open", false: "closed"}[r.Open])
 	if r.Hidden != "" {
 		fmt.Printf(", results hidden on the site (%s)", r.Hidden)
 	}
@@ -387,7 +401,7 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	// The operator sees the counts even while the site hides them.
 	full := *e
 	full.MinVoters, full.Blackouts = 0, nil
-	r = polls.Compute(&full, tallies, voters, time.Now())
+	r = polls.Compute(&full, tallies, turnout, time.Now())
 	fmt.Printf("%4s %-30s %7s %7s %7s  %5s %7s %5s\n", "PREF", "CANDIDATE", "FIRST", "SHARE", "TOP-N", "HON", "HONESTY", "FACTS")
 	for _, c := range r.Candidates {
 		pref, first, share, top := "-", "-", "-", "-"
@@ -410,17 +424,34 @@ func runPollPurgeUsers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--provider is empty")
 	}
 	if !yes {
-		return fmt.Errorf("this deletes every %s user and their ballots: add --yes", provider)
+		return fmt.Errorf("this deletes every %s user: add --yes", provider)
 	}
 	storer, err := openPollStorer(ctx)
 	if err != nil {
 		return err
 	}
 	defer storer.Close()
-	n, err := api.NewAccountStore(storer, pollStore(storer)).PurgeUsers(ctx, provider)
+	n, err := accounts.NewPGStore(storer.Pool(), accounts.Hooks{}).PurgeUsers(ctx, provider)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%d %s user(s) deleted with their ballots\n", n, provider)
+	fmt.Printf("%d %s user(s) deleted\n", n, provider)
+	return nil
+}
+
+func runPollResetVotes(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	if yes, _ := cmd.Flags().GetBool("yes"); !yes {
+		return fmt.Errorf("this deletes every voting key, ballot and log entry: add --yes")
+	}
+	storer, err := openPollStorer(ctx)
+	if err != nil {
+		return err
+	}
+	defer storer.Close()
+	if err := pollStore(storer).ResetVotes(ctx); err != nil {
+		return err
+	}
+	fmt.Println("voting keys, ballots and the public log deleted")
 	return nil
 }

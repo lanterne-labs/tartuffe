@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
+	"sync"
 	"time"
 
+	"digital-mirror/backend/polls/semaphore"
+
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,55 +56,37 @@ type CandidateTally struct {
 	Card
 }
 
-// UserChoice is one vote of a user, with the candidate it goes to.
-type UserChoice struct {
-	EventID      int64   `json:"event_id"`
-	Rank         int     `json:"rank"`
-	PersonID     int64   `json:"person_id"`
-	Name         string  `json:"name"`
-	ImageURL     *string `json:"image_url,omitempty"`
-	HonestyScore float64 `json:"honesty_score"`
-	FactCount    int     `json:"fact_count"`
-}
-
 // ErrNotCandidate is returned when a ballot names a person who is not (or
 // no longer) a candidate of the event.
 var ErrNotCandidate = errors.New("not a candidate of the event")
 
-// ErrNotVerified is returned when an account without a verified identity
-// adds a vote.
-var ErrNotVerified = errors.New("the account has no verified identity: verify it to vote")
-
-// Store is what the polls keep: the events, their blackouts and candidates,
-// the ballots and the consents. It owns the tables poll_events,
-// poll_blackouts, poll_candidates, poll_choices and poll_consents. The
-// candidates' cards are not its own: Tallies and UserChoices leave them
-// empty.
+// Store is what the polls keep of the events: the events, their blackouts
+// and candidates, and their tallies. It owns the tables poll_events,
+// poll_blackouts and poll_candidates. The candidates' cards are not its own:
+// Tallies leaves them empty.
 type Store interface {
 	ListEvents(ctx context.Context) ([]Event, error)
 	GetEvent(ctx context.Context, slug string) (*Event, error)
 	CandidateIDs(ctx context.Context, eventID int64) ([]int64, error)
-	Tallies(ctx context.Context, eventID int64) ([]CandidateTally, int, error)
-	Ballot(ctx context.Context, eventID, userID int64) ([]int64, error)
-	Consented(ctx context.Context, userID int64) (bool, error)
-	UpdateBallot(ctx context.Context, eventID, userID int64, consent bool, edit func(current []int64) ([]int64, error)) ([]int64, error)
-	UserChoices(ctx context.Context, userID int64) ([]UserChoice, error)
+	Tallies(ctx context.Context, eventID int64) ([]CandidateTally, Turnout, error)
 }
 
-// LockVerified locks the account in the transaction and tells whether it
-// holds a verified identity (accounts.LockVerified): the polls never read
-// the accounts' tables themselves.
-type LockVerified func(ctx context.Context, tx pgx.Tx, userID int64) (bool, error)
-
-// PGStore is the Postgres Store.
+// PGStore is the Postgres Store, and the anonymous ballots: the voters'
+// commitments and their trees, the ballots, the public log. One API process
+// serves them: the trees of the open windows are kept in its memory.
 type PGStore struct {
-	pool         *pgxpool.Pool
-	lockVerified LockVerified
+	pool *pgxpool.Pool
+	now  func() time.Time
+
+	// treesMu serializes the registrations and guards trees, the voter
+	// trees of the open windows.
+	treesMu sync.Mutex
+	trees   map[Window]*semaphore.Tree
 }
 
 // NewPGStore keeps the polls in the pool's database.
-func NewPGStore(pool *pgxpool.Pool, lockVerified LockVerified) *PGStore {
-	return &PGStore{pool: pool, lockVerified: lockVerified}
+func NewPGStore(pool *pgxpool.Pool) *PGStore {
+	return &PGStore{pool: pool, now: time.Now, trees: map[Window]*semaphore.Tree{}}
 }
 
 const eventColumns = `id, slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at, featured`
@@ -259,140 +242,6 @@ func (s *PGStore) CandidateIDs(ctx context.Context, eventID int64) ([]int64, err
 	return ids, nil
 }
 
-// Tallies returns the candidates of the event with their counts (no card),
-// and the number of ballots. A ballot's first choice is its lowest rank, so
-// a ballot whose rank 1 candidate was removed counts for its next one.
-func (s *PGStore) Tallies(ctx context.Context, eventID int64) ([]CandidateTally, int, error) {
-	rows, err := s.pool.Query(ctx, `
-		WITH firsts AS (
-			SELECT DISTINCT ON (user_id) user_id, person_id
-			FROM poll_choices WHERE event_id = $1
-			ORDER BY user_id, rank
-		)
-		SELECT pc0.person_id,
-			(SELECT COUNT(*) FROM firsts f WHERE f.person_id = pc0.person_id),
-			(SELECT COUNT(*) FROM poll_choices pc WHERE pc.event_id = $1 AND pc.person_id = pc0.person_id)
-		FROM poll_candidates pc0
-		WHERE pc0.event_id = $1
-		ORDER BY pc0.person_id`, eventID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("poll tallies of event %d: %w", eventID, err)
-	}
-	defer rows.Close()
-	out := []CandidateTally{}
-	for rows.Next() {
-		var c CandidateTally
-		if err := rows.Scan(&c.PersonID, &c.FirstChoices, &c.Chosen); err != nil {
-			return nil, 0, fmt.Errorf("scan poll tally: %w", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("poll tallies of event %d: %w", eventID, err)
-	}
-	var voters int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(DISTINCT user_id) FROM poll_choices WHERE event_id = $1`, eventID).Scan(&voters); err != nil {
-		return nil, 0, fmt.Errorf("poll voters of event %d: %w", eventID, err)
-	}
-	return out, voters, nil
-}
-
-// Ballot returns the person ids the user ranked, first choice first.
-func (s *PGStore) Ballot(ctx context.Context, eventID, userID int64) ([]int64, error) {
-	return ballot(ctx, s.pool, eventID, userID)
-}
-
-func ballot(ctx context.Context, q interface {
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-}, eventID, userID int64) ([]int64, error) {
-	rows, err := q.Query(ctx, `SELECT person_id FROM poll_choices WHERE event_id = $1 AND user_id = $2 ORDER BY rank`, eventID, userID)
-	if err != nil {
-		return nil, fmt.Errorf("poll ballot: %w", err)
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
-	if err != nil {
-		return nil, fmt.Errorf("poll ballot: %w", err)
-	}
-	if ids == nil {
-		ids = []int64{}
-	}
-	return ids, nil
-}
-
-// Consented tells whether the user agreed that their ballots (political
-// opinions, GDPR art. 9) are stored.
-func (s *PGStore) Consented(ctx context.Context, userID int64) (bool, error) {
-	var ok bool
-	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM poll_consents WHERE user_id = $1)`, userID).Scan(&ok); err != nil {
-		return false, fmt.Errorf("poll consent of user %d: %w", userID, err)
-	}
-	return ok, nil
-}
-
-// UpdateBallot changes the user's ballot (person ids, first choice first) in
-// one transaction: edit gets the ballot as stored and returns the new one
-// (empty withdraws it), or an error that cancels the change and is returned
-// as is. The account is locked first (LockVerified), so two requests of one
-// user (two tabs, a double click) apply one after the other, each on the
-// other's result, and a document moving to another account meanwhile takes
-// the right to vote with it: a ballot that gains a vote needs the identity
-// (ErrNotVerified). A changed ballot records the user's consent when consent
-// is set, and logs a poll_updated event so the open result pages refresh. It
-// returns the ballot as stored.
-func (s *PGStore) UpdateBallot(ctx context.Context, eventID, userID int64, consent bool, edit func(current []int64) ([]int64, error)) ([]int64, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("update poll ballot: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	verified, err := s.lockVerified(ctx, tx, userID)
-	if err != nil {
-		return nil, err
-	}
-	current, err := ballot(ctx, tx, eventID, userID)
-	if err != nil {
-		return nil, err
-	}
-	next, err := edit(current)
-	if err != nil {
-		return nil, err
-	}
-	if slices.Equal(current, next) {
-		return current, nil
-	}
-	if !verified && slices.ContainsFunc(next, func(id int64) bool { return !slices.Contains(current, id) }) {
-		return nil, ErrNotVerified
-	}
-	if consent {
-		if _, err := tx.Exec(ctx, `INSERT INTO poll_consents (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, userID); err != nil {
-			return nil, fmt.Errorf("record consent: %w", err)
-		}
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM poll_choices WHERE event_id = $1 AND user_id = $2`, eventID, userID); err != nil {
-		return nil, fmt.Errorf("clear poll ballot: %w", err)
-	}
-	for i, pid := range next {
-		if _, err := tx.Exec(ctx, `INSERT INTO poll_choices (event_id, user_id, rank, person_id) VALUES ($1, $2, $3, $4)`,
-			eventID, userID, i+1, pid); err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23503" {
-				return nil, fmt.Errorf("person %d: %w", pid, ErrNotCandidate)
-			}
-			return nil, fmt.Errorf("save poll choice %d: %w", i+1, err)
-		}
-	}
-	if err := pollUpdated(ctx, tx, eventID); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("update poll ballot: %w", err)
-	}
-	if next == nil {
-		next = []int64{}
-	}
-	return next, nil
-}
-
 // pollUpdated logs a poll_updated event of the event (event_log, read by the
 // SSE stream): the open result pages refetch.
 func pollUpdated(ctx context.Context, tx pgx.Tx, eventID int64) error {
@@ -407,76 +256,10 @@ func pollUpdated(ctx context.Context, tx pgx.Tx, eventID int64) error {
 	return nil
 }
 
-// UserChoices returns every vote of the user, by event then rank (no card).
-func (s *PGStore) UserChoices(ctx context.Context, userID int64) ([]UserChoice, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT event_id, rank, person_id FROM poll_choices
-		WHERE user_id = $1 ORDER BY event_id, rank`, userID)
-	if err != nil {
-		return nil, fmt.Errorf("poll choices of user %d: %w", userID, err)
-	}
-	defer rows.Close()
-	out := []UserChoice{}
-	for rows.Next() {
-		var c UserChoice
-		if err := rows.Scan(&c.EventID, &c.Rank, &c.PersonID); err != nil {
-			return nil, fmt.Errorf("scan poll choice: %w", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("poll choices of user %d: %w", userID, err)
-	}
-	return out, nil
-}
-
-// MoveBallots carries the ballots and the consent of an account to another,
-// in the accounts' transaction (accounts.Hooks.Moved): a verified identity
-// moved, and what it voted goes with it. The new account has no ballot, as
-// it could not vote without the identity.
-func (s *PGStore) MoveBallots(ctx context.Context, tx pgx.Tx, from, to int64) error {
-	rows, err := tx.Query(ctx, `UPDATE poll_choices SET user_id = $1 WHERE user_id = $2 RETURNING event_id`, to, from)
-	if err != nil {
-		return fmt.Errorf("move ballots: %w", err)
-	}
-	events, err := pgx.CollectRows(rows, pgx.RowTo[int64])
-	if err != nil {
-		return fmt.Errorf("move ballots: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO poll_consents (user_id, consent_at)
-		SELECT $1, consent_at FROM poll_consents WHERE user_id = $2
-		ON CONFLICT (user_id) DO NOTHING`, to, from); err != nil {
-		return fmt.Errorf("move consent: %w", err)
-	}
-	return logEvents(ctx, tx, events)
-}
-
-// ForgetUser logs a poll_updated event for each event the account voted in,
-// before it is deleted with its ballots (accounts.Hooks.Deleting), so the
-// open result pages refresh.
-func (s *PGStore) ForgetUser(ctx context.Context, tx pgx.Tx, userID int64) error {
-	rows, err := tx.Query(ctx, `SELECT DISTINCT event_id FROM poll_choices WHERE user_id = $1`, userID)
-	if err != nil {
-		return fmt.Errorf("poll events of user %d: %w", userID, err)
-	}
-	events, err := pgx.CollectRows(rows, pgx.RowTo[int64])
-	if err != nil {
-		return fmt.Errorf("poll events of user %d: %w", userID, err)
-	}
-	return logEvents(ctx, tx, events)
-}
-
-func logEvents(ctx context.Context, tx pgx.Tx, events []int64) error {
-	seen := map[int64]bool{}
-	for _, e := range events {
-		if seen[e] {
-			continue
-		}
-		seen[e] = true
-		if err := pollUpdated(ctx, tx, e); err != nil {
-			return err
-		}
-	}
-	return nil
+// SetClock makes the store read the time from now (tests).
+func (s *PGStore) SetClock(now func() time.Time) {
+	s.treesMu.Lock()
+	defer s.treesMu.Unlock()
+	s.now = now
+	clear(s.trees)
 }
