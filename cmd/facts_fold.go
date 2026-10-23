@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -141,6 +142,9 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 			mu.Unlock()
 		}()
 		clusters, err := core.FoldClustersForPerson(ctx, storer, judge, p, opts)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return err // every person left would fail the same way
+		}
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Fold clustering failed; skipping person")
 			return nil
