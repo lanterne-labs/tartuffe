@@ -23,13 +23,12 @@ var (
 		Help:      "Sign-ins by provider and outcome (ok, refused, error)",
 	}, []string{"provider", "outcome"})
 
-	// VerificationsTotal counts the identity verifications by provider and
-	// outcome (ok, moved: the document came from another account, again: the
-	// account's own document, other_document, refused, error).
+	// VerificationsTotal counts the document proofs checked by provider and
+	// outcome (ok, refused, error).
 	VerificationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: Namespace,
 		Name:      "verifications_total",
-		Help:      "Identity verifications by provider and outcome (ok, moved, again, other_document, refused, error)",
+		Help:      "Document proofs checked by provider and outcome (ok, refused, error)",
 	}, []string{"provider", "outcome"})
 
 	// BallotChangesTotal counts the anonymous ballots cast by outcome (ok,

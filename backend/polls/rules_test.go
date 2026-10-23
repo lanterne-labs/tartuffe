@@ -105,3 +105,14 @@ func TestComputeBlank(t *testing.T) {
 	hidden := Compute(event(), sampleTallies(), Turnout{Voters: 0}, time.Now())
 	assert.Nil(t, hidden.Blank, "hidden with the shares")
 }
+
+// TestAnonBallotMessage: the browser builds the same text
+// (frontend/src/lib/anonballot.test.ts).
+func TestAnonBallotMessage(t *testing.T) {
+	w := Window{Series: 1, Index: 9}
+	b := AnonBallot{EventID: 12, Window: w, Seq: 3, Kind: KindChoices, Choices: []int64{7, 4, 9}}
+	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=7,4,9", b.Message())
+	b = AnonBallot{EventID: 12, Window: w, Seq: 1, Kind: KindBlank}
+	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=1;blank", b.Message())
+	assert.Equal(t, "tartuffe/ballot/v1/12/1/9", ScopeName(12, w))
+}

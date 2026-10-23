@@ -50,7 +50,7 @@ type Provider interface {
 const (
 	// RoleAccount providers open accounts (google).
 	RoleAccount = "account"
-	// RoleVerification providers prove one document per account (zkpassport).
+	// RoleVerification providers prove a document (zkpassport).
 	RoleVerification = "verification"
 	// RoleTest providers do both, with no proof (noop): never where the
 	// results must mean something.
@@ -98,7 +98,7 @@ func Opens(p Provider) bool {
 	return r == RoleAccount || r == RoleTest
 }
 
-// Verifies says the provider may attach a document to an account.
+// Verifies says the provider may prove a document.
 func Verifies(p Provider) bool {
 	r := p.Info().Role
 	return r == RoleVerification || r == RoleTest

@@ -1,9 +1,9 @@
-// Package accounts is the site's accounts: who is signed in, with which
-// provider, and whether a verified identity (a document) is attached. It
-// serves /api/auth/* and /api/me/verify/*, and gives the other parts of the
-// site RequireUser, UserFrom and ViewerID; they never read its tables. A
-// document moving between accounts, or an account deleted, reaches them
-// through Hooks (in the transaction) and Changed (after it).
+// Package accounts is the site's accounts: who is signed in, and with which
+// provider. It serves /api/auth/*, and gives the other parts of the site
+// RequireUser, UserFrom and ViewerID; they never read its tables. It attaches
+// no document to an account: ProveDocument checks the proof of a document
+// for the polls (which admit a voting key with it) and keeps nothing of it,
+// so nothing ties an account to a document.
 package accounts
 
 import (
@@ -21,9 +21,6 @@ import (
 type Service struct {
 	store     Store
 	providers *providers.Registry
-	// Changed runs after a verified identity moved or an account was
-	// deleted (for instance to drop cached poll results).
-	Changed []func()
 	// SubjectKey keys the HMAC of the document identifiers ProveDocument
 	// gives (AUTH_SUBJECT_KEY).
 	SubjectKey []byte
@@ -35,22 +32,14 @@ func NewService(store Store, reg *providers.Registry) *Service {
 	return &Service{store: store, providers: reg}
 }
 
-func (s *Service) changed() {
-	for _, f := range s.Changed {
-		f()
-	}
-}
-
 // Routes mounts the accounts' endpoints on the /api router. signin limits the
-// requests that cost a proof check (challenges, sign-ins, verifications).
+// requests that cost a proof check (challenges and sign-ins).
 func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 	r.Get("/auth/providers", s.handleAuthProviders)
 	r.Group(func(r chi.Router) {
 		r.Use(signin)
 		r.Post("/auth/challenge/{provider}", s.handleAuthChallenge)
 		r.Post("/auth/signin/{provider}", s.handleAuthSignIn)
-		r.Post("/me/verify/move", s.RequireUser(s.handleConfirmMove))
-		r.Post("/me/verify/{provider}", s.RequireUser(s.handleVerify))
 	})
 	r.Get("/auth/me", s.RequireUser(s.handleAuthMe))
 	r.Patch("/auth/me", s.RequireUser(s.handleSetDisplayName))

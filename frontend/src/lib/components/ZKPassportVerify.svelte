@@ -1,12 +1,12 @@
 <script lang="ts">
-	// Verifies the signed-in account with the ZKPassport app. The server
-	// issues a one-time challenge; the request built here asks the app to
-	// prove the holder's age (and nationality) and binds the challenge into
-	// the proof; the proofs then go to the API, which checks them itself and
-	// attaches the document to the account
-	// (backend/accounts/providers/zkpassport.go).
+	// Proves the holder's document with the ZKPassport app, for a voting
+	// key. The server issues a one-time challenge; the request built here asks
+	// the app to prove the holder's age (and nationality) and binds the
+	// challenge and the key's commitment into the proof; onProof sends the
+	// proofs to the API, which checks them itself
+	// (backend/accounts/providers/zkpassport.go) and admits the commitment.
 	import { onDestroy } from 'svelte';
-	import { authFetch, errorText, verify, VerifyError, verifyOpen } from '$lib/auth';
+	import { challenge as askChallenge, binding, voterKeyOpen } from '$lib/voter';
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
 	import ZKProofAnimation from './ZKProofAnimation.svelte';
@@ -14,11 +14,13 @@
 	interface Props {
 		config: Record<string, unknown>;
 		lang: Lang;
-		// onDone gets whether the document came from another account.
-		onDone: (moved: boolean) => void;
+		// commitment is the voting key's, bound into the proof.
+		commitment: string;
+		// onProof sends the proofs; a refusal is shown here.
+		onProof: (payload: { challenge: string; proofs: unknown; result: unknown }) => Promise<void>;
 	}
 
-	let { config, lang, onDone }: Props = $props();
+	let { config, lang, commitment, onProof }: Props = $props();
 
 	type Step = 'idle' | 'starting' | 'scan' | 'received' | 'proving' | 'verifying' | 'rejected' | 'error';
 	let step: Step = $state('idle');
@@ -34,9 +36,7 @@
 		error = '';
 		step = 'starting';
 		try {
-			const res = await authFetch('/api/auth/challenge/zkpassport', { method: 'POST' });
-			if (!res.ok) throw new Error(await errorText(res));
-			const { challenge } = (await res.json()) as { challenge: string };
+			const challenge = await askChallenge('zkpassport');
 
 			// Loaded on demand: the SDK is large and only this flow needs it.
 			const { ZKPassport } = await import('@zkpassport/sdk');
@@ -53,7 +53,7 @@
 			const nationality = String(config.nationality ?? '');
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			if (nationality) builder = builder.in('nationality', [nationality as any]);
-			builder = builder.bind('custom_data', challenge);
+			builder = builder.bind('custom_data', binding(challenge, commitment));
 			const req = builder.done();
 
 			url = req.url;
@@ -73,15 +73,9 @@
 				if (cancelled) return;
 				step = 'verifying';
 				try {
-					const { moved } = await verify('zkpassport', { challenge, proofs, result });
-					onDone(moved);
+					await onProof({ challenge, proofs, result });
 				} catch (err) {
-					// A document of another account: the dialog asks before moving it.
-					if (err instanceof VerifyError && err.code === 'document_elsewhere') {
-						reset();
-						return;
-					}
-					error = err instanceof VerifyError && err.code === 'other_document' ? tr('verify.other_document', lang) : err instanceof Error ? err.message : String(err);
+					error = err instanceof Error ? err.message : String(err);
 					step = 'error';
 				}
 			});
@@ -116,7 +110,7 @@
 			<li>{tr('zk.step3', lang)}</li>
 		</ol>
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
-		<a class="more" href="/verification" onclick={() => verifyOpen.set(false)}>{tr('zk.how', lang)}</a>
+		<a class="more" href="/verification" onclick={() => voterKeyOpen.set(false)}>{tr('zk.how', lang)}</a>
 	{:else if step === 'starting'}
 		<p class="status">{tr('zk.starting', lang)}</p>
 	{:else if step === 'scan'}

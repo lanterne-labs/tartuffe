@@ -1,34 +1,37 @@
 <script lang="ts">
-	// The signed-in user's page: their account, and their votes per event,
-	// which they can reorder or take back while the event is open.
-	import { onMount, onDestroy, untrack } from 'svelte';
+	// The voter's page: their voting key first (no account needed), the copies
+	// that keep it safe and the devices that share it, then what this device
+	// remembers of their ballots; then their account, if they have one, for
+	// the reports and the +1s.
+	import { onMount, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
-	import { session, signInOpen, signOut, verifyOpen, setDisplayName } from '$lib/auth';
-	import { getMyVotes, removeVote, saveBallot, deleteAccount, onBallotChanged, BallotError } from '$lib/ballot';
+	import { API_BASE } from '$lib/config';
+	import { session, signInOpen, signOut, setDisplayName, authFetch } from '$lib/auth';
+	import { voterKey, voterKeyOpen, protectedEnough } from '$lib/voter';
+	import { rememberedBallot, forgetBallots } from '$lib/anonballot';
 	import Modal from '$lib/components/Modal.svelte';
-	import VoteList from '$lib/components/VoteList.svelte';
+	import ProtectKey from '$lib/components/ProtectKey.svelte';
 	import { getMyReports } from '$lib/reports';
-	import type { MyVotes, MyEventVotes, UserReport } from '$lib/types';
+	import type { PollEvent, UserReport } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
-	let mine: MyVotes | null = $state(null);
+	let events: PollEvent[] | null = $state(null);
+	let eventsError = $state(false);
 	let reports: UserReport[] | null = $state(null);
 	let reportsError = $state(false);
-	let loadError: string | null = $state(null);
-	// The event whose votes are being changed (one change at a time).
-	let busySlug: string | null = $state(null);
-	let actionError: { slug: string; msg: string } | null = $state(null);
 	let deleteOpen = $state(false);
 	let deleting = $state(false);
 	let deleteError: string | null = $state(null);
 	let deleted = $state(false);
+	let forgetOpen = $state(false);
 	let seq = 0;
 
 	let user = $derived($session?.user ?? null);
+	let key = $derived($voterKey);
 
-	// The votes load again for each session (sign-in, sign-out, another account).
+	// The reports load again for each session (sign-in, sign-out, another account).
 	let loadedFor = '';
 	$effect(() => {
 		const token = $session?.token ?? '';
@@ -37,27 +40,23 @@
 		untrack(() => {
 			if (token) {
 				deleted = false;
-				load();
 				loadReports();
 			} else {
 				seq++;
-				mine = null;
 				reports = null;
 			}
 		});
 	});
 
-	async function load() {
-		const n = ++seq;
+	async function loadEvents() {
 		try {
-			const m = await getMyVotes();
-			if (n !== seq) return;
-			mine = m;
-			loadError = null;
+			const res = await fetch(`${API_BASE}/api/polls`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			events = await res.json();
+			eventsError = false;
 		} catch (err) {
-			if (n !== seq) return;
-			console.error('failed to load my votes', err);
-			if (!(err instanceof BallotError && err.code === 'signed_out')) loadError = tr('profile.error', currentLang);
+			console.error('failed to load polls', err);
+			eventsError = true;
 		}
 	}
 
@@ -75,42 +74,12 @@
 		}
 	}
 
-	async function change(ev: MyEventVotes, request: () => Promise<unknown>) {
-		if (busySlug) return;
-		busySlug = ev.event.slug;
-		actionError = null;
-		try {
-			await request();
-		} catch (err) {
-			let msg = err instanceof Error ? err.message : String(err);
-			if (err instanceof BallotError) {
-				if (err.code === 'closed') msg = tr('vote.error.closed', currentLang);
-				else if (err.code === 'signed_out') msg = tr('vote.error.signed_out', currentLang);
-			}
-			actionError = { slug: ev.event.slug, msg };
-		} finally {
-			busySlug = null;
-			await load();
-		}
-	}
-
-	function remove(ev: MyEventVotes, personId: number) {
-		change(ev, () => removeVote(ev.event.slug, personId));
-	}
-
-	function move(ev: MyEventVotes, i: number, delta: number) {
-		const ids = ev.votes.map((v) => v.person_id);
-		const j = i + delta;
-		if (j < 0 || j >= ids.length) return;
-		[ids[i], ids[j]] = [ids[j], ids[i]];
-		change(ev, () => saveBallot(ev.event.slug, ids));
-	}
-
 	async function confirmDelete() {
 		deleting = true;
 		deleteError = null;
 		try {
-			await deleteAccount();
+			const res = await authFetch('/api/auth/me', { method: 'DELETE' });
+			if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
 			deleteOpen = false;
 			deleted = true;
 			// The session went with the account: only the local copy is left.
@@ -122,8 +91,26 @@
 		}
 	}
 
+	function forgetKey() {
+		forgetOpen = false;
+		voterKey.set(null);
+		forgetBallots();
+	}
+
 	function dateText(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+	}
+
+	function isOpen(e: PollEvent): boolean {
+		const now = Date.now();
+		return new Date(e.opens_at).getTime() <= now && (!e.closes_at || now < new Date(e.closes_at).getTime());
+	}
+
+	function ballotText(e: PollEvent): string {
+		const b = rememberedBallot(e.id);
+		if (!b) return tr('profile.ballot.none', currentLang);
+		if (b.kind === 'blank') return tr('profile.ballot.blank', currentLang);
+		return tr(b.choices.length === 1 ? 'profile.ballot.one' : 'profile.ballot.many', currentLang, { n: b.choices.length });
 	}
 
 	// The pseudonym, shown to the user alone; editing it in place.
@@ -147,13 +134,7 @@
 		return tr('profile.provider_other', currentLang, { p });
 	}
 
-	let unwatch: (() => void) | null = null;
-	onMount(() => {
-		unwatch = onBallotChanged(() => {
-			if ($session && !busySlug) load();
-		});
-	});
-	onDestroy(() => unwatch?.());
+	onMount(loadEvents);
 </script>
 
 <svelte:head>
@@ -164,17 +145,76 @@
 <div class="profile">
 	<h1>{tr('profile.title', currentLang)}</h1>
 
+	<section class="card key" aria-labelledby="key-title">
+		<h2 id="key-title">{tr('profile.key.title', currentLang)}</h2>
+		{#if !key?.registered}
+			<p class="muted">{tr('profile.key.none', currentLang)}</p>
+			<button class="btn btn-primary" onclick={() => voterKeyOpen.set(true)}>{tr('poll.ballot.get_key', currentLang)}</button>
+		{:else}
+			{#if key.waitingUntil && new Date(key.waitingUntil) > new Date()}
+				<p class="notice">{tr('key.waiting', currentLang, { d: dateText(key.waitingUntil) })}</p>
+			{:else}
+				<p class="ok">{tr('profile.key.ready', currentLang)}</p>
+			{/if}
+			<p class="muted">{tr('profile.key.story', currentLang)}</p>
+			{#if !protectedEnough(key)}
+				<p class="alarm">{tr('profile.key.unprotected', currentLang)}</p>
+			{/if}
+			<ProtectKey lang={currentLang} />
+			<details class="lost">
+				<summary>{tr('profile.key.lost.title', currentLang)}</summary>
+				<p class="muted">{tr('profile.key.lost.text', currentLang)}</p>
+			</details>
+			<button class="link danger-link" onclick={() => (forgetOpen = true)}>{tr('profile.key.forget', currentLang)}</button>
+		{/if}
+	</section>
+
+	<h2 class="section-title">{tr('profile.votes', currentLang)}</h2>
+	{#if eventsError}
+		<div class="card">
+			<p class="error">{tr('profile.error', currentLang)}</p>
+			<button class="btn" onclick={loadEvents}>{tr('home.retry', currentLang)}</button>
+		</div>
+	{:else if !events}
+		<p class="muted">{tr('person.loading', currentLang)}</p>
+	{:else if events.length === 0}
+		<p class="muted">{tr('profile.no_events', currentLang)}</p>
+	{:else}
+		{#each events as ev (ev.id)}
+			<section class="card event" aria-labelledby="event-{ev.id}">
+				<div class="event-head">
+					<h3 id="event-{ev.id}">
+						<a href="/election/{ev.slug}">{currentLang === 'en' ? ev.title_en : ev.title_fr}</a>
+					</h3>
+					<span class="badge" class:badge--open={isOpen(ev)}>
+						{#if !isOpen(ev)}
+							{tr('profile.closed', currentLang)}
+						{:else if ev.closes_at}
+							{tr('profile.open_until', currentLang, { d: dateText(ev.closes_at) })}
+						{:else}
+							{tr('profile.open', currentLang)}
+						{/if}
+					</span>
+				</div>
+				<p class="muted">{key?.registered ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
+				<a href="/election/{ev.slug}" class="btn" class:btn-primary={isOpen(ev)}>
+					{isOpen(ev) ? tr('profile.go_vote', currentLang) : tr('profile.go_results', currentLang)}
+				</a>
+			</section>
+		{/each}
+	{/if}
+
+	<h2 class="section-title">{tr('profile.account', currentLang)}</h2>
 	{#if !user}
 		<section class="card">
 			{#if deleted}
 				<p class="ok" role="status">{tr('profile.deleted', currentLang)}</p>
 			{/if}
 			<p class="muted">{tr('profile.sign_in_text', currentLang)}</p>
-			<button class="btn btn-primary" onclick={() => signInOpen.set(true)}>{tr('auth.title', currentLang)}</button>
+			<button class="btn" onclick={() => signInOpen.set(true)}>{tr('auth.title', currentLang)}</button>
 		</section>
 	{:else}
-		<section class="card" aria-labelledby="account-title">
-			<h2 id="account-title">{tr('profile.account', currentLang)}</h2>
+		<section class="card" aria-label={tr('profile.account', currentLang)}>
 			{#if editingName}
 				<form class="name-form" onsubmit={saveName}>
 					<input type="text" bind:value={newName} maxlength="40" required placeholder={tr('auth.name.placeholder', currentLang)} autocomplete="nickname" />
@@ -190,66 +230,9 @@
 			{/if}
 			<p class="muted small">{tr('auth.name.hint', currentLang)}</p>
 			<p class="muted" class:warn={user.provider === 'noop'}>{providerText(user.provider)}</p>
-			{#if user.verified}
-				<p class="muted">{tr('profile.verified', currentLang)}</p>
-			{:else}
-				<p class="muted">{tr('profile.unverified', currentLang)}</p>
-				<button class="btn btn-primary" onclick={() => verifyOpen.set(true)}>{tr('poll.ballot.verify', currentLang)}</button>
-			{/if}
-			{#if mine?.consented}
-				<p class="muted small">{tr('profile.consent_given', currentLang)}</p>
-			{/if}
+			<p class="muted small">{tr('profile.account.apart', currentLang)}</p>
 			<button class="btn" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
 		</section>
-
-		<h2 class="section-title">{tr('profile.votes', currentLang)}</h2>
-		{#if loadError}
-			<div class="card">
-				<p class="error">{loadError}</p>
-				<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
-			</div>
-		{:else if !mine}
-			<p class="muted">{tr('person.loading', currentLang)}</p>
-		{:else if mine.events.length === 0}
-			<p class="muted">{tr('profile.no_events', currentLang)}</p>
-		{:else}
-			{#each mine.events as ev (ev.event.id)}
-				<section class="card event" aria-labelledby="event-{ev.event.id}">
-					<div class="event-head">
-						<h3 id="event-{ev.event.id}">
-							<a href="/election/{ev.event.slug}">{currentLang === 'en' ? ev.event.title_en : ev.event.title_fr}</a>
-						</h3>
-						<span class="badge" class:badge--open={ev.open}>
-							{#if !ev.open}
-								{tr('profile.closed', currentLang)}
-							{:else if ev.event.closes_at}
-								{tr('profile.open_until', currentLang, { d: dateText(ev.event.closes_at) })}
-							{:else}
-								{tr('profile.open', currentLang)}
-							{/if}
-						</span>
-					</div>
-					<VoteList
-						votes={ev.votes}
-						max={ev.event.max_choices}
-						lang={currentLang}
-						editable={ev.open}
-						busy={busySlug !== null}
-						onmove={(i, d) => move(ev, i, d)}
-						onremove={(id) => remove(ev, id)}
-					/>
-					{#if ev.votes.length === 0}
-						<p class="muted">{tr('profile.empty', currentLang, { n: ev.event.max_choices })}</p>
-					{/if}
-					{#if actionError?.slug === ev.event.slug}
-						<p class="error" role="alert">{actionError.msg}</p>
-					{/if}
-					<a href="/election/{ev.event.slug}" class="btn" class:btn-primary={ev.open && ev.votes.length < ev.event.max_choices}>
-						{ev.open ? tr('profile.go_vote', currentLang) : tr('profile.go_results', currentLang)}
-					</a>
-				</section>
-			{/each}
-		{/if}
 
 		<h2 class="section-title">{tr('profile.reports', currentLang)}</h2>
 		{#if reportsError}
@@ -296,6 +279,14 @@
 	{#snippet actions()}
 		<button class="btn" onclick={() => (deleteOpen = false)} disabled={deleting}>{tr('vote.cancel', currentLang)}</button>
 		<button class="btn btn-danger" onclick={confirmDelete} disabled={deleting}>{tr('profile.delete', currentLang)}</button>
+	{/snippet}
+</Modal>
+
+<Modal open={forgetOpen} title={tr('profile.key.forget.title', currentLang)} onclose={() => (forgetOpen = false)} closeLabel={tr('auth.close', currentLang)}>
+	<p class="muted">{tr(protectedEnough(key) ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
+	{#snippet actions()}
+		<button class="btn" onclick={() => (forgetOpen = false)}>{tr('vote.cancel', currentLang)}</button>
+		<button class="btn btn-danger" onclick={forgetKey}>{tr('profile.key.forget', currentLang)}</button>
 	{/snippet}
 </Modal>
 
@@ -458,6 +449,43 @@
 	.status--pending {
 		color: var(--amber);
 		border-color: var(--amber);
+	}
+	.key h2 {
+		margin-bottom: 0.75rem;
+	}
+	.notice {
+		padding: 0.75rem;
+		border-left: 3px solid var(--accent);
+		background: var(--bg-secondary);
+		margin: 0 0 0.75rem;
+		line-height: 1.5;
+		font-size: 0.9rem;
+	}
+	.alarm {
+		padding: 0.7rem 0.85rem;
+		margin: 0 0 0.75rem;
+		border: 1px solid var(--amber);
+		border-radius: var(--radius-md);
+		color: var(--text-primary);
+		background: color-mix(in oklch, var(--amber) 12%, var(--bg-card));
+		font-size: 0.9rem;
+		line-height: 1.5;
+	}
+	.lost {
+		margin-top: 1rem;
+		font-size: 0.9rem;
+	}
+	.lost summary {
+		cursor: pointer;
+		color: var(--text-secondary);
+	}
+	.lost p {
+		margin-top: 0.5rem;
+	}
+	.danger-link {
+		display: block;
+		margin: 1rem 0 0;
+		color: var(--red);
 	}
 	.danger {
 		margin-top: 2rem;

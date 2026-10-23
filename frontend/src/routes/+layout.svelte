@@ -17,7 +17,7 @@
 	import { API_BASE } from '$lib/config';
 	import { session, signOut, refreshUser } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
-	import VerifyDialog from '$lib/components/VerifyDialog.svelte';
+	import VoterKeyDialog from '$lib/components/VoterKeyDialog.svelte';
 	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
@@ -130,7 +130,7 @@
 </nav>
 
 <SignInDialog />
-<VerifyDialog />
+<VoterKeyDialog />
 
 {#key $page.url.pathname}
 	<main class="page-content" in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>

@@ -18,7 +18,7 @@ import (
 // the voters' documents through the accounts (never their accounts: no
 // ballot names one), and get the candidates' cards from the mirror.
 func Wire(storer *storage.PostgresStorer, reg *providers.Registry, batches polls.BatchConfig) (*accounts.Service, *mirror.Service, *polls.Service) {
-	acc := accounts.NewService(accounts.NewPGStore(storer.Pool(), accounts.Hooks{}), reg)
+	acc := accounts.NewService(accounts.NewPGStore(storer.Pool()), reg)
 	acc.SubjectKey = []byte(os.Getenv("AUTH_SUBJECT_KEY"))
 	store := polls.NewPGStore(storer.Pool())
 	p := polls.NewService(store, store, PersonCards{storer}, acc, batches)

@@ -1,6 +1,6 @@
 // Package accountstest helps the tests of the parts that need signed-in
 // users: an in-memory accounts store, a router with the accounts' routes,
-// and the requests to sign in and verify with the noop provider.
+// and the request to sign in with the noop provider.
 package accountstest
 
 import (
@@ -20,30 +20,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MemStore keeps the accounts in memory. OnMoved and OnDeleting stand for the
-// hooks of the Postgres store.
+// MemStore keeps the accounts in memory.
 type MemStore struct {
 	mu         sync.Mutex
 	users      map[string]*accounts.User // by provider/subject
 	sessions   map[string]int64          // by token hash
 	challenges map[string]string         // challenge -> provider
-	verified   map[string]int64          // subject -> user
-	moves      map[string]move           // token hash -> pending move
 	next       int64
-
-	OnMoved    func(from, to int64)
-	OnDeleting func(userID int64)
-}
-
-type move struct {
-	user    int64
-	subject string
 }
 
 // NewMemStore is an empty store.
 func NewMemStore() *MemStore {
-	return &MemStore{users: map[string]*accounts.User{}, sessions: map[string]int64{}, challenges: map[string]string{},
-		verified: map[string]int64{}, moves: map[string]move{}}
+	return &MemStore{users: map[string]*accounts.User{}, sessions: map[string]int64{}, challenges: map[string]string{}}
 }
 
 func (m *MemStore) user(id int64) *accounts.User {
@@ -53,27 +41,6 @@ func (m *MemStore) user(id int64) *accounts.User {
 		}
 	}
 	return nil
-}
-
-// Verified tells whether the account holds a verified identity (the polls'
-// LockVerified in memory).
-func (m *MemStore) Verified(userID int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	u := m.user(userID)
-	return u != nil && u.Verified
-}
-
-// Subject is the verified subject of the account ("" when none).
-func (m *MemStore) Subject(userID int64) string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for sub, id := range m.verified {
-		if id == userID {
-			return sub
-		}
-	}
-	return ""
 }
 
 // UserOfToken is the account of a session token (0 when none).
@@ -143,54 +110,6 @@ func (m *MemStore) ConsumeChallenge(_ context.Context, provider, challenge strin
 	return true, nil
 }
 
-func (m *MemStore) AttachVerification(_ context.Context, userID int64, subject string, mv bool) (int64, error) {
-	m.mu.Lock()
-	for sub, id := range m.verified {
-		if id == userID {
-			m.mu.Unlock()
-			if sub == subject {
-				return 0, nil
-			}
-			return 0, accounts.ErrOtherDocument
-		}
-	}
-	from := m.verified[subject]
-	if from != 0 && !mv {
-		m.mu.Unlock()
-		return from, accounts.ErrHeldElsewhere
-	}
-	m.verified[subject] = userID
-	if u := m.user(userID); u != nil {
-		u.Verified = true
-	}
-	if u := m.user(from); u != nil {
-		u.Verified = false
-	}
-	m.mu.Unlock()
-	if from != 0 && m.OnMoved != nil {
-		m.OnMoved(from, userID)
-	}
-	return from, nil
-}
-
-func (m *MemStore) CreateMove(_ context.Context, userID int64, subject string, hash []byte, _ time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.moves[string(hash)] = move{user: userID, subject: subject}
-	return nil
-}
-
-func (m *MemStore) ConsumeMove(_ context.Context, userID int64, hash []byte) (string, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	mv, ok := m.moves[string(hash)]
-	if !ok || mv.user != userID {
-		return "", false, nil
-	}
-	delete(m.moves, string(hash))
-	return mv.subject, true, nil
-}
-
 func (m *MemStore) SetDisplayName(_ context.Context, userID int64, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -201,9 +120,6 @@ func (m *MemStore) SetDisplayName(_ context.Context, userID int64, name string) 
 }
 
 func (m *MemStore) DeleteUser(_ context.Context, userID int64) error {
-	if m.OnDeleting != nil {
-		m.OnDeleting(userID)
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for k, u := range m.users {
@@ -214,11 +130,6 @@ func (m *MemStore) DeleteUser(_ context.Context, userID int64) error {
 	for h, id := range m.sessions {
 		if id == userID {
 			delete(m.sessions, h)
-		}
-	}
-	for sub, id := range m.verified {
-		if id == userID {
-			delete(m.verified, sub)
 		}
 	}
 	return nil
@@ -270,34 +181,9 @@ func Do(t *testing.T, h http.Handler, method, path, token string, body any) *htt
 	return rec
 }
 
-// SignIn opens a noop account and verifies it with the noop document of the
-// same pseudonym: the account may vote.
+// SignIn opens a noop account of the pseudonym and returns its session
+// token.
 func SignIn(t *testing.T, h http.Handler, pseudonym string) string {
-	t.Helper()
-	token := SignInUnverified(t, h, pseudonym)
-	rec := Do(t, h, http.MethodPost, "/api/me/verify/noop", token, map[string]string{"pseudonym": pseudonym})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	return token
-}
-
-// MoveHere verifies the account with a document another account holds and
-// confirms the move: the votes of the other account come here.
-func MoveHere(t *testing.T, h http.Handler, token, doc string) {
-	t.Helper()
-	rec := Do(t, h, http.MethodPost, "/api/me/verify/noop", token, map[string]string{"pseudonym": doc})
-	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	var held struct {
-		Code      string `json:"code"`
-		MoveToken string `json:"move_token"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &held))
-	require.Equal(t, "document_elsewhere", held.Code)
-	rec = Do(t, h, http.MethodPost, "/api/me/verify/move", token, map[string]string{"move_token": held.MoveToken})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-}
-
-// SignInUnverified opens a noop account with no verified identity.
-func SignInUnverified(t *testing.T, h http.Handler, pseudonym string) string {
 	t.Helper()
 	rec := Do(t, h, http.MethodPost, "/api/auth/signin/noop", "", map[string]string{"pseudonym": pseudonym})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())

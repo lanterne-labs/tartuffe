@@ -30,16 +30,19 @@
 	"dependencies": {
 		"@fontsource/cormorant-garamond": "5.3.0",
 		"@fontsource/inter": "5.3.0",
+		"@noble/hashes": "2.0.1",
 		"@scure/bip39": "2.0.1",
 		"@semaphore-protocol/group": "4.14.3",
 		"@semaphore-protocol/identity": "4.14.3",
 		"@semaphore-protocol/proof": "4.14.3",
+		"@semaphore-protocol/utils": "4.14.3",
 		"@sveltejs/adapter-node": "^5.0.0",
 		"@types/dompurify": "^3.0.5",
 		"@zkpassport/sdk": "0.18.2",
 		"dompurify": "^3.4.7",
 		"jsqr": "1.4.0",
 		"marked": "^18.0.4",
+		"poseidon-lite": "0.3.0",
 		"qrcode": "^1.5.4"
 	}
 }

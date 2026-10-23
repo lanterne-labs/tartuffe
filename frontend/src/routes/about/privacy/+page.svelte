@@ -1,9 +1,10 @@
 <script lang="ts">
 	// Privacy: what the site receives, keeps and never sees, feature by
-	// feature (reading, the Google account, the identity check, the votes, the
-	// +1 and the reports, the session), and how to erase everything. Every line
-	// must stay true to the code: backend/accounts, backend/polls, the access
-	// log of backend/api, the fonts served by the site.
+	// feature (reading, the Google account, the voting key, the anonymous
+	// ballots, the +1 and the reports, the session), and how to erase
+	// everything. Every line must stay true to the code: backend/accounts,
+	// backend/polls (and its semaphore package), lib/voter.ts, the access log
+	// of backend/api, the fonts served by the site.
 	import { lang, type Lang } from '$lib/i18n';
 
 	let currentLang = $state<Lang>('fr');
@@ -60,28 +61,41 @@
 					note: 'Google sait que vous vous connectez à tartuffe.me, comme pour tout bouton « Continuer avec Google ».'
 				},
 				{
-					title: 'Vérifier son identité, pour voter',
+					title: 'Obtenir sa clé de vote',
 					get: [
-						'« Majeur : oui » et « nationalité française : oui ».',
-						'Un identifiant de votre document propre à ce site, pour qu’un document ne vote qu’une fois. Il ne sert nulle part ailleurs et ne permet pas de remonter à vous.'
+						'« Majeur : oui » et « nationalité française : oui », prouvés par l’app ZKPassport.',
+						'Un identifiant de votre document propre à ce site, passé dans la même « moulinette » que l’identifiant Google, pour qu’un document n’ait qu’une clé de vote à la fois.',
+						'L’empreinte publique de votre clé de vote. La clé elle-même est créée et gardée sur votre appareil : nous ne la recevons jamais.'
 					],
 					never: [
-						'Votre nom, votre prénom, votre date de naissance, votre photo, le numéro de votre document.',
-						'Ils ne quittent pas votre téléphone : l’app ZKPassport y calcule une preuve mathématique, que nous vérifions nous-mêmes.'
+						'Votre nom, votre prénom, votre date de naissance, votre photo, le numéro de votre document : ils ne quittent pas votre téléphone, où l’app calcule une preuve mathématique que nous vérifions nous-mêmes.',
+						'Votre compte : la clé de vote n’est rattachée à aucun compte, et la demande part sans votre connexion.'
 					],
-					note: 'La demande passe par le relais de ZKPassport, chiffrée de bout en bout. Si votre document est déjà lié à un autre compte (un ancien compte Google, par exemple), nous vous demandons avant de le transférer, avec ses votes.',
+					note: 'La demande passe par le relais de ZKPassport, chiffrée de bout en bout.',
 					link: ['/verification', 'Comment marche la vérification']
 				},
 				{
 					title: 'Voter',
 					get: [
-						'Vos choix (vos candidats, dans votre ordre), rattachés à votre compte, seulement après votre accord : un vote est une opinion politique, une donnée sensible.'
+						'Un bulletin anonyme : vos choix (ou votre vote blanc), avec une preuve mathématique qu’il vient d’une des clés de vote admises, sans dire laquelle. Un même votant a un même pseudonyme chiffré par période de 30 jours, pour qu’un nouveau vote remplace l’ancien.',
+						'Les bulletins sont publiés par lots, mélangés, dans un journal public que chacun peut télécharger et recompter. Vous y retrouvez le vôtre, depuis vos appareils.'
 					],
 					never: [
-						'Votre vote n’est jamais montré seul : seuls les totaux s’affichent, à partir d’un nombre minimum de votants, et jamais pendant la période d’interdiction légale.',
-						'Aucune page ni aucune requête ne donne le vote, le pseudo ou les +1 d’une autre personne.'
+						'Qui a voté quoi : ni nous, ni personne, ne peut relier un bulletin à une clé de vote, à un document ou à un compte. Le bulletin ne porte ni l’un ni l’autre.',
+						'Votre clé de vote : sans elle, personne, nous compris, ne peut changer votre vote.'
 					],
-					note: 'Vous changez ou retirez vos votes à tout moment jusqu’à la clôture.'
+					note: 'Limites, en clair : l’adresse IP d’un bulletin et l’heure à laquelle il arrive passent par nos serveurs (nous ne les gardons pas, mais un hébergeur contraint pourrait les voir) ; l’option de connexion par Tor est prévue. Et qui a votre clé, ou vos 12 mots, vote à votre place.'
+				},
+				{
+					title: 'Garder sa clé sur plusieurs appareils',
+					get: [
+						'Avec une clé d’accès (Face ID, empreinte) : une copie de votre clé de vote, chiffrée sur votre appareil avec une clé que seule votre clé d’accès donne. Nous ne pouvons pas l’ouvrir.',
+						'En reliant un appareil par QR code : un message chiffré d’un appareil à l’autre, qui transite par nous et s’efface dès qu’il est lu, dans les 10 minutes.'
+					],
+					never: [
+						'Votre clé de vote en clair, ni vos 12 mots de secours : ils ne quittent jamais vos appareils.',
+						'Votre visage ou votre empreinte : Face ID reste dans votre téléphone.'
+					]
 				},
 				{
 					title: 'Les +1 et les signalements',
@@ -101,11 +115,11 @@
 					never: ['Votre mot de passe : il n’y en a pas.']
 				}
 			],
-			eraseTitle: 'Tout effacer, d’un clic',
+			eraseTitle: 'Tout effacer',
 			erase: [
-				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions, son identité vérifiée, ses votes et ses +1.',
-				'Vos signalements restent, détachés de vous : ils ont servi à corriger le site.',
-				'Vous reconnecter ensuite ouvre un compte vierge.'
+				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.',
+				'Votre vote n’est rattaché à aucun compte : retirez-le sur la page du vote, avec votre clé. Un bulletin retiré ne compte plus ; un bulletin non renouvelé expire après 30 jours.',
+				'« Retirer la clé de cet appareil », sur votre profil, l’efface de ce navigateur.'
 			],
 			promiseTitle: 'Ce que nous ne ferons jamais',
 			promises: ['Vendre, louer ou partager des données.', 'Afficher de la publicité.', 'Vous envoyer des e-mails : nous n’avons pas le vôtre.', 'Croiser vos données avec celles d’autres sites.'],
@@ -140,26 +154,38 @@
 					note: 'Google knows you sign in to tartuffe.me, as with any “Continue with Google” button.'
 				},
 				{
-					title: 'Verifying one’s identity, to vote',
+					title: 'Getting one’s voting key',
 					get: [
-						'“Adult: yes” and “French nationality: yes”.',
-						'An identifier of your document unique to this site, so one document votes once. It serves nowhere else and does not lead back to you.'
+						'“Adult: yes” and “French nationality: yes”, proved by the ZKPassport app.',
+						'An identifier of your document unique to this site, through the same “mill” as the Google identifier, so one document holds one voting key at a time.',
+						'The public fingerprint of your voting key. The key itself is made and kept on your device: we never receive it.'
 					],
 					never: [
-						'Your name, your first name, your birth date, your photo, your document number.',
-						'They never leave your phone: the ZKPassport app computes a mathematical proof there, which we check ourselves.'
+						'Your name, your first name, your birth date, your photo, your document number: they never leave your phone, where the app computes a mathematical proof we check ourselves.',
+						'Your account: the voting key is tied to no account, and the request leaves without your sign-in.'
 					],
-					note: 'The request goes through ZKPassport’s relay, end-to-end encrypted. If your document is already tied to another account (an old Google account, say), we ask you before moving it, with its votes.',
+					note: 'The request goes through ZKPassport’s relay, end-to-end encrypted.',
 					link: ['/verification', 'How the verification works']
 				},
 				{
 					title: 'Voting',
-					get: ['Your choices (your candidates, in your order), tied to your account, only after you agree: a vote is a political opinion, sensitive data.'],
-					never: [
-						'Your vote is never shown on its own: only the totals are, from a minimum number of voters, and never during the legal silence period.',
-						'No page and no request gives another person’s vote, pseudonym or +1.'
+					get: [
+						'An anonymous ballot: your choices (or your blank vote), with a mathematical proof that it comes from one of the admitted voting keys, without saying which. One voter has one encrypted pseudonym per 30-day period, so a new vote replaces the old one.',
+						'Ballots are published in shuffled batches, in a public log anyone can download and recount. You find yours there, from your devices.'
 					],
-					note: 'You change or take back your votes at any time until voting closes.'
+					never: [
+						'Who voted what: neither we nor anyone can tie a ballot to a voting key, a document or an account. The ballot carries none of them.',
+						'Your voting key: without it, nobody, us included, can change your vote.'
+					],
+					note: 'Limits, plainly: a ballot’s IP address and the time it arrives pass through our servers (we don’t keep them, but a compelled host could see them); a Tor option is planned. And whoever has your key, or your 12 words, votes in your place.'
+				},
+				{
+					title: 'Keeping one’s key on several devices',
+					get: [
+						'With a passkey (Face ID, fingerprint): a copy of your voting key, encrypted on your device with a key only your passkey gives. We cannot open it.',
+						'Linking a device by QR code: an encrypted message from one device to the other, which passes through us and is erased once read, within 10 minutes.'
+					],
+					never: ['Your voting key in clear, or your 12 recovery words: they never leave your devices.', 'Your face or fingerprint: Face ID stays in your phone.']
 				},
 				{
 					title: '+1 and reports',
@@ -173,11 +199,11 @@
 					never: ['Your password: there is none.']
 				}
 			],
-			eraseTitle: 'Erase everything, in one click',
+			eraseTitle: 'Erase everything',
 			erase: [
-				'On your profile, “Delete my account” erases at once the account, its sessions, its verified identity, its votes and its +1.',
-				'Your reports stay, detached from you: they served to correct the site.',
-				'Signing in again then opens a blank account.'
+				'On your profile, “Delete my account” erases at once the account, its sessions and its +1. Your reports stay, detached from you: they served to correct the site.',
+				'Your vote is tied to no account: take it back on the vote page, with your key. A withdrawn ballot no longer counts; one not renewed expires after 30 days.',
+				'“Remove the key from this device”, on your profile, erases it from this browser.'
 			],
 			promiseTitle: 'What we will never do',
 			promises: ['Sell, rent or share data.', 'Show ads.', 'Send you e-mails: we don’t have yours.', 'Match your data with other sites’.'],

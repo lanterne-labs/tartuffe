@@ -24,7 +24,7 @@
 			get: [
 				'« Majeur : oui » et « Nationalité française : oui ». Rien de plus précis.',
 				'Un identifiant anonyme, propre à tartuffe.me (voir plus bas), qui empêche de voter deux fois.',
-				'Votre classement, si vous votez. Il n’est jamais publié seul : seuls les totaux le sont.'
+				'L’empreinte publique de votre clé de vote, créée sur votre appareil. Votre bulletin, lui, ne porte ni cet identifiant ni cette empreinte : personne ne peut le relier à votre document.'
 			],
 			neverTitle: 'Ce que nous ne voyons jamais',
 			never: [
@@ -49,7 +49,7 @@
 				'Il faut un smartphone avec NFC et un document à puce (passeport biométrique ou carte d’identité au format carte bancaire). Sans eux, vous ne pouvez pas encore voter.',
 				'L’identifiant est lié au document, pas à la personne : quelqu’un qui a à la fois un passeport et une carte d’identité valides pourrait voter deux fois. Un document expiré est refusé.',
 				'Renouveler son document donne un nouvel identifiant.',
-				'Quelqu’un qui posséderait une copie complète des données de la puce de votre document pourrait recalculer votre identifiant. Il ne verrait qu’un classement, jamais publié seul.',
+				'Quelqu’un qui posséderait une copie complète des données de la puce de votre document pourrait recalculer votre identifiant. Il saurait que ce document a une clé de vote, jamais pour qui elle a voté : le vote dépend d’un secret qui n’est que sur vos appareils.',
 				'La demande transite entre le site et votre téléphone par le relais de ZKPassport, chiffrée de bout en bout. La vérification, elle, se fait sur nos serveurs.',
 				'ZKPassport est open source et a fait l’objet d’audits internes, mais pas encore d’audit externe.'
 			],
@@ -76,7 +76,7 @@
 			get: [
 				'“Adult: yes” and “French national: yes”. Nothing more precise.',
 				'An anonymous identifier, specific to tartuffe.me (see below), that prevents voting twice.',
-				'Your ranking, if you vote. It is never published on its own: only the totals are.'
+				'The public fingerprint of your voting key, made on your device. Your ballot carries neither this identifier nor this fingerprint: nobody can tie it to your document.'
 			],
 			neverTitle: 'What we never see',
 			never: ['Your name, your photo', 'Your exact date of birth', 'Your document number', 'Your address, email or phone number'],
@@ -96,7 +96,7 @@
 				'You need a smartphone with NFC and a chip document (biometric passport or credit-card-size ID card). Without them, you cannot vote yet.',
 				'The identifier belongs to the document, not the person: someone holding both a valid passport and a valid ID card could vote twice. An expired document is refused.',
 				'Renewing your document gives a new identifier.',
-				'Someone holding a full copy of your document’s chip data could recompute your identifier. They would only see a ranking, never published on its own.',
+				'Someone holding a full copy of your document’s chip data could recompute your identifier. They would learn that this document has a voting key, never how it voted: the vote depends on a secret that is only on your devices.',
 				'The request travels between the site and your phone through ZKPassport’s relay, end-to-end encrypted. The verification itself runs on our servers.',
 				'ZKPassport is open source and has had internal audits, but no external audit yet.'
 			],

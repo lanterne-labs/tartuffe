@@ -431,7 +431,7 @@ func runPollPurgeUsers(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer storer.Close()
-	n, err := accounts.NewPGStore(storer.Pool(), accounts.Hooks{}).PurgeUsers(ctx, provider)
+	n, err := accounts.NewPGStore(storer.Pool()).PurgeUsers(ctx, provider)
 	if err != nil {
 		return err
 	}

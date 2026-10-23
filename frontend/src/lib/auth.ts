@@ -1,8 +1,8 @@
 // Signed-in session of the visitor (backend/accounts). The API lives on
 // another origin, so the session token travels as a Bearer header (no
 // third-party cookie), kept in localStorage so a reload stays signed in.
-// An account comes from Google (or noop in tests); voting needs a verified
-// identity on top, a document proved with ZKPassport (verify).
+// An account comes from Google (or noop in tests). Voting needs no account:
+// the voting key (voter.ts) is the voter's, and nothing ties it to one.
 
 import { writable, get } from 'svelte/store';
 import { API_BASE } from './config';
@@ -49,13 +49,6 @@ if (typeof window !== 'undefined') {
 // Whether the sign-in dialog is open (any page can ask for it).
 export const signInOpen = writable(false);
 
-// Whether the identity verification dialog is open (asked before a vote).
-export const verifyOpen = writable(false);
-
-// pendingMove is the token of a document found on another account: the
-// verification dialog asks the user before it moves here (confirmMove).
-export const pendingMove = writable<string | null>(null);
-
 let providersLoad: Promise<AuthProvider[]> | null = null;
 
 // loadProviders lists the enabled providers, once per page load.
@@ -98,50 +91,6 @@ export async function challenge(provider: string): Promise<string> {
 	const res = await authFetch(`/api/auth/challenge/${encodeURIComponent(provider)}`, { method: 'POST' });
 	if (!res.ok) throw new Error(await errorText(res));
 	return ((await res.json()) as { challenge: string }).challenge;
-}
-
-export class VerifyError extends Error {
-	constructor(
-		message: string,
-		readonly code: string
-	) {
-		super(message);
-	}
-}
-
-async function verifyCall(path: string, payload: unknown): Promise<{ moved: boolean }> {
-	const res = await authFetch(path, { method: 'POST', body: JSON.stringify(payload) });
-	if (!res.ok) {
-		let code = 'error';
-		let msg = `HTTP ${res.status}`;
-		try {
-			const body = await res.json();
-			code = body.code ?? code;
-			msg = body.error ?? msg;
-			if (code === 'document_elsewhere' && body.move_token) pendingMove.set(body.move_token);
-		} catch {}
-		throw new VerifyError(msg, code);
-	}
-	const out = (await res.json()) as { user: AppUser; moved: boolean };
-	setUser(out.user);
-	return { moved: out.moved };
-}
-
-// verify attaches the document a verification provider proves (the passport
-// proof for zkpassport, a pseudonym for noop) to the signed-in account. A
-// document another account holds is not moved: the error's code is
-// document_elsewhere and pendingMove holds the token to confirm the move.
-export function verify(provider: string, payload: unknown): Promise<{ moved: boolean }> {
-	return verifyCall(`/api/me/verify/${encodeURIComponent(provider)}`, payload);
-}
-
-// confirmMove moves here the document pendingMove names, with the votes of
-// the account that held it.
-export async function confirmMove(): Promise<{ moved: boolean }> {
-	const token = get(pendingMove);
-	pendingMove.set(null);
-	if (!token) throw new VerifyError('no move to confirm', 'no_move');
-	return verifyCall('/api/me/verify/move', { move_token: token });
 }
 
 // setDisplayName sets the pseudonym the user sees on their account.

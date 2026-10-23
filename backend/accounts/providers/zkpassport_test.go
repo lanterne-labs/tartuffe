@@ -81,3 +81,13 @@ func TestRegistryFromEnv(t *testing.T) {
 	_, err = RegistryFromEnv()
 	assert.ErrorContains(t, err, "ZKPASSPORT_DOMAIN")
 }
+
+func TestBinding(t *testing.T) {
+	if got := Binding("abc", ""); got != "abc" {
+		t.Errorf("without a commitment: %q", got)
+	}
+	// frontend/src/lib/anonballot.test.ts checks the same value.
+	if got := Binding("abc", "123"); got != "ed584c8ea7aa5b7a8852f3f003a14ed1eb457f1a900b00d731cc54b9af16077b" {
+		t.Errorf("Binding = %q", got)
+	}
+}

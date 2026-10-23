@@ -85,7 +85,7 @@
     },
     {
       "type": "stat",
-      "title": "Verified accounts",
+      "title": "Voting keys",
       "description": "Accounts with a document attached: they may vote.",
       "datasource": {
         "type": "postgres",
@@ -105,7 +105,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM app_users WHERE verified_subject IS NOT NULL",
+          "rawSql": "SELECT COUNT(*) FROM voter_keys WHERE until_a IS NULL AND provider <> 'noop'",
           "refId": "A"
         }
       ],
@@ -131,7 +131,7 @@
     },
     {
       "type": "stat",
-      "title": "Verified share",
+      "title": "Keys replaced (lost)",
       "description": "Share of the real accounts (not noop) that verified their identity: the conversion of the passport step.",
       "datasource": {
         "type": "postgres",
@@ -151,7 +151,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT 100.0 * COUNT(*) FILTER (WHERE verified_subject IS NOT NULL) / NULLIF(COUNT(*), 0) FROM app_users WHERE provider <> 'noop'",
+          "rawSql": "SELECT COUNT(*) FROM voter_keys WHERE until_a IS NOT NULL AND provider <> 'noop'",
           "refId": "A"
         }
       ],
@@ -168,16 +168,14 @@
         "textMode": "auto"
       },
       "fieldConfig": {
-        "defaults": {
-          "unit": "percent"
-        },
+        "defaults": {},
         "overrides": []
       },
       "id": 4
     },
     {
       "type": "stat",
-      "title": "Voters, featured poll",
+      "title": "Ballots counted, featured poll",
       "description": "Distinct ballots of the featured poll.",
       "datasource": {
         "type": "postgres",
@@ -197,7 +195,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT pc.user_id) FROM poll_choices pc JOIN poll_events e ON e.id = pc.event_id WHERE e.featured",
+          "rawSql": "-- The results' window: of the two open windows, the one that started first (backend/polls/windows.go).\nWITH w AS (SELECT s AS series, floor(extract(epoch FROM now() - (timestamptz '2026-01-01 00:00:00+00' + s * interval '15 days')) / (30 * 86400))::int AS win FROM generate_series(0, 1) s), r AS (SELECT series, win FROM w ORDER BY timestamptz '2026-01-01 00:00:00+00' + series * interval '15 days' + win * interval '30 days' LIMIT 1), l AS (SELECT DISTINCT ON (b.nullifier) b.kind FROM anon_ballots b JOIN poll_events e ON e.id = b.event_id JOIN r ON r.series = b.series AND r.win = b.win WHERE e.featured AND b.published_at IS NOT NULL ORDER BY b.nullifier, b.seq DESC) SELECT COUNT(*) FROM l WHERE kind <> 'withdraw'",
           "refId": "A"
         }
       ],
@@ -315,7 +313,7 @@
     },
     {
       "type": "timeseries",
-      "title": "New accounts and verifications per day",
+      "title": "New accounts and voting keys per day",
       "description": "Accounts opened per day (by their creation). A moved identity keeps no trace here.",
       "datasource": {
         "type": "postgres",
@@ -345,7 +343,7 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('day', verified_at) AS time, COUNT(*) AS verified FROM app_users WHERE verified_at IS NOT NULL AND $__timeFilter(verified_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('day', created_at) AS time, COUNT(*) AS voting_keys FROM voter_keys WHERE $__timeFilter(created_at) GROUP BY 1 ORDER BY 1",
           "refId": "B"
         }
       ],
@@ -392,7 +390,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT e.slug AS poll, COUNT(DISTINCT pc.user_id) AS voters, COUNT(pc.*) AS votes, (SELECT COUNT(*) FROM poll_candidates c WHERE c.event_id = e.id) AS candidates, e.closes_at FROM poll_events e LEFT JOIN poll_choices pc ON pc.event_id = e.id GROUP BY e.id ORDER BY e.featured DESC, e.opens_at DESC",
+          "rawSql": "SELECT e.slug AS poll, (SELECT COUNT(DISTINCT b.nullifier) FROM anon_ballots b WHERE b.event_id = e.id AND b.published_at IS NOT NULL) AS voters_all_windows, (SELECT COUNT(*) FROM anon_ballots b WHERE b.event_id = e.id AND b.published_at IS NULL) AS waiting, (SELECT COUNT(*) FROM poll_candidates c WHERE c.event_id = e.id) AS candidates, e.closes_at FROM poll_events e ORDER BY e.featured DESC, e.opens_at DESC",
           "refId": "A"
         }
       ],
@@ -549,7 +547,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Identity verifications",
+      "title": "Document checks",
       "description": "Per hour. ok, moved (the document came from another account with its ballots), again, other_document, refused, error.",
       "datasource": {
         "type": "prometheus"
@@ -596,7 +594,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Verification funnel",
+      "title": "Document check funnel",
       "description": "Per day: verifications started (a challenge issued, the QR shown) against verifications that went through. The gap is the people who gave up at the app.",
       "datasource": {
         "type": "prometheus"
@@ -648,7 +646,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Ballot changes",
+      "title": "Ballots cast",
       "description": "Per hour. ok, or the refusal: verification_required (an account without a document tried to vote), consent_required, ballot_full, closed, ...",
       "datasource": {
         "type": "prometheus"

@@ -173,7 +173,14 @@ export interface CandidateResult {
 }
 
 export interface PollResults {
+	// voters counts the ballots, blank votes included: the shares are of them.
 	voters: number;
+	// blank and blank_share: the blank votes (null while hidden).
+	blank: number | null;
+	blank_share: number | null;
+	// window: the 30-day window the results count, until its end.
+	window: { series: number; window: number };
+	until: string;
 	open: boolean;
 	hidden?: 'too_few_voters' | 'blackout';
 	candidates: CandidateResult[];
@@ -182,44 +189,13 @@ export interface PollResults {
 export interface PollResponse {
 	event: PollEvent;
 	results: PollResults;
-}
-
-// The signed-in user's votes of an event: person_ids, first choice first,
-// out of max_choices.
-export interface Ballot {
-	person_ids: number[];
-	consented: boolean;
-	max_choices: number;
-	open: boolean;
-}
-
-// One vote of the user, with the candidate it goes to (the profile page).
-export interface UserVote {
-	event_id: number;
-	rank: number;
-	person_id: number;
-	name: string;
-	image_url?: string;
-	honesty_score: number;
-	fact_count: number;
-}
-
-export interface MyEventVotes {
-	event: PollEvent;
-	open: boolean;
-	votes: UserVote[];
-}
-
-// GET /api/me/votes: every open event, and the closed ones voted in.
-export interface MyVotes {
-	user: AppUser;
-	consented: boolean;
-	events: MyEventVotes[];
+	// windows: the open windows a ballot is cast in.
+	windows: { series: number; window: number; start: string; end: string }[];
 }
 
 // Accounts (backend/accounts): an account provider (google) opens the
-// account, a verification provider (zkpassport) attaches a document to it,
-// which gives the right to vote; noop (tests) does both.
+// account; a verification provider (zkpassport) proves the document that
+// admits a voting key, which no account holds; noop (tests) does both.
 
 export type ProviderRole = 'account' | 'verification' | 'test';
 
@@ -234,8 +210,6 @@ export interface AppUser {
 	id: number;
 	provider: string;
 	display_name: string;
-	// verified: a document is attached, the account may vote.
-	verified: boolean;
 }
 
 // GET /api/person/{id}/score: every input of the honesty score.
