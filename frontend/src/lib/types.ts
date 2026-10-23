@@ -165,14 +165,18 @@ export interface CandidateResult {
 	honesty_score: number;
 	fact_count: number;
 	contradiction_count: number;
-	// approvals, approval_share: the ballots that approve the candidate;
-	// favourites, favourite_share: those that mark them as favourite (null
-	// while hidden).
-	approvals: number | null;
-	approval_share: number | null;
-	favourites: number | null;
-	favourite_share: number | null;
+	// first_choices, first_choice_share: the ballots that rank the candidate
+	// first; ranked, ranked_share: those that rank them at all (null while
+	// hidden).
+	first_choices: number | null;
+	first_choice_share: number | null;
+	ranked: number | null;
+	ranked_share: number | null;
+	// preference_rank: the rank with the ranking counted (Schulze);
+	// majority_rank: the rank by first choices, as the one-round majority
+	// vote would (null while hidden).
 	preference_rank: number | null;
+	majority_rank: number | null;
 	honesty_rank: number;
 }
 
@@ -187,6 +191,9 @@ export interface PollResults {
 	until: string;
 	open: boolean;
 	hidden?: 'too_few_voters' | 'blackout';
+	// condorcet_winner: the candidate who beats each other one head to head,
+	// if one does (null while hidden).
+	condorcet_winner: number | null;
 	candidates: CandidateResult[];
 }
 

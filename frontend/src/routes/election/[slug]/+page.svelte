@@ -30,23 +30,22 @@
 	// view is kept in the URL (?vue=) so a link shares it.
 	type View = 'vote' | 'both' | 'honesty';
 	const VIEWS: View[] = ['vote', 'both', 'honesty'];
-	let view: View = $state('both');
+	let view: View = $state('vote');
 
 	function setView(v: View) {
 		view = v;
 		const url = new URL(window.location.href);
-		if (v === 'both') url.searchParams.delete('vue');
+		if (v === 'vote') url.searchParams.delete('vue');
 		else url.searchParams.set('vue', v);
 		replaceState(url, {});
 	}
 
-	// The voter's ballot: the candidates they approve (approval voting) and
-	// their favourite among them, a blank vote, or none. Each change is proved
-	// on this device and cast anonymously (anonballot.ts); it counts once the
-	// next batch publishes it.
+	// The voter's ballot: up to max_choices candidates ranked from the
+	// preferred one, a blank vote, or none. Each change is proved on this
+	// device and cast anonymously (anonballot.ts); it counts once the next
+	// batch publishes it.
 	let mine = $state<MyBallot | null>(null);
 	let ballot = $derived(mine?.kind === 'choices' ? mine.choices : []);
-	let favourite = $derived(mine?.kind === 'choices' ? (mine.favourite ?? 0) : 0);
 	let blank = $derived(mine?.kind === 'blank');
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
@@ -62,9 +61,8 @@
 	let event = $derived(data?.event ?? null);
 	let results = $derived(data?.results ?? null);
 	let windows = $derived(data?.windows ?? []);
-	// maxChoices caps the approvals (0: no cap).
-	let maxChoices = $derived(event?.max_choices ?? 0);
-	let full = $derived(maxChoices > 0 && ballot.length >= maxChoices);
+	let maxChoices = $derived(event?.max_choices ?? 3);
+	let full = $derived(ballot.length >= maxChoices);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
 
 	// The ballot loads once per voting key and event, then again when another
@@ -97,6 +95,21 @@
 		}
 		return list.sort((a, b) => (a.preference_rank ?? 1e9) - (b.preference_rank ?? 1e9) || name(a, b));
 	});
+
+	// The same ballots counted as the one-round majority vote: first choices.
+	let byMajority = $derived(
+		[...(results?.candidates ?? [])].sort((a, b) => (a.majority_rank ?? 1e9) - (b.majority_rank ?? 1e9) || a.name.localeCompare(b.name, 'fr'))
+	);
+
+	// The sole winner of each count, if there is one: when they differ, the
+	// page says so.
+	function soleFirst(list: CandidateResult[], rank: (c: CandidateResult) => number | null): CandidateResult | null {
+		const top = list.filter((c) => rank(c) === 1);
+		return top.length === 1 ? top[0] : null;
+	}
+	let rankingWinner = $derived(results?.hidden ? null : soleFirst(results?.candidates ?? [], (c) => c.preference_rank));
+	let majorityWinner = $derived(results?.hidden ? null : soleFirst(results?.candidates ?? [], (c) => c.majority_rank));
+	let differ = $derived(!!rankingWinner && !!majorityWinner && rankingWinner.person_id !== majorityWinner.person_id);
 
 	async function load() {
 		try {
@@ -176,7 +189,7 @@
 		return w ? closesText(w) : '';
 	}
 
-	// pick is a click on "Approve" for a candidate (or on the blank vote):
+	// pick is a click on "Rank" for a candidate (or on the blank vote):
 	// it gets a voting key first if needed.
 	function pick(choice: number | 'blank') {
 		pending = choice;
@@ -201,26 +214,14 @@
 			return;
 		}
 		const name = displayName(byId.get(choice)?.name ?? '');
-		// The first approval is the favourite until the voter picks another.
-		const next = [...ballot, choice].sort((a, b) => a - b);
-		change({ kind: 'choices', choices: next, favourite: favourite || choice }, tr('vote.done.added', currentLang, { name }));
+		const next = [...ballot, choice];
+		change({ kind: 'choices', choices: next }, tr('vote.done.added', currentLang, { name, rank: rankWord(next.length) }));
 	}
 
 	function remove(id: number) {
 		const name = displayName(byId.get(id)?.name ?? '');
 		const next = ballot.filter((x) => x !== id);
-		change(
-			next.length > 0 ? { kind: 'choices', choices: next, favourite: favourite === id ? undefined : favourite || undefined } : { kind: 'withdraw', choices: [] },
-			tr('vote.done.removed', currentLang, { name })
-		);
-	}
-
-	// star makes an approved candidate the favourite, or takes it back.
-	function star(id: number) {
-		if (!ballot.includes(id)) return;
-		const name = displayName(byId.get(id)?.name ?? '');
-		if (favourite === id) change({ kind: 'choices', choices: ballot }, tr('vote.done.unfavourite', currentLang));
-		else change({ kind: 'choices', choices: ballot, favourite: id }, tr('vote.done.favourite', currentLang, { name }));
+		change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] }, tr('vote.done.removed', currentLang, { name }));
 	}
 
 	async function withdrawAll() {
@@ -239,14 +240,20 @@
 		return v === null ? '—' : `${Math.round(v * 100)}%`;
 	}
 
-	// The approval bars are on a 0–100 % scale: each candidate is approved by
-	// a share of all the voters, independently of the others.
+	// The bars are on a 0–100 % scale of all the voters, blank votes
+	// included.
 	function barWidth(share: number | null): number {
 		return share === null ? 0 : Math.round(share * 100);
 	}
 
 	function ordinal(n: number): string {
 		if (currentLang === 'en') return `#${n}`;
+		return n === 1 ? '1er' : `${n}e`;
+	}
+
+	// rankWord is the rank of a choice in words: 1er, 2e (1st, 2nd).
+	function rankWord(n: number): string {
+		if (currentLang === 'en') return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
 		return n === 1 ? '1er' : `${n}e`;
 	}
 
@@ -373,29 +380,23 @@
 						</div>
 					</div>
 				{:else}
-					{#if ballot.length > 0}
-						<ul class="approved">
-							{#each ballot as id (id)}
-								{@const c = byId.get(id)}
-								<li class:fav={favourite === id}>
-									<button class="star" onclick={() => star(id)} disabled={busy || !results.open} aria-pressed={favourite === id} title={tr(favourite === id ? 'vote.favourite.remove' : 'vote.favourite.set', currentLang, { name: c?.name ?? '' })}>
-										{favourite === id ? '★' : '☆'}
-									</button>
-									<span class="approved-name">{displayName(c?.name ?? `#${id}`)}</span>
-									{#if favourite === id}<span class="fav-label">{tr('vote.favourite', currentLang)}</span>{/if}
+					<ol class="slots">
+						{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
+							{@const id = ballot[i]}
+							{@const c = id === undefined ? undefined : byId.get(id)}
+							<li class:filled={id !== undefined} class:next={id === undefined && i === ballot.length}>
+								<span class="slot-num">{i + 1}</span>
+								{#if id !== undefined}
+									<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
 									{#if results.open}
 										<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
 									{/if}
-								</li>
-							{/each}
-						</ul>
-						{#if maxChoices > 0}
-							<p class="hint">{tr('vote.cap', currentLang, { used: ballot.length, max: maxChoices })}</p>
-						{/if}
-					{/if}
-					{#if ballot.length === 0 && results.open}
-						<p class="empty">{tr('vote.empty', currentLang)}</p>
-					{/if}
+								{:else if results.open && i === ballot.length}
+									<span class="slot-empty">{tr(i === 0 ? 'vote.slot.first' : 'vote.slot.empty', currentLang)}</span>
+								{/if}
+							</li>
+						{/each}
+					</ol>
 				{/if}
 				<div class="ballot-actions" aria-live="polite">
 					{#if results.open && !blank}
@@ -432,15 +433,11 @@
 
 	{#snippet pickButton(c: CandidateResult)}
 		{#if results?.open}
-			{#if ballot.includes(c.person_id)}
-				<span class="pick-pair">
-					<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.remove_named', currentLang, { name: c.name })}>
-						{tr('vote.approved', currentLang)} ✓
-					</button>
-					<button class="pick-star" class:on={favourite === c.person_id} onclick={() => star(c.person_id)} disabled={busy} aria-pressed={favourite === c.person_id} title={tr(favourite === c.person_id ? 'vote.favourite.remove' : 'vote.favourite.set', currentLang, { name: c.name })}>
-						{favourite === c.person_id ? '★' : '☆'}
-					</button>
-				</span>
+			{@const at = ballot.indexOf(c.person_id)}
+			{#if at >= 0}
+				<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.ranked_as', currentLang, { rank: rankWord(at + 1) })}>
+					{rankWord(at + 1)} ×
+				</button>
 			{:else}
 				<button class="pick" class:pick--full={hasKey && full} onclick={() => pick(c.person_id)} disabled={busy || (hasKey && full)}>
 					{tr('vote.add', currentLang)}
@@ -471,45 +468,73 @@
 	{#if sorted.length === 0}
 		<p class="state">{tr('poll.no_candidates', currentLang)}</p>
 	{:else if view === 'vote'}
-		<ol class="vote-list">
-			{#each sorted as c (c.person_id)}
-				<li class="vote-row" class:vote-row--mine={ballot.includes(c.person_id)}>
-					<span class="vote-rank">{c.preference_rank ?? '—'}</span>
-					{@render who(c)}
-					<div class="vote-bar">
-						{#if c.approval_share === null}
-							<span class="value value--muted">—</span>
-							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
-						{:else}
-							<div class="vote-bar-line">
-								<div class="bar bar--wide" aria-hidden="true">
-									<span class="bar-fill--vote" style="width: {barWidth(c.approval_share)}%"></span>
+		{#if differ && rankingWinner && majorityWinner}
+			<p class="differ">
+				{tr(results.condorcet_winner === rankingWinner.person_id ? 'poll.differ' : 'poll.differ_no_condorcet', currentLang, {
+					a: displayName(rankingWinner.name),
+					b: displayName(majorityWinner.name)
+				})}
+			</p>
+		{/if}
+		<div class="lists" class:lists--one={!!results.hidden}>
+			<section class="list">
+				<h3>{tr('poll.list.ranking', currentLang)} <small>{tr('poll.list.ranking_sub', currentLang)}</small></h3>
+				<ol class="vote-list">
+					{#each sorted as c (c.person_id)}
+						<li class="vote-row" class:vote-row--mine={ballot.includes(c.person_id)} class:vote-row--top={c.preference_rank === 1}>
+							<span class="vote-rank">{c.preference_rank ?? '—'}</span>
+							<div class="vote-main">
+								{@render who(c)}
+								{#if c.first_choice_share === null}
+									<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
+								{:else}
+									{#if results.condorcet_winner === c.person_id}
+										<span class="winner">{tr('poll.condorcet', currentLang)}</span>
+									{/if}
+									<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(c.first_choice_share), r: pct(c.ranked_share) })}</span>
+								{/if}
+							</div>
+							<div class="vote-pick">{@render pickButton(c)}</div>
+						</li>
+					{/each}
+				</ol>
+			</section>
+			{#if !results.hidden}
+				<section class="list">
+					<h3>{tr('poll.list.majority', currentLang)} <small>{tr('poll.list.majority_sub', currentLang)}</small></h3>
+					<ol class="vote-list">
+						{#each byMajority as c (c.person_id)}
+							<li class="vote-row" class:vote-row--mine={ballot[0] === c.person_id} class:vote-row--top={c.majority_rank === 1}>
+								<span class="vote-rank">{c.majority_rank ?? '—'}</span>
+								<div class="vote-main">
+									{@render who(c)}
+									<div class="vote-bar-line">
+										<div class="bar bar--wide" aria-hidden="true">
+											<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share)}%"></span>
+										</div>
+										<span class="value">{pct(c.first_choice_share)}</span>
+									</div>
 								</div>
-								<span class="value">{pct(c.approval_share)}</span>
-							</div>
-							<span class="meta">{tr('poll.gauge.approvals', currentLang, { n: c.approvals ?? 0 })} · {tr('poll.favourite_short', currentLang, { p: pct(c.favourite_share) })}</span>
+							</li>
+						{/each}
+						{#if results.blank_share !== null}
+							<li class="vote-row vote-row--blank" class:vote-row--mine={blank}>
+								<span class="vote-rank">—</span>
+								<div class="vote-main">
+									<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
+									<div class="vote-bar-line">
+										<div class="bar bar--wide" aria-hidden="true">
+											<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
+										</div>
+										<span class="value">{pct(results.blank_share)}</span>
+									</div>
+								</div>
+							</li>
 						{/if}
-					</div>
-					<div class="vote-pick">{@render pickButton(c)}</div>
-				</li>
-			{/each}
-			{#if results.blank_share !== null}
-				<li class="vote-row vote-row--blank" class:vote-row--mine={blank}>
-					<span class="vote-rank">—</span>
-					<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
-					<div class="vote-bar">
-						<div class="vote-bar-line">
-							<div class="bar bar--wide" aria-hidden="true">
-								<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
-							</div>
-							<span class="value">{pct(results.blank_share)}</span>
-						</div>
-						<span class="meta">{tr('poll.gauge.votes', currentLang, { n: results.blank ?? 0 })}</span>
-					</div>
-					<div class="vote-pick"></div>
-				</li>
+					</ol>
+				</section>
 			{/if}
-		</ol>
+		</div>
 		<p class="board-note">{tr('poll.note.vote', currentLang)}</p>
 	{:else if view === 'honesty'}
 		<div class="gauge-grid">
@@ -552,18 +577,17 @@
 			{#each sorted as c (c.person_id)}
 				<div class="board-row" class:board-row--mine={ballot.includes(c.person_id)} role="row">
 					<div class="cell cell--vote" role="cell">
-						{#if c.approval_share === null}
+						{#if c.first_choice_share === null}
 							<span class="value value--muted">—</span>
 							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
 						{:else}
 							<div class="value-line">
-								<span class="rank">{ordinal(c.preference_rank ?? 0)}</span>
-								<span class="value">{pct(c.approval_share)}</span>
+								<span class="value">{ordinal(c.preference_rank ?? 0)}</span>
 							</div>
 							<div class="bar bar--vote" aria-hidden="true">
-								<span class="bar-fill--vote" style="width: {barWidth(c.approval_share)}%"></span>
+								<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share)}%"></span>
 							</div>
-							<span class="meta">{tr('poll.favourite_short', currentLang, { p: pct(c.favourite_share) })}</span>
+							<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(c.first_choice_share), r: pct(c.ranked_share) })}</span>
 						{/if}
 					</div>
 
@@ -645,59 +669,68 @@
 	.event-strip a {
 		color: var(--event);
 	}
-	.approved {
+	.slots {
 		list-style: none;
-		margin: 0 0 0.5rem;
+		margin: 0 0 0.75rem;
 		padding: 0;
+		display: grid;
+		gap: 0.4rem;
+	}
+	.slots li {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.45rem;
-	}
-	.approved li {
-		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.3rem 0.45rem 0.3rem 0.35rem;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		background: var(--bg-card);
-		font-size: 0.88rem;
+		gap: 0.6rem;
+		min-height: 2.6rem;
+		padding: 0.35rem 0.6rem 0.35rem 0.4rem;
+		border: 1px dashed var(--glass-border);
+		border-radius: var(--radius-md);
+		color: var(--text-muted);
+		font-size: 0.9rem;
 	}
-	.approved li.fav {
-		border-color: var(--amber);
+	.slots li.filled {
+		border-style: solid;
+		border-color: var(--accent);
+		background: var(--accent-glow);
+		color: var(--text-primary);
 	}
-	.approved-name {
+	.slots li.next {
+		border-color: var(--accent);
+	}
+	.slot-num {
+		width: 1.7rem;
+		height: 1.7rem;
+		flex-shrink: 0;
+		display: grid;
+		place-items: center;
+		border-radius: 50%;
+		background: var(--bg-secondary);
+		font-weight: 700;
+		font-size: 0.85rem;
+	}
+	.slots li.filled .slot-num {
+		background: var(--accent);
+		color: white;
+	}
+	.slot-name {
+		flex: 1;
+		min-width: 0;
+		font-weight: 600;
 		text-transform: capitalize;
 	}
-	.fav-label {
-		font-size: 0.7rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: var(--amber);
+	.slot-empty {
+		font-style: italic;
 	}
-	.star,
-	.unpick,
-	.pick-star {
+	.unpick {
 		background: none;
 		border: none;
 		color: var(--text-muted);
-		font-size: 1rem;
+		font-size: 1.2rem;
 		line-height: 1;
 		cursor: pointer;
-		padding: 0.1rem 0.2rem;
-	}
-	.approved li.fav .star,
-	.pick-star.on {
-		color: var(--amber);
+		padding: 0.1rem 0.3rem;
 	}
 	.unpick:hover {
 		color: var(--red);
-	}
-	.pick-pair {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.2rem;
 	}
 	.protect {
 		display: block;
@@ -852,11 +885,6 @@
 		margin: 0.5rem 0 0.75rem;
 		line-height: 1.45;
 	}
-	.empty {
-		font-size: 0.9rem;
-		color: var(--text-muted);
-		margin: 0 0 0.75rem;
-	}
 	.profile-link {
 		font-size: 0.85rem;
 		color: var(--text-secondary);
@@ -869,52 +897,6 @@
 		line-height: 1.5;
 		color: var(--text-secondary);
 		margin: 0 0 0.75rem;
-	}
-	.dialog-note {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		margin: 0.75rem 0 0;
-	}
-	.swap-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-	}
-	.swap {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.45rem 0.75rem;
-		background: var(--bg-card);
-		border-radius: var(--radius-sm);
-	}
-	.swap-rank {
-		width: 1.5rem;
-		height: 1.5rem;
-		flex-shrink: 0;
-		display: grid;
-		place-items: center;
-		border-radius: 50%;
-		background: var(--accent);
-		color: white;
-		font-weight: 700;
-		font-size: 0.8rem;
-	}
-	.swap-name {
-		flex: 1;
-		min-width: 0;
-		font-weight: 500;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	a.btn {
-		text-decoration: none;
-		display: inline-flex;
-		align-items: center;
 	}
 	.ballot-actions {
 		display: flex;
@@ -965,10 +947,50 @@
 		color: white;
 	}
 
+	.differ {
+		max-width: 52rem;
+		margin: 0 auto 1rem;
+		padding: 0.8rem 1rem;
+		border-left: 3px solid var(--accent);
+		border-radius: var(--radius-sm);
+		background: var(--accent-glow);
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+	.lists {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1.25rem;
+		max-width: 60rem;
+		margin: 0 auto;
+	}
+	.lists--one {
+		grid-template-columns: 1fr;
+		max-width: 40rem;
+	}
+	.list h3 {
+		margin: 0 0 0.5rem;
+		font-family: var(--font-serif);
+		font-size: 1.2rem;
+	}
+	.list h3 small {
+		margin-left: 0.3rem;
+		font-family: var(--font-family);
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: var(--text-muted);
+	}
+	.board-note {
+		max-width: 46rem;
+		margin: 0.9rem auto 0;
+		font-size: 0.8rem;
+		line-height: 1.5;
+		color: var(--text-muted);
+		text-align: center;
+	}
 	.vote-list {
 		list-style: none;
-		max-width: 52rem;
-		margin: 0 auto;
+		margin: 0;
 		padding: 0;
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
@@ -977,10 +999,10 @@
 	}
 	.vote-row {
 		display: grid;
-		grid-template-columns: 2.5rem 12rem 1fr auto;
+		grid-template-columns: 1.8rem minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.9rem 1.25rem;
+		gap: 0.75rem;
+		padding: 0.7rem 1rem;
 		border-bottom: 1px solid var(--border-card);
 	}
 	.vote-row:last-child {
@@ -989,40 +1011,56 @@
 	.vote-row--mine {
 		background: var(--accent-glow);
 	}
+	.vote-row--top .vote-rank {
+		color: var(--accent-hover);
+	}
 	.vote-rank {
-		font-size: 1.25rem;
+		font-size: 1.2rem;
 		font-weight: 700;
 		color: var(--text-muted);
 		text-align: center;
 		font-variant-numeric: tabular-nums;
 	}
-	.vote-row .who {
-		flex-direction: row;
-		gap: 0.6rem;
-		text-align: left;
-	}
-	.vote-row .photo {
-		width: 44px;
-		height: 44px;
-		flex-shrink: 0;
-	}
-	.vote-bar {
+	.vote-main {
 		display: flex;
 		flex-direction: column;
 		gap: 0.3rem;
 		min-width: 0;
+	}
+	.vote-row .who {
+		flex-direction: row;
+		gap: 0.6rem;
+		text-align: left;
+		align-items: center;
+	}
+	.vote-row .photo {
+		width: 36px;
+		height: 36px;
+		flex-shrink: 0;
+		font-size: 1rem;
+	}
+	.vote-row .meta {
+		justify-content: flex-start;
+		text-align: left;
+	}
+	.winner {
+		width: fit-content;
+		padding: 0.1rem 0.5rem;
+		border-radius: var(--radius-full);
+		background: var(--accent);
+		color: white;
+		font-size: 0.7rem;
+		font-weight: 700;
 	}
 	.vote-bar-line {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
 	}
-	.vote-bar .value {
-		min-width: 3.5rem;
+	.vote-bar-line .value {
+		min-width: 3rem;
+		font-size: 1.1rem;
 		text-align: right;
-	}
-	.vote-bar .meta {
-		text-align: left;
 	}
 
 	.gauge-grid {
@@ -1150,11 +1188,6 @@
 		color: var(--text-primary);
 	}
 	.value--muted {
-		color: var(--text-muted);
-	}
-	.rank {
-		font-size: 0.75rem;
-		font-weight: 600;
 		color: var(--text-muted);
 	}
 	.bar {
@@ -1286,6 +1319,12 @@
 		color: var(--text-primary);
 	}
 
+	@media (max-width: 760px) {
+		.lists {
+			grid-template-columns: 1fr;
+		}
+	}
+
 	@media (max-width: 560px) {
 		.ballot {
 			padding: 1rem;
@@ -1307,16 +1346,8 @@
 			height: 48px;
 		}
 		.vote-row {
-			grid-template-columns: 1.6rem 1fr;
-			gap: 0.4rem 0.75rem;
-			padding: 0.8rem 0.9rem;
-		}
-		.vote-bar {
-			grid-column: 1 / -1;
-		}
-		.vote-pick {
-			grid-column: 1 / -1;
-			justify-self: start;
+			gap: 0.5rem;
+			padding: 0.7rem 0.75rem;
 		}
 		.name {
 			font-size: 0.82rem;

@@ -9,7 +9,7 @@ const secret = '000102030405060708090a0b0c0d0e0f';
 describe('anonymous ballots', () => {
 	it('builds the message the server rebuilds', () => {
 		const w = { series: 1, window: 9 };
-		expect(message(12, w, 3, { kind: 'choices', choices: [4, 7, 9], favourite: 7 })).toBe('tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=4,7,9;favourite=7');
+		expect(message(12, w, 3, { kind: 'choices', choices: [7, 4, 9] })).toBe('tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=7,4,9');
 		expect(message(12, w, 3, { kind: 'choices', choices: [4, 7, 9] })).toBe('tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=4,7,9');
 		expect(message(12, w, 1, { kind: 'blank', choices: [] })).toBe('tartuffe-ballot/v1;poll=12;series=1;window=9;seq=1;blank');
 		expect(scopeName(12, w)).toBe('tartuffe/ballot/v1/12/1/9');

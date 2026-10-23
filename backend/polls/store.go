@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Event is one poll (the 2027 presidential pre-poll first): a voter approves
-// the candidates they find acceptable and may mark one as their favourite.
+// Event is one poll (the 2027 presidential pre-poll first): a voter ranks up
+// to MaxChoices of its candidates.
 type Event struct {
 	ID            int64  `json:"id"`
 	Slug          string `json:"slug"`
@@ -23,7 +23,6 @@ type Event struct {
 	TitleEN       string `json:"title_en"`
 	DescriptionFR string `json:"description_fr"`
 	DescriptionEN string `json:"description_en"`
-	// MaxChoices caps the approvals of a ballot (0: no cap).
 	MaxChoices int        `json:"max_choices"`
 	MinVoters  int        `json:"min_voters"`
 	OpensAt    time.Time  `json:"opens_at"`
@@ -48,12 +47,15 @@ type Card struct {
 	ContradictionCount int
 }
 
-// CandidateTally is a candidate of an event with how many ballots approve
-// them and how many mark them as favourite, and their card.
+// CandidateTally is a candidate of an event with how many ballots rank them
+// first and at all, how many rank them above each other candidate (Beats,
+// by person id: a ranked candidate is above every unranked one), and their
+// card.
 type CandidateTally struct {
-	PersonID   int64
-	Approvals  int
-	Favourites int
+	PersonID     int64
+	FirstChoices int
+	Ranked       int
+	Beats        map[int64]int
 	Card
 }
 

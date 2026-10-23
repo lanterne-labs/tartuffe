@@ -16,12 +16,11 @@ import { identity, type VoterKey, type WindowInfo } from './voter';
 
 export type BallotKind = 'choices' | 'blank' | 'withdraw';
 
-// MyBallot is a ballot: for choices, the approved candidates in increasing
-// id order and the favourite (one of them) or none.
+// MyBallot is a ballot: for choices, the ranked candidates, from the
+// preferred one.
 export interface MyBallot {
 	kind: BallotKind;
 	choices: number[];
-	favourite?: number;
 }
 
 // TREE_DEPTH is the depth every proof uses: the circuit files served are
@@ -59,8 +58,7 @@ export function nullifier(secret: string, eventId: number, w: { series: number; 
 
 // message is the text the proof binds (backend/polls.AnonBallot.Message).
 export function message(eventId: number, w: { series: number; window: number }, seq: number, b: MyBallot): string {
-	const fav = b.kind === 'choices' && b.favourite ? `;favourite=${b.favourite}` : '';
-	const body = b.kind === 'choices' ? `choices=${b.choices.join(',')}${fav}` : b.kind;
+	const body = b.kind === 'choices' ? `choices=${b.choices.join(',')}` : b.kind;
 	return `tartuffe-ballot/v1;poll=${eventId};series=${w.series};window=${w.window};seq=${seq};${body}`;
 }
 
@@ -122,7 +120,6 @@ interface PublicBallot {
 	seq: number;
 	kind: BallotKind;
 	choices: number[];
-	favourite?: number;
 }
 
 const pollPath = (slug: string) => `/api/polls/${encodeURIComponent(slug)}`;
@@ -174,7 +171,7 @@ async function castIn(slug: string, eventId: number, key: VoterKey, w: WindowInf
 		const proof: SemaphoreProof = await generateProof(identity(key.secret), group, digest(message(eventId, w, seq, b)), digest(scopeName(eventId, w)), TREE_DEPTH, ARTIFACTS);
 		const res = await plain(`${pollPath(slug)}/ballots`, {
 			method: 'POST',
-			body: JSON.stringify({ poll: eventId, series: w.series, window: w.window, seq, kind: b.kind, choices: b.choices, favourite: b.favourite ?? 0, proof })
+			body: JSON.stringify({ poll: eventId, series: w.series, window: w.window, seq, kind: b.kind, choices: b.choices, proof })
 		});
 		if (res.ok) return { seq, publishedBy: ((await res.json()) as { published_by: string }).published_by };
 		const err = await errorBody(res);
@@ -233,7 +230,7 @@ export async function myBallot(slug: string, eventId: number, key: VoterKey, win
 		const p = found[wkey(w)];
 		if (!p) continue;
 		if (!state || p.seq > (state.seq[wkey(w)] ?? 0)) {
-			state = { ballot: { kind: p.kind, choices: p.choices ?? [], favourite: p.favourite || undefined }, seq: { ...(state?.seq ?? {}), [wkey(w)]: p.seq }, waiting: {} };
+			state = { ballot: { kind: p.kind, choices: p.choices ?? [] }, seq: { ...(state?.seq ?? {}), [wkey(w)]: p.seq }, waiting: {} };
 		}
 	}
 	if (!state) return { ballot: null };

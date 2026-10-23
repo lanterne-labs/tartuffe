@@ -58,10 +58,11 @@ type tallyEntry struct {
 	Window
 	Voters int `json:"voters"`
 	Blank  int `json:"blank"`
-	// Approvals and Favourites count, per candidate, the ballots that
-	// approve them and that mark them as favourite.
-	Approvals  map[int64]int `json:"approvals"`
-	Favourites map[int64]int `json:"favourites"`
+	// First and Ranked count, per candidate, the ballots that rank them
+	// first and at all; Beats[a][b] those that rank a above b.
+	First  map[int64]int           `json:"first"`
+	Ranked map[int64]int           `json:"ranked"`
+	Beats  map[int64]map[int64]int `json:"beats"`
 }
 
 // voteLogLock serializes the appends (pg_advisory_xact_lock key).

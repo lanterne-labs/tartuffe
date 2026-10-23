@@ -141,7 +141,6 @@ type publicBallot struct {
 	Seq       int     `json:"seq"`
 	Kind      string  `json:"kind"`
 	Choices   []int64 `json:"choices"`
-	Favourite int64   `json:"favourite,omitempty"`
 }
 
 // handleListBallots lists the published ballots of an open window, the last
@@ -162,7 +161,7 @@ func (s *Service) handleListBallots(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]publicBallot, len(ballots))
 	for i, b := range ballots {
-		out[i] = publicBallot{Nullifier: b.Proof.Nullifier, Seq: b.Seq, Kind: b.Kind, Choices: b.Choices, Favourite: b.Favourite}
+		out[i] = publicBallot{Nullifier: b.Proof.Nullifier, Seq: b.Seq, Kind: b.Kind, Choices: b.Choices}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
