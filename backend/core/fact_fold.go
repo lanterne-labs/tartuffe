@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -218,6 +220,11 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 		// puts same-topic-but-different claims above 0.80 too, so no
 		// similarity level is trusted on its own).
 		verdict, jErr := ask(i, j)
+		if errors.Is(jErr, llm.ErrUnavailable) {
+			// No pair can be judged until the LLM serves again: a fold that
+			// went on would read every pair as distinct.
+			return nil, fmt.Errorf("fold %s: occurrence gate: %w", p.Name, jErr)
+		}
 		if jErr != nil {
 			log.Warn().Err(jErr).Int64("fact_a", facts[i].ID).Int64("fact_b", facts[j].ID).
 				Msg("Occurrence gate failed; treating pair as distinct")

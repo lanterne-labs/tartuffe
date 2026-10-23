@@ -2,10 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
+
+	"digital-mirror/backend/llm"
 )
 
 // foldClusterStorer is a FactFoldStorer over in-memory facts: no shared
@@ -178,5 +181,25 @@ func TestCliquesKeepLeftovers(t *testing.T) {
 	// A lone leftover is no cluster.
 	if got := cliques([]FactForFold{f(1), f(2), f(9)}, func(x, y FactForFold) bool { return join[OrderedPair(x.ID, y.ID)] }); len(got) != 1 {
 		t.Errorf("a lone leftover made a cluster: %v", got)
+	}
+}
+
+// downJudge is an LLM that cannot serve.
+type downJudge struct{}
+
+func (downJudge) IsSameOccurrence(ctx context.Context, a, b ClaimEvidence) (OccurrenceVerdict, error) {
+	return OccurrenceDifferent, fmt.Errorf("gate: %w", llm.ErrUnavailable)
+}
+
+// An LLM that cannot serve stops the fold: going on would read every pair as
+// distinct and fold nothing (prod 2026-10-23, every seat at its limit).
+func TestFoldClustersStopWhenTheLLMIsDown(t *testing.T) {
+	store := &foldClusterStorer{facts: []FactForFold{
+		{ID: 1, Text: "A", Embedding: []float32{1, 0, 0}},
+		{ID: 2, Text: "B", Embedding: []float32{1, 0, 0}},
+	}}
+	_, err := FoldClustersForPerson(context.Background(), store, downJudge{}, PersonRecord{ID: 1, Name: "p"}, DefaultFoldOptions)
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want llm.ErrUnavailable", err)
 	}
 }
