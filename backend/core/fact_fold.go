@@ -258,41 +258,25 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 			continue
 		}
 		sort.Slice(g, func(a, b int) bool { return g[a].ID < g[b].ID })
-		// COMPLETE-linkage refinement: union-find is single-linkage and can chain
-		// two opposing positions through a vague bridge fact (the stance-merge
-		// lesson). Keep only members the gate confirmed against EVERY
-		// already-kept member, and never across a contradicted pair.
-		var clique []FactForFold
-		for _, f := range g {
-			ok := true
-			for _, m := range clique {
-				k := key(m.ID, f.ID)
-				if !confirmed[k].Groupable() || contradicted[k] != 0 {
-					ok = false
-					break
+		for _, clique := range cliques(g, func(x, y FactForFold) bool {
+			k := key(x.ID, y.ID)
+			return confirmed[k].Groupable() && contradicted[k] == 0
+		}) {
+			if len(clique) > opts.MaxCluster {
+				log.Warn().Str("person", p.Name).Int("size", len(clique)).
+					Msg("Skipping oversized fold cluster (raise --max-cluster to include)")
+				continue
+			}
+			cluster := FoldCluster{Facts: clique}
+			for a := range clique {
+				for b := a + 1; b < len(clique); b++ {
+					if confirmed[key(clique[a].ID, clique[b].ID)] == OccurrenceContained {
+						cluster.Contained = true
+					}
 				}
 			}
-			if ok {
-				clique = append(clique, f)
-			}
+			clusters = append(clusters, cluster)
 		}
-		if len(clique) < 2 {
-			continue
-		}
-		if len(clique) > opts.MaxCluster {
-			log.Warn().Str("person", p.Name).Int("size", len(clique)).
-				Msg("Skipping oversized fold cluster (raise --max-cluster to include)")
-			continue
-		}
-		cluster := FoldCluster{Facts: clique}
-		for a := range clique {
-			for b := a + 1; b < len(clique); b++ {
-				if confirmed[key(clique[a].ID, clique[b].ID)] == OccurrenceContained {
-					cluster.Contained = true
-				}
-			}
-		}
-		clusters = append(clusters, cluster)
 	}
 	sort.Slice(clusters, func(a, b int) bool { return clusters[a].Facts[0].ID < clusters[b].Facts[0].ID })
 	return clusters, nil
@@ -335,6 +319,41 @@ func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord
 	log.Info().Str("person", p.Name).Int64("parent_fact_id", parent).Int("members", len(cluster)-1).
 		Msg("Grouped one-occurrence cluster")
 	return parent, nil
+}
+
+// cliques splits a single-linkage group (in order) into COMPLETE-linkage
+// clusters: union-find can chain two opposing positions through a vague bridge
+// fact (the stance-merge lesson), so a cluster keeps only members joinable
+// with EVERY member already kept. The members left out form their own
+// clusters the same way, instead of being dropped: a widely reported event
+// (one conviction in a dozen articles) chains into one large group whose
+// first clique held only a few of its reports. Clusters of one are not
+// returned.
+func cliques(g []FactForFold, joinable func(x, y FactForFold) bool) [][]FactForFold {
+	var out [][]FactForFold
+	rest := g
+	for len(rest) >= 2 {
+		var clique, left []FactForFold
+		for _, f := range rest {
+			ok := true
+			for _, m := range clique {
+				if !joinable(m, f) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				clique = append(clique, f)
+			} else {
+				left = append(left, f)
+			}
+		}
+		if len(clique) >= 2 {
+			out = append(out, clique)
+		}
+		rest = left
+	}
+	return out
 }
 
 func foldFactIDs(facts []FactForFold) []int64 {
