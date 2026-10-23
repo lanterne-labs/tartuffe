@@ -17,18 +17,18 @@ import (
 // Event is one poll (the 2027 presidential pre-poll first): a voter ranks up
 // to MaxChoices of its candidates.
 type Event struct {
-	ID            int64  `json:"id"`
-	Slug          string `json:"slug"`
-	TitleFR       string `json:"title_fr"`
-	TitleEN       string `json:"title_en"`
-	DescriptionFR string `json:"description_fr"`
-	DescriptionEN string `json:"description_en"`
-	MaxChoices int        `json:"max_choices"`
-	MinVoters  int        `json:"min_voters"`
-	OpensAt    time.Time  `json:"opens_at"`
-	ClosesAt   *time.Time `json:"closes_at,omitempty"`
-	Featured   bool       `json:"featured"`
-	Blackouts  []Blackout `json:"blackouts"`
+	ID            int64      `json:"id"`
+	Slug          string     `json:"slug"`
+	TitleFR       string     `json:"title_fr"`
+	TitleEN       string     `json:"title_en"`
+	DescriptionFR string     `json:"description_fr"`
+	DescriptionEN string     `json:"description_en"`
+	MaxChoices    int        `json:"max_choices"`
+	MinVoters     int        `json:"min_voters"`
+	OpensAt       time.Time  `json:"opens_at"`
+	ClosesAt      *time.Time `json:"closes_at,omitempty"`
+	Featured      bool       `json:"featured"`
+	Blackouts     []Blackout `json:"blackouts"`
 }
 
 // Blackout is a period when the results of an event are not shown.

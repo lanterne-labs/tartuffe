@@ -10,7 +10,7 @@ package polls
 import (
 	"errors"
 	"fmt"
-		"sort"
+	"sort"
 	"strings"
 	"time"
 )
