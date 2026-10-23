@@ -6,6 +6,7 @@
 	import { page } from '$app/stores';
 	import { tr, type Lang } from '$lib/i18n';
 	import type { PollEvent } from '$lib/types';
+	import { eventPaths } from '$lib/event';
 
 	let { event, lang }: { event: PollEvent; lang: Lang } = $props();
 
@@ -44,7 +45,7 @@
 		{#if ends}
 			<p class="ends">{tr('event.ends', lang, { d: dateText(ends), n: daysLeft ?? 0 })}</p>
 		{/if}
-		<a class="go" href="/election/{event.slug}" onclick={close}>{tr('event.cta', lang)} →</a>
+		<a class="go" href={eventPaths(event.slug).vote} onclick={close}>{tr('event.cta', lang)} →</a>
 	</aside>
 {/if}
 

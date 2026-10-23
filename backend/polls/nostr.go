@@ -165,9 +165,11 @@ func RelayBallots(ctx context.Context, relay string) ([]RelayBallot, error) {
 }
 
 // acceptEvent casts the ballot of an event. Anyone can publish events of
-// this kind: one that holds no valid ballot is dropped.
+// this kind: one that holds no valid ballot is dropped. An event seen
+// already (on another relay, or in the slack of the last read) is skipped
+// before its proof is checked again.
 func (s *Service) acceptEvent(ctx context.Context, relay string, ev nostrEvent) {
-	if ev.Kind != NostrKind || len(ev.Content) > maxBallotBody {
+	if ev.Kind != NostrKind || len(ev.Content) > maxBallotBody || s.seenEvent(ev) {
 		return
 	}
 	var b AnonBallot
@@ -196,6 +198,27 @@ func (s *Service) acceptEvent(ctx context.Context, relay string, ev nostrEvent) 
 	default:
 		log.Debug().Err(err).Str("relay", relay).Str("event", ev.ID).Str("code", code).Msg("Nostr ballot refused")
 	}
+}
+
+// seenEvent tells whether the event was read before, and remembers it; it
+// forgets the events older than the slack.
+func (s *Service) seenEvent(ev nostrEvent) bool {
+	s.seenMu.Lock()
+	defer s.seenMu.Unlock()
+	if s.seen == nil {
+		s.seen = map[string]int64{}
+	}
+	if _, ok := s.seen[ev.ID]; ok {
+		return true
+	}
+	old := time.Now().Add(-2 * relaySlack).Unix()
+	for id, at := range s.seen {
+		if at < old {
+			delete(s.seen, id)
+		}
+	}
+	s.seen[ev.ID] = ev.CreatedAt
+	return false
 }
 
 // eventByID returns the poll of the id, nil if there is none.

@@ -3,6 +3,7 @@
 	// that keep it safe and the devices that share it, then what this device
 	// remembers of their ballots; then their account, if they have one, for
 	// the reports and the +1s.
+	import { eventPaths } from '$lib/event';
 	import { onMount, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -184,7 +185,7 @@
 			<section class="card event" aria-labelledby="event-{ev.id}">
 				<div class="event-head">
 					<h3 id="event-{ev.id}">
-						<a href="/election/{ev.slug}">{currentLang === 'en' ? ev.title_en : ev.title_fr}</a>
+						<a href={eventPaths(ev.slug).intro}>{currentLang === 'en' ? ev.title_en : ev.title_fr}</a>
 					</h3>
 					<span class="badge" class:badge--open={isOpen(ev)}>
 						{#if !isOpen(ev)}
@@ -197,7 +198,7 @@
 					</span>
 				</div>
 				<p class="muted">{key?.registered ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
-				<a href="/election/{ev.slug}" class="btn" class:btn-primary={isOpen(ev)}>
+				<a href={eventPaths(ev.slug).vote} class="btn" class:btn-primary={isOpen(ev)}>
 					{isOpen(ev) ? tr('profile.go_vote', currentLang) : tr('profile.go_results', currentLang)}
 				</a>
 			</section>

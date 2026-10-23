@@ -12,6 +12,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"digital-mirror/backend/accounts"
@@ -39,6 +40,9 @@ type Service struct {
 	// ballots come through.
 	signer *LogSigner
 	relays []string
+	// seen are the relay events read, by id, with their date.
+	seenMu sync.Mutex
+	seen   map[string]int64
 }
 
 // Config is how the polls run: when the ballots are published, the key of

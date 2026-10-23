@@ -2,6 +2,7 @@
 	// The lab behind the site: why it exists, and what it releases. The
 	// contradiction checker is its permanent product; the presidential vote is
 	// a temporary experiment, shown with its end date (the featured poll's).
+	import { eventPaths } from '$lib/event';
 	import { onMount } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -151,9 +152,9 @@
 				<p class="note">{c.eventNote}</p>
 				<div class="actions">
 					{#if featured}
-						<a class="btn-event" href="/election/{featured.slug}">{c.eventCta}</a>
+						<a class="btn-event" href={eventPaths(featured.slug).vote}>{c.eventCta}</a>
 					{/if}
-					<a class="link" href="/about/privacy">{c.eventHow} →</a>
+					<a class="link" href={eventPaths(featured?.slug).how}>{c.eventHow} →</a>
 				</div>
 			</div>
 		</div>

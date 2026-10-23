@@ -4,6 +4,7 @@
 	// feed), then the lab's temporary event, the private presidential vote,
 	// in its own colour with its end date, then the lab itself. The ranking is
 	// at /dashboard.
+	import { eventPaths } from '$lib/event';
 	import { onMount } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -32,7 +33,7 @@
 		return { destroy: () => io.disconnect() };
 	}
 
-	const POLL = '/election/presidentielle-2027';
+	const POLL = eventPaths();
 	let featured = $state<PollEvent | null>(null);
 	onMount(async () => {
 		try {
@@ -84,10 +85,10 @@
 
 			evTag: 'Expérience temporaire du labo',
 			evTitle: 'Présidentielle 2027 : le vote en ligne, vraiment privé',
-			evBody: 'Approuvez les candidats qui vous conviennent, ou votez blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
+			evBody: 'Classez jusqu’à 3 candidats, ou votez blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
 			evEnds: 'Jusqu’au {d}',
 			evCta: 'Voter',
-			evMore: 'Pourquoi cette expérience',
+			evMore: 'Découvrir l’expérience',
 
 			labKicker: 'Le labo',
 			labTitle: 'Un laboratoire pour la démocratie',
@@ -128,10 +129,10 @@
 
 			evTag: 'A temporary experiment of the lab',
 			evTitle: 'Presidential 2027: online voting, truly private',
-			evBody: 'Approve the candidates you find acceptable, or vote blank, with your passport or ID card. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
+			evBody: 'Rank up to 3 candidates, or vote blank, with your passport or ID card. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
 			evEnds: 'Until {d}',
 			evCta: 'Vote',
-			evMore: 'Why this experiment',
+			evMore: 'Discover the experiment',
 
 			labKicker: 'The lab',
 			labTitle: 'A lab for democracy',
@@ -248,8 +249,8 @@
 		<h2>{c.evTitle}</h2>
 		<p>{c.evBody}</p>
 		<div class="ev-actions">
-			<a class="ev-cta" href={featured ? `/election/${featured.slug}` : POLL}>{c.evCta} →</a>
-			<a class="ev-more" href="/lab">{c.evMore}</a>
+			<a class="ev-cta" href={featured ? eventPaths(featured.slug).vote : POLL.vote}>{c.evCta} →</a>
+			<a class="ev-more" href={featured ? eventPaths(featured.slug).intro : POLL.intro}>{c.evMore}</a>
 		</div>
 	</section>
 

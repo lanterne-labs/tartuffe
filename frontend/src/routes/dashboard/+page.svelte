@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { eventPaths } from '$lib/event';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
@@ -169,7 +170,7 @@
 
 <div class="dashboard">
 	{#if featured}
-		<a class="poll-hero" href="/election/{featured.slug}">
+		<a class="poll-hero" href={eventPaths(featured.slug).vote}>
 			<div class="poll-hero-text">
 				<span class="poll-hero-kicker">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
 				<h1 class="poll-hero-title">{tr('home.poll.title', currentLang)}</h1>

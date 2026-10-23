@@ -20,6 +20,7 @@
 	import VoterKeyDialog from '$lib/components/VoterKeyDialog.svelte';
 	import EventBanner from '$lib/components/EventBanner.svelte';
 	import { voterKey } from '$lib/voter';
+	import { eventPaths } from '$lib/event';
 	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
@@ -44,6 +45,27 @@
 	// The featured pre-poll, the lab's temporary event, gets a link in the
 	// nav with its end date, and a card in a corner (EventBanner).
 	let featured = $state<PollEvent | null>(null);
+
+	// The event's menu (its three pages) opens on a click or a tap, on hover
+	// with a mouse, and closes on Escape, outside, or on a new page.
+	let eventMenuOpen = $state(false);
+	let eventMenuEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		$page.url.pathname;
+		eventMenuOpen = false;
+	});
+	function onWindowClick(e: MouseEvent) {
+		if (eventMenuOpen && eventMenuEl && !eventMenuEl.contains(e.target as Node)) eventMenuOpen = false;
+	}
+	function onWindowKey(e: KeyboardEvent) {
+		if (e.key === 'Escape' && eventMenuOpen) {
+			eventMenuOpen = false;
+			eventMenuEl?.querySelector('button')?.focus();
+		}
+	}
+	function onMenuFocusOut(e: FocusEvent) {
+		if (eventMenuEl && e.relatedTarget && !eventMenuEl.contains(e.relatedTarget as Node)) eventMenuOpen = false;
+	}
 	onMount(async () => {
 		// The stored session may be stale: its pseudonym may have changed.
 		refreshUser();
@@ -76,6 +98,8 @@
 	<meta name="twitter:description" content={meta.description} />
 </svelte:head>
 
+<svelte:window onclick={onWindowClick} onkeydown={onWindowKey} />
+
 <nav class="nav-bar">
 	<div class="nav-content">
 		<a href="/" class="nav-brand" aria-label="tartuffe.me — home">
@@ -106,10 +130,32 @@
 				>EN</button>
 			</div>
 			{#if featured}
-				<a href="/election/{featured.slug}" class="nav-link nav-link--poll" class:active={$page.url.pathname.startsWith('/election/')} title={tr('event.label', currentLang)}>
-					<span class="poll-tag">{tr('event.tag_short', currentLang)}</span>
-					{currentLang === 'en' ? featured.title_en : featured.title_fr}
-				</a>
+				{@const ep = eventPaths(featured.slug)}
+				<div class="nav-event" class:open={eventMenuOpen} bind:this={eventMenuEl} onfocusout={onMenuFocusOut}>
+					<button
+						class="nav-link nav-link--poll"
+						class:active={$page.url.pathname.startsWith('/election/')}
+						aria-haspopup="true"
+						aria-expanded={eventMenuOpen}
+						aria-controls="event-menu"
+						title={tr('event.label', currentLang)}
+						onclick={() => (eventMenuOpen = !eventMenuOpen)}
+					>
+						<span class="poll-tag">{tr('event.tag_short', currentLang)}</span>
+						<span class="poll-title">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
+						<!-- On a phone the title does not fit: the year says it. -->
+						<span class="poll-title-short">{featured.title_fr.match(/\d{4}/)?.[0] ?? featured.title_fr}</span>
+						<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+					</button>
+					<div class="event-menu" id="event-menu">
+						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how]] as [k, href] (k)}
+							<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
+								<strong>{tr(`event.menu.${k}`, currentLang)}</strong>
+								<span>{tr(`event.menu.${k}_sub`, currentLang)}</span>
+							</a>
+						{/each}
+					</div>
+				</div>
 			{/if}
 			<a href="/feed" class="nav-link nav-link--feed" class:active={$page.url.pathname === '/feed'}>{tr('nav.feed', currentLang)}</a>
 			<a href="/dashboard" class="nav-link nav-link--home" class:active={$page.url.pathname === "/dashboard"}>{tr('nav.dashboard', currentLang)}</a>
@@ -159,8 +205,6 @@
 	<a href="/corrections">{tr('corrections.title', currentLang)}</a>
 	<span aria-hidden="true">·</span>
 	<a href="/feed">{tr('nav.feed', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/verification">{tr('footer.verification', currentLang)}</a>
 </footer>
 
 <style>
@@ -283,16 +327,115 @@
 		color: var(--text-primary);
 	}
 
+	.nav-event {
+		position: relative;
+		min-width: 0;
+	}
 	.nav-link--poll {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;
+		max-width: 100%;
 		white-space: nowrap;
 		color: var(--text-primary);
-		padding: 0.25rem 0.75rem 0.25rem 0.3rem;
+		padding: 0.25rem 0.6rem 0.25rem 0.3rem;
 		border: 1px solid var(--event);
 		border-radius: var(--radius-full);
 		background: var(--event-glow);
+		font-family: inherit;
+		cursor: pointer;
+	}
+	.poll-title {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.poll-title-short {
+		display: none;
+	}
+	@media (max-width: 480px) {
+		.poll-title {
+			display: none;
+		}
+		.poll-title-short {
+			display: inline;
+		}
+	}
+	.caret {
+		width: 12px;
+		height: 12px;
+		flex-shrink: 0;
+		transition: transform var(--transition-fast);
+	}
+	.nav-event.open .caret {
+		transform: rotate(180deg);
+	}
+	.event-menu {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		z-index: 110;
+		display: grid;
+		gap: 2px;
+		min-width: 17rem;
+		margin-top: 0.5rem;
+		padding: 0.35rem;
+		border: 1px solid var(--event);
+		border-radius: var(--radius-lg);
+		background: var(--bg-secondary);
+		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+		opacity: 0;
+		visibility: hidden;
+		transform: translateY(-4px);
+		transition:
+			opacity 0.15s ease,
+			transform 0.15s ease,
+			visibility 0.15s;
+	}
+	/* The gap between the pill and the menu keeps the hover. */
+	.event-menu::before {
+		content: '';
+		position: absolute;
+		top: -0.6rem;
+		left: 0;
+		right: 0;
+		height: 0.6rem;
+	}
+	.nav-event.open .event-menu {
+		opacity: 1;
+		visibility: visible;
+		transform: none;
+	}
+	@media (hover: hover) {
+		.nav-event:hover .event-menu {
+			opacity: 1;
+			visibility: visible;
+			transform: none;
+		}
+	}
+	.event-menu a {
+		display: grid;
+		gap: 0.1rem;
+		padding: 0.55rem 0.75rem;
+		border-radius: var(--radius-md);
+		color: var(--text-primary);
+		text-decoration: none;
+	}
+	.event-menu a strong {
+		font-size: 0.88rem;
+		font-weight: 600;
+	}
+	.event-menu a span {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+	.event-menu a:hover,
+	.event-menu a:focus-visible {
+		background: var(--event-glow);
+	}
+	.event-menu a.active {
+		background: var(--event-glow);
+		box-shadow: inset 3px 0 0 var(--event);
 	}
 
 	.poll-tag {
@@ -457,10 +600,18 @@
 		}
 		.nav-link--poll {
 			min-width: 0;
-			overflow: hidden;
-			text-overflow: ellipsis;
 			font-size: 0.8rem;
-			padding: 0.25rem 0.6rem;
+			padding: 0.25rem 0.5rem 0.25rem 0.6rem;
+		}
+		.event-menu {
+			position: fixed;
+			top: 3.4rem;
+			left: 1rem;
+			right: 1rem;
+			min-width: 0;
+		}
+		.event-menu::before {
+			display: none;
 		}
 	}
 

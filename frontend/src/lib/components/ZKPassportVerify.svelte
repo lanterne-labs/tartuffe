@@ -10,6 +10,7 @@
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
 	import ZKProofAnimation from './ZKProofAnimation.svelte';
+	import { eventPaths } from '$lib/event';
 
 	interface Props {
 		config: Record<string, unknown>;
@@ -110,7 +111,7 @@
 			<li>{tr('zk.step3', lang)}</li>
 		</ol>
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
-		<a class="more" href="/verification" onclick={() => voterKeyOpen.set(false)}>{tr('zk.how', lang)}</a>
+		<a class="more" href="{eventPaths().how}#cle" onclick={() => voterKeyOpen.set(false)}>{tr('zk.how', lang)}</a>
 	{:else if step === 'starting'}
 		<p class="status">{tr('zk.starting', lang)}</p>
 	{:else if step === 'scan'}

@@ -12,6 +12,7 @@
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { replaceState } from '$app/navigation';
+	import { eventPaths } from '$lib/event';
 	import type { PollResponse, CandidateResult } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -21,6 +22,7 @@
 	let hasKey = $derived(!!$voterKey?.registered);
 
 	let slug = $derived($page.params.slug ?? '');
+	let paths = $derived(eventPaths(slug));
 	let data = $state<PollResponse | null>(null);
 	let loadError: string | null = $state(null);
 	let notFound = $state(false);
@@ -325,9 +327,6 @@
 	{/if}
 </svelte:head>
 
-<!-- The lab's temporary event: the page wears the event's colour, not the checker's. -->
-<div class="event-page">
-
 {#if notFound}
 	<p class="state">{tr('poll.not_found', currentLang)}</p>
 {:else if loadError}
@@ -338,11 +337,6 @@
 {:else if !event || !results}
 	<p class="state">{tr('person.loading', currentLang)}</p>
 {:else}
-	<p class="event-strip">
-		<span class="event-strip-tag">{tr('event.tag', currentLang)}</span>
-		<span>{event.closes_at ? tr('event.strip.ends', currentLang, { d: closesText(event.closes_at) }) : tr('event.strip', currentLang)}</span>
-		<a href="/lab">{tr('event.strip.why', currentLang)} →</a>
-	</p>
 	<header class="hero">
 		<span class="kicker">{tr('poll.kicker', currentLang)}</span>
 		<h1>{currentLang === 'en' ? event.title_en : event.title_fr}</h1>
@@ -438,7 +432,7 @@
 				{:else if publishedBy && mine && !busy}
 					<p class="published">{tr('vote.published_by', currentLang, { t: timeText(publishedBy) })}</p>
 				{:else if check?.state === 'included' && mine && !busy}
-					<p class="published published--ok">✓ {@html tr('vote.log.included', currentLang)}</p>
+					<p class="published published--ok">✓ {@html tr('vote.log.included', currentLang, { href: paths.how + '#journal' })}</p>
 				{/if}
 				{#if actionError}
 					<p class="save-error" role="alert">{actionError}</p>
@@ -653,48 +647,14 @@
 			<li>{@html tr('poll.how.honesty', currentLang)}</li>
 			<li>{@html tr('poll.how.compare', currentLang)}</li>
 			<li>{tr('poll.how.facts', currentLang)}</li>
-			<li>{@html tr('poll.how.verification', currentLang)}</li>
+			<li>{@html tr('poll.how.verification', currentLang, { href: paths.how + '#cle' })}</li>
 			<li>{tr('poll.how.blank', currentLang)}</li>
-			<li>{@html tr('poll.how.privacy', currentLang)}</li>
+			<li>{@html tr('poll.how.privacy', currentLang, { href: paths.how + '#journal' })}</li>
 		</ul>
 	</details>
 {/if}
-</div>
 
 <style>
-	.event-page {
-		--accent: var(--event-strong);
-		--accent-hover: var(--event);
-		--accent-glow: var(--event-glow);
-	}
-	.event-strip {
-		display: flex;
-		flex-wrap: wrap;
-		justify-content: center;
-		align-items: center;
-		gap: 0.4rem 0.9rem;
-		max-width: 46rem;
-		margin: 0.5rem auto 0;
-		padding: 0.55rem 1rem;
-		border: 1px dashed var(--event);
-		border-radius: var(--radius-full);
-		background: var(--event-glow);
-		font-size: 0.85rem;
-		text-align: center;
-	}
-	.event-strip-tag {
-		font-size: 0.66rem;
-		font-weight: 700;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		padding: 0.15rem 0.5rem;
-		border-radius: var(--radius-full);
-		background: var(--event-strong);
-		color: white;
-	}
-	.event-strip a {
-		color: var(--event);
-	}
 	.slots {
 		list-style: none;
 		margin: 0 0 0.75rem;

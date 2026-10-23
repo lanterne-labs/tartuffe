@@ -31,14 +31,14 @@ trusting it:
     checkpoint-<size>.txt and .ots for the ots client ("ots verify -f
     checkpoint-12.txt checkpoint-12.txt.ots").
 It exits non-zero when it finds a problem.`,
-	Example: `  dm poll verify --api https://api.tartuffe.me --relays --stamps ./stamps`,
+	Example: `  dm poll verify --api https://tartuffe.me --relays --stamps ./stamps`,
 	RunE:    runPollVerify,
 }
 
 func init() {
 	pollCmd.AddCommand(pollVerifyCmd, pollLogKeyCmd)
 	f := pollVerifyCmd.Flags()
-	f.String("api", "https://api.tartuffe.me", "base URL of the site's API")
+	f.String("api", "https://tartuffe.me", "base URL of the site's API")
 	f.String("key", "", "the log's verifier key (tartuffe.me/vote-log+...); default: the one the site serves")
 	f.Bool("relays", false, "also compare the log with the ballots on the Nostr relays")
 	f.StringSlice("relay", polls.DefaultRelays, "the relays to read with --relays")

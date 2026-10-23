@@ -1,7 +1,9 @@
 <script lang="ts">
 	// About / methodology: what tartuffe.me is, how facts, stances and
 	// contradictions are built, how the score is computed (with a live chart),
-	// the limits, the neutrality rules and what the pre-poll is and is not.
+	// the limits and the neutrality rules. The lab's vote experiment has its
+	// own pages (/election/...): one line points there.
+	import { eventPaths } from '$lib/event';
 	import { lang } from '$lib/i18n';
 	import Pipeline from '$lib/components/about/Pipeline.svelte';
 	import ContradictionFlow from '$lib/components/about/ContradictionFlow.svelte';
@@ -107,15 +109,7 @@
 				['Indépendant', 'Un projet collaboratif, porté par sa communauté.']
 			],
 
-			pollKicker: 'Pré-sondage',
-			pollTitle: 'Présidentielle 2027 : votez, comparez',
-			pollBody: [
-				'Votre choix, face au score de chaque candidat.',
-				'Un vote par citoyen français majeur, prouvé par ZKPassport. Aucune autre donnée transmise.',
-				'Consultation ouverte, pas un sondage au sens de la loi du 19 juillet 1977. Résultats masqués sous un seuil de votants et pendant le silence électoral.'
-			],
-			pollLink: 'Aller au pré-sondage',
-			verifLink: 'Comment marche la vérification'
+			pollLink: 'Le labo mène aussi, à part, une expérience de vote en ligne privé : la présidentielle 2027'
 		},
 		en: {
 			metaTitle: 'About — tartuffe.me',
@@ -190,15 +184,7 @@
 				['Independent', 'A collaborative project, driven by its community.']
 			],
 
-			pollKicker: 'Pre-poll',
-			pollTitle: '2027 presidential: vote, compare',
-			pollBody: [
-				'Your choice, next to each candidate’s score.',
-				'One vote per adult French citizen, proved with ZKPassport. No other data sent.',
-				'An open consultation, not a poll under the French law of 19 July 1977. Results hidden below a voter threshold and during the electoral blackout.'
-			],
-			pollLink: 'Go to the pre-poll',
-			verifLink: 'How the verification works'
+			pollLink: 'The lab also runs, apart, an experiment in private online voting: the 2027 presidential election'
 		}
 	};
 
@@ -333,16 +319,7 @@
 		</div>
 	</section>
 
-	<!-- Pre-poll -->
-	<section id="poll" class="card poll" use:reveal>
-		<span class="kicker">{c.pollKicker}</span>
-		<h2>{c.pollTitle}</h2>
-		{#each c.pollBody as p}<p>{p}</p>{/each}
-		<div class="poll-links">
-			<a class="cta" href="/election/presidentielle-2027">{c.pollLink}</a>
-			<a href="/verification">{c.verifLink} →</a>
-		</div>
-	</section>
+	<p class="more event-line"><a href={eventPaths().intro}>{c.pollLink} →</a></p>
 </article>
 
 <style>
@@ -657,30 +634,8 @@
 		font-size: 0.9rem;
 	}
 
-	/* Pre-poll */
-	.poll {
-		border-color: var(--border-card-hover);
-		background: radial-gradient(ellipse 90% 70% at 100% 0%, var(--accent-glow), transparent 60%), var(--bg-card);
-	}
-	.poll-links {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem 1.25rem;
-		margin-top: 1.25rem;
-	}
-	.cta {
-		display: inline-block;
-		padding: 0.7rem 1.4rem;
-		border-radius: var(--radius-full);
-		background: var(--accent);
-		color: white;
-		font-weight: 600;
-		font-size: 0.95rem;
-	}
-	.cta:hover {
-		background: var(--accent-hover);
-		color: white;
+	.event-line {
+		text-align: center;
 	}
 
 	/* Scroll reveal (added by the action, so no-JS shows everything). */
