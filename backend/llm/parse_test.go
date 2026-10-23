@@ -11,6 +11,9 @@ func TestParseJSONResponse(t *testing.T) {
 		`{"same": true, "reasoning": "r"}`,
 		"  \n```json\n{\"same\": true, \"reasoning\": \"r\"}\n```\n",
 		"```\n{\"same\": true, \"reasoning\": \"r\"}\n```",
+		// prod, occurrence gate: the reasoning as prose, then the JSON
+		"Both report the appeal ruling of 7 July [B lists more]. Same.\n\n{\"reasoning\": \"r\", \"same\": true}",
+		"Same ruling.\n```json\n{\"reasoning\": \"r\", \"same\": true}\n```",
 	} {
 		v, err := ParseJSONResponse[verdict](in)
 		if err != nil {
