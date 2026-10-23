@@ -94,11 +94,11 @@ func commitment(t *testing.T, secret string) string {
 	return prove(t, secret, nil, "1", "1").Commitment
 }
 
-// ballot builds a ballot of the event in the window and proves it as
-// secret, a member after others.
-func ballot(t *testing.T, e *polls.Event, w polls.Window, seq int, kind string, choices []int64, secret string, others []string) polls.AnonBallot {
+// ballot builds a ballot of the event in the window (approved choices, and
+// the favourite or 0) and proves it as secret, a member after others.
+func ballot(t *testing.T, e *polls.Event, w polls.Window, seq int, kind string, choices []int64, favourite int64, secret string, others []string) polls.AnonBallot {
 	t.Helper()
-	b := polls.AnonBallot{EventID: e.ID, Window: w, Seq: seq, Kind: kind, Choices: choices}
+	b := polls.AnonBallot{EventID: e.ID, Window: w, Seq: seq, Kind: kind, Choices: choices, Favourite: favourite}
 	p := prove(t, secret, others, semaphore.Digest([]byte(b.Message())).String(), polls.Scope(e.ID, w))
 	b.Proof = p.Proof
 	return b
@@ -210,23 +210,23 @@ func TestCastPublishTally(t *testing.T) {
 		}
 		return out
 	}
-	cast := func(sec string, seq int, kind string, choices ...int64) error {
-		b := ballot(t, e, w, seq, kind, choices, sec, others(sec))
+	cast := func(sec string, seq int, kind string, favourite int64, choices ...int64) error {
+		b := ballot(t, e, w, seq, kind, choices, favourite, sec, others(sec))
 		require.NoError(t, polls.CheckAnonBallot(e, cands, b, now))
 		return s.polls.Cast(ctx, b)
 	}
-	require.NoError(t, cast("v1", 1, polls.KindChoices, cands[0], cands[1]))
-	require.NoError(t, cast("v2", 1, polls.KindBlank))
-	require.NoError(t, cast("v3", 1, polls.KindChoices, cands[1]))
-	require.NoError(t, cast("v3", 2, polls.KindChoices, cands[0]))
+	require.NoError(t, cast("v1", 1, polls.KindChoices, cands[0], cands[0], cands[1]))
+	require.NoError(t, cast("v2", 1, polls.KindBlank, 0))
+	require.NoError(t, cast("v3", 1, polls.KindChoices, 0, cands[1]))
+	require.NoError(t, cast("v3", 2, polls.KindChoices, cands[0], cands[0]))
 	var stale *polls.StaleSeqError
-	require.ErrorAs(t, cast("v3", 2, polls.KindChoices, cands[1]), &stale)
+	require.ErrorAs(t, cast("v3", 2, polls.KindChoices, 0, cands[1]), &stale)
 	assert.Equal(t, 2, stale.Last)
-	require.NoError(t, cast("v4", 1, polls.KindChoices, cands[1]))
-	require.NoError(t, cast("v4", 2, polls.KindWithdraw))
+	require.NoError(t, cast("v4", 1, polls.KindChoices, 0, cands[1]))
+	require.NoError(t, cast("v4", 2, polls.KindWithdraw, 0))
 
 	// A root the window never had.
-	b := ballot(t, e, w, 1, polls.KindBlank, nil, "stranger", []string{"x"})
+	b := ballot(t, e, w, 1, polls.KindBlank, nil, 0, "stranger", []string{"x"})
 	assert.ErrorIs(t, s.polls.Cast(ctx, b), polls.ErrUnknownRoot)
 
 	// Nothing is counted before a batch publishes it.
@@ -248,22 +248,27 @@ func TestCastPublishTally(t *testing.T) {
 	for _, c := range tallies {
 		byID[c.PersonID] = c
 	}
-	assert.Equal(t, 2, byID[cands[0]].FirstChoices, "v1, and v3's second ballot")
-	assert.Equal(t, 2, byID[cands[0]].Chosen)
-	assert.Equal(t, 0, byID[cands[1]].FirstChoices)
-	assert.Equal(t, 1, byID[cands[1]].Chosen, "v1's second choice; v4 withdrew")
+	assert.Equal(t, 2, byID[cands[0]].Approvals, "v1, and v3's second ballot")
+	assert.Equal(t, 2, byID[cands[0]].Favourites)
+	assert.Equal(t, 1, byID[cands[1]].Approvals, "v1's; v4 withdrew")
+	assert.Equal(t, 0, byID[cands[1]].Favourites)
 
 	r := polls.Compute(e, tallies, turnout, now)
 	require.NotNil(t, r.BlankShare)
 	assert.InDelta(t, 1.0/3, *r.BlankShare, 1e-9)
 
-	// A removed candidate: v1's ballot counts for its next choice.
+	// A removed candidate: v1's ballot still approves the other, without a
+	// favourite; v3's approved only the removed one and no longer counts.
 	_, err = s.polls.RemoveCandidate(ctx, e.ID, cands[0])
 	require.NoError(t, err)
 	tallies, _, err = s.polls.Tallies(ctx, e.ID)
 	require.NoError(t, err)
 	require.Len(t, tallies, 1)
-	assert.Equal(t, 1, tallies[0].FirstChoices)
+	assert.Equal(t, 1, tallies[0].Approvals)
+	assert.Equal(t, 0, tallies[0].Favourites)
+	_, turnout, err = s.polls.Tallies(ctx, e.ID)
+	require.NoError(t, err)
+	assert.Equal(t, polls.Turnout{Voters: 2, Blank: 1}, turnout, "v1 and the blank vote")
 
 	ballots, err := s.polls.Ballots(ctx, e.ID, w)
 	require.NoError(t, err)
@@ -287,7 +292,7 @@ func TestCheckAnonBallot(t *testing.T) {
 	now := time.Now()
 	e, cands := s.pollWith(t, "check-poll", "check candidate a", "check candidate b")
 	open := polls.OpenWindows(now)
-	b := ballot(t, e, open[1], 1, polls.KindChoices, []int64{cands[0]}, "c1", nil)
+	b := ballot(t, e, open[1], 1, polls.KindChoices, []int64{cands[0]}, cands[0], "c1", nil)
 	require.NoError(t, polls.CheckAnonBallot(e, cands, b, now))
 
 	changed := b
@@ -298,6 +303,9 @@ func TestCheckAnonBallot(t *testing.T) {
 	assert.ErrorIs(t, polls.CheckAnonBallot(e, cands, other, now), polls.ErrBallot, "another scope")
 	blankWithChoice := b
 	blankWithChoice.Kind = polls.KindBlank
+	unbound := b
+	unbound.Favourite = 0
+	assert.ErrorIs(t, polls.CheckAnonBallot(e, cands, unbound, now), polls.ErrBallot, "the favourite is bound by the proof")
 	assert.ErrorIs(t, polls.CheckAnonBallot(e, cands, blankWithChoice, now), polls.ErrBallot, "blank is exclusive")
 	empty := b
 	empty.Choices = nil

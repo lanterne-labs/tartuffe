@@ -1,12 +1,15 @@
 // The rules of a poll: its results and the checks of a ballot.
-// The results put two numbers side by side for each candidate: the share of
-// voters who ranked them first, and their honesty score. Each orders the
-// candidates on its own; the two are never mixed into one number.
+// A ballot approves the candidates the voter finds acceptable (approval
+// voting) and may mark one of them as the favourite. The results put two
+// numbers side by side for each candidate: the share of voters who approve
+// them, and their honesty score; the favourite share comes second. Each
+// orders the candidates on its own; the two are never mixed into one number.
 package polls
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -27,9 +30,10 @@ type CandidateResult struct {
 	HonestyScore       float64  `json:"honesty_score"`
 	FactCount          int      `json:"fact_count"`
 	ContradictionCount int      `json:"contradiction_count"`
-	FirstChoices       *int     `json:"first_choices"`
-	FirstChoiceShare   *float64 `json:"first_choice_share"`
-	ChosenShare        *float64 `json:"chosen_share"`
+	Approvals          *int     `json:"approvals"`
+	ApprovalShare      *float64 `json:"approval_share"`
+	Favourites         *int     `json:"favourites"`
+	FavouriteShare     *float64 `json:"favourite_share"`
 	PreferenceRank     *int     `json:"preference_rank"`
 	HonestyRank        int      `json:"honesty_rank"`
 }
@@ -87,8 +91,9 @@ func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time)
 			HonestyScore: t.HonestyScore, FactCount: t.FactCount, ContradictionCount: t.ContradictionCount,
 		}
 		if r.Hidden == "" {
-			first, firstShare, chosenShare := t.FirstChoices, float64(t.FirstChoices)/float64(voters), float64(t.Chosen)/float64(voters)
-			c.FirstChoices, c.FirstChoiceShare, c.ChosenShare = &first, &firstShare, &chosenShare
+			approvals, favourites := t.Approvals, t.Favourites
+			approvalShare, favouriteShare := float64(approvals)/float64(voters), float64(favourites)/float64(voters)
+			c.Approvals, c.ApprovalShare, c.Favourites, c.FavouriteShare = &approvals, &approvalShare, &favourites, &favouriteShare
 		}
 		r.Candidates = append(r.Candidates, c)
 	}
@@ -116,15 +121,15 @@ func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time)
 	blank, blankShare := turnout.Blank, float64(turnout.Blank)/float64(voters)
 	r.Blank, r.BlankShare = &blank, &blankShare
 
-	// Preference ranks: most first choices first, then most chosen at all;
+	// Preference ranks: most approved first, then most often favourite;
 	// equal on both share a rank.
 	sort.SliceStable(r.Candidates, func(i, j int) bool {
 		a, b := r.Candidates[i], r.Candidates[j]
-		if *a.FirstChoices != *b.FirstChoices {
-			return *a.FirstChoices > *b.FirstChoices
+		if *a.Approvals != *b.Approvals {
+			return *a.Approvals > *b.Approvals
 		}
-		if *a.ChosenShare != *b.ChosenShare {
-			return *a.ChosenShare > *b.ChosenShare
+		if *a.Favourites != *b.Favourites {
+			return *a.Favourites > *b.Favourites
 		}
 		return byName(i, j)
 	})
@@ -132,7 +137,7 @@ func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time)
 		rank := i + 1
 		if i > 0 {
 			a, b := r.Candidates[i], r.Candidates[i-1]
-			if *a.FirstChoices == *b.FirstChoices && *a.ChosenShare == *b.ChosenShare {
+			if *a.Approvals == *b.Approvals && *a.Favourites == *b.Favourites {
 				rank = *b.PreferenceRank
 			}
 		}
@@ -147,28 +152,30 @@ var ErrBallot = errors.New("ballot refused")
 // ErrClosed refuses a ballot outside the voting period.
 var ErrClosed = fmt.Errorf("%w: the event does not take ballots now", ErrBallot)
 
-// CheckBallot checks a ballot (first choice first) against the event and its
-// candidates. An empty ballot withdraws the user's choices.
-func CheckBallot(e *Event, candidates []int64, personIDs []int64, now time.Time) error {
+// CheckBallot checks a ballot against the event and its candidates: the
+// approved candidates (in increasing id order, each once, so one ballot has
+// one text) and the favourite (0: none, else one of the approved).
+func CheckBallot(e *Event, candidates []int64, approved []int64, favourite int64, now time.Time) error {
 	if !IsOpen(e, now) {
 		return ErrClosed
 	}
-	if len(personIDs) > e.MaxChoices {
-		return fmt.Errorf("%w: at most %d choices", ErrBallot, e.MaxChoices)
+	if e.MaxChoices > 0 && len(approved) > e.MaxChoices {
+		return fmt.Errorf("%w: at most %d approvals", ErrBallot, e.MaxChoices)
 	}
 	isCandidate := make(map[int64]bool, len(candidates))
 	for _, id := range candidates {
 		isCandidate[id] = true
 	}
-	seen := map[int64]bool{}
-	for _, id := range personIDs {
+	for i, id := range approved {
 		if !isCandidate[id] {
 			return fmt.Errorf("%w: person %d is not a candidate", ErrBallot, id)
 		}
-		if seen[id] {
-			return fmt.Errorf("%w: person %d is ranked twice", ErrBallot, id)
+		if i > 0 && approved[i-1] >= id {
+			return fmt.Errorf("%w: the approvals must be in increasing order, each once", ErrBallot)
 		}
-		seen[id] = true
+	}
+	if favourite != 0 && !slices.Contains(approved, favourite) {
+		return fmt.Errorf("%w: the favourite must be approved", ErrBallot)
 	}
 	return nil
 }

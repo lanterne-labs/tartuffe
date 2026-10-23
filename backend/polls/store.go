@@ -14,21 +14,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Event is one poll (the 2027 presidential pre-poll first): the users rank
-// up to MaxChoices of its candidates.
+// Event is one poll (the 2027 presidential pre-poll first): a voter approves
+// the candidates they find acceptable and may mark one as their favourite.
 type Event struct {
-	ID            int64      `json:"id"`
-	Slug          string     `json:"slug"`
-	TitleFR       string     `json:"title_fr"`
-	TitleEN       string     `json:"title_en"`
-	DescriptionFR string     `json:"description_fr"`
-	DescriptionEN string     `json:"description_en"`
-	MaxChoices    int        `json:"max_choices"`
-	MinVoters     int        `json:"min_voters"`
-	OpensAt       time.Time  `json:"opens_at"`
-	ClosesAt      *time.Time `json:"closes_at,omitempty"`
-	Featured      bool       `json:"featured"`
-	Blackouts     []Blackout `json:"blackouts"`
+	ID            int64  `json:"id"`
+	Slug          string `json:"slug"`
+	TitleFR       string `json:"title_fr"`
+	TitleEN       string `json:"title_en"`
+	DescriptionFR string `json:"description_fr"`
+	DescriptionEN string `json:"description_en"`
+	// MaxChoices caps the approvals of a ballot (0: no cap).
+	MaxChoices int        `json:"max_choices"`
+	MinVoters  int        `json:"min_voters"`
+	OpensAt    time.Time  `json:"opens_at"`
+	ClosesAt   *time.Time `json:"closes_at,omitempty"`
+	Featured   bool       `json:"featured"`
+	Blackouts  []Blackout `json:"blackouts"`
 }
 
 // Blackout is a period when the results of an event are not shown.
@@ -47,12 +48,12 @@ type Card struct {
 	ContradictionCount int
 }
 
-// CandidateTally is a candidate of an event with how many ballots rank them
-// first, and at all, and their card.
+// CandidateTally is a candidate of an event with how many ballots approve
+// them and how many mark them as favourite, and their card.
 type CandidateTally struct {
-	PersonID     int64
-	FirstChoices int
-	Chosen       int
+	PersonID   int64
+	Approvals  int
+	Favourites int
 	Card
 }
 

@@ -11,7 +11,6 @@
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import VoteList from '$lib/components/VoteList.svelte';
 	import { replaceState } from '$app/navigation';
 	import type { PollResponse, CandidateResult } from '$lib/types';
 
@@ -41,11 +40,13 @@
 		replaceState(url, {});
 	}
 
-	// The voter's ballot: candidates ranked (first choice first), a blank
-	// vote, or none. Each change is proved on this device and cast
-	// anonymously (anonballot.ts); it counts once the next batch publishes it.
+	// The voter's ballot: the candidates they approve (approval voting) and
+	// their favourite among them, a blank vote, or none. Each change is proved
+	// on this device and cast anonymously (anonballot.ts); it counts once the
+	// next batch publishes it.
 	let mine = $state<MyBallot | null>(null);
 	let ballot = $derived(mine?.kind === 'choices' ? mine.choices : []);
+	let favourite = $derived(mine?.kind === 'choices' ? (mine.favourite ?? 0) : 0);
 	let blank = $derived(mine?.kind === 'blank');
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
@@ -54,25 +55,17 @@
 	let flashTimer: ReturnType<typeof setTimeout> | null = null;
 	let ballotLoaded = $state(false);
 
-	// The vote waiting for a step before it is cast: the voting key, or the
-	// choice of the vote to give up when every vote is used.
+	// The vote waiting for the voting key before it is cast.
 	let pending: number | 'blank' | null = $state(null);
-	let changeOpen = $state(false);
 	let withdrawOpen = $state(false);
 
 	let event = $derived(data?.event ?? null);
 	let results = $derived(data?.results ?? null);
 	let windows = $derived(data?.windows ?? []);
-	let maxChoices = $derived(event?.max_choices ?? 3);
-	let full = $derived(ballot.length >= maxChoices);
+	// maxChoices caps the approvals (0: no cap).
+	let maxChoices = $derived(event?.max_choices ?? 0);
+	let full = $derived(maxChoices > 0 && ballot.length >= maxChoices);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
-	let pendingName = $derived(typeof pending === 'number' ? (byId.get(pending)?.name ?? '') : '');
-	let ballotVotes = $derived(
-		ballot.map((id) => {
-			const c = byId.get(id);
-			return { person_id: id, name: c?.name ?? `#${id}`, image_url: c?.image_url };
-		})
-	);
 
 	// The ballot loads once per voting key and event, then again when another
 	// tab casts one.
@@ -131,7 +124,7 @@
 			mine = got.ballot;
 			publishedBy = got.publishedBy ?? null;
 			ballotLoaded = true;
-			if (pending !== null && !changeOpen && !get(voterKeyOpen)) go(pending);
+			if (pending !== null && !get(voterKeyOpen)) go(pending);
 		} catch (err) {
 			console.error('failed to load ballot', err);
 			ballotLoaded = true;
@@ -142,7 +135,7 @@
 		mine = null;
 		publishedBy = null;
 		ballotLoaded = false;
-		changeOpen = withdrawOpen = false;
+		withdrawOpen = false;
 	}
 
 	function say(msg: string) {
@@ -183,8 +176,8 @@
 		return w ? closesText(w) : '';
 	}
 
-	// pick is a click on "Vote" for a candidate (or on the blank vote): it
-	// gets a voting key, or asks which vote to give up first, as needed.
+	// pick is a click on "Approve" for a candidate (or on the blank vote):
+	// it gets a voting key first if needed.
 	function pick(choice: number | 'blank') {
 		pending = choice;
 		if (!hasKey) {
@@ -196,53 +189,38 @@
 	}
 
 	function go(choice: number | 'blank') {
-		if (busy || (typeof choice === 'number' && ballot.includes(choice)) || (choice === 'blank' && blank)) {
-			pending = null;
-			return;
-		}
+		pending = null;
+		if (busy) return;
 		if (choice === 'blank') {
-			pending = null;
-			change({ kind: 'blank', choices: [] }, tr('vote.done.blank', currentLang));
+			if (!blank) change({ kind: 'blank', choices: [] }, tr('vote.done.blank', currentLang));
 			return;
 		}
+		if (ballot.includes(choice)) return;
 		if (full) {
-			changeOpen = true;
+			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
 			return;
 		}
-		castFor(choice);
-	}
-
-	async function castFor(id: number, replace?: number) {
-		const name = byId.get(id)?.name ?? '';
-		let next: number[];
-		if (replace !== undefined) next = ballot.map((x) => (x === replace ? id : x));
-		else next = [...ballot, id];
-		pending = null;
-		await change({ kind: 'choices', choices: next }, tr('vote.done.added', currentLang, { name }));
-	}
-
-	function replaceWith(old: number) {
-		changeOpen = false;
-		if (typeof pending === 'number') castFor(pending, old);
-	}
-
-	function cancelPending() {
-		changeOpen = false;
-		pending = null;
+		const name = displayName(byId.get(choice)?.name ?? '');
+		// The first approval is the favourite until the voter picks another.
+		const next = [...ballot, choice].sort((a, b) => a - b);
+		change({ kind: 'choices', choices: next, favourite: favourite || choice }, tr('vote.done.added', currentLang, { name }));
 	}
 
 	function remove(id: number) {
-		const name = byId.get(id)?.name ?? '';
+		const name = displayName(byId.get(id)?.name ?? '');
 		const next = ballot.filter((x) => x !== id);
-		change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] }, tr('vote.done.removed', currentLang, { name }));
+		change(
+			next.length > 0 ? { kind: 'choices', choices: next, favourite: favourite === id ? undefined : favourite || undefined } : { kind: 'withdraw', choices: [] },
+			tr('vote.done.removed', currentLang, { name })
+		);
 	}
 
-	function move(i: number, delta: number) {
-		const j = i + delta;
-		if (j < 0 || j >= ballot.length) return;
-		const next = [...ballot];
-		[next[i], next[j]] = [next[j], next[i]];
-		change({ kind: 'choices', choices: next }, tr('vote.done.moved', currentLang));
+	// star makes an approved candidate the favourite, or takes it back.
+	function star(id: number) {
+		if (!ballot.includes(id)) return;
+		const name = displayName(byId.get(id)?.name ?? '');
+		if (favourite === id) change({ kind: 'choices', choices: ballot }, tr('vote.done.unfavourite', currentLang));
+		else change({ kind: 'choices', choices: ballot, favourite: id }, tr('vote.done.favourite', currentLang, { name }));
 	}
 
 	async function withdrawAll() {
@@ -261,13 +239,10 @@
 		return v === null ? '—' : `${Math.round(v * 100)}%`;
 	}
 
-	// The vote bars are drawn relative to the leader: with many candidates the
-	// shares are small, and a bar on a 0–100 % scale would be nearly empty for all.
-	let leaderShare = $derived(Math.max(0, results?.blank_share ?? 0, ...(results?.candidates ?? []).map((c) => c.first_choice_share ?? 0)));
-
-	function barWidth(share: number | null, leader: number): number {
-		if (share === null || leader <= 0) return 0;
-		return Math.round((share / leader) * 100);
+	// The approval bars are on a 0–100 % scale: each candidate is approved by
+	// a share of all the voters, independently of the others.
+	function barWidth(share: number | null): number {
+		return share === null ? 0 : Math.round(share * 100);
 	}
 
 	function ordinal(n: number): string {
@@ -398,7 +373,26 @@
 						</div>
 					</div>
 				{:else}
-					<VoteList votes={ballotVotes} max={maxChoices} lang={currentLang} editable={results.open} {busy} onmove={move} onremove={remove} />
+					{#if ballot.length > 0}
+						<ul class="approved">
+							{#each ballot as id (id)}
+								{@const c = byId.get(id)}
+								<li class:fav={favourite === id}>
+									<button class="star" onclick={() => star(id)} disabled={busy || !results.open} aria-pressed={favourite === id} title={tr(favourite === id ? 'vote.favourite.remove' : 'vote.favourite.set', currentLang, { name: c?.name ?? '' })}>
+										{favourite === id ? '★' : '☆'}
+									</button>
+									<span class="approved-name">{displayName(c?.name ?? `#${id}`)}</span>
+									{#if favourite === id}<span class="fav-label">{tr('vote.favourite', currentLang)}</span>{/if}
+									{#if results.open}
+										<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+						{#if maxChoices > 0}
+							<p class="hint">{tr('vote.cap', currentLang, { used: ballot.length, max: maxChoices })}</p>
+						{/if}
+					{/if}
 					{#if ballot.length === 0 && results.open}
 						<p class="empty">{tr('vote.empty', currentLang)}</p>
 					{/if}
@@ -428,26 +422,6 @@
 		</section>
 	{/if}
 
-	<Modal open={changeOpen} title={tr('vote.change.title', currentLang)} onclose={cancelPending} closeLabel={tr('auth.close', currentLang)}>
-		<p class="dialog-text">{tr('vote.change.text', currentLang, { n: ballot.length, name: pendingName })}</p>
-		<ul class="swap-list">
-			{#each ballot as id, i (id)}
-				{@const c = byId.get(id)}
-				<li class="swap">
-					<span class="swap-rank">{i + 1}</span>
-					<span class="swap-name">{c?.name ?? `#${id}`}</span>
-					<button class="btn btn-danger" onclick={() => replaceWith(id)} disabled={busy}>
-						{tr('vote.change.remove', currentLang)}
-					</button>
-				</li>
-			{/each}
-		</ul>
-		<p class="dialog-note">{tr('vote.change.note', currentLang, { name: pendingName })}</p>
-		{#snippet actions()}
-			<button class="btn" onclick={cancelPending}>{tr('vote.change.keep', currentLang)}</button>
-		{/snippet}
-	</Modal>
-
 	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
 		<p class="dialog-text">{tr(blank ? 'vote.withdraw.text_blank' : 'vote.withdraw.text', currentLang, { n: ballot.length })}</p>
 		{#snippet actions()}
@@ -458,14 +432,18 @@
 
 	{#snippet pickButton(c: CandidateResult)}
 		{#if results?.open}
-			{@const mine = ballot.indexOf(c.person_id)}
-			{#if mine >= 0}
-				<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.remove_named', currentLang, { name: c.name })}>
-					{tr('vote.mine', currentLang, { n: mine + 1 })} ✓
-				</button>
+			{#if ballot.includes(c.person_id)}
+				<span class="pick-pair">
+					<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.remove_named', currentLang, { name: c.name })}>
+						{tr('vote.approved', currentLang)} ✓
+					</button>
+					<button class="pick-star" class:on={favourite === c.person_id} onclick={() => star(c.person_id)} disabled={busy} aria-pressed={favourite === c.person_id} title={tr(favourite === c.person_id ? 'vote.favourite.remove' : 'vote.favourite.set', currentLang, { name: c.name })}>
+						{favourite === c.person_id ? '★' : '☆'}
+					</button>
+				</span>
 			{:else}
-				<button class="pick" class:pick--full={hasKey && full} onclick={() => pick(c.person_id)} disabled={busy}>
-					{hasKey && full ? tr('vote.change_button', currentLang) : tr('vote.add', currentLang)}
+				<button class="pick" class:pick--full={hasKey && full} onclick={() => pick(c.person_id)} disabled={busy || (hasKey && full)}>
+					{tr('vote.add', currentLang)}
 				</button>
 			{/if}
 		{/if}
@@ -499,17 +477,17 @@
 					<span class="vote-rank">{c.preference_rank ?? '—'}</span>
 					{@render who(c)}
 					<div class="vote-bar">
-						{#if c.first_choice_share === null}
+						{#if c.approval_share === null}
 							<span class="value value--muted">—</span>
 							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
 						{:else}
 							<div class="vote-bar-line">
 								<div class="bar bar--wide" aria-hidden="true">
-									<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
+									<span class="bar-fill--vote" style="width: {barWidth(c.approval_share)}%"></span>
 								</div>
-								<span class="value">{pct(c.first_choice_share)}</span>
+								<span class="value">{pct(c.approval_share)}</span>
 							</div>
-							<span class="meta">{tr('poll.gauge.votes', currentLang, { n: c.first_choices ?? 0 })} · {tr('poll.top_n_short', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</span>
+							<span class="meta">{tr('poll.gauge.approvals', currentLang, { n: c.approvals ?? 0 })} · {tr('poll.favourite_short', currentLang, { p: pct(c.favourite_share) })}</span>
 						{/if}
 					</div>
 					<div class="vote-pick">{@render pickButton(c)}</div>
@@ -522,7 +500,7 @@
 					<div class="vote-bar">
 						<div class="vote-bar-line">
 							<div class="bar bar--wide" aria-hidden="true">
-								<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share, leaderShare)}%"></span>
+								<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
 							</div>
 							<span class="value">{pct(results.blank_share)}</span>
 						</div>
@@ -574,18 +552,18 @@
 			{#each sorted as c (c.person_id)}
 				<div class="board-row" class:board-row--mine={ballot.includes(c.person_id)} role="row">
 					<div class="cell cell--vote" role="cell">
-						{#if c.first_choice_share === null}
+						{#if c.approval_share === null}
 							<span class="value value--muted">—</span>
 							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
 						{:else}
 							<div class="value-line">
 								<span class="rank">{ordinal(c.preference_rank ?? 0)}</span>
-								<span class="value">{pct(c.first_choice_share)}</span>
+								<span class="value">{pct(c.approval_share)}</span>
 							</div>
 							<div class="bar bar--vote" aria-hidden="true">
-								<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share, leaderShare)}%"></span>
+								<span class="bar-fill--vote" style="width: {barWidth(c.approval_share)}%"></span>
 							</div>
-							<span class="meta">{tr('poll.top_n_short', currentLang, { k: maxChoices, p: pct(c.chosen_share) })}</span>
+							<span class="meta">{tr('poll.favourite_short', currentLang, { p: pct(c.favourite_share) })}</span>
 						{/if}
 					</div>
 
@@ -605,7 +583,7 @@
 					<div class="cell cell--vote" role="cell">
 						<div class="value-line"><span class="value">{pct(results.blank_share)}</span></div>
 						<div class="bar bar--vote" aria-hidden="true">
-							<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share, leaderShare)}%"></span>
+							<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
 						</div>
 						<span class="meta">{tr('poll.gauge.votes', currentLang, { n: results.blank ?? 0 })}</span>
 					</div>
@@ -666,6 +644,60 @@
 	}
 	.event-strip a {
 		color: var(--event);
+	}
+	.approved {
+		list-style: none;
+		margin: 0 0 0.5rem;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+	}
+	.approved li {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.3rem 0.45rem 0.3rem 0.35rem;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: var(--bg-card);
+		font-size: 0.88rem;
+	}
+	.approved li.fav {
+		border-color: var(--amber);
+	}
+	.approved-name {
+		text-transform: capitalize;
+	}
+	.fav-label {
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--amber);
+	}
+	.star,
+	.unpick,
+	.pick-star {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 1rem;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0.1rem 0.2rem;
+	}
+	.approved li.fav .star,
+	.pick-star.on {
+		color: var(--amber);
+	}
+	.unpick:hover {
+		color: var(--red);
+	}
+	.pick-pair {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.2rem;
 	}
 	.protect {
 		display: block;

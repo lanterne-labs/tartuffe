@@ -18,15 +18,15 @@ func event() *Event {
 
 func sampleTallies() []CandidateTally {
 	return []CandidateTally{
-		{PersonID: 1, Card: Card{Name: "Alice", HonestyScore: 0.58}, FirstChoices: 2, Chosen: 3},
-		{PersonID: 2, Card: Card{Name: "Bruno", HonestyScore: 0.81}, FirstChoices: 1, Chosen: 2},
-		{PersonID: 3, Card: Card{Name: "Chloé", HonestyScore: 0.58}, FirstChoices: 1, Chosen: 2},
-		{PersonID: 4, Card: Card{Name: "David", HonestyScore: 0.30}, FirstChoices: 0, Chosen: 1},
+		{PersonID: 1, Card: Card{Name: "Alice", HonestyScore: 0.58}, Approvals: 3, Favourites: 2},
+		{PersonID: 2, Card: Card{Name: "Bruno", HonestyScore: 0.81}, Approvals: 2, Favourites: 1},
+		{PersonID: 3, Card: Card{Name: "Chloé", HonestyScore: 0.58}, Approvals: 2, Favourites: 1},
+		{PersonID: 4, Card: Card{Name: "David", HonestyScore: 0.30}, Approvals: 1, Favourites: 0},
 	}
 }
 
-// TestComputeRanks: preference orders by first choices, then by how often a
-// candidate is chosen at all; honesty by score. Equal values share a rank.
+// TestComputeRanks: preference orders by approvals, then by how often a
+// candidate is the favourite; honesty by score. Equal values share a rank.
 func TestComputeRanks(t *testing.T) {
 	r := Compute(event(), sampleTallies(), Turnout{Voters: 4}, now)
 	require.Empty(t, r.Hidden)
@@ -45,11 +45,11 @@ func TestComputeRanks(t *testing.T) {
 	}
 	assert.Equal(t, [2]int{1, 2}, ranks["Alice"])
 	assert.Equal(t, [2]int{2, 1}, ranks["Bruno"])
-	assert.Equal(t, [2]int{2, 2}, ranks["Chloé"], "same first choices and chosen as Bruno; same score as Alice")
+	assert.Equal(t, [2]int{2, 2}, ranks["Chloé"], "same approvals and favourites as Bruno; same score as Alice")
 	assert.Equal(t, [2]int{4, 4}, ranks["David"])
 
-	assert.InDelta(t, 0.5, *r.Candidates[0].FirstChoiceShare, 1e-9)
-	assert.InDelta(t, 0.75, *r.Candidates[0].ChosenShare, 1e-9)
+	assert.InDelta(t, 0.75, *r.Candidates[0].ApprovalShare, 1e-9)
+	assert.InDelta(t, 0.5, *r.Candidates[0].FavouriteShare, 1e-9)
 }
 
 // TestComputeHidden: under min_voters or in a blackout no count, share or
@@ -65,9 +65,9 @@ func TestComputeHidden(t *testing.T) {
 	assert.Equal(t, HiddenBlackout, r.Hidden)
 	assert.Equal(t, "Bruno", r.Candidates[0].Name, "by honesty while hidden")
 	for _, c := range r.Candidates {
-		assert.Nil(t, c.FirstChoices)
-		assert.Nil(t, c.FirstChoiceShare)
-		assert.Nil(t, c.ChosenShare)
+		assert.Nil(t, c.Approvals)
+		assert.Nil(t, c.ApprovalShare)
+		assert.Nil(t, c.FavouriteShare)
 		assert.Nil(t, c.PreferenceRank)
 		assert.NotZero(t, c.HonestyRank)
 	}
@@ -80,20 +80,27 @@ func TestComputeHidden(t *testing.T) {
 func TestCheckBallot(t *testing.T) {
 	e := event()
 	candidates := []int64{1, 2, 3, 4}
-	assert.NoError(t, CheckBallot(e, candidates, []int64{2, 1}, now))
-	assert.NoError(t, CheckBallot(e, candidates, nil, now), "an empty ballot withdraws")
+	assert.NoError(t, CheckBallot(e, candidates, []int64{1, 2}, 2, now))
+	assert.NoError(t, CheckBallot(e, candidates, []int64{1, 2, 4}, 0, now), "no favourite")
 
-	for name, ballot := range map[string][]int64{
-		"too many":      {1, 2, 3, 4},
-		"not candidate": {9},
-		"twice":         {1, 1},
+	for name, b := range map[string]struct {
+		approved  []int64
+		favourite int64
+	}{
+		"too many":             {[]int64{1, 2, 3, 4}, 0},
+		"not candidate":        {[]int64{9}, 0},
+		"twice":                {[]int64{1, 1}, 0},
+		"not in order":         {[]int64{2, 1}, 0},
+		"favourite not chosen": {[]int64{1, 2}, 3},
 	} {
-		err := CheckBallot(e, candidates, ballot, now)
+		err := CheckBallot(e, candidates, b.approved, b.favourite, now)
 		assert.True(t, errors.Is(err, ErrBallot), name)
 	}
+	e.MaxChoices = 0
+	assert.NoError(t, CheckBallot(e, candidates, []int64{1, 2, 3, 4}, 4, now), "no cap")
 
-	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, e.ClosesAt.Add(time.Second)), ErrClosed)
-	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, e.OpensAt.Add(-time.Second)), ErrClosed)
+	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, 0, e.ClosesAt.Add(time.Second)), ErrClosed)
+	assert.ErrorIs(t, CheckBallot(e, candidates, []int64{1}, 0, e.OpensAt.Add(-time.Second)), ErrClosed)
 }
 
 // TestComputeBlank: a blank vote counts in the voters and has its share.
@@ -110,8 +117,10 @@ func TestComputeBlank(t *testing.T) {
 // (frontend/src/lib/anonballot.test.ts).
 func TestAnonBallotMessage(t *testing.T) {
 	w := Window{Series: 1, Index: 9}
-	b := AnonBallot{EventID: 12, Window: w, Seq: 3, Kind: KindChoices, Choices: []int64{7, 4, 9}}
-	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=7,4,9", b.Message())
+	b := AnonBallot{EventID: 12, Window: w, Seq: 3, Kind: KindChoices, Choices: []int64{4, 7, 9}, Favourite: 7}
+	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=4,7,9;favourite=7", b.Message())
+	b.Favourite = 0
+	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=3;choices=4,7,9", b.Message())
 	b = AnonBallot{EventID: 12, Window: w, Seq: 1, Kind: KindBlank}
 	assert.Equal(t, "tartuffe-ballot/v1;poll=12;series=1;window=9;seq=1;blank", b.Message())
 	assert.Equal(t, "tartuffe/ballot/v1/12/1/9", ScopeName(12, w))

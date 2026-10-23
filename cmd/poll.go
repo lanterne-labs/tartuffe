@@ -18,10 +18,11 @@ import (
 
 var pollCmd = &cobra.Command{
 	Use:   "poll",
-	Short: "Pre-polls: the events users rank candidates in (the presidential election first)",
+	Short: "Pre-polls: the events voters approve candidates in (the presidential election first)",
 	Long: `A pre-poll event lists its candidates among the tracked persons. Each
-signed-in user ranks up to max_choices of them; the site shows the share of
-first choices next to each candidate's honesty score.`,
+voter approves the candidates they find acceptable (at most max_choices, 0 for
+no cap) and may mark one as favourite; the site shows the share of approvals
+next to each candidate's honesty score.`,
 }
 
 var pollListCmd = &cobra.Command{
@@ -134,7 +135,7 @@ func init() {
 	f.String("title-en", "", "title in English")
 	f.String("description-fr", "", "description in French")
 	f.String("description-en", "", "description in English")
-	f.Int("max-choices", 3, "how many candidates a ballot may rank (1-10)")
+	f.Int("max-choices", 0, "how many candidates a ballot may approve at most (0: no cap)")
 	f.Int("min-voters", 50, "below this many ballots the shares are hidden")
 	f.String("opens", "", "first moment ballots are taken (default: now, for a new event)")
 	f.String("closes", "", "moment ballots stop (\"never\" to keep it open)")
@@ -230,7 +231,7 @@ func runPollEventSet(cmd *cobra.Command, args []string) error {
 		if !f.Changed("title-fr") || !f.Changed("title-en") {
 			return fmt.Errorf("a new event needs --title-fr and --title-en")
 		}
-		e = &polls.Event{Slug: slug, MaxChoices: 3, MinVoters: 50, OpensAt: time.Now()}
+		e = &polls.Event{Slug: slug, MaxChoices: 0, MinVoters: 50, OpensAt: time.Now()}
 	}
 	str := func(name string, dst *string) {
 		if f.Changed(name) {
@@ -402,16 +403,20 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	full := *e
 	full.MinVoters, full.Blackouts = 0, nil
 	r = polls.Compute(&full, tallies, turnout, time.Now())
-	fmt.Printf("%4s %-30s %7s %7s %7s  %5s %7s %5s\n", "PREF", "CANDIDATE", "FIRST", "SHARE", "TOP-N", "HON", "HONESTY", "FACTS")
+	fmt.Printf("%4s %-30s %7s %7s %7s %7s  %5s %7s %5s\n", "PREF", "CANDIDATE", "APPROVE", "SHARE", "FAVOUR", "SHARE", "HON", "HONESTY", "FACTS")
 	for _, c := range r.Candidates {
-		pref, first, share, top := "-", "-", "-", "-"
+		pref, approvals, share, favourites, favShare := "-", "-", "-", "-", "-"
 		if c.PreferenceRank != nil {
 			pref = fmt.Sprint(*c.PreferenceRank)
-			first = fmt.Sprint(*c.FirstChoices)
-			share = fmt.Sprintf("%.1f%%", 100**c.FirstChoiceShare)
-			top = fmt.Sprintf("%.1f%%", 100**c.ChosenShare)
+			approvals = fmt.Sprint(*c.Approvals)
+			share = fmt.Sprintf("%.1f%%", 100**c.ApprovalShare)
+			favourites = fmt.Sprint(*c.Favourites)
+			favShare = fmt.Sprintf("%.1f%%", 100**c.FavouriteShare)
 		}
-		fmt.Printf("%4s %-30.30s %7s %7s %7s  %5d %7.0f %5d\n", pref, c.Name, first, share, top, c.HonestyRank, 100*c.HonestyScore, c.FactCount)
+		fmt.Printf("%4s %-30.30s %7s %7s %7s %7s  %5d %7.0f %5d\n", pref, c.Name, approvals, share, favourites, favShare, c.HonestyRank, 100*c.HonestyScore, c.FactCount)
+	}
+	if r.Blank != nil {
+		fmt.Printf("%4s %-30s %7d %6.1f%%\n", "-", "(blank)", *r.Blank, 100**r.BlankShare)
 	}
 	return nil
 }

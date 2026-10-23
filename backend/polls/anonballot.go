@@ -23,18 +23,19 @@ type AnonBallot struct {
 	Window
 	// Seq orders the ballots of one nullifier: the highest counts.
 	Seq int `json:"seq"`
-	// Kind is choices (Choices ranked, first choice first), blank (a blank
-	// vote: no candidate, counted on its own) or withdraw (no ballot any
-	// more).
-	Kind    string          `json:"kind"`
-	Choices []int64         `json:"choices"`
-	Proof   semaphore.Proof `json:"proof"`
+	// Kind is choices (Choices approved, in increasing id order, Favourite
+	// one of them or 0), blank (a blank vote: no candidate, counted on its
+	// own) or withdraw (no ballot any more).
+	Kind      string          `json:"kind"`
+	Choices   []int64         `json:"choices"`
+	Favourite int64           `json:"favourite,omitempty"`
+	Proof     semaphore.Proof `json:"proof"`
 }
 
 // Message is the text the proof binds: the browser builds the same one,
 // so a ballot cannot be changed under its proof.
 //
-//	tartuffe-ballot/v1;poll=12;series=0;window=10;seq=3;choices=7,4,9
+//	tartuffe-ballot/v1;poll=12;series=0;window=10;seq=3;choices=4,7,9;favourite=7
 //	tartuffe-ballot/v1;poll=12;series=1;window=9;seq=1;blank
 func (b AnonBallot) Message() string {
 	var sb strings.Builder
@@ -47,6 +48,10 @@ func (b AnonBallot) Message() string {
 				sb.WriteByte(',')
 			}
 			sb.WriteString(strconv.FormatInt(id, 10))
+		}
+		if b.Favourite != 0 {
+			sb.WriteString(";favourite=")
+			sb.WriteString(strconv.FormatInt(b.Favourite, 10))
 		}
 	default:
 		sb.WriteString(b.Kind)
@@ -79,11 +84,11 @@ func CheckAnonBallot(e *Event, candidates []int64, b AnonBallot, now time.Time) 
 		if len(b.Choices) == 0 {
 			return fmt.Errorf("%w: no choice (a blank vote is its own kind)", ErrBallot)
 		}
-		if err := CheckBallot(e, candidates, b.Choices, now); err != nil {
+		if err := CheckBallot(e, candidates, b.Choices, b.Favourite, now); err != nil {
 			return err
 		}
 	case KindBlank, KindWithdraw:
-		if len(b.Choices) != 0 {
+		if len(b.Choices) != 0 || b.Favourite != 0 {
 			return fmt.Errorf("%w: a %s ballot names no candidate", ErrBallot, b.Kind)
 		}
 	default:

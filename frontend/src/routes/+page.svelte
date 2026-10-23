@@ -84,7 +84,7 @@
 
 			evTag: 'Expérience temporaire du labo',
 			evTitle: 'Présidentielle 2027 : le vote en ligne, vraiment privé',
-			evBody: 'Votez pour votre candidat, ou blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
+			evBody: 'Approuvez les candidats qui vous conviennent, ou votez blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
 			evEnds: 'Jusqu’au {d}',
 			evCta: 'Voter',
 			evMore: 'Pourquoi cette expérience',
@@ -128,7 +128,7 @@
 
 			evTag: 'A temporary experiment of the lab',
 			evTitle: 'Presidential 2027: online voting, truly private',
-			evBody: 'Vote for your candidate, or blank, with your passport or ID card. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
+			evBody: 'Approve the candidates you find acceptable, or vote blank, with your passport or ID card. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
 			evEnds: 'Until {d}',
 			evCta: 'Vote',
 			evMore: 'Why this experiment',

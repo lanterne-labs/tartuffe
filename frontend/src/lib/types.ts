@@ -165,9 +165,13 @@ export interface CandidateResult {
 	honesty_score: number;
 	fact_count: number;
 	contradiction_count: number;
-	first_choices: number | null;
-	first_choice_share: number | null;
-	chosen_share: number | null;
+	// approvals, approval_share: the ballots that approve the candidate;
+	// favourites, favourite_share: those that mark them as favourite (null
+	// while hidden).
+	approvals: number | null;
+	approval_share: number | null;
+	favourites: number | null;
+	favourite_share: number | null;
 	preference_rank: number | null;
 	honesty_rank: number;
 }

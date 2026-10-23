@@ -70,8 +70,12 @@ func (s *PGStore) Cast(ctx context.Context, b AnonBallot) error {
 	if choices == nil {
 		choices = []int64{}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO anon_ballots (event_id, series, win, nullifier, seq, kind, choices, root, proof) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		b.EventID, b.Series, b.Index, b.Proof.Nullifier, b.Seq, b.Kind, choices, b.Proof.MerkleTreeRoot, proof); err != nil {
+	var favourite *int64
+	if b.Favourite != 0 {
+		favourite = &b.Favourite
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO anon_ballots (event_id, series, win, nullifier, seq, kind, choices, favourite, root, proof) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		b.EventID, b.Series, b.Index, b.Proof.Nullifier, b.Seq, b.Kind, choices, favourite, b.Proof.MerkleTreeRoot, proof); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return fmt.Errorf("%w: no such poll", ErrBallot)
@@ -94,7 +98,7 @@ func (s *PGStore) PublishBatch(ctx context.Context, minBallots int, maxWait time
 		return nil, fmt.Errorf("publish ballots: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT event_id, series, win, nullifier, seq, kind, choices, proof, received_at FROM anon_ballots WHERE published_at IS NULL FOR UPDATE`)
+	rows, err := tx.Query(ctx, `SELECT event_id, series, win, nullifier, seq, kind, choices, COALESCE(favourite, 0), proof, received_at FROM anon_ballots WHERE published_at IS NULL FOR UPDATE`)
 	if err != nil {
 		return nil, fmt.Errorf("waiting ballots: %w", err)
 	}
@@ -104,7 +108,7 @@ func (s *PGStore) PublishBatch(ctx context.Context, minBallots int, maxWait time
 		var b AnonBallot
 		var proof []byte
 		var received time.Time
-		if err := rows.Scan(&b.EventID, &b.Series, &b.Index, &b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices, &proof, &received); err != nil {
+		if err := rows.Scan(&b.EventID, &b.Series, &b.Index, &b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices, &b.Favourite, &proof, &received); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan waiting ballot: %w", err)
 		}
@@ -148,9 +152,9 @@ func (s *PGStore) PublishBatch(ctx context.Context, minBallots int, maxWait time
 		if err != nil {
 			return nil, err
 		}
-		entry := tallyEntry{EventID: e, Window: w, Voters: turnout.Voters, Blank: turnout.Blank, First: map[int64]int{}, Chosen: map[int64]int{}}
+		entry := tallyEntry{EventID: e, Window: w, Voters: turnout.Voters, Blank: turnout.Blank, Approvals: map[int64]int{}, Favourites: map[int64]int{}}
 		for _, t := range tallies {
-			entry.First[t.PersonID], entry.Chosen[t.PersonID] = t.FirstChoices, t.Chosen
+			entry.Approvals[t.PersonID], entry.Favourites[t.PersonID] = t.Approvals, t.Favourites
 		}
 		if _, err := appendLog(ctx, tx, LogTally, entry); err != nil {
 			return nil, err
@@ -181,9 +185,9 @@ func shuffle(b []AnonBallot) error {
 
 // Tallies returns the candidates of the event with their counts (no card),
 // over the published ballots of the results' window: the last ballot of each
-// nullifier, unless it withdrew. A ballot's first choice is its first
-// candidate still on the poll, so a ballot whose first choice was removed
-// counts for its next one.
+// nullifier, unless it withdrew. Only the candidates still on the poll count:
+// a ballot that approved none of them any more is not counted, and a removed
+// favourite leaves the ballot without one.
 func (s *PGStore) Tallies(ctx context.Context, eventID int64) ([]CandidateTally, Turnout, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -208,7 +212,7 @@ func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]Ca
 		out[i].PersonID, index[id] = id, i
 	}
 	rows, err = tx.Query(ctx, `
-		SELECT DISTINCT ON (nullifier) kind, choices FROM anon_ballots
+		SELECT DISTINCT ON (nullifier) kind, choices, COALESCE(favourite, 0) FROM anon_ballots
 		WHERE event_id = $1 AND series = $2 AND win = $3 AND published_at IS NOT NULL
 		ORDER BY nullifier, seq DESC`, eventID, w.Series, w.Index)
 	if err != nil {
@@ -219,7 +223,8 @@ func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]Ca
 	for rows.Next() {
 		var kind string
 		var choices []int64
-		if err := rows.Scan(&kind, &choices); err != nil {
+		var favourite int64
+		if err := rows.Scan(&kind, &choices, &favourite); err != nil {
 			return nil, Turnout{}, fmt.Errorf("scan ballot: %w", err)
 		}
 		switch kind {
@@ -227,19 +232,17 @@ func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]Ca
 			turnout.Voters++
 			turnout.Blank++
 		case KindChoices:
-			first := true
+			counted := false
 			for _, id := range choices {
-				i, ok := index[id]
-				if !ok {
-					continue
+				if i, ok := index[id]; ok {
+					out[i].Approvals++
+					counted = true
 				}
-				if first {
-					out[i].FirstChoices++
-					first = false
-				}
-				out[i].Chosen++
 			}
-			if !first {
+			if i, ok := index[favourite]; ok && favourite != 0 {
+				out[i].Favourites++
+			}
+			if counted {
 				turnout.Voters++
 			}
 		}
@@ -255,7 +258,7 @@ func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]Ca
 // telling which it looks for.
 func (s *PGStore) Ballots(ctx context.Context, eventID int64, w Window) ([]AnonBallot, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (nullifier) nullifier, seq, kind, choices FROM anon_ballots
+		SELECT DISTINCT ON (nullifier) nullifier, seq, kind, choices, COALESCE(favourite, 0) FROM anon_ballots
 		WHERE event_id = $1 AND series = $2 AND win = $3 AND published_at IS NOT NULL
 		ORDER BY nullifier, seq DESC`, eventID, w.Series, w.Index)
 	if err != nil {
@@ -265,7 +268,7 @@ func (s *PGStore) Ballots(ctx context.Context, eventID int64, w Window) ([]AnonB
 	out := []AnonBallot{}
 	for rows.Next() {
 		b := AnonBallot{EventID: eventID, Window: w}
-		if err := rows.Scan(&b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices); err != nil {
+		if err := rows.Scan(&b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices, &b.Favourite); err != nil {
 			return nil, fmt.Errorf("scan ballot: %w", err)
 		}
 		out = append(out, b)
