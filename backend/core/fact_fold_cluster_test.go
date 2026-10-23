@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -147,5 +148,35 @@ func TestFoldClustersSkipsPairsJudgedAtInsert(t *testing.T) {
 	}
 	if len(judge.asked) != 2 {
 		t.Fatalf("asked %v, want A-B and A-C", judge.asked)
+	}
+}
+
+// TestCliquesKeepLeftovers: a chain of reports (1-2-3 joinable together, 4-5
+// joinable together, 3-4 the bridge) splits into two clusters; the old single
+// clique kept {1,2,3} and dropped 4 and 5 for good (prod: the Le Monde and RTL
+// reports of one conviction, judged the same occurrence, never grouped).
+func TestCliquesKeepLeftovers(t *testing.T) {
+	f := func(id int64) FactForFold { return FactForFold{ID: id} }
+	join := map[[2]int64]bool{{1, 2}: true, {1, 3}: true, {2, 3}: true, {3, 4}: true, {4, 5}: true}
+	got := cliques([]FactForFold{f(1), f(2), f(3), f(4), f(5)}, func(x, y FactForFold) bool {
+		return join[OrderedPair(x.ID, y.ID)]
+	})
+	ids := func(c []FactForFold) []int64 {
+		var out []int64
+		for _, x := range c {
+			out = append(out, x.ID)
+		}
+		return out
+	}
+	if len(got) != 2 || fmt.Sprint(ids(got[0])) != "[1 2 3]" || fmt.Sprint(ids(got[1])) != "[4 5]" {
+		var all [][]int64
+		for _, c := range got {
+			all = append(all, ids(c))
+		}
+		t.Errorf("cliques = %v, want [[1 2 3] [4 5]]", all)
+	}
+	// A lone leftover is no cluster.
+	if got := cliques([]FactForFold{f(1), f(2), f(9)}, func(x, y FactForFold) bool { return join[OrderedPair(x.ID, y.ID)] }); len(got) != 1 {
+		t.Errorf("a lone leftover made a cluster: %v", got)
 	}
 }
