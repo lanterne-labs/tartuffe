@@ -1,8 +1,10 @@
 package polls
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -54,6 +56,10 @@ func (s *Service) handleGetPoll(w http.ResponseWriter, r *http.Request) {
 		"event":   e,
 		"results": Compute(e, tallies, turnout, now),
 		"windows": windowsResponse(now),
+		// The relays a ballot is published to, and when a ballot sent now
+		// is published at the latest.
+		"relays":       s.relays,
+		"published_by": s.batches.nextBatch(now),
 	})
 }
 
@@ -90,49 +96,59 @@ func (s *Service) handleCastBallot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	count := func(outcome string) { metrics.BallotChangesTotal.WithLabelValues(outcome).Inc() }
+	count := func(outcome string) { metrics.BallotChangesTotal.WithLabelValues("direct", outcome).Inc() }
 	var b AnonBallot
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBallotBody)).Decode(&b); err != nil {
 		count(codeInvalid)
 		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: "invalid ballot: " + err.Error(), Code: codeInvalid})
 		return
 	}
-	candidates, err := s.store.CandidateIDs(r.Context(), e.ID)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to get candidates")
-		return
-	}
 	now := time.Now()
-	if err := CheckAnonBallot(e, candidates, b, now); err != nil {
-		code := codeInvalid
-		if errors.Is(err, ErrClosed) {
-			code = codeClosed
-		}
+	code, err := s.accept(r.Context(), e, b, now)
+	if code != "" {
 		count(code)
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: code})
-		return
 	}
-	err = s.box.Cast(r.Context(), b)
 	var stale *StaleSeqError
 	switch {
+	case code == "ok":
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "waiting", "published_by": s.batches.nextBatch(now)})
 	case errors.As(err, &stale):
-		count(codeStaleSeq)
 		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "code": codeStaleSeq, "last_seq": stale.Last})
-		return
-	case errors.Is(err, ErrUnknownRoot):
-		count(codeUnknownRoot)
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: codeUnknownRoot})
-		return
-	case errors.Is(err, ErrBallot):
-		count(codeInvalid)
-		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: codeInvalid})
-		return
-	case err != nil:
+	case code != "":
+		httpx.WriteJSON(w, http.StatusBadRequest, httpx.CodedError{Error: err.Error(), Code: code})
+	default:
 		httpx.InternalError(w, err, "failed to cast ballot")
-		return
 	}
-	count("ok")
-	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "waiting", "published_by": s.batches.nextBatch(now)})
+}
+
+// accept checks and casts a ballot of the event, posted or read from a
+// relay. It returns "ok" or the refusal code, with the reason; an empty
+// code is a failure of ours (err).
+func (s *Service) accept(ctx context.Context, e *Event, b AnonBallot, now time.Time) (string, error) {
+	candidates, err := s.store.CandidateIDs(ctx, e.ID)
+	if err != nil {
+		return "", fmt.Errorf("candidates: %w", err)
+	}
+	if err := CheckAnonBallot(e, candidates, b, now); err != nil {
+		if errors.Is(err, ErrClosed) {
+			return codeClosed, err
+		}
+		return codeInvalid, err
+	}
+	err = s.box.Cast(ctx, b)
+	var stale *StaleSeqError
+	switch {
+	case err == nil:
+		return "ok", nil
+	case errors.As(err, &stale):
+		return codeStaleSeq, err
+	case errors.Is(err, ErrUnknownRoot):
+		return codeUnknownRoot, err
+	case errors.Is(err, ErrBallot):
+		return codeInvalid, err
+	default:
+		return "", err
+	}
 }
 
 // publicBallot is a published ballot as anyone reads it.
@@ -141,6 +157,9 @@ type publicBallot struct {
 	Seq       int     `json:"seq"`
 	Kind      string  `json:"kind"`
 	Choices   []int64 `json:"choices"`
+	// LogSeq is the log entry that holds it: the browser asks the proof
+	// that the signed tree holds it.
+	LogSeq int64 `json:"log_seq"`
 }
 
 // handleListBallots lists the published ballots of an open window, the last
@@ -161,7 +180,7 @@ func (s *Service) handleListBallots(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]publicBallot, len(ballots))
 	for i, b := range ballots {
-		out[i] = publicBallot{Nullifier: b.Proof.Nullifier, Seq: b.Seq, Kind: b.Kind, Choices: b.Choices}
+		out[i] = publicBallot{Nullifier: b.Proof.Nullifier, Seq: b.Seq, Kind: b.Kind, Choices: b.Choices, LogSeq: b.LogSeq}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -35,7 +35,7 @@ func openStores(t *testing.T) stores {
 	storer, err := storage.NewPostgresStorerFromEnv(ctx)
 	require.NoError(t, err)
 	t.Cleanup(storer.Close)
-	_, err = storer.Pool().Exec(ctx, "TRUNCATE app_users, poll_events, auth_challenges, voter_keys, voter_roots, vote_log, key_vault, device_links RESTART IDENTITY CASCADE")
+	_, err = storer.Pool().Exec(ctx, "TRUNCATE app_users, poll_events, auth_challenges, voter_keys, voter_roots, vote_log, vote_log_hashes, vote_log_stamps, nostr_cursors, key_vault, device_links RESTART IDENTITY CASCADE")
 	require.NoError(t, err)
 	return stores{storer: storer, polls: polls.NewPGStore(storer.Pool())}
 }
@@ -175,10 +175,24 @@ func TestRegisterAndTrees(t *testing.T) {
 	}
 	assert.Equal(t, 4, kinds[polls.LogRegister], "b, a, a2, a3; the repeat and the refusal log nothing")
 	assert.Positive(t, kinds[polls.LogRoot])
-	require.NoError(t, polls.VerifyLog(make([]byte, 32), entries))
+	requireTree(t, s.polls, entries)
 	tampered := append([]polls.LogEntry(nil), entries...)
-	tampered[1].Body = json.RawMessage(`{"document":"forged"}`)
-	assert.Error(t, polls.VerifyLog(make([]byte, 32), tampered))
+	tampered[1].Body = `{"document":"forged"}`
+	forged, err := polls.TreeOf(tampered)
+	require.NoError(t, err)
+	head, err := s.polls.Head(ctx)
+	require.NoError(t, err)
+	assert.NotEqual(t, head.Hash, forged.Hash)
+}
+
+// requireTree checks that the entries (the whole log) make the log's tree.
+func requireTree(t *testing.T, s *polls.PGStore, entries []polls.LogEntry) {
+	t.Helper()
+	head, err := s.Head(context.Background())
+	require.NoError(t, err)
+	tree, err := polls.TreeOf(entries)
+	require.NoError(t, err)
+	assert.Equal(t, head, tree)
 }
 
 // TestCastPublishTally: a ballot needs a known root and a higher seq; a
@@ -282,7 +296,7 @@ func TestCastPublishTally(t *testing.T) {
 	}
 	assert.Equal(t, 6, kinds[polls.LogBallot])
 	assert.Equal(t, 1, kinds[polls.LogTally])
-	require.NoError(t, polls.VerifyLog(make([]byte, 32), entries))
+	requireTree(t, s.polls, entries)
 }
 
 // TestCheckAnonBallot: the proof binds the ballot, the scope binds the poll

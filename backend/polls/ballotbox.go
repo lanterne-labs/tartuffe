@@ -230,7 +230,7 @@ func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]Ca
 // telling which it looks for.
 func (s *PGStore) Ballots(ctx context.Context, eventID int64, w Window) ([]AnonBallot, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT ON (nullifier) nullifier, seq, kind, choices FROM anon_ballots
+		SELECT DISTINCT ON (nullifier) nullifier, seq, kind, choices, log_seq FROM anon_ballots
 		WHERE event_id = $1 AND series = $2 AND win = $3 AND published_at IS NOT NULL
 		ORDER BY nullifier, seq DESC`, eventID, w.Series, w.Index)
 	if err != nil {
@@ -240,7 +240,7 @@ func (s *PGStore) Ballots(ctx context.Context, eventID int64, w Window) ([]AnonB
 	out := []AnonBallot{}
 	for rows.Next() {
 		b := AnonBallot{EventID: eventID, Window: w}
-		if err := rows.Scan(&b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices); err != nil {
+		if err := rows.Scan(&b.Proof.Nullifier, &b.Seq, &b.Kind, &b.Choices, &b.LogSeq); err != nil {
 			return nil, fmt.Errorf("scan ballot: %w", err)
 		}
 		out = append(out, b)

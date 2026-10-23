@@ -35,6 +35,19 @@ type Service struct {
 	accounts *accounts.Service
 	results  *resultsCache
 	batches  BatchConfig
+	// signer signs the log's checkpoints; relays are the Nostr relays the
+	// ballots come through.
+	signer *LogSigner
+	relays []string
+}
+
+// Config is how the polls run: when the ballots are published, the key of
+// the log's checkpoints, and the relays the ballots come through (none: the
+// ballots are only posted).
+type Config struct {
+	Batches BatchConfig
+	Signer  *LogSigner
+	Relays  []string
 }
 
 // BatchConfig says when the waiting ballots are published: every Interval,
@@ -56,8 +69,9 @@ func (c BatchConfig) nextBatch(now time.Time) time.Time {
 
 // NewService serves the polls of the store and the ballots of the box (the
 // same PGStore, but in tests); acc checks the documents.
-func NewService(store Store, box *PGStore, people People, acc *accounts.Service, batches BatchConfig) *Service {
-	return &Service{store: store, box: box, people: people, accounts: acc, results: newResultsCache(resultsTTL), batches: batches}
+func NewService(store Store, box *PGStore, people People, acc *accounts.Service, cfg Config) *Service {
+	return &Service{store: store, box: box, people: people, accounts: acc, results: newResultsCache(resultsTTL),
+		batches: cfg.Batches, signer: cfg.Signer, relays: cfg.Relays}
 }
 
 // Routes mounts the polls' endpoints on the /api router. signin limits the
@@ -70,14 +84,24 @@ func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 	r.Get("/voters/trees/{series}/{window}", s.handleVoterTree)
 	r.With(signin).Post("/voters/register/{provider}", s.handleRegister)
 	r.Get("/vote-log", s.handleLog)
+	r.Get("/vote-log/checkpoint", s.handleCheckpoint)
+	r.Get("/vote-log/key", s.handleLogKey)
+	r.Get("/vote-log/proof/entry", s.handleProveEntry)
+	r.Get("/vote-log/proof/append", s.handleProveAppend)
+	r.Get("/vote-log/stamps", s.handleStamps)
 	r.Get("/vault/{lookup}", s.handleVaultGet)
 	r.With(signin).Put("/vault/{lookup}", s.handleVaultPut)
 	r.With(signin).Post("/links/{channel}", s.handleLinkPut)
 	r.Get("/links/{channel}", s.handleLinkTake)
 }
 
-// Run publishes the waiting ballots in batches until ctx ends.
+// Run publishes the waiting ballots in batches until ctx ends: at each
+// batch it reads the relays' new ballots, publishes, and stamps the log's
+// new checkpoint on Bitcoin.
 func (s *Service) Run(ctx context.Context) {
+	if err := s.box.FillTree(ctx); err != nil {
+		log.Error().Err(err).Msg("fill the vote log's tree")
+	}
 	tick := time.NewTicker(s.batches.Interval)
 	defer tick.Stop()
 	for {
@@ -85,6 +109,7 @@ func (s *Service) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			s.ReadRelays(ctx)
 			events, err := s.box.PublishBatch(ctx, s.batches.Min, s.batches.MaxWait)
 			if err != nil {
 				log.Error().Err(err).Msg("publish ballots")
@@ -95,6 +120,11 @@ func (s *Service) Run(ctx context.Context) {
 			}
 			if len(events) > 0 {
 				log.Info().Int("polls", len(events)).Msg("ballots published")
+			}
+			if st, err := s.box.StampHead(ctx, s.signer); err != nil {
+				log.Warn().Err(err).Msg("stamp the vote log's checkpoint")
+			} else if st != nil {
+				log.Info().Int64("size", st.Size).Msg("vote log checkpoint stamped")
 			}
 		}
 	}

@@ -51,7 +51,7 @@ func (onePoll) Cards(context.Context, []int64) (map[int64]polls.Card, error) {
 // reached by these tests), with noop sign-in.
 func newServer(pingErr error) *Server {
 	acc := accounts.NewService(accountstest.NewMemStore(), providers.NewRegistry(providers.Noop{}))
-	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, nil, onePoll{}, acc, polls.DefaultBatches))
+	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, nil, onePoll{}, acc, polls.Config{Batches: polls.DefaultBatches}))
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -93,6 +93,11 @@ func TestRoutes(t *testing.T) {
 		"GET /api/voters/trees/{series}/{window}",
 		"POST /api/voters/register/{provider}",
 		"GET /api/vote-log",
+		"GET /api/vote-log/checkpoint",
+		"GET /api/vote-log/key",
+		"GET /api/vote-log/proof/append",
+		"GET /api/vote-log/proof/entry",
+		"GET /api/vote-log/stamps",
 		"GET /api/vault/{lookup}",
 		"PUT /api/vault/{lookup}",
 		"POST /api/links/{channel}",

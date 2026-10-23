@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"os"
 	"strconv"
 	"time"
@@ -17,12 +18,45 @@ import (
 // Wire builds the three parts on the database of storer: the polls check
 // the voters' documents through the accounts (never their accounts: no
 // ballot names one), and get the candidates' cards from the mirror.
-func Wire(storer *storage.PostgresStorer, reg *providers.Registry, batches polls.BatchConfig) (*accounts.Service, *mirror.Service, *polls.Service) {
+func Wire(storer *storage.PostgresStorer, reg *providers.Registry, cfg polls.Config) (*accounts.Service, *mirror.Service, *polls.Service) {
 	acc := accounts.NewService(accounts.NewPGStore(storer.Pool()), reg)
 	acc.SubjectKey = []byte(os.Getenv("AUTH_SUBJECT_KEY"))
 	store := polls.NewPGStore(storer.Pool())
-	p := polls.NewService(store, store, PersonCards{storer}, acc, batches)
+	p := polls.NewService(store, store, PersonCards{storer}, acc, cfg)
 	return acc, mirror.NewService(storer, acc), p
+}
+
+// PollsFromEnv reads the polls' config: the batches (BatchesFromEnv), the
+// key of the log's checkpoints (VOTE_LOG_KEY, from `dm poll log-key`; a key
+// made at start when unset, with a warning: the checkpoints of a restart
+// then fail to verify) and the Nostr relays (NOSTR_RELAYS, comma separated;
+// polls.DefaultRelays when unset, "none" for none).
+func PollsFromEnv() (polls.Config, error) {
+	batches, err := BatchesFromEnv()
+	if err != nil {
+		return polls.Config{}, err
+	}
+	cfg := polls.Config{Batches: batches, Relays: polls.DefaultRelays}
+	skey := os.Getenv("VOTE_LOG_KEY")
+	if skey == "" {
+		log.Warn().Msg("VOTE_LOG_KEY is not set: the vote log's checkpoints are signed by a key made now, that the next start replaces")
+		if skey, _, err = polls.GenerateLogKey(); err != nil {
+			return polls.Config{}, err
+		}
+	}
+	if cfg.Signer, err = polls.NewLogSigner(skey); err != nil {
+		return polls.Config{}, fmt.Errorf("VOTE_LOG_KEY: %w", err)
+	}
+	switch r := os.Getenv("NOSTR_RELAYS"); r {
+	case "":
+	case "none":
+		cfg.Relays = nil
+	default:
+		if cfg.Relays, err = polls.ParseRelays(r); err != nil {
+			return polls.Config{}, fmt.Errorf("NOSTR_RELAYS: %w", err)
+		}
+	}
+	return cfg, nil
 }
 
 // BatchesFromEnv reads VOTE_BATCH_INTERVAL, VOTE_BATCH_MIN and

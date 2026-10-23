@@ -5,6 +5,9 @@
 // ballots come out in hourly batches: the ballot shown here is the one this
 // device cast, or, on another device, found among the published ones by its
 // nullifier, which only the key computes. No request carries the account.
+// A ballot goes out through public Nostr relays (nostr.ts), so our server
+// never sees where it comes from; the browser then checks that the signed
+// log holds it, as cast (votelog.ts).
 
 import { Group } from '@semaphore-protocol/group';
 import { generateProof, type SemaphoreProof } from '@semaphore-protocol/proof';
@@ -12,6 +15,8 @@ import { poseidon2 } from 'poseidon-lite';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { API_BASE } from './config';
+import { ballotEvent, publish } from './nostr';
+import { checkEntry, checkHead, type LogFault } from './votelog';
 import { identity, type VoterKey, type WindowInfo } from './voter';
 
 export type BallotKind = 'choices' | 'blank' | 'withdraw';
@@ -71,7 +76,24 @@ interface Stored {
 	// waiting: the windows whose last ballot is not published yet.
 	waiting: Record<string, boolean>;
 	publishedBy?: string;
+	// sent: per window, the Nostr event of the last ballot and the relays
+	// that took it (none: posted to our server).
+	sent?: Record<string, { event: string; relays: string[] }>;
 }
+
+// Via is how a ballot goes out: the relays (none: posted to our server),
+// and when the server publishes a ballot sent now at the latest.
+export interface Via {
+	relays: string[];
+	publishedBy: string;
+}
+
+// LATE is how long after its deadline a ballot not yet published is called
+// missing.
+const LATE = 30 * 60_000;
+
+// Check is what the browser found of the voter's ballot in the public log.
+export type Check = { state: 'included' } | { state: 'waiting' } | { state: 'fault'; fault: LogFault };
 
 const storeKey = (eventId: number) => `ballot:${eventId}`;
 const wkey = (w: { series: number; window: number }) => `${w.series}/${w.window}`;
@@ -120,6 +142,7 @@ interface PublicBallot {
 	seq: number;
 	kind: BallotKind;
 	choices: number[];
+	log_seq: number;
 }
 
 const pollPath = (slug: string) => `/api/polls/${encodeURIComponent(slug)}`;
@@ -160,7 +183,13 @@ export class NotInWindow extends BallotError {
 	}
 }
 
-async function castIn(slug: string, eventId: number, key: VoterKey, w: WindowInfo, seq: number, b: MyBallot): Promise<{ seq: number; publishedBy: string }> {
+interface Cast {
+	seq: number;
+	publishedBy: string;
+	sent?: { event: string; relays: string[] };
+}
+
+async function castIn(slug: string, eventId: number, key: VoterKey, w: WindowInfo, seq: number, b: MyBallot, via: Via): Promise<Cast> {
 	const leaves = await treeOf(w);
 	if (!leaves.includes(key.commitment)) {
 		trees.delete(wkey(w));
@@ -169,10 +198,16 @@ async function castIn(slug: string, eventId: number, key: VoterKey, w: WindowInf
 	const group = new Group((trees.get(wkey(w))?.leaves ?? leaves).map(BigInt));
 	for (let attempt = 0; attempt < 2; attempt++) {
 		const proof: SemaphoreProof = await generateProof(identity(key.secret), group, digest(message(eventId, w, seq, b)), digest(scopeName(eventId, w)), TREE_DEPTH, ARTIFACTS);
-		const res = await plain(`${pollPath(slug)}/ballots`, {
-			method: 'POST',
-			body: JSON.stringify({ poll: eventId, series: w.series, window: w.window, seq, kind: b.kind, choices: b.choices, proof })
-		});
+		const body = JSON.stringify({ poll: eventId, series: w.series, window: w.window, seq, kind: b.kind, choices: b.choices, proof });
+		if (via.relays.length > 0) {
+			const ev = ballotEvent(body);
+			const took = await publish(via.relays, ev);
+			if (took.length > 0) return { seq, publishedBy: via.publishedBy, sent: { event: ev.id, relays: took } };
+			// No relay took it: our server takes it directly, and sees where
+			// it comes from.
+			console.warn('no Nostr relay took the ballot: sent to the server');
+		}
+		const res = await plain(`${pollPath(slug)}/ballots`, { method: 'POST', body });
 		if (res.ok) return { seq, publishedBy: ((await res.json()) as { published_by: string }).published_by };
 		const err = await errorBody(res);
 		// Another device of the voter cast after this one's last ballot.
@@ -187,16 +222,19 @@ async function castIn(slug: string, eventId: number, key: VoterKey, w: WindowInf
 
 // cast casts the ballot in every open window the key votes in. It returns
 // when the batches will have published it at the latest.
-export async function cast(slug: string, eventId: number, key: VoterKey, windows: WindowInfo[], b: MyBallot): Promise<string> {
+export async function cast(slug: string, eventId: number, key: VoterKey, windows: WindowInfo[], b: MyBallot, via: Via): Promise<string> {
 	const mine = readMine(eventId) ?? { ballot: b, seq: {}, waiting: {} };
+	mine.sent ??= {};
 	let publishedBy = '';
 	let castSome = false;
 	let lastErr: unknown = null;
 	for (const w of windows) {
 		try {
-			const done = await castIn(slug, eventId, key, w, (mine.seq[wkey(w)] ?? 0) + 1, b);
+			const done = await castIn(slug, eventId, key, w, (mine.seq[wkey(w)] ?? 0) + 1, b, via);
 			mine.seq[wkey(w)] = done.seq;
 			mine.waiting[wkey(w)] = true;
+			if (done.sent) mine.sent[wkey(w)] = done.sent;
+			else delete mine.sent[wkey(w)];
 			publishedBy = done.publishedBy;
 			castSome = true;
 		} catch (err) {
@@ -214,7 +252,7 @@ export async function cast(slug: string, eventId: number, key: VoterKey, windows
 // the one published under their nullifier (cast from another device). It
 // also re-casts silently in an open window that lacks it, so the ballot
 // keeps counting from one window to the next. null: no ballot.
-export async function myBallot(slug: string, eventId: number, key: VoterKey, windows: WindowInfo[]): Promise<{ ballot: MyBallot | null; publishedBy?: string }> {
+export async function myBallot(slug: string, eventId: number, key: VoterKey, windows: WindowInfo[], via: Via): Promise<{ ballot: MyBallot | null; publishedBy?: string; check?: Check }> {
 	const mine = readMine(eventId);
 	const found: Record<string, PublicBallot | undefined> = {};
 	for (const w of windows) {
@@ -230,7 +268,7 @@ export async function myBallot(slug: string, eventId: number, key: VoterKey, win
 		const p = found[wkey(w)];
 		if (!p) continue;
 		if (!state || p.seq > (state.seq[wkey(w)] ?? 0)) {
-			state = { ballot: { kind: p.kind, choices: p.choices ?? [] }, seq: { ...(state?.seq ?? {}), [wkey(w)]: p.seq }, waiting: {} };
+			state = { ballot: { kind: p.kind, choices: p.choices ?? [] }, seq: { ...(state?.seq ?? {}), [wkey(w)]: p.seq }, waiting: {}, sent: state?.sent };
 		}
 	}
 	if (!state) return { ballot: null };
@@ -243,13 +281,62 @@ export async function myBallot(slug: string, eventId: number, key: VoterKey, win
 	if (state.ballot.kind !== 'withdraw') {
 		const missing = windows.filter((w) => !found[wkey(w)] && !state.waiting[wkey(w)]);
 		if (missing.length > 0) {
-			cast(slug, eventId, key, missing, state.ballot).catch((err) => {
+			cast(slug, eventId, key, missing, state.ballot, via).catch((err) => {
 				if (!(err instanceof NotInWindow)) console.warn('refresh of the ballot in a new window failed', err);
 			});
 		}
 	}
 	const waiting = Object.values(state.waiting).some(Boolean);
-	return { ballot: state.ballot.kind === 'withdraw' ? null : state.ballot, publishedBy: waiting ? state.publishedBy : undefined };
+	let check: Check | undefined;
+	try {
+		check = await checkLog(eventId, key, windows, state, found);
+	} catch (err) {
+		console.warn('could not check the public log', err);
+	}
+	return { ballot: state.ballot.kind === 'withdraw' ? null : state.ballot, publishedBy: waiting ? state.publishedBy : undefined, check };
+}
+
+// checkLog checks the log's signed head against the last one this device
+// saw, then that it holds the voter's last published ballot as cast; a
+// ballot still not published long after its deadline is missing.
+async function checkLog(eventId: number, key: VoterKey, windows: WindowInfo[], state: Stored, found: Record<string, PublicBallot | undefined>): Promise<Check> {
+	const head = await checkHead();
+	if ('fault' in head) return { state: 'fault', fault: head.fault };
+	for (const w of windows) {
+		const k = wkey(w);
+		if (state.waiting[k]) {
+			if (state.publishedBy && Date.now() > new Date(state.publishedBy).getTime() + LATE) {
+				const sent = state.sent?.[k];
+				return {
+					state: 'fault',
+					fault: {
+						kind: 'missing',
+						detail: `the ballot of window ${k} was due by ${state.publishedBy} and is not in the log`,
+						evidence: `${head.note}\nballot event ${sent?.event ?? '(posted to the server)'} on ${sent?.relays.join(' ') ?? '-'}`
+					}
+				};
+			}
+			continue;
+		}
+		const p = found[k];
+		if (!p || !p.log_seq || p.seq !== state.seq[k]) continue;
+		const n = nullifier(key.secret, eventId, w);
+		const want = state.ballot;
+		const fault = await checkEntry(head.tree, head.note, p.log_seq, (b) => {
+			const proof = b.proof as { nullifier?: string } | undefined;
+			return (
+				b.poll === eventId &&
+				b.series === w.series &&
+				b.window === w.window &&
+				b.seq === p.seq &&
+				b.kind === want.kind &&
+				JSON.stringify(b.choices ?? []) === JSON.stringify(want.choices) &&
+				proof?.nullifier === n
+			);
+		});
+		if (fault) return { state: 'fault', fault };
+	}
+	return Object.values(state.waiting).some(Boolean) ? { state: 'waiting' } : { state: 'included' };
 }
 
 // forgetBallots drops what this device remembers of its ballots (the key

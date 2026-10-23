@@ -251,7 +251,7 @@ func knownRoot(ctx context.Context, q pgx.Tx, w Window, root string) (bool, erro
 func (s *PGStore) ResetVotes(ctx context.Context) error {
 	s.treesMu.Lock()
 	defer s.treesMu.Unlock()
-	if _, err := s.pool.Exec(ctx, `TRUNCATE anon_ballots, voter_roots, voter_keys, vote_log, device_links RESTART IDENTITY`); err != nil {
+	if _, err := s.pool.Exec(ctx, `TRUNCATE anon_ballots, voter_roots, voter_keys, vote_log, vote_log_hashes, vote_log_stamps, nostr_cursors, device_links RESTART IDENTITY`); err != nil {
 		return fmt.Errorf("reset votes: %w", err)
 	}
 	clear(s.trees)

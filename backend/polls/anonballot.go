@@ -29,6 +29,9 @@ type AnonBallot struct {
 	Kind    string          `json:"kind"`
 	Choices []int64         `json:"choices"`
 	Proof   semaphore.Proof `json:"proof"`
+	// LogSeq is the log entry that holds the ballot once published (not
+	// part of the ballot).
+	LogSeq int64 `json:"-"`
 }
 
 // Message is the text the proof binds: the browser builds the same one,
@@ -89,7 +92,15 @@ func CheckAnonBallot(e *Event, candidates []int64, b AnonBallot, now time.Time) 
 	default:
 		return fmt.Errorf("%w: kind %q", ErrBallot, b.Kind)
 	}
-	if b.Proof.Scope != Scope(e.ID, b.Window) {
+	return CheckBallotProof(b)
+}
+
+// CheckBallotProof checks that the proof is the ballot's: its scope (the
+// poll and window), its message (the ballot's text) and the proof itself.
+// It does not check the root: a verifier checks it against the roots of the
+// log.
+func CheckBallotProof(b AnonBallot) error {
+	if b.Proof.Scope != Scope(b.EventID, b.Window) {
 		return fmt.Errorf("%w: the proof is for another scope", ErrBallot)
 	}
 	if b.Proof.Message != semaphore.Digest([]byte(b.Message())).String() {

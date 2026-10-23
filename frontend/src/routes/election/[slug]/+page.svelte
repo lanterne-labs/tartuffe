@@ -6,7 +6,7 @@
 	import { displayName } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
 	import { voterKey, voterKeyOpen, protectedEnough } from '$lib/voter';
-	import { cast, myBallot, onBallotChanged, BallotError, NotInWindow, type MyBallot } from '$lib/anonballot';
+	import { cast, myBallot, onBallotChanged, BallotError, NotInWindow, type MyBallot, type Check, type Via } from '$lib/anonballot';
 	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
@@ -61,6 +61,9 @@
 	let event = $derived(data?.event ?? null);
 	let results = $derived(data?.results ?? null);
 	let windows = $derived(data?.windows ?? []);
+	let via = $derived<Via>({ relays: data?.relays ?? [], publishedBy: data?.published_by ?? '' });
+	// check: what this browser found of the ballot in the public log.
+	let check = $state<Check | null>(null);
 	let maxChoices = $derived(event?.max_choices ?? 3);
 	let full = $derived(ballot.length >= maxChoices);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
@@ -132,10 +135,11 @@
 		const key = get(voterKey);
 		if (!key?.registered || !event) return;
 		try {
-			const got = await myBallot(slug, event.id, key, windows);
+			const got = await myBallot(slug, event.id, key, windows, via);
 			if (busy) return;
 			mine = got.ballot;
 			publishedBy = got.publishedBy ?? null;
+			check = got.check ?? null;
 			ballotLoaded = true;
 			if (pending !== null && !get(voterKeyOpen)) go(pending);
 		} catch (err) {
@@ -147,6 +151,7 @@
 	function resetBallot() {
 		mine = null;
 		publishedBy = null;
+		check = null;
 		ballotLoaded = false;
 		withdrawOpen = false;
 	}
@@ -165,8 +170,9 @@
 		busy = true;
 		actionError = null;
 		try {
-			publishedBy = await cast(slug, event.id, key, windows, next);
+			publishedBy = await cast(slug, event.id, key, windows, next, via);
 			mine = next.kind === 'withdraw' ? null : next;
+			check = mine ? { state: 'waiting' } : null;
 			say(done);
 			return true;
 		} catch (err) {
@@ -182,6 +188,18 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	// saveEvidence downloads what proves the server's fault: the signed
+	// checkpoints and the entry, for anyone to check.
+	function saveEvidence(c: Check | null) {
+		if (c?.state !== 'fault') return;
+		const text = `tartuffe.me vote log fault: ${c.fault.kind}\n${c.fault.detail}\nfound by this browser at ${new Date().toISOString()}\n\n${c.fault.evidence}\n`;
+		const a = document.createElement('a');
+		a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+		a.download = 'tartuffe-vote-log-proof.txt';
+		a.click();
+		URL.revokeObjectURL(a.href);
 	}
 
 	function waitingText(): string {
@@ -411,8 +429,16 @@
 						<span class="status status--ok">{flash}</span>
 					{/if}
 				</div>
-				{#if publishedBy && mine && !busy}
+				{#if check?.state === 'fault'}
+					<div class="log-fault" role="alert">
+						<strong>{tr('vote.log.fault', currentLang)}</strong>
+						<span>{tr(`vote.log.fault.${check.fault.kind}`, currentLang)}</span>
+						<button class="btn" onclick={() => saveEvidence(check)}>{tr('vote.log.evidence', currentLang)}</button>
+					</div>
+				{:else if publishedBy && mine && !busy}
 					<p class="published">{tr('vote.published_by', currentLang, { t: timeText(publishedBy) })}</p>
+				{:else if check?.state === 'included' && mine && !busy}
+					<p class="published published--ok">✓ {@html tr('vote.log.included', currentLang)}</p>
 				{/if}
 				{#if actionError}
 					<p class="save-error" role="alert">{actionError}</p>
@@ -780,6 +806,24 @@
 		margin: 0.5rem 0 0;
 		font-size: 0.82rem;
 		color: var(--text-secondary);
+	}
+	.published--ok {
+		color: var(--green);
+	}
+	.published--ok :global(a) {
+		color: inherit;
+	}
+	.log-fault {
+		display: grid;
+		gap: 0.4rem;
+		justify-items: start;
+		margin: 0.75rem 0 0;
+		padding: 0.75rem 0.9rem;
+		border: 1px solid var(--red);
+		border-radius: var(--radius-md);
+		background: color-mix(in oklch, var(--red) 10%, var(--bg-card));
+		font-size: 0.88rem;
+		line-height: 1.45;
 	}
 	:global(:root) {
 		--poll-blue: #6f8fc9;

@@ -38,11 +38,11 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 		names = append(names, p.Name)
 	}
 	log.Info().Strs("auth_providers", names).Msg("Sign-in providers enabled")
-	batches, err := BatchesFromEnv()
+	pollsCfg, err := PollsFromEnv()
 	if err != nil {
 		return err
 	}
-	acc, m, p := Wire(storer, reg, batches)
+	acc, m, p := Wire(storer, reg, pollsCfg)
 	go p.Run(ctx)
 	server := NewServer(storer, acc, m, p)
 	storer.StartMetricsCollectors(ctx)

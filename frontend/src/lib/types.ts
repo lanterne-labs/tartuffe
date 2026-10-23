@@ -202,6 +202,10 @@ export interface PollResponse {
 	results: PollResults;
 	// windows: the open windows a ballot is cast in.
 	windows: { series: number; window: number; start: string; end: string }[];
+	// relays: the Nostr relays a ballot goes out through; published_by: when
+	// a ballot sent now is published at the latest.
+	relays: string[];
+	published_by: string;
 }
 
 // Accounts (backend/accounts): an account provider (google) opens the

@@ -31,14 +31,23 @@ var (
 		Help:      "Document proofs checked by provider and outcome (ok, refused, error)",
 	}, []string{"provider", "outcome"})
 
-	// BallotChangesTotal counts the anonymous ballots cast by outcome (ok,
-	// or the code of the refusal: closed, invalid_ballot, stale_seq,
-	// unknown_root).
+	// BallotChangesTotal counts the anonymous ballots cast by path (nostr:
+	// read from a relay; direct: posted to the API) and outcome (ok, or the
+	// code of the refusal: closed, invalid_ballot, stale_seq, unknown_root).
+	// A ballot read from several relays counts once ok, then stale_seq.
 	BallotChangesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: Namespace,
 		Name:      "ballot_changes_total",
-		Help:      "Ballot changes by outcome (ok or the refusal code)",
-	}, []string{"outcome"})
+		Help:      "Ballot changes by path (nostr, direct) and outcome (ok or the refusal code)",
+	}, []string{"path", "outcome"})
+
+	// NostrRelayReadsTotal counts the reads of the Nostr relays by relay and
+	// outcome (ok, error).
+	NostrRelayReadsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: Namespace,
+		Name:      "nostr_relay_reads_total",
+		Help:      "Reads of the Nostr relays the ballots come through, by relay and outcome (ok, error)",
+	}, []string{"relay", "outcome"})
 
 	// VoterRegistrationsTotal counts the voting keys registered by provider
 	// and outcome (registered, replaced, already, taken, invalid).
