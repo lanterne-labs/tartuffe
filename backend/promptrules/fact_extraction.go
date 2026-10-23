@@ -92,6 +92,7 @@ If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - A specific recorded legislative vote — Type 2 outcome. KEEP even when from a prior parliament. ✅ "X voted AGAINST the Sondervermögen in the previous Bundestag" → KEEP.
 - The entity's own stated past or present POSITION — even framed as biography. The entity can later flip. ✅ "X stated she has long opposed primaries" → KEEP (she could later support primaries).
 - An election result where THE SUBJECT was a candidate — the subject could later claim a different number. ✅ "X obtained 49.79%% at Harfleur" → KEEP.
+- An ACT the entity chose that takes a side on a question, even when it looks like campaign organisation or travel: running in, entering or refusing an election or a primary; joining, leading or presenting a list or an alliance with named partners; attending or boycotting a named event; resigning, staying, withdrawing. Such an act can break the entity's own stated position ("I refuse the primary", "never an alliance with Y", "I will attend no mass"). ✅ "X est engagé dans la primaire PS-PP" → KEEP. ✅ "X a présenté une liste d'union avec Y et Z" → KEEP. ✅ "X a réorganisé son agenda pour assister à la messe du pape" → KEEP. Still reject the logistics that take no side: the place or date of a meeting, naming a spokesperson, publishing a book.
 
 **5. Journalist characterization without evidence**
 A journalist's interpretation or narrative framing is NOT a valid fact. However, a journalist reporting a concrete, documented finding WITH evidence IS valid (Type 2).

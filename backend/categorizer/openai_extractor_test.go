@@ -537,3 +537,74 @@ Interrogé sur la désignation d'un candidat unique du bloc central pour 2027, i
 		t.Errorf("both facts carried an unambiguous sense in only %d of %d runs", goodRuns, samples)
 	}
 }
+
+// TestRemoteLLMExtractor_SideTakingActs pins rule 4's exception for acts: an
+// act the entity chose that takes a side (running in a primary, presenting a
+// joint list with named partners, attending a named event) is kept, because
+// it can break the entity's own stated position (prod 2026-10-23: the audit
+// flagged "Glucksmann est engagé dans la primaire" and "Macron assistera à la
+// messe du pape" as not contradictable, though each grounds a real
+// contradiction); logistics that take no side stay rejected. Majority of 3.
+func TestRemoteLLMExtractor_SideTakingActs(t *testing.T) {
+	llmtest.Setup(t)
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Raphaël Glucksmann accélère
+
+Raphaël Glucksmann est désormais engagé dans la primaire PS-Place publique, qui se tiendra les 9 et 10 octobre.
+
+Pour les municipales, il a présenté à Lille une liste d'union avec Martine Aubry et Marine Tondelier.
+
+Il a réorganisé son agenda pour assister lundi à la messe du pape Léon XIV à Notre-Dame.
+
+Il a tenu son meeting de rentrée à Montpellier et a nommé Aurore Lalucq porte-parole de sa campagne.`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/acts",
+		Title:   "Raphaël Glucksmann accélère",
+		Content: mockText,
+	}
+	ctx := context.Background()
+	const samples = 3
+	results := make([]extractResult, samples)
+	llmtest.ForEach(samples, func(i int) {
+		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, "Raphaël Glucksmann", mockContent)
+	})
+	var keptRuns, leakRuns int
+	for run := 1; run <= samples; run++ {
+		facts, err := results[run-1].facts, results[run-1].err
+		if err != nil {
+			t.Fatalf("ExtractFacts failed (run %d): %v", run, err)
+		}
+		primary, list, mass, leaked := false, false, false, false
+		for i, f := range facts {
+			text := strings.ToLower(f.NormalizedFactText)
+			t.Logf("  run %d [%d] %s", run, i+1, f.NormalizedFactText)
+			switch {
+			case strings.Contains(text, "primaire"):
+				primary = true
+			case strings.Contains(text, "liste"):
+				list = true
+			case strings.Contains(text, "messe"):
+				mass = true
+			case strings.Contains(text, "meeting") || strings.Contains(text, "porte-parole"):
+				leaked = true
+			}
+		}
+		if primary && list && mass {
+			keptRuns++
+		}
+		if leaked {
+			leakRuns++
+		}
+	}
+	if keptRuns <= samples/2 {
+		t.Errorf("the three side-taking acts were kept in only %d of %d runs", keptRuns, samples)
+	}
+	if leakRuns > samples/2 {
+		t.Errorf("logistics (meeting, spokesperson) leaked in %d of %d runs", leakRuns, samples)
+	}
+}
