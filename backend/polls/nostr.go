@@ -82,27 +82,44 @@ func (s *Service) readRelay(ctx context.Context, relay string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if since > 0 {
+		since -= int64(relaySlack / time.Second)
+	}
+	latest, n := since, 0
+	err = relayEvents(ctx, relay, since, func(ev nostrEvent) {
+		n++
+		latest = max(latest, ev.CreatedAt)
+		s.acceptEvent(ctx, relay, ev)
+	})
+	if err != nil {
+		return n, err
+	}
+	return n, s.box.setRelayCursor(ctx, relay, latest)
+}
+
+// relayEvents calls each on every ballot event of the relay dated since
+// (0: all) and returns at the relay's end of stored events.
+func relayEvents(ctx context.Context, relay string, since int64, each func(nostrEvent)) error {
 	ctx, cancel := context.WithTimeout(ctx, relayReadTimeout)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, relay, nil)
 	if err != nil {
-		return 0, fmt.Errorf("dial: %w", err)
+		return fmt.Errorf("dial: %w", err)
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(1 << 20)
 	filter := map[string]any{"kinds": []int{NostrKind}, "#t": []string{NostrTag}}
 	if since > 0 {
-		filter["since"] = since - int64(relaySlack/time.Second)
+		filter["since"] = since
 	}
 	req, _ := json.Marshal([]any{"REQ", "ballots", filter})
 	if err := conn.Write(ctx, websocket.MessageText, req); err != nil {
-		return 0, fmt.Errorf("send request: %w", err)
+		return fmt.Errorf("send request: %w", err)
 	}
-	n, latest := 0, since
 	for {
 		_, raw, err := conn.Read(ctx)
 		if err != nil {
-			return n, fmt.Errorf("read: %w", err)
+			return fmt.Errorf("read: %w", err)
 		}
 		var msg []json.RawMessage
 		if err := json.Unmarshal(raw, &msg); err != nil || len(msg) == 0 {
@@ -119,19 +136,32 @@ func (s *Service) readRelay(ctx context.Context, relay string) (int, error) {
 			if err := json.Unmarshal(msg[2], &ev); err != nil {
 				continue
 			}
-			n++
-			latest = max(latest, ev.CreatedAt)
-			s.acceptEvent(ctx, relay, ev)
+			each(ev)
 		case "EOSE":
 			conn.Write(ctx, websocket.MessageText, []byte(`["CLOSE","ballots"]`))
 			conn.Close(websocket.StatusNormalClosure, "")
-			return n, s.box.setRelayCursor(ctx, relay, latest)
+			return nil
 		case "CLOSED":
-			return n, fmt.Errorf("the relay closed the request: %s", raw)
+			return fmt.Errorf("the relay closed the request: %s", raw)
 		case "NOTICE":
 			log.Debug().Str("relay", relay).RawJSON("notice", raw).Msg("Nostr relay notice")
 		}
 	}
+}
+
+// RelayBallots returns the ballots of every ballot event the relay holds
+// (events without a readable ballot are skipped): what a verifier compares
+// with the log.
+func RelayBallots(ctx context.Context, relay string) ([]RelayBallot, error) {
+	var out []RelayBallot
+	err := relayEvents(ctx, relay, 0, func(ev nostrEvent) {
+		var b AnonBallot
+		if ev.Kind != NostrKind || len(ev.Content) > maxBallotBody || json.Unmarshal([]byte(ev.Content), &b) != nil {
+			return
+		}
+		out = append(out, RelayBallot{Ballot: b, At: time.Unix(ev.CreatedAt, 0), Relay: relay})
+	})
+	return out, err
 }
 
 // acceptEvent casts the ballot of an event. Anyone can publish events of

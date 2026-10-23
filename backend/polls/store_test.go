@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -176,6 +177,7 @@ func TestRegisterAndTrees(t *testing.T) {
 	assert.Equal(t, 4, kinds[polls.LogRegister], "b, a, a2, a3; the repeat and the refusal log nothing")
 	assert.Positive(t, kinds[polls.LogRoot])
 	requireTree(t, s.polls, entries)
+	assert.Empty(t, polls.Audit(entries).Problems, "the registrations and roots replay")
 	tampered := append([]polls.LogEntry(nil), entries...)
 	tampered[1].Body = `{"document":"forged"}`
 	forged, err := polls.TreeOf(tampered)
@@ -297,6 +299,28 @@ func TestCastPublishTally(t *testing.T) {
 	assert.Equal(t, 6, kinds[polls.LogBallot])
 	assert.Equal(t, 1, kinds[polls.LogTally])
 	requireTree(t, s.polls, entries)
+
+	// Anyone replays the log; a changed tally or ballot shows.
+	report := polls.Audit(entries)
+	assert.Empty(t, report.Problems)
+	assert.Equal(t, 6, report.Ballots)
+	changed := 0
+	for i, en := range entries {
+		forged := append([]polls.LogEntry(nil), entries...)
+		switch en.Kind {
+		case polls.LogTally:
+			forged[i].Body = strings.Replace(en.Body, `"voters":3`, `"voters":4`, 1)
+		case polls.LogBallot:
+			forged[i].Body = strings.Replace(en.Body, `"kind":"blank"`, `"kind":"withdraw"`, 1)
+		default:
+			continue
+		}
+		if forged[i].Body != en.Body {
+			changed++
+			assert.NotEmpty(t, polls.Audit(forged).Problems, "entry %d changed", en.Seq)
+		}
+	}
+	assert.Equal(t, 2, changed, "the tally and the blank ballot")
 }
 
 // TestCheckAnonBallot: the proof binds the ballot, the scope binds the poll
