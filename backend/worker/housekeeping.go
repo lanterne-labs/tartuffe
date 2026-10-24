@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,9 +45,21 @@ const (
 	// last pass and the last feed.
 	maintenanceJob = "maintenance"
 	feedJob        = "feed"
+
+	// watchPriority is the priority of the tasks of the watch list (the day
+	// before): the news of yesterday goes before the backfills (priority 0
+	// to 20, `dm collect add --priority`).
+	watchPriority = 50
 )
 
-// Housekeeping is what the worker does when no task is pending.
+// Housekeeping is the work of the worker besides the tasks, in the order of
+// priority. The feed goes before every task: it runs beside them (Beside) as
+// soon as it is due. The maintenance pass runs alone, since it rewrites the
+// stances the tasks insert into: when no task is pending (Idle), and at the
+// latest every MaintenanceEvery although tasks are pending (Urgent: the
+// worker lets the running tasks end first). Before, both waited for an empty
+// queue: during the 2-year backfill the feed did not run for 2 days and the
+// maintenance for 3 (2026-10-24).
 //
 // The feed runs once a day, after FeedHourUTC: the ingest of the plugins that
 // read their own source (frpolitics: the votes and the transcripts of the
@@ -73,7 +86,8 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
-	dirty atomic.Bool // facts were added since the last pass (set by the tasks run at once)
+	dirty  atomic.Bool // facts were added since the last pass (set by the tasks run at once)
+	feedMu sync.Mutex  // one feed at a time (Beside and Idle)
 }
 
 // NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
@@ -103,21 +117,41 @@ func (h *Housekeeping) FactsAdded(n int) {
 	}
 }
 
-// Idle implements Idle: the feed when due, then a maintenance pass when due.
-// An unavailable LLM stops the work with an error wrapping llm.ErrUnavailable;
-// the other failures are joined and returned after the work went on.
+// Beside implements Idle: the feed when due, unless one runs.
+func (h *Housekeeping) Beside(ctx context.Context) error {
+	if !h.feedMu.TryLock() {
+		return nil
+	}
+	defer h.feedMu.Unlock()
+	due, err := h.feedDue(ctx)
+	if err != nil || !due {
+		return err
+	}
+	return h.feed(ctx)
+}
+
+// Urgent implements Idle: a maintenance pass is due although tasks are
+// pending when none ran for MaintenanceEvery (a cut pass waits for it too,
+// so the passes do not hold the worker back to back).
+func (h *Housekeeping) Urgent(ctx context.Context) (bool, error) {
+	last, err := h.lastMaintenance(ctx)
+	if err != nil {
+		return false, err
+	}
+	return last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery, nil
+}
+
+// Idle implements Idle: the feed when due (unless one runs beside), then a
+// maintenance pass when due. An unavailable LLM stops the work with an error
+// wrapping llm.ErrUnavailable; the other failures are joined and returned
+// after the work went on.
 func (h *Housekeeping) Idle(ctx context.Context) error {
 	var errs []error
-	due, err := h.feedDue(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	} else if due {
-		if err := h.feed(ctx); err != nil {
-			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-				return err
-			}
-			errs = append(errs, err)
+	if err := h.Beside(ctx); err != nil {
+		if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
+			return err
 		}
+		errs = append(errs, err)
 	}
 	due, since, err := h.maintenanceDue(ctx)
 	if err != nil {
@@ -229,7 +263,7 @@ func (h *Housekeeping) watchTasks(ctx context.Context) (int, error) {
 	var tasks []storage.NewCollectionTask
 	for _, t := range targets {
 		for _, name := range PeriodPlugins() {
-			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, RequestedBy: "watch"})
+			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, Priority: watchPriority, RequestedBy: "watch"})
 		}
 	}
 	added, err := h.Storer.AddCollectionTasks(ctx, tasks)
