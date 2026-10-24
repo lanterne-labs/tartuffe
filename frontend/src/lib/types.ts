@@ -186,13 +186,19 @@ export interface PollResults {
 	// blank and blank_share: the blank votes (null while hidden).
 	blank: number | null;
 	blank_share: number | null;
+	// blank_ranked, blank_ranked_share: the ballots that place the blank
+	// vote, first or after candidates; blank_rank: its place in the ranking
+	// (null while hidden).
+	blank_ranked: number | null;
+	blank_ranked_share: number | null;
+	blank_rank: number | null;
 	// window: the 30-day window the results count, until its end.
 	window: { series: number; window: number };
 	until: string;
 	open: boolean;
 	hidden?: 'too_few_voters' | 'blackout';
 	// condorcet_winner: the candidate who beats each other one head to head,
-	// if one does (null while hidden).
+	// 0 when the blank vote does, if one does (null while hidden).
 	condorcet_winner: number | null;
 	candidates: CandidateResult[];
 }

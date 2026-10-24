@@ -70,6 +70,11 @@ type tallyEntry struct {
 	First  map[int64]int           `json:"first"`
 	Ranked map[int64]int           `json:"ranked"`
 	Beats  map[int64]map[int64]int `json:"beats"`
+	// BlankRanked counts the ballots that place the blank vote, BlankBeats
+	// those that rank it above each candidate; Beats[a][0] those that rank
+	// candidate a above it.
+	BlankRanked int           `json:"blank_ranked"`
+	BlankBeats  map[int64]int `json:"blank_beats"`
 }
 
 // voteLogLock serializes the appends (pg_advisory_xact_lock key).

@@ -2,6 +2,7 @@ package polls
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -56,9 +57,73 @@ func TestTally(t *testing.T) {
 	tally.Add(KindChoices, []int64{9, 2})
 	tally.Add(KindChoices, []int64{9})
 	out, turnout := tally.Result()
-	assert.Equal(t, Turnout{Voters: 1}, turnout, "a ranking of no candidate left is not counted")
+	assert.Equal(t, 1, turnout.Voters, "a ranking of no candidate left is not counted")
 	assert.Equal(t, 1, out[1].FirstChoices, "the candidate who left is skipped, the next one moves up")
 	assert.Equal(t, 1, out[1].Beats[1])
+}
+
+// TestBlankInRanking: the blank vote ends a ranking and stands in the duels
+// like a candidate; first, it is the blank ballot.
+func TestBlankInRanking(t *testing.T) {
+	tally := NewTally([]int64{1, 2, 3})
+	// 3 voters: 1 then blank (2 and 3 are worse than blank); 2 voters: 2,
+	// 1 (3 unranked, the blank vote too); 2 blank ballots.
+	for range 3 {
+		tally.Add(KindChoices, []int64{1, BlankID})
+	}
+	for range 2 {
+		tally.Add(KindChoices, []int64{2, 1})
+	}
+	for range 2 {
+		tally.Add(KindBlank, nil)
+	}
+	out, turnout := tally.Result()
+	require.Len(t, out, 3, "the blank vote is not a candidate of the results")
+	assert.Equal(t, 7, turnout.Voters)
+	assert.Equal(t, 2, turnout.Blank, "blank first only")
+	assert.Equal(t, 5, turnout.BlankRanked)
+	assert.Equal(t, 5, turnout.BlankBeats[2], "3 after 1, 2 alone")
+	assert.Equal(t, 5, turnout.BlankBeats[3])
+	assert.Equal(t, 2, turnout.BlankBeats[1])
+	byID := map[int64]CandidateTally{}
+	for _, c := range out {
+		byID[c.PersonID] = c
+	}
+	assert.Equal(t, 5, byID[1].Beats[BlankID], "3 rank 1 above blank, 2 rank 1 and not blank")
+	assert.Equal(t, 2, byID[2].Beats[BlankID])
+
+	tallies := make([]CandidateTally, 0, len(out))
+	for _, c := range out {
+		c.Card = Card{Name: fmt.Sprintf("C%d", c.PersonID)}
+		tallies = append(tallies, c)
+	}
+	r := Compute(event(), tallies, turnout, now)
+	require.NotNil(t, r.BlankRank)
+	ranks := map[int64]int{}
+	for _, c := range r.Candidates {
+		ranks[c.PersonID] = *c.PreferenceRank
+	}
+	assert.Equal(t, 1, ranks[1], "1 beats the blank vote 5 to 2, and the others")
+	assert.Equal(t, 2, *r.BlankRank, "the blank vote beats 2 and 3")
+	assert.Equal(t, 3, ranks[2])
+	require.NotNil(t, r.CondorcetWinner)
+	assert.Equal(t, int64(1), *r.CondorcetWinner)
+	assert.Equal(t, 5, *r.BlankRanked)
+
+	// With the blank vote first on most ballots, it wins.
+	rej := NewTally([]int64{1, 2})
+	for range 3 {
+		rej.Add(KindBlank, nil)
+	}
+	rej.Add(KindChoices, []int64{1})
+	out, turnout = rej.Result()
+	for i := range out {
+		out[i].Card = Card{Name: fmt.Sprintf("C%d", out[i].PersonID)}
+	}
+	r = Compute(event(), out, turnout, now)
+	require.NotNil(t, r.CondorcetWinner)
+	assert.Equal(t, BlankID, *r.CondorcetWinner, "the majority prefers a blank vote to each candidate")
+	assert.Equal(t, 1, *r.BlankRank)
 }
 
 // TestComputeRanks: the preference order is Schulze's, the majority order
@@ -143,11 +208,16 @@ func TestCheckBallot(t *testing.T) {
 	candidates := []int64{1, 2, 3, 4}
 	assert.NoError(t, CheckBallot(e, candidates, []int64{2, 1}, now))
 	assert.NoError(t, CheckBallot(e, candidates, []int64{4, 1, 3}, now))
+	assert.NoError(t, CheckBallot(e, candidates, []int64{4, BlankID}, now), "the blank vote after a candidate")
+	assert.NoError(t, CheckBallot(e, candidates, []int64{4, 1, BlankID}, now))
 
 	for name, ranked := range map[string][]int64{
-		"too many":      {1, 2, 3, 4},
-		"not candidate": {9},
-		"twice":         {1, 1},
+		"too many":           {1, 2, 3, 4},
+		"not candidate":      {9},
+		"twice":              {1, 1},
+		"blank alone":        {BlankID},
+		"blank not last":     {1, BlankID, 2},
+		"blank takes a slot": {1, 2, 3, BlankID},
 	} {
 		err := CheckBallot(e, candidates, ranked, now)
 		assert.True(t, errors.Is(err, ErrBallot), name)

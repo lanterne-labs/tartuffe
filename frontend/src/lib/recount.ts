@@ -49,6 +49,8 @@ interface TallyEntry {
 	first: Record<string, number>;
 	ranked: Record<string, number>;
 	beats: Record<string, Record<string, number>>;
+	blank_ranked?: number;
+	blank_beats?: Record<string, number>;
 }
 
 const nodeHash = (l: Uint8Array, r: Uint8Array) => {
@@ -82,7 +84,12 @@ async function entries(n: number): Promise<Entry[]> {
 	return out.slice(0, n);
 }
 
-// Count is a tally of ballots (polls.Tally).
+// BLANK stands for the blank vote in a ranking and in the duels
+// (polls.BlankID): a ballot may end with it, a blank ballot ranks it alone.
+export const BLANK = 0;
+
+// Count is a tally of ballots (polls.Tally), the blank vote counted as one
+// more candidate (BLANK): blank counts the ballots that rank it first.
 export interface Count {
 	voters: number;
 	blank: number;
@@ -92,30 +99,28 @@ export interface Count {
 }
 
 export function count(candidates: number[], ballots: { kind: BallotKind; choices: number[] }[]): Count {
+	const ids = [...new Set([...candidates, BLANK])];
 	const c: Count = { voters: 0, blank: 0, first: new Map(), ranked: new Map(), beats: new Map() };
-	for (const id of candidates) {
+	for (const id of ids) {
 		c.first.set(id, 0);
 		c.ranked.set(id, 0);
-		c.beats.set(id, new Map(candidates.filter((x) => x !== id).map((x) => [x, 0])));
+		c.beats.set(id, new Map(ids.filter((x) => x !== id).map((x) => [x, 0])));
 	}
-	const known = new Set(candidates);
+	const known = new Set(ids);
 	for (const b of ballots) {
-		if (b.kind === 'blank') {
-			c.voters++;
-			c.blank++;
-			continue;
-		}
-		if (b.kind !== 'choices') continue;
-		const ranked = [...new Set(b.choices.filter((id) => known.has(id)))];
+		if (b.kind !== 'choices' && b.kind !== 'blank') continue;
+		const choices = b.kind === 'blank' ? [BLANK] : b.choices;
+		const ranked = [...new Set(choices.filter((id) => known.has(id)))];
 		if (ranked.length === 0) continue;
 		c.voters++;
+		if (ranked[0] === BLANK) c.blank++;
 		c.first.set(ranked[0], c.first.get(ranked[0])! + 1);
 		const seen = new Set(ranked);
 		ranked.forEach((a, k) => {
 			c.ranked.set(a, c.ranked.get(a)! + 1);
 			const row = c.beats.get(a)!;
 			for (const x of ranked.slice(k + 1)) row.set(x, row.get(x)! + 1);
-			for (const x of candidates) if (!seen.has(x)) row.set(x, row.get(x)! + 1);
+			for (const x of ids) if (!seen.has(x)) row.set(x, row.get(x)! + 1);
 		});
 	}
 	return c;
@@ -149,28 +154,32 @@ export function schulze(ids: number[], beats: Map<number, Map<number, number>>):
 }
 
 function sameTally(c: Count, t: TallyEntry): boolean {
-	if (c.voters !== t.voters || c.blank !== t.blank) return false;
-	for (const [id, v] of c.first) if ((t.first[id] ?? 0) !== v) return false;
-	for (const [id, v] of c.ranked) if ((t.ranked[id] ?? 0) !== v) return false;
-	for (const [a, row] of c.beats) for (const [b, v] of row) if ((t.beats[a]?.[b] ?? 0) !== v) return false;
+	if (c.voters !== t.voters || c.blank !== t.blank || c.ranked.get(BLANK) !== (t.blank_ranked ?? 0)) return false;
+	for (const [id, v] of c.first) if (id !== BLANK && (t.first[id] ?? 0) !== v) return false;
+	for (const [id, v] of c.ranked) if (id !== BLANK && (t.ranked[id] ?? 0) !== v) return false;
+	for (const [a, row] of c.beats)
+		for (const [b, v] of row) {
+			const logged = a === BLANK ? t.blank_beats?.[b] : t.beats[a]?.[b];
+			if ((logged ?? 0) !== v) return false;
+		}
 	return true;
 }
 
 // sameShown compares the count with the results on the page: the voters,
 // the blank votes, each candidate's first choices and rankings, the
-// preference ranks and the Condorcet winner.
+// preference ranks (the blank vote's too) and the Condorcet winner.
 function sameShown(c: Count, shown: PollResults): boolean {
 	if (c.voters !== shown.voters) return false;
 	if (shown.hidden) return true;
-	if ((shown.blank ?? 0) !== c.blank) return false;
-	const ids = shown.candidates.map((x) => x.person_id);
+	if ((shown.blank ?? 0) !== c.blank || (shown.blank_ranked ?? 0) !== c.ranked.get(BLANK)) return false;
+	const ids = [...shown.candidates.map((x) => x.person_id), BLANK];
 	const { wins, winner } = schulze(ids, c.beats);
 	if ((shown.condorcet_winner ?? null) !== winner) return false;
-	const order = [...ids].sort((a, b) => wins.get(b)! - wins.get(a)!);
+	const rankOf = (id: number) => 1 + ids.filter((x) => wins.get(x)! > wins.get(id)!).length;
+	if (shown.blank_rank !== rankOf(BLANK)) return false;
 	for (const x of shown.candidates) {
 		if (x.first_choices !== (c.first.get(x.person_id) ?? 0) || x.ranked !== (c.ranked.get(x.person_id) ?? 0)) return false;
-		const rank = order.findIndex((id) => wins.get(id) === wins.get(x.person_id)) + 1;
-		if (x.preference_rank !== rank) return false;
+		if (x.preference_rank !== rankOf(x.person_id)) return false;
 	}
 	return true;
 }
@@ -240,7 +249,12 @@ export async function recount(eventId: number, shown: PollResults, report: (s: S
 	report({ id: 'count', state: 'running' });
 	const ballots = [...last.values()].map((b) => ({ kind: b.kind, choices: b.choices ?? [] }));
 	if (tally) {
-		const c = count(Object.keys(tally.first).map(Number), ballots);
+		const c = count(
+			Object.keys(tally.first)
+				.map(Number)
+				.filter((id) => id !== BLANK),
+			ballots
+		);
 		if (!sameTally(c, tally)) {
 			report({ id: 'count', state: 'failed', n: c.voters });
 			return false;

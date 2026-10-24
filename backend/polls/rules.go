@@ -1,8 +1,11 @@
 // The rules of a poll: its results and the checks of a ballot.
-// A ballot ranks up to MaxChoices candidates, from the preferred one. The
-// results order the candidates twice from the same ballots: by the Condorcet
-// method of Schulze (who beats whom head to head, a ranked candidate above
-// every unranked one), and by first choices alone, as the one-round majority
+// A ballot ranks up to MaxChoices candidates, from the preferred one, and
+// may end with the blank vote (BlankID): the candidates after it, unranked,
+// are worse than a blank vote to the voter. A blank vote alone is the
+// blank ballot. The results order the candidates twice from the same
+// ballots: by the Condorcet method of Schulze (who beats whom head to head,
+// a ranked candidate above every unranked one, the blank vote in the duels
+// like a candidate), and by first choices alone, as the one-round majority
 // vote would. Next to them stands each candidate's honesty score; the orders
 // are never mixed into one number.
 package polls
@@ -10,6 +13,7 @@ package polls
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -57,8 +61,14 @@ type Results struct {
 	// Hidden is set (HiddenTooFewVoters, HiddenBlackout) when the shares are
 	// not shown.
 	Hidden string `json:"hidden,omitempty"`
+	// BlankRanked and BlankRankedShare count the ballots that place the
+	// blank vote, first or after candidates; BlankRank is its place in the
+	// Schulze order, among the candidates (nil while hidden).
+	BlankRanked      *int     `json:"blank_ranked"`
+	BlankRankedShare *float64 `json:"blank_ranked_share"`
+	BlankRank        *int     `json:"blank_rank"`
 	// CondorcetWinner is the candidate who beats each other one head to head,
-	// if one does (nil while hidden).
+	// BlankID when the blank vote does, if one does (nil while hidden).
 	CondorcetWinner *int64 `json:"condorcet_winner"`
 	// Candidates are in preference (Schulze) order when shown, else by
 	// honesty.
@@ -80,8 +90,12 @@ func InBlackout(e *Event, now time.Time) bool {
 	return false
 }
 
+// BlankID stands for the blank vote in a ranking and in the duels.
+const BlankID int64 = 0
+
 // Tally counts ballots, the last of each voter: the store counts the
-// results with it, and anyone recounts the public log the same way.
+// results with it, and anyone recounts the public log the same way. The
+// blank vote is counted as one more candidate (BlankID).
 type Tally struct {
 	index   map[int64]int
 	out     []CandidateTally
@@ -90,51 +104,69 @@ type Tally struct {
 
 // NewTally starts a count over the candidates of the poll.
 func NewTally(candidates []int64) *Tally {
-	t := &Tally{index: make(map[int64]int, len(candidates)), out: make([]CandidateTally, len(candidates))}
-	for i, id := range candidates {
-		t.index[id] = i
-		t.out[i] = CandidateTally{PersonID: id, Beats: map[int64]int{}}
+	t := &Tally{index: make(map[int64]int, len(candidates)+1), out: make([]CandidateTally, 0, len(candidates)+1)}
+	for _, id := range append(slices.Clone(candidates), BlankID) {
+		if _, ok := t.index[id]; ok {
+			continue
+		}
+		t.index[id] = len(t.out)
+		t.out = append(t.out, CandidateTally{PersonID: id, Beats: map[int64]int{}})
 	}
 	return t
 }
 
 // Add counts one ballot. A ranked candidate who left the poll is skipped,
-// the next ones move up; a ranking with none left is not counted.
+// the next ones move up; a ranking with none left is not counted. A
+// blank ballot ranks the blank vote alone.
 func (t *Tally) Add(kind string, choices []int64) {
 	switch kind {
 	case KindBlank:
-		t.turnout.Voters++
-		t.turnout.Blank++
+		choices = []int64{BlankID}
 	case KindChoices:
-		ranked := make([]int, 0, len(choices))
-		seen := make(map[int]bool, len(choices))
-		for _, id := range choices {
-			if i, ok := t.index[id]; ok && !seen[i] {
-				ranked, seen[i] = append(ranked, i), true
-			}
+	default:
+		return
+	}
+	ranked := make([]int, 0, len(choices))
+	seen := make(map[int]bool, len(choices))
+	for _, id := range choices {
+		if i, ok := t.index[id]; ok && !seen[i] {
+			ranked, seen[i] = append(ranked, i), true
 		}
-		if len(ranked) == 0 {
-			return
+	}
+	if len(ranked) == 0 {
+		return
+	}
+	t.turnout.Voters++
+	if t.out[ranked[0]].PersonID == BlankID {
+		t.turnout.Blank++
+	}
+	t.out[ranked[0]].FirstChoices++
+	for k, i := range ranked {
+		t.out[i].Ranked++
+		for _, j := range ranked[k+1:] {
+			t.out[i].Beats[t.out[j].PersonID]++
 		}
-		t.turnout.Voters++
-		t.out[ranked[0]].FirstChoices++
-		for k, i := range ranked {
-			t.out[i].Ranked++
-			for _, j := range ranked[k+1:] {
+		for j := range t.out {
+			if !seen[j] {
 				t.out[i].Beats[t.out[j].PersonID]++
-			}
-			for j := range t.out {
-				if !seen[j] {
-					t.out[i].Beats[t.out[j].PersonID]++
-				}
 			}
 		}
 	}
 }
 
-// Result returns the counts.
+// Result returns the counts of the candidates, and the blank vote's in the
+// turnout.
 func (t *Tally) Result() ([]CandidateTally, Turnout) {
-	return t.out, t.turnout
+	out := make([]CandidateTally, 0, len(t.out)-1)
+	turnout := t.turnout
+	for _, c := range t.out {
+		if c.PersonID == BlankID {
+			turnout.BlankRanked, turnout.BlankBeats = c.Ranked, c.Beats
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, turnout
 }
 
 // Compute builds the results from the tallies of the event's candidates and
@@ -184,6 +216,8 @@ func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time)
 	}
 	blank, blankShare := turnout.Blank, float64(turnout.Blank)/float64(voters)
 	r.Blank, r.BlankShare = &blank, &blankShare
+	blankRanked, blankRankedShare := turnout.BlankRanked, float64(turnout.BlankRanked)/float64(voters)
+	r.BlankRanked, r.BlankRankedShare = &blankRanked, &blankRankedShare
 
 	// Majority ranks: most first choices first; equal counts share a rank.
 	sort.SliceStable(r.Candidates, func(i, j int) bool {
@@ -203,26 +237,39 @@ func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time)
 
 	// Preference ranks: the Schulze order, candidates it ties share a rank
 	// and stand by first choices.
-	beats := make(map[int64]map[int64]int, len(tallies))
+	// The blank vote is in the duels like a candidate, and gets its rank.
+	beats := make(map[int64]map[int64]int, len(tallies)+1)
 	for _, t := range tallies {
 		beats[t.PersonID] = t.Beats
 	}
-	ids := make([]int64, len(r.Candidates))
-	for i, c := range r.Candidates {
-		ids[i] = c.PersonID
+	beats[BlankID] = turnout.BlankBeats
+	ids := make([]int64, 0, len(r.Candidates)+1)
+	for _, c := range r.Candidates {
+		ids = append(ids, c.PersonID)
 	}
+	ids = append(ids, BlankID)
 	wins, winner := Schulze(ids, beats)
 	r.CondorcetWinner = winner
 	sort.SliceStable(r.Candidates, func(i, j int) bool {
 		return wins[r.Candidates[i].PersonID] > wins[r.Candidates[j].PersonID]
 	})
-	for i := range r.Candidates {
-		rank := i + 1
-		if i > 0 && wins[r.Candidates[i].PersonID] == wins[r.Candidates[i-1].PersonID] {
-			rank = *r.Candidates[i-1].PreferenceRank
+	// A rank is one more than the number of entries (the blank vote
+	// included) with more wins: tied entries share it.
+	rankOf := func(id int64) int {
+		n := 1
+		for _, other := range ids {
+			if wins[other] > wins[id] {
+				n++
+			}
 		}
+		return n
+	}
+	for i := range r.Candidates {
+		rank := rankOf(r.Candidates[i].PersonID)
 		r.Candidates[i].PreferenceRank = &rank
 	}
+	blankRank := rankOf(BlankID)
+	r.BlankRank = &blankRank
 	return r
 }
 
@@ -286,24 +333,30 @@ var ErrBallot = errors.New("ballot refused")
 var ErrClosed = fmt.Errorf("%w: the event does not take ballots now", ErrBallot)
 
 // CheckBallot checks a ranking against the event and its candidates: at
-// most MaxChoices candidates, from the preferred one, each once.
+// most MaxChoices entries, from the preferred one, each once; the blank vote
+// (BlankID) only last, after at least one candidate (alone, it is a blank
+// ballot).
 func CheckBallot(e *Event, candidates []int64, ranked []int64, now time.Time) error {
 	if !IsOpen(e, now) {
 		return ErrClosed
 	}
 	if len(ranked) > e.MaxChoices {
-		return fmt.Errorf("%w: at most %d candidates", ErrBallot, e.MaxChoices)
+		return fmt.Errorf("%w: at most %d choices", ErrBallot, e.MaxChoices)
 	}
 	isCandidate := make(map[int64]bool, len(candidates))
 	for _, id := range candidates {
 		isCandidate[id] = true
 	}
 	seen := make(map[int64]bool, len(ranked))
-	for _, id := range ranked {
-		if !isCandidate[id] {
+	for i, id := range ranked {
+		switch {
+		case id == BlankID && i == 0:
+			return fmt.Errorf("%w: a blank vote alone is its own kind", ErrBallot)
+		case id == BlankID && i != len(ranked)-1:
+			return fmt.Errorf("%w: the blank vote ends the ranking", ErrBallot)
+		case id != BlankID && !isCandidate[id]:
 			return fmt.Errorf("%w: person %d is not a candidate", ErrBallot, id)
-		}
-		if seen[id] {
+		case seen[id]:
 			return fmt.Errorf("%w: person %d is ranked twice", ErrBallot, id)
 		}
 		seen[id] = true

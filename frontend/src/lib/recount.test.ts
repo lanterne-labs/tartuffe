@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import vectors from './testdata/votelog-vectors.json';
 import { leafData, leafHash } from './votelog';
-import { count, schulze, treeHash } from './recount';
+import { BLANK, count, schulze, treeHash } from './recount';
 
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const leaves = vectors.entries.map((e) => leafHash(leafData(e.seq, e.kind, e.body)));
@@ -26,12 +26,27 @@ describe('the recount', () => {
 		);
 		expect(c.voters).toBe(3);
 		expect(c.blank).toBe(1);
-		expect([...c.first]).toEqual([[1, 1], [2, 1], [3, 0]]);
-		expect([...c.ranked]).toEqual([[1, 1], [2, 2], [3, 0]]);
+		expect([...c.first]).toEqual([[1, 1], [2, 1], [3, 0], [0, 1]]);
+		expect([...c.ranked]).toEqual([[1, 1], [2, 2], [3, 0], [0, 1]]);
 		// 1 above 2 and 3 on the first ballot; 2 above 3 on both.
 		expect(c.beats.get(1)!.get(2)).toBe(1);
 		expect(c.beats.get(2)!.get(1)).toBe(1);
 		expect(c.beats.get(2)!.get(3)).toBe(2);
+	});
+
+	it('puts the blank vote in the duels, as polls.TestBlankInRanking', () => {
+		const ballots = [
+			...Array.from({ length: 3 }, () => ({ kind: 'choices' as const, choices: [1, BLANK] })),
+			...Array.from({ length: 2 }, () => ({ kind: 'choices' as const, choices: [2, 1] })),
+			...Array.from({ length: 2 }, () => ({ kind: 'blank' as const, choices: [] }))
+		];
+		const c = count([1, 2, 3], ballots);
+		expect([c.voters, c.blank, c.ranked.get(BLANK)]).toEqual([7, 2, 5]);
+		expect(c.beats.get(BLANK)!.get(2)).toBe(5);
+		expect(c.beats.get(1)!.get(BLANK)).toBe(5);
+		const s = schulze([1, 2, 3, BLANK], c.beats);
+		expect(s.winner).toBe(1);
+		expect(s.wins.get(BLANK)).toBe(2);
 	});
 
 	it('finds the Condorcet winner, and none in a cycle', () => {

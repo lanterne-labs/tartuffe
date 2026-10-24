@@ -137,6 +137,7 @@
 					title: '4. Le vote blanc compte',
 					body: [
 						'C’est un bulletin à part entière : « j’ai voté, mais aucun ne me convainc ». Il ne classe personne, mais il compte parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
+						'Vous pouvez aussi le placer après vos candidats : il signifie alors « les autres, non ». Il affronte chaque candidat en face-à-face, comme un candidat : un candidat que la majorité place sous le vote blanc passe derrière lui dans le classement.',
 						'Retirer son vote, c’est autre chose : le bulletin ne compte plus.'
 					]
 				},
@@ -311,6 +312,7 @@
 					title: '4. The blank vote counts',
 					body: [
 						'A ballot in its own right: “I voted, none convinces me”. No ranking, counted among the voters and in every share, with its own line.',
+						'You can also place it after your candidates: it then means “the others, no”. It faces each candidate head to head, like a candidate: a candidate the majority puts below the blank vote comes after it in the ranking.',
 						'Withdrawing your vote is something else: the ballot no longer counts.'
 					]
 				},

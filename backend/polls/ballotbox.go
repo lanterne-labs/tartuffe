@@ -15,10 +15,14 @@ import (
 )
 
 // Turnout counts the ballots of the results: Voters every ballot that
-// counts, blank votes included, Blank those.
+// counts, blank votes included, Blank those (the blank vote first). The
+// blank vote's own count: BlankRanked the ballots that place it, BlankBeats
+// how many rank it above each candidate.
 type Turnout struct {
-	Voters int `json:"voters"`
-	Blank  int `json:"blank"`
+	Voters      int `json:"voters"`
+	Blank       int `json:"blank"`
+	BlankRanked int
+	BlankBeats  map[int64]int
 }
 
 // ErrUnknownRoot refuses a ballot proved against a root the window's tree
@@ -148,7 +152,8 @@ func (s *PGStore) PublishBatch(ctx context.Context, minBallots int, maxWait time
 		if err != nil {
 			return nil, err
 		}
-		entry := tallyEntry{EventID: e, Window: w, Voters: turnout.Voters, Blank: turnout.Blank, First: map[int64]int{}, Ranked: map[int64]int{}, Beats: map[int64]map[int64]int{}}
+		entry := tallyEntry{EventID: e, Window: w, Voters: turnout.Voters, Blank: turnout.Blank, BlankRanked: turnout.BlankRanked, BlankBeats: turnout.BlankBeats,
+			First: map[int64]int{}, Ranked: map[int64]int{}, Beats: map[int64]map[int64]int{}}
 		for _, t := range tallies {
 			entry.First[t.PersonID], entry.Ranked[t.PersonID], entry.Beats[t.PersonID] = t.FirstChoices, t.Ranked, t.Beats
 		}

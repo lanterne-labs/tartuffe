@@ -257,9 +257,12 @@ func (a *auditor) ballot(e LogEntry, b AnonBallot) {
 	switch b.Kind {
 	case KindChoices:
 		seen := map[int64]bool{}
-		for _, id := range b.Choices {
+		for i, id := range b.Choices {
 			if seen[id] {
 				a.problem(e, "ranks %d twice", id)
+			}
+			if id == BlankID && (i == 0 || i != len(b.Choices)-1) {
+				a.problem(e, "the blank vote is not last after a candidate")
 			}
 			seen[id] = true
 		}
@@ -314,14 +317,19 @@ func (a *auditor) tally(e LogEntry, t tallyEntry) {
 		}
 	}
 	got, turnout := count.Result()
-	if turnout.Voters != t.Voters || turnout.Blank != t.Blank {
-		a.problem(e, "counts %d voters and %d blank, the log says %d and %d", turnout.Voters, turnout.Blank, t.Voters, t.Blank)
+	if turnout.Voters != t.Voters || turnout.Blank != t.Blank || turnout.BlankRanked != t.BlankRanked {
+		a.problem(e, "counts %d voters, %d blank and %d placing the blank vote, the log says %d, %d and %d", turnout.Voters, turnout.Blank, turnout.BlankRanked, t.Voters, t.Blank, t.BlankRanked)
+	}
+	for _, d := range candidates {
+		if turnout.BlankBeats[d] != t.BlankBeats[d] {
+			a.problem(e, "the blank vote above %d on %d ballots, the log says %d", d, turnout.BlankBeats[d], t.BlankBeats[d])
+		}
 	}
 	for _, c := range got {
 		if c.FirstChoices != t.First[c.PersonID] || c.Ranked != t.Ranked[c.PersonID] {
 			a.problem(e, "candidate %d: %d first choices and %d ranked, the log says %d and %d", c.PersonID, c.FirstChoices, c.Ranked, t.First[c.PersonID], t.Ranked[c.PersonID])
 		}
-		for _, d := range candidates {
+		for _, d := range append(slices.Clone(candidates), BlankID) {
 			if c.Beats[d] != t.Beats[c.PersonID][d] {
 				a.problem(e, "candidate %d above %d on %d ballots, the log says %d", c.PersonID, d, c.Beats[d], t.Beats[c.PersonID][d])
 			}

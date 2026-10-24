@@ -13,7 +13,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { replaceState } from '$app/navigation';
 	import { eventPaths, showVoters } from '$lib/event';
-	import { recount, type Step, type StepId } from '$lib/recount';
+	import { recount, BLANK, type Step, type StepId } from '$lib/recount';
 	import type { PollResponse, CandidateResult } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -50,6 +50,8 @@
 	let mine = $state<MyBallot | null>(null);
 	let ballot = $derived(mine?.kind === 'choices' ? mine.choices : []);
 	let blank = $derived(mine?.kind === 'blank');
+	// endsBlank: the ranking ends with the blank vote (the others: no).
+	let endsBlank = $derived(ballot.at(-1) === BLANK);
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
 	let actionError: string | null = $state(null);
@@ -159,6 +161,15 @@
 	});
 
 	// The same ballots counted as the one-round majority vote: first choices.
+	// blankAt: where the blank vote's line goes in the ranked list, by its
+	// rank (null while hidden).
+	let blankAt = $derived.by(() => {
+		const r = results?.blank_rank;
+		if (results?.hidden || r === null || r === undefined) return null;
+		const i = sorted.findIndex((c) => (c.preference_rank ?? 1e9) > r);
+		return i < 0 ? sorted.length : i;
+	});
+
 	let byMajority = $derived(
 		[...(results?.candidates ?? [])].sort((a, b) => (a.majority_rank ?? 1e9) - (b.majority_rank ?? 1e9) || a.name.localeCompare(b.name, 'fr'))
 	);
@@ -275,7 +286,13 @@
 		pending = null;
 		if (busy) return;
 		if (choice === 'blank') {
-			if (!blank) change({ kind: 'blank', choices: [] });
+			// Alone, a blank ballot; after candidates, it ends the ranking.
+			if (ballot.length === 0) {
+				if (!blank) change({ kind: 'blank', choices: [] });
+			} else if (!endsBlank) {
+				if (full) actionError = tr('vote.error.full', currentLang, { n: maxChoices });
+				else change({ kind: 'choices', choices: [...ballot, BLANK] });
+			}
 			return;
 		}
 		if (ballot.includes(choice)) return;
@@ -283,12 +300,15 @@
 			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
 			return;
 		}
-		change({ kind: 'choices', choices: [...ballot, choice] });
+		// A candidate goes before the blank vote that ends the ranking.
+		const next = endsBlank ? [...ballot.slice(0, -1), choice, BLANK] : [...ballot, choice];
+		change({ kind: 'choices', choices: next });
 	}
 
 	function remove(id: number) {
 		const next = ballot.filter((x) => x !== id);
-		change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] });
+		if (next.length === 1 && next[0] === BLANK) change({ kind: 'blank', choices: [] });
+		else change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] });
 	}
 
 	async function withdrawAll() {
@@ -442,7 +462,7 @@
 					<div class="slots slots--blank">
 						<div class="slot filled">
 							<div class="slot-photo slot-photo--blank" aria-hidden="true">◻</div>
-							<span class="slot-name">{tr('vote.blank.name', currentLang)}</span>
+							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
 						</div>
 					</div>
 				{:else}
@@ -450,8 +470,14 @@
 						{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
 							{@const id = ballot[i]}
 							{@const c = id === undefined ? undefined : byId.get(id)}
-							<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === ballot.length}>
-								{#if id !== undefined}
+							<li class="slot" class:filled={id !== undefined} class:closed={id === undefined && endsBlank} class:next={results.open && !endsBlank && id === undefined && i === ballot.length}>
+								{#if id === BLANK}
+									<div class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></div>
+									<span class="slot-name slot-name--plain">{tr('vote.blank.rest', currentLang)}</span>
+									{#if results.open}
+										<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
+									{/if}
+								{:else if id !== undefined}
 									<div class="slot-photo">
 										{#if c?.image_url}
 											<img src={c.image_url} alt="" />
@@ -464,7 +490,7 @@
 									{#if results.open}
 										<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
 									{/if}
-								{:else}
+								{:else if !endsBlank}
 									<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
 									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
 								{/if}
@@ -474,8 +500,9 @@
 				{/if}
 				{#if results.open}
 					<div class="ballot-actions">
-						{#if !blank}
-							<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
+						{#if !blank && !endsBlank && (ballot.length === 0 || !full)}
+							<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr(ballot.length === 0 ? 'vote.blank.button' : 'vote.blank.after', currentLang)}</button>
+							{@render help(tr('vote.blank.help', currentLang))}
 						{/if}
 						{#if mine}
 							<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
@@ -514,7 +541,7 @@
 	{/if}
 
 	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-		<p class="dialog-text">{tr(blank ? 'vote.withdraw.text_blank' : 'vote.withdraw.text', currentLang, { n: ballot.length })}</p>
+		<p class="dialog-text">{tr(blank ? 'vote.withdraw.text_blank' : 'vote.withdraw.text', currentLang)}</p>
 		{#snippet actions()}
 			<button class="btn" onclick={() => (withdrawOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
@@ -538,6 +565,19 @@
 			<summary aria-label="?">?</summary>
 			<p>{text}</p>
 		</details>
+	{/snippet}
+
+	{#snippet blankRankedRow()}
+		<li class="vote-row vote-row--blank" class:vote-row--mine={blank || endsBlank} class:vote-row--top={results?.blank_rank === 1}>
+			<span class="vote-rank">{results?.blank_rank ?? '—'}</span>
+			<div class="vote-main">
+				<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
+				{#if results?.condorcet_winner === BLANK}
+					<span class="winner">{tr('poll.condorcet', currentLang)}</span>
+				{/if}
+				<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(results?.blank_share ?? null), r: pct(results?.blank_ranked_share ?? null) })}</span>
+			</div>
+		</li>
 	{/snippet}
 
 	{#snippet pickButton(c: CandidateResult)}
@@ -589,7 +629,8 @@
 			<section class="list">
 				<h3>{tr('poll.list.ranking', currentLang)} <small>{tr('poll.list.ranking_sub', currentLang)}</small></h3>
 				<ol class="vote-list">
-					{#each sorted as c (c.person_id)}
+					{#each sorted as c, i (c.person_id)}
+						{#if blankAt === i}{@render blankRankedRow()}{/if}
 						<li class="vote-row" class:vote-row--mine={ballot.includes(c.person_id)} class:vote-row--top={c.preference_rank === 1}>
 							<span class="vote-rank">{c.preference_rank ?? '—'}</span>
 							<div class="vote-main">
@@ -606,6 +647,7 @@
 							<div class="vote-pick">{@render pickButton(c)}</div>
 						</li>
 					{/each}
+					{#if blankAt === sorted.length}{@render blankRankedRow()}{/if}
 				</ol>
 			</section>
 			{#if !results.hidden}
@@ -786,6 +828,10 @@
 	.slot.next {
 		border-color: var(--accent);
 	}
+	.slot.closed {
+		border-color: transparent;
+		background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in oklch, var(--text-muted) 10%, transparent) 8px 9px);
+	}
 	.slot-photo {
 		position: relative;
 		width: 4.75rem;
@@ -852,6 +898,9 @@
 		line-height: 1.2;
 		text-transform: capitalize;
 		overflow-wrap: anywhere;
+	}
+	.slot-name--plain {
+		text-transform: none;
 	}
 	.slot-name--empty {
 		font-weight: 400;

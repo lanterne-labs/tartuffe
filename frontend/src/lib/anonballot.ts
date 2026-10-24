@@ -107,9 +107,14 @@ function readMine(eventId: number): Stored | null {
 	}
 }
 
+// writeMine stores the state, and tells the other tabs only when it
+// changed: a tab that reloads on the message writes again, so an unchanged
+// write must not echo between tabs.
 function writeMine(eventId: number, s: Stored) {
+	const text = JSON.stringify(s);
 	try {
-		window.localStorage.setItem(storeKey(eventId), JSON.stringify(s));
+		if (window.localStorage.getItem(storeKey(eventId)) === text) return;
+		window.localStorage.setItem(storeKey(eventId), text);
 	} catch {}
 	channel?.postMessage(eventId);
 }

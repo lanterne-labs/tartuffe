@@ -64,7 +64,8 @@ func NewLogSigner(skey string) (*LogSigner, error) {
 // verifierKey derives the verifier key from the signer key
 // PRIVATE+KEY+<name>+<hash>+<base64 0x01 || seed>.
 func verifierKey(skey string) (string, error) {
-	parts := strings.Split(skey, "+")
+	// The key data is base64 and may hold "+" too: it is all after the fourth.
+	parts := strings.SplitN(skey, "+", 5)
 	if len(parts) != 5 || parts[0] != "PRIVATE" || parts[1] != "KEY" {
 		return "", fmt.Errorf("vote log key: not a signer key")
 	}

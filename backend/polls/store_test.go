@@ -259,7 +259,7 @@ func TestCastPublishTally(t *testing.T) {
 
 	tallies, turnout, err := s.polls.Tallies(ctx, e.ID)
 	require.NoError(t, err)
-	assert.Equal(t, polls.Turnout{Voters: 3, Blank: 1}, turnout)
+	assert.Equal(t, [2]int{3, 1}, [2]int{turnout.Voters, turnout.Blank})
 	byID := map[int64]polls.CandidateTally{}
 	for _, c := range tallies {
 		byID[c.PersonID] = c
@@ -284,7 +284,7 @@ func TestCastPublishTally(t *testing.T) {
 	assert.Equal(t, 1, tallies[0].FirstChoices)
 	_, turnout, err = s.polls.Tallies(ctx, e.ID)
 	require.NoError(t, err)
-	assert.Equal(t, polls.Turnout{Voters: 2, Blank: 1}, turnout, "v1 and the blank vote")
+	assert.Equal(t, [2]int{2, 1}, [2]int{turnout.Voters, turnout.Blank}, "v1 and the blank vote")
 
 	ballots, err := s.polls.Ballots(ctx, e.ID, w)
 	require.NoError(t, err)
