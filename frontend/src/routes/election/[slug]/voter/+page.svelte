@@ -11,6 +11,8 @@
 	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import Steps from '$lib/components/Steps.svelte';
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { replaceState } from '$app/navigation';
 	import { eventPaths, showVoters } from '$lib/event';
 	import { recount, BLANK, type Step, type StepId } from '$lib/recount';
@@ -53,17 +55,17 @@
 	// endsBlank: the ranking ends with the blank vote (the others: no).
 	let endsBlank = $derived(ballot.at(-1) === BLANK);
 
-	// The picker opens from the next empty slot: the candidates not ranked
-	// yet, by name (not by result, so it does not push the leaders), and the
-	// blank vote. It stays open until the ballot is full.
-	let picking = $state(true);
+	// slotPick is the slot whose window is open: a tap on a slot opens the
+	// candidates not ranked yet, by name (not by result, so it does not push
+	// the leaders), and the blank vote; a tap on one closes it and votes.
+	let slotPick = $state<number | null>(null);
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
 	let actionError: string | null = $state(null);
 	let ballotLoaded = $state(false);
 
 	// The vote waiting for the voting key before it is cast.
-	let pending: number | 'blank' | null = $state(null);
+	let pending: { choice: number | 'blank'; at: number | null } | null = $state(null);
 	let withdrawOpen = $state(false);
 
 	let event = $derived(data?.event ?? null);
@@ -85,32 +87,50 @@
 
 	// The voter's own check, step by step (the log signed, never rewritten,
 	// the ballot in it as cast), and anyone's recount of the results.
+	// The voter's check stays open once asked: its steps follow the ballot's
+	// state, so a ballot waiting for its batch turns to ✓ by itself when the
+	// batch publishes it (loadBallot on poll_updated).
+	let mineOpen = $state(false);
+	let mineRunning = $state(false);
+	let mineError = $state(false);
 	type MineStep = 'signed' | 'history' | 'mine';
-	let mineSteps = $state<Record<MineStep, 'running' | 'ok' | 'failed' | 'waiting'> | null>(null);
+	type MineState = 'running' | 'ok' | 'failed' | 'waiting';
+	let mineSteps = $derived.by((): Record<MineStep, MineState> | null => {
+		if (!mineOpen) return null;
+		if (mineRunning) return { signed: 'running', history: 'running', mine: 'running' };
+		if (mineError) return { signed: 'failed', history: 'failed', mine: 'failed' };
+		const f = check?.state === 'fault' ? check.fault.kind : null;
+		const signedOk = f !== 'bad_signature' && f !== 'key_changed';
+		const historyOk = signedOk && f !== 'forked';
+		return {
+			signed: signedOk ? 'ok' : 'failed',
+			history: historyOk ? 'ok' : 'failed',
+			mine: !historyOk || f ? 'failed' : status === 'logged' ? 'ok' : 'waiting'
+		};
+	});
 	let recountSteps = $state<Step[] | null>(null);
 	let recounting = $state(false);
 
+
 	async function verifyMine() {
-		const key = get(voterKey);
-		if (!key?.registered || !event) return;
-		mineSteps = { signed: 'running', history: 'running', mine: 'running' };
+		mineOpen = true;
+		mineRunning = true;
+		mineError = false;
 		try {
+			const key = get(voterKey);
+			if (!key?.registered || !event) return;
 			const got = await myBallot(slug, event.id, key, windows, via);
 			check = got.check ?? null;
 			publishedBy = got.publishedBy ?? null;
-			const f = check?.state === 'fault' ? check.fault.kind : null;
-			const signedOk = f !== 'bad_signature' && f !== 'key_changed';
-			const historyOk = signedOk && f !== 'forked';
-			mineSteps = {
-				signed: signedOk ? 'ok' : 'failed',
-				history: !signedOk ? 'failed' : historyOk ? 'ok' : 'failed',
-				mine: !historyOk ? 'failed' : f ? 'failed' : check?.state === 'included' && !publishedBy ? 'ok' : 'waiting'
-			};
+			if (!check) mineError = true;
 		} catch (err) {
 			console.error('vote check failed', err);
-			mineSteps = { signed: 'failed', history: 'failed', mine: 'failed' };
+			mineError = true;
+		} finally {
+			mineRunning = false;
 		}
 	}
+
 
 	async function verifyResults() {
 		if (!event || !results || recounting) return;
@@ -133,7 +153,6 @@
 
 	let maxChoices = $derived(event?.max_choices ?? 3);
 	let full = $derived(ballot.length >= maxChoices);
-	let showPicker = $derived(picking && !!results?.open && !blank && !endsBlank && ballot.length < maxChoices);
 	let choosable = $derived(
 		[...(results?.candidates ?? [])].filter((c) => !ballot.includes(c.person_id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 	);
@@ -155,7 +174,7 @@
 			if (isOpen) return;
 			untrack(() => {
 				if (!get(voterKey)?.registered) pending = null;
-				else if (pending !== null && ballotLoaded) go(pending);
+				else if (pending !== null && ballotLoaded) go(pending.choice, pending.at);
 			});
 		})
 	);
@@ -221,7 +240,7 @@
 			publishedBy = got.publishedBy ?? null;
 			check = got.check ?? null;
 			ballotLoaded = true;
-			if (pending !== null && !get(voterKeyOpen)) go(pending);
+			if (pending !== null && !get(voterKeyOpen)) go(pending.choice, pending.at);
 		} catch (err) {
 			console.error('failed to load ballot', err);
 			ballotLoaded = true;
@@ -280,40 +299,51 @@
 		return w ? closesText(w) : '';
 	}
 
-	// pick is a click on "Rank" for a candidate (or on the blank vote):
-	// it gets a voting key first if needed.
-	function pick(choice: number | 'blank') {
-		pending = choice;
+	// pick is a click on a candidate or on the blank vote, for a slot (at)
+	// or after the ranked ones (null, the lists' "Rank"): it gets a voting
+	// key first if needed.
+	function pick(choice: number | 'blank', at: number | null = null) {
+		pending = { choice, at };
 		if (!hasKey) {
 			voterKeyOpen.set(true);
 			return;
 		}
 		if (!ballotLoaded) return; // goes on once the ballot is loaded
-		go(choice);
+		go(choice, at);
 	}
 
-	function go(choice: number | 'blank') {
+	// placed is the ranking with the choice at slot at (null: after the
+	// ranked candidates, before a blank vote that ends the ranking). The
+	// blank vote ends the ranking: placed at a slot, it drops what follows;
+	// a candidate placed elsewhere moves there.
+	function placed(cur: number[], choice: number, at: number | null): number[] {
+		if (choice === BLANK) return [...cur.filter((x) => x !== BLANK).slice(0, at ?? cur.length), BLANK];
+		const rest = cur.filter((x) => x !== choice);
+		const tail = rest.at(-1) === BLANK;
+		const body = tail ? rest.slice(0, -1) : rest;
+		const i = at === null ? body.length : Math.min(at, body.length);
+		if (at !== null && i < body.length) body[i] = choice;
+		else body.splice(i, 0, choice);
+		return tail && body.length < maxChoices ? [...body, BLANK] : body;
+	}
+
+	function go(choice: number | 'blank', at: number | null) {
 		pending = null;
 		if (busy) return;
-		if (choice === 'blank') {
-			// Alone, a blank ballot; after candidates, it ends the ranking.
-			if (ballot.length === 0) {
-				if (!blank) change({ kind: 'blank', choices: [] });
-			} else if (!endsBlank) {
-				if (full) actionError = tr('vote.error.full', currentLang, { n: maxChoices });
-				else change({ kind: 'choices', choices: [...ballot, BLANK] });
-			}
-			return;
-		}
-		if (ballot.includes(choice)) return;
-		if (full) {
+		const id = choice === 'blank' ? BLANK : choice;
+		const next = placed(blank ? [BLANK] : ballot, id, at);
+		if (next.length > maxChoices) {
 			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
 			return;
 		}
-		// A candidate goes before the blank vote that ends the ranking; on a
-		// blank ballot, it goes first and the blank vote stays for the rest.
-		const next = blank ? [choice, BLANK] : endsBlank ? [...ballot.slice(0, -1), choice, BLANK] : [...ballot, choice];
-		change({ kind: 'choices', choices: next });
+		if (JSON.stringify(next) === JSON.stringify(blank ? [BLANK] : ballot)) return;
+		change(next.length === 1 && next[0] === BLANK ? { kind: 'blank', choices: [] } : { kind: 'choices', choices: next });
+	}
+
+	function chooseFor(choice: number | 'blank') {
+		const at = slotPick;
+		slotPick = null;
+		pick(choice, at);
 	}
 
 	function remove(id: number) {
@@ -408,7 +438,7 @@
 		<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
 	</div>
 {:else if !event || !results}
-	<p class="state">{tr('person.loading', currentLang)}</p>
+	<p class="state loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 {:else}
 	<header class="hero">
 		<span class="kicker">{tr('poll.kicker', currentLang)}</span>
@@ -452,7 +482,7 @@
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
 						</span>
 					{:else if status === 'busy'}
-						<span class="state-icon state-icon--spin" role="status" title={tr('vote.status.busy', currentLang)} aria-label={tr('vote.status.busy', currentLang)}></span>
+						<span class="state-icon" title={tr('vote.status.busy', currentLang)}><Spinner size="sm" label={tr('vote.status.busy', currentLang)} /></span>
 					{:else if status === 'fault'}
 						<span class="state-icon state-icon--fault" title={tr('vote.log.fault', currentLang)} aria-label={tr('vote.log.fault', currentLang)}>!</span>
 					{/if}
@@ -471,8 +501,10 @@
 			{#if blank}
 				<div class="slots slots--blank">
 					<div class="slot filled">
-						<div class="slot-photo slot-photo--blank" aria-hidden="true">◻</div>
-						<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
+						<button class="slot-add" onclick={() => (slotPick = 0)} disabled={busy || !results.open}>
+							<span class="slot-photo slot-photo--blank" aria-hidden="true">◻</span>
+							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
+						</button>
 					</div>
 				</div>
 			{:else}
@@ -482,27 +514,33 @@
 						{@const c = id === undefined ? undefined : byId.get(id)}
 						<li class="slot" class:filled={id !== undefined} class:closed={id === undefined && endsBlank} class:next={results.open && !endsBlank && id === undefined && i === ballot.length}>
 							{#if id === BLANK}
-								<div class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></div>
-								<span class="slot-name slot-name--plain">{tr('vote.blank.rest', currentLang)}</span>
+								<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+									<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
+									<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
+								</button>
 								{#if results.open}
 									<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
 								{/if}
 							{:else if id !== undefined}
-								<div class="slot-photo">
-									{#if c?.image_url}
-										<img src={c.image_url} alt="" />
-									{:else}
-										<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
-									{/if}
-									<span class="slot-rank">{i + 1}</span>
-								</div>
-								<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
+								<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+									<span class="slot-photo">
+										{#if c?.image_url}
+											<img src={c.image_url} alt="" />
+										{:else}
+											<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
+										{/if}
+										<span class="slot-rank">{i + 1}</span>
+									</span>
+									<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
+								</button>
 								{#if results.open}
 									<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
 								{/if}
-							{:else if !endsBlank && results.open && i === ballot.length}
-								<button class="slot-add" onclick={() => (picking = !picking)} disabled={busy} aria-expanded={showPicker} aria-controls="picker">
-									<span class="slot-photo slot-photo--empty"><span class="slot-plus" aria-hidden="true">+</span></span>
+							{:else if !endsBlank && results.open}
+								<button class="slot-add" onclick={() => (slotPick = ballot.length)} disabled={busy}>
+									<span class="slot-photo slot-photo--empty">
+										{#if i === ballot.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
+									</span>
 									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
 								</button>
 							{:else if !endsBlank}
@@ -513,28 +551,10 @@
 					{/each}
 				</ol>
 				{/if}
-				{#if showPicker}
-					<div class="picker" id="picker">
-						{#each choosable as c (c.person_id)}
-							<button class="pick-card" onclick={() => pick(c.person_id)} disabled={busy}>
-								{#if c.image_url}
-									<img src={c.image_url} alt="" />
-								{:else}
-									<span class="pick-initial" aria-hidden="true">{c.name.charAt(0).toUpperCase()}</span>
-								{/if}
-								<span>{displayName(c.name)}</span>
-							</button>
-						{/each}
-						<button class="pick-card pick-card--blank" onclick={() => pick('blank')} disabled={busy}>
-							<span class="pick-initial" aria-hidden="true">◻</span>
-							<span>{tr(ballot.length === 0 ? 'vote.blank.name' : 'vote.blank.after', currentLang)}</span>
-						</button>
-					</div>
-				{/if}
 				{#if results.open}
 					<div class="ballot-actions">
-					{#if !showPicker && !blank && !endsBlank && (ballot.length === 0 || !full)}
-						<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr(ballot.length === 0 ? 'vote.blank.button' : 'vote.blank.after', currentLang)}</button>
+					{#if ballot.length === 0 && !blank}
+						<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
 						{@render help(tr('vote.blank.help', currentLang))}
 					{/if}
 					{#if mine}
@@ -548,11 +568,14 @@
 					{@render help(tr('vote.verify.help', currentLang))}
 				</div>
 				{#if mineSteps}
-					<ul class="steps">
-						{#each ['signed', 'history', 'mine'] as const as k (k)}
-							<li class="step step--{mineSteps[k]}">{@render stepIcon(mineSteps[k])}<span>{tr(`vote.verify.${k}`, currentLang)}</span></li>
-						{/each}
-					</ul>
+					<div class="steps-box">
+						<Steps
+							steps={(['signed', 'history', 'mine'] as const).map((k) => ({
+								label: tr(k === 'mine' && mineError ? 'vote.verify.error' : `vote.verify.${k}`, currentLang),
+								state: mineSteps![k] === 'waiting' ? 'running' : mineSteps![k]
+							}))}
+						/>
+					</div>
 				{/if}
 			{/if}
 			{#if check?.state === 'fault'}
@@ -568,6 +591,25 @@
 		</section>
 	{/if}
 
+	<Modal open={slotPick !== null} title={slotPick === null ? '' : tr('vote.slot.choice', currentLang, { rank: rankWord(slotPick + 1) })} onclose={() => (slotPick = null)} closeLabel={tr('auth.close', currentLang)}>
+		<div class="picker">
+			{#each choosable as c (c.person_id)}
+				<button class="pick-card" onclick={() => chooseFor(c.person_id)} disabled={busy}>
+					{#if c.image_url}
+						<img src={c.image_url} alt="" />
+					{:else}
+						<span class="pick-initial" aria-hidden="true">{c.name.charAt(0).toUpperCase()}</span>
+					{/if}
+					<span>{displayName(c.name)}</span>
+				</button>
+			{/each}
+			<button class="pick-card pick-card--blank" onclick={() => chooseFor('blank')} disabled={busy}>
+				<span class="pick-initial" aria-hidden="true">◻</span>
+				<span>{tr('vote.blank.name', currentLang)}</span>
+			</button>
+		</div>
+	</Modal>
+
 	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
 		<p class="dialog-text">{tr(blank ? 'vote.withdraw.text_blank' : 'vote.withdraw.text', currentLang)}</p>
 		{#snippet actions()}
@@ -576,17 +618,6 @@
 		{/snippet}
 	</Modal>
 
-	{#snippet stepIcon(state: string)}
-		{#if state === 'running'}
-			<span class="state-icon state-icon--spin state-icon--sm" aria-hidden="true"></span>
-		{:else if state === 'ok'}
-			<span class="state-icon state-icon--ok state-icon--sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>
-		{:else if state === 'failed'}
-			<span class="state-icon state-icon--fault state-icon--sm" aria-hidden="true">!</span>
-		{:else}
-			<span class="state-icon state-icon--wait state-icon--sm" aria-hidden="true">…</span>
-		{/if}
-	{/snippet}
 
 	{#snippet help(text: string)}
 		<details class="help">
@@ -719,11 +750,9 @@
 			{@render help(tr('poll.verify.help', currentLang))}
 		</div>
 		{#if recountSteps}
-			<ul class="steps steps--results">
-				{#each recountSteps as st (st.id)}
-					<li class="step step--{st.state}">{@render stepIcon(st.state)}<span>{tr(`poll.verify.${st.id}`, currentLang)}</span></li>
-				{/each}
-			</ul>
+			<div class="steps-box steps-box--results">
+				<Steps steps={recountSteps.map((st) => ({ label: tr(`poll.verify.${st.id}`, currentLang), state: st.state === 'skipped' ? 'todo' : st.state }))} />
+			</div>
 		{/if}
 		<p class="board-note">{tr('poll.note.vote', currentLang)}</p>
 	{:else if view === 'honesty'}
@@ -882,11 +911,7 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
 		gap: 0.5rem;
-		margin: 0 0 1rem;
-		padding: 0.75rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: color-mix(in oklch, var(--accent) 5%, var(--bg-card));
+		min-width: min(28rem, 80vw);
 	}
 	.pick-card {
 		display: flex;
@@ -1083,25 +1108,6 @@
 	.state-icon--logged svg .tick {
 		stroke-width: 2.2;
 	}
-	.state-icon--sm {
-		width: 1.1rem;
-		height: 1.1rem;
-		margin: 0;
-		flex-shrink: 0;
-	}
-	.state-icon--sm svg {
-		width: 0.75rem;
-		height: 0.75rem;
-	}
-	.state-icon--sm.state-icon--fault {
-		font-size: 0.7rem;
-	}
-	.state-icon--wait {
-		background: var(--bg-secondary);
-		color: var(--text-muted);
-		font-size: 0.7rem;
-		line-height: 1;
-	}
 	.verify {
 		display: flex;
 		align-items: center;
@@ -1148,34 +1154,12 @@
 		line-height: 1.45;
 		color: var(--text-secondary);
 	}
-	.steps {
-		list-style: none;
+	.steps-box {
 		margin: 0.6rem 0 0;
-		padding: 0;
-		display: grid;
-		gap: 0.35rem;
 	}
-	.steps--results {
+	.steps-box--results {
 		width: fit-content;
 		margin: 0.75rem auto 0;
-	}
-	.step {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
-	}
-	.step--ok {
-		color: var(--text-primary);
-	}
-	.step--failed {
-		color: var(--red);
-	}
-	.state-icon--spin {
-		border: 2.5px solid color-mix(in oklch, var(--text-muted) 40%, transparent);
-		border-top-color: var(--accent-hover);
-		animation: spin 0.8s linear infinite;
 	}
 	.state-icon--fault {
 		background: var(--red);
@@ -1183,16 +1167,6 @@
 		font-family: var(--font-sans, inherit);
 		font-size: 0.85rem;
 		font-weight: 800;
-	}
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.state-icon--spin {
-			animation-duration: 2.4s;
-		}
 	}
 	.btn-small {
 		padding: 0.4rem 0.8rem;

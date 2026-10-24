@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The "?" beside a score: how this number is made. A person's inputs come
 	// from the API (GET /api/person/{id}/score); a stance's from its card.
+	import Spinner from './Spinner.svelte';
 	import Modal from './Modal.svelte';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
@@ -61,7 +62,7 @@
 		{#if loadError}
 			<p class="err">{tr('score.error', currentLang)}</p>
 		{:else if !inputs || score == null}
-			<p class="muted">{tr('person.loading', currentLang)}</p>
+			<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 		{:else}
 			<p class="big"><strong>{Math.round((score ?? 0) * 100)}</strong>/100</p>
 			<p class="what">{tr('score.what', currentLang)}</p>

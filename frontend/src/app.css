@@ -178,3 +178,10 @@ a:hover {
 html {
 	scroll-padding-top: 5.5rem;
 }
+
+/* A loading place: the wheel, centred (Spinner). */
+.loading {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}

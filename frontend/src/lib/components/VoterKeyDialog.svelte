@@ -4,6 +4,7 @@
 	// the passport, which admits a new key (POST /api/voters/register). Then
 	// it asks to protect the key, so that a lost device does not lose the
 	// vote. Open it with voterKeyOpen.set(true).
+	import Spinner from './Spinner.svelte';
 	import { get } from 'svelte/store';
 	import { loadProviders, session } from '$lib/auth';
 	import { lang, tr } from '$lib/i18n';
@@ -160,7 +161,7 @@
 		{#if loadError}
 			<p class="error">{loadError}</p>
 		{:else if providers === null}
-			<p class="muted">{tr('person.loading', currentLang)}</p>
+			<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 		{:else if providers.length === 0}
 			<p class="muted">{tr('auth.none', currentLang)}</p>
 		{:else}

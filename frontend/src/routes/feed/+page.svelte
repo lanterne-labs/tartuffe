@@ -4,6 +4,7 @@
 	// newest first, filtered by kind, person and the dates of the statements,
 	// all kept in the URL so a filtered feed can be shared. A new
 	// contradiction while the page is open shows a banner to load it.
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -388,7 +389,7 @@
 	<div bind:this={sentinel} class="sentinel"></div>
 	{#if items.length > 0}
 		{#if loading}
-			<p class="state muted">{tr('person.loading', currentLang)}</p>
+			<p class="state muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 		{:else if error}
 			<div class="state"><button class="btn" onclick={() => load(false)}>{tr('home.retry', currentLang)}</button></div>
 		{:else if ended && sort === 'hot'}

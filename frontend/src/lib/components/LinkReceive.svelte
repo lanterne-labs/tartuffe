@@ -3,6 +3,7 @@
 	// scans it with the device that has the voting key, and the key (and the
 	// account's session, if that device is signed in) arrives here, end to
 	// end encrypted. One step, as with WhatsApp or Signal.
+	import Spinner from './Spinner.svelte';
 	import { onDestroy, onMount } from 'svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import { session } from '$lib/auth';
@@ -51,7 +52,7 @@
 <section class="receive">
 	<p class="lead">{tr('link.receive.lead', lang)}</p>
 	{#if phase === 'starting'}
-		<p class="muted">{tr('person.loading', lang)}</p>
+		<p class="muted loading"><Spinner label={tr('person.loading', lang)} /></p>
 	{:else if phase === 'waiting'}
 		<img class="qr" src={qr} alt={tr('link.receive.qr_alt', lang)} width="240" height="240" />
 		<ol class="steps">

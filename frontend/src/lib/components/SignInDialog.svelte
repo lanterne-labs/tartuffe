@@ -3,6 +3,7 @@
 	// /api/auth/providers): Google, and the test account where noop is on.
 	// Open it from anywhere with signInOpen.set(true). Verifying the account
 	// for a vote is another dialog (VerifyDialog).
+	import Spinner from './Spinner.svelte';
 	import { signInOpen, loadProviders, signIn, session, setDisplayName } from '$lib/auth';
 	import { signInWithGoogle, GoogleClosed } from '$lib/google';
 	import { lang, tr } from '$lib/i18n';
@@ -113,7 +114,7 @@
 	{:else if loadError}
 		<p class="error">{loadError}</p>
 	{:else if providers === null}
-		<p class="muted">{tr('person.loading', currentLang)}</p>
+		<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 	{:else if providers.length === 0}
 		<p class="muted">{tr('auth.none', currentLang)}</p>
 	{:else}

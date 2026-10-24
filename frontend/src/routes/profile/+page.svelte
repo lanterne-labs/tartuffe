@@ -3,6 +3,7 @@
 	// that keep it safe and the devices that share it, then what this device
 	// remembers of their ballots; then their account, if they have one, for
 	// the reports and the +1s.
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { eventPaths } from '$lib/event';
 	import { onMount, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
@@ -177,7 +178,7 @@
 			<button class="btn" onclick={loadEvents}>{tr('home.retry', currentLang)}</button>
 		</div>
 	{:else if !events}
-		<p class="muted">{tr('person.loading', currentLang)}</p>
+		<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 	{:else if events.length === 0}
 		<p class="muted">{tr('profile.no_events', currentLang)}</p>
 	{:else}
@@ -242,7 +243,7 @@
 				<button class="btn" onclick={loadReports}>{tr('home.retry', currentLang)}</button>
 			</div>
 		{:else if !reports}
-			<p class="muted">{tr('person.loading', currentLang)}</p>
+			<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 		{:else if reports.length === 0}
 			<p class="muted">{tr('profile.reports.none', currentLang)}</p>
 		{:else}

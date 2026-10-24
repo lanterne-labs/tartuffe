@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { sourceDomain } from '$lib/sources';
 	import FactVersions from '$lib/components/FactVersions.svelte';
 	import { page } from '$app/stores';
@@ -660,7 +661,7 @@
 								<div class="stance-tab-body" role="tabpanel">
 									{#if tab === 'contradictions'}
 										{#if stanceLoading[stance.id]}
-											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+											<p class="empty-mini loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 										{:else if items.length > 0}
 											{#each items.slice(0, shown) as g (g.base_fact_id)}
 												<ContradictionGroupCard
@@ -688,7 +689,7 @@
 										{/if}
 									{:else}
 										{#if stanceFactsLoading[stance.id]}
-											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+											<p class="empty-mini loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 										{:else if (stanceFacts[stance.id]?.length ?? 0) > 0}
 											<div class="stance-facts-list">
 												{#each stanceFacts[stance.id] as f (f.fact_id)}

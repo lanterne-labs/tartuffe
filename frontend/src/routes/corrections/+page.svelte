@@ -2,6 +2,7 @@
 	// The public log of corrections: every fact or contradiction removed after
 	// a report, with the judge's reason (GET /api/corrections). Neither the
 	// reporter nor their words are shown.
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { onMount } from 'svelte';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, type Lang } from '$lib/i18n';
@@ -50,7 +51,7 @@
 	<p class="intro">{tr('corrections.intro', currentLang)} <a href="/about">{tr('score.more', currentLang)}</a></p>
 
 	{#if items.length === 0 && loading}
-		<p class="muted">{tr('person.loading', currentLang)}</p>
+		<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 	{:else if items.length === 0 && error}
 		<div class="card"><p>{tr('feed.error', currentLang)}</p><button class="btn" onclick={() => load(false)}>{tr('home.retry', currentLang)}</button></div>
 	{:else if items.length === 0}

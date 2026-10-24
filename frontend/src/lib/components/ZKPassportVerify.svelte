@@ -5,6 +5,7 @@
 	// challenge and the key's commitment into the proof; onProof sends the
 	// proofs to the API, which checks them itself
 	// (backend/accounts/providers/zkpassport.go) and admits the commitment.
+	import Steps, { type StepState } from './Steps.svelte';
 	import { onDestroy } from 'svelte';
 	import { challenge as askChallenge, binding, voterKeyOpen } from '$lib/voter';
 	import { tr, type Lang } from '$lib/i18n';
@@ -28,6 +29,22 @@
 	let url = $state('');
 	let qr = $state('');
 	let error = $state('');
+
+	// flow is the scan's progress: the QR code scanned, the steps in the
+	// app, the proof computed on the phone, its check here. A refusal or an
+	// error stops it at the step that was running.
+	const FLOW = ['qr', 'app', 'proof', 'check'] as const;
+	const at: Record<string, number> = { starting: 0, scan: 0, received: 1, proving: 2, verifying: 3 };
+	let reached = $state(0);
+	$effect(() => {
+		if (step in at) reached = at[step];
+	});
+	let flow = $derived(
+		FLOW.map((k, i) => ({
+			label: tr(`zk.flow.${k}`, lang),
+			state: (i < reached ? 'ok' : i > reached ? 'todo' : step === 'rejected' || step === 'error' ? 'failed' : 'running') as StepState
+		}))
+	);
 	let cancelled = false;
 
 	const isPhone = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -112,9 +129,11 @@
 		</ol>
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
 		<a class="more" href="{eventPaths().how}#cle" onclick={() => voterKeyOpen.set(false)}>{tr('zk.how', lang)}</a>
-	{:else if step === 'starting'}
-		<p class="status">{tr('zk.starting', lang)}</p>
-	{:else if step === 'scan'}
+	{/if}
+	{#if step !== 'idle'}
+		<div class="flow"><Steps layout="row" steps={flow} /></div>
+	{/if}
+	{#if step === 'scan'}
 		{#if isPhone}
 			<a class="primary block" href={url}>{tr('zk.open_app', lang)}</a>
 			<p class="muted small">{tr('zk.phone_hint', lang)}</p>
@@ -124,12 +143,6 @@
 		{/if}
 		<p class="muted small">{tr('zk.get_app', lang)} <a href="https://zkpassport.id" target="_blank" rel="noopener">zkpassport.id</a></p>
 		<button class="link" onclick={reset}>{tr('zk.cancel', lang)}</button>
-	{:else if step === 'received'}
-		<p class="status">{tr('zk.received', lang)}</p>
-	{:else if step === 'proving'}
-		<p class="status">{tr('zk.proving', lang)}</p>
-	{:else if step === 'verifying'}
-		<p class="status">{tr('zk.verifying', lang)}</p>
 	{:else if step === 'rejected'}
 		<p class="status warn">{tr('zk.rejected', lang)}</p>
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
@@ -144,6 +157,9 @@
 </section>
 
 <style>
+	.flow {
+		margin: 0.75rem 0;
+	}
 	.zk {
 		padding: 1rem;
 		border: 1px solid var(--accent);
