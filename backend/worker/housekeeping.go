@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -86,8 +85,7 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
-	dirty  atomic.Bool // facts were added since the last pass (set by the tasks run at once)
-	feedMu sync.Mutex  // one feed at a time (Beside and Idle)
+	dirty atomic.Bool // facts were added since the last pass (set by the tasks run at once)
 }
 
 // NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
@@ -117,12 +115,8 @@ func (h *Housekeeping) FactsAdded(n int) {
 	}
 }
 
-// Beside implements Idle: the feed when due, unless one runs.
+// Beside implements Idle: the feed when due.
 func (h *Housekeeping) Beside(ctx context.Context) error {
-	if !h.feedMu.TryLock() {
-		return nil
-	}
-	defer h.feedMu.Unlock()
 	due, err := h.feedDue(ctx)
 	if err != nil || !due {
 		return err
@@ -141,30 +135,14 @@ func (h *Housekeeping) Urgent(ctx context.Context) (bool, error) {
 	return last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery, nil
 }
 
-// Idle implements Idle: the feed when due (unless one runs beside), then a
-// maintenance pass when due. An unavailable LLM stops the work with an error
-// wrapping llm.ErrUnavailable; the other failures are joined and returned
-// after the work went on.
+// Idle implements Idle: a maintenance pass when due. The feed is Beside's
+// only: the worker never runs both at once.
 func (h *Housekeeping) Idle(ctx context.Context) error {
-	var errs []error
-	if err := h.Beside(ctx); err != nil {
-		if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-			return err
-		}
-		errs = append(errs, err)
-	}
 	due, since, err := h.maintenanceDue(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	} else if due {
-		if err := h.maintenance(ctx, since); err != nil {
-			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-				return err
-			}
-			errs = append(errs, err)
-		}
+	if err != nil || !due {
+		return err
 	}
-	return errors.Join(errs...)
+	return h.maintenance(ctx, since)
 }
 
 // feedDue reports whether the feed of the day has not run yet: the last feed
