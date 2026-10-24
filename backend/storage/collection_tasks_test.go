@@ -101,3 +101,36 @@ func TestCollectionTasksClaimOrderAndLease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int{TaskDone: 1, TaskCancelled: 1}, counts)
 }
+
+// TestCollectionTasksClaimSpreadsPersons: within a priority, the claim takes
+// a task of a person no task runs for before an older task of a running
+// person; a higher priority still goes first.
+func TestCollectionTasksClaimSpreadsPersons(t *testing.T) {
+	storer, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE collection_tasks")
+	require.NoError(t, err)
+	a, err := storer.FindOrInsertPersonWithType(ctx, "spread person a", "human")
+	require.NoError(t, err)
+	b, err := storer.FindOrInsertPersonWithType(ctx, "spread person b", "human")
+	require.NoError(t, err)
+	day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, nt := range []NewCollectionTask{
+		{PersonID: a, Plugin: "news", Since: day, Until: day.AddDate(0, 0, 30)},
+		{PersonID: a, Plugin: "twitter", Since: day, Until: day.AddDate(0, 0, 30)},
+		{PersonID: b, Plugin: "news", Since: day, Until: day.AddDate(0, 0, 30)},
+	} {
+		_, err := storer.AddCollectionTasks(ctx, []NewCollectionTask{nt})
+		require.NoError(t, err)
+	}
+	first, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, a, first.PersonID, "the oldest first")
+	second, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, b, second.PersonID, "a person no task runs for before the older task of a")
+	third, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	require.NoError(t, err)
+	assert.Equal(t, "twitter", third.Plugin, "then the task of a running person")
+}
