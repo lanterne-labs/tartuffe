@@ -4,7 +4,9 @@
 // ballot's proof of the results' window against a root the log published
 // before it, then counts the last ballot of each voter as the server does
 // (polls.Tally, polls.Schulze) and compares with the log's last tally and
-// with the results on the page.
+// with the results on the page. The results name the log size they count
+// (log_size): the recount reads exactly that many entries, so a batch
+// published meanwhile changes nothing.
 
 import { verifyProof, type SemaphoreProof } from '@semaphore-protocol/proof';
 import { API_BASE } from './config';
@@ -194,6 +196,11 @@ export async function recount(eventId: number, shown: PollResults, report: (s: S
 		return false;
 	}
 	const tree: Tree = head.tree;
+	const counted = shown.log_size;
+	if (tree.size < counted) {
+		report({ id: 'signed', state: 'failed', detail: `the results count ${counted} entries, the signed log holds ${tree.size}` });
+		return false;
+	}
 	report({ id: 'signed', state: 'ok', n: tree.size });
 
 	report({ id: 'tree', state: 'running' });
@@ -213,7 +220,7 @@ export async function recount(eventId: number, shown: PollResults, report: (s: S
 	let tally: TallyEntry | null = null;
 	let proved = 0;
 	const scope = digest(scopeName(eventId, w)).toString();
-	for (const e of log) {
+	for (const e of log.slice(0, counted)) {
 		let body: Record<string, unknown>;
 		try {
 			body = JSON.parse(e.body);

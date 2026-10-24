@@ -58,6 +58,9 @@ type Results struct {
 	Until  time.Time `json:"until"`
 	// Open is true while ballots are taken.
 	Open bool `json:"open"`
+	// LogSize is the size of the public log the results count: they are
+	// those of its first LogSize entries (Turnout.LogSize).
+	LogSize int64 `json:"log_size"`
 	// Hidden is set (HiddenTooFewVoters, HiddenBlackout) when the shares are
 	// not shown.
 	Hidden string `json:"hidden,omitempty"`
@@ -173,8 +176,13 @@ func (t *Tally) Result() ([]CandidateTally, Turnout) {
 // its turnout, counted in the results' window at now.
 func Compute(e *Event, tallies []CandidateTally, turnout Turnout, now time.Time) Results {
 	voters := turnout.Voters
+	// The window is the one the ballots were counted in, when known: the
+	// results then name exactly the ballots they count.
 	w := ResultWindow(now)
-	r := Results{Voters: voters, Open: IsOpen(e, now), Window: w, Until: w.End(), Candidates: make([]CandidateResult, 0, len(tallies))}
+	if turnout.Window != nil {
+		w = *turnout.Window
+	}
+	r := Results{Voters: voters, Open: IsOpen(e, now), LogSize: turnout.LogSize, Window: w, Until: w.End(), Candidates: make([]CandidateResult, 0, len(tallies))}
 	switch {
 	case InBlackout(e, now):
 		r.Hidden = HiddenBlackout

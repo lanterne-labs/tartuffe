@@ -404,6 +404,12 @@ const dict: Record<string, { fr: string; en: string }> = {
 
 	// Nav
 	'nav.feed': { fr: 'Le fil', en: 'Feed' },
+	'nav.menu.project': { fr: 'Le projet', en: 'The project' },
+	'nav.menu.project_sub': { fr: 'Ce que mesure tartuffe.me', en: 'What tartuffe.me measures' },
+	'nav.menu.lab': { fr: 'Le labo', en: 'The lab' },
+	'nav.menu.lab_sub': { fr: 'Nos expériences temporaires', en: 'Our temporary experiments' },
+	'nav.menu.privacy': { fr: 'Confidentialité', en: 'Privacy' },
+	'nav.menu.privacy_sub': { fr: 'Ce que nous gardons, et pourquoi', en: 'What we keep, and why' },
 	'nav.about': { fr: 'À propos', en: 'About' },
 	'nav.privacy': { fr: 'Confidentialité', en: 'Privacy' },
 

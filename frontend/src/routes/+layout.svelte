@@ -46,25 +46,32 @@
 	// nav with its end date, and a card in a corner (EventBanner).
 	let featured = $state<PollEvent | null>(null);
 
-	// The event's menu (its three pages) opens on a click or a tap, on hover
-	// with a mouse, and closes on Escape, outside, or on a new page.
-	let eventMenuOpen = $state(false);
-	let eventMenuEl = $state<HTMLElement | null>(null);
+	// The nav's menus (the event's three pages, the About pages) open on a
+	// click or a tap, on hover with a mouse, and close on Escape, outside, or
+	// on a new page. One is open at a time.
+	type Menu = 'event' | 'about';
+	let openMenu = $state<Menu | null>(null);
+	let menuEls = $state<Record<Menu, HTMLElement | null>>({ event: null, about: null });
 	$effect(() => {
 		$page.url.pathname;
-		eventMenuOpen = false;
+		openMenu = null;
 	});
+	function toggleMenu(m: Menu) {
+		openMenu = openMenu === m ? null : m;
+	}
 	function onWindowClick(e: MouseEvent) {
-		if (eventMenuOpen && eventMenuEl && !eventMenuEl.contains(e.target as Node)) eventMenuOpen = false;
+		const el = openMenu && menuEls[openMenu];
+		if (el && !el.contains(e.target as Node)) openMenu = null;
 	}
 	function onWindowKey(e: KeyboardEvent) {
-		if (e.key === 'Escape' && eventMenuOpen) {
-			eventMenuOpen = false;
-			eventMenuEl?.querySelector('button')?.focus();
+		if (e.key === 'Escape' && openMenu) {
+			menuEls[openMenu]?.querySelector('button')?.focus();
+			openMenu = null;
 		}
 	}
-	function onMenuFocusOut(e: FocusEvent) {
-		if (eventMenuEl && e.relatedTarget && !eventMenuEl.contains(e.relatedTarget as Node)) eventMenuOpen = false;
+	function onMenuFocusOut(m: Menu, e: FocusEvent) {
+		const el = menuEls[m];
+		if (openMenu === m && el && e.relatedTarget && !el.contains(e.relatedTarget as Node)) openMenu = null;
 	}
 	onMount(async () => {
 		// The stored session may be stale: its pseudonym may have changed.
@@ -131,15 +138,15 @@
 			</div>
 			{#if featured}
 				{@const ep = eventPaths(featured.slug)}
-				<div class="nav-event" class:open={eventMenuOpen} bind:this={eventMenuEl} onfocusout={onMenuFocusOut}>
+				<div class="nav-drop nav-event" class:open={openMenu === 'event'} bind:this={menuEls.event} onfocusout={(e) => onMenuFocusOut('event', e)}>
 					<button
 						class="nav-link nav-link--poll"
 						class:active={$page.url.pathname.startsWith('/election/')}
 						aria-haspopup="true"
-						aria-expanded={eventMenuOpen}
+						aria-expanded={openMenu === 'event'}
 						aria-controls="event-menu"
 						title={tr('event.label', currentLang)}
-						onclick={() => (eventMenuOpen = !eventMenuOpen)}
+						onclick={() => toggleMenu('event')}
 					>
 						<span class="poll-tag">{tr('event.tag_short', currentLang)}</span>
 						<span class="poll-title">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
@@ -147,7 +154,7 @@
 						<span class="poll-title-short">{featured.title_fr.match(/\d{4}/)?.[0] ?? featured.title_fr}</span>
 						<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
 					</button>
-					<div class="event-menu" id="event-menu">
+					<div class="drop-menu" id="event-menu">
 						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how]] as [k, href] (k)}
 							<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
 								<strong>{tr(`event.menu.${k}`, currentLang)}</strong>
@@ -159,12 +166,25 @@
 			{/if}
 			<a href="/feed" class="nav-link nav-link--feed" class:active={$page.url.pathname === '/feed'}>{tr('nav.feed', currentLang)}</a>
 			<a href="/dashboard" class="nav-link nav-link--home" class:active={$page.url.pathname === "/dashboard"}>{tr('nav.dashboard', currentLang)}</a>
-			<!-- About opens a small menu on hover or focus: its subpages. -->
-			<div class="nav-about nav-link--about">
-				<a href="/about" class="nav-link" class:active={$page.url.pathname.startsWith('/about')} aria-haspopup="true">{tr('nav.about', currentLang)}</a>
-				<div class="nav-menu">
-					<a href="/lab" class:active={$page.url.pathname === '/lab'}>{tr('nav.lab', currentLang)}</a>
-					<a href="/about/privacy" class:active={$page.url.pathname === '/about/privacy'}>{tr('nav.privacy', currentLang)}</a>
+			<div class="nav-drop nav-about nav-link--about" class:open={openMenu === 'about'} bind:this={menuEls.about} onfocusout={(e) => onMenuFocusOut('about', e)}>
+				<button
+					class="nav-link nav-link--menu"
+					class:active={$page.url.pathname.startsWith('/about') || $page.url.pathname === '/lab'}
+					aria-haspopup="true"
+					aria-expanded={openMenu === 'about'}
+					aria-controls="about-menu"
+					onclick={() => toggleMenu('about')}
+				>
+					{tr('nav.about', currentLang)}
+					<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+				</button>
+				<div class="drop-menu drop-menu--end" id="about-menu">
+					{#each [['project', '/about'], ['lab', '/lab'], ['privacy', '/about/privacy']] as [k, href] (k)}
+						<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
+							<strong>{tr(`nav.menu.${k}`, currentLang)}</strong>
+							<span>{tr(`nav.menu.${k}_sub`, currentLang)}</span>
+						</a>
+					{/each}
 				</div>
 			</div>
 			{#if userName}
@@ -278,44 +298,6 @@
 		gap: 1rem;
 	}
 
-	.nav-about {
-		position: relative;
-	}
-	.nav-menu {
-		position: absolute;
-		top: 100%;
-		right: -0.6rem;
-		padding-top: 0.6rem;
-		opacity: 0;
-		visibility: hidden;
-		transform: translateY(-4px);
-		transition:
-			opacity 0.15s ease,
-			transform 0.15s ease,
-			visibility 0.15s;
-	}
-	.nav-about:hover .nav-menu,
-	.nav-about:focus-within .nav-menu {
-		opacity: 1;
-		visibility: visible;
-		transform: none;
-	}
-	.nav-menu a {
-		display: block;
-		white-space: nowrap;
-		padding: 0.55rem 0.9rem;
-		border-radius: var(--radius-md);
-		background: var(--bg-secondary);
-		border: 1px solid var(--glass-border);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-		color: var(--text-secondary);
-		font-size: 0.85rem;
-		text-decoration: none;
-	}
-	.nav-menu a:hover,
-	.nav-menu a.active {
-		color: var(--text-primary);
-	}
 	.nav-link {
 		font-size: 0.875rem;
 		font-weight: 500;
@@ -327,9 +309,30 @@
 		color: var(--text-primary);
 	}
 
-	.nav-event {
+	/* The nav's menus share one look; each has its colour (--drop): the
+	   event its blue, the site its own. */
+	.nav-drop {
 		position: relative;
 		min-width: 0;
+		--drop: var(--accent-hover);
+		--drop-glow: color-mix(in oklch, var(--accent) 14%, transparent);
+	}
+	.nav-event {
+		--drop: var(--event);
+		--drop-glow: var(--event-glow);
+	}
+	.nav-link--menu {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0;
+		border: none;
+		background: none;
+		font-family: inherit;
+		cursor: pointer;
+	}
+	.nav-link--menu.active {
+		color: var(--text-primary);
 	}
 	.nav-link--poll {
 		display: inline-flex;
@@ -367,10 +370,10 @@
 		flex-shrink: 0;
 		transition: transform var(--transition-fast);
 	}
-	.nav-event.open .caret {
+	.nav-drop.open .caret {
 		transform: rotate(180deg);
 	}
-	.event-menu {
+	.drop-menu {
 		position: absolute;
 		top: 100%;
 		left: 0;
@@ -380,7 +383,7 @@
 		min-width: 17rem;
 		margin-top: 0.5rem;
 		padding: 0.35rem;
-		border: 1px solid var(--event);
+		border: 1px solid var(--drop);
 		border-radius: var(--radius-lg);
 		background: var(--bg-secondary);
 		box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
@@ -392,8 +395,12 @@
 			transform 0.15s ease,
 			visibility 0.15s;
 	}
-	/* The gap between the pill and the menu keeps the hover. */
-	.event-menu::before {
+	.drop-menu--end {
+		left: auto;
+		right: 0;
+	}
+	/* The gap between the button and the menu keeps the hover. */
+	.drop-menu::before {
 		content: '';
 		position: absolute;
 		top: -0.6rem;
@@ -401,19 +408,19 @@
 		right: 0;
 		height: 0.6rem;
 	}
-	.nav-event.open .event-menu {
+	.nav-drop.open .drop-menu {
 		opacity: 1;
 		visibility: visible;
 		transform: none;
 	}
 	@media (hover: hover) {
-		.nav-event:hover .event-menu {
+		.nav-drop:hover .drop-menu {
 			opacity: 1;
 			visibility: visible;
 			transform: none;
 		}
 	}
-	.event-menu a {
+	.drop-menu a {
 		display: grid;
 		gap: 0.1rem;
 		padding: 0.55rem 0.75rem;
@@ -421,21 +428,21 @@
 		color: var(--text-primary);
 		text-decoration: none;
 	}
-	.event-menu a strong {
+	.drop-menu a strong {
 		font-size: 0.88rem;
 		font-weight: 600;
 	}
-	.event-menu a span {
+	.drop-menu a span {
 		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
-	.event-menu a:hover,
-	.event-menu a:focus-visible {
-		background: var(--event-glow);
+	.drop-menu a:hover,
+	.drop-menu a:focus-visible {
+		background: var(--drop-glow);
 	}
-	.event-menu a.active {
-		background: var(--event-glow);
-		box-shadow: inset 3px 0 0 var(--event);
+	.drop-menu a.active {
+		background: var(--drop-glow);
+		box-shadow: inset 3px 0 0 var(--drop);
 	}
 
 	.poll-tag {
@@ -603,14 +610,14 @@
 			font-size: 0.8rem;
 			padding: 0.25rem 0.5rem 0.25rem 0.6rem;
 		}
-		.event-menu {
+		.drop-menu {
 			position: fixed;
 			top: 3.4rem;
 			left: 1rem;
 			right: 1rem;
 			min-width: 0;
 		}
-		.event-menu::before {
+		.drop-menu::before {
 			display: none;
 		}
 	}

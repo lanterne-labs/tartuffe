@@ -23,6 +23,13 @@ type Turnout struct {
 	Blank       int `json:"blank"`
 	BlankRanked int
 	BlankBeats  map[int64]int
+	// LogSize is the size of the public log the ballots were read with: the
+	// count is that of its first LogSize entries, so anyone recounts the
+	// results shown from them exactly.
+	LogSize int64
+	// Window is the results' window the ballots were counted in (nil: the
+	// one at the moment the results are computed).
+	Window *Window
 }
 
 // ErrUnknownRoot refuses a ballot proved against a root the window's tree
@@ -188,13 +195,24 @@ func shuffle(b []AnonBallot) error {
 // over the published ballots of the results' window: the last ballot of each
 // nullifier, unless it withdrew (Tally: a candidate who left the poll is
 // skipped, the next ones move up).
+//
+// The ballots and the log's size are read in one snapshot (repeatable
+// read): a batch publishes its ballots and logs them in one transaction, so
+// the count is exactly that of the log's first LogSize entries.
 func (s *PGStore) Tallies(ctx context.Context, eventID int64) ([]CandidateTally, Turnout, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly, IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return nil, Turnout{}, fmt.Errorf("poll tallies: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	return countBallots(ctx, tx, eventID, ResultWindow(s.now()))
+	var size int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(seq), 0) FROM vote_log`).Scan(&size); err != nil {
+		return nil, Turnout{}, fmt.Errorf("poll tallies: log size: %w", err)
+	}
+	w := ResultWindow(s.now())
+	out, turnout, err := countBallots(ctx, tx, eventID, w)
+	turnout.LogSize, turnout.Window = size, &w
+	return out, turnout, err
 }
 
 func countBallots(ctx context.Context, tx pgx.Tx, eventID int64, w Window) ([]CandidateTally, Turnout, error) {

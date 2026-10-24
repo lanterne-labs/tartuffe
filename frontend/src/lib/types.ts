@@ -196,6 +196,9 @@ export interface PollResults {
 	window: { series: number; window: number };
 	until: string;
 	open: boolean;
+	// log_size: the size of the public ledger the results count: they are
+	// those of its first log_size entries.
+	log_size: number;
 	hidden?: 'too_few_voters' | 'blackout';
 	// condorcet_winner: the candidate who beats each other one head to head,
 	// 0 when the blank vote does, if one does (null while hidden).

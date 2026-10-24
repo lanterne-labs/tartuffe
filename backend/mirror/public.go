@@ -119,7 +119,8 @@ func (s *Service) handleFeed(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to get feed")
 		return
 	}
-	page := feedPage{Items: items}
+	// An empty feed is an empty list, not null: the page reads the items.
+	page := feedPage{Items: append([]storage.FeedItem{}, items...)}
 	switch {
 	case len(items) < limit:
 	case f.Hot && f.Offset+limit < maxHotItems:
@@ -222,7 +223,7 @@ func (s *Service) handleCorrections(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to list corrections")
 		return
 	}
-	page := correctionsPage{Items: items}
+	page := correctionsPage{Items: append([]storage.Correction{}, items...)}
 	if len(items) == limit {
 		page.Next = items[len(items)-1].ID
 	}

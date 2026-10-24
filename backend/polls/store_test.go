@@ -260,6 +260,11 @@ func TestCastPublishTally(t *testing.T) {
 	tallies, turnout, err := s.polls.Tallies(ctx, e.ID)
 	require.NoError(t, err)
 	assert.Equal(t, [2]int{3, 1}, [2]int{turnout.Voters, turnout.Blank})
+	head, err := s.polls.Head(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, head.N, turnout.LogSize, "the count is that of the whole log, read in the same snapshot")
+	require.NotNil(t, turnout.Window)
+	assert.Equal(t, polls.ResultWindow(time.Now()), *turnout.Window)
 	byID := map[int64]polls.CandidateTally{}
 	for _, c := range tallies {
 		byID[c.PersonID] = c

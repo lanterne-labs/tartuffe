@@ -52,6 +52,11 @@
 	let blank = $derived(mine?.kind === 'blank');
 	// endsBlank: the ranking ends with the blank vote (the others: no).
 	let endsBlank = $derived(ballot.at(-1) === BLANK);
+
+	// The picker opens from the next empty slot: the candidates not ranked
+	// yet, by name (not by result, so it does not push the leaders), and the
+	// blank vote. It stays open until the ballot is full.
+	let picking = $state(true);
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
 	let actionError: string | null = $state(null);
@@ -116,15 +121,7 @@
 			recountSteps = (recountSteps ?? steps).map((x) => (x.id === s.id ? s : x));
 		};
 		try {
-			// The results shown may predate the last batch the ledger holds:
-			// they are reloaded first, and once more if only they differ.
-			await load();
-			if (!results) return;
-			const ok = await recount(event.id, results, report);
-			if (!ok && recountSteps?.find((x) => x.id === 'shown')?.state === 'failed') {
-				await load();
-				if (results) await recount(event.id, results, report);
-			}
+			await recount(event.id, results, report);
 		} catch (err) {
 			console.error('recount failed', err);
 			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'failed' } : x));
@@ -136,6 +133,10 @@
 
 	let maxChoices = $derived(event?.max_choices ?? 3);
 	let full = $derived(ballot.length >= maxChoices);
+	let showPicker = $derived(picking && !!results?.open && !blank && !endsBlank && ballot.length < maxChoices);
+	let choosable = $derived(
+		[...(results?.candidates ?? [])].filter((c) => !ballot.includes(c.person_id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+	);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
 
 	// The ballot loads once per voting key and event, then again when another
@@ -464,88 +465,105 @@
 			</div>
 			<p class="hint">{tr(results.open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: maxChoices })}</p>
 
-			{#if hasKey}
-				{#if !protectedEnough($voterKey)}
-					<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
-				{/if}
-				{#if blank}
-					<div class="slots slots--blank">
-						<div class="slot filled">
-							<div class="slot-photo slot-photo--blank" aria-hidden="true">◻</div>
-							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
-						</div>
+			{#if hasKey && !protectedEnough($voterKey)}
+				<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
+			{/if}
+			{#if blank}
+				<div class="slots slots--blank">
+					<div class="slot filled">
+						<div class="slot-photo slot-photo--blank" aria-hidden="true">◻</div>
+						<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
 					</div>
-				{:else}
-					<ol class="slots" style="--n: {maxChoices}">
-						{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
-							{@const id = ballot[i]}
-							{@const c = id === undefined ? undefined : byId.get(id)}
-							<li class="slot" class:filled={id !== undefined} class:closed={id === undefined && endsBlank} class:next={results.open && !endsBlank && id === undefined && i === ballot.length}>
-								{#if id === BLANK}
-									<div class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></div>
-									<span class="slot-name slot-name--plain">{tr('vote.blank.rest', currentLang)}</span>
-									{#if results.open}
-										<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
-									{/if}
-								{:else if id !== undefined}
-									<div class="slot-photo">
-										{#if c?.image_url}
-											<img src={c.image_url} alt="" />
-										{:else}
-											<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
-										{/if}
-										<span class="slot-rank">{i + 1}</span>
-									</div>
-									<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
-									{#if results.open}
-										<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
-									{/if}
-								{:else if !endsBlank}
-									<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
-									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+				</div>
+			{:else}
+				<ol class="slots" style="--n: {maxChoices}">
+					{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
+						{@const id = ballot[i]}
+						{@const c = id === undefined ? undefined : byId.get(id)}
+						<li class="slot" class:filled={id !== undefined} class:closed={id === undefined && endsBlank} class:next={results.open && !endsBlank && id === undefined && i === ballot.length}>
+							{#if id === BLANK}
+								<div class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></div>
+								<span class="slot-name slot-name--plain">{tr('vote.blank.rest', currentLang)}</span>
+								{#if results.open}
+									<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
 								{/if}
-							</li>
+							{:else if id !== undefined}
+								<div class="slot-photo">
+									{#if c?.image_url}
+										<img src={c.image_url} alt="" />
+									{:else}
+										<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
+									{/if}
+									<span class="slot-rank">{i + 1}</span>
+								</div>
+								<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
+								{#if results.open}
+									<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
+								{/if}
+							{:else if !endsBlank && results.open && i === ballot.length}
+								<button class="slot-add" onclick={() => (picking = !picking)} disabled={busy} aria-expanded={showPicker} aria-controls="picker">
+									<span class="slot-photo slot-photo--empty"><span class="slot-plus" aria-hidden="true">+</span></span>
+									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+								</button>
+							{:else if !endsBlank}
+								<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
+								<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+							{/if}
+						</li>
+					{/each}
+				</ol>
+				{/if}
+				{#if showPicker}
+					<div class="picker" id="picker">
+						{#each choosable as c (c.person_id)}
+							<button class="pick-card" onclick={() => pick(c.person_id)} disabled={busy}>
+								{#if c.image_url}
+									<img src={c.image_url} alt="" />
+								{:else}
+									<span class="pick-initial" aria-hidden="true">{c.name.charAt(0).toUpperCase()}</span>
+								{/if}
+								<span>{displayName(c.name)}</span>
+							</button>
 						{/each}
-					</ol>
+						<button class="pick-card pick-card--blank" onclick={() => pick('blank')} disabled={busy}>
+							<span class="pick-initial" aria-hidden="true">◻</span>
+							<span>{tr(ballot.length === 0 ? 'vote.blank.name' : 'vote.blank.after', currentLang)}</span>
+						</button>
+					</div>
 				{/if}
 				{#if results.open}
 					<div class="ballot-actions">
-						{#if !blank && !endsBlank && (ballot.length === 0 || !full)}
-							<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr(ballot.length === 0 ? 'vote.blank.button' : 'vote.blank.after', currentLang)}</button>
-							{@render help(tr('vote.blank.help', currentLang))}
-						{/if}
-						{#if mine}
-							<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
-						{/if}
-					</div>
-				{/if}
-				{#if mine}
-					<div class="verify">
-						<button class="btn btn-small" onclick={verifyMine} disabled={busy}>🔍 {tr('vote.verify', currentLang)}</button>
-						{@render help(tr('vote.verify.help', currentLang))}
-					</div>
-					{#if mineSteps}
-						<ul class="steps">
-							{#each ['signed', 'history', 'mine'] as const as k (k)}
-								<li class="step step--{mineSteps[k]}">{@render stepIcon(mineSteps[k])}<span>{tr(`vote.verify.${k}`, currentLang)}</span></li>
-							{/each}
-						</ul>
+					{#if !showPicker && !blank && !endsBlank && (ballot.length === 0 || !full)}
+						<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr(ballot.length === 0 ? 'vote.blank.button' : 'vote.blank.after', currentLang)}</button>
+						{@render help(tr('vote.blank.help', currentLang))}
 					{/if}
-				{/if}
-				{#if check?.state === 'fault'}
-					<div class="log-fault" role="alert">
-						<strong>{tr('vote.log.fault', currentLang)}</strong>
-						<span>{tr(`vote.log.fault.${check.fault.kind}`, currentLang)}</span>
-						<button class="btn" onclick={() => saveEvidence(check)}>{tr('vote.log.evidence', currentLang)}</button>
-					</div>
-				{/if}
-				{#if actionError}
-					<p class="save-error" role="alert">{actionError}</p>
-				{/if}
-			{:else if results.open}
-				<div class="ballot-actions">
-					<button class="btn btn-small" onclick={() => pick('blank')}>◻ {tr('vote.blank.button', currentLang)}</button>
+					{#if mine}
+						<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+					{/if}
 				</div>
+			{/if}
+			{#if mine}
+				<div class="verify">
+					<button class="btn btn-small" onclick={verifyMine} disabled={busy}>🔍 {tr('vote.verify', currentLang)}</button>
+					{@render help(tr('vote.verify.help', currentLang))}
+				</div>
+				{#if mineSteps}
+					<ul class="steps">
+						{#each ['signed', 'history', 'mine'] as const as k (k)}
+							<li class="step step--{mineSteps[k]}">{@render stepIcon(mineSteps[k])}<span>{tr(`vote.verify.${k}`, currentLang)}</span></li>
+						{/each}
+					</ul>
+				{/if}
+			{/if}
+			{#if check?.state === 'fault'}
+				<div class="log-fault" role="alert">
+					<strong>{tr('vote.log.fault', currentLang)}</strong>
+					<span>{tr(`vote.log.fault.${check.fault.kind}`, currentLang)}</span>
+					<button class="btn" onclick={() => saveEvidence(check)}>{tr('vote.log.evidence', currentLang)}</button>
+				</div>
+			{/if}
+			{#if actionError}
+				<p class="save-error" role="alert">{actionError}</p>
 			{/if}
 		</section>
 	{/if}
@@ -837,6 +855,82 @@
 	}
 	.slot.next {
 		border-color: var(--accent);
+	}
+	.slot-add {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0;
+		border: none;
+		background: none;
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+	}
+	.slot:has(.slot-add):hover {
+		background: color-mix(in oklch, var(--accent) 8%, transparent);
+	}
+	.slot-plus {
+		font-size: 1.8rem;
+		font-weight: 300;
+		line-height: 1;
+		color: var(--accent-hover);
+	}
+	.picker {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+		gap: 0.5rem;
+		margin: 0 0 1rem;
+		padding: 0.75rem;
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		background: color-mix(in oklch, var(--accent) 5%, var(--bg-card));
+	}
+	.pick-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.6rem 0.3rem;
+		border: 1px solid transparent;
+		border-radius: var(--radius-md);
+		background: transparent;
+		color: var(--text-primary);
+		font: inherit;
+		font-size: 0.8rem;
+		font-weight: 600;
+		line-height: 1.2;
+		text-align: center;
+		cursor: pointer;
+		transition: background 0.15s, border-color 0.15s;
+	}
+	.pick-card:hover:not(:disabled) {
+		border-color: var(--accent);
+		background: color-mix(in oklch, var(--accent) 12%, transparent);
+	}
+	.pick-card:disabled {
+		opacity: 0.5;
+		cursor: wait;
+	}
+	.pick-card img,
+	.pick-initial {
+		width: 3.2rem;
+		height: 3.2rem;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+	.pick-initial {
+		display: grid;
+		place-items: center;
+		background: var(--bg-secondary);
+		font-family: var(--font-serif);
+		font-size: 1.4rem;
+		color: var(--text-secondary);
+	}
+	.pick-card--blank {
+		color: var(--text-secondary);
 	}
 	.slot.closed {
 		border-color: transparent;
