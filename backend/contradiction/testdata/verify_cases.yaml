@@ -548,6 +548,15 @@ cases:
     bucket: reason_of_another_pair
     notes: "The stance analysis gave one reason for two key facts: the reason (« minable ») is about another fact. Neither statement here contains it; the two are unrelated."
 
+  # ---- Review of 2026-10-25 ----
+  - name: "FP_1600_lepen_condition_not_met"
+    fact_a: "Marine Le Pen a affirmé qu'il n'y a plus de scénario dans lequel elle ne pourrait pas être candidate à l'élection présidentielle."
+    fact_b: "Marine Le Pen a déclaré que si la cour d'appel confirme l'interdiction d'exercer une fonction publique, Jordan Bardella prendrait sa place comme candidat."
+    claimed_reason: "Elle assurait qu'aucun scénario ne l'empêcherait d'être candidate, mais admet que Bardella la remplacerait si son inéligibilité était confirmée."
+    expect: drop
+    bucket: condition_not_met
+    notes: "The reverse of a stated-condition walk-back: 'if Y, Bardella runs', then Y did not happen (the appeal did not confirm the ban) and 'no scenario is left where I cannot run' ('il n'y a plus'). A plan for a condition that did not occur is consistent with the later claim."
+
   # ---- Prod re-verification of 2026-10-22: what the verifier must keep ----
   - name: "TP_1262_lepen_bracelet_condition_walk_back"
     fact_a: "Marine Le Pen a annoncé sa candidature à l'élection présidentielle le 7 juillet 2026, malgré sa condamnation en appel à trois ans d'emprisonnement, dont un an ferme sous bracelet électronique, pour détournement de fonds européens au profit de son parti."
