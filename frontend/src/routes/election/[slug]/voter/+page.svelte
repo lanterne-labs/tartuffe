@@ -300,8 +300,9 @@
 			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
 			return;
 		}
-		// A candidate goes before the blank vote that ends the ranking.
-		const next = endsBlank ? [...ballot.slice(0, -1), choice, BLANK] : [...ballot, choice];
+		// A candidate goes before the blank vote that ends the ranking; on a
+		// blank ballot, it goes first and the blank vote stays for the rest.
+		const next = blank ? [choice, BLANK] : endsBlank ? [...ballot.slice(0, -1), choice, BLANK] : [...ballot, choice];
 		change({ kind: 'choices', choices: next });
 	}
 
