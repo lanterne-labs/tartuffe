@@ -92,17 +92,25 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 }
 
 // ClaimCollectionTask takes the next task to run: the pending task of the
-// highest priority, oldest first, whose not_before has passed, or a running
-// task whose heartbeat is older than lease (its worker died). The task comes
-// back running, with one more attempt; nil when there is none. Two workers
-// never claim the same task (FOR UPDATE SKIP LOCKED).
+// highest priority whose not_before has passed, or a running task whose
+// heartbeat is older than lease (its worker died). Within a priority, a task
+// of a person no task runs for comes first, then the oldest: the facts of one
+// person are inserted one at a time, so two tasks of one person (news and
+// twitter, claimed together by age) wait for each other (2026-10-24: 2 of
+// 4 lanes idle). The task comes back running, with one more attempt; nil
+// when there is none. Two workers never claim the same task (FOR UPDATE
+// SKIP LOCKED).
 func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Duration) (*CollectionTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		WITH next AS (
 			SELECT id FROM collection_tasks
 			WHERE (status = 'pending' AND not_before <= now())
 			   OR (status = 'running' AND heartbeat_at < now() - $1::interval)
-			ORDER BY priority DESC, created_at
+			ORDER BY priority DESC,
+				EXISTS (SELECT 1 FROM collection_tasks r
+					WHERE r.person_id = collection_tasks.person_id AND r.status = 'running'
+					  AND r.heartbeat_at >= now() - $1::interval),
+				created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		), t AS (
