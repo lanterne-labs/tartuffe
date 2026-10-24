@@ -52,51 +52,51 @@
 
 	const content = {
 		fr: {
-			title: 'Ils disent. Ils agissent. On compare.',
-			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
-			pills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
+			title: 'Les actes suivent‑ils les paroles ?',
+			lead: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.',
+			pills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
 
-			exKicker: 'En un coup d’œil',
-			exTitle: 'Une contradiction, un score',
-			exWho: 'Un élu',
+			exKicker: 'Concrètement',
+			exTitle: 'Une contradiction, et le score baisse',
+			exWho: 'Un député',
 			exTag: 'Exemple',
 			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
-			exSaidSrc: 'Interview',
-			exDid: 'Vote pour le report de l’âge de départ à 64 ans.',
-			exDidSrc: 'Vote à l’Assemblée',
+			exSaidSrc: 'En interview',
+			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
+			exDidSrc: 'Scrutin à l’Assemblée',
 			exClash: 'Contradiction',
 			exScore: 'Score d’honnêteté',
 			steps: [
-				['On écoute', 'Ce qu’il dit, ce qu’il vote.'],
-				['On compare', 'Les deux s’opposent ? C’est noté.'],
-				['On montre', 'Le score baisse. Sources à l’appui.']
+				['On relève', 'Ses déclarations et ses votes.'],
+				['On confronte', 'Quand ils se contredisent, on le note.'],
+				['On publie', 'Son score baisse, preuves à l’appui.']
 			],
-			exNote: 'Cohérence, pas vérité.',
+			exNote: 'On mesure la cohérence, pas la vérité.',
 
-			svcKicker: 'Deux façons de s’en servir',
-			svcTitle: 'Tout est public',
+			svcKicker: 'Deux façons de suivre',
+			svcTitle: 'Tout est en accès libre',
 			services: [
-				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Tous les élus et partis, notés sur 100. Cherchez, comparez.', cta: 'Ouvrir' },
-				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, en direct. Un +1 les fait remonter.', cta: 'Lire' }
+				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Chaque élu et chaque parti, noté sur 100. Cherchez un nom, comparez.', cta: 'Ouvrir' },
+				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, au fil de l’eau. Un +1 les fait remonter.', cta: 'Lire' }
 			],
-			aboutLink: 'Comment on calcule le score',
+			aboutLink: 'Comment le score est calculé',
 
 			evTag: 'Expérience temporaire du labo',
-			evTitle: 'Présidentielle 2027 : le vote en ligne, vraiment privé',
-			evBody: 'Classez jusqu’à 3 candidats, ou votez blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat est juste à côté.',
+			evTitle: 'Présidentielle 2027 : voter en ligne, vraiment en secret',
+			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport ou votre carte d’identité. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat s’affiche à côté.',
 			evEnds: 'Jusqu’au {d}',
 			evCta: 'Voter',
 			evMore: 'Découvrir l’expérience',
 
 			labKicker: 'Le labo',
-			labTitle: 'Un laboratoire pour la démocratie',
-			labBody: 'tartuffe.me est un laboratoire de recherche et développement des outils démocratiques : plus de transparence, plus de redevabilité, des preuves plutôt que des opinions. Le détecteur de contradictions est notre premier produit ; le vote privé, notre première expérience.',
+			labTitle: 'Un laboratoire au service de la démocratie',
+			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente, où les élus rendent des comptes, avec des preuves plutôt que des opinions. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
 			labCta: 'Découvrir le labo'
 		},
 		en: {
-			title: 'They say. They act. We compare.',
+			title: 'Do their actions match their words?',
 			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
 			pills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 			ctaMain: 'See the ranking',

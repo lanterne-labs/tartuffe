@@ -35,10 +35,10 @@
 
 	const content = {
 		fr: {
-			kicker: 'Pré-sondage citoyen · Présidentielle 2027',
+			kicker: 'Consultation citoyenne · Présidentielle 2027',
 			until: 'Jusqu’au {d}',
-			title1: 'Votez pour 2027.',
-			title2: 'Anonymement. Vraiment.',
+			title1: 'Votez.',
+			title2: 'Personne ne saura pour qui.',
 			lead: 'Scannez votre passeport ou votre carte d’identité, puis classez vos 3 candidats préférés. Personne, ni nous ni l’État, ne sait qui a voté quoi, et tout le monde peut recompter.',
 			vote: 'Voter maintenant',
 			how: 'Comment ça marche',
@@ -51,7 +51,7 @@
 				['100 %', 'recomptable par tous']
 			],
 			stepsKicker: 'Trois gestes',
-			stepsTitle: 'Une minute, une fois.',
+			stepsTitle: 'Une minute, une seule fois.',
 			steps: [
 				['Scannez votre document', 'Vous ne le faites qu’une fois : il prouve seulement que vous êtes majeur et français.'],
 				['Classez jusqu’à 3 candidats', 'Vous pouvez aussi voter blanc, et changer votre vote à tout moment.'],
@@ -71,14 +71,14 @@
 			countMore: 'Comprendre les deux comptages',
 			blankTitle: 'Le vote blanc compte.',
 			blankBody: 'C’est un bulletin à part entière, compté dans chaque pourcentage.',
-			honestyTitle: 'Votez, et regardez leur bilan.',
+			honestyTitle: 'Votez, et jugez sur pièces.',
 			honestyBody: 'Chaque candidat est affiché avec son score d’honnêteté, calculé à partir de ses contradictions, sources à l’appui.',
 			checkTitle: 'Impossible de tricher sans que ça se voie.',
 			checkBody: 'Chaque bulletin entre dans un registre public signé et horodaté sur Bitcoin. Tout le monde peut le télécharger et recompter.',
 			checkMore: 'Comment vérifier',
 			disclaimer: 'C’est une consultation ouverte, pas un sondage : les votants ne sont pas représentatifs. Les résultats sont masqués la veille et le jour du scrutin.',
-			finalTitle: 'J-{n}. À vous.',
-			finalTitleNoDate: 'À vous.',
+			finalTitle: 'J-{n}. À vous de voter.',
+			finalTitleNoDate: 'À vous de voter.',
 			labLine: 'Une expérience du labo tartuffe.me.',
 			labLink: 'Le labo',
 			phTitle: 'Mon vote',
@@ -88,8 +88,8 @@
 		en: {
 			kicker: 'Citizen pre-poll · 2027 presidential election',
 			until: 'Until {d}',
-			title1: 'Vote for 2027.',
-			title2: 'Anonymously. For real.',
+			title1: 'Vote.',
+			title2: 'No one will know for whom.',
 			lead: 'One scan of your passport or ID card, then your 3 favourite candidates. Nobody, neither we nor the State, knows who voted what. And anyone can recount.',
 			vote: 'Vote now',
 			how: 'How it works',

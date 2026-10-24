@@ -29,39 +29,39 @@
 	const content = {
 		fr: {
 			kicker: 'Le labo',
-			title: 'Un laboratoire pour des démocraties plus transparentes',
-			lead: 'tartuffe.me est un laboratoire de recherche et développement des outils de la démocratie. Nous construisons, publions et testons en conditions réelles des outils qui rendent le pouvoir redevable, et que chacun peut vérifier.',
+			title: 'Un laboratoire pour une démocratie plus transparente',
+			lead: 'tartuffe.me conçoit des outils au service de la démocratie. Nous les construisons, les publions et les testons en conditions réelles : des outils qui obligent le pouvoir à rendre des comptes, et que chacun peut vérifier.',
 			whyTitle: 'Pourquoi maintenant',
 			why: [
 				'La défiance envers les responsables politiques n’a jamais été aussi forte, et la désinformation va plus vite que les démentis.',
 				'Les promesses s’oublient, les votes passent inaperçus, et les citoyens n’ont souvent que des opinions à opposer à des opinions.',
-				'La réponse que nous défendons : des preuves. Ce que les élus disent et font, comparé publiquement, sources à l’appui ; des votes en ligne que chacun peut recompter, sans jamais savoir qui a voté quoi.'
+				'Notre réponse : des preuves. Ce que les élus disent et ce qu’ils font, confrontés publiquement, sources à l’appui ; des votes en ligne que chacun peut recompter, sans que personne ne sache qui a voté quoi.'
 			],
 			releasesTitle: 'Ce que le labo publie',
 			mainTag: 'Produit permanent',
 			mainTitle: 'Tartuffe, le détecteur de contradictions',
-			mainBody: 'Tartuffe lit ce que disent les responsables politiques (discours, interviews, réseaux) et ce qu’ils font (leurs votes à l’Assemblée), puis signale quand les deux s’opposent. Chaque contradiction est sourcée, les mêmes règles valent pour tous, et chacun peut signaler une erreur. Un score d’honnêteté résume la cohérence de chacun.',
+			mainBody: 'Tartuffe lit ce que disent les responsables politiques (discours, interviews, réseaux sociaux) et ce qu’ils font (leurs votes à l’Assemblée), puis signale quand les deux se contredisent. Chaque contradiction est sourcée, les règles sont les mêmes pour tous, et chacun peut signaler une erreur. Un score d’honnêteté résume la cohérence de chacun.',
 			mainCta: 'Voir le classement',
-			mainCta2: 'Comment on calcule le score',
+			mainCta2: 'Comment le score est calculé',
 			eventTag: 'Expérience temporaire',
-			eventTitle: 'Le vote présidentiel privé',
-			eventEnds: 'Jusqu’au {d}, puis l’expérience se termine.',
-			eventBody: 'Une démonstration : peut-on voter en ligne en toute confidentialité, en s’appuyant sur l’infrastructure de l’État, le passeport ou la carte d’identité à puce ?',
+			eventTitle: 'Voter en secret en ligne : la présidentielle',
+			eventEnds: 'Jusqu’au {d}. L’expérience s’arrêtera ensuite.',
+			eventBody: 'Une démonstration : peut-on voter en ligne en toute confidentialité, en s’appuyant sur ce que l’État fournit déjà, le passeport ou la carte d’identité à puce ?',
 			eventPoints: [
-				'Votre document prouve, sur votre téléphone, que vous êtes un électeur français majeur : rien d’autre ne le quitte.',
-				'Votre bulletin est signé par une clé gardée sur vos appareils : ni nous, ni personne, ni l’État ne peut le relier à vous.',
-				'Chaque bulletin et chaque total sont publiés dans un journal public : chacun peut recompter.',
+				'Votre document prouve, sur votre téléphone, que vous êtes électeur, français et majeur : rien d’autre n’en sort.',
+				'Votre bulletin est signé par une clé conservée sur vos appareils : ni nous, ni personne, ni l’État ne peut le relier à vous.',
+				'Chaque bulletin et chaque total sont publiés dans un registre public : chacun peut recompter.',
 				'Aucun compte, aucun e-mail, aucun numéro de téléphone.'
 			],
-			eventNote: 'Ce n’est ni un scrutin officiel ni un sondage représentatif : c’est une preuve de faisabilité, en conditions réelles.',
+			eventNote: 'Ce n’est ni un scrutin officiel ni un sondage représentatif, mais une preuve de faisabilité en conditions réelles.',
 			eventCta: 'Participer',
 			eventHow: 'Ce que nous voyons, et ce que nous ne voyons pas',
 			principlesTitle: 'Nos principes',
 			principles: [
-				['Vérifiable', 'Les sources sont citées, les méthodes publiées, les résultats recomptables.'],
-				['Privé par construction', 'Pas de publicité, pas de traceur, pas d’e-mail : nous ne savons pas qui vous êtes.'],
-				['Mêmes règles pour tous', 'Aucun parti, aucun élu n’est traité à part.'],
-				['Honnête sur ses limites', 'Ce que nos outils ne garantissent pas est écrit, en clair.']
+				['Vérifiable', 'Les sources sont citées, les méthodes publiées et les résultats recomptables.'],
+				['Privé dès la conception', 'Ni publicité, ni traceur, ni e-mail : nous ne savons pas qui vous êtes.'],
+				['Les mêmes règles pour tous', 'Aucun parti, aucun élu ne bénéficie d’un traitement à part.'],
+				['Lucide sur ses limites', 'Ce que nos outils ne garantissent pas est écrit noir sur blanc.']
 			],
 			next: 'D’autres expériences suivront.'
 		},

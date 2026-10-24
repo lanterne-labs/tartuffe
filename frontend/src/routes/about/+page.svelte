@@ -41,20 +41,20 @@
 			metaDesc:
 				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule un score de cohérence. Méthode, limites et neutralité.',
 			kicker: 'À propos',
-			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire de R&D pour des démocraties plus transparentes.',
+			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente.',
 			labLink: 'Le labo',
-			title: 'Ils disent. Ils agissent. On compare.',
-			lead: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.',
-			heroPills: ['100 % sourcé', 'Mêmes règles pour tous', 'Corrigé par vous'],
+			title: 'Les actes suivent‑ils les paroles ?',
+			lead: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.',
+			heroPills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
 
 			howKicker: 'Méthode',
 			howTitle: 'Comment ça marche',
-			howLead: 'Des sources publiques au score. Automatique, identique pour tous.',
+			howLead: 'Des sources publiques jusqu’au score, de façon automatique et identique pour tous.',
 
 			sortTitle: 'Une vraie contradiction, pas une nuance',
 			sortBody: [
 				'Préciser sa pensée n’est pas se contredire. On ne retient que deux faits qui ne peuvent pas être vrais en même temps.',
-				'Les deux faits côte à côte, datés, cités, sourcés.'
+				'Les deux faits sont présentés côte à côte, datés, cités et sourcés.'
 			],
 
 			scoreKicker: 'Le score',
@@ -70,7 +70,7 @@
 				'Trois faits qui se contredisent sur les retraites forment trois paires, mais un seul lot : on ne compte pas trois fois le même revirement.',
 			rules: [
 				['100', 'pour une personne sans aucun fait : il n’y a rien à reprocher, mais rien à juger non plus.'],
-				['≈ 95', 'avec une contradiction.'],
+				['≈ 95', 'pour une seule contradiction.'],
 				['75', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits n’écrase pas le score.'],
 				['½ + ½', 'pour un parti : la moitié vient de son propre score, l’autre moitié de la moyenne de ses membres.']
 			],
@@ -79,14 +79,14 @@
 			readLow: 'Un score bas',
 			readLowBody: ': beaucoup de contradictions pour ce que l’on sait.',
 			readHigh: 'Un score élevé avec peu de faits',
-			readHighBody: ': on en sait peu, pas « honnête ». Regardez le nombre de faits.',
+			readHighBody: ': on en sait peu, ce qui ne veut pas dire « honnête ». Regardez le nombre de faits.',
 
 			limitsKicker: 'Fiabilité',
 			limitsTitle: 'L’IA détecte, vous corrigez',
 			limits: [
 				['Tout est sourcé.', 'Date, citation exacte, lien vers l’original.'],
-				['Vérifié deux fois.', 'Chaque contradiction est relue avant d’être publiée, puis auditée régulièrement.'],
-				['Vous avez le dernier mot.', 'Un fait ou une contradiction faux ? Signalez-le : s’il est fondé, il disparaît.'],
+				['Vérifié deux fois.', 'Chaque contradiction est relue avant publication, puis auditée régulièrement.'],
+				['Vous avez le dernier mot.', 'Un fait ou une contradiction vous semble faux ? Signalez-le : si vous avez raison, il est retiré.'],
 				['Corrections publiques.', 'Chaque retrait est affiché, avec sa raison.']
 			],
 			correctionsLink: 'Voir les corrections',
@@ -95,21 +95,21 @@
 			privacyTitle: 'Nous ne savons pas qui vous êtes',
 			privacy: [
 				['Pas d’e-mail.', 'Google ne nous transmet ni votre e-mail ni votre nom.'],
-				['Pas d’identité.', 'Votre passeport prouve « Français, majeur » sans quitter votre téléphone.'],
-				['Pas de traceur.', 'Ni pub, ni mesure d’audience, ni adresse IP gardée.']
+				['Pas d’identité.', 'Votre passeport prouve « français et majeur » sans quitter votre téléphone.'],
+				['Pas de traceur.', 'Ni publicité, ni mesure d’audience, ni adresse IP conservée.']
 			],
 			privacyLink: 'Tout le détail',
 
 			neutralKicker: 'Neutralité',
 			neutralTitle: 'Gauche, droite : même traitement',
 			neutral: [
-				['Même code pour tous', 'Mêmes règles pour chaque élu et chaque parti.'],
-				['Zéro intervention', 'Personne n’est noté à la main.'],
-				['Zéro argent politique', 'Aucun parti, aucun candidat, aucune pub.'],
+				['Le même code pour tous', 'Les mêmes règles pour chaque élu et chaque parti.'],
+				['Aucune note à la main', 'Aucun élu n’est noté manuellement.'],
+				['Aucun argent politique', 'Ni parti, ni candidat, ni publicité.'],
 				['Indépendant', 'Un projet collaboratif, porté par sa communauté.']
 			],
 
-			pollLink: 'Le labo mène aussi, à part, une expérience de vote en ligne privé : la présidentielle 2027'
+			pollLink: 'Le labo mène aussi, à part, une expérience de vote secret en ligne : la présidentielle 2027'
 		},
 		en: {
 			metaTitle: 'About — tartuffe.me',

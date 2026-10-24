@@ -1,6 +1,6 @@
 export const load = () => ({
 	meta: {
-		title: 'tartuffe.me — Ils disent. Ils agissent. On compare.',
-		description: 'La cohérence, pas la vérité : on ne dit pas qui a raison, on montre qui se contredit. Preuves à l’appui.'
+		title: 'tartuffe.me — Les actes suivent‑ils les paroles ?',
+		description: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.'
 	}
 });

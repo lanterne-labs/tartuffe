@@ -33,7 +33,7 @@
 			kicker: 'Confidentialité',
 			title: 'Nous ne savons pas qui vous êtes.',
 			lead: 'C’est voulu : un site qui juge les responsables politiques ne doit rien savoir de ses lecteurs. Voici, point par point, ce que nous recevons, ce que nous gardons, et ce que nous ne voyons jamais.',
-			pills: ['Pas de pub', 'Pas de traceur', 'Pas d’e-mail', 'Pas d’adresse IP gardée'],
+			pills: ['Pas de pub', 'Pas de traceur', 'Pas d’e-mail', 'Pas d’adresse IP conservée'],
 			getLabel: 'Ce que nous recevons',
 			neverLabel: 'Jamais',
 			parts: [
