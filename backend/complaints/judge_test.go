@@ -29,11 +29,28 @@ func judgeStub(t *testing.T, replies ...string) (*OpenAIJudge, *atomic.Int32) {
 	return &OpenAIJudge{client: cfg.NewClient("complaint-judge-test")}, &calls
 }
 
-// Prose before the JSON gets one corrective retry; the JSON of the second
+// Prose before the JSON is read without a retry (llm.ParseJSONResponse
+// decodes the JSON after the prose).
+func TestOpenAIJudge_ProseBeforeJSON(t *testing.T) {
+	j, calls := judgeStub(t,
+		"The complaint is right.\n{\"reason\": \"misquote\", \"verdict\": \"delete_target\"}")
+	v, err := j.Judge(context.Background(), "PROMPT")
+	if err != nil {
+		t.Fatalf("Judge: %v", err)
+	}
+	if v.Verdict != VerdictDeleteTarget || v.Reason != "misquote" {
+		t.Fatalf("verdict = %+v, want delete_target/misquote", v)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("calls = %d, want 1", n)
+	}
+}
+
+// A reply without JSON gets one corrective retry; the JSON of the second
 // reply is the verdict.
 func TestOpenAIJudge_CorrectiveRetry(t *testing.T) {
 	j, calls := judgeStub(t,
-		"The complaint is right.\n{\"reason\": \"misquote\", \"verdict\": \"delete_target\"}",
+		"The complaint is right.",
 		`{"reason": "misquote", "verdict": "delete_target"}`)
 	v, err := j.Judge(context.Background(), "PROMPT")
 	if err != nil {

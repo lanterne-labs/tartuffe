@@ -20,9 +20,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // minArticleContentLen is the minimum length (after the extractor's cleaning
@@ -184,6 +186,9 @@ func (p *Provider) UseExtractor(extractorType string) error {
 // newsMaxConsecutiveFailures aborts a target's extraction after this many
 // documents failed in a row: the LLM is down, not the articles.
 const newsMaxConsecutiveFailures = 5
+
+// pagesAtOnce is how many pages of one task are fetched at once.
+const pagesAtOnce = 8
 
 // targetCacheDir returns the target-specific cache subdirectory under baseDir.
 // Creates the directory if it doesn't exist.
@@ -551,13 +556,20 @@ func (p *Provider) extractAndInsertFromArticles(
 			extractionErrors[i] = br.Error
 		}
 	} else {
+		// The pages are fetched at once: webfetch paces each site (a rate and
+		// a count at once per domain), so the bound here only caps the work
+		// of one task.
 		extractedContents = make([]*extractor.ExtractedContent, len(urlsToExtract))
 		extractionErrors = make([]error, len(urlsToExtract))
+		var g errgroup.Group
+		g.SetLimit(pagesAtOnce)
 		for i, url := range urlsToExtract {
-			content, err := contentExtractor.ExtractContent(url)
-			extractedContents[i] = content
-			extractionErrors[i] = err
+			g.Go(func() error {
+				extractedContents[i], extractionErrors[i] = contentExtractor.ExtractContent(url)
+				return nil
+			})
 		}
+		_ = g.Wait() // the errors are per page, in extractionErrors
 	}
 
 	// Fetch step of the document state machine: every scraped article is
@@ -635,16 +647,26 @@ func (p *Provider) extractStoredDocuments(ctx context.Context, target plugins.Ta
 	}
 	result.storedExtracted = true
 	inserter := p.newFactInserter()
+	// The documents are extracted at once (ProcessOptions.Parallel): each
+	// counts into its own Result, added to result under mu.
+	var mu sync.Mutex
 	extract := func(ctx context.Context, docs []core.SourceDocument) (map[int64]int, error) {
-		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, result)
+		var own Result
+		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, &own)
 		if err != nil {
-			result.Errors = append(result.Errors, err)
+			own.Errors = append(own.Errors, err)
+		}
+		mu.Lock()
+		aggregateResult(result, &own)
+		mu.Unlock()
+		if err != nil {
 			return nil, err
 		}
 		return map[int64]int{docs[0].ID: n}, nil
 	}
 	stats, err := core.ProcessDocuments(ctx, p.Storer, "news", target.PersonID, extract, core.ProcessOptions{
 		MaxConsecutiveFailures: newsMaxConsecutiveFailures,
+		Parallel:               true,
 	})
 	log.Info().Str("target", target.Name).Int("pending", stats.Pending).Int("extracted", stats.Extracted).
 		Int("failed", stats.Failed).Int("facts", stats.Facts).Msg("news: documents extracted")

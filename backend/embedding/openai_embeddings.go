@@ -151,6 +151,12 @@ type embedResponse struct {
 	} `json:"error,omitempty"`
 }
 
+// embedInFlight bounds the embedding requests of the process at one time: the
+// documents of the tasks are extracted at once, and each embeds its facts.
+const embedInFlight = 8
+
+var embedSlots = make(chan struct{}, embedInFlight)
+
 // purposeInstructions maps each Purpose to the instruction prefix prepended
 // to every input. Qwen3-Embedding consumes "Instruct: ...\nQuery: ..." and
 // produces a representation tuned to the stated task; OpenAI's
@@ -286,6 +292,12 @@ func (m *OpenAIEmbeddingGenerator) GenerateEmbeddings(ctx context.Context, purpo
 	if len(texts) == 0 {
 		return [][]float32{}, nil // Return empty slice if no input
 	}
+	select {
+	case embedSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-embedSlots }()
 
 	instruction, ok := purposeInstructions[purpose]
 	if !ok {

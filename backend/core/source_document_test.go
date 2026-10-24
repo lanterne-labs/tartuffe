@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -251,5 +252,46 @@ func TestProcessDocuments_StopsOnDeadline(t *testing.T) {
 		if m.states[id] != DocFetched || m.tries[id] != 0 {
 			t.Fatalf("doc %d: state %s tries %d, want fetched with no attempt charged", id, m.states[id], m.tries[id])
 		}
+	}
+}
+
+// Parallel runs the batches at once (as many as the endpoint serves) and
+// records every document; an outage still stops the run on the streak.
+func TestProcessDocuments_Parallel(t *testing.T) {
+	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{ProcsPerSeat: 4}, "claude-sonnet-5-5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	var docs []SourceDocument
+	for i := int64(1); i <= 12; i++ {
+		docs = append(docs, fetched(i, fmt.Sprintf("u%d", i), 1))
+	}
+	store := newMemDocs(docs...)
+	var inFlight, peak atomic.Int32
+	extract := func(ctx context.Context, b []SourceDocument) (map[int64]int, error) {
+		n := inFlight.Add(1)
+		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+		}
+		time.Sleep(30 * time.Millisecond)
+		inFlight.Add(-1)
+		return map[int64]int{b[0].ID: 2}, nil
+	}
+	st, err := ProcessDocuments(context.Background(), store, "t", 0, extract, ProcessOptions{Parallel: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Extracted != 12 || st.Facts != 24 || peak.Load() < 2 || peak.Load() > 4 {
+		t.Fatalf("stats %+v, peak %d; want 12 extracted, 24 facts, 2 to 4 at once", st, peak.Load())
+	}
+
+	store = newMemDocs(docs...)
+	down := fmt.Errorf("x: %w", llm.ErrUnavailable)
+	_, err = ProcessDocuments(context.Background(), store, "t", 0, func(ctx context.Context, b []SourceDocument) (map[int64]int, error) {
+		time.Sleep(5 * time.Millisecond)
+		return nil, down
+	}, ProcessOptions{Parallel: true, MaxConsecutiveFailures: 3})
+	if !errors.Is(err, ErrOutage) {
+		t.Fatalf("err = %v, want the outage", err)
 	}
 }
