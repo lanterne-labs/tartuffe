@@ -56,7 +56,7 @@ func TestForEach(t *testing.T) {
 		t.Fatalf("local: an error at item 2 started %v (err %v); want 0..2 and the error", started, err)
 	}
 
-	restore, err := SetRouting(ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{MaxProcs: 3}, "claude-sonnet-5-5"))
+	restore, err := SetRouting(ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{ProcsPerSeat: 3}, "claude-sonnet-5-5"))
 	if err != nil {
 		t.Fatal(err)
 	}
