@@ -44,11 +44,21 @@ type Options struct {
 	Notify func(ctx context.Context, msg string) error
 }
 
-// Idle is the work of the worker when no task is pending (*Housekeeping).
+// Idle is the work of the worker besides the tasks (*Housekeeping), in the
+// order of priority: Beside runs the work that goes before every task (the
+// feed) at the same time as the tasks; Urgent tells that the work that runs
+// alone (the maintenance pass) is due although tasks are pending, and the
+// worker then stops claiming, lets the running tasks end and runs Idle; Idle
+// runs when no task runs.
 type Idle interface {
 	// Idle does the work that is due. An error wrapping llm.ErrUnavailable
 	// makes the worker wait for the LLM.
 	Idle(ctx context.Context) error
+	// Beside does the work that is due and runs beside the tasks.
+	Beside(ctx context.Context) error
+	// Urgent reports whether Idle has work due that goes before the pending
+	// tasks.
+	Urgent(ctx context.Context) (bool, error)
 	// FactsAdded tells that a task added n facts.
 	FactsAdded(n int)
 }
@@ -110,10 +120,19 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 	log.Info().Dur("poll", opts.Poll).Dur("lease", opts.Lease).Int("tasks_at_once", lanes).Msg("Worker started")
 	done := make(chan error, lanes)
 	running := 0
+	// The work beside the tasks (the feed): one at a time, looked at every poll.
+	besideDone := make(chan error, 1)
+	besideRunning := false
+	var besideNext, urgentNext time.Time
+	// draining: the work that runs alone is due; no claim until it ran.
+	draining := false
 	// The tasks running when Run returns finish their bookkeeping first.
 	defer func() {
 		for ; running > 0; running-- {
 			<-done
+		}
+		if besideRunning {
+			<-besideDone
 		}
 	}()
 	quickRefails := 0
@@ -147,8 +166,25 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if idle != nil {
+			now := time.Now()
+			if !besideRunning && !now.Before(besideNext) {
+				besideRunning = true
+				go func() { besideDone <- runHousekeeping(ctx, idle.Beside, opts) }()
+			}
+			if !draining && running > 0 && !now.Before(urgentNext) {
+				urgentNext = now.Add(opts.Poll)
+				urgent, err := idle.Urgent(ctx)
+				if err != nil {
+					log.Error().Err(err).Msg("Worker: checking the housekeeping failed")
+				} else if urgent {
+					draining = true
+					log.Info().Int("running", running).Msg("Worker: the maintenance is due; no claim until the running tasks end and it ran")
+				}
+			}
+		}
 		// Fill the free lanes.
-		for running < lanes && !time.Now().Before(resume) {
+		for !draining && running < lanes && !time.Now().Before(resume) {
 			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease)
 			if err != nil {
 				if ctx.Err() != nil {
@@ -181,7 +217,8 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		case time.Now().Before(resume):
 			wait = time.Until(resume)
 		case idle != nil:
-			resume = time.Now().Add(settle(runIdle(ctx, idle, opts), false))
+			resume = time.Now().Add(settle(runHousekeeping(ctx, idle.Idle, opts), false))
+			draining = false
 			continue
 		default:
 			wait = opts.Poll
@@ -191,6 +228,12 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 			running--
 			if pause := settle(err, true); pause > 0 {
 				resume = time.Now().Add(pause)
+			}
+		case err := <-besideDone:
+			besideRunning = false
+			besideNext = time.Now().Add(opts.Poll)
+			if errors.Is(err, errIdleFailed) {
+				besideNext = time.Now().Add(opts.Backoff)
 			}
 		case <-time.After(wait):
 		case <-ctx.Done():
@@ -203,11 +246,11 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 // unavailable LLM: the loop pauses for the backoff before the next claim.
 var errIdleFailed = errors.New("the housekeeping failed")
 
-// runIdle does the housekeeping that is due. An unavailable LLM makes the
+// runHousekeeping does the housekeeping work. An unavailable LLM makes the
 // worker wait as for a task; another failure is logged and sent to the
 // operator.
-func runIdle(ctx context.Context, idle Idle, opts Options) error {
-	err := idle.Idle(ctx)
+func runHousekeeping(ctx context.Context, work func(context.Context) error, opts Options) error {
+	err := work(ctx)
 	switch {
 	case err == nil || ctx.Err() != nil:
 		return nil

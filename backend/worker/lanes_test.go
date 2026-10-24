@@ -64,13 +64,22 @@ func (r *laneRunner) Run(context.Context, storage.CollectionTask) (Outcome, erro
 
 // laneIdle records whether the housekeeping ever ran while a task ran.
 type laneIdle struct {
-	runner  *laneRunner
-	calls   atomic.Int32
-	overlap atomic.Bool
+	runner        *laneRunner
+	calls         atomic.Int32
+	overlap       atomic.Bool
+	besideOverlap atomic.Bool // Beside ran while a task ran
+	urgent        atomic.Bool // Urgent says yes until Idle ran
+	urgentAsked   atomic.Bool
+	pendingAtIdle atomic.Int32 // the tasks still pending when Idle first ran
+	tasks         *memTasks
 }
 
 func (i *laneIdle) Idle(context.Context) error {
-	i.calls.Add(1)
+	if i.calls.Add(1) == 1 && i.tasks != nil {
+		i.tasks.mu.Lock()
+		i.pendingAtIdle.Store(int32(len(i.tasks.pending)))
+		i.tasks.mu.Unlock()
+	}
 	if i.runner.inFlight.Load() > 0 {
 		i.overlap.Store(true)
 	}
@@ -79,16 +88,32 @@ func (i *laneIdle) Idle(context.Context) error {
 
 func (i *laneIdle) FactsAdded(int) {}
 
+func (i *laneIdle) Beside(context.Context) error {
+	if i.runner.inFlight.Load() > 0 {
+		i.besideOverlap.Store(true)
+	}
+	return nil
+}
+
+func (i *laneIdle) Urgent(context.Context) (bool, error) {
+	if i.urgent.Load() && i.calls.Load() == 0 {
+		i.urgentAsked.Store(true)
+		return true, nil
+	}
+	return false, nil
+}
+
 // runLanes runs the worker over n tasks until they are done, and returns the
 // most tasks that ran at once.
-func runLanes(t *testing.T, n int) (int32, *laneIdle) {
+func runLanes(t *testing.T, n int, urgent ...bool) (int32, *laneIdle) {
 	t.Helper()
 	tasks := &memTasks{finished: map[int64]string{}}
 	for id := int64(1); id <= int64(n); id++ {
 		tasks.pending = append(tasks.pending, storage.CollectionTask{ID: id, Plugin: "news", PersonName: "p"})
 	}
 	runner := &laneRunner{}
-	idle := &laneIdle{runner: runner}
+	idle := &laneIdle{runner: runner, tasks: tasks}
+	idle.urgent.Store(len(urgent) > 0 && urgent[0])
 	ctx, cancel := context.WithCancel(context.Background())
 	opts := DefaultOptions
 	opts.Poll = 10 * time.Millisecond
@@ -145,5 +170,29 @@ func TestWorkerLanes(t *testing.T) {
 	}
 	if idle.calls.Load() == 0 {
 		t.Error("team endpoint: no housekeeping once the queue was empty")
+	}
+}
+
+// TestWorkerUrgentHousekeeping: an urgent maintenance stops the claims, lets
+// the running tasks end, runs alone while tasks are still pending, and the
+// tasks go on after it; the work beside the tasks runs while they run.
+func TestWorkerUrgentHousekeeping(t *testing.T) {
+	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{ProcsPerSeat: 3}, "claude-sonnet-5-5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	_, idle := runLanes(t, 30, true)
+	if !idle.urgentAsked.Load() || idle.calls.Load() == 0 {
+		t.Fatal("the urgent maintenance did not run")
+	}
+	if idle.overlap.Load() {
+		t.Error("the maintenance ran while a task ran")
+	}
+	if idle.pendingAtIdle.Load() == 0 {
+		t.Error("the maintenance waited for the queue to be empty")
+	}
+	if !idle.besideOverlap.Load() {
+		t.Error("the work beside the tasks never ran while a task ran")
 	}
 }
