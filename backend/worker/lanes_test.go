@@ -131,7 +131,7 @@ func TestWorkerLanes(t *testing.T) {
 		t.Error("local endpoint: the housekeeping ran while a task ran")
 	}
 
-	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{MaxProcs: 3}, "claude-sonnet-5-5"))
+	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{ProcsPerSeat: 3}, "claude-sonnet-5-5"))
 	if err != nil {
 		t.Fatal(err)
 	}

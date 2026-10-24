@@ -550,7 +550,7 @@ cat "$d/stdout"
 		t.Fatal(err)
 	}
 	e := teamEndpoint(bin)
-	e.MaxProcs = 1
+	e.ProcsPerSeat = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
@@ -594,7 +594,7 @@ cat "$d/stdout"
 		t.Fatal(err)
 	}
 	e := teamEndpoint(bin)
-	e.MaxProcs = 1
+	e.ProcsPerSeat = 1
 	e.CallTimeout = 200 * time.Millisecond
 	start := time.Now()
 	_, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "slow"}}})
@@ -609,10 +609,10 @@ cat "$d/stdout"
 	}
 }
 
-// At most MaxProcs processes run at one time. Each fake CLI counts the
+// At most ProcsPerSeat processes run at one time. Each fake CLI counts the
 // running processes when it starts; the test fails only on a count above
-// MaxProcs, so a slow machine cannot fail it.
-func TestClaudeTeamEndpoint_MaxProcs(t *testing.T) {
+// ProcsPerSeat, so a slow machine cannot fail it.
+func TestClaudeTeamEndpoint_ProcsPerSeat(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "stdout"), []byte(teamSuccess), 0o644); err != nil {
 		t.Fatal(err)
@@ -631,7 +631,7 @@ cat "$d/stdout"
 		t.Fatal(err)
 	}
 	e := teamEndpoint(bin)
-	e.MaxProcs = 2
+	e.ProcsPerSeat = 2
 	var wg sync.WaitGroup
 	errs := make(chan error, 6)
 	for i := 0; i < 6; i++ {
@@ -657,8 +657,8 @@ cat "$d/stdout"
 		}
 		peak = max(peak, n)
 	}
-	if peak == 0 || peak > e.MaxProcs {
-		t.Fatalf("peak of %d processes, want 1 to %d", peak, e.MaxProcs)
+	if peak == 0 || peak > e.ProcsPerSeat {
+		t.Fatalf("peak of %d processes, want 1 to %d", peak, e.ProcsPerSeat)
 	}
 }
 
@@ -867,14 +867,14 @@ func TestClaudeTeamEndpoint_RotationPastReset(t *testing.T) {
 }
 
 // Concurrent calls on a limited first seat all succeed on the next seat; the
-// limited seat runs at most MaxProcs processes (the calls in flight when the
+// limited seat runs at most ProcsPerSeat processes (the calls in flight when the
 // first limit comes back).
 func TestClaudeTeamEndpoint_RotationConcurrent(t *testing.T) {
 	bin, dir := rotatingClaude(t, teamLimit)
 	if err := os.WriteFile(filepath.Join(dir, "limited"), []byte("tok-alice\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e := &ClaudeTeamEndpoint{Binary: bin, MaxProcs: 4, seats: []claudeSeat{{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}}}
+	e := &ClaudeTeamEndpoint{Binary: bin, ProcsPerSeat: 4, seats: []claudeSeat{{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}}}
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
@@ -906,5 +906,77 @@ func TestClaudeTeamEndpoint_RotationConcurrent(t *testing.T) {
 	}
 	if alice < 1 || alice > 4 || bob != 8 {
 		t.Fatalf("alice ran %d times, bob %d; want 1 to 4 and 8", alice, bob)
+	}
+}
+
+// Every seat that serves runs its processes at the same time: with 2 seats of
+// 2 processes, 8 slow calls run 4 at once, at most 2 per seat (prod
+// 2026-10-24: 4 processes in all, on one seat, while 3 other seats sat idle).
+func TestClaudeTeamEndpoint_SeatsServeTogether(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "stdout"), []byte(teamSuccess), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+d=%q
+cat > /dev/null
+touch "$d/run.$CLAUDE_CODE_OAUTH_TOKEN.$$"
+echo "$(ls "$d" | grep -c '^run\.') $(ls "$d" | grep -c "^run\.$CLAUDE_CODE_OAUTH_TOKEN\.")" >> "$d/counts"
+sleep 0.4
+rm "$d/run.$CLAUDE_CODE_OAUTH_TOKEN.$$"
+cat "$d/stdout"
+`, dir)
+	bin := filepath.Join(dir, "claude")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := &ClaudeTeamEndpoint{Binary: bin, ProcsPerSeat: 2, seats: []claudeSeat{{name: "alice", token: "tok-alice"}, {name: "bob", token: "tok-bob"}}}
+	if n := e.Concurrency(); n != 4 {
+		t.Fatalf("Concurrency() = %d, want 2 seats x 2", n)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, seat := 0, 0
+	for _, line := range strings.Split(strings.TrimSpace(readFile(t, filepath.Join(dir, "counts"))), "\n") {
+		var a, s int
+		if _, err := fmt.Sscan(line, &a, &s); err != nil {
+			t.Fatal(err)
+		}
+		all, seat = max(all, a), max(seat, s)
+	}
+	if all < 3 || all > 4 || seat > 2 {
+		t.Fatalf("peak of %d processes, %d on one seat; want 3 to 4 in all and 2 at most per seat", all, seat)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, s := range e.seats {
+		if s.busy != 0 {
+			t.Fatalf("seat %s still holds %d processes", s.name, s.busy)
+		}
+	}
+}
+
+// A call that waits for a free process ends with its context.
+func TestClaudeTeamEndpoint_WaitEndsWithTheContext(t *testing.T) {
+	e := &ClaudeTeamEndpoint{Binary: "/nonexistent", ProcsPerSeat: 1, seats: []claudeSeat{{name: "alice", token: "tok-alice", busy: 1}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, _, err := teamCall(e, ctx, ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline of the context", err)
 	}
 }

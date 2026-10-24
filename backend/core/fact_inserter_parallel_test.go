@@ -106,7 +106,7 @@ func TestInsertFactsConcurrency(t *testing.T) {
 		t.Fatalf("local profile: inserted %d, peak %d; want %d and 1", res.Inserted, stancer.peak, len(facts))
 	}
 
-	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{MaxProcs: 4}, "claude-sonnet-5-5"))
+	restore, err := llm.SetRouting(llm.ClaudeRouting(llm.EndpointClaudeTeam, &llm.ClaudeTeamEndpoint{ProcsPerSeat: 4}, "claude-sonnet-5-5"))
 	if err != nil {
 		t.Fatal(err)
 	}
