@@ -54,6 +54,10 @@
 	let blank = $derived(mine?.kind === 'blank');
 	// endsBlank: the ranking ends with the blank vote (the others: no).
 	let endsBlank = $derived(ballot.at(-1) === BLANK);
+	// shown is the ranking as the slots show it: a blank ballot is the blank
+	// vote in the first slot. The slots are always all there: an empty one
+	// after a blank vote takes a candidate before it.
+	let shown = $derived(blank ? [BLANK] : ballot);
 
 	// slotPick is the slot whose window is open: a tap on a slot opens the
 	// candidates not ranked yet, by name (not by result, so it does not push
@@ -347,7 +351,7 @@
 	}
 
 	function remove(id: number) {
-		const next = ballot.filter((x) => x !== id);
+		const next = shown.filter((x) => x !== id);
 		if (next.length === 1 && next[0] === BLANK) change({ kind: 'blank', choices: [] });
 		else change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] });
 	}
@@ -498,59 +502,48 @@
 			{#if hasKey && !protectedEnough($voterKey)}
 				<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
 			{/if}
-			{#if blank}
-				<div class="slots slots--blank">
-					<div class="slot filled">
-						<button class="slot-add" onclick={() => (slotPick = 0)} disabled={busy || !results.open}>
-							<span class="slot-photo slot-photo--blank" aria-hidden="true">◻</span>
-							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
-						</button>
-					</div>
-				</div>
-			{:else}
-				<ol class="slots" style="--n: {maxChoices}">
-					{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
-						{@const id = ballot[i]}
-						{@const c = id === undefined ? undefined : byId.get(id)}
-						<li class="slot" class:filled={id !== undefined} class:closed={id === undefined && endsBlank} class:next={results.open && !endsBlank && id === undefined && i === ballot.length}>
-							{#if id === BLANK}
-								<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
-									<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
-									<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
-								</button>
-								{#if results.open}
-									<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
-								{/if}
-							{:else if id !== undefined}
-								<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
-									<span class="slot-photo">
-										{#if c?.image_url}
-											<img src={c.image_url} alt="" />
-										{:else}
-											<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
-										{/if}
-										<span class="slot-rank">{i + 1}</span>
-									</span>
-									<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
-								</button>
-								{#if results.open}
-									<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
-								{/if}
-							{:else if !endsBlank && results.open}
-								<button class="slot-add" onclick={() => (slotPick = ballot.length)} disabled={busy}>
-									<span class="slot-photo slot-photo--empty">
-										{#if i === ballot.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
-									</span>
-									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
-								</button>
-							{:else if !endsBlank}
-								<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
-								<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+			<ol class="slots" style="--n: {maxChoices}">
+				{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
+					{@const id = shown[i]}
+					{@const c = id === undefined ? undefined : byId.get(id)}
+					<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === shown.length}>
+						{#if id === BLANK}
+							<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+								<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
+								<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
+							</button>
+							{#if results.open}
+								<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
 							{/if}
-						</li>
-					{/each}
-				</ol>
-				{/if}
+						{:else if id !== undefined}
+							<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+								<span class="slot-photo">
+									{#if c?.image_url}
+										<img src={c.image_url} alt="" />
+									{:else}
+										<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
+									{/if}
+									<span class="slot-rank">{i + 1}</span>
+								</span>
+								<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
+							</button>
+							{#if results.open}
+								<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
+							{/if}
+						{:else if results.open}
+							<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
+								<span class="slot-photo slot-photo--empty">
+									{#if i === shown.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
+								</span>
+								<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+							</button>
+						{:else}
+							<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
+							<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+						{/if}
+					</li>
+				{/each}
+			</ol>
 				{#if results.open}
 					<div class="ballot-actions">
 					{#if ballot.length === 0 && !blank}
@@ -862,10 +855,6 @@
 		grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
 		gap: 0.75rem;
 	}
-	.slots--blank {
-		grid-template-columns: minmax(0, 12rem);
-		justify-content: center;
-	}
 	.slot {
 		position: relative;
 		display: flex;
@@ -956,10 +945,6 @@
 	}
 	.pick-card--blank {
 		color: var(--text-secondary);
-	}
-	.slot.closed {
-		border-color: transparent;
-		background: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in oklch, var(--text-muted) 10%, transparent) 8px 9px);
 	}
 	.slot-photo {
 		position: relative;

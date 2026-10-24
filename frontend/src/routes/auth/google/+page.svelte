@@ -2,6 +2,7 @@
 	// Where Google sends the sign-in back (src/lib/google.ts): the ID token is
 	// in the fragment, which never reaches a server. In the popup it goes back
 	// to the page that opened it; else this page finishes the sign-in itself.
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { signIn } from '$lib/auth';
@@ -50,7 +51,7 @@
 		<p class="error">{error}</p>
 		<a href="/">{tr('auth.google.back', currentLang)}</a>
 	{:else}
-		<p>{tr('auth.google.signing_in', currentLang)}</p>
+		<p class="loading"><Spinner size="lg" label={tr('auth.google.signing_in', currentLang)} /></p>
 	{/if}
 </div>
 

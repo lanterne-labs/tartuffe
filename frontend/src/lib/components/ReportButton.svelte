@@ -3,6 +3,7 @@
 	// reports, once per target; an AI re-examines the report with the sources
 	// and removes the item when the report is right (the worker, within
 	// minutes). A signed-out click opens the sign-in, then this dialog.
+	import Spinner from './Spinner.svelte';
 	import Modal from './Modal.svelte';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { session, signInOpen } from '$lib/auth';
@@ -121,7 +122,7 @@
 			{:else}
 				<button class="btn" onclick={() => (open = false)} disabled={sending}>{tr('vote.cancel', currentLang)}</button>
 				<button class="btn btn-primary" onclick={submit} disabled={sending || length < MIN_REASON}>
-					{sending ? tr('report.sending', currentLang) : tr('report.submit', currentLang)}
+					{#if sending}<Spinner size="sm" label={tr('report.sending', currentLang)} />{:else}{tr('report.submit', currentLang)}{/if}
 				</button>
 			{/if}
 		{/snippet}

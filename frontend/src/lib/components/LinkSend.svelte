@@ -4,6 +4,7 @@
 	// phone's own camera opens /link), asks the voter to confirm, and sends
 	// the key, and a session of the account if signed in, encrypted for the
 	// new device only.
+	import Spinner from './Spinner.svelte';
 	import { onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
 	import { tr, type Lang } from '$lib/i18n';
@@ -100,12 +101,12 @@
 	{#if !$voterKey}
 		<p class="muted">{tr('link.send.no_key', lang)}</p>
 	{:else if phase === 'sent'}
-		<p class="ok">{tr('link.send.sent', lang)}</p>
+		<p class="ok">✓ {tr('link.send.sent', lang)}</p>
 	{:else if target}
 		<p class="confirm">{tr($session ? 'link.send.confirm_account' : 'link.send.confirm', lang)}</p>
 		<p class="muted small">{tr('link.send.own_only', lang)}</p>
 		<div class="actions">
-			<button class="primary" onclick={send} disabled={phase === 'sending'}>{tr('link.send.button', lang)}</button>
+			<button class="primary" onclick={send} disabled={phase === 'sending'}>{#if phase === 'sending'}<Spinner size="sm" />{:else}{tr('link.send.button', lang)}{/if}</button>
 			<button class="secondary" onclick={() => (target = null)} disabled={phase === 'sending'}>{tr('vote.cancel', lang)}</button>
 		</div>
 	{:else}

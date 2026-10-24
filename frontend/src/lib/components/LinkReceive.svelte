@@ -59,7 +59,7 @@
 			<li>{tr('link.receive.step1', lang)}</li>
 			<li>{tr('link.receive.step2', lang)}</li>
 		</ol>
-		<p class="muted small">{tr('link.receive.waiting', lang)}</p>
+		<p class="loading"><Spinner label={tr('link.receive.waiting', lang)} /></p>
 		<details>
 			<summary>{tr('link.receive.no_camera', lang)}</summary>
 			<p class="url">{url}</p>
@@ -104,9 +104,6 @@
 		color: var(--text-secondary);
 		font-size: 0.85rem;
 		margin: 0;
-	}
-	.small {
-		font-size: 0.8rem;
 	}
 	details {
 		margin-top: 0.75rem;

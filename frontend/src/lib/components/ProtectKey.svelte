@@ -4,6 +4,7 @@
 	// devices), another device linked by QR code, the 12 recovery words. Each
 	// one done is ticked. Without any, a lost device means a passport scan
 	// and up to 30 days without a vote that counts.
+	import Spinner from './Spinner.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import { voterKey, protectWithPasskey, passkeySupported, recoveryWords, PasskeyUnsupported } from '$lib/voter';
 	import LinkSend from './LinkSend.svelte';
@@ -45,7 +46,7 @@
 	{#if b.passkey}
 		<p class="main done">✓ {tr('key.passkey.saved', lang)}</p>
 	{:else if passkeySupported()}
-		<button class="main" onclick={passkey} disabled={busy}>{tr('key.passkey.button', lang)}</button>
+		<button class="main" onclick={passkey} disabled={busy}>{#if busy}<Spinner size="sm" />{:else}{tr('key.passkey.button', lang)}{/if}</button>
 	{/if}
 	<div class="others">
 		<button class="other" class:done={b.linked > 0} onclick={() => (linking = !linking)}>
