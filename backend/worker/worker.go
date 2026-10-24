@@ -49,7 +49,7 @@ type Options struct {
 // feed) at the same time as the tasks; Urgent tells that the work that runs
 // alone (the maintenance pass) is due although tasks are pending, and the
 // worker then stops claiming, lets the running tasks end and runs Idle; Idle
-// runs when no task runs.
+// runs when no task and no Beside runs, and no Beside starts while it is due.
 type Idle interface {
 	// Idle does the work that is due. An error wrapping llm.ErrUnavailable
 	// makes the worker wait for the LLM.
@@ -168,11 +168,13 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		}
 		if idle != nil {
 			now := time.Now()
-			if !besideRunning && !now.Before(besideNext) {
+			if !draining && !besideRunning && !now.Before(besideNext) {
 				besideRunning = true
 				go func() { besideDone <- runHousekeeping(ctx, idle.Beside, opts) }()
 			}
-			if !draining && running > 0 && !now.Before(urgentNext) {
+			// A feed that runs goes on beside the tasks: the urgent work waits
+			// for its end rather than hold the tasks back behind it.
+			if !draining && running > 0 && !besideRunning && !now.Before(urgentNext) {
 				urgentNext = now.Add(opts.Poll)
 				urgent, err := idle.Urgent(ctx)
 				if err != nil {
@@ -216,6 +218,9 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 			}
 		case time.Now().Before(resume):
 			wait = time.Until(resume)
+		case besideRunning:
+			// The work that runs alone waits for the end of the feed.
+			wait = opts.Poll
 		case idle != nil:
 			resume = time.Now().Add(settle(runHousekeeping(ctx, idle.Idle, opts), false))
 			draining = false
