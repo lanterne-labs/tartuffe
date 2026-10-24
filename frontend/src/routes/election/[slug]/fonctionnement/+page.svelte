@@ -77,15 +77,15 @@
 						[
 							'Une preuve « à divulgation nulle de connaissance » ?',
 							[
-								'Une preuve qu’une affirmation est vraie, sans rien révéler d’autre.',
-								'Comme un certificat « majeur » infalsifiable, remis à la place de votre carte d’identité. Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans faire confiance au téléphone.',
+								'C’est une preuve qu’une affirmation est vraie, qui ne révèle rien d’autre.',
+								'C’est comme un certificat « majeur » infalsifiable, remis à la place de votre carte d’identité. Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans faire confiance au téléphone.',
 								'La preuve repose sur la signature de l’État inscrite dans la puce : un faux document ne peut pas en produire.'
 							]
 						],
 						[
 							'L’identifiant du document',
 							[
-								'Calculé à partir du document et du nom du site : le même document donne toujours le même identifiant ici, d’où une voix par document. Il change d’un site à l’autre et ne mène pas à votre nom.',
+								'Il est calculé à partir du document et du nom du site : le même document donne toujours le même identifiant ici, d’où une voix par document. Il change d’un site à l’autre et ne mène pas à votre nom.',
 								'Nous n’en gardons qu’une empreinte à sens unique : une fuite de notre base ne donnerait pas la liste des documents.'
 							]
 						]
@@ -95,7 +95,7 @@
 					id: 'vote',
 					title: '2. Voter',
 					body: [
-						'Jusqu’à 3 candidats, par ordre de préférence, ou un vote blanc. Modifiable jusqu’à la clôture : le dernier vote compte.',
+						'Vous classez jusqu’à 3 candidats, par ordre de préférence, ou vous votez blanc. Vous pouvez changer d’avis jusqu’à la clôture : seul le dernier vote compte.',
 						'Votre navigateur télécharge toute la liste des votants, pour ne pas dire qui vous êtes, et calcule une preuve Semaphore : « ce bulletin vient d’une clé de la liste », sans dire laquelle. Elle donne aussi un pseudonyme, le même pour vous pendant 30 jours et sans lien avec votre clé : un nouveau vote remplace ainsi l’ancien.',
 						'Le bulletin ne passe pas par nous : il part sur des relais Nostr publics, tenus par d’autres (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social), signé par une clé jetable et daté à l’heure près. Notre serveur lit les relais une fois par heure : il ne voit ni l’adresse IP d’un bulletin, ni la minute de son envoi.',
 						'Chaque heure, les bulletins sont publiés par lots mélangés (au moins 3, ou après 6 h d’attente au plus) dans le registre public. Si aucun relais ne répond, le navigateur envoie le bulletin directement à notre serveur, qui voit alors son adresse.'
@@ -129,14 +129,14 @@
 					body: [
 						'« Avec le classement » : on oppose les candidats deux à deux. A passe devant B si plus de votants classent A au-dessus de B (un candidat classé passe devant un candidat qui ne l’est pas). Celui qui bat tous les autres est le gagnant de Condorcet ; s’il n’y en a pas, la méthode de Schulze donne tout de même un ordre.',
 						'« Au scrutin majoritaire » : seuls les premiers choix comptent, comme au premier tour. Quand les deux gagnants diffèrent, la page le signale.',
-						'Résultats affichés dès le premier vote, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
+						'Les résultats sont affichés dès le premier vote, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
 					]
 				},
 				{
 					id: 'blanc',
 					title: '4. Le vote blanc compte',
 					body: [
-						'Un bulletin à part entière : « j’ai voté, aucun ne me convainc ». Sans classement, compté parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
+						'C’est un bulletin à part entière : « j’ai voté, mais aucun ne me convainc ». Il ne classe personne, mais il compte parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
 						'Retirer son vote, c’est autre chose : le bulletin ne compte plus.'
 					]
 				},
@@ -167,7 +167,7 @@
 					id: 'appareils',
 					title: '6. Plusieurs appareils, clé perdue',
 					body: [
-						'Votre clé vit sur votre appareil. Trois façons de la retrouver ailleurs : une clé d’accès (Face ID, empreinte), qui ouvre une copie chiffrée gardée chez nous ; un autre appareil relié par QR code, comme WhatsApp (message chiffré, effacé dès sa lecture, valable 10 minutes) ; ou 12 mots de secours, à noter.',
+						'Votre clé vit sur votre appareil. Vous pouvez la retrouver ailleurs de trois façons : une clé d’accès (Face ID, empreinte), qui ouvre une copie chiffrée gardée chez nous ; un autre appareil relié par QR code, comme WhatsApp (message chiffré, effacé dès sa lecture, valable 10 minutes) ; ou 12 mots de secours, à noter.',
 						'Tout perdu ? Scannez à nouveau votre document : la nouvelle clé vote à partir de la période de 30 jours suivante. D’ici là, votre ancien vote compte. Un document ne pèse jamais deux voix.'
 					]
 				}
