@@ -193,10 +193,7 @@
 	{:else if step === 'protect'}
 		{#if waitingUntil}
 			<p class="notice">{tr('key.waiting', currentLang, { d: dateText(waitingUntil) })}</p>
-		{:else}
-			<p class="ok">{tr('key.registered', currentLang)}</p>
 		{/if}
-		<p class="lead">{tr('key.protect.lead', currentLang)}</p>
 		<ProtectKey lang={currentLang} />
 		<button class="link" onclick={close}>{tr($voterKey && protectedEnough($voterKey) ? 'key.protect.done' : 'key.protect.later', currentLang)}</button>
 	{:else}
