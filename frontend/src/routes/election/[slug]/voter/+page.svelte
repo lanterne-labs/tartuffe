@@ -14,6 +14,7 @@
 	import Steps from '$lib/components/Steps.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { replaceState } from '$app/navigation';
+	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
 	import { recount, BLANK, type Step, type StepId } from '$lib/recount';
 	import type { PollResponse, CandidateResult } from '$lib/types';
@@ -344,6 +345,52 @@
 		change(next.length === 1 && next[0] === BLANK ? { kind: 'blank', choices: [] } : { kind: 'choices', choices: next });
 	}
 
+	// A long press on a ranked candidate lifts it (SortableJS; a long click
+	// with a mouse); dropped on another candidate's slot, the ranks move and
+	// the new ballot is cast. The blank vote stays last and does not move.
+	// Svelte owns the slots: the moved element is put back, and the ballot
+	// redraws them. A long press does not open the slot's window.
+	let suppressClick = false;
+
+	function movable(id: number | undefined): boolean {
+		return id !== undefined && id !== BLANK && !busy && !!results?.open && ballot.filter((x) => x !== BLANK).length > 1;
+	}
+
+	function sortable(node: HTMLElement) {
+		const s = Sortable.create(node, {
+			draggable: '.movable',
+			delay: 350,
+			forceFallback: true,
+			animation: 150,
+			chosenClass: 'chosen',
+			ghostClass: 'drop-target',
+			fallbackClass: 'dragging',
+			onMove: (e) => e.related.classList.contains('movable'),
+			onChoose: () => {
+				suppressClick = true;
+				navigator.vibrate?.(15);
+			},
+			onUnchoose: () => setTimeout(() => (suppressClick = false), 0),
+			onEnd: (e) => {
+				const from = e.oldDraggableIndex;
+				const to = e.newDraggableIndex;
+				if (from === undefined || to === undefined || from === to) return;
+				e.from.removeChild(e.item);
+				e.from.insertBefore(e.item, e.from.children[e.oldIndex ?? from] ?? null);
+				const cands = ballot.filter((x) => x !== BLANK);
+				const [moved] = cands.splice(from, 1);
+				cands.splice(to, 0, moved);
+				change({ kind: 'choices', choices: endsBlank ? [...cands, BLANK] : cands });
+			}
+		});
+		return { destroy: () => s.destroy() };
+	}
+
+	function openSlot(i: number) {
+		if (suppressClick) return;
+		slotPick = i;
+	}
+
 	function chooseFor(choice: number | 'blank') {
 		const at = slotPick;
 		slotPick = null;
@@ -478,13 +525,19 @@
 				<h2 id="ballot-title">
 					{tr('vote.title', currentLang)}
 					{#if status === 'logged'}
-						<a href="{paths.how}#journal" class="state-icon state-icon--logged" title={tr('vote.status.logged', currentLang)} aria-label={tr('vote.status.logged', currentLang)}>
-							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
-						</a>
+						<details class="help status-tip">
+							<summary class="state-icon state-icon--logged" aria-label={tr('vote.status.logged', currentLang)}>
+								<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
+							</summary>
+							<p>{tr('vote.status.logged', currentLang)}</p>
+						</details>
 					{:else if status === 'received'}
-						<span class="state-icon state-icon--ok" title={tr('vote.status.received', currentLang)} aria-label={tr('vote.status.received', currentLang)}>
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-						</span>
+						<details class="help status-tip">
+							<summary class="state-icon state-icon--ok" aria-label={tr('vote.status.received', currentLang)}>
+								<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+							</summary>
+							<p>{tr('vote.status.received', currentLang)}</p>
+						</details>
 					{:else if status === 'busy'}
 						<span class="state-icon" title={tr('vote.status.busy', currentLang)}><Spinner size="sm" label={tr('vote.status.busy', currentLang)} /></span>
 					{:else if status === 'fault'}
@@ -502,13 +555,13 @@
 			{#if hasKey && !protectedEnough($voterKey)}
 				<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
 			{/if}
-			<ol class="slots" style="--n: {maxChoices}">
+			<ol class="slots" style="--n: {maxChoices}" use:sortable>
 				{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
 					{@const id = shown[i]}
 					{@const c = id === undefined ? undefined : byId.get(id)}
-					<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === shown.length}>
+					<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === shown.length} class:movable={movable(id)}>
 						{#if id === BLANK}
-							<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+							<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !results.open}>
 								<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
 								<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
 							</button>
@@ -516,10 +569,10 @@
 								<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
 							{/if}
 						{:else if id !== undefined}
-							<button class="slot-add" onclick={() => (slotPick = i)} disabled={busy || !results.open}>
+							<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !results.open}>
 								<span class="slot-photo">
 									{#if c?.image_url}
-										<img src={c.image_url} alt="" />
+										<img src={c.image_url} alt="" draggable="false" />
 									{:else}
 										<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
 									{/if}
@@ -871,6 +924,22 @@
 		border: 1px solid color-mix(in oklch, var(--accent) 55%, var(--border-card));
 		background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 14%, var(--bg-card)), var(--bg-card));
 	}
+	.slot.movable {
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+	}
+	:global(.slot.dragging) {
+		opacity: 1 !important;
+		cursor: grabbing;
+		box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+		transform: scale(1.05);
+	}
+	:global(.slot.drop-target) {
+		border-color: var(--accent);
+		border-style: dashed;
+		background: color-mix(in oklch, var(--accent) 14%, var(--bg-card));
+	}
 	.slot.next {
 		border-color: var(--accent);
 	}
@@ -1139,6 +1208,24 @@
 		line-height: 1.45;
 		color: var(--text-secondary);
 	}
+	/* A status icon opens its text like a "?". */
+	.status-tip {
+		display: inline-block;
+		margin-left: 0.4rem;
+		vertical-align: 0.1em;
+	}
+	.help.status-tip summary {
+		border: none;
+		margin: 0;
+		color: white;
+	}
+	.status-tip p {
+		left: 0;
+		transform: none;
+		font-family: var(--font-family);
+		font-weight: 400;
+		text-align: left;
+	}
 	.steps-box {
 		margin: 0.6rem 0 0;
 	}
@@ -1149,7 +1236,7 @@
 	.state-icon--fault {
 		background: var(--red);
 		color: white;
-		font-family: var(--font-sans, inherit);
+		font-family: var(--font-family);
 		font-size: 0.85rem;
 		font-weight: 800;
 	}
