@@ -2,21 +2,11 @@ apiVersion: 1
 
 # The worker alerts on the job_metrics rows of the application Postgres: they
 # say when the feed and the maintenance pass last ended, also when the worker
-# itself is down. The alerts go to the Telegram chat of the worker; the
-# observability service needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
-# (e.g. ${{worker.TELEGRAM_BOT_TOKEN}}), or Grafana fails to provision.
-
-contactPoints:
-  - orgId: 1
-    name: telegram
-    receivers:
-      - uid: telegram
-        type: telegram
-        settings:
-          bottoken: "${TELEGRAM_BOT_TOKEN}"
-          # Grafana parses the value again after it expands the variable: the
-          # inner quotes keep a numeric chat ID a string.
-          chatid: "'${TELEGRAM_CHAT_ID}'"
+# itself is down. The alerts go to the Telegram chat of the worker: the
+# contact point "telegram" is written at the start of Grafana
+# (s6-rc.d/grafana/run) from TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID of the
+# observability service (e.g. ${{worker.TELEGRAM_BOT_TOKEN}}); without them
+# Grafana fails to provision.
 
 policies:
   - orgId: 1
