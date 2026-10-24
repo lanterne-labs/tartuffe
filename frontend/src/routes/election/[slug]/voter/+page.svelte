@@ -112,10 +112,19 @@
 		recounting = true;
 		const steps: Step[] = (['signed', 'tree', 'proofs', 'count', 'shown'] as StepId[]).map((id) => ({ id, state: 'running' as const }));
 		recountSteps = steps;
+		const report = (s: Step) => {
+			recountSteps = (recountSteps ?? steps).map((x) => (x.id === s.id ? s : x));
+		};
 		try {
-			await recount(event.id, results, (s) => {
-				recountSteps = (recountSteps ?? steps).map((x) => (x.id === s.id ? s : x));
-			});
+			// The results shown may predate the last batch the ledger holds:
+			// they are reloaded first, and once more if only they differ.
+			await load();
+			if (!results) return;
+			const ok = await recount(event.id, results, report);
+			if (!ok && recountSteps?.find((x) => x.id === 'shown')?.state === 'failed') {
+				await load();
+				if (results) await recount(event.id, results, report);
+			}
 		} catch (err) {
 			console.error('recount failed', err);
 			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'failed' } : x));
