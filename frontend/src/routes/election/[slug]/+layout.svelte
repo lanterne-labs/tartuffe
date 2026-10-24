@@ -54,6 +54,7 @@
 		--accent: var(--event-strong);
 		--accent-hover: var(--event);
 		--accent-glow: var(--event-glow);
+		--shadow-glow: 0 0 20px var(--event-glow);
 	}
 	.event-strip {
 		display: flex;

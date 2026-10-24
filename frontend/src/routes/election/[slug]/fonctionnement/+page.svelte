@@ -46,47 +46,47 @@
 		fr: {
 			kicker: 'Comment ça marche',
 			title: 'Un vote que personne ne peut relier à vous. Pas même nous.',
-			lead: 'Votre document prouve que vous êtes un électeur français majeur. Votre vote, lui, ne porte ni votre document, ni votre compte, ni votre adresse. Et chacun peut recompter. Voici comment, étape par étape.',
+			lead: 'Votre document prouve votre droit de vote. Votre bulletin ne porte ni votre document, ni votre compte, ni votre adresse. Et tout le monde peut recompter.',
 			toc: 'Sommaire',
 			parts: [
 				{
 					id: 'cle',
 					title: '1. Obtenir sa clé de vote',
 					body: [
-						'Pourquoi un document d’identité ? Pour qu’une personne ne vote qu’une fois : sans cela, n’importe qui pourrait créer cent comptes et fausser les résultats. Le passeport ou la carte d’identité biométrique prouve seulement que vous êtes un électeur français majeur. Ni nom, ni photo, ni e-mail.',
-						'Votre navigateur crée d’abord une clé de vote secrète, qui ne le quitte jamais, et son empreinte publique. Puis l’app ZKPassport lit la puce de votre document (NFC) et calcule, sur votre téléphone, une preuve mathématique : « ce document est authentique, signé par l’État, non expiré ; son titulaire a plus de 18 ans et est français ». Cette preuve est attachée à l’empreinte de votre clé, pour ne servir qu’à elle, une seule fois.',
-						'Nous vérifions la preuve nous-mêmes. Nous gardons un identifiant de votre document passé dans une « moulinette » à sens unique (une empreinte HMAC, avec une clé secrète que nous seuls avons), pour qu’un document n’ait qu’une clé de vote à la fois, et l’empreinte publique de votre clé, qui rejoint la liste des votants. Rien ne relie l’un à votre bulletin.'
+						'Une personne, une voix : sans document, on pourrait créer cent comptes. Le passeport ou la carte d’identité à puce prouve seulement que vous êtes majeur et français.',
+						'Votre navigateur crée une clé de vote secrète, qui ne le quitte jamais, et son empreinte publique. L’app ZKPassport lit la puce (NFC) et calcule sur le téléphone une preuve : « document authentique, signé par l’État, en cours de validité ; titulaire majeur et français ». La preuve est liée à l’empreinte de votre clé, et ne sert qu’une fois.',
+						'Nous vérifions la preuve, puis gardons deux choses : une empreinte à sens unique de l’identifiant du document (HMAC, avec une clé secrète à nous), pour une seule clé de vote par document, et l’empreinte publique de votre clé, qui rejoint la liste des votants. Rien ne les relie à votre bulletin.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'App ZKPassport', sub: 'votre téléphone' }, { label: 'tartuffe.me' }, { label: 'Ethereum', sub: 'registre public' }],
 						steps: [
-							{ at: 0, note: 'Crée la clé de vote secrète s et son empreinte publique C. s reste sur l’appareil.', span: 2 },
+							{ at: 0, note: 'Crée la clé secrète s et son empreinte publique C. s reste sur l’appareil.', span: 2 },
 							{ from: 0, to: 2, label: 'demande un défi, sans compte ni session' },
 							{ from: 2, to: 0, label: 'défi à usage unique', dashed: true },
-							{ from: 0, to: 1, label: 'QR code : « majeur ? français ? » lié à H(défi, C)' },
+							{ from: 0, to: 1, label: 'QR code : « majeur ? français ? », lié à H(défi, C)' },
 							{ at: 1, note: 'Lit la puce (NFC), calcule la preuve. Les données restent sur le téléphone.', span: 2 },
-							{ from: 1, to: 0, label: 'preuve : oui, oui. Pas de nom, pas de numéro', dashed: true },
+							{ from: 1, to: 0, label: 'preuve : oui, oui. Ni nom ni numéro', dashed: true },
 							{ from: 0, to: 2, label: 'preuve + C' },
 							{ from: 2, to: 3, label: 'lit les certificats des États (lecture seule)' },
-							{ at: 2, note: 'Vérifie la preuve. Garde HMAC(document) et C. C rejoint la liste des votants.', span: 2 },
-							{ from: 2, to: 0, label: 'inscrit : vous pouvez voter', dashed: true }
+							{ at: 2, note: 'Vérifie la preuve, garde HMAC(document) et C. C rejoint la liste des votants.', span: 2 },
+							{ from: 2, to: 0, label: 'inscrit : vous pouvez voter', dashed: true }
 						],
-						caption: 'Le document prouve un droit de vote ; la clé, gardée par vous, votera. Rien ne relie les deux au bulletin.'
+						caption: 'Le document ouvre le droit de vote ; la clé, que vous seul avez, vote. Rien ne relie les deux au bulletin.'
 					},
 					more: [
 						[
-							'Une preuve « à divulgation nulle de connaissance » ?',
+							'Une preuve « à divulgation nulle de connaissance » ?',
 							[
-								'C’est une technique de cryptographie qui permet de prouver qu’une affirmation est vraie sans révéler les informations qui la rendent vraie.',
-								'Une image : vous voulez prouver à un videur que vous avez plus de 18 ans sans lui montrer votre carte. Un notaire regarde votre carte en secret et vous remet un certificat « majeur », impossible à falsifier. Ici, le notaire est un calcul fait par votre téléphone, et n’importe qui peut vérifier le certificat sans faire confiance au téléphone.',
-								'La preuve s’appuie sur la signature numérique de l’État présente dans la puce : un faux document ne peut pas produire une preuve valide.'
+								'Une preuve qu’une affirmation est vraie, sans rien révéler d’autre.',
+								'Comme un certificat « majeur » infalsifiable, remis à la place de votre carte d’identité. Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans faire confiance au téléphone.',
+								'La preuve repose sur la signature de l’État inscrite dans la puce : un faux document ne peut pas en produire.'
 							]
 						],
 						[
 							'L’identifiant du document',
 							[
-								'Il est calculé à partir de votre document et du nom du site. Le même document donne toujours le même identifiant ici : c’est ce qui garantit une voix par document. Il diffère sur chaque site, et ne permet pas de remonter à votre nom.',
-								'Nous ne le gardons pas tel quel : il passe dans notre « moulinette » à sens unique. Si notre base fuitait, elle ne donnerait pas la liste des documents.'
+								'Calculé à partir du document et du nom du site : le même document donne toujours le même identifiant ici, d’où une voix par document. Il change d’un site à l’autre et ne mène pas à votre nom.',
+								'Nous n’en gardons qu’une empreinte à sens unique : une fuite de notre base ne donnerait pas la liste des documents.'
 							]
 						]
 					]
@@ -95,120 +95,120 @@
 					id: 'vote',
 					title: '2. Voter',
 					body: [
-						'Vous classez jusqu’à 3 candidats en les touchant dans l’ordre : le premier est votre favori. Ou vous votez blanc. Vous pouvez changer d’avis à tout moment jusqu’à la clôture : le dernier vote compte.',
-						'Votre navigateur télécharge toute la liste des votants (toutes les empreintes, pas seulement la vôtre : la demande ne dit pas qui vous êtes) et calcule une preuve Semaphore : « ce bulletin vient d’une des clés de la liste », sans dire laquelle. La preuve donne aussi un pseudonyme de période, toujours le même pour vous sur 30 jours et impossible à relier à votre clé : c’est lui qui fait qu’un nouveau vote remplace l’ancien.',
-						'Le bulletin ne part pas chez nous : il est publié sur des relais Nostr publics, tenus par d’autres (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social). Chaque envoi est signé par une clé jetable et daté à l’heure près. Notre serveur lit les relais une fois par heure : il ne voit jamais l’adresse IP d’un bulletin, ni à quelle minute il est parti.',
-						'Les bulletins sont publiés par lots, mélangés, chaque heure (au moins 3 à la fois, ou après 6 h d’attente au plus), dans le journal public. Si aucun relais ne répond, votre navigateur envoie le bulletin directement à notre serveur, qui voit alors l’adresse d’où il vient.'
+						'Jusqu’à 3 candidats, par ordre de préférence, ou un vote blanc. Modifiable jusqu’à la clôture : le dernier vote compte.',
+						'Votre navigateur télécharge toute la liste des votants, pour ne pas dire qui vous êtes, et calcule une preuve Semaphore : « ce bulletin vient d’une clé de la liste », sans dire laquelle. Elle donne aussi un pseudonyme, le même pour vous pendant 30 jours et sans lien avec votre clé : un nouveau vote remplace ainsi l’ancien.',
+						'Le bulletin ne passe pas par nous : il part sur des relais Nostr publics, tenus par d’autres (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social), signé par une clé jetable et daté à l’heure près. Notre serveur lit les relais une fois par heure : il ne voit ni l’adresse IP d’un bulletin, ni la minute de son envoi.',
+						'Chaque heure, les bulletins sont publiés par lots mélangés (au moins 3, ou après 6 h d’attente au plus) dans le registre public. Si aucun relais ne répond, le navigateur envoie le bulletin directement à notre serveur, qui voit alors son adresse.'
 					],
 					diagram: {
-						actors: [{ label: 'Votre navigateur' }, { label: 'Relais Nostr', sub: 'publics, tenus par d’autres' }, { label: 'tartuffe.me' }, { label: 'Journal public' }],
+						actors: [{ label: 'Votre navigateur' }, { label: 'Relais Nostr', sub: 'publics, tenus par d’autres' }, { label: 'tartuffe.me' }, { label: 'Registre public' }],
 						steps: [
 							{ from: 0, to: 2, label: 'télécharge toute la liste des votants' },
-							{ at: 0, note: 'Prouve « une des clés de la liste », lie la preuve au bulletin ①②③ et donne le pseudonyme de période.', span: 2 },
-							{ from: 0, to: 1, label: 'bulletin + preuve, signé d’une clé jetable, daté à l’heure' },
+							{ at: 0, note: 'Prouve « une clé de la liste », lie la preuve au bulletin ①②③, donne le pseudonyme.', span: 2 },
+							{ from: 0, to: 1, label: 'bulletin + preuve, clé jetable, daté à l’heure' },
 							{ from: 1, to: 0, label: 'OK (plusieurs relais)', dashed: true },
-							{ from: 2, to: 1, label: 'lit les nouveaux bulletins, une fois par heure' },
+							{ from: 2, to: 1, label: 'lit les nouveaux bulletins, chaque heure' },
 							{ at: 2, note: 'Vérifie chaque preuve. Un nouveau vote remplace l’ancien du même pseudonyme.', span: 2 },
-							{ from: 2, to: 3, label: 'publie le lot mélangé et les nouveaux totaux' }
+							{ from: 2, to: 3, label: 'publie le lot mélangé et les totaux' }
 						],
-						caption: 'Notre serveur ne reçoit pas le bulletin de vous : il le lit sur les relais, avec tous les autres.'
+						caption: 'Notre serveur ne reçoit pas votre bulletin de vous : il le lit sur les relais, parmi les autres.'
 					},
 					more: [
 						[
-							'Pourquoi des périodes de 30 jours ?',
+							'Pourquoi des périodes de 30 jours ?',
 							[
-								'Un bulletin compte pour une période de 30 jours. Deux séries de périodes tournent, la seconde décalée de 15 jours, et votre navigateur vote dans les deux : les résultats lisent la période commencée la première. Il renouvelle votre bulletin tout seul quand une nouvelle période s’ouvre, si vous revenez sur le site.',
-								'C’est ce qui permet de remplacer une clé perdue sans jamais compter deux voix pour un document : une nouvelle clé vote à partir de la période suivante.'
+								'Un bulletin vaut pour 30 jours. Deux séries de périodes tournent, décalées de 15 jours, et votre navigateur vote dans les deux ; les résultats lisent celle qui a commencé en premier. À chaque visite, il renouvelle votre bulletin si une nouvelle période s’est ouverte.',
+								'C’est ce qui permet de remplacer une clé perdue sans jamais compter deux voix pour un document : la nouvelle clé vote à partir de la période suivante.'
 							]
 						]
 					]
 				},
 				{
 					id: 'comptage',
-					title: '3. Deux façons de compter les mêmes votes',
+					title: '3. Les mêmes votes, deux comptages',
 					body: [
-						'« Avec le classement » tient compte de vos 2ᵉ et 3ᵉ choix. On compare les candidats deux à deux : A passe devant B si plus de votants classent A au-dessus de B (un candidat classé passe devant un candidat non classé). Le gagnant est celui qui bat chacun des autres en face-à-face : c’est le gagnant de Condorcet. Quand aucun ne bat tous les autres, la méthode de Schulze donne quand même un ordre.',
-						'« Au scrutin majoritaire » ne garde que les premiers choix, comme le premier tour d’une élection. Quand les deux gagnants diffèrent, la page le dit : le scrutin majoritaire a laissé de côté une préférence de la majorité.',
-						'Les résultats sont masqués tant qu’il y a trop peu de votants, et la veille et le jour d’un scrutin, comme la loi l’exige. Ce n’est pas un sondage : les votants ne sont pas représentatifs de la population.'
+						'« Avec le classement » : on oppose les candidats deux à deux. A passe devant B si plus de votants classent A au-dessus de B (un candidat classé passe devant un candidat qui ne l’est pas). Celui qui bat tous les autres est le gagnant de Condorcet ; s’il n’y en a pas, la méthode de Schulze donne tout de même un ordre.',
+						'« Au scrutin majoritaire » : seuls les premiers choix comptent, comme au premier tour. Quand les deux gagnants diffèrent, la page le signale.',
+						'Résultats affichés dès le premier vote, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
 					]
 				},
 				{
 					id: 'blanc',
 					title: '4. Le vote blanc compte',
 					body: [
-						'Le vote blanc est un bulletin à part entière : « je suis venu, j’ai voté, aucun ne me convainc ». Il exclut tout classement, il compte parmi les votants, et donc dans chaque pourcentage. Il a sa propre ligne dans les résultats.',
-						'Retirer son vote, c’est autre chose : le bulletin ne compte plus du tout.'
+						'Un bulletin à part entière : « j’ai voté, aucun ne me convainc ». Sans classement, compté parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
+						'Retirer son vote, c’est autre chose : le bulletin ne compte plus.'
 					]
 				},
 				{
 					id: 'journal',
 					title: '5. Vérifier, sans nous faire confiance',
 					body: [
-						'Chaque inscription, chaque liste de votants, chaque bulletin et chaque total entre dans un journal public, construit comme ceux qui surveillent les certificats du web : un arbre de Merkle. Notre serveur signe régulièrement la « tête » de l’arbre (un point de contrôle) ; un point de contrôle engage tout ce qui le précède.',
-						'Votre navigateur garde le dernier point de contrôle qu’il a vu. À chaque visite, il demande la preuve que le nouveau prolonge l’ancien, sans rien effacer ni réécrire, puis la preuve que votre bulletin est dans l’arbre, tel que vous l’avez fait. Sinon, il vous le dit et vous donne la preuve signée de l’anomalie, à publier.',
-						'À chaque lot, l’empreinte du point de contrôle est inscrite dans la blockchain Bitcoin, gratuitement, par OpenTimestamps : personne ne peut ensuite prétendre qu’un autre journal existait à cette date. Et n’importe qui peut télécharger tout le journal et tout recompter avec l’outil open source « dm poll verify » : les inscriptions, les listes de votants, chaque preuve et chaque total, en comparant avec les bulletins restés sur les relais Nostr.'
+						'Inscriptions, listes de votants, bulletins et totaux entrent dans un registre public, un arbre de Merkle comme ceux qui surveillent les certificats du web. Notre serveur en signe régulièrement la tête (un point de contrôle), qui engage tout ce qui précède.',
+						'Votre navigateur garde le dernier point de contrôle vu. À chaque visite, il vérifie que le nouveau prolonge l’ancien sans rien effacer, puis que votre bulletin y figure, intact. Sinon, il vous alerte et vous donne la preuve signée à publier.',
+						'À chaque lot, l’empreinte du point de contrôle est horodatée dans Bitcoin par OpenTimestamps : impossible ensuite de prétendre à un autre registre à cette date. Et chacun peut tout télécharger et recompter avec l’outil open source « dm poll verify », en comparant avec les bulletins restés sur les relais.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'tartuffe.me' }, { label: 'Bitcoin', sub: 'OpenTimestamps' }, { label: 'N’importe qui' }],
 						steps: [
-							{ at: 1, note: 'Chaque entrée devient une feuille de l’arbre de Merkle du journal.', span: 2 },
-							{ from: 1, to: 2, label: 'empreinte du point de contrôle signé, à chaque lot' },
+							{ at: 1, note: 'Chaque entrée devient une feuille de l’arbre de Merkle.', span: 2 },
+							{ from: 1, to: 2, label: 'empreinte du point de contrôle, à chaque lot' },
 							{ from: 0, to: 1, label: 'demande le point de contrôle signé' },
-							{ from: 1, to: 0, label: 'taille, racine, signature + preuve qu’il prolonge le dernier vu', dashed: true },
-							{ from: 0, to: 1, label: 'demande la preuve que mon bulletin est dans l’arbre' },
-							{ at: 0, note: 'Vérifie : le journal n’a fait que grandir, et il contient mon bulletin tel que je l’ai fait. Sinon : preuve signée à télécharger.', span: 2 },
-							{ from: 3, to: 1, label: 'télécharge tout le journal' },
-							{ at: 3, note: 'dm poll verify : rejoue inscriptions, listes, preuves et totaux ; compare avec les relais.', span: 2 }
+							{ from: 1, to: 0, label: 'taille, racine, signature + preuve qu’il prolonge le précédent', dashed: true },
+							{ from: 0, to: 1, label: 'demande la preuve que mon bulletin y est' },
+							{ at: 0, note: 'Vérifie que le registre n’a fait que grandir et contient mon bulletin intact. Sinon : preuve signée à télécharger.', span: 2 },
+							{ from: 3, to: 1, label: 'télécharge tout le registre' },
+							{ at: 3, note: 'dm poll verify : rejoue inscriptions, listes, preuves et totaux, et compare avec les relais.', span: 2 }
 						],
-						caption: 'Nous ne pouvons pas changer, effacer ou oublier un bulletin sans que cela se voie.'
+						caption: 'Changer, effacer ou oublier un bulletin se verrait.'
 					}
 				},
 				{
 					id: 'appareils',
-					title: '6. Plusieurs appareils, et une clé perdue',
+					title: '6. Plusieurs appareils, clé perdue',
 					body: [
-						'Votre clé de vote vit sur votre appareil. Pour la retrouver ailleurs, trois moyens : une clé d’accès (Face ID, empreinte), qui garde chez nous une copie chiffrée sur votre appareil, que seule votre clé d’accès ouvre ; relier un appareil par QR code, comme WhatsApp : un message chiffré d’un appareil à l’autre, effacé dès qu’il est lu, dans les 10 minutes ; ou 12 mots de secours, à noter.',
-						'Tout perdu ? Scannez à nouveau votre document : une nouvelle clé est créée, et elle vote à partir de la période de 30 jours suivante. D’ici là, votre ancien vote compte toujours. Ainsi, un document ne pèse jamais deux voix.'
+						'Votre clé vit sur votre appareil. Trois façons de la retrouver ailleurs : une clé d’accès (Face ID, empreinte), qui ouvre une copie chiffrée gardée chez nous ; un autre appareil relié par QR code, comme WhatsApp (message chiffré, effacé dès sa lecture, valable 10 minutes) ; ou 12 mots de secours, à noter.',
+						'Tout perdu ? Scannez à nouveau votre document : la nouvelle clé vote à partir de la période de 30 jours suivante. D’ici là, votre ancien vote compte. Un document ne pèse jamais deux voix.'
 					]
 				}
 			],
 			getTitle: 'Ce que nous recevons',
 			get: [
-				'« Majeur : oui » et « nationalité française : oui », prouvés par l’app ZKPassport.',
-				'L’empreinte HMAC de l’identifiant de votre document, pour une clé de vote par document.',
-				'L’empreinte publique de votre clé de vote. La clé elle-même ne quitte jamais vos appareils.',
-				'Des bulletins anonymes, lus sur les relais Nostr, avec leur preuve. Ils sont publiés, mélangés, dans le journal public.'
+				'« Majeur : oui », « nationalité française : oui », prouvés par ZKPassport.',
+				'Une empreinte HMAC de l’identifiant du document : une clé de vote par document.',
+				'L’empreinte publique de votre clé. La clé, elle, reste sur vos appareils.',
+				'Des bulletins anonymes et leur preuve, lus sur les relais, publiés mélangés.'
 			],
 			neverTitle: 'Ce que nous ne voyons jamais',
 			never: [
-				'Votre nom, votre photo, votre date de naissance, le numéro de votre document.',
-				'Qui a voté quoi : un bulletin ne porte ni votre document, ni votre clé, ni votre compte.',
-				'L’adresse IP d’un bulletin envoyé par les relais, ni l’heure exacte de son envoi.',
-				'Votre clé de vote en clair, vos 12 mots, votre visage ou votre empreinte.'
+				'Votre nom, votre photo, votre date de naissance, le numéro du document.',
+				'Qui a voté quoi : un bulletin ne porte ni votre document, ni votre clé, ni votre compte.',
+				'L’adresse IP d’un bulletin passé par les relais, ni l’heure exacte de son envoi.',
+				'Votre clé en clair, vos 12 mots, votre visage, votre empreinte.'
 			],
 			limitsTitle: 'Les limites, honnêtement',
-			limitsLead: 'Aucun vote en ligne n’est parfait. Voici ce que celui-ci ne garantit pas.',
+			limitsLead: 'Ce que ce vote ne garantit pas.',
 			limits: [
-				'Les relais Nostr voient l’adresse IP de votre navigateur, comme tout site qu’il ouvre ; votre fournisseur d’accès voit que vous vous connectez à eux. Une option Tor n’existe pas encore.',
-				'Si aucun relais ne répond, le bulletin part directement chez nous, et notre serveur voit alors son adresse IP (nous ne la gardons pas).',
-				'Un votant qui le veut peut prouver son vote à quelqu’un : l’achat de votes n’est pas empêché. Et qui a votre clé, ou vos 12 mots, vote à votre place.',
-				'Le code de cette page est servi par nous : un serveur malveillant pourrait servir un autre code. Le code est open source, et le journal est vérifiable par d’autres.',
-				'Un seul serveur reçoit et publie les bulletins. Le journal signé et ancré dans Bitcoin rend la triche visible, pas impossible.',
-				'Il faut un smartphone avec NFC et un document à puce. L’identifiant est lié au document, pas à la personne : quelqu’un qui a un passeport et une carte d’identité valides pourrait voter deux fois. Renouveler son document donne un nouvel identifiant.',
-				'Qui posséderait une copie complète des données de la puce de votre document pourrait recalculer son identifiant : il saurait que ce document a une clé de vote, jamais pour qui elle a voté.',
-				'La demande ZKPassport transite par le relais de ZKPassport, chiffrée de bout en bout. ZKPassport est open source et a eu des audits internes, pas encore d’audit externe.'
+				'Les relais Nostr voient l’adresse IP de votre navigateur, comme tout site visité ; votre fournisseur d’accès voit que vous vous y connectez. Pas encore d’option Tor.',
+				'Si aucun relais ne répond, le bulletin arrive directement chez nous, et nous voyons son adresse IP (sans la garder).',
+				'Un votant peut prouver son vote à un tiers : l’achat de votes n’est pas empêché. Et qui a votre clé ou vos 12 mots vote à votre place.',
+				'Nous servons le code de cette page : un serveur malveillant pourrait en servir un autre. Le code est open source, le registre vérifiable par d’autres.',
+				'Un seul serveur reçoit et publie les bulletins. Le registre signé et horodaté dans Bitcoin rend la triche visible, pas impossible.',
+				'Il faut un smartphone NFC et un document à puce. L’identifiant suit le document, pas la personne : avec un passeport et une carte d’identité valides, on pourrait voter deux fois. Un document renouvelé donne un nouvel identifiant.',
+				'Qui aurait une copie complète de la puce de votre document pourrait recalculer son identifiant : il saurait que ce document a une clé de vote, jamais pour qui elle vote.',
+				'La demande ZKPassport passe par leur relais, chiffrée de bout en bout. ZKPassport est open source, audité en interne, pas encore par un tiers.'
 			],
 			eraseTitle: 'Retirer son vote, effacer sa clé',
 			erase: [
-				'Votre vote n’est rattaché à aucun compte : retirez-le sur la page du vote, avec votre clé. Un bulletin non renouvelé expire après 30 jours.',
-				'« Retirer la clé de cet appareil », sur votre profil, l’efface de ce navigateur.'
+				'Votre vote n’est lié à aucun compte : retirez-le sur la page du vote, avec votre clé. Un bulletin non renouvelé expire au bout de 30 jours.',
+				'« Retirer la clé de cet appareil », sur votre profil, l’efface de ce navigateur.'
 			],
 			techTitle: 'Pour les curieux',
 			tech: [
-				'Les preuves de vote sont des preuves Semaphore (Groth16), vérifiées par notre serveur en Go, avec les clés de vérification de la cérémonie publique de Semaphore.',
-				'Le journal est un arbre de Merkle au sens de la RFC 6962 ; ses points de contrôle sont des « notes signées » Ed25519 (format C2SP), servis sur /api/vote-log/checkpoint avec leurs preuves.',
-				'La vérification ZKPassport n’utilise ni compte ni clé ZKPassport : notre serveur exécute le vérificateur de leur kit open source et lit seulement, sur Ethereum, le registre public des certificats des États émetteurs.',
-				'Recompter soi-même : dm poll verify --api https://tartuffe.me --relays.'
+				'Preuves de vote Semaphore (Groth16), vérifiées par notre serveur en Go avec les clés de la cérémonie publique de Semaphore.',
+				'Registre : arbre de Merkle au sens de la RFC 6962 ; points de contrôle en « notes signées » Ed25519 (format C2SP), servis sur /api/vote-log/checkpoint avec leurs preuves.',
+				'Vérification ZKPassport sans compte ni clé ZKPassport : notre serveur exécute le vérificateur de leur kit open source et lit seulement, sur Ethereum, le registre public des certificats des États.',
+				'Recompter soi-même : dm poll verify --api https://tartuffe.me --relays.'
 			],
 			links: [
 				['Code de ZKPassport (Apache-2.0)', 'https://github.com/zkpassport'],
@@ -219,48 +219,48 @@
 		},
 		en: {
 			kicker: 'How it works',
-			title: 'A vote nobody can tie to you. Not even us.',
-			lead: 'Your document proves you are an adult French voter. Your vote carries neither your document, nor your account, nor your address. And anyone can recount. Here is how, step by step.',
+			title: 'A vote nobody can link to you. Not even us.',
+			lead: 'Your document proves your right to vote. Your ballot carries neither your document, nor your account, nor your address. And anyone can recount.',
 			toc: 'Contents',
 			parts: [
 				{
 					id: 'cle',
-					title: '1. Getting one’s voting key',
+					title: '1. Getting your voting key',
 					body: [
-						'Why an ID document? So each person votes only once: without it, anyone could create a hundred accounts and skew the results. The passport or biometric ID card only proves you are an adult French voter. No name, no photo, no e-mail.',
-						'Your browser first makes a secret voting key, which never leaves it, and its public fingerprint. Then the ZKPassport app reads your document’s chip (NFC) and computes, on your phone, a mathematical proof: “this document is genuine, signed by the State, not expired; its holder is over 18 and French”. The proof is tied to your key’s fingerprint, to serve it alone, once.',
-						'We check the proof ourselves. We keep an identifier of your document put through a one-way “mill” (an HMAC fingerprint, with a secret key only we have), so one document holds one voting key at a time, and your key’s public fingerprint, which joins the list of voters. Nothing ties either to your ballot.'
+						'One person, one vote: without a document, anyone could create a hundred accounts. The chip passport or ID card only proves that you are an adult and French.',
+						'Your browser makes a secret voting key, which never leaves it, and its public fingerprint. The ZKPassport app reads the chip (NFC) and computes a proof on the phone: “genuine document, signed by the State, still valid; holder adult and French”. The proof is bound to your key’s fingerprint, and works once.',
+						'We check the proof, then keep two things: a one-way fingerprint of the document identifier (HMAC, with a secret key of ours), for one voting key per document, and your key’s public fingerprint, which joins the voter list. Nothing links them to your ballot.'
 					],
 					diagram: {
 						actors: [{ label: 'Your browser' }, { label: 'ZKPassport app', sub: 'your phone' }, { label: 'tartuffe.me' }, { label: 'Ethereum', sub: 'public registry' }],
 						steps: [
-							{ at: 0, note: 'Makes the secret voting key s and its public fingerprint C. s stays on the device.', span: 2 },
-							{ from: 0, to: 2, label: 'asks for a challenge, without account or session' },
+							{ at: 0, note: 'Makes the secret key s and its public fingerprint C. s stays on the device.', span: 2 },
+							{ from: 0, to: 2, label: 'asks for a challenge, no account, no session' },
 							{ from: 2, to: 0, label: 'one-time challenge', dashed: true },
-							{ from: 0, to: 1, label: 'QR code: “adult? French?” tied to H(challenge, C)' },
+							{ from: 0, to: 1, label: 'QR code: “adult? French?”, bound to H(challenge, C)' },
 							{ at: 1, note: 'Reads the chip (NFC), computes the proof. The data stays on the phone.', span: 2 },
 							{ from: 1, to: 0, label: 'proof: yes, yes. No name, no number', dashed: true },
 							{ from: 0, to: 2, label: 'proof + C' },
 							{ from: 2, to: 3, label: 'reads the States’ certificates (read only)' },
-							{ at: 2, note: 'Checks the proof. Keeps HMAC(document) and C. C joins the list of voters.', span: 2 },
+							{ at: 2, note: 'Checks the proof, keeps HMAC(document) and C. C joins the voter list.', span: 2 },
 							{ from: 2, to: 0, label: 'registered: you can vote', dashed: true }
 						],
-						caption: 'The document proves a right to vote; the key, kept by you, will vote. Nothing ties either to the ballot.'
+						caption: 'The document grants the right to vote; the key, which only you hold, votes. Nothing links the two to the ballot.'
 					},
 					more: [
 						[
 							'A “zero-knowledge” proof?',
 							[
-								'It is a cryptographic technique that proves a statement is true without revealing the information that makes it true.',
-								'An analogy: you want to prove to a bouncer you are over 18 without showing your card. A notary looks at your card in private and hands you an unforgeable “adult” certificate. Here the notary is a computation done by your phone, and anyone can check the certificate without trusting the phone.',
-								'The proof relies on the State’s digital signature in the chip: a fake document cannot produce a valid proof.'
+								'A proof that a claim is true, revealing nothing else.',
+								'Like a forgery-proof “adult” certificate handed over instead of your ID card. Here your phone computes it, and anyone can check it without trusting the phone.',
+								'The proof rests on the State’s signature in the chip: a fake document cannot produce one.'
 							]
 						],
 						[
-							'The document’s identifier',
+							'The document identifier',
 							[
-								'It is computed from your document and the site’s name. The same document always gives the same identifier here: that is what guarantees one vote per document. It differs on every site and does not lead back to your name.',
-								'We do not keep it as is: it goes through our one-way “mill”. If our database leaked, it would not give the list of documents.'
+								'Computed from the document and the site’s name: the same document always gives the same identifier here, hence one vote per document. It differs from site to site and does not lead to your name.',
+								'We only keep a one-way fingerprint of it: a leak of our database would not give the list of documents.'
 							]
 						]
 					]
@@ -269,118 +269,118 @@
 					id: 'vote',
 					title: '2. Voting',
 					body: [
-						'You rank up to 3 candidates by tapping them in order: the first is your favourite. Or you vote blank. You can change your mind at any time until voting closes: the last vote counts.',
-						'Your browser downloads the whole list of voters (every fingerprint, not just yours: the request does not say who you are) and computes a Semaphore proof: “this ballot comes from one of the keys of the list”, without saying which. The proof also gives a period pseudonym, always the same for you over 30 days and impossible to tie to your key: that is what makes a new vote replace the old one.',
-						'The ballot does not go to us: it is published on public Nostr relays run by others (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social). Each one is signed by a throwaway key and dated to the hour. Our server reads the relays once an hour: it never sees a ballot’s IP address, nor the minute it was sent.',
-						'Ballots are published in shuffled batches every hour (at least 3 at once, or after 6 hours of waiting at most), in the public log. If no relay answers, your browser sends the ballot straight to our server, which then sees the address it comes from.'
+						'Up to 3 candidates, in order of preference, or a blank vote. You can change it until voting closes: the last vote counts.',
+						'Your browser downloads the whole voter list, so as not to say who you are, and computes a Semaphore proof: “this ballot comes from a key on the list”, without saying which. It also gives a pseudonym, the same for you for 30 days and unlinked to your key: that is how a new vote replaces the old one.',
+						'The ballot does not go through us: it goes out to public Nostr relays run by others (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social), signed by a throwaway key and dated to the hour. Our server reads the relays once an hour: it sees neither a ballot’s IP address nor the minute it was sent.',
+						'Every hour, ballots are published in shuffled batches (at least 3, or after 6 h of waiting at most) in the public ledger. If no relay answers, the browser sends the ballot straight to our server, which then sees its address.'
 					],
 					diagram: {
-						actors: [{ label: 'Your browser' }, { label: 'Nostr relays', sub: 'public, run by others' }, { label: 'tartuffe.me' }, { label: 'Public log' }],
+						actors: [{ label: 'Your browser' }, { label: 'Nostr relays', sub: 'public, run by others' }, { label: 'tartuffe.me' }, { label: 'Public ledger' }],
 						steps: [
-							{ from: 0, to: 2, label: 'downloads the whole list of voters' },
-							{ at: 0, note: 'Proves “one of the keys of the list”, ties the proof to the ballot ①②③ and gives the period pseudonym.', span: 2 },
-							{ from: 0, to: 1, label: 'ballot + proof, signed by a throwaway key, dated to the hour' },
+							{ from: 0, to: 2, label: 'downloads the whole voter list' },
+							{ at: 0, note: 'Proves “a key on the list”, binds the proof to the ballot ①②③, gives the pseudonym.', span: 2 },
+							{ from: 0, to: 1, label: 'ballot + proof, throwaway key, dated to the hour' },
 							{ from: 1, to: 0, label: 'OK (several relays)', dashed: true },
-							{ from: 2, to: 1, label: 'reads the new ballots, once an hour' },
+							{ from: 2, to: 1, label: 'reads the new ballots, every hour' },
 							{ at: 2, note: 'Checks each proof. A new vote replaces the old one of the same pseudonym.', span: 2 },
-							{ from: 2, to: 3, label: 'publishes the shuffled batch and the new totals' }
+							{ from: 2, to: 3, label: 'publishes the shuffled batch and the totals' }
 						],
-						caption: 'Our server does not get the ballot from you: it reads it on the relays, with all the others.'
+						caption: 'Our server does not get your ballot from you: it reads it on the relays, among the others.'
 					},
 					more: [
 						[
 							'Why 30-day periods?',
 							[
-								'A ballot counts for a 30-day period. Two series of periods run, the second 15 days later, and your browser votes in both: the results read the period that started first. It renews your ballot on its own when a new period opens, if you come back to the site.',
-								'That is what lets a lost key be replaced without ever counting two votes for one document: a new key votes from the next period.'
+								'A ballot holds for 30 days. Two series of periods run, 15 days apart, and your browser votes in both; the results read the one that started first. On each visit, it renews your ballot if a new period has opened.',
+								'That is how a lost key can be replaced without ever counting two votes for one document: the new key votes from the next period.'
 							]
 						]
 					]
 				},
 				{
 					id: 'comptage',
-					title: '3. Two ways to count the same votes',
+					title: '3. The same votes, two counts',
 					body: [
-						'“With the ranking” uses your 2nd and 3rd choices. Candidates are compared two by two: A comes before B when more voters rank A above B (a ranked candidate comes before an unranked one). The winner beats each other candidate head to head: the Condorcet winner. When none beats all the others, the Schulze method still gives an order.',
-						'“One-round majority vote” keeps only the first choices, like the first round of an election. When the two winners differ, the page says so: the majority vote left out a preference of the majority.',
-						'Results are hidden while there are too few voters, and the day before and the day of a vote, as the law requires. This is not an opinion poll: the voters are not representative of the population.'
+						'“With the ranking”: candidates are matched in pairs. A beats B if more voters rank A above B (a ranked candidate beats an unranked one). The one who beats all others is the Condorcet winner; if there is none, the Schulze method still gives an order.',
+						'“One-round majority vote”: only first choices count, as in a first round. When the two winners differ, the page says so.',
+						'Results shown from the first vote, except the day before and the day of the vote, as the law requires. This is not an opinion poll: the voters are not representative.'
 					]
 				},
 				{
 					id: 'blanc',
 					title: '4. The blank vote counts',
 					body: [
-						'The blank vote is a ballot in its own right: “I came, I voted, none convinces me”. It excludes any ranking, counts among the voters, and so in every share. It has its own line in the results.',
-						'Removing one’s vote is another thing: the ballot no longer counts at all.'
+						'A ballot in its own right: “I voted, none convinces me”. No ranking, counted among the voters and in every share, with its own line.',
+						'Withdrawing your vote is something else: the ballot no longer counts.'
 					]
 				},
 				{
 					id: 'journal',
 					title: '5. Checking, without trusting us',
 					body: [
-						'Every registration, every list of voters, every ballot and every total goes into a public log, built like those that watch the web’s certificates: a Merkle tree. Our server regularly signs the “head” of the tree (a checkpoint); a checkpoint commits to everything before it.',
-						'Your browser keeps the last checkpoint it saw. At each visit, it asks for the proof that the new one extends the old one, erasing and rewriting nothing, then the proof that your ballot is in the tree, as you cast it. If not, it tells you and gives you the signed proof of the fault, to publish.',
-						'At each batch, the checkpoint’s fingerprint is written into the Bitcoin blockchain, for free, by OpenTimestamps: nobody can later claim another log existed at that date. And anyone can download the whole log and recount everything with the open-source tool “dm poll verify”: the registrations, the lists of voters, every proof and every total, checked against the ballots left on the Nostr relays.'
+						'Registrations, voter lists, ballots and totals go into a public ledger, a Merkle tree like those that watch the web’s certificates. Our server regularly signs its head (a checkpoint), which commits to everything before it.',
+						'Your browser keeps the last checkpoint it saw. On each visit, it checks that the new one extends the old without erasing anything, then that your ballot is in it, intact. If not, it warns you and gives you the signed proof to publish.',
+						'At each batch, the checkpoint’s fingerprint is timestamped in Bitcoin by OpenTimestamps: no one can later claim another ledger at that date. And anyone can download everything and recount with the open-source tool “dm poll verify”, comparing with the ballots left on the relays.'
 					],
 					diagram: {
 						actors: [{ label: 'Your browser' }, { label: 'tartuffe.me' }, { label: 'Bitcoin', sub: 'OpenTimestamps' }, { label: 'Anyone' }],
 						steps: [
-							{ at: 1, note: 'Each entry becomes a leaf of the log’s Merkle tree.', span: 2 },
-							{ from: 1, to: 2, label: 'fingerprint of the signed checkpoint, at each batch' },
+							{ at: 1, note: 'Each entry becomes a leaf of the Merkle tree.', span: 2 },
+							{ from: 1, to: 2, label: 'checkpoint fingerprint, at each batch' },
 							{ from: 0, to: 1, label: 'asks for the signed checkpoint' },
-							{ from: 1, to: 0, label: 'size, root, signature + proof it extends the last one seen', dashed: true },
-							{ from: 0, to: 1, label: 'asks for the proof that my ballot is in the tree' },
-							{ at: 0, note: 'Checks: the log only grew, and it holds my ballot as I cast it. If not: a signed proof to download.', span: 2 },
-							{ from: 3, to: 1, label: 'downloads the whole log' },
-							{ at: 3, note: 'dm poll verify: replays registrations, lists, proofs and totals; compares with the relays.', span: 2 }
+							{ from: 1, to: 0, label: 'size, root, signature + proof it extends the previous one', dashed: true },
+							{ from: 0, to: 1, label: 'asks for the proof my ballot is in it' },
+							{ at: 0, note: 'Checks the ledger only grew and holds my ballot intact. If not: signed proof to download.', span: 2 },
+							{ from: 3, to: 1, label: 'downloads the whole ledger' },
+							{ at: 3, note: 'dm poll verify: replays registrations, lists, proofs and totals, and compares with the relays.', span: 2 }
 						],
-						caption: 'We cannot change, erase or forget a ballot without it showing.'
+						caption: 'Changing, erasing or forgetting a ballot would show.'
 					}
 				},
 				{
 					id: 'appareils',
-					title: '6. Several devices, and a lost key',
+					title: '6. Several devices, a lost key',
 					body: [
-						'Your voting key lives on your device. To find it elsewhere, three ways: a passkey (Face ID, fingerprint), which keeps with us a copy encrypted on your device that only your passkey opens; linking a device by QR code, like WhatsApp: an encrypted message from one device to the other, erased once read, within 10 minutes; or 12 recovery words, to write down.',
-						'Lost everything? Scan your document again: a new key is made, and it votes from the next 30-day period. Until then, your old vote still counts. So a document never weighs two votes.'
+						'Your key lives on your device. Three ways to get it elsewhere: a passkey (Face ID, fingerprint), which opens an encrypted copy we keep; another device linked by QR code, as with WhatsApp (encrypted message, erased once read, valid 10 minutes); or 12 recovery words, to write down.',
+						'Lost everything? Scan your document again: the new key votes from the next 30-day period. Until then, your old vote counts. A document never weighs two votes.'
 					]
 				}
 			],
 			getTitle: 'What we receive',
 			get: [
-				'“Adult: yes” and “French nationality: yes”, proved by the ZKPassport app.',
-				'The HMAC fingerprint of your document’s identifier, for one voting key per document.',
-				'The public fingerprint of your voting key. The key itself never leaves your devices.',
-				'Anonymous ballots, read on the Nostr relays, with their proof. They are published, shuffled, in the public log.'
+				'“Adult: yes”, “French nationality: yes”, proved by ZKPassport.',
+				'An HMAC fingerprint of the document identifier: one voting key per document.',
+				'Your key’s public fingerprint. The key itself stays on your devices.',
+				'Anonymous ballots and their proof, read on the relays, published shuffled.'
 			],
 			neverTitle: 'What we never see',
 			never: [
-				'Your name, your photo, your birth date, your document number.',
+				'Your name, your photo, your birth date, the document number.',
 				'Who voted what: a ballot carries neither your document, nor your key, nor your account.',
 				'The IP address of a ballot sent through the relays, nor the exact time it was sent.',
-				'Your voting key in clear, your 12 words, your face or your fingerprint.'
+				'Your key in clear, your 12 words, your face, your fingerprint.'
 			],
 			limitsTitle: 'The limits, honestly',
-			limitsLead: 'No online vote is perfect. Here is what this one does not guarantee.',
+			limitsLead: 'What this vote does not guarantee.',
 			limits: [
-				'The Nostr relays see your browser’s IP address, like any site it opens; your internet provider sees you connect to them. There is no Tor option yet.',
-				'If no relay answers, the ballot goes straight to us, and our server then sees its IP address (we do not keep it).',
-				'A voter who wants to can prove their vote to someone: vote buying is not prevented. And whoever has your key, or your 12 words, votes in your place.',
-				'This page’s code is served by us: a malicious server could serve other code. The code is open source, and the log can be checked by others.',
-				'One server receives and publishes the ballots. The signed log anchored in Bitcoin makes cheating visible, not impossible.',
-				'You need a smartphone with NFC and a chip document. The identifier belongs to the document, not the person: someone holding a valid passport and a valid ID card could vote twice. Renewing a document gives a new identifier.',
-				'Whoever held a full copy of your document’s chip data could recompute its identifier: they would learn that this document has a voting key, never how it voted.',
-				'The ZKPassport request goes through ZKPassport’s relay, end-to-end encrypted. ZKPassport is open source and had internal audits, no external audit yet.'
+				'The Nostr relays see your browser’s IP address, as any site visited does; your internet provider sees you connect to them. No Tor option yet.',
+				'If no relay answers, the ballot comes straight to us, and we see its IP address (we do not keep it).',
+				'A voter can prove their vote to someone: vote buying is not prevented. And whoever has your key or your 12 words votes in your place.',
+				'We serve this page’s code: a malicious server could serve other code. The code is open source, the ledger checkable by others.',
+				'A single server receives and publishes the ballots. The ledger, signed and timestamped in Bitcoin, makes cheating visible, not impossible.',
+				'You need an NFC smartphone and a chip document. The identifier follows the document, not the person: with a valid passport and ID card, one could vote twice. A renewed document gives a new identifier.',
+				'Someone with a full copy of your document’s chip could recompute its identifier: they would know this document has a voting key, never whom it votes for.',
+				'The ZKPassport request goes through their relay, end-to-end encrypted. ZKPassport is open source, audited internally, not yet by a third party.'
 			],
-			eraseTitle: 'Removing one’s vote, erasing one’s key',
+			eraseTitle: 'Withdrawing your vote, erasing your key',
 			erase: [
-				'Your vote is tied to no account: remove it on the vote page, with your key. A ballot not renewed expires after 30 days.',
+				'Your vote is tied to no account: withdraw it on the vote page, with your key. A ballot not renewed expires after 30 days.',
 				'“Remove the key from this device”, on your profile, erases it from this browser.'
 			],
 			techTitle: 'For the curious',
 			tech: [
 				'The ballot proofs are Semaphore proofs (Groth16), checked by our Go server with the verification keys of Semaphore’s public ceremony.',
-				'The log is a Merkle tree in the sense of RFC 6962; its checkpoints are Ed25519 “signed notes” (C2SP format), served at /api/vote-log/checkpoint with their proofs.',
+				'The ledger is a Merkle tree in the sense of RFC 6962; its checkpoints are Ed25519 “signed notes” (C2SP format), served at /api/vote-log/checkpoint with their proofs.',
 				'The ZKPassport check uses no ZKPassport account or key: our server runs the verifier of their open-source kit and only reads, on Ethereum, the public registry of the issuing States’ certificates.',
 				'Recount it yourself: dm poll verify --api https://tartuffe.me --relays.'
 			],

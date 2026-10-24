@@ -8,3 +8,9 @@ export function eventPaths(slug: string = FEATURED_SLUG) {
   const base = `/election/${encodeURIComponent(slug)}`;
   return { intro: base, vote: `${base}/voter`, how: `${base}/fonctionnement` };
 }
+
+// The count of voters shows from SHOW_VOTERS_FROM on: the results show from
+// the first vote, but a handful of voters says nothing of the experiment.
+export const SHOW_VOTERS_FROM = 1000;
+
+export const showVoters = (n: number | null | undefined) => (n ?? 0) >= SHOW_VOTERS_FROM;

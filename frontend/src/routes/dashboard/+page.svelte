@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { eventPaths } from '$lib/event';
+	import { eventPaths, showVoters } from '$lib/event';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
@@ -174,9 +174,9 @@
 			<div class="poll-hero-text">
 				<span class="poll-hero-kicker">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
 				<h1 class="poll-hero-title">{tr('home.poll.title', currentLang)}</h1>
-				{#if featuredVoters !== null}
+				{#if showVoters(featuredVoters)}
 					<p class="poll-hero-meta">
-						{featuredVoters === 1 ? tr('poll.voter', currentLang) : tr('poll.voters', currentLang, { n: featuredVoters })}
+						{tr('poll.voters', currentLang, { n: (featuredVoters ?? 0).toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}
 						{#if featuredCandidates}<span class="dot"></span>{tr('home.poll.candidates', currentLang, { n: featuredCandidates })}{/if}
 					</p>
 				{/if}

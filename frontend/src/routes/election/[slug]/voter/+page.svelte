@@ -12,7 +12,8 @@
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import { replaceState } from '$app/navigation';
-	import { eventPaths } from '$lib/event';
+	import { eventPaths, showVoters } from '$lib/event';
+	import { recount, type Step, type StepId } from '$lib/recount';
 	import type { PollResponse, CandidateResult } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -52,8 +53,6 @@
 	let publishedBy: string | null = $state(null);
 	let busy = $state(false);
 	let actionError: string | null = $state(null);
-	let flash: string | null = $state(null);
-	let flashTimer: ReturnType<typeof setTimeout> | null = null;
 	let ballotLoaded = $state(false);
 
 	// The vote waiting for the voting key before it is cast.
@@ -66,6 +65,64 @@
 	let via = $derived<Via>({ relays: data?.relays ?? [], publishedBy: data?.published_by ?? '' });
 	// check: what this browser found of the ballot in the public log.
 	let check = $state<Check | null>(null);
+	// status is the icon on the ballot's title: proving and sending, received
+	// (waiting for the batch that publishes it), on the public log as cast
+	// (checked by this browser), or a fault.
+	let status = $derived.by(() => {
+		if (busy) return 'busy';
+		if (check?.state === 'fault') return 'fault';
+		if (!mine) return null;
+		if (check?.state === 'included' && !publishedBy) return 'logged';
+		return 'received';
+	});
+
+	// The voter's own check, step by step (the log signed, never rewritten,
+	// the ballot in it as cast), and anyone's recount of the results.
+	type MineStep = 'signed' | 'history' | 'mine';
+	let mineSteps = $state<Record<MineStep, 'running' | 'ok' | 'failed' | 'waiting'> | null>(null);
+	let recountSteps = $state<Step[] | null>(null);
+	let recounting = $state(false);
+
+	async function verifyMine() {
+		const key = get(voterKey);
+		if (!key?.registered || !event) return;
+		mineSteps = { signed: 'running', history: 'running', mine: 'running' };
+		try {
+			const got = await myBallot(slug, event.id, key, windows, via);
+			check = got.check ?? null;
+			publishedBy = got.publishedBy ?? null;
+			const f = check?.state === 'fault' ? check.fault.kind : null;
+			const signedOk = f !== 'bad_signature' && f !== 'key_changed';
+			const historyOk = signedOk && f !== 'forked';
+			mineSteps = {
+				signed: signedOk ? 'ok' : 'failed',
+				history: !signedOk ? 'failed' : historyOk ? 'ok' : 'failed',
+				mine: !historyOk ? 'failed' : f ? 'failed' : check?.state === 'included' && !publishedBy ? 'ok' : 'waiting'
+			};
+		} catch (err) {
+			console.error('vote check failed', err);
+			mineSteps = { signed: 'failed', history: 'failed', mine: 'failed' };
+		}
+	}
+
+	async function verifyResults() {
+		if (!event || !results || recounting) return;
+		recounting = true;
+		const steps: Step[] = (['signed', 'tree', 'proofs', 'count', 'shown'] as StepId[]).map((id) => ({ id, state: 'running' as const }));
+		recountSteps = steps;
+		try {
+			await recount(event.id, results, (s) => {
+				recountSteps = (recountSteps ?? steps).map((x) => (x.id === s.id ? s : x));
+			});
+		} catch (err) {
+			console.error('recount failed', err);
+			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'failed' } : x));
+		} finally {
+			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'skipped' } : x));
+			recounting = false;
+		}
+	}
+
 	let maxChoices = $derived(event?.max_choices ?? 3);
 	let full = $derived(ballot.length >= maxChoices);
 	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
@@ -158,15 +215,9 @@
 		withdrawOpen = false;
 	}
 
-	function say(msg: string) {
-		flash = msg;
-		if (flashTimer) clearTimeout(flashTimer);
-		flashTimer = setTimeout(() => (flash = null), 5000);
-	}
-
 	// change proves and casts the next ballot; while it runs the vote buttons
 	// wait. It tells whether the ballot was cast.
-	async function change(next: MyBallot, done: string): Promise<boolean> {
+	async function change(next: MyBallot): Promise<boolean> {
 		const key = get(voterKey);
 		if (busy || !key || !event) return false;
 		busy = true;
@@ -175,7 +226,6 @@
 			publishedBy = await cast(slug, event.id, key, windows, next, via);
 			mine = next.kind === 'withdraw' ? null : next;
 			check = mine ? { state: 'waiting' } : null;
-			say(done);
 			return true;
 		} catch (err) {
 			if (err instanceof NotInWindow) {
@@ -225,7 +275,7 @@
 		pending = null;
 		if (busy) return;
 		if (choice === 'blank') {
-			if (!blank) change({ kind: 'blank', choices: [] }, tr('vote.done.blank', currentLang));
+			if (!blank) change({ kind: 'blank', choices: [] });
 			return;
 		}
 		if (ballot.includes(choice)) return;
@@ -233,20 +283,17 @@
 			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
 			return;
 		}
-		const name = displayName(byId.get(choice)?.name ?? '');
-		const next = [...ballot, choice];
-		change({ kind: 'choices', choices: next }, tr('vote.done.added', currentLang, { name, rank: rankWord(next.length) }));
+		change({ kind: 'choices', choices: [...ballot, choice] });
 	}
 
 	function remove(id: number) {
-		const name = displayName(byId.get(id)?.name ?? '');
 		const next = ballot.filter((x) => x !== id);
-		change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] }, tr('vote.done.removed', currentLang, { name }));
+		change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] });
 	}
 
 	async function withdrawAll() {
 		withdrawOpen = false;
-		await change({ kind: 'withdraw', choices: [] }, tr('vote.done.withdrawn', currentLang));
+		await change({ kind: 'withdraw', choices: [] });
 	}
 
 	// The honesty colour follows the score: red at 20 and below, green at 80
@@ -282,10 +329,6 @@
 		return d.toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
 
-	function timeText(iso: string): string {
-		return new Date(iso).toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { weekday: 'long', hour: '2-digit', minute: '2-digit' });
-	}
-
 	let unsubscribe: (() => void) | null = null;
 	let unwatchBallot: (() => void) | null = null;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -314,7 +357,6 @@
 		unsubscribe?.();
 		unwatchBallot?.();
 		if (refreshTimer) clearTimeout(refreshTimer);
-		if (flashTimer) clearTimeout(flashTimer);
 		realtimeManager.disconnect();
 		clearOldEvents();
 	});
@@ -342,8 +384,10 @@
 		<h1>{currentLang === 'en' ? event.title_en : event.title_fr}</h1>
 		<p class="lead">{currentLang === 'en' ? event.description_en : event.description_fr}</p>
 		<p class="meta">
-			<strong>{results.voters === 1 ? tr('poll.voter', currentLang) : tr('poll.voters', currentLang, { n: results.voters })}</strong>
-			<span class="dot"></span>
+			{#if showVoters(results.voters)}
+				<strong>{tr('poll.voters', currentLang, { n: results.voters.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</strong>
+				<span class="dot"></span>
+			{/if}
 			{#if results.open && event.closes_at}
 				{tr('poll.closes', currentLang, { d: closesText(event.closes_at) })}
 			{:else if !results.open}
@@ -358,7 +402,7 @@
 			{#if results.hidden === 'blackout'}
 				{tr('poll.hidden.blackout', currentLang)}
 			{:else}
-				{tr('poll.hidden.too_few_voters', currentLang, { min: event.min_voters, n: results.voters })}
+				{tr(results.voters === 0 ? 'poll.hidden.none' : 'poll.hidden.too_few_voters', currentLang)}
 			{/if}
 		</div>
 	{/if}
@@ -366,79 +410,105 @@
 	{#if results.open || mine}
 		<section class="ballot" aria-labelledby="ballot-title">
 			<div class="ballot-head">
-				<h2 id="ballot-title">{tr('vote.title', currentLang)}</h2>
+				<h2 id="ballot-title">
+					{tr('vote.title', currentLang)}
+					{#if status === 'logged'}
+						<a href="{paths.how}#journal" class="state-icon state-icon--logged" title={tr('vote.status.logged', currentLang)} aria-label={tr('vote.status.logged', currentLang)}>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
+						</a>
+					{:else if status === 'received'}
+						<span class="state-icon state-icon--ok" title={tr('vote.status.received', currentLang)} aria-label={tr('vote.status.received', currentLang)}>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+						</span>
+					{:else if status === 'busy'}
+						<span class="state-icon state-icon--spin" role="status" title={tr('vote.status.busy', currentLang)} aria-label={tr('vote.status.busy', currentLang)}></span>
+					{:else if status === 'fault'}
+						<span class="state-icon state-icon--fault" title={tr('vote.log.fault', currentLang)} aria-label={tr('vote.log.fault', currentLang)}>!</span>
+					{/if}
+				</h2>
 				{#if !hasKey}
 					<button class="btn btn-primary" onclick={() => voterKeyOpen.set(true)}>{tr('poll.ballot.get_key', currentLang)}</button>
 				{:else}
 					<a href="/profile" class="profile-link">{tr('vote.profile_link', currentLang)}</a>
 				{/if}
 			</div>
-			{#if results.open}
-				<p class="hint">{tr('vote.hint', currentLang, { n: maxChoices })}</p>
-			{:else}
-				<p class="hint">{tr('vote.closed_hint', currentLang)}</p>
-			{/if}
+			<p class="hint">{tr(results.open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: maxChoices })}</p>
 
 			{#if hasKey}
 				{#if !protectedEnough($voterKey)}
 					<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
 				{/if}
 				{#if blank}
-					<div class="blank-card">
-						<span class="blank-mark" aria-hidden="true">◻</span>
-						<div>
-							<strong>{tr('vote.blank.mine', currentLang)}</strong>
-							<span>{tr('vote.blank.counted', currentLang)}</span>
+					<div class="slots slots--blank">
+						<div class="slot filled">
+							<div class="slot-photo slot-photo--blank" aria-hidden="true">◻</div>
+							<span class="slot-name">{tr('vote.blank.name', currentLang)}</span>
 						</div>
 					</div>
 				{:else}
-					<ol class="slots">
+					<ol class="slots" style="--n: {maxChoices}">
 						{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
 							{@const id = ballot[i]}
 							{@const c = id === undefined ? undefined : byId.get(id)}
-							<li class:filled={id !== undefined} class:next={id === undefined && i === ballot.length}>
-								<span class="slot-num">{i + 1}</span>
+							<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === ballot.length}>
 								{#if id !== undefined}
+									<div class="slot-photo">
+										{#if c?.image_url}
+											<img src={c.image_url} alt="" />
+										{:else}
+											<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
+										{/if}
+										<span class="slot-rank">{i + 1}</span>
+									</div>
 									<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
 									{#if results.open}
 										<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
 									{/if}
-								{:else if results.open && i === ballot.length}
-									<span class="slot-empty">{tr(i === 0 ? 'vote.slot.first' : 'vote.slot.empty', currentLang)}</span>
+								{:else}
+									<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
+									<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
 								{/if}
 							</li>
 						{/each}
 					</ol>
 				{/if}
-				<div class="ballot-actions" aria-live="polite">
-					{#if results.open && !blank}
-						<button class="btn" onclick={() => pick('blank')} disabled={busy}>{tr('vote.blank.button', currentLang)}</button>
+				{#if results.open}
+					<div class="ballot-actions">
+						{#if !blank}
+							<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
+						{/if}
+						{#if mine}
+							<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+						{/if}
+					</div>
+				{/if}
+				{#if mine}
+					<div class="verify">
+						<button class="btn btn-small" onclick={verifyMine} disabled={busy}>🔍 {tr('vote.verify', currentLang)}</button>
+						{@render help(tr('vote.verify.help', currentLang))}
+					</div>
+					{#if mineSteps}
+						<ul class="steps">
+							{#each ['signed', 'history', 'mine'] as const as k (k)}
+								<li class="step step--{mineSteps[k]}">{@render stepIcon(mineSteps[k])}<span>{tr(`vote.verify.${k}`, currentLang)}</span></li>
+							{/each}
+						</ul>
 					{/if}
-					{#if results.open && mine}
-						<button class="btn" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
-					{/if}
-					{#if busy}
-						<span class="status">{tr('vote.proving', currentLang)}</span>
-					{:else if flash}
-						<span class="status status--ok">{flash}</span>
-					{/if}
-				</div>
+				{/if}
 				{#if check?.state === 'fault'}
 					<div class="log-fault" role="alert">
 						<strong>{tr('vote.log.fault', currentLang)}</strong>
 						<span>{tr(`vote.log.fault.${check.fault.kind}`, currentLang)}</span>
 						<button class="btn" onclick={() => saveEvidence(check)}>{tr('vote.log.evidence', currentLang)}</button>
 					</div>
-				{:else if publishedBy && mine && !busy}
-					<p class="published">{tr('vote.published_by', currentLang, { t: timeText(publishedBy) })}</p>
-				{:else if check?.state === 'included' && mine && !busy}
-					<p class="published published--ok">✓ {@html tr('vote.log.included', currentLang, { href: paths.how + '#journal' })}</p>
 				{/if}
 				{#if actionError}
 					<p class="save-error" role="alert">{actionError}</p>
 				{/if}
 			{:else if results.open}
-				<button class="btn" onclick={() => pick('blank')}>{tr('vote.blank.button', currentLang)}</button>
+				<div class="ballot-actions">
+					<button class="btn btn-small" onclick={() => pick('blank')}>◻ {tr('vote.blank.button', currentLang)}</button>
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -450,6 +520,25 @@
 			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
 		{/snippet}
 	</Modal>
+
+	{#snippet stepIcon(state: string)}
+		{#if state === 'running'}
+			<span class="state-icon state-icon--spin state-icon--sm" aria-hidden="true"></span>
+		{:else if state === 'ok'}
+			<span class="state-icon state-icon--ok state-icon--sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg></span>
+		{:else if state === 'failed'}
+			<span class="state-icon state-icon--fault state-icon--sm" aria-hidden="true">!</span>
+		{:else}
+			<span class="state-icon state-icon--wait state-icon--sm" aria-hidden="true">…</span>
+		{/if}
+	{/snippet}
+
+	{#snippet help(text: string)}
+		<details class="help">
+			<summary aria-label="?">?</summary>
+			<p>{text}</p>
+		</details>
+	{/snippet}
 
 	{#snippet pickButton(c: CandidateResult)}
 		{#if results?.open}
@@ -555,6 +644,17 @@
 				</section>
 			{/if}
 		</div>
+		<div class="verify verify--results">
+			<button class="btn btn-small" onclick={verifyResults} disabled={recounting}>🔍 {tr('poll.verify', currentLang)}</button>
+			{@render help(tr('poll.verify.help', currentLang))}
+		</div>
+		{#if recountSteps}
+			<ul class="steps steps--results">
+				{#each recountSteps as st (st.id)}
+					<li class="step step--{st.state}">{@render stepIcon(st.state)}<span>{tr(`poll.verify.${st.id}`, currentLang)}</span></li>
+				{/each}
+			</ul>
+		{/if}
 		<p class="board-note">{tr('poll.note.vote', currentLang)}</p>
 	{:else if view === 'honesty'}
 		<div class="gauge-grid">
@@ -657,102 +757,297 @@
 <style>
 	.slots {
 		list-style: none;
-		margin: 0 0 0.75rem;
+		margin: 0.75rem 0 1rem;
 		padding: 0;
 		display: grid;
-		gap: 0.4rem;
+		grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr));
+		gap: 0.75rem;
 	}
-	.slots li {
+	.slots--blank {
+		grid-template-columns: minmax(0, 12rem);
+		justify-content: center;
+	}
+	.slot {
+		position: relative;
 		display: flex;
+		flex-direction: column;
 		align-items: center;
 		gap: 0.6rem;
-		min-height: 2.6rem;
-		padding: 0.35rem 0.6rem 0.35rem 0.4rem;
+		padding: 1rem 0.5rem 0.85rem;
 		border: 1px dashed var(--glass-border);
-		border-radius: var(--radius-md);
-		color: var(--text-muted);
-		font-size: 0.9rem;
+		border-radius: var(--radius-lg);
+		text-align: center;
+		transition: border-color 0.2s, background 0.2s;
 	}
-	.slots li.filled {
-		border-style: solid;
-		border-color: var(--accent);
-		background: var(--accent-glow);
-		color: var(--text-primary);
+	.slot.filled {
+		border: 1px solid color-mix(in oklch, var(--accent) 55%, var(--border-card));
+		background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 14%, var(--bg-card)), var(--bg-card));
 	}
-	.slots li.next {
+	.slot.next {
 		border-color: var(--accent);
 	}
-	.slot-num {
-		width: 1.7rem;
-		height: 1.7rem;
-		flex-shrink: 0;
+	.slot-photo {
+		position: relative;
+		width: 4.75rem;
+		height: 4.75rem;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		background: var(--bg-secondary);
+		box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px var(--accent);
+	}
+	.slot-photo img {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+	.slot-initial {
+		font-family: var(--font-serif);
+		font-size: 1.9rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+	.slot-photo--empty {
+		background: transparent;
+		box-shadow: none;
+		border: 2px dashed var(--glass-border);
+	}
+	.slot.next .slot-photo--empty {
+		border-color: var(--accent);
+	}
+	.slot-photo--blank {
+		font-size: 2rem;
+		color: var(--text-secondary);
+		box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px var(--text-muted);
+	}
+	.slot-rank {
+		position: absolute;
+		left: -0.2rem;
+		bottom: -0.2rem;
+		width: 1.6rem;
+		height: 1.6rem;
 		display: grid;
 		place-items: center;
 		border-radius: 50%;
-		background: var(--bg-secondary);
-		font-weight: 700;
-		font-size: 0.85rem;
-	}
-	.slots li.filled .slot-num {
 		background: var(--accent);
 		color: white;
+		font-weight: 700;
+		font-size: 0.85rem;
+		box-shadow: 0 0 0 2px var(--bg-card);
+	}
+	.slot-photo--empty .slot-rank {
+		position: static;
+		background: transparent;
+		color: var(--text-muted);
+		box-shadow: none;
+		font-size: 1.1rem;
+	}
+	.slot.next .slot-photo--empty .slot-rank {
+		color: var(--accent-hover);
 	}
 	.slot-name {
-		flex: 1;
-		min-width: 0;
 		font-weight: 600;
+		font-size: 0.95rem;
+		line-height: 1.2;
 		text-transform: capitalize;
+		overflow-wrap: anywhere;
 	}
-	.slot-empty {
-		font-style: italic;
+	.slot-name--empty {
+		font-weight: 400;
+		font-size: 0.82rem;
+		color: var(--text-muted);
+		text-transform: none;
 	}
 	.unpick {
+		position: absolute;
+		top: 0.3rem;
+		right: 0.3rem;
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 50%;
 		background: none;
 		border: none;
 		color: var(--text-muted);
-		font-size: 1.2rem;
+		font-size: 1.15rem;
 		line-height: 1;
 		cursor: pointer;
-		padding: 0.1rem 0.3rem;
 	}
 	.unpick:hover {
 		color: var(--red);
+		background: color-mix(in oklch, var(--red) 12%, transparent);
 	}
 	.protect {
 		display: block;
 		width: 100%;
-		margin: 0 0 0.75rem;
-		padding: 0.6rem 0.8rem;
-		text-align: left;
+		margin: 0.5rem 0 0;
+		padding: 0.55rem 0.8rem;
+		text-align: center;
 		background: color-mix(in oklch, var(--accent) 12%, var(--bg-card));
 		border: 1px solid var(--accent);
 		border-radius: var(--radius-md);
 		color: var(--text-primary);
 		font: inherit;
 		font-size: 0.88rem;
-		line-height: 1.4;
+		font-weight: 600;
 		cursor: pointer;
 	}
-	.blank-card {
+	.state-icon {
+		display: inline-grid;
+		place-items: center;
+		width: 1.35rem;
+		height: 1.35rem;
+		margin-left: 0.4rem;
+		vertical-align: 0.1em;
+		border-radius: 50%;
+	}
+	.state-icon--ok {
+		background: var(--green);
+	}
+	.state-icon--ok svg {
+		width: 0.95rem;
+		height: 0.95rem;
+		fill: none;
+		stroke: white;
+		stroke-width: 3;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.state-icon--logged {
+		width: 1.6rem;
+		height: 1.6rem;
+		background: var(--green);
+	}
+	.state-icon--logged svg {
+		width: 1.15rem;
+		height: 1.15rem;
+		fill: none;
+		stroke: white;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.state-icon--logged svg .tick {
+		stroke-width: 2.2;
+	}
+	.state-icon--sm {
+		width: 1.1rem;
+		height: 1.1rem;
+		margin: 0;
+		flex-shrink: 0;
+	}
+	.state-icon--sm svg {
+		width: 0.75rem;
+		height: 0.75rem;
+	}
+	.state-icon--sm.state-icon--fault {
+		font-size: 0.7rem;
+	}
+	.state-icon--wait {
+		background: var(--bg-secondary);
+		color: var(--text-muted);
+		font-size: 0.7rem;
+		line-height: 1;
+	}
+	.verify {
 		display: flex;
-		gap: 0.75rem;
 		align-items: center;
-		padding: 0.75rem 0.9rem;
-		border: 1px dashed var(--text-secondary);
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
+		gap: 0.4rem;
+		margin-top: 0.75rem;
 	}
-	.blank-card div {
+	.verify--results {
+		justify-content: center;
+		margin: 1.25rem auto 0;
+	}
+	.help {
+		position: relative;
+	}
+	.help summary {
+		list-style: none;
+		width: 1.3rem;
+		height: 1.3rem;
 		display: grid;
-		gap: 0.15rem;
-	}
-	.blank-card span:not(.blank-mark) {
+		place-items: center;
+		border-radius: 50%;
+		border: 1px solid var(--glass-border);
 		color: var(--text-secondary);
+		font-size: 0.75rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	.help summary::-webkit-details-marker {
+		display: none;
+	}
+	.help p {
+		position: absolute;
+		z-index: 20;
+		top: 1.7rem;
+		left: 50%;
+		transform: translateX(-50%);
+		width: min(17rem, 80vw);
+		margin: 0;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+		box-shadow: var(--shadow-card-hover);
+		font-size: 0.8rem;
+		line-height: 1.45;
+		color: var(--text-secondary);
+	}
+	.steps {
+		list-style: none;
+		margin: 0.6rem 0 0;
+		padding: 0;
+		display: grid;
+		gap: 0.35rem;
+	}
+	.steps--results {
+		width: fit-content;
+		margin: 0.75rem auto 0;
+	}
+	.step {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.step--ok {
+		color: var(--text-primary);
+	}
+	.step--failed {
+		color: var(--red);
+	}
+	.state-icon--spin {
+		border: 2.5px solid color-mix(in oklch, var(--text-muted) 40%, transparent);
+		border-top-color: var(--accent-hover);
+		animation: spin 0.8s linear infinite;
+	}
+	.state-icon--fault {
+		background: var(--red);
+		color: white;
+		font-family: var(--font-sans, inherit);
+		font-size: 0.85rem;
+		font-weight: 800;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.state-icon--spin {
+			animation-duration: 2.4s;
+		}
+	}
+	.btn-small {
+		padding: 0.4rem 0.8rem;
 		font-size: 0.85rem;
 	}
-	.blank-mark,
-	.photo--blank {
-		font-size: 1.2rem;
+	.btn-quiet {
+		border-color: transparent;
+		background: transparent;
 		color: var(--text-secondary);
 	}
 	.bar-fill--blank {
@@ -761,17 +1056,6 @@
 	.vote-row--blank .name,
 	.board-row--blank .name {
 		font-style: italic;
-	}
-	.published {
-		margin: 0.5rem 0 0;
-		font-size: 0.82rem;
-		color: var(--text-secondary);
-	}
-	.published--ok {
-		color: var(--green);
-	}
-	.published--ok :global(a) {
-		color: inherit;
 	}
 	.log-fault {
 		display: grid;
@@ -907,13 +1191,6 @@
 		align-items: center;
 		gap: 0.6rem;
 		flex-wrap: wrap;
-	}
-	.status {
-		font-size: 0.8rem;
-		color: var(--amber);
-	}
-	.status--ok {
-		color: var(--green);
 	}
 	.save-error {
 		color: var(--red);
@@ -1332,6 +1609,19 @@
 	@media (max-width: 560px) {
 		.ballot {
 			padding: 1rem;
+		}
+		.slots {
+			gap: 0.45rem;
+		}
+		.slot {
+			padding: 0.8rem 0.25rem 0.7rem;
+		}
+		.slot-photo {
+			width: 3.6rem;
+			height: 3.6rem;
+		}
+		.slot-name {
+			font-size: 0.82rem;
 		}
 		.board-head,
 		.board-row {

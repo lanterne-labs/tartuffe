@@ -7,7 +7,7 @@
 	import { page } from '$app/stores';
 	import { API_BASE } from '$lib/config';
 	import { lang, type Lang } from '$lib/i18n';
-	import { eventPaths } from '$lib/event';
+	import { eventPaths, showVoters } from '$lib/event';
 	import type { PollResponse } from '$lib/types';
 
 	let currentLang = $state<Lang>('fr');
@@ -39,46 +39,47 @@
 			until: 'Jusqu’au {d}',
 			title1: 'Votez pour 2027.',
 			title2: 'Anonymement. Vraiment.',
-			lead: 'Classez vos 3 candidats préférés, prouvez que vous êtes électeur avec votre passeport ou votre carte d’identité, et c’est tout. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi. Et chacun peut recompter.',
+			lead: 'Un scan de votre passeport ou de votre carte d’identité, puis vos 3 candidats préférés. Personne, ni nous ni l’État, ne sait qui a voté quoi. Et tout le monde peut recompter.',
 			vote: 'Voter maintenant',
 			how: 'Comment ça marche',
 			votersNow: '{n} votants · {c} candidats',
+			candidatesNow: '{c} candidats',
 			stats: [
 				['0', 'lien entre vous et votre vote'],
 				['1', 'voix par document'],
 				['3', 'choix, classés'],
-				['100 %', 'recomptable par tous']
+				['100 %', 'recomptable par tous']
 			],
 			stepsKicker: 'Trois gestes',
 			stepsTitle: 'Une minute, une fois.',
 			steps: [
-				['Scannez votre document', 'Une seule fois. Votre téléphone prouve que vous êtes un électeur français majeur, sans révéler qui vous êtes.'],
-				['Classez jusqu’à 3 candidats', 'Touchez-les dans l’ordre de vos préférences. Ou votez blanc. Changez d’avis quand vous voulez.'],
-				['Vérifiez', 'Votre navigateur contrôle lui-même que votre vote est compté, tel que vous l’avez fait.']
+				['Scannez votre document', 'Une seule fois. Majeur et français, rien de plus.'],
+				['Classez jusqu’à 3 candidats', 'Ou votez blanc. Modifiable à tout moment.'],
+				['Vérifiez', 'Votre navigateur s’assure que votre vote est bien compté.']
 			],
 			anonKicker: 'Le secret du vote',
 			anonTitle: 'Votre document ouvre la porte. Il ne vote pas.',
-			anonBody: 'Le scan crée sur votre appareil une clé de vote que vous seul avez. Votre bulletin prouve qu’il vient d’un électeur, sans dire lequel, et part par des relais publics : nous ne voyons ni votre document, ni votre adresse, derrière un bulletin.',
+			anonBody: 'Le scan crée une clé de vote, sur votre appareil seulement. Le bulletin prouve qu’il vient d’un électeur, sans dire lequel, et passe par des relais publics. Derrière un bulletin, nous ne voyons ni votre document ni votre adresse IP.',
 			anonLabels: ['Votre document', 'Votre clé', 'Votre bulletin'],
 			anonCut: 'aucun lien',
 			countKicker: 'Même vote, deux résultats',
-			countTitle: 'Et si le premier tour mentait ?',
-			countBody: 'Nous comptons les mêmes bulletins de deux façons. Au scrutin majoritaire, seul votre premier choix compte. Avec le classement, vos 2ᵉ et 3ᵉ choix aussi : le gagnant est celui qu’une majorité préfère à chacun des autres. Parfois, ce n’est pas le même.',
+			countTitle: 'Et si le premier tour mentait ?',
+			countBody: 'Les mêmes bulletins, comptés deux fois. Au scrutin majoritaire, seul le premier choix compte. Avec le classement, le gagnant est celui qu’une majorité préfère à chacun des autres.',
 			countMajority: 'Au scrutin majoritaire',
 			countRanking: 'Avec le classement',
 			countWinner: 'bat chacun des autres',
 			countMore: 'Comprendre les deux comptages',
 			blankTitle: 'Le vote blanc compte.',
-			blankBody: 'Ici, voter blanc n’est pas se taire : c’est un bulletin à part entière, compté parmi les votants et dans chaque pourcentage.',
+			blankBody: 'Un bulletin à part entière, compté dans chaque pourcentage.',
 			honestyTitle: 'Votez, et regardez leur bilan.',
-			honestyBody: 'À côté de chaque candidat, son score d’honnêteté : les contradictions que tartuffe.me a trouvées entre ses déclarations et ses votes, sources à l’appui.',
-			checkTitle: 'Nous ne pouvons pas tricher sans que cela se voie.',
-			checkBody: 'Chaque bulletin entre dans un journal public signé, ancré dans la blockchain Bitcoin. Votre navigateur vérifie que votre vote y est. N’importe qui peut tout télécharger et tout recompter.',
-			checkMore: 'Voir comment on vérifie',
-			disclaimer: 'Une consultation ouverte des utilisateurs de tartuffe.me, pas un sondage : les votants ne sont pas représentatifs. Résultats masqués sous un seuil de votants, et la veille et le jour d’un scrutin.',
+			honestyBody: 'À côté de chaque candidat, son score d’honnêteté : ses contradictions, sources à l’appui.',
+			checkTitle: 'Impossible de tricher sans que ça se voie.',
+			checkBody: 'Chaque bulletin entre dans un registre public signé et horodaté sur Bitcoin. Tout le monde peut le télécharger et recompter.',
+			checkMore: 'Comment vérifier',
+			disclaimer: 'Une consultation ouverte, pas un sondage : les votants ne sont pas représentatifs. Résultats masqués la veille et le jour du scrutin.',
 			finalTitle: 'J-{n}. À vous.',
 			finalTitleNoDate: 'À vous.',
-			labLine: 'Une expérience du labo tartuffe.me, qui construit des outils pour des démocraties plus transparentes.',
+			labLine: 'Une expérience du labo tartuffe.me.',
 			labLink: 'Le labo',
 			phTitle: 'Mon vote',
 			phBlank: 'Vote blanc',
@@ -89,10 +90,11 @@
 			until: 'Until {d}',
 			title1: 'Vote for 2027.',
 			title2: 'Anonymously. For real.',
-			lead: 'Rank your 3 favourite candidates, prove you are a voter with your passport or ID card, and that is all. Nobody, neither we nor the State, can know who voted what. And anyone can recount.',
+			lead: 'One scan of your passport or ID card, then your 3 favourite candidates. Nobody, neither we nor the State, knows who voted what. And anyone can recount.',
 			vote: 'Vote now',
 			how: 'How it works',
 			votersNow: '{n} voters · {c} candidates',
+			candidatesNow: '{c} candidates',
 			stats: [
 				['0', 'link between you and your vote'],
 				['1', 'vote per document'],
@@ -102,33 +104,33 @@
 			stepsKicker: 'Three steps',
 			stepsTitle: 'One minute, once.',
 			steps: [
-				['Scan your document', 'Only once. Your phone proves you are an adult French voter, without revealing who you are.'],
-				['Rank up to 3 candidates', 'Tap them in order of preference. Or vote blank. Change your mind whenever you like.'],
-				['Check', 'Your browser checks by itself that your vote is counted, as you cast it.']
+				['Scan your document', 'Only once. Adult and French, nothing more.'],
+				['Rank up to 3 candidates', 'Or vote blank. Change it any time.'],
+				['Check', 'Your browser makes sure your vote is counted.']
 			],
 			anonKicker: 'The secret ballot',
 			anonTitle: 'Your document opens the door. It does not vote.',
-			anonBody: 'The scan makes on your device a voting key only you hold. Your ballot proves it comes from a voter, without saying which, and goes out through public relays: we see neither your document nor your address behind a ballot.',
+			anonBody: 'The scan makes a voting key, on your device only. The ballot proves it comes from a voter, without saying which, and goes through public relays. Behind a ballot, we see neither your document nor your IP address.',
 			anonLabels: ['Your document', 'Your key', 'Your ballot'],
 			anonCut: 'no link',
 			countKicker: 'Same votes, two results',
 			countTitle: 'What if the first round lied?',
-			countBody: 'We count the same ballots two ways. With the one-round majority vote, only your first choice counts. With the ranking, your 2nd and 3rd choices count too: the winner is the one a majority prefers to each other candidate. Sometimes it is not the same one.',
+			countBody: 'The same ballots, counted twice. With the one-round majority vote, only the first choice counts. With the ranking, the winner is the one a majority prefers to each other candidate.',
 			countMajority: 'One-round majority vote',
 			countRanking: 'With the ranking',
 			countWinner: 'beats each other one',
 			countMore: 'Understand the two counts',
 			blankTitle: 'The blank vote counts.',
-			blankBody: 'Here, voting blank is not keeping quiet: it is a ballot in its own right, counted among the voters and in every share.',
+			blankBody: 'A ballot in its own right, counted in every share.',
 			honestyTitle: 'Vote, and look at their record.',
-			honestyBody: 'Next to each candidate, their honesty score: the contradictions tartuffe.me found between their statements and their votes, with sources.',
+			honestyBody: 'Next to each candidate, their honesty score: their contradictions, with sources.',
 			checkTitle: 'We cannot cheat without it showing.',
-			checkBody: 'Every ballot goes into a signed public log, anchored in the Bitcoin blockchain. Your browser checks that your vote is in it. Anyone can download everything and recount.',
-			checkMore: 'See how it is checked',
-			disclaimer: 'An open consultation of tartuffe.me users, not an opinion poll: the voters are not representative. Results hidden below a voter threshold, and the day before and the day of a vote.',
+			checkBody: 'Every ballot goes into a signed public ledger, timestamped on Bitcoin. Anyone can download it and recount.',
+			checkMore: 'How to check',
+			disclaimer: 'An open consultation, not an opinion poll: the voters are not representative. Results hidden the day before and the day of the vote.',
 			finalTitle: '{n} days left. Your turn.',
 			finalTitleNoDate: 'Your turn.',
-			labLine: 'An experiment of the tartuffe.me lab, which builds tools for more transparent democracies.',
+			labLine: 'An experiment of the tartuffe.me lab.',
 			labLink: 'The lab',
 			phTitle: 'My vote',
 			phBlank: 'Blank vote',
@@ -163,7 +165,7 @@
 				<a class="btn-alt" href={paths.how}>{c.how}</a>
 			</div>
 			{#if voters !== null && candidates}
-				<p class="live"><span class="pulse" aria-hidden="true"></span>{c.votersNow.replace('{n}', String(voters)).replace('{c}', String(candidates))}</p>
+				<p class="live"><span class="pulse" aria-hidden="true"></span>{(showVoters(voters) ? c.votersNow : c.candidatesNow).replace('{n}', String(voters)).replace('{c}', String(candidates))}</p>
 			{/if}
 		</div>
 
@@ -268,7 +270,7 @@
 						<li class:top={i === 0}>
 							<span class="who">{name}</span>
 							<span class="bar"><span style="width: {pct * 2.4}%"></span></span>
-							<span class="pct">{pct} %</span>
+							<span class="pct">{pct}&nbsp;%</span>
 						</li>
 					{/each}
 				</ol>
@@ -352,7 +354,7 @@
 	}
 	h1 em {
 		font-style: italic;
-		background: linear-gradient(100deg, var(--event), #b9cdf0 60%, var(--event-strong));
+		background: linear-gradient(100deg, var(--event), color-mix(in oklch, var(--event) 55%, white) 60%, var(--event-strong));
 		-webkit-background-clip: text;
 		background-clip: text;
 		color: transparent;
