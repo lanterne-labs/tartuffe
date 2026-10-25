@@ -30,6 +30,18 @@ func TestDeriveDeputyFactsNameTheVoter(t *testing.T) {
 	}
 }
 
+// A deputy who took no part in the vote gets no fact: it states no position.
+func TestDeriveDeputyFactsSkipNonVoting(t *testing.T) {
+	law := Law{Key: "17-1", URL: "https://an.test/17-1"}
+	facts := deriveDeputyFacts(law, []VoteEvent{
+		{DisplayName: "Jean Dupont", Position: VoteNonVotant},
+		{DisplayName: "Marie Curie", Position: VoteAbstention},
+	}, LawSummary{}, testObjectPhrase)
+
+	require.Len(t, facts, 1)
+	require.Equal(t, "Marie Curie s'est abstenu lors du vote sur "+testObjectPhrase, facts[0].FactText)
+}
+
 // A party's majority fact names the party.
 func TestDerivePartyMajorityFactsNameTheParty(t *testing.T) {
 	law := Law{Key: "17-1", URL: "https://an.test/17-1"}
