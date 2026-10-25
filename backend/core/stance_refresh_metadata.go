@@ -6,6 +6,7 @@ import (
 	"digital-mirror/backend/util"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
 )
@@ -80,20 +81,27 @@ func RefreshPendingStances(ctx context.Context, storer PendingRefreshStorer, sm 
 	if err != nil {
 		return 0, err
 	}
-	failed := 0
-	for i, id := range ids {
+	// The stances are independent: they run as many at once as the endpoint
+	// serves.
+	var tried, failed atomic.Int64
+	err = llm.ForEach(ctx, ids, func(ctx context.Context, id int64) error {
 		if err := ctx.Err(); err != nil {
-			return i, fmt.Errorf("stance refresh stopped: %w", err)
+			return fmt.Errorf("stance refresh stopped: %w", err)
 		}
 		err := sm.RefreshStanceMetadata(ctx, id)
 		if err != nil && (errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil) {
-			return i, fmt.Errorf("refreshing stance %d: %w", id, err)
+			return fmt.Errorf("refreshing stance %d: %w", id, err)
 		}
+		tried.Add(1)
 		if err != nil {
-			failed++
+			failed.Add(1)
 			log.Warn().Err(err).Int64("stance_id", id).Msg("Stance refresh failed; the stance keeps its previous label and summary")
 		}
+		return nil
+	})
+	if err != nil {
+		return int(tried.Load()), err
 	}
-	log.Info().Int("stances", len(ids)).Int("failed", failed).Msg("Refreshed the stances with pending facts")
+	log.Info().Int("stances", len(ids)).Int64("failed", failed.Load()).Msg("Refreshed the stances with pending facts")
 	return len(ids), nil
 }
