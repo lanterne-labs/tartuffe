@@ -55,7 +55,7 @@
 					body: [
 						'Une personne, une voix : sans document, on pourrait créer cent comptes. Le passeport ou la carte d’identité à puce prouve seulement que vous êtes majeur et français.',
 						'Votre navigateur crée une clé de vote secrète, qui ne le quitte jamais, et son empreinte publique. L’app ZKPassport lit la puce (NFC) et calcule sur le téléphone une preuve : « document authentique, signé par l’État, en cours de validité ; titulaire majeur et français ». La preuve est liée à l’empreinte de votre clé, et ne sert qu’une fois.',
-						'Nous vérifions la preuve, puis gardons deux choses : une empreinte à sens unique de l’identifiant du document (HMAC, avec une clé secrète à nous), pour une seule clé de vote par document, et l’empreinte publique de votre clé, qui rejoint la liste des votants. Rien ne les relie à votre bulletin.'
+						'Nous vérifions la preuve, puis gardons deux choses : une empreinte à sens unique de l’identifiant du document (HMAC, avec une clé secrète qui nous est propre), pour qu’un document n’ouvre qu’une clé de vote, et l’empreinte publique de votre clé, qui rejoint la liste des votants. Rien ne les relie à votre bulletin.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'App ZKPassport', sub: 'votre téléphone' }, { label: 'tartuffe.me' }, { label: 'Ethereum', sub: 'registre public' }],
@@ -71,14 +71,14 @@
 							{ at: 2, note: 'Vérifie la preuve, garde HMAC(document) et C. C rejoint la liste des votants.', span: 2 },
 							{ from: 2, to: 0, label: 'inscrit : vous pouvez voter', dashed: true }
 						],
-						caption: 'Le document ouvre le droit de vote ; la clé, que vous seul avez, vote. Rien ne relie les deux au bulletin.'
+						caption: 'Le document ouvre le droit de vote ; c’est la clé, que vous êtes seul à détenir, qui vote. Rien ne relie les deux au bulletin.'
 					},
 					more: [
 						[
 							'Une preuve « à divulgation nulle de connaissance » ?',
 							[
 								'C’est une preuve qu’une affirmation est vraie, qui ne révèle rien d’autre.',
-								'C’est comme un certificat « majeur » infalsifiable, remis à la place de votre carte d’identité. Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans faire confiance au téléphone.',
+								'Imaginez qu’au lieu de montrer votre carte d’identité, vous remettiez un certificat infalsifiable qui dit seulement « majeur ». Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans avoir à faire confiance au téléphone.',
 								'La preuve repose sur la signature de l’État inscrite dans la puce : un faux document ne peut pas en produire.'
 							]
 						],
@@ -96,9 +96,9 @@
 					title: '2. Voter',
 					body: [
 						'Vous classez jusqu’à 3 candidats, par ordre de préférence, ou vous votez blanc. Vous pouvez changer d’avis jusqu’à la clôture : seul le dernier vote compte.',
-						'Votre navigateur télécharge toute la liste des votants, pour ne pas dire qui vous êtes, et calcule une preuve Semaphore : « ce bulletin vient d’une clé de la liste », sans dire laquelle. Elle donne aussi un pseudonyme, le même pour vous pendant 30 jours et sans lien avec votre clé : un nouveau vote remplace ainsi l’ancien.',
+						'Votre navigateur télécharge toute la liste des votants, pour ne pas révéler qui vous êtes, et calcule une preuve Semaphore : « ce bulletin vient d’une clé de la liste », sans dire laquelle. Elle produit aussi un pseudonyme, le même pour vous pendant 30 jours et sans lien avec votre clé : un nouveau vote remplace ainsi l’ancien.',
 						'Le bulletin ne passe pas par nous : il part sur des relais Nostr publics, tenus par d’autres (nos.lol, relay.primal.net, offchain.pub, nostr.mom, relay.snort.social), signé par une clé jetable et daté à l’heure près. Notre serveur lit les relais une fois par heure : il ne voit ni l’adresse IP d’un bulletin, ni la minute de son envoi.',
-						'Chaque heure, les bulletins sont publiés par lots mélangés (au moins 3, ou après 6 h d’attente au plus) dans le registre public. Si aucun relais ne répond, le navigateur envoie le bulletin directement à notre serveur, qui voit alors son adresse.'
+						'Chaque heure, les bulletins sont publiés par lots mélangés (dès 3 bulletins, ou au bout de 6 h au plus) dans le registre public. Si aucun relais ne répond, le navigateur envoie le bulletin directement à notre serveur, qui voit alors son adresse.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'Relais Nostr', sub: 'publics, tenus par d’autres' }, { label: 'tartuffe.me' }, { label: 'Registre public' }],
@@ -117,7 +117,7 @@
 						[
 							'Pourquoi des périodes de 30 jours ?',
 							[
-								'Un bulletin vaut pour 30 jours. Deux séries de périodes tournent, décalées de 15 jours, et votre navigateur vote dans les deux ; les résultats lisent celle qui a commencé en premier. À chaque visite, il renouvelle votre bulletin si une nouvelle période s’est ouverte.',
+								'Un bulletin vaut pour 30 jours. Deux séries de périodes tournent, décalées de 15 jours, et votre navigateur vote dans les deux ; les résultats s’appuient sur celle qui a commencé la première. À chaque visite, il renouvelle votre bulletin si une nouvelle période s’est ouverte.',
 								'C’est ce qui permet de remplacer une clé perdue sans jamais compter deux voix pour un document : la nouvelle clé vote à partir de la période suivante.'
 							]
 						]
@@ -137,7 +137,7 @@
 					title: '4. Le vote blanc compte',
 					body: [
 						'C’est un bulletin à part entière : « j’ai voté, mais aucun ne me convainc ». Il ne classe personne, mais il compte parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
-						'Vous pouvez aussi le placer après vos candidats : il signifie alors « les autres, non ». Il affronte chaque candidat en face-à-face, comme un candidat : un candidat que la majorité place sous le vote blanc passe derrière lui dans le classement.',
+						'Vous pouvez aussi le placer après vos candidats : il signifie alors « les autres, non ». Il affronte chaque candidat en duel, comme s’il en était un : un candidat que la majorité place sous le vote blanc passe derrière lui dans le classement.',
 						'Retirer son vote, c’est autre chose : le bulletin ne compte plus.'
 					]
 				},
@@ -145,9 +145,9 @@
 					id: 'journal',
 					title: '5. Vérifier, sans nous faire confiance',
 					body: [
-						'Inscriptions, listes de votants, bulletins et totaux entrent dans un registre public, un arbre de Merkle comme ceux qui surveillent les certificats du web. Notre serveur en signe régulièrement la tête (un point de contrôle), qui engage tout ce qui précède.',
+						'Inscriptions, listes de votants, bulletins et totaux entrent dans un registre public, un arbre de Merkle comme ceux qui surveillent les certificats du web. Notre serveur signe régulièrement son état (un point de contrôle), qui engage tout ce qui précède.',
 						'Votre navigateur garde le dernier point de contrôle vu. À chaque visite, il vérifie que le nouveau prolonge l’ancien sans rien effacer, puis que votre bulletin y figure, intact. Sinon, il vous alerte et vous donne la preuve signée à publier.',
-						'À chaque lot, l’empreinte du point de contrôle est horodatée dans Bitcoin par OpenTimestamps : impossible ensuite de prétendre à un autre registre à cette date. Et chacun peut tout télécharger et recompter avec l’outil open source « dm poll verify », en comparant avec les bulletins restés sur les relais.'
+						'À chaque lot, l’empreinte du point de contrôle est horodatée dans Bitcoin par OpenTimestamps : impossible ensuite de faire passer un autre registre pour celui de cette date. Et chacun peut tout télécharger et recompter avec l’outil open source « dm poll verify », en comparant avec les bulletins restés sur les relais.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'tartuffe.me' }, { label: 'Bitcoin', sub: 'OpenTimestamps' }, { label: 'N’importe qui' }],
@@ -168,8 +168,8 @@
 					id: 'appareils',
 					title: '6. Plusieurs appareils, clé perdue',
 					body: [
-						'Votre clé vit sur votre appareil. Vous pouvez la retrouver ailleurs de trois façons : une clé d’accès (Face ID, empreinte), qui ouvre une copie chiffrée gardée chez nous ; un autre appareil relié par QR code, comme WhatsApp (message chiffré, effacé dès sa lecture, valable 10 minutes) ; ou 12 mots de secours, à noter.',
-						'Tout perdu ? Scannez à nouveau votre document : la nouvelle clé vote à partir de la période de 30 jours suivante. D’ici là, votre ancien vote compte. Un document ne pèse jamais deux voix.'
+						'Votre clé est stockée sur votre appareil. Vous pouvez la retrouver ailleurs de trois façons : une clé d’accès (Face ID, empreinte), qui ouvre une copie chiffrée gardée chez nous ; un autre appareil relié par QR code, comme WhatsApp (message chiffré, effacé dès sa lecture, valable 10 minutes) ; ou 12 mots de secours, à noter.',
+						'Vous avez tout perdu ? Scannez à nouveau votre document : la nouvelle clé vote à partir de la période de 30 jours suivante. D’ici là, votre ancien vote compte. Un document ne compte jamais pour deux voix.'
 					]
 				}
 			],
@@ -187,7 +187,7 @@
 				'L’adresse IP d’un bulletin passé par les relais, ni l’heure exacte de son envoi.',
 				'Votre clé en clair, vos 12 mots, votre visage, votre empreinte.'
 			],
-			limitsTitle: 'Les limites, honnêtement',
+			limitsTitle: 'Nos limites, en toute franchise',
 			limitsLead: 'Ce que ce vote ne garantit pas.',
 			limits: [
 				'Les relais Nostr voient l’adresse IP de votre navigateur, comme tout site visité ; votre fournisseur d’accès voit que vous vous y connectez. Pas encore d’option Tor.',
