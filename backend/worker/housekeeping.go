@@ -31,6 +31,10 @@ const (
 	// refreshBudget caps how many stances a pass brings up to date (one LLM
 	// call each).
 	refreshBudget = 2000
+	// mergeBudget caps the LLM calls of the stance merge sweep of a pass:
+	// after a fold or a large backfill most persons need a sweep, and the
+	// sweep over all of them held the pass for more than 10 h.
+	mergeBudget = 2000
 	// detectBudget caps how many pairs a pass judges (one LLM call each, about
 	// 4 s): a pass that judges every person (the first one, a rulebook change)
 	// is cut into passes of about 2 h, so the feed and the tasks run between
@@ -330,7 +334,9 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	}
 	// 2. The stances of one person that cover one subject are merged; the
 	// facts they held are judged against each other.
-	_, err = core.RunStanceMergeSweep(ctx, storer, sm, core.DefaultStanceMergeOptions)
+	mergeOpts := core.DefaultStanceMergeOptions
+	mergeOpts.MaxLLMCalls = mergeBudget
+	_, err = core.RunStanceMergeSweep(ctx, storer, sm, mergeOpts)
 	if err := step("stance merge", err); err != nil {
 		return err
 	}
