@@ -18,6 +18,11 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary, objectPh
 	// The action verb (voted FOR/AGAINST) is preserved in FactText for display + LLM comparison
 	embeddingText := objectPhrase
 	for _, ev := range events {
+		// Not taking part in a vote states no position: no contradiction
+		// can come of it, so it makes no fact.
+		if ev.Position == VoteNonVotant {
+			continue
+		}
 		// The text names its voter, like any fact: one fact row per ballot.
 		text := ev.DisplayName + " " + buildVoteStatement(ev.Position, objectPhrase)
 		if len(out) < 3 {

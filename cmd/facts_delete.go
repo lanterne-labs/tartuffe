@@ -14,15 +14,20 @@ import (
 // factsDeleteCmd represents the facts delete command
 var factsDeleteCmd = &cobra.Command{
 	Use:   "delete",
-	Short: "Delete facts for a person or party",
-	Long: `Delete all facts associated with a specific person or party.
+	Short: "Delete facts for a person or party, or by id",
+	Long: `Delete all facts associated with a specific person or party, or the facts
+given by id (--ids): their stances left empty go too, and the honesty score of
+every person they mention is recomputed.
 
 Examples:
   # Delete all facts for a person
   ./dm facts delete --person "Marine Le Pen"
 
   # Delete all facts for a party
-  ./dm facts delete --party "Rassemblement national"`,
+  ./dm facts delete --party "Rassemblement national"
+
+  # Delete facts by id
+  ./dm facts delete --ids 23631,23202`,
 	RunE: deleteFacts,
 }
 
@@ -30,6 +35,7 @@ func init() {
 	factsCmd.AddCommand(factsDeleteCmd)
 	factsDeleteCmd.Flags().StringP("person", "p", "", "Person name to delete facts for")
 	factsDeleteCmd.Flags().String("party", "", "Party name to delete facts for")
+	factsDeleteCmd.Flags().Int64Slice("ids", nil, "Fact ids to delete, comma-separated")
 	factsDeleteCmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompt")
 }
 
@@ -38,6 +44,14 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 
 	personName, _ := cmd.Flags().GetString("person")
 	partyName, _ := cmd.Flags().GetString("party")
+	ids, _ := cmd.Flags().GetInt64Slice("ids")
+	if len(ids) > 0 {
+		if personName != "" || partyName != "" {
+			return fmt.Errorf("--ids cannot be combined with --person or --party")
+		}
+		skipConfirm, _ := cmd.Flags().GetBool("yes")
+		return deleteFactsByID(ctx, ids, skipConfirm)
+	}
 
 	if personName == "" && partyName == "" {
 		return fmt.Errorf("either --person or --party is required")
@@ -106,5 +120,35 @@ func deleteFacts(cmd *cobra.Command, args []string) error {
 		Int64("deleted", deleted).
 		Msg("Facts and plugin metadata deleted")
 
+	return nil
+}
+
+// deleteFactsByID deletes the facts given and cleans up after them
+// (DeleteFactsAndCleanup).
+func deleteFactsByID(ctx context.Context, ids []int64, skipConfirm bool) error {
+	if err := godotenv.Load(); err != nil {
+		log.Debug().Msg(".env file not found or error loading")
+	}
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create PostgreSQL storer: %w", err)
+	}
+	defer storer.Close()
+
+	fmt.Printf("About to delete %d facts by id\n", len(ids))
+	if !skipConfirm {
+		fmt.Print("Continue? (y/n): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "y" && confirm != "Y" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
+	}
+	res, err := storer.DeleteFactsAndCleanup(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("failed to delete facts: %w", err)
+	}
+	fmt.Printf("Deleted %d facts, %d empty stances; %d persons rescored\n", res.FactsDeleted, res.StancesDeleted, len(res.PersonsAffected))
 	return nil
 }
