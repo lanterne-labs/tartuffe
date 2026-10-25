@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -65,6 +66,10 @@ type StanceMergeOptions struct {
 	// MaxPersons caps how many candidate persons RunStanceMergeSweep processes
 	// (0 = all), taken in the order storage lists them. Bounded smoke runs use it.
 	MaxPersons int
+	// MaxLLMCalls is the number of LLM calls after which the sweep starts no
+	// new person (0 = no cap); the persons left stay pending for the next
+	// sweep. The maintenance pass uses it to stay short.
+	MaxLLMCalls int64
 }
 
 // DefaultStanceMergeOptions is the single source of truth for merge thresholds
@@ -166,7 +171,7 @@ func MergeRulebookKey(opts StanceMergeOptions) string {
 
 // RunStanceMergeSweep is the daily-pipeline stance merge step: for every person
 // with at least two stances whose stance set changed since it was last judged
-// (capped by opts.MaxPersons), LLM-vets the candidate clusters, applies the
+// (capped by opts.MaxPersons and opts.MaxLLMCalls), LLM-vets the candidate clusters, applies the
 // merges, and re-detects contradictions across the previously-fragmented
 // facts. A person judged without LLM failures is memoized under the current
 // stance fingerprint and rulebook (RecordMergeSweep), so unchanged persons
@@ -190,41 +195,55 @@ func RunStanceMergeSweep(ctx context.Context, storer StanceMergeStorer, sm *Stan
 		persons = persons[:opts.MaxPersons]
 	}
 
-	for _, p := range persons {
+	// The persons are independent: they run as many at once as the endpoint
+	// serves.
+	var mu sync.Mutex
+	err = llm.ForEach(ctx, persons, func(ctx context.Context, p PersonRecord) error {
 		if err := ctx.Err(); err != nil {
-			return stats, fmt.Errorf("stance merge sweep stopped: %w", err)
+			return fmt.Errorf("stance merge sweep stopped: %w", err)
+		}
+		mu.Lock()
+		over := opts.MaxLLMCalls > 0 && stats.LLMCalls >= opts.MaxLLMCalls
+		mu.Unlock()
+		if over {
+			return nil
 		}
 		ps, perr := MergeStancesForPerson(ctx, storer, sm, p, opts)
+		mu.Lock()
+		stats.Add(ps)
+		mu.Unlock()
 		if errors.Is(perr, llm.ErrUnavailable) {
-			stats.Add(ps)
-			return stats, fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, perr)
+			return fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, perr)
 		}
 		if err := ctx.Err(); err != nil {
 			// Cut under the person: candidates may have gone unjudged, so it
 			// is not memoized and the next sweep asks again.
-			stats.Add(ps)
-			return stats, fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, err)
+			return fmt.Errorf("stance merge sweep stopped at %s: %w", p.Name, err)
 		}
 		if perr != nil {
 			log.Warn().Err(perr).Str("person", p.Name).Msg("Merge sweep: per-person failure (continuing)")
-			continue
+			return nil
 		}
-		stats.Add(ps)
 		// A failed LLM call means a candidate went unjudged: leave the person
 		// pending so the next sweep asks again. Dry runs judge without
 		// applying, so their answer must not be memoized either.
 		if ps.LLMFailures > 0 || opts.DryRun {
-			continue
+			return nil
 		}
 		if err := storer.RecordMergeSweep(ctx, p.ID, key); err != nil {
 			log.Error().Err(err).Str("person", p.Name).Msg("Merge sweep: failed to record the sweep memo")
 		}
+		return nil
+	})
+	if err != nil {
+		return stats, err
 	}
 
 	log.Info().
 		Dur("elapsed", time.Since(start)).
 		Int("pending", pending).
 		Int64("persons_processed", stats.PersonsProcessed).
+		Int64("llm_calls", stats.LLMCalls).
 		Int64("stances_merged", stats.StancesMerged).
 		Int64("post_merge_contradictions", stats.PostMergeContradictions).
 		Int64("post_merge_analyze_failures", stats.PostMergeAnalyzeFailures).

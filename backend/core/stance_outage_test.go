@@ -588,3 +588,22 @@ func TestVerifyEntries_NothingUnverified(t *testing.T) {
 		t.Errorf("queued for the detector: %v, want the unverified pair 5-10", storer.queued)
 	}
 }
+
+// TestStanceMergeSweep_StopsAtCallBudget: once MaxLLMCalls calls were made,
+// the sweep starts no new person; the person left is not memoized.
+func TestStanceMergeSweep_StopsAtCallBudget(t *testing.T) {
+	m := pensionStorer()
+	m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+	m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+	storer := &sweepStorer{reassignStorer: &reassignStorer{mockStanceStorer: m}}
+	sm, _ := newOutageManager(t, storer, answers(nil))
+	opts := DefaultStanceMergeOptions
+	opts.MaxLLMCalls = 1
+	stats, err := RunStanceMergeSweep(context.Background(), storer, sm, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.PersonsProcessed != 1 || stats.LLMCalls < 1 || len(storer.memos) != 1 || storer.memos[0] != 1 {
+		t.Errorf("stats=%+v memos=%v; want person 1 judged and memoized, person 2 left", stats, storer.memos)
+	}
+}
