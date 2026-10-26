@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -31,6 +32,7 @@ type ContradictionFactPair struct {
 // *storage.PostgresStorer implements it.
 type FactFoldStorer interface {
 	GroupStorer
+	OccurrenceCheckStorer
 	// GetFoldFactsForPerson returns the person's active (non-duplicate)
 	// facts with their embeddings.
 	GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error)
@@ -74,22 +76,18 @@ type FoldOptions struct {
 	Floor      float64 // cosine-similarity floor for same-claim candidates
 	TextFloor  float64 // trigram-similarity floor for same-claim candidates (0 = embedding only)
 	MaxCluster int     // clusters larger than this are skipped (defense against runaway chaining)
-	// JudgedSince: a fact inserted at or after it went through the
-	// insert-time gate under the current grouping rule, so a pair of two
-	// such facts is not asked again (the gate's answer at insertion stands;
-	// asking again only replays its variance). Zero: every pair is asked.
-	JudgedSince time.Time
+	// AskAll asks the gate about every candidate pair, also those a stored
+	// verdict covers (occurrence_checks). By default a stored verdict stands:
+	// asking again only replays the gate's variance.
+	AskAll bool
+	// Asked, when set, counts the gate calls (a sweep's budget).
+	Asked *atomic.Int64
 }
-
-// groupingRuleSince is when the insert-time gate took the current grouping
-// rule (one occurrence, read from quotes, dates and outlets) on the Claude
-// endpoints.
-var groupingRuleSince = time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 
 // DefaultFoldOptions are the thresholds `dm facts fold` uses. TextFloor is
 // the inserter's dedupeTextSimilarityFloor: the two candidate sources of the
 // insert-time gate, so the backfill reaches the same pairs.
-var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12, JudgedSince: groupingRuleSince}
+var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12}
 
 // FoldCluster is a set of facts that report one occurrence.
 type FoldCluster struct {
@@ -162,14 +160,8 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - opts.Floor
 	var candidates, contradictedCandidates [][2]int
-	judgedAtInsert := func(f FactForFold) bool {
-		return !opts.JudgedSince.IsZero() && !f.CreatedAt.Before(opts.JudgedSince)
-	}
 	for i := 0; i < len(facts); i++ {
 		for j := i + 1; j < len(facts); j++ {
-			if judgedAtInsert(facts[i]) && judgedAtInsert(facts[j]) {
-				continue
-			}
 			if !textPairs[key(facts[i].ID, facts[j].ID)] {
 				if len(facts[i].Embedding) == 0 || len(facts[j].Embedding) == 0 {
 					continue
@@ -205,10 +197,37 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	if err != nil {
 		return nil, fmt.Errorf("load claim sources: %w", err)
 	}
+	// The pairs a stored verdict covers are not asked again: the insertion
+	// and the earlier folds asked them under the same gate prompt.
+	ruleHash := OccurrenceRuleHash()
+	stored := map[pairKey]OccurrenceVerdict{}
+	if !opts.AskAll {
+		var withEvidence [][2]int64
+		for _, pr := range evidenceRows {
+			withEvidence = append(withEvidence, key(pr[0], pr[1]))
+		}
+		if stored, err = storer.LoadOccurrenceChecks(ctx, withEvidence, ruleHash); err != nil {
+			return nil, fmt.Errorf("load occurrence checks: %w", err)
+		}
+	}
 	ask := func(i, j int) (OccurrenceVerdict, error) {
-		return judge.IsSameOccurrence(ctx,
+		k := key(facts[i].ID, facts[j].ID)
+		if v, ok := stored[k]; ok {
+			return v, nil
+		}
+		if opts.Asked != nil {
+			opts.Asked.Add(1)
+		}
+		v, err := judge.IsSameOccurrence(ctx,
 			ClaimEvidence{Text: facts[i].Text, Sources: sources[facts[i].ID]},
 			ClaimEvidence{Text: facts[j].Text, Sources: sources[facts[j].ID]})
+		if err != nil {
+			return v, err
+		}
+		if rErr := storer.RecordOccurrenceCheck(ctx, k[0], k[1], ruleHash, v); rErr != nil {
+			log.Warn().Err(rErr).Int64("fact_a", k[0]).Int64("fact_b", k[1]).Msg("Recording an occurrence verdict failed")
+		}
+		return v, nil
 	}
 	for _, c := range candidates {
 		i, j := c[0], c[1]

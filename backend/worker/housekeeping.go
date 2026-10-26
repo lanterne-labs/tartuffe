@@ -35,6 +35,9 @@ const (
 	// after a fold or a large backfill most persons need a sweep, and the
 	// sweep over all of them held the pass for more than 10 h.
 	mergeBudget = 2000
+	// foldBudget caps the grouping gate calls of the fold sweep of a pass
+	// (two calls per pair at most, both orders).
+	foldBudget = 2000
 	// detectBudget caps how many pairs a pass judges (one LLM call each, about
 	// 4 s): a pass that judges every person (the first one, a rulebook change)
 	// is cut into passes of about 2 h, so the feed and the tasks run between
@@ -338,6 +341,17 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	mergeOpts.MaxLLMCalls = mergeBudget
 	_, err = core.RunStanceMergeSweep(ctx, storer, sm, mergeOpts)
 	if err := step("stance merge", err); err != nil {
+		return err
+	}
+	// 2b. The groups of one occurrence that the insertion never compared are
+	// merged: the persons whose active facts changed, the pairs no stored
+	// gate verdict covers.
+	judge, err := core.NewFactDedupeAdjudicatorFromEnv()
+	if err != nil {
+		return fmt.Errorf("maintenance: grouping gate: %w", err)
+	}
+	_, err = core.RunFoldSweep(ctx, storer, judge, core.DefaultFoldOptions, foldBudget)
+	if err := step("fold", err); err != nil {
 		return err
 	}
 	// 3. Detection across stances. A NO verdict is final only under the

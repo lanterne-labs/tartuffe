@@ -39,10 +39,12 @@ report one occurrence (candidates by embedding or text similarity, then the
 same evidence rule and LLM gate as insertion), makes each cluster one claim
 group whose parent is its most concrete wording (the others are kept as
 members), moves their contradictions onto the parent (collapsing duplicate
-rows), and recomputes scores. Insertion-time grouping handles new facts.
+rows), and recomputes scores. The maintenance pass folds the persons whose
+facts changed (core.RunFoldSweep).
 
-A pair of two facts inserted under the current grouping rule (since
-2026-10-12) keeps its insert-time verdict; --ask-all asks the gate about it too.
+A pair the gate already judged under its current prompt (occurrence_checks,
+at insertion or in an earlier fold) keeps that verdict; --ask-all asks the gate
+about it again.
 
 READ-ONLY by default: prints the clusters it would fold. Pass --apply to write.`,
 	Annotations: map[string]string{"needs_db": "true"},
@@ -56,7 +58,7 @@ func init() {
 	factsFoldCmd.Flags().Float64Var(&factsFoldFloor, "floor", core.DefaultFoldOptions.Floor, "Cosine-similarity floor for grouping candidates")
 	factsFoldCmd.Flags().IntVar(&factsFoldMaxCluster, "max-cluster", core.DefaultFoldOptions.MaxCluster, "Skip clusters larger than this (defense against runaway chaining)")
 	factsFoldCmd.Flags().StringVar(&factsFoldUntil, "until", "", "Stop starting persons after this RFC 3339 time (a long backfill must not overlap the nightly)")
-	factsFoldCmd.Flags().BoolVar(&factsFoldAskAll, "ask-all", false, "Also ask the gate about pairs of facts inserted under the current grouping rule (by default their insert-time verdict stands)")
+	factsFoldCmd.Flags().BoolVar(&factsFoldAskAll, "ask-all", false, "Also ask the gate about the pairs it already judged under its current prompt (by default the stored verdict stands)")
 	factsFoldCmd.Flags().Int64Var(&factsFoldStartAfter, "start-after", 0, "Skip persons up to and including this person id (resume a cut run)")
 }
 
@@ -97,10 +99,7 @@ func runFactsFold(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster, JudgedSince: core.DefaultFoldOptions.JudgedSince}
-	if factsFoldAskAll {
-		opts.JudgedSince = time.Time{}
-	}
+	opts := core.FoldOptions{Floor: factsFoldFloor, TextFloor: core.DefaultFoldOptions.TextFloor, MaxCluster: factsFoldMaxCluster, AskAll: factsFoldAskAll}
 	// The persons are folded as many at once as the endpoint serves
 	// (llm.ForEach): each person's clusters are independent of the others'.
 	// The persons start in order, so at the deadline every person before the

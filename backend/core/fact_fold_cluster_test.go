@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"digital-mirror/backend/llm"
 )
@@ -19,6 +19,24 @@ type foldClusterStorer struct {
 	facts      []FactForFold
 	textPairs  [][2]int64
 	noEvidence [][2]int64
+	checks     map[[2]int64]OccurrenceVerdict // the stored gate verdicts
+}
+
+func (f *foldClusterStorer) LoadOccurrenceChecks(ctx context.Context, pairs [][2]int64, ruleHash string) (map[[2]int64]OccurrenceVerdict, error) {
+	out := map[[2]int64]OccurrenceVerdict{}
+	for _, p := range pairs {
+		if v, ok := f.checks[p]; ok {
+			out[p] = v
+		}
+	}
+	return out, nil
+}
+func (f *foldClusterStorer) RecordOccurrenceCheck(ctx context.Context, a, b int64, ruleHash string, v OccurrenceVerdict) error {
+	if f.checks == nil {
+		f.checks = map[[2]int64]OccurrenceVerdict{}
+	}
+	f.checks[OrderedPair(a, b)] = v
+	return nil
 }
 
 func (f *foldClusterStorer) GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error) {
@@ -76,6 +94,7 @@ func TestFoldClustersUnionTextPairs(t *testing.T) {
 	}
 
 	store.textPairs = [][2]int64{{1, 3}}
+	store.checks = nil // the first run stored A-B; ask it again here
 	judge = &sameAlwaysJudge{}
 	clusters, err = FoldClustersForPerson(context.Background(), store, judge, p, FoldOptions{Floor: 0.70, TextFloor: 0.40, MaxCluster: 12})
 	if err != nil {
@@ -129,28 +148,47 @@ func TestApplyFoldClusterContainedParent(t *testing.T) {
 	}
 }
 
-// A pair of two facts inserted under the current rule keeps its insert-time
-// verdict: the gate is asked only about pairs with an older fact.
-func TestFoldClustersSkipsPairsJudgedAtInsert(t *testing.T) {
-	since := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
-	old, recent := since.Add(-time.Hour), since.Add(time.Hour)
-	store := &foldClusterStorer{facts: []FactForFold{
-		{ID: 1, Text: "A", Embedding: []float32{1, 0, 0}, CreatedAt: old},
-		{ID: 2, Text: "B", Embedding: []float32{1, 0, 0}, CreatedAt: recent},
-		{ID: 3, Text: "C", Embedding: []float32{1, 0, 0}, CreatedAt: recent},
-	}}
+// A pair the gate already judged keeps its stored verdict: the gate is asked
+// only about the other pairs, and its answers are stored. AskAll asks again.
+func TestFoldClustersReuseStoredVerdicts(t *testing.T) {
+	store := &foldClusterStorer{
+		facts: []FactForFold{
+			{ID: 1, Text: "A", Embedding: []float32{1, 0, 0}},
+			{ID: 2, Text: "B", Embedding: []float32{1, 0, 0}},
+			{ID: 3, Text: "C", Embedding: []float32{1, 0, 0}},
+		},
+		checks: map[[2]int64]OccurrenceVerdict{{2, 3}: OccurrenceDifferent},
+	}
 	judge := &sameAlwaysJudge{}
-	opts := FoldOptions{Floor: 0.70, MaxCluster: 12, JudgedSince: since}
-	if _, err := FoldClustersForPerson(context.Background(), store, judge, PersonRecord{ID: 1, Name: "p"}, opts); err != nil {
+	var asked atomic.Int64
+	opts := FoldOptions{Floor: 0.70, MaxCluster: 12, Asked: &asked}
+	clusters, err := FoldClustersForPerson(context.Background(), store, judge, PersonRecord{ID: 1, Name: "p"}, opts)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range judge.asked {
 		if a == [2]string{"B", "C"} || a == [2]string{"C", "B"} {
-			t.Fatalf("the gate was asked about B-C, two facts judged at insertion: %v", judge.asked)
+			t.Fatalf("the gate was asked about B-C, a stored verdict: %v", judge.asked)
 		}
 	}
-	if len(judge.asked) != 2 {
-		t.Fatalf("asked %v, want A-B and A-C", judge.asked)
+	if len(judge.asked) != 2 || asked.Load() != 2 {
+		t.Fatalf("asked %v (counted %d), want A-B and A-C", judge.asked, asked.Load())
+	}
+	if store.checks[[2]int64{1, 2}] != OccurrenceSame || store.checks[[2]int64{1, 3}] != OccurrenceSame {
+		t.Errorf("checks %v, want the two answers stored", store.checks)
+	}
+	// B-C stays different, so the clique is {A,B} or {A,C}, never all three.
+	if len(clusters) != 1 || len(clusters[0].Facts) != 2 {
+		t.Errorf("clusters %v, want one pair", clusters)
+	}
+
+	judge = &sameAlwaysJudge{}
+	opts = FoldOptions{Floor: 0.70, MaxCluster: 12, AskAll: true}
+	if _, err := FoldClustersForPerson(context.Background(), store, judge, PersonRecord{ID: 1, Name: "p"}, opts); err != nil {
+		t.Fatal(err)
+	}
+	if len(judge.asked) != 3 {
+		t.Fatalf("AskAll asked %v, want the three pairs", judge.asked)
 	}
 }
 
@@ -201,5 +239,44 @@ func TestFoldClustersStopWhenTheLLMIsDown(t *testing.T) {
 	_, err := FoldClustersForPerson(context.Background(), store, downJudge{}, PersonRecord{ID: 1, Name: "p"}, DefaultFoldOptions)
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Fatalf("err = %v, want llm.ErrUnavailable", err)
+	}
+}
+
+// sweepFoldStorer lists two persons to fold and records the folds.
+type sweepFoldStorer struct {
+	*foldClusterStorer
+	folded []int64
+}
+
+func (s *sweepFoldStorer) ListPersonsNeedingFold(ctx context.Context, ruleHash string) ([]PersonRecord, error) {
+	return []PersonRecord{{ID: 1, Name: "p"}, {ID: 2, Name: "q"}}, nil
+}
+func (s *sweepFoldStorer) RecordFold(ctx context.Context, personID int64, ruleHash string) error {
+	s.folded = append(s.folded, personID)
+	return nil
+}
+
+// differentJudge reads every pair as two occurrences.
+type differentJudge struct{ asked int }
+
+func (j *differentJudge) IsSameOccurrence(ctx context.Context, a, b ClaimEvidence) (OccurrenceVerdict, error) {
+	j.asked++
+	return OccurrenceDifferent, nil
+}
+
+// The fold sweep starts no person after its gate budget and memoizes the
+// persons it folded; the persons left stay pending.
+func TestRunFoldSweepBudget(t *testing.T) {
+	store := &sweepFoldStorer{foldClusterStorer: &foldClusterStorer{facts: []FactForFold{
+		{ID: 1, Text: "A", Embedding: []float32{1, 0, 0}},
+		{ID: 2, Text: "B", Embedding: []float32{1, 0, 0}},
+	}}}
+	judge := &differentJudge{}
+	stats, err := RunFoldSweep(context.Background(), store, judge, FoldOptions{Floor: 0.70, MaxCluster: 12}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Persons != 1 || stats.Asked != 1 || judge.asked != 1 || len(store.folded) != 1 || store.folded[0] != 1 {
+		t.Errorf("stats=%+v asked=%d folded=%v; want person 1 folded within the budget, person 2 left", stats, judge.asked, store.folded)
 	}
 }
