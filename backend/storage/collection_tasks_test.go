@@ -35,7 +35,11 @@ func TestCollectionTasksClaimOrderAndLease(t *testing.T) {
 	_, err = storer.AddCollectionTasks(ctx, []NewCollectionTask{{PersonID: a, Plugin: "news", Since: day, Until: day}})
 	require.Error(t, err, "an empty period is refused")
 
-	first, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	held, err := storer.ClaimCollectionTask(ctx, time.Hour, 50)
+	require.NoError(t, err)
+	assert.Nil(t, held, "no task reaches the minimum priority")
+
+	first, err := storer.ClaimCollectionTask(ctx, time.Hour, 5)
 	require.NoError(t, err)
 	require.NotNil(t, first)
 	assert.Equal(t, "twitter", first.Plugin, "the higher priority first")
@@ -43,18 +47,18 @@ func TestCollectionTasksClaimOrderAndLease(t *testing.T) {
 	assert.Equal(t, TaskRunning, first.Status)
 	assert.Equal(t, 1, first.Attempts)
 
-	second, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	second, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	assert.Equal(t, "news", second.Plugin)
-	none, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	none, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	assert.Nil(t, none, "both tasks are running within their lease")
 
 	// The lease of the first expired: it is claimed again, with one more attempt.
 	_, err = storer.pool.Exec(ctx, "UPDATE collection_tasks SET heartbeat_at = now() - interval '2 hours' WHERE id = $1", first.ID)
 	require.NoError(t, err)
-	again, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	again, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	require.NotNil(t, again)
 	assert.Equal(t, first.ID, again.ID)
@@ -65,11 +69,11 @@ func TestCollectionTasksClaimOrderAndLease(t *testing.T) {
 
 	// Released with a backoff: not claimed before it.
 	require.NoError(t, storer.ReleaseCollectionTask(ctx, second.ID, "search quota", time.Now().Add(time.Hour), 3, 1, true))
-	none, err = storer.ClaimCollectionTask(ctx, time.Hour)
+	none, err = storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	assert.Nil(t, none, "the released task waits for its not_before")
 	require.NoError(t, storer.ReleaseCollectionTask(ctx, again.ID, "", time.Now(), 0, 0, false))
-	third, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	third, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	require.NotNil(t, third)
 	assert.Equal(t, first.ID, third.ID, "released for now: claimed again")
@@ -124,13 +128,13 @@ func TestCollectionTasksClaimSpreadsPersons(t *testing.T) {
 		_, err := storer.AddCollectionTasks(ctx, []NewCollectionTask{nt})
 		require.NoError(t, err)
 	}
-	first, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	first, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	require.Equal(t, a, first.PersonID, "the oldest first")
-	second, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	second, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	assert.Equal(t, b, second.PersonID, "a person no task runs for before the older task of a")
-	third, err := storer.ClaimCollectionTask(ctx, time.Hour)
+	third, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 	require.NoError(t, err)
 	assert.Equal(t, "twitter", third.Plugin, "then the task of a running person")
 }

@@ -19,16 +19,18 @@ type memTasks struct {
 	finished map[int64]string
 }
 
-func (m *memTasks) ClaimCollectionTask(context.Context, time.Duration) (*storage.CollectionTask, error) {
+func (m *memTasks) ClaimCollectionTask(_ context.Context, _ time.Duration, minPriority int) (*storage.CollectionTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.pending) == 0 {
-		return nil, nil
+	for i, t := range m.pending {
+		if t.Priority < minPriority {
+			continue
+		}
+		m.pending = append(m.pending[:i:i], m.pending[i+1:]...)
+		t.Attempts++
+		return &t, nil
 	}
-	t := m.pending[0]
-	m.pending = m.pending[1:]
-	t.Attempts++
-	return &t, nil
+	return nil, nil
 }
 
 func (m *memTasks) HeartbeatCollectionTask(context.Context, int64) (bool, error) { return true, nil }
@@ -93,6 +95,8 @@ func (i *laneIdle) Idle(context.Context) error {
 }
 
 func (i *laneIdle) FactsAdded(int) {}
+
+func (i *laneIdle) MinPriority() int { return 0 }
 
 func (i *laneIdle) Beside(context.Context) error {
 	i.besideIn.Store(true)
@@ -208,5 +212,62 @@ func TestWorkerUrgentHousekeeping(t *testing.T) {
 	}
 	if idle.idleBeside.Load() {
 		t.Error("the maintenance ran while the work beside the tasks ran")
+	}
+}
+
+// minIdle holds the tasks below its minimum priority back while held is set.
+type minIdle struct {
+	laneIdle
+	held atomic.Bool
+}
+
+func (i *minIdle) MinPriority() int {
+	if i.held.Load() {
+		return 50
+	}
+	return 0
+}
+
+// TestWorkerFeedHoldsBackfillsBack: while the feed runs, the worker claims
+// the watch list's tasks only; the backfills start once it ended.
+func TestWorkerFeedHoldsBackfillsBack(t *testing.T) {
+	tasks := &memTasks{finished: map[int64]string{}, pending: []storage.CollectionTask{
+		{ID: 1, Plugin: "news", PersonName: "p", Priority: 0},
+		{ID: 2, Plugin: "news", PersonName: "q", Priority: 50},
+	}}
+	runner := &laneRunner{}
+	idle := &minIdle{laneIdle: laneIdle{runner: runner, tasks: tasks}}
+	idle.held.Store(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := DefaultOptions
+	opts.Poll = 10 * time.Millisecond
+	errc := make(chan error, 1)
+	go func() { errc <- Run(ctx, tasks, runner, idle, opts) }()
+	finished := func() map[int64]string {
+		tasks.mu.Lock()
+		defer tasks.mu.Unlock()
+		out := map[int64]string{}
+		for id, s := range tasks.finished {
+			out[id] = s
+		}
+		return out
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(finished()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := finished(); len(got) != 1 || got[2] == "" {
+		t.Fatalf("during the feed: finished %v, want the watch task 2 only", got)
+	}
+	idle.held.Store(false)
+	for len(finished()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-errc
+	if got := finished(); got[1] != storage.TaskDone {
+		t.Errorf("after the feed: the backfill task is %q, want done", got[1])
 	}
 }

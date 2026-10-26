@@ -36,7 +36,7 @@ func TestOperationProgress(t *testing.T) {
 	require.NoError(t, err)
 	got := map[string]string{}
 	for range 2 {
-		task, err := storer.ClaimCollectionTask(ctx, time.Hour)
+		task, err := storer.ClaimCollectionTask(ctx, time.Hour, 0)
 		require.NoError(t, err)
 		require.NotNil(t, task)
 		got[task.Plugin] = task.Operation
