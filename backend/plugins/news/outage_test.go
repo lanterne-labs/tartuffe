@@ -56,6 +56,27 @@ func TestIngestTargetsStopsOnUnavailableLLM(t *testing.T) {
 	assert.Equal(t, []string{"A", "B"}, called)
 }
 
+// TestIngestTargetsStopsOnSearchQuota: when every search provider refused for
+// its quota, no later target can be searched either: the loop stops, the
+// quota goes up with its marker (the worker lets the task wait, without
+// counting an attempt), and the target is neither done nor fetched.
+func TestIngestTargetsStopsOnSearchQuota(t *testing.T) {
+	targets := []plugins.Target{{Name: "A", PersonID: 1}, {Name: "B", PersonID: 2}, {Name: "C", PersonID: 3}}
+	var called []string
+	stats, err := ingestTargets(context.Background(), targets, func(_ context.Context, tg plugins.Target) (*Result, error) {
+		called = append(called, tg.Name)
+		if tg.Name == "B" {
+			return nil, fmt.Errorf("news search failed for %s: fr: all news providers failed; last error: %w", tg.Name, search.ErrQuota)
+		}
+		return &Result{FactsExtracted: 1}, nil
+	})
+	require.ErrorIs(t, err, search.ErrQuota)
+	assert.Equal(t, []string{"A", "B"}, called, "no target after the quota")
+	assert.Equal(t, []int64{1}, stats.Done, "the target that hit the quota is not done: its period is searched again")
+	assert.Empty(t, stats.Fetched)
+	assert.Empty(t, stats.Details, "the quota is the error, not a note")
+}
+
 // TestIngestTargetsStopsAtDeadline: an expired context starts no target; a
 // target cut by the cancellation is neither done nor a failure, and no
 // target starts after it.
