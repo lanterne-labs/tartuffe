@@ -207,8 +207,16 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 	log.Info().Strs("plugins", feedPlugins()).Msg("Feed started")
 	var errs []error
 
+	// The watch list's tasks go in first: the worker claims them during the
+	// feed (and no backfill), so yesterday's news runs beside the votes of
+	// the day rather than after them. A feed tried again after an outage
+	// finds them open: none is added twice.
+	added, err := h.watchTasks(ctx)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	var in pipeline.IngestRun
-	var err error
 	if names := feedPlugins(); len(names) > 0 {
 		// An empty list would mean every plugin to IngestRun.
 		err = in.Run(ctx, h.Deps, nil, plugins.IngestOptions{}, names)
@@ -237,11 +245,6 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 			continue
 		}
 		errs = append(errs, fmt.Errorf("backfill %s: %w", name, e))
-	}
-
-	added, err := h.watchTasks(ctx)
-	if err != nil {
-		errs = append(errs, err)
 	}
 
 	if err := h.Storer.RecordJobMetrics(ctx, []storage.JobMetric{

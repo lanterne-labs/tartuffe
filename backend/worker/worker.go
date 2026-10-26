@@ -50,9 +50,9 @@ type Options struct {
 // feed) at the same time as the tasks; Urgent tells that the work that runs
 // alone (the maintenance pass) is due although tasks are pending, and the
 // worker then stops claiming, lets the running tasks end and runs Idle; Idle
-// runs when no task and no Beside runs; a Beside that starts while it is due
-// goes first.
-// While Beside runs, MinPriority holds the lower tasks back.
+// runs when no task and no Beside runs. While MinPriority is above 0 (the
+// feed is due or runs), the lower tasks are not claimed and Idle does not
+// start: the feed goes first, then the urgent work, then the tasks.
 type Idle interface {
 	// Idle does the work that is due. An error wrapping llm.ErrUnavailable
 	// makes the worker wait for the LLM.
@@ -173,6 +173,9 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		// minPriority above 0 means the feed is due or runs: it goes first,
+		// so no backfill is claimed and no maintenance starts until it ended.
+		minPriority := 0
 		if idle != nil {
 			now := time.Now()
 			// The feed starts even while the maintenance waits for the
@@ -183,9 +186,14 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 				besideRunning = true
 				go func() { besideDone <- runHousekeeping(ctx, idle.Beside, opts) }()
 			}
-			// A feed that runs goes on beside the tasks: the urgent work waits
-			// for its end rather than hold the tasks back behind it.
-			if !draining && running > 0 && !besideRunning && !now.Before(urgentNext) {
+			var err error
+			if minPriority, err = idle.MinPriority(ctx); err != nil {
+				log.Error().Err(err).Msg("Worker: checking the feed failed; the backfills are claimed")
+			}
+			// The urgent work goes before the backfills: checked before the
+			// lanes fill, so that free lanes (after the feed, at a start) do
+			// not take tasks the pass then waits hours for.
+			if !draining && minPriority == 0 && !now.Before(urgentNext) {
 				urgentNext = now.Add(opts.Poll)
 				urgent, err := idle.Urgent(ctx)
 				if err != nil {
@@ -197,13 +205,6 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 			}
 		}
 		// Fill the free lanes.
-		minPriority := 0
-		if idle != nil && !draining && running < lanes {
-			var err error
-			if minPriority, err = idle.MinPriority(ctx); err != nil {
-				log.Error().Err(err).Msg("Worker: checking the feed failed; the backfills are claimed")
-			}
-		}
 		for !draining && running < lanes && !time.Now().Before(resume) {
 			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease, minPriority)
 			if err != nil {
@@ -236,8 +237,9 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 			}
 		case time.Now().Before(resume):
 			wait = time.Until(resume)
-		case besideRunning:
-			// The work that runs alone waits for the end of the feed.
+		case besideRunning || minPriority > 0:
+			// The work that runs alone waits for the end of the feed, or
+			// for a due feed to start.
 			wait = opts.Poll
 		case idle != nil:
 			resume = time.Now().Add(settle(runHousekeeping(ctx, idle.Idle, opts), false))
