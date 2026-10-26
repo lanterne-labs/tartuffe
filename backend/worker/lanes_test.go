@@ -96,7 +96,7 @@ func (i *laneIdle) Idle(context.Context) error {
 
 func (i *laneIdle) FactsAdded(int) {}
 
-func (i *laneIdle) MinPriority() int { return 0 }
+func (i *laneIdle) MinPriority(context.Context) (int, error) { return 0, nil }
 
 func (i *laneIdle) Beside(context.Context) error {
 	i.besideIn.Store(true)
@@ -221,11 +221,11 @@ type minIdle struct {
 	held atomic.Bool
 }
 
-func (i *minIdle) MinPriority() int {
+func (i *minIdle) MinPriority(context.Context) (int, error) {
 	if i.held.Load() {
-		return 50
+		return 50, nil
 	}
-	return 0
+	return 0, nil
 }
 
 // TestWorkerFeedHoldsBackfillsBack: while the feed runs, the worker claims

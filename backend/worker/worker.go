@@ -65,8 +65,9 @@ type Idle interface {
 	// FactsAdded tells that a task added n facts.
 	FactsAdded(n int)
 	// MinPriority is the lowest priority of the tasks the worker claims now:
-	// while the feed runs, the backfills wait and leave the seats to it.
-	MinPriority() int
+	// while the feed is due or runs, the backfills wait and leave the seats
+	// to it.
+	MinPriority(ctx context.Context) (int, error)
 }
 
 // DefaultOptions are the options of `dm worker run`.
@@ -197,8 +198,11 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		}
 		// Fill the free lanes.
 		minPriority := 0
-		if idle != nil {
-			minPriority = idle.MinPriority()
+		if idle != nil && !draining && running < lanes {
+			var err error
+			if minPriority, err = idle.MinPriority(ctx); err != nil {
+				log.Error().Err(err).Msg("Worker: checking the feed failed; the backfills are claimed")
+			}
 		}
 		for !draining && running < lanes && !time.Now().Before(resume) {
 			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease, minPriority)
