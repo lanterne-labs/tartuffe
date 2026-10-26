@@ -108,6 +108,7 @@ export async function postWithAck(
 	timeoutMs: number
 ): Promise<{ posted: Posted; ack: Ack }> {
 	let lastErr = 'no box answered';
+	let reposts = 0;
 	for (const box of boxes) {
 		let posted: Posted;
 		try {
@@ -117,8 +118,16 @@ export async function postWithAck(
 			continue;
 		}
 		const ack = await waitAck(mail, posted, timeoutMs);
-		if (ack) return { posted, ack };
+		if (ack) {
+			// A repost of our own body that the server already took is a
+			// success (SPEC §7.2): the first box's acknowledgement was missed.
+			if (reposts > 0 && ack.outcome === 'rejected' && (ack.reason === 'duplicate' || ack.reason === 'uid_used' || ack.reason === 'id_used')) {
+				return { posted, ack: { ...ack, outcome: 'logged', reason: undefined } };
+			}
+			return { posted, ack };
+		}
 		lastErr = `${box}: no acknowledgement`;
+		reposts++;
 	}
 	throw new Error(lastErr);
 }

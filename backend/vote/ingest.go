@@ -368,10 +368,21 @@ func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Ti
 	if d := now.Sub(r.ProofDate); d > validity+5*time.Minute || d < -(validity+5*time.Minute) {
 		return pendingEntry{}, ReasonStaleDate
 	}
-	if in.pendingUID[r.UID] {
-		return pendingEntry{}, ReasonUIDUsed
+	// The same registration again (a repost after a missed ack) is a
+	// duplicate; another leaf for a registered passport is uid_used.
+	for _, p := range in.pending {
+		if p.kind == KindRegister && p.uid == r.UID {
+			if p.id == r.ID {
+				return pendingEntry{}, ReasonDuplicate
+			}
+			return pendingEntry{}, ReasonUIDUsed
+		}
 	}
-	if used, err := in.store.HasUID(ctx, in.cfg.Event.ID, r.UID); err != nil || used {
+	if id, err := in.store.IDOfUID(ctx, in.cfg.Event.ID, r.UID); err != nil {
+		return pendingEntry{}, ReasonUIDUsed
+	} else if id == r.ID {
+		return pendingEntry{}, ReasonDuplicate
+	} else if id != "" {
 		return pendingEntry{}, ReasonUIDUsed
 	}
 	if in.pendingID[r.ID] {

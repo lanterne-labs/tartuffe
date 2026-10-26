@@ -18,9 +18,10 @@
 		session: VoteSession;
 		domain: string;
 		devMode?: boolean;
+		simulate?: boolean;
 		onclose: () => void;
 	}
-	let { open, lang, session, domain, devMode = false, onclose }: Props = $props();
+	let { open, lang, session, domain, devMode = false, simulate = false, onclose }: Props = $props();
 
 	type Step = 'choose' | 'words' | 'confirm' | 'passport' | 'posting' | 'done' | 'restore';
 	let step: Step = $state('choose');
@@ -142,7 +143,7 @@
 			<button class="btn btn-primary" onclick={checkWords}>{tr('v2.key.continue', lang)}</button>
 		</div>
 	{:else if step === 'passport' && request}
-		<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} onSuccess={onProof} />
+		<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} {simulate} onSuccess={onProof} />
 	{:else if step === 'posting' || step === 'done'}
 		<div class="steps-box"><Steps steps={posting} /></div>
 		{#if step === 'done'}

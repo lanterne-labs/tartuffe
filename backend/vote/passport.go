@@ -3,6 +3,7 @@ package vote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"digital-mirror/backend/accounts/providers"
 )
@@ -23,4 +24,24 @@ func (p Passport) VerifyRegistration(ctx context.Context, proof json.RawMessage,
 		extra["scope"] = p.Scope
 	}
 	return p.Z.VerifyBound(ctx, proof, customData, extra)
+}
+
+// DevPassport accepts any registration, with the hash of its proof bundle
+// as the passport identifier: for local trials without the ZKPassport app.
+// Never in production: the command refuses it when DM_PRODUCTION is
+// set.
+type DevPassport struct{}
+
+// VerifyRegistration implements PassportVerifier: the identifier is the one
+// the bundle's result claims.
+func (DevPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (string, error) {
+	var b struct {
+		Result struct {
+			UID string `json:"uniqueIdentifier"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(proof, &b); err != nil || b.Result.UID == "" {
+		return "", errors.New("dev passport: no uniqueIdentifier in the result")
+	}
+	return b.Result.UID, nil
 }

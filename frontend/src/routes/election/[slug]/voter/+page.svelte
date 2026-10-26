@@ -388,7 +388,7 @@
 		{/snippet}
 	</Modal>
 
-	<VoteKeyDialog open={keyOpen} lang={currentLang} {session} domain={import.meta.env.VITE_ZKPASSPORT_DOMAIN ?? window.location.hostname} devMode={import.meta.env.VITE_ZKPASSPORT_DEV === '1'} onclose={() => (keyOpen = false)} />
+	<VoteKeyDialog open={keyOpen} lang={currentLang} {session} domain={import.meta.env.VITE_ZKPASSPORT_DOMAIN ?? window.location.hostname} devMode={import.meta.env.VITE_ZKPASSPORT_DEV === '1'} simulate={import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1'} onclose={() => (keyOpen = false)} />
 
 	{#snippet help(text: string)}
 		<details class="help">

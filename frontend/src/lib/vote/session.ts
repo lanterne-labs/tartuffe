@@ -273,9 +273,11 @@ export class VoteSession {
 		const setup = get(this.setup);
 		const cp = get(this.checkpoint);
 		if (!k || k.position < 0 || !setup || !cp || !this.mail) throw new Error('not ready');
+		console.warn('vote: cast', r, 'prover', !!this.prover, 'path', this.path?.root, 'cp', cp.treeRoot);
 		if (!this.prover) this.prover = await warmUp(this.src, (s) => this.warm.set(s));
 		if (!this.path || this.path.root !== cp.treeRoot) await this.refreshPath(cp);
 		if (!this.path) throw new Error('no path');
+		console.warn('vote: proving with root', this.path.root);
 		for (let attempt = 0; attempt < 3; attempt++) {
 			const seq = k.seq + 1;
 			this.ballot.set({ state: 'proving', ranking: r });

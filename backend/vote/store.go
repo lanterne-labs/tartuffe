@@ -456,3 +456,13 @@ func (s *Store) Stats(ctx context.Context, eventID int64) (Stats, error) {
 	}
 	return st, nil
 }
+
+// IDOfUID returns the leaf a passport registered, "" for none.
+func (s *Store) IDOfUID(ctx context.Context, eventID int64, uid string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM vote2_registrations WHERE event_id = $1 AND uid = $2`, eventID, uid).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}

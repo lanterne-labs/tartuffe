@@ -16,10 +16,23 @@
 		scope: string;
 		customData: string;
 		devMode?: boolean;
+		// simulate shows a button that stands in for the app (local trials).
+		simulate?: boolean;
 		onSuccess: (payload: { proofs: unknown; result: unknown; at: Date }) => Promise<void>;
 	}
 
-	let { lang, domain, scope, customData, devMode = false, onSuccess }: Props = $props();
+	let { lang, domain, scope, customData, devMode = false, simulate = false, onSuccess }: Props = $props();
+
+	async function simulateScan() {
+		step = 'posting';
+		const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+		try {
+			await onSuccess({ proofs: [{ simulated: id }], result: { uniqueIdentifier: 'dev-' + id, customData }, at: new Date() });
+		} catch (err) {
+			error = err instanceof Error ? err.message : String(err);
+			step = 'error';
+		}
+	}
 
 	type Step = 'idle' | 'starting' | 'scan' | 'received' | 'proving' | 'posting' | 'rejected' | 'error';
 	let step: Step = $state('idle');
@@ -113,6 +126,9 @@
 	{#if step === 'idle'}
 		<ZKProofAnimation {lang} />
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
+		{#if simulate}
+			<button class="link" onclick={simulateScan}>Simuler un passeport (essai local)</button>
+		{/if}
 	{/if}
 	{#if step !== 'idle'}
 		<div class="flow"><Steps layout="row" steps={flow} /></div>

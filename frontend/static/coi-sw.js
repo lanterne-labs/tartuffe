@@ -16,9 +16,9 @@ self.addEventListener('fetch', (e) => {
 	for (const host of SRS_HOSTS) {
 		if (req.url.startsWith(host)) {
 			const local = new URL('/srs' + url.pathname, self.location.origin);
-			e.respondWith(
-				fetch(local.href, { headers: req.headers, cache: 'force-cache' }).then(withIsolation)
-			);
+			// The Range header of the request is kept: the file is large and
+			// bb.js asks for the points it needs.
+			e.respondWith(fetch(local.href, { headers: req.headers }).then(withIsolation));
 			return;
 		}
 	}
@@ -29,7 +29,7 @@ self.addEventListener('fetch', (e) => {
 function withIsolation(res) {
 	if (res.status === 0 || res.type === 'opaque') return res;
 	const headers = new Headers(res.headers);
-	headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
+	headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
 	headers.set('Cross-Origin-Opener-Policy', 'same-origin');
 	headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
 	return new Response(res.body, { status: res.status, statusText: res.statusText, headers });

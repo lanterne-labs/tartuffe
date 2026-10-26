@@ -20,6 +20,8 @@ interface CompiledCircuit {
 	abi: unknown;
 }
 
+const SRS_POINTS = 1 << 17; // bb.js takes the compressed SRS in blocks of 2^17 points (4 MB)
+
 let warm: Promise<Prover> | null = null;
 
 // threads: all the cores up to 8 when the page is cross-origin isolated
@@ -43,16 +45,23 @@ export function warmUp(src: Sources, onStage?: (s: 'artifact' | 'backend' | 'rea
 		onStage?.('backend');
 		const [{ Noir }, { Barretenberg, UltraHonkBackend }] = await Promise.all([import('@noir-lang/noir_js'), import('@aztec/bb.js')]);
 		const noir = new Noir(circuit as never);
-		const api = await Barretenberg.new({ threads: threads() });
+		console.warn('vote: prover starting, threads', threads());
+		// The SRS: enough points for the circuit (15k gates: 2^15 covers it
+		// with the ZK masking), not bb.js's 2^19 default (16 MB).
+		const api = await Barretenberg.new({ threads: threads(), srsSize: SRS_POINTS });
 		const backend = new UltraHonkBackend(circuit.bytecode, api);
 		// A first proof-sized operation makes the SRS download and the key
 		// setup happen now, not at the vote.
 		await backend.getVerificationKey({ verifierTarget: 'noir-recursive' });
+		console.warn('vote: prover ready');
 		onStage?.('ready');
 		return {
 			async prove(inputs) {
+				const t0 = performance.now();
 				const { witness, returnValue } = await noir.execute(inputs as never);
+				console.warn('vote: witness', Math.round(performance.now() - t0), 'ms');
 				const p = await backend.generateProof(witness, { verifierTarget: 'noir-recursive' });
+				console.warn('vote: proof', Math.round(performance.now() - t0), 'ms');
 				return { proof: p.proof, publicInputs: p.publicInputs, returnValue };
 			}
 		} satisfies Prover;

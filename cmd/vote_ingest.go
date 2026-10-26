@@ -38,6 +38,7 @@ func init() {
 	voteIngestCmd.Flags().String("vk", "", "the circuit's verification key file of dm vote setup (required)")
 	voteIngestCmd.Flags().String("mirror-dir", "", "directory of the public data mirror (SPEC §8.3), served by a static host")
 	voteIngestCmd.Flags().String("artifact", "", "the compiled circuit (ballot.json of dm vote setup), published on the mirror")
+	voteIngestCmd.Flags().Bool("dev-accept-any-passport", false, "accept every registration without a passport proof (local trials only)")
 	_ = voteIngestCmd.MarkFlagRequired("vk")
 }
 
@@ -75,13 +76,23 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 	if os.Getenv("VOTE_LOG_KEY") == "" {
 		return fmt.Errorf("VOTE_LOG_KEY is required: the checkpoints of a restart would not verify")
 	}
-	zk, err := providers.NewZKPassportFromEnv()
-	if err != nil {
-		return err
-	}
-	z, ok := zk.(*providers.ZKPassport)
-	if !ok {
-		return fmt.Errorf("the ZKPassport provider is not configured")
+	var passport vote.PassportVerifier
+	if dev, _ := cmd.Flags().GetBool("dev-accept-any-passport"); dev {
+		if os.Getenv("DM_PRODUCTION") != "" {
+			return fmt.Errorf("--dev-accept-any-passport is for local trials, never on the host")
+		}
+		log.Warn().Msg("vote: DEV MODE, every registration is accepted without a passport")
+		passport = vote.DevPassport{}
+	} else {
+		zk, err := providers.NewZKPassportFromEnv()
+		if err != nil {
+			return err
+		}
+		z, ok := zk.(*providers.ZKPassport)
+		if !ok {
+			return fmt.Errorf("the ZKPassport provider is not configured")
+		}
+		passport = vote.Passport{Z: z, Scope: "tartuffe-vote/2:" + e.Slug}
 	}
 	repo, _ := filepath.Abs(".")
 	tools, err := vote.FindTools(repo)
@@ -134,7 +145,7 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		Event:    e,
 		Mail:     mail,
 		Signer:   pollsCfg.Signer,
-		Passport: vote.Passport{Z: z, Scope: "tartuffe-vote/2:" + e.Slug},
+		Passport: passport,
 		BB:       tools.BB,
 		VK:       vk,
 		Stamp: func(ctx context.Context, size int64, note []byte) error {
