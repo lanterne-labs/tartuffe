@@ -101,3 +101,17 @@ func TestExtraction_RetriesAReplyThatDoesNotParse(t *testing.T) {
 		})
 	}
 }
+
+// A chunk takes the room the endpoint's context leaves: on Claude the static
+// chunk size binds, on the local box the prompt leaves little room.
+func TestDynamicChunkBudgetFollowsTheContext(t *testing.T) {
+	const prompt = 30000 // chars of the rendered prompt without content
+	local := dynamicChunkBudgetChars(prompt, llm.LocalContextTokens)
+	claude := dynamicChunkBudgetChars(prompt, 200000)
+	if local >= chunkSizeChars {
+		t.Errorf("local budget %d, want under the static chunk %d", local, chunkSizeChars)
+	}
+	if claude < chunkSizeChars {
+		t.Errorf("claude budget %d, want at least the static chunk %d", claude, chunkSizeChars)
+	}
+}

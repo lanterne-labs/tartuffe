@@ -673,3 +673,6 @@ func outputSnippet(s string) string {
 	}
 	return s
 }
+
+// ContextTokens is the context of one Claude call.
+func (*ClaudeTeamEndpoint) ContextTokens() int { return claudeContextTokens }

@@ -352,3 +352,6 @@ func (t *ClaudeBatchEndpoint) applyKnownPrefix(family string, c *batchCall, ttl 
 	c.job.Request = req
 	return true, nil
 }
+
+// ContextTokens is the context of one Claude call.
+func (*ClaudeBatchEndpoint) ContextTokens() int { return claudeContextTokens }
