@@ -604,6 +604,9 @@ cat "$d/stdout"
 	if took := time.Since(start); took > 10*time.Second {
 		t.Fatalf("the call took %s, want it cut at the timeout", took)
 	}
+	// Only the slow call is cut: on a loaded machine the fake CLI takes
+	// more than 200 ms to start (2026-10-26: 2 runs in 5 failed here).
+	e.CallTimeout = 10 * time.Second
 	if _, _, err := teamCall(e, context.Background(), ChatRequest{MaxTokens: 10, Messages: []ChatMessage{{Role: "user", Content: "q"}}}); err != nil {
 		t.Fatalf("the slot of the timed-out call must be free: %v", err)
 	}

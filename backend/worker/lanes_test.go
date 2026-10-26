@@ -16,6 +16,7 @@ import (
 type memTasks struct {
 	mu       sync.Mutex
 	pending  []storage.CollectionTask
+	total    int // the tasks given at the start
 	finished map[int64]string
 }
 
@@ -76,6 +77,7 @@ type laneIdle struct {
 	urgent        atomic.Bool // Urgent says yes until Idle ran
 	urgentAsked   atomic.Bool
 	pendingAtIdle atomic.Int32 // the tasks still pending when Idle first ran
+	claimedAtIdle atomic.Int32 // the tasks claimed before Idle first ran
 	tasks         *memTasks
 }
 
@@ -83,6 +85,7 @@ func (i *laneIdle) Idle(context.Context) error {
 	if i.calls.Add(1) == 1 && i.tasks != nil {
 		i.tasks.mu.Lock()
 		i.pendingAtIdle.Store(int32(len(i.tasks.pending)))
+		i.claimedAtIdle.Store(int32(i.tasks.total - len(i.tasks.pending)))
 		i.tasks.mu.Unlock()
 	}
 	if i.runner.inFlight.Load() > 0 {
@@ -124,6 +127,7 @@ func runLanes(t *testing.T, n int, urgent ...bool) (int32, *laneIdle) {
 	for id := int64(1); id <= int64(n); id++ {
 		tasks.pending = append(tasks.pending, storage.CollectionTask{ID: id, Plugin: "news", PersonName: "p"})
 	}
+	tasks.total = n
 	runner := &laneRunner{}
 	idle := &laneIdle{runner: runner, tasks: tasks, besideFor: 25 * time.Millisecond}
 	idle.urgent.Store(len(urgent) > 0 && urgent[0])
@@ -206,6 +210,9 @@ func TestWorkerUrgentHousekeeping(t *testing.T) {
 	}
 	if idle.pendingAtIdle.Load() == 0 {
 		t.Error("the maintenance waited for the queue to be empty")
+	}
+	if n := idle.claimedAtIdle.Load(); n != 0 {
+		t.Errorf("%d tasks were claimed before the due maintenance ran, want none: it goes before the tasks", n)
 	}
 	if !idle.besideOverlap.Load() {
 		t.Error("the work beside the tasks never ran while a task ran")
