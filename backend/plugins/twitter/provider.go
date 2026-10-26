@@ -358,7 +358,7 @@ func (p *Provider) extractTweetBatch(ctx context.Context, handle Handle, factIns
 			SourceURL:          sourceURL,
 			PublishedAt:        finalPubAt,
 			SourceType:         "twitter",
-			Lang:               matchFactToTweetLang(fact, batch),
+			Lang:               factLang(fact, batch),
 			Metadata: map[string]any{
 				"twitter_handle": handle.Handle,
 				"person_name":    handle.PersonName,
@@ -603,13 +603,24 @@ func matchFactToTweetURL(fact backend.Fact, batch []Tweet) string {
 	return ""
 }
 
-// matchFactToTweetLang returns the lang of the tweet matching a fact's SourceURL.
-// Falls back to the first tweet's lang, or "" if none available.
-func matchFactToTweetLang(fact backend.Fact, batch []Tweet) string {
-	if tw := findMatchingTweet(fact, batch); tw != nil {
+// factLang is the language of the fact text: the one the extractor gives,
+// else the tweet's. Twitter's lang is a guess about the tweet, not the fact,
+// and is often no language at all (qme: media only, zxx: no text, und:
+// undetermined): 279 French facts carried such codes or "it"/"es".
+func factLang(fact backend.Fact, batch []Tweet) string {
+	if fact.Lang != "" {
+		return fact.Lang
+	}
+	if tw := findMatchingTweet(fact, batch); tw != nil && isLanguageCode(tw.Lang) {
 		return tw.Lang
 	}
 	return ""
+}
+
+// isLanguageCode reports whether a Twitter lang names a language: not one of
+// Twitter's own codes (q*, zxx, und).
+func isLanguageCode(lang string) bool {
+	return lang != "" && lang != "und" && lang != "zxx" && !strings.HasPrefix(lang, "q")
 }
 
 // matchFactToTweetCreatedAt returns the CreatedAt of the tweet matching a fact's
