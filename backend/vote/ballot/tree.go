@@ -1,6 +1,7 @@
 package ballot
 
 import (
+	"encoding/hex"
 	"errors"
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -93,4 +94,20 @@ func RootFromPath(leaf fr.Element, path [Depth]fr.Element, pos int) fr.Element {
 		}
 	}
 	return cur
+}
+
+// BlockRoots returns the root of every full block of the given size (a
+// power of two): the subtree roots at that level, for the mirror.
+func (t *Tree) BlockRoots(block int) []string {
+	level := 0
+	for 1<<level < block {
+		level++
+	}
+	full := t.Size() / block
+	out := make([]string, 0, full)
+	for i := 0; i < full; i++ {
+		b := t.levels[level][i].Bytes()
+		out = append(out, "0x"+hex.EncodeToString(b[:]))
+	}
+	return out
 }

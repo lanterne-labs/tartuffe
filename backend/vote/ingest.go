@@ -37,6 +37,8 @@ type Config struct {
 	Now      func() time.Time
 	// Stamp timestamps a checkpoint note (OpenTimestamps); nil stamps nothing.
 	Stamp func(ctx context.Context, size int64, note []byte) error
+	// Mirror is the public data mirror; nil writes none.
+	Mirror Mirror
 }
 
 // Ingest reads the mailbox, validates registrations and ballots, buffers
@@ -422,19 +424,35 @@ func (in *Ingest) Checkpoint(ctx context.Context) error {
 	root := in.tree.Root()
 	rootHex := "0x" + hexOf(root.Marshal())
 	now := in.cfg.Now()
+	// The mirror's files for this checkpoint go out first: the note names
+	// their commit.
+	var prevSize int64
+	if last, err := in.store.LastCheckpoint(ctx); err == nil && last != nil {
+		prevSize = last.LogSize
+	}
+	token, err := in.stageMirror(ctx, index, prevSize, head.N, now)
+	if err != nil {
+		return fmt.Errorf("mirror: %w", err)
+	}
 	text := polls.CheckpointText(head) +
 		"tree " + rootHex + " " + strconv.Itoa(in.tree.Size()) + "\n" +
 		"index " + strconv.FormatInt(index, 10) + "\n" +
 		"event " + strconv.FormatInt(in.cfg.Event.ID, 10) + "\n" +
 		"time " + strconv.FormatInt(now.Unix(), 10) + "\n"
+	if token != "" {
+		text += "mirror " + token + "\n"
+	}
 	msg, err := in.cfg.Signer.SignText(text)
 	if err != nil {
 		return err
 	}
-	if err := in.store.AddCheckpoint(ctx, Checkpoint{Index: index, LogSize: head.N, TreeRoot: rootHex, TreeSize: in.tree.Size(), Note: string(msg)}); err != nil {
+	if err := in.store.AddCheckpoint(ctx, Checkpoint{Index: index, LogSize: head.N, TreeRoot: rootHex, TreeSize: in.tree.Size(), Commit: token, Note: string(msg)}); err != nil {
 		return err
 	}
 	in.nextIndex = index + 1
+	if err := in.stageNote(index, msg); err != nil {
+		log.Error().Err(err).Msg("vote: mirror note")
+	}
 	n := in.cfg.Mail.PostAll(ctx, Outgoing{Kind: OutCheckpoint, Body: string(msg)})
 	for _, b := range in.cfg.Mail.Boxes() {
 		if err := in.store.SetCursor(ctx, b, now.Unix()); err != nil {

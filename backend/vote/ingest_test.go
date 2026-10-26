@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -142,7 +143,8 @@ func TestIngestOnDevVectors(t *testing.T) {
 	signer, _ := polls.NewLogSigner(skey)
 	mail := &memMailbox{boxes: []string{"wss://a.test", "wss://b.test"}}
 	event := &polls.Event{ID: 1, Slug: "test-vote"}
-	in, err := NewIngest(ctx, store, Config{Event: event, Mail: mail, Signer: signer, Passport: fakePassport{uid: "passport-1"}, BB: tools.BB, VK: vk})
+	mirror := &DirMirror{Dir: t.TempDir()}
+	in, err := NewIngest(ctx, store, Config{Event: event, Mail: mail, Signer: signer, Passport: fakePassport{uid: "passport-1"}, BB: tools.BB, VK: vk, Mirror: mirror})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,5 +252,26 @@ func TestIngestOnDevVectors(t *testing.T) {
 	// A second ballot of the same pseudonym with a stale seq.
 	if ack := post("b5", bal); ack.Reason != ReasonDuplicate {
 		t.Fatalf("logged ballot reposted: %+v", ack)
+	}
+	// The mirror holds the files of SPEC §8.3 and the note names its commit.
+	day := time.Now().UTC().Format("2006-01-02")
+	hour := time.Now().UTC().Format("2006-01-02T15")
+	for _, f := range []string{"leaves/" + day + ".json", "blocks/open.json", "blocks/roots.json", "entries/" + hour + ".json", "setup.json", "checkpoint.txt", "checkpoints/2.txt", "index/" + bal.Nullifier[2:4] + ".json", "positions/" + v.Tree.Leaves[0][2:3] + ".json"} {
+		if b, err := mirror.Read(f); err != nil || b == nil {
+			t.Fatalf("mirror file %s: %v", f, err)
+		}
+	}
+	if !strings.Contains(cp.Note, "\nmirror dir-") {
+		t.Fatalf("note without a mirror line:\n%s", cp.Note)
+	}
+	var leaves []MirrorLeaf
+	b, _ := mirror.Read("leaves/" + day + ".json")
+	if json.Unmarshal(b, &leaves) != nil || len(leaves) != 5 {
+		t.Fatalf("leaves file: %s", b)
+	}
+	var idx map[string]uint32
+	b, _ = mirror.Read("index/" + bal.Nullifier[2:4] + ".json")
+	if json.Unmarshal(b, &idx) != nil || idx[bal.Nullifier] != 1 {
+		t.Fatalf("index shard: %s", b)
 	}
 }

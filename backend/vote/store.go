@@ -297,3 +297,135 @@ func (s *Store) LoadTree(ctx context.Context, eventID int64) (*ballot.Tree, erro
 	}
 	return t, nil
 }
+
+// LeavesBetween returns the leaves logged with after < log_seq ≤ upto.
+func (s *Store) LeavesBetween(ctx context.Context, eventID, after, upto int64) ([]Registration, error) {
+	rows, err := s.pool.Query(ctx, `SELECT position, id, log_seq FROM vote2_registrations WHERE event_id = $1 AND log_seq > $2 AND log_seq <= $3 ORDER BY position`, eventID, after, upto)
+	if err != nil {
+		return nil, fmt.Errorf("leaves between: %w", err)
+	}
+	defer rows.Close()
+	var out []Registration
+	for rows.Next() {
+		var r Registration
+		if err := rows.Scan(&r.Position, &r.ID, &r.LogSeq); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// LeavesRange returns the leaf ids at positions [from, to).
+func (s *Store) LeavesRange(ctx context.Context, eventID int64, from, to int) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id FROM vote2_registrations WHERE event_id = $1 AND position >= $2 AND position < $3 ORDER BY position`, eventID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("leaves range: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// PositionsShard returns id → position for the leaves whose id starts
+// with the hex nibble.
+func (s *Store) PositionsShard(ctx context.Context, eventID int64, nibble string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, position FROM vote2_registrations WHERE event_id = $1 AND substr(id, 3, 1) = $2`, eventID, nibble)
+	if err != nil {
+		return nil, fmt.Errorf("positions shard: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var pos int
+		if err := rows.Scan(&id, &pos); err != nil {
+			return nil, err
+		}
+		out[id] = pos
+	}
+	return out, rows.Err()
+}
+
+// EntriesOf lists the entries of a checkpoint for the mirror.
+func (s *Store) EntriesOf(ctx context.Context, checkpoint int64) ([]MirrorEntry, error) {
+	rows, err := s.pool.Query(ctx, `SELECT kind, body_hash, pi_hash, outcome, log_seq FROM vote2_events WHERE checkpoint = $1 ORDER BY log_seq`, checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("entries of: %w", err)
+	}
+	defer rows.Close()
+	var out []MirrorEntry
+	for rows.Next() {
+		var kind int
+		var bodyHash, outcome string
+		var pi *string
+		var seq *int64
+		if err := rows.Scan(&kind, &bodyHash, &pi, &outcome, &seq); err != nil {
+			return nil, err
+		}
+		e := MirrorEntry{Checkpoint: checkpoint, Hash: bodyHash}
+		switch {
+		case outcome == "rejected":
+			e.Kind = KindReject
+		case MessageKind(kind) == MsgBallot:
+			e.Kind = KindBallot
+			if pi != nil {
+				e.Hash = *pi
+			}
+		case MessageKind(kind) == MsgRegister:
+			e.Kind = KindRegister
+		default:
+			e.Kind = KindSeen
+		}
+		if seq != nil {
+			e.LogSeq = *seq
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// NullifiersOf lists the pseudonyms with a ballot in a checkpoint.
+func (s *Store) NullifiersOf(ctx context.Context, checkpoint int64) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT nullifier FROM vote2_ballots WHERE checkpoint = $1`, checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("nullifiers of: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// IndexShard returns nullifier → highest seq for the pseudonyms whose
+// hex starts with the byte given.
+func (s *Store) IndexShard(ctx context.Context, eventID int64, prefix string) (map[string]uint32, error) {
+	rows, err := s.pool.Query(ctx, `SELECT nullifier, MAX(seq) FROM vote2_ballots WHERE event_id = $1 AND substr(nullifier, 3, 2) = $2 GROUP BY nullifier`, eventID, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("index shard: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]uint32{}
+	for rows.Next() {
+		var n string
+		var seq int32
+		if err := rows.Scan(&n, &seq); err != nil {
+			return nil, err
+		}
+		out[n] = uint32(seq)
+	}
+	return out, rows.Err()
+}

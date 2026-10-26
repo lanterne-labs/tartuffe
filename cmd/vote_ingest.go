@@ -35,6 +35,7 @@ event's circuit: --vk, from dm vote setup.`,
 func init() {
 	voteCmd.AddCommand(voteIngestCmd)
 	voteIngestCmd.Flags().String("vk", "", "the circuit's verification key file of dm vote setup (required)")
+	voteIngestCmd.Flags().String("mirror-dir", "", "directory of the public data mirror (SPEC §8.3), served by a static host")
 	_ = voteIngestCmd.MarkFlagRequired("vk")
 }
 
@@ -88,6 +89,13 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no setup logged for %s (dm vote setup)", e.Slug)
 	}
 	mail := vote.NewNostrMailbox(e.Slug, key, vote.ActiveBoxes(setups))
+	var mirror vote.Mirror
+	if dir, _ := cmd.Flags().GetString("mirror-dir"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		mirror = &vote.DirMirror{Dir: dir}
+	}
 	in, err := vote.NewIngest(ctx, store, vote.Config{
 		Event:    e,
 		Mail:     mail,
@@ -99,6 +107,7 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 			_, err := store.Log.StampNote(ctx, size, note)
 			return err
 		},
+		Mirror: mirror,
 	})
 	if err != nil {
 		return err
