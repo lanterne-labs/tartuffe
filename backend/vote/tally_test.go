@@ -58,11 +58,16 @@ func TestTallierPublishesAfterKRealChanges(t *testing.T) {
 	}
 	// Four voters; one recasts the same ranking (not a change) and one
 	// changes their mind.
+	nul := func(i byte) string {
+		b := make([]byte, 32)
+		b[31] = i
+		return "0x" + hex.EncodeToString(b)
+	}
 	rankings := map[string][]ballot.Ranking{
-		"0x01": {{Len: 2, Slots: [3]int{4, 2}}},
-		"0x02": {{Len: 1, Slots: [3]int{4}}, {Len: 1, Slots: [3]int{4}}},
-		"0x03": {{Len: 1, Slots: [3]int{ballot.Blank}}},
-		"0x04": {{Len: 1, Slots: [3]int{0}}, {Len: 3, Slots: [3]int{2, 4, 0}}},
+		nul(1): {{Len: 2, Slots: [3]int{4, 2}}},
+		nul(2): {{Len: 1, Slots: [3]int{4}}, {Len: 1, Slots: [3]int{4}}},
+		nul(3): {{Len: 1, Slots: [3]int{ballot.Blank}}},
+		nul(4): {{Len: 1, Slots: [3]int{0}}, {Len: 3, Slots: [3]int{2, 4, 0}}},
 	}
 	var expectedCts []ballot.Ciphertext
 	idx := int64(0)
