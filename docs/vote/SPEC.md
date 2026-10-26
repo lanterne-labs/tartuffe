@@ -1,6 +1,6 @@
 # tartuffe-vote/2: encrypted ranked ballots with a public homomorphic tally
 
-Status: **draft 4, reviewed, ready for implementation**, 2026-10-26.
+Status: **draft 4, reviewed; implemented and run locally end to end**, 2026-10-26. §15 says what is built and what is not.
 Nothing here is implemented yet. Drafts 1, 2 and 3 were each reviewed on
 2026-10-26 (adversarial protocol review ×3, a study of alternatives, a
 privacy and UX study); draft 4 closes the final review's blocking items
@@ -759,3 +759,42 @@ Open questions:
   which we could repoint. The spec assumes the former.
 - **Q4.** Relay recruitment: measure five candidate relays against §7.1 and
   name two fallbacks.
+
+## 15. Implementation status (2026-10-26)
+
+Built, tested, run locally end to end (ten simulated voters through public
+Nostr relays, a tally, the results on the page, the audit of the log):
+
+- `circuits/ballot` (§6.2): 15,140 gates; 0.19 s native, 0.34 s in Chrome
+  with 8 threads, 0.8 s single-threaded.
+- `backend/vote`: Poseidon2, Grumpkin, the ballot arithmetic, DLEQ and
+  key proofs, the tree; the setup (`dm vote keygen`, `dm vote setup`); the
+  ingest over the `Mailbox` interface with its Nostr adapter (`dm vote
+  ingest`); the tallier with `K_REAL` and the firing lag, the close
+  (`dm vote tally`); the data mirror on a directory; the auditor
+  (`dm vote verify`, §12.1–12.5, 12.7, 12.8 except the snapshot).
+- `frontend/src/lib/vote` and the vote page: the key (PRF passkey or 12
+  words), the passport scan bound to the registration, the relays, the
+  private path update, the prover warm-up with the service worker, the
+  ballot, acknowledgements, the receipt, the results and counters.
+
+Differences from the text above:
+
+- The registration acknowledgement carries no position (§4 step 4, as
+  amended); the mirror also serves `event.json`, `candidates.json`,
+  `circuit/ballot.json`, `log-key.txt` and `stats.json` (ballots logged,
+  since the last tally, registrations).
+- The `closed` entry is written by the tallier right after the final
+  tally; the close snapshot of §9.3 is not built yet.
+- The prover asks bb.js for a 2^17-point SRS (4 MB, the smallest block it
+  takes) plus its fixed 4 MB Grumpkin SRS: about 8 MB on a first visit,
+  not 4–8.
+- A local trial mode (`--dev-accept-any-passport`,
+  `VITE_VOTE_SIMULATE_PASSPORT=1`) stands in for the ZKPassport app; the
+  command refuses it on the host.
+
+Not built yet: the git-backed mirror and the `github.io` app origin
+(§8.3, Q3), the relays' archive and the withholding check of §12.6, the
+complaints, the close snapshot, the device link for v2 keys, keyboard
+reordering of the ranking, the final shuffle (§9.4), the removal of
+tartuffe-vote/1.

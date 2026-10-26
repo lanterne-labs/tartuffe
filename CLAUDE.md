@@ -212,6 +212,40 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
   3. If it is better, edit the `mirror-llm` entry in `llama-swap.yaml` (llama-swap reloads the file). Nothing changes on the host, except `FALLBACK_CHAT_MODEL` if the OpenRouter name changes.
   4. Record the result in CHANGES.md.
 
+## The anonymous vote (tartuffe-vote/2)
+
+The event's vote is specified in `docs/vote/SPEC.md` (read it before touching
+`circuits/`, `backend/vote` or `frontend/src/lib/vote`). Encrypted ranked
+ballots proved in the browser (Noir, UltraHonk, no ceremony of ours), posted
+to public Nostr relays through the `Mailbox` interface (`backend/vote/mailbox.go`,
+`frontend/src/lib/vote/mailbox.ts`: another transport is one more
+implementation, never a change to the ingest or the page), logged by the
+ingest at each checkpoint, decrypted as sums by the tallier with proofs,
+results after every `K_REAL` changed ballots. The browser never calls our
+server: it reads the data mirror and the relays.
+
+```bash
+cd circuits/ballot && nargo test && nargo compile           # the circuit (nargo 1.0.0-beta.22, bb from frontend/node_modules)
+./dm vote keygen <slug> --out keys.json                     # the election keys, on the tallier; keys.pub.json for the setup
+./dm vote setup <slug> --keys keys.pub.json --relays wss://… --nostr-pubkey <hex>   # compiles the circuit for the keys, logs the setup
+./dm vote ingest <slug> --vk <dir>/vk --artifact <dir>/ballot.json --mirror-dir <dir>   # VOTE_LOG_KEY, VOTE_NOSTR_KEY, ZKPASSPORT_*
+./dm vote tally <slug> --keys keys.json                     # the tallier: no inbound port, the database only
+./dm vote verify <slug> --api https://tartuffe.me --vk vk   # anyone's audit of the log
+```
+
+- The ingest is the log's only writer while it runs; the tallier appends
+  tallies and the close. Never run two ingests on one database.
+- Local trial: `--dev-accept-any-passport` on the ingest and
+  `VITE_VOTE_SIMULATE_PASSPORT=1` on Vite stand in for the ZKPassport app;
+  the ingest refuses the flag on the host. `VITE_VOTE_MIRROR` names the
+  mirror directory's URL (symlink it into `frontend/static/mirror` in dev).
+- Go tests of `backend/vote` need `DATABASE_URL` (mirror_test) and the
+  circuit's `out/native/vk` for the proof checks (`bb write_vk` in
+  `circuits/ballot`); `frontend`: `npx vitest run src/lib/vote` checks the
+  browser's arithmetic against the circuit's vectors.
+- A setup change that touches a fixed field (keys, `vk_hash`, `k_real`,
+  `closes`…) is a new event (SPEC §11).
+
 ## Deployment (the host)
 
 Services on the host:
