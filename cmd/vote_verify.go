@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -168,4 +170,27 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("ok: the log checks out")
 	return nil
+}
+
+// verifyClient reads the site's API.
+var verifyClient = &http.Client{Timeout: time.Minute}
+
+func apiGet(ctx context.Context, base, path string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := verifyClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: %w", path, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: HTTP %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }

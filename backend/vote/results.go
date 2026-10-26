@@ -1,8 +1,11 @@
 package vote
 
 import (
+	"context"
 	"sort"
+	"time"
 
+	"digital-mirror/backend/polls"
 	"digital-mirror/backend/vote/ballot"
 )
 
@@ -135,4 +138,110 @@ func ComputeResults(v [ballot.V]int64, s *Setup) Results {
 	}
 	sort.SliceStable(res.Options, func(i, j int) bool { return res.Options[i].Rank < res.Options[j].Rank })
 	return res
+}
+
+// PollResults is what the site's pages get of an event's results
+// (/api/polls/{slug}): the latest tally's numbers with the candidates'
+// cards, or hidden (below min_voters, or a blackout), with the voter count
+// kept either way.
+type PollResults struct {
+	Voters          int64        `json:"voters"`
+	Hidden          string       `json:"hidden,omitempty"`
+	UpdatedAt       *time.Time   `json:"updated_at,omitempty"`
+	KReal           int          `json:"k_real"`
+	CondorcetWinner *int         `json:"condorcet_winner,omitempty"`
+	Options         []PollOption `json:"options"`
+}
+
+// PollOption is one option's line.
+type PollOption struct {
+	Slot     int     `json:"slot"`
+	Kind     string  `json:"kind"`
+	PersonID int64   `json:"person_id,omitempty"`
+	Name     string  `json:"name"`
+	ImageURL *string `json:"image_url,omitempty"`
+	Honesty  float64 `json:"honesty_score"`
+	First    *int64  `json:"first,omitempty"`
+	Ranked   *int64  `json:"ranked,omitempty"`
+	Rank     *int    `json:"rank,omitempty"`
+}
+
+// ResultsOf gives the results function the polls serve: the latest tally
+// of the event, decoded, with cards from people.
+func ResultsOf(store *Store, people polls.People) func(ctx context.Context, e *polls.Event) (any, error) {
+	return func(ctx context.Context, e *polls.Event) (any, error) {
+		setups, err := store.Setups(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		out := PollResults{KReal: DefaultKReal, Options: []PollOption{}}
+		if len(setups) == 0 {
+			return out, nil
+		}
+		cur := setups[len(setups)-1].Setup
+		out.KReal = cur.KReal
+		lt, err := store.LastTally(ctx, e.ID)
+		if err != nil {
+			return nil, err
+		}
+		var ids []int64
+		for _, o := range cur.Options {
+			if o.Kind == "candidate" {
+				ids = append(ids, o.PersonID)
+			}
+		}
+		cards, err := people.Cards(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		var res *Results
+		if lt != nil {
+			vals, err := store.TallyValues(lt)
+			if err != nil {
+				return nil, err
+			}
+			r := ComputeResults(vals, &cur)
+			res = &r
+			out.Voters = r.Voters
+			at := lt.At
+			out.UpdatedAt = &at
+		}
+		out.Hidden = polls.Hidden(e, out.Voters, now)
+		if res == nil {
+			out.Hidden = polls.HiddenTooFewVoters
+		}
+		for _, o := range cur.Options {
+			if o.Kind != "candidate" && o.Kind != "blank" {
+				continue
+			}
+			po := PollOption{Slot: o.Slot, Kind: o.Kind, PersonID: o.PersonID, Name: o.Name}
+			if c, ok := cards[o.PersonID]; ok && o.Kind == "candidate" {
+				po.Name, po.ImageURL, po.Honesty = c.Name, c.ImageURL, c.HonestyScore
+			}
+			if res != nil && out.Hidden == "" {
+				for _, r := range res.Options {
+					if r.Slot == o.Slot {
+						first, ranked, rank := r.First, r.Ranked, r.Rank
+						po.First, po.Ranked, po.Rank = &first, &ranked, &rank
+					}
+				}
+			}
+			out.Options = append(out.Options, po)
+		}
+		if res != nil && out.Hidden == "" {
+			out.CondorcetWinner = res.Winner
+			sort.SliceStable(out.Options, func(i, j int) bool {
+				ri, rj := 99, 99
+				if out.Options[i].Rank != nil {
+					ri = *out.Options[i].Rank
+				}
+				if out.Options[j].Rank != nil {
+					rj = *out.Options[j].Rank
+				}
+				return ri < rj
+			})
+		}
+		return out, nil
+	}
 }

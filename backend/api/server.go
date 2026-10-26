@@ -154,7 +154,7 @@ func (s *Server) setupRoutes() {
 		// the sign-ins and the verifications.
 		signin := accounts.SignInLimit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), s.keyIP)
 		s.accounts.Routes(r, signin)
-		s.polls.Routes(r, signin)
+		s.polls.Routes(r)
 	})
 }
 

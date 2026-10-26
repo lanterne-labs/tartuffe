@@ -11,6 +11,7 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/vote"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
@@ -188,9 +189,9 @@ func runPollList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	now := time.Now()
-	fmt.Printf("%-24s %-30s %-8s %5s %5s %6s %6s  %s\n", "SLUG", "TITLE", "STATE", "MAX", "MIN", "CANDS", "VOTERS", "CLOSES")
+	fmt.Printf("%-24s %-30s %-8s %5s %5s %6s  %s\n", "SLUG", "TITLE", "STATE", "MAX", "MIN", "CANDS", "CLOSES")
 	for _, e := range events {
-		tallies, turnout, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
+		cands, err := pollStore(storer).CandidateIDs(ctx, e.ID)
 		if err != nil {
 			return err
 		}
@@ -209,7 +210,7 @@ func runPollList(cmd *cobra.Command, args []string) error {
 		if e.Featured {
 			title = "★ " + title
 		}
-		fmt.Printf("%-24s %-30.30s %-8s %5d %5d %6d %6d  %s\n", e.Slug, title, state, e.MaxChoices, e.MinVoters, len(tallies), turnout.Voters, closes)
+		fmt.Printf("%-24s %-30.30s %-8s %5d %5d %6d  %s\n", e.Slug, title, state, e.MaxChoices, e.MinVoters, len(cands), closes)
 	}
 	return nil
 }
@@ -388,35 +389,33 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	tallies, turnout, err := polls.TalliesWithCards(ctx, pollStore(storer), api.PersonCards{Storer: storer}, e.ID)
-	if err != nil {
-		return err
-	}
-	r := polls.Compute(e, tallies, turnout, time.Now())
-	fmt.Printf("%s: %d voter(s), %d blank, window %d/%d until %s, %s", e.TitleFR, r.Voters, turnout.Blank,
-		r.Window.Series, r.Window.Index, r.Until.UTC().Format(time.RFC3339), map[bool]string{true: "open", false: "closed"}[r.Open])
-	if r.Hidden != "" {
-		fmt.Printf(", results hidden on the site (%s)", r.Hidden)
-	}
-	fmt.Println()
 	// The operator sees the counts even while the site hides them.
 	full := *e
 	full.MinVoters, full.Blackouts = 0, nil
-	r = polls.Compute(&full, tallies, turnout, time.Now())
-	fmt.Printf("%4s %4s %-30s %7s %7s %7s %7s  %5s %7s %5s\n", "PREF", "MAJ", "CANDIDATE", "FIRST", "SHARE", "RANKED", "SHARE", "HON", "HONESTY", "FACTS")
-	for _, c := range r.Candidates {
-		pref, maj, first, firstShare, ranked, rankedShare := "-", "-", "-", "-", "-", "-"
-		if c.PreferenceRank != nil {
-			pref, maj = fmt.Sprint(*c.PreferenceRank), fmt.Sprint(*c.MajorityRank)
-			first = fmt.Sprint(*c.FirstChoices)
-			firstShare = fmt.Sprintf("%.1f%%", 100**c.FirstChoiceShare)
-			ranked = fmt.Sprint(*c.Ranked)
-			rankedShare = fmt.Sprintf("%.1f%%", 100**c.RankedShare)
-		}
-		fmt.Printf("%4s %4s %-30.30s %7s %7s %7s %7s  %5d %7.0f %5d\n", pref, maj, c.Name, first, firstShare, ranked, rankedShare, c.HonestyRank, 100*c.HonestyScore, c.FactCount)
+	got, err := vote.ResultsOf(vote.NewStore(storer.Pool()), api.PersonCards{Storer: storer})(ctx, &full)
+	if err != nil {
+		return err
 	}
-	if r.Blank != nil {
-		fmt.Printf("%4s %4s %-30s %7d %6.1f%%\n", "-", "-", "(blank)", *r.Blank, 100**r.BlankShare)
+	r := got.(vote.PollResults)
+	if r.UpdatedAt == nil {
+		fmt.Printf("%s: no tally yet\n", e.TitleFR)
+		return nil
+	}
+	fmt.Printf("%s: %d voter(s), results of %s\n", e.TitleFR, r.Voters, r.UpdatedAt.UTC().Format(time.RFC3339))
+	fmt.Printf("%4s %-30s %7s %7s  %7s\n", "RANK", "OPTION", "FIRST", "RANKED", "HONESTY")
+	for _, o := range r.Options {
+		name := o.Name
+		if o.Kind == "blank" {
+			name = "(vote blanc)"
+		}
+		rank, first, ranked := "-", "-", "-"
+		if o.Rank != nil {
+			rank, first, ranked = fmt.Sprint(*o.Rank), fmt.Sprint(*o.First), fmt.Sprint(*o.Ranked)
+		}
+		fmt.Printf("%4s %-30.30s %7s %7s  %7.0f\n", rank, name, first, ranked, 100*o.Honesty)
+	}
+	if r.CondorcetWinner != nil {
+		fmt.Printf("Condorcet winner: slot %d\n", *r.CondorcetWinner)
 	}
 	return nil
 }
@@ -454,9 +453,9 @@ func runPollResetVotes(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer storer.Close()
-	if err := pollStore(storer).ResetVotes(ctx); err != nil {
+	if err := vote.NewStore(storer.Pool()).Reset(ctx); err != nil {
 		return err
 	}
-	fmt.Println("voting keys, ballots and the public log deleted")
+	fmt.Println("registrations, ballots, checkpoints and the public log deleted")
 	return nil
 }

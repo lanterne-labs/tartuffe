@@ -11,18 +11,6 @@ import (
 	"golang.org/x/mod/sumdb/tlog"
 )
 
-// The kinds of the public log's entries.
-const (
-	// LogRegister: a document admitted a commitment (body: registerEntry).
-	LogRegister = "register"
-	// LogRoot: a window's voter tree reached a root (body: rootEntry).
-	LogRoot = "root"
-	// LogBallot: a ballot, published in a shuffled batch (body: AnonBallot).
-	LogBallot = "ballot"
-	// LogTally: the results of a poll after a batch (body: tallyEntry).
-	LogTally = "tally"
-)
-
 // LogEntry is one entry of the public log. The entries are the records of a
 // Merkle tree (the tree of Certificate Transparency, RFC 6962: package
 // tlog), record Seq-1 holding LeafData(Seq, Kind, Body): a signed checkpoint
@@ -41,40 +29,6 @@ type LogEntry struct {
 //	tartuffe-log/v1\n<seq>\n<kind>\n<body>
 func LeafData(seq int64, kind string, body []byte) []byte {
 	return append([]byte("tartuffe-log/v1\n"+strconv.FormatInt(seq, 10)+"\n"+kind+"\n"), body...)
-}
-
-// registerEntry is a registration: the document (an HMAC of its
-// identifier, never the identifier) admits the commitment from the windows
-// From; Replaces is the commitment it had, which stays until those windows.
-type registerEntry struct {
-	Document   string `json:"document"`
-	Provider   string `json:"provider"`
-	Commitment string `json:"commitment"`
-	From       [2]int `json:"from"`
-	Replaces   string `json:"replaces,omitempty"`
-}
-
-type rootEntry struct {
-	Window
-	Root string `json:"root"`
-	Size int    `json:"size"`
-}
-
-type tallyEntry struct {
-	EventID int64 `json:"poll"`
-	Window
-	Voters int `json:"voters"`
-	Blank  int `json:"blank"`
-	// First and Ranked count, per candidate, the ballots that rank them
-	// first and at all; Beats[a][b] those that rank a above b.
-	First  map[int64]int           `json:"first"`
-	Ranked map[int64]int           `json:"ranked"`
-	Beats  map[int64]map[int64]int `json:"beats"`
-	// BlankRanked counts the ballots that place the blank vote, BlankBeats
-	// those that rank it above each candidate; Beats[a][0] those that rank
-	// candidate a above it.
-	BlankRanked int           `json:"blank_ranked"`
-	BlankBeats  map[int64]int `json:"blank_beats"`
 }
 
 // voteLogLock serializes the appends (pg_advisory_xact_lock key).

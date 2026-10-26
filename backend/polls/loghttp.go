@@ -8,24 +8,6 @@ import (
 	"digital-mirror/backend/httpx"
 )
 
-// handleCheckpoint returns the signed checkpoint of the log's head
-// (text/plain, a signed note).
-func (s *Service) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
-	head, err := s.box.Head(r.Context())
-	if err != nil {
-		httpx.InternalError(w, err, "failed to read the vote log")
-		return
-	}
-	msg, err := s.signer.Sign(head)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to sign the checkpoint")
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Write(msg)
-}
-
 // handleLogKey returns the verifier key of the checkpoints.
 func (s *Service) handleLogKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

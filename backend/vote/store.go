@@ -466,3 +466,17 @@ func (s *Store) IDOfUID(ctx context.Context, eventID int64, uid string) (string,
 	}
 	return id, err
 }
+
+// Reset deletes everything of the vote: the protocol's tables and the
+// public log with its hashes and stamps. Before a launch only.
+func (s *Store) Reset(ctx context.Context) error {
+	for _, q := range []string{
+		`TRUNCATE vote2_events, vote2_ballots, vote2_registrations, vote2_checkpoints, vote2_cursors`,
+		`TRUNCATE vote_log, vote_log_hashes, vote_log_stamps`,
+	} {
+		if _, err := s.pool.Exec(ctx, q); err != nil {
+			return fmt.Errorf("reset: %w", err)
+		}
+	}
+	return nil
+}

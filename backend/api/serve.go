@@ -43,7 +43,9 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 		return err
 	}
 	acc, m, p := Wire(storer, reg, pollsCfg)
-	go p.Run(ctx)
+	if err := p.FillTree(ctx); err != nil {
+		log.Error().Err(err).Msg("fill the vote log's tree")
+	}
 	server := NewServer(storer, acc, m, p)
 	storer.StartMetricsCollectors(ctx)
 

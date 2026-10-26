@@ -5,10 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
-
-	"digital-mirror/backend/polls/semaphore"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,49 +44,24 @@ type Card struct {
 	ContradictionCount int
 }
 
-// CandidateTally is a candidate of an event with how many ballots rank them
-// first and at all, how many rank them above each other candidate (Beats,
-// by person id: a ranked candidate is above every unranked one), and their
-// card.
-type CandidateTally struct {
-	PersonID     int64
-	FirstChoices int
-	Ranked       int
-	Beats        map[int64]int
-	Card
-}
-
-// ErrNotCandidate is returned when a ballot names a person who is not (or
-// no longer) a candidate of the event.
-var ErrNotCandidate = errors.New("not a candidate of the event")
-
 // Store is what the polls keep of the events: the events, their blackouts
-// and candidates, and their tallies. It owns the tables poll_events,
-// poll_blackouts and poll_candidates. The candidates' cards are not its own:
-// Tallies leaves them empty.
+// and candidates. It owns the tables poll_events, poll_blackouts and
+// poll_candidates.
 type Store interface {
 	ListEvents(ctx context.Context) ([]Event, error)
 	GetEvent(ctx context.Context, slug string) (*Event, error)
 	CandidateIDs(ctx context.Context, eventID int64) ([]int64, error)
-	Tallies(ctx context.Context, eventID int64) ([]CandidateTally, Turnout, error)
 }
 
-// PGStore is the Postgres Store, and the anonymous ballots: the voters'
-// commitments and their trees, the ballots, the public log. One API process
-// serves them: the trees of the open windows are kept in its memory.
+// PGStore is the Postgres Store, and the public log.
 type PGStore struct {
 	pool *pgxpool.Pool
 	now  func() time.Time
-
-	// treesMu serializes the registrations and guards trees, the voter
-	// trees of the open windows.
-	treesMu sync.Mutex
-	trees   map[Window]*semaphore.Tree
 }
 
 // NewPGStore keeps the polls in the pool's database.
 func NewPGStore(pool *pgxpool.Pool) *PGStore {
-	return &PGStore{pool: pool, now: time.Now, trees: map[Window]*semaphore.Tree{}}
+	return &PGStore{pool: pool, now: time.Now}
 }
 
 const eventColumns = `id, slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at, featured`
@@ -260,9 +232,7 @@ func pollUpdated(ctx context.Context, tx pgx.Tx, eventID int64) error {
 }
 
 // SetClock makes the store read the time from now (tests).
-func (s *PGStore) SetClock(now func() time.Time) {
-	s.treesMu.Lock()
-	defer s.treesMu.Unlock()
-	s.now = now
-	clear(s.trees)
-}
+func (s *PGStore) SetClock(now func() time.Time) { s.now = now }
+
+// Pool is the store's pool (tests).
+func (s *PGStore) Pool() *pgxpool.Pool { return s.pool }

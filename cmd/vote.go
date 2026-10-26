@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"digital-mirror/backend/polls"
 	"digital-mirror/backend/vote"
 	"digital-mirror/backend/vote/ballot"
 
@@ -41,9 +42,27 @@ the flags, checks it, and appends it to the public log.`,
 	RunE: runVoteSetup,
 }
 
+var voteLogKeyCmd = &cobra.Command{
+	Use:   "log-key",
+	Short: "Make a new key for the public log's checkpoints",
+	Long: `Prints a new signer key (VOTE_LOG_KEY of the API and the ingest: keep it
+secret, set it once, never change it, or every browser that saw the old
+checkpoints reports a fault) and its verifier key (public: publish it, pin it
+in the frontend as VITE_VOTE_LOG_KEY).`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		skey, vkey, err := polls.GenerateLogKey()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("VOTE_LOG_KEY=%s\nverifier key: %s\n", skey, vkey)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(voteCmd)
-	voteCmd.AddCommand(voteKeygenCmd, voteSetupCmd)
+	voteCmd.AddCommand(voteKeygenCmd, voteSetupCmd, voteLogKeyCmd)
 	voteKeygenCmd.Flags().String("out", "", "file for the secret keys (required)")
 	_ = voteKeygenCmd.MarkFlagRequired("out")
 
