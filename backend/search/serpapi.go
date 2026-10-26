@@ -217,6 +217,9 @@ func (s *serpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if quotaStatus(resp.StatusCode) {
+			return nil, fmt.Errorf("%w: SerpAPI request failed with status: %s", ErrQuota, resp.Status)
+		}
 		return nil, fmt.Errorf("SerpAPI request failed with status: %s", resp.Status)
 	}
 
@@ -226,6 +229,9 @@ func (s *serpAPINewsProvider) SearchNews(query string, opts NewsSearchOptions) (
 	}
 
 	if searchResp.Error != "" {
+		if quotaMessage(searchResp.Error) {
+			return nil, fmt.Errorf("%w: SerpAPI error: %s", ErrQuota, searchResp.Error)
+		}
 		return nil, fmt.Errorf("SerpAPI error: %s", searchResp.Error)
 	}
 

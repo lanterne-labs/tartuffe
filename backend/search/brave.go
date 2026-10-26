@@ -50,7 +50,7 @@ func (b *braveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Resp
 	if time.Now().Before(braveCircuitOpenUntil) {
 		retryAfter := braveCircuitOpenUntil
 		braveCircuitMu.Unlock()
-		return nil, fmt.Errorf("Brave API circuit breaker open (quota exhausted), retry after %s", retryAfter.Format(time.RFC3339))
+		return nil, fmt.Errorf("%w: Brave API circuit breaker open, retry after %s", ErrQuota, retryAfter.Format(time.RFC3339))
 	}
 	braveCircuitMu.Unlock()
 
@@ -92,7 +92,7 @@ func (b *braveSearchProvider) doBraveRequest(reqURL, apiType string) (*http.Resp
 				backoff *= 2
 				continue
 			}
-			return nil, fmt.Errorf("Brave %s API returned status 429 Too Many Requests after %d retries", apiType, braveMaxRetries)
+			return nil, fmt.Errorf("%w: Brave %s API returned status 429 Too Many Requests after %d retries", ErrQuota, apiType, braveMaxRetries)
 		}
 
 		if resp.StatusCode != http.StatusOK {

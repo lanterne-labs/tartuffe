@@ -18,6 +18,7 @@ import (
 
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
@@ -352,6 +353,17 @@ func runOne(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Opt
 			return errRecovered
 		}
 		return errWaited
+	case errors.Is(err, search.ErrQuota):
+		// Every search provider refused for its quota: the task did not
+		// fail, it waits, and the worker goes on with the tasks of the other
+		// plugins.
+		notBefore := time.Now().Add(searchQuotaWait)
+		logger.Warn().Err(err).Time("retry_at", notBefore).Dur("elapsed", elapsed).
+			Msg("Worker: search quota exhausted; the task waits for it")
+		if idle != nil {
+			idle.FactsAdded(out.Facts)
+		}
+		return release(wctx, tasks, task, err.Error(), notBefore, out, false)
 	case err == nil && out.Covered:
 		logger.Info().Dur("elapsed", elapsed).Int("items", out.Items).Int("facts", out.Facts).Strs("notes", out.Details).Msg("Worker: task done")
 		metrics.CollectionTaskAttemptsTotal.WithLabelValues(task.Plugin, storage.TaskDone).Inc()
@@ -385,6 +397,11 @@ func runOne(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Opt
 	logger.Warn().Str("error", msg).Dur("elapsed", elapsed).Time("retry_at", notBefore).Msg("Worker: attempt failed; the task is retried")
 	return release(wctx, tasks, task, msg, notBefore, out, true)
 }
+
+// searchQuotaWait is how long a task waits when every search provider refused
+// for its quota: the quotas reset by the hour (rate) or the month (credits),
+// and a task that tries again costs one search per provider.
+const searchQuotaWait = 6 * time.Hour
 
 func release(ctx context.Context, tasks Tasks, task storage.CollectionTask, msg string, notBefore time.Time, out Outcome, countAttempt bool) error {
 	metrics.CollectionTaskAttemptsTotal.WithLabelValues(task.Plugin, "released").Inc()

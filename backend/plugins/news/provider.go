@@ -991,7 +991,10 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 		if err != nil && ctx.Err() != nil {
 			return aggregate, fmt.Errorf("window %d/%d stopped: %w", i+1, totalWindows, ctx.Err())
 		}
-		if errors.Is(err, llm.ErrUnavailable) {
+		if errors.Is(err, llm.ErrUnavailable) || errors.Is(err, search.ErrQuota) {
+			// No later window can be served either: the task waits for the
+			// LLM or the search quota instead of failing its windows one by
+			// one.
 			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",
 				i+1, totalWindows, w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err)
 		}
