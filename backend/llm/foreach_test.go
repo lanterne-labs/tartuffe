@@ -70,3 +70,18 @@ func TestForEach(t *testing.T) {
 		t.Fatalf("team: an error at the first item started %d items (err %v); want fewer than all and the error", len(started), err)
 	}
 }
+
+// The context of a task is its endpoint's: the local box's 14k, or Claude's.
+func TestContextTokens(t *testing.T) {
+	if got := ContextTokens(TaskExtract); got != LocalContextTokens {
+		t.Errorf("local routing: ContextTokens = %d, want %d", got, LocalContextTokens)
+	}
+	restore, err := SetRouting(ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{ProcsPerSeat: 3}, "claude-sonnet-5-5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	if got := ContextTokens(TaskExtract); got != claudeContextTokens {
+		t.Errorf("claude-team routing: ContextTokens = %d, want %d", got, claudeContextTokens)
+	}
+}

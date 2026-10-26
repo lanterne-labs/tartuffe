@@ -460,6 +460,35 @@ func Concurrency() int {
 	return 1
 }
 
+// LocalContextTokens is the context of a call on the local endpoint: the
+// mirror-llm slot holds 16k tokens (llama-swap entry: -c 32768 -np 2), 14k of
+// them usable. An endpoint that does not say otherwise gets it.
+const LocalContextTokens = 14000
+
+// claudeContextTokens is the context of a Claude call (Sonnet and Opus 5.5).
+const claudeContextTokens = 200000
+
+// contextEndpoint is an endpoint that says how many tokens one call may hold.
+type contextEndpoint interface {
+	ContextTokens() int
+}
+
+// ContextTokens is the number of tokens (prompt and answer) a call of task
+// may hold on the endpoint of its route in the active routing. A caller that
+// splits its input (the extraction of a long page) sizes its pieces from it:
+// sized for the local box, a live blog went to Claude in 113 pieces of 1,500
+// characters, and quotes lost the name of their speaker.
+func ContextTokens(task Task) int {
+	r := activeRouting()
+	if r == nil {
+		return LocalContextTokens
+	}
+	if e, ok := r.Endpoints[r.Route(task).Endpoint].(contextEndpoint); ok {
+		return e.ContextTokens()
+	}
+	return LocalContextTokens
+}
+
 func activeRouting() *Routing {
 	routingMu.RLock()
 	defer routingMu.RUnlock()

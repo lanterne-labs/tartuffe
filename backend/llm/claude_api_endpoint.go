@@ -349,3 +349,6 @@ func (t *ClaudeAPIEndpoint) UsageReport() string {
 	defer t.mu.Unlock()
 	return usageReport(t.usage, true, fmt.Sprintf("list price; cap %.2f USD per day", t.maxUSD))
 }
+
+// ContextTokens is the context of one Claude call.
+func (*ClaudeAPIEndpoint) ContextTokens() int { return claudeContextTokens }

@@ -25,11 +25,11 @@ const (
 	chunkSizeChars         = 16000
 	overlapChars           = 500
 
-	// Model-context budgeting. The mirror-llm slot holds 16k tokens (llama-swap
-	// entry: -c 32768 -np 2). 14k with a 4,096-token answer keeps the chunk
-	// room of the old 12k / 2,048 split: Qwen3.8 writes longer reasoning per
-	// fact than Gemma, and a 2,048 cap cut a reply mid-JSON (run 118).
-	maxContextTokens    = 14000
+	// Model-context budgeting: the context is the endpoint's
+	// (llm.ContextTokens). On the local box, 14k with a 4,096-token answer
+	// keeps the chunk room of the old 12k / 2,048 split: Qwen3.8 writes longer
+	// reasoning per fact than Gemma, and a 2,048 cap cut a reply mid-JSON (run
+	// 118).
 	outputBudgetTokens  = 4096 // mirrors MaxTokens in callChatAPIWithPrompt
 	contextSafetyTokens = 256  // headroom for system framing / role tokens
 	// Conservative chars-per-token ratio. French news typically lands at ~3.5;
@@ -40,11 +40,12 @@ const (
 )
 
 // dynamicChunkBudgetChars returns the largest chunk size in chars that keeps
-// (prompt + chunk + output_budget + safety) below the model context cap.
-// promptOverheadChars is the rendered prompt size with empty Content.
-func dynamicChunkBudgetChars(promptOverheadChars int) int {
+// (prompt + chunk + output_budget + safety) below the context of the
+// endpoint that serves the extraction (contextTokens). promptOverheadChars is
+// the rendered prompt size with empty Content.
+func dynamicChunkBudgetChars(promptOverheadChars, contextTokens int) int {
 	overheadTokens := promptOverheadChars/approxCharsPerToken + 1
-	available := maxContextTokens - outputBudgetTokens - contextSafetyTokens - overheadTokens
+	available := contextTokens - outputBudgetTokens - contextSafetyTokens - overheadTokens
 	if available <= 0 {
 		// Prompt alone already exceeds the budget — fall back to a minimal
 		// chunk so we still emit *something* and the LLM can flag the overflow.
@@ -104,7 +105,7 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg prompt
 	overheadCfg := cfg
 	overheadCfg.Content = ""
 	promptOverhead := promptrules.BuildFactExtractionPrompt(overheadCfg)
-	dynBudget := dynamicChunkBudgetChars(len(promptOverhead))
+	dynBudget := dynamicChunkBudgetChars(len(promptOverhead), llm.ContextTokens(llm.TaskExtract))
 	if dynBudget < chunkParams.ChunkSizeChars {
 		log.Debug().Str("url", cfg.SourceURL).Int("prompt_overhead_chars", len(promptOverhead)).Int("static_chunk", chunkParams.ChunkSizeChars).Int("dynamic_chunk", dynBudget).Msg("Dynamic chunk budget binds — shrinking chunks to fit model context")
 		chunkParams.ChunkSizeChars = dynBudget

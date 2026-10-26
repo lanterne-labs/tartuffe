@@ -5,6 +5,7 @@ import (
 	"digital-mirror/backend"
 	"digital-mirror/backend/extractor"
 	"digital-mirror/backend/llmtest"
+	"digital-mirror/backend/util"
 	"regexp"
 	"strings"
 	"testing"
@@ -307,6 +308,62 @@ d'austérité était « en partie responsable » de la lenteur des secours.`
 				t.Errorf("Fact %d dropped the 'en partie' qualifier: %q", i+1, f.NormalizedFactText)
 			}
 		}
+	}
+}
+
+// TestRemoteLLMExtractor_LiveBlogSpeakers locks the attribution of quotes on
+// a page where many politicians speak (mirror-ds6.6). On the Figaro live blog
+// of 2026-09-12, searched for Édouard Philippe, Olivier Faure's "je suis de
+// gauche et dans l'opposition" and François Ruffin's "deux tiers des Français
+// qui nous haïssent" became facts of Philippe (prod 18079, 18084), and the
+// first one alone made 18 false contradictions. A page about the target does
+// not make the target the speaker of every quote on it.
+func TestRemoteLLMExtractor_LiveBlogSpeakers(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `EN DIRECT - «Je ne suis pas un homme pressé» pour l'élection présidentielle : Édouard Philippe défend la tortue et moque les lièvres
+
+15:30 Édouard Philippe : «Je ne suis pas un homme pressé»
+En déplacement ce samedi, le candidat Horizons a répondu à ceux qui le pressent d'accélérer. «Je ne suis pas un homme pressé. J'ai commencé ma campagne il y a longtemps, je connaissais le lièvre et la tortue», a asséné le maire du Havre.
+
+14:10 «Si la copie est conforme aux pistes, je censurerai», affirme Olivier Faure
+Olivier Faure, premier secrétaire du Parti socialiste et candidat à la primaire socialiste, affirme que «si la copie est conforme aux pistes, à la fin effectivement je censurerai le gouvernement». «Je n'ai jamais cherché à dire que j'étais devenu un élément du bloc central, je n'en suis pas. Je suis de gauche et je suis dans l'opposition», a-t-il ajouté.
+
+11:05 «On ne pourra pas gagner à gauche avec deux tiers des Français qui nous haïssent» : à la fête de l'Huma, Ruffin s'en prend à Mélenchon sans le citer
+À la fête de l'Humanité, François Ruffin appelle au rassemblement de la gauche, à la construction d'une «grande force commune» pour s'opposer à l'extrême droite. «On ne pourra pas gagner à gauche avec deux tiers des Français qui nous haïssent», a-t-il lancé.`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/en-direct-philippe",
+		Title:   "EN DIRECT - «Je ne suis pas un homme pressé» : Édouard Philippe défend la tortue et moque les lièvres",
+		Content: mockText,
+	}
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Edouard Philippe", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	philippe := 0
+	for i, f := range facts {
+		t.Logf("  [%d] entity=%q normalized=%q", i+1, f.SubjectEntity, f.NormalizedFactText)
+		subject := strings.ToLower(util.RemoveAccents(f.SubjectEntity))
+		if !strings.Contains(subject, "philippe") {
+			continue
+		}
+		philippe++
+		hay := strings.ToLower(f.NormalizedFactText + " " + f.NormalizedFactTextEn + " " + f.OriginalQuote)
+		for _, other := range []string{"bloc central", "de gauche", "opposition", "censur", "deux tiers", "haïssent", "huma"} {
+			if strings.Contains(hay, other) {
+				t.Errorf("Fact %d gives Philippe another speaker's words (%q): %q", i+1, other, f.NormalizedFactText)
+			}
+		}
+	}
+	if philippe == 0 {
+		t.Error("want Philippe's own statement (not a man in a hurry) extracted")
 	}
 }
 
