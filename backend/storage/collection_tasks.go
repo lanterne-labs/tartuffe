@@ -53,6 +53,9 @@ type NewCollectionTask struct {
 	RequestedBy string
 	// Operation names the batch the task belongs to ("" for none).
 	Operation string
+	// UnlessDone leaves the task out when one of the same person, plugin and
+	// period is done: the watch list, added by every attempt of the feed.
+	UnlessDone bool
 }
 
 const collectionTaskColumns = `t.id, t.person_id, p.name, COALESCE(p.entity_type, 'human'), t.plugin, t.since, t.until,
@@ -71,7 +74,8 @@ func scanCollectionTask(row pgx.Row) (*CollectionTask, error) {
 }
 
 // AddCollectionTasks creates the tasks and returns how many were new: a task
-// equal to an open one (same person, plugin and period) is not created again.
+// equal to an open one (same person, plugin and period) is not created again,
+// nor one equal to a done one when UnlessDone is set.
 func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewCollectionTask) (int, error) {
 	added := 0
 	for _, t := range tasks {
@@ -80,9 +84,12 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 		}
 		tag, err := s.pool.Exec(ctx, `
 			INSERT INTO collection_tasks (person_id, plugin, since, until, priority, requested_by, operation)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), NULLIF($7, ''))
+			SELECT $1::bigint, $2::text, $3::date, $4::date, $5::int, NULLIF($6::text, ''), NULLIF($7::text, '')
+			WHERE NOT ($8::boolean AND EXISTS (
+				SELECT 1 FROM collection_tasks
+				WHERE person_id = $1 AND plugin = $2 AND since = $3 AND until = $4 AND status = 'done'))
 			ON CONFLICT DO NOTHING`,
-			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy, t.Operation)
+			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy, t.Operation, t.UnlessDone)
 		if err != nil {
 			return added, fmt.Errorf("adding collection task: %w", err)
 		}

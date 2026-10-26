@@ -210,7 +210,7 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 	// The watch list's tasks go in first: the worker claims them during the
 	// feed (and no backfill), so yesterday's news runs beside the votes of
 	// the day rather than after them. A feed tried again after an outage
-	// finds them open: none is added twice.
+	// finds them open or done: none is added twice.
 	added, err := h.watchTasks(ctx)
 	if err != nil {
 		errs = append(errs, err)
@@ -271,7 +271,7 @@ func (h *Housekeeping) watchTasks(ctx context.Context) (int, error) {
 	var tasks []storage.NewCollectionTask
 	for _, t := range targets {
 		for _, name := range PeriodPlugins() {
-			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, Priority: watchPriority, RequestedBy: "watch"})
+			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, Priority: watchPriority, RequestedBy: "watch", UnlessDone: true})
 		}
 	}
 	added, err := h.Storer.AddCollectionTasks(ctx, tasks)
