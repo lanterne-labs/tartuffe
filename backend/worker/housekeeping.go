@@ -92,7 +92,8 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
-	dirty atomic.Bool // facts were added since the last pass (set by the tasks run at once)
+	dirty   atomic.Bool // facts were added since the last pass (set by the tasks run at once)
+	feeding atomic.Bool // the feed runs
 }
 
 // NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
@@ -128,7 +129,20 @@ func (h *Housekeeping) Beside(ctx context.Context) error {
 	if err != nil || !due {
 		return err
 	}
+	h.feeding.Store(true)
+	defer h.feeding.Store(false)
 	return h.feed(ctx)
+}
+
+// MinPriority implements Idle: while the feed runs, only the tasks of the
+// watch list are claimed. The backfills that run go on, but no new one
+// starts: on 2026-10-26 the 16 lanes of backfills held the seats, and the
+// feed of the day waited behind them until the seats hit their limit.
+func (h *Housekeeping) MinPriority() int {
+	if h.feeding.Load() {
+		return watchPriority
+	}
+	return 0
 }
 
 // Urgent implements Idle: a maintenance pass is due although tasks are

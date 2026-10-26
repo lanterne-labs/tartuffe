@@ -108,6 +108,8 @@ func (f *fakeIdle) FactsAdded(n int) { f.facts += n }
 
 func (f *fakeIdle) Beside(context.Context) error { return nil }
 
+func (f *fakeIdle) MinPriority() int { return 0 }
+
 func (f *fakeIdle) Urgent(context.Context) (bool, error) { return false, nil }
 
 // TestWorkerIdleRunsTheHousekeeping: the worker tells the housekeeping about

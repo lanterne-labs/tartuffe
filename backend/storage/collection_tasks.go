@@ -98,14 +98,16 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 // person are inserted one at a time, so two tasks of one person (news and
 // twitter, claimed together by age) wait for each other (2026-10-24: 2 of
 // 4 lanes idle). The task comes back running, with one more attempt; nil
-// when there is none. Two workers never claim the same task (FOR UPDATE
-// SKIP LOCKED).
-func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Duration) (*CollectionTask, error) {
+// when there is none. Only the tasks of priority minPriority or more are
+// claimed (the worker holds the backfills back while the feed runs). Two
+// workers never claim the same task (FOR UPDATE SKIP LOCKED).
+func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Duration, minPriority int) (*CollectionTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		WITH next AS (
 			SELECT id FROM collection_tasks
-			WHERE (status = 'pending' AND not_before <= now())
-			   OR (status = 'running' AND heartbeat_at < now() - $1::interval)
+			WHERE ((status = 'pending' AND not_before <= now())
+			   OR (status = 'running' AND heartbeat_at < now() - $1::interval))
+			  AND priority >= $2
 			ORDER BY priority DESC,
 				EXISTS (SELECT 1 FROM collection_tasks r
 					WHERE r.person_id = collection_tasks.person_id AND r.status = 'running'
@@ -120,7 +122,7 @@ func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Dur
 			RETURNING c.*
 		)
 		SELECT `+collectionTaskColumns+` FROM t JOIN persons p ON p.id = t.person_id`,
-		lease)
+		lease, minPriority)
 	t, err := scanCollectionTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

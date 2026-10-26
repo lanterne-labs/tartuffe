@@ -50,7 +50,9 @@ type Options struct {
 // feed) at the same time as the tasks; Urgent tells that the work that runs
 // alone (the maintenance pass) is due although tasks are pending, and the
 // worker then stops claiming, lets the running tasks end and runs Idle; Idle
-// runs when no task and no Beside runs, and no Beside starts while it is due.
+// runs when no task and no Beside runs; a Beside that starts while it is due
+// goes first.
+// While Beside runs, MinPriority holds the lower tasks back.
 type Idle interface {
 	// Idle does the work that is due. An error wrapping llm.ErrUnavailable
 	// makes the worker wait for the LLM.
@@ -62,6 +64,9 @@ type Idle interface {
 	Urgent(ctx context.Context) (bool, error)
 	// FactsAdded tells that a task added n facts.
 	FactsAdded(n int)
+	// MinPriority is the lowest priority of the tasks the worker claims now:
+	// while the feed runs, the backfills wait and leave the seats to it.
+	MinPriority() int
 }
 
 // DefaultOptions are the options of `dm worker run`.
@@ -92,7 +97,7 @@ type Runner interface {
 
 // Tasks is the storage the worker needs (*storage.PostgresStorer).
 type Tasks interface {
-	ClaimCollectionTask(ctx context.Context, lease time.Duration) (*storage.CollectionTask, error)
+	ClaimCollectionTask(ctx context.Context, lease time.Duration, minPriority int) (*storage.CollectionTask, error)
 	HeartbeatCollectionTask(ctx context.Context, id int64) (running bool, err error)
 	FinishCollectionTask(ctx context.Context, id int64, status, lastError string, items, facts int) error
 	ReleaseCollectionTask(ctx context.Context, id int64, lastError string, notBefore time.Time, items, facts int, countAttempt bool) error
@@ -169,7 +174,11 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		}
 		if idle != nil {
 			now := time.Now()
-			if !draining && !besideRunning && !now.Before(besideNext) {
+			// The feed starts even while the maintenance waits for the
+			// running tasks: the pass waits for the feed's end, never the
+			// feed for the pass (2026-10-26: the feed cut by the seat limit
+			// waited behind 16 backfills and the pass).
+			if !besideRunning && !now.Before(besideNext) {
 				besideRunning = true
 				go func() { besideDone <- runHousekeeping(ctx, idle.Beside, opts) }()
 			}
@@ -187,8 +196,12 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 			}
 		}
 		// Fill the free lanes.
+		minPriority := 0
+		if idle != nil {
+			minPriority = idle.MinPriority()
+		}
 		for !draining && running < lanes && !time.Now().Before(resume) {
-			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease)
+			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease, minPriority)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()

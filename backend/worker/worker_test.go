@@ -94,6 +94,13 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the worker did not run the 5 attempts in time")
 	}
+	// The 5th attempt started; its release is recorded before the stop, or
+	// the stop releases it as stopped.
+	require.Eventually(t, func() bool {
+		var released bool
+		err := storer.Pool().QueryRow(ctx, "SELECT status = 'pending' FROM collection_tasks WHERE plugin = 'searchquota'").Scan(&released)
+		return err == nil && released
+	}, 5*time.Second, 10*time.Millisecond, "the search quota task is released")
 	stop()
 	require.ErrorIs(t, <-errc, context.Canceled)
 
