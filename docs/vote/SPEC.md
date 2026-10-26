@@ -432,7 +432,7 @@ The difference between two consecutive results is exactly the sum of the
 ballots that changed in between, whatever else surrounds them. An update that
 holds one changed ballot publishes that ballot's full ranking. So:
 
-**A tally is published only when at least `K_REAL` (20) distinct pseudonyms
+**A tally is published only when at least `K_REAL` (10) distinct pseudonyms
 have changed their decrypted values since the previous tally** (a first
 ballot and a withdrawal count as changes; a recast identical to the previous
 ballot does not). There is no time cap: a cap would be the leak. The tallier
@@ -471,11 +471,11 @@ that strictly beats every other one, if there is one.
 
 **What the voter sees.** Receipt within seconds (the ack), inclusion within a
 checkpoint (≤ 20 s plus the mirror fetch), « 1 247 bulletins reçus · 13 depuis
-la dernière mise à jour · prochaine mise à jour dès 20 bulletins modifiés »,
+la dernière mise à jour · prochaine mise à jour dès 10 bulletins modifiés »,
 their own ranking shown locally. At busy times (launch, debates) the rule
-fires every minute or two; at a vote every 5 minutes the median wait is about
-50 minutes; at night, the morning. The daily variant (« chaque soir à 20 h,
-par lots d'au moins 20 bulletins modifiés, sinon reporté ») is the same rule
+fires every minute or so; at a vote every 5 minutes the median wait is about
+25 minutes; at night, the morning. The daily variant (« chaque soir à 20 h,
+par lots d'au moins 10 bulletins modifiés, sinon reporté ») is the same rule
 with a minimum gap of 24 h, a configuration of the setup (`tally_min_gap`).
 
 ### 9.2 Blackouts
@@ -538,9 +538,12 @@ knows `sk`.
 
 - **Updates.** A tally's difference from the previous one is the sum of at
   least `K_REAL` changed rankings. A relay that carried one of them learns
-  that its ballot is one of ≥ 20 whose sum is public. A group holding
+  that its ballot is one of ≥ 10 whose sum is public; a sum of 10 rankings
+  often splits into its parts, so the protection is the 1-in-10
+  attribution, not the secrecy of the rankings in the batch. A group holding
   `K_REAL − 1` passports could fill a batch around one target's change:
-  stated residual (raising `K_REAL` is the only lever).
+  stated residual (raising `K_REAL` is the only lever; the owner chose 10 for
+  the latency of results, 2026-10-26).
 - **First ballot.** A new pseudonym's first ballot follows its registration;
   both are dated to a checkpoint. On a busy day the anonymity set is the
   registrants of that checkpoint; at quiet times it is one. That ties a
@@ -650,7 +653,7 @@ proof verification and a 100 GB log for a full audit, incremental afterwards;
 | `N` | 10 | 7 candidates, blank, 2 reserved |
 | `V`, `J`, `L` | 66, 10, 36 | values, ciphertexts, bits per digit |
 | `D` | 20 | a million leaves |
-| `K_REAL` | 20 | changed ballots per tally: the anonymity set of an update |
+| `K_REAL` | 10 | changed ballots per tally: the anonymity set of an update |
 | `ANCHOR_AGE` | 24 h | how old a ballot's root may be |
 | `CHECKPOINT_PERIOD` | 20 s | receipt latency |
 | `tally_min_gap` | 0 (live) or 24 h (daily) | the owner's choice of rhythm |
