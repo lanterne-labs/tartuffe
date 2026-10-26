@@ -1,9 +1,11 @@
 # tartuffe-vote/2: encrypted ranked ballots with a public homomorphic tally
 
-Status: **draft 3 for final review**, 2026-10-26. Nothing here is implemented
-yet. Draft 1 and draft 2 were each reviewed on 2026-10-26 (adversarial
-protocol review ×2, a study of alternatives, a privacy and UX study); this
-draft takes in all four and the owner's decisions. It replaces tartuffe-vote/1
+Status: **draft 4, reviewed, ready for implementation**, 2026-10-26.
+Nothing here is implemented yet. Drafts 1, 2 and 3 were each reviewed on
+2026-10-26 (adversarial protocol review ×3, a study of alternatives, a
+privacy and UX study); draft 4 closes the final review's blocking items
+(registration freshness, the acknowledgement body, the relay ranking, the
+P1 residual) and its recommendations. It replaces tartuffe-vote/1
 (plain anonymous ballots in 30-day windows, `backend/polls`), which never ran
 in production.
 
@@ -56,6 +58,13 @@ Non-goals and accepted residuals (decisions of 2026-10-26):
   have changed (§9.1); the page shows the activity meanwhile;
 - a group holding `K_REAL − 1` passports can fill a batch around one target's
   change (§10);
+- **P1 under our server colluding with a voter's own sticky relay** rests on
+  that voter's browser: the relay can show the ballot and the acknowledgement
+  to that voter alone, and only the browser's inclusion check (§7.2, within
+  20 s while the page is open, and at every later visit) turns the loss into a
+  public complaint. A voter who closes the page before « vérifié » and never
+  returns has no third party watching. Any other relay, and the honest-relay
+  case, are covered by auditors;
 - denial of service beyond §7.4.
 
 ## 2. Parties and adversaries
@@ -128,13 +137,19 @@ Adversaries:
    event to its registration relay (§7.1), `uid` the ZKPassport unique
    identifier for that domain and scope, `proof` the compressed proof and
    query result.
-4. Our server, which watches the relays continuously, verifies the proof with
-   the registration's `proof_date` as reference time, checks the rules,
-   appends the `register` entry, inserts `ID` into the tree (§5), and posts a
-   signed acknowledgement (§7.2) on the same relay: `{nostr_id, body_hash,
-   log_seq, outcome: "logged", position}`. The next checkpoint (≤ 30 s, §8.2)
-   carries a root that includes the voter; the browser then votes.
-5. Rules: one `register` per `uid` per event, ever; one per `ID`. A
+4. Our server, which watches the relays continuously, checks **freshness**
+   first: `|proof_date − now| ≤ validity + 5 min`, else `reject stale_date`
+   (without this bound a phone with its clock set to 2033 proves "adult" for
+   a minor and "not expired" for an expired passport). It then verifies the
+   proof with `proof_date` as the reference date (the SDK's own check is only
+   `|date − now| ≤ validity`), checks the rules, appends the `register` entry,
+   inserts `ID` into the tree (§5), and posts a signed acknowledgement (§7.2)
+   on the same relay with `position`. The next checkpoint (≤ 20 s, §8.2)
+   carries a root that includes the voter; the browser then votes. The
+   browser waits up to 60 s for this acknowledgement (verification queues at
+   launch) before reposting to its next relay.
+5. Rules: one `register` per `uid` per event, ever (`reject uid_used`); one
+   per `ID` (`reject id_used`); `custom_data` compared as lower-case hex. A
    registration seen on a relay and not logged is withholding (§12.6).
 6. A voter who lost `s` and every backup keeps their last ballot but cannot
    register again: a second key would be a second vote, and ballots are
@@ -158,7 +173,9 @@ the voter's devices, so a lost phone does not lose the key; the passkey
 provider learns that a passkey for the app origin exists, nothing else.
 Otherwise `s` is random, stored with `navigator.storage.persist()`, and
 backed up by 12 words or a device link (QR, end-to-end encrypted, through a
-relay).
+relay). The 12 words are offered to PRF users too: a passkey can be deleted
+or a provider account lost, and the words are the only backup that depends
+on nobody.
 
 ### 4.2 Backup before the first ballot
 
@@ -184,7 +201,13 @@ pourrez plus le changer. »
   `ANCHOR_AGE` (24 h) old when the ballot is logged, judged by checkpoint
   times. Never against a root the server gave only to one voter.
 - The browser proves against the newest checkpoint root it has that contains
-  its leaf.
+  its leaf, with one rule for a **first ballot**: it uses the newest
+  checkpoint root (within `ANCHOR_AGE`) in which its leaf is **not among the
+  last `R_MIN` = 32 leaves**, if such a root exists, else the newest root.
+  Otherwise a server could isolate one registration in a checkpoint of its
+  own at a busy time and shrink that voter's anonymity set to one; with the
+  rule, a first ballot at busy times proves against a root that at least 32
+  later registrants share, and at quiet times the residual of §1 applies.
 
 ### 5.1 Keeping the path up to date, privately
 
@@ -205,8 +228,9 @@ would tie its IP to its `ID`.
 - A device restored from a backup finds its position without naming it: it
   downloads the shard `positions/<prefix>` of the `ID → position` table for
   the first 4 bits of `ID` (1/16 of the leaves), then its block's fixed group
-  `blocks/<position div 4096>`. The group is fixed by the position, so repeated
-  visits intersect to nothing new.
+  `blocks/<position div 4096>`. The group is fixed by the position, so
+  repeated visits intersect to nothing new; the host learns the intersection
+  of the shard and the group, about 256 leaves.
 - The recomputed root is checked against the newest checkpoint root; a
   mismatch means a bad mirror or relay, and the browser tries another source.
 
@@ -234,9 +258,10 @@ would tie its IP to its `ID`.
 - **Packing.** Each value is shifted to `v + 1 ∈ {0, 1, 2}` and 7 values share
   one plaintext as base-`2^L` digits, `L = 36`:
   `p_j = Σ_{k<7} (v_{7j+k} + 1) · 2^{Lk}`, the first value in the lowest
-  digit. `J = ⌈66/7⌉ = 10` ciphertexts; `7·36 = 252 < log2 r`. A sum over `c`
-  ballots decodes digit by digit while `2c < 2^36` (34 billion ballots), then
-  subtracts `c` from each digit.
+  digit; the 4 unused digits of `p_9` hold the value 0, i.e. the digit 1, so
+  every digit decodes alike. `J = ⌈66/7⌉ = 10` ciphertexts;
+  `7·36 = 252 < log2 r`. A sum over `c` ballots decodes digit by digit while
+  `2c < 2^36` (34 billion ballots), then subtracts `c` from each digit.
 
 ### 6.2 The ballot statement (one UltraHonk proof)
 
@@ -268,10 +293,13 @@ ceremony of ours.
 
 **Phone cost contingency.** If the measured proof exceeds about 5 s on a
 2021 mid-range Android (Q2), the statement splits as in MACI: the phone proves
-1–3 and binds a hash of the ciphertexts; our tallier, which decrypts every
-ballot anyway, proves 4–6 for each logged ballot in a batch proof appended
-to the log. P2 and P3 are unchanged; what moves is where the content proof
-is computed.
+1–3 and binds `H(T_CT, C0, C_0…C_9)`; our tallier proves, with `sk_j` as its
+witness (`PK_j = sk_j·G` and a valid packing `p` with
+`C_j − sk_j·C0 = p_j·G`, the on-curve checks moving to the verifier), a batch
+proof over each checkpoint's ballots that outputs one validity bit per
+ballot; only ballots proven valid count, an invalid one leaves the voter's
+previous ballot in force, and the tally waits for the batch proof. P2 and P3
+are unchanged. This variant is specified in full only if Q2 triggers it.
 
 ### 6.3 Which ballot counts
 
@@ -320,14 +348,16 @@ the bulk and its size does not depend on the circuit's size.
 
 ### 7.1 Relays
 
-- Each device picks **one sticky relay** for ballots, derived from `s` and the
-  setup's relay list (`H(T_RELAY, s, …)` mod the number of eligible relays),
-  and keeps it; it changes only when that relay fails, to the next in the
-  derived order. Rotating would spread the IP ↔ pseudonym link to every relay
-  used; sticking exposes it to one.
-- The **registration relay** is a different relay, derived the same way, and
-  it never receives a ballot from this key: the registration shows `uid` with
-  the IP, the ballots show the pseudonym with the IP.
+- Each device ranks the relays of the setup in force at its registration by
+  **rendezvous hashing**: score `H(T_RELAY, s, relay_url)` per relay, sorted
+  ascending. Rank 0 is the **registration relay**; it never receives a ballot
+  from this key (the registration shows `uid` with the IP, the ballots show
+  the pseudonym with the IP). The **sticky relay** for ballots is the
+  best-ranked other relay that is not retired; on failure the device moves to
+  the next in its ranking and never returns to a recovered relay. Relays added
+  by a later setup are ranked by new devices only. Rotating would spread the
+  IP ↔ pseudonym link to every relay used; sticking exposes it to one, and a
+  rank-based rule keeps every device's choice stable when the list changes.
 - One websocket per event posted; subscriptions for acknowledgements use the
   same filter every browser sends (`kinds`, the event tag, `since` = the last
   checkpoint time), never the voter's own event id.
@@ -338,7 +368,9 @@ the bulk and its size does not depend on the circuit's size.
   checkpoint 1_7023, complaint 1_7024, snapshot 1_7025), tag
   `t = tartuffe-vote/2/<slug>`, each voter event signed by a fresh throwaway
   key, `created_at` rounded down to the minute (the hour would make paging
-  stall: all events of an hour share one timestamp). Catch-up uses NIP-77
+  stall: all events of an hour share one timestamp). Our server's events
+  (acks, checkpoints, snapshot) are signed by its Nostr key (secp256k1),
+  named in the setup, distinct from the Ed25519 log key. Catch-up uses NIP-77
   (negentropy) where the relay supports it, paging by `until` otherwise.
 - Relay requirements (checked at setup time from NIP-11): `max_message_length`
   ≥ 32 KB, no payment, no proof-of-work, no auth, persistent storage
@@ -348,20 +380,26 @@ the bulk and its size does not depend on the circuit's size.
 
 ### 7.2 Acknowledgements and complaints
 
-- For every event it ingests, our server posts on the relay it read it from a
-  signed `ack {nostr_id, body_hash, pi_hash, log_seq, outcome, reason?}`,
-  `outcome ∈ {logged, rejected}`. The browser treats a `duplicate` ack whose
-  `body_hash` matches its own repost as success. On `old_root`, `stale_seq` or
-  `unknown_setup` it re-proves with fresh values and reposts, then tells the
-  voter only if that fails.
-- A signed ack with `outcome: logged` whose `log_seq` is not that entry in a
-  later checkpoint is self-incriminating.
-- On its next visit (or at the next checkpoint while the page is open) the
-  browser checks inclusion privately (§12). If the ballot is missing, it
-  reposts to two other relays and posts the signed ack as a `complaint`
-  event; auditors collect complaints.
-- With no ack within 20 s the browser reposts to the next relay of its derived
-  order.
+- For every event it ingests, our server posts on the relay it read it from,
+  within seconds, a signed `ack {nostr_id, body_hash, pi_hash, checkpoint,
+  outcome, reason?, position?}`, `outcome ∈ {logged, rejected}`,
+  `checkpoint` the index of the checkpoint that will hold the entry (the log
+  seq is not known yet: entries of a checkpoint are ordered by `pi_hash` when
+  it closes). **Either outcome is self-incriminating** if that checkpoint's
+  entries do not list `pi_hash` (as `ballot`, `register` or `reject`).
+- The browser treats a `duplicate` ack whose `body_hash` matches its own
+  repost as success. On `old_root`, `stale_seq` or `unknown_setup` it
+  re-proves with fresh values and reposts, then tells the voter only if that
+  fails. On `bad_proof` it re-verifies its own proof locally; if the proof
+  verifies, the reject is false and it complains (below).
+- The page shows « enregistré » at the ack and **« vérifié »** once `pi_hash`
+  appears in the entries of the named checkpoint (≤ 20 s, read from the
+  mirror's open-hour entries file that everyone fetches, §8.3). If it does
+  not, or on any later visit when the ballot is missing, the browser reposts
+  the ballot to its next two relays and posts the signed ack as a `complaint`
+  event; auditors collect complaints and check them like any event (§12.6).
+- With no ack within 20 s (60 s for a registration) the browser reposts to
+  the next relay of its ranking.
 
 ### 7.3 Our server's traffic
 
@@ -390,7 +428,8 @@ the `seq` rule, then appends:
 - `reject {v, event, nostr_id, body, reason}` with the body in full (capped
   at the ballot size) and a reason from a closed list (`malformed`,
   `unknown_setup`, `old_root`, `bad_proof`, `duplicate`, `stale_seq`,
-  `closed`), each re-checkable by anyone from the stored body and the log;
+  `stale_date`, `uid_used`, `id_used`, `closed`), each re-checkable by anyone
+  from the stored body and the log;
 - `seen {v, nostr_id, hash}` for a tagged event that is not a protocol body.
 
 Every event id carrying the tag is thus listed, including copies of an
@@ -411,11 +450,13 @@ Nothing is published when nothing happened.
 A public GitHub repository, read through jsDelivr **by the commit hash named
 in the checkpoint** (branch URLs are cached 12 h; GitHub Pages is never the
 data host), holds what browsers read: checkpoints and tallies, the tree files
-of §5.1, the index shards of §6.3, and per-checkpoint entry files
-`entries/<checkpoint>` listing `(pi_hash, log_seq)` of every entry, from which
-a browser finds its receipt without fetching its own entry. Every file is
+of §5.1, the index shards of §6.3 (rebuilt hourly), and **hourly** entry
+files `entries/<hour>` listing `(checkpoint, pi_hash, log_seq)` of every
+entry of that hour, plus the open hour's file rewritten at each checkpoint.
+A browser fetches whole hours, the same files as everyone, and finds its
+receipt in them without naming its checkpoint. Every closed file is
 immutable and under 20 MB; the repository rotates (the checkpoint names it)
-before 150 MB. The full log, proofs included, stays on our server for auditors
+by history size, before 150 MB. The full log, proofs included, stays on our server for auditors
 (an auditor reveals nothing by downloading it all) and may be mirrored by
 anyone.
 
@@ -437,9 +478,18 @@ have changed their decrypted values since the previous tally** (a first
 ballot and a withdrawal count as changes; a recast identical to the previous
 ballot does not). There is no time cap: a cap would be the leak. The tallier
 counts changes from its own per-ballot decryptions; the public cannot check
-`K_REAL` and does not need to, since it protects voters from the public and
-the relays, and the tallier holds `sk` anyway. Auditors check the weak public
-bound `‖Δfirst‖₁ ≤ 2 × (ballots since the previous tally)`.
+`K_REAL` exactly and does not need to, since it protects voters from the
+public and the relays, and the tallier holds `sk` anyway. Auditors check what
+is public: at least `K_REAL` distinct pseudonyms have a ballot in
+`(prev_upto, upto]`, and `Δvoter ≤` the number of pseudonyms seen for the
+first time in that range.
+
+**Firing lag.** Firing at the very checkpoint that reaches `K_REAL` would
+say that its last ballot was a real change. So once the count is reached,
+the tallier fires at each following checkpoint with probability 1/2
+(geometric lag, a few checkpoints on average), and `upto` is that
+checkpoint's last entry. The daily variant fires at a fixed `tally_at` time
+of day, provided the count is reached, else it skips the day.
 
 When the rule fires, the tallier:
 
@@ -507,16 +557,18 @@ cannot.
 - 30 days after `closed`, the tallier destroys `sk` and its shares and our
   server appends `destroyed {v, event, at}`.
 
-### 9.4 The final shuffle
+### 9.4 The final shuffle (optional, after launch)
 
-With the final tally, our tallier takes the latest ballot of every pseudonym,
-re-encrypts and permutes them with a Bayer–Groth shuffle proof (commitment
-keys derived from a public nothing-up-my-sleeve hash of the setup), and
-decrypts each output with a DLEQ proof. The log then holds every final
+With the final tally, our tallier may take the latest ballot of every
+pseudonym, re-encrypt and permute them with a Bayer–Groth shuffle proof
+(commitment keys derived by a verifiable hash-to-curve from the setup), and
+decrypt each output with a DLEQ proof. The log then holds every final
 ranking in clear, unlinkable to pseudonyms for the public. Anyone recomputes
 Schulze, first choices or any other method from the ballots themselves; the
 margins tally is the cross-check. The tallier knows the permutation, as it
-knows `sk`.
+knows `sk`. It protects nothing new and is the heaviest implementation item
+(no Go library), so `closed.shuffle` is optional and verifiers accept its
+absence; it does not gate the launch.
 
 ## 10. What each party learns
 
@@ -608,12 +660,12 @@ from the log, the relays and its own continuous archive of them:
    `vk_hash` equal to the key built from the published source with the pinned
    `nargo` and `bb`; `app_hash` equal to the reproducible build; later setups
    within §11.
-3. **Registrations:** every ZKPassport proof verifies locally with the
-   registration's `proof_date` as the reference time (the stock verifier
-   compares with today and would fail weeks later), with the certificate
-   registry root valid at that date (Ethereum RPC): age, nationality,
-   passport, not expired, `custom_data = H(T_REG, event, ID)`, domain and
-   scope; `uid` and `ID` unique.
+3. **Registrations:** `|proof_date − checkpoint time| ≤ validity + 10 min`;
+   every ZKPassport proof verifies locally with `proof_date` as the reference
+   date (the stock verifier compares with today and would fail weeks later),
+   with the certificate registry root valid at that date (Ethereum RPC): age,
+   nationality, passport, not expired, `custom_data = H(T_REG, event, ID)`,
+   domain and scope; `uid` and `ID` unique.
 4. **Tree:** every checkpoint root is the root of the leaves logged so far.
 5. **Ballots:** every `ballot` verifies against its setup, a checkpoint root
    at most `anchor_age` older than its checkpoint, and the `seq` rule; every
@@ -627,19 +679,19 @@ from the log, the relays and its own continuous archive of them:
    withholding. Complaints (§7.2) are checked the same way.
 7. **Tallies:** the latest valid ballot per pseudonym up to `upto`, their
    count `c`, their sums equal to `s0, s`, every digit within `[0, 2c]`, every
-   DLEQ proof valid, the public bound of §9.1, `tally_min_gap` respected, no
+   DLEQ proof valid, the public checks of §9.1, `tally_min_gap` respected, no
    tally inside a blackout, and the results shown computed from the decrypted
    values.
 8. **Close:** the snapshot first seen on the relays by `T + 2 min`, the final
-   tally covering it, the shuffle proof and the output decryptions valid, the
-   plaintext rankings consistent with the final tally, nothing accepted after
-   `closed`, `destroyed` logged.
+   tally covering it, the shuffle proof and the output decryptions valid when
+   present and the plaintext rankings consistent with the final tally,
+   nothing accepted after `closed`, `destroyed` logged.
 
-The voter's browser checks for itself: the ack of its ballot (outcome
-`logged`); its `pi_hash` in the `entries/<checkpoint>` files it fetches for
-the checkpoints since its post, the same files every visitor fetches;
-checkpoints that only grow; the latest tally's DLEQ proofs (which prove the
-decryption of the sums the log holds). On request, the full sum (every
+The voter's browser checks for itself: the ack of its ballot; its `pi_hash`
+in the hourly entries files it fetches, the same files every visitor fetches;
+checkpoints that only grow; the latest tally's DLEQ proofs against the sums
+in the tally body (which prove the decryption of what the tally claims; the
+full check of the sums is the auditor's, or the browser's on request: every
 ballot's ciphertexts, about 360 B each).
 
 Cost at a million voters, about 8 million ballots: about 22 CPU-hours of
@@ -654,13 +706,17 @@ proof verification and a 100 GB log for a full audit, incremental afterwards;
 | `V`, `J`, `L` | 66, 10, 36 | values, ciphertexts, bits per digit |
 | `D` | 20 | a million leaves |
 | `K_REAL` | 10 | changed ballots per tally: the anonymity set of an update |
+| `R_MIN` | 32 | later registrants a first ballot's root must share, when possible |
 | `ANCHOR_AGE` | 24 h | how old a ballot's root may be |
+| `validity` | 1 h | ZKPassport proof age, and the registration freshness bound |
 | `CHECKPOINT_PERIOD` | 20 s | receipt latency |
 | `tally_min_gap` | 0 (live) or 24 h (daily) | the owner's choice of rhythm |
 | relays | ≥ 5 persistent, different operators, ≥ 32 KB messages | §7.1 |
 
 Domain tags: `T_ID`, `T_NULL`, `T_NODE`, `T_REG`, `T_PRF`, `T_RELAY`,
-`T_DLEQ`, `T_NONCE`, `T_POK`. Nostr kinds in §7.1.
+`T_DLEQ`, `T_NONCE`, `T_POK`, `T_CT`. Nostr kinds in §7.1. Setup fields
+added by this draft: `nostr_pubkey` (our server's), `tally_at` (daily
+variant), `r_min`.
 
 ## 14. Before implementation
 
@@ -671,14 +727,20 @@ Formats to fix with the circuit, and test vectors to publish with it:
   public inputs, the `Field → EmbeddedCurveScalar` (lo/hi 128) conversion for
   `r_b` and `p_j`, the packing order, the tree index bit order, the Nostr
   event JSON of every kind, the ack, complaint and snapshot bodies, the
-  canonical JSON rule, `pi_hash` and the snapshot root;
+  canonical JSON rule, `pi_hash` and the snapshot root; the encodings of
+  DLEQ `z` and `pk_pok` `(A, z)`; the ZKPassport result field used as
+  `proof_date`; the tallier ↔ ingest interface (tally submission, its
+  authentication, the log read); the `shuffle` entry if built;
 - vectors: `ID` and nullifier for a given `(event, s)`; a depth-20 root with 3
   leaves; `p_j` for five rankings (blank only; `A, B, blank`; a withdrawal; a
   full 3-ranking; a reserved-slot reject); one complete ballot (public inputs,
   proof, `vk_hash`); a sum of 3 ballots with `c`, the digits and the results;
   one DLEQ with its nonce and challenge; one `pk_pok`; Schulze margins on a
   4-option matrix with a tie and a blank Condorcet win; a checkpoint, a
-  consistency proof and an OTS stub; one negative vector per reject reason.
+  consistency proof and an OTS stub; one negative vector per reject reason,
+  registrations included; a register body, an ack and a complaint; a
+  first-ballot root choice with 40 later leaves; a tally window holding an
+  identical recast and a withdrawal.
 
 Open questions:
 
