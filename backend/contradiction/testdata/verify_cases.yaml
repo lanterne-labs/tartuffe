@@ -557,6 +557,14 @@ cases:
     bucket: condition_not_met
     notes: "The reverse of a stated-condition walk-back: 'if Y, Bardella runs', then Y did not happen (the appeal did not confirm the ban) and 'no scenario is left where I cannot run' ('il n'y a plus'). A plan for a condition that did not occur is consistent with the later claim."
 
+  - name: "FP_1620_lepen_keeps_her_own_reform"
+    fact_a: "Marine Le Pen a promis le maintien de sa réforme des retraites."
+    fact_b: "Marine Le Pen soutient officiellement le retour de l'âge minimum de départ à la retraite à 62 ans, annulant la réforme des retraites de 2023."
+    claimed_reason: "Elle a défendu en juillet 2026 l'annulation de la réforme de 2023 par le retour à 62 ans, puis a promis en octobre 2026 son maintien, ce qui renverse sa position sur la même question."
+    expect: drop
+    bucket: different_subjects
+    notes: "'Sa réforme' is HER reform (the return to 62), not the 2023 reform of the government. Keeping her own reform and supporting the return to 62 are one position. Prod 1620 and 1614."
+
   # ---- Prod re-verification of 2026-10-22: what the verifier must keep ----
   - name: "TP_1262_lepen_bracelet_condition_walk_back"
     fact_a: "Marine Le Pen a annoncé sa candidature à l'élection présidentielle le 7 juillet 2026, malgré sa condamnation en appel à trois ans d'emprisonnement, dont un an ferme sous bracelet électronique, pour détournement de fonds européens au profit de son parti."
