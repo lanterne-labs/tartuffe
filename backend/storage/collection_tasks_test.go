@@ -104,6 +104,19 @@ func TestCollectionTasksClaimOrderAndLease(t *testing.T) {
 	counts, err := storer.CountCollectionTasks(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int{TaskDone: 1, TaskCancelled: 1}, counts)
+
+	// UnlessDone: the done period is not added again, the cancelled one is.
+	added, err = storer.AddCollectionTasks(ctx, []NewCollectionTask{
+		{PersonID: a, Plugin: "news", Since: day, Until: day.AddDate(0, 0, 30), UnlessDone: true},
+		{PersonID: b, Plugin: "twitter", Since: day, Until: day.AddDate(0, 0, 30), UnlessDone: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, added, "only the cancelled period (a, news) is added again")
+	added, err = storer.AddCollectionTasks(ctx, []NewCollectionTask{
+		{PersonID: b, Plugin: "twitter", Since: day, Until: day.AddDate(0, 0, 30)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, added, "without UnlessDone a done period is asked again")
 }
 
 // TestCollectionTasksClaimSpreadsPersons: within a priority, the claim takes
