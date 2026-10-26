@@ -39,6 +39,9 @@ try {
 	let builder = zk.createQuery();
 	if (req.minAge) builder = builder.gte('age', req.minAge);
 	if (req.nationality) builder = builder.in('nationality', [req.nationality]);
+	// The vote (tartuffe-vote/2) takes passports only: a passport and an
+	// identity card give two identifiers.
+	if (req.documentType) builder = builder.eq('document_type', req.documentType);
 	builder = builder.bind('custom_data', req.challenge);
 	const { query } = builder.done();
 

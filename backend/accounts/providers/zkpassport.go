@@ -230,3 +230,44 @@ func (z *ZKPassport) run(ctx context.Context, in []byte) (*zkVerifierOutput, err
 	log.Info().Bool("verified", out.Verified).Dur("took", time.Since(start)).Msg("zkpassport proofs checked")
 	return &out, nil
 }
+
+// VerifyBound runs the verifier on a proof bundle {"proofs", "result"}
+// whose custom data must equal binding, with the provider's settings and
+// the extra query conditions given (for example documentType "passport"):
+// what the anonymous vote needs of a registration (backend/vote). It
+// returns the unique identifier.
+func (z *ZKPassport) VerifyBound(ctx context.Context, bundle json.RawMessage, binding string, extra map[string]any) (string, error) {
+	var p struct {
+		Proofs json.RawMessage `json:"proofs"`
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(bundle, &p); err != nil || len(p.Proofs) == 0 || len(p.Result) == 0 {
+		return "", fmt.Errorf("%w: proofs and result are required", ErrInvalidProof)
+	}
+	req := map[string]any{
+		"proofs":      p.Proofs,
+		"result":      p.Result,
+		"challenge":   binding,
+		"domain":      z.Domain,
+		"scope":       z.Scope,
+		"minAge":      z.MinAge,
+		"nationality": z.Nationality,
+		"devMode":     z.DevMode,
+		"rpcUrl":      z.RPCURL,
+	}
+	for k, v := range extra {
+		req[k] = v
+	}
+	in, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("zkpassport verifier input: %w", err)
+	}
+	out, err := z.run(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	if !out.Verified || out.UniqueIdentifier == "" {
+		return "", fmt.Errorf("%w: the passport proof did not verify (%s)", ErrInvalidProof, strings.TrimSpace(string(out.Errors)))
+	}
+	return out.UniqueIdentifier, nil
+}

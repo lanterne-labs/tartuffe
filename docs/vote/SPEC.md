@@ -143,11 +143,15 @@ Adversaries:
    a minor and "not expired" for an expired passport). It then verifies the
    proof with `proof_date` as the reference date (the SDK's own check is only
    `|date − now| ≤ validity`), checks the rules, appends the `register` entry,
-   inserts `ID` into the tree (§5), and posts a signed acknowledgement (§7.2)
-   on the same relay with `position`. The next checkpoint (≤ 20 s, §8.2)
-   carries a root that includes the voter; the browser then votes. The
-   browser waits up to 60 s for this acknowledgement (verification queues at
-   launch) before reposting to its next relay.
+   buffers the registration for the next checkpoint, and posts a signed
+   acknowledgement (§7.2) on the same relay. The next checkpoint (≤ 20 s,
+   §8.2) logs the registration, appends `ID` to the tree (§5) and carries a
+   root that includes the voter; the browser finds its position among that
+   checkpoint's new leaves (a file everyone fetches, §8.3) and then votes.
+   The acknowledgement carries no position: positions follow the log order
+   of the checkpoint, which is by hash (§8.1), not by arrival. The browser
+   waits up to 60 s for the acknowledgement (verification queues at launch)
+   before reposting to its next relay.
 5. Rules: one `register` per `uid` per event, ever (`reject uid_used`); one
    per `ID` (`reject id_used`); `custom_data` compared as lower-case hex. A
    registration seen on a relay and not logged is withholding (§12.6).

@@ -82,7 +82,17 @@ func (s *LogSigner) VerifierKey() string { return s.verifier }
 
 // Sign signs the checkpoint of the tree.
 func (s *LogSigner) Sign(t LogTree) ([]byte, error) {
-	msg, err := note.Sign(&note.Note{Text: CheckpointText(t)}, s.signer)
+	return s.SignText(CheckpointText(t))
+}
+
+// SignText signs a checkpoint text: CheckpointText, possibly followed by
+// extension lines (the vote protocol adds its tree root, mirror commit and
+// time). OpenCheckpoint reads the tree of such a note and ignores the rest.
+func (s *LogSigner) SignText(text string) ([]byte, error) {
+	if !strings.HasPrefix(text, LogOrigin+"\n") || !strings.HasSuffix(text, "\n") {
+		return nil, fmt.Errorf("sign checkpoint: not a checkpoint of %s", LogOrigin)
+	}
+	msg, err := note.Sign(&note.Note{Text: text}, s.signer)
 	if err != nil {
 		return nil, fmt.Errorf("sign checkpoint: %w", err)
 	}

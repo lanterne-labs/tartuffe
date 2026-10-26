@@ -141,3 +141,26 @@ func (s *PGStore) Stamps(ctx context.Context) ([]Stamp, error) {
 	}
 	return out, nil
 }
+
+// StampNote stamps a signed checkpoint note of the given tree size with
+// OpenTimestamps, once per size (the vote protocol's checkpoints carry
+// extension lines, so they are stamped as they are served).
+func (s *PGStore) StampNote(ctx context.Context, size int64, msg []byte) (*Stamp, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM vote_log_stamps WHERE size = $1)`, size).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("vote log stamps: %w", err)
+	}
+	if exists {
+		return nil, nil
+	}
+	ots, err := otsFile(ctx, CheckpointDigest(msg))
+	if err != nil {
+		return nil, err
+	}
+	st := &Stamp{Size: size, Checkpoint: string(msg), OTS: ots}
+	if err := s.pool.QueryRow(ctx, `INSERT INTO vote_log_stamps (size, checkpoint, ots) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING created_at`,
+		st.Size, st.Checkpoint, st.OTS).Scan(&st.CreatedAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("save vote log stamp: %w", err)
+	}
+	return st, nil
+}
