@@ -156,65 +156,38 @@ export interface PollEvent {
 	blackouts: PollBlackout[];
 }
 
-// One candidate's line of the results. The counts, shares and preference rank
-// are null while the results are hidden.
-export interface CandidateResult {
-	person_id: number;
+// One option's line of the results (backend/vote PollOption): a candidate
+// or the blank vote; the counts and rank are absent while the results are
+// hidden.
+export interface PollOption {
+	slot: number;
+	kind: 'candidate' | 'blank';
+	person_id?: number;
 	name: string;
 	image_url?: string;
 	honesty_score: number;
-	fact_count: number;
-	contradiction_count: number;
-	// first_choices, first_choice_share: the ballots that rank the candidate
-	// first; ranked, ranked_share: those that rank them at all (null while
-	// hidden).
-	first_choices: number | null;
-	first_choice_share: number | null;
-	ranked: number | null;
-	ranked_share: number | null;
-	// preference_rank: the rank with the ranking counted (Schulze);
-	// majority_rank: the rank by first choices, as the one-round majority
-	// vote would (null while hidden).
-	preference_rank: number | null;
-	majority_rank: number | null;
-	honesty_rank: number;
+	first?: number;
+	ranked?: number;
+	rank?: number;
 }
 
+// The results of an event as the site shows them (backend/vote
+// PollResults): the latest tally of tartuffe-vote/2.
 export interface PollResults {
-	// voters counts the ballots, blank votes included: the shares are of them.
 	voters: number;
-	// blank and blank_share: the blank votes (null while hidden).
-	blank: number | null;
-	blank_share: number | null;
-	// blank_ranked, blank_ranked_share: the ballots that place the blank
-	// vote, first or after candidates; blank_rank: its place in the ranking
-	// (null while hidden).
-	blank_ranked: number | null;
-	blank_ranked_share: number | null;
-	blank_rank: number | null;
-	// window: the 30-day window the results count, until its end.
-	window: { series: number; window: number };
-	until: string;
-	open: boolean;
-	// log_size: the size of the public ledger the results count: they are
-	// those of its first log_size entries.
-	log_size: number;
 	hidden?: 'too_few_voters' | 'blackout';
-	// condorcet_winner: the candidate who beats each other one head to head,
-	// 0 when the blank vote does, if one does (null while hidden).
-	condorcet_winner: number | null;
-	candidates: CandidateResult[];
+	updated_at?: string;
+	// k_real: results move once this many ballots changed.
+	k_real: number;
+	condorcet_winner?: number;
+	options: PollOption[];
 }
 
 export interface PollResponse {
 	event: PollEvent;
 	results: PollResults;
-	// windows: the open windows a ballot is cast in.
-	windows: { series: number; window: number; start: string; end: string }[];
-	// relays: the Nostr relays a ballot goes out through; published_by: when
-	// a ballot sent now is published at the latest.
-	relays: string[];
-	published_by: string;
+	open: boolean;
+	blackout: boolean;
 }
 
 // Accounts (backend/accounts): an account provider (google) opens the

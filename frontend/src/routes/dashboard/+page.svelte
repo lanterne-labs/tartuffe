@@ -42,7 +42,7 @@
 			if (!pr.ok) throw new Error(`HTTP ${pr.status}`);
 			const poll: PollResponse = await pr.json();
 			featuredVoters = poll.results.voters;
-			featuredCandidates = poll.results.candidates.length;
+			featuredCandidates = poll.results.options.filter((o) => o.kind === 'candidate').length;
 		} catch (err) {
 			console.error('failed to load the featured poll', err);
 		}

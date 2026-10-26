@@ -9,10 +9,8 @@
 	import { lang, tr } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
 	import { session, signInOpen, signOut, setDisplayName, authFetch } from '$lib/auth';
-	import { voterKey, voterKeyOpen, protectedEnough } from '$lib/voter';
-	import { rememberedBallot, forgetBallots } from '$lib/anonballot';
+	import { voteKey } from '$lib/vote/key';
 	import Modal from '$lib/components/Modal.svelte';
-	import ProtectKey from '$lib/components/ProtectKey.svelte';
 	import { getMyReports } from '$lib/reports';
 	import type { PollEvent, UserReport } from '$lib/types';
 
@@ -31,7 +29,7 @@
 	let seq = 0;
 
 	let user = $derived($session?.user ?? null);
-	let key = $derived($voterKey);
+	let key = $derived($voteKey);
 
 	// The reports load again for each session (sign-in, sign-out, another account).
 	let loadedFor = '';
@@ -95,8 +93,10 @@
 
 	function forgetKey() {
 		forgetOpen = false;
-		voterKey.set(null);
-		forgetBallots();
+		voteKey.set(null);
+		try {
+			for (const k of Object.keys(localStorage)) if (k.startsWith('vote2_ballot:')) localStorage.removeItem(k);
+		} catch {}
 	}
 
 	function dateText(iso: string): string {
@@ -109,10 +109,15 @@
 	}
 
 	function ballotText(e: PollEvent): string {
-		const b = rememberedBallot(e.id);
-		if (!b) return tr('profile.ballot.none', currentLang);
-		if (b.kind === 'blank') return tr('profile.ballot.blank', currentLang);
-		return tr(b.choices.length === 1 ? 'profile.ballot.one' : 'profile.ballot.many', currentLang, { n: b.choices.length });
+		try {
+			const raw = localStorage.getItem(`vote2_ballot:${e.slug}`);
+			const slots = raw ? (JSON.parse(raw) as number[]) : [];
+			if (slots.length === 0) return tr('profile.ballot.none', currentLang);
+			if (slots.length === 1 && slots[0] === 7) return tr('profile.ballot.blank', currentLang);
+			return tr(slots.length === 1 ? 'profile.ballot.one' : 'profile.ballot.many', currentLang, { n: slots.length });
+		} catch {
+			return tr('profile.ballot.none', currentLang);
+		}
 	}
 
 	// The pseudonym, shown to the user alone; editing it in place.
@@ -149,20 +154,15 @@
 
 	<section class="card key" aria-labelledby="key-title">
 		<h2 id="key-title">{tr('profile.key.title', currentLang)}</h2>
-		{#if !key?.registered}
+		{#if !key || key.position < 0}
 			<p class="muted">{tr('profile.key.none', currentLang)}</p>
-			<button class="btn btn-primary" onclick={() => voterKeyOpen.set(true)}>{tr('poll.ballot.get_key', currentLang)}</button>
+			{#if events?.find((e) => e.featured)}
+				<a class="btn btn-primary" href={eventPaths(events.find((e) => e.featured)!.slug).vote}>{tr('v2.key.get', currentLang)}</a>
+			{/if}
 		{:else}
-			{#if key.waitingUntil && new Date(key.waitingUntil) > new Date()}
-				<p class="notice">{tr('key.waiting', currentLang, { d: dateText(key.waitingUntil) })}</p>
-			{:else}
-				<p class="ok">{tr('profile.key.ready', currentLang)}</p>
-			{/if}
+			<p class="ok">{tr('profile.key.ready', currentLang)}</p>
 			<p class="muted">{tr('profile.key.story', currentLang)}</p>
-			{#if !protectedEnough(key)}
-				<p class="alarm">{tr('profile.key.unprotected', currentLang)}</p>
-			{/if}
-			<ProtectKey lang={currentLang} />
+			<p class="muted">{tr(key.prf ? 'profile.key.passkey' : key.backups.words ? 'profile.key.words' : 'profile.key.unprotected', currentLang)}</p>
 			<details class="lost">
 				<summary>{tr('profile.key.lost.title', currentLang)}</summary>
 				<p class="muted">{tr('profile.key.lost.text', currentLang)}</p>
@@ -198,7 +198,7 @@
 						{/if}
 					</span>
 				</div>
-				<p class="muted">{key?.registered ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
+				<p class="muted">{key && key.position >= 0 ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
 				<a href={eventPaths(ev.slug).vote} class="btn" class:btn-primary={isOpen(ev)}>
 					{isOpen(ev) ? tr('profile.go_vote', currentLang) : tr('profile.go_results', currentLang)}
 				</a>
@@ -285,7 +285,7 @@
 </Modal>
 
 <Modal open={forgetOpen} title={tr('profile.key.forget.title', currentLang)} onclose={() => (forgetOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-	<p class="muted">{tr(protectedEnough(key) ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
+	<p class="muted">{tr(key?.prf || key?.backups.words ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
 	{#snippet actions()}
 		<button class="btn" onclick={() => (forgetOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 		<button class="btn btn-danger" onclick={forgetKey}>{tr('profile.key.forget', currentLang)}</button>

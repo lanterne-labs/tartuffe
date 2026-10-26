@@ -12,7 +12,7 @@ import { warmUp, type Prover } from './prove';
 import { ensureIsolated } from './isolate';
 import { findPosition, updatePath, type PathState } from './tree';
 import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, type Setup, type Ack, type CheckpointInfo } from './protocol';
-import { openCheckpoint } from '$lib/votelog';
+import { openCheckpoint } from './checkpoint';
 
 export type Phase = 'loading' | 'no-key' | 'registering' | 'joining' | 'ready' | 'closed' | 'error';
 

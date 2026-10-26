@@ -27,7 +27,7 @@
 	let ends = $derived(poll?.event.closes_at ? new Date(poll.event.closes_at) : null);
 	let daysLeft = $derived(ends ? Math.max(0, Math.ceil((ends.getTime() - Date.now()) / 86_400_000)) : null);
 	let voters = $derived(poll?.results.voters ?? null);
-	let candidates = $derived(poll?.results.candidates.length ?? null);
+	let candidates = $derived(poll?.results.options.filter((o) => o.kind === 'candidate').length ?? null);
 
 	function dateText(d: Date): string {
 		return d.toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });

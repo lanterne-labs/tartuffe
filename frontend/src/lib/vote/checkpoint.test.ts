@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vectors from './testdata/votelog-vectors.json';
-import { leafData, leafHash, openCheckpoint, verifyConsistency, verifyInclusion, type Tree } from './votelog';
+import { leafData, leafHash, openCheckpoint, verifyConsistency, verifyInclusion, type Tree } from './checkpoint';
 
 // The vectors are proofs of Go's tlog (backend/polls/vectors_test.go).
 const b64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));

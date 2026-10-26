@@ -17,9 +17,8 @@
 	import { API_BASE } from '$lib/config';
 	import { session, signOut, refreshUser } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
-	import VoterKeyDialog from '$lib/components/VoterKeyDialog.svelte';
 	import EventBanner from '$lib/components/EventBanner.svelte';
-	import { voterKey } from '$lib/voter';
+	import { voteKey } from '$lib/vote/key';
 	import { eventPaths } from '$lib/event';
 	import type { PollEvent } from '$lib/types';
 
@@ -195,7 +194,7 @@
 					</a>
 					<button class="nav-signout" onclick={signOut}>{tr('auth.sign_out', currentLang)}</button>
 				</span>
-			{:else if $voterKey}
+			{:else if $voteKey}
 				<a href="/profile" class="nav-link" class:active={$page.url.pathname === '/profile'}>{tr('nav.profile', currentLang)}</a>
 			{/if}
 		</div>
@@ -203,7 +202,6 @@
 </nav>
 
 <SignInDialog />
-<VoterKeyDialog />
 {#if featured}
 	<EventBanner event={featured} lang={currentLang} />
 {/if}
