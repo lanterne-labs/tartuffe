@@ -3,7 +3,7 @@
 	// document check, ZKPassport), the anonymous ballot and its way out
 	// through the Nostr relays, the two counts, the blank vote, the public log
 	// and its checks, the devices, what the site receives and never sees, and
-	// the limits. Every line must stay true to the code: backend/polls (and
+	// the levels of privacy and what holds at every level. Every line must stay true to the code: backend/polls (and
 	// its semaphore package, votelog.go, checkpoint.go, nostr.go, stamps.go,
 	// audit.go), backend/accounts, lib/voter.ts, lib/anonballot.ts,
 	// lib/nostr.ts, lib/votelog.ts.
@@ -32,9 +32,11 @@
 			get: string[];
 			neverTitle: string;
 			never: string[];
-			limitsTitle: string;
-			limitsLead: string;
-			limits: string[];
+			levelsTitle: string;
+			levelsLead: string;
+			levels: { name: string; how: string; lines: string[] }[];
+			knownTitle: string;
+			known: string[];
 			eraseTitle: string;
 			erase: string[];
 			techTitle: string;
@@ -187,16 +189,35 @@
 				'L’adresse IP d’un bulletin passé par les relais, ni l’heure exacte de son envoi.',
 				'Votre clé en clair, vos 12 mots, votre visage, votre empreinte.'
 			],
-			limitsTitle: 'Nos limites, en toute franchise',
-			limitsLead: 'Ce que ce vote ne garantit pas.',
-			limits: [
-				'Les relais Nostr voient l’adresse IP de votre navigateur, comme tout site visité ; votre fournisseur d’accès voit que vous vous y connectez. Pas encore d’option Tor.',
-				'Si aucun relais ne répond, le bulletin arrive directement chez nous, et nous voyons son adresse IP (sans la garder).',
-				'Un votant peut prouver son vote à un tiers : l’achat de votes n’est pas empêché. Et qui a votre clé ou vos 12 mots vote à votre place.',
-				'Nous servons le code de cette page : un serveur malveillant pourrait en servir un autre. Le code est open source, le registre vérifiable par d’autres.',
-				'Un seul serveur reçoit et publie les bulletins. Le registre signé et horodaté dans Bitcoin rend la triche visible, pas impossible.',
+			levelsTitle: 'Votre niveau de confidentialité',
+			levelsLead: 'Le vote est anonyme pour tous. Pour aller plus loin, à vous de choisir.',
+			levels: [
+				{
+					name: 'Par défaut',
+					how: 'Rien à faire.',
+					lines: [
+						'Personne, pas même nous, ne peut relier votre bulletin à vous ni à votre document.',
+						'Notre serveur ne voit pas l’adresse IP de votre bulletin : il le lit sur les relais.',
+						'Les relais voient l’adresse IP de votre navigateur, comme tout site visité, mais pas qui vous êtes. Si aucun ne répond, le bulletin passe par notre serveur, qui voit alors cette adresse, sans la garder.',
+						'L’État, qui connaît les puces de ses documents, pourrait savoir qu’un document s’est inscrit ici. Jamais pour qui il vote.'
+					]
+				},
+				{
+					name: 'Avec Tor',
+					how: 'Ouvrez tartuffe.me dans Tor Browser, au niveau de sécurité « Standard » (les deux autres bloquent le calcul de la preuve).',
+					lines: [
+						'Les relais et notre serveur ne voient qu’une adresse du réseau Tor.',
+						'Votre fournisseur d’accès ne voit pas que vous votez.',
+						'La sauvegarde par Face ID peut ne pas y fonctionner : notez plutôt les 12 mots.'
+					]
+				}
+			],
+			knownTitle: 'À tous les niveaux',
+			known: [
+				'Un votant peut prouver son vote à un tiers : l’achat de votes n’est pas empêché. Qui a votre clé ou vos 12 mots vote à votre place.',
+				'Nous servons le code de cette page. Il est open source, et le registre peut être vérifié par d’autres que nous.',
+				'Un seul serveur reçoit et publie les bulletins. Le registre signé et horodaté dans Bitcoin rend toute triche visible.',
 				'Il faut un smartphone NFC et un document à puce. L’identifiant suit le document, pas la personne : avec un passeport et une carte d’identité valides, on pourrait voter deux fois. Un document renouvelé donne un nouvel identifiant.',
-				'Qui aurait une copie complète de la puce de votre document pourrait recalculer son identifiant : il saurait que ce document a une clé de vote, jamais pour qui elle vote.',
 				'La demande ZKPassport passe par leur relais, chiffrée de bout en bout. ZKPassport est open source, audité en interne, pas encore par un tiers.'
 			],
 			eraseTitle: 'Retirer son vote, effacer sa clé',
@@ -362,16 +383,35 @@
 				'The IP address of a ballot sent through the relays, nor the exact time it was sent.',
 				'Your key in clear, your 12 words, your face, your fingerprint.'
 			],
-			limitsTitle: 'The limits, honestly',
-			limitsLead: 'What this vote does not guarantee.',
-			limits: [
-				'The Nostr relays see your browser’s IP address, as any site visited does; your internet provider sees you connect to them. No Tor option yet.',
-				'If no relay answers, the ballot comes straight to us, and we see its IP address (we do not keep it).',
-				'A voter can prove their vote to someone: vote buying is not prevented. And whoever has your key or your 12 words votes in your place.',
-				'We serve this page’s code: a malicious server could serve other code. The code is open source, the ledger checkable by others.',
-				'A single server receives and publishes the ballots. The ledger, signed and timestamped in Bitcoin, makes cheating visible, not impossible.',
+			levelsTitle: 'Your level of privacy',
+			levelsLead: 'The vote is anonymous for everyone. To go further, it is your choice.',
+			levels: [
+				{
+					name: 'By default',
+					how: 'Nothing to do.',
+					lines: [
+						'Nobody, not even us, can link your ballot to you or to your document.',
+						'Our server does not see your ballot’s IP address: it reads it from the relays.',
+						'The relays see your browser’s IP address, as any site visited does, but not who you are. If none answers, the ballot goes through our server, which then sees that address, without keeping it.',
+						'The State, which knows the chips of its documents, could tell that a document registered here. Never whom it votes for.'
+					]
+				},
+				{
+					name: 'With Tor',
+					how: 'Open tartuffe.me in Tor Browser, at the “Standard” security level (the other two block the proof computation).',
+					lines: [
+						'The relays and our server see only a Tor network address.',
+						'Your internet provider does not see that you vote.',
+						'The Face ID backup may not work there: write down the 12 words instead.'
+					]
+				}
+			],
+			knownTitle: 'At every level',
+			known: [
+				'A voter can prove their vote to someone: vote buying is not prevented. Whoever has your key or your 12 words votes in your place.',
+				'We serve this page’s code. It is open source, and the ledger can be checked by others than us.',
+				'A single server receives and publishes the ballots. The ledger, signed and timestamped in Bitcoin, makes any cheating visible.',
 				'You need an NFC smartphone and a chip document. The identifier follows the document, not the person: with a valid passport and ID card, one could vote twice. A renewed document gives a new identifier.',
-				'Someone with a full copy of your document’s chip could recompute its identifier: they would know this document has a voting key, never whom it votes for.',
 				'The ZKPassport request goes through their relay, end-to-end encrypted. ZKPassport is open source, audited internally, not yet by a third party.'
 			],
 			eraseTitle: 'Withdrawing your vote, erasing your key',
@@ -411,7 +451,7 @@
 
 	<nav class="toc" aria-label={c.toc}>
 		{#each c.parts as p (p.id)}<a href="#{p.id}">{p.title}</a>{/each}
-		<a href="#limites">{c.limitsTitle}</a>
+		<a href="#niveaux">{c.levelsTitle}</a>
 	</nav>
 
 	{#each c.parts as part (part.id)}
@@ -446,10 +486,26 @@
 		</div>
 	</section>
 
-	<section class="part" id="limites">
-		<h2>{c.limitsTitle}</h2>
-		<p>{c.limitsLead}</p>
-		<ul class="limits">{#each c.limits as line}<li>{line}</li>{/each}</ul>
+	<section class="part" id="niveaux">
+		<h2>{c.levelsTitle}</h2>
+		<p>{c.levelsLead}</p>
+		<div class="levels">
+			{#each c.levels as level, i (i)}
+				<div class="box level">
+					<h3>
+						<svg class="shield" viewBox="0 0 24 24" aria-hidden="true">
+							<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z" />
+							{#each Array(i + 1) as _, k (k)}<path class="bar" d="M8.5 {14 - k * 3.5}h7" />{/each}
+						</svg>
+						{level.name}
+					</h3>
+					<p class="how">{level.how}</p>
+					<ul>{#each level.lines as line}<li>{line}</li>{/each}</ul>
+				</div>
+			{/each}
+		</div>
+		<h3 class="known-title">{c.knownTitle}</h3>
+		<ul class="known">{#each c.known as line}<li>{line}</li>{/each}</ul>
 	</section>
 
 	<section class="part">
@@ -582,8 +638,45 @@
 	.box--never {
 		border-top: 2px solid var(--red);
 	}
-	.limits li::marker {
-		color: var(--amber);
+	.levels {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1rem;
+		margin: 1rem 0 1.5rem;
+	}
+	.level {
+		border-top: 2px solid var(--event);
+	}
+	h3 {
+		font-family: var(--font-serif);
+		font-size: 1.2rem;
+		font-weight: 600;
+		margin: 0 0 0.5rem;
+	}
+	.level h3 {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.shield {
+		width: 1.6rem;
+		height: 1.6rem;
+		flex-shrink: 0;
+		fill: color-mix(in oklch, var(--event) 18%, transparent);
+		stroke: var(--event);
+		stroke-width: 1.6;
+		stroke-linejoin: round;
+	}
+	.shield .bar {
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.how {
+		color: var(--text-primary);
+		font-weight: 500;
+	}
+	.known li::marker {
+		color: var(--text-muted);
 	}
 	.go {
 		text-align: center;
@@ -602,7 +695,8 @@
 		background: var(--event);
 	}
 	@media (max-width: 640px) {
-		.split {
+		.split,
+		.levels {
 			grid-template-columns: 1fr;
 		}
 		h2 {
