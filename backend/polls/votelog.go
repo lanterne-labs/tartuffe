@@ -158,6 +158,25 @@ func appendLog(ctx context.Context, tx pgx.Tx, kind string, body any) (int64, er
 	return seq, nil
 }
 
+// Append appends one entry of the given kind with body as its JSON (the
+// bytes given are logged as they are: callers pass canonical JSON) and
+// returns its seq. The vote protocol (backend/vote) logs through it.
+func (s *PGStore) Append(ctx context.Context, kind string, body json.RawMessage) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	seq, err := appendLog(ctx, tx, kind, body)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return seq, nil
+}
+
 // LogTree is the tree of the log's first Size entries.
 type LogTree = tlog.Tree
 
