@@ -67,6 +67,7 @@ type Ingest struct {
 	pendingUID   map[string]bool
 	pendingID    map[string]bool
 	closedSeq    int64 // the closed entry, 0 while open
+	snapshotSeq  int64 // the close snapshot's entry, 0 before the close
 	lastStampErr time.Time
 }
 
@@ -118,6 +119,11 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 		return nil, err
 	} else if c != nil {
 		in.closedSeq = c.Final
+	}
+	if s, err := store.SnapshotEntry(ctx, cfg.Event.ID); err != nil {
+		return nil, err
+	} else if s != nil {
+		in.snapshotSeq = s.Seq
 	}
 	// What the browser needs once: the circuit, the log's verifier key.
 	if cfg.Mirror != nil {
@@ -208,6 +214,9 @@ func (in *Ingest) Run(ctx context.Context) error {
 		case <-tick.C:
 			if err := in.Checkpoint(ctx); err != nil {
 				log.Error().Err(err).Msg("vote: checkpoint")
+			}
+			if err := in.Close(ctx); err != nil {
+				log.Error().Err(err).Msg("vote: close")
 			}
 		}
 	}
@@ -418,12 +427,27 @@ func RegistrationBinding(eventID int64, id fr.Element) string {
 // Checkpoint logs the pending entries ordered by hash, assigns the new
 // leaves their positions, signs the checkpoint with its extension lines,
 // stores it, posts it to every box and stamps it. Nothing happens when
-// nothing is pending.
+// nothing is pending and the log did not grow (a tally, the snapshot, the
+// closed entry: written by others, covered by the next checkpoint).
 func (in *Ingest) Checkpoint(ctx context.Context) error {
 	in.mu.Lock()
 	defer in.mu.Unlock()
+	return in.checkpoint(ctx)
+}
+
+func (in *Ingest) checkpoint(ctx context.Context) error {
 	if len(in.pending) == 0 {
-		return nil
+		head, err := in.store.Log.Head(ctx)
+		if err != nil {
+			return err
+		}
+		last, err := in.store.LastCheckpoint(ctx)
+		if err != nil {
+			return err
+		}
+		if last != nil && head.N == last.LogSize {
+			return nil
+		}
 	}
 	sort.SliceStable(in.pending, func(i, j int) bool { return in.pending[i].hash < in.pending[j].hash })
 	index := in.nextIndex

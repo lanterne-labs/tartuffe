@@ -156,9 +156,20 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	tree := ballot.NewTree()
 	regUID := map[string]bool{}
 	regID := map[string]bool{}
+	// A voter's ballots since the last tally, in log order: a tally counts
+	// the latest one logged up to its upto, whatever came after.
 	type voter struct {
-		latest  *auditedBallot
+		history []*auditedBallot
 		ballots int
+	}
+	latestUpto := func(v *voter, upto int64) *auditedBallot {
+		var found *auditedBallot
+		for _, b := range v.history {
+			if b.seq <= upto {
+				found = b
+			}
+		}
+		return found
 	}
 	voters := map[string]*voter{}
 	piSeen := map[string]bool{}
@@ -179,6 +190,8 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	}
 	expectedRoots := map[int64]string{} // checkpoint index → root after its entries
 	var closedAt *time.Time
+	var snapshot *LoggedSnapshot
+	tallySeqs := map[int64]int64{} // tally seq → its upto
 	other := 0
 	for _, e := range entries {
 		cp := cpOf(e.Seq)
@@ -221,6 +234,9 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("registration %d: leaf %s registered twice", e.Seq, r.ID)
 			}
 			regUID[r.UID], regID[r.ID] = true, true
+			if snapshot != nil {
+				rep.problem("registration %d after the close snapshot", e.Seq)
+			}
 			leaf, err := parseField(r.ID)
 			if err != nil {
 				rep.problem("registration %d: %v", e.Seq, err)
@@ -263,6 +279,8 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			}
 			if closedAt != nil {
 				rep.problem("ballot %d after the close", e.Seq)
+			} else if snapshot != nil {
+				rep.problem("ballot %d after the close snapshot", e.Seq)
 			}
 			at, known := rootFirst[p.Root]
 			if !known {
@@ -280,15 +298,15 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				v = &voter{}
 				voters[p.Nullifier] = v
 			}
-			if v.latest != nil && p.Seq <= v.latest.body.Seq {
-				rep.problem("ballot %d: seq %d not above the pseudonym's %d", e.Seq, p.Seq, v.latest.body.Seq)
+			if n := len(v.history); n > 0 && p.Seq <= v.history[n-1].body.Seq {
+				rep.problem("ballot %d: seq %d not above the pseudonym's %d", e.Seq, p.Seq, v.history[n-1].body.Seq)
 			}
 			if opt.Verifier != nil {
 				if err := opt.Verifier.Verify(ctx, p.ProofBytes, p.PublicInputs32(setup.Setup.Mask)); err != nil {
 					rep.problem("ballot %d: %v", e.Seq, err)
 				}
 			}
-			v.latest = &auditedBallot{seq: e.Seq, body: p, logged: cp.CreatedAt}
+			v.history = append(v.history, &auditedBallot{seq: e.Seq, body: p, logged: cp.CreatedAt})
 			v.ballots++
 		case KindReject:
 			var rj Reject
@@ -321,9 +339,19 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			var cts []ballot.Ciphertext
 			changed := 0
 			for _, v := range voters {
-				if v.latest != nil && v.latest.seq <= t.Upto {
-					cts = append(cts, v.latest.body.Ciphertext)
+				counted := latestUpto(v, t.Upto)
+				if counted == nil {
+					continue
 				}
+				cts = append(cts, counted.body.Ciphertext)
+				// The ballots before the counted one will never count again.
+				kept := v.history[:0]
+				for _, b := range v.history {
+					if b.seq >= counted.seq {
+						kept = append(kept, b)
+					}
+				}
+				v.history = kept
 			}
 			_ = changed
 			vals, err := VerifyTally(t, pk, cts)
@@ -345,12 +373,50 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			res := ComputeResults(vals, &cur.Setup)
 			rep.Results = &res
 			rep.Voters = res.Voters
-		case KindClosed:
-			var c struct {
-				At time.Time `json:"at"`
+			tallySeqs[e.Seq] = t.Upto
+		case KindSnapshot:
+			var s Snapshot
+			if err := json.Unmarshal([]byte(e.Body), &s); err != nil || s.Event != opt.EventID {
+				if err != nil {
+					rep.problem("snapshot %d: %v", e.Seq, err)
+				}
+				continue
 			}
-			if err := json.Unmarshal([]byte(e.Body), &c); err == nil {
-				closedAt = &c.At
+			if snapshot != nil {
+				rep.problem("snapshot %d: a second snapshot (the first at %d)", e.Seq, snapshot.Seq)
+			}
+			if err := parseSnapshotRoot(s.Root); err != nil {
+				rep.problem("snapshot %d: %v", e.Seq, err)
+			}
+			if len(setups) > 0 && s.At.Before(setups[0].Setup.Closes) {
+				rep.problem("snapshot %d taken at %s, before the close %s", e.Seq, s.At.Format(time.RFC3339), setups[0].Setup.Closes.Format(time.RFC3339))
+			}
+			snapshot = &LoggedSnapshot{Seq: e.Seq, Body: s}
+		case KindClosed:
+			var c Closed
+			if err := json.Unmarshal([]byte(e.Body), &c); err != nil || c.Event != opt.EventID {
+				if err != nil {
+					rep.problem("closed %d: %v", e.Seq, err)
+				}
+				continue
+			}
+			closedAt = &c.At
+			// 8. The final tally covers exactly the snapshot: every ballot
+			// logged before the snapshot entry, none after.
+			switch {
+			case snapshot == nil:
+				rep.problem("closed %d without a close snapshot", e.Seq)
+			case c.SnapshotRoot != snapshot.Body.Root:
+				rep.problem("closed %d names snapshot root %s, the snapshot's is %s", e.Seq, c.SnapshotRoot, snapshot.Body.Root)
+			case c.Final == 0 && rep.Ballots > 0:
+				rep.problem("closed %d names no final tally over %d ballots", e.Seq, rep.Ballots)
+			case c.Final != 0:
+				upto, ok := tallySeqs[c.Final]
+				if !ok || c.Final > e.Seq {
+					rep.problem("closed %d names final tally %d, not a tally before it", e.Seq, c.Final)
+				} else if upto != snapshot.Seq {
+					rep.problem("closed %d: the final tally covers the log up to %d, the snapshot is entry %d", e.Seq, upto, snapshot.Seq)
+				}
 			}
 		case KindSeen, KindDestroyed, KindAbort:
 		default:

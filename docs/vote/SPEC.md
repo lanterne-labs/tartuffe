@@ -548,16 +548,21 @@ cannot.
   stated residual.
 - The page stops accepting new ballots at `T − 10 min` and says so before
   proving; a send in flight completes.
-- At `T` our server signs the **snapshot**: the Merkle root over the sorted
-  ids of every protocol event it has seen, posted to every relay (auditors
-  reject a snapshot first seen after `T + 2 min`), with the list on the
-  mirror. Auditors take their own snapshots: events they archived before
+- At `T` our server logs what it holds (a checkpoint), then signs the
+  **snapshot** `{v, event, at, root, count, checkpoint}`: `root` is the
+  Merkle root (RFC 6962, the log's hashing) over the sorted ids of every
+  protocol event it has seen. It appends it to the log as a `snapshot`
+  entry, posts it to every relay (auditors reject a snapshot first seen after
+  `T + 2 min`), puts the list on the mirror (`snapshot.json`) and checkpoints
+  the entry. Auditors take their own snapshots: events they archived before
   `T − 5 min` must be in it; events in `[T − 5 min, T]` may or may not be.
-- It ingests exactly the snapshot's events, judging validity with time = `T`,
-  appends the final `tally`, then the **final shuffle** (§9.4), then
-  `closed {v, event, at, snapshot_root, final_tally, shuffle}`. Events not in
-  the snapshot are rejected with `closed`. After `closed` nothing is accepted
-  and the final result is shown for good.
+- The tallier's final `tally` covers exactly the snapshot: its `upto` is the
+  snapshot entry's seq (every ballot logged before it, judged when it was
+  received). Then the **final shuffle** (§9.4), then
+  `closed {v, event, at, final, snapshot_root}` (`final` the seq of the
+  final tally, 0 without a ballot). Events seen after the snapshot are
+  rejected with `closed`. After `closed` nothing is accepted and the final
+  result is shown for good.
 - 30 days after `closed`, the tallier destroys `sk` and its shares and our
   server appends `destroyed {v, event, at}`.
 
@@ -686,8 +691,10 @@ from the log, the relays and its own continuous archive of them:
    DLEQ proof valid, the public checks of §9.1, `tally_min_gap` respected, no
    tally inside a blackout, and the results shown computed from the decrypted
    values.
-8. **Close:** the snapshot first seen on the relays by `T + 2 min`, the final
-   tally covering it, the shuffle proof and the output decryptions valid when
+8. **Close:** the snapshot first seen on the relays by `T + 2 min`, taken
+   at or after `closes`, logged once; `closed` naming its root and a final
+   tally whose `upto` is the snapshot entry; no `ballot` or `register`
+   logged after the snapshot; the shuffle proof and the output decryptions valid when
    present and the plaintext rankings consistent with the final tally,
    nothing accepted after `closed`, `destroyed` logged.
 
@@ -770,9 +777,11 @@ Nostr relays, a tally, the results on the page, the audit of the log):
 - `backend/vote`: Poseidon2, Grumpkin, the ballot arithmetic, DLEQ and
   key proofs, the tree; the setup (`dm vote keygen`, `dm vote setup`); the
   ingest over the `Mailbox` interface with its Nostr adapter (`dm vote
-  ingest`); the tallier with `K_REAL` and the firing lag, the close
+  ingest`) and its close snapshot; the tallier with `K_REAL` and the
+  firing lag, the final tally over the snapshot and the `closed` entry
   (`dm vote tally`); the data mirror on a directory; the auditor
-  (`dm vote verify`, §12.1–12.5, 12.7, 12.8 except the snapshot).
+  (`dm vote verify`, §12.1–12.5, 12.7, 12.8 from the log: the snapshot's
+  first sighting on the relays is the archive's, §12.6).
 - `frontend/src/lib/vote` and the vote page: the key (PRF passkey or 12
   words), the passport scan bound to the registration, the relays, the
   private path update, the prover warm-up with the service worker, the
@@ -784,8 +793,6 @@ Differences from the text above:
   amended); the mirror also serves `event.json`, `candidates.json`,
   `circuit/ballot.json`, `log-key.txt` and `stats.json` (ballots logged,
   since the last tally, registrations).
-- The `closed` entry is written by the tallier right after the final
-  tally; the close snapshot of §9.3 is not built yet.
 - The prover asks bb.js for a 2^17-point SRS (4 MB, the smallest block it
   takes) plus its fixed 4 MB Grumpkin SRS: about 8 MB on a first visit,
   not 4–8.
@@ -795,6 +802,5 @@ Differences from the text above:
 
 Not built yet: the git-backed mirror and the `github.io` app origin
 (§8.3, Q3), the relays' archive and the withholding check of §12.6, the
-complaints, the close snapshot, the device link for v2 keys, keyboard
-reordering of the ranking, the final shuffle (§9.4), the removal of
-tartuffe-vote/1.
+complaints, the device link for v2 keys, keyboard reordering of the
+ranking, the final shuffle (§9.4).

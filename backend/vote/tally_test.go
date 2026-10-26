@@ -154,6 +154,22 @@ func TestTallierPublishesAfterKRealChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	tl.now = func() time.Time { return setup.Closes.Add(time.Minute) }
+	// Without the ingest's snapshot the tallier waits.
+	if err := tl.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := store.ClosedEntry(ctx, 1); c != nil {
+		t.Fatal("closed before the snapshot")
+	}
+	snapBody, _ := Canonical(Snapshot{V: Version, Event: 1, At: setup.Closes, Root: SnapshotRoot([]string{"a", "b"}), Count: 2, Checkpoint: 2})
+	snapSeq, _ := store.Log.Append(ctx, KindSnapshot, snapBody)
+	// A ballot logged after the snapshot (a relay's late copy, rejected in
+	// the real ingest) is not in the final tally.
+	body3, _ := encryptedBallot(t, pk, nul(2), 3, ballot.Ranking{Len: 1, Slots: [3]int{1}})
+	seq3, _ := store.Log.Append(ctx, KindBallot, body3)
+	if err := store.AddBallot(ctx, LoggedBallot{EventID: 1, Nullifier: nul(2), Seq: 3, PIHash: "0xlate", LogSeq: seq3, Checkpoint: 3, Body: body3, NostrID: "late", Relay: "wss://a.test"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := tl.Step(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +178,15 @@ func TestTallierPublishesAfterKRealChanges(t *testing.T) {
 		t.Fatalf("no closed entry: %v", err)
 	}
 	final, _ := store.LastTally(ctx, 1)
-	if final.Seq != closed.Final || final.Seq == last.Seq {
-		t.Fatalf("final tally %d, closed names %d", final.Seq, closed.Final)
+	if final.Seq != closed.Final || final.Seq == last.Seq || final.Upto != snapSeq {
+		t.Fatalf("final tally %d up to %d, closed names %d, snapshot at %d", final.Seq, final.Upto, closed.Final, snapSeq)
+	}
+	if closed.SnapshotRoot != SnapshotRoot([]string{"b", "a"}) {
+		t.Fatalf("closed names root %s", closed.SnapshotRoot)
+	}
+	// The late ballot is not counted; its pseudonym's earlier ballot is.
+	if final.Body.Count != 4 {
+		t.Fatalf("final tally counts %d ballots", final.Body.Count)
 	}
 	if err := tl.Step(ctx); err != nil {
 		t.Fatal(err)

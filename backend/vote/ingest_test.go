@@ -283,6 +283,67 @@ func TestIngestOnDevVectors(t *testing.T) {
 	if rep.Checkpoints != 6 || rep.Registrations != 5 || rep.Ballots != 1 || rep.Rejects != 4 {
 		t.Fatalf("audit counts: %+v", *rep)
 	}
+	// The close: the snapshot lists every event handled, its entry and
+	// the checkpoint covering it are logged, it is posted to every box;
+	// a ballot after it is rejected as closed; nothing happens twice.
+	in.cfg.Now = func() time.Time { return setup.Closes.Add(time.Second) }
+	if err := in.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := store.SnapshotEntry(ctx, 1)
+	if err != nil || snap == nil {
+		t.Fatalf("no snapshot entry: %v", err)
+	}
+	ids, _ := store.HandledIDs(ctx)
+	// The pending reject (b5) was flushed in checkpoint 7 before the
+	// snapshot; checkpoint 8 covers the snapshot entry.
+	if snap.Body.Count != len(ids) || snap.Body.Root != SnapshotRoot(ids) || snap.Body.Checkpoint != 7 {
+		t.Fatalf("snapshot %+v, %d events handled", snap.Body, len(ids))
+	}
+	cp, _ = store.LastCheckpoint(ctx)
+	if cp.Index != 8 || cp.LogSize != snap.Seq {
+		t.Fatalf("checkpoint %d covers %d, the snapshot is entry %d", cp.Index, cp.LogSize, snap.Seq)
+	}
+	posts := mail.posts["wss://a.test"]
+	if posts[len(posts)-2].Kind != OutSnapshot {
+		t.Fatalf("the snapshot was not posted before the checkpoint: %v", posts[len(posts)-2].Kind)
+	}
+	var list SnapshotList
+	if b, _ := mirror.Read("snapshot.json"); json.Unmarshal(b, &list) != nil || len(list.IDs) != len(ids) || list.Root != snap.Body.Root {
+		t.Fatalf("mirror snapshot: %s", b)
+	}
+	if ack := post("b6", bal); ack.Reason != ReasonClosed {
+		t.Fatalf("after the close: %+v", ack)
+	}
+	if err := in.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := store.SnapshotEntry(ctx, 1); again.Seq != snap.Seq {
+		t.Fatal("a second snapshot")
+	}
+	// The log grew by the reject: the next checkpoint covers it.
+	if err := in.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cp, _ = store.LastCheckpoint(ctx); cp.Index != 9 {
+		t.Fatalf("checkpoint %d after the reject", cp.Index)
+	}
+	rep, err = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Verifier: in.ver})
+	if err != nil || !rep.OK() {
+		t.Fatalf("audit after the close: %v %v", err, rep.Problems)
+	}
+	// A closed entry naming another root fails the audit.
+	closedBody, _ := Canonical(Closed{V: Version, Event: 1, At: setup.Closes, Final: 0, SnapshotRoot: SnapshotRoot([]string{"x"})})
+	if _, err := store.Log.Append(ctx, KindClosed, closedBody); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Checkpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey()})
+	if len(rep.Problems) != 1 || !strings.Contains(rep.Problems[0], "snapshot root") {
+		t.Fatalf("audit problems: %v", rep.Problems)
+	}
 	// A tampered entry breaks the checkpoint's tree.
 	if _, err := pool.Exec(ctx, `UPDATE vote_log SET body = replace(body, '"seq":1', '"seq":2') WHERE kind = 'ballot'`); err != nil {
 		t.Fatal(err)

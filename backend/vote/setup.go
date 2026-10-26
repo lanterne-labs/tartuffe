@@ -34,6 +34,7 @@ const (
 	KindReject    = "reject"
 	KindSeen      = "seen"
 	KindTally     = "tally"
+	KindSnapshot  = "snapshot"
 	KindClosed    = "closed"
 	KindDestroyed = "destroyed"
 	KindAbort     = "abort"

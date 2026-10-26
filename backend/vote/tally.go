@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 
 	"digital-mirror/backend/polls"
@@ -54,13 +55,14 @@ type Tallier struct {
 	now    func() time.Time
 	rand   func() float64
 
-	latest      map[string]decrypted // pseudonym → its counted ballot
-	lastUpto    int64                // log seq of the last tally's upto
-	lastTallyAt time.Time
-	changed     map[string]bool // pseudonyms changed since the last tally
-	scanned     int64           // log seq up to which ballots were decrypted
-	armedAt     int64           // the checkpoint when K_REAL was reached, 0 when not
-	closed      bool
+	latest          map[string]decrypted // pseudonym → its counted ballot
+	lastUpto        int64                // log seq of the last tally's upto
+	lastTallyAt     time.Time
+	changed         map[string]bool // pseudonyms changed since the last tally
+	scanned         int64           // log seq up to which ballots were decrypted
+	armedAt         int64           // the checkpoint when K_REAL was reached, 0 when not
+	closed          bool
+	waitingSnapshot bool
 }
 
 type decrypted struct {
@@ -177,24 +179,32 @@ func (t *Tallier) Run(ctx context.Context) error {
 	}
 }
 
-// Closed is the closed entry of SPEC §9.3.
+// Closed is the closed entry of SPEC §9.3: the final tally (a log seq, 0
+// when no ballot was cast) and the root of the close snapshot it covers.
 type Closed struct {
-	V     int       `json:"v"`
-	Event int64     `json:"event"`
-	At    time.Time `json:"at"`
-	Final int64     `json:"final"`
+	V            int       `json:"v"`
+	Event        int64     `json:"event"`
+	At           time.Time `json:"at"`
+	Final        int64     `json:"final"`
+	SnapshotRoot string    `json:"snapshot_root"`
 }
 
 // Step scans the new ballots and publishes a tally when the rule fires;
 // at the close it publishes the final tally and the closed entry.
 func (t *Tallier) Step(ctx context.Context) error {
-	if err := t.scan(ctx, 1<<62); err != nil {
-		return err
-	}
 	now := t.now()
 	s := t.setup(now)
 	if !now.Before(s.Closes) {
 		return t.Close(ctx, now)
+	}
+	// The ballots a checkpoint covers: scanning further would count a
+	// change the tally's upto leaves out.
+	cp, err := t.store.LastCheckpoint(ctx)
+	if err != nil || cp == nil {
+		return err
+	}
+	if err := t.scan(ctx, cp.LogSize); err != nil {
+		return err
 	}
 	if len(t.changed) < s.KReal {
 		t.armedAt = 0
@@ -207,10 +217,6 @@ func (t *Tallier) Step(ctx context.Context) error {
 	}
 	if s.TallyMinGap > 0 && !t.lastTallyAt.IsZero() && now.Sub(t.lastTallyAt) < time.Duration(s.TallyMinGap)*time.Second {
 		return nil
-	}
-	cp, err := t.store.LastCheckpoint(ctx)
-	if err != nil || cp == nil {
-		return err
 	}
 	// The firing lag: not at the checkpoint that reached K_REAL, then at
 	// each later checkpoint with probability 1/2.
@@ -229,9 +235,26 @@ func (t *Tallier) Step(ctx context.Context) error {
 func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 	var cts []ballot.Ciphertext
 	var total [ballot.V]int64
-	for _, d := range t.latest {
+	for n, d := range t.latest {
 		if d.logSeq > upto {
-			continue
+			// The pseudonym voted again after upto: its latest ballot up
+			// to upto counts (the close, or a checkpoint the scan overtook).
+			lb, err := t.store.LatestBallotUpto(ctx, t.event.ID, n, upto)
+			if err != nil {
+				return err
+			}
+			if lb == nil {
+				continue
+			}
+			p, err := ParseBallot(lb.Body)
+			if err != nil {
+				return fmt.Errorf("logged ballot %d: %w", lb.LogSeq, err)
+			}
+			vals, err := ballot.DecryptBallot(t.sk, p.Ciphertext)
+			if err != nil {
+				return fmt.Errorf("logged ballot %d: %w", lb.LogSeq, err)
+			}
+			d = decrypted{seq: lb.Seq, logSeq: lb.LogSeq, values: vals, ct: p.Ciphertext}
 		}
 		cts = append(cts, d.ct)
 		for k := range total {
@@ -299,8 +322,9 @@ func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 	return nil
 }
 
-// Close publishes the final tally over every ballot logged before the
-// close and the closed entry, once.
+// Close publishes the final tally over exactly the ballots of the ingest's
+// close snapshot (every ballot logged before its entry) and the closed
+// entry, once. Until the ingest logs the snapshot it waits.
 func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 	if t.closed {
 		return nil
@@ -311,11 +335,21 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 		t.closed = true
 		return nil
 	}
-	head, err := t.store.Log.Head(ctx)
+	snap, err := t.store.SnapshotEntry(ctx, t.event.ID)
 	if err != nil {
 		return err
 	}
-	if err := t.Publish(ctx, head.N); err != nil {
+	if snap == nil {
+		if !t.waitingSnapshot {
+			t.waitingSnapshot = true
+			log.Info().Msg("vote: the close has passed, waiting for the ingest's snapshot")
+		}
+		return nil
+	}
+	if err := t.scan(ctx, snap.Seq); err != nil {
+		return err
+	}
+	if err := t.Publish(ctx, snap.Seq); err != nil {
 		return err
 	}
 	final, err := t.store.LastTally(ctx, t.event.ID)
@@ -326,7 +360,7 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 	if final != nil {
 		finalSeq = final.Seq
 	}
-	body, _ := Canonical(Closed{V: Version, Event: t.event.ID, At: now.UTC(), Final: finalSeq})
+	body, _ := Canonical(Closed{V: Version, Event: t.event.ID, At: now.UTC(), Final: finalSeq, SnapshotRoot: snap.Body.Root})
 	seq, err := t.store.Log.Append(ctx, KindClosed, body)
 	if err != nil {
 		return err
@@ -433,6 +467,25 @@ func (s *Store) LastTally(ctx context.Context, eventID int64) (*LoggedTally, err
 		}
 	}
 	return nil, rows.Err()
+}
+
+// LatestBallotUpto returns a pseudonym's ballot of highest seq logged up
+// to upto, nil when it had none by then.
+func (s *Store) LatestBallotUpto(ctx context.Context, eventID int64, nullifier string, upto int64) (*LoggedBallot, error) {
+	var b LoggedBallot
+	var seq int32
+	err := s.pool.QueryRow(ctx, `SELECT nullifier, seq, pi_hash, log_seq, checkpoint, body FROM vote2_ballots
+		WHERE event_id = $1 AND nullifier = $2 AND log_seq <= $3 ORDER BY seq DESC LIMIT 1`, eventID, nullifier, upto).
+		Scan(&b.Nullifier, &seq, &b.PIHash, &b.LogSeq, &b.Checkpoint, &b.Body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("latest ballot: %w", err)
+	}
+	b.Seq = uint32(seq)
+	b.EventID = eventID
+	return &b, nil
 }
 
 // BallotsAfter returns the logged ballots with after < log_seq ≤ upto, in
