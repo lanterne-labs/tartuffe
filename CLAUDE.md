@@ -145,7 +145,9 @@ FRPOLITICS_CACHE_DIR=/data/frpolitics-cache  # Persistent cache for AN data (the
 LLM_PROFILE=local                # local (default) or claude-team; the profile routes each LLM task to an endpoint.
                                  # local: the GPU box (OPEN_AI_API) with the OpenRouter fallback, as before.
                                  # claude-team: the Team seats first; when every seat is at its usage limit, the
-                                 # Claude API (ANTHROPIC_API_KEY) serves, capped at 25 USD per UTC day.
+                                 # Claude API (ANTHROPIC_API_KEY) serves, capped per UTC day.
+CLAUDE_API_DAY_CAP_USD=25        # the cap of the API key per UTC day (default 25): the seats have no cap of ours,
+                                 # only Anthropic's usage windows; the key stops at the cap and serves again the next day
 CLAUDE_TEAM_PLAN_TOKENS=a=...,b=...  # seat tokens of the Team plan, as name=token pairs, in the order of use:
                                  # a seat at its usage limit gives way to the next; the claude CLI must be on the PATH
 CLAUDE_TEAM_PLAN_SEAT=a          # optional: the seat to use first (the order then wraps around)

@@ -161,6 +161,33 @@ func TestClaudeAPIEndpoint_NeedsTheKey(t *testing.T) {
 	}
 }
 
+// TestClaudeAPIEndpoint_DayCapFromEnv: the cap of the day is
+// CLAUDE_API_DAY_CAP_USD, claudeAPIRunCapUSD when not set; a value that is
+// not a number of USD refuses the endpoint.
+func TestClaudeAPIEndpoint_DayCapFromEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	for _, c := range []struct {
+		env  string
+		want float64
+		bad  bool
+	}{{"", claudeAPIRunCapUSD, false}, {"50", 50, false}, {" 12.5 ", 12.5, false}, {"0", 0, false}, {"-1", 0, true}, {"lots", 0, true}} {
+		t.Setenv("CLAUDE_API_DAY_CAP_USD", c.env)
+		e, err := NewClaudeAPIEndpointFromEnv()
+		if c.bad {
+			if err == nil {
+				t.Errorf("CLAUDE_API_DAY_CAP_USD=%q: want an error", c.env)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("CLAUDE_API_DAY_CAP_USD=%q: %v", c.env, err)
+		}
+		if e.maxUSD != c.want {
+			t.Errorf("CLAUDE_API_DAY_CAP_USD=%q: cap %v, want %v", c.env, e.maxUSD, c.want)
+		}
+	}
+}
+
 // wantStopped checks that err stops the endpoint: an UnavailableError of the
 // API endpoint with retryAt as its RetryAt (zero when not known).
 func wantStopped(t *testing.T, err error, retryAt time.Time) {
