@@ -171,3 +171,19 @@ func TestClaudeCostUSD(t *testing.T) {
 		t.Fatalf("unknown model must fail, got %v", err)
 	}
 }
+
+// A JSON answer keeps the value Claude settled on: the first one after a note,
+// the last one after a correction.
+func TestFirstJSONValue(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"plain", `{"a":1}`, `{"a":1}`},
+		{"note after", `{"a":1} Correction: the index is 1, so this is right.`, `{"a":1}`},
+		{"corrected", "{\"translation\": \"first\"}\n\nCorrection, to stay faithful:\n\n{\"translation\": \"second\"}", `{"translation": "second"}`},
+		{"not JSON", `Here is the answer`, `Here is the answer`},
+	}
+	for _, c := range cases {
+		if got := firstJSONValue("test", c.in); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
