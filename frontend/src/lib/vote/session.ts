@@ -76,6 +76,8 @@ export class VoteSession {
 			if (!setup) throw new Error('no setup on the mirror');
 			this.setup.set(setup);
 			this.logKey = (import.meta.env.VITE_VOTE_LOG_KEY as string | undefined) || (await this.src.text('log-key.txt'))?.trim() || '';
+			const stats = await this.src.json<Stats>('stats.json');
+			if (stats) this.stats.set(stats);
 			await this.refreshCheckpoint();
 			this.mail = new NostrMailbox(
 				setup.setup.relays.filter((r) => r.state === 'active').map((r) => r.url),

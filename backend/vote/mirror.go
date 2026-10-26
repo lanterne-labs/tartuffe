@@ -211,42 +211,7 @@ func (in *Ingest) stageMirror(ctx context.Context, index int64, prevLogSize, log
 			return "", err
 		}
 	}
-	// The setup in force and the latest tally.
-	cur := in.current(now)
-	if err := stageJSON("setup.json", struct {
-		Seq   int64 `json:"seq"`
-		Setup Setup `json:"setup"`
-	}{cur.Seq, cur.Setup}); err != nil {
-		return "", err
-	}
-	if lt, err := in.store.LastTally(ctx, in.cfg.Event.ID); err == nil && lt != nil {
-		if b, _ := m.Read(fmt.Sprintf("tallies/%d.json", lt.Seq)); b == nil {
-			vals, err := in.store.TallyValues(lt)
-			var res *Results
-			if err == nil {
-				r := ComputeResults(vals, &cur.Setup)
-				res = &r
-			}
-			out := struct {
-				Seq     int64      `json:"seq"`
-				At      time.Time  `json:"at"`
-				Tally   TallyEntry `json:"tally"`
-				Results *Results   `json:"results,omitempty"`
-			}{lt.Seq, lt.At, lt.Body, res}
-			if err := stageJSON(fmt.Sprintf("tallies/%d.json", lt.Seq), out); err != nil {
-				return "", err
-			}
-			if err := stageJSON("tallies/latest.json", out); err != nil {
-				return "", err
-			}
-		}
-	}
-	// The live counters the page shows (public numbers of the log only).
-	st, err := in.store.Stats(ctx, in.cfg.Event.ID)
-	if err != nil {
-		return "", err
-	}
-	if err := stageJSON("stats.json", st); err != nil {
+	if err := in.stageCurrent(ctx, now); err != nil {
 		return "", err
 	}
 	token, err := m.Commit(ctx, fmt.Sprintf("checkpoint %d", index))
@@ -282,4 +247,52 @@ func (s *Store) TallyValues(lt *LoggedTally) ([ballot.V]int64, error) {
 		P[j] = x
 	}
 	return ballot.Unpack(P, lt.Body.Count)
+}
+
+// stageCurrent stages what changes with time rather than with entries:
+// the setup in force, the latest tally with its results, the counters.
+func (in *Ingest) stageCurrent(ctx context.Context, now time.Time) error {
+	m := in.cfg.Mirror
+	stageJSON := func(path string, v any) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		return m.Stage(path, b)
+	}
+	cur := in.current(now)
+	if err := stageJSON("setup.json", struct {
+		Seq   int64 `json:"seq"`
+		Setup Setup `json:"setup"`
+	}{cur.Seq, cur.Setup}); err != nil {
+		return err
+	}
+	if lt, err := in.store.LastTally(ctx, in.cfg.Event.ID); err == nil && lt != nil {
+		if b, _ := m.Read(fmt.Sprintf("tallies/%d.json", lt.Seq)); b == nil {
+			vals, err := in.store.TallyValues(lt)
+			var res *Results
+			if err == nil {
+				r := ComputeResults(vals, &cur.Setup)
+				res = &r
+			}
+			out := struct {
+				Seq     int64      `json:"seq"`
+				At      time.Time  `json:"at"`
+				Tally   TallyEntry `json:"tally"`
+				Results *Results   `json:"results,omitempty"`
+			}{lt.Seq, lt.At, lt.Body, res}
+			if err := stageJSON(fmt.Sprintf("tallies/%d.json", lt.Seq), out); err != nil {
+				return err
+			}
+			if err := stageJSON("tallies/latest.json", out); err != nil {
+				return err
+			}
+		}
+	}
+	// The live counters the page shows (public numbers of the log only).
+	st, err := in.store.Stats(ctx, in.cfg.Event.ID)
+	if err != nil {
+		return err
+	}
+	return stageJSON("stats.json", st)
 }

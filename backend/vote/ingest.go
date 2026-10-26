@@ -42,6 +42,9 @@ type Config struct {
 	// Artifact is the compiled circuit (target/ballot.json of the setup),
 	// published on the mirror for the browser.
 	Artifact []byte
+	// Extra are other files published once on the mirror (event.json, the
+	// candidates' cards): path → content.
+	Extra map[string][]byte
 }
 
 // Ingest reads the mailbox, validates registrations and ballots, buffers
@@ -119,6 +122,14 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 			}
 		}
 		if err := cfg.Mirror.Stage("log-key.txt", []byte(cfg.Signer.VerifierKey()+"\n")); err != nil {
+			return nil, err
+		}
+		for path, b := range cfg.Extra {
+			if err := cfg.Mirror.Stage(path, b); err != nil {
+				return nil, err
+			}
+		}
+		if err := in.stageCurrent(ctx, cfg.Now()); err != nil {
 			return nil, err
 		}
 		if _, err := cfg.Mirror.Commit(ctx, "setup files"); err != nil {

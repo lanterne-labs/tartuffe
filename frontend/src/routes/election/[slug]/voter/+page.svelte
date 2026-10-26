@@ -1,326 +1,106 @@
 <script lang="ts">
-	import { onMount, onDestroy, untrack } from 'svelte';
-	import { get } from 'svelte/store';
+	// The vote page of tartuffe-vote/2 (docs/vote/SPEC.md). Everything it
+	// shows comes from the public mirror and the mailbox (lib/vote/session):
+	// the event, the setup in force, the latest checkpoint and tally, the
+	// live counters; the voter's key, ballot and receipt. It never calls our
+	// server.
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import { API_BASE } from '$lib/config';
 	import { displayName } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
-	import { voterKey, voterKeyOpen, protectedEnough } from '$lib/voter';
-	import { cast, myBallot, onBallotChanged, BallotError, NotInWindow, type MyBallot, type Check, type Via } from '$lib/anonballot';
-	import { realtimeManager, subscribeToPollEvents, clearOldEvents } from '$lib/realtime';
-	import HonestyGauge from '$lib/components/HonestyGauge.svelte';
-	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import Modal from '$lib/components/Modal.svelte';
-	import Steps from '$lib/components/Steps.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import { replaceState } from '$app/navigation';
+	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
-	import { recount, BLANK, type Step, type StepId } from '$lib/recount';
-	import type { PollResponse, CandidateResult } from '$lib/types';
+	import { VoteSession, type Tally } from '$lib/vote/session';
+	import { voteKey } from '$lib/vote/key';
+	import { BLANK, type Ranking } from '$lib/vote/crypto';
+	import { defaultSources } from '$lib/vote/sources';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
-	// hasKey: this device holds a voting key a document admitted.
-	let hasKey = $derived(!!$voterKey?.registered);
-
 	let slug = $derived($page.params.slug ?? '');
 	let paths = $derived(eventPaths(slug));
-	let data = $state<PollResponse | null>(null);
-	let loadError: string | null = $state(null);
-	let notFound = $state(false);
-	let sortBy: 'preference' | 'honesty' = $state('preference');
+	const session = new VoteSession($page.params.slug ?? '');
+	const phase = session.phase;
+	const setupStore = session.setup;
+	const tallyStore = session.tally;
+	const statsStore = session.stats;
+	const ballotStore = session.ballot;
+	const warm = session.warm;
+	const sessionError = session.error;
 
-	// Three views: the votes only, both side by side, the honesty only. The
-	// view is kept in the URL (?vue=) so a link shares it.
-	type View = 'vote' | 'both' | 'honesty';
-	const VIEWS: View[] = ['vote', 'both', 'honesty'];
-	let view: View = $state('vote');
-
-	function setView(v: View) {
-		view = v;
-		const url = new URL(window.location.href);
-		if (v === 'vote') url.searchParams.delete('vue');
-		else url.searchParams.set('vue', v);
-		replaceState(url, {});
+	interface EventInfo {
+		id: number;
+		slug: string;
+		title_fr: string;
+		title_en: string;
+		description_fr: string;
+		description_en: string;
+		closes_at?: string;
 	}
-
-	// The voter's ballot: up to max_choices candidates ranked from the
-	// preferred one, a blank vote, or none. Each change is proved on this
-	// device and cast anonymously (anonballot.ts); it counts once the next
-	// batch publishes it.
-	let mine = $state<MyBallot | null>(null);
-	let ballot = $derived(mine?.kind === 'choices' ? mine.choices : []);
-	let blank = $derived(mine?.kind === 'blank');
-	// endsBlank: the ranking ends with the blank vote (the others: no).
-	let endsBlank = $derived(ballot.at(-1) === BLANK);
-	// shown is the ranking as the slots show it: a blank ballot is the blank
-	// vote in the first slot. The slots are always all there: an empty one
-	// after a blank vote takes a candidate before it.
-	let shown = $derived(blank ? [BLANK] : ballot);
-
-	// slotPick is the slot whose window is open: a tap on a slot opens the
-	// candidates not ranked yet, by name (not by result, so it does not push
-	// the leaders), and the blank vote; a tap on one closes it and votes.
+	interface Card {
+		person_id: number;
+		name: string;
+		image_url?: string;
+		honesty_score: number;
+	}
+	let event = $state<EventInfo | null>(null);
+	let cards = $state<Map<number, Card>>(new Map());
+	let keyOpen = $state(false);
 	let slotPick = $state<number | null>(null);
-	let publishedBy: string | null = $state(null);
-	let busy = $state(false);
-	let actionError: string | null = $state(null);
-	let ballotLoaded = $state(false);
-
-	// The vote waiting for the voting key before it is cast.
-	let pending: { choice: number | 'blank'; at: number | null } | null = $state(null);
 	let withdrawOpen = $state(false);
+	let actionError = $state('');
 
-	let event = $derived(data?.event ?? null);
-	let results = $derived(data?.results ?? null);
-	let windows = $derived(data?.windows ?? []);
-	let via = $derived<Via>({ relays: data?.relays ?? [], publishedBy: data?.published_by ?? '' });
-	// check: what this browser found of the ballot in the public log.
-	let check = $state<Check | null>(null);
-	// status is the icon on the ballot's title: proving and sending, received
-	// (waiting for the batch that publishes it), on the public log as cast
-	// (checked by this browser), or a fault.
-	let status = $derived.by(() => {
-		if (busy) return 'busy';
-		if (check?.state === 'fault') return 'fault';
-		if (!mine) return null;
-		if (check?.state === 'included' && !publishedBy) return 'logged';
-		return 'received';
-	});
+	// The options of the setup in force: slot → candidate card or blank.
+	let options = $derived(($setupStore?.setup.options ?? []).filter((o) => o.kind === 'candidate' || o.kind === 'blank'));
+	let bySlot = $derived(new Map(options.map((o) => [o.slot, o])));
+	let mask = $derived($setupStore?.setup.mask ?? 0);
+	let kReal = $derived($setupStore?.setup.k_real ?? 10);
+	let open = $derived($phase !== 'closed' && !!$setupStore && Date.now() < Date.parse($setupStore.setup.closes));
+	let blackout = $derived(($setupStore?.setup.blackouts ?? []).some((b) => Date.now() >= Date.parse(b.from) && Date.now() < Date.parse(b.to)));
+	let hasKey = $derived(!!$voteKey && $voteKey.slug === slug);
+	let ready = $derived($phase === 'ready');
+	let busy = $derived($ballotStore.state === 'proving' || $ballotStore.state === 'sending');
 
-	// The voter's own check, step by step (the log signed, never rewritten,
-	// the ballot in it as cast), and anyone's recount of the results.
-	// The voter's check stays open once asked: its steps follow the ballot's
-	// state, so a ballot waiting for its batch turns to ✓ by itself when the
-	// batch publishes it (loadBallot on poll_updated).
-	let mineOpen = $state(false);
-	let mineRunning = $state(false);
-	let mineError = $state(false);
-	type MineStep = 'signed' | 'history' | 'mine';
-	type MineState = 'running' | 'ok' | 'failed' | 'waiting';
-	let mineSteps = $derived.by((): Record<MineStep, MineState> | null => {
-		if (!mineOpen) return null;
-		if (mineRunning) return { signed: 'running', history: 'running', mine: 'running' };
-		if (mineError) return { signed: 'failed', history: 'failed', mine: 'failed' };
-		const f = check?.state === 'fault' ? check.fault.kind : null;
-		const signedOk = f !== 'bad_signature' && f !== 'key_changed';
-		const historyOk = signedOk && f !== 'forked';
-		return {
-			signed: signedOk ? 'ok' : 'failed',
-			history: historyOk ? 'ok' : 'failed',
-			mine: !historyOk || f ? 'failed' : status === 'logged' ? 'ok' : 'waiting'
-		};
-	});
-	let recountSteps = $state<Step[] | null>(null);
-	let recounting = $state(false);
+	// The ballot shown: the last one cast from this device (kept with the
+	// key), as slots.
+	let shown = $derived<number[]>($ballotStore.ranking ? $ballotStore.ranking.slots.slice(0, $ballotStore.ranking.len) : rememberedSlots());
+	let endsBlank = $derived(shown.at(-1) === BLANK);
+	let choosable = $derived(options.filter((o) => o.kind === 'candidate' && !shown.includes(o.slot)));
 
-
-	async function verifyMine() {
-		mineOpen = true;
-		mineRunning = true;
-		mineError = false;
+	const REMEMBER = 'vote2_ballot';
+	function rememberedSlots(): number[] {
 		try {
-			const key = get(voterKey);
-			if (!key?.registered || !event) return;
-			const got = await myBallot(slug, event.id, key, windows, via);
-			check = got.check ?? null;
-			publishedBy = got.publishedBy ?? null;
-			if (!check) mineError = true;
-		} catch (err) {
-			console.error('vote check failed', err);
-			mineError = true;
-		} finally {
-			mineRunning = false;
+			const raw = localStorage.getItem(`${REMEMBER}:${slug}`);
+			return raw ? (JSON.parse(raw) as number[]) : [];
+		} catch {
+			return [];
 		}
 	}
-
-
-	async function verifyResults() {
-		if (!event || !results || recounting) return;
-		recounting = true;
-		const steps: Step[] = (['signed', 'tree', 'proofs', 'count', 'shown'] as StepId[]).map((id) => ({ id, state: 'running' as const }));
-		recountSteps = steps;
-		const report = (s: Step) => {
-			recountSteps = (recountSteps ?? steps).map((x) => (x.id === s.id ? s : x));
-		};
+	function remember(slots: number[]) {
 		try {
-			await recount(event.id, results, report);
-		} catch (err) {
-			console.error('recount failed', err);
-			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'failed' } : x));
-		} finally {
-			recountSteps = (recountSteps ?? steps).map((x) => (x.state === 'running' ? { ...x, state: 'skipped' } : x));
-			recounting = false;
-		}
+			localStorage.setItem(`${REMEMBER}:${slug}`, JSON.stringify(slots));
+		} catch {}
 	}
 
-	let maxChoices = $derived(event?.max_choices ?? 3);
-	let full = $derived(ballot.length >= maxChoices);
-	let choosable = $derived(
-		[...(results?.candidates ?? [])].filter((c) => !ballot.includes(c.person_id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'))
-	);
-	let byId = $derived(new Map<number, CandidateResult>((results?.candidates ?? []).map((c: CandidateResult) => [c.person_id, c])));
-
-	// The ballot loads once per voting key and event, then again when another
-	// tab casts one.
-	let ballotKey = '';
-	$effect(() => {
-		const key = $voterKey?.registered && event ? `${$voterKey.commitment}:${event.id}` : '';
-		if (key === ballotKey) return;
-		ballotKey = key;
-		untrack(() => (key ? loadBallot() : resetBallot()));
-	});
-
-	// A key dialog closed without a key drops the vote it was for.
-	$effect(() =>
-		voterKeyOpen.subscribe((isOpen) => {
-			if (isOpen) return;
-			untrack(() => {
-				if (!get(voterKey)?.registered) pending = null;
-				else if (pending !== null && ballotLoaded) go(pending.choice, pending.at);
-			});
-		})
-	);
-
-	let sorted = $derived.by(() => {
-		const list = [...(results?.candidates ?? [])];
-		const name = (a: CandidateResult, b: CandidateResult) => a.name.localeCompare(b.name, 'fr');
-		const by = view === 'vote' ? 'preference' : view === 'honesty' ? 'honesty' : sortBy;
-		if (by === 'honesty' || results?.hidden) {
-			return list.sort((a, b) => a.honesty_rank - b.honesty_rank || name(a, b));
-		}
-		return list.sort((a, b) => (a.preference_rank ?? 1e9) - (b.preference_rank ?? 1e9) || name(a, b));
-	});
-
-	// The same ballots counted as the one-round majority vote: first choices.
-	// blankAt: where the blank vote's line goes in the ranked list, by its
-	// rank (null while hidden).
-	let blankAt = $derived.by(() => {
-		const r = results?.blank_rank;
-		if (results?.hidden || r === null || r === undefined) return null;
-		const i = sorted.findIndex((c) => (c.preference_rank ?? 1e9) > r);
-		return i < 0 ? sorted.length : i;
-	});
-
-	let byMajority = $derived(
-		[...(results?.candidates ?? [])].sort((a, b) => (a.majority_rank ?? 1e9) - (b.majority_rank ?? 1e9) || a.name.localeCompare(b.name, 'fr'))
-	);
-
-	// The sole winner of each count, if there is one: when they differ, the
-	// page says so.
-	function soleFirst(list: CandidateResult[], rank: (c: CandidateResult) => number | null): CandidateResult | null {
-		const top = list.filter((c) => rank(c) === 1);
-		return top.length === 1 ? top[0] : null;
-	}
-	let rankingWinner = $derived(results?.hidden ? null : soleFirst(results?.candidates ?? [], (c) => c.preference_rank));
-	let majorityWinner = $derived(results?.hidden ? null : soleFirst(results?.candidates ?? [], (c) => c.majority_rank));
-	let differ = $derived(!!rankingWinner && !!majorityWinner && rankingWinner.person_id !== majorityWinner.person_id);
-
-	async function load() {
+	async function change(next: number[]): Promise<boolean> {
+		if (busy || !ready) return false;
+		actionError = '';
+		const r: Ranking = { len: next.length, slots: [next[0] ?? 0, next[1] ?? 0, next[2] ?? 0] };
 		try {
-			const res = await fetch(`${API_BASE}/api/polls/${encodeURIComponent(slug)}`);
-			if (res.status === 404) {
-				notFound = true;
-				return;
-			}
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			data = await res.json();
-			loadError = null;
-		} catch (err) {
-			console.error('failed to load poll', err);
-			// A failed live refresh keeps the results shown.
-			if (!data) loadError = tr('poll.error', currentLang);
-		}
-	}
-
-	async function loadBallot() {
-		const key = get(voterKey);
-		if (!key?.registered || !event) return;
-		try {
-			const got = await myBallot(slug, event.id, key, windows, via);
-			if (busy) return;
-			mine = got.ballot;
-			publishedBy = got.publishedBy ?? null;
-			check = got.check ?? null;
-			ballotLoaded = true;
-			if (pending !== null && !get(voterKeyOpen)) go(pending.choice, pending.at);
-		} catch (err) {
-			console.error('failed to load ballot', err);
-			ballotLoaded = true;
-		}
-	}
-
-	function resetBallot() {
-		mine = null;
-		publishedBy = null;
-		check = null;
-		ballotLoaded = false;
-		withdrawOpen = false;
-	}
-
-	// change proves and casts the next ballot; while it runs the vote buttons
-	// wait. It tells whether the ballot was cast.
-	async function change(next: MyBallot): Promise<boolean> {
-		const key = get(voterKey);
-		if (busy || !key || !event) return false;
-		busy = true;
-		actionError = null;
-		try {
-			publishedBy = await cast(slug, event.id, key, windows, next, via);
-			mine = next.kind === 'withdraw' ? null : next;
-			check = mine ? { state: 'waiting' } : null;
+			await session.cast(r);
+			remember(next);
 			return true;
-		} catch (err) {
-			if (err instanceof NotInWindow) {
-				actionError = tr('vote.error.waiting', currentLang, { d: waitingText() });
-			} else if (err instanceof BallotError && err.code === 'closed') {
-				actionError = tr('vote.error.closed', currentLang);
-				load();
-			} else {
-				actionError = err instanceof Error ? err.message : String(err);
-			}
+		} catch (e) {
+			const reason = $ballotStore.reason ?? (e instanceof Error ? e.message : String(e));
+			actionError = tr(`v2.reason.${reason}`, currentLang) !== `v2.reason.${reason}` ? tr(`v2.reason.${reason}`, currentLang) : reason;
 			return false;
-		} finally {
-			busy = false;
 		}
 	}
 
-	// saveEvidence downloads what proves the server's fault: the signed
-	// checkpoints and the entry, for anyone to check.
-	function saveEvidence(c: Check | null) {
-		if (c?.state !== 'fault') return;
-		const text = `tartuffe.me vote log fault: ${c.fault.kind}\n${c.fault.detail}\nfound by this browser at ${new Date().toISOString()}\n\n${c.fault.evidence}\n`;
-		const a = document.createElement('a');
-		a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-		a.download = 'tartuffe-vote-log-proof.txt';
-		a.click();
-		URL.revokeObjectURL(a.href);
-	}
-
-	function waitingText(): string {
-		const w = get(voterKey)?.waitingUntil;
-		return w ? closesText(w) : '';
-	}
-
-	// pick is a click on a candidate or on the blank vote, for a slot (at)
-	// or after the ranked ones (null, the lists' "Rank"): it gets a voting
-	// key first if needed.
-	function pick(choice: number | 'blank', at: number | null = null) {
-		pending = { choice, at };
-		if (!hasKey) {
-			voterKeyOpen.set(true);
-			return;
-		}
-		if (!ballotLoaded) return; // goes on once the ballot is loaded
-		go(choice, at);
-	}
-
-	// placed is the ranking with the choice at slot at (null: after the
-	// ranked candidates, before a blank vote that ends the ranking). The
-	// blank vote ends the ranking: placed at a slot, it drops what follows;
-	// a candidate placed elsewhere moves there.
 	function placed(cur: number[], choice: number, at: number | null): number[] {
 		if (choice === BLANK) return [...cur.filter((x) => x !== BLANK).slice(0, at ?? cur.length), BLANK];
 		const rest = cur.filter((x) => x !== choice);
@@ -329,33 +109,27 @@
 		const i = at === null ? body.length : Math.min(at, body.length);
 		if (at !== null && i < body.length) body[i] = choice;
 		else body.splice(i, 0, choice);
-		return tail && body.length < maxChoices ? [...body, BLANK] : body;
+		return tail && body.length < 3 ? [...body, BLANK] : body;
 	}
 
-	function go(choice: number | 'blank', at: number | null) {
-		pending = null;
-		if (busy) return;
-		const id = choice === 'blank' ? BLANK : choice;
-		const next = placed(blank ? [BLANK] : ballot, id, at);
-		if (next.length > maxChoices) {
-			actionError = tr('vote.error.full', currentLang, { n: maxChoices });
+	function pick(choice: number, at: number | null) {
+		if (!hasKey) {
+			keyOpen = true;
 			return;
 		}
-		if (JSON.stringify(next) === JSON.stringify(blank ? [BLANK] : ballot)) return;
-		change(next.length === 1 && next[0] === BLANK ? { kind: 'blank', choices: [] } : { kind: 'choices', choices: next });
+		const next = placed(shown, choice, at);
+		if (next.length > 3) {
+			actionError = tr('vote.error.full', currentLang, { n: 3 });
+			return;
+		}
+		if (JSON.stringify(next) === JSON.stringify(shown)) return;
+		change(next);
 	}
 
-	// A long press on a ranked candidate lifts it (SortableJS; a long click
-	// with a mouse); dropped on another candidate's slot, the ranks move and
-	// the new ballot is cast. The blank vote stays last and does not move.
-	// Svelte owns the slots: the moved element is put back, and the ballot
-	// redraws them. A long press does not open the slot's window.
 	let suppressClick = false;
-
 	function movable(id: number | undefined): boolean {
-		return id !== undefined && id !== BLANK && !busy && !!results?.open && ballot.filter((x) => x !== BLANK).length > 1;
+		return id !== undefined && id !== BLANK && !busy && open && shown.filter((x) => x !== BLANK).length > 1;
 	}
-
 	function sortable(node: HTMLElement) {
 		const s = Sortable.create(node, {
 			draggable: '.movable',
@@ -377,101 +151,74 @@
 				if (from === undefined || to === undefined || from === to) return;
 				e.from.removeChild(e.item);
 				e.from.insertBefore(e.item, e.from.children[e.oldIndex ?? from] ?? null);
-				const cands = ballot.filter((x) => x !== BLANK);
+				const cands = shown.filter((x) => x !== BLANK);
 				const [moved] = cands.splice(from, 1);
 				cands.splice(to, 0, moved);
-				change({ kind: 'choices', choices: endsBlank ? [...cands, BLANK] : cands });
+				change(endsBlank ? [...cands, BLANK] : cands);
 			}
 		});
 		return { destroy: () => s.destroy() };
 	}
-
 	function openSlot(i: number) {
 		if (suppressClick) return;
 		slotPick = i;
 	}
-
-	function chooseFor(choice: number | 'blank') {
+	function chooseFor(choice: number) {
 		const at = slotPick;
 		slotPick = null;
 		pick(choice, at);
 	}
-
 	function remove(id: number) {
-		const next = shown.filter((x) => x !== id);
-		if (next.length === 1 && next[0] === BLANK) change({ kind: 'blank', choices: [] });
-		else change(next.length > 0 ? { kind: 'choices', choices: next } : { kind: 'withdraw', choices: [] });
+		change(shown.filter((x) => x !== id));
 	}
-
 	async function withdrawAll() {
 		withdrawOpen = false;
-		await change({ kind: 'withdraw', choices: [] });
+		await change([]);
 	}
 
-	// The honesty colour follows the score: red at 20 and below, green at 80
-	// and above, through amber between.
-	function honestyColor(score: number): string {
-		const p = Math.round(Math.max(0, Math.min(1, (score - 0.2) / 0.6)) * 100);
-		return `color-mix(in oklch, var(--green) ${p}%, var(--red))`;
-	}
-
-	function pct(v: number | null): string {
-		return v === null ? '—' : `${Math.round(v * 100)}%`;
-	}
-
-	// The bars are on a 0–100 % scale of all the voters, blank votes
-	// included.
-	function barWidth(share: number | null): number {
-		return share === null ? 0 : Math.round(share * 100);
-	}
-
-	function ordinal(n: number): string {
-		if (currentLang === 'en') return `#${n}`;
-		return n === 1 ? '1er' : `${n}e`;
-	}
-
-	// rankWord is the rank of a choice in words: 1er, 2e (1st, 2nd).
 	function rankWord(n: number): string {
 		if (currentLang === 'en') return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
 		return n === 1 ? '1er' : `${n}e`;
 	}
-
 	function closesText(iso: string): string {
-		const d = new Date(iso);
-		return d.toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+	}
+	function pct(n: number, total: number): string {
+		return total > 0 ? `${Math.round((100 * n) / total)}%` : '—';
+	}
+	function ago(iso: string): string {
+		const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+		if (m < 1) return currentLang === 'en' ? 'just now' : 'à l’instant';
+		if (m < 60) return currentLang === 'en' ? `${m} min ago` : `il y a ${m} min`;
+		const h = Math.round(m / 60);
+		return currentLang === 'en' ? `${h} h ago` : `il y a ${h} h`;
+	}
+	function nameOf(slot: number): string {
+		const o = bySlot.get(slot);
+		if (!o) return `#${slot}`;
+		if (o.kind === 'blank') return tr('vote.blank.name', currentLang);
+		return displayName(cards.get(o.person_id ?? 0)?.name ?? o.name ?? `#${slot}`);
+	}
+	function imageOf(slot: number): string | undefined {
+		const o = bySlot.get(slot);
+		return o?.person_id ? cards.get(o.person_id)?.image_url : undefined;
 	}
 
-	let unsubscribe: (() => void) | null = null;
-	let unwatchBallot: (() => void) | null = null;
-	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let results = $derived.by(() => {
+		const t: Tally | null = $tallyStore;
+		if (!t?.results) return null;
+		return t.results;
+	});
+	let winnerSlot = $derived(results?.condorcet_winner ?? null);
 
 	onMount(async () => {
-		const v = new URL(window.location.href).searchParams.get('vue') as View | null;
-		if (v && VIEWS.includes(v)) view = v;
-		await load();
-		unwatchBallot = onBallotChanged(() => {
-			if (!busy) loadBallot();
-		});
-		realtimeManager.connect();
-		if (event) {
-			unsubscribe = subscribeToPollEvents(event.id, () => {
-				// A batch publishes many ballots: one reload per second at most.
-				if (refreshTimer) return;
-				refreshTimer = setTimeout(() => {
-					refreshTimer = null;
-					load().then(() => loadBallot());
-				}, 1000);
-			});
-		}
+		const src = defaultSources();
+		const [ev, cs] = await Promise.all([src.json<EventInfo>('event.json'), src.json<Card[]>('candidates.json')]);
+		event = ev;
+		cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+		await session.init();
 	});
-
-	onDestroy(() => {
-		unsubscribe?.();
-		unwatchBallot?.();
-		if (refreshTimer) clearTimeout(refreshTimer);
-		realtimeManager.disconnect();
-		clearOldEvents();
-	});
+	onDestroy(() => session.destroy());
 </script>
 
 <svelte:head>
@@ -481,189 +228,167 @@
 	{/if}
 </svelte:head>
 
-{#if notFound}
-	<p class="state">{tr('poll.not_found', currentLang)}</p>
-{:else if loadError}
+{#if $phase === 'error'}
 	<div class="state error">
-		<p>{loadError}</p>
-		<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
+		<p>{$sessionError}</p>
+		<button class="btn" onclick={() => session.init()}>{tr('home.retry', currentLang)}</button>
 	</div>
-{:else if !event || !results}
+{:else if $phase === 'loading' || !$setupStore}
 	<p class="state loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 {:else}
 	<header class="hero">
 		<span class="kicker">{tr('poll.kicker', currentLang)}</span>
-		<h1>{currentLang === 'en' ? event.title_en : event.title_fr}</h1>
-		<p class="lead">{currentLang === 'en' ? event.description_en : event.description_fr}</p>
+		<h1>{event ? (currentLang === 'en' ? event.title_en : event.title_fr) : slug}</h1>
+		{#if event}<p class="lead">{currentLang === 'en' ? event.description_en : event.description_fr}</p>{/if}
 		<p class="meta">
-			{#if showVoters(results.voters)}
+			{#if results && showVoters(results.voters)}
 				<strong>{tr('poll.voters', currentLang, { n: results.voters.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</strong>
 				<span class="dot"></span>
 			{/if}
-			{#if results.open && event.closes_at}
-				{tr('poll.closes', currentLang, { d: closesText(event.closes_at) })}
-			{:else if !results.open}
+			{#if open}
+				{tr('poll.closes', currentLang, { d: closesText($setupStore.setup.closes) })}
+			{:else}
 				{tr('poll.closed', currentLang)}
 			{/if}
 		</p>
 		<p class="disclaimer">{tr('poll.disclaimer', currentLang)}</p>
 	</header>
 
-	{#if results.hidden}
-		<div class="notice" class:notice--legal={results.hidden === 'blackout'}>
-			{#if results.hidden === 'blackout'}
-				{tr('poll.hidden.blackout', currentLang)}
-			{:else}
-				{tr(results.voters === 0 ? 'poll.hidden.none' : 'poll.hidden.too_few_voters', currentLang)}
+	{#if $statsStore}
+		<p class="live">
+			<span>{tr('v2.counter.ballots', currentLang, { n: $statsStore.ballots.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
+			<span class="dot"></span>
+			<span>{tr('v2.counter.since', currentLang, { n: $statsStore.since_tally })}</span>
+			<span class="dot"></span>
+			<span>{tr('v2.counter.next', currentLang, { k: kReal })}</span>
+		</p>
+	{/if}
+
+	{#if blackout}
+		<div class="notice notice--legal">{tr('poll.hidden.blackout', currentLang)}</div>
+	{/if}
+
+	<section class="ballot" aria-labelledby="ballot-title">
+		<div class="ballot-head">
+			<h2 id="ballot-title">
+				{tr('vote.title', currentLang)}
+				{#if $ballotStore.state === 'verified'}
+					<details class="help status-tip">
+						<summary class="state-icon state-icon--logged" aria-label={tr('v2.status.verified', currentLang)}>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
+						</summary>
+						<p>{tr('v2.status.verified.help', currentLang)}</p>
+					</details>
+				{:else if $ballotStore.state === 'received'}
+					<details class="help status-tip">
+						<summary class="state-icon state-icon--ok" aria-label={tr('v2.status.received', currentLang)}>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+						</summary>
+						<p>{tr('v2.status.received.help', currentLang)}</p>
+					</details>
+				{:else if busy}
+					<span class="state-icon" title={tr(`v2.status.${$ballotStore.state}`, currentLang)}><Spinner size="sm" label={tr(`v2.status.${$ballotStore.state}`, currentLang)} /></span>
+				{:else if $ballotStore.state === 'rejected' || $ballotStore.state === 'failed'}
+					<span class="state-icon state-icon--fault" title={actionError} aria-label={actionError}>!</span>
+				{/if}
+			</h2>
+			{#if !hasKey}
+				<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.key.get', currentLang)}</button>
+			{:else if $phase === 'joining' || $phase === 'registering'}
+				<span class="joining"><Spinner size="sm" label={tr('v2.join.waiting', currentLang)} /> {tr('v2.join.waiting', currentLang)}</span>
 			{/if}
 		</div>
-	{/if}
-
-	{#if results.open || mine}
-		<section class="ballot" aria-labelledby="ballot-title">
-			<div class="ballot-head">
-				<h2 id="ballot-title">
-					{tr('vote.title', currentLang)}
-					{#if status === 'logged'}
-						<details class="help status-tip">
-							<summary class="state-icon state-icon--logged" aria-label={tr('vote.status.logged', currentLang)}>
-								<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
-							</summary>
-							<p>{tr('vote.status.logged', currentLang)}</p>
-						</details>
-					{:else if status === 'received'}
-						<details class="help status-tip">
-							<summary class="state-icon state-icon--ok" aria-label={tr('vote.status.received', currentLang)}>
-								<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-							</summary>
-							<p>{tr('vote.status.received', currentLang)}</p>
-						</details>
-					{:else if status === 'busy'}
-						<span class="state-icon" title={tr('vote.status.busy', currentLang)}><Spinner size="sm" label={tr('vote.status.busy', currentLang)} /></span>
-					{:else if status === 'fault'}
-						<span class="state-icon state-icon--fault" title={tr('vote.log.fault', currentLang)} aria-label={tr('vote.log.fault', currentLang)}>!</span>
+		<p class="hint">{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: 3 })}</p>
+		{#if hasKey && $warm !== 'ready' && $warm !== 'idle'}
+			<p class="hint muted">{tr(`v2.warm.${$warm}`, currentLang)}</p>
+		{/if}
+		<ol class="slots" style="--n: 3" use:sortable>
+			{#each [0, 1, 2] as i (i)}
+				{@const id = shown[i]}
+				<li class="slot" class:filled={id !== undefined} class:next={open && id === undefined && i === shown.length} class:movable={movable(id)}>
+					{#if id === BLANK}
+						<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !open}>
+							<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
+							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
+						</button>
+						{#if open}
+							<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
+						{/if}
+					{:else if id !== undefined}
+						<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !open}>
+							<span class="slot-photo">
+								{#if imageOf(id)}
+									<img src={imageOf(id)} alt="" draggable="false" />
+								{:else}
+									<span class="slot-initial">{nameOf(id).charAt(0).toUpperCase()}</span>
+								{/if}
+								<span class="slot-rank">{i + 1}</span>
+							</span>
+							<span class="slot-name">{nameOf(id)}</span>
+						</button>
+						{#if open}
+							<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: nameOf(id) })}>×</button>
+						{/if}
+					{:else if open}
+						<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
+							<span class="slot-photo slot-photo--empty">
+								{#if i === shown.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
+							</span>
+							<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+						</button>
+					{:else}
+						<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
+						<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
 					{/if}
-				</h2>
-				{#if !hasKey}
-					<button class="btn btn-primary" onclick={() => voterKeyOpen.set(true)}>{tr('poll.ballot.get_key', currentLang)}</button>
-				{:else}
-					<a href="/profile" class="profile-link">{tr('vote.profile_link', currentLang)}</a>
+				</li>
+			{/each}
+		</ol>
+		{#if open}
+			<div class="ballot-actions">
+				{#if shown.length === 0}
+					<button class="btn btn-small" onclick={() => pick(BLANK, null)} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
+					{@render help(tr('vote.blank.help', currentLang))}
+				{/if}
+				{#if shown.length > 0}
+					<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
 				{/if}
 			</div>
-			<p class="hint">{tr(results.open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: maxChoices })}</p>
-
-			{#if hasKey && !protectedEnough($voterKey)}
-				<button class="protect" onclick={() => voterKeyOpen.set(true)}>{tr('vote.protect', currentLang)}</button>
-			{/if}
-			<ol class="slots" style="--n: {maxChoices}" use:sortable>
-				{#each Array.from({ length: maxChoices }, (_, i) => i) as i (i)}
-					{@const id = shown[i]}
-					{@const c = id === undefined ? undefined : byId.get(id)}
-					<li class="slot" class:filled={id !== undefined} class:next={results.open && id === undefined && i === shown.length} class:movable={movable(id)}>
-						{#if id === BLANK}
-							<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !results.open}>
-								<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
-								<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
-							</button>
-							{#if results.open}
-								<button class="unpick" onclick={() => remove(BLANK)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: tr('vote.blank.name', currentLang) })}>×</button>
-							{/if}
-						{:else if id !== undefined}
-							<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !results.open}>
-								<span class="slot-photo">
-									{#if c?.image_url}
-										<img src={c.image_url} alt="" draggable="false" />
-									{:else}
-										<span class="slot-initial">{(c?.name ?? '?').charAt(0).toUpperCase()}</span>
-									{/if}
-									<span class="slot-rank">{i + 1}</span>
-								</span>
-								<span class="slot-name">{displayName(c?.name ?? `#${id}`)}</span>
-							</button>
-							{#if results.open}
-								<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: c?.name ?? '' })}>×</button>
-							{/if}
-						{:else if results.open}
-							<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
-								<span class="slot-photo slot-photo--empty">
-									{#if i === shown.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
-								</span>
-								<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
-							</button>
-						{:else}
-							<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
-							<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
-						{/if}
-					</li>
-				{/each}
-			</ol>
-				{#if results.open}
-					<div class="ballot-actions">
-					{#if ballot.length === 0 && !blank}
-						<button class="btn btn-small" onclick={() => pick('blank')} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
-						{@render help(tr('vote.blank.help', currentLang))}
-					{/if}
-					{#if mine}
-						<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
-					{/if}
-				</div>
-			{/if}
-			{#if mine}
-				<div class="verify">
-					<button class="btn btn-small" onclick={verifyMine} disabled={busy}>🔍 {tr('vote.verify', currentLang)}</button>
-					{@render help(tr('vote.verify.help', currentLang))}
-				</div>
-				{#if mineSteps}
-					<div class="steps-box">
-						<Steps
-							steps={(['signed', 'history', 'mine'] as const).map((k) => ({
-								label: tr(k === 'mine' && mineError ? 'vote.verify.error' : `vote.verify.${k}`, currentLang),
-								state: mineSteps![k] === 'waiting' ? 'running' : mineSteps![k]
-							}))}
-						/>
-					</div>
-				{/if}
-			{/if}
-			{#if check?.state === 'fault'}
-				<div class="log-fault" role="alert">
-					<strong>{tr('vote.log.fault', currentLang)}</strong>
-					<span>{tr(`vote.log.fault.${check.fault.kind}`, currentLang)}</span>
-					<button class="btn" onclick={() => saveEvidence(check)}>{tr('vote.log.evidence', currentLang)}</button>
-				</div>
-			{/if}
-			{#if actionError}
-				<p class="save-error" role="alert">{actionError}</p>
-			{/if}
-		</section>
-	{/if}
+		{/if}
+		{#if actionError}
+			<p class="save-error" role="alert">{actionError}</p>
+		{/if}
+	</section>
 
 	<Modal open={slotPick !== null} title={slotPick === null ? '' : tr('vote.slot.choice', currentLang, { rank: rankWord(slotPick + 1) })} onclose={() => (slotPick = null)} closeLabel={tr('auth.close', currentLang)}>
 		<div class="picker">
-			{#each choosable as c (c.person_id)}
-				<button class="pick-card" onclick={() => chooseFor(c.person_id)} disabled={busy}>
-					{#if c.image_url}
-						<img src={c.image_url} alt="" />
+			{#each choosable as o (o.slot)}
+				<button class="pick-card" onclick={() => chooseFor(o.slot)} disabled={busy}>
+					{#if imageOf(o.slot)}
+						<img src={imageOf(o.slot)} alt="" />
 					{:else}
-						<span class="pick-initial" aria-hidden="true">{c.name.charAt(0).toUpperCase()}</span>
+						<span class="pick-initial" aria-hidden="true">{nameOf(o.slot).charAt(0).toUpperCase()}</span>
 					{/if}
-					<span>{displayName(c.name)}</span>
+					<span>{nameOf(o.slot)}</span>
 				</button>
 			{/each}
-			<button class="pick-card pick-card--blank" onclick={() => chooseFor('blank')} disabled={busy}>
-				<span class="pick-initial" aria-hidden="true">◻</span>
-				<span>{tr('vote.blank.name', currentLang)}</span>
-			</button>
+			{#if !shown.includes(BLANK)}
+				<button class="pick-card pick-card--blank" onclick={() => chooseFor(BLANK)} disabled={busy}>
+					<span class="pick-initial" aria-hidden="true">◻</span>
+					<span>{tr('vote.blank.name', currentLang)}</span>
+				</button>
+			{/if}
 		</div>
 	</Modal>
 
 	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-		<p class="dialog-text">{tr(blank ? 'vote.withdraw.text_blank' : 'vote.withdraw.text', currentLang)}</p>
+		<p class="dialog-text">{tr('vote.withdraw.text', currentLang)}</p>
 		{#snippet actions()}
 			<button class="btn" onclick={() => (withdrawOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
 		{/snippet}
 	</Modal>
 
+	<VoteKeyDialog open={keyOpen} lang={currentLang} {session} domain={import.meta.env.VITE_ZKPASSPORT_DOMAIN ?? window.location.hostname} devMode={import.meta.env.VITE_ZKPASSPORT_DEV === '1'} onclose={() => (keyOpen = false)} />
 
 	{#snippet help(text: string)}
 		<details class="help">
@@ -672,231 +397,39 @@
 		</details>
 	{/snippet}
 
-	{#snippet blankRankedRow()}
-		<li class="vote-row vote-row--blank" class:vote-row--mine={blank || endsBlank} class:vote-row--top={results?.blank_rank === 1}>
-			<span class="vote-rank">{results?.blank_rank ?? '—'}</span>
-			<div class="vote-main">
-				<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
-				{#if results?.condorcet_winner === BLANK}
-					<span class="winner">{tr('poll.condorcet', currentLang)}</span>
-				{/if}
-				<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(results?.blank_share ?? null), r: pct(results?.blank_ranked_share ?? null) })}</span>
-			</div>
-		</li>
-	{/snippet}
-
-	{#snippet pickButton(c: CandidateResult)}
-		{#if results?.open}
-			{@const at = ballot.indexOf(c.person_id)}
-			{#if at >= 0}
-				<button class="pick pick--mine" onclick={() => remove(c.person_id)} disabled={busy} title={tr('vote.ranked_as', currentLang, { rank: rankWord(at + 1) })}>
-					{rankWord(at + 1)} ×
-				</button>
-			{:else}
-				<button class="pick" class:pick--full={hasKey && full} onclick={() => pick(c.person_id)} disabled={busy || (hasKey && full)}>
-					{tr('vote.add', currentLang)}
-				</button>
-			{/if}
-		{/if}
-	{/snippet}
-
-	{#snippet who(c: CandidateResult)}
-		<a href="/person/{c.person_id}" class="who">
-			{#if c.image_url}
-				<img src={c.image_url} alt="" class="photo" />
-			{:else}
-				<span class="photo photo--empty">{c.name.charAt(0).toUpperCase()}</span>
-			{/if}
-			<span class="name">{displayName(c.name)}</span>
-		</a>
-	{/snippet}
-
-	<div class="views" role="tablist" aria-label={tr('poll.view', currentLang)}>
-		{#each ['vote', 'both', 'honesty'] as const as v}
-			<button class="view-tab" class:active={view === v} role="tab" aria-selected={view === v} onclick={() => setView(v)}>
-				{tr(`poll.view.${v}`, currentLang)}
-			</button>
-		{/each}
-	</div>
-
-	{#if sorted.length === 0}
-		<p class="state">{tr('poll.no_candidates', currentLang)}</p>
-	{:else if view === 'vote'}
-		{#if differ && rankingWinner && majorityWinner}
-			<p class="differ">
-				{tr(results.condorcet_winner === rankingWinner.person_id ? 'poll.differ' : 'poll.differ_no_condorcet', currentLang, {
-					a: displayName(rankingWinner.name),
-					b: displayName(majorityWinner.name)
-				})}
-			</p>
-		{/if}
-		<div class="lists" class:lists--one={!!results.hidden}>
-			<section class="list">
-				<h3>{tr('poll.list.ranking', currentLang)} <small>{tr('poll.list.ranking_sub', currentLang)}</small></h3>
-				<ol class="vote-list">
-					{#each sorted as c, i (c.person_id)}
-						{#if blankAt === i}{@render blankRankedRow()}{/if}
-						<li class="vote-row" class:vote-row--mine={ballot.includes(c.person_id)} class:vote-row--top={c.preference_rank === 1}>
-							<span class="vote-rank">{c.preference_rank ?? '—'}</span>
-							<div class="vote-main">
-								{@render who(c)}
-								{#if c.first_choice_share === null}
-									<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
+	<section class="results" aria-labelledby="results-title">
+		<h2 id="results-title">{tr('poll.list.ranking', currentLang)}</h2>
+		{#if blackout}
+			<p class="state">{tr('v2.blackout', currentLang)}</p>
+		{:else if !results || !$tallyStore}
+			<p class="state">{tr('v2.results.none', currentLang, { k: kReal })}</p>
+		{:else}
+			<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyStore.at) })}</p>
+			<ol class="vote-list">
+				{#each results.options as o (o.slot)}
+					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={o.rank === 1} class:vote-row--blank={o.kind === 'blank'}>
+						<span class="vote-rank">{o.rank}</span>
+						<div class="vote-main">
+							<span class="who">
+								{#if imageOf(o.slot)}
+									<img src={imageOf(o.slot)} alt="" class="photo" />
 								{:else}
-									{#if results.condorcet_winner === c.person_id}
-										<span class="winner">{tr('poll.condorcet', currentLang)}</span>
-									{/if}
-									<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(c.first_choice_share), r: pct(c.ranked_share) })}</span>
+									<span class="photo photo--empty">{o.kind === 'blank' ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 								{/if}
-							</div>
-							<div class="vote-pick">{@render pickButton(c)}</div>
-						</li>
-					{/each}
-					{#if blankAt === sorted.length}{@render blankRankedRow()}{/if}
-				</ol>
-			</section>
-			{#if !results.hidden}
-				<section class="list">
-					<h3>{tr('poll.list.majority', currentLang)} <small>{tr('poll.list.majority_sub', currentLang)}</small></h3>
-					<ol class="vote-list">
-						{#each byMajority as c (c.person_id)}
-							<li class="vote-row" class:vote-row--mine={ballot[0] === c.person_id} class:vote-row--top={c.majority_rank === 1}>
-								<span class="vote-rank">{c.majority_rank ?? '—'}</span>
-								<div class="vote-main">
-									{@render who(c)}
-									<div class="vote-bar-line">
-										<div class="bar bar--wide" aria-hidden="true">
-											<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share)}%"></span>
-										</div>
-										<span class="value">{pct(c.first_choice_share)}</span>
-									</div>
-								</div>
-							</li>
-						{/each}
-						{#if results.blank_share !== null}
-							<li class="vote-row vote-row--blank" class:vote-row--mine={blank}>
-								<span class="vote-rank">—</span>
-								<div class="vote-main">
-									<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
-									<div class="vote-bar-line">
-										<div class="bar bar--wide" aria-hidden="true">
-											<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
-										</div>
-										<span class="value">{pct(results.blank_share)}</span>
-									</div>
-								</div>
-							</li>
-						{/if}
-					</ol>
-				</section>
-			{/if}
-		</div>
-		<div class="verify verify--results">
-			<button class="btn btn-small" onclick={verifyResults} disabled={recounting}>🔍 {tr('poll.verify', currentLang)}</button>
-			{@render help(tr('poll.verify.help', currentLang))}
-		</div>
-		{#if recountSteps}
-			<div class="steps-box steps-box--results">
-				<Steps steps={recountSteps.map((st) => ({ label: tr(`poll.verify.${st.id}`, currentLang), state: st.state === 'skipped' ? 'todo' : st.state }))} />
-			</div>
-		{/if}
-		<p class="board-note">{tr('poll.note.vote', currentLang)}</p>
-	{:else if view === 'honesty'}
-		<div class="gauge-grid">
-			{#each sorted as c (c.person_id)}
-				<article class="gauge-card" class:gauge-card--mine={ballot.includes(c.person_id)}>
-					<span class="gauge-rank">{ordinal(c.honesty_rank)}</span>
-					{@render who(c)}
-					<HonestyGauge score={c.honesty_score} size={200} label={displayName(c.name)} />
-					<span class="meta">{tr('poll.gauge.facts', currentLang, { n: c.fact_count })} · {tr('poll.gauge.contradictions', currentLang, { n: c.contradiction_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
-					{@render pickButton(c)}
-				</article>
-			{/each}
-		</div>
-		<p class="board-note">{tr('poll.note.honesty', currentLang)}</p>
-	{:else}
-		<div class="board" role="table" aria-label={currentLang === 'en' ? event.title_en : event.title_fr}>
-			<div class="board-head" role="row">
-				<button
-					class="col-head col-head--vote"
-					class:active={sortBy === 'preference' && !results.hidden}
-					onclick={() => (sortBy = 'preference')}
-					disabled={!!results.hidden}
-					role="columnheader"
-					aria-sort={sortBy === 'preference' && !results.hidden ? 'descending' : 'none'}
-				>
-					{tr('poll.col.vote', currentLang)}{#if sortBy === 'preference' && !results.hidden} ↓{/if}
-				</button>
-				<span class="col-head col-head--name" role="columnheader">{tr('poll.col.candidate', currentLang)}</span>
-				<button
-					class="col-head col-head--honesty"
-					class:active={sortBy === 'honesty' || !!results.hidden}
-					onclick={() => (sortBy = 'honesty')}
-					role="columnheader"
-					aria-sort={sortBy === 'honesty' || results.hidden ? 'descending' : 'none'}
-				>
-					{tr('poll.col.honesty', currentLang)}{#if sortBy === 'honesty' || results.hidden} ↓{/if}
-				</button>
-			</div>
-
-			{#each sorted as c (c.person_id)}
-				<div class="board-row" class:board-row--mine={ballot.includes(c.person_id)} role="row">
-					<div class="cell cell--vote" role="cell">
-						{#if c.first_choice_share === null}
-							<span class="value value--muted">—</span>
-							<span class="meta">{tr('poll.gauge.hidden', currentLang)}</span>
-						{:else}
-							<div class="value-line">
-								<span class="value">{ordinal(c.preference_rank ?? 0)}</span>
-							</div>
-							<div class="bar bar--vote" aria-hidden="true">
-								<span class="bar-fill--vote" style="width: {barWidth(c.first_choice_share)}%"></span>
-							</div>
-							<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(c.first_choice_share), r: pct(c.ranked_share) })}</span>
-						{/if}
-					</div>
-
-					<div class="cell cell--name" role="cell">
-						{@render who(c)}
-						{@render pickButton(c)}
-					</div>
-
-					<div class="cell cell--honesty" role="cell">
-						<HonestyGauge score={c.honesty_score} size={130} label={displayName(c.name)} />
-						<span class="meta">{ordinal(c.honesty_rank)} · {tr('poll.gauge.facts', currentLang, { n: c.fact_count })} <ScoreHelp name={c.name} personId={c.person_id} /></span>
-					</div>
-				</div>
-			{/each}
-			{#if results.blank_share !== null}
-				<div class="board-row board-row--blank" class:board-row--mine={blank} role="row">
-					<div class="cell cell--vote" role="cell">
-						<div class="value-line"><span class="value">{pct(results.blank_share)}</span></div>
-						<div class="bar bar--vote" aria-hidden="true">
-							<span class="bar-fill--vote bar-fill--blank" style="width: {barWidth(results.blank_share)}%"></span>
+								<span class="name">{nameOf(o.slot)}</span>
+							</span>
+							{#if winnerSlot === o.slot}
+								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
+							{/if}
+							<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(o.first, results.voters), r: pct(o.ranked, results.voters) })}</span>
 						</div>
-						<span class="meta">{tr('poll.gauge.votes', currentLang, { n: results.blank ?? 0 })}</span>
-					</div>
-					<div class="cell cell--name" role="cell">
-						<span class="who"><span class="photo photo--empty photo--blank" aria-hidden="true">◻</span><span class="name">{tr('vote.blank.name', currentLang)}</span></span>
-					</div>
-					<div class="cell cell--honesty" role="cell"><span class="meta">{tr('vote.blank.no_score', currentLang)}</span></div>
-				</div>
-			{/if}
-		</div>
-	{/if}
+					</li>
+				{/each}
+			</ol>
+		{/if}
+	</section>
 
-	<details class="how">
-		<summary>{tr('poll.how.title', currentLang)}</summary>
-		<ul>
-			<li>{@html tr('poll.how.preference', currentLang)}</li>
-			<li>{@html tr('poll.how.honesty', currentLang)}</li>
-			<li>{@html tr('poll.how.compare', currentLang)}</li>
-			<li>{tr('poll.how.facts', currentLang)}</li>
-			<li>{@html tr('poll.how.verification', currentLang, { href: paths.how + '#cle' })}</li>
-			<li>{tr('poll.how.blank', currentLang)}</li>
-			<li>{@html tr('poll.how.privacy', currentLang, { href: paths.how + '#journal' })}</li>
-		</ul>
-	</details>
+	<p class="how-link"><a href={paths.how}>{tr('poll.how.title', currentLang)}</a></p>
 {/if}
 
 <style>
@@ -1845,5 +1378,35 @@
 		.name {
 			font-size: 0.82rem;
 		}
+	}
+	.live {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		align-items: center;
+		gap: 0.5rem;
+		margin: -0.5rem 0 1.25rem;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.joining {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.muted {
+		color: var(--text-muted);
+	}
+	.updated {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin: 0 0 0.75rem;
+	}
+	.how-link {
+		text-align: center;
+		margin: 2rem 0;
+		font-size: 0.9rem;
 	}
 </style>

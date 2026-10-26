@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -96,6 +97,32 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no setup logged for %s (dm vote setup)", e.Slug)
 	}
 	mail := vote.NewNostrMailbox(e.Slug, key, vote.ActiveBoxes(setups))
+	// What the page shows of the event and its candidates, from the mirror.
+	extra := map[string][]byte{}
+	if b, err := json.Marshal(e); err == nil {
+		extra["event.json"] = b
+	}
+	ids, err := pollStore(storer).CandidateIDs(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	type card struct {
+		PersonID     int64   `json:"person_id"`
+		Name         string  `json:"name"`
+		ImageURL     *string `json:"image_url,omitempty"`
+		HonestyScore float64 `json:"honesty_score"`
+	}
+	var cards []card
+	for _, id := range ids {
+		p, err := storer.GetPersonByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		cards = append(cards, card{PersonID: id, Name: p.Name, ImageURL: p.ImageURL, HonestyScore: p.HonestyScore})
+	}
+	if b, err := json.Marshal(cards); err == nil {
+		extra["candidates.json"] = b
+	}
 	var mirror vote.Mirror
 	if dir, _ := cmd.Flags().GetString("mirror-dir"); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -116,6 +143,7 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		},
 		Mirror:   mirror,
 		Artifact: artifact,
+		Extra:    extra,
 	})
 	if err != nil {
 		return err

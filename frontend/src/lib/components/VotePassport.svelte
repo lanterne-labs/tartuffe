@@ -1,0 +1,244 @@
+<script lang="ts">
+	// The passport scan of tartuffe-vote/2 (SPEC §4, step 2): the ZKPassport
+	// app proves on the phone that the holder is an adult French national
+	// with a valid passport, and binds the registration's custom data into
+	// the proof. Nothing goes to our server: onSuccess posts the proof to
+	// the mailbox. No cloud prover: the proof is made on the device.
+	import Steps, { type StepState } from './Steps.svelte';
+	import { onDestroy } from 'svelte';
+	import { tr, type Lang } from '$lib/i18n';
+	import favicon from '$lib/assets/favicon.svg';
+	import ZKProofAnimation from './ZKProofAnimation.svelte';
+
+	interface Props {
+		lang: Lang;
+		domain: string;
+		scope: string;
+		customData: string;
+		devMode?: boolean;
+		onSuccess: (payload: { proofs: unknown; result: unknown; at: Date }) => Promise<void>;
+	}
+
+	let { lang, domain, scope, customData, devMode = false, onSuccess }: Props = $props();
+
+	type Step = 'idle' | 'starting' | 'scan' | 'received' | 'proving' | 'posting' | 'rejected' | 'error';
+	let step: Step = $state('idle');
+	let url = $state('');
+	let qr = $state('');
+	let error = $state('');
+
+	const FLOW = ['qr', 'app', 'proof', 'check'] as const;
+	const at: Record<string, number> = { starting: 0, scan: 0, received: 1, proving: 2, posting: 3 };
+	let reached = $state(0);
+	$effect(() => {
+		if (step in at) reached = at[step];
+	});
+	let flow = $derived(
+		FLOW.map((k, i) => ({
+			label: tr(`zk.flow.${k}`, lang),
+			state: (i < reached ? 'ok' : i > reached ? 'todo' : step === 'rejected' || step === 'error' ? 'failed' : 'running') as StepState
+		}))
+	);
+	let cancelled = false;
+	const isPhone = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+	async function start() {
+		cancelled = false;
+		error = '';
+		step = 'starting';
+		try {
+			const { ZKPassport } = await import('@zkpassport/sdk');
+			const zk = new ZKPassport(domain);
+			let builder = await zk.request({
+				name: 'tartuffe.me',
+				logo: new URL(favicon, window.location.origin).href,
+				purpose: tr('zk.purpose', lang),
+				scope,
+				devMode,
+				mode: 'compressed'
+			});
+			builder = builder.gte('age', 18);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			builder = builder.in('nationality', ['FRA' as any]);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			builder = (builder as any).eq('document_type', 'passport');
+			builder = builder.bind('custom_data', customData);
+			const req = builder.done();
+			url = req.url;
+			const QRCode = await import('qrcode');
+			qr = await QRCode.toDataURL(req.url, { margin: 2, width: 480, errorCorrectionLevel: 'L' });
+			step = 'scan';
+			req.onRequestReceived(() => !cancelled && (step = 'received'));
+			req.onGeneratingProof(() => !cancelled && (step = 'proving'));
+			req.onReject(() => !cancelled && (step = 'rejected'));
+			req.onError((e: unknown) => {
+				if (cancelled) return;
+				error = String(e);
+				step = 'error';
+			});
+			req.onSuccess(async ({ proofs, result }: { proofs: unknown; result: unknown }) => {
+				if (cancelled) return;
+				step = 'posting';
+				try {
+					await onSuccess({ proofs, result, at: new Date() });
+				} catch (err) {
+					error = err instanceof Error ? err.message : String(err);
+					step = 'error';
+				}
+			});
+		} catch (err) {
+			console.error('zkpassport', err);
+			error = err instanceof Error ? err.message : String(err);
+			step = 'error';
+		}
+	}
+
+	function reset() {
+		cancelled = true;
+		step = 'idle';
+		url = '';
+		qr = '';
+	}
+
+	onDestroy(() => (cancelled = true));
+</script>
+
+<section class="zk">
+	<div class="zk-head">
+		<h3>{tr('zk.title', lang)}</h3>
+		<span class="badge">{tr('zk.badge', lang)}</span>
+	</div>
+	<p class="why">{tr('zk.why', lang)}</p>
+	<p class="why">{tr('v2.passport.only', lang)}</p>
+	{#if step === 'idle'}
+		<ZKProofAnimation {lang} />
+		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
+	{/if}
+	{#if step !== 'idle'}
+		<div class="flow"><Steps layout="row" steps={flow} /></div>
+	{/if}
+	{#if step === 'scan'}
+		{#if isPhone}
+			<a class="primary block" href={url}>{tr('zk.open_app', lang)}</a>
+			<p class="muted small">{tr('zk.phone_hint', lang)}</p>
+		{:else}
+			<img class="qr" src={qr} alt={tr('zk.qr_alt', lang)} width="260" height="260" />
+			<p class="muted small">{tr('zk.scan_hint', lang)}</p>
+		{/if}
+		<p class="muted small">{tr('zk.get_app', lang)} <a href="https://zkpassport.id" target="_blank" rel="noopener">zkpassport.id</a></p>
+		<button class="link" onclick={reset}>{tr('zk.cancel', lang)}</button>
+	{:else if step === 'rejected'}
+		<p class="status warn">{tr('zk.rejected', lang)}</p>
+		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
+	{:else if step === 'error'}
+		<p class="status err">{tr('zk.error', lang)} {error}</p>
+		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
+	{/if}
+	{#if devMode}
+		<p class="dev">{tr('zk.dev_mode', lang)}</p>
+	{/if}
+</section>
+
+<style>
+	.flow {
+		margin: 0.75rem 0;
+	}
+	.zk {
+		padding: 1rem;
+		border: 1px solid var(--accent);
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+	}
+	.zk-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		margin-bottom: 0.25rem;
+	}
+	h3 {
+		font-size: 0.95rem;
+		margin: 0;
+	}
+	.why {
+		margin: 0 0 0.75rem;
+		font-size: 0.9rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
+	}
+	.badge {
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--green);
+		border: 1px solid var(--green);
+		border-radius: var(--radius-full);
+		padding: 0.1rem 0.5rem;
+		white-space: nowrap;
+	}
+	.muted {
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+		line-height: 1.45;
+		margin: 0 0 0.75rem;
+	}
+	.small {
+		font-size: 0.78rem;
+		text-align: center;
+	}
+	.primary {
+		display: inline-block;
+		width: 100%;
+		padding: 0.65rem 1rem;
+		background: var(--accent);
+		color: white;
+		border: none;
+		border-radius: var(--radius-md);
+		font-weight: 600;
+		font-size: 0.95rem;
+		cursor: pointer;
+		text-align: center;
+		text-decoration: none;
+	}
+	.primary:hover {
+		background: var(--accent-hover);
+	}
+	.block {
+		margin-bottom: 0.5rem;
+	}
+	.qr {
+		display: block;
+		margin: 0 auto 0.5rem;
+		border-radius: var(--radius-md);
+		background: white;
+		padding: 0.5rem;
+		width: 260px;
+		height: 260px;
+	}
+	.link {
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		text-decoration: underline;
+		cursor: pointer;
+		font-size: 0.85rem;
+		display: block;
+		margin: 0 auto;
+	}
+	.status {
+		margin: 0.5rem 0;
+		font-size: 0.9rem;
+	}
+	.warn {
+		color: var(--amber);
+	}
+	.err {
+		color: var(--red);
+	}
+	.dev {
+		margin: 0.75rem 0 0;
+		font-size: 0.75rem;
+		color: var(--amber);
+	}
+</style>
