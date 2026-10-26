@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,7 +39,8 @@ type ClaudeAPIEndpoint struct {
 	stop     *UnavailableError // set when the endpoint stops for the rest of the day
 }
 
-// claudeAPIRunCapUSD is the spend cap of the API endpoint per UTC day. A sync
+// claudeAPIRunCapUSD is the spend cap of the API endpoint per UTC day when
+// CLAUDE_API_DAY_CAP_USD is not set (claudeAPIDayCapFromEnv). A sync
 // call costs about 0.01 USD on Sonnet 5.5 and 0.02 USD on Opus 5.5 (the
 // batch pilot of 2026-10-10: 0.01 USD per occurrence pair on Opus at half
 // price). A day of the worker makes about 2,000 calls, about 30 USD on the
@@ -59,14 +64,33 @@ const claudeAPITimeout = 10 * time.Minute
 // starts the 5 min again at no cost. So the first case is the usual one.
 const claudeAPICacheTTL = ""
 
-// NewClaudeAPIEndpointFromEnv reads ANTHROPIC_API_KEY. The spend cap is
-// claudeAPIRunCapUSD.
+// NewClaudeAPIEndpointFromEnv reads ANTHROPIC_API_KEY and the spend cap of
+// the day, CLAUDE_API_DAY_CAP_USD (claudeAPIRunCapUSD when not set).
 func NewClaudeAPIEndpointFromEnv() (*ClaudeAPIEndpoint, error) {
 	h, err := newClaudeHTTPFromEnv(claudeAPITimeout)
 	if err != nil {
 		return nil, fmt.Errorf("claude api endpoint: %w", err)
 	}
-	return &ClaudeAPIEndpoint{api: h, maxUSD: claudeAPIRunCapUSD}, nil
+	maxUSD, err := claudeAPIDayCapFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("claude api endpoint: %w", err)
+	}
+	return &ClaudeAPIEndpoint{api: h, maxUSD: maxUSD}, nil
+}
+
+// claudeAPIDayCapFromEnv reads CLAUDE_API_DAY_CAP_USD, the spend cap of the
+// endpoint per UTC day: claudeAPIRunCapUSD when not set; 0 stops the endpoint
+// before its first call.
+func claudeAPIDayCapFromEnv() (float64, error) {
+	s := strings.TrimSpace(os.Getenv("CLAUDE_API_DAY_CAP_USD"))
+	if s == "" {
+		return claudeAPIRunCapUSD, nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("CLAUDE_API_DAY_CAP_USD %q: want a number of USD, 0 or more", s)
+	}
+	return v, nil
 }
 
 // Call sends one Messages request and waits for its reply. Only an endpoint
