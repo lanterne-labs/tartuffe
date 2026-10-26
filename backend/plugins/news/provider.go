@@ -707,16 +707,7 @@ func (p *Provider) extractDocument(
 		return 0, fmt.Errorf("extracting facts from %s: %w", doc.URL, err)
 	}
 
-	// Publication date — priority: LLM-from-body > the date stored with the
-	// document (webcrawlerapi <meta>, else the SERP date).
-	var llmDate *time.Time
-	for _, f := range facts {
-		if f.ArticlePublishedAt != nil {
-			llmDate = f.ArticlePublishedAt
-			break
-		}
-	}
-	publishedAt := core.PickPublishedAt(llmDate, doc.PublishedAt, nil)
+	publishedAt := articleDate(doc, facts)
 
 	if opts.KeepSourceDir != "" {
 		if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, doc.URL, doc.Title, doc.Content, publishedAt, facts); dumpErr != nil {
@@ -1244,4 +1235,20 @@ func (p *Provider) newFactInserter() *core.FactInserter {
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 	inserter.EnableDedupe(p.Storer)
 	return inserter
+}
+
+// articleDate is the publication date of an article: the date stored with the
+// document (webcrawlerapi <meta>, else the SERP date), else the LLM's reading
+// of the body. The LLM resolves "mis à jour il y a 2 heures" against today: on
+// the Oct 2026 backfill it dated 17 % of the articles with a dated URL on the
+// day they were scraped, while the document had the right date.
+func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
+	var llmDate *time.Time
+	for _, f := range facts {
+		if f.ArticlePublishedAt != nil {
+			llmDate = f.ArticlePublishedAt
+			break
+		}
+	}
+	return core.PickPublishedAt(doc.PublishedAt, llmDate)
 }
