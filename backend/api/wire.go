@@ -13,6 +13,7 @@ import (
 	"digital-mirror/backend/mirror"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/vote"
 )
 
 // Wire builds the three parts on the database of storer: the polls check
@@ -23,6 +24,7 @@ func Wire(storer *storage.PostgresStorer, reg *providers.Registry, cfg polls.Con
 	acc.SubjectKey = []byte(os.Getenv("AUTH_SUBJECT_KEY"))
 	store := polls.NewPGStore(storer.Pool())
 	p := polls.NewService(store, store, PersonCards{storer}, acc, cfg)
+	p.Extra = vote.Routes(vote.NewStore(storer.Pool()))
 	return acc, mirror.NewService(storer, acc), p
 }
 

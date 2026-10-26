@@ -28,6 +28,8 @@ type People interface {
 
 // Service serves the polls.
 type Service struct {
+	// Extra mounts the routes of the vote protocol beside the log's (backend/vote).
+	Extra func(r chi.Router)
 	store Store
 	// box keeps the anonymous ballots: the voters' commitments, the
 	// ballots, the public log, the vault and the device links.
@@ -97,6 +99,9 @@ func (s *Service) Routes(r chi.Router, signin func(http.Handler) http.Handler) {
 	r.With(signin).Put("/vault/{lookup}", s.handleVaultPut)
 	r.With(signin).Post("/links/{channel}", s.handleLinkPut)
 	r.Get("/links/{channel}", s.handleLinkTake)
+	if s.Extra != nil {
+		s.Extra(r)
+	}
 }
 
 // Run publishes the waiting ballots in batches until ctx ends: at each

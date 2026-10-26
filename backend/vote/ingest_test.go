@@ -149,27 +149,23 @@ func TestIngestOnDevVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Register the vector tree's leaves through registrations.
+	// Register the vector tree's leaves, one checkpoint each so that the
+	// positions follow the vector's order (a checkpoint orders its entries
+	// by hash).
 	for i, leaf := range v.Tree.Leaves {
 		reg, _ := Canonical(Register{V: Version, Event: 1, ID: leaf, UID: "uid-" + string(rune('a'+i)), Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
 		in.cfg.Passport = fakePassport{uid: "uid-" + string(rune('a'+i))}
 		in.Handle(ctx, Message{ID: "reg" + string(rune('a'+i)), Box: "wss://a.test", Kind: MsgRegister, Body: reg})
-	}
-	if err := in.Checkpoint(ctx); err != nil {
-		t.Fatal(err)
+		if err := in.Checkpoint(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cp, err := store.LastCheckpoint(ctx)
 	if err != nil || cp == nil {
 		t.Fatalf("no checkpoint: %v", err)
 	}
-	// The registrations were ordered by hash, so the positions differ from
-	// arrival; the vector tree holds them in arrival order. Reset to the
-	// vector order for the ballot's root to be a logged root.
-	if cp.TreeSize != 5 {
-		t.Fatalf("tree size %d", cp.TreeSize)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE vote2_checkpoints SET tree_root = $1 WHERE idx = $2`, v.Tree.Root, cp.Index); err != nil {
-		t.Fatal(err)
+	if cp.TreeSize != 5 || cp.TreeRoot != v.Tree.Root {
+		t.Fatalf("tree size %d root %s, the vectors' is %s", cp.TreeSize, cp.TreeRoot, v.Tree.Root)
 	}
 
 	// The vector ballot.
@@ -226,11 +222,11 @@ func TestIngestOnDevVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	cp, _ = store.LastCheckpoint(ctx)
-	if cp.Index != 2 {
+	if cp.Index != 6 {
 		t.Fatalf("checkpoint %d", cp.Index)
 	}
 	treeRoot, size, index, eventID, at, err := ParseCheckpoint(cp.Note)
-	if err != nil || index != 2 || eventID != 1 || size != 5 || treeRoot == "" || at.IsZero() {
+	if err != nil || index != 6 || eventID != 1 || size != 5 || treeRoot == "" || at.IsZero() {
 		t.Fatalf("checkpoint note: %v %d %d %d", err, index, eventID, size)
 	}
 	if _, err := polls.OpenCheckpoint([]byte(cp.Note), signer.VerifierKey()); err != nil {
@@ -256,7 +252,7 @@ func TestIngestOnDevVectors(t *testing.T) {
 	// The mirror holds the files of SPEC §8.3 and the note names its commit.
 	day := time.Now().UTC().Format("2006-01-02")
 	hour := time.Now().UTC().Format("2006-01-02T15")
-	for _, f := range []string{"leaves/" + day + ".json", "blocks/open.json", "blocks/roots.json", "entries/" + hour + ".json", "setup.json", "checkpoint.txt", "checkpoints/2.txt", "index/" + bal.Nullifier[2:4] + ".json", "positions/" + v.Tree.Leaves[0][2:3] + ".json"} {
+	for _, f := range []string{"leaves/" + day + ".json", "blocks/open.json", "blocks/roots.json", "entries/" + hour + ".json", "setup.json", "checkpoint.txt", "checkpoints/6.txt", "index/" + bal.Nullifier[2:4] + ".json", "positions/" + v.Tree.Leaves[0][2:3] + ".json"} {
 		if b, err := mirror.Read(f); err != nil || b == nil {
 			t.Fatalf("mirror file %s: %v", f, err)
 		}
@@ -273,5 +269,26 @@ func TestIngestOnDevVectors(t *testing.T) {
 	b, _ = mirror.Read("index/" + bal.Nullifier[2:4] + ".json")
 	if json.Unmarshal(b, &idx) != nil || idx[bal.Nullifier] != 1 {
 		t.Fatalf("index shard: %s", b)
+	}
+
+	// The auditor on the same log: the checkpoints verify, the ballot's
+	// proof verifies, the rejects have their reasons.
+	rep, err := Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Verifier: in.ver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK() {
+		t.Fatalf("audit problems: %v", rep.Problems)
+	}
+	if rep.Checkpoints != 6 || rep.Registrations != 5 || rep.Ballots != 1 || rep.Rejects != 4 {
+		t.Fatalf("audit counts: %+v", *rep)
+	}
+	// A tampered entry breaks the checkpoint's tree.
+	if _, err := pool.Exec(ctx, `UPDATE vote_log SET body = replace(body, '"seq":1', '"seq":2') WHERE kind = 'ballot'`); err != nil {
+		t.Fatal(err)
+	}
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey()})
+	if rep.OK() {
+		t.Fatal("a tampered ballot passed the audit")
 	}
 }
