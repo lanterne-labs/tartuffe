@@ -114,6 +114,11 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 	if last != nil {
 		in.nextIndex = last.Index + 1
 	}
+	if c, err := store.ClosedEntry(ctx, cfg.Event.ID); err != nil {
+		return nil, err
+	} else if c != nil {
+		in.closedSeq = c.Final
+	}
 	// What the browser needs once: the circuit, the log's verifier key.
 	if cfg.Mirror != nil {
 		if len(cfg.Artifact) > 0 {
@@ -505,6 +510,14 @@ func (in *Ingest) Checkpoint(ctx context.Context) error {
 		}
 	}
 	log.Info().Int64("index", index).Int64("log", head.N).Int("tree", in.tree.Size()).Int("boxes", n).Msg("vote: checkpoint")
+	if in.closedSeq == 0 {
+		if c, err := in.store.ClosedEntry(ctx, in.cfg.Event.ID); err == nil && c != nil {
+			in.closedSeq = c.Final
+			if in.closedSeq == 0 {
+				in.closedSeq = -1
+			}
+		}
+	}
 	return nil
 }
 

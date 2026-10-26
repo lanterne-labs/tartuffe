@@ -59,7 +59,8 @@
 	let bySlot = $derived(new Map(options.map((o) => [o.slot, o])));
 	let mask = $derived($setupStore?.setup.mask ?? 0);
 	let kReal = $derived($setupStore?.setup.k_real ?? 10);
-	let open = $derived($phase !== 'closed' && !!$setupStore && Date.now() < Date.parse($setupStore.setup.closes));
+	// The page stops taking ballots 10 minutes before the close (SPEC §9.3).
+	let open = $derived($phase !== 'closed' && !!$setupStore && Date.now() < Date.parse($setupStore.setup.closes) - 10 * 60_000);
 	let blackout = $derived(($setupStore?.setup.blackouts ?? []).some((b) => Date.now() >= Date.parse(b.from) && Date.now() < Date.parse(b.to)));
 	let hasKey = $derived(!!$voteKey && $voteKey.slug === slug);
 	let ready = $derived($phase === 'ready');

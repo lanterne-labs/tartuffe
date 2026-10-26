@@ -146,4 +146,29 @@ func TestTallierPublishesAfterKRealChanges(t *testing.T) {
 	if again, _ := store.LastTally(ctx, 1); again.Seq != last.Seq {
 		t.Fatal("a second tally without changes")
 	}
+	// The close: one more ballot, then time passes the close; the final
+	// tally covers it (no K_REAL) and the closed entry names it.
+	body2, _ := encryptedBallot(t, pk, nul(1), 2, ballot.Ranking{Len: 1, Slots: [3]int{6}})
+	seq, _ := store.Log.Append(ctx, KindBallot, body2)
+	if err := store.AddBallot(ctx, LoggedBallot{EventID: 1, Nullifier: nul(1), Seq: 2, PIHash: "0xlast", LogSeq: seq, Checkpoint: 2, Body: body2, NostrID: "last", Relay: "wss://a.test"}); err != nil {
+		t.Fatal(err)
+	}
+	tl.now = func() time.Time { return setup.Closes.Add(time.Minute) }
+	if err := tl.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := store.ClosedEntry(ctx, 1)
+	if err != nil || closed == nil {
+		t.Fatalf("no closed entry: %v", err)
+	}
+	final, _ := store.LastTally(ctx, 1)
+	if final.Seq != closed.Final || final.Seq == last.Seq {
+		t.Fatalf("final tally %d, closed names %d", final.Seq, closed.Final)
+	}
+	if err := tl.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if c2, _ := store.ClosedEntry(ctx, 1); c2.Final != closed.Final {
+		t.Fatal("closed twice")
+	}
 }

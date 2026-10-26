@@ -60,6 +60,7 @@ type Tallier struct {
 	changed     map[string]bool // pseudonyms changed since the last tally
 	scanned     int64           // log seq up to which ballots were decrypted
 	armedAt     int64           // the checkpoint when K_REAL was reached, 0 when not
+	closed      bool
 }
 
 type decrypted struct {
@@ -176,13 +177,25 @@ func (t *Tallier) Run(ctx context.Context) error {
 	}
 }
 
-// Step scans the new ballots and publishes a tally when the rule fires.
+// Closed is the closed entry of SPEC §9.3.
+type Closed struct {
+	V     int       `json:"v"`
+	Event int64     `json:"event"`
+	At    time.Time `json:"at"`
+	Final int64     `json:"final"`
+}
+
+// Step scans the new ballots and publishes a tally when the rule fires;
+// at the close it publishes the final tally and the closed entry.
 func (t *Tallier) Step(ctx context.Context) error {
 	if err := t.scan(ctx, 1<<62); err != nil {
 		return err
 	}
 	now := t.now()
 	s := t.setup(now)
+	if !now.Before(s.Closes) {
+		return t.Close(ctx, now)
+	}
 	if len(t.changed) < s.KReal {
 		t.armedAt = 0
 		return nil
@@ -284,6 +297,63 @@ func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 	}
 	log.Info().Int64("seq", seq).Int64("upto", upto).Int64("count", count).Int64("voters", total[0]).Msg("vote: tally published")
 	return nil
+}
+
+// Close publishes the final tally over every ballot logged before the
+// close and the closed entry, once.
+func (t *Tallier) Close(ctx context.Context, now time.Time) error {
+	if t.closed {
+		return nil
+	}
+	if c, err := t.store.ClosedEntry(ctx, t.event.ID); err != nil {
+		return err
+	} else if c != nil {
+		t.closed = true
+		return nil
+	}
+	head, err := t.store.Log.Head(ctx)
+	if err != nil {
+		return err
+	}
+	if err := t.Publish(ctx, head.N); err != nil {
+		return err
+	}
+	final, err := t.store.LastTally(ctx, t.event.ID)
+	if err != nil {
+		return err
+	}
+	var finalSeq int64
+	if final != nil {
+		finalSeq = final.Seq
+	}
+	body, _ := Canonical(Closed{V: Version, Event: t.event.ID, At: now.UTC(), Final: finalSeq})
+	seq, err := t.store.Log.Append(ctx, KindClosed, body)
+	if err != nil {
+		return err
+	}
+	t.closed = true
+	log.Info().Int64("seq", seq).Int64("final_tally", finalSeq).Msg("vote: closed")
+	return nil
+}
+
+// ClosedEntry returns the event's closed entry, nil while open.
+func (s *Store) ClosedEntry(ctx context.Context, eventID int64) (*Closed, error) {
+	rows, err := s.pool.Query(ctx, `SELECT body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindClosed)
+	if err != nil {
+		return nil, fmt.Errorf("closed: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		var c Closed
+		if json.Unmarshal([]byte(body), &c) == nil && c.Event == eventID {
+			return &c, nil
+		}
+	}
+	return nil, rows.Err()
 }
 
 // VerifyTally checks a tally entry against the sums of the ballots given
