@@ -39,6 +39,9 @@ type Config struct {
 	Stamp func(ctx context.Context, size int64, note []byte) error
 	// Mirror is the public data mirror; nil writes none.
 	Mirror Mirror
+	// Artifact is the compiled circuit (target/ballot.json of the setup),
+	// published on the mirror for the browser.
+	Artifact []byte
 }
 
 // Ingest reads the mailbox, validates registrations and ballots, buffers
@@ -107,6 +110,20 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 	in.nextIndex = 1
 	if last != nil {
 		in.nextIndex = last.Index + 1
+	}
+	// What the browser needs once: the circuit, the log's verifier key.
+	if cfg.Mirror != nil {
+		if len(cfg.Artifact) > 0 {
+			if err := cfg.Mirror.Stage("circuit/ballot.json", cfg.Artifact); err != nil {
+				return nil, err
+			}
+		}
+		if err := cfg.Mirror.Stage("log-key.txt", []byte(cfg.Signer.VerifierKey()+"\n")); err != nil {
+			return nil, err
+		}
+		if _, err := cfg.Mirror.Commit(ctx, "setup files"); err != nil {
+			return nil, err
+		}
 	}
 	return in, nil
 }

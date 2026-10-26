@@ -241,6 +241,14 @@ func (in *Ingest) stageMirror(ctx context.Context, index int64, prevLogSize, log
 			}
 		}
 	}
+	// The live counters the page shows (public numbers of the log only).
+	st, err := in.store.Stats(ctx, in.cfg.Event.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := stageJSON("stats.json", st); err != nil {
+		return "", err
+	}
 	token, err := m.Commit(ctx, fmt.Sprintf("checkpoint %d", index))
 	if err != nil {
 		return "", err

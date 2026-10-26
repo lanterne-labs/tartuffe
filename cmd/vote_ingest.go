@@ -36,6 +36,7 @@ func init() {
 	voteCmd.AddCommand(voteIngestCmd)
 	voteIngestCmd.Flags().String("vk", "", "the circuit's verification key file of dm vote setup (required)")
 	voteIngestCmd.Flags().String("mirror-dir", "", "directory of the public data mirror (SPEC §8.3), served by a static host")
+	voteIngestCmd.Flags().String("artifact", "", "the compiled circuit (ballot.json of dm vote setup), published on the mirror")
 	_ = voteIngestCmd.MarkFlagRequired("vk")
 }
 
@@ -55,6 +56,12 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 	vk, err := os.ReadFile(vkPath)
 	if err != nil {
 		return err
+	}
+	var artifact []byte
+	if p, _ := cmd.Flags().GetString("artifact"); p != "" {
+		if artifact, err = os.ReadFile(p); err != nil {
+			return err
+		}
 	}
 	key, err := vote.NostrKeyFromEnv()
 	if err != nil {
@@ -107,7 +114,8 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 			_, err := store.Log.StampNote(ctx, size, note)
 			return err
 		},
-		Mirror: mirror,
+		Mirror:   mirror,
+		Artifact: artifact,
 	})
 	if err != nil {
 		return err

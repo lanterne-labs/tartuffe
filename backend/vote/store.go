@@ -429,3 +429,30 @@ func (s *Store) IndexShard(ctx context.Context, eventID int64, prefix string) (m
 	}
 	return out, rows.Err()
 }
+
+// Stats are the public counters of the mirror: ballots logged, ballots
+// since the last tally, registrations. Never anything decrypted.
+type Stats struct {
+	Ballots       int64 `json:"ballots"`
+	SinceTally    int64 `json:"since_tally"`
+	Registrations int64 `json:"registrations"`
+}
+
+// Stats counts for the mirror.
+func (s *Store) Stats(ctx context.Context, eventID int64) (Stats, error) {
+	var st Stats
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM vote2_ballots WHERE event_id = $1`, eventID).Scan(&st.Ballots); err != nil {
+		return st, fmt.Errorf("stats: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM vote2_registrations WHERE event_id = $1`, eventID).Scan(&st.Registrations); err != nil {
+		return st, fmt.Errorf("stats: %w", err)
+	}
+	var upto int64
+	if lt, err := s.LastTally(ctx, eventID); err == nil && lt != nil {
+		upto = lt.Upto
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM vote2_ballots WHERE event_id = $1 AND log_seq > $2`, eventID, upto).Scan(&st.SinceTally); err != nil {
+		return st, fmt.Errorf("stats: %w", err)
+	}
+	return st, nil
+}
