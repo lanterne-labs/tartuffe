@@ -1,0 +1,7 @@
+[package]
+name = "keygen"
+type = "bin"
+authors = ["tartuffe.me"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
