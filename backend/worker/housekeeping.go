@@ -134,15 +134,21 @@ func (h *Housekeeping) Beside(ctx context.Context) error {
 	return h.feed(ctx)
 }
 
-// MinPriority implements Idle: while the feed runs, only the tasks of the
-// watch list are claimed. The backfills that run go on, but no new one
+// MinPriority implements Idle: while the feed is due or runs, only the tasks
+// of the watch list are claimed. The backfills that run go on, but no new one
 // starts: on 2026-10-26 the 16 lanes of backfills held the seats, and the
-// feed of the day waited behind them until the seats hit their limit.
-func (h *Housekeeping) MinPriority() int {
+// feed of the day waited behind them until the seats hit their limit. A due
+// feed counts too: the worker claims as it starts the feed, so at a restart
+// the backfills took every lane before the feed began.
+func (h *Housekeeping) MinPriority(ctx context.Context) (int, error) {
 	if h.feeding.Load() {
-		return watchPriority
+		return watchPriority, nil
 	}
-	return 0
+	due, err := h.feedDue(ctx)
+	if err != nil || !due {
+		return 0, err
+	}
+	return watchPriority, nil
 }
 
 // Urgent implements Idle: a maintenance pass is due although tasks are

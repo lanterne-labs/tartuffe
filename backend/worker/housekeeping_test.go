@@ -35,10 +35,21 @@ func TestHousekeepingDue(t *testing.T) {
 	due, err = h.feedDue(ctx)
 	require.NoError(t, err)
 	assert.False(t, due, "the feed of the day (yesterday 03:00 to today 03:00) ran")
+	min, err := h.MinPriority(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, min, "no feed due or running: the backfills are claimed")
+	h.feeding.Store(true)
+	min, err = h.MinPriority(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, watchPriority, min, "the feed runs: the backfills wait")
+	h.feeding.Store(false)
 	clock = clock.Add(time.Hour) // 03:30: a new feed day
 	due, err = h.feedDue(ctx)
 	require.NoError(t, err)
 	assert.True(t, due, "the feed hour passed since the last feed")
+	min, err = h.MinPriority(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, watchPriority, min, "the feed is due: the backfills wait for it")
 
 	due, since, err := h.maintenanceDue(ctx)
 	require.NoError(t, err)
@@ -108,7 +119,7 @@ func (f *fakeIdle) FactsAdded(n int) { f.facts += n }
 
 func (f *fakeIdle) Beside(context.Context) error { return nil }
 
-func (f *fakeIdle) MinPriority() int { return 0 }
+func (f *fakeIdle) MinPriority(context.Context) (int, error) { return 0, nil }
 
 func (f *fakeIdle) Urgent(context.Context) (bool, error) { return false, nil }
 
