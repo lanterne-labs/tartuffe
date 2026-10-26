@@ -9,6 +9,7 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/plugins"
+	"digital-mirror/backend/search"
 
 	"github.com/rs/zerolog/log"
 )
@@ -134,6 +135,14 @@ func ingestTargets(ctx context.Context, targets []plugins.Target, collect func(c
 			log.Error().Err(err).Str("person", t.Name).Msg("news: target failed")
 			if errors.Is(err, llm.ErrUnavailable) {
 				stats.Fetched = append(stats.Fetched, t.PersonID)
+				return stats, fmt.Errorf("%s: %w", t.Name, err)
+			}
+			if errors.Is(err, search.ErrQuota) {
+				// Every search provider refused for its quota: no later
+				// target can be searched either, and the target is neither
+				// done nor fetched. The error goes up with its marker, so
+				// the worker lets the task wait for the quota instead of
+				// counting an attempt.
 				return stats, fmt.Errorf("%s: %w", t.Name, err)
 			}
 			stats.Details = append(stats.Details, t.Name+": "+err.Error())
