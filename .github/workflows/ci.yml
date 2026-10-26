@@ -1,9 +1,10 @@
 name: ci
 
+# Pull requests only: the pull_request run tests the merge result, so a
+# second run on the push to main repeated it and doubled the minutes of a
+# private repo (2,000 free a month, used up on 2026-10-26).
 on:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
 
 # Cancel in-progress runs on the same ref when a new push lands —
