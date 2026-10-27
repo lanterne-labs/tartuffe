@@ -20,10 +20,11 @@ import (
 )
 
 // PassportVerifier checks a registration's ZKPassport proof for the event:
-// an adult French national's valid passport, bound to customData. It
-// returns the passport's unique identifier for our domain and scope.
+// an adult French national's passport, not expired at proofDate, bound to
+// customData. It returns the passport's unique identifier for our domain
+// and scope.
 type PassportVerifier interface {
-	VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (uid string, err error)
+	VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string, proofDate time.Time) (uid string, err error)
 }
 
 // Config is what the ingest server runs with.
@@ -406,7 +407,7 @@ func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Ti
 		return pendingEntry{}, ReasonIDUsed
 	}
 	custom := RegistrationBinding(in.cfg.Event.ID, id)
-	uid, err := in.cfg.Passport.VerifyRegistration(ctx, r.Proof, custom)
+	uid, err := in.cfg.Passport.VerifyRegistration(ctx, r.Proof, custom, r.ProofDate)
 	if err != nil || uid != r.UID {
 		if err != nil {
 			log.Debug().Err(err).Msg("vote: registration proof refused")

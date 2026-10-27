@@ -2,7 +2,10 @@
 // (backend/accounts/providers/zkpassport.go) runs it once per verification: the request is one
 // JSON object on stdin, the answer one JSON object on stdout.
 //
-// stdin:  { proofs, result, challenge (the custom data the proof binds), domain, scope, minAge, nationality, devMode, rpcUrl }
+// stdin:  { proofs, result, challenge (the custom data the proof binds), domain, scope, minAge, nationality, devMode, rpcUrl,
+//           documentType, requireExpiry, proofDate }: with requireExpiry the proof must show a document not expired at
+//           proofDate (the base proof does not check the expiry; the query expiry_date >= <date> does, and the date the
+//           browser chose, kept in the result, must be the proof's day)
 // stdout: { verified, uniqueIdentifier, errors }
 //
 // The query is rebuilt here from the server's own settings and the one-time
@@ -42,6 +45,17 @@ try {
 	// The vote (tartuffe-vote/2) takes passports only: a passport and an
 	// identity card give two identifiers.
 	if (req.documentType) builder = builder.eq('document_type', req.documentType);
+	if (req.requireExpiry) {
+		const expected = req.result?.expiry_date?.gte?.expected;
+		if (!expected) throw new Error('the proof does not show the document is not expired (no expiry_date query)');
+		const date = new Date(expected);
+		const ref = req.proofDate ? new Date(req.proofDate) : new Date();
+		const day = 86_400_000;
+		if (!(date.getTime() >= ref.getTime() - 2 * day && date.getTime() <= ref.getTime() + day)) {
+			throw new Error(`the expiry check is against ${date.toISOString().slice(0, 10)}, not the proof's day`);
+		}
+		builder = builder.gte('expiry_date', date);
+	}
 	builder = builder.bind('custom_data', req.challenge);
 	const { query } = builder.done();
 

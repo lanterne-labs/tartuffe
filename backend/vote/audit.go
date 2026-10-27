@@ -260,7 +260,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				}
 			}
 			if opt.Passport != nil {
-				uid, err := opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(opt.EventID, leaf))
+				uid, err := opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(opt.EventID, leaf), r.ProofDate)
 				if err != nil || uid != r.UID {
 					rep.problem("registration %d: passport proof: %v", e.Seq, err)
 				}

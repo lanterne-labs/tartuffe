@@ -70,20 +70,15 @@ func (a apiSource) Checkpoints(ctx context.Context) ([]vote.Checkpoint, error) {
 	return out, json.Unmarshal(raw, &out)
 }
 
-// auditPassport verifies a registration's proof as of its own date: the
-// SDK's freshness check takes the validity it is given.
+// auditPassport verifies a registration's proof as of its own date (the
+// expiry check is against the proof's day, not the audit's).
 type auditPassport struct {
 	z     *providers.ZKPassport
 	scope string
 }
 
-func (a auditPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (string, error) {
-	var r struct {
-		ProofDate time.Time `json:"proof_date"`
-	}
-	_ = json.Unmarshal(proof, &r)
-	extra := map[string]any{"minAge": 18, "nationality": "FRA", "documentType": "passport", "scope": a.scope}
-	return a.z.VerifyBound(ctx, proof, customData, extra)
+func (a auditPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string, proofDate time.Time) (string, error) {
+	return vote.Passport{Z: a.z, Scope: a.scope}.VerifyRegistration(ctx, proof, customData, proofDate)
 }
 
 func runVoteVerify(cmd *cobra.Command, args []string) error {

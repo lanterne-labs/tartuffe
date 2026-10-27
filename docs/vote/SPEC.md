@@ -718,8 +718,10 @@ times of first sighting:
    every ZKPassport proof verifies locally with `proof_date` as the reference
    date (the stock verifier compares with today and would fail weeks later),
    with the certificate registry root valid at that date (Ethereum RPC): age,
-   nationality, passport, not expired, `custom_data = H(T_REG, event, ID)`,
-   domain and scope; `uid` and `ID` unique.
+   nationality, passport, not expired (the base proof does not check the
+   expiry: the request carries `expiry_date >= <the proof's day>`, and the
+   verifier requires that query, against that day), `custom_data =
+   H(T_REG, event, ID)`, domain and scope; `uid` and `ID` unique.
 4. **Tree:** every checkpoint root is the root of the leaves logged so far.
 5. **Ballots:** every `ballot` verifies against its setup, a checkpoint root
    at most `anchor_age` older than its checkpoint, and the `seq` rule; every

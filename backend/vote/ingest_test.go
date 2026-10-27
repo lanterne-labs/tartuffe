@@ -47,7 +47,7 @@ func (m *memMailbox) PostAll(ctx context.Context, msg Outgoing) int {
 
 type fakePassport struct{ uid string }
 
-func (f fakePassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (string, error) {
+func (f fakePassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string, proofDate time.Time) (string, error) {
 	return f.uid, nil
 }
 

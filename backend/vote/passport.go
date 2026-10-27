@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"digital-mirror/backend/accounts/providers"
 )
@@ -17,9 +18,11 @@ type Passport struct {
 	Scope string
 }
 
-// VerifyRegistration implements PassportVerifier.
-func (p Passport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (string, error) {
-	extra := map[string]any{"minAge": 18, "nationality": "FRA", "documentType": "passport"}
+// VerifyRegistration implements PassportVerifier: the passport must not be
+// expired at the proof's date (a query of the proof, checked against that
+// date, not today's: an audit runs later).
+func (p Passport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string, proofDate time.Time) (string, error) {
+	extra := map[string]any{"minAge": 18, "nationality": "FRA", "documentType": "passport", "requireExpiry": true, "proofDate": proofDate.UTC().Format(time.RFC3339)}
 	if p.Scope != "" {
 		extra["scope"] = p.Scope
 	}
@@ -34,7 +37,7 @@ type DevPassport struct{}
 
 // VerifyRegistration implements PassportVerifier: the identifier is the one
 // the bundle's result claims.
-func (DevPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string) (string, error) {
+func (DevPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage, customData string, proofDate time.Time) (string, error) {
 	var b struct {
 		Result struct {
 			UID string `json:"uniqueIdentifier"`

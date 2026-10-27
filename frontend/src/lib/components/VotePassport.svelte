@@ -75,6 +75,9 @@
 			builder = builder.in('nationality', ['FRA' as any]);
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			builder = (builder as any).eq('document_type', 'passport');
+			// A passport still valid today: the base proof does not check
+			// the expiry, a query does (the verifier expects today's date).
+			builder = builder.gte('expiry_date', new Date());
 			builder = builder.bind('custom_data', customData);
 			const req = builder.done();
 			url = req.url;
