@@ -272,8 +272,6 @@
 
 <svelte:head>
 	<title>{event ? `${currentLang === 'en' ? event.title_en : event.title_fr} — tartuffe.me` : 'tartuffe.me'}</title>
-	{#if event}
-	{/if}
 </svelte:head>
 
 {#if $phase === 'error'}
