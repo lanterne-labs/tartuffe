@@ -15,6 +15,7 @@ import (
 	"digital-mirror/backend/objectstore"
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
+	"digital-mirror/backend/webfetch"
 
 	"github.com/rs/zerolog/log"
 	"golang.org/x/text/runes"
@@ -121,10 +122,9 @@ func (p *Provider) SearchAndUpload(ctx context.Context, person storage.PersonSum
 	}
 
 	// Try downloading top candidates
+	// Without a client of its own (tests), every image goes through webfetch:
+	// the site of its host, the record for the Sources page.
 	httpClient := p.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
 
 	limit := maxFallbacks
 	if limit > len(scored) {
@@ -342,31 +342,37 @@ func scoreDomain(source string) float64 {
 
 // downloadImage downloads an image from a URL and validates the response.
 func downloadImage(ctx context.Context, client *http.Client, url string) ([]byte, string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, "", fmt.Errorf("create request: %w", err)
+	var data []byte
+	var contentType string
+	if client == nil {
+		fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		page, err := webfetch.Fetch(fctx, webfetch.Request{URL: url, Source: "photos", Purpose: "photo", MaxBytes: maxDownloadSize + 1})
+		if err != nil {
+			return nil, "", fmt.Errorf("download: %w", err)
+		}
+		data, contentType = page.Body, page.Header.Get("Content-Type")
+	} else {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("create request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, "", fmt.Errorf("download: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		contentType = resp.Header.Get("Content-Type")
+		if data, err = io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize+1)); err != nil {
+			return nil, "", fmt.Errorf("read body: %w", err)
+		}
 	}
-	req.Header.Set("User-Agent", "DigitalMirror/1.0 (photo-fetcher; contact@digital-mirror.app)")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	contentType := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "image/") {
 		return nil, "", fmt.Errorf("not an image: content-type %q", contentType)
-	}
-
-	// Limit read to maxDownloadSize
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("read body: %w", err)
 	}
 
 	if len(data) > maxDownloadSize {

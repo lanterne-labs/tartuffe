@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"golang.org/x/sync/errgroup"
 )
 
 // InsertedFactMeta holds metadata about a successfully inserted fact.
@@ -194,9 +193,10 @@ func (fi *FactInserter) EnableDedupe(groups GroupStorer) {
 // mention rows) is deleted and the batch fails — there is no silent fallback.
 //
 // The facts of one subject are processed in order: two of them at once could
-// both open a stance on one subject, or miss each other as a same claim. The
-// subjects run at once up to llm.Concurrency(), the number of calls the
-// endpoint serves together (1 on the local profile: one fact at a time). A
+// both open a stance on one subject, or miss each other as a same claim; that
+// holds across the batches inserted at once in the process (subjectLocks). The
+// subjects run as many at once as the endpoint serves (llm.ForEach; on the
+// local profile one subject at a time, in the order of their first fact). A
 // scrutin is one ballot per voter, so its ballots run that many at once.
 func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput) (*InsertResult, error) {
 	var order []string
@@ -208,7 +208,9 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 		bySubject[f.SubjectEntity] = append(bySubject[f.SubjectEntity], i)
 	}
 	outcomes := make([]factOutcome, len(facts))
-	insertSubject := func(ctx context.Context, idxs []int) error {
+	insertSubject := func(ctx context.Context, subject string, idxs []int) error {
+		unlock := subjectLocks.Lock(subjectKey(subject))
+		defer unlock()
 		for _, i := range idxs {
 			out, err := fi.insertOne(ctx, i, len(facts), facts[i])
 			if err != nil {
@@ -219,23 +221,9 @@ func (fi *FactInserter) InsertFacts(ctx context.Context, facts []StoreFactInput)
 		return nil
 	}
 
-	var err error
-	if workers := llm.Concurrency(); workers <= 1 || len(order) <= 1 {
-		// One at a time, in the order given.
-		all := make([]int, len(facts))
-		for i := range facts {
-			all[i] = i
-		}
-		err = insertSubject(ctx, all)
-	} else {
-		g, gctx := errgroup.WithContext(ctx)
-		g.SetLimit(workers)
-		for _, subject := range order {
-			idxs := bySubject[subject]
-			g.Go(func() error { return insertSubject(gctx, idxs) })
-		}
-		err = g.Wait()
-	}
+	err := llm.ForEach(ctx, order, func(ctx context.Context, subject string) error {
+		return insertSubject(ctx, subject, bySubject[subject])
+	})
 
 	result := &InsertResult{}
 	for _, out := range outcomes {
@@ -339,12 +327,13 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// a vote is its own record.
 	var groupTarget *SimilarFact
 	groupVerdict := OccurrenceDifferent
+	var judged map[int64]OccurrenceVerdict
 	if len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
-		target, verdict, err := fi.findGroupTarget(ctx, subjectID, input)
+		target, verdict, verdicts, err := fi.findGroupTarget(ctx, subjectID, input)
 		if err != nil {
 			return 0, 0, err
 		}
-		groupTarget, groupVerdict = target, verdict
+		groupTarget, groupVerdict, judged = target, verdict, verdicts
 	}
 
 	// Insert the fact
@@ -353,6 +342,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return 0, 0, fmt.Errorf("failed to insert fact: %w", err)
 	}
 	metrics.IncrementFactsExtracted(input.SourceType, true)
+	fi.recordVerdicts(ctx, factID, judged)
 
 	// Link source to the fact
 	sourceID, err := fi.storer.LinkSourceToFact(
@@ -415,10 +405,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 // with the gate's verdict, or nil. An unavailable LLM is an error: grouping
 // is decided once, at insert time, so inserting the fact ungrouped would make
 // the outage's answer final.
-func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, input StoreFactInput) (*SimilarFact, OccurrenceVerdict, error) {
+func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, input StoreFactInput) (*SimilarFact, OccurrenceVerdict, map[int64]OccurrenceVerdict, error) {
 	rule, err := groupEvidenceRule()
 	if err != nil {
-		return nil, OccurrenceDifferent, err
+		return nil, OccurrenceDifferent, nil, err
 	}
 	similar, err := fi.storer.FindSimilarActiveFacts(ctx, SimilarFactQuery{
 		PersonIDs:   []int64{subjectID},
@@ -434,11 +424,11 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 	if err != nil {
 		log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 			Msg("Dedup check failed, proceeding with insertion")
-		return nil, OccurrenceDifferent, nil
+		return nil, OccurrenceDifferent, nil, nil
 	}
 	if len(similar) == 0 {
 		metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeNoCandidates)
-		return nil, OccurrenceDifferent, nil
+		return nil, OccurrenceDifferent, nil, nil
 	}
 	ids := make([]int64, len(similar))
 	for i, sf := range similar {
@@ -448,16 +438,17 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 	if err != nil {
 		log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).
 			Msg("Loading candidate sources failed, proceeding with insertion")
-		return nil, OccurrenceDifferent, nil
+		return nil, OccurrenceDifferent, nil, nil
 	}
 	incoming := ClaimEvidence{Text: input.NormalizedFactText, Sources: []ClaimSource{{
 		Outlet: OutletOf(input.SourceURL), Quote: input.OriginalQuote, PublishedAt: input.PublishedAt,
 	}}}
+	judged := make(map[int64]OccurrenceVerdict, len(similar))
 	for _, sf := range similar {
 		existing := ClaimEvidence{Text: sf.Text, Sources: sources[sf.ID]}
 		verdict, jErr := fi.askDedupeGate(ctx, existing, incoming)
 		if errors.Is(jErr, llm.ErrUnavailable) {
-			return nil, OccurrenceDifferent, fmt.Errorf("fact-dedupe gate: %w", jErr)
+			return nil, OccurrenceDifferent, judged, fmt.Errorf("fact-dedupe gate: %w", jErr)
 		}
 		if jErr != nil {
 			log.Warn().Err(jErr).Int64("existing_fact_id", sf.ID).
@@ -465,6 +456,7 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeGateError)
 			continue
 		}
+		judged[sf.ID] = verdict
 		if verdict.Groupable() {
 			log.Info().
 				Int64("existing_fact_id", sf.ID).
@@ -474,11 +466,11 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 				Msg("Same-occurrence fact (LLM gate)")
 			metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeFolded)
 			sfCopy := sf
-			return &sfCopy, verdict, nil
+			return &sfCopy, verdict, judged, nil
 		}
 	}
 	metrics.RecordDecision(metrics.StageFactDedupe, metrics.OutcomeDistinct)
-	return nil, OccurrenceDifferent, nil
+	return nil, OccurrenceDifferent, judged, nil
 }
 
 // askDedupeGate asks the judge whether existing and the incoming fact report
@@ -492,6 +484,22 @@ func (fi *FactInserter) askDedupeGate(ctx context.Context, existing, incoming Cl
 	}
 	log.Warn().Err(err).Msg("LLM fact-dedupe check failed, retrying once")
 	return fi.dedupeJudge.IsSameOccurrence(ctx, existing, incoming)
+}
+
+// recordVerdicts stores the gate's verdicts between the new fact and the
+// existing ones, when the group storer keeps them: the fold then does not ask
+// these pairs again. A failure is logged; the fold asks the pair instead.
+func (fi *FactInserter) recordVerdicts(ctx context.Context, factID int64, judged map[int64]OccurrenceVerdict) {
+	rec, ok := fi.groupStorer.(OccurrenceCheckStorer)
+	if !ok || len(judged) == 0 {
+		return
+	}
+	ruleHash := OccurrenceRuleHash()
+	for existing, v := range judged {
+		if err := rec.RecordOccurrenceCheck(ctx, existing, factID, ruleHash, v); err != nil {
+			log.Warn().Err(err).Int64("fact_id", factID).Int64("existing_fact_id", existing).Msg("Recording an occurrence verdict failed")
+		}
+	}
 }
 
 func (fi *FactInserter) dedupeEnabled() bool {

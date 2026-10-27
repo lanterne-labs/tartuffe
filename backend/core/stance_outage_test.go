@@ -518,10 +518,11 @@ func TestProcessNewFact_LabelPassUnavailable(t *testing.T) {
 	}
 }
 
-// TestAnalyzeAcrossBatches_ParallelInBatchOrder: the batches of one analysis
-// run at the same time, and the result lists the contradictions in batch
-// order, whatever the order in which the batches finish.
-func TestAnalyzeAcrossBatches_ParallelInBatchOrder(t *testing.T) {
+// TestAnalyzeAcrossBatches_InBatchOrder: the result lists the contradictions
+// in batch order, whatever the order in which the batches finish. The batches
+// run as many at once as the endpoint serves (llm.ForEach): one at a time on
+// the local endpoint of this test.
+func TestAnalyzeAcrossBatches_InBatchOrder(t *testing.T) {
 	var mu sync.Mutex
 	inFlight, maxInFlight := 0, 0
 	sm, o := newOutageManager(t, newMockStanceStorer(), func(prompt string) any {
@@ -556,10 +557,96 @@ func TestAnalyzeAcrossBatches_ParallelInBatchOrder(t *testing.T) {
 	if fmt.Sprint(got) != fmt.Sprint(want) || agg.PrimaryVerdict != "CONTRADICTION" {
 		t.Errorf("contradictions = %v (%s), want %v in batch order", got, agg.PrimaryVerdict, want)
 	}
-	if maxInFlight < 2 {
-		t.Errorf("at most %d batch at one time, want the batches in parallel", maxInFlight)
+	if maxInFlight != 1 {
+		t.Errorf("%d batches at one time, want 1 on the local endpoint", maxInFlight)
 	}
 	if n := o.count(analyzePrompt); n != 2*len(want) {
 		t.Errorf("analyze calls = %d, want 2 agreeing votes per batch", n)
+	}
+}
+
+// TestVerifyEntries_NothingUnverified: a contradiction with a key fact the
+// analysis was not shown is dropped (prod #1205 got the reason of another
+// pair), and one whose verification fails goes to the detector's queue
+// instead of being recorded.
+func TestVerifyEntries_NothingUnverified(t *testing.T) {
+	storer := newMockStanceStorer()
+	sm, _ := newOutageManager(t, storer, answers(map[string]any{verifyPrompt: "no verdict here"}))
+	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans."}
+	entries := []StanceContradictionEntry{
+		{KeyFactID: 10, Reason: "62 vs 64"},
+		{KeyFactID: 99, Reason: "a fact the analysis was not shown"},
+	}
+	got, err := sm.verifyEntries(context.Background(), 7, 5, "Il vote la retraite à 64 ans.", keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("survivors: %+v, want none", got)
+	}
+	if len(storer.queued) != 1 || storer.queued[0] != [2]int64{5, 10} {
+		t.Errorf("queued for the detector: %v, want the unverified pair 5-10", storer.queued)
+	}
+}
+
+// TestVerifyEntries_OnePerStance: a fact contradicts a stance once. The
+// entries are verified in their order (clearest first) and the first
+// survivor is the contradiction; the entries after it are not judged, so
+// their verifier calls are spared. A refuted entry in front gives way to the
+// next.
+func TestVerifyEntries_OnePerStance(t *testing.T) {
+	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans.", 11: "Il promet de ne jamais toucher à l'âge légal.", 12: "Il refuse toute réforme des retraites."}
+	entries := []StanceContradictionEntry{{KeyFactID: 10, Reason: "62 vs 64"}, {KeyFactID: 11, Reason: "promesse rompue"}, {KeyFactID: 12, Reason: "réforme refusée"}}
+	newFact := "Il vote la retraite à 64 ans."
+
+	storer := newMockStanceStorer()
+	sm, o := newOutageManager(t, storer, answers(nil))
+	got, err := sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].KeyFactID != 10 {
+		t.Errorf("survivors: %+v, want the first entry alone", got)
+	}
+	if n := o.count(verifyPrompt); n != 1 {
+		t.Errorf("verifier calls = %d, want 1: the entries after the survivor are not judged", n)
+	}
+
+	// The first entry is refuted: the second is the contradiction.
+	storer = newMockStanceStorer()
+	sm, o = newOutageManager(t, storer, func(prompt string) any {
+		if strings.Contains(prompt, verifyPrompt) && strings.Contains(prompt, keyTexts[10]) {
+			return "REASON: same position.\nVERDICT: NO"
+		}
+		return answers(nil)(prompt)
+	})
+	got, err = sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].KeyFactID != 11 {
+		t.Errorf("survivors: %+v, want the second entry alone", got)
+	}
+	if n := o.count(verifyPrompt); n != 2 {
+		t.Errorf("verifier calls = %d, want 2", n)
+	}
+}
+
+// TestStanceMergeSweep_StopsAtCallBudget: once MaxLLMCalls calls were made,
+// the sweep starts no new person; the person left is not memoized.
+func TestStanceMergeSweep_StopsAtCallBudget(t *testing.T) {
+	m := pensionStorer()
+	m.stances[2] = StanceDocument{ID: 2, PersonID: 1, ClusterLabel: "âge de la retraite", ClusterEmbedding: []float32{1, 0}, FactCount: 1}
+	m.facts[2] = []StanceFactInfo{{ID: 20, NormalizedFactText: "veut la retraite à 64 ans"}}
+	storer := &sweepStorer{reassignStorer: &reassignStorer{mockStanceStorer: m}}
+	sm, _ := newOutageManager(t, storer, answers(nil))
+	opts := DefaultStanceMergeOptions
+	opts.MaxLLMCalls = 1
+	stats, err := RunStanceMergeSweep(context.Background(), storer, sm, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.PersonsProcessed != 1 || stats.LLMCalls < 1 || len(storer.memos) != 1 || storer.memos[0] != 1 {
+		t.Errorf("stats=%+v memos=%v; want person 1 judged and memoized, person 2 left", stats, storer.memos)
 	}
 }

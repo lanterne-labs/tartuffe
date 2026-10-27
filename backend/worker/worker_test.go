@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/llm"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/stretchr/testify/assert"
@@ -65,11 +66,15 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 		{PersonID: person, Plugin: "ok", Since: day, Until: day.AddDate(0, 0, 3), Priority: 3},
 		{PersonID: person, Plugin: "quota", Since: day, Until: day.AddDate(0, 0, 3), Priority: 2},
 		{PersonID: person, Plugin: "outage", Since: day, Until: day.AddDate(0, 0, 3), Priority: 1},
+		{PersonID: person, Plugin: "searchquota", Since: day, Until: day.AddDate(0, 0, 3), Priority: 0},
 	})
 	require.NoError(t, err)
 
 	outages := 0
-	runner := &fakeRunner{want: 4, done: make(chan struct{}), script: map[string]func(storage.CollectionTask) (Outcome, error){
+	runner := &fakeRunner{want: 5, done: make(chan struct{}), script: map[string]func(storage.CollectionTask) (Outcome, error){
+		"searchquota": func(storage.CollectionTask) (Outcome, error) {
+			return Outcome{}, fmt.Errorf("window 1/30: %w", search.ErrQuota)
+		},
 		"ok":    func(storage.CollectionTask) (Outcome, error) { return Outcome{Items: 2, Facts: 1, Covered: true}, nil },
 		"quota": func(storage.CollectionTask) (Outcome, error) { return Outcome{Details: []string{"search quota"}}, nil },
 		"outage": func(storage.CollectionTask) (Outcome, error) {
@@ -87,8 +92,15 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 	select {
 	case <-runner.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the worker did not run the 4 attempts in time")
+		t.Fatal("the worker did not run the 5 attempts in time")
 	}
+	// The 5th attempt started; its release is recorded before the stop, or
+	// the stop releases it as stopped.
+	require.Eventually(t, func() bool {
+		var released bool
+		err := storer.Pool().QueryRow(ctx, "SELECT status = 'pending' FROM collection_tasks WHERE plugin = 'searchquota'").Scan(&released)
+		return err == nil && released
+	}, 5*time.Second, 10*time.Millisecond, "the search quota task is released")
 	stop()
 	require.ErrorIs(t, <-errc, context.Canceled)
 
@@ -98,7 +110,7 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 	for _, task := range tasks {
 		byPlugin[task.Plugin] = task
 	}
-	assert.Equal(t, []int64{byPlugin["ok"].ID, byPlugin["quota"].ID, byPlugin["outage"].ID, byPlugin["outage"].ID}, runner.ran,
+	assert.Equal(t, []int64{byPlugin["ok"].ID, byPlugin["quota"].ID, byPlugin["outage"].ID, byPlugin["outage"].ID, byPlugin["searchquota"].ID}, runner.ran,
 		"by priority; the outage task runs again after the reset")
 	assert.Equal(t, storage.TaskDone, byPlugin["ok"].Status)
 	assert.Equal(t, 1, byPlugin["ok"].Facts)
@@ -106,6 +118,10 @@ func TestWorkerRunsTasksAndRecordsOutcomes(t *testing.T) {
 	assert.Contains(t, byPlugin["quota"].LastError, "search quota")
 	assert.Equal(t, storage.TaskDone, byPlugin["outage"].Status)
 	assert.Equal(t, 1, byPlugin["outage"].Attempts, "the outage is not an attempt of the task")
+	sq := byPlugin["searchquota"]
+	assert.Equal(t, storage.TaskPending, sq.Status, "a search quota is a wait, not a failure")
+	assert.Equal(t, 0, sq.Attempts, "the search quota is not an attempt of the task")
+	assert.True(t, sq.NotBefore.After(time.Now().Add(time.Hour)), "the task waits for the quota")
 }
 
 // TestWorkerCancelStopsTheAttempt: a task cancelled while it runs is stopped

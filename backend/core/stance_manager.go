@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"golang.org/x/sync/errgroup"
 )
 
 // StanceStorer defines the storage interface for stance operations.
@@ -53,6 +52,8 @@ type StanceStorer interface {
 	// of the person in its own transaction and returns its id and whether the
 	// bundler still has to resolve its stance.
 	RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (contradictionID int64, needsBundler bool, err error)
+	// EnqueueFactPair asks the contradiction detector to judge a pair.
+	EnqueueFactPair(ctx context.Context, personID, factA, factB int64, source string) error
 }
 
 // StanceDocument is the core type for stance documents.
@@ -475,16 +476,10 @@ func analyzeVoteKey(r *stanceLLMResponse) string {
 	return r.PrimaryVerdict + "|" + strconv.FormatInt(r.DuplicateOf, 10) + "|" + strings.Join(ids, ",")
 }
 
-// analyzeBatchParallelism is the number of batches of one analysis that run at
-// one time. The Claude Team endpoint runs 4 CLI processes at one time
-// (llm.defaultClaudeTeamProcs); the local server serves one request at a time
-// and queues the others, well within the 300 s timeout of the client.
-const analyzeBatchParallelism = 4
-
 // analyzeAcrossBatches splits keyFacts into batches (chunkKeyFactsByBudget)
 // and calls callLLM once per batch with the same summary + new fact. The
-// batches run in parallel (analyzeBatchParallelism); the first failed batch
-// stops the others and its error is returned. The answers are aggregated in
+// batches run as many at once as the endpoint serves (llm.ForEach); after the
+// first failed batch no other starts, and its error is returned. The answers are aggregated in
 // batch order, so the result does not depend on the order of completion.
 // Across all batches the contradictions list is unioned (deduped by
 // KeyFactID). The primary verdict is CONTRADICTION if any batch returned
@@ -500,26 +495,28 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 	}
 
 	resps := make([]*stanceLLMResponse, len(batches))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(analyzeBatchParallelism)
-	for batchIdx, batch := range batches {
-		g.Go(func() error {
-			// The analyze verdict is a sample, and this judge CREATES contradiction
-			// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
-			// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
-			// single-sample). Early exit keeps the usual cost at 2 calls.
-			resp, err := llm.MajorityVote(AnalyzeVotes,
-				func() (*stanceLLMResponse, error) { return sm.callLLM(gctx, stanceSummary, batch, newFactText) },
-				analyzeVoteKey,
-			)
-			if err != nil {
-				return fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
-			}
-			resps[batchIdx] = resp
-			return nil
-		})
+	idxs := make([]int, len(batches))
+	for i := range idxs {
+		idxs[i] = i
 	}
-	if err := g.Wait(); err != nil {
+	err := llm.ForEach(ctx, idxs, func(ctx context.Context, batchIdx int) error {
+		// The analyze verdict is a sample, and this judge CREATES contradiction
+		// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
+		// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
+		// single-sample). Early exit keeps the usual cost at 2 calls.
+		resp, err := llm.MajorityVote(AnalyzeVotes,
+			func() (*stanceLLMResponse, error) {
+				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText)
+			},
+			analyzeVoteKey,
+		)
+		if err != nil {
+			return fmt.Errorf("analyze batch %d/%d: %w", batchIdx+1, len(batches), err)
+		}
+		resps[batchIdx] = resp
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
@@ -696,7 +693,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		// Adversarial verification pass: survivors only — refuted pairs are
 		// never recorded, so they never dent the honesty score. If every pair
 		// is refuted the fact is just new info for the stance.
-		verified, err := sm.verifyEntries(ctx, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		verified, err := sm.verifyEntries(ctx, personID, factID, newFactText, keyTextByID(keyFacts), agg.Contradictions)
 		if err != nil {
 			return nil, err
 		}
@@ -804,7 +801,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	}
 	// Adversarial verification pass (same gate as the live ingest path in
 	// handleVerdict).
-	return sm.verifyEntries(ctx, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
+	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
 }
 
 // VerifyContradiction runs the adversarial refutation pass over a single
@@ -822,25 +819,43 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 	return llm.VerifyContradiction(ctx, sm.client, promptrules.Statement{Text: factA}, promptrules.Statement{Text: factB}, claimedReason)
 }
 
-// verifyEntries runs the adversarial refutation pass over each flagged
-// contradiction entry and returns only the survivors. newFactText is the text
-// of the fact being processed; keyTexts maps each candidate key-fact ID to
-// its text. An entry whose key-fact text is missing is kept unchecked (we
-// cannot verify what we cannot read). On a verifier error other than
-// llm.ErrUnavailable the entry is kept (fail-open, as on the detector path)
-// and logged; on an explicit refutation (keep=false) it is dropped and logged
-// at INFO. When the LLM is unavailable nothing is decided: the error (wrapping
+// verifyEntries runs the adversarial refutation pass over the flagged
+// contradiction entries, in their order, and returns the first survivor
+// alone: a fact contradicts a stance once. The entries list every key fact
+// of the stance the new fact opposes (the analysis is asked to be complete,
+// clearest opposition first), but they are one inconsistency, the one between
+// the fact and the stance: on 2026-10-27 one fact of Retailleau ("ne pense pas
+// du tout à 2027") made 40 contradictions, one per later fact on his
+// candidacy, and the repetition penalty cost a sixth of his score. The entries
+// after the survivor are not judged, which spares their verifier calls.
+//
+// factID and newFactText are the fact being processed; keyTexts maps each key
+// fact the analysis was shown to its text. Nothing is recorded unverified:
+//   - an entry whose key fact the analysis was not shown is dropped: the
+//     model gave an ID it cannot have read (prod #1205 paired a fact with the
+//     reason of another);
+//   - on a verifier error other than llm.ErrUnavailable the entry is not
+//     kept but queued for the contradiction detector (fact_pair_queue), which
+//     judges and verifies the pair on its own;
+//   - an explicit refutation (keep=false) drops it.
+//
+// When the LLM is unavailable nothing is decided: the error (wrapping
 // llm.ErrUnavailable) is returned and the caller must record nothing.
-func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
+func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
-	survivors := make([]StanceContradictionEntry, 0, len(entries))
-	for _, c := range entries {
+	survivors := make([]StanceContradictionEntry, 0, 1)
+	for i, c := range entries {
+		if len(survivors) > 0 {
+			log.Info().Int64("fact_id", factID).Int64("key_fact_id", survivors[0].KeyFactID).Int("not_judged", len(entries)-i).
+				Msg("One contradiction per fact and stance: the other flagged key facts are not judged")
+			break
+		}
 		keyText, ok := keyTexts[c.KeyFactID]
 		if !ok || strings.TrimSpace(keyText) == "" {
-			// No text to verify against — keep it; the recorder still guards on KeyFactID.
-			survivors = append(survivors, c)
+			log.Warn().Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Str("flagged_reason", c.Reason).
+				Msg("Contradiction with a key fact the analysis was not shown; dropping")
 			continue
 		}
 		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
@@ -848,10 +863,11 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, newFactText string, 
 			return nil, fmt.Errorf("verifying contradiction with key fact %d: %w", c.KeyFactID, err)
 		}
 		if err != nil {
-			log.Warn().Err(err).
-				Int64("key_fact_id", c.KeyFactID).
-				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
-			survivors = append(survivors, c)
+			log.Warn().Err(err).Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).
+				Msg("Contradiction verification failed; the pair goes to the detector")
+			if qErr := sm.storer.EnqueueFactPair(ctx, personID, factID, c.KeyFactID, "stance:unverified"); qErr != nil {
+				log.Warn().Err(qErr).Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Msg("Queueing the unverified pair failed")
+			}
 			continue
 		}
 		if !keep {
@@ -1263,7 +1279,7 @@ You MUST evaluate the NEW FACT against EVERY key fact in the stance, INDEPENDENT
 - Similarity between key facts (if three key facts each separately contradict the new fact, return three entries)
 - Perceived "strength" of one contradiction over another (a weaker direct contradiction is still a contradiction; list it)
 - Same underlying axis or rule (multiple key facts on the same axis can each independently contradict the new fact)
-The downstream system builds a contradiction graph from these entries — missing edges silently corrupt the honesty score and hide patterns from users. Err on the side of listing more direct edges, never fewer.
+The downstream system records the first entry that survives verification as the contradiction between the new fact and this stance, so ORDER the entries from the clearest opposition to the least clear; a missing entry can leave a weaker one in front. Err on the side of listing more direct edges, never fewer.
 
 **COMPLETENESS DOES NOT OVERRIDE THE NEGATIVE-PATTERN CARVE-OUTS.** Completeness only fires on pairs that pass the contradiction rules below. If a pair falls under a NEGATIVE PATTERN (ADMINISTRATIVE ERROR vs CRIMINAL INTENT — PAIR 16/17 in the examples; COHERENT DEFENSE — PAIR 18; CONSISTENT IGNORANCE; SAME POSITION IN DIFFERENT WORDS; ANNOUNCEMENT FOLLOWED BY ACTION; etc.), DO NOT emit an entry for it — even if every other heuristic says "but they sound opposite". The carve-outs win.
 
@@ -1279,6 +1295,8 @@ Counter-example (completeness with a carve-out): if the NEW FACT is "denied any 
 
 **DIRECT-EDGE REQUIREMENT (the precision brake — apply to each candidate entry):**
 Every contradiction entry MUST be a DIRECT opposition between the NEW FACT and the named key fact (the person's own positions, claims, commitments or acts conflict, a position reversal, or an authoritative finding against the person's denial) — the pair must be one you would flag as contradictory if you saw only those two statements side by side. Surrounding key facts may be used to verify that a stated CONDITION has been met or a TRIGGER has fired (PAIR 5b / Commitment vs Carve-Out style — the other facts establish that the condition is real, but the contradiction edge is still between the two named statements alone). They may NOT be used to bridge two facts that are themselves aligned. If the new fact and a key fact both move in the SAME DIRECTION on the same subject (both commit to outcome X, both deny outcome Y, both defend the same value), they CANNOT contradict each other — even if a third key fact in the stance moves in the opposite direction. In that case the third key fact contradicts each of them separately; the two aligned facts do not contradict each other.
+
+**ONE REASON PER KEY FACT:** each entry's reasoning and reason are about the NEW FACT and THAT key fact only: they quote or name only what those two statements say. Never give two entries the same reason, never cite in an entry a word or an event of another key fact; if the reason you would write fits another key fact better, the entry belongs to that key fact's ID.
 
 **Mandatory mental check before emitting each contradiction entry:** ask "If I only had the NEW FACT and this one key fact in front of me, with no other context, would I still flag them as contradictory?"
 - If YES → emit the entry (regardless of how many other entries you've already emitted; completeness wins).
@@ -1301,7 +1319,7 @@ NEW FACT:
 %s
 
 **RESPONSE FORMAT:**
-Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
+Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry. Put the clearest opposition first in the array.
 
 **LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in FRENCH (even when the facts are in English). Do NOT provide any translation — English and other languages are produced separately by the translation phase. `+"`reasoning`"+` fields (both top-level and per-contradiction) may follow the language of the facts.
 

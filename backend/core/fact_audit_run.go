@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
+
+	"digital-mirror/backend/llm"
 
 	"github.com/rs/zerolog/log"
 )
@@ -49,68 +51,51 @@ func FactAuditSubjectLabel(personNames []string) string {
 	return fmt.Sprintf("%s (+%d more)", personNames[0], len(personNames)-1)
 }
 
-// RunFactAudit audits every job with `parallelism` concurrent workers (1 =
-// sequential), hands each outcome to onResult in completion order (from the
-// caller's goroutine, so onResult needs no locking), and returns the tally.
-// An auditor error is logged, counted, and still delivered to onResult; an
-// onResult error aborts the run.
-func RunFactAudit(ctx context.Context, auditor FactAuditor, jobs []FactAuditJob, parallelism int, onResult func(FactAuditOutcome) error) (FactAuditTally, error) {
-	if parallelism < 1 {
-		parallelism = 1
-	}
-	var tally FactAuditTally
-
-	feed := make(chan FactAuditJob)
-	results := make(chan FactAuditOutcome, parallelism*2)
-
-	var wg sync.WaitGroup
-	for w := 0; w < parallelism; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range feed {
-				result := auditor.Audit(ctx, j.Input)
-				if result.Err != nil {
-					log.Error().Err(result.Err).Int64("fact_id", j.FactID).Msg("Fact audit error")
-				}
-				results <- FactAuditOutcome{FactID: j.FactID, Result: result}
-			}
-		}()
-	}
-
-	go func() {
-		for _, j := range jobs {
-			feed <- j
+// RunFactAudit audits every job, as many at once as the endpoint serves
+// (llm.ForEach), hands each outcome to onResult in completion order (one at a
+// time, so onResult needs no locking), and returns the tally. An auditor
+// error is logged, counted, and still delivered to onResult; an onResult
+// error aborts the run. An LLM that cannot serve (llm.ErrUnavailable: every
+// seat at its limit, the API cap) stops the run with that error and the tally
+// of the facts judged: the facts left were not audited, and a caller that
+// took the run as done would never audit them (prod 2026-10-23: September
+// 21-30 "audited" in 2 s, every call refused).
+func RunFactAudit(ctx context.Context, auditor FactAuditor, jobs []FactAuditJob, onResult func(FactAuditOutcome) error) (FactAuditTally, error) {
+	var (
+		mu    sync.Mutex
+		tally FactAuditTally
+		done  int
+	)
+	err := llm.ForEach(ctx, jobs, func(ctx context.Context, j FactAuditJob) error {
+		result := auditor.Audit(ctx, j.Input)
+		if errors.Is(result.Err, llm.ErrUnavailable) {
+			return result.Err
 		}
-		close(feed)
-	}()
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	var done atomic.Int64
-	for r := range results {
-		if r.Result.Err != nil {
+		if result.Err != nil {
+			log.Error().Err(result.Err).Int64("fact_id", j.FactID).Msg("Fact audit error")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if result.Err != nil {
 			tally.Errors++
 		} else {
-			switch r.Result.Verdict {
+			switch result.Verdict {
 			case FactVerdictKeep:
 				tally.Keep++
 			case FactVerdictDelete:
 				tally.Delete++
-				tally.DeleteIDs = append(tally.DeleteIDs, r.FactID)
+				tally.DeleteIDs = append(tally.DeleteIDs, j.FactID)
 			case FactVerdictUnsure:
 				tally.Unsure++
 			}
 		}
-		if err := onResult(r); err != nil {
-			return tally, err
+		if err := onResult(FactAuditOutcome{FactID: j.FactID, Result: result}); err != nil {
+			return err
 		}
-		n := done.Add(1)
-		if n%50 == 0 {
+		done++
+		if done%50 == 0 {
 			log.Info().
-				Int64("audited", n).
+				Int("audited", done).
 				Int("total", len(jobs)).
 				Int("keep", tally.Keep).
 				Int("delete", tally.Delete).
@@ -118,6 +103,7 @@ func RunFactAudit(ctx context.Context, auditor FactAuditor, jobs []FactAuditJob,
 				Int("errors", tally.Errors).
 				Msg("Audit progress")
 		}
-	}
-	return tally, nil
+		return nil
+	})
+	return tally, err
 }

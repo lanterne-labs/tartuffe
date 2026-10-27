@@ -13,6 +13,7 @@ type mockStanceStorer struct {
 	facts          map[int64][]StanceFactInfo // keyed by stance ID
 	nextID         int64
 	contradictions []mockContradiction
+	queued         [][2]int64
 	unsummarized   []StanceFactInfo
 	tensions       map[int64][]StanceTension
 	consumed       [][]int64 // fact ids passed to UpdateStanceMetadata, per call
@@ -147,6 +148,11 @@ func (m *mockStanceStorer) GetStanceMetadata(ctx context.Context, stanceID int64
 		return "", "", nil
 	}
 	return doc.ClusterLabel, doc.Summary, nil
+}
+
+func (m *mockStanceStorer) EnqueueFactPair(ctx context.Context, personID, factA, factB int64, source string) error {
+	m.queued = append(m.queued, [2]int64{factA, factB})
+	return nil
 }
 
 func (m *mockStanceStorer) RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (int64, bool, error) {

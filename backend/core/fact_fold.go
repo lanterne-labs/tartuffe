@@ -2,9 +2,12 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/util"
+	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -29,6 +32,7 @@ type ContradictionFactPair struct {
 // *storage.PostgresStorer implements it.
 type FactFoldStorer interface {
 	GroupStorer
+	OccurrenceCheckStorer
 	// GetFoldFactsForPerson returns the person's active (non-duplicate)
 	// facts with their embeddings.
 	GetFoldFactsForPerson(ctx context.Context, personID int64) ([]FactForFold, error)
@@ -72,22 +76,18 @@ type FoldOptions struct {
 	Floor      float64 // cosine-similarity floor for same-claim candidates
 	TextFloor  float64 // trigram-similarity floor for same-claim candidates (0 = embedding only)
 	MaxCluster int     // clusters larger than this are skipped (defense against runaway chaining)
-	// JudgedSince: a fact inserted at or after it went through the
-	// insert-time gate under the current grouping rule, so a pair of two
-	// such facts is not asked again (the gate's answer at insertion stands;
-	// asking again only replays its variance). Zero: every pair is asked.
-	JudgedSince time.Time
+	// AskAll asks the gate about every candidate pair, also those a stored
+	// verdict covers (occurrence_checks). By default a stored verdict stands:
+	// asking again only replays the gate's variance.
+	AskAll bool
+	// Asked, when set, counts the gate calls (a sweep's budget).
+	Asked *atomic.Int64
 }
-
-// groupingRuleSince is when the insert-time gate took the current grouping
-// rule (one occurrence, read from quotes, dates and outlets) on the Claude
-// endpoints.
-var groupingRuleSince = time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 
 // DefaultFoldOptions are the thresholds `dm facts fold` uses. TextFloor is
 // the inserter's dedupeTextSimilarityFloor: the two candidate sources of the
 // insert-time gate, so the backfill reaches the same pairs.
-var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12, JudgedSince: groupingRuleSince}
+var DefaultFoldOptions = FoldOptions{Floor: 0.70, TextFloor: dedupeTextSimilarityFloor, MaxCluster: 12}
 
 // FoldCluster is a set of facts that report one occurrence.
 type FoldCluster struct {
@@ -160,14 +160,8 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	// pairs (caught by the 2026-07-29 prod audit).
 	floorDist := 1.0 - opts.Floor
 	var candidates, contradictedCandidates [][2]int
-	judgedAtInsert := func(f FactForFold) bool {
-		return !opts.JudgedSince.IsZero() && !f.CreatedAt.Before(opts.JudgedSince)
-	}
 	for i := 0; i < len(facts); i++ {
 		for j := i + 1; j < len(facts); j++ {
-			if judgedAtInsert(facts[i]) && judgedAtInsert(facts[j]) {
-				continue
-			}
 			if !textPairs[key(facts[i].ID, facts[j].ID)] {
 				if len(facts[i].Embedding) == 0 || len(facts[j].Embedding) == 0 {
 					continue
@@ -203,10 +197,37 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 	if err != nil {
 		return nil, fmt.Errorf("load claim sources: %w", err)
 	}
+	// The pairs a stored verdict covers are not asked again: the insertion
+	// and the earlier folds asked them under the same gate prompt.
+	ruleHash := OccurrenceRuleHash()
+	stored := map[pairKey]OccurrenceVerdict{}
+	if !opts.AskAll {
+		var withEvidence [][2]int64
+		for _, pr := range evidenceRows {
+			withEvidence = append(withEvidence, key(pr[0], pr[1]))
+		}
+		if stored, err = storer.LoadOccurrenceChecks(ctx, withEvidence, ruleHash); err != nil {
+			return nil, fmt.Errorf("load occurrence checks: %w", err)
+		}
+	}
 	ask := func(i, j int) (OccurrenceVerdict, error) {
-		return judge.IsSameOccurrence(ctx,
+		k := key(facts[i].ID, facts[j].ID)
+		if v, ok := stored[k]; ok {
+			return v, nil
+		}
+		if opts.Asked != nil {
+			opts.Asked.Add(1)
+		}
+		v, err := judge.IsSameOccurrence(ctx,
 			ClaimEvidence{Text: facts[i].Text, Sources: sources[facts[i].ID]},
 			ClaimEvidence{Text: facts[j].Text, Sources: sources[facts[j].ID]})
+		if err != nil {
+			return v, err
+		}
+		if rErr := storer.RecordOccurrenceCheck(ctx, k[0], k[1], ruleHash, v); rErr != nil {
+			log.Warn().Err(rErr).Int64("fact_a", k[0]).Int64("fact_b", k[1]).Msg("Recording an occurrence verdict failed")
+		}
+		return v, nil
 	}
 	for _, c := range candidates {
 		i, j := c[0], c[1]
@@ -218,6 +239,11 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 		// puts same-topic-but-different claims above 0.80 too, so no
 		// similarity level is trusted on its own).
 		verdict, jErr := ask(i, j)
+		if errors.Is(jErr, llm.ErrUnavailable) {
+			// No pair can be judged until the LLM serves again: a fold that
+			// went on would read every pair as distinct.
+			return nil, fmt.Errorf("fold %s: occurrence gate: %w", p.Name, jErr)
+		}
 		if jErr != nil {
 			log.Warn().Err(jErr).Int64("fact_a", facts[i].ID).Int64("fact_b", facts[j].ID).
 				Msg("Occurrence gate failed; treating pair as distinct")
@@ -258,41 +284,25 @@ func FoldClustersForPerson(ctx context.Context, storer FactFoldStorer, judge Sam
 			continue
 		}
 		sort.Slice(g, func(a, b int) bool { return g[a].ID < g[b].ID })
-		// COMPLETE-linkage refinement: union-find is single-linkage and can chain
-		// two opposing positions through a vague bridge fact (the stance-merge
-		// lesson). Keep only members the gate confirmed against EVERY
-		// already-kept member, and never across a contradicted pair.
-		var clique []FactForFold
-		for _, f := range g {
-			ok := true
-			for _, m := range clique {
-				k := key(m.ID, f.ID)
-				if !confirmed[k].Groupable() || contradicted[k] != 0 {
-					ok = false
-					break
+		for _, clique := range cliques(g, func(x, y FactForFold) bool {
+			k := key(x.ID, y.ID)
+			return confirmed[k].Groupable() && contradicted[k] == 0
+		}) {
+			if len(clique) > opts.MaxCluster {
+				log.Warn().Str("person", p.Name).Int("size", len(clique)).
+					Msg("Skipping oversized fold cluster (raise --max-cluster to include)")
+				continue
+			}
+			cluster := FoldCluster{Facts: clique}
+			for a := range clique {
+				for b := a + 1; b < len(clique); b++ {
+					if confirmed[key(clique[a].ID, clique[b].ID)] == OccurrenceContained {
+						cluster.Contained = true
+					}
 				}
 			}
-			if ok {
-				clique = append(clique, f)
-			}
+			clusters = append(clusters, cluster)
 		}
-		if len(clique) < 2 {
-			continue
-		}
-		if len(clique) > opts.MaxCluster {
-			log.Warn().Str("person", p.Name).Int("size", len(clique)).
-				Msg("Skipping oversized fold cluster (raise --max-cluster to include)")
-			continue
-		}
-		cluster := FoldCluster{Facts: clique}
-		for a := range clique {
-			for b := a + 1; b < len(clique); b++ {
-				if confirmed[key(clique[a].ID, clique[b].ID)] == OccurrenceContained {
-					cluster.Contained = true
-				}
-			}
-		}
-		clusters = append(clusters, cluster)
 	}
 	sort.Slice(clusters, func(a, b int) bool { return clusters[a].Facts[0].ID < clusters[b].Facts[0].ID })
 	return clusters, nil
@@ -335,6 +345,41 @@ func ApplyFoldCluster(ctx context.Context, storer FactFoldStorer, p PersonRecord
 	log.Info().Str("person", p.Name).Int64("parent_fact_id", parent).Int("members", len(cluster)-1).
 		Msg("Grouped one-occurrence cluster")
 	return parent, nil
+}
+
+// cliques splits a single-linkage group (in order) into COMPLETE-linkage
+// clusters: union-find can chain two opposing positions through a vague bridge
+// fact (the stance-merge lesson), so a cluster keeps only members joinable
+// with EVERY member already kept. The members left out form their own
+// clusters the same way, instead of being dropped: a widely reported event
+// (one conviction in a dozen articles) chains into one large group whose
+// first clique held only a few of its reports. Clusters of one are not
+// returned.
+func cliques(g []FactForFold, joinable func(x, y FactForFold) bool) [][]FactForFold {
+	var out [][]FactForFold
+	rest := g
+	for len(rest) >= 2 {
+		var clique, left []FactForFold
+		for _, f := range rest {
+			ok := true
+			for _, m := range clique {
+				if !joinable(m, f) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				clique = append(clique, f)
+			} else {
+				left = append(left, f)
+			}
+		}
+		if len(clique) >= 2 {
+			out = append(out, clique)
+		}
+		rest = left
+	}
+	return out
 }
 
 func foldFactIDs(facts []FactForFold) []int64 {

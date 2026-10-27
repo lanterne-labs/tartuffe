@@ -961,14 +961,32 @@ type FactAuditPerson struct {
 	Name string
 }
 
-// ListFactsForAudit returns facts for the auditor, optionally filtered to a
-// single person and/or to a specific fact id. Order is newest-first by
-// default; pass random=true for a uniform sample. limit=0 means no cap.
-func (s *PostgresStorer) ListFactsForAudit(ctx context.Context, personID *int64, factID *int64, random bool, limit int) ([]FactAuditRow, error) {
+// FactAuditScope narrows ListFactsForAudit: a person, one fact, a window of
+// creation dates (zero bounds are open).
+type FactAuditScope struct {
+	PersonID      *int64
+	FactID        *int64
+	CreatedFrom   time.Time
+	CreatedBefore time.Time
+}
+
+// ListFactsForAudit returns facts for the auditor in scope. Order is
+// newest-first by default; pass random=true for a uniform sample. limit=0
+// means no cap.
+func (s *PostgresStorer) ListFactsForAudit(ctx context.Context, scope FactAuditScope, random bool, limit int) ([]FactAuditRow, error) {
 	var (
 		conds []string
 		args  []any
 	)
+	personID, factID := scope.PersonID, scope.FactID
+	if !scope.CreatedFrom.IsZero() {
+		args = append(args, scope.CreatedFrom)
+		conds = append(conds, fmt.Sprintf("f.created_at >= $%d", len(args)))
+	}
+	if !scope.CreatedBefore.IsZero() {
+		args = append(args, scope.CreatedBefore)
+		conds = append(conds, fmt.Sprintf("f.created_at < $%d", len(args)))
+	}
 	if personID != nil {
 		args = append(args, *personID)
 		conds = append(conds, fmt.Sprintf(`EXISTS (

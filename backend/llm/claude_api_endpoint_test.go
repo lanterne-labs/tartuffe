@@ -161,6 +161,33 @@ func TestClaudeAPIEndpoint_NeedsTheKey(t *testing.T) {
 	}
 }
 
+// TestClaudeAPIEndpoint_DayCapFromEnv: the cap of the day is
+// CLAUDE_API_DAY_CAP_USD, claudeAPIRunCapUSD when not set; a value that is
+// not a number of USD refuses the endpoint.
+func TestClaudeAPIEndpoint_DayCapFromEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	for _, c := range []struct {
+		env  string
+		want float64
+		bad  bool
+	}{{"", claudeAPIRunCapUSD, false}, {"50", 50, false}, {" 12.5 ", 12.5, false}, {"0", 0, false}, {"-1", 0, true}, {"lots", 0, true}} {
+		t.Setenv("CLAUDE_API_DAY_CAP_USD", c.env)
+		e, err := NewClaudeAPIEndpointFromEnv()
+		if c.bad {
+			if err == nil {
+				t.Errorf("CLAUDE_API_DAY_CAP_USD=%q: want an error", c.env)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("CLAUDE_API_DAY_CAP_USD=%q: %v", c.env, err)
+		}
+		if e.maxUSD != c.want {
+			t.Errorf("CLAUDE_API_DAY_CAP_USD=%q: cap %v, want %v", c.env, e.maxUSD, c.want)
+		}
+	}
+}
+
 // wantStopped checks that err stops the endpoint: an UnavailableError of the
 // API endpoint with retryAt as its RetryAt (zero when not known).
 func wantStopped(t *testing.T, err error, retryAt time.Time) {
@@ -763,5 +790,56 @@ func TestClaudeAPIEndpoint_CapResetsWithTheDay(t *testing.T) {
 	}
 	if n := len(f.requests()); n != 3 {
 		t.Fatalf("%d requests, want 3", n)
+	}
+}
+
+// memLedger is a SpendLedger shared by the endpoints of a test, as the
+// database is by the processes.
+type memLedger struct {
+	mu    sync.Mutex
+	spent map[time.Time]float64
+}
+
+func (l *memLedger) Reserve(ctx context.Context, day time.Time, cost, limit float64) (float64, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.spent[day]+cost > limit {
+		return l.spent[day], false, nil
+	}
+	l.spent[day] += cost
+	return l.spent[day], true, nil
+}
+
+func (l *memLedger) Settle(ctx context.Context, day time.Time, delta float64) error {
+	l.mu.Lock()
+	l.spent[day] += delta
+	l.mu.Unlock()
+	return nil
+}
+
+// Two processes (two endpoints) on one ledger share the cap of the day: the
+// second stops where the first left the spend (prod 2026-10-23: one dm per
+// audited day, each with its own 25 USD).
+func TestClaudeAPIEndpoint_SpendCapIsShared(t *testing.T) {
+	l := &memLedger{spent: map[time.Time]float64{}}
+	SetSpendLedger(l)
+	t.Cleanup(func() { SetSpendLedger(nil) })
+	f := newFakeMessagesAPI(t)
+	a, b := f.endpoint(), f.endpoint()
+	req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskAudit}
+	a.maxUSD = apiReplyCost + apiReserve(t, req)
+	b.maxUSD = a.maxUSD
+	for i := 0; i < 2; i++ {
+		if _, _, err := a.Call(context.Background(), req, apiOpts); err != nil {
+			t.Fatalf("call %d is under the cap: %v", i+1, err)
+		}
+	}
+	_, _, err := b.Call(context.Background(), req, apiOpts)
+	wantStopped(t, err, nextDay())
+	if got := l.spent[nextDay().AddDate(0, 0, -1)]; math.Abs(got-2*apiReplyCost) > 1e-12 {
+		t.Fatalf("ledger %.6f USD, want the real cost of 2 replies %.6f USD", got, 2*apiReplyCost)
+	}
+	if n := len(f.requests()); n != 2 {
+		t.Fatalf("%d requests, want 2", n)
 	}
 }

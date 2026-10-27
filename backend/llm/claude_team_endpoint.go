@@ -19,35 +19,47 @@ import (
 
 // ClaudeTeamEndpoint answers each call with one `claude -p` process (the
 // Claude Code CLI) on a seat of the Team plan. A seat pays no token price: it
-// has a usage limit per time window. A call goes to the first seat of
-// CLAUDE_TEAM_PLAN_TOKENS that is not at its limit. When a seat reaches its
+// has a usage limit per time window. Each seat runs up to ProcsPerSeat
+// processes at one time, and every seat that is not at its limit serves: a
+// call goes to the first seat of CLAUDE_TEAM_PLAN_TOKENS that is not at its
+// limit and has a free process (the seats fill in the order of the list, so
+// the prompt cache of the first seats stays warm), and waits for a free
+// process when every seat that serves is full. When a seat reaches its
 // limit, the seat is down until its reset time and the call moves to the next
 // seat. When every seat is down, the call fails with ErrUnavailable and the
 // earliest reset time.
 type ClaudeTeamEndpoint struct {
 	// Binary is the path of the CLI to run.
 	Binary string
-	// MaxProcs is the maximum number of CLI processes at one time. 0 means
-	// defaultClaudeTeamProcs.
-	MaxProcs int
+	// ProcsPerSeat is the maximum number of CLI processes of one seat at one
+	// time. 0 means defaultClaudeTeamProcs.
+	ProcsPerSeat int
 	// CallTimeout bounds one CLI process. 0 means claudeTeamCallTimeout.
 	CallTimeout time.Duration
 
-	semOnce  sync.Once
-	sem      chan struct{}
-	mu       sync.Mutex
-	seats    []claudeSeat // in the order of use; the tokens are never logged
+	mu    sync.Mutex
+	seats []claudeSeat // in the order of use; the tokens are never logged
+	// changed is closed (and replaced) when a process ends or a seat goes
+	// down: the calls that wait for a free process look again.
+	changed  chan struct{}
 	usage    map[usageKey]*TaskUsage
 	prefixes prefixCache
 }
 
+// defaultClaudeTeamProcs is the processes of one seat at one time: one seat
+// ran 4 for about 3.5 h of its 5 h window before its limit (2026-10-24).
 const defaultClaudeTeamProcs = 4
 
-// Concurrency is the number of CLI processes that run at one time
-// (MaxProcs).
+// Concurrency is the number of CLI processes that run at one time: the
+// processes of each seat (the seats that are at their limit included: the
+// callers then wait for a seat that serves, and fail when none does).
 func (t *ClaudeTeamEndpoint) Concurrency() int {
-	if t.MaxProcs > 0 {
-		return t.MaxProcs
+	return t.procsPerSeat() * max(1, len(t.seats))
+}
+
+func (t *ClaudeTeamEndpoint) procsPerSeat() int {
+	if t.ProcsPerSeat > 0 {
+		return t.ProcsPerSeat
 	}
 	return defaultClaudeTeamProcs
 }
@@ -76,12 +88,14 @@ type claudeSeat struct {
 	token string    // the OAuth token of the seat; never logged
 	down  time.Time // zero: the seat serves calls; else: the seat is down until this time
 	reset time.Time // the reset time to report while the seat is down; zero: not known
+	busy  int       // the processes of the seat running now
 }
 
 // NewClaudeTeamEndpointFromEnv builds the endpoint of the seats of
 // CLAUDE_TEAM_PLAN_TOKENS: name=token,name=token, in the order of use. When
-// CLAUDE_TEAM_PLAN_SEAT names a seat, the order starts at that seat. The
-// claude CLI must be on the PATH.
+// CLAUDE_TEAM_PLAN_SEAT names a seat, the order starts at that seat.
+// CLAUDE_TEAM_PLAN_PROCS_PER_SEAT sets ProcsPerSeat. The claude CLI must be on
+// the PATH.
 func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
 	tokens := os.Getenv("CLAUDE_TEAM_PLAN_TOKENS")
 	if strings.TrimSpace(tokens) == "" {
@@ -95,7 +109,15 @@ func NewClaudeTeamEndpointFromEnv() (*ClaudeTeamEndpoint, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claude team endpoint: %w", err)
 	}
-	return &ClaudeTeamEndpoint{Binary: bin, seats: seats}, nil
+	e := &ClaudeTeamEndpoint{Binary: bin, seats: seats}
+	if v := strings.TrimSpace(os.Getenv("CLAUDE_TEAM_PLAN_PROCS_PER_SEAT")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("CLAUDE_TEAM_PLAN_PROCS_PER_SEAT: %q is not a count of processes", v)
+		}
+		e.ProcsPerSeat = n
+	}
+	return e, nil
 }
 
 // claudeSeats parses name=token,name=token into the seats, in the order of
@@ -178,20 +200,6 @@ func (t *ClaudeTeamEndpoint) Call(ctx context.Context, req ChatRequest, opts Cla
 		system += "\n\n" + p
 		prompt = prompt[len(p):]
 	}
-	t.semOnce.Do(func() {
-		n := t.MaxProcs
-		if n <= 0 {
-			n = defaultClaudeTeamProcs
-		}
-		t.sem = make(chan struct{}, n)
-	})
-	select {
-	case t.sem <- struct{}{}:
-	case <-ctx.Done():
-		return "", nil, fmt.Errorf("claude team: %w", ctx.Err())
-	}
-	defer func() { <-t.sem }()
-
 	t.mu.Lock()
 	u := countTaskCall(&t.usage, req.Task, creq.Model)
 	t.mu.Unlock()
@@ -218,14 +226,17 @@ func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, 
 	var res claudeCLIResult
 	var last *UnavailableError // the limit error of the last seat
 	// One try per seat: a seat that fails here is down until a time after
-	// now (answer), so pickSeat never returns it again in this call.
+	// now (answer), so acquire never returns it again in this call.
 	for range t.seats {
-		seat, earliest, ok := t.pickSeat(time.Now())
-		if !ok {
+		seat, release, earliest, err := t.acquire(ctx)
+		if err != nil {
+			return "", res, fmt.Errorf("claude team: %w", err)
+		}
+		if release == nil {
 			return "", res, t.unavailable(earliest, last)
 		}
-		var err error
 		res, err = t.run(ctx, seat, creq, system, prompt)
+		release()
 		if err != nil {
 			return "", res, err
 		}
@@ -240,28 +251,106 @@ func (t *ClaudeTeamEndpoint) callSeats(ctx context.Context, creq ClaudeRequest, 
 		}
 		t.seatDown(seat.name, down, last.RetryAt, now)
 	}
-	if _, earliest, ok := t.pickSeat(time.Now()); !ok {
+	if earliest, serving := t.serving(time.Now()); !serving {
 		return "", res, t.unavailable(earliest, last)
 	}
 	return "", res, last // a seat came back during the call; the next call uses it
 }
 
-// pickSeat returns the first seat that is not down at now. When every seat is
-// down, ok is false and earliest is the seat that comes back first.
-func (t *ClaudeTeamEndpoint) pickSeat(now time.Time) (seat claudeSeat, earliest claudeSeat, ok bool) {
+// acquire takes a process of the first seat that is not down and has a free
+// process, and returns it with the release to call when the process ends.
+// While every seat that serves is full, it waits. When every seat is down,
+// release is nil and earliest is the seat that comes back first. The error is
+// the one of ctx.
+func (t *ClaudeTeamEndpoint) acquire(ctx context.Context) (seat claudeSeat, release func(), earliest claudeSeat, err error) {
+	per := t.procsPerSeat()
+	for {
+		t.mu.Lock()
+		now := time.Now()
+		earliest = claudeSeat{}
+		for i := range t.seats {
+			s := &t.seats[i]
+			if !s.down.IsZero() && now.Before(s.down) {
+				if earliest.down.IsZero() || s.down.Before(earliest.down) {
+					earliest = *s
+				}
+				continue
+			}
+			s.down, s.reset = time.Time{}, time.Time{}
+			if s.busy < per {
+				s.busy++
+				got := *s
+				t.mu.Unlock()
+				return got, func() { t.done(i) }, claudeSeat{}, nil
+			}
+		}
+		allDown := true
+		for i := range t.seats {
+			if t.seats[i].down.IsZero() {
+				allDown = false
+			}
+		}
+		if allDown {
+			t.mu.Unlock()
+			return claudeSeat{}, nil, earliest, nil
+		}
+		if t.changed == nil {
+			t.changed = make(chan struct{})
+		}
+		changed := t.changed
+		t.mu.Unlock()
+		// A down seat that comes back also frees processes.
+		var timer <-chan time.Time
+		var tm *time.Timer
+		if !earliest.down.IsZero() {
+			tm = time.NewTimer(time.Until(earliest.down))
+			timer = tm.C
+		}
+		select {
+		case <-changed:
+		case <-timer:
+		case <-ctx.Done():
+		}
+		if tm != nil {
+			tm.Stop()
+		}
+		if ctx.Err() != nil {
+			return claudeSeat{}, nil, claudeSeat{}, ctx.Err()
+		}
+	}
+}
+
+// done ends a process of seat i and wakes the calls that wait.
+func (t *ClaudeTeamEndpoint) done(i int) {
+	t.mu.Lock()
+	t.seats[i].busy--
+	t.wakeLocked()
+	t.mu.Unlock()
+}
+
+// wakeLocked wakes the calls that wait for a process. The caller holds t.mu.
+func (t *ClaudeTeamEndpoint) wakeLocked() {
+	if t.changed != nil {
+		close(t.changed)
+		t.changed = nil
+	}
+}
+
+// serving reports whether a seat is not down at now; when none is, earliest is
+// the seat that comes back first.
+func (t *ClaudeTeamEndpoint) serving(now time.Time) (earliest claudeSeat, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i := range t.seats {
-		seat := &t.seats[i]
-		if seat.down.IsZero() || !now.Before(seat.down) {
-			seat.down, seat.reset = time.Time{}, time.Time{}
-			return *seat, claudeSeat{}, true
+		s := &t.seats[i]
+		if s.down.IsZero() || !now.Before(s.down) {
+			return claudeSeat{}, true
 		}
-		if earliest.down.IsZero() || seat.down.Before(earliest.down) {
-			earliest = *seat
+		if earliest.down.IsZero() || s.down.Before(earliest.down) {
+			earliest = *s
 		}
 	}
-	return claudeSeat{}, earliest, false
+	return earliest, false
 }
 
 // unavailable returns the error of a call when every seat is down, and
@@ -295,6 +384,7 @@ func (t *ClaudeTeamEndpoint) seatDown(name string, down, reset, now time.Time) {
 		seat := &t.seats[i]
 		if seat.name == name {
 			seat.down, seat.reset = down, reset
+			t.wakeLocked() // the calls waiting on this seat look at the others
 		} else if next == "" && (seat.down.IsZero() || !now.Before(seat.down)) {
 			next = seat.name
 		}
@@ -583,3 +673,6 @@ func outputSnippet(s string) string {
 	}
 	return s
 }
+
+// ContextTokens is the context of one Claude call.
+func (*ClaudeTeamEndpoint) ContextTokens() int { return claudeContextTokens }

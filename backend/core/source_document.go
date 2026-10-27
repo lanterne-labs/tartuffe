@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -89,6 +90,13 @@ type ProcessOptions struct {
 	// MaxConsecutiveFailures, when > 0, aborts the run after that many
 	// failed batches in a row: an outage, not bad documents.
 	MaxConsecutiveFailures int
+	// Parallel runs the batches as many at once as the endpoint serves
+	// (llm.ForEach) instead of one after the other. extract must then be
+	// safe to call at once. The facts of one subject are still inserted one
+	// at a time (the subject lock of the inserter): only the extraction and
+	// the insertion of different subjects overlap. The streak of
+	// MaxConsecutiveFailures counts in the order the batches end.
+	Parallel bool
 	// Order, when set, sorts the unfinished documents before processing
 	// (default: oldest fetch first).
 	Order func(a, b SourceDocument) bool
@@ -151,31 +159,43 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 		batchSize = 1
 	}
 
-	consecutive := 0
-	var lastErr error
+	var batches [][]SourceDocument
 	for i := 0; i < len(docs); i += batchSize {
+		batches = append(batches, docs[i:min(i+batchSize, len(docs))])
+	}
+	var (
+		mu          sync.Mutex // st, consecutive, lastErr, started
+		consecutive int
+		lastErr     error
+		started     int // documents of the batches started, for MaxDocs
+	)
+	// errEnough stops the run without an error: the deadline or MaxDocs.
+	errEnough := errors.New("enough documents")
+	run := func(ctx context.Context, batch []SourceDocument) error {
 		if err := ctx.Err(); err != nil {
-			return st, fmt.Errorf("%s documents stopped: %w", sourceType, err)
+			return fmt.Errorf("%s documents stopped: %w", sourceType, err)
 		}
+		mu.Lock()
 		if !opts.Deadline.IsZero() && time.Now().After(opts.Deadline) {
 			st.DeadlineHit = true
-			break
+			mu.Unlock()
+			return errEnough
 		}
-		if opts.MaxDocs > 0 && st.Attempted >= opts.MaxDocs {
-			break
+		if opts.MaxDocs > 0 && started >= opts.MaxDocs {
+			mu.Unlock()
+			return errEnough
 		}
-		end := i + batchSize
-		if end > len(docs) {
-			end = len(docs)
-		}
-		batch := docs[i:end]
+		started += len(batch)
+		mu.Unlock()
 
 		facts, err := extract(ctx, batch)
 		if err != nil && ctx.Err() != nil {
 			// The run was cancelled under the batch: not the documents' fault,
 			// they stay as they were for the next run.
-			return st, fmt.Errorf("%s documents stopped: %w", sourceType, ctx.Err())
+			return fmt.Errorf("%s documents stopped: %w", sourceType, ctx.Err())
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		st.Attempted += len(batch)
 		if err != nil {
 			lastErr = err
@@ -194,13 +214,13 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 				log.Warn().Err(err).Str("source", sourceType).Str("url", d.URL).Int("attempt", d.Attempts+1).
 					Msg("document extraction failed; left unfinished for the next run")
 				if mErr := storer.MarkDocumentFailed(ctx, d.ID, err); mErr != nil {
-					return st, mErr
+					return mErr
 				}
 			}
 			if opts.MaxConsecutiveFailures > 0 && consecutive >= opts.MaxConsecutiveFailures {
-				return st, fmt.Errorf("%w: %d consecutive failures (last: %w)", ErrOutage, consecutive, err)
+				return fmt.Errorf("%w: %d consecutive failures (last: %w)", ErrOutage, consecutive, err)
 			}
-			continue
+			return nil
 		}
 		consecutive = 0
 		for _, d := range batch {
@@ -213,9 +233,22 @@ func ProcessDocuments(ctx context.Context, storer DocumentStorer, sourceType str
 				metrics.RecordDecision(metrics.StageDocumentExtract, metrics.OutcomeDocNoFacts)
 			}
 			if mErr := storer.MarkDocumentExtracted(ctx, d.ID, n); mErr != nil {
-				return st, mErr
+				return mErr
 			}
 		}
+		return nil
+	}
+	if opts.Parallel {
+		err = llm.ForEach(ctx, batches, run)
+	} else {
+		for _, batch := range batches {
+			if err = run(ctx, batch); err != nil {
+				break
+			}
+		}
+	}
+	if err != nil && !errors.Is(err, errEnough) {
+		return st, err
 	}
 	if st.Attempted > 0 && st.Extracted == 0 && st.Failed > 0 {
 		return st, fmt.Errorf("%w: every attempted document failed (%d, last: %w)", ErrOutage, st.Failed, lastErr)

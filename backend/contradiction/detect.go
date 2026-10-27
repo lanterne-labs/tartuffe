@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -132,6 +131,7 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	var allPersonPairs []personPairs
 	totalPairs := 0
 	cut := false
+	reached := len(persons)
 	for i, person := range persons {
 		if err := ctx.Err(); err != nil {
 			return DetectResult{}, fmt.Errorf("contradiction detection stopped collecting pairs: %w", err)
@@ -140,6 +140,7 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 			log.Info().Int("max_pairs", opts.MaxPairs).Int("pairs", totalPairs).Int("persons_left", len(persons)-i).
 				Msg("Pair budget reached; the persons left wait for the next run")
 			cut = true
+			reached = i
 			break
 		}
 		if _, excluded := excludeSet[person.Name]; excluded {
@@ -158,12 +159,33 @@ func RunDetection(ctx context.Context, storer *storage.PostgresStorer, opts Dete
 	}
 
 	if totalPairs == 0 {
+		recordDetectionProgress(ctx, storer, opts, reached, len(persons))
 		return DetectResult{Cut: cut}, nil
 	}
 
 	res, err := judgePairs(ctx, storer, allPersonPairs, opts)
 	res.Cut = cut
+	if err == nil {
+		recordDetectionProgress(ctx, storer, opts, reached, len(persons))
+	}
 	return res, err
+}
+
+// detectionAllOperation names the detection over every person in the
+// progress records.
+const detectionAllOperation = "detection: all persons"
+
+// recordDetectionProgress records how far a detection over every person is
+// (Grafana, Operations): the persons the passes reached, judged. A pass
+// reaches further than the one before, since the persons it judged have no
+// new pair left. A detection over a list of persons is not that operation.
+func recordDetectionProgress(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions, reached, total int) {
+	if len(opts.Persons) > 0 || opts.MaxPersons > 0 || opts.DryRun {
+		return
+	}
+	if err := storer.RecordProgress(ctx, detectionAllOperation, reached, total); err != nil {
+		log.Warn().Err(err).Msg("Detection: recording the progress failed")
+	}
 }
 
 func personsForDetection(ctx context.Context, storer *storage.PostgresStorer, opts DetectOptions) ([]storage.PersonInfo, error) {
@@ -560,13 +582,18 @@ func dropCheckedPairs(person string, allPairs []pairInfo, checkedPairs map[strin
 }
 
 // judgeConcurrently asks the detector for the verdicts of pairs, batchSize
-// pairs per call, every call at once. The results are in pair order.
+// pairs per call, as many calls at once as the endpoint serves
+// (llm.ForEach). The results are in pair order.
 func judgeConcurrently(ctx context.Context, detector *OpenAIContradictionDetector, pairs []pairInfo, batchSize int) []BatchResult {
 	results := make([]BatchResult, len(pairs))
-	var wg sync.WaitGroup
+	var starts []int
 	for i := 0; i < len(pairs); i += batchSize {
-		end := min(i+batchSize, len(pairs))
-		batch := pairs[i:end]
+		starts = append(starts, i)
+	}
+	// The detector reports its failures in the results: no call returns an
+	// error, so every batch runs.
+	_ = llm.ForEach(ctx, starts, func(ctx context.Context, at int) error {
+		batch := pairs[at:min(at+batchSize, len(pairs))]
 		factPairs := make([]FactPair, len(batch))
 		for j, p := range batch {
 			factPairs[j] = FactPair{
@@ -580,13 +607,9 @@ func judgeConcurrently(ctx context.Context, detector *OpenAIContradictionDetecto
 				AlsoB:  p.alsoB,
 			}
 		}
-		wg.Add(1)
-		go func(at int) {
-			defer wg.Done()
-			copy(results[at:], detector.AreContradictoryBatch(ctx, factPairs))
-		}(i)
-	}
-	wg.Wait()
+		copy(results[at:], detector.AreContradictoryBatch(ctx, factPairs))
+		return nil
+	})
 	return results
 }
 
@@ -832,10 +855,9 @@ func resolveBundle(ctx context.Context, bundler bundleResolver, personID, contra
 // No decision is made when the detector failed, when the LLM was unavailable
 // to the verifier or the grouping gate, or when the grouping gate failed
 // otherwise: a recorded NO is never judged again, so the pair would lose its
-// grouping for good. A verifier failure other than llm.ErrUnavailable keeps the YES
-// (fail-open, see OpenAIContradictionDetector.VerifyContradiction): the judge
-// found it, and a verifier that cannot answer must not silently drop it; the
-// auditor re-judges it later.
+// grouping for good. A verifier failure makes no decision either: a YES is
+// never recorded unverified, and the pair, left unjudged, comes back in the
+// next pass.
 //
 // A failure under a cancelled ctx makes no decision either: a cut verifier
 // call must not keep the YES unverified, nor a cut detector call become a NO.
@@ -856,9 +878,12 @@ func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.Same
 	}
 
 	d := pairDecision{decided: true, contradiction: r.IsContradictory}
-	// A pair whose fact text is empty (deleted mid-run) cannot be verified;
-	// the YES is kept, mirroring the stance path.
-	if d.contradiction && p.factAText != "" && p.factBText != "" {
+	// A pair whose fact text is empty (deleted mid-run) cannot be verified:
+	// no decision, as the stance path records nothing unverified.
+	if d.contradiction && (p.factAText == "" || p.factBText == "") {
+		return pairDecision{}, nil
+	}
+	if d.contradiction {
 		keep, refutation, err := verifier.VerifyContradiction(ctx,
 			promptrules.Statement{Text: p.factAText, Also: p.alsoA},
 			promptrules.Statement{Text: p.factBText, Also: p.alsoB}, r.Reason)
@@ -869,7 +894,8 @@ func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.Same
 			return pairDecision{}, fmt.Errorf("verifying pair %d-%d: %w", p.factAID, p.factBID, ctx.Err())
 		case err != nil:
 			log.Warn().Err(err).Int64("fact_a", p.factAID).Int64("fact_b", p.factBID).
-				Msg("Contradiction verification failed; keeping contradiction (fail-open)")
+				Msg("Contradiction verification failed; pair left pending")
+			return pairDecision{}, nil
 		case !keep:
 			d.contradiction = false
 			metrics.RecordDecision(metrics.StageContradiction, metrics.OutcomeContradictionRefuted)

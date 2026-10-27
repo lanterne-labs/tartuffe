@@ -126,7 +126,7 @@ A breaker does NOT invalidate a promise when:
 PAIR 1 (Learning Over Time / Unknown-Date Skepticism - NOT Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen said she didn't know about the mutualization scheme."
 Statement B (dated March 20, 2024): "Marine Le Pen claimed the EU Parliament knew about mutualization and it was normal practice."
-PAIR 1: NO: Earlier "didn't know" followed by later knowledge fits LEARNING OVER TIME. When a date is missing or ordering is unclear, default to skepticism — apparently opposite stances may be a legitimate change of position over time, not a contradiction.
+PAIR 1: NO: Earlier "didn't know" followed by later knowledge fits LEARNING OVER TIME: she learned something, she did not reverse a position.
 
 PAIR 2 (Denial After Claim - Contradictory):
 Statement A (dated January 15, 2024): "Marine Le Pen stated she was fully aware of the mutualization scheme and that it was standard practice."
@@ -305,7 +305,7 @@ var contradictionPromptTpl = `You are analyzing pairs of statements for contradi
 ` + ContradictionRulesAndExamples + `
 
 **POSITION REVERSAL — IS A CONTRADICTION:**
-The person states a position, demand, intention or refusal on a question, and on another date states or does the opposite on the SAME question (e.g. "plaide pour une grande primaire" then "ne veut pas de primaire"; "refuse d'appeler X à annuler" then "appelle X à annuler"; "annonce sa démission" then "accepte de rester"). With both dates known, this IS the contradiction this tracker records: do not dismiss it as "a change of position" or "not a logical contradiction". The "legitimate change of position over time" exemption applies ONLY when a date is unknown (TEMPORAL REASONING, rule 4). It is NOT a reversal when the two statements answer different questions, concern different events or texts, or one is a forecast.
+The person states a position, demand, intention or refusal on a question, and on another date states or does the opposite on the SAME question (e.g. "plaide pour une grande primaire" then "ne veut pas de primaire"; "refuse d'appeler X à annuler" then "appelle X à annuler"; "annonce sa démission" then "accepte de rester"). With both dates known, this IS the contradiction this tracker records: do not dismiss it as "a change of position" or "not a logical contradiction". So is denying one's own earlier position ("refused the idea of a primary" then "never said no to a primary on principle"), and a STATED-CONDITION WALK-BACK ("I will not campaign with an electronic bracelet", then a candidacy announced after a sentence to a bracelet: the condition occurred, the person goes on anyway). The "legitimate change of position over time" exemption applies ONLY when a date is unknown (TEMPORAL REASONING, rule 4). It is NOT a reversal when the two statements answer different questions, concern different events or texts, or one is a forecast.
 
 ` + promptrules.RestatementsRule + `
 
@@ -372,8 +372,8 @@ func (d *OpenAIContradictionDetector) AreContradictory(ctx context.Context, text
 // claimed contradiction returned by AreContradictoryBatch, before it is
 // persisted. keep == true means the claim survived (record it); keep == false
 // means it was refuted as a false positive (drop it). A non-nil error is an
-// operational failure (LLM unreachable / unparseable) — callers should log and
-// fall open (keep the contradiction), never silently drop on error.
+// operational failure (LLM unreachable / unparseable): callers record nothing
+// unverified and leave the pair for a later judgment.
 //
 // Delegates to llm.VerifyContradiction so the detector path and the stance path
 // (core.StanceManager.VerifyContradiction) share identical refutation logic.

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"digital-mirror/backend"
 )
 
 func TestFormatTweetBatch(t *testing.T) {
@@ -162,5 +164,27 @@ func newTestHandle() Handle {
 		PersonName: "Test Person",
 		Handle:     "test_handle",
 		Active:     true,
+	}
+}
+
+// A fact's language is the extractor's; Twitter's codes that name no
+// language (qme, zxx, und) never become one.
+func TestFactLang(t *testing.T) {
+	batch := []Tweet{{URL: "https://x.com/a/status/1", Lang: "qme"}}
+	cases := []struct {
+		name string
+		fact backend.Fact
+		want string
+	}{
+		{"extractor wins", backend.Fact{Lang: "fr", SourceURL: "https://x.com/a/status/1"}, "fr"},
+		{"no language code", backend.Fact{SourceURL: "https://x.com/a/status/1"}, ""},
+	}
+	for _, c := range cases {
+		if got := factLang(c.fact, batch); got != c.want {
+			t.Errorf("%s: factLang = %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := factLang(backend.Fact{}, []Tweet{{Lang: "es"}}); got != "es" {
+		t.Errorf("tweet fallback: factLang = %q, want es", got)
 	}
 }

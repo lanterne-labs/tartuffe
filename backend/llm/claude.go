@@ -276,10 +276,11 @@ func (r ClaudeReply) Text(wantJSON bool) (string, error) {
 // text. source names the reply in the errors. The Messages API, the Message
 // Batches API and the claude CLI (ClaudeTeamEndpoint) share it.
 //
-// A JSON answer loses its code fence and keeps only its first JSON value.
+// A JSON answer loses its code fence and keeps one JSON value (firstJSONValue).
 // Without a JSON mode, Claude can write a note after the object ("Correction:
-// the index is 1, so the assignment is correct."), and the parsers of the
-// callers reject text after the value. A warning logs the dropped note. An
+// the index is 1, so the assignment is correct."), or a corrected object, and
+// the parsers of the callers reject text after the value. A warning logs the
+// dropped text. An
 // answer that does not start with a JSON value stays unchanged: the parser of
 // the caller rejects it.
 func claudeAnswer(source, stopReason, text string, outputTokens int, wantJSON bool) (string, error) {
@@ -299,8 +300,11 @@ func claudeAnswer(source, stopReason, text string, outputTokens int, wantJSON bo
 	return text, nil
 }
 
-// firstJSONValue returns the first JSON value of text, and logs the text
-// after it. Text that does not start with a JSON value comes back unchanged.
+// firstJSONValue returns the JSON value of text that Claude settled on, and
+// logs the text it drops. That is the first value, unless the text after it
+// holds another value of the same kind: Claude then corrected itself
+// ("Correction, to stay strictly faithful: {...}") and the last one is its
+// answer. Text that does not start with a JSON value comes back unchanged.
 func firstJSONValue(source, text string) string {
 	dec := json.NewDecoder(strings.NewReader(text))
 	var v json.RawMessage
@@ -311,13 +315,36 @@ func firstJSONValue(source, text string) string {
 	if rest == "" {
 		return text
 	}
+	msg := "Claude wrote text after the JSON answer; the answer keeps the JSON value only"
+	if last, ok := lastJSONValue(rest, v[0]); ok {
+		v = last
+		msg = "Claude corrected its JSON answer; the answer keeps the last JSON value"
+	}
 	note := rest
 	if len(note) > 300 {
 		note = note[:300] + "..."
 	}
-	log.Warn().Str("source", source).Int("dropped_bytes", len(rest)).Str("dropped", note).
-		Msg("Claude wrote text after the JSON answer; the answer keeps the JSON value only")
+	log.Warn().Str("source", source).Int("dropped_bytes", len(rest)).Str("dropped", note).Msg(msg)
 	return string(v)
+}
+
+// lastJSONValue returns the last JSON value in text that opens with open ('{'
+// or '['), the kind of the first answer.
+func lastJSONValue(text string, open byte) (json.RawMessage, bool) {
+	var last json.RawMessage
+	for i := 0; i < len(text); i++ {
+		if text[i] != open {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(text[i:]))
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			continue
+		}
+		last = v
+		i += int(dec.InputOffset()) - 1
+	}
+	return last, last != nil
 }
 
 // claudeChatResponse returns the ChatResponse of a Claude answer. The prompt

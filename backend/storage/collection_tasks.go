@@ -35,6 +35,7 @@ type CollectionTask struct {
 	NotBefore   time.Time
 	LastError   string
 	RequestedBy string
+	Operation   string
 	Items       int
 	Facts       int
 	CreatedAt   time.Time
@@ -50,16 +51,21 @@ type NewCollectionTask struct {
 	Until       time.Time
 	Priority    int
 	RequestedBy string
+	// Operation names the batch the task belongs to ("" for none).
+	Operation string
+	// UnlessDone leaves the task out when one of the same person, plugin and
+	// period is done: the watch list, added by every attempt of the feed.
+	UnlessDone bool
 }
 
 const collectionTaskColumns = `t.id, t.person_id, p.name, COALESCE(p.entity_type, 'human'), t.plugin, t.since, t.until,
-	t.status, t.priority, t.attempts, t.not_before, COALESCE(t.last_error, ''), COALESCE(t.requested_by, ''),
+	t.status, t.priority, t.attempts, t.not_before, COALESCE(t.last_error, ''), COALESCE(t.requested_by, ''), COALESCE(t.operation, ''),
 	t.items, t.facts, t.created_at, t.started_at, t.finished_at`
 
 func scanCollectionTask(row pgx.Row) (*CollectionTask, error) {
 	var t CollectionTask
 	err := row.Scan(&t.ID, &t.PersonID, &t.PersonName, &t.EntityType, &t.Plugin, &t.Since, &t.Until,
-		&t.Status, &t.Priority, &t.Attempts, &t.NotBefore, &t.LastError, &t.RequestedBy,
+		&t.Status, &t.Priority, &t.Attempts, &t.NotBefore, &t.LastError, &t.RequestedBy, &t.Operation,
 		&t.Items, &t.Facts, &t.CreatedAt, &t.StartedAt, &t.FinishedAt)
 	if err != nil {
 		return nil, err
@@ -68,7 +74,8 @@ func scanCollectionTask(row pgx.Row) (*CollectionTask, error) {
 }
 
 // AddCollectionTasks creates the tasks and returns how many were new: a task
-// equal to an open one (same person, plugin and period) is not created again.
+// equal to an open one (same person, plugin and period) is not created again,
+// nor one equal to a done one when UnlessDone is set.
 func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewCollectionTask) (int, error) {
 	added := 0
 	for _, t := range tasks {
@@ -76,10 +83,13 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 			return added, fmt.Errorf("collection task: since %s is not before until %s", t.Since.Format("2006-01-02"), t.Until.Format("2006-01-02"))
 		}
 		tag, err := s.pool.Exec(ctx, `
-			INSERT INTO collection_tasks (person_id, plugin, since, until, priority, requested_by)
-			VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''))
+			INSERT INTO collection_tasks (person_id, plugin, since, until, priority, requested_by, operation)
+			SELECT $1::bigint, $2::text, $3::date, $4::date, $5::int, NULLIF($6::text, ''), NULLIF($7::text, '')
+			WHERE NOT ($8::boolean AND EXISTS (
+				SELECT 1 FROM collection_tasks
+				WHERE person_id = $1 AND plugin = $2 AND since = $3 AND until = $4 AND status = 'done'))
 			ON CONFLICT DO NOTHING`,
-			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy)
+			t.PersonID, t.Plugin, t.Since, t.Until, t.Priority, t.RequestedBy, t.Operation, t.UnlessDone)
 		if err != nil {
 			return added, fmt.Errorf("adding collection task: %w", err)
 		}
@@ -89,17 +99,27 @@ func (s *PostgresStorer) AddCollectionTasks(ctx context.Context, tasks []NewColl
 }
 
 // ClaimCollectionTask takes the next task to run: the pending task of the
-// highest priority, oldest first, whose not_before has passed, or a running
-// task whose heartbeat is older than lease (its worker died). The task comes
-// back running, with one more attempt; nil when there is none. Two workers
-// never claim the same task (FOR UPDATE SKIP LOCKED).
-func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Duration) (*CollectionTask, error) {
+// highest priority whose not_before has passed, or a running task whose
+// heartbeat is older than lease (its worker died). Within a priority, a task
+// of a person no task runs for comes first, then the oldest: the facts of one
+// person are inserted one at a time, so two tasks of one person (news and
+// twitter, claimed together by age) wait for each other (2026-10-24: 2 of
+// 4 lanes idle). The task comes back running, with one more attempt; nil
+// when there is none. Only the tasks of priority minPriority or more are
+// claimed (the worker holds the backfills back while the feed runs). Two
+// workers never claim the same task (FOR UPDATE SKIP LOCKED).
+func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Duration, minPriority int) (*CollectionTask, error) {
 	row := s.pool.QueryRow(ctx, `
 		WITH next AS (
 			SELECT id FROM collection_tasks
-			WHERE (status = 'pending' AND not_before <= now())
-			   OR (status = 'running' AND heartbeat_at < now() - $1::interval)
-			ORDER BY priority DESC, created_at
+			WHERE ((status = 'pending' AND not_before <= now())
+			   OR (status = 'running' AND heartbeat_at < now() - $1::interval))
+			  AND priority >= $2
+			ORDER BY priority DESC,
+				EXISTS (SELECT 1 FROM collection_tasks r
+					WHERE r.person_id = collection_tasks.person_id AND r.status = 'running'
+					  AND r.heartbeat_at >= now() - $1::interval),
+				created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT 1
 		), t AS (
@@ -109,7 +129,7 @@ func (s *PostgresStorer) ClaimCollectionTask(ctx context.Context, lease time.Dur
 			RETURNING c.*
 		)
 		SELECT `+collectionTaskColumns+` FROM t JOIN persons p ON p.id = t.person_id`,
-		lease)
+		lease, minPriority)
 	t, err := scanCollectionTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil

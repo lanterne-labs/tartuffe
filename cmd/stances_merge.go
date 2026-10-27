@@ -4,6 +4,7 @@ import (
 	"context"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"fmt"
 	"sync"
 
@@ -16,7 +17,6 @@ var (
 	stancesMergePersonsFile    string
 	stancesMergeRecallSim      float64
 	stancesMergeLabelSim       float64
-	stancesMergeParallel       int
 	stancesMergeLookupMaxFacts int
 	stancesMergeDryRun         bool
 )
@@ -39,7 +39,7 @@ unreliable. The gate still vetoes a wrong high-similarity pair.
 
 Examples:
   ./dm stances merge --person "Marine Le Pen"
-  ./dm stances merge --persons-file /tmp/heavies.txt --parallel 4
+  ./dm stances merge --persons-file /tmp/heavies.txt
   ./dm stances merge                                       # all persons
   ./dm stances merge --recall-threshold 0.70 --dry-run
   ./dm stances merge --recall-threshold 1 --dry-run          # label candidates only`,
@@ -54,7 +54,6 @@ func init() {
 	stancesMergeCmd.Flags().Float64Var(&stancesMergeRecallSim, "recall-threshold", core.DefaultStanceMergeOptions.RecallSim, "Cosine-similarity floor for surfacing candidate pairs (the LLM gates each)")
 	stancesMergeCmd.Flags().Float64Var(&stancesMergeLabelSim, "label-threshold", core.DefaultStanceMergeOptions.LabelSim, "Trigram floor on stance labels for a second candidate source (0 = off; a stricter gate vets each)")
 	stancesMergeCmd.Flags().IntVar(&stancesMergeLookupMaxFacts, "lookup-max-facts", core.DefaultStanceMergeOptions.LookupMaxFacts, "Stances of at most this many facts are looked up against the person's other stances by the LLM (0 = off)")
-	stancesMergeCmd.Flags().IntVar(&stancesMergeParallel, "parallel", 1, "Number of persons to merge concurrently")
 	stancesMergeCmd.Flags().BoolVar(&stancesMergeDryRun, "dry-run", false, "Log proposed merges without writing to the database")
 }
 
@@ -90,16 +89,12 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if stancesMergeParallel < 1 {
-		stancesMergeParallel = 1
-	}
 	if stancesMergeRecallSim < 0 || stancesMergeRecallSim > 1 {
 		return fmt.Errorf("--recall-threshold must be in [0,1]")
 	}
 
 	log.Info().
 		Int("person_count", len(persons)).
-		Int("parallel", stancesMergeParallel).
 		Float64("recall_sim_threshold", stancesMergeRecallSim).
 		Bool("dry_run", stancesMergeDryRun).
 		Msg("Starting stance LLM-merge phase")
@@ -129,22 +124,11 @@ func runStancesMerge(cmd *cobra.Command, args []string) error {
 		mu.Unlock()
 	}
 
-	jobs := make(chan core.PersonRecord)
-	var wg sync.WaitGroup
-	for i := 0; i < stancesMergeParallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for p := range jobs {
-				processOne(p)
-			}
-		}()
-	}
-	for _, p := range persons {
-		jobs <- p
-	}
-	close(jobs)
-	wg.Wait()
+	// As many persons at once as the endpoint serves (llm.ForEach).
+	_ = llm.ForEach(ctx, persons, func(ctx context.Context, p core.PersonRecord) error {
+		processOne(p)
+		return nil
+	})
 
 	rows := []resultRow{
 		{Label: "Persons processed", Value: stats.PersonsProcessed},

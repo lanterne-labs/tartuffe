@@ -153,7 +153,11 @@ func (s *SerperProvider) doPost(endpoint string, body any) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		// Surface 429s in a shape ChainedSearcher recognizes for fallthrough.
-		return nil, fmt.Errorf("serper %s returned %s: %s", endpoint, resp.Status, util.TruncateString(string(respBody), 200))
+		err := fmt.Errorf("serper %s returned %s: %s", endpoint, resp.Status, util.TruncateString(string(respBody), 200))
+		if quotaStatus(resp.StatusCode) || quotaMessage(string(respBody)) {
+			return nil, fmt.Errorf("%w: %w", ErrQuota, err)
+		}
+		return nil, err
 	}
 
 	return respBody, nil
@@ -201,6 +205,9 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 			return nil, fmt.Errorf("decode serper news response: %w", err)
 		}
 		if resp.Message != "" {
+			if quotaMessage(resp.Message) {
+				return nil, fmt.Errorf("%w: serper news error: %s", ErrQuota, resp.Message)
+			}
 			return nil, fmt.Errorf("serper news error: %s", resp.Message)
 		}
 

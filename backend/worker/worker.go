@@ -18,6 +18,7 @@ import (
 
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 
 	"github.com/rs/zerolog/log"
@@ -44,13 +45,29 @@ type Options struct {
 	Notify func(ctx context.Context, msg string) error
 }
 
-// Idle is the work of the worker when no task is pending (*Housekeeping).
+// Idle is the work of the worker besides the tasks (*Housekeeping), in the
+// order of priority: Beside runs the work that goes before every task (the
+// feed) at the same time as the tasks; Urgent tells that the work that runs
+// alone (the maintenance pass) is due although tasks are pending, and the
+// worker then stops claiming, lets the running tasks end and runs Idle; Idle
+// runs when no task and no Beside runs. While MinPriority is above 0 (the
+// feed is due or runs), the lower tasks are not claimed and Idle does not
+// start: the feed goes first, then the urgent work, then the tasks.
 type Idle interface {
 	// Idle does the work that is due. An error wrapping llm.ErrUnavailable
 	// makes the worker wait for the LLM.
 	Idle(ctx context.Context) error
+	// Beside does the work that is due and runs beside the tasks.
+	Beside(ctx context.Context) error
+	// Urgent reports whether Idle has work due that goes before the pending
+	// tasks.
+	Urgent(ctx context.Context) (bool, error)
 	// FactsAdded tells that a task added n facts.
 	FactsAdded(n int)
+	// MinPriority is the lowest priority of the tasks the worker claims now:
+	// while the feed is due or runs, the backfills wait and leave the seats
+	// to it.
+	MinPriority(ctx context.Context) (int, error)
 }
 
 // DefaultOptions are the options of `dm worker run`.
@@ -81,7 +98,7 @@ type Runner interface {
 
 // Tasks is the storage the worker needs (*storage.PostgresStorer).
 type Tasks interface {
-	ClaimCollectionTask(ctx context.Context, lease time.Duration) (*storage.CollectionTask, error)
+	ClaimCollectionTask(ctx context.Context, lease time.Duration, minPriority int) (*storage.CollectionTask, error)
 	HeartbeatCollectionTask(ctx context.Context, id int64) (running bool, err error)
 	FinishCollectionTask(ctx context.Context, id int64, status, lastError string, items, facts int) error
 	ReleaseCollectionTask(ctx context.Context, id int64, lastError string, notBefore time.Time, items, facts int, countAttempt bool) error
@@ -95,57 +112,164 @@ func (o Options) Validate() error {
 	return nil
 }
 
-// Run claims and runs tasks until ctx ends, and returns ctx.Err(). A task the
-// worker is on when ctx ends goes back to pending at once. When no task is
-// pending, idle does the housekeeping (nil: none).
+// Run claims and runs tasks until ctx ends, and returns ctx.Err(). It runs as
+// many tasks at once as the LLM endpoint serves (llm.Concurrency(): one on the
+// local GPU box): a task spends most of its time on LLM calls made one after
+// the other (the facts of one person go in order), so the tasks of different
+// persons fill the endpoint together. The tasks the worker is on when ctx ends
+// go back to pending at once. When no task is pending and none runs, idle
+// does the housekeeping (nil: none).
 func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Options) error {
 	if err := opts.Validate(); err != nil {
 		return err
 	}
-	log.Info().Dur("poll", opts.Poll).Dur("lease", opts.Lease).Msg("Worker started")
-	quickRefails := 0
-	for {
-		task, err := tasks.ClaimCollectionTask(ctx, opts.Lease)
-		switch {
-		case err != nil:
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			log.Error().Err(err).Msg("Worker: claiming a task failed; retrying after the poll pause")
-		case task != nil:
-			err = runOne(ctx, tasks, runner, idle, opts, *task)
-			if err != nil && !errors.Is(err, errWaited) && !errors.Is(err, errRecovered) && ctx.Err() == nil {
-				log.Error().Err(err).Int64("task", task.ID).Msg("Worker: recording the attempt failed; the lease of the task expires")
-			}
-		case idle != nil:
-			err = runIdle(ctx, idle, opts)
+	lanes := llm.Concurrency()
+	log.Info().Dur("poll", opts.Poll).Dur("lease", opts.Lease).Int("tasks_at_once", lanes).Msg("Worker started")
+	done := make(chan error, lanes)
+	running := 0
+	// The work beside the tasks (the feed): one at a time, looked at every poll.
+	besideDone := make(chan error, 1)
+	besideRunning := false
+	var besideNext, urgentNext time.Time
+	// draining: the work that runs alone is due; no claim until it ran.
+	draining := false
+	// The tasks running when Run returns finish their bookkeeping first.
+	defer func() {
+		for ; running > 0; running-- {
+			<-done
 		}
+		if besideRunning {
+			<-besideDone
+		}
+	}()
+	quickRefails := 0
+	// settle applies the outcome of a task or a housekeeping to the loop: it
+	// returns how long to wait before the next claim.
+	settle := func(err error, task bool) time.Duration {
+		if errors.Is(err, errRecovered) {
+			quickRefails++
+			if quickRefails < maxQuickRefails {
+				return 0 // the LLM is back: the same work at once
+			}
+			// Work that keeps failing as unavailable while the LLM answers is
+			// not run again at every poll.
+			log.Error().Int("refails", quickRefails).Msg("Worker: the LLM answers but the work keeps failing as unavailable; pausing")
+			quickRefails = 0
+			return opts.Backoff
+		}
+		if err == nil {
+			quickRefails = 0
+			if task {
+				return 0 // the next task at once
+			}
+		}
+		var far *farResetError
+		switch {
+		case errors.Is(err, errIdleFailed):
+			return opts.Backoff
+		case errors.As(err, &far):
+			// The work waits for the reset; the tasks need the LLM too.
+			return max(time.Until(far.at), opts.Poll)
+		}
+		return opts.Poll
+	}
+	var resume time.Time // no claim before it
+	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if errors.Is(err, errRecovered) {
-			quickRefails++
-		} else if err == nil {
-			quickRefails = 0
-		}
-		if errors.Is(err, errRecovered) && quickRefails < maxQuickRefails {
-			continue // the LLM is back: the same work at once
-		}
-		if task != nil && err == nil {
-			continue // the next task at once
-		}
-		pause := opts.Poll
-		if errors.Is(err, errIdleFailed) || errors.Is(err, errRecovered) {
-			// A failed housekeeping, or work that keeps failing as unavailable
-			// while the LLM answers, is not run again at every poll.
-			if errors.Is(err, errRecovered) {
-				log.Error().Int("refails", quickRefails).Msg("Worker: the LLM answers but the work keeps failing as unavailable; pausing")
-				quickRefails = 0
+		// minPriority above 0 means the feed is due or runs: it goes first,
+		// so no backfill is claimed and no maintenance starts until it ended.
+		minPriority := 0
+		if idle != nil {
+			now := time.Now()
+			// The feed starts even while the maintenance waits for the
+			// running tasks: the pass waits for the feed's end, never the
+			// feed for the pass (2026-10-26: the feed cut by the seat limit
+			// waited behind 16 backfills and the pass).
+			if !besideRunning && !now.Before(besideNext) {
+				besideRunning = true
+				go func() { besideDone <- runHousekeeping(ctx, idle.Beside, opts) }()
 			}
-			pause = opts.Backoff
+			var err error
+			if minPriority, err = idle.MinPriority(ctx); err != nil {
+				log.Error().Err(err).Msg("Worker: checking the feed failed; the backfills are claimed")
+			}
+			// The urgent work goes before the backfills: checked before the
+			// lanes fill, so that free lanes (after the feed, at a start) do
+			// not take tasks the pass then waits hours for.
+			if !draining && minPriority == 0 && !now.Before(urgentNext) {
+				urgentNext = now.Add(opts.Poll)
+				urgent, err := idle.Urgent(ctx)
+				if err != nil {
+					log.Error().Err(err).Msg("Worker: checking the housekeeping failed")
+				} else if urgent {
+					draining = true
+					log.Info().Int("running", running).Msg("Worker: the maintenance is due; no claim until the running tasks end and it ran")
+				}
+			}
+		}
+		// Fill the free lanes.
+		for !draining && running < lanes && !time.Now().Before(resume) {
+			task, err := tasks.ClaimCollectionTask(ctx, opts.Lease, minPriority)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				log.Error().Err(err).Msg("Worker: claiming a task failed; retrying after the poll pause")
+				resume = time.Now().Add(opts.Poll)
+				break
+			}
+			if task == nil {
+				break
+			}
+			running++
+			go func(task storage.CollectionTask) {
+				err := runOne(ctx, tasks, runner, idle, opts, task)
+				if err != nil && !errors.Is(err, errWaited) && !errors.Is(err, errRecovered) && ctx.Err() == nil {
+					log.Error().Err(err).Int64("task", task.ID).Msg("Worker: recording the attempt failed; the lease of the task expires")
+				}
+				done <- err
+			}(*task)
+		}
+		var wait time.Duration
+		switch {
+		case running > 0:
+			// A lane frees, or the poll looks for tasks added meanwhile.
+			wait = opts.Poll
+			if d := time.Until(resume); d > 0 {
+				wait = d
+			}
+		case time.Now().Before(resume):
+			wait = time.Until(resume)
+		case besideRunning || minPriority > 0:
+			// The work that runs alone waits for the end of the feed, or
+			// for a due feed to start.
+			wait = opts.Poll
+		case idle != nil:
+			resume = time.Now().Add(settle(runHousekeeping(ctx, idle.Idle, opts), false))
+			draining = false
+			continue
+		default:
+			wait = opts.Poll
 		}
 		select {
-		case <-time.After(pause):
+		case err := <-done:
+			running--
+			if pause := settle(err, true); pause > 0 {
+				resume = time.Now().Add(pause)
+			}
+		case err := <-besideDone:
+			besideRunning = false
+			besideNext = time.Now().Add(opts.Poll)
+			var far *farResetError
+			switch {
+			case errors.Is(err, errIdleFailed):
+				besideNext = time.Now().Add(opts.Backoff)
+			case errors.As(err, &far):
+				besideNext = far.at
+			}
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -156,17 +280,27 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 // unavailable LLM: the loop pauses for the backoff before the next claim.
 var errIdleFailed = errors.New("the housekeeping failed")
 
-// runIdle does the housekeeping that is due. An unavailable LLM makes the
+// runHousekeeping does the housekeeping work. An unavailable LLM makes the
 // worker wait as for a task; another failure is logged and sent to the
 // operator.
-func runIdle(ctx context.Context, idle Idle, opts Options) error {
-	err := idle.Idle(ctx)
+func runHousekeeping(ctx context.Context, work func(context.Context) error, opts Options) error {
+	err := work(ctx)
 	switch {
 	case err == nil || ctx.Err() != nil:
 		return nil
 	case errors.Is(err, llm.ErrUnavailable):
+		until := time.Now().Add(opts.MaxLLMWait)
+		var ue *llm.UnavailableError
+		if errors.As(err, &ue) && ue.RetryAt.After(until) {
+			// A reset too far away to wait for: the work is tried again at
+			// the reset, not at every poll (2026-10-27: the feed, cut by the
+			// seats at their limit for 80 min and the API at its day cap,
+			// re-downloaded and re-parsed the votes every minute until then).
+			log.Warn().Err(err).Time("retry_at", ue.RetryAt).Msg("Worker: LLM unavailable until its reset; the housekeeping waits for it")
+			return &farResetError{at: ue.RetryAt}
+		}
 		log.Warn().Err(err).Msg("Worker: LLM unavailable during the housekeeping; waiting")
-		if back, _ := llm.WaitForEndpoint(ctx, err, time.Now().Add(opts.MaxLLMWait)); back {
+		if back, _ := llm.WaitForEndpoint(ctx, err, until); back {
 			return errRecovered
 		}
 		return errWaited
@@ -175,6 +309,18 @@ func runIdle(ctx context.Context, idle Idle, opts Options) error {
 	notify(ctx, opts, "❌ <b>Worker housekeeping failed</b>\n"+html.EscapeString(err.Error()))
 	return fmt.Errorf("%w: %w", errIdleFailed, err)
 }
+
+// farResetError marks a housekeeping that stopped on an unavailable LLM
+// whose reset is after the end of the wait (MaxLLMWait): the loop tries the
+// work again at the reset, as a task in the same case waits for it. It is an
+// errWaited for the callers that only tell a wait from a failure.
+type farResetError struct{ at time.Time }
+
+func (e *farResetError) Error() string {
+	return "waited for the LLM: its reset is at " + e.at.UTC().Format(time.RFC3339)
+}
+
+func (e *farResetError) Is(target error) bool { return target == errWaited }
 
 // notify sends msg to the operator when opts.Notify is set.
 func notify(ctx context.Context, opts Options, msg string) {
@@ -257,6 +403,17 @@ func runOne(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Opt
 			return errRecovered
 		}
 		return errWaited
+	case errors.Is(err, search.ErrQuota):
+		// Every search provider refused for its quota: the task did not
+		// fail, it waits, and the worker goes on with the tasks of the other
+		// plugins.
+		notBefore := time.Now().Add(searchQuotaWait)
+		logger.Warn().Err(err).Time("retry_at", notBefore).Dur("elapsed", elapsed).
+			Msg("Worker: search quota exhausted; the task waits for it")
+		if idle != nil {
+			idle.FactsAdded(out.Facts)
+		}
+		return release(wctx, tasks, task, err.Error(), notBefore, out, false)
 	case err == nil && out.Covered:
 		logger.Info().Dur("elapsed", elapsed).Int("items", out.Items).Int("facts", out.Facts).Strs("notes", out.Details).Msg("Worker: task done")
 		metrics.CollectionTaskAttemptsTotal.WithLabelValues(task.Plugin, storage.TaskDone).Inc()
@@ -290,6 +447,11 @@ func runOne(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Opt
 	logger.Warn().Str("error", msg).Dur("elapsed", elapsed).Time("retry_at", notBefore).Msg("Worker: attempt failed; the task is retried")
 	return release(wctx, tasks, task, msg, notBefore, out, true)
 }
+
+// searchQuotaWait is how long a task waits when every search provider refused
+// for its quota: the quotas reset by the hour (rate) or the month (credits),
+// and a task that tries again costs one search per provider.
+const searchQuotaWait = 6 * time.Hour
 
 func release(ctx context.Context, tasks Tasks, task storage.CollectionTask, msg string, notBefore time.Time, out Outcome, countAttempt bool) error {
 	metrics.CollectionTaskAttemptsTotal.WithLabelValues(task.Plugin, "released").Inc()

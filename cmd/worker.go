@@ -98,9 +98,7 @@ func runWorker(cmd *cobra.Command, args []string) error {
 	}
 
 	d := deps.New(storer)
-	house := worker.DefaultHousekeeping
-	house.Storer, house.Deps = storer, d
-	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, &house, opts)
+	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, worker.NewHousekeeping(storer, d), opts)
 	if errors.Is(err, context.Canceled) {
 		log.Info().Msg("Worker stopped")
 		return nil

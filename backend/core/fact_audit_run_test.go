@@ -3,8 +3,11 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"testing"
+
+	"digital-mirror/backend/llm"
 )
 
 // fakeAuditor returns a verdict keyed by the fact text.
@@ -30,7 +33,7 @@ func TestRunFactAudit_TallyAndDelivery(t *testing.T) {
 	}
 
 	var seen []int64
-	tally, err := RunFactAudit(context.Background(), auditor, jobs, 3, func(o FactAuditOutcome) error {
+	tally, err := RunFactAudit(context.Background(), auditor, jobs, func(o FactAuditOutcome) error {
 		seen = append(seen, o.FactID)
 		return nil
 	})
@@ -54,7 +57,7 @@ func TestRunFactAudit_OnResultErrorAborts(t *testing.T) {
 	auditor := fakeAuditor{verdicts: map[string]FactAuditResult{"x": {Verdict: FactVerdictKeep, Rule: "none"}}}
 	jobs := []FactAuditJob{{FactID: 1, Input: FactAuditInput{NormalizedFact: "x"}}}
 	want := errors.New("encode failed")
-	_, err := RunFactAudit(context.Background(), auditor, jobs, 1, func(FactAuditOutcome) error { return want })
+	_, err := RunFactAudit(context.Background(), auditor, jobs, func(FactAuditOutcome) error { return want })
 	if !errors.Is(err, want) {
 		t.Fatalf("expected the onResult error to surface, got %v", err)
 	}
@@ -69,5 +72,27 @@ func TestFactAuditSubjectLabel(t *testing.T) {
 	}
 	if got := FactAuditSubjectLabel([]string{"a", "b", "c"}); got != "a (+2 more)" {
 		t.Errorf("three persons: got %q", got)
+	}
+}
+
+// An LLM that cannot serve stops the run with its error: the facts left are
+// not audited, so the run must not look done. Without a routing the jobs
+// run one at a time, in order.
+func TestRunFactAudit_UnavailableStops(t *testing.T) {
+	down := fmt.Errorf("judge API call failed: %w", llm.ErrUnavailable)
+	auditor := fakeAuditor{verdicts: map[string]FactAuditResult{
+		"d1": {Verdict: FactVerdictDelete, Rule: "speculative"},
+		"x":  {Err: down},
+	}}
+	jobs := []FactAuditJob{
+		{FactID: 1, Input: FactAuditInput{NormalizedFact: "d1"}},
+		{FactID: 2, Input: FactAuditInput{NormalizedFact: "x"}},
+	}
+	tally, err := RunFactAudit(context.Background(), auditor, jobs, func(FactAuditOutcome) error { return nil })
+	if !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("err = %v, want llm.ErrUnavailable", err)
+	}
+	if len(tally.DeleteIDs) != 1 || tally.DeleteIDs[0] != 1 {
+		t.Fatalf("tally of the facts judged = %+v", tally)
 	}
 }

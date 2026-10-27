@@ -13,15 +13,18 @@ import (
 	"digital-mirror/backend/search"
 	"digital-mirror/backend/storage"
 	"digital-mirror/backend/util"
+	"digital-mirror/backend/webfetch"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // minArticleContentLen is the minimum length (after the extractor's cleaning
@@ -183,6 +186,9 @@ func (p *Provider) UseExtractor(extractorType string) error {
 // newsMaxConsecutiveFailures aborts a target's extraction after this many
 // documents failed in a row: the LLM is down, not the articles.
 const newsMaxConsecutiveFailures = 5
+
+// pagesAtOnce is how many pages of one task are fetched at once.
+const pagesAtOnce = 8
 
 // targetCacheDir returns the target-specific cache subdirectory under baseDir.
 // Creates the directory if it doesn't exist.
@@ -550,13 +556,20 @@ func (p *Provider) extractAndInsertFromArticles(
 			extractionErrors[i] = br.Error
 		}
 	} else {
+		// The pages are fetched at once: webfetch paces each site (a rate and
+		// a count at once per domain), so the bound here only caps the work
+		// of one task.
 		extractedContents = make([]*extractor.ExtractedContent, len(urlsToExtract))
 		extractionErrors = make([]error, len(urlsToExtract))
+		var g errgroup.Group
+		g.SetLimit(pagesAtOnce)
 		for i, url := range urlsToExtract {
-			content, err := contentExtractor.ExtractContent(url)
-			extractedContents[i] = content
-			extractionErrors[i] = err
+			g.Go(func() error {
+				extractedContents[i], extractionErrors[i] = contentExtractor.ExtractContent(url)
+				return nil
+			})
 		}
+		_ = g.Wait() // the errors are per page, in extractionErrors
 	}
 
 	// Fetch step of the document state machine: every scraped article is
@@ -570,6 +583,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)
 			metrics.IncrementNewsArticles("error")
+			webfetch.Note(ctx, "news", article.Link, "article_failed")
 			continue
 		}
 		if content == nil {
@@ -594,12 +608,15 @@ func (p *Provider) extractAndInsertFromArticles(
 		case text == "":
 			log.Debug().Str("url", article.Link).Msg("news: no content extracted")
 			metrics.IncrementNewsArticles("skipped_empty_content")
+			webfetch.Note(ctx, "news", article.Link, "article_empty")
 		case len(text) < minArticleContentLen:
 			log.Warn().Str("url", article.Link).Int("content_len", len(content.Content)).
 				Msg("news: scraped content too thin after cleaning — skipping extraction")
 			metrics.IncrementNewsArticles("skipped_thin_content")
 			result.SkippedThinContent++
+			webfetch.Note(ctx, "news", article.Link, "article_thin")
 		default:
+			webfetch.Note(ctx, "news", article.Link, "article_ok")
 			continue
 		}
 		nothingToExtract = append(nothingToExtract, article.Link)
@@ -630,16 +647,26 @@ func (p *Provider) extractStoredDocuments(ctx context.Context, target plugins.Ta
 	}
 	result.storedExtracted = true
 	inserter := p.newFactInserter()
+	// The documents are extracted at once (ProcessOptions.Parallel): each
+	// counts into its own Result, added to result under mu.
+	var mu sync.Mutex
 	extract := func(ctx context.Context, docs []core.SourceDocument) (map[int64]int, error) {
-		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, result)
+		var own Result
+		n, err := p.extractDocument(ctx, target, docs[0], affiliatedParties, opts, inserter, &own)
 		if err != nil {
-			result.Errors = append(result.Errors, err)
+			own.Errors = append(own.Errors, err)
+		}
+		mu.Lock()
+		aggregateResult(result, &own)
+		mu.Unlock()
+		if err != nil {
 			return nil, err
 		}
 		return map[int64]int{docs[0].ID: n}, nil
 	}
 	stats, err := core.ProcessDocuments(ctx, p.Storer, "news", target.PersonID, extract, core.ProcessOptions{
 		MaxConsecutiveFailures: newsMaxConsecutiveFailures,
+		Parallel:               true,
 	})
 	log.Info().Str("target", target.Name).Int("pending", stats.Pending).Int("extracted", stats.Extracted).
 		Int("failed", stats.Failed).Int("facts", stats.Facts).Msg("news: documents extracted")
@@ -680,16 +707,7 @@ func (p *Provider) extractDocument(
 		return 0, fmt.Errorf("extracting facts from %s: %w", doc.URL, err)
 	}
 
-	// Publication date — priority: LLM-from-body > the date stored with the
-	// document (webcrawlerapi <meta>, else the SERP date).
-	var llmDate *time.Time
-	for _, f := range facts {
-		if f.ArticlePublishedAt != nil {
-			llmDate = f.ArticlePublishedAt
-			break
-		}
-	}
-	publishedAt := core.PickPublishedAt(llmDate, doc.PublishedAt, nil)
+	publishedAt := articleDate(doc, facts)
 
 	if opts.KeepSourceDir != "" {
 		if dumpErr := core.DumpSourceAndFacts(opts.KeepSourceDir, target.Name, doc.URL, doc.Title, doc.Content, publishedAt, facts); dumpErr != nil {
@@ -973,7 +991,10 @@ func (p *Provider) CollectFactsWithDateWindows(ctx context.Context, target plugi
 		if err != nil && ctx.Err() != nil {
 			return aggregate, fmt.Errorf("window %d/%d stopped: %w", i+1, totalWindows, ctx.Err())
 		}
-		if errors.Is(err, llm.ErrUnavailable) {
+		if errors.Is(err, llm.ErrUnavailable) || errors.Is(err, search.ErrQuota) {
+			// No later window can be served either: the task waits for the
+			// LLM or the search quota instead of failing its windows one by
+			// one.
 			return aggregate, fmt.Errorf("window %d/%d (%s to %s): %w",
 				i+1, totalWindows, w.from.Format("2006-01-02"), w.to.Format("2006-01-02"), err)
 		}
@@ -1217,4 +1238,20 @@ func (p *Provider) newFactInserter() *core.FactInserter {
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 	inserter.EnableDedupe(p.Storer)
 	return inserter
+}
+
+// articleDate is the publication date of an article: the date stored with the
+// document (webcrawlerapi <meta>, else the SERP date), else the LLM's reading
+// of the body. The LLM resolves "mis à jour il y a 2 heures" against today: on
+// the Oct 2026 backfill it dated 17 % of the articles with a dated URL on the
+// day they were scraped, while the document had the right date.
+func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
+	var llmDate *time.Time
+	for _, f := range facts {
+		if f.ArticlePublishedAt != nil {
+			llmDate = f.ArticlePublishedAt
+			break
+		}
+	}
+	return core.PickPublishedAt(doc.PublishedAt, llmDate)
 }

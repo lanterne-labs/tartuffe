@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"digital-mirror/backend/contradiction"
@@ -30,6 +31,13 @@ const (
 	// refreshBudget caps how many stances a pass brings up to date (one LLM
 	// call each).
 	refreshBudget = 2000
+	// mergeBudget caps the LLM calls of the stance merge sweep of a pass:
+	// after a fold or a large backfill most persons need a sweep, and the
+	// sweep over all of them held the pass for more than 10 h.
+	mergeBudget = 2000
+	// foldBudget caps the grouping gate calls of the fold sweep of a pass
+	// (two calls per pair at most, both orders).
+	foldBudget = 2000
 	// detectBudget caps how many pairs a pass judges (one LLM call each, about
 	// 4 s): a pass that judges every person (the first one, a rulebook change)
 	// is cut into passes of about 2 h, so the feed and the tasks run between
@@ -43,9 +51,21 @@ const (
 	// last pass and the last feed.
 	maintenanceJob = "maintenance"
 	feedJob        = "feed"
+
+	// watchPriority is the priority of the tasks of the watch list (the day
+	// before): the news of yesterday goes before the backfills (priority 0
+	// to 20, `dm collect add --priority`).
+	watchPriority = 50
 )
 
-// Housekeeping is what the worker does when no task is pending.
+// Housekeeping is the work of the worker besides the tasks, in the order of
+// priority. The feed goes before every task: it runs beside them (Beside) as
+// soon as it is due. The maintenance pass runs alone, since it rewrites the
+// stances the tasks insert into: when no task is pending (Idle), and at the
+// latest every MaintenanceEvery although tasks are pending (Urgent: the
+// worker lets the running tasks end first). Before, both waited for an empty
+// queue: during the 2-year backfill the feed did not run for 2 days and the
+// maintenance for 3 (2026-10-24).
 //
 // The feed runs once a day, after FeedHourUTC: the ingest of the plugins that
 // read their own source (frpolitics: the votes and the transcripts of the
@@ -72,15 +92,20 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
-	dirty bool
+	dirty   atomic.Bool // facts were added since the last pass (set by the tasks run at once)
+	feeding atomic.Bool // the feed runs
 }
 
-// DefaultHousekeeping are the settings of `dm worker run`.
-var DefaultHousekeeping = Housekeeping{
-	MaintenanceEvery: 6 * time.Hour,
-	// The AN archive is refreshed around 02:05 UTC.
-	FeedHourUTC: 3,
-	BackfillCap: time.Hour,
+// NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
+func NewHousekeeping(storer *storage.PostgresStorer, d *deps.Deps) *Housekeeping {
+	return &Housekeeping{
+		Storer:           storer,
+		Deps:             d,
+		MaintenanceEvery: 6 * time.Hour,
+		// The AN archive is refreshed around 02:05 UTC.
+		FeedHourUTC: 3,
+		BackfillCap: time.Hour,
+	}
 }
 
 func (h *Housekeeping) now() time.Time {
@@ -94,38 +119,57 @@ func (h *Housekeeping) now() time.Time {
 // runs a maintenance pass.
 func (h *Housekeeping) FactsAdded(n int) {
 	if n > 0 {
-		h.dirty = true
+		h.dirty.Store(true)
 	}
 }
 
-// Idle implements Idle: the feed when due, then a maintenance pass when due.
-// An unavailable LLM stops the work with an error wrapping llm.ErrUnavailable;
-// the other failures are joined and returned after the work went on.
-func (h *Housekeeping) Idle(ctx context.Context) error {
-	var errs []error
+// Beside implements Idle: the feed when due.
+func (h *Housekeeping) Beside(ctx context.Context) error {
 	due, err := h.feedDue(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	} else if due {
-		if err := h.feed(ctx); err != nil {
-			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-				return err
-			}
-			errs = append(errs, err)
-		}
+	if err != nil || !due {
+		return err
 	}
+	h.feeding.Store(true)
+	defer h.feeding.Store(false)
+	return h.feed(ctx)
+}
+
+// MinPriority implements Idle: while the feed is due or runs, only the tasks
+// of the watch list are claimed. The backfills that run go on, but no new one
+// starts: on 2026-10-26 the 16 lanes of backfills held the seats, and the
+// feed of the day waited behind them until the seats hit their limit. A due
+// feed counts too: the worker claims as it starts the feed, so at a restart
+// the backfills took every lane before the feed began.
+func (h *Housekeeping) MinPriority(ctx context.Context) (int, error) {
+	if h.feeding.Load() {
+		return watchPriority, nil
+	}
+	due, err := h.feedDue(ctx)
+	if err != nil || !due {
+		return 0, err
+	}
+	return watchPriority, nil
+}
+
+// Urgent implements Idle: a maintenance pass is due although tasks are
+// pending when none ran for MaintenanceEvery (a cut pass waits for it too,
+// so the passes do not hold the worker back to back).
+func (h *Housekeeping) Urgent(ctx context.Context) (bool, error) {
+	last, err := h.lastMaintenance(ctx)
+	if err != nil {
+		return false, err
+	}
+	return last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery, nil
+}
+
+// Idle implements Idle: a maintenance pass when due. The feed is Beside's
+// only: the worker never runs both at once.
+func (h *Housekeeping) Idle(ctx context.Context) error {
 	due, since, err := h.maintenanceDue(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	} else if due {
-		if err := h.maintenance(ctx, since); err != nil {
-			if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-				return err
-			}
-			errs = append(errs, err)
-		}
+	if err != nil || !due {
+		return err
 	}
-	return errors.Join(errs...)
+	return h.maintenance(ctx, since)
 }
 
 // feedDue reports whether the feed of the day has not run yet: the last feed
@@ -163,8 +207,16 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 	log.Info().Strs("plugins", feedPlugins()).Msg("Feed started")
 	var errs []error
 
+	// The watch list's tasks go in first: the worker claims them during the
+	// feed (and no backfill), so yesterday's news runs beside the votes of
+	// the day rather than after them. A feed tried again after an outage
+	// finds them open or done: none is added twice.
+	added, err := h.watchTasks(ctx)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	var in pipeline.IngestRun
-	var err error
 	if names := feedPlugins(); len(names) > 0 {
 		// An empty list would mean every plugin to IngestRun.
 		err = in.Run(ctx, h.Deps, nil, plugins.IngestOptions{}, names)
@@ -195,11 +247,6 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 		errs = append(errs, fmt.Errorf("backfill %s: %w", name, e))
 	}
 
-	added, err := h.watchTasks(ctx)
-	if err != nil {
-		errs = append(errs, err)
-	}
-
 	if err := h.Storer.RecordJobMetrics(ctx, []storage.JobMetric{
 		{JobType: feedJob, Metric: "facts", Value: float64(in.Result.Total.Facts)},
 		{JobType: feedJob, Metric: "watch_tasks", Value: float64(added)},
@@ -224,7 +271,7 @@ func (h *Housekeeping) watchTasks(ctx context.Context) (int, error) {
 	var tasks []storage.NewCollectionTask
 	for _, t := range targets {
 		for _, name := range PeriodPlugins() {
-			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, RequestedBy: "watch"})
+			tasks = append(tasks, storage.NewCollectionTask{PersonID: t.PersonID, Plugin: name, Since: since, Until: until, Priority: watchPriority, RequestedBy: "watch", UnlessDone: true})
 		}
 	}
 	added, err := h.Storer.AddCollectionTasks(ctx, tasks)
@@ -245,7 +292,7 @@ func (h *Housekeeping) maintenanceDue(ctx context.Context) (bool, time.Time, err
 	if last.cut {
 		return true, last.since, nil
 	}
-	due := h.dirty || last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery
+	due := h.dirty.Load() || last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery
 	return due, last.start, nil
 }
 
@@ -288,7 +335,7 @@ func (h *Housekeeping) lastMaintenance(ctx context.Context) (lastPass, error) {
 // since is zero).
 func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	start := h.now()
-	log.Info().Time("since", since).Bool("facts_added", h.dirty).Msg("Maintenance pass started")
+	log.Info().Time("since", since).Bool("facts_added", h.dirty.Load()).Msg("Maintenance pass started")
 	var errs []error
 	step := func(name string, err error) error {
 		if err == nil {
@@ -313,8 +360,21 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	}
 	// 2. The stances of one person that cover one subject are merged; the
 	// facts they held are judged against each other.
-	_, err = core.RunStanceMergeSweep(ctx, storer, sm, core.DefaultStanceMergeOptions)
+	mergeOpts := core.DefaultStanceMergeOptions
+	mergeOpts.MaxLLMCalls = mergeBudget
+	_, err = core.RunStanceMergeSweep(ctx, storer, sm, mergeOpts)
 	if err := step("stance merge", err); err != nil {
+		return err
+	}
+	// 2b. The groups of one occurrence that the insertion never compared are
+	// merged: the persons whose active facts changed, the pairs no stored
+	// gate verdict covers.
+	judge, err := core.NewFactDedupeAdjudicatorFromEnv()
+	if err != nil {
+		return fmt.Errorf("maintenance: grouping gate: %w", err)
+	}
+	_, err = core.RunFoldSweep(ctx, storer, judge, core.DefaultFoldOptions, foldBudget)
+	if err := step("fold", err); err != nil {
 		return err
 	}
 	// 3. Detection across stances. A NO verdict is final only under the
@@ -387,7 +447,7 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 		return err
 	}
 
-	h.dirty = false
+	h.dirty.Store(false)
 	elapsed := h.now().Sub(start)
 	rows := []storage.JobMetric{{JobType: maintenanceJob, Metric: "duration_seconds", Value: elapsed.Seconds()}}
 	if cut {

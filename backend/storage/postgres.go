@@ -6,6 +6,8 @@ import (
 	"digital-mirror/backend/metrics"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -42,7 +44,17 @@ func NewPostgresStorerFromEnv(ctx context.Context) (*PostgresStorer, error) {
 	config.MaxConnIdleTime = 5 * time.Minute    // Close idle connections before server times them out
 	config.HealthCheckPeriod = 30 * time.Second // Check connection health periodically
 	config.MaxConns = 10                        // Reasonable pool size
-	config.MinConns = 2                         // Keep some connections warm
+	// The worker runs a task per LLM process (16 on 4 seats), each with its
+	// documents at once: it sets a larger pool. Every process opens its own
+	// pool on the one Postgres (100 connections), so the default stays small.
+	if v := strings.TrimSpace(os.Getenv("DATABASE_MAX_CONNS")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("DATABASE_MAX_CONNS: %q is not a count of connections", v)
+		}
+		config.MaxConns = int32(n)
+	}
+	config.MinConns = 2 // Keep some connections warm
 
 	// Register pgvector types with the connection config
 	config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {

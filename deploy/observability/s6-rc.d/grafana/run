@@ -1,6 +1,38 @@
 #!/bin/sh
 # The host injects PORT for the public-facing process; fall back to 3000 locally.
 export GF_SERVER_HTTP_PORT="${PORT:-3000}"
+# GF_SECURITY_ADMIN_PASSWORD sets the admin password only when Grafana
+# creates its database; after that the password lives in /data. Reset it at
+# every start, so the host variable is the password.
+if [ -n "$GF_SECURITY_ADMIN_PASSWORD" ]; then
+  s6-setuidgid grafana /usr/share/grafana/bin/grafana cli \
+    --homepath=/usr/share/grafana --config=/etc/grafana/grafana.ini \
+    admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD" >/dev/null \
+    || echo "grafana: resetting the admin password failed" >&2
+fi
+# The contact point of the alerts (provisioning/alerting/worker.yml). Grafana
+# turns a variable that expands to a number into a number, and the chat ID of
+# Telegram must stay a string: it is written here as a literal string. The
+# token stays a variable that Grafana expands.
+case "$TELEGRAM_CHAT_ID" in
+  '' | *[!0-9-]*)
+    echo "grafana: TELEGRAM_CHAT_ID is not a numeric chat ID; the alerts have no contact point" >&2
+    ;;
+  *)
+    cat >/etc/grafana/provisioning/alerting/telegram.yml <<EOF
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: telegram
+    receivers:
+      - uid: telegram
+        type: telegram
+        settings:
+          bottoken: "\${TELEGRAM_BOT_TOKEN}"
+          chatid: "$TELEGRAM_CHAT_ID"
+EOF
+    ;;
+esac
 exec s6-setuidgid grafana /usr/share/grafana/bin/grafana server \
   --homepath=/usr/share/grafana \
   --config=/etc/grafana/grafana.ini

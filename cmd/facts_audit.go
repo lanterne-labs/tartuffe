@@ -5,8 +5,10 @@ import (
 	"context"
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
 	"digital-mirror/backend/storage"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -18,18 +20,18 @@ import (
 )
 
 var (
-	factsAuditPerson   string
-	factsAuditPersonID int64
-	factsAuditFactID   int64
-	factsAuditMax      int
-	factsAuditRandom   bool
-	factsAuditFormat   string
-	factsAuditApply    bool
-	factsAuditYes      bool
-	factsAuditEndpoint string
-	factsAuditModel    string
-	factsAuditAPIKey   string
-	factsAuditParallel int
+	factsAuditPerson                                                      string
+	factsAuditPersonID                                                    int64
+	factsAuditFactID                                                      int64
+	factsAuditMax                                                         int
+	factsAuditRandom                                                      bool
+	factsAuditFormat                                                      string
+	factsAuditApply                                                       bool
+	factsAuditYes                                                         bool
+	factsAuditCreatedFrom, factsAuditCreatedBefore, factsAuditDeleteRules string
+	factsAuditEndpoint                                                    string
+	factsAuditModel                                                       string
+	factsAuditAPIKey                                                      string
 )
 
 var factsAuditCmd = &cobra.Command{
@@ -79,10 +81,12 @@ func init() {
 	factsAuditCmd.Flags().StringVar(&factsAuditFormat, "format", "jsonl", "Output format: jsonl or text")
 	factsAuditCmd.Flags().BoolVar(&factsAuditApply, "apply", false, "After audit, delete facts with verdict=delete (cascades stance/contradiction cleanup + recomputes honesty score)")
 	factsAuditCmd.Flags().BoolVar(&factsAuditYes, "yes", false, "Skip the confirmation prompt before deletion (only with --apply)")
+	factsAuditCmd.Flags().StringVar(&factsAuditCreatedFrom, "created-from", "", "Only facts created on or after this day (YYYY-MM-DD)")
+	factsAuditCmd.Flags().StringVar(&factsAuditCreatedBefore, "created-before", "", "Only facts created before this day (YYYY-MM-DD)")
+	factsAuditCmd.Flags().StringVar(&factsAuditDeleteRules, "delete-rules", "", "With --apply, delete only the facts whose rule is in this comma-separated list (e.g. not_about_entity,journalist_characterization); default: every delete verdict")
 	factsAuditCmd.Flags().StringVar(&factsAuditEndpoint, "endpoint", "", "Override OPEN_AI_API for this run (e.g. http://cachy:4000/v1)")
 	factsAuditCmd.Flags().StringVar(&factsAuditModel, "model", "", "Override OPEN_AI_CHAT_MODEL for this run")
 	factsAuditCmd.Flags().StringVar(&factsAuditAPIKey, "apikey", "", "Override OPEN_AI_KEY for this run (some local gateways use a fixed token)")
-	factsAuditCmd.Flags().IntVar(&factsAuditParallel, "parallel", 1, "Number of facts to audit concurrently (1 = sequential). Local LLM gateways like vLLM/llama-swap usually handle 16+ in parallel.")
 }
 
 // factAuditPerson is the JSON shape of one mentioned person in the audit row.
@@ -106,7 +110,7 @@ type factAuditOutputLine struct {
 	Error          string            `json:"error,omitempty"`
 }
 
-func runFactsAudit(cmd *cobra.Command, args []string) error {
+func runFactsAudit(cmd *cobra.Command, args []string) (runErr error) {
 	ctx := context.Background()
 
 	if err := godotenv.Load(); err != nil {
@@ -141,7 +145,27 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		personIDPtr = &person.ID
 	}
 
-	rows, err := storer.ListFactsForAudit(ctx, personIDPtr, factIDPtr, factsAuditRandom, factsAuditMax)
+	scope := storage.FactAuditScope{PersonID: personIDPtr, FactID: factIDPtr}
+	for _, b := range []struct {
+		flag string
+		dst  *time.Time
+	}{{factsAuditCreatedFrom, &scope.CreatedFrom}, {factsAuditCreatedBefore, &scope.CreatedBefore}} {
+		if b.flag == "" {
+			continue
+		}
+		t, err := time.Parse("2006-01-02", b.flag)
+		if err != nil {
+			return fmt.Errorf("invalid date %q (YYYY-MM-DD): %w", b.flag, err)
+		}
+		*b.dst = t
+	}
+	deleteRules := map[string]bool{}
+	for _, r := range strings.Split(factsAuditDeleteRules, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			deleteRules[r] = true
+		}
+	}
+	rows, err := storer.ListFactsForAudit(ctx, scope, factsAuditRandom, factsAuditMax)
 	if err != nil {
 		return fmt.Errorf("failed to list facts: %w", err)
 	}
@@ -158,15 +182,9 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 
-	parallelism := factsAuditParallel
-	if parallelism < 1 {
-		parallelism = 1
-	}
-
 	startedAt := time.Now()
 	log.Info().
 		Int("total", len(rows)).
-		Int("parallel", parallelism).
 		Bool("random", factsAuditRandom).
 		Str("scope", factsAuditScopeDescription()).
 		Str("model", auditor.Model()).
@@ -195,8 +213,10 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		rowByID[row.ID] = row
 	}
 
-	tally, err := core.RunFactAudit(ctx, auditor, jobs, parallelism, func(o core.FactAuditOutcome) error {
+	ruleByID := map[int64]string{}
+	tally, err := core.RunFactAudit(ctx, auditor, jobs, func(o core.FactAuditOutcome) error {
 		row := rowByID[o.FactID]
+		ruleByID[o.FactID] = o.Result.Rule
 		line := factAuditOutputLine{
 			FactID:         row.ID,
 			Persons:        toAuditInputPersons(row.Persons),
@@ -221,8 +241,19 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 		printFactAuditTextRow(os.Stdout, line)
 		return nil
 	})
-	if err != nil {
+	// An LLM that cannot serve stops the run: the verdicts given still apply,
+	// and the command fails so the facts left are audited again later.
+	stopped := errors.Is(err, llm.ErrUnavailable)
+	if err != nil && !stopped {
 		return err
+	}
+	if stopped {
+		fmt.Fprintf(os.Stderr, "\nThe audit stopped, the LLM cannot serve: %v\n", err)
+		defer func() {
+			if runErr == nil {
+				runErr = fmt.Errorf("fact audit stopped before the end: %w", err)
+			}
+		}()
 	}
 
 	printFactAuditSummary(os.Stderr, len(rows), tally.Keep, tally.Delete, tally.Unsure, tally.Errors, time.Since(startedAt))
@@ -235,6 +266,18 @@ func runFactsAudit(cmd *cobra.Command, args []string) error {
 	}
 
 	deleteIDs := tally.DeleteIDs
+	if len(deleteRules) > 0 {
+		// Only the deletions under the rules asked for; the others stay in
+		// the JSONL output for a review.
+		kept := deleteIDs[:0:0]
+		for _, id := range deleteIDs {
+			if deleteRules[ruleByID[id]] {
+				kept = append(kept, id)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "%d of %d deletions are under --delete-rules\n", len(kept), len(deleteIDs))
+		deleteIDs = kept
+	}
 	if len(deleteIDs) == 0 {
 		fmt.Fprintln(os.Stderr, "Nothing to apply.")
 		return nil
