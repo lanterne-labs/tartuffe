@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,7 @@ func TestRegistryFromEnvRefusesNoopOnthe host(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, r.Infos())
 	t.Setenv("DM_PRODUCTION", "")
+	os.Unsetenv("AUTH_PROVIDERS")
 	r, err = RegistryFromEnv()
 	require.NoError(t, err)
 	require.Len(t, r.Infos(), 1)
