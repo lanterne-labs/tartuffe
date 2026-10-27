@@ -589,6 +589,49 @@ func TestVerifyEntries_NothingUnverified(t *testing.T) {
 	}
 }
 
+// TestVerifyEntries_OnePerStance: a fact contradicts a stance once. The
+// entries are verified in their order (clearest first) and the first
+// survivor is the contradiction; the entries after it are not judged, so
+// their verifier calls are spared. A refuted entry in front gives way to the
+// next.
+func TestVerifyEntries_OnePerStance(t *testing.T) {
+	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans.", 11: "Il promet de ne jamais toucher à l'âge légal.", 12: "Il refuse toute réforme des retraites."}
+	entries := []StanceContradictionEntry{{KeyFactID: 10, Reason: "62 vs 64"}, {KeyFactID: 11, Reason: "promesse rompue"}, {KeyFactID: 12, Reason: "réforme refusée"}}
+	newFact := "Il vote la retraite à 64 ans."
+
+	storer := newMockStanceStorer()
+	sm, o := newOutageManager(t, storer, answers(nil))
+	got, err := sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].KeyFactID != 10 {
+		t.Errorf("survivors: %+v, want the first entry alone", got)
+	}
+	if n := o.count(verifyPrompt); n != 1 {
+		t.Errorf("verifier calls = %d, want 1: the entries after the survivor are not judged", n)
+	}
+
+	// The first entry is refuted: the second is the contradiction.
+	storer = newMockStanceStorer()
+	sm, o = newOutageManager(t, storer, func(prompt string) any {
+		if strings.Contains(prompt, verifyPrompt) && strings.Contains(prompt, keyTexts[10]) {
+			return "REASON: same position.\nVERDICT: NO"
+		}
+		return answers(nil)(prompt)
+	})
+	got, err = sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].KeyFactID != 11 {
+		t.Errorf("survivors: %+v, want the second entry alone", got)
+	}
+	if n := o.count(verifyPrompt); n != 2 {
+		t.Errorf("verifier calls = %d, want 2", n)
+	}
+}
+
 // TestStanceMergeSweep_StopsAtCallBudget: once MaxLLMCalls calls were made,
 // the sweep starts no new person; the person left is not memoized.
 func TestStanceMergeSweep_StopsAtCallBudget(t *testing.T) {
