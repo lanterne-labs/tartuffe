@@ -23,16 +23,28 @@ type GitMirror struct {
 	dir    *DirMirror
 	remote string
 	branch string
+	sshKey string // a private key file for an ssh remote, "" for none
 }
 
 // NewGitMirror opens the clone in dir, cloning the remote's branch when
 // dir is empty (an empty remote gets its first commit at the first
-// Commit).
+// Commit). An ssh remote (git@github.com:org/repo.git) authenticates with
+// the deploy key in VOTE_MIRROR_SSH_KEY (the private key's text), written
+// to a file of the clone's parent directory.
 func NewGitMirror(ctx context.Context, dir, remote, branch string) (*GitMirror, error) {
 	if branch == "" {
 		branch = "main"
 	}
 	m := &GitMirror{dir: &DirMirror{Dir: dir}, remote: remote, branch: branch}
+	if key := os.Getenv("VOTE_MIRROR_SSH_KEY"); key != "" {
+		if err := os.MkdirAll(filepath.Dir(filepath.Clean(dir)), 0o755); err != nil {
+			return nil, err
+		}
+		m.sshKey = filepath.Join(filepath.Dir(filepath.Clean(dir)), ".mirror-deploy-key")
+		if err := os.WriteFile(m.sshKey, []byte(strings.TrimSpace(key)+"\n"), 0o600); err != nil {
+			return nil, fmt.Errorf("mirror ssh key: %w", err)
+		}
+	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		if out, err := m.git(ctx, "pull", "--ff-only", "-q", "origin", branch); err != nil && !strings.Contains(out, "couldn't find remote ref") {
 			return nil, fmt.Errorf("git pull: %s: %w", strings.TrimSpace(out), err)
@@ -61,6 +73,9 @@ func (m *GitMirror) git(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = m.dir.Dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_AUTHOR_NAME=tartuffe-vote", "GIT_AUTHOR_EMAIL=vote@tartuffe.me", "GIT_COMMITTER_NAME=tartuffe-vote", "GIT_COMMITTER_EMAIL=vote@tartuffe.me")
+	if m.sshKey != "" {
+		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -i "+m.sshKey+" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new")
+	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()

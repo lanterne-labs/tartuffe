@@ -1,17 +1,18 @@
-import adapter from '@sveltejs/adapter-node';
+import adapterNode from '@sveltejs/adapter-node';
+import adapterStatic from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+
+// VOTE_APP=1 builds the vote app alone (scripts/vote-app.mjs): the vote
+// routes, as static files for https://tartuffeme.github.io, every page
+// rendered in the browser (the fallback), nothing of ours serving it.
+const voteApp = process.env.VOTE_APP === '1';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-	// Consult https://svelte.dev/docs/kit/integrations
-	// for more information about preprocessors
 	preprocess: vitePreprocess(),
-
 	kit: {
-		// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-		// If your environment is not supported, or you settled on a specific environment, switch out the adapter.
-		// See https://svelte.dev/docs/kit/adapters for more information about adapters.
-		adapter: adapter()
+		adapter: voteApp ? adapterStatic({ pages: 'build-vote', assets: 'build-vote', fallback: '404.html', strict: false }) : adapterNode(),
+		files: voteApp ? { routes: '.vote-routes' } : undefined
 	}
 };
 

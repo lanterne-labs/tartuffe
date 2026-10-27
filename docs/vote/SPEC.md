@@ -875,6 +875,12 @@ Differences from the text above:
   checkpoint one commit, its hash the token the note names, read through
   jsDelivr by commit and the latest files through the repository's pages
   (the browser's `Sources` tries a commit-aware mirror first for a token).
+  The organisation is `tartuffeme` (Q3): the mirror is
+  `github.com/tartuffeme/vote-data` (pages at
+  `tartuffeme.github.io/vote-data`), the app `tartuffeme.github.io` (built
+  by the code repository's workflow `vote-app.yml` from `npm run
+  build:vote`, the hash of the build in the commit message: `app_hash`),
+  the code `tartuffeme/mirror` (private until the licence is chosen).
 - The ranking can be reordered with the keyboard (buttons on each slot)
   besides the drag.
 

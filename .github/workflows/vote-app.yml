@@ -1,0 +1,61 @@
+# The vote app (tartuffe-vote/2) as static files on https://tartuffeme.github.io:
+# built from the frontend with the vote's settings, pushed to the public
+# repository tartuffeme/tartuffeme.github.io with a deploy key (the secret
+# VOTE_APP_DEPLOY_KEY: the private key whose public half is a write deploy
+# key of that repository). The build's hash is in the commit message: what
+# the setup entry's app_hash names.
+name: vote-app
+on:
+  push:
+    branches: [main]
+    paths: ['frontend/**', '.github/workflows/vote-app.yml']
+  workflow_dispatch:
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: SRS
+        working-directory: frontend
+        run: ./scripts/srs.sh
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_API_BASE: https://tartuffe.me
+          VITE_VOTE_MIRROR: https://tartuffeme.github.io/vote-data
+          VITE_VOTE_MIRROR_REPO: tartuffeme/vote-data
+          VITE_ZKPASSPORT_DOMAIN: tartuffeme.github.io
+          VITE_VOTE_LOG_KEY: ${{ vars.VOTE_LOG_VERIFIER_KEY }}
+        run: npm run build:vote
+      - name: Hash
+        id: hash
+        working-directory: frontend
+        run: |
+          h=$(find build-vote -type f ! -path '*/srs/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)
+          echo "app_hash=$h" >> "$GITHUB_OUTPUT"
+          echo "app_hash $h"
+      - name: Publish
+        env:
+          DEPLOY_KEY: ${{ secrets.VOTE_APP_DEPLOY_KEY }}
+        run: |
+          set -eu
+          [ -n "$DEPLOY_KEY" ] || { echo "no VOTE_APP_DEPLOY_KEY secret: build kept, nothing published"; exit 0; }
+          mkdir -p ~/.ssh && printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes"
+          git clone -q --depth 1 git@github.com:tartuffeme/tartuffeme.github.io.git pages
+          find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
+          cp -R frontend/build-vote/. pages/
+          touch pages/.nojekyll
+          cd pages
+          git add -A
+          git -c user.name=tartuffe-vote -c user.email=vote@tartuffe.me commit -q -m "build ${GITHUB_SHA::12}, app_hash ${{ steps.hash.outputs.app_hash }}" || { echo "nothing changed"; exit 0; }
+          git push -q origin HEAD:main
