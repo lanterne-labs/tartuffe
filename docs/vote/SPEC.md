@@ -155,11 +155,13 @@ Adversaries:
    (without this bound a phone with its clock set to 2033 proves "adult" for
    a minor and "not expired" for an expired passport). It then verifies the
    proof with `proof_date` as the reference date (the SDK's own check is only
-   `|date − now| ≤ validity`), checks the rules, appends the `register` entry,
-   buffers the registration for the next checkpoint, and posts a signed
-   acknowledgement (§7.2) on the same relay. The next checkpoint (≤ 20 s,
-   §8.2) logs the registration, appends `ID` to the tree (§5) and carries a
-   root that includes the voter; the browser finds its position among that
+   `|date − now| ≤ validity`; the verifier is told the proof's date, and the
+   identifier type is pinned to the document's own, non-salted one), checks
+   the rules, records the registration as pending in its store, and posts a
+   signed acknowledgement (§7.2) on the same relay. The next checkpoint
+   (≤ 20 s, §8.2) logs the registration (with the other entries of the
+   checkpoint, in one transaction), appends `ID` to the tree (§5) and
+   carries a root that includes the voter; the browser finds its position among that
    checkpoint's new leaves (a file everyone fetches, §8.3) and then votes.
    The acknowledgement carries no position: positions follow the log order
    of the checkpoint, which is by hash (§8.1), not by arrival. The browser
@@ -426,6 +428,13 @@ the bulk and its size does not depend on the circuit's size.
   relay before the next checkpoint. The relays keep both (retention ≥ 30
   days, §7.1); the acknowledgement, not an auditor's presence at the time,
   is what makes withholding provable later (§12.6).
+- **Our server keeps its promise through a restart.** It writes the entry
+  as pending in its store before it posts the acknowledgement, and a server
+  that starts again logs every pending entry at the checkpoint the
+  acknowledgements named (the next one). A failure of its own, the database
+  or a verifier process, never becomes an outcome: the event waits for the
+  next tick and is judged then (§8.1). An acknowledgement a relay refused
+  is posted again at each tick for an hour; its content does not change.
 - The browser treats a `duplicate` ack whose `body_hash` matches its own
   repost as success. On `old_root`, `stale_seq` or `unknown_setup` it
   re-proves with fresh values and reposts, then tells the voter only if that
@@ -482,7 +491,25 @@ the `seq` rule, then appends:
 Every event id carrying the tag is thus listed, including copies of an
 already logged body (`duplicate`), so an auditor never finds an unlisted
 event. Entries ingested between two checkpoints are ordered by `pi_hash`, not
-by arrival.
+by arrival. Two ballots of one pseudonym within one checkpoint are both
+logged, in that order: the `seq` rule (§6.3) compares with the ballots
+logged at earlier checkpoints and with the pending ones, and auditors accept
+any `seq` order within a checkpoint (the counted ballot is the highest
+`seq`, never the last in log order).
+
+A reason is the body's own: a failure of the server's (the database, the
+verifier process) delays the judgement to the next tick rather than
+signing a reject that a re-check would refute. The entries of a checkpoint,
+their index rows and the pending rows' deletion are one transaction, so a
+crash leaves either all of them logged or none; the tree takes its leaves
+after the commit, and a server that starts again rebuilds it from the
+index. One ingest at a time holds a lease on the log (a session advisory
+lock of the database), one tallier likewise: a second one refuses to start
+rather than acknowledge the same checkpoint index twice. A server reads a
+relay from the newest `created_at` that relay delivered, minus two hours,
+so a relay out of reach for a while is caught up from where it was left;
+it reads the active relays of every setup logged, since browsers on an
+older setup post to its relays until the newer one takes effect (§11).
 
 ### 8.2 Checkpoints
 
@@ -521,9 +548,10 @@ ballots that changed in between, whatever else surrounds them. An update that
 holds one changed ballot publishes that ballot's full ranking. So:
 
 **A tally is published only when at least `K_REAL` (10) distinct pseudonyms
-have changed their decrypted values since the previous tally** (a first
-ballot and a withdrawal count as changes; a recast identical to the previous
-ballot does not). There is no time cap: a cap would be the leak. The tallier
+hold a ballot whose decrypted values differ from the ballot the previous
+tally counted for them** (a first ballot and a withdrawal count as changes;
+a recast identical to the counted ballot does not, nor does a change undone
+before the tally: the count is of net changes). There is no time cap: a cap would be the leak. The tallier
 counts changes from its own per-ballot decryptions; the public cannot check
 `K_REAL` exactly and does not need to, since it protects voters from the
 public and the relays, and the tallier holds `sk` anyway. Auditors check what
@@ -533,17 +561,18 @@ first time in that range.
 
 **Firing lag.** Firing at the very checkpoint that reaches `K_REAL` would
 say that its last ballot was a real change. So once the count is reached,
-the tallier fires at each following checkpoint with probability 1/2
-(geometric lag, a few checkpoints on average), and `upto` is that
-checkpoint's last entry. The daily variant fires at a fixed `tally_at` time
+the tallier fires at each following checkpoint with probability 1/2, one
+coin per checkpoint however often it looks at it (geometric lag, a few
+checkpoints on average), and `upto` is that checkpoint's last entry. The daily variant fires at a fixed `tally_at` time
 of day, provided the count is reached, else it skips the day.
 
 When the rule fires, the tallier:
 
 1. takes, for every pseudonym, its latest valid ballot logged up to `upto`;
 2. sums them per component: `S0 = Σ C0`, `S_j = Σ C_j`, and counts them, `c`;
-3. knows each ballot's `p_j` from its own per-ballot decryption (a table over
-   the ≈ 820 valid rankings), so `P_j = Σ p_j` is known exactly and checked by
+3. knows each ballot's `p_j` from its own per-ballot decryption (a table
+   over the valid rankings: 310 with seven candidates and the blank), so
+   `P_j = Σ p_j` is known exactly and checked by
    `S_j − sk_j·S0 = P_j·G`: no discrete log of a sum;
 4. unpacks each `P_j` into 7 digits, checks `0 ≤ digit ≤ 2c`, subtracts `c`;
 5. appends `tally {v, event, upto, c, s0, s[J], p[J], dleq[J]}` where `dleq[j]`
@@ -709,6 +738,8 @@ times of first sighting:
 1. **Log:** every checkpoint signed by the published key, each consistent
    with the previous (RFC 6962), its hash in Bitcoin; the checkpoints seen on
    at least two relays and on the mirror are one chain (no split view).
+   Every time-based judgement below uses the `time` line of the signed
+   note, never a record's `created_at`, which the server edits freely.
 2. **Setup:** keys on the curve, distinct, not the identity nor `±G`;
    `pk_pok` valid; the `PK_j` compiled into the circuit equal to `setup.pk`;
    `vk_hash` equal to the key built from the published source with the pinned
@@ -724,9 +755,14 @@ times of first sighting:
    H(T_REG, event, ID)`, domain and scope; `uid` and `ID` unique.
 4. **Tree:** every checkpoint root is the root of the leaves logged so far.
 5. **Ballots:** every `ballot` verifies against its setup, a checkpoint root
-   at most `anchor_age` older than its checkpoint, and the `seq` rule; every
-   `reject` deserves its reason, judged against the auditor's own first
-   sighting of the event.
+   at most `anchor_age` older than its checkpoint, and the `seq` rule (a
+   `seq` above every `seq` of the pseudonym logged at earlier checkpoints,
+   `(nullifier, seq)` once); every `reject` deserves its reason, re-checked
+   from the stored body and the log as it was at the reject's checkpoint
+   (`bad_proof` by verifying the proof, `duplicate` and `stale_seq` by the
+   ballots logged by then, `uid_used` and `id_used` by the registrations,
+   `old_root`, `unknown_setup`, `stale_date` and `closed` by the
+   checkpoint's time, `malformed` by parsing).
 6. **Withholding (P1):** the auditor reads every tagged event of the relays
    (`--relays`: ballots, registrations, complaints, acks, checkpoints, the
    snapshot) and judges each protocol event by its acknowledgement:
@@ -741,12 +777,21 @@ times of first sighting:
      time an auditor saw it: an event archived at `t` must be listed by the
      first checkpoint the auditor saw after `t + 10 min`, and one that is
      not is withholding attributed to our server (a relay serves what it
-     holds to every subscriber alike).
+     holds to every subscriber alike), provided the event's `created_at`
+     is within an hour of that sighting: the server reads a relay from the
+     newest time it delivered minus two hours, so an event dated further
+     back never reaches a live reader, and a browser corrects its clock
+     from the checkpoints (§7.1).
    Checkpoints seen on the relays must equal the log's of the same index
    (no split view). Complaints (§7.2) are judged by the ack they carry,
    after its signature by `nostr_pubkey`: a complaint whose ack is not
    honoured by the log is withholding, proven; one whose ack is honoured is
-   closed (the ballot was late on the mirror, not missing).
+   closed (the ballot was late on the mirror, not missing). A registration's
+   ack names the posted body's hash while the log holds the canonical body,
+   so a complaint about a registration is judged by the relay's copy of the
+   event; when no relay holds it any more it is reported, not judged. The
+   setup must name `nostr_pubkey`: an ack under any other key proves
+   nothing.
 7. **Tallies:** the latest valid ballot per pseudonym up to `upto`, their
    count `c`, their sums equal to `s0, s`, every digit within `[0, 2c]`, every
    DLEQ proof valid, the public checks of §9.1, `tally_min_gap` respected, no
@@ -894,6 +939,24 @@ Differences from the text above:
   the election files of `deploy/ingest/<slug>/`); the API allows the
   app's origin and pins the log key's verifier (the workflow's variable
   `VOTE_LOG_VERIFIER_KEY`, the frontend's `VITE_VOTE_LOG_KEY`).
+
+- Review (2026-10-27, three independent passes: spec against backend,
+  the voter's journey, adversarial): the acknowledgement is written as
+  pending before it is posted and logged at its checkpoint after a
+  restart; the checkpoint is one transaction; one ingest and one tallier
+  at a time (a lease); a server failure puts a message off instead of
+  rejecting it; lower-case hex only (one pseudonym, one string); `seq`
+  stored as 64-bit; relay cursors from delivered times, every setup's
+  relays read; the tallier's coin once per checkpoint and net changes;
+  the auditor judges by signed times, accepts any `seq` order within a
+  checkpoint, checks `K_REAL`, `tally_min_gap` and the count, re-checks
+  every reject's reason, requires `nostr_pubkey`, attributes an
+  unacknowledged event only when created within an hour of its sighting;
+  the passport verifier pins the non-salted identifier and the validity.
+  The browser's findings (registration failures, key persistence, passkey
+  recovery, polling, the by-commit fallback, ack signatures, the device
+  link's confirmation code, the clock, DLEQ checks) are in the same
+  change set.
 
 Not built yet: the final shuffle (§9.4). Not done yet: the election's
 own setup in production (the tallier's keygen, `dm vote setup` with the
