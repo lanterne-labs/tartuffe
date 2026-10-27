@@ -3,6 +3,7 @@ package vote
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nbd-wtf/go-nostr"
 
 	"digital-mirror/backend/polls"
 )
@@ -149,13 +151,25 @@ func TestIngestOnDevVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// What the relays hold, as an auditor reads them (the voters' events
+	// as handled, the server's posts), for the withholding check below.
+	var relays []RelayEvent
+	voterEvent := func(m Message) {
+		kind := KindNostrBallot
+		if m.Kind == MsgRegister {
+			kind = KindNostrRegister
+		}
+		relays = append(relays, RelayEvent{Relay: m.Box, ID: m.ID, Kind: kind, Content: string(m.Body), CreatedAt: in.cfg.Now().Unix()})
+	}
 	// Register the vector tree's leaves, one checkpoint each so that the
 	// positions follow the vector's order (a checkpoint orders its entries
 	// by hash).
 	for i, leaf := range v.Tree.Leaves {
 		reg, _ := Canonical(Register{V: Version, Event: 1, ID: leaf, UID: "uid-" + string(rune('a'+i)), Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
 		in.cfg.Passport = fakePassport{uid: "uid-" + string(rune('a'+i))}
-		in.Handle(ctx, Message{ID: "reg" + string(rune('a'+i)), Box: "wss://a.test", Kind: MsgRegister, Body: reg})
+		m := Message{ID: "reg" + string(rune('a'+i)), Box: "wss://a.test", Kind: MsgRegister, Body: reg}
+		voterEvent(m)
+		in.Handle(ctx, m)
 		if err := in.Checkpoint(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +200,9 @@ func TestIngestOnDevVectors(t *testing.T) {
 	bal := Ballot{V: Version, Event: 1, Setup: 5, Root: v.Ballot.Inputs.Root, Nullifier: v.Ballot.Inputs.Nullifier, Seq: v.Ballot.Inputs.Seq, C0: c0, C: c, Proof: v.Proof}
 	post := func(id string, b Ballot) *Ack {
 		raw, _ := Canonical(b)
-		in.Handle(ctx, Message{ID: id, Box: "wss://b.test", Kind: MsgBallot, Body: raw})
+		m := Message{ID: id, Box: "wss://b.test", Kind: MsgBallot, Body: raw}
+		voterEvent(m)
+		in.Handle(ctx, m)
 		posts := mail.posts["wss://b.test"]
 		var ack Ack
 		if err := json.Unmarshal([]byte(posts[len(posts)-1].Body), &ack); err != nil {
@@ -332,6 +348,61 @@ func TestIngestOnDevVectors(t *testing.T) {
 	if err != nil || !rep.OK() {
 		t.Fatalf("audit after the close: %v %v", err, rep.Problems)
 	}
+	// The relays (SPEC §12.6): every voter event acknowledged and listed,
+	// the checkpoints the log's, the snapshot the log's: no finding.
+	for _, box := range mail.boxes {
+		for i, o := range mail.posts[box] {
+			kind := map[OutgoingKind]int{OutAck: KindNostrAck, OutCheckpoint: KindNostrCheckpoint, OutSnapshot: KindNostrSnapshot}[o.Kind]
+			relays = append(relays, RelayEvent{Relay: box, ID: fmt.Sprintf("srv-%s-%d", box, i), Kind: kind, Content: o.Body, CreatedAt: time.Now().Unix()})
+		}
+	}
+	var snapList SnapshotList
+	b, _ = mirror.Read("snapshot.json")
+	_ = json.Unmarshal(b, &snapList)
+	rep, err = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: relays, Snapshot: &snapList})
+	if err != nil || !rep.OK() {
+		t.Fatalf("relay audit: %v %v", err, rep.Problems)
+	}
+	if rep.RelayEvents != 12 || rep.Acks != 12 || rep.Unacknowledged != 0 || rep.Withheld != 0 {
+		t.Fatalf("relay counts: %+v", *rep)
+	}
+	// A ballot on a relay that no one acknowledged: a finding; seen live by
+	// an archive 11 min before a checkpoint, withholding attributed.
+	unseen := bal
+	unseen.Seq = 9 // a body the log does not hold
+	ghostBody, _ := Canonical(unseen)
+	ghost := RelayEvent{Relay: "wss://a.test", ID: "ghost", Kind: KindNostrBallot, Content: string(ghostBody), CreatedAt: time.Now().Unix()}
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: append(relays, ghost)})
+	if !rep.OK() || rep.Unacknowledged != 1 {
+		t.Fatalf("unacknowledged: %+v %v", *rep, rep.Problems)
+	}
+	now := time.Now()
+	live := append([]RelayEvent(nil), relays...)
+	for i := range live {
+		live[i].Live, live[i].SeenAt = true, now
+	}
+	ghost.Live, ghost.SeenAt = true, now.Add(-11*time.Minute)
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: append(live, ghost)})
+	if rep.OK() || rep.Withheld != 1 || !strings.Contains(rep.Problems[0], "withholding") {
+		t.Fatalf("attributed withholding: %+v %v", *rep, rep.Problems)
+	}
+	// A forged ack the log does not honour, and a complaint carrying it:
+	// withholding proven, twice.
+	sk := nostr.GeneratePrivateKey()
+	forged, _ := Canonical(Ack{V: Version, NostrID: "ghost", BodyHash: BodyHash(ghostBody), PIHash: "0xdead", Checkpoint: 6, Outcome: "logged"})
+	ackEv := nostr.Event{Kind: KindNostrAck, CreatedAt: nostr.Timestamp(now.Unix()), Tags: nostr.Tags{{"t", EventTag("test-vote")}}, Content: string(forged)}
+	if err := ackEv.Sign(sk); err != nil {
+		t.Fatal(err)
+	}
+	complaint, _ := Canonical(Complaint{V: Version, Event: 1, NostrID: "ghost", PIHash: "0xdead", Ack: ackEv})
+	more := append(append([]RelayEvent(nil), relays...), ghost,
+		RelayEvent{Relay: "wss://a.test", ID: ackEv.ID, Pubkey: ackEv.PubKey, Kind: KindNostrAck, Content: string(forged)},
+		RelayEvent{Relay: "wss://b.test", ID: "complaint-1", Kind: KindNostrComplaint, Content: string(complaint)})
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: more})
+	if rep.Withheld != 2 || rep.Complaints != 1 || len(rep.Problems) != 2 {
+		t.Fatalf("forged ack: %+v %v", *rep, rep.Problems)
+	}
+
 	// A closed entry naming another root fails the audit.
 	closedBody, _ := Canonical(Closed{V: Version, Event: 1, At: setup.Closes, Final: 0, SnapshotRoot: SnapshotRoot([]string{"x"})})
 	if _, err := store.Log.Append(ctx, KindClosed, closedBody); err != nil {

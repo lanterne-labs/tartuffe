@@ -14,15 +14,17 @@ import (
 )
 
 // The Nostr mailbox: one box per relay. Voters' events are regular events
-// of these kinds, tagged t = tartuffe-vote/2/<slug>, signed by throwaway
-// keys; the server's events are signed by its Nostr key (SPEC §7.1).
+// of these kinds (1000–9999: the replaceable range 10000–19999 keeps one
+// event per key and kind, so one ack per relay), tagged
+// t = tartuffe-vote/2/<slug>, signed by throwaway keys; the server's events
+// are signed by its Nostr key (SPEC §7.1).
 const (
-	KindNostrBallot     = 17020
-	KindNostrRegister   = 17021
-	KindNostrAck        = 17022
-	KindNostrCheckpoint = 17023
-	KindNostrComplaint  = 17024
-	KindNostrSnapshot   = 17025
+	KindNostrBallot     = 7020
+	KindNostrRegister   = 7021
+	KindNostrAck        = 7022
+	KindNostrCheckpoint = 7023
+	KindNostrComplaint  = 7024
+	KindNostrSnapshot   = 7025
 )
 
 // EventTag is the tag of every event of a vote.

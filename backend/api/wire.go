@@ -46,6 +46,7 @@ func PollsFromEnv() (polls.Config, error) {
 	}
 	return cfg, nil
 }
+
 // PersonCards gives the polls the cards of the mirror's persons.
 type PersonCards struct{ Storer *storage.PostgresStorer }
 

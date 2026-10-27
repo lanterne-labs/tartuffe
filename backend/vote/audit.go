@@ -39,6 +39,12 @@ type Options struct {
 	// Verifier checks ballot proofs; nil skips them (a warning).
 	Verifier *Verifier
 	Now      time.Time
+	// Relays are the events read from the relays (DumpRelays, or an
+	// archive with first sightings): the withholding check of §12.6; nil
+	// skips it (a warning).
+	Relays []RelayEvent
+	// Snapshot is the mirror's snapshot list, to check against the relays.
+	Snapshot *SnapshotList
 }
 
 // Report is what the audit found.
@@ -49,6 +55,9 @@ type Report struct {
 	Entries, Checkpoints, Registrations, Ballots, Rejects, Tallies int
 	Voters                                                         int64
 	Results                                                        *Results
+	// The relays: protocol events read, acks, events acknowledged by no
+	// one, withholdings proven or attributed, complaints.
+	RelayEvents, Acks, Unacknowledged, Withheld, Complaints int
 }
 
 func (r *Report) problem(format string, args ...any) {
@@ -192,6 +201,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	var closedAt *time.Time
 	var snapshot *LoggedSnapshot
 	tallySeqs := map[int64]int64{} // tally seq → its upto
+	lg := &logged{ballots: map[string]int64{}, registers: map[string]int64{}, rejects: map[string]rejectAt{}, seen: map[string]int64{}, cps: cpByIndex}
 	other := 0
 	for _, e := range entries {
 		cp := cpOf(e.Seq)
@@ -234,6 +244,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("registration %d: leaf %s registered twice", e.Seq, r.ID)
 			}
 			regUID[r.UID], regID[r.ID] = true, true
+			lg.registers[BodyHash([]byte(e.Body))] = cp.Index
 			if snapshot != nil {
 				rep.problem("registration %d after the close snapshot", e.Seq)
 			}
@@ -293,6 +304,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("ballot %d: the same public inputs as an earlier ballot", e.Seq)
 			}
 			piSeen[pi] = true
+			lg.ballots[pi] = cp.Index
 			v := voters[p.Nullifier]
 			if v == nil {
 				v = &voter{}
@@ -315,6 +327,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				continue
 			}
 			rep.Rejects++
+			lg.rejects[rj.NostrID] = rejectAt{cp: cp.Index, reason: rj.Reason}
 			if !knownReason(rj.Reason) {
 				rep.problem("reject %d: unknown reason %q", e.Seq, rj.Reason)
 			}
@@ -392,6 +405,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("snapshot %d taken at %s, before the close %s", e.Seq, s.At.Format(time.RFC3339), setups[0].Setup.Closes.Format(time.RFC3339))
 			}
 			snapshot = &LoggedSnapshot{Seq: e.Seq, Body: s}
+			lg.snapshot = snapshot
 		case KindClosed:
 			var c Closed
 			if err := json.Unmarshal([]byte(e.Body), &c); err != nil || c.Event != opt.EventID {
@@ -418,7 +432,12 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 					rep.problem("closed %d: the final tally covers the log up to %d, the snapshot is entry %d", e.Seq, upto, snapshot.Seq)
 				}
 			}
-		case KindSeen, KindDestroyed, KindAbort:
+		case KindSeen:
+			var sn Seen
+			if json.Unmarshal([]byte(e.Body), &sn) == nil && sn.NostrID != "" {
+				lg.seen[sn.NostrID] = cp.Index
+			}
+		case KindDestroyed, KindAbort:
 		default:
 			rep.warn("entry %d: unknown kind %q", e.Seq, e.Kind)
 		}
@@ -444,6 +463,13 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	}
 	if opt.Verifier == nil {
 		rep.warn("ballot proofs not checked (no verification key)")
+	}
+	// 6. The relays.
+	lg.setups = setups
+	if opt.Relays == nil {
+		rep.warn("the relays not read: withholding not checked (--relays)")
+	} else {
+		rep.checkRelays(opt.Relays, lg, opt)
 	}
 	return rep, nil
 }
@@ -524,6 +550,31 @@ func subtree(records []tlog.Hash, level int, n int64) (tlog.Hash, error) {
 		return tlog.Hash{}, err
 	}
 	return tlog.NodeHash(l, r), nil
+}
+
+// SetupsOf reads the setups of an event from a log source, in log order.
+func SetupsOf(ctx context.Context, src LogSource, eventID int64) ([]LoggedSetup, error) {
+	var out []LoggedSetup
+	var after int64
+	for {
+		page, err := src.Entries(ctx, after, 1000)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			return out, nil
+		}
+		for _, e := range page {
+			after = e.Seq
+			if e.Kind != KindSetup {
+				continue
+			}
+			var s Setup
+			if json.Unmarshal([]byte(e.Body), &s) == nil && s.Event == eventID {
+				out = append(out, LoggedSetup{Seq: e.Seq, LoggedAt: e.CreatedAt, Setup: s})
+			}
+		}
+	}
 }
 
 // StoreSource reads the log from the store (tests, local audits).

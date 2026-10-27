@@ -25,7 +25,12 @@ var voteVerifyCmd = &cobra.Command{
 without trusting it: every checkpoint's signature (--key, the log's verifier
 key) and tree, the setup, every registration's passport proof, the voter
 tree, every ballot's proof and rules, every tally's sums and decryption
-proofs, and recomputes the results. It exits non-zero on any problem.`,
+proofs, and recomputes the results. With --relays it reads the relays too
+and judges every event there by its acknowledgement (SPEC §12.6): an
+acknowledged event the log does not list is withholding, proven; an event
+no one acknowledged is listed as a finding. An archive of the relays
+(dm vote archive, --archive) adds the first sightings that attribute the
+latter. It exits non-zero on any problem.`,
 	Example:      `  dm vote verify presidentielle-2027 --api https://tartuffe.me --key 'tartuffe.me/vote-log+…' --vk vk`,
 	Args:         cobra.ExactArgs(1),
 	RunE:         runVoteVerify,
@@ -39,6 +44,9 @@ func init() {
 	f.String("key", "", "the log's verifier key; default: the one the site serves (which only proves the site signed its own log)")
 	f.String("vk", "", "the circuit's verification key, to check the ballot proofs (default: skipped, with a warning)")
 	f.Bool("skip-passports", false, "do not verify the ZKPassport proofs of the registrations")
+	f.String("relays", "", "read the relays: 'setup' for the setup's, or wss:// URLs, comma-separated")
+	f.String("archive", "", "an archive of the relays (dm vote archive): read instead of the relays, with first sightings")
+	f.String("snapshot", "", "the mirror's snapshot.json, to check the relays against the close snapshot")
 }
 
 // apiSource reads the log from the site's API.
@@ -87,26 +95,9 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 	skipPassports, _ := f.GetBool("skip-passports")
 	slug := args[0]
 
-	// The event's id: from the API's event list.
-	raw, err := apiGet(ctx, base, "/api/polls")
+	eventID, err := eventIDOf(ctx, base, slug)
 	if err != nil {
 		return err
-	}
-	var events []struct {
-		ID   int64  `json:"id"`
-		Slug string `json:"slug"`
-	}
-	if err := json.Unmarshal(raw, &events); err != nil {
-		return fmt.Errorf("events: %w", err)
-	}
-	var eventID int64
-	for _, e := range events {
-		if e.Slug == slug {
-			eventID = e.ID
-		}
-	}
-	if eventID == 0 {
-		return fmt.Errorf("no event %q at %s", slug, base)
 	}
 	if key == "" {
 		raw, err := apiGet(ctx, base, "/api/vote-log/key")
@@ -140,12 +131,52 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 			opt.Passport = auditPassport{z: z, scope: "tartuffe-vote/2:" + slug}
 		}
 	}
-	rep, err := vote.Audit(ctx, apiSource{base}, opt)
+	relayList, _ := f.GetString("relays")
+	archiveDir, _ := f.GetString("archive")
+	snapshotFile, _ := f.GetString("snapshot")
+	src := apiSource{base}
+	switch {
+	case archiveDir != "":
+		events, err := vote.ReadArchive(archiveDir)
+		if err != nil {
+			return err
+		}
+		opt.Relays = events
+		fmt.Printf("archive: %d events\n", len(events))
+	case relayList != "":
+		urls, err := relayURLs(ctx, src, eventID, relayList)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("reading %d relays…\n", len(urls))
+		events, errs := vote.DumpRelays(ctx, slug, urls)
+		for _, e := range errs {
+			fmt.Printf("warning: %v\n", e)
+		}
+		opt.Relays = events
+		fmt.Printf("relays: %d events\n", len(events))
+	}
+	if snapshotFile != "" {
+		raw, err := os.ReadFile(snapshotFile)
+		if err != nil {
+			return err
+		}
+		var list vote.SnapshotList
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return fmt.Errorf("%s: %w", snapshotFile, err)
+		}
+		opt.Snapshot = &list
+	}
+	rep, err := vote.Audit(ctx, src, opt)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("log: %d entries, %d checkpoints\nevent %s: %d registrations, %d ballots, %d rejects, %d tallies\n",
 		rep.Entries, rep.Checkpoints, slug, rep.Registrations, rep.Ballots, rep.Rejects, rep.Tallies)
+	if opt.Relays != nil {
+		fmt.Printf("relays: %d protocol events, %d acknowledgements, %d acknowledged by no one, %d withheld, %d complaints\n",
+			rep.RelayEvents, rep.Acks, rep.Unacknowledged, rep.Withheld, rep.Complaints)
+	}
 	if rep.Results != nil {
 		fmt.Printf("results: %d voters\n", rep.Results.Voters)
 		for _, o := range rep.Results.Options {
@@ -170,6 +201,49 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("ok: the log checks out")
 	return nil
+}
+
+// eventIDOf finds an event's id in the API's event list.
+func eventIDOf(ctx context.Context, base, slug string) (int64, error) {
+	raw, err := apiGet(ctx, base, "/api/polls")
+	if err != nil {
+		return 0, err
+	}
+	var events []struct {
+		ID   int64  `json:"id"`
+		Slug string `json:"slug"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return 0, fmt.Errorf("events: %w", err)
+	}
+	for _, e := range events {
+		if e.Slug == slug {
+			return e.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("no event %q at %s", slug, base)
+}
+
+// relayURLs resolves --relays: the active relays of the event's setup, or
+// the URLs given.
+func relayURLs(ctx context.Context, src vote.LogSource, eventID int64, flag string) ([]string, error) {
+	if flag != "setup" {
+		var urls []string
+		for _, u := range strings.Split(flag, ",") {
+			if u = strings.TrimSpace(u); u != "" {
+				urls = append(urls, u)
+			}
+		}
+		return urls, nil
+	}
+	setups, err := vote.SetupsOf(ctx, src, eventID)
+	if err != nil {
+		return nil, err
+	}
+	if len(setups) == 0 {
+		return nil, fmt.Errorf("no setup logged for event %d", eventID)
+	}
+	return vote.ActiveBoxes(setups), nil
 }
 
 // verifyClient reads the site's API.

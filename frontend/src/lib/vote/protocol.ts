@@ -5,7 +5,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { compress, hex, big, leafOf, nullifierOf, registrationBinding, values, pack, type Ranking, validRanking } from './crypto';
-import type { Mailbox, Posted } from './mailbox';
+import type { Mailbox, Posted, NostrEvent } from './mailbox';
 import type { Sources } from './sources';
 import type { VoteKey } from './key';
 import type { Prover } from './prove';
@@ -72,9 +72,16 @@ export function parseCheckpoint(note: string): CheckpointInfo | null {
 
 export const bodyHash = (body: string) => '0x' + bytesToHex(sha256(new TextEncoder().encode(body)));
 
+// SignedAck is an acknowledgement with the server's signed event: the
+// proof a complaint carries (SPEC §7.2).
+export interface SignedAck {
+	ack: Ack;
+	event: NostrEvent;
+}
+
 // waitAck waits for the server's acknowledgement of a posted message on
 // its box, up to the timeout.
-export function waitAck(mail: Mailbox, posted: Posted, timeoutMs: number): Promise<Ack | null> {
+export function waitAck(mail: Mailbox, posted: Posted, timeoutMs: number): Promise<SignedAck | null> {
 	return new Promise((resolve) => {
 		const since = Math.floor(Date.now() / 1000) - 120;
 		let done = false;
@@ -84,7 +91,7 @@ export function waitAck(mail: Mailbox, posted: Posted, timeoutMs: number): Promi
 				if (ack.nostr_id === posted.id && !done) {
 					done = true;
 					stop();
-					resolve(ack);
+					resolve({ ack, event: m.event });
 				}
 			} catch {}
 		});
@@ -106,7 +113,7 @@ export async function postWithAck(
 	kind: 'ballot' | 'register',
 	body: string,
 	timeoutMs: number
-): Promise<{ posted: Posted; ack: Ack }> {
+): Promise<{ posted: Posted; ack: Ack; ackEvent: NostrEvent }> {
 	let lastErr = 'no box answered';
 	let reposts = 0;
 	for (const box of boxes) {
@@ -117,14 +124,15 @@ export async function postWithAck(
 			lastErr = e instanceof Error ? e.message : String(e);
 			continue;
 		}
-		const ack = await waitAck(mail, posted, timeoutMs);
-		if (ack) {
+		const signed = await waitAck(mail, posted, timeoutMs);
+		if (signed) {
+			const { ack, event: ackEvent } = signed;
 			// A repost of our own body that the server already took is a
 			// success (SPEC §7.2): the first box's acknowledgement was missed.
 			if (reposts > 0 && ack.outcome === 'rejected' && (ack.reason === 'duplicate' || ack.reason === 'uid_used' || ack.reason === 'id_used')) {
-				return { posted, ack: { ...ack, outcome: 'logged', reason: undefined } };
+				return { posted, ack: { ...ack, outcome: 'logged', reason: undefined }, ackEvent };
 			}
-			return { posted, ack };
+			return { posted, ack, ackEvent };
 		}
 		lastErr = `${box}: no acknowledgement`;
 		reposts++;
@@ -237,6 +245,13 @@ export function canonical(v: unknown): string {
 		return x;
 	};
 	return JSON.stringify(sort(v));
+}
+
+// complaintBody is what the browser posts when its acknowledged ballot is
+// not in the log: the server's signed ack, for anyone to judge against
+// the log (SPEC §7.2, §12.6).
+export function complaintBody(eventId: number, nostrId: string, piHash: string, ackEvent: NostrEvent): string {
+	return canonical({ v: 2, event: eventId, nostr_id: nostrId, pi_hash: piHash, ack: ackEvent });
 }
 
 // --- The receipt ---

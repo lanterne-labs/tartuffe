@@ -18,8 +18,14 @@ everyone sees the live results.
 
 Required properties, against the adversaries of §2:
 
-- **P1. Public detection of withholding.** Any third party can detect that a
-  ballot a voter cast is missing from the count.
+- **P1. Public detection of withholding.** Any third party can detect, from
+  the relays and the log alone and at any later time, that a ballot a voter
+  cast is missing from the count: every event on a relay must carry our
+  server's signed acknowledgement naming the checkpoint that lists it
+  (§7.2). An event never acknowledged stays on the relays as a public
+  finding; attributing it (our server withheld it, or the relay never
+  delivered it) takes a witness: an auditor's continuous archive or the
+  relay's operator (§12.6).
 - **P2. No fake ballots.** Every counted ballot comes from a registered key;
   every key comes from one valid passport of an adult French national; a
   passport has at most one key per event; a key's ballot counts once.
@@ -65,6 +71,13 @@ Non-goals and accepted residuals (decisions of 2026-10-26):
   public complaint. A voter who closes the page before « vérifié » and never
   returns has no third party watching. Any other relay, and the honest-relay
   case, are covered by auditors;
+- **attribution of an unacknowledged event** (P1): an event on a relay with
+  no acknowledgement and no logged body is detected by anyone, post hoc,
+  but our server can claim the relay never delivered it. The browser's
+  reposts (an unacknowledged ballot is reposted to two more relays, then
+  shown as failed to the voter) make a withholding server leave that trail
+  on several relays; a witness who saw the event on the relay in time (an
+  auditor's archive, the relay's operator) settles it;
 - denial of service beyond §7.4.
 
 ## 2. Parties and adversaries
@@ -154,7 +167,8 @@ Adversaries:
    before reposting to its next relay.
 5. Rules: one `register` per `uid` per event, ever (`reject uid_used`); one
    per `ID` (`reject id_used`); `custom_data` compared as lower-case hex. A
-   registration seen on a relay and not logged is withholding (§12.6).
+   registration on a relay, acknowledged and not logged, is withholding
+   (§12.6).
 6. A voter who lost `s` and every backup keeps their last ballot but cannot
    register again: a second key would be a second vote, and ballots are
    unlinkable, so the old key's ballot cannot be cancelled.
@@ -368,8 +382,10 @@ the bulk and its size does not depend on the circuit's size.
 - **There is no direct path to our server.** If the sticky relay refuses, the
   browser tries the next; if none accepts, the page says so and retries later,
   keeping the ballot. It never sends the ballot to us.
-- Nostr: regular event kinds (ballot 1_7020, register 1_7021, ack 1_7022,
-  checkpoint 1_7023, complaint 1_7024, snapshot 1_7025), tag
+- Nostr: regular event kinds (ballot 7020, register 7021, ack 7022,
+  checkpoint 7023, complaint 7024, snapshot 7025: kinds 10000–19999 are
+  replaceable, one event per key and kind, which would keep one ack per
+  relay), tag
   `t = tartuffe-vote/2/<slug>`, each voter event signed by a fresh throwaway
   key, `created_at` rounded down to the minute (the hour would make paging
   stall: all events of an hour share one timestamp). Our server's events
@@ -391,6 +407,11 @@ the bulk and its size does not depend on the circuit's size.
   seq is not known yet: entries of a checkpoint are ordered by `pi_hash` when
   it closes). **Either outcome is self-incriminating** if that checkpoint's
   entries do not list `pi_hash` (as `ballot`, `register` or `reject`).
+- **The acknowledgement is the obligation.** Every event of a protocol kind
+  on an active relay, tagged for the event, gets its acknowledgement on that
+  relay before the next checkpoint. The relays keep both (retention ≥ 30
+  days, §7.1); the acknowledgement, not an auditor's presence at the time,
+  is what makes withholding provable later (§12.6).
 - The browser treats a `duplicate` ack whose `body_hash` matches its own
   repost as success. On `old_root`, `stale_seq` or `unknown_setup` it
   re-proves with fresh values and reposts, then tells the voter only if that
@@ -399,9 +420,11 @@ the bulk and its size does not depend on the circuit's size.
 - The page shows « enregistré » at the ack and **« vérifié »** once `pi_hash`
   appears in the entries of the named checkpoint (≤ 20 s, read from the
   mirror's open-hour entries file that everyone fetches, §8.3). If it does
-  not, or on any later visit when the ballot is missing, the browser reposts
-  the ballot to its next two relays and posts the signed ack as a `complaint`
-  event; auditors collect complaints and check them like any event (§12.6).
+  not by the checkpoint after the named one, or on any later visit when the
+  ballot is missing, the browser reposts the ballot to its next two relays
+  and posts a `complaint {v, event, nostr_id, pi_hash, ack}` carrying the
+  server's signed ack event, to the same two relays; auditors check
+  complaints like any event (§12.6). A complaint is logged as `seen`.
 - With no ack within 20 s (60 s for a registration) the browser reposts to
   the next relay of its ranking.
 
@@ -658,8 +681,10 @@ absence; it does not gate the launch.
 
 ## 12. Public verification
 
-An auditor (`dm poll verify`, open source, incremental per checkpoint) checks,
-from the log, the relays and its own continuous archive of them:
+An auditor (`dm vote verify`, open source, incremental per checkpoint) checks,
+from the log and the relays, at any time while the relays keep the events;
+a continuous archive of the relays (`dm vote archive`, optional) adds the
+times of first sighting:
 
 1. **Log:** every checkpoint signed by the published key, each consistent
    with the previous (RFC 6962), its hash in Bitcoin; the checkpoints seen on
@@ -680,19 +705,35 @@ from the log, the relays and its own continuous archive of them:
    at most `anchor_age` older than its checkpoint, and the `seq` rule; every
    `reject` deserves its reason, judged against the auditor's own first
    sighting of the event.
-6. **Withholding (P1):** every protocol event the auditor archived at time
-   `t` is listed by its body in every checkpoint the auditor first saw on a
-   relay at or after `t + 10 min`: as `ballot`, `register`, `reject` or
-   `seen`. A body seen anywhere and never logged is withholding; an unlisted
-   Nostr id whose body is logged is a relay-copy discrepancy, reported but not
-   withholding. Complaints (§7.2) are checked the same way.
+6. **Withholding (P1):** the auditor reads every tagged event of the relays
+   (`--relays`: ballots, registrations, complaints, acks, checkpoints, the
+   snapshot) and judges each protocol event by its acknowledgement:
+   - acknowledged: the named checkpoint's entries list the event (`pi_hash`
+     for a ballot, the body hash for a registration, the `nostr_id` for a
+     reject or a `seen`) with the acknowledged outcome; a miss is
+     **withholding, proven** by the signed ack;
+   - not acknowledged, body logged (a repost whose first copy was taken):
+     a relay-copy discrepancy, reported, not withholding;
+   - not acknowledged, body not logged: **an unacknowledged event**, listed
+     as a finding with its relay and `created_at`; with an archive, the
+     time an auditor saw it: an event archived at `t` must be listed by the
+     first checkpoint the auditor saw after `t + 10 min`, and one that is
+     not is withholding attributed to our server (a relay serves what it
+     holds to every subscriber alike).
+   Checkpoints seen on the relays must equal the log's of the same index
+   (no split view). Complaints (§7.2) are judged by the ack they carry,
+   after its signature by `nostr_pubkey`: a complaint whose ack is not
+   honoured by the log is withholding, proven; one whose ack is honoured is
+   closed (the ballot was late on the mirror, not missing).
 7. **Tallies:** the latest valid ballot per pseudonym up to `upto`, their
    count `c`, their sums equal to `s0, s`, every digit within `[0, 2c]`, every
    DLEQ proof valid, the public checks of §9.1, `tally_min_gap` respected, no
    tally inside a blackout, and the results shown computed from the decrypted
    values.
-8. **Close:** the snapshot first seen on the relays by `T + 2 min`, taken
-   at or after `closes`, logged once; `closed` naming its root and a final
+8. **Close:** the snapshot on the relays (first seen by `T + 2 min` with an
+   archive), taken at or after `closes`, logged once; every protocol event
+   on the relays with `created_at` before `T − 5 min` in the snapshot's
+   list (`snapshot.json`); `closed` naming its root and a final
    tally whose `upto` is the snapshot entry; no `ballot` or `register`
    logged after the snapshot; the shuffle proof and the output decryptions valid when
    present and the plaintext rankings consistent with the final tally,
@@ -780,12 +821,16 @@ Nostr relays, a tally, the results on the page, the audit of the log):
   ingest`) and its close snapshot; the tallier with `K_REAL` and the
   firing lag, the final tally over the snapshot and the `closed` entry
   (`dm vote tally`); the data mirror on a directory; the auditor
-  (`dm vote verify`, §12.1–12.5, 12.7, 12.8 from the log: the snapshot's
-  first sighting on the relays is the archive's, §12.6).
+  (`dm vote verify`, §12.1–12.5, 12.7, 12.8; `--relays` reads the relays
+  for §12.6: acks, unacknowledged events, complaints, the checkpoints'
+  split view, the snapshot; `--archive` takes the continuous archive of
+  `dm vote archive` with its first sightings).
 - `frontend/src/lib/vote` and the vote page: the key (PRF passkey or 12
   words), the passport scan bound to the registration, the relays, the
   private path update, the prover warm-up with the service worker, the
-  ballot, acknowledgements, the receipt, the results and counters.
+  ballot, acknowledgements, the receipt, the results and counters; the
+  complaint when the checkpoint after the acknowledged one does not list
+  the ballot (reposted to two relays with the signed ack).
 
 Differences from the text above:
 
@@ -800,7 +845,11 @@ Differences from the text above:
   `VITE_VOTE_SIMULATE_PASSPORT=1`) stands in for the ZKPassport app; the
   command refuses it on the host.
 
+- The browser complains while the page is open; the check at a later
+  visit (§7.2) is not built: a key stores its `seq` only, not the last
+  ballot's `pi_hash`.
+
 Not built yet: the git-backed mirror and the `github.io` app origin
-(§8.3, Q3), the relays' archive and the withholding check of §12.6, the
-complaints, the device link for v2 keys, keyboard reordering of the
-ranking, the final shuffle (§9.4).
+(§8.3, Q3), the later-visit check and a page a complaint links to, the
+device link for v2 keys, keyboard reordering of the ranking, the final
+shuffle (§9.4).

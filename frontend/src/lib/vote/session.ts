@@ -6,24 +6,31 @@
 import { writable, get, type Writable } from 'svelte/store';
 import { bb, big, hex, nullifierOf, type Ranking } from './crypto';
 import { voteKey, newVoteKey, randomSecret, createPasskeySecret, prfSupported, secretFromWords, newWords, type VoteKey } from './key';
-import { NostrMailbox, type Mailbox } from './mailbox';
+import { NostrMailbox, type Mailbox, type NostrEvent } from './mailbox';
 import { defaultSources, type Sources } from './sources';
 import { warmUp, type Prover } from './prove';
 import { ensureIsolated } from './isolate';
 import { findPosition, updatePath, type PathState } from './tree';
-import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, type Setup, type Ack, type CheckpointInfo } from './protocol';
+import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, complaintBody, type Setup, type Ack, type CheckpointInfo } from './protocol';
 import { openCheckpoint } from './checkpoint';
 
 export type Phase = 'loading' | 'no-key' | 'registering' | 'joining' | 'ready' | 'closed' | 'error';
 
 export interface BallotStatus {
-	state: 'idle' | 'proving' | 'sending' | 'sent' | 'received' | 'verified' | 'rejected' | 'failed';
+	// missing: acknowledged for a checkpoint that does not list it; the
+	// complaint is posted (SPEC §7.2).
+	state: 'idle' | 'proving' | 'sending' | 'sent' | 'received' | 'verified' | 'rejected' | 'failed' | 'missing';
 	ranking?: Ranking;
 	piHash?: string;
 	postedAt?: number;
 	checkpoint?: number;
 	reason?: string;
 	logSeq?: number;
+	// What a complaint needs: the body as posted, its id and the signed ack.
+	body?: string;
+	nostrId?: string;
+	ackEvent?: NostrEvent;
+	complaints?: string[];
 }
 
 export interface Tally {
@@ -147,6 +154,9 @@ export class VoteSession {
 		if ((b.state === 'received' || b.state === 'sent') && b.piHash && b.postedAt && b.checkpoint && cp.index >= b.checkpoint) {
 			const entry = await findReceipt(this.src, cp.mirror, b.piHash, new Date(b.postedAt));
 			if (entry) this.ballot.update((x) => ({ ...x, state: 'verified', logSeq: entry.log_seq }));
+			// Not listed by the checkpoint after the named one: the mirror
+			// had time; the server's own ack is now the proof.
+			else if (cp.index > b.checkpoint && get(this.ballot).state === 'received') await this.complain(b);
 		}
 		const k = get(voteKey);
 		if (k && k.position < 0 && k.registration?.checkpoint && cp.index >= k.registration.checkpoint) await this.finishJoin(k);
@@ -266,6 +276,28 @@ export class VoteSession {
 		}
 	}
 
+	// complain reposts the ballot to the next two relays and posts the
+	// signed ack as a complaint there (SPEC §7.2): the relays keep it for
+	// anyone to judge against the log.
+	private async complain(b: BallotStatus) {
+		const k = get(voteKey);
+		if (!k || !this.mail || !b.body || !b.nostrId || !b.ackEvent || !b.piHash) return;
+		const next = k.ranking.slice(1).filter((box) => box !== k.sticky).slice(0, 2);
+		const complaint = complaintBody(k.eventId, b.nostrId, b.piHash, b.ackEvent);
+		const ids: string[] = [];
+		for (const box of next) {
+			try {
+				await this.mail.post(box, 'ballot', b.body);
+				const posted = await this.mail.post(box, 'complaint', complaint);
+				ids.push(posted.id);
+			} catch (e) {
+				console.warn('complaint', box, e);
+			}
+		}
+		console.warn('vote: ballot missing from checkpoint', b.checkpoint, 'complaint posted', ids);
+		this.ballot.update((x) => ({ ...x, state: 'missing', complaints: ids }));
+	}
+
 	// --- Casting ---
 
 	async cast(r: Ranking): Promise<void> {
@@ -284,7 +316,7 @@ export class VoteSession {
 			const { body, piHash } = await makeBallot(this.prover, k, setup, this.path.path, this.path.root, seq, r);
 			this.ballot.set({ state: 'sending', ranking: r, piHash });
 			const postedAt = Date.now();
-			let res: { ack: Ack };
+			let res: { ack: Ack; ackEvent: NostrEvent; posted: { id: string } };
 			try {
 				res = await postWithAck(this.mail, [k.sticky, ...k.ranking.slice(1).filter((b) => b !== k.sticky)], 'ballot', body, ACK_TIMEOUT);
 			} catch (e) {
@@ -294,7 +326,7 @@ export class VoteSession {
 			const ack = res.ack;
 			if (ack.outcome === 'logged') {
 				voteKey.update((x) => (x ? { ...x, seq } : x));
-				this.ballot.set({ state: 'received', ranking: r, piHash, postedAt, checkpoint: ack.checkpoint });
+				this.ballot.set({ state: 'received', ranking: r, piHash, postedAt, checkpoint: ack.checkpoint, body, nostrId: res.posted.id, ackEvent: res.ackEvent });
 				return;
 			}
 			if (ack.reason === 'stale_seq') {

@@ -287,6 +287,11 @@
 						</summary>
 						<p>{tr('v2.status.received.help', currentLang)}</p>
 					</details>
+				{:else if $ballotStore.state === 'missing'}
+					<details class="help status-tip">
+						<summary class="state-icon state-icon--fault" aria-label={tr('v2.status.missing', currentLang)}>!</summary>
+						<p>{tr('v2.status.missing.help', currentLang)}</p>
+					</details>
 				{:else if busy}
 					<span class="state-icon" title={tr(`v2.status.${$ballotStore.state}`, currentLang)}><Spinner size="sm" label={tr(`v2.status.${$ballotStore.state}`, currentLang)} /></span>
 				{:else if $ballotStore.state === 'rejected' || $ballotStore.state === 'failed'}

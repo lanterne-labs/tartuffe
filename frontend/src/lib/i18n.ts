@@ -361,6 +361,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.status.received': { fr: 'Bulletin reçu', en: 'Ballot received' },
 	'v2.status.received.help': { fr: 'Bulletin reçu. Il rejoindra le registre public au prochain point de contrôle, dans moins d’une minute.', en: 'Ballot received. It joins the public log at the next checkpoint, within a minute.' },
 	'v2.status.verified': { fr: 'Bulletin dans le registre', en: 'Ballot in the log' },
+	'v2.status.missing': { fr: 'Bulletin absent du registre', en: 'Ballot missing from the log' },
+	'v2.status.missing.help': { fr: 'Notre serveur a accusé réception de votre bulletin pour un point de contrôle qui ne le contient pas. Votre navigateur a renvoyé le bulletin à deux autres relais et y a publié l’accusé de réception signé : la preuve publique de ce manquement, que tout auditeur vérifie.', en: 'Our server acknowledged your ballot for a checkpoint that does not hold it. Your browser reposted the ballot to two other relays and published the signed acknowledgement there: the public proof of this failure, which any auditor checks.' },
 	'v2.status.verified.help': { fr: 'Votre bulletin figure dans le registre public, chiffré, tel que vous l’avez envoyé. Votre navigateur l’a vérifié.', en: 'Your ballot is in the public log, encrypted, as you sent it. Your browser checked it.' },
 	'v2.warm.artifact': { fr: 'Préparation du vote : chargement du circuit…', en: 'Preparing the vote: loading the circuit…' },
 	'v2.warm.backend': { fr: 'Préparation du vote : démarrage du prouveur…', en: 'Preparing the vote: starting the prover…' },

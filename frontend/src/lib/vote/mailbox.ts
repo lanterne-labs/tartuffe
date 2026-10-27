@@ -22,6 +22,8 @@ export interface ServerMessage {
 	kind: ServerKind;
 	body: string;
 	time: number;
+	// event: the signed event itself (a complaint carries the ack's).
+	event: NostrEvent;
 }
 
 // Registration is a registration as read from a box (the newest leaves).
@@ -48,7 +50,7 @@ export interface Mailbox {
 // --- Nostr ---
 
 // The kinds of backend/vote/nostr.go.
-const KINDS: Record<MessageKind | ServerKind, number> = { ballot: 17020, register: 17021, ack: 17022, checkpoint: 17023, complaint: 17024, snapshot: 17025 };
+const KINDS: Record<MessageKind | ServerKind, number> = { ballot: 7020, register: 7021, ack: 7022, checkpoint: 7023, complaint: 7024, snapshot: 7025 };
 
 export interface NostrEvent {
 	id: string;
@@ -160,7 +162,7 @@ export class NostrMailbox implements Mailbox {
 	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void): () => void {
 		return this.subscribe(box, { kinds: [KINDS[kind]], authors: [this.serverPubkey], since }, (ev) => {
 			if (ev.pubkey !== this.serverPubkey) return;
-			each({ kind, body: ev.content, time: ev.created_at });
+			each({ kind, body: ev.content, time: ev.created_at, event: ev });
 		});
 	}
 
