@@ -614,3 +614,40 @@ cases:
     expect: drop
     bucket: different_subjects
     notes: "That an extraction took place and that he could not request one himself are compatible: someone else did."
+
+  # ---- Le Pen review of 2026-10-27 (mirror-ds6.11 to ds6.14): false positives ----
+  - name: "FP_1963_lepen_two_budgets"
+    fact_a: "Marine Le Pen a déclaré au sommet Paris Playbook de POLITICO qu'elle prévoit d'amender le budget plutôt que de le bloquer."
+    fact_b: "Marine Le Pen a annoncé que le RN voterait contre le budget, qu'elle présente comme traduisant la politique d'Emmanuel Macron."
+    claimed_reason: "Elle disait vouloir amender le budget plutôt que le bloquer, mais annonce désormais que le RN votera contre."
+    expect: drop
+    bucket: different_events
+    notes: "Statement A is from October 2026 (the 2027 budget), statement B from October 2025 (the 2026 budget): two texts. Prod 1963, also 1961 and 1708. The dates are in the rendered statements."
+    date_a: "2026-10-01"
+    date_b: "2025-10-24"
+
+  - name: "FP_2057_lepen_candidacy_vs_campaign"
+    fact_a: "Marine Le Pen a conditionné sa candidature à l'absence de condamnation au port d'un bracelet électronique."
+    fact_b: "Marine Le Pen a déclaré que, quel que soit le résultat du procès en appel le 7 juillet, elle ferait avec Jordan Bardella la campagne présidentielle en binôme."
+    claimed_reason: "Elle s'engage à faire campagne quel que soit le verdict, alors qu'elle avait conditionné sa candidature à l'absence de bracelet électronique."
+    expect: drop
+    bucket: condition_later_met
+    notes: "The carve-out concerns her candidacy, the commitment is to campaign with Bardella as a ticket: campaigning for the ticket does not require being its candidate. Prod 2057 and 2056."
+
+  - name: "FP_1920_lepen_deferred_decision"
+    fact_a: "Marine Le Pen said she is waiting to hear Lecornu's general policy speech on Tuesday before deciding on any further course of action."
+    fact_b: "Marine Le Pen a annoncé qu'elle censure tout (le gouvernement), déclarant que la plaisanterie a assez duré."
+    claimed_reason: "Elle disait attendre le discours de politique générale avant de décider, puis annonce qu'elle censure tout par principe."
+    expect: drop
+    bucket: announcement_then_action
+    notes: "Oct 5: she will decide after the speech of Tuesday Oct 7; Oct 8: the decision. The announced sequence. Prod 1920."
+    date_a: "2025-10-05"
+    date_b: "2025-10-08"
+
+  - name: "FP_1335_lepen_second_fuel_lever"
+    fact_a: "Marine Le Pen a affirmé qu'il n'y avait pas d'autre solution qu'une baisse des taxes sur les carburants pour éviter un blocage de l'économie."
+    fact_b: "Marine Le Pen veut la suppression des contraintes qui pèsent sur les distributeurs de carburants pour faire baisser immédiatement les prix à la pompe."
+    claimed_reason: "Elle jugeait la baisse des taxes seule possibilité pour réduire le prix du carburant, mais préconise maintenant un autre levier : alléger les contraintes des distributeurs."
+    expect: drop
+    bucket: same_direction
+    notes: "A second lever toward the same goal, the first one not dropped. Prod 1334, 1335, 1336."

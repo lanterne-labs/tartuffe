@@ -11,7 +11,7 @@ import (
 // Plugins can optionally inject additional instructions via the {{PLUGIN_INSTRUCTIONS}} placeholder.
 const CoreFactExtractionPrompt = `You are an expert AI assistant specialized in extracting **verifiable factual statements** from news articles.
 
-TODAY'S DATE: %s (YYYY-MM-DD). Use this as the reference point for any relative date phrases ("2 days ago", "il y a 3 jours", "yesterday", "hier", "la semaine dernière") you encounter — convert each to an absolute YYYY-MM-DD value when populating date fields below.
+REFERENCE DATE: %s (YYYY-MM-DD) — the article's publication date when it is known, else today's date. Use it as the reference point for any relative date phrase ("2 days ago", "il y a 3 jours", "yesterday", "hier", "lundi", "la semaine dernière") you encounter — convert each to an absolute YYYY-MM-DD value when populating date fields below. A weekday ("lundi", "mardi") names the last such day on or before the REFERENCE DATE, never a day after it.
 
 ## Task
 Extract facts about ALL relevant persons, parties, and organizations mentioned in the article.
@@ -86,7 +86,7 @@ If a statement can NEVER lead to a self-contradiction, reject it. This includes:
 - Courtroom behavior/procedure (listening, appearing, being called to the stand)
 - Pure biographical facts: birth date, party-founding year, role titles, lifetime events (retirement, marriage), childhood and personal background. ❌ "X a déclaré avoir grandi dans un quartier populaire" ❌ "X a décrit son engagement bénévole comme formateur"
 - Personal purchases, truisms, reactions to scheduling, empty formulas. ❌ "X a déclaré que chacun prend ses responsabilités"
-- Narration of an exchange without its substance: that X "s'est expliqué", "a répondu", "a réagi" to someone is not a fact; WHAT X asserted in the answer may be one. ❌ "X s'est expliquée face au journaliste après avoir été critiquée"
+- Narration of an exchange without its substance: that X "s'est expliqué", "a répondu", "a réagi" to someone is not a fact; WHAT X asserted in the answer may be one. ❌ "X s'est expliquée face au journaliste après avoir été critiquée". The same for the writer's framing of a reply — "a rejeté l'argument selon lequel sa réforme coûtera 9 milliards", "a balayé les critiques", "a répondu aux attaques" — never copy the frame (it reads as X disputing the figure or the point); write what X ASSERTED in the reply. Source: « a rejeté l'argument selon lequel sa réforme coûtera 9 milliards d'euros par an. "C'est un choix de société, moi je l'assume" » → ✅ "X a assumé le coût de 9 milliards d'euros par an de sa réforme comme un choix de société" ❌ "X a rejeté l'argument selon lequel sa réforme coûterait 9 milliards"
 
 ⚠️ DO NOT reject under rule 4 (these LOOK biographical/historical but ARE contradictable):
 - A specific recorded legislative vote — Type 2 outcome. KEEP even when from a prior parliament. ✅ "X voted AGAINST the Sondervermögen in the previous Bundestag" → KEEP.
@@ -99,6 +99,7 @@ A journalist's interpretation or narrative framing is NOT a valid fact. However,
 - ❌ "X a été séduite par Trump" — journalist's narrative, no evidence
 - ❌ "X adopte un ton plus pro-marché" — subjective assessment
 - ❌ "X est décrite comme portant une vision plus sociale de l'extrême droite" — a portrait in the passive voice ("est décrit(e) comme", "apparaît comme", "incarne") is the journalist's, never X's own statement
+- ❌ A position the writer ATTRIBUTES to X in the active voice, with no statement or act of X on an occasion to anchor it, is a characterization too: « tout en défendant pourtant le retour à 60 ans de l'âge pivot » (an aside in the narrative of a congress — X said nothing of the kind there), « X has been clear that, if elected, she would halt military support to Ukraine » (an analyst's summary of X's line), « X threatens to block the EU budget » in an analysis piece with no quoted threat. These glosses compress or distort what X actually said. A position is X's own ONLY when the article shows X stating it (quoted or reported speech: "a déclaré", "a promis", "a dit que", "a proposé", on an identifiable occasion) or doing it (a vote, a bill, a program document, an act). A paraphrase of a statement X made on a given occasion IS fine; a free-floating attribution of a line to X is not.
 - ✅ "X a déclaré soutenir Donald Trump" — X's own statement
 - ✅ "An investigation revealed X received €50,000 from Y" — documented finding with specifics
 
@@ -139,11 +140,11 @@ Before finalizing each fact, re-read your normalized_fact and verify:
 - Does the sentence make logical sense on its own? If the first half contradicts the second half, you have misread the source.
 - ONE CLAIM — does the normalized_fact assert more than one position, promise, measure or outcome (typically two clauses joined by "et"/"and", or a list of measures)? Then SPLIT it into one fact per claim; each fact quotes its own clause of the source sentence (a quote may be a sub-span of one sentence). "X soutiendrait un mouvement social contre la vie chère, et a proposé un bouclier social" → TWO facts.
 - Pay special attention to NEGATION CHAINS: "denied that X lacks Y" vs "accused X of lacking Y" mean OPPOSITE things. When the source says "X ne fait pas preuve de Y" (X does not show Y), the entity is ACCUSING X of lacking Y, NOT denying that X lacks Y.
-- UNAMBIGUOUS WORDS — write a key word that has several meanings so that only the source's meaning can be read, in normalized_fact AND in embedding_text: « une primaire » → « une primaire électorale », « dès le primaire » → « dès l'école primaire »; « la majorité » → « la majorité parlementaire » or « l'âge de la majorité »; « la réforme » → « la réforme des retraites ». Rewrite the word itself even when other words of the fact already hint at its meaning (« dès le primaire pour les élèves » → « dès l'école primaire pour les élèves »). Take the meaning from the source; this adds no new detail, so GROUNDING below still holds.
+- UNAMBIGUOUS WORDS — write a key word that has several meanings so that only the source's meaning can be read, in normalized_fact AND in embedding_text: « une primaire » → « une primaire électorale », « dès le primaire » → « dès l'école primaire »; « la majorité » → « la majorité parlementaire » or « l'âge de la majorité »; « la réforme » → « la réforme des retraites »; a YEARLY text named without its year — « le budget », « le PLF », « le PLFSS », « la loi de finances » — gets the year the source gives (« le budget 2026 »), since the budget of one year and the budget of the next are two texts a position can differ on; a possessive naming the entity's own proposal stays visibly its own (« sa proposition de réforme des retraites », not « sa réforme », which reads as the law in force). Rewrite the word itself even when other words of the fact already hint at its meaning (« dès le primaire pour les élèves » → « dès l'école primaire pour les élèves »). Take the meaning from the source; this adds no new detail, so GROUNDING below still holds.
 - GROUNDING — do NOT over-specify: every specific in normalized_fact (a date, a named body like "GIEC"/IPCC, a figure like "30 milliards", a place like "le Salvador", a motive like "pour déstabiliser l'Europe", an outlet/byline like "Politico") MUST appear in original_quote. If the quote is generic ("les scientifiques"), keep the fact generic — do NOT swap in a specific name the article didn't attribute. If the quote carries no date, add no date. Strip any detail the quote doesn't prove, or drop the fact. NEVER import a detail from a different sentence or source.
 - ATTRIBUTION — the subject must be the person who actually spoke or acted. A statement by an aide, deputy, spokesperson, "le bras droit de X", "un proche de X", "l'entourage de X", or a party colleague is NOT X's statement: attribute it to the actual speaker BY NAME — provided that speaker is themselves a political actor in scope (the scope rule below still applies: a named coach, singer, or CEO speaking outside politics is still REJECTED) — or DROP the fact if that speaker is not named. A descriptive role is never a valid subject_entity — never emit a subject like "le bras droit de Jean-Luc Mélenchon"; an unnamed speaker means no fact. A social-media handle (e.g. "@eciotti") names exactly one person — the one whose name the handle spells (@eciotti = Éric Ciotti). Resolve it ONLY from the handle's letters, NEVER from surrounding context or from what you know about the real world: "mon ami @eciotti, aujourd'hui maire de Nice" is a fact about Ciotti even if you believe someone else is mayor of Nice. If you cannot name the handle's owner from the handle itself, keep the handle text verbatim. NEVER substitute a different politician's name for a handle or an unnamed speaker.
 - QUALIFIERS — preserve hedges and scope limiters from the quote ("en partie", "notamment", "selon lui", "sous conditions", "à ce stade"). Dropping "en partie" from "en partie responsable" turns a partial claim into an absolute one the entity never made.
-- EVENT DATE ≠ PUBLISH DATE — the article's publication date is NOT the date of the event it reports. Date an event only from the quote/article's own dating of that event ("hier", "le 14 juillet", "lundi dernier" — converted via TODAY'S DATE); if the event itself is undated, leave the date out.
+- EVENT DATE ≠ PUBLISH DATE — the article's publication date is NOT the date of the event it reports. Date an event only from the quote/article's own dating of that event ("hier", "le 14 juillet", "lundi dernier" — converted via the REFERENCE DATE); if the event itself is undated, leave the date out.
 - If you catch an internal contradiction, re-read the original_quote carefully and rewrite.
 
 ## Consolidation
@@ -180,7 +181,7 @@ Return a JSON array. Each object has 10 fields (in this order):
 7. 'original_quote': Exact verbatim snippet (max ~250 chars) from the source text that SUBSTANTIATES THE WHOLE fact. Every concrete detail in normalized_fact — names, dates, numbers, places, the action, and any motive/attribution — must appear in (or be directly entailed by) this quote. If a detail is not in a quote you can cite, it does NOT belong in normalized_fact. Never stitch a quote together from distant fragments, and never borrow a detail from a DIFFERENT statement or source in the article.
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
-9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published. Use the most precise form supplied ("YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full RFC3339 with timezone). Set this when the body explicitly states either (a) an absolute date/time in a byline ("Publié le 19/05/2026 à 09h", "Posted on May 19, 2026"), OR (b) a relative phrase ("Publié hier", "Posted 2 days ago", "il y a 3 heures") — resolve relative phrases to absolute values using TODAY'S DATE above, preserving the implied hour when given. OMIT this field entirely otherwise. DO NOT guess from article content, topic, or named events.
+9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published. Use the most precise form supplied ("YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full RFC3339 with timezone). Set this when the body explicitly states either (a) an absolute date/time in a byline ("Publié le 19/05/2026 à 09h", "Posted on May 19, 2026"), OR (b) a relative phrase ("Publié hier", "Posted 2 days ago", "il y a 3 heures") — resolve relative phrases to absolute values using the REFERENCE DATE above, preserving the implied hour when given. OMIT this field entirely otherwise. DO NOT guess from article content, topic, or named events.
 
 %s
 
@@ -258,8 +259,10 @@ type FactExtractorConfig struct {
 	// Leave empty for default behavior.
 	PluginInstructions string
 	// Now is the reference time the LLM uses to resolve relative date phrases
-	// it sees in the article body ("2 days ago", "il y a 3 jours"). Zero value
-	// falls back to time.Now() at prompt-build time — tests should pin it.
+	// it sees in the article body ("2 days ago", "il y a 3 jours", "lundi"):
+	// the article's publication date when it is known (a backfill reads old
+	// articles; "lundi" is the Monday of the article, not of the run). Zero
+	// value falls back to time.Now() at prompt-build time — tests should pin it.
 	Now time.Time
 }
 
@@ -277,7 +280,7 @@ func BuildFactExtractionPrompt(cfg FactExtractorConfig) string {
 	}
 
 	return fmt.Sprintf(CoreFactExtractionPrompt,
-		now.Format("2006-01-02"), // First %s - TODAY'S DATE for relative-date resolution
+		now.Format("2006-01-02"), // First %s - REFERENCE DATE for relative-date resolution
 		cfg.TargetName,           // Second %s - target name in intro
 		pluginSection,            // Third %s - plugin instructions section
 		cfg.TargetName,           // Fourth %s - target name in input data

@@ -88,7 +88,7 @@ func (failingFactStorer) LinkPersonsToSourceMention(context.Context, int64, []in
 
 type noopStance struct{}
 
-func (noopStance) ProcessNewFact(context.Context, int64, int64, string, []float32, string) (*core.StanceProcessResult, error) {
+func (noopStance) ProcessNewFact(context.Context, int64, int64, string, []float32, string, *time.Time) (*core.StanceProcessResult, error) {
 	return &core.StanceProcessResult{}, nil
 }
 

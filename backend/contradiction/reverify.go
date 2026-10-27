@@ -93,8 +93,8 @@ func RunReverify(ctx context.Context, storer *storage.PostgresStorer, opts Rever
 	log.Info().Int("total", len(rows)).Bool("random", opts.Random).Bool("apply", opts.Apply).Str("scope", opts.Scope).Msg("Starting contradiction reverify")
 
 	for i, row := range rows {
-		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID]}
-		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID]}
+		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID], Date: promptrules.DateOf(row.FactADate)}
+		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID], Date: promptrules.DateOf(row.FactBDate)}
 		line := ReverifyRow{
 			ContradictionID: row.ID,
 			PersonID:        row.PersonID,

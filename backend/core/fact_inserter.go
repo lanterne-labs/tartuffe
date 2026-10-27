@@ -32,7 +32,7 @@ type InsertResult struct {
 // StanceManager.ApplyStanceDecision; tests may supply a stub that satisfies
 // the invariant without an LLM round-trip.
 type StanceProcessor interface {
-	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error)
+	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string, date *time.Time) (*StanceProcessResult, error)
 }
 
 // FactInserter handles fact insertion with mandatory stance-based processing.
@@ -382,7 +382,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Mandatory stance processing. Failure rolls back the fact via compensating
 	// delete so that the "every fact has a stance" invariant holds — unless the
 	// fact is already in its stance and only the label refresh is pending.
-	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
+	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb, input.PublishedAt)
 	if err != nil {
 		if !errors.Is(err, ErrStanceRefreshPending) {
 			fi.compensateDelete(ctx, factID, "stance processing")

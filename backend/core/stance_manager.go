@@ -90,6 +90,8 @@ type StanceFactInfo struct {
 	EmbeddingText      string
 	CanonicalVerb      string
 	Lang               string // BCP-47 source language ("fr", "en", ...); always set on new inserts.
+	// Date is the day of the fact (its earliest source), nil when unknown.
+	Date *time.Time
 }
 
 // StanceContradictionEntry is one (new_fact, key_fact) contradiction the LLM
@@ -269,7 +271,7 @@ var ErrStanceRefreshPending = errors.New("fact linked to its stance; label and s
 // label + summary (see refreshAfterVerdict). An error wrapping
 // ErrStanceRefreshPending means the fact was routed and only that refresh
 // failed.
-func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string, date *time.Time) (*StanceProcessResult, error) {
 	decision, matched, err := sm.assignStance(ctx, personID, factID, factText, embedding)
 	if err != nil {
 		return nil, err
@@ -289,12 +291,12 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	// contradictions across batches. The fact joins the stance only once the
 	// analysis and its verification are done (handleVerdict): a failed call
 	// leaves nothing written, so the (person, fact) pair stays pending.
-	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText)
+	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText, date)
 	if err != nil {
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
 	}
 
-	return sm.handleVerdict(ctx, matched, personID, factID, factText, keyFacts, embedding, agg)
+	return sm.handleVerdict(ctx, matched, personID, factID, factText, date, keyFacts, embedding, agg)
 }
 
 // AssignStance decides the stance of a fact of the person without the
@@ -485,7 +487,7 @@ func analyzeVoteKey(r *stanceLLMResponse) string {
 // KeyFactID). The primary verdict is CONTRADICTION if any batch returned
 // contradictions, else DUPLICATE if any batch returned DUPLICATE, else
 // NEW_INFO.
-func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
+func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*aggregatedAnalysis, error) {
 	batches := chunkKeyFactsByBudget(stanceSummary, newFactText, keyFacts)
 	if len(batches) == 0 {
 		// No key facts at all — degenerate but possible. Treat the new fact as
@@ -506,7 +508,7 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 		// single-sample). Early exit keeps the usual cost at 2 calls.
 		resp, err := llm.MajorityVote(AnalyzeVotes,
 			func() (*stanceLLMResponse, error) {
-				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText)
+				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText, newFactDate)
 			},
 			analyzeVoteKey,
 		)
@@ -575,7 +577,34 @@ func estimateStanceTokens(s string) int {
 // formatKeyFactLine renders one key fact as it appears in the analyze prompt.
 // Shared by the prompt builder and the budget estimator so the two never drift.
 func formatKeyFactLine(f StanceFactInfo) string {
-	return fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText)
+	return fmt.Sprintf("- [ID %d] (%s) %s%s\n", f.ID, f.CanonicalVerb, datedPrefix(f.Date), f.NormalizedFactText)
+}
+
+// datedPrefix is the date a judge sees before a fact's text: "(dated
+// YYYY-MM-DD) " when known, "(undated) " else. The rules reason on dates (a
+// reversal needs both, a yearly text a year apart is two texts); until
+// 2026-10-27 the stance judges saw none (the Le Pen review: two budgets a
+// year apart judged as one text).
+func datedPrefix(t *time.Time) string {
+	d := promptrules.DateOf(t)
+	if d == "" {
+		return "(undated) "
+	}
+	return "(dated " + d + ") "
+}
+
+// keyFactByID indexes the key facts of a stance by id.
+func keyFactByID(facts []StanceFactInfo) map[int64]StanceFactInfo {
+	m := make(map[int64]StanceFactInfo, len(facts))
+	for _, f := range facts {
+		m[f.ID] = f
+	}
+	return m
+}
+
+// statementOf is the fact as the verifier judges it: its text and its date.
+func statementOf(f StanceFactInfo) promptrules.Statement {
+	return promptrules.Statement{Text: f.NormalizedFactText, Date: promptrules.DateOf(f.Date)}
 }
 
 // estimateStanceBaseTokens estimates the analyze prompt's fixed cost EXCLUDING
@@ -685,7 +714,7 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 // label+summary refresh for non-duplicate verdicts. Nothing is written before
 // the verification succeeded, so a failed verifier call leaves the fact out
 // of the stance, still pending.
-func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
+func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, newFactDate *time.Time, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
 	decision := StanceDecision{StanceID: matched.ID, Verdict: agg.PrimaryVerdict, Reasoning: agg.Reasoning}
 	switch agg.PrimaryVerdict {
 	case VerdictDuplicate, VerdictNewInfo:
@@ -693,7 +722,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		// Adversarial verification pass: survivors only — refuted pairs are
 		// never recorded, so they never dent the honesty score. If every pair
 		// is refuted the fact is just new info for the stance.
-		verified, err := sm.verifyEntries(ctx, personID, factID, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		verified, err := sm.verifyEntries(ctx, personID, factID, promptrules.Statement{Text: newFactText, Date: promptrules.DateOf(newFactDate)}, keyFactByID(keyFacts), agg.Contradictions)
 		if err != nil {
 			return nil, err
 		}
@@ -792,7 +821,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	if len(otherFacts) == 0 {
 		return nil, nil
 	}
-	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText)
+	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText, fact.Date)
 	if err != nil {
 		return nil, fmt.Errorf("analyze: %w", err)
 	}
@@ -801,7 +830,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	}
 	// Adversarial verification pass (same gate as the live ingest path in
 	// handleVerdict).
-	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
+	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, statementOf(fact), keyFactByID(otherFacts), agg.Contradictions)
 }
 
 // VerifyContradiction runs the adversarial refutation pass over a single
@@ -815,8 +844,8 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 // identical refutation logic. The stance path judges plain texts (no group
 // members) because the stance analysis that found the contradiction saw
 // plain texts too: a veto never sees less than the finder.
-func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	return llm.VerifyContradiction(ctx, sm.client, promptrules.Statement{Text: factA}, promptrules.Statement{Text: factB}, claimedReason)
+func (sm *StanceManager) VerifyContradiction(ctx context.Context, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error) {
+	return llm.VerifyContradiction(ctx, sm.client, a, b, claimedReason)
 }
 
 // verifyEntries runs the adversarial refutation pass over the flagged
@@ -841,7 +870,7 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 //
 // When the LLM is unavailable nothing is decided: the error (wrapping
 // llm.ErrUnavailable) is returned and the caller must record nothing.
-func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
+func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFact promptrules.Statement, keyFacts map[int64]StanceFactInfo, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
@@ -852,13 +881,13 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int
 				Msg("One contradiction per fact and stance: the other flagged key facts are not judged")
 			break
 		}
-		keyText, ok := keyTexts[c.KeyFactID]
-		if !ok || strings.TrimSpace(keyText) == "" {
+		keyFact, ok := keyFacts[c.KeyFactID]
+		if !ok || strings.TrimSpace(keyFact.NormalizedFactText) == "" {
 			log.Warn().Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Str("flagged_reason", c.Reason).
 				Msg("Contradiction with a key fact the analysis was not shown; dropping")
 			continue
 		}
-		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
+		keep, reason, err := sm.VerifyContradiction(ctx, newFact, statementOf(keyFact), c.Reason)
 		if errors.Is(err, llm.ErrUnavailable) {
 			return nil, fmt.Errorf("verifying contradiction with key fact %d: %w", c.KeyFactID, err)
 		}
@@ -1259,7 +1288,7 @@ func (sm *StanceManager) callJSONLLM(
 // and parses the response. Callers split into batches via chunkKeyFacts; this
 // function handles a single batch and returns whatever contradictions the LLM
 // found within it.
-func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
+func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*stanceLLMResponse, error) {
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
 		factsBuilder.WriteString(formatKeyFactLine(f))
@@ -1312,7 +1341,7 @@ The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction 
 EXISTING STANCE SUMMARY:
 %s
 
-KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
+KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) (dated YYYY-MM-DD) text", "(undated)" when the date is unknown; the NEW FACT carries its date the same way — use them for the TEMPORAL REASONING rules):
 %s
 
 NEW FACT:
@@ -1340,7 +1369,7 @@ Return ONLY valid JSON:
 For DUPLICATE: contradictions MUST be []. Set duplicate_of_key_fact_id to the [ID N] of the key fact the new fact paraphrases.
 For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
 For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
-		stanceSummary, factsBuilder.String(), newFactText)
+		stanceSummary, factsBuilder.String(), datedPrefix(newFactDate)+newFactText)
 
 	// temp=0.1 matches the rest of the codebase (every other contradiction /
 	// detector / auditor / dedup path uses 0.1 or lower); the 0.2 default that

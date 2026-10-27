@@ -717,6 +717,46 @@ Elle n'a pas fait de reniement sur la retraite à 60 ans pour ceux qui ont comme
 			leak: regexp.MustCompile(`(?i)reniement|renié|pas mentionné|tva sociale|60 ans`),
 			keep: regexp.MustCompile(`(?i)impôt sur le revenu`),
 		},
+		// mirror-ds6.8: the writer's active-voice gloss of her position
+		// (fact 105047: "tout en défendant pourtant le retour à 60 ans de
+		// l'âge pivot") is not a statement she made at the congress.
+		{
+			name:   "active gloss",
+			person: "Marine Le Pen",
+			title:  "Un congrès du RN sous haute tension à Orléans, Marine Le Pen en position de force",
+			text: `Devant 5 000 militants réunis à Orléans, Marine Le Pen a lancé sa campagne présidentielle. « On a le vent de face, mais on est resté ultra-favori », a-t-elle déclaré à la tribune.
+
+La candidate a promis une loi d'urgence sur l'immigration dès l'été 2027 : « Le premier texte que je présenterai au Parlement sera la loi sur la priorité nationale. »
+
+Un congrès où la ligne sociale du parti s'est faite plus discrète, la candidate ménageant les milieux économiques tout en défendant pourtant le retour à 60 ans de l'âge pivot.`,
+			leak: regexp.MustCompile(`(?i)60 ans|âge pivot|milieux économiques`),
+			keep: regexp.MustCompile(`(?i)priorité nationale|immigration`),
+		},
+		// mirror-ds6.8: an analyst's summary of her line (fact 95213,
+		// Carnegie: "has been clear that she would halt military support").
+		{
+			name:   "analyst summary",
+			person: "Marine Le Pen",
+			title:  "How Le Pen benefits from the stalemate in Ukraine",
+			text: `The stalemate on the Ukrainian front plays into the hands of France's far right. Marine Le Pen has been clear that, if elected in 2027, she would halt French military support to Ukraine and suspend sanctions against Russia, and she promises to bring peace through diplomacy.
+
+Asked on France Inter on Tuesday about the war, Le Pen said: "We can no longer help Ukraine financially; France's own deficit forbids it."`,
+			leak: regexp.MustCompile(`(?i)halt|suspend|sanctions|diplomacy|military support`),
+			keep: regexp.MustCompile(`(?i)financ`),
+		},
+		// mirror-ds6.10: the writer's framing of a reply ("a rejeté
+		// l'argument selon lequel...") kept instead of what she asserted
+		// (fact 14923: she assumes the 9 billion cost as a choice).
+		{
+			name:   "framing verb",
+			person: "Marine Le Pen",
+			title:  "Débat du Medef : Marine Le Pen assume le coût de sa réforme des retraites",
+			text: `Interrogée sur le financement de son retour à la retraite à 62 ans, Marine Le Pen a rejeté l'argument selon lequel sa réforme coûtera 9 milliards d'euros par an. « C'est un choix de société. Assumons les choix de société, moi je les assume », a-t-elle affirmé devant les patrons réunis au Medef.
+
+Elle a par ailleurs promis une baisse de la TVA sur l'énergie à 5,5 % dès l'été 2027.`,
+			leak: regexp.MustCompile(`(?i)rejet|contest|nié|dément`),
+			keep: regexp.MustCompile(`(?i)assum|choix de société`),
+		},
 	}
 	ctx := context.Background()
 	const samples = 3

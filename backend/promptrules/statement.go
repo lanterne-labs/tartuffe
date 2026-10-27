@@ -3,6 +3,7 @@ package promptrules
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Statement is one side of a judged pair: the statement's text and, when it
@@ -15,6 +16,29 @@ type Statement struct {
 	// concrete first. They carry the figures, dates and targets a group's
 	// headline text may leave out.
 	Also []string
+	// Date is the day of the statement (YYYY-MM-DD) when it is known, else
+	// empty. The verifier shows it (Dated): the catalog's temporal rules (a
+	// reversal needs both dates, a yearly text a year apart is two texts)
+	// were dead letters without it. Render leaves it out, so the auditor's
+	// input hash does not change.
+	Date string
+}
+
+// Dated is the statement as the verifier shows it: its date when known,
+// "(undated)" else, then Render.
+func (s Statement) Dated() string {
+	if s.Date == "" {
+		return "(undated) " + s.Render()
+	}
+	return "(dated " + s.Date + ") " + s.Render()
+}
+
+// DateOf is the Date of a statement made on t: empty when t is nil or zero.
+func DateOf(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format("2006-01-02")
 }
 
 // Render is the statement as a prompt shows it: the quoted text, then one

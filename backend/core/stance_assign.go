@@ -85,7 +85,7 @@ func AssignOrphansForPerson(
 		if err := ctx.Err(); err != nil {
 			return ps, fmt.Errorf("stance assignment stopped: %w", err)
 		}
-		res, err := stanceManager.ProcessNewFact(ctx, p.ID, f.ID, f.FactText, f.Embedding, f.CanonicalVerb)
+		res, err := stanceManager.ProcessNewFact(ctx, p.ID, f.ID, f.FactText, f.Embedding, f.CanonicalVerb, f.PublishedAt)
 		if errors.Is(err, llm.ErrUnavailable) {
 			return ps, fmt.Errorf("routing fact %d: %w", f.ID, err)
 		}

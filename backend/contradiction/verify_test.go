@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,12 +19,15 @@ type verifyCase struct {
 	FactB string `yaml:"fact_b"`
 	// AlsoA / AlsoB are other wordings of a statement that stands for a group
 	// of restatements (promptrules.Statement.Also).
-	AlsoA         []string `yaml:"also_a"`
-	AlsoB         []string `yaml:"also_b"`
-	ClaimedReason string   `yaml:"claimed_reason"`
-	Expect        string   `yaml:"expect"` // "keep" or "drop"
-	Bucket        string   `yaml:"bucket"`
-	Notes         string   `yaml:"notes"`
+	AlsoA []string `yaml:"also_a"`
+	AlsoB []string `yaml:"also_b"`
+	// DateA / DateB are the days of the statements (YYYY-MM-DD), optional.
+	DateA         string `yaml:"date_a"`
+	DateB         string `yaml:"date_b"`
+	ClaimedReason string `yaml:"claimed_reason"`
+	Expect        string `yaml:"expect"` // "keep" or "drop"
+	Bucket        string `yaml:"bucket"`
+	Notes         string `yaml:"notes"`
 	// Judges scopes the case to specific golden suites: "verify" and/or
 	// "audit". Empty = both (the default for every pre-existing case). Use it
 	// when only ONE judge handles the shape reliably — the other judge's gap
@@ -101,7 +105,7 @@ func TestVerifyGolden(t *testing.T) {
 			}
 			t.Run(tc.Name, func(t *testing.T) {
 				llmtest.Parallel(t)
-				keep, reason, err := detector.VerifyContradiction(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, tc.ClaimedReason)
+				keep, reason, err := detector.VerifyContradiction(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA, Date: tc.DateA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB, Date: tc.DateB}, tc.ClaimedReason)
 				if err != nil {
 					t.Fatalf("VerifyContradiction error: %v", err)
 				}
@@ -143,4 +147,18 @@ func verdictWord(keep bool) string {
 		return "keep"
 	}
 	return "drop"
+}
+
+// caseDate parses the optional YYYY-MM-DD of a case; empty is nil (undated),
+// as the audit path passes a row's date.
+func caseDate(t *testing.T, s string) *time.Time {
+	t.Helper()
+	if s == "" {
+		return nil
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Fatalf("case date %q: %v", s, err)
+	}
+	return &d
 }

@@ -65,7 +65,7 @@ type orderingStancer struct {
 	peak     int
 }
 
-func (o *orderingStancer) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (o *orderingStancer) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string, _ *time.Time) (*StanceProcessResult, error) {
 	o.mu.Lock()
 	o.inFlight++
 	o.peak = max(o.peak, o.inFlight)

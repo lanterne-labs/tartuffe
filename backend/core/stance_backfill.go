@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -16,6 +17,8 @@ type StanceRoutingFact struct {
 	EmbeddingText string
 	CanonicalVerb string
 	Embedding     []float32
+	// PublishedAt is the day of the fact (its earliest source), nil when unknown.
+	PublishedAt *time.Time
 }
 
 // StanceBackfillStorer is the storage view the backfill / rebuild paths need.
@@ -129,7 +132,7 @@ func BackfillStancesForPerson(
 
 	for _, e := range entries {
 		rep := e.facts[0]
-		res, err := stanceManager.ProcessNewFact(ctxDefer, p.ID, rep.ID, rep.FactText, rep.Embedding, rep.CanonicalVerb)
+		res, err := stanceManager.ProcessNewFact(ctxDefer, p.ID, rep.ID, rep.FactText, rep.Embedding, rep.CanonicalVerb, rep.PublishedAt)
 		if err != nil {
 			log.Error().Err(err).Str("person", p.Name).Int64("fact_id", rep.ID).Msg("ProcessNewFact failed; skipping group")
 			continue

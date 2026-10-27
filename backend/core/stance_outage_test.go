@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/promptrules"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,7 +129,7 @@ func TestProcessNewFact_UnavailableLLMWritesNothing(t *testing.T) {
 		t.Run("unavailable at "+down, func(t *testing.T) {
 			storer := pensionStorer()
 			sm, _ := newOutageManager(t, storer, answers(map[string]any{down: nil}))
-			_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+			_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared", nil)
 			if !errors.Is(err, llm.ErrUnavailable) {
 				t.Fatalf("err = %v, want ErrUnavailable", err)
 			}
@@ -144,7 +145,7 @@ func TestProcessNewFact_UnavailableLLMWritesNothing(t *testing.T) {
 	t.Run("control: every call succeeds", func(t *testing.T) {
 		storer := pensionStorer()
 		sm, _ := newOutageManager(t, storer, answers(nil))
-		res, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+		res, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -434,7 +435,7 @@ func TestProcessNewFact_RefreshUnavailableKeepsTheLink(t *testing.T) {
 		}
 		return nil // the label + summary refresh
 	})
-	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared", nil)
 	if !errors.Is(err, llm.ErrUnavailable) || !errors.Is(err, ErrStanceRefreshPending) {
 		t.Fatalf("err = %v, want ErrUnavailable marked ErrStanceRefreshPending", err)
 	}
@@ -449,7 +450,7 @@ func TestProcessNewFact_RefreshUnavailableKeepsTheLink(t *testing.T) {
 // stanceErrProcessor fails every routing with err.
 type stanceErrProcessor struct{ err error }
 
-func (p stanceErrProcessor) ProcessNewFact(context.Context, int64, int64, string, []float32, string) (*StanceProcessResult, error) {
+func (p stanceErrProcessor) ProcessNewFact(context.Context, int64, int64, string, []float32, string, *time.Time) (*StanceProcessResult, error) {
 	return nil, p.err
 }
 
@@ -506,7 +507,7 @@ func TestProcessNewFact_LabelPassUnavailable(t *testing.T) {
 	}
 	storer.nextID = shortlistTopK + 2
 	sm, o := newOutageManager(t, storer, answers(map[string]any{"(labels only)": nil}))
-	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared")
+	_, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared", nil)
 	if !errors.Is(err, llm.ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
@@ -545,7 +546,7 @@ func TestAnalyzeAcrossBatches_InBatchOrder(t *testing.T) {
 	for id := int64(1); id <= 3*keyFactBatchSize; id++ {
 		facts = append(facts, StanceFactInfo{ID: id, NormalizedFactText: fmt.Sprintf("fait %d", id)})
 	}
-	agg, err := sm.analyzeAcrossBatches(context.Background(), "résumé", facts, "nouveau fait")
+	agg, err := sm.analyzeAcrossBatches(context.Background(), "résumé", facts, "nouveau fait", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,12 +573,12 @@ func TestAnalyzeAcrossBatches_InBatchOrder(t *testing.T) {
 func TestVerifyEntries_NothingUnverified(t *testing.T) {
 	storer := newMockStanceStorer()
 	sm, _ := newOutageManager(t, storer, answers(map[string]any{verifyPrompt: "no verdict here"}))
-	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans."}
+	keyTexts := map[int64]StanceFactInfo{10: {ID: 10, NormalizedFactText: "Il défend la retraite à 62 ans."}}
 	entries := []StanceContradictionEntry{
 		{KeyFactID: 10, Reason: "62 vs 64"},
 		{KeyFactID: 99, Reason: "a fact the analysis was not shown"},
 	}
-	got, err := sm.verifyEntries(context.Background(), 7, 5, "Il vote la retraite à 64 ans.", keyTexts, entries)
+	got, err := sm.verifyEntries(context.Background(), 7, 5, promptrules.Statement{Text: "Il vote la retraite à 64 ans."}, keyTexts, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,13 +596,13 @@ func TestVerifyEntries_NothingUnverified(t *testing.T) {
 // their verifier calls are spared. A refuted entry in front gives way to the
 // next.
 func TestVerifyEntries_OnePerStance(t *testing.T) {
-	keyTexts := map[int64]string{10: "Il défend la retraite à 62 ans.", 11: "Il promet de ne jamais toucher à l'âge légal.", 12: "Il refuse toute réforme des retraites."}
+	keyTexts := map[int64]StanceFactInfo{10: {ID: 10, NormalizedFactText: "Il défend la retraite à 62 ans."}, 11: {ID: 11, NormalizedFactText: "Il promet de ne jamais toucher à l'âge légal."}, 12: {ID: 12, NormalizedFactText: "Il refuse toute réforme des retraites."}}
 	entries := []StanceContradictionEntry{{KeyFactID: 10, Reason: "62 vs 64"}, {KeyFactID: 11, Reason: "promesse rompue"}, {KeyFactID: 12, Reason: "réforme refusée"}}
 	newFact := "Il vote la retraite à 64 ans."
 
 	storer := newMockStanceStorer()
 	sm, o := newOutageManager(t, storer, answers(nil))
-	got, err := sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	got, err := sm.verifyEntries(context.Background(), 7, 5, promptrules.Statement{Text: newFact}, keyTexts, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,12 +616,12 @@ func TestVerifyEntries_OnePerStance(t *testing.T) {
 	// The first entry is refuted: the second is the contradiction.
 	storer = newMockStanceStorer()
 	sm, o = newOutageManager(t, storer, func(prompt string) any {
-		if strings.Contains(prompt, verifyPrompt) && strings.Contains(prompt, keyTexts[10]) {
+		if strings.Contains(prompt, verifyPrompt) && strings.Contains(prompt, keyTexts[10].NormalizedFactText) {
 			return "REASON: same position.\nVERDICT: NO"
 		}
 		return answers(nil)(prompt)
 	})
-	got, err = sm.verifyEntries(context.Background(), 7, 5, newFact, keyTexts, entries)
+	got, err = sm.verifyEntries(context.Background(), 7, 5, promptrules.Statement{Text: newFact}, keyTexts, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
