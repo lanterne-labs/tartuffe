@@ -6,7 +6,7 @@ export const FEATURED_SLUG = "presidentielle-2027";
 
 export function eventPaths(slug: string = FEATURED_SLUG) {
   const base = `/election/${encodeURIComponent(slug)}`;
-  return { intro: base, vote: `${base}/voter`, how: `${base}/fonctionnement` };
+  return { intro: base, vote: `${base}/voter`, how: `${base}/fonctionnement`, complaint: `${base}/complaint` };
 }
 
 // The count of voters shows from SHOW_VOTERS_FROM on: the results show from

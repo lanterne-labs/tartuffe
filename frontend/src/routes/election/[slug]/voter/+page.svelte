@@ -17,6 +17,7 @@
 	import { voteKey } from '$lib/vote/key';
 	import { BLANK, type Ranking } from '$lib/vote/crypto';
 	import { defaultSources } from '$lib/vote/sources';
+	import { neventLink } from '$lib/vote/mailbox';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -291,6 +292,16 @@
 					<details class="help status-tip">
 						<summary class="state-icon state-icon--fault" aria-label={tr('v2.status.missing', currentLang)}>!</summary>
 						<p>{tr('v2.status.missing.help', currentLang)}</p>
+						{#if $ballotStore.complaints?.length}
+							<p>
+								{tr('v2.status.missing.links', currentLang)}
+								{#each $ballotStore.complaints as id, i (id)}
+									{#if i > 0}, {/if}
+									<a href="{paths.complaint}?id={id}">{tr('v2.status.missing.verify', currentLang)}</a>
+									(<a href={neventLink(id, $setupStore?.setup.relays.map((r) => r.url) ?? [])} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
+								{/each}
+							</p>
+						{/if}
 					</details>
 				{:else if busy}
 					<span class="state-icon" title={tr(`v2.status.${$ballotStore.state}`, currentLang)}><Spinner size="sm" label={tr(`v2.status.${$ballotStore.state}`, currentLang)} /></span>

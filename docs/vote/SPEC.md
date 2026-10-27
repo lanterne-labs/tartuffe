@@ -433,7 +433,13 @@ the bulk and its size does not depend on the circuit's size.
   ballot is missing, the browser reposts the ballot to its next two relays
   and posts a `complaint {v, event, nostr_id, pi_hash, ack}` carrying the
   server's signed ack event, to the same two relays; auditors check
-  complaints like any event (§12.6). A complaint is logged as `seen`.
+  complaints like any event (§12.6). A complaint is logged as `seen`. The
+  page then shows the voter two links to pass on: the complaint on
+  `njump.me` (any Nostr event, no account) and
+  `/election/<slug>/complaint?id=<event>`, a static page that reads the
+  complaint from the relays, checks the ack's signature by `nostr_pubkey`,
+  the named checkpoint's signature by the log key and its entries on the
+  mirror, and says in the reader's browser whether the ballot is there.
 - With no ack within 20 s (60 s for a registration) the browser reposts to
   the next relay of its ranking.
 
@@ -859,5 +865,5 @@ Differences from the text above:
   moves to the next relay of the ranking when a relay cannot be reached.
 
 Not built yet: the git-backed mirror and the `github.io` app origin
-(§8.3, Q3), a page a complaint links to, the device link for v2 keys,
-keyboard reordering of the ranking, the final shuffle (§9.4).
+(§8.3, Q3), the device link for v2 keys, keyboard reordering of the
+ranking, the final shuffle (§9.4).

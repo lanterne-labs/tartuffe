@@ -6,7 +6,8 @@
 
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+import { bech32 } from '@scure/base';
 
 export type MessageKind = 'ballot' | 'register' | 'complaint';
 export type ServerKind = 'ack' | 'checkpoint' | 'snapshot';
@@ -47,6 +48,9 @@ export interface Mailbox {
 	// since the time given, live, until stopped (the newest leaves, before
 	// the mirror has them).
 	registrations(box: string, since: number, each: (m: RegisterMessage) => void): () => void;
+	// fetchEvent reads one event by its id from whichever box holds it
+	// (a complaint someone links to); null when none does in time.
+	fetchEvent(id: string, timeoutMs: number): Promise<NostrEvent | null>;
 }
 
 // --- Nostr ---
@@ -74,6 +78,32 @@ function signedEvent(kind: number, tag: string, content: string, now = Date.now(
 	const serial = JSON.stringify([0, pubkey, created_at, kind, tags, content]);
 	const id = sha256(new TextEncoder().encode(serial));
 	return { id: bytesToHex(id), pubkey, created_at, kind, tags, content, sig: bytesToHex(schnorr.sign(id, secret)) };
+}
+
+// eventId recomputes a Nostr event's id; verifyEvent checks it and the
+// signature (what a complaint's reader does with the ack inside).
+export function eventId(ev: NostrEvent): string {
+	const serial = JSON.stringify([0, ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content]);
+	return bytesToHex(sha256(new TextEncoder().encode(serial)));
+}
+
+export function verifyEvent(ev: NostrEvent): boolean {
+	try {
+		return eventId(ev) === ev.id && schnorr.verify(hexToBytes(ev.sig), hexToBytes(ev.id), hexToBytes(ev.pubkey));
+	} catch {
+		return false;
+	}
+}
+
+// neventLink is a public page of the event (njump renders any Nostr
+// event): an nevent code with the relays as hints.
+export function neventLink(id: string, relays: string[]): string {
+	const tlv: number[] = [0, 32, ...hexToBytes(id)];
+	for (const r of relays.slice(0, 3)) {
+		const b = new TextEncoder().encode(r);
+		tlv.push(1, b.length, ...b);
+	}
+	return 'https://njump.me/' + bech32.encode('nevent', bech32.toWords(Uint8Array.from(tlv)), 5000);
 }
 
 const POST_TIMEOUT = 10_000;
@@ -181,6 +211,21 @@ export class NostrMailbox implements Mailbox {
 
 	registrations(box: string, since: number, each: (m: RegisterMessage) => void): () => void {
 		return this.subscribe(box, { kinds: [KINDS.register], since }, (ev) => each({ id: ev.id, body: ev.content, time: ev.created_at }));
+	}
+
+	fetchEvent(id: string, timeoutMs: number): Promise<NostrEvent | null> {
+		return new Promise((resolve) => {
+			const stops: (() => void)[] = [];
+			let done = false;
+			const finish = (ev: NostrEvent | null) => {
+				if (done) return;
+				done = true;
+				stops.forEach((s) => s());
+				resolve(ev);
+			};
+			for (const box of this.urls) stops.push(this.subscribe(box, { ids: [id] }, (ev) => ev.id === id && verifyEvent(ev) && finish(ev)));
+			setTimeout(() => finish(null), timeoutMs);
+		});
 	}
 }
 
