@@ -819,10 +819,18 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 	return llm.VerifyContradiction(ctx, sm.client, promptrules.Statement{Text: factA}, promptrules.Statement{Text: factB}, claimedReason)
 }
 
-// verifyEntries runs the adversarial refutation pass over each flagged
-// contradiction entry and returns only the survivors. factID and newFactText
-// are the fact being processed; keyTexts maps each key fact the analysis was
-// shown to its text. Nothing is recorded unverified:
+// verifyEntries runs the adversarial refutation pass over the flagged
+// contradiction entries, in their order, and returns the first survivor
+// alone: a fact contradicts a stance once. The entries list every key fact
+// of the stance the new fact opposes (the analysis is asked to be complete,
+// clearest opposition first), but they are one inconsistency, the one between
+// the fact and the stance: on 2026-10-27 one fact of Retailleau ("ne pense pas
+// du tout à 2027") made 40 contradictions, one per later fact on his
+// candidacy, and the repetition penalty cost a sixth of his score. The entries
+// after the survivor are not judged, which spares their verifier calls.
+//
+// factID and newFactText are the fact being processed; keyTexts maps each key
+// fact the analysis was shown to its text. Nothing is recorded unverified:
 //   - an entry whose key fact the analysis was not shown is dropped: the
 //     model gave an ID it cannot have read (prod #1205 paired a fact with the
 //     reason of another);
@@ -837,8 +845,13 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int
 	if len(entries) == 0 {
 		return entries, nil
 	}
-	survivors := make([]StanceContradictionEntry, 0, len(entries))
-	for _, c := range entries {
+	survivors := make([]StanceContradictionEntry, 0, 1)
+	for i, c := range entries {
+		if len(survivors) > 0 {
+			log.Info().Int64("fact_id", factID).Int64("key_fact_id", survivors[0].KeyFactID).Int("not_judged", len(entries)-i).
+				Msg("One contradiction per fact and stance: the other flagged key facts are not judged")
+			break
+		}
 		keyText, ok := keyTexts[c.KeyFactID]
 		if !ok || strings.TrimSpace(keyText) == "" {
 			log.Warn().Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Str("flagged_reason", c.Reason).
@@ -1266,7 +1279,7 @@ You MUST evaluate the NEW FACT against EVERY key fact in the stance, INDEPENDENT
 - Similarity between key facts (if three key facts each separately contradict the new fact, return three entries)
 - Perceived "strength" of one contradiction over another (a weaker direct contradiction is still a contradiction; list it)
 - Same underlying axis or rule (multiple key facts on the same axis can each independently contradict the new fact)
-The downstream system builds a contradiction graph from these entries — missing edges silently corrupt the honesty score and hide patterns from users. Err on the side of listing more direct edges, never fewer.
+The downstream system records the first entry that survives verification as the contradiction between the new fact and this stance, so ORDER the entries from the clearest opposition to the least clear; a missing entry can leave a weaker one in front. Err on the side of listing more direct edges, never fewer.
 
 **COMPLETENESS DOES NOT OVERRIDE THE NEGATIVE-PATTERN CARVE-OUTS.** Completeness only fires on pairs that pass the contradiction rules below. If a pair falls under a NEGATIVE PATTERN (ADMINISTRATIVE ERROR vs CRIMINAL INTENT — PAIR 16/17 in the examples; COHERENT DEFENSE — PAIR 18; CONSISTENT IGNORANCE; SAME POSITION IN DIFFERENT WORDS; ANNOUNCEMENT FOLLOWED BY ACTION; etc.), DO NOT emit an entry for it — even if every other heuristic says "but they sound opposite". The carve-outs win.
 
@@ -1306,7 +1319,7 @@ NEW FACT:
 %s
 
 **RESPONSE FORMAT:**
-Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry.
+Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry. Put the clearest opposition first in the array.
 
 **LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in FRENCH (even when the facts are in English). Do NOT provide any translation — English and other languages are produced separately by the translation phase. `+"`reasoning`"+` fields (both top-level and per-contradiction) may follow the language of the facts.
 
