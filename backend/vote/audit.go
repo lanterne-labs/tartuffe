@@ -393,6 +393,11 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				}
 				continue
 			}
+			if len(setups) > 0 && setups[0].Setup.TallyPubkey != "" {
+				if err := VerifyEntry(setups[0].Setup.TallyPubkey, []byte(e.Body)); err != nil {
+					rep.problem("tally %d: %v", e.Seq, err)
+				}
+			}
 			rep.Tallies++
 			if len(setups) == 0 {
 				rep.problem("tally %d before any setup", e.Seq)
@@ -486,6 +491,11 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				}
 				continue
 			}
+			if len(setups) > 0 && setups[0].Setup.TallyPubkey != "" {
+				if err := VerifyEntry(setups[0].Setup.TallyPubkey, []byte(e.Body)); err != nil {
+					rep.problem("closed %d: %v", e.Seq, err)
+				}
+			}
 			closedAt = &c.At
 			// 8. The final tally covers exactly the snapshot: every ballot
 			// logged before the snapshot entry, none after.
@@ -542,6 +552,8 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	}
 	if len(setups) == 0 {
 		rep.problem("no setup for event %d", opt.EventID)
+	} else if setups[0].Setup.TallyPubkey == "" {
+		rep.warn("the setup names no tally_pubkey: the tallies and the close are not signed (a trial log)")
 	}
 	if opt.Passport == nil {
 		rep.warn("passport proofs not checked")

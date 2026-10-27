@@ -71,7 +71,23 @@ func NewNostrMailbox(slug string, key *NostrKey, urls []string) *NostrMailbox {
 }
 
 // Boxes implements Mailbox.
-func (m *NostrMailbox) Boxes() []string { return m.urls }
+func (m *NostrMailbox) Boxes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.urls...)
+}
+
+// AddBox implements Mailbox.
+func (m *NostrMailbox) AddBox(url string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.urls {
+		if u == url {
+			return
+		}
+	}
+	m.urls = append(m.urls, url)
+}
 
 func (m *NostrMailbox) conn(ctx context.Context, url string) (*nostr.Relay, error) {
 	m.mu.Lock()

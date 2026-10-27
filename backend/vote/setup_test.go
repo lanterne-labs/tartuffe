@@ -48,6 +48,7 @@ func TestSetupValidate(t *testing.T) {
 	k, _ := GenerateKeys(1)
 	s := Setup{
 		NostrPubkey: testNostrPubkey,
+		TallyPubkey: testNostrPubkey,
 		V:           Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: 0b10001111,
 		PK: k.PK, PKPoK: k.PoK, VKHash: "0x01", Circuit: Circuit{SourceHash: "0x02"},
 		Relays: []Relay{{URL: "wss://nos.lol", State: "active"}},

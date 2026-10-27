@@ -19,7 +19,7 @@ import { newReceiver, linkURL, seal, open as openLink, type LinkCode, type LinkP
 import { findPosition, updatePath, type PathState } from './tree';
 import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, complaintBody, chooseAnchor, type Setup, type Ack, type CheckpointInfo, type PostProgress } from './protocol';
 import { openCheckpoint } from './checkpoint';
-import { verifyTally, type TallyBody } from './tally';
+import { verifyTally, verifyTallySig, type TallyBody } from './tally';
 import { VoteError, toVoteError } from './errors';
 
 export type Phase = 'loading' | 'no-key' | 'registering' | 'joining' | 'ready' | 'closed' | 'error';
@@ -319,7 +319,7 @@ export class VoteSession {
 			if (stats) this.stats.set(stats);
 			if (tally) {
 				const setup = get(this.setup);
-				const why = setup ? verifyTally(setup.setup.pk, tally.tally) : 'no setup';
+				const why = setup ? (verifyTally(setup.setup.pk, tally.tally) ?? verifyTallySig(setup.setup.tally_pubkey, tally.tally)) : 'no setup';
 				if (why) console.error('vote: the tally does not verify', tally.seq, why);
 				this.tally.set(tally);
 				this.tallyVerified.set(why === null);

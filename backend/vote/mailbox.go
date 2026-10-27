@@ -12,6 +12,8 @@ import "context"
 type Mailbox interface {
 	// Boxes lists the boxes voters may post to.
 	Boxes() []string
+	// AddBox adds a box (a relay a later setup names) while running.
+	AddBox(box string)
 	// Read delivers the voters' messages of a box from the time since on,
 	// then live, to out, until ctx ends or the box fails (an error).
 	Read(ctx context.Context, box string, since int64, out chan<- Message) error

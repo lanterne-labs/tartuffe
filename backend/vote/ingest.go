@@ -80,6 +80,11 @@ type Ingest struct {
 	deferredAt   map[string]time.Time // when each was first put off
 	unacked      []unacked            // acknowledgements a box refused
 	seen         map[string]int64     // box → newest created_at delivered
+	// The readers of the boxes, started by Run and by a later setup.
+	incoming chan Message
+	readers  sync.WaitGroup
+	reading  map[string]bool
+	runCtx   context.Context
 }
 
 type unacked struct {
@@ -161,7 +166,7 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 	if len(rows) > 0 {
 		log.Info().Int("entries", len(rows)).Int64("checkpoint", in.nextIndex).Msg("vote: pending entries restored")
 	}
-	if c, err := store.ClosedEntry(ctx, cfg.Event.ID); err != nil {
+	if c, err := store.ClosedEntrySigned(ctx, cfg.Event.ID, setups[len(setups)-1].Setup.TallyPubkey); err != nil {
 		return nil, err
 	} else if c != nil {
 		in.closedSeq = c.Final
@@ -222,8 +227,23 @@ func ActiveBoxes(setups []LoggedSetup) []string {
 // Release gives the writer's lease back (Run does it on exit).
 func (in *Ingest) Release(ctx context.Context) { in.lease.Release(ctx) }
 
-// reloadSetups takes a setup logged while running into account. Its
-// relays are read from the next start: the log says so, loudly.
+// startReader reads a box from Run's context (under the lock, or before
+// Run's loop).
+func (in *Ingest) startReader(box string) {
+	if in.runCtx == nil || in.reading[box] {
+		return
+	}
+	in.reading[box] = true
+	in.readers.Add(1)
+	go func() {
+		defer in.readers.Done()
+		in.readBox(in.runCtx, box, in.incoming)
+	}()
+}
+
+// reloadSetups takes a setup logged while running into account: its
+// relays are read from now on (browsers on the older setup keep posting
+// to the older relays, which stay read).
 func (in *Ingest) reloadSetups(ctx context.Context) {
 	setups, err := in.store.Setups(ctx, in.cfg.Event.ID)
 	if err != nil {
@@ -240,7 +260,9 @@ func (in *Ingest) reloadSetups(ctx context.Context) {
 	in.setups = setups
 	for _, r := range setups[len(setups)-1].Setup.Relays {
 		if r.State == "active" && !boxes[r.URL] {
-			log.Error().Str("relay", r.URL).Msg("vote: a new setup names a relay this server does not read: restart it before the setup takes effect (24 h)")
+			in.cfg.Mail.AddBox(r.URL)
+			in.startReader(r.URL)
+			log.Info().Str("relay", r.URL).Msg("vote: reading the relay of a new setup")
 		}
 	}
 	log.Info().Int("setups", len(setups)).Msg("vote: a new setup was logged")
@@ -276,14 +298,11 @@ func (in *Ingest) setupInForce(seq int64, now time.Time) (LoggedSetup, bool) {
 
 // Run reads the mailbox and checkpoints until ctx ends.
 func (in *Ingest) Run(ctx context.Context) error {
-	incoming := make(chan Message, 256)
-	var wg sync.WaitGroup
+	in.incoming = make(chan Message, 256)
+	in.reading = map[string]bool{}
+	in.runCtx = ctx
 	for _, b := range in.cfg.Mail.Boxes() {
-		wg.Add(1)
-		go func(box string) {
-			defer wg.Done()
-			in.readBox(ctx, box, incoming)
-		}(b)
+		in.startReader(b)
 	}
 	period := time.Duration(in.current(in.cfg.Now()).Setup.CheckpointPeriod) * time.Second
 	tick := time.NewTicker(period)
@@ -292,9 +311,9 @@ func (in *Ingest) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			wg.Wait()
+			in.readers.Wait()
 			return nil
-		case m := <-incoming:
+		case m := <-in.incoming:
 			in.Handle(ctx, m)
 		case <-tick.C:
 			in.Tick(ctx)
@@ -772,7 +791,7 @@ func (in *Ingest) checkpoint(ctx context.Context) error {
 	}
 	log.Info().Int64("index", index).Int64("log", head.N).Int("tree", in.tree.Size()).Int("boxes", n).Msg("vote: checkpoint")
 	if in.closedSeq == 0 {
-		if c, err := in.store.ClosedEntry(ctx, in.cfg.Event.ID); err == nil && c != nil {
+		if c, err := in.store.ClosedEntrySigned(ctx, in.cfg.Event.ID, in.current(in.cfg.Now()).Setup.TallyPubkey); err == nil && c != nil {
 			in.closedSeq = c.Final
 			if in.closedSeq == 0 {
 				in.closedSeq = -1

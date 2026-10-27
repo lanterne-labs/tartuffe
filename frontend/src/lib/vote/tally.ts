@@ -6,8 +6,11 @@
 // z·G = A + e·PK_j, z·S0 = B + e·(S_j − P_j·G). The sums themselves are the
 // auditor's check (every ballot's ciphertexts).
 
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { hexToBytes } from '@noble/hashes/utils.js';
 import { J, T_DLEQ, big, h } from './crypto';
 import { G, ORDER, affine, decompress } from './grumpkin';
+import { canonical } from './protocol';
 
 export interface TallyBody {
 	v: number;
@@ -18,6 +21,28 @@ export interface TallyBody {
 	s: string[];
 	p: string[];
 	dleq: { a: string; b: string; z: string }[];
+	// sig: the tallier's Ed25519 signature (backend/vote/sign.go).
+	sig?: string;
+}
+
+// The tallier signs what it appends: "tartuffe-vote/2/tally\n" then the
+// canonical body without sig, under the setup's tally_pubkey. Anyone with
+// the database could append a tally otherwise.
+const SIG_PREFIX = 'tartuffe-vote/2/tally\n';
+
+// verifyTallySig returns null when the signature holds under the key,
+// else what fails. A setup without a key (a trial) is "unsigned".
+export function verifyTallySig(tallyPubkey: string | undefined, t: TallyBody): string | null {
+	if (!tallyPubkey) return 'unsigned (the setup names no tally key)';
+	if (!/^[0-9a-f]{64}$/.test(tallyPubkey)) return 'malformed tally key';
+	if (!t.sig || !/^[0-9a-f]{128}$/.test(t.sig)) return 'no tallier signature';
+	const { sig, ...rest } = t;
+	const msg = new TextEncoder().encode(SIG_PREFIX + canonical(rest));
+	try {
+		return ed25519.verify(hexToBytes(sig), msg, hexToBytes(tallyPubkey)) ? null : 'the tallier signature does not verify';
+	} catch (e) {
+		return `signature: ${e instanceof Error ? e.message : String(e)}`;
+	}
 }
 
 // verifyTally returns null when every proof holds, else what fails (for

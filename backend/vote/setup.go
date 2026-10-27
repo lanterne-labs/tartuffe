@@ -69,21 +69,23 @@ type Circuit struct {
 // check a ballot, and the rules of the event. Fixed fields (SPEC §11) may
 // not change between the setups of an event.
 type Setup struct {
-	V                int        `json:"v"`
-	Event            int64      `json:"event"`
-	Version          int        `json:"version"`
-	Options          []Option   `json:"options"`
-	Blank            int        `json:"blank"`
-	Mask             uint32     `json:"mask"`
-	NCap             int        `json:"n_cap"`
-	PK               []string   `json:"pk"`
-	PKPoK            []PoKJSON  `json:"pk_pok"`
-	VKHash           string     `json:"vk_hash"`
-	Circuit          Circuit    `json:"circuit"`
-	AppHash          string     `json:"app_hash"`
-	SRSHash          string     `json:"srs_hash"`
-	Relays           []Relay    `json:"relays"`
-	NostrPubkey      string     `json:"nostr_pubkey"`
+	V           int       `json:"v"`
+	Event       int64     `json:"event"`
+	Version     int       `json:"version"`
+	Options     []Option  `json:"options"`
+	Blank       int       `json:"blank"`
+	Mask        uint32    `json:"mask"`
+	NCap        int       `json:"n_cap"`
+	PK          []string  `json:"pk"`
+	PKPoK       []PoKJSON `json:"pk_pok"`
+	VKHash      string    `json:"vk_hash"`
+	Circuit     Circuit   `json:"circuit"`
+	AppHash     string    `json:"app_hash"`
+	SRSHash     string    `json:"srs_hash"`
+	Relays      []Relay   `json:"relays"`
+	NostrPubkey string    `json:"nostr_pubkey"`
+	// TallyPubkey signs the tallies and the closed entry (sign.go).
+	TallyPubkey      string     `json:"tally_pubkey"`
 	KReal            int        `json:"k_real"`
 	RMin             int        `json:"r_min"`
 	TallyMinGap      int64      `json:"tally_min_gap"`
@@ -136,14 +138,19 @@ type Keys struct {
 	SK    []string  `json:"sk"`
 	PK    []string  `json:"pk"`
 	PoK   []PoKJSON `json:"pk_pok"`
-	Made  time.Time `json:"made"`
+	// TallySK signs the tallies and the closed entry (sign.go); the setup
+	// names its public half.
+	TallySK     string    `json:"tally_sk"`
+	TallyPubkey string    `json:"tally_pubkey"`
+	Made        time.Time `json:"made"`
 }
 
 // PublicKeys is the public half of Keys, safe to copy off the tallier.
 type PublicKeys struct {
-	Event int64     `json:"event"`
-	PK    []string  `json:"pk"`
-	PoK   []PoKJSON `json:"pk_pok"`
+	Event       int64     `json:"event"`
+	PK          []string  `json:"pk"`
+	PoK         []PoKJSON `json:"pk_pok"`
+	TallyPubkey string    `json:"tally_pubkey"`
 }
 
 // GenerateKeys makes an event's election keys with their proofs.
@@ -153,6 +160,9 @@ func GenerateKeys(eventID int64) (*Keys, error) {
 		return nil, err
 	}
 	k := &Keys{Event: eventID, Made: time.Now().UTC()}
+	if k.TallySK, k.TallyPubkey, err = GenerateTallyKey(); err != nil {
+		return nil, err
+	}
 	event := fieldOf(eventID)
 	for j := 0; j < ballot.J; j++ {
 		c, err := pk[j].Compress()
@@ -175,7 +185,9 @@ func GenerateKeys(eventID int64) (*Keys, error) {
 }
 
 // Public returns the public half.
-func (k *Keys) Public() PublicKeys { return PublicKeys{Event: k.Event, PK: k.PK, PoK: k.PoK} }
+func (k *Keys) Public() PublicKeys {
+	return PublicKeys{Event: k.Event, PK: k.PK, PoK: k.PoK, TallyPubkey: k.TallyPubkey}
+}
 
 // Secret parses the secret keys.
 func (k *Keys) Secret() (ballot.SecretKeys, error) {
@@ -413,6 +425,11 @@ func (s *Setup) Validate() error {
 	}
 	if len(s.Options) != ballot.N {
 		return fmt.Errorf("vote: %d options, want %d", len(s.Options), ballot.N)
+	}
+	if len(s.TallyPubkey) != 64 || s.TallyPubkey != strings.ToLower(s.TallyPubkey) {
+		// Without it anyone with the database could append a tally or
+		// close the vote (sign.go).
+		return errors.New("vote: tally_pubkey (the tallier's signing key of keygen, 32 bytes of lower-case hex) is required")
 	}
 	if len(s.NostrPubkey) != 64 || s.NostrPubkey != strings.ToLower(s.NostrPubkey) {
 		// Without it every acknowledgement on the relays passes for the

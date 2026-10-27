@@ -71,7 +71,7 @@ func TestPendingSurvivesRestartAndFailuresDefer(t *testing.T) {
 	keys, _ := GenerateKeys(1)
 	setup := Setup{V: Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: 255, PK: keys.PK, PKPoK: keys.PoK,
 		VKHash: "0x01", Circuit: Circuit{SourceHash: "0x02"}, Relays: []Relay{{URL: "wss://a.test", State: "active"}},
-		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour), NostrPubkey: testNostrPubkey}
+		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour), NostrPubkey: testNostrPubkey, TallyPubkey: keys.TallyPubkey}
 	for i := 0; i < 10; i++ {
 		o := Option{Slot: i, Kind: "reserved"}
 		if i < 7 {

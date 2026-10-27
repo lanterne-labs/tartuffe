@@ -40,7 +40,7 @@ func TestTallierPublishesAfterKRealChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	pk, _ := keys.Public().ParsedKeys()
-	setup := Setup{V: Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: 255, PK: keys.PK, PKPoK: keys.PoK, NostrPubkey: testNostrPubkey,
+	setup := Setup{V: Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: 255, PK: keys.PK, PKPoK: keys.PoK, NostrPubkey: testNostrPubkey, TallyPubkey: keys.TallyPubkey,
 		VKHash: "0x01", Circuit: Circuit{SourceHash: "0x02"}, Relays: []Relay{{URL: "wss://a.test", State: "active"}},
 		KReal: 3, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour)}
 	for i := 0; i < 10; i++ {

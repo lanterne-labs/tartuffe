@@ -21,6 +21,7 @@ export interface Setup {
 		mask: number;
 		pk: string[];
 		nostr_pubkey: string;
+		tally_pubkey?: string;
 		relays: { url: string; state: string }[];
 		k_real: number;
 		r_min?: number;

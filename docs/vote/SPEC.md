@@ -581,7 +581,8 @@ When the rule fires, the tallier:
    `P_j = Σ p_j` is known exactly and checked by
    `S_j − sk_j·S0 = P_j·G`: no discrete log of a sum;
 4. unpacks each `P_j` into 7 digits, checks `0 ≤ digit ≤ 2c`, subtracts `c`;
-5. appends `tally {v, event, upto, c, s0, s[J], p[J], dleq[J]}` where `dleq[j]`
+5. appends `tally {v, event, upto, c, s0, s[J], p[J], dleq[J], sig}` (`sig` by
+   `tally_pubkey`, §11) where `dleq[j]`
    is a Chaum-Pedersen proof that `log_G PK_j = log_{S0}(S_j − P_j·G)`:
    nonce `k = H(T_NONCE, sk_j, event, upto, j, S0.x, S0.y, S_j.x, S_j.y, P_j)`,
    commitments `A = k·G`, `B = k·S0`, challenge
@@ -637,7 +638,7 @@ cannot.
 - The tallier's final `tally` covers exactly the snapshot: its `upto` is the
   snapshot entry's seq (every ballot logged before it, judged when it was
   received). Then the **final shuffle** (§9.4), then
-  `closed {v, event, at, final, snapshot_root}` (`final` the seq of the
+  `closed {v, event, at, final, snapshot_root, sig}` (`final` the seq of the
   final tally, 0 without a ballot). Events seen after the snapshot are
   rejected with `closed`. After `closed` nothing is accepted and the final
   result is shown for good.
@@ -711,10 +712,17 @@ absence; it does not gate the launch.
 - Every body carries `"v"`. A verifier rejects a version it does not know.
 - `setup {v, event, version, options:[…], blank, mask, n_cap, pk:[…],
   pk_pok:[…], vk_hash, circuit:{noir, bb, source_hash}, app_hash, srs_hash,
-  relays:[{url, state}], k_real, tally_min_gap, anchor_age, checkpoint_period,
-  closes, blackouts:[…]}`. `pk_pok[j]` is a Schnorr proof of knowledge of
+  relays:[{url, state}], nostr_pubkey, tally_pubkey, k_real, tally_min_gap,
+  anchor_age, checkpoint_period, closes, blackouts:[…]}`. `nostr_pubkey` is
+  the ingest's relay key (§7.2); `tally_pubkey` the tallier's Ed25519 key:
+  every `tally` and the `closed` entry carry `sig`, the signature of
+  `"tartuffe-vote/2/tally\n"` and the canonical body without `sig`. The
+  ingest, the auditor and the browser take only signed ones: anyone with
+  the database could append a tally or close the vote otherwise. A setup
+  logged while the ingest runs is read at its next tick, and the relays it
+  adds are read from then on. `pk_pok[j]` is a Schnorr proof of knowledge of
   `sk_j` with challenge `H(T_POK, event, j, PK_j.x, PK_j.y, A.x, A.y)`.
-- **Fixed for the event:** `n_cap`, `blank`, the keys, `vk_hash`, `srs_hash`,
+- **Fixed for the event:** `n_cap`, `blank`, the keys, `tally_pubkey`, `vk_hash`, `srs_hash`,
   `k_real`, `anchor_age`, `closes`, `blackouts`. Relays may be added or
   retired, never removed. `tally_min_gap` may only grow.
 - **A later setup** may only name a reserved slot, withdraw a candidate (shown

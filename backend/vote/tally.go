@@ -31,6 +31,8 @@ type TallyEntry struct {
 	S     []string   `json:"s"`
 	P     []string   `json:"p"`
 	DLEQ  []DLEQJSON `json:"dleq"`
+	// Sig is the tallier's signature (sign.go).
+	Sig string `json:"sig,omitempty"`
 }
 
 // DLEQJSON is a decryption proof in a body.
@@ -66,6 +68,7 @@ type Tallier struct {
 	closed          bool
 	waitingSnapshot bool
 	lease           *Lease
+	tallySK         string // the signing seed (sign.go)
 }
 
 type decrypted struct {
@@ -97,12 +100,19 @@ func NewTallier(ctx context.Context, store *Store, event *polls.Event, keys *Key
 			return nil, errors.New("vote: the keys are not the setup's")
 		}
 	}
+	if setups[0].Setup.TallyPubkey == "" {
+		log.Warn().Msg("vote: the setup names no tally_pubkey: the tallies will not be signed (a trial log)")
+	} else if pub, err := TallyPubkeyOf(keys.TallySK); err != nil {
+		return nil, err
+	} else if setups[0].Setup.TallyPubkey != pub {
+		return nil, errors.New("vote: the tally signing key is not the setup's tally_pubkey")
+	}
 	lease, err := store.Acquire(ctx, leaseTallier, "tallier")
 	if err != nil {
 		return nil, err
 	}
 	t := &Tallier{store: store, event: event, sk: sk, pk: pk, setups: setups, now: time.Now, rand: rand.Float64,
-		latest: map[string]decrypted{}, changed: map[string]bool{}, counted: map[string][ballot.V]int64{}, lease: lease}
+		latest: map[string]decrypted{}, changed: map[string]bool{}, counted: map[string][ballot.V]int64{}, lease: lease, tallySK: keys.TallySK}
 	last, err := store.LastTally(ctx, event.ID)
 	if err != nil {
 		lease.Release(ctx)
@@ -209,6 +219,7 @@ type Closed struct {
 	At           time.Time `json:"at"`
 	Final        int64     `json:"final"`
 	SnapshotRoot string    `json:"snapshot_root"`
+	Sig          string    `json:"sig,omitempty"`
 }
 
 // Step scans the new ballots and publishes a tally when the rule fires;
@@ -329,7 +340,7 @@ func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 		b, _ := pr.B.Compress()
 		entry.DLEQ = append(entry.DLEQ, DLEQJSON{A: "0x" + hex.EncodeToString(a[:]), B: "0x" + hex.EncodeToString(b[:]), Z: "0x" + pr.Z.Text(16)})
 	}
-	body, err := Canonical(entry)
+	body, err := t.sign(entry)
 	if err != nil {
 		return err
 	}
@@ -348,6 +359,15 @@ func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 	}
 	log.Info().Int64("seq", seq).Int64("upto", upto).Int64("count", count).Int64("voters", total[0]).Msg("vote: tally published")
 	return nil
+}
+
+// sign gives an entry's canonical body with the tallier's signature, or
+// without one on a trial log whose setup names no tally key.
+func (t *Tallier) sign(entry any) ([]byte, error) {
+	if t.setups[0].Setup.TallyPubkey == "" {
+		return Canonical(entry)
+	}
+	return SignEntry(t.tallySK, entry)
 }
 
 // Close publishes the final tally over exactly the ballots of the ingest's
@@ -394,7 +414,10 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 	if final != nil {
 		finalSeq = final.Seq
 	}
-	body, _ := Canonical(Closed{V: Version, Event: t.event.ID, At: now.UTC(), Final: finalSeq, SnapshotRoot: snap.Body.Root})
+	body, err := t.sign(Closed{V: Version, Event: t.event.ID, At: now.UTC(), Final: finalSeq, SnapshotRoot: snap.Body.Root})
+	if err != nil {
+		return err
+	}
 	seq, err := t.store.Log.Append(ctx, KindClosed, body)
 	if err != nil {
 		return err
@@ -406,20 +429,35 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 
 // ClosedEntry returns the event's closed entry, nil while open.
 func (s *Store) ClosedEntry(ctx context.Context, eventID int64) (*Closed, error) {
-	rows, err := s.db.Query(ctx, `SELECT body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindClosed)
+	return s.ClosedEntrySigned(ctx, eventID, "")
+}
+
+// ClosedEntrySigned returns the event's closed entry under the tallier's
+// key (sign.go); with tallyPubkey "" any closed entry. An entry someone
+// else appended is reported and passed over: the vote stays open.
+func (s *Store) ClosedEntrySigned(ctx context.Context, eventID int64, tallyPubkey string) (*Closed, error) {
+	rows, err := s.db.Query(ctx, `SELECT seq, body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindClosed)
 	if err != nil {
 		return nil, fmt.Errorf("closed: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
+		var seq int64
 		var body string
-		if err := rows.Scan(&body); err != nil {
+		if err := rows.Scan(&seq, &body); err != nil {
 			return nil, err
 		}
 		var c Closed
-		if json.Unmarshal([]byte(body), &c) == nil && c.Event == eventID {
-			return &c, nil
+		if json.Unmarshal([]byte(body), &c) != nil || c.Event != eventID {
+			continue
 		}
+		if tallyPubkey != "" {
+			if err := VerifyEntry(tallyPubkey, []byte(body)); err != nil {
+				log.Error().Err(err).Int64("seq", seq).Msg("vote: a closed entry the tallier did not sign: ignored")
+				continue
+			}
+		}
+		return &c, nil
 	}
 	return nil, rows.Err()
 }

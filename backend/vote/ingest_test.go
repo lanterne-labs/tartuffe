@@ -25,6 +25,14 @@ type memMailbox struct {
 }
 
 func (m *memMailbox) Boxes() []string { return m.boxes }
+func (m *memMailbox) AddBox(box string) {
+	for _, b := range m.boxes {
+		if b == box {
+			return
+		}
+	}
+	m.boxes = append(m.boxes, box)
+}
 func (m *memMailbox) Read(ctx context.Context, box string, since int64, out chan<- Message) error {
 	<-ctx.Done()
 	return ctx.Err()
@@ -132,7 +140,7 @@ func TestIngestOnDevVectors(t *testing.T) {
 	}
 	setup := Setup{V: Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: v.Ballot.Inputs.Mask, PK: keys.PK, PKPoK: keys.PoK,
 		VKHash: "0x01", Circuit: Circuit{SourceHash: "0x02"}, Relays: []Relay{{URL: "wss://a.test", State: "active"}, {URL: "wss://b.test", State: "active"}},
-		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour), NostrPubkey: testNostrPubkey}
+		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour), NostrPubkey: testNostrPubkey, TallyPubkey: keys.TallyPubkey}
 	for i := 0; i < 10; i++ {
 		o := Option{Slot: i, Kind: "reserved"}
 		if i < 7 {
@@ -424,15 +432,30 @@ func TestIngestOnDevVectors(t *testing.T) {
 	}
 
 	// A closed entry naming another root fails the audit.
-	closedBody, _ := Canonical(Closed{V: Version, Event: 1, At: setup.Closes, Final: 0, SnapshotRoot: SnapshotRoot([]string{"x"})})
+	// An unsigned one first: the ingest does not take it (the vote stays
+	// open to it), the audit names both faults.
+	unsigned, _ := Canonical(Closed{V: Version, Event: 1, At: setup.Closes, Final: 0, SnapshotRoot: SnapshotRoot([]string{"x"})})
+	if _, err := store.Log.Append(ctx, KindClosed, unsigned); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := store.ClosedEntrySigned(ctx, 1, keys.TallyPubkey); err != nil || c != nil {
+		t.Fatalf("an unsigned closed entry was taken: %+v %v", c, err)
+	}
+	closedBody, err := SignEntry(keys.TallySK, Closed{V: Version, Event: 1, At: setup.Closes, Final: 0, SnapshotRoot: SnapshotRoot([]string{"x"})})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.Log.Append(ctx, KindClosed, closedBody); err != nil {
 		t.Fatal(err)
+	}
+	if c, err := store.ClosedEntrySigned(ctx, 1, keys.TallyPubkey); err != nil || c == nil {
+		t.Fatalf("the signed closed entry was not taken: %v", err)
 	}
 	if err := in.Checkpoint(ctx); err != nil {
 		t.Fatal(err)
 	}
 	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey()})
-	if len(rep.Problems) != 1 || !strings.Contains(rep.Problems[0], "snapshot root") {
+	if len(rep.Problems) != 3 || !strings.Contains(rep.Problems[0], "no tallier signature") || !strings.Contains(rep.Problems[2], "snapshot root") {
 		t.Fatalf("audit problems: %v", rep.Problems)
 	}
 	// A tampered entry breaks the checkpoint's tree.

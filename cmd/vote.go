@@ -212,7 +212,7 @@ func runVoteSetup(cmd *cobra.Command, args []string) error {
 		blackouts = append(blackouts, vote.Blackout{From: b.StartsAt, To: b.EndsAt})
 	}
 	s := vote.Setup{V: vote.Version, Event: e.ID, Options: options, Blank: ballot.Blank, Mask: mask, NCap: ballot.N,
-		PK: pub.PK, PKPoK: pub.PoK, VKHash: built.VKHash, Circuit: built.Circuit, Relays: relays, Closes: e.ClosesAt.UTC(), Blackouts: blackouts}
+		PK: pub.PK, PKPoK: pub.PoK, TallyPubkey: pub.TallyPubkey, VKHash: built.VKHash, Circuit: built.Circuit, Relays: relays, Closes: e.ClosesAt.UTC(), Blackouts: blackouts}
 	s.Version, _ = f.GetInt("version")
 	s.NostrPubkey, _ = f.GetString("nostr-pubkey")
 	s.AppHash, _ = f.GetString("app-hash")
