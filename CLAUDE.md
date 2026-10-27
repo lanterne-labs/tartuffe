@@ -166,6 +166,7 @@ PostgreSQL with pgvector extension. Migrations in `supabase/migrations/` are ide
 - Migrations are run by **goose** on `dm web serve` startup (in prod) and applied locally by `supabase db reset` / `make db-start`.
 - **Every new migration MUST begin with `-- +goose Up` and include a `-- +goose Down` block** — without them goose throws a parse error at boot and the deploy fails.
 - Migrations should be incremental (ALTER TABLE, not DROP/CREATE).
+- **Two migrations must never share a version** (goose panics at boot: `Migrations.Less`); before merging a branch, check its versions against main's. Versions older than the latest applied (a branch merged after main moved on) are applied: the runner passes `goose.WithAllowMissing()`.
 - **Never reset the database without user permission** - data loss is permanent.
 
 Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `search_queue` (the queue of the news searches).
