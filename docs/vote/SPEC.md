@@ -392,9 +392,18 @@ the bulk and its size does not depend on the circuit's size.
   (acks, checkpoints, snapshot) are signed by its Nostr key (secp256k1),
   named in the setup, distinct from the Ed25519 log key. Catch-up uses NIP-77
   (negentropy) where the relay supports it, paging by `until` otherwise.
-- Relay requirements (checked at setup time from NIP-11): `max_message_length`
-  ≥ 32 KB, no payment, no proof-of-work, no auth, persistent storage
-  (strfry-class), retention ≥ 30 days, different operators. A relay can be
+- Relay requirements (checked at setup time from NIP-11 and measured by
+  `dm vote relays probe`, which posts a ballot-sized event of each kind and
+  reads back the earlier runs' events: a relay's real retention is what
+  the post-hoc check of §12.6 rests on): `max_message_length` ≥ 32 KB, no
+  payment, no proof-of-work, no auth, no web-of-trust or NIP-05 gate (the
+  voters' keys are throwaway), persistent storage (strfry-class), retention
+  ≥ 30 days, different operators. First probe (2026-10-27): of 22 public
+  relays, 8 took both kinds (nos.lol, relay.primal.net, nostr.mom,
+  nostr.oxtr.dev, relay.nostr.net, nostr-pub.wellorder.net,
+  relay.nostr.wirednet.jp, nostr.sathoarder.com); the others gate writes
+  (web of trust, NIP-05, payment) or were down; retention to be read over
+  the following weeks (`docs/vote/relays-probe.json`). A relay can be
   marked **retired** by a later setup: browsers stop posting there, auditors
   keep reading it.
 
