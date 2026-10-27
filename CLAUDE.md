@@ -238,13 +238,16 @@ cd circuits/ballot && nargo test && nargo compile           # the circuit (nargo
 ./dm vote setup <slug> --keys keys.pub.json --relays wss://… --nostr-pubkey <hex>   # compiles the circuit for the keys, logs the setup
 ./dm vote ingest <slug> --vk <dir>/vk --artifact <dir>/ballot.json --mirror-dir <dir>   # VOTE_LOG_KEY, VOTE_NOSTR_KEY, ZKPASSPORT_*
 ./dm vote tally <slug> --keys keys.json                     # the tallier: no inbound port, the database only
+./dm vote nostr-key                                         # the ingest's relay key (VOTE_NOSTR_KEY) and its public key, for --nostr-pubkey
 ./dm vote verify <slug> --api https://tartuffe.me --vk vk   # anyone's audit of the log
 #   --relays setup (withholding), --mirror-cdn tartuffeme/vote-data (the mirror at each commit),
 #   --bitcoin (default: the stamps against the block headers), --archive, --snapshot
 ```
 
 - The ingest is the log's only writer while it runs; the tallier appends
-  tallies and the close. Never run two ingests on one database.
+  tallies and the close (signed). A second ingest or tallier refuses to
+  start (a lease on the database). The order of operations for a launch,
+  with the commands, is `docs/vote/LAUNCH.md`.
 - Local trial: `--dev-accept-any-passport` on the ingest and
   `VITE_VOTE_SIMULATE_PASSPORT=1` on Vite stand in for the ZKPassport app;
   the ingest refuses the flag on the host. `VITE_VOTE_MIRROR` names the

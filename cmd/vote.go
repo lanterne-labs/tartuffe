@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +44,34 @@ the flags, checks it, and appends it to the public log.`,
 	RunE: runVoteSetup,
 }
 
+var voteNostrKeyCmd = &cobra.Command{
+	Use:   "nostr-key",
+	Short: "The ingest's Nostr key: its public key (VOTE_NOSTR_KEY set), or a new key",
+	Long: `With VOTE_NOSTR_KEY set, prints its public key: what the setup names as
+--nostr-pubkey. Without it, makes a new key and prints both.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if secret := os.Getenv("VOTE_NOSTR_KEY"); secret != "" {
+			k, err := vote.NewNostrKey(secret)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("nostr public key: %s\n", k.Public)
+			return nil
+		}
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return err
+		}
+		k, err := vote.NewNostrKey(hex.EncodeToString(b))
+		if err != nil {
+			return err
+		}
+		fmt.Printf("VOTE_NOSTR_KEY=%s\nnostr public key: %s\n", hex.EncodeToString(b), k.Public)
+		return nil
+	},
+}
+
 var voteLogKeyCmd = &cobra.Command{
 	Use:   "log-key",
 	Short: "Make a new key for the public log's checkpoints",
@@ -62,7 +92,7 @@ in the frontend as VITE_VOTE_LOG_KEY).`,
 
 func init() {
 	rootCmd.AddCommand(voteCmd)
-	voteCmd.AddCommand(voteKeygenCmd, voteSetupCmd, voteLogKeyCmd)
+	voteCmd.AddCommand(voteKeygenCmd, voteSetupCmd, voteLogKeyCmd, voteNostrKeyCmd)
 	voteKeygenCmd.Flags().String("out", "", "file for the secret keys (required)")
 	_ = voteKeygenCmd.MarkFlagRequired("out")
 
