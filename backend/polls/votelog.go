@@ -112,6 +112,12 @@ func appendLog(ctx context.Context, tx pgx.Tx, kind string, body any) (int64, er
 	return seq, nil
 }
 
+// AppendIn appends one entry in the caller's transaction (the ingest logs
+// a checkpoint's entries and their index rows in one), returning its seq.
+func (s *PGStore) AppendIn(ctx context.Context, tx pgx.Tx, kind string, body json.RawMessage) (int64, error) {
+	return appendLog(ctx, tx, kind, body)
+}
+
 // Append appends one entry of the given kind with body as its JSON (the
 // bytes given are logged as they are: callers pass canonical JSON) and
 // returns its seq. The vote protocol (backend/vote) logs through it.

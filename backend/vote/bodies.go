@@ -94,8 +94,10 @@ func BodyHash(b []byte) string {
 
 func parseField(s string) (fr.Element, error) {
 	var e fr.Element
-	if !strings.HasPrefix(s, "0x") || len(s) != 66 {
-		return e, errors.New("a field element is 32 bytes of 0x hex")
+	if !strings.HasPrefix(s, "0x") || len(s) != 66 || s != strings.ToLower(s) {
+		// Lower-case only (SPEC §3): the strings key the pseudonyms and
+		// the leaves, so one element must have one spelling.
+		return e, errors.New("a field element is 32 bytes of lower-case 0x hex")
 	}
 	b, err := hex.DecodeString(s[2:])
 	if err != nil {

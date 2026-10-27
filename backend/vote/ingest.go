@@ -14,6 +14,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/rs/zerolog/log"
 
+	"digital-mirror/backend/accounts/providers"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/vote/ballot"
 	"digital-mirror/backend/vote/poseidon2"
@@ -33,9 +34,13 @@ type Config struct {
 	Mail     Mailbox
 	Signer   *polls.LogSigner
 	Passport PassportVerifier
-	BB       string
-	VK       []byte
-	Now      func() time.Time
+	// NostrPubkey is the key the mailbox signs with: the setup must name
+	// it (nostr_pubkey), or every acknowledgement on the relays passes for
+	// the server's.
+	NostrPubkey string
+	BB          string
+	VK          []byte
+	Now         func() time.Time
 	// Stamp timestamps a checkpoint note (OpenTimestamps); nil stamps nothing.
 	Stamp func(ctx context.Context, size int64, note []byte) error
 	// Mirror is the public data mirror; nil writes none.
@@ -70,6 +75,16 @@ type Ingest struct {
 	closedSeq    int64 // the closed entry, 0 while open
 	snapshotSeq  int64 // the close snapshot's entry, 0 before the close
 	lastStampErr time.Time
+	lease        *Lease
+	deferred     []Message            // put off by an infrastructure failure
+	deferredAt   map[string]time.Time // when each was first put off
+	unacked      []unacked            // acknowledgements a box refused
+	seen         map[string]int64     // box → newest created_at delivered
+}
+
+type unacked struct {
+	box, body string
+	since     time.Time
 }
 
 type pendingEntry struct {
@@ -106,15 +121,45 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 	if err != nil {
 		return nil, err
 	}
-	in := &Ingest{cfg: cfg, store: store, setups: setups, ver: ver, slug: cfg.Event.Slug, tree: tree,
-		pendingNull: map[string]uint32{}, pendingPI: map[string]bool{}, pendingUID: map[string]bool{}, pendingID: map[string]bool{}}
+	for _, s := range setups {
+		if s.Setup.NostrPubkey != "" && cfg.NostrPubkey != "" && s.Setup.NostrPubkey != cfg.NostrPubkey {
+			return nil, fmt.Errorf("vote: the setup at seq %d names the server key %s, this server signs with %s", s.Seq, short(s.Setup.NostrPubkey), short(cfg.NostrPubkey))
+		}
+		if s.Setup.NostrPubkey == "" {
+			log.Warn().Int64("seq", s.Seq).Msg("vote: the setup names no nostr_pubkey: any acknowledgement on the relays passes for ours")
+		}
+	}
+	lease, err := store.Acquire(ctx, leaseIngest, "ingest")
+	if err != nil {
+		return nil, err
+	}
+	in := &Ingest{cfg: cfg, store: store, setups: setups, ver: ver, slug: cfg.Event.Slug, tree: tree, lease: lease,
+		pendingNull: map[string]uint32{}, pendingPI: map[string]bool{}, pendingUID: map[string]bool{}, pendingID: map[string]bool{},
+		deferredAt: map[string]time.Time{}, seen: map[string]int64{}}
 	last, err := store.LastCheckpoint(ctx)
 	if err != nil {
+		lease.Release(ctx)
 		return nil, err
 	}
 	in.nextIndex = 1
 	if last != nil {
 		in.nextIndex = last.Index + 1
+	}
+	// What was acknowledged and not logged before a stop: logged at the
+	// next checkpoint, the one the acknowledgements named.
+	rows, err := store.Pending(ctx)
+	if err != nil {
+		lease.Release(ctx)
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.Checkpoint != in.nextIndex {
+			log.Error().Str("id", r.Msg.ID).Int64("promised", r.Checkpoint).Int64("next", in.nextIndex).Msg("vote: a pending entry was promised another checkpoint; logged at the next one")
+		}
+		in.buffer(entryOf(r))
+	}
+	if len(rows) > 0 {
+		log.Info().Int("entries", len(rows)).Int64("checkpoint", in.nextIndex).Msg("vote: pending entries restored")
 	}
 	if c, err := store.ClosedEntry(ctx, cfg.Event.ID); err != nil {
 		return nil, err
@@ -125,6 +170,11 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 		return nil, err
 	} else if s != nil {
 		in.snapshotSeq = s.Seq
+		// Posted again: a stop between its logging and its posting would
+		// have kept it from the relays (the browsers take it once).
+		if body, err := Canonical(s.Body); err == nil {
+			cfg.Mail.PostAll(ctx, Outgoing{Kind: OutSnapshot, Body: string(body)})
+		}
 	}
 	// What the browser needs once: the circuit, the log's verifier key.
 	if cfg.Mirror != nil {
@@ -151,16 +201,49 @@ func NewIngest(ctx context.Context, store *Store, cfg Config) (*Ingest, error) {
 	return in, nil
 }
 
-// ActiveBoxes lists the active relays of the latest setup: what the
-// mailbox is built from.
+// ActiveBoxes lists the relays active in any setup of the event: what the
+// mailbox is built from. A later setup takes effect 24 h after it is
+// logged (SPEC §11), and browsers on the older one post to its relays
+// until then: every relay still in force is read.
 func ActiveBoxes(setups []LoggedSetup) []string {
 	var urls []string
-	for _, r := range setups[len(setups)-1].Setup.Relays {
-		if r.State == "active" {
-			urls = append(urls, r.URL)
+	seen := map[string]bool{}
+	for _, s := range setups {
+		for _, r := range s.Setup.Relays {
+			if r.State == "active" && !seen[r.URL] {
+				seen[r.URL] = true
+				urls = append(urls, r.URL)
+			}
 		}
 	}
 	return urls
+}
+
+// Release gives the writer's lease back (Run does it on exit).
+func (in *Ingest) Release(ctx context.Context) { in.lease.Release(ctx) }
+
+// reloadSetups takes a setup logged while running into account. Its
+// relays are read from the next start: the log says so, loudly.
+func (in *Ingest) reloadSetups(ctx context.Context) {
+	setups, err := in.store.Setups(ctx, in.cfg.Event.ID)
+	if err != nil {
+		log.Error().Err(err).Msg("vote: setups")
+		return
+	}
+	if len(setups) <= len(in.setups) {
+		return
+	}
+	boxes := map[string]bool{}
+	for _, b := range in.cfg.Mail.Boxes() {
+		boxes[b] = true
+	}
+	in.setups = setups
+	for _, r := range setups[len(setups)-1].Setup.Relays {
+		if r.State == "active" && !boxes[r.URL] {
+			log.Error().Str("relay", r.URL).Msg("vote: a new setup names a relay this server does not read: restart it before the setup takes effect (24 h)")
+		}
+	}
+	log.Info().Int("setups", len(setups)).Msg("vote: a new setup was logged")
 }
 
 // Setups returns the event's setups, for the mailbox's construction.
@@ -205,6 +288,7 @@ func (in *Ingest) Run(ctx context.Context) error {
 	period := time.Duration(in.current(in.cfg.Now()).Setup.CheckpointPeriod) * time.Second
 	tick := time.NewTicker(period)
 	defer tick.Stop()
+	defer in.lease.Release(context.Background())
 	for {
 		select {
 		case <-ctx.Done():
@@ -213,13 +297,26 @@ func (in *Ingest) Run(ctx context.Context) error {
 		case m := <-incoming:
 			in.Handle(ctx, m)
 		case <-tick.C:
-			if err := in.Checkpoint(ctx); err != nil {
-				log.Error().Err(err).Msg("vote: checkpoint")
-			}
-			if err := in.Close(ctx); err != nil {
-				log.Error().Err(err).Msg("vote: close")
-			}
+			in.Tick(ctx)
 		}
+	}
+}
+
+// Tick is what a checkpoint period ends with: the setups reloaded, the
+// messages put off tried again, the acknowledgements a box refused posted
+// again, then the checkpoint and, after the close, the snapshot.
+func (in *Ingest) Tick(ctx context.Context) {
+	in.mu.Lock()
+	in.reloadSetups(ctx)
+	in.retryDeferred(ctx)
+	in.repostAcks(ctx)
+	err := in.checkpoint(ctx)
+	in.mu.Unlock()
+	if err != nil {
+		log.Error().Err(err).Msg("vote: checkpoint")
+	}
+	if err := in.Close(ctx); err != nil {
+		log.Error().Err(err).Msg("vote: close")
 	}
 }
 
@@ -254,14 +351,26 @@ func (in *Ingest) readBox(ctx context.Context, box string, out chan<- Message) {
 // Handle validates one message and buffers its entry, acknowledging it on
 // the box it came from.
 func (in *Ingest) Handle(ctx context.Context, m Message) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if m.Time > in.seen[m.Box] {
+		in.seen[m.Box] = m.Time
+	}
+	in.handle(ctx, m)
+}
+
+// handle judges one message under the lock. An infrastructure failure (the
+// database, the verifier process) puts the message off to the next tick:
+// a signed outcome must be the body's own, re-checkable by anyone from the
+// log (SPEC §8.1), never the server's hiccup.
+func (in *Ingest) handle(ctx context.Context, m Message) {
 	if h, err := in.store.Handled(ctx, m.ID); err != nil {
 		log.Error().Err(err).Msg("vote: handled lookup")
+		in.putOff(m)
 		return
 	} else if h != nil {
 		return
 	}
-	in.mu.Lock()
-	defer in.mu.Unlock()
 	for _, p := range in.pending {
 		if p.msg.ID == m.ID {
 			return
@@ -270,15 +379,21 @@ func (in *Ingest) Handle(ctx context.Context, m Message) {
 	now := in.cfg.Now()
 	var entry pendingEntry
 	var reason string
+	var err error
 	switch m.Kind {
 	case MsgBallot:
-		entry, reason = in.checkBallot(ctx, m.Body, now)
+		entry, reason, err = in.checkBallot(ctx, m.Body, now)
 	case MsgRegister:
-		entry, reason = in.checkRegister(ctx, m.Body, now)
+		entry, reason, err = in.checkRegister(ctx, m.Body, now)
 	case MsgComplaint:
 		entry = pendingEntry{kind: KindSeen, hash: BodyHash(m.Body)}
 		entry.body, _ = Canonical(Seen{V: Version, NostrID: m.ID, Hash: entry.hash})
 	default:
+		return
+	}
+	if err != nil {
+		log.Error().Err(err).Str("box", m.Box).Str("id", m.ID).Msg("vote: message put off to the next tick")
+		in.putOff(m)
 		return
 	}
 	entry.msg = m
@@ -297,125 +412,221 @@ func (in *Ingest) Handle(ctx context.Context, m Message) {
 		entry.hash = BodyHash(entry.body)
 		ack.Outcome, ack.Reason = "rejected", reason
 	}
+	if entry.kind == KindBallot {
+		ack.PIHash = entry.hash
+	}
+	// The obligation is written before it is given (SPEC §7.2): a restart
+	// logs the entry at the checkpoint the acknowledgement names.
+	if err := in.store.AddPending(ctx, entry.row(in.nextIndex)); err != nil {
+		log.Error().Err(err).Msg("vote: pending row")
+		in.putOff(m)
+		return
+	}
+	in.buffer(entry)
+	in.postAck(ctx, m.Box, ack)
+	log.Info().Str("kind", entry.kind).Str("outcome", ack.Outcome).Str("reason", reason).Str("box", m.Box).Msg("vote: message handled")
+}
+
+// putOff keeps a message for another attempt at the next tick, up to an
+// hour: after that the relay's redelivery at a restart is the way back.
+func (in *Ingest) putOff(m Message) {
+	if _, dup := in.deferredAt[m.ID]; dup {
+		return
+	}
+	in.deferredAt[m.ID] = in.cfg.Now()
+	in.deferred = append(in.deferred, m)
+}
+
+// retryDeferred handles the messages put off, under the lock.
+func (in *Ingest) retryDeferred(ctx context.Context) {
+	if len(in.deferred) == 0 {
+		return
+	}
+	msgs := in.deferred
+	in.deferred = nil
+	now := in.cfg.Now()
+	for _, m := range msgs {
+		since := in.deferredAt[m.ID]
+		delete(in.deferredAt, m.ID)
+		if now.Sub(since) > time.Hour {
+			log.Error().Str("id", m.ID).Str("box", m.Box).Msg("vote: message given up after an hour of failures")
+			continue
+		}
+		in.handle(ctx, m)
+		if _, again := in.deferredAt[m.ID]; again {
+			in.deferredAt[m.ID] = since
+		}
+	}
+}
+
+// buffer adds an entry to the pending set and its lookups.
+func (in *Ingest) buffer(entry pendingEntry) {
 	switch entry.kind {
 	case KindBallot:
-		ack.PIHash = entry.hash
-		in.pendingNull[entry.nullifier] = entry.seq
+		if entry.seq > in.pendingNull[entry.nullifier] {
+			in.pendingNull[entry.nullifier] = entry.seq
+		}
 		in.pendingPI[entry.hash] = true
 	case KindRegister:
 		in.pendingUID[entry.uid] = true
 		in.pendingID[entry.id] = true
 	}
 	in.pending = append(in.pending, entry)
-	raw, _ := Canonical(ack)
-	if err := in.cfg.Mail.Post(ctx, m.Box, Outgoing{Kind: OutAck, Body: string(raw)}); err != nil {
-		log.Warn().Err(err).Msg("vote: post ack")
-	}
-	log.Info().Str("kind", entry.kind).Str("outcome", ack.Outcome).Str("reason", reason).Str("box", m.Box).Msg("vote: message handled")
 }
 
-// checkBallot applies SPEC §8.1 to a ballot body.
-func (in *Ingest) checkBallot(ctx context.Context, content []byte, now time.Time) (pendingEntry, string) {
+// postAck posts an acknowledgement; a box that refuses it gets it again at
+// each tick for an hour (its content does not change: the checkpoint it
+// names is the one the entry is logged at).
+func (in *Ingest) postAck(ctx context.Context, box string, ack Ack) {
+	raw, _ := Canonical(ack)
+	if err := in.cfg.Mail.Post(ctx, box, Outgoing{Kind: OutAck, Body: string(raw)}); err != nil {
+		log.Warn().Err(err).Str("box", box).Msg("vote: post ack (kept for the next tick)")
+		in.unacked = append(in.unacked, unacked{box: box, body: string(raw), since: in.cfg.Now()})
+	}
+}
+
+// repostAcks tries the acknowledgements a box refused.
+func (in *Ingest) repostAcks(ctx context.Context) {
+	if len(in.unacked) == 0 {
+		return
+	}
+	list := in.unacked
+	in.unacked = nil
+	now := in.cfg.Now()
+	for _, u := range list {
+		if now.Sub(u.since) > time.Hour {
+			log.Error().Str("box", u.box).Msg("vote: an acknowledgement could not be posted for an hour")
+			continue
+		}
+		if err := in.cfg.Mail.Post(ctx, u.box, Outgoing{Kind: OutAck, Body: u.body}); err != nil {
+			in.unacked = append(in.unacked, u)
+		}
+	}
+}
+
+// row is the pending entry as stored before its acknowledgement.
+func (p pendingEntry) row(index int64) PendingRow {
+	return PendingRow{Msg: p.msg, Kind: p.kind, Body: p.body, Hash: p.hash, Nullifier: p.nullifier, Seq: p.seq, UID: p.uid, ID: p.id, ProofDate: p.proofDate, Reason: p.reason, Checkpoint: index}
+}
+
+func entryOf(r PendingRow) pendingEntry {
+	return pendingEntry{kind: r.Kind, body: r.Body, hash: r.Hash, msg: r.Msg, nullifier: r.Nullifier, seq: r.Seq, uid: r.UID, id: r.ID, proofDate: r.ProofDate, reason: r.Reason}
+}
+
+// checkBallot applies SPEC §8.1 to a ballot body: the entry and "" when it
+// is accepted, the reason when it is rejected, an error when the server
+// could not judge it.
+func (in *Ingest) checkBallot(ctx context.Context, content []byte, now time.Time) (pendingEntry, string, error) {
 	p, err := ParseBallot(content)
 	if err != nil {
-		return pendingEntry{}, ReasonMalformed
+		return pendingEntry{}, ReasonMalformed, nil
 	}
 	if p.Event != in.cfg.Event.ID {
-		return pendingEntry{}, ReasonMalformed
+		return pendingEntry{}, ReasonMalformed, nil
 	}
 	if in.closedSeq != 0 || !now.Before(in.current(now).Setup.Closes) {
-		return pendingEntry{}, ReasonClosed
+		return pendingEntry{}, ReasonClosed, nil
 	}
 	setup, ok := in.setupInForce(p.Setup, now)
 	if !ok {
-		return pendingEntry{}, ReasonUnknownSetup
+		return pendingEntry{}, ReasonUnknownSetup, nil
 	}
 	at, known, err := in.store.RootAge(ctx, p.Root)
 	if err != nil {
-		log.Error().Err(err).Msg("vote: root age")
-		return pendingEntry{}, ReasonOldRoot
+		return pendingEntry{}, "", fmt.Errorf("root age: %w", err)
 	}
-	if !known || now.Sub(at) > time.Duration(setup.Setup.AnchorAge)*time.Second {
-		return pendingEntry{}, ReasonOldRoot
+	// The auditor judges the age at the checkpoint that logs the ballot:
+	// a root about to pass anchor_age by then is already too old.
+	period := time.Duration(setup.Setup.CheckpointPeriod) * time.Second
+	if !known || now.Sub(at)+period > time.Duration(setup.Setup.AnchorAge)*time.Second {
+		return pendingEntry{}, ReasonOldRoot, nil
 	}
 	pi := p.PIHash(setup.Setup.Mask)
 	if in.pendingPI[pi] {
-		return pendingEntry{}, ReasonDuplicate
+		return pendingEntry{}, ReasonDuplicate, nil
 	}
-	if dup, err := in.store.HasPIHash(ctx, pi); err != nil || dup {
-		return pendingEntry{}, ReasonDuplicate
+	if dup, err := in.store.HasPIHash(ctx, pi); err != nil {
+		return pendingEntry{}, "", fmt.Errorf("pi_hash lookup: %w", err)
+	} else if dup {
+		return pendingEntry{}, ReasonDuplicate, nil
 	}
 	latest, err := in.store.LatestSeq(ctx, in.cfg.Event.ID, p.Nullifier)
 	if err != nil {
-		log.Error().Err(err).Msg("vote: latest seq")
-		return pendingEntry{}, ReasonStaleSeq
+		return pendingEntry{}, "", fmt.Errorf("latest seq: %w", err)
 	}
 	if s := in.pendingNull[p.Nullifier]; s > latest {
 		latest = s
 	}
 	if p.Seq <= latest {
-		return pendingEntry{}, ReasonStaleSeq
+		return pendingEntry{}, ReasonStaleSeq, nil
 	}
 	if err := in.ver.Verify(ctx, p.ProofBytes, p.PublicInputs32(setup.Setup.Mask)); err != nil {
 		if !errors.Is(err, ErrBadProof) {
-			log.Error().Err(err).Msg("vote: verifier")
+			return pendingEntry{}, "", fmt.Errorf("verifier: %w", err)
 		}
-		return pendingEntry{}, ReasonBadProof
+		return pendingEntry{}, ReasonBadProof, nil
 	}
 	body, _ := Canonical(p.Ballot)
-	return pendingEntry{kind: KindBallot, body: body, hash: pi, nullifier: p.Nullifier, seq: p.Seq}, ""
+	return pendingEntry{kind: KindBallot, body: body, hash: pi, nullifier: p.Nullifier, seq: p.Seq}, "", nil
 }
 
-// checkRegister applies SPEC §4 to a registration body.
-func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Time) (pendingEntry, string) {
+// checkRegister applies SPEC §4 to a registration body (see checkBallot
+// for the three outcomes).
+func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Time) (pendingEntry, string, error) {
 	var r Register
 	if err := json.Unmarshal(content, &r); err != nil || r.V != Version || r.Event != in.cfg.Event.ID || r.UID == "" || len(r.Proof) == 0 {
-		return pendingEntry{}, ReasonMalformed
+		return pendingEntry{}, ReasonMalformed, nil
 	}
 	id, err := parseField(r.ID)
 	if err != nil {
-		return pendingEntry{}, ReasonMalformed
+		return pendingEntry{}, ReasonMalformed, nil
 	}
 	if in.closedSeq != 0 || !now.Before(in.current(now).Setup.Closes) {
-		return pendingEntry{}, ReasonClosed
+		return pendingEntry{}, ReasonClosed, nil
 	}
 	validity := time.Duration(in.current(now).Setup.Validity) * time.Second
 	if d := now.Sub(r.ProofDate); d > validity+5*time.Minute || d < -(validity+5*time.Minute) {
-		return pendingEntry{}, ReasonStaleDate
+		return pendingEntry{}, ReasonStaleDate, nil
 	}
 	// The same registration again (a repost after a missed ack) is a
 	// duplicate; another leaf for a registered passport is uid_used.
 	for _, p := range in.pending {
 		if p.kind == KindRegister && p.uid == r.UID {
 			if p.id == r.ID {
-				return pendingEntry{}, ReasonDuplicate
+				return pendingEntry{}, ReasonDuplicate, nil
 			}
-			return pendingEntry{}, ReasonUIDUsed
+			return pendingEntry{}, ReasonUIDUsed, nil
 		}
 	}
 	if id, err := in.store.IDOfUID(ctx, in.cfg.Event.ID, r.UID); err != nil {
-		return pendingEntry{}, ReasonUIDUsed
+		return pendingEntry{}, "", fmt.Errorf("uid lookup: %w", err)
 	} else if id == r.ID {
-		return pendingEntry{}, ReasonDuplicate
+		return pendingEntry{}, ReasonDuplicate, nil
 	} else if id != "" {
-		return pendingEntry{}, ReasonUIDUsed
+		return pendingEntry{}, ReasonUIDUsed, nil
 	}
 	if in.pendingID[r.ID] {
-		return pendingEntry{}, ReasonIDUsed
+		return pendingEntry{}, ReasonIDUsed, nil
 	}
-	if used, err := in.store.HasID(ctx, in.cfg.Event.ID, r.ID); err != nil || used {
-		return pendingEntry{}, ReasonIDUsed
+	if used, err := in.store.HasID(ctx, in.cfg.Event.ID, r.ID); err != nil {
+		return pendingEntry{}, "", fmt.Errorf("id lookup: %w", err)
+	} else if used {
+		return pendingEntry{}, ReasonIDUsed, nil
 	}
 	custom := RegistrationBinding(in.cfg.Event.ID, id)
 	uid, err := in.cfg.Passport.VerifyRegistration(ctx, r.Proof, custom, r.ProofDate)
-	if err != nil || uid != r.UID {
-		if err != nil {
-			log.Debug().Err(err).Msg("vote: registration proof refused")
+	if err != nil {
+		if !errors.Is(err, providers.ErrInvalidProof) {
+			return pendingEntry{}, "", fmt.Errorf("passport verifier: %w", err)
 		}
-		return pendingEntry{}, ReasonBadProof
+		log.Debug().Err(err).Msg("vote: registration proof refused")
+		return pendingEntry{}, ReasonBadProof, nil
+	}
+	if uid != r.UID {
+		return pendingEntry{}, ReasonBadProof, nil
 	}
 	body, _ := Canonical(r)
-	return pendingEntry{kind: KindRegister, body: body, hash: BodyHash(body), uid: r.UID, id: r.ID, proofDate: r.ProofDate}, ""
+	return pendingEntry{kind: KindRegister, body: body, hash: BodyHash(body), uid: r.UID, id: r.ID, proofDate: r.ProofDate}, "", nil
 }
 
 // RegistrationBinding is custom_data = H(T_REG, event, ID), lower-case hex.
@@ -452,32 +663,55 @@ func (in *Ingest) checkpoint(ctx context.Context) error {
 	}
 	sort.SliceStable(in.pending, func(i, j int) bool { return in.pending[i].hash < in.pending[j].hash })
 	index := in.nextIndex
-	for _, p := range in.pending {
-		seq, err := in.store.Log.Append(ctx, p.kind, p.body)
-		if err != nil {
-			return fmt.Errorf("append %s: %w", p.kind, err)
-		}
-		h := HandledEvent{NostrID: p.msg.ID, Relay: p.msg.Box, Kind: int(p.msg.Kind), BodyHash: BodyHash(p.msg.Body), Outcome: "logged", LogSeq: seq, Checkpoint: index}
-		switch p.kind {
-		case KindBallot:
-			h.PIHash = p.hash
-			if err := in.store.AddBallot(ctx, LoggedBallot{EventID: in.cfg.Event.ID, Nullifier: p.nullifier, Seq: p.seq, PIHash: p.hash, LogSeq: seq, Checkpoint: index, Body: p.body, NostrID: p.msg.ID, Relay: p.msg.Box}); err != nil {
-				return err
-			}
-		case KindRegister:
-			leaf, _ := parseField(p.id)
-			pos, err := in.tree.Append(leaf)
+	// The entries, their index rows and the pending rows' deletion are one
+	// transaction: a failure leaves the log as it was, and the tree is
+	// touched only once they are committed.
+	pos0 := in.tree.Size()
+	var leaves []fr.Element
+	err := in.store.Tx(ctx, func(ctx context.Context, tx *Store) error {
+		leaves = leaves[:0]
+		for _, p := range in.pending {
+			seq, err := tx.AppendLog(ctx, p.kind, p.body)
 			if err != nil {
+				return fmt.Errorf("append %s: %w", p.kind, err)
+			}
+			h := HandledEvent{NostrID: p.msg.ID, Relay: p.msg.Box, Kind: int(p.msg.Kind), BodyHash: BodyHash(p.msg.Body), Outcome: "logged", LogSeq: seq, Checkpoint: index}
+			switch p.kind {
+			case KindBallot:
+				h.PIHash = p.hash
+				if err := tx.AddBallot(ctx, LoggedBallot{EventID: in.cfg.Event.ID, Nullifier: p.nullifier, Seq: p.seq, PIHash: p.hash, LogSeq: seq, Checkpoint: index, Body: p.body, NostrID: p.msg.ID, Relay: p.msg.Box}); err != nil {
+					return err
+				}
+			case KindRegister:
+				leaf, err := parseField(p.id)
+				if err != nil {
+					return fmt.Errorf("pending leaf: %w", err)
+				}
+				pos := pos0 + len(leaves)
+				if err := tx.AddRegistration(ctx, Registration{EventID: in.cfg.Event.ID, UID: p.uid, ID: p.id, Position: pos, LogSeq: seq, ProofDate: p.proofDate, NostrID: p.msg.ID, Relay: p.msg.Box}); err != nil {
+					return err
+				}
+				leaves = append(leaves, leaf)
+			case KindReject:
+				h.Outcome, h.Reason = "rejected", p.reason
+			}
+			if err := tx.AddHandled(ctx, h); err != nil {
 				return err
 			}
-			if err := in.store.AddRegistration(ctx, Registration{EventID: in.cfg.Event.ID, UID: p.uid, ID: p.id, Position: pos, LogSeq: seq, ProofDate: p.proofDate, NostrID: p.msg.ID, Relay: p.msg.Box}); err != nil {
+			if err := tx.DeletePending(ctx, p.msg.ID); err != nil {
 				return err
 			}
-		case KindReject:
-			h.Outcome, h.Reason = "rejected", p.reason
 		}
-		if err := in.store.AddHandled(ctx, h); err != nil {
-			return err
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, l := range leaves {
+		if _, err := in.tree.Append(l); err != nil {
+			// The tree is full: the registrations are logged and indexed;
+			// the next start rebuilds the tree and fails the same way.
+			return fmt.Errorf("tree: %w", err)
 		}
 	}
 	in.pending = in.pending[:0]
@@ -523,8 +757,10 @@ func (in *Ingest) checkpoint(ctx context.Context) error {
 		log.Error().Err(err).Msg("vote: mirror note")
 	}
 	n := in.cfg.Mail.PostAll(ctx, Outgoing{Kind: OutCheckpoint, Body: string(msg)})
-	for _, b := range in.cfg.Mail.Boxes() {
-		if err := in.store.SetCursor(ctx, b, now.Unix()); err != nil {
+	// A box's cursor is the newest time it delivered: a box out of reach
+	// for a while is read again from where it was left, not from now.
+	for b, t := range in.seen {
+		if err := in.store.SetCursor(ctx, b, t); err != nil {
 			log.Error().Err(err).Msg("vote: cursor")
 		}
 	}

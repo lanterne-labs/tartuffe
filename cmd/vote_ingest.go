@@ -151,12 +151,13 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		}
 	}
 	in, err := vote.NewIngest(ctx, store, vote.Config{
-		Event:    e,
-		Mail:     mail,
-		Signer:   pollsCfg.Signer,
-		Passport: passport,
-		BB:       bb,
-		VK:       vk,
+		Event:       e,
+		Mail:        mail,
+		Signer:      pollsCfg.Signer,
+		Passport:    passport,
+		NostrPubkey: key.Public,
+		BB:          bb,
+		VK:          vk,
 		Stamp: func(ctx context.Context, size int64, note []byte) error {
 			_, err := store.Log.StampNote(ctx, size, note)
 			return err

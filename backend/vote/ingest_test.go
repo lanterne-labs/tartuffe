@@ -51,6 +51,13 @@ func (f fakePassport) VerifyRegistration(ctx context.Context, proof json.RawMess
 	return f.uid, nil
 }
 
+// testNostrSecret is the server's Nostr key in the tests; the setups name
+// its public half.
+var (
+	testNostrSecret = strings.Repeat("11", 32)
+	testNostrPubkey = func() string { p, _ := nostr.GetPublicKey(testNostrSecret); return p }()
+)
+
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	url := os.Getenv("DATABASE_URL")
@@ -64,7 +71,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(pool.Close)
 	ctx := context.Background()
 	for _, q := range []string{
-		`TRUNCATE vote2_events, vote2_ballots, vote2_registrations, vote2_checkpoints, vote2_cursors`,
+		`TRUNCATE vote2_events, vote2_ballots, vote2_registrations, vote2_checkpoints, vote2_cursors, vote2_pending`,
 		`TRUNCATE vote_log, vote_log_hashes, vote_log_stamps`,
 		`INSERT INTO poll_events (id, slug, title_fr, title_en, description_fr, description_en, max_choices, min_voters, opens_at, closes_at)
 		 VALUES (1, 'test-vote', 't', 't', 'd', 'd', 3, 1, now(), now() + interval '1 day') ON CONFLICT (id) DO UPDATE SET closes_at = now() + interval '1 day'`,
@@ -125,7 +132,7 @@ func TestIngestOnDevVectors(t *testing.T) {
 	}
 	setup := Setup{V: Version, Event: 1, Version: 1, Blank: 7, NCap: 10, Mask: v.Ballot.Inputs.Mask, PK: keys.PK, PKPoK: keys.PoK,
 		VKHash: "0x01", Circuit: Circuit{SourceHash: "0x02"}, Relays: []Relay{{URL: "wss://a.test", State: "active"}, {URL: "wss://b.test", State: "active"}},
-		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour)}
+		KReal: 10, RMin: 32, AnchorAge: DefaultAnchorAge, CheckpointPeriod: 20, Validity: 3600, Closes: time.Now().Add(24 * time.Hour), NostrPubkey: testNostrPubkey}
 	for i := 0; i < 10; i++ {
 		o := Option{Slot: i, Kind: "reserved"}
 		if i < 7 {
@@ -146,10 +153,11 @@ func TestIngestOnDevVectors(t *testing.T) {
 	mail := &memMailbox{boxes: []string{"wss://a.test", "wss://b.test"}}
 	event := &polls.Event{ID: 1, Slug: "test-vote"}
 	mirror := &DirMirror{Dir: t.TempDir()}
-	in, err := NewIngest(ctx, store, Config{Event: event, Mail: mail, Signer: signer, Passport: fakePassport{uid: "passport-1"}, BB: tools.BB, VK: vk, Mirror: mirror})
+	in, err := NewIngest(ctx, store, Config{Event: event, Mail: mail, Signer: signer, Passport: fakePassport{uid: "passport-1"}, BB: tools.BB, VK: vk, Mirror: mirror, NostrPubkey: testNostrPubkey})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { in.Release(ctx) })
 
 	// What the relays hold, as an auditor reads them (the voters' events
 	// as handled, the server's posts), for the withholding check below.
@@ -353,7 +361,7 @@ func TestIngestOnDevVectors(t *testing.T) {
 	for _, box := range mail.boxes {
 		for i, o := range mail.posts[box] {
 			kind := map[OutgoingKind]int{OutAck: KindNostrAck, OutCheckpoint: KindNostrCheckpoint, OutSnapshot: KindNostrSnapshot}[o.Kind]
-			relays = append(relays, RelayEvent{Relay: box, ID: fmt.Sprintf("srv-%s-%d", box, i), Kind: kind, Content: o.Body, CreatedAt: time.Now().Unix()})
+			relays = append(relays, RelayEvent{Relay: box, ID: fmt.Sprintf("srv-%s-%d", box, i), Kind: kind, Content: o.Body, CreatedAt: time.Now().Unix(), Pubkey: testNostrPubkey})
 		}
 	}
 	var snapList SnapshotList
@@ -386,12 +394,12 @@ func TestIngestOnDevVectors(t *testing.T) {
 	if rep.OK() || rep.Withheld != 1 || !strings.Contains(rep.Problems[0], "withholding") {
 		t.Fatalf("attributed withholding: %+v %v", *rep, rep.Problems)
 	}
-	// A forged ack the log does not honour, and a complaint carrying it:
-	// withholding proven, twice.
-	sk := nostr.GeneratePrivateKey()
+	// An ack of the server's key the log does not honour, and a complaint
+	// carrying it: withholding proven, twice. The same ack under another
+	// key proves nothing (a warning): the setup names the server's key.
 	forged, _ := Canonical(Ack{V: Version, NostrID: "ghost", BodyHash: BodyHash(ghostBody), PIHash: "0xdead", Checkpoint: 6, Outcome: "logged"})
 	ackEv := nostr.Event{Kind: KindNostrAck, CreatedAt: nostr.Timestamp(now.Unix()), Tags: nostr.Tags{{"t", EventTag("test-vote")}}, Content: string(forged)}
-	if err := ackEv.Sign(sk); err != nil {
+	if err := ackEv.Sign(testNostrSecret); err != nil {
 		t.Fatal(err)
 	}
 	complaint, _ := Canonical(Complaint{V: Version, Event: 1, NostrID: "ghost", PIHash: "0xdead", Ack: ackEv})
@@ -401,6 +409,18 @@ func TestIngestOnDevVectors(t *testing.T) {
 	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: more})
 	if rep.Withheld != 2 || rep.Complaints != 1 || len(rep.Problems) != 2 {
 		t.Fatalf("forged ack: %+v %v", *rep, rep.Problems)
+	}
+	otherEv := nostr.Event{Kind: KindNostrAck, CreatedAt: nostr.Timestamp(now.Unix()), Tags: nostr.Tags{{"t", EventTag("test-vote")}}, Content: string(forged)}
+	if err := otherEv.Sign(nostr.GeneratePrivateKey()); err != nil {
+		t.Fatal(err)
+	}
+	otherComplaint, _ := Canonical(Complaint{V: Version, Event: 1, NostrID: "ghost", PIHash: "0xdead", Ack: otherEv})
+	anyone := append(append([]RelayEvent(nil), relays...), ghost,
+		RelayEvent{Relay: "wss://a.test", ID: otherEv.ID, Pubkey: otherEv.PubKey, Kind: KindNostrAck, Content: string(forged)},
+		RelayEvent{Relay: "wss://b.test", ID: "complaint-2", Kind: KindNostrComplaint, Content: string(otherComplaint)})
+	rep, _ = Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Relays: anyone})
+	if rep.Withheld != 0 || len(rep.Problems) != 0 {
+		t.Fatalf("an ack under another key proved something: %v", rep.Problems)
 	}
 
 	// A closed entry naming another root fails the audit.

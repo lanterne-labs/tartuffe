@@ -3,7 +3,7 @@ package vote
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"digital-mirror/backend/accounts/providers"
@@ -44,7 +44,7 @@ func (DevPassport) VerifyRegistration(ctx context.Context, proof json.RawMessage
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(proof, &b); err != nil || b.Result.UID == "" {
-		return "", errors.New("dev passport: no uniqueIdentifier in the result")
+		return "", fmt.Errorf("%w: dev passport: no uniqueIdentifier in the result", providers.ErrInvalidProof)
 	}
 	return b.Result.UID, nil
 }

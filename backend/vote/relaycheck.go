@@ -219,14 +219,14 @@ func (rep *Report) checkRelays(events []RelayEvent, l *logged, opt Options) {
 			rep.warn("relay %s: event %s is logged but its copy there was not acknowledged (a relay-copy discrepancy)", e.Relay, short(e.ID))
 		default:
 			rep.Unacknowledged++
-			if due, ok := dueBy(e.SeenAt); ok && e.Live {
+			if due, ok := dueBy(e.SeenAt); ok && attributable(e) {
 				rep.Withheld++
 				rep.problem("withholding: %s %s seen on %s at %s, acknowledged by no one and not listed by checkpoint %d", kindName(e.Kind), short(e.ID), e.Relay, e.SeenAt.Format(time.RFC3339), due)
 			} else {
 				rep.warn("unacknowledged: %s %s on %s (created %s), never acknowledged nor logged", kindName(e.Kind), short(e.ID), e.Relay, time.Unix(e.CreatedAt, 0).UTC().Format(time.RFC3339))
 			}
 		}
-		if listed && e.Live {
+		if listed && attributable(e) {
 			if due, ok := dueBy(e.SeenAt); ok && cp > due {
 				rep.Withheld++
 				rep.problem("withholding: %s %s seen on %s at %s was listed by checkpoint %d, due by %d", kindName(e.Kind), short(e.ID), e.Relay, e.SeenAt.Format(time.RFC3339), cp, due)
@@ -234,7 +234,7 @@ func (rep *Report) checkRelays(events []RelayEvent, l *logged, opt Options) {
 		}
 		if e.Kind == KindNostrComplaint {
 			rep.Complaints++
-			rep.judgeComplaint(e, l, setup)
+			rep.judgeComplaint(e, l, setup, byID)
 		}
 		if snapshotIDs != nil && setup != nil && time.Unix(e.CreatedAt, 0).Before(setup.Closes.Add(-5*time.Minute)) && !snapshotIDs[e.ID] {
 			rep.problem("close: %s %s on %s, created %s, is not in the snapshot", kindName(e.Kind), short(e.ID), e.Relay, time.Unix(e.CreatedAt, 0).UTC().Format(time.RFC3339))
@@ -267,9 +267,21 @@ func (rep *Report) checkRelays(events []RelayEvent, l *logged, opt Options) {
 	}
 }
 
+// attributable tells whether an unacknowledged event seen live is the
+// server's fault (SPEC §12.6): its created_at must be within an hour of
+// its first sighting. The server reads a relay from the newest time it
+// delivered minus two hours; an event dated earlier is never delivered to
+// any live reader, and a browser's clock set that far back is the
+// browser's fault (it corrects its clock from the checkpoints).
+func attributable(e RelayEvent) bool {
+	return e.Live && e.SeenAt.Sub(time.Unix(e.CreatedAt, 0)) <= time.Hour
+}
+
 // judgeComplaint checks a complaint's ack: signed by our server, and
-// honoured by the log, else withholding proven.
-func (rep *Report) judgeComplaint(e RelayEvent, l *logged, setup *Setup) {
+// honoured by the log, else withholding proven. A registration's ack is
+// settled by the event itself when a relay still holds it: the ack names
+// the posted body's hash, the log the canonical one.
+func (rep *Report) judgeComplaint(e RelayEvent, l *logged, setup *Setup, byID map[string]RelayEvent) {
 	var c Complaint
 	if json.Unmarshal([]byte(e.Content), &c) != nil || c.V != Version {
 		rep.warn("relay %s: complaint %s is not a complaint", e.Relay, short(e.ID))
@@ -293,6 +305,16 @@ func (rep *Report) judgeComplaint(e RelayEvent, l *logged, setup *Setup) {
 		return
 	}
 	if err := l.honoured(a); err != nil {
+		if a.Outcome == "logged" && a.PIHash == "" {
+			if ev, ok := byID[a.NostrID]; ok {
+				if cp, _, _, listed := l.listed(ev); listed && cp == a.Checkpoint {
+					return
+				}
+			} else {
+				rep.warn("relay %s: complaint %s about registration %s, which no relay holds any more: not judged", e.Relay, short(e.ID), short(a.NostrID))
+				return
+			}
+		}
 		rep.Withheld++
 		rep.problem("withholding, proven by the complaint %s on %s: the ack of %s %v", short(e.ID), e.Relay, short(a.NostrID), err)
 	}

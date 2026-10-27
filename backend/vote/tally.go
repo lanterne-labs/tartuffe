@@ -58,11 +58,14 @@ type Tallier struct {
 	latest          map[string]decrypted // pseudonym → its counted ballot
 	lastUpto        int64                // log seq of the last tally's upto
 	lastTallyAt     time.Time
-	changed         map[string]bool // pseudonyms changed since the last tally
-	scanned         int64           // log seq up to which ballots were decrypted
-	armedAt         int64           // the checkpoint when K_REAL was reached, 0 when not
+	changed         map[string]bool            // pseudonyms whose ballot differs from the one counted
+	counted         map[string][ballot.V]int64 // pseudonym → the values the last tally counted
+	scanned         int64                      // log seq up to which ballots were decrypted
+	armedAt         int64                      // the checkpoint when K_REAL was reached, 0 when not
+	judged          int64                      // the last checkpoint the firing coin was flipped at
 	closed          bool
 	waitingSnapshot bool
+	lease           *Lease
 }
 
 type decrypted struct {
@@ -94,10 +97,15 @@ func NewTallier(ctx context.Context, store *Store, event *polls.Event, keys *Key
 			return nil, errors.New("vote: the keys are not the setup's")
 		}
 	}
+	lease, err := store.Acquire(ctx, leaseTallier, "tallier")
+	if err != nil {
+		return nil, err
+	}
 	t := &Tallier{store: store, event: event, sk: sk, pk: pk, setups: setups, now: time.Now, rand: rand.Float64,
-		latest: map[string]decrypted{}, changed: map[string]bool{}}
+		latest: map[string]decrypted{}, changed: map[string]bool{}, counted: map[string][ballot.V]int64{}, lease: lease}
 	last, err := store.LastTally(ctx, event.ID)
 	if err != nil {
+		lease.Release(ctx)
 		return nil, err
 	}
 	if last != nil {
@@ -107,14 +115,22 @@ func NewTallier(ctx context.Context, store *Store, event *polls.Event, keys *Key
 	// Replay: the ballots up to the last tally set the counted state, the
 	// ones after it the pending changes.
 	if err := t.scan(ctx, t.lastUpto); err != nil {
+		lease.Release(ctx)
 		return nil, err
+	}
+	for n, d := range t.latest {
+		t.counted[n] = d.values
 	}
 	t.changed = map[string]bool{}
 	if err := t.scan(ctx, 1<<62); err != nil {
+		lease.Release(ctx)
 		return nil, err
 	}
 	return t, nil
 }
+
+// Release gives the writer's lease back (Run does it on exit).
+func (t *Tallier) Release(ctx context.Context) { t.lease.Release(ctx) }
 
 func (t *Tallier) setup(now time.Time) *Setup {
 	cur := t.setups[0]
@@ -154,8 +170,13 @@ func (t *Tallier) scan(ctx context.Context, upto int64) error {
 			continue
 		}
 		d := decrypted{seq: b.Seq, logSeq: b.LogSeq, values: vals, ct: p.Ciphertext}
-		if !had || prev.values != vals {
+		// A change is against the ballot the last tally counted: a
+		// pseudonym back on its counted ranking has not changed (K_REAL
+		// counts net changes, SPEC §9.1).
+		if c, was := t.counted[b.Nullifier]; !was || c != vals {
 			t.changed[b.Nullifier] = true
+		} else {
+			delete(t.changed, b.Nullifier)
 		}
 		t.latest[b.Nullifier] = d
 		t.scanned = b.LogSeq
@@ -167,6 +188,7 @@ func (t *Tallier) scan(ctx context.Context, upto int64) error {
 func (t *Tallier) Run(ctx context.Context) error {
 	tick := time.NewTicker(5 * time.Second)
 	defer tick.Stop()
+	defer t.lease.Release(context.Background())
 	for {
 		select {
 		case <-ctx.Done():
@@ -219,12 +241,17 @@ func (t *Tallier) Step(ctx context.Context) error {
 		return nil
 	}
 	// The firing lag: not at the checkpoint that reached K_REAL, then at
-	// each later checkpoint with probability 1/2.
+	// each later checkpoint with probability 1/2: one coin per checkpoint,
+	// whatever the number of steps it stays current.
 	if t.armedAt == 0 {
 		t.armedAt = cp.Index
 		return nil
 	}
-	if cp.Index == t.armedAt || t.rand() < 0.5 {
+	if cp.Index == t.armedAt || cp.Index == t.judged {
+		return nil
+	}
+	t.judged = cp.Index
+	if t.rand() < 0.5 {
 		return nil
 	}
 	return t.Publish(ctx, cp.LogSize)
@@ -316,6 +343,7 @@ func (t *Tallier) Publish(ctx context.Context, upto int64) error {
 	for n, d := range t.latest {
 		if d.logSeq <= upto {
 			delete(t.changed, n)
+			t.counted[n] = d.values
 		}
 	}
 	log.Info().Int64("seq", seq).Int64("upto", upto).Int64("count", count).Int64("voters", total[0]).Msg("vote: tally published")
@@ -349,8 +377,14 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 	if err := t.scan(ctx, snap.Seq); err != nil {
 		return err
 	}
-	if err := t.Publish(ctx, snap.Seq); err != nil {
+	// Once: a closed entry that failed to log after the final tally must
+	// not bring a second final tally.
+	if last, err := t.store.LastTally(ctx, t.event.ID); err != nil {
 		return err
+	} else if last == nil || last.Upto != snap.Seq {
+		if err := t.Publish(ctx, snap.Seq); err != nil {
+			return err
+		}
 	}
 	final, err := t.store.LastTally(ctx, t.event.ID)
 	if err != nil {
@@ -372,7 +406,7 @@ func (t *Tallier) Close(ctx context.Context, now time.Time) error {
 
 // ClosedEntry returns the event's closed entry, nil while open.
 func (s *Store) ClosedEntry(ctx context.Context, eventID int64) (*Closed, error) {
-	rows, err := s.pool.Query(ctx, `SELECT body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindClosed)
+	rows, err := s.db.Query(ctx, `SELECT body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindClosed)
 	if err != nil {
 		return nil, fmt.Errorf("closed: %w", err)
 	}
@@ -447,7 +481,7 @@ type LoggedTally struct {
 
 // LastTally returns the latest tally of an event, nil before the first.
 func (s *Store) LastTally(ctx context.Context, eventID int64) (*LoggedTally, error) {
-	rows, err := s.pool.Query(ctx, `SELECT seq, body, created_at FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindTally)
+	rows, err := s.db.Query(ctx, `SELECT seq, body, created_at FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindTally)
 	if err != nil {
 		return nil, fmt.Errorf("tallies: %w", err)
 	}
@@ -473,8 +507,8 @@ func (s *Store) LastTally(ctx context.Context, eventID int64) (*LoggedTally, err
 // to upto, nil when it had none by then.
 func (s *Store) LatestBallotUpto(ctx context.Context, eventID int64, nullifier string, upto int64) (*LoggedBallot, error) {
 	var b LoggedBallot
-	var seq int32
-	err := s.pool.QueryRow(ctx, `SELECT nullifier, seq, pi_hash, log_seq, checkpoint, body FROM vote2_ballots
+	var seq int64
+	err := s.db.QueryRow(ctx, `SELECT nullifier, seq, pi_hash, log_seq, checkpoint, body FROM vote2_ballots
 		WHERE event_id = $1 AND nullifier = $2 AND log_seq <= $3 ORDER BY seq DESC LIMIT 1`, eventID, nullifier, upto).
 		Scan(&b.Nullifier, &seq, &b.PIHash, &b.LogSeq, &b.Checkpoint, &b.Body)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -491,7 +525,7 @@ func (s *Store) LatestBallotUpto(ctx context.Context, eventID int64, nullifier s
 // BallotsAfter returns the logged ballots with after < log_seq ≤ upto, in
 // log order.
 func (s *Store) BallotsAfter(ctx context.Context, eventID, after, upto int64) ([]LoggedBallot, error) {
-	rows, err := s.pool.Query(ctx, `SELECT nullifier, seq, pi_hash, log_seq, checkpoint, body FROM vote2_ballots
+	rows, err := s.db.Query(ctx, `SELECT nullifier, seq, pi_hash, log_seq, checkpoint, body FROM vote2_ballots
 		WHERE event_id = $1 AND log_seq > $2 AND log_seq <= $3 ORDER BY log_seq`, eventID, after, upto)
 	if err != nil {
 		return nil, fmt.Errorf("ballots: %w", err)
@@ -500,7 +534,7 @@ func (s *Store) BallotsAfter(ctx context.Context, eventID, after, upto int64) ([
 	var out []LoggedBallot
 	for rows.Next() {
 		var b LoggedBallot
-		var seq int32
+		var seq int64
 		if err := rows.Scan(&b.Nullifier, &seq, &b.PIHash, &b.LogSeq, &b.Checkpoint, &b.Body); err != nil {
 			return nil, err
 		}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -181,7 +182,17 @@ func (in *Ingest) stageMirror(ctx context.Context, index int64, prevLogSize, log
 		if b, _ := m.Read("entries/" + hour + ".json"); b != nil {
 			_ = json.Unmarshal(b, &list)
 		}
-		list = append(list, entries...)
+		// A checkpoint tried again after a failure must not list its
+		// entries twice.
+		have := map[string]bool{}
+		for _, e := range list {
+			have[e.Hash+"/"+strconv.FormatInt(e.LogSeq, 10)] = true
+		}
+		for _, e := range entries {
+			if !have[e.Hash+"/"+strconv.FormatInt(e.LogSeq, 10)] {
+				list = append(list, e)
+			}
+		}
 		if err := stageJSON("entries/"+hour+".json", list); err != nil {
 			return "", err
 		}

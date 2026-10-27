@@ -414,6 +414,11 @@ func (s *Setup) Validate() error {
 	if len(s.Options) != ballot.N {
 		return fmt.Errorf("vote: %d options, want %d", len(s.Options), ballot.N)
 	}
+	if len(s.NostrPubkey) != 64 || s.NostrPubkey != strings.ToLower(s.NostrPubkey) {
+		// Without it every acknowledgement on the relays passes for the
+		// server's, and a forged one proves a withholding (SPEC §7.2).
+		return errors.New("vote: nostr_pubkey (the ingest's key, 32 bytes of lower-case hex) is required")
+	}
 	var mask uint32
 	for i, o := range s.Options {
 		if o.Slot != i {

@@ -127,6 +127,10 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 		}))
 	}
 	cpByIndex := map[int64]Checkpoint{}
+	// The time of a checkpoint is its signed note's `time` line, never the
+	// record's created_at, which the server edits freely.
+	noteTime := map[int64]time.Time{}
+	unsignedTimes := 0
 	var prevIndex int64
 	for _, cp := range cps {
 		cpByIndex[cp.Index] = cp
@@ -148,9 +152,15 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("checkpoint %d: the entries do not make its tree hash", cp.Index)
 			}
 		}
-		root, size, index, eventID, _, err := ParseCheckpoint(noteText(cp.Note))
+		root, size, index, eventID, at, err := ParseCheckpoint(noteText(cp.Note))
 		if err != nil || index != cp.Index || eventID != opt.EventID {
 			rep.problem("checkpoint %d: note lines: %v", cp.Index, err)
+		}
+		if err == nil && !at.IsZero() && opt.LogKey != "" {
+			noteTime[cp.Index] = at
+		} else {
+			noteTime[cp.Index] = cp.CreatedAt
+			unsignedTimes++
 		}
 		if root != cp.TreeRoot || size != cp.TreeSize {
 			rep.problem("checkpoint %d: note and record disagree on the tree", cp.Index)
@@ -159,6 +169,10 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	if opt.LogKey == "" {
 		rep.warn("checkpoint signatures not checked (no log key)")
 	}
+	if unsignedTimes > 0 {
+		rep.warn("%d checkpoints judged by the record's time, not a signed one", unsignedTimes)
+	}
+	cpAt := func(cp Checkpoint) time.Time { return noteTime[cp.Index] }
 
 	// Replay the entries in order.
 	var setups []LoggedSetup
@@ -171,10 +185,12 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 		history []*auditedBallot
 		ballots int
 	}
+	// The ballot a tally counts: the highest seq logged up to its upto
+	// (the entries of one checkpoint are ordered by hash, not by seq).
 	latestUpto := func(v *voter, upto int64) *auditedBallot {
 		var found *auditedBallot
 		for _, b := range v.history {
-			if b.seq <= upto {
+			if b.seq <= upto && (found == nil || b.body.Seq > found.body.Seq) {
 				found = b
 			}
 		}
@@ -185,7 +201,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	rootFirst := map[string]time.Time{} // tree root → when first in a checkpoint
 	for _, cp := range cps {
 		if _, ok := rootFirst[cp.TreeRoot]; !ok {
-			rootFirst[cp.TreeRoot] = cp.CreatedAt
+			rootFirst[cp.TreeRoot] = cpAt(cp)
 		}
 	}
 	// Which checkpoint an entry belongs to: the first whose LogSize ≥ seq.
@@ -201,6 +217,21 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	var closedAt *time.Time
 	var snapshot *LoggedSnapshot
 	tallySeqs := map[int64]int64{} // tally seq → its upto
+	// What the rejects are re-checked against once the replay is done
+	// (§12.5: every reject deserves its reason): the first checkpoint
+	// that logged each pi_hash, passport, leaf, and each pseudonym's seqs.
+	piFirst := map[string]int64{}
+	uidFirst := map[string]int64{}
+	idFirst := map[string]int64{}
+	seqsOf := map[string]map[uint32]int64{} // nullifier → seq → checkpoint
+	type loggedReject struct {
+		seq int64
+		cp  Checkpoint
+		rj  Reject
+	}
+	var rejects []loggedReject
+	var prevTallyUpto int64
+	var prevTallyAt time.Time
 	lg := &logged{ballots: map[string]int64{}, registers: map[string]int64{}, rejects: map[string]rejectAt{}, seen: map[string]int64{}, cps: cpByIndex}
 	other := 0
 	for _, e := range entries {
@@ -231,7 +262,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 					rep.problem("setup %d: %v", e.Seq, err)
 				}
 			}
-			setups = append(setups, LoggedSetup{Seq: e.Seq, LoggedAt: e.CreatedAt, Setup: s})
+			setups = append(setups, LoggedSetup{Seq: e.Seq, LoggedAt: cpAt(cp), Setup: s})
 		case KindRegister:
 			var r Register
 			if err := json.Unmarshal([]byte(e.Body), &r); err != nil || r.Event != opt.EventID {
@@ -244,6 +275,12 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("registration %d: leaf %s registered twice", e.Seq, r.ID)
 			}
 			regUID[r.UID], regID[r.ID] = true, true
+			if _, ok := uidFirst[r.UID]; !ok {
+				uidFirst[r.UID] = cp.Index
+			}
+			if _, ok := idFirst[r.ID]; !ok {
+				idFirst[r.ID] = cp.Index
+			}
 			lg.registers[BodyHash([]byte(e.Body))] = cp.Index
 			if snapshot != nil {
 				rep.problem("registration %d after the close snapshot", e.Seq)
@@ -255,8 +292,8 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			}
 			if len(setups) > 0 {
 				validity := time.Duration(setups[0].Setup.Validity) * time.Second
-				if d := cp.CreatedAt.Sub(r.ProofDate); d > validity+10*time.Minute || d < -(validity+10*time.Minute) {
-					rep.problem("registration %d: proof date %s, logged %s", e.Seq, r.ProofDate.Format(time.RFC3339), cp.CreatedAt.Format(time.RFC3339))
+				if d := cpAt(cp).Sub(r.ProofDate); d > validity+10*time.Minute || d < -(validity+10*time.Minute) {
+					rep.problem("registration %d: proof date %s, logged %s", e.Seq, r.ProofDate.Format(time.RFC3339), cpAt(cp).Format(time.RFC3339))
 				}
 			}
 			if opt.Passport != nil {
@@ -296,7 +333,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			at, known := rootFirst[p.Root]
 			if !known {
 				rep.problem("ballot %d: root %s is no checkpoint's", e.Seq, p.Root[:12])
-			} else if cp.CreatedAt.Sub(at) > time.Duration(setup.Setup.AnchorAge)*time.Second {
+			} else if cpAt(cp).Sub(at) > time.Duration(setup.Setup.AnchorAge)*time.Second {
 				rep.problem("ballot %d: root older than anchor_age", e.Seq)
 			}
 			pi := p.PIHash(setup.Setup.Mask)
@@ -304,21 +341,37 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				rep.problem("ballot %d: the same public inputs as an earlier ballot", e.Seq)
 			}
 			piSeen[pi] = true
+			if _, ok := piFirst[pi]; !ok {
+				piFirst[pi] = cp.Index
+			}
 			lg.ballots[pi] = cp.Index
 			v := voters[p.Nullifier]
 			if v == nil {
 				v = &voter{}
 				voters[p.Nullifier] = v
 			}
-			if n := len(v.history); n > 0 && p.Seq <= v.history[n-1].body.Seq {
-				rep.problem("ballot %d: seq %d not above the pseudonym's %d", e.Seq, p.Seq, v.history[n-1].body.Seq)
+			// §6.3: a seq above every seq logged at an earlier checkpoint,
+			// and (nullifier, seq) once; two ballots of one pseudonym in
+			// one checkpoint come in hash order, either first.
+			if seqsOf[p.Nullifier] == nil {
+				seqsOf[p.Nullifier] = map[uint32]int64{}
 			}
+			if at, dup := seqsOf[p.Nullifier][p.Seq]; dup {
+				rep.problem("ballot %d: seq %d of the pseudonym logged twice (checkpoint %d)", e.Seq, p.Seq, at)
+			}
+			for sq, at := range seqsOf[p.Nullifier] {
+				if at < cp.Index && sq >= p.Seq {
+					rep.problem("ballot %d: seq %d not above the pseudonym's %d of checkpoint %d", e.Seq, p.Seq, sq, at)
+					break
+				}
+			}
+			seqsOf[p.Nullifier][p.Seq] = cp.Index
 			if opt.Verifier != nil {
 				if err := opt.Verifier.Verify(ctx, p.ProofBytes, p.PublicInputs32(setup.Setup.Mask)); err != nil {
 					rep.problem("ballot %d: %v", e.Seq, err)
 				}
 			}
-			v.history = append(v.history, &auditedBallot{seq: e.Seq, body: p, logged: cp.CreatedAt})
+			v.history = append(v.history, &auditedBallot{seq: e.Seq, body: p, logged: cpAt(cp)})
 			v.ballots++
 		case KindReject:
 			var rj Reject
@@ -331,6 +384,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			if !knownReason(rj.Reason) {
 				rep.problem("reject %d: unknown reason %q", e.Seq, rj.Reason)
 			}
+			rejects = append(rejects, loggedReject{seq: e.Seq, cp: cp, rj: rj})
 		case KindTally:
 			var t TallyEntry
 			if err := json.Unmarshal([]byte(e.Body), &t); err != nil || t.Event != opt.EventID {
@@ -350,8 +404,13 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				continue
 			}
 			var cts []ballot.Ciphertext
-			changed := 0
-			for _, v := range voters {
+			changed := map[string]bool{} // pseudonyms with a ballot since the last tally
+			for n, v := range voters {
+				for _, b := range v.history {
+					if b.seq > prevTallyUpto && b.seq <= t.Upto {
+						changed[n] = true
+					}
+				}
 				counted := latestUpto(v, t.Upto)
 				if counted == nil {
 					continue
@@ -366,7 +425,20 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				}
 				v.history = kept
 			}
-			_ = changed
+			// §9.1 in public: at least K_REAL pseudonyms with a new ballot
+			// since the last tally (the final tally excepted), the gap
+			// between tallies, the count over the pseudonyms with a ballot.
+			final := snapshot != nil && t.Upto == snapshot.Seq
+			if !final && len(changed) < setups[0].Setup.KReal {
+				rep.problem("tally %d: %d pseudonyms voted since the last tally, K_REAL is %d", e.Seq, len(changed), setups[0].Setup.KReal)
+			}
+			if gap := setups[0].Setup.TallyMinGap; gap > 0 && !final && !prevTallyAt.IsZero() && cpAt(cp).Sub(prevTallyAt) < time.Duration(gap)*time.Second {
+				rep.problem("tally %d: %s after the previous one, tally_min_gap is %d s", e.Seq, cpAt(cp).Sub(prevTallyAt), gap)
+			}
+			if t.Count != int64(len(cts)) {
+				rep.problem("tally %d: counts %d ballots, %d pseudonyms had one", e.Seq, t.Count, len(cts))
+			}
+			prevTallyUpto, prevTallyAt = t.Upto, cpAt(cp)
 			vals, err := VerifyTally(t, pk, cts)
 			if err != nil {
 				rep.problem("tally %d: %v", e.Seq, err)
@@ -374,12 +446,12 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			}
 			cur := setups[0]
 			for _, s := range setups[1:] {
-				if !e.CreatedAt.Before(s.LoggedAt.Add(24 * time.Hour)) {
+				if !cpAt(cp).Before(s.LoggedAt.Add(24 * time.Hour)) {
 					cur = s
 				}
 			}
 			for _, b := range cur.Setup.Blackouts {
-				if !e.CreatedAt.Before(b.From) && e.CreatedAt.Before(b.To) {
+				if !cpAt(cp).Before(b.From) && cpAt(cp).Before(b.To) {
 					rep.problem("tally %d inside a blackout", e.Seq)
 				}
 			}
@@ -450,6 +522,19 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			if prev, ok := expectedRoots[cp.Index-1]; !ok || prev != cp.TreeRoot {
 				rep.problem("checkpoint %d: tree root %s, the registrations give %s", cp.Index, cp.TreeRoot[:12], want[:12])
 			}
+		}
+	}
+	// 5. Every reject deserves its reason (§12.5), from its stored body
+	// and the log as it was at its checkpoint.
+	if len(setups) > 0 {
+		rc := rejectChecker{opt: opt, setups: setups, cpAt: cpAt, cpByIndex: cpByIndex, rootFirst: rootFirst, piFirst: piFirst, uidFirst: uidFirst, idFirst: idFirst, seqsOf: seqsOf, closedAt: closedAt}
+		for _, r := range rejects {
+			if why := rc.check(ctx, r.cp, r.rj); why != "" {
+				rep.problem("reject %d (%s): %s", r.seq, r.rj.Reason, why)
+			}
+		}
+		if rc.unchecked > 0 {
+			rep.warn("%d rejects for bad_proof not re-checked (no verifier or passport)", rc.unchecked)
 		}
 	}
 	if other > 0 {
@@ -590,7 +675,7 @@ func (s StoreSource) Checkpoints(ctx context.Context) ([]Checkpoint, error) {
 
 // AllCheckpoints lists every checkpoint in order.
 func (s *Store) AllCheckpoints(ctx context.Context) ([]Checkpoint, error) {
-	rows, err := s.pool.Query(ctx, `SELECT idx, log_size, tree_root, tree_size, mirror_commit, note, created_at FROM vote2_checkpoints ORDER BY idx`)
+	rows, err := s.db.Query(ctx, `SELECT idx, log_size, tree_root, tree_size, mirror_commit, note, created_at FROM vote2_checkpoints ORDER BY idx`)
 	if err != nil {
 		return nil, fmt.Errorf("checkpoints: %w", err)
 	}
@@ -604,4 +689,149 @@ func (s *Store) AllCheckpoints(ctx context.Context) ([]Checkpoint, error) {
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// rejectChecker re-checks a reject's reason against the stored body and
+// the log at its checkpoint.
+type rejectChecker struct {
+	opt       Options
+	setups    []LoggedSetup
+	cpAt      func(Checkpoint) time.Time
+	cpByIndex map[int64]Checkpoint
+	rootFirst map[string]time.Time
+	piFirst   map[string]int64
+	uidFirst  map[string]int64
+	idFirst   map[string]int64
+	seqsOf    map[string]map[uint32]int64
+	closedAt  *time.Time
+	unchecked int
+}
+
+// check returns "" when the reason holds, else why it does not.
+func (c *rejectChecker) check(ctx context.Context, cp Checkpoint, rj Reject) string {
+	at := c.cpAt(cp)
+	body := []byte(rj.Body)
+	cur := c.setups[0]
+	for _, s := range c.setups[1:] {
+		if !at.Before(s.LoggedAt.Add(24 * time.Hour)) {
+			cur = s
+		}
+	}
+	p, perr := ParseBallot(body)
+	if perr == nil && p.Event != c.opt.EventID {
+		perr = errors.New("another event")
+	}
+	var r Register
+	rerr := json.Unmarshal(body, &r)
+	if rerr == nil && (r.V != Version || r.Event != c.opt.EventID || r.UID == "" || len(r.Proof) == 0) {
+		rerr = errors.New("not a registration of this event")
+	}
+	var leaf fr.Element
+	if rerr == nil {
+		if leaf, rerr = parseField(r.ID); rerr != nil {
+			rerr = fmt.Errorf("id: %w", rerr)
+		}
+	}
+	isBallot, isReg := perr == nil, rerr == nil
+	switch rj.Reason {
+	case ReasonMalformed:
+		if isBallot || isReg {
+			return "the body parses"
+		}
+	case ReasonClosed:
+		if at.Before(cur.Setup.Closes) && (c.closedAt == nil || at.Before(*c.closedAt)) {
+			return "the vote was open at the checkpoint"
+		}
+	case ReasonUnknownSetup:
+		if !isBallot {
+			return "not a ballot"
+		}
+		for i, s := range c.setups {
+			if s.Seq == p.Setup && (i == 0 || !at.Before(s.LoggedAt.Add(24*time.Hour))) {
+				return fmt.Sprintf("setup %d was in force", p.Setup)
+			}
+		}
+	case ReasonOldRoot:
+		if !isBallot {
+			return "not a ballot"
+		}
+		first, known := c.rootFirst[p.Root]
+		if known && at.Sub(first) <= time.Duration(cur.Setup.AnchorAge)*time.Second {
+			return "the root was within anchor_age"
+		}
+	case ReasonDuplicate:
+		if isBallot {
+			if first, ok := c.piFirst[p.PIHash(cur.Setup.Mask)]; !ok || first > cp.Index {
+				return "no ballot with these public inputs was logged by then"
+			}
+		} else if isReg {
+			if first, ok := c.uidFirst[r.UID]; !ok || first > cp.Index {
+				return "the passport was not registered by then"
+			}
+		} else {
+			return "the body does not parse"
+		}
+	case ReasonStaleSeq:
+		if !isBallot {
+			return "not a ballot"
+		}
+		for sq, idx := range c.seqsOf[p.Nullifier] {
+			if idx <= cp.Index && sq >= p.Seq {
+				return ""
+			}
+		}
+		return fmt.Sprintf("no ballot of the pseudonym with seq ≥ %d was logged by then", p.Seq)
+	case ReasonBadProof:
+		if isBallot {
+			if c.opt.Verifier == nil {
+				c.unchecked++
+				return ""
+			}
+			var setup *LoggedSetup
+			for i := range c.setups {
+				if c.setups[i].Seq == p.Setup {
+					setup = &c.setups[i]
+				}
+			}
+			if setup == nil {
+				return ""
+			}
+			if err := c.opt.Verifier.Verify(ctx, p.ProofBytes, p.PublicInputs32(setup.Setup.Mask)); err == nil {
+				return "the proof verifies"
+			}
+		} else if isReg {
+			if c.opt.Passport == nil {
+				c.unchecked++
+				return ""
+			}
+			if uid, err := c.opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(c.opt.EventID, leaf), r.ProofDate); err == nil && uid == r.UID {
+				return "the passport proof verifies"
+			}
+		} else {
+			return "the body does not parse"
+		}
+	case ReasonStaleDate:
+		if !isReg {
+			return "not a registration"
+		}
+		validity := time.Duration(cur.Setup.Validity) * time.Second
+		if d := at.Sub(r.ProofDate); d <= validity+10*time.Minute && d >= -(validity+10*time.Minute) {
+			return "the proof date was within validity"
+		}
+	case ReasonUIDUsed:
+		if !isReg {
+			return "not a registration"
+		}
+		if first, ok := c.uidFirst[r.UID]; !ok || first > cp.Index {
+			return "the passport had no registration by then"
+		}
+	case ReasonIDUsed:
+		if !isReg {
+			return "not a registration"
+		}
+		if first, ok := c.idFirst[r.ID]; !ok || first > cp.Index {
+			return "the leaf had no registration by then"
+		}
+	}
+	return ""
 }

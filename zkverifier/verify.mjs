@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 // The CommonJS build: the ESM one imports the browser polyfill path
 // 'buffer/', which the Node ESM loader refuses.
 const { ZKPassport } = createRequire(import.meta.url)('@zkpassport/sdk');
+const { NullifierType } = createRequire(import.meta.url)('@zkpassport/utils');
 
 async function readStdin() {
 	const chunks = [];
@@ -59,12 +60,18 @@ try {
 	builder = builder.bind('custom_data', req.challenge);
 	const { query } = builder.done();
 
+	// The identifier must be the document's own (non-salted): a salted one
+	// would be another identifier for the same passport. The validity is
+	// the caller's (the ingest bounds proof_date itself; the audit runs
+	// months later): without it the SDK refuses a proof older than 7 days.
 	const { verified, uniqueIdentifier, queryResultErrors } = await zk.verify({
 		proofs: req.proofs,
 		originalQuery: query,
 		queryResult: req.result,
 		scope: req.scope,
 		devMode: Boolean(req.devMode),
+		uniqueIdentifierType: req.devMode ? NullifierType.NON_SALTED_MOCK : NullifierType.NON_SALTED,
+		validity: req.validity || 10 * 365 * 86_400,
 		verifierMode: 'local',
 		config: req.rpcUrl ? { rpcUrl: req.rpcUrl } : undefined
 	});

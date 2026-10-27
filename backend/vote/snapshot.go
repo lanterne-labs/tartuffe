@@ -98,7 +98,7 @@ type LoggedSnapshot struct {
 
 // SnapshotEntry returns the event's snapshot entry, nil while open.
 func (s *Store) SnapshotEntry(ctx context.Context, eventID int64) (*LoggedSnapshot, error) {
-	rows, err := s.pool.Query(ctx, `SELECT seq, body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindSnapshot)
+	rows, err := s.db.Query(ctx, `SELECT seq, body FROM vote_log WHERE kind = $1 ORDER BY seq DESC`, KindSnapshot)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot: %w", err)
 	}
@@ -118,7 +118,7 @@ func (s *Store) SnapshotEntry(ctx context.Context, eventID int64) (*LoggedSnapsh
 
 // HandledIDs lists the id of every event handled, in no order.
 func (s *Store) HandledIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT nostr_id FROM vote2_events`)
+	rows, err := s.db.Query(ctx, `SELECT nostr_id FROM vote2_events`)
 	if err != nil {
 		return nil, fmt.Errorf("handled ids: %w", err)
 	}
