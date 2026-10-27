@@ -6,10 +6,11 @@
 import { writable, get, type Writable } from 'svelte/store';
 import { bb, big, hex, nullifierOf, type Ranking } from './crypto';
 import { voteKey, newVoteKey, randomSecret, createPasskeySecret, prfSupported, secretFromWords, newWords, type VoteKey, type LastBallot } from './key';
-import { NostrMailbox, type Mailbox, type NostrEvent } from './mailbox';
+import { NostrMailbox, linkTag, type Mailbox, type NostrEvent } from './mailbox';
 import { defaultSources, type Sources } from './sources';
 import { warmUp, type Prover } from './prove';
 import { ensureIsolated } from './isolate';
+import { newReceiver, linkURL, seal, open as openLink, type LinkCode } from './link';
 import { findPosition, updatePath, type PathState } from './tree';
 import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, complaintBody, type Setup, type Ack, type CheckpointInfo } from './protocol';
 import { openCheckpoint } from './checkpoint';
@@ -241,6 +242,87 @@ export class VoteSession {
 		voteKey.set(key);
 		this.phase.set('ready');
 		void this.prepare();
+	}
+
+	// --- The device link (SPEC §4.2) ---
+
+	// receiveLink makes the code a new device shows and waits for the
+	// secret a device that holds it posts for that code; the promise
+	// resolves once the key is adopted, or rejects when stopped.
+	receiveLink(votePage: string): { url: string; stop: () => void; done: Promise<void> } {
+		const setup = get(this.setup);
+		if (!setup || !this.mail) throw new Error('not ready');
+		const boxes = setup.setup.relays.filter((r) => r.state === 'active').map((r) => r.url);
+		const { code, priv } = newReceiver();
+		const stops: (() => void)[] = [];
+		const stopAll = () => stops.splice(0).forEach((s) => s());
+		let reject: (e: Error) => void = () => {};
+		let taken = false;
+		const done = new Promise<void>((resolve, rej) => {
+			reject = rej;
+			const since = Math.floor(Date.now() / 1000) - 60;
+			for (const box of boxes) {
+				stops.push(
+					this.mail!.links(box, code.pub, since, async (sealed) => {
+						const p = openLink(priv, sealed);
+						if (!p || taken) return;
+						taken = true;
+						stopAll();
+						try {
+							await this.adoptLinked(p.secret, p.position, p.seq, boxes);
+							resolve();
+						} catch (e) {
+							rej(e instanceof Error ? e : new Error(String(e)));
+						}
+					})
+				);
+			}
+		});
+		return {
+			url: linkURL(votePage, code),
+			stop: () => {
+				stopAll();
+				reject(new Error('stopped'));
+			},
+			done
+		};
+	}
+
+	// adoptLinked takes a secret another device sent: the key is rebuilt
+	// and its position checked against the mirror.
+	private async adoptLinked(secret: string, position: number, seq: number, boxes: string[]) {
+		const setup = get(this.setup);
+		if (!setup) throw new Error('not ready');
+		const key = newVoteKey(this.slug, setup.setup.event, big(secret), false, boxes);
+		const pos = await findPosition(this.src, key.leaf);
+		if (pos === null && position < 0) throw new Error('not registered');
+		key.position = pos ?? position;
+		key.seq = seq;
+		key.backups.linked = 1;
+		voteKey.set(key);
+		this.phase.set('ready');
+		this.watchCheckpoints();
+		void this.prepare();
+	}
+
+	// sendKey posts this device's secret, sealed for the code's receiver,
+	// to the relay the code names.
+	async sendKey(code: LinkCode): Promise<void> {
+		const k = get(voteKey);
+		const setup = get(this.setup);
+		if (!k || k.position < 0 || !setup || !this.mail) throw new Error('not ready');
+		const sealed = seal(code, { secret: k.secret, position: k.position, seq: k.seq });
+		let lastErr = 'no relay answered';
+		for (const box of [k.sticky, ...k.ranking.filter((b) => b !== k.sticky)]) {
+			try {
+				await this.mail.post(box, 'link', sealed, [['t', linkTag(code.pub)]]);
+				voteKey.update((x) => (x ? { ...x, backups: { ...x.backups, linked: x.backups.linked + 1 } } : x));
+				return;
+			} catch (e) {
+				lastErr = e instanceof Error ? e.message : String(e);
+			}
+		}
+		throw new Error(lastErr);
 	}
 
 	// registrationRequest is what the ZKPassport component binds.

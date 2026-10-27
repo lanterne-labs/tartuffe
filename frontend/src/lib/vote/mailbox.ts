@@ -9,7 +9,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { bech32 } from '@scure/base';
 
-export type MessageKind = 'ballot' | 'register' | 'complaint';
+export type MessageKind = 'ballot' | 'register' | 'complaint' | 'link';
 export type ServerKind = 'ack' | 'checkpoint' | 'snapshot';
 
 // Posted is the receipt of a post: the message's id in the box.
@@ -37,8 +37,9 @@ export interface RegisterMessage {
 export interface Mailbox {
 	boxes(): string[];
 	// post sends a voter message to one box; it resolves once the box took
-	// it, or rejects.
-	post(box: string, kind: MessageKind, body: string): Promise<Posted>;
+	// it, or rejects. tags are added to the event's (a link names its
+	// receiver with a p tag).
+	post(box: string, kind: MessageKind, body: string, tags?: string[][]): Promise<Posted>;
 	// serverMessages reads the server's messages of a kind posted to the
 	// box since the time given, live, until the subscription is stopped;
 	// down is told once when the box cannot be reached three times in a
@@ -51,12 +52,15 @@ export interface Mailbox {
 	// fetchEvent reads one event by its id from whichever box holds it
 	// (a complaint someone links to); null when none does in time.
 	fetchEvent(id: string, timeoutMs: number): Promise<NostrEvent | null>;
+	// links reads the device links posted to the box for a receiver key
+	// (SPEC §4.2), live, until stopped.
+	links(box: string, receiver: string, since: number, each: (sealed: string) => void): () => void;
 }
 
 // --- Nostr ---
 
 // The kinds of backend/vote/nostr.go.
-const KINDS: Record<MessageKind | ServerKind, number> = { ballot: 7020, register: 7021, ack: 7022, checkpoint: 7023, complaint: 7024, snapshot: 7025 };
+const KINDS: Record<MessageKind | ServerKind, number> = { ballot: 7020, register: 7021, ack: 7022, checkpoint: 7023, complaint: 7024, snapshot: 7025, link: 7026 };
 
 export interface NostrEvent {
 	id: string;
@@ -70,15 +74,17 @@ export interface NostrEvent {
 
 // signedEvent signs the content as an event of a fresh throwaway key,
 // dated to the minute.
-function signedEvent(kind: number, tag: string, content: string, now = Date.now()): NostrEvent {
+function signedEvent(kind: number, tag: string, content: string, extraTags: string[][] = [], now = Date.now()): NostrEvent {
 	const secret = schnorr.utils.randomSecretKey();
 	const pubkey = bytesToHex(schnorr.getPublicKey(secret));
 	const created_at = Math.floor(now / 60_000) * 60;
-	const tags = [['t', tag]];
+	const tags = [['t', tag], ...extraTags];
 	const serial = JSON.stringify([0, pubkey, created_at, kind, tags, content]);
 	const id = sha256(new TextEncoder().encode(serial));
 	return { id: bytesToHex(id), pubkey, created_at, kind, tags, content, sig: bytesToHex(schnorr.sign(id, secret)) };
 }
+
+export const linkTag = (receiver: string) => `link:${receiver}`;
 
 // eventId recomputes a Nostr event's id; verifyEvent checks it and the
 // signature (what a complaint's reader does with the ack inside).
@@ -120,8 +126,8 @@ export class NostrMailbox implements Mailbox {
 		return this.urls;
 	}
 
-	post(box: string, kind: MessageKind, body: string): Promise<Posted> {
-		const ev = signedEvent(KINDS[kind], this.tag, body);
+	post(box: string, kind: MessageKind, body: string, tags: string[][] = []): Promise<Posted> {
+		const ev = signedEvent(KINDS[kind], this.tag, body, tags);
 		return new Promise((resolve, reject) => {
 			let ws: WebSocket;
 			const done = (err?: string) => {
@@ -168,7 +174,7 @@ export class NostrMailbox implements Mailbox {
 			ws.onopen = () => {
 				retry = 1000;
 				failures = 0;
-				ws?.send(JSON.stringify(['REQ', sub, { ...filter, '#t': [this.tag] }]));
+				ws?.send(JSON.stringify(['REQ', sub, { '#t': [this.tag], ...filter }]));
 			};
 			ws.onmessage = (m) => {
 				try {
@@ -211,6 +217,12 @@ export class NostrMailbox implements Mailbox {
 
 	registrations(box: string, since: number, each: (m: RegisterMessage) => void): () => void {
 		return this.subscribe(box, { kinds: [KINDS.register], since }, (ev) => each({ id: ev.id, body: ev.content, time: ev.created_at }));
+	}
+
+	// A link names its receiver in a t tag (relays validate p tags as
+	// 32-byte keys; the receiver's is a 33-byte compressed point).
+	links(box: string, receiver: string, since: number, each: (sealed: string) => void): () => void {
+		return this.subscribe(box, { kinds: [KINDS.link], '#t': [linkTag(receiver)], since }, (ev) => each(ev.content));
 	}
 
 	fetchEvent(id: string, timeoutMs: number): Promise<NostrEvent | null> {

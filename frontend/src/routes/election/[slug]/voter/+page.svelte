@@ -18,6 +18,7 @@
 	import { BLANK, type Ranking } from '$lib/vote/crypto';
 	import { defaultSources } from '$lib/vote/sources';
 	import { neventLink } from '$lib/vote/mailbox';
+	import { parseLink, type LinkCode } from '$lib/vote/link';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -53,6 +54,26 @@
 	let keyOpen = $state(false);
 	let slotPick = $state<number | null>(null);
 	let withdrawOpen = $state(false);
+	// A device link opened here (SPEC §4.2): the code of the device asking
+	// for the key, and where the sending stands.
+	let linkCode = $state<LinkCode | null>(null);
+	let linkState = $state<'ask' | 'sending' | 'sent' | 'failed'>('ask');
+	let linkError = $state('');
+	async function sendKey() {
+		if (!linkCode) return;
+		linkState = 'sending';
+		try {
+			await session.sendKey(linkCode);
+			linkState = 'sent';
+		} catch (e) {
+			linkError = e instanceof Error ? e.message : String(e);
+			linkState = 'failed';
+		}
+	}
+	function closeLink() {
+		linkCode = null;
+		history.replaceState(null, '', window.location.pathname + window.location.search);
+	}
 	let actionError = $state('');
 
 	// The options of the setup in force: slot → candidate card or blank.
@@ -229,8 +250,23 @@
 		event = ev;
 		cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
 		await session.init();
+		checkLink();
+		window.addEventListener('hashchange', checkLink);
 	});
-	onDestroy(() => session.destroy());
+	// A device link in the URL, opened here (a scanned QR code) or
+	// navigated to (the hash alone changes without a reload).
+	function checkLink() {
+		const code = parseLink(window.location.hash);
+		if (code && code.pub !== linkCode?.pub) {
+			linkCode = code;
+			linkState = 'ask';
+			linkError = '';
+		}
+	}
+	onDestroy(() => {
+		session.destroy();
+		if (typeof window !== 'undefined') window.removeEventListener('hashchange', checkLink);
+	});
 </script>
 
 <svelte:head>
@@ -418,6 +454,23 @@
 		{#snippet actions()}
 			<button class="btn" onclick={() => (withdrawOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+		{/snippet}
+	</Modal>
+
+	<Modal open={!!linkCode} title={tr('v2.link.send.title', currentLang)} onclose={closeLink} closeLabel={tr('auth.close', currentLang)}>
+		{#if !hasKey || ($voteKey?.position ?? -1) < 0}
+			<p class="dialog-text">{tr('v2.link.send.nokey', currentLang)}</p>
+		{:else if linkState === 'sent'}
+			<p class="dialog-text">{tr('v2.link.send.sent', currentLang)}</p>
+		{:else}
+			<p class="dialog-text">{tr('v2.link.send.text', currentLang)}</p>
+			{#if linkState === 'failed'}<p class="save-error" role="alert">{linkError}</p>{/if}
+		{/if}
+		{#snippet actions()}
+			<button class="btn" onclick={closeLink}>{tr('auth.close', currentLang)}</button>
+			{#if hasKey && ($voteKey?.position ?? -1) >= 0 && linkState !== 'sent'}
+				<button class="btn btn-primary" onclick={sendKey} disabled={linkState === 'sending'}>{tr('v2.link.send.button', currentLang)}</button>
+			{/if}
 		{/snippet}
 	</Modal>
 

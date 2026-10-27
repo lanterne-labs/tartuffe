@@ -5,6 +5,7 @@
 	// and acknowledged. Also the way back in with 12 words.
 	import Modal from './Modal.svelte';
 	import Steps, { type StepState } from './Steps.svelte';
+	import Spinner from './Spinner.svelte';
 	import VotePassport from './VotePassport.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import type { VoteSession } from '$lib/vote/session';
@@ -23,7 +24,7 @@
 	}
 	let { open, lang, session, domain, devMode = false, simulate = false, onclose }: Props = $props();
 
-	type Step = 'choose' | 'words' | 'confirm' | 'passport' | 'posting' | 'done' | 'restore';
+	type Step = 'choose' | 'words' | 'confirm' | 'passport' | 'posting' | 'done' | 'restore' | 'link' | 'linked';
 	let step: Step = $state('choose');
 	let key: VoteKey | null = $state(null);
 	let words = $state('');
@@ -32,6 +33,10 @@
 	let error = $state('');
 	let busy = $state(false);
 	let restoreWords = $state('');
+	let linkUrl = $state('');
+	let linkQr = $state('');
+	let linkCopied = $state(false);
+	let stopLink: (() => void) | null = null;
 	let request = $derived(key ? session.registrationRequest(key) : null);
 	let canPasskey = $derived(prfSupported());
 
@@ -95,7 +100,42 @@
 		}
 	}
 
+	// receiveLink shows the code of this device and waits for the key.
+	async function receiveLink() {
+		error = '';
+		try {
+			const got = session.receiveLink(window.location.origin + window.location.pathname);
+			stopLink = got.stop;
+			linkUrl = got.url;
+			linkCopied = false;
+			step = 'link';
+			const QRCode = await import('qrcode');
+			linkQr = await QRCode.toDataURL(got.url, { margin: 1, width: 240 });
+			await got.done;
+			stopLink = null;
+			step = 'linked';
+		} catch (e) {
+			if (e instanceof Error && e.message === 'stopped') return;
+			error = e instanceof Error && e.message === 'not registered' ? tr('v2.key.restore.notfound', lang) : e instanceof Error ? e.message : String(e);
+		}
+	}
+
+	async function copyLink() {
+		try {
+			await navigator.clipboard.writeText(linkUrl);
+			linkCopied = true;
+		} catch {}
+	}
+
+	function back() {
+		stopLink?.();
+		stopLink = null;
+		step = 'choose';
+	}
+
 	function close() {
+		stopLink?.();
+		stopLink = null;
 		onclose();
 		setTimeout(() => {
 			if (!$voteKey) step = 'choose';
@@ -120,6 +160,7 @@
 			{/if}
 			<button class="btn" class:btn-primary={!canPasskey} onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
 			<button class="link" onclick={() => (step = 'restore')}>{tr('v2.key.restore', lang)}</button>
+			<button class="link" onclick={receiveLink}>{tr('v2.key.link', lang)}</button>
 		</div>
 	{:else if step === 'words'}
 		<p class="text"><strong>{tr('v2.key.words.title', lang)}</strong></p>
@@ -150,6 +191,20 @@
 			<p class="text">{tr('v2.key.joined', lang)}</p>
 			<button class="btn btn-primary" onclick={close}>{tr('auth.close', lang)}</button>
 		{/if}
+	{:else if step === 'link'}
+		<p class="text">{tr('v2.key.link.show', lang)}</p>
+		{#if linkQr}
+			<img class="qr" src={linkQr} alt="QR" width="240" height="240" />
+		{/if}
+		<p class="url"><code>{linkUrl}</code></p>
+		<div class="row">
+			<button class="btn" onclick={back}>{tr('key.back', lang)}</button>
+			<button class="btn" onclick={copyLink}>{tr(linkCopied ? 'v2.key.link.copied' : 'v2.key.link.copy', lang)}</button>
+		</div>
+		<p class="text waiting"><Spinner size="sm" label={tr('v2.key.link.waiting', lang)} /> {tr('v2.key.link.waiting', lang)}</p>
+	{:else if step === 'linked'}
+		<p class="text">{tr('v2.key.link.done', lang)}</p>
+		<button class="btn btn-primary" onclick={close}>{tr('auth.close', lang)}</button>
 	{:else if step === 'restore'}
 		<p class="text">{tr('v2.key.restore', lang)}</p>
 		<textarea rows="3" bind:value={restoreWords} placeholder={tr('v2.key.restore.placeholder', lang)} autocapitalize="none"></textarea>
@@ -226,6 +281,24 @@
 	}
 	.steps-box {
 		margin: 0.5rem 0 1rem;
+	}
+	.qr {
+		display: block;
+		margin: 0 auto 0.9rem;
+		border-radius: var(--radius-md);
+		background: white;
+	}
+	.url {
+		margin: 0 0 0.9rem;
+		font-size: 0.72rem;
+		word-break: break-all;
+		color: var(--text-muted);
+	}
+	.waiting {
+		margin-top: 0.9rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	.error {
 		margin: 0.75rem 0 0;

@@ -190,8 +190,13 @@ assertion time: two biometric prompts). Apple and Google sync passkeys across
 the voter's devices, so a lost phone does not lose the key; the passkey
 provider learns that a passkey for the app origin exists, nothing else.
 Otherwise `s` is random, stored with `navigator.storage.persist()`, and
-backed up by 12 words or a device link (QR, end-to-end encrypted, through a
-relay). The 12 words are offered to PRF users too: a passkey can be deleted
+backed up by 12 words or a device link: the new device shows a URL (as a QR
+code and as text) carrying an ephemeral secp256k1 key and listens on every
+relay of the setup; the device that holds `s` opens it, the voter confirms,
+and it posts `{s, position, seq}` sealed for that key (ECDH,
+XChaCha20-Poly1305) as a `link` event (kind 7026, a second `t` tag
+`link:<receiver key>`) to the first of its relays that takes it. Our server never sees it; the relay sees a ciphertext and the two
+devices' addresses. The 12 words are offered to PRF users too: a passkey can be deleted
 or a provider account lost, and the words are the only backup that depends
 on nobody.
 
@@ -871,6 +876,8 @@ Differences from the text above:
 - The ranking can be reordered with the keyboard (buttons on each slot)
   besides the drag.
 
+- The device link (§4.2): the new device's QR code or URL, the sending
+  device's confirmation, the sealed secret through a relay.
+
 Not built yet: the `github.io` app origin and the mirror repository (Q3,
-the owner's choice of organisation), the device link for v2 keys, the
-final shuffle (§9.4).
+the owner's choice of organisation), the final shuffle (§9.4).

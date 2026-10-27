@@ -25,6 +25,10 @@ const (
 	KindNostrCheckpoint = 7023
 	KindNostrComplaint  = 7024
 	KindNostrSnapshot   = 7025
+	// KindNostrLink carries a voter's secret from one of their devices to
+	// another, encrypted for the receiver (SPEC §4.2); never read by the
+	// ingest.
+	KindNostrLink = 7026
 )
 
 // EventTag is the tag of every event of a vote.

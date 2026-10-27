@@ -162,7 +162,7 @@
 		{:else}
 			<p class="ok">{tr('profile.key.ready', currentLang)}</p>
 			<p class="muted">{tr('profile.key.story', currentLang)}</p>
-			<p class="muted">{tr(key.prf ? 'profile.key.passkey' : key.backups.words ? 'profile.key.words' : 'profile.key.unprotected', currentLang)}</p>
+			<p class="muted">{tr(key.prf ? 'profile.key.passkey' : key.backups.words ? 'profile.key.words' : key.backups.linked > 0 ? 'profile.key.linked' : 'profile.key.unprotected', currentLang)}</p>
 			<details class="lost">
 				<summary>{tr('profile.key.lost.title', currentLang)}</summary>
 				<p class="muted">{tr('profile.key.lost.text', currentLang)}</p>
