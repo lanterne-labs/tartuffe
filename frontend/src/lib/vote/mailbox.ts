@@ -39,8 +39,10 @@ export interface Mailbox {
 	// it, or rejects.
 	post(box: string, kind: MessageKind, body: string): Promise<Posted>;
 	// serverMessages reads the server's messages of a kind posted to the
-	// box since the time given, live, until the subscription is stopped.
-	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void): () => void;
+	// box since the time given, live, until the subscription is stopped;
+	// down is told once when the box cannot be reached three times in a
+	// row (the caller moves to another box).
+	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void, down?: () => void): () => void;
 	// registrations reads the voters' registrations posted to the box
 	// since the time given, live, until stopped (the newest leaves, before
 	// the mirror has them).
@@ -119,10 +121,11 @@ export class NostrMailbox implements Mailbox {
 		});
 	}
 
-	private subscribe(box: string, filter: Record<string, unknown>, each: (ev: NostrEvent) => void): () => void {
+	private subscribe(box: string, filter: Record<string, unknown>, each: (ev: NostrEvent) => void, down?: () => void): () => void {
 		let ws: WebSocket | null = null;
 		let stopped = false;
 		let retry = 1000;
+		let failures = 0;
 		const sub = 's' + Math.random().toString(36).slice(2, 10);
 		const open = () => {
 			if (stopped) return;
@@ -134,6 +137,7 @@ export class NostrMailbox implements Mailbox {
 			}
 			ws.onopen = () => {
 				retry = 1000;
+				failures = 0;
 				ws?.send(JSON.stringify(['REQ', sub, { ...filter, '#t': [this.tag] }]));
 			};
 			ws.onmessage = (m) => {
@@ -147,6 +151,10 @@ export class NostrMailbox implements Mailbox {
 		};
 		const schedule = () => {
 			if (stopped) return;
+			if (++failures === 3 && down) {
+				down();
+				if (stopped) return;
+			}
 			setTimeout(open, retry);
 			retry = Math.min(retry * 2, 30_000);
 		};
@@ -159,11 +167,16 @@ export class NostrMailbox implements Mailbox {
 		};
 	}
 
-	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void): () => void {
-		return this.subscribe(box, { kinds: [KINDS[kind]], authors: [this.serverPubkey], since }, (ev) => {
-			if (ev.pubkey !== this.serverPubkey) return;
-			each({ kind, body: ev.content, time: ev.created_at, event: ev });
-		});
+	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void, down?: () => void): () => void {
+		return this.subscribe(
+			box,
+			{ kinds: [KINDS[kind]], authors: [this.serverPubkey], since },
+			(ev) => {
+				if (ev.pubkey !== this.serverPubkey) return;
+				each({ kind, body: ev.content, time: ev.created_at, event: ev });
+			},
+			down
+		);
 	}
 
 	registrations(box: string, since: number, each: (m: RegisterMessage) => void): () => void {

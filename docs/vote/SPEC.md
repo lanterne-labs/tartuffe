@@ -854,11 +854,10 @@ Differences from the text above:
   `VITE_VOTE_SIMULATE_PASSPORT=1`) stands in for the ZKPassport app; the
   command refuses it on the host.
 
-- The browser complains while the page is open; the check at a later
-  visit (§7.2) is not built: a key stores its `seq` only, not the last
-  ballot's `pi_hash`.
+- The key keeps the last ballot's check (received, verified, missing);
+  a later visit shows it and finishes it. The checkpoint subscription
+  moves to the next relay of the ranking when a relay cannot be reached.
 
 Not built yet: the git-backed mirror and the `github.io` app origin
-(§8.3, Q3), the later-visit check and a page a complaint links to, the
-device link for v2 keys, keyboard reordering of the ranking, the final
-shuffle (§9.4).
+(§8.3, Q3), a page a complaint links to, the device link for v2 keys,
+keyboard reordering of the ranking, the final shuffle (§9.4).

@@ -9,7 +9,7 @@ import { entropyToMnemonic, mnemonicToEntropy, validateMnemonic } from '@scure/b
 import { wordlist as french } from '@scure/bip39/wordlists/french.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { FR, T_PRF, T_RELAY, fromBytes, h, hex, toBytes, leafOf } from './crypto';
-import { relayRanking } from './mailbox';
+import { relayRanking, type NostrEvent } from './mailbox';
 
 export interface VoteKey {
 	// slug names the event the key is for; eventId its number.
@@ -31,6 +31,23 @@ export interface VoteKey {
 	backups: { words: boolean; passkey: boolean; linked: number };
 	// seq is the last ballot's sequence number cast from this key.
 	seq: number;
+	// lastBallot is the last ballot this device cast and where its check
+	// stands, so a later visit finishes the check (SPEC §7.2): received
+	// (acknowledged, not yet found in the log), verified, or missing (the
+	// complaint posted).
+	lastBallot?: LastBallot;
+}
+
+export interface LastBallot {
+	state: 'received' | 'verified' | 'missing';
+	piHash: string;
+	postedAt: number;
+	checkpoint: number;
+	nostrId: string;
+	body: string;
+	ackEvent: NostrEvent;
+	logSeq?: number;
+	complaints?: string[];
 }
 
 const STORAGE_KEY = 'vote2_key';

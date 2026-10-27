@@ -5,7 +5,7 @@
 
 import { writable, get, type Writable } from 'svelte/store';
 import { bb, big, hex, nullifierOf, type Ranking } from './crypto';
-import { voteKey, newVoteKey, randomSecret, createPasskeySecret, prfSupported, secretFromWords, newWords, type VoteKey } from './key';
+import { voteKey, newVoteKey, randomSecret, createPasskeySecret, prfSupported, secretFromWords, newWords, type VoteKey, type LastBallot } from './key';
 import { NostrMailbox, type Mailbox, type NostrEvent } from './mailbox';
 import { defaultSources, type Sources } from './sources';
 import { warmUp, type Prover } from './prove';
@@ -100,12 +100,32 @@ export class VoteSession {
 				void this.finishJoin(k);
 			} else {
 				this.phase.set('ready');
+				this.resumeLastBallot(k);
 				void this.prepare();
 			}
 		} catch (e) {
 			this.error.set(e instanceof Error ? e.message : String(e));
 			this.phase.set('error');
 		}
+	}
+
+	// resumeLastBallot shows where the last ballot of this device stands
+	// and, when it was acknowledged but not yet found, finishes the check
+	// against the checkpoints of this visit (SPEC §7.2: a later visit).
+	private resumeLastBallot(k: VoteKey) {
+		const lb = k.lastBallot;
+		if (!lb) return;
+		this.ballot.set({ state: lb.state, piHash: lb.piHash, postedAt: lb.postedAt, checkpoint: lb.checkpoint, nostrId: lb.nostrId, body: lb.body, ackEvent: lb.ackEvent, logSeq: lb.logSeq, complaints: lb.complaints });
+		const cp = get(this.checkpoint);
+		if (lb.state === 'received' && cp) void this.afterCheckpoint(cp);
+	}
+
+	// rememberBallot keeps the ballot's check with the key.
+	private rememberBallot(b: BallotStatus) {
+		if (!b.piHash || !b.postedAt || !b.checkpoint || !b.nostrId || !b.body || !b.ackEvent) return;
+		if (b.state !== 'received' && b.state !== 'verified' && b.state !== 'missing') return;
+		const lb: LastBallot = { state: b.state, piHash: b.piHash, postedAt: b.postedAt, checkpoint: b.checkpoint, nostrId: b.nostrId, body: b.body, ackEvent: b.ackEvent, logSeq: b.logSeq, complaints: b.complaints };
+		voteKey.update((x) => (x ? { ...x, lastBallot: lb } : x));
 	}
 
 	private async refreshCheckpoint(): Promise<CheckpointInfo | null> {
@@ -129,16 +149,29 @@ export class VoteSession {
 	}
 
 	// watchCheckpoints follows the server's checkpoints on the key's sticky
-	// box (or the first box), the same subscription for every visitor.
-	private watchCheckpoints() {
+	// box (or the first box), the same subscription for every visitor; a
+	// box that cannot be reached gives way to the next of the ranking, and
+	// the mirror's checkpoint is read meanwhile.
+	private watchCheckpoints(skip = 0) {
 		const k = get(voteKey);
-		const box = k?.sticky ?? this.mail?.boxes()[0];
+		const order = k ? [k.sticky, ...k.ranking.filter((b) => b !== k.sticky)] : (this.mail?.boxes() ?? []);
+		const box = order[skip % Math.max(order.length, 1)];
 		if (!box || !this.mail) return;
 		this.stopCheckpoints?.();
-		this.stopCheckpoints = this.mail.serverMessages(box, 'checkpoint', Math.floor(Date.now() / 1000) - 600, (m) => {
-			const info = this.takeCheckpoint(m.body);
-			if (info) void this.afterCheckpoint(info);
-		});
+		this.stopCheckpoints = this.mail.serverMessages(
+			box,
+			'checkpoint',
+			Math.floor(Date.now() / 1000) - 600,
+			(m) => {
+				const info = this.takeCheckpoint(m.body);
+				if (info) void this.afterCheckpoint(info);
+			},
+			() => {
+				console.warn('vote: checkpoint relay unreachable, moving on', box);
+				void this.refreshCheckpoint().then((info) => info && this.afterCheckpoint(info));
+				this.watchCheckpoints(skip + 1);
+			}
+		);
 	}
 
 	private async refreshPublic(cp: CheckpointInfo) {
@@ -153,7 +186,10 @@ export class VoteSession {
 		const b = get(this.ballot);
 		if ((b.state === 'received' || b.state === 'sent') && b.piHash && b.postedAt && b.checkpoint && cp.index >= b.checkpoint) {
 			const entry = await findReceipt(this.src, cp.mirror, b.piHash, new Date(b.postedAt));
-			if (entry) this.ballot.update((x) => ({ ...x, state: 'verified', logSeq: entry.log_seq }));
+			if (entry) {
+				this.ballot.update((x) => ({ ...x, state: 'verified', logSeq: entry.log_seq }));
+				this.rememberBallot(get(this.ballot));
+			}
 			// Not listed by the checkpoint after the named one: the mirror
 			// had time; the server's own ack is now the proof.
 			else if (cp.index > b.checkpoint && get(this.ballot).state === 'received') await this.complain(b);
@@ -296,6 +332,7 @@ export class VoteSession {
 		}
 		console.warn('vote: ballot missing from checkpoint', b.checkpoint, 'complaint posted', ids);
 		this.ballot.update((x) => ({ ...x, state: 'missing', complaints: ids }));
+		this.rememberBallot(get(this.ballot));
 	}
 
 	// --- Casting ---
@@ -327,6 +364,7 @@ export class VoteSession {
 			if (ack.outcome === 'logged') {
 				voteKey.update((x) => (x ? { ...x, seq } : x));
 				this.ballot.set({ state: 'received', ranking: r, piHash, postedAt, checkpoint: ack.checkpoint, body, nostrId: res.posted.id, ackEvent: res.ackEvent });
+				this.rememberBallot(get(this.ballot));
 				return;
 			}
 			if (ack.reason === 'stale_seq') {
