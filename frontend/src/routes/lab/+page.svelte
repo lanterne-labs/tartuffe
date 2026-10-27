@@ -109,7 +109,6 @@
 
 <svelte:head>
 	<title>{c.kicker} — tartuffe.me</title>
-	<meta name="description" content={c.lead} />
 </svelte:head>
 
 <article class="lab">

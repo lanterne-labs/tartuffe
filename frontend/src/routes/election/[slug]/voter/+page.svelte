@@ -10,6 +10,7 @@
 	import { lang, tr } from '$lib/i18n';
 	import Modal from '$lib/components/Modal.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
@@ -272,7 +273,6 @@
 <svelte:head>
 	<title>{event ? `${currentLang === 'en' ? event.title_en : event.title_fr} — tartuffe.me` : 'tartuffe.me'}</title>
 	{#if event}
-		<meta name="description" content={currentLang === 'en' ? event.description_en : event.description_fr} />
 	{/if}
 </svelte:head>
 
@@ -414,6 +414,9 @@
 		</ol>
 		{#if open}
 			<div class="ballot-actions">
+				{#if event && ($ballotStore.state === 'verified' || $ballotStore.state === 'received' || ($voteKey?.lastBallot && $voteKey.lastBallot.state !== 'missing'))}
+					<ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} />
+				{/if}
 				{#if shown.length === 0}
 					<button class="btn btn-small" onclick={() => pick(BLANK, null)} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
 					{@render help(tr('vote.blank.help', currentLang))}

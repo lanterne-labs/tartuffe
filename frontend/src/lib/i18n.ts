@@ -273,6 +273,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'share.text.person': { fr: '{name} : {score}/100 de cohérence sur tartuffe.me', en: '{name}: {score}/100 for consistency on tartuffe.me' },
 	'share.text.stance': { fr: 'Les déclarations et les votes de {name} sur « {topic} »', en: 'What {name} says and votes on “{topic}”' },
 	'share.text.contradiction': { fr: '{name} : « {a} » puis « {b} »', en: '{name}: “{a}”, then “{b}”' },
+	'share.text.event': { fr: 'J’ai voté : {name}. Personne ne saura pour qui, et tout le monde peut recompter.', en: 'I voted: {name}. Nobody will know for whom, and anyone can recount.' },
 	'share.text.fact': { fr: '{name} : « {fact} »', en: '{name}: “{fact}”' },
 
 	// Score explanation

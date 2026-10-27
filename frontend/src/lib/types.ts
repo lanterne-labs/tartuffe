@@ -264,7 +264,7 @@ export interface FeedPage {
 	next?: string;
 }
 
-export type ShareKind = 'person' | 'stance' | 'contradiction' | 'fact';
+export type ShareKind = 'person' | 'stance' | 'contradiction' | 'fact' | 'event';
 
 // GET /api/share/{kind}/{id}: what a shared link points at.
 export interface ShareTarget {

@@ -16,6 +16,8 @@ export interface ShareItem {
 	topic?: string;
 	text?: string;
 	other?: string;
+	// The event's slug, for an event.
+	slug?: string;
 }
 
 // displayName capitalizes a name stored in lowercase ("jean-luc mélenchon"
@@ -26,8 +28,10 @@ export function displayName(name: string): string {
 	return name.replace(/(^|[\s\-'’])(\p{L})/gu, (_, sep: string, c: string) => sep + c.toUpperCase());
 }
 
-export function sharePath(kind: ShareKind, id: number, personId: number): string {
+export function sharePath(kind: ShareKind, id: number, personId: number, slug = ''): string {
 	switch (kind) {
+		case 'event':
+			return `/election/${encodeURIComponent(slug)}`;
 		case 'person':
 			return `/person/${personId}`;
 		case 'stance':
@@ -41,7 +45,7 @@ export function sharePath(kind: ShareKind, id: number, personId: number): string
 
 export function shareURL(item: ShareItem): string {
 	const origin = typeof window === 'undefined' ? '' : window.location.origin;
-	return origin + sharePath(item.kind, item.id, item.personId);
+	return origin + sharePath(item.kind, item.id, item.personId, item.slug);
 }
 
 export function clip(s: string, n: number): string {
@@ -54,6 +58,8 @@ export function clip(s: string, n: number): string {
 export function shareText(item: ShareItem, l: Lang): string {
 	const name = displayName(item.personName);
 	switch (item.kind) {
+		case 'event':
+			return tr('share.text.event', l, { name });
 		case 'person':
 			return tr('share.text.person', l, { name, score: Math.round((item.score ?? 0) * 100) });
 		case 'stance':

@@ -151,7 +151,6 @@
 
 <svelte:head>
 	<title>{c.title1} {c.title2} — tartuffe.me</title>
-	<meta name="description" content={c.lead} />
 </svelte:head>
 
 <article class="intro">

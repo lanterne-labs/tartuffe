@@ -193,7 +193,6 @@
 
 <svelte:head>
 	<title>{c.metaTitle}</title>
-	<meta name="description" content={c.metaDesc} />
 </svelte:head>
 
 {#snippet neutralIcon(i: number)}

@@ -165,7 +165,6 @@
 
 <svelte:head>
 	<title>tartuffe.me — {tr('home.poll.title', currentLang)}</title>
-	<meta name="description" content={tr('home.poll.lead', currentLang)} />
 </svelte:head>
 
 <div class="dashboard">

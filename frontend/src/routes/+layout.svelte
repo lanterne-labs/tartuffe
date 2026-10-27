@@ -88,6 +88,7 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<link rel="canonical" href={$page.url.origin + $page.url.pathname} />
 	<meta name="description" content={meta.description} />
 	<meta property="og:site_name" content="tartuffe.me" />
 	<meta property="og:type" content="website" />
