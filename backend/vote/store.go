@@ -494,9 +494,12 @@ func (s *Store) PositionsShard(ctx context.Context, eventID int64, nibble string
 	return out, rows.Err()
 }
 
-// EntriesOf lists the entries of a checkpoint for the mirror.
+// EntriesOf lists the entries of a checkpoint for the mirror: a ballot by
+// its pi_hash, any other entry by the hash of its logged body (what anyone
+// recomputes from the log: the auditor compares the file with it).
 func (s *Store) EntriesOf(ctx context.Context, checkpoint int64) ([]MirrorEntry, error) {
-	rows, err := s.db.Query(ctx, `SELECT kind, body_hash, pi_hash, outcome, log_seq FROM vote2_events WHERE checkpoint = $1 ORDER BY log_seq`, checkpoint)
+	rows, err := s.db.Query(ctx, `SELECT e.kind, e.body_hash, e.pi_hash, e.outcome, e.log_seq, l.body FROM vote2_events e
+		LEFT JOIN vote_log l ON l.seq = e.log_seq WHERE e.checkpoint = $1 ORDER BY e.log_seq`, checkpoint)
 	if err != nil {
 		return nil, fmt.Errorf("entries of: %w", err)
 	}
@@ -505,12 +508,15 @@ func (s *Store) EntriesOf(ctx context.Context, checkpoint int64) ([]MirrorEntry,
 	for rows.Next() {
 		var kind int
 		var bodyHash, outcome string
-		var pi *string
+		var pi, logged *string
 		var seq *int64
-		if err := rows.Scan(&kind, &bodyHash, &pi, &outcome, &seq); err != nil {
+		if err := rows.Scan(&kind, &bodyHash, &pi, &outcome, &seq, &logged); err != nil {
 			return nil, err
 		}
 		e := MirrorEntry{Checkpoint: checkpoint, Hash: bodyHash}
+		if logged != nil {
+			e.Hash = BodyHash([]byte(*logged))
+		}
 		switch {
 		case outcome == "rejected":
 			e.Kind = KindReject

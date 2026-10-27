@@ -27,6 +27,8 @@ import (
 type LogSource interface {
 	Entries(ctx context.Context, after int64, limit int) ([]polls.LogEntry, error)
 	Checkpoints(ctx context.Context) ([]Checkpoint, error)
+	// Stamps lists the OpenTimestamps proofs of the checkpoints.
+	Stamps(ctx context.Context) ([]polls.Stamp, error)
 }
 
 // Options of an audit.
@@ -45,6 +47,12 @@ type Options struct {
 	Relays []RelayEvent
 	// Snapshot is the mirror's snapshot list, to check against the relays.
 	Snapshot *SnapshotList
+	// BlockRoots checks the stamps' Bitcoin attestations against the block
+	// headers; nil checks the proofs' structure only (a warning).
+	BlockRoots polls.BlockRoots
+	// Mirror reads the mirror at the commits the notes name; nil skips the
+	// mirror (a warning).
+	Mirror MirrorReader
 }
 
 // Report is what the audit found.
@@ -58,6 +66,10 @@ type Report struct {
 	// The relays: protocol events read, acks, events acknowledged by no
 	// one, withholdings proven or attributed, complaints.
 	RelayEvents, Acks, Unacknowledged, Withheld, Complaints int
+	// The stamps: checkpoints attested in Bitcoin, still pending.
+	Stamped, StampsPending int
+	// The mirror: checkpoints whose files were checked at their commit.
+	MirrorChecked int
 }
 
 func (r *Report) problem(format string, args ...any) {
@@ -220,6 +232,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	// What the rejects are re-checked against once the replay is done
 	// (§12.5: every reject deserves its reason): the first checkpoint
 	// that logged each pi_hash, passport, leaf, and each pseudonym's seqs.
+	mirrorEntries := map[int64][]MirrorEntry{} // checkpoint → what its entries file must list
 	piFirst := map[string]int64{}
 	uidFirst := map[string]int64{}
 	idFirst := map[string]int64{}
@@ -254,8 +267,11 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				}
 				continue
 			}
-			if err := s.Validate(); err != nil {
+			if err := s.ValidateLogged(); err != nil {
 				rep.problem("setup %d: %v", e.Seq, err)
+			}
+			if s.NostrPubkey == "" || s.TallyPubkey == "" {
+				rep.warn("setup %d names no %s: a trial log", e.Seq, map[bool]string{true: "nostr_pubkey", false: "tally_pubkey"}[s.NostrPubkey == ""])
 			}
 			if len(setups) > 0 {
 				if err := checkLaterSetup(setups[0].Setup, s); err != nil {
@@ -282,6 +298,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				idFirst[r.ID] = cp.Index
 			}
 			lg.registers[BodyHash([]byte(e.Body))] = cp.Index
+			mirrorEntries[cp.Index] = append(mirrorEntries[cp.Index], MirrorEntry{Checkpoint: cp.Index, Kind: KindRegister, Hash: BodyHash([]byte(e.Body)), LogSeq: e.Seq})
 			if snapshot != nil {
 				rep.problem("registration %d after the close snapshot", e.Seq)
 			}
@@ -345,6 +362,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 				piFirst[pi] = cp.Index
 			}
 			lg.ballots[pi] = cp.Index
+			mirrorEntries[cp.Index] = append(mirrorEntries[cp.Index], MirrorEntry{Checkpoint: cp.Index, Kind: KindBallot, Hash: pi, LogSeq: e.Seq})
 			v := voters[p.Nullifier]
 			if v == nil {
 				v = &voter{}
@@ -381,6 +399,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			}
 			rep.Rejects++
 			lg.rejects[rj.NostrID] = rejectAt{cp: cp.Index, reason: rj.Reason}
+			mirrorEntries[cp.Index] = append(mirrorEntries[cp.Index], MirrorEntry{Checkpoint: cp.Index, Kind: KindReject, Hash: BodyHash([]byte(e.Body)), LogSeq: e.Seq})
 			if !knownReason(rj.Reason) {
 				rep.problem("reject %d: unknown reason %q", e.Seq, rj.Reason)
 			}
@@ -518,6 +537,7 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 			var sn Seen
 			if json.Unmarshal([]byte(e.Body), &sn) == nil && sn.NostrID != "" {
 				lg.seen[sn.NostrID] = cp.Index
+				mirrorEntries[cp.Index] = append(mirrorEntries[cp.Index], MirrorEntry{Checkpoint: cp.Index, Kind: KindSeen, Hash: BodyHash([]byte(e.Body)), LogSeq: e.Seq})
 			}
 		case KindDestroyed, KindAbort:
 		default:
@@ -550,6 +570,11 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 	if other > 0 {
 		rep.warn("%d entries of another protocol version skipped", other)
 	}
+	// 9. The stamps: every checkpoint's note in Bitcoin (§12.1).
+	rep.checkStamps(ctx, src, cps, noteTime, opt)
+	// 10. The mirror: the files browsers read at each checkpoint's commit
+	// are the log's (§8.3).
+	rep.checkMirror(ctx, cps, noteTime, mirrorEntries, opt)
 	if len(setups) == 0 {
 		rep.problem("no setup for event %d", opt.EventID)
 	} else if setups[0].Setup.TallyPubkey == "" {
@@ -683,6 +708,10 @@ func (s StoreSource) Entries(ctx context.Context, after int64, limit int) ([]pol
 
 func (s StoreSource) Checkpoints(ctx context.Context) ([]Checkpoint, error) {
 	return s.Store.AllCheckpoints(ctx)
+}
+
+func (s StoreSource) Stamps(ctx context.Context) ([]polls.Stamp, error) {
+	return s.Store.Log.Stamps(ctx)
 }
 
 // AllCheckpoints lists every checkpoint in order.
@@ -846,4 +875,115 @@ func (c *rejectChecker) check(ctx context.Context, cp Checkpoint, rj Reject) str
 		}
 	}
 	return ""
+}
+
+// checkStamps verifies the OpenTimestamps proof of every checkpoint: the
+// stamp's note is the log's, the proof is of its digest, and its Bitcoin
+// attestations match the block headers. A checkpoint older than a day
+// without a Bitcoin attestation is a warning (the calendars confirm within
+// hours; the upgrade may lag).
+func (rep *Report) checkStamps(ctx context.Context, src LogSource, cps []Checkpoint, noteTime map[int64]time.Time, opt Options) {
+	stamps, err := src.Stamps(ctx)
+	if err != nil {
+		rep.warn("stamps not read: %v", err)
+		return
+	}
+	bySize := map[int64]polls.Stamp{}
+	for _, st := range stamps {
+		bySize[st.Size] = st
+	}
+	if opt.BlockRoots == nil {
+		rep.warn("the stamps' Bitcoin attestations not checked against the block headers (no block source)")
+	}
+	unstamped := 0
+	for _, cp := range cps {
+		st, ok := bySize[cp.LogSize]
+		if !ok {
+			if opt.Now.Sub(noteTime[cp.Index]) > time.Hour {
+				unstamped++
+			}
+			continue
+		}
+		if st.Checkpoint != cp.Note {
+			rep.problem("stamp of size %d: its note is not checkpoint %d's", st.Size, cp.Index)
+			continue
+		}
+		heights, pending, err := polls.VerifyOTS(ctx, st.OTS, polls.CheckpointDigest([]byte(cp.Note)), opt.BlockRoots)
+		if err != nil {
+			rep.problem("stamp of checkpoint %d: %v", cp.Index, err)
+			continue
+		}
+		if len(heights) > 0 {
+			rep.Stamped++
+		} else {
+			rep.StampsPending++
+			if opt.Now.Sub(noteTime[cp.Index]) > 24*time.Hour {
+				rep.warn("checkpoint %d: stamped %s ago, still pending at %s (no Bitcoin attestation yet)", cp.Index, opt.Now.Sub(noteTime[cp.Index]).Round(time.Hour), strings.Join(pending, ", "))
+			}
+		}
+	}
+	if unstamped > 0 {
+		rep.warn("%d checkpoints older than an hour have no stamp", unstamped)
+	}
+}
+
+// checkMirror reads, at the commit each note names, the note's own file
+// and the hour's entries file, and compares them with the log.
+func (rep *Report) checkMirror(ctx context.Context, cps []Checkpoint, noteTime map[int64]time.Time, entries map[int64][]MirrorEntry, opt Options) {
+	if opt.Mirror == nil {
+		rep.warn("the mirror not checked against the log (--mirror-git or --mirror-cdn)")
+		return
+	}
+	for _, cp := range cps {
+		if cp.Commit == "" {
+			continue
+		}
+		note, err := opt.Mirror.ReadAt(ctx, cp.Commit, fmt.Sprintf("checkpoints/%d.txt", cp.Index))
+		if err != nil {
+			rep.warn("mirror at %s: %v", short(cp.Commit), err)
+			continue
+		}
+		if note == nil {
+			rep.problem("mirror at %s: no checkpoints/%d.txt", short(cp.Commit), cp.Index)
+			continue
+		}
+		if strings.TrimSpace(string(note)) != strings.TrimSpace(cp.Note) {
+			rep.problem("mirror at %s: checkpoints/%d.txt is not the log's note", short(cp.Commit), cp.Index)
+		}
+		hour := noteTime[cp.Index].UTC().Format("2006-01-02T15")
+		raw, err := opt.Mirror.ReadAt(ctx, cp.Commit, "entries/"+hour+".json")
+		if err != nil {
+			rep.warn("mirror at %s: %v", short(cp.Commit), err)
+			continue
+		}
+		var listed []MirrorEntry
+		if raw != nil {
+			if err := json.Unmarshal(raw, &listed); err != nil {
+				rep.problem("mirror at %s: entries/%s.json: %v", short(cp.Commit), hour, err)
+				continue
+			}
+		}
+		key := func(e MirrorEntry) string { return fmt.Sprintf("%s/%s/%d", e.Kind, e.Hash, e.LogSeq) }
+		want := map[string]bool{}
+		for _, e := range entries[cp.Index] {
+			want[key(e)] = true
+		}
+		got := map[string]bool{}
+		for _, e := range listed {
+			if e.Checkpoint == cp.Index {
+				got[key(e)] = true
+			}
+		}
+		for k := range want {
+			if !got[k] {
+				rep.problem("mirror at %s: entries/%s.json does not list %s of checkpoint %d", short(cp.Commit), hour, k, cp.Index)
+			}
+		}
+		for k := range got {
+			if !want[k] {
+				rep.problem("mirror at %s: entries/%s.json lists %s, not an entry of checkpoint %d", short(cp.Commit), hour, k, cp.Index)
+			}
+		}
+		rep.MirrorChecked++
+	}
 }

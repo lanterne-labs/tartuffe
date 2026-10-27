@@ -416,7 +416,14 @@ func firstLine(b []byte) string {
 
 // Validate checks a setup's own consistency (not its relation to earlier
 // setups, which the log checks: SPEC §11).
-func (s *Setup) Validate() error {
+func (s *Setup) Validate() error { return s.validate(true) }
+
+// ValidateLogged checks a setup read from the log: as Validate, but a
+// setup without the server keys (a trial log) is the auditor's warning,
+// not an invalid setup.
+func (s *Setup) ValidateLogged() error { return s.validate(false) }
+
+func (s *Setup) validate(requireKeys bool) error {
 	if s.V != Version {
 		return fmt.Errorf("vote: setup version %d", s.V)
 	}
@@ -426,12 +433,12 @@ func (s *Setup) Validate() error {
 	if len(s.Options) != ballot.N {
 		return fmt.Errorf("vote: %d options, want %d", len(s.Options), ballot.N)
 	}
-	if len(s.TallyPubkey) != 64 || s.TallyPubkey != strings.ToLower(s.TallyPubkey) {
+	if requireKeys && (len(s.TallyPubkey) != 64 || s.TallyPubkey != strings.ToLower(s.TallyPubkey)) {
 		// Without it anyone with the database could append a tally or
 		// close the vote (sign.go).
 		return errors.New("vote: tally_pubkey (the tallier's signing key of keygen, 32 bytes of lower-case hex) is required")
 	}
-	if len(s.NostrPubkey) != 64 || s.NostrPubkey != strings.ToLower(s.NostrPubkey) {
+	if requireKeys && (len(s.NostrPubkey) != 64 || s.NostrPubkey != strings.ToLower(s.NostrPubkey)) {
 		// Without it every acknowledgement on the relays passes for the
 		// server's, and a forged one proves a withholding (SPEC §7.2).
 		return errors.New("vote: nostr_pubkey (the ingest's key, 32 bytes of lower-case hex) is required")

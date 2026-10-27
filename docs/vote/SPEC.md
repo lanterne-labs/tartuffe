@@ -750,8 +750,16 @@ a continuous archive of the relays (`dm vote archive`, optional) adds the
 times of first sighting:
 
 1. **Log:** every checkpoint signed by the published key, each consistent
-   with the previous (RFC 6962), its hash in Bitcoin; the checkpoints seen on
-   at least two relays and on the mirror are one chain (no split view).
+   with the previous (RFC 6962), its hash in Bitcoin (the OpenTimestamps
+   proof the site serves for each checkpoint, upgraded hourly by the ingest
+   once a calendar confirms, is evaluated down to a block height and the
+   message compared with that block's Merkle root, read from public block
+   explorers; a proof still pending after a day is a warning); the
+   checkpoints seen on at least two relays and on the mirror are one chain
+   (no split view). The mirror, read at the commit each note names (a
+   clone, or jsDelivr as browsers do), holds the note itself and an hour's
+   entries file that lists exactly the checkpoint's entries (a ballot by
+   `pi_hash`, any other entry by the hash of its logged body).
    Every time-based judgement below uses the `time` line of the signed
    note, never a record's `created_at`, which the server edits freely.
 2. **Setup:** keys on the curve, distinct, not the identity nor `±G`;
@@ -976,7 +984,10 @@ Differences from the text above:
   the auditor judges by signed times, accepts any `seq` order within a
   checkpoint, checks `K_REAL`, `tally_min_gap` and the count, re-checks
   every reject's reason, requires `nostr_pubkey`, attributes an
-  unacknowledged event only when created within an hour of its sighting;
+  unacknowledged event only when created within an hour of its sighting,
+  verifies the stamps against Bitcoin and the mirror's files at each
+  commit; the tallier signs its entries under `tally_pubkey`; a setup
+  logged while the ingest runs is read, relays included;
   the passport verifier pins the non-salted identifier and the validity.
   The browser's findings (registration failures, key persistence, passkey
   recovery, polling, the by-commit fallback, ack signatures, the device

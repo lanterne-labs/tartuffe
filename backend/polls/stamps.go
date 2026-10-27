@@ -164,3 +164,43 @@ func (s *PGStore) StampNote(ctx context.Context, size int64, msg []byte) (*Stamp
 	}
 	return st, nil
 }
+
+// UpgradeStamps asks the calendars for the Bitcoin part of every stamp
+// still pending (a calendar confirms within hours) and keeps the upgraded
+// proofs. The ingest runs it hourly; it returns how many were upgraded.
+func (s *PGStore) UpgradeStamps(ctx context.Context) (int, error) {
+	stamps, err := s.Stamps(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	var errs []error
+	for _, st := range stamps {
+		o, err := ParseOTS(st.OTS)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stamp %d: %w", st.Size, err))
+			continue
+		}
+		pending := false
+		for _, a := range o.Attestations() {
+			if !a.Bitcoin {
+				pending = true
+			}
+		}
+		if !pending {
+			continue
+		}
+		changed, err := o.Upgrade(ctx, stampClient)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stamp %d: %w", st.Size, err))
+		}
+		if !changed {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE vote_log_stamps SET ots = $2 WHERE size = $1`, st.Size, o.Bytes()); err != nil {
+			return n, fmt.Errorf("save upgraded stamp %d: %w", st.Size, err)
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
+}

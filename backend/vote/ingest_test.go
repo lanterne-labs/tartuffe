@@ -305,15 +305,31 @@ func TestIngestOnDevVectors(t *testing.T) {
 
 	// The auditor on the same log: the checkpoints verify, the ballot's
 	// proof verifies, the rejects have their reasons.
-	rep, err := Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Verifier: in.ver})
+	rep, err := Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Verifier: in.ver, Mirror: DirMirrorReader{Dir: mirror.Dir}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !rep.OK() {
 		t.Fatalf("audit problems: %v", rep.Problems)
 	}
-	if rep.Checkpoints != 6 || rep.Registrations != 5 || rep.Ballots != 1 || rep.Rejects != 4 {
+	if rep.Checkpoints != 6 || rep.Registrations != 5 || rep.Ballots != 1 || rep.Rejects != 4 || rep.MirrorChecked != 6 {
 		t.Fatalf("audit counts: %+v", *rep)
+	}
+	// A mirror whose entries file lists another entry is caught.
+	hourFile := "entries/" + time.Now().UTC().Format("2006-01-02T15") + ".json"
+	orig, _ := mirror.Read(hourFile)
+	var listed []MirrorEntry
+	_ = json.Unmarshal(orig, &listed)
+	listed[0].Hash = "0x" + strings.Repeat("00", 32)
+	tampered, _ := json.Marshal(listed)
+	if err := mirror.Stage(hourFile, tampered); err != nil {
+		t.Fatal(err)
+	}
+	if rep, _ := Audit(ctx, StoreSource{store}, Options{EventID: 1, LogKey: signer.VerifierKey(), Mirror: DirMirrorReader{Dir: mirror.Dir}}); rep.OK() || !strings.Contains(strings.Join(rep.Problems, " "), "entries/") {
+		t.Fatalf("a tampered mirror passed: %v", rep.Problems)
+	}
+	if err := mirror.Stage(hourFile, orig); err != nil {
+		t.Fatal(err)
 	}
 	// The close: the snapshot lists every event handled, its entry and
 	// the checkpoint covering it are logged, it is posted to every box;

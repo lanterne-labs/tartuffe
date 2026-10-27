@@ -75,6 +75,7 @@ type Ingest struct {
 	closedSeq    int64 // the closed entry, 0 while open
 	snapshotSeq  int64 // the close snapshot's entry, 0 before the close
 	lastStampErr time.Time
+	lastUpgrade  time.Time
 	lease        *Lease
 	deferred     []Message            // put off by an infrastructure failure
 	deferredAt   map[string]time.Time // when each was first put off
@@ -331,6 +332,15 @@ func (in *Ingest) Tick(ctx context.Context) {
 	in.repostAcks(ctx)
 	err := in.checkpoint(ctx)
 	in.mu.Unlock()
+	// The Bitcoin part of the stamps, once the calendars have it.
+	if now := in.cfg.Now(); in.cfg.Stamp != nil && now.Sub(in.lastUpgrade) > time.Hour {
+		in.lastUpgrade = now
+		if n, err := in.store.Log.UpgradeStamps(ctx); err != nil {
+			log.Warn().Err(err).Int("upgraded", n).Msg("vote: OpenTimestamps upgrade")
+		} else if n > 0 {
+			log.Info().Int("upgraded", n).Msg("vote: stamps now attested in Bitcoin")
+		}
+	}
 	if err != nil {
 		log.Error().Err(err).Msg("vote: checkpoint")
 	}

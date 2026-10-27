@@ -239,6 +239,8 @@ cd circuits/ballot && nargo test && nargo compile           # the circuit (nargo
 ./dm vote ingest <slug> --vk <dir>/vk --artifact <dir>/ballot.json --mirror-dir <dir>   # VOTE_LOG_KEY, VOTE_NOSTR_KEY, ZKPASSPORT_*
 ./dm vote tally <slug> --keys keys.json                     # the tallier: no inbound port, the database only
 ./dm vote verify <slug> --api https://tartuffe.me --vk vk   # anyone's audit of the log
+#   --relays setup (withholding), --mirror-cdn tartuffeme/vote-data (the mirror at each commit),
+#   --bitcoin (default: the stamps against the block headers), --archive, --snapshot
 ```
 
 - The ingest is the log's only writer while it runs; the tallier appends

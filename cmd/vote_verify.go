@@ -47,6 +47,9 @@ func init() {
 	f.String("relays", "", "read the relays: 'setup' for the setup's, or wss:// URLs, comma-separated")
 	f.String("archive", "", "an archive of the relays (dm vote archive): read instead of the relays, with first sightings")
 	f.String("snapshot", "", "the mirror's snapshot.json, to check the relays against the close snapshot")
+	f.Bool("bitcoin", true, "check the stamps' Bitcoin attestations against the block headers (blockstream.info, mempool.space)")
+	f.String("mirror-git", "", "a clone of the mirror repository: its files at each checkpoint's commit are checked against the log")
+	f.String("mirror-cdn", "", "the mirror repository as org/name, read through jsDelivr by commit (as browsers do)")
 }
 
 // apiSource reads the log from the site's API.
@@ -67,6 +70,15 @@ func (a apiSource) Checkpoints(ctx context.Context) ([]vote.Checkpoint, error) {
 		return nil, err
 	}
 	var out []vote.Checkpoint
+	return out, json.Unmarshal(raw, &out)
+}
+
+func (a apiSource) Stamps(ctx context.Context) ([]polls.Stamp, error) {
+	raw, err := apiGet(ctx, a.base, "/api/vote-log/stamps")
+	if err != nil {
+		return nil, err
+	}
+	var out []polls.Stamp
 	return out, json.Unmarshal(raw, &out)
 }
 
@@ -103,6 +115,14 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 		fmt.Printf("log key (served by the site, not pinned): %s\n", key)
 	}
 	opt := vote.Options{EventID: eventID, LogKey: key}
+	if bitcoin, _ := f.GetBool("bitcoin"); bitcoin {
+		opt.BlockRoots = polls.NewExplorerRoots(nil)
+	}
+	if dir, _ := f.GetString("mirror-git"); dir != "" {
+		opt.Mirror = vote.GitMirrorReader{Dir: dir}
+	} else if repo, _ := f.GetString("mirror-cdn"); repo != "" {
+		opt.Mirror = vote.CDNMirrorReader{Repo: repo}
+	}
 	if vkPath != "" {
 		vk, err := os.ReadFile(vkPath)
 		if err != nil {
@@ -168,6 +188,7 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("log: %d entries, %d checkpoints\nevent %s: %d registrations, %d ballots, %d rejects, %d tallies\n",
 		rep.Entries, rep.Checkpoints, slug, rep.Registrations, rep.Ballots, rep.Rejects, rep.Tallies)
+	fmt.Printf("stamps: %d checkpoints attested in Bitcoin, %d pending; mirror: %d checkpoints checked at their commit\n", rep.Stamped, rep.StampsPending, rep.MirrorChecked)
 	if opt.Relays != nil {
 		fmt.Printf("relays: %d protocol events, %d acknowledgements, %d acknowledged by no one, %d withheld, %d complaints\n",
 			rep.RelayEvents, rep.Acks, rep.Unacknowledged, rep.Withheld, rep.Complaints)
