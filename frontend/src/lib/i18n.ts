@@ -145,7 +145,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'home.poll.candidates': { fr: '{n} candidats', en: '{n} candidates' },
 
 	// ZKPassport sign-in
-	'zk.title': { fr: 'Passeport ou carte d’identité', en: 'Passport or ID card' },
+	'zk.title': { fr: 'Votre passeport', en: 'Your passport' },
 	'zk.badge': { fr: '1 personne = 1 voix', en: '1 person = 1 vote' },
 	'zk.why': { fr: 'Le scan garantit que chacun ne vote qu’une fois. Nous ne voyons ni votre nom ni votre photo.', en: 'So each person votes once. We never see your name or photo.' },
 	'zk.start': { fr: 'Scanner mon document', en: 'Verify with my document' },

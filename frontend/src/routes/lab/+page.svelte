@@ -46,10 +46,10 @@
 			eventTag: 'Expérience temporaire',
 			eventTitle: 'Voter en secret en ligne : la présidentielle',
 			eventEnds: 'Jusqu’au {d}. L’expérience s’arrêtera ensuite.',
-			eventBody: 'Une démonstration : peut-on voter en ligne en toute confidentialité, en s’appuyant sur ce que l’État fournit déjà, le passeport ou la carte d’identité à puce ?',
+			eventBody: 'Une démonstration : peut-on voter en ligne en toute confidentialité, en s’appuyant sur ce que l’État fournit déjà, la puce du passeport ?',
 			eventPoints: [
-				'Votre document prouve, sur votre téléphone, que vous êtes électeur, français et majeur : rien d’autre n’en sort.',
-				'Votre bulletin est signé par une clé conservée sur vos appareils : ni nous, ni personne, ni l’État ne peut le relier à vous.',
+				'Votre passeport prouve, sur votre téléphone, que vous êtes majeur et français : rien d’autre n’en sort.',
+				'Votre bulletin est chiffré et prouvé par une clé conservée sur vos appareils : ni nous, ni personne, ni l’État ne peut le relier à vous.',
 				'Chaque bulletin et chaque total sont publiés dans un registre public : chacun peut recompter.',
 				'Aucun compte, aucun e-mail, aucun numéro de téléphone.'
 			],
@@ -84,10 +84,10 @@
 			eventTag: 'Temporary experiment',
 			eventTitle: 'The private presidential vote',
 			eventEnds: 'Until {d}, then the experiment ends.',
-			eventBody: 'A demonstration: can we vote online in full privacy, relying on the State’s own infrastructure, the chip passport or ID card?',
+			eventBody: 'A demonstration: can we vote online in full privacy, relying on the State’s own infrastructure, the passport’s chip?',
 			eventPoints: [
-				'Your document proves, on your phone, that you are an adult French voter: nothing else leaves it.',
-				'Your ballot is signed by a key kept on your devices: neither we, nor anyone, nor the State can tie it to you.',
+				'Your passport proves, on your phone, that you are an adult and French: nothing else leaves it.',
+				'Your ballot is encrypted and proven by a key kept on your devices: neither we, nor anyone, nor the State can tie it to you.',
 				'Every ballot and every total go to a public log: anyone can recount.',
 				'No account, no e-mail, no phone number.'
 			],

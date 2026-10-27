@@ -72,7 +72,7 @@
 							{ from: 3, to: 4, label: 'inscription publiée, preuve comprise' },
 							{ from: 3, to: 2, label: 'accusé de réception signé', dashed: true }
 						],
-						caption: 'Le passeport ouvre le droit de vote ; c’est la clé, que vous êtes seul à détenir, qui vote.'
+						caption: 'Le passeport ouvre le vote ; c’est la clé, que vous êtes seul à détenir, qui vote.'
 					},
 					more: [
 						[
@@ -258,7 +258,7 @@
 							{ from: 3, to: 4, label: 'registration published, proof included' },
 							{ from: 3, to: 2, label: 'signed acknowledgement', dashed: true }
 						],
-						caption: 'The passport opens the right to vote; the key, which you alone hold, votes.'
+						caption: 'The passport opens the vote; the key, which you alone hold, votes.'
 					},
 					more: [
 						[

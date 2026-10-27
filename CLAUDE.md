@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Digital Mirror is a fact-checking and honesty-scoring system for political figures. It extracts facts from web content and political data sources, stores them with semantic embeddings, and uses LLM-based contradiction detection to compute honesty scores.
 
-**Tech Stack**: Go 1.23 backend (Chi router, pgx/PostgreSQL, pgvector), SvelteKit 5 frontend, Supabase for local development.
+**Tech Stack**: Go 1.24 backend (Chi router, pgx/PostgreSQL, pgvector), SvelteKit 5 frontend, Supabase for local development.
 
 ## Common Commands
 
@@ -164,7 +164,7 @@ PostgreSQL with pgvector extension. Migrations in `supabase/migrations/` are ide
 - Migrations should be incremental (ALTER TABLE, not DROP/CREATE).
 - **Never reset the database without user permission** - data loss is permanent.
 
-Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `news_queue` (queue for news search).
+Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `search_queue` (the queue of the news searches).
 
 ## Environment Variables
 
