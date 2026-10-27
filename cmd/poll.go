@@ -115,9 +115,11 @@ the test ballots.`,
 var pollResetVotesCmd = &cobra.Command{
 	Use:   "reset-votes",
 	Short: "Delete every voting key, ballot and log entry (before a launch)",
-	Long: `Delete the registered voting keys, the ballots and the public log. A ballot
-is anonymous: the test ballots (noop voters) cannot be told from the others, so
-before a launch everything goes. Never once real voters have voted.`,
+	Long: `Delete the registrations, the ballots, the checkpoints and the public log. A
+ballot is anonymous: the test ballots cannot be told from the others, so before
+a launch everything goes. Never once real voters have voted. Stop the ingest
+and the tallier first: they hold the tree and the counted ballots in memory,
+and start again from the log.`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.NoArgs,
 	RunE:        runPollResetVotes,

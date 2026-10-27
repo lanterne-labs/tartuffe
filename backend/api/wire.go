@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"os"
@@ -29,13 +30,18 @@ func Wire(storer *storage.PostgresStorer, reg *providers.Registry, cfg polls.Con
 }
 
 // PollsFromEnv reads the polls' config: the key of the log's checkpoints
-// (VOTE_LOG_KEY, from `dm vote log-key`; a key made at start when unset,
-// with a warning: the checkpoints of a restart then fail to verify).
+// (VOTE_LOG_KEY, from `dm vote log-key`). Unset, a key is made at start
+// locally, with a warning (the checkpoints of a restart then fail to
+// verify); on the host the start is refused: a key that changes at each
+// deploy would break every pinned checkpoint.
 func PollsFromEnv() (polls.Config, error) {
 	cfg := polls.Config{}
 	skey := os.Getenv("VOTE_LOG_KEY")
 	var err error
 	if skey == "" {
+		if os.Getenv("DM_PRODUCTION") != "" {
+			return polls.Config{}, errors.New("VOTE_LOG_KEY is not set: required on the host (dm vote log-key, set once, never changed)")
+		}
 		log.Warn().Msg("VOTE_LOG_KEY is not set: the vote log's checkpoints are signed by a key made now, that the next start replaces")
 		if skey, _, err = polls.GenerateLogKey(); err != nil {
 			return polls.Config{}, err
