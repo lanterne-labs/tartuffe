@@ -213,7 +213,7 @@
 			eraseTitle: 'Retirer son vote, effacer sa clé',
 			erase: [
 				'Votre vote n’est lié à aucun compte : retirez-le sur la page du vote, avec votre clé. Dans le registre, un retrait ressemble à un bulletin.',
-				'« Oublier ma clé », sur votre profil, l’efface de ce navigateur ; votre passkey ou vos 12 mots la retrouvent.'
+				'« Retirer la clé de cet appareil », dans le menu « Ma clé » de la page du vote, l’efface de ce navigateur ; Face ID ou une clé d’accès (« Retrouver ma clé »), vos 12 mots ou votre autre appareil la retrouvent.'
 			],
 			techTitle: 'Pour les curieux',
 			tech: [
@@ -399,7 +399,7 @@
 			eraseTitle: 'Withdrawing your vote, erasing your key',
 			erase: [
 				'Your vote is tied to no account: withdraw it on the vote page, with your key. In the log, a withdrawal looks like a ballot.',
-				'“Forget my key”, on your profile, erases it from this browser; your passkey or your 12 words bring it back.'
+				'“Remove the key from this device”, in the “My key” menu of the vote page, erases it from this browser; Face ID or a passkey (“Find my key”), your 12 words or your other device bring it back.'
 			],
 			techTitle: 'For the curious',
 			tech: [

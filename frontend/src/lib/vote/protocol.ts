@@ -1,14 +1,15 @@
-// The voter's side of the protocol (SPEC §4, §6, §7.2): registering, the
+// The voter's side of the protocol (SPEC §4, §5, §6, §7.2): registering, the
 // acknowledgements, casting a ballot, the receipt. Pure logic over the
 // Mailbox and the Sources; the UI drives it and shows its states.
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { compress, hex, big, leafOf, nullifierOf, registrationBinding, values, pack, type Ranking, validRanking } from './crypto';
-import type { Mailbox, Posted, NostrEvent } from './mailbox';
-import type { Sources } from './sources';
+import { clockKnown, sinceRecent, verifyEvent, type Mailbox, type Posted, type Prepared, type NostrEvent } from './mailbox';
+import type { Sources, Read } from './sources';
 import type { VoteKey } from './key';
 import type { Prover } from './prove';
+import { VoteError } from './errors';
 
 // Setup is the setup entry in force, as the mirror serves it.
 export interface Setup {
@@ -18,9 +19,11 @@ export interface Setup {
 		event: number;
 		options: { slot: number; kind: string; person_id?: number; name?: string }[];
 		mask: number;
+		pk: string[];
 		nostr_pubkey: string;
 		relays: { url: string; state: string }[];
 		k_real: number;
+		r_min?: number;
 		anchor_age: number;
 		checkpoint_period: number;
 		validity: number;
@@ -80,19 +83,26 @@ export interface SignedAck {
 }
 
 // waitAck waits for the server's acknowledgement of a posted message on
-// its box, up to the timeout.
+// its box, up to the timeout. The subscription starts two minutes before
+// the newest checkpoint's time (at or before the server's now, whatever
+// the local clock says); with no checkpoint seen yet it starts from
+// whatever the box serves. An acknowledgement that does not carry the
+// server's signature is not one.
 export function waitAck(mail: Mailbox, posted: Posted, timeoutMs: number): Promise<SignedAck | null> {
 	return new Promise((resolve) => {
-		const since = Math.floor(Date.now() / 1000) - 120;
+		const since = clockKnown() ? sinceRecent(120) : 0;
 		let done = false;
 		const stop = mail.serverMessages(posted.box, 'ack', since, (m) => {
 			try {
 				const ack = JSON.parse(m.body) as Ack;
-				if (ack.nostr_id === posted.id && !done) {
-					done = true;
-					stop();
-					resolve({ ack, event: m.event });
+				if (ack.nostr_id !== posted.id || done) return;
+				if (!verifyEvent(m.event)) {
+					console.warn('vote: an acknowledgement that does not verify', posted.box);
+					return;
 				}
+				done = true;
+				stop();
+				resolve({ ack, event: m.event });
 			} catch {}
 		});
 		setTimeout(() => {
@@ -105,31 +115,47 @@ export function waitAck(mail: Mailbox, posted: Posted, timeoutMs: number): Promi
 	});
 }
 
-// postWithAck posts to the key's box and waits for the acknowledgement,
-// moving to the next box of the ranking when a box fails or stays silent.
-export async function postWithAck(
-	mail: Mailbox,
-	boxes: string[],
-	kind: 'ballot' | 'register',
-	body: string,
-	timeoutMs: number
-): Promise<{ posted: Posted; ack: Ack; ackEvent: NostrEvent }> {
+// Progress tells the UI where a post stands: which box, of how many.
+export interface PostProgress {
+	box: string;
+	n: number;
+	of: number;
+	stage: 'posting' | 'waiting';
+}
+
+export interface PostOptions {
+	// resend: the message was already posted once (an earlier visit): a
+	// rejection saying it is already taken is then a success.
+	resend?: boolean;
+	onPosted?: (posted: Posted) => void;
+	progress?: (p: PostProgress) => void;
+}
+
+// postWithAck posts a prepared message to the boxes in turn and waits for
+// the acknowledgement, moving to the next box when one fails or stays
+// silent; it throws no_relay when none acknowledged. A repost of a body
+// the server already took is a success (SPEC §7.2): duplicate, or for a
+// registration uid_used and id_used after the first post of this key.
+export async function postWithAck(mail: Mailbox, boxes: string[], msg: Prepared, timeoutMs: number, opts: PostOptions = {}): Promise<{ posted: Posted; ack: Ack; ackEvent: NostrEvent }> {
 	let lastErr = 'no box answered';
-	let reposts = 0;
+	let reposts = opts.resend ? 1 : 0;
+	let n = 0;
 	for (const box of boxes) {
+		n++;
 		let posted: Posted;
+		opts.progress?.({ box, n, of: boxes.length, stage: 'posting' });
 		try {
-			posted = await mail.post(box, kind, body);
+			posted = await mail.send(box, msg);
 		} catch (e) {
 			lastErr = e instanceof Error ? e.message : String(e);
 			continue;
 		}
+		opts.onPosted?.(posted);
+		opts.progress?.({ box, n, of: boxes.length, stage: 'waiting' });
 		const signed = await waitAck(mail, posted, timeoutMs);
 		if (signed) {
 			const { ack, event: ackEvent } = signed;
-			// A repost of our own body that the server already took is a
-			// success (SPEC §7.2): the first box's acknowledgement was missed.
-			if (reposts > 0 && ack.outcome === 'rejected' && (ack.reason === 'duplicate' || ack.reason === 'uid_used' || ack.reason === 'id_used')) {
+			if (ack.outcome === 'rejected' && (ack.reason === 'duplicate' || (reposts > 0 && (ack.reason === 'uid_used' || ack.reason === 'id_used')))) {
 				return { posted, ack: { ...ack, outcome: 'logged', reason: undefined }, ackEvent };
 			}
 			return { posted, ack, ackEvent };
@@ -137,7 +163,7 @@ export async function postWithAck(
 		lastErr = `${box}: no acknowledgement`;
 		reposts++;
 	}
-	throw new Error(lastErr);
+	throw new VoteError('no_relay', lastErr);
 }
 
 // --- Registration ---
@@ -180,7 +206,7 @@ export interface BallotBody {
 // public-input hash (what the acknowledgement names).
 export async function makeBallot(prover: Prover, key: VoteKey, setup: Setup, path: string[], root: string, seq: number, r: Ranking): Promise<{ body: string; piHash: string }> {
 	const bad = validRanking(r, setup.setup.mask);
-	if (bad) throw new Error(bad);
+	if (bad) throw new VoteError('ranking', bad);
 	const secret = big(key.secret);
 	const event = BigInt(key.eventId);
 	const nullifier = nullifierOf(event, secret);
@@ -199,7 +225,13 @@ export async function makeBallot(prover: Prover, key: VoteKey, setup: Setup, pat
 		len: r.len,
 		r: hex(rnd)
 	};
-	const { proof, publicInputs, returnValue } = await prover.prove(inputs);
+	let out: Awaited<ReturnType<Prover['prove']>>;
+	try {
+		out = await prover.prove(inputs);
+	} catch (e) {
+		throw new VoteError('prover', e instanceof Error ? e.message : String(e));
+	}
+	const { proof, publicInputs, returnValue } = out;
 	const pts = (returnValue as string[]).map(big);
 	const c0 = compress(pts[0], pts[1]);
 	const c: string[] = [];
@@ -209,6 +241,17 @@ export async function makeBallot(prover: Prover, key: VoteKey, setup: Setup, pat
 	const pi = new Uint8Array(32 * publicInputs.length);
 	publicInputs.forEach((p, i) => pi.set(toBytes32(big(p)), 32 * i));
 	return { body: canonical(body), piHash: '0x' + bytesToHex(sha256(pi)) };
+}
+
+// chooseAnchor picks the checkpoint a ballot proves against (SPEC §5):
+// the newest within anchorAge that holds the leaf; for a first ballot,
+// the newest in which the leaf is not among the last rMin leaves, when
+// one exists, else the newest. checkpoints are newest first.
+export function chooseAnchor(checkpoints: CheckpointInfo[], position: number, firstBallot: boolean, rMin: number, anchorAgeSeconds: number, nowSeconds: number): CheckpointInfo | null {
+	const fresh = checkpoints.filter((c) => c.treeSize > position && nowSeconds - c.time <= anchorAgeSeconds);
+	if (fresh.length === 0) return null;
+	if (!firstBallot) return fresh[0];
+	return fresh.find((c) => c.treeSize - position - 1 >= rMin) ?? fresh[0];
 }
 
 function toBytes32(x: bigint): Uint8Array {
@@ -263,24 +306,37 @@ export interface MirrorEntry {
 	log_seq: number;
 }
 
-// findReceipt looks for a hash in the entries files of the hours from the
-// post on (the same files every visitor fetches).
-export async function findReceipt(src: Sources, token: string, hash: string, postedAt: Date): Promise<MirrorEntry | null> {
-	const hours: string[] = [];
-	for (let t = postedAt.getTime() - 3_600_000; t <= Date.now() + 3_600_000; t += 3_600_000) hours.push(new Date(t).toISOString().slice(0, 13));
-	for (const hr of hours) {
-		const list = await src.json<MirrorEntry[]>(`entries/${hr}.json`, token);
-		const found = list?.find((e) => e.hash === hash);
-		if (found) return found;
-	}
-	return null;
+// Receipt is what a search of the entries gives: the entry when found;
+// exact when every file read came from the commit asked for (a miss in
+// older files proves nothing).
+export interface Receipt {
+	entry: MirrorEntry | null;
+	exact: boolean;
 }
 
-// myPosition finds the key's leaf among the leaves of the day (the file
-// everyone fetches).
-export async function myPosition(src: Sources, token: string, leaf: string, day: Date): Promise<number | null> {
-	for (const d of [day, new Date(day.getTime() + 86_400_000)]) {
-		const list = await src.json<{ position: number; id: string }[]>(`leaves/${d.toISOString().slice(0, 10)}.json`, token);
+// findReceipt looks for a hash in the entries files of the hours from the
+// post on (the same files every visitor fetches).
+export async function findReceipt(src: Sources, token: string, hash: string, postedAt: Date): Promise<Receipt> {
+	const hours: string[] = [];
+	for (let t = postedAt.getTime() - 3_600_000; t <= Date.now() + 3_600_000; t += 3_600_000) hours.push(new Date(t).toISOString().slice(0, 13));
+	let exact = true;
+	for (const hr of hours) {
+		const read: Read = { exact: true };
+		const list = await src.json<MirrorEntry[]>(`entries/${hr}.json`, token, read);
+		exact &&= read.exact;
+		const found = list?.find((e) => e.hash === hash);
+		if (found) return { entry: found, exact: true };
+	}
+	return { entry: null, exact };
+}
+
+// myPosition finds the key's leaf among the leaves of the days from the
+// one given (the file everyone fetches).
+export async function myPosition(src: Sources, token: string, leaf: string, from: Date): Promise<number | null> {
+	const days: string[] = [];
+	for (let t = from.getTime(); t <= Date.now() + 86_400_000 && days.length < 4; t += 86_400_000) days.push(new Date(t).toISOString().slice(0, 10));
+	for (const d of days) {
+		const list = await src.json<{ position: number; id: string }[]>(`leaves/${d}.json`, token);
 		const found = list?.find((l) => l.id === leaf);
 		if (found) return found.position;
 	}

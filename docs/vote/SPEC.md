@@ -195,10 +195,16 @@ Otherwise `s` is random, stored with `navigator.storage.persist()`, and
 backed up by 12 words or a device link: the new device shows a URL (as a QR
 code and as text) carrying an ephemeral secp256k1 key and listens on every
 relay of the setup; the device that holds `s` opens it, the voter confirms,
-and it posts `{s, position, seq}` sealed for that key (ECDH,
-XChaCha20-Poly1305) as a `link` event (kind 7026, a second `t` tag
-`link:<receiver key>`) to the first of its relays that takes it. Our server never sees it; the relay sees a ciphertext and the two
-devices' addresses. The 12 words are offered to PRF users too: a passkey can be deleted
+and it posts `{s, position, seq, slots, last, words}` sealed for that key
+(ECDH, XChaCha20-Poly1305) as a `link` event (kind 7026, a second `t` tag
+`link:<receiver key>`) to the first of its relays that takes it. Both
+devices derive a six-digit code from the shared key; the sending device
+shows it, and the receiving device adopts the key only once the voter
+confirms the code it decrypted is the one shown there: whoever saw the QR
+code, or the relay itself, cannot push a key of their own into the new
+device. The receiver listens for 15 minutes at most. Our server never sees
+it; the relay sees a ciphertext and the two devices' addresses. The 12 words
+are offered to PRF users too: a passkey can be deleted
 or a provider account lost, and the words are the only backup that depends
 on nobody.
 
@@ -806,12 +812,23 @@ times of first sighting:
    present and the plaintext rankings consistent with the final tally,
    nothing accepted after `closed`, `destroyed` logged.
 
-The voter's browser checks for itself: the ack of its ballot; its `pi_hash`
-in the hourly entries files it fetches, the same files every visitor fetches;
-checkpoints that only grow; the latest tally's DLEQ proofs against the sums
-in the tally body (which prove the decryption of what the tally claims; the
-full check of the sums is the auditor's, or the browser's on request: every
-ballot's ciphertexts, about 360 B each).
+The voter's browser checks for itself: the Nostr signature of every server
+message it reads (an ack, a checkpoint, the snapshot: a relay cannot forge
+one under the server's key) and the log key's signature of every
+checkpoint note; the ack of its ballot; its `pi_hash` in the hourly entries
+files it fetches, the same files every visitor fetches, with the checkpoint
+it was listed by (one later than the ack named counts, and is kept for the
+auditors); checkpoints that only grow; the latest tally's DLEQ proofs
+against the sums in the tally body (which prove the decryption of what the
+tally claims; results that fail it are shown as unverified; the full check
+of the sums is the auditor's, or the browser's on request: every ballot's
+ciphertexts, about 360 B each). It sets its clock from the signed
+checkpoints (a stale one bounds a clock that is behind; a live one gives
+the offset), so its events and its ack subscriptions do not depend on the
+device's clock. A registration acknowledged for a checkpoint and not listed
+by the one after it is shown as such (the relays hold the signed ack) and
+sent again; a page is never left waiting on an event that may not come:
+the mirror is read every 30 s while anything is pending.
 
 Cost at a million voters, about 8 million ballots: about 22 CPU-hours of
 proof verification and a 100 GB log for a full audit, incremental afterwards;

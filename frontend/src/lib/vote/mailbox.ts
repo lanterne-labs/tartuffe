@@ -18,6 +18,15 @@ export interface Posted {
 	box: string;
 }
 
+// Prepared is a message signed and ready to send, the same to every box:
+// its id is known before any box took it, so the device can keep it
+// (a registration survives a closed tab) and send it again as it is.
+export interface Prepared {
+	id: string;
+	// raw is the transport's form of the message, serializable.
+	raw: unknown;
+}
+
 // ServerMessage is one the server posted to a box.
 export interface ServerMessage {
 	kind: ServerKind;
@@ -25,6 +34,10 @@ export interface ServerMessage {
 	time: number;
 	// event: the signed event itself (a complaint carries the ack's).
 	event: NostrEvent;
+	// live: delivered after the subscription caught up with the box's
+	// stored events, so posted moments ago (a checkpoint's time is then
+	// the server's now).
+	live: boolean;
 }
 
 // Registration is a registration as read from a box (the newest leaves).
@@ -36,14 +49,18 @@ export interface RegisterMessage {
 
 export interface Mailbox {
 	boxes(): string[];
-	// post sends a voter message to one box; it resolves once the box took
-	// it, or rejects. tags are added to the event's (a link names its
-	// receiver with a p tag).
+	// prepare signs a voter message; send posts it to one box and resolves
+	// once the box took it, or rejects. post does both. tags are added to
+	// the event's (a link names its receiver with a t tag).
+	prepare(kind: MessageKind, body: string, tags?: string[][]): Prepared;
+	send(box: string, msg: Prepared): Promise<Posted>;
 	post(box: string, kind: MessageKind, body: string, tags?: string[][]): Promise<Posted>;
 	// serverMessages reads the server's messages of a kind posted to the
-	// box since the time given, live, until the subscription is stopped;
-	// down is told once when the box cannot be reached three times in a
-	// row (the caller moves to another box).
+	// box since the time given (0: whatever the box serves), live, until
+	// the subscription is stopped; only messages the server signed are
+	// given. down is told once when the box cannot be reached three times
+	// in a row or refuses the subscription (the caller moves to another
+	// box).
 	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void, down?: () => void): () => void;
 	// registrations reads the voters' registrations posted to the box
 	// since the time given, live, until stopped (the newest leaves, before
@@ -55,6 +72,42 @@ export interface Mailbox {
 	// links reads the device links posted to the box for a receiver key
 	// (SPEC §4.2), live, until stopped.
 	links(box: string, receiver: string, since: number, each: (sealed: string) => void): () => void;
+}
+
+// --- The server's clock ---
+//
+// A device's clock may be off by minutes: its events would be refused or
+// its acknowledgement subscription would start too late. Every signed
+// checkpoint carries the server's time. A checkpoint reaches us after it
+// was signed, never before, so (its time − local time) is a lower bound
+// on the offset: it corrects a clock that is behind, never one that is
+// ahead (an old checkpoint says nothing about that). A checkpoint that
+// arrives live (after the subscription caught up) was signed seconds ago:
+// its offset is the truth, either way.
+
+let bound: number | null = null;
+let live: number | null = null;
+let lastCheckpointTime = 0;
+
+export function noteServerTime(unixSeconds: number, isLive = false) {
+	const o = unixSeconds * 1000 - Date.now();
+	bound = bound === null ? o : Math.max(bound, o);
+	if (isLive) live = o;
+	lastCheckpointTime = Math.max(lastCheckpointTime, unixSeconds);
+}
+
+export const clockKnown = () => bound !== null;
+
+// serverNow is the time as the server counts it, in milliseconds.
+export const serverNow = () => Date.now() + (live ?? Math.max(0, bound ?? 0));
+
+// sinceRecent gives a subscription's starting time: a window before the
+// newest checkpoint's time, which is at or before the server's now
+// whatever the local clock says; before any checkpoint, before now as
+// best known.
+export function sinceRecent(windowSeconds: number): number {
+	const base = lastCheckpointTime || Math.floor(serverNow() / 1000);
+	return Math.max(0, base - windowSeconds);
 }
 
 // --- Nostr ---
@@ -73,8 +126,8 @@ export interface NostrEvent {
 }
 
 // signedEvent signs the content as an event of a fresh throwaway key,
-// dated to the minute.
-function signedEvent(kind: number, tag: string, content: string, extraTags: string[][] = [], now = Date.now()): NostrEvent {
+// dated to the minute on the server's clock.
+function signedEvent(kind: number, tag: string, content: string, extraTags: string[][] = [], now = serverNow()): NostrEvent {
 	const secret = schnorr.utils.randomSecretKey();
 	const pubkey = bytesToHex(schnorr.getPublicKey(secret));
 	const created_at = Math.floor(now / 60_000) * 60;
@@ -113,6 +166,8 @@ export function neventLink(id: string, relays: string[]): string {
 }
 
 const POST_TIMEOUT = 10_000;
+// With no time to start from, a box serves its newest events up to this.
+const NO_SINCE_LIMIT = 500;
 
 export class NostrMailbox implements Mailbox {
 	constructor(
@@ -126,8 +181,13 @@ export class NostrMailbox implements Mailbox {
 		return this.urls;
 	}
 
-	post(box: string, kind: MessageKind, body: string, tags: string[][] = []): Promise<Posted> {
+	prepare(kind: MessageKind, body: string, tags: string[][] = []): Prepared {
 		const ev = signedEvent(KINDS[kind], this.tag, body, tags);
+		return { id: ev.id, raw: ev };
+	}
+
+	send(box: string, msg: Prepared): Promise<Posted> {
+		const ev = msg.raw as NostrEvent;
 		return new Promise((resolve, reject) => {
 			let ws: WebSocket;
 			const done = (err?: string) => {
@@ -157,14 +217,34 @@ export class NostrMailbox implements Mailbox {
 		});
 	}
 
-	private subscribe(box: string, filter: Record<string, unknown>, each: (ev: NostrEvent) => void, down?: () => void): () => void {
+	post(box: string, kind: MessageKind, body: string, tags: string[][] = []): Promise<Posted> {
+		return this.send(box, this.prepare(kind, body, tags));
+	}
+
+	// subscribe keeps a subscription open on a box, reconnecting with a
+	// backoff; a box that fails three times in a row, or that refuses the
+	// subscription (CLOSED, or a NOTICE before any event or EOSE), is told
+	// down once.
+	private subscribe(box: string, filter: Record<string, unknown>, each: (ev: NostrEvent, live: boolean) => void, down?: () => void): () => void {
 		let ws: WebSocket | null = null;
 		let stopped = false;
 		let retry = 1000;
 		let failures = 0;
+		let served = false;
+		let caughtUp = false;
 		const sub = 's' + Math.random().toString(36).slice(2, 10);
+		const refused = (why: string) => {
+			console.warn('vote: box refused the subscription', box, why);
+			// Counts as the last of three failures.
+			failures = Math.max(failures, 2);
+			try {
+				ws?.close();
+			} catch {}
+		};
 		const open = () => {
 			if (stopped) return;
+			served = false;
+			caughtUp = false;
 			try {
 				ws = new WebSocket(box);
 			} catch {
@@ -173,13 +253,21 @@ export class NostrMailbox implements Mailbox {
 			}
 			ws.onopen = () => {
 				retry = 1000;
-				failures = 0;
 				ws?.send(JSON.stringify(['REQ', sub, { '#t': [this.tag], ...filter }]));
 			};
 			ws.onmessage = (m) => {
 				try {
 					const msg = JSON.parse(String(m.data));
-					if (msg[0] === 'EVENT' && msg[1] === sub && msg[2]) each(msg[2] as NostrEvent);
+					if (msg[0] === 'EVENT' && msg[1] === sub && msg[2]) {
+						served = true;
+						failures = 0;
+						each(msg[2] as NostrEvent, caughtUp);
+					} else if (msg[0] === 'EOSE' && msg[1] === sub) {
+						served = true;
+						caughtUp = true;
+						failures = 0;
+					} else if (msg[0] === 'CLOSED' && msg[1] === sub) refused(String(msg[2] ?? 'closed'));
+					else if (msg[0] === 'NOTICE' && !served) refused(String(msg[1] ?? 'notice'));
 				} catch {}
 			};
 			ws.onclose = () => schedule();
@@ -204,12 +292,21 @@ export class NostrMailbox implements Mailbox {
 	}
 
 	serverMessages(box: string, kind: ServerKind, since: number, each: (m: ServerMessage) => void, down?: () => void): () => void {
+		const filter: Record<string, unknown> = { kinds: [KINDS[kind]], authors: [this.serverPubkey] };
+		if (since > 0) filter.since = since;
+		else filter.limit = NO_SINCE_LIMIT;
 		return this.subscribe(
 			box,
-			{ kinds: [KINDS[kind]], authors: [this.serverPubkey], since },
-			(ev) => {
+			filter,
+			(ev, live) => {
 				if (ev.pubkey !== this.serverPubkey) return;
-				each({ kind, body: ev.content, time: ev.created_at, event: ev });
+				// A box could forge an event under the server's key: only a
+				// signature of that key counts (SPEC §7.2).
+				if (!verifyEvent(ev)) {
+					console.warn('vote: a server message that does not verify', box, kind, ev.id);
+					return;
+				}
+				each({ kind, body: ev.content, time: ev.created_at, event: ev, live });
 			},
 			down
 		);

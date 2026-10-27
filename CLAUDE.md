@@ -247,6 +247,11 @@ cd circuits/ballot && nargo test && nargo compile           # the circuit (nargo
   `VITE_VOTE_SIMULATE_PASSPORT=1` on Vite stand in for the ZKPassport app;
   the ingest refuses the flag on the host. `VITE_VOTE_MIRROR` names the
   mirror directory's URL (symlink it into `frontend/static/mirror` in dev).
+  `VITE_VOTE_APP_ORIGIN` (the site's build only: `https://tartuffeme.github.io`)
+  sends the vote and complaint pages of tartuffe.me to the app origin, where
+  the keys and the passport proofs live; unset in dev and in the app's build.
+  `npm run build:vote` rewrites `.svelte-kit/generated` for the app's routes:
+  run `npx vite build` after it when the dev server is running.
 - Go tests of `backend/vote` need `DATABASE_URL` (mirror_test) and the
   circuit's `out/native/vk` for the proof checks (`bb write_vk` in
   `circuits/ballot`); `frontend`: `npx vitest run src/lib/vote` checks the

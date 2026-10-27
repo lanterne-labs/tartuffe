@@ -13,6 +13,21 @@ export interface MirrorSource {
 	byCommit: boolean;
 }
 
+// Read tells how a file was read: exact when it came from the commit
+// asked for, or the latest files were asked for, or no source reads by
+// commit (the directory is then the mirror itself). A read that fell back
+// to the latest files may be older than the checkpoint, so a miss in it
+// proves nothing.
+export interface Read {
+	exact: boolean;
+}
+
+interface Attempt {
+	source: MirrorSource;
+	token: string;
+	exact: boolean;
+}
+
 // dirSource serves a directory: tokens are ignored, the files are the
 // latest.
 export function dirSource(base: string): MirrorSource {
@@ -26,42 +41,64 @@ export function jsDelivrSource(repo: string, branch = 'main'): MirrorSource {
 }
 
 export class Sources {
-	constructor(private readonly mirrors: MirrorSource[]) {}
+	private readonly byCommit: boolean;
 
-	// order lists the mirrors to try: for a commit, the ones that read by
-	// commit first, the others as a fallback (their latest files).
-	private order(token: string): MirrorSource[] {
-		if (!token) return this.mirrors;
-		return [...this.mirrors.filter((m) => m.byCommit), ...this.mirrors.filter((m) => !m.byCommit)];
+	constructor(private readonly mirrors: MirrorSource[]) {
+		this.byCommit = mirrors.some((m) => m.byCommit);
 	}
 
-	// text fetches a file, trying each mirror; null when no mirror has it.
-	async text(path: string, token = ''): Promise<string | null> {
+	// attempts lists what to try for a path: for a commit, the sources that
+	// read by commit at that commit, then every source's latest files (a
+	// CDN that does not serve the commit yet answers 404: the search goes
+	// on to the next source, then to the latest files, SPEC §8.3); without
+	// a token, each source's latest files.
+	private attempts(token: string): Attempt[] {
+		const out: Attempt[] = [];
+		if (token) for (const source of this.mirrors) if (source.byCommit) out.push({ source, token, exact: true });
+		for (const source of this.mirrors) out.push({ source, token: '', exact: !token || !this.byCommit });
+		return out;
+	}
+
+	// text fetches a file, trying each attempt in turn; null when the last
+	// one has no such file either. A failure (a 5xx, the network) moves to
+	// the next attempt; when every attempt failed, the last error is
+	// thrown. read, when given, tells whether the answer (or the miss) came
+	// from the commit asked for.
+	async text(path: string, token = '', read?: Read): Promise<string | null> {
+		const list = this.attempts(token);
 		let lastErr: unknown = null;
-		for (const m of this.order(token)) {
+		for (const a of list) {
 			try {
-				const res = await fetch(m.url(path, token), { credentials: 'omit', cache: token ? 'force-cache' : 'no-cache' });
-				if (res.status === 404) return null;
+				const res = await fetch(a.source.url(path, a.token), { credentials: 'omit', cache: a.token ? 'force-cache' : 'no-cache' });
+				if (res.status === 404) {
+					if (a === list[list.length - 1]) {
+						if (read) read.exact = a.exact;
+						return null;
+					}
+					continue;
+				}
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				if (read) read.exact = a.exact;
 				return await res.text();
 			} catch (e) {
 				lastErr = e;
 			}
 		}
 		if (lastErr) throw lastErr;
+		if (read) read.exact = false;
 		return null;
 	}
 
-	async json<T>(path: string, token = ''): Promise<T | null> {
-		const t = await this.text(path, token);
+	async json<T>(path: string, token = '', read?: Read): Promise<T | null> {
+		const t = await this.text(path, token, read);
 		return t === null ? null : (JSON.parse(t) as T);
 	}
 
 	async bytes(path: string, token = ''): Promise<Uint8Array | null> {
-		for (const m of this.order(token)) {
+		for (const a of this.attempts(token)) {
 			try {
-				const res = await fetch(m.url(path, token), { credentials: 'omit' });
-				if (res.status === 404) return null;
+				const res = await fetch(a.source.url(path, a.token), { credentials: 'omit' });
+				if (res.status === 404) continue;
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				return new Uint8Array(await res.arrayBuffer());
 			} catch {}

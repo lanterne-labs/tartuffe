@@ -3,12 +3,15 @@
 	// app proves on the phone that the holder is an adult French national
 	// with a valid passport, and binds the registration's custom data into
 	// the proof. Nothing goes to our server: onSuccess posts the proof to
-	// the mailbox. No cloud prover: the proof is made on the device.
+	// the mailbox. No cloud prover: the proof is made on the device. The
+	// identifier is the document's own, non-salted one, so that a passport
+	// cannot register twice under another identifier.
 	import Steps, { type StepState } from './Steps.svelte';
 	import { onDestroy } from 'svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
 	import ZKProofAnimation from './ZKProofAnimation.svelte';
+	import { messageOf } from '$lib/vote/errors';
 
 	interface Props {
 		lang: Lang;
@@ -18,20 +21,21 @@
 		devMode?: boolean;
 		// simulate shows a button that stands in for the app (local trials).
 		simulate?: boolean;
+		// onSuccess takes the proof; what it does with it (the registration)
+		// is the caller's, with its own states: it never throws back here.
 		onSuccess: (payload: { proofs: unknown; result: unknown; at: Date }) => Promise<void>;
 	}
 
 	let { lang, domain, scope, customData, devMode = false, simulate = false, onSuccess }: Props = $props();
 
+	// The app, once it took the request, is given this long before the
+	// page says it does not answer (the voter can always cancel before).
+	const APP_TIMEOUT = 3 * 60_000;
+
 	async function simulateScan() {
 		step = 'posting';
 		const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-		try {
-			await onSuccess({ proofs: [{ simulated: id }], result: { uniqueIdentifier: 'dev-' + id, customData }, at: new Date() });
-		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
-			step = 'error';
-		}
+		await onSuccess({ proofs: [{ simulated: id }], result: { uniqueIdentifier: 'dev-' + id, customData }, at: new Date() });
 	}
 
 	type Step = 'idle' | 'starting' | 'scan' | 'received' | 'proving' | 'posting' | 'rejected' | 'error';
@@ -39,6 +43,7 @@
 	let url = $state('');
 	let qr = $state('');
 	let error = $state('');
+	let detail = $state('');
 
 	const FLOW = ['qr', 'app', 'proof', 'check'] as const;
 	const at: Record<string, number> = { starting: 0, scan: 0, received: 1, proving: 2, posting: 3 };
@@ -53,14 +58,33 @@
 		}))
 	);
 	let cancelled = false;
+	let appTimer: ReturnType<typeof setTimeout> | null = null;
 	const isPhone = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+	function armTimeout() {
+		if (appTimer) clearTimeout(appTimer);
+		appTimer = setTimeout(() => {
+			if (cancelled || (step !== 'received' && step !== 'proving')) return;
+			error = tr('zk.timeout', lang);
+			detail = '';
+			step = 'error';
+		}, APP_TIMEOUT);
+	}
+
+	function fail(e: unknown) {
+		console.error('zkpassport', e);
+		error = tr('zk.error', lang);
+		detail = messageOf(e);
+		step = 'error';
+	}
 
 	async function start() {
 		cancelled = false;
 		error = '';
+		detail = '';
 		step = 'starting';
 		try {
-			const { ZKPassport } = await import('@zkpassport/sdk');
+			const { ZKPassport, NullifierType } = await import('@zkpassport/sdk');
 			const zk = new ZKPassport(domain);
 			let builder = await zk.request({
 				name: 'tartuffe.me',
@@ -68,7 +92,11 @@
 				purpose: tr('zk.purpose', lang),
 				scope,
 				devMode,
-				mode: 'compressed'
+				mode: 'compressed',
+				// The proof is valid for an hour (SPEC §4 step 2); the server
+				// judges freshness by proof_date.
+				validity: 3600,
+				uniqueIdentifierType: NullifierType.NON_SALTED
 			});
 			builder = builder.gte('age', 18);
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -84,39 +112,46 @@
 			const QRCode = await import('qrcode');
 			qr = await QRCode.toDataURL(req.url, { margin: 2, width: 480, errorCorrectionLevel: 'L' });
 			step = 'scan';
-			req.onRequestReceived(() => !cancelled && (step = 'received'));
-			req.onGeneratingProof(() => !cancelled && (step = 'proving'));
+			req.onRequestReceived(() => {
+				if (cancelled) return;
+				step = 'received';
+				armTimeout();
+			});
+			req.onGeneratingProof(() => {
+				if (cancelled) return;
+				step = 'proving';
+				armTimeout();
+			});
 			req.onReject(() => !cancelled && (step = 'rejected'));
 			req.onError((e: unknown) => {
 				if (cancelled) return;
-				error = String(e);
-				step = 'error';
+				fail(e);
 			});
 			req.onSuccess(async ({ proofs, result }: { proofs: unknown; result: unknown }) => {
 				if (cancelled) return;
+				if (appTimer) clearTimeout(appTimer);
 				step = 'posting';
-				try {
-					await onSuccess({ proofs, result, at: new Date() });
-				} catch (err) {
-					error = err instanceof Error ? err.message : String(err);
-					step = 'error';
-				}
+				await onSuccess({ proofs, result, at: new Date() });
 			});
 		} catch (err) {
-			console.error('zkpassport', err);
-			error = err instanceof Error ? err.message : String(err);
-			step = 'error';
+			fail(err);
 		}
 	}
 
 	function reset() {
 		cancelled = true;
+		if (appTimer) clearTimeout(appTimer);
 		step = 'idle';
 		url = '';
 		qr = '';
+		error = '';
+		detail = '';
 	}
 
-	onDestroy(() => (cancelled = true));
+	onDestroy(() => {
+		cancelled = true;
+		if (appTimer) clearTimeout(appTimer);
+	});
 </script>
 
 <section class="zk">
@@ -130,7 +165,7 @@
 		<ZKProofAnimation {lang} />
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
 		{#if simulate}
-			<button class="link" onclick={simulateScan}>Simuler un passeport (essai local)</button>
+			<button class="link" onclick={simulateScan}>{tr('zk.simulate', lang)}</button>
 		{/if}
 	{/if}
 	{#if step !== 'idle'}
@@ -146,11 +181,14 @@
 		{/if}
 		<p class="muted small">{tr('zk.get_app', lang)} <a href="https://zkpassport.id" target="_blank" rel="noopener">zkpassport.id</a></p>
 		<button class="link" onclick={reset}>{tr('zk.cancel', lang)}</button>
+	{:else if step === 'received' || step === 'proving' || step === 'starting'}
+		<button class="link" onclick={reset}>{tr('zk.cancel', lang)}</button>
 	{:else if step === 'rejected'}
 		<p class="status warn">{tr('zk.rejected', lang)}</p>
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
 	{:else if step === 'error'}
-		<p class="status err">{tr('zk.error', lang)} {error}</p>
+		<p class="status err" role="alert">{error}</p>
+		{#if detail}<p class="muted small detail">{detail}</p>{/if}
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
 	{/if}
 	{#if devMode}
@@ -205,6 +243,10 @@
 	.small {
 		font-size: 0.78rem;
 		text-align: center;
+	}
+	.detail {
+		font-family: var(--font-mono, monospace);
+		word-break: break-word;
 	}
 	.primary {
 		display: inline-block;

@@ -25,9 +25,10 @@ interface Files {
 }
 
 // findPosition finds the leaf's position from the positions shard of its
-// nibble (a restore: everyone fetches a whole shard).
-export async function findPosition(src: Sources, id: string): Promise<number | null> {
-	const shard = await src.json<Record<string, number>>(`positions/${id[2]}.json`);
+// nibble (a restore: everyone fetches a whole shard), read at the mirror
+// commit given (the newest checkpoint's: the latest files can be stale).
+export async function findPosition(src: Sources, id: string, token = ''): Promise<number | null> {
+	const shard = await src.json<Record<string, number>>(`positions/${id[2]}.json`, token);
 	return shard?.[id] ?? null;
 }
 

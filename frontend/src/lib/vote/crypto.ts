@@ -40,6 +40,7 @@ export const T_NODE = tag('node');
 export const T_REG = tag('reg');
 export const T_PRF = tag('prf');
 export const T_RELAY = tag('relay');
+export const T_DLEQ = tag('dleq');
 
 let api: BarretenbergSync | null = null;
 let loading: Promise<BarretenbergSync> | null = null;

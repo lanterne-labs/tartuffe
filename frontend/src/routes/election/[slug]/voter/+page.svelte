@@ -3,7 +3,7 @@
 	// shows comes from the public mirror and the mailbox (lib/vote/session):
 	// the event, the setup in force, the latest checkpoint and tally, the
 	// live counters; the voter's key, ballot and receipt. It never calls our
-	// server.
+	// server. Every wait here has a visible state and a next action.
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { displayName } from '$lib/share';
@@ -20,6 +20,7 @@
 	import { defaultSources } from '$lib/vote/sources';
 	import { neventLink } from '$lib/vote/mailbox';
 	import { parseLink, type LinkCode } from '$lib/vote/link';
+	import { describeError, toVoteError } from '$lib/vote/errors';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -30,10 +31,13 @@
 	const phase = session.phase;
 	const setupStore = session.setup;
 	const tallyStore = session.tally;
+	const tallyVerified = session.tallyVerified;
 	const statsStore = session.stats;
 	const ballotStore = session.ballot;
+	const registration = session.registration;
 	const warm = session.warm;
 	const sessionError = session.error;
+	const sessionErrorDetail = session.errorDetail;
 
 	interface EventInfo {
 		id: number;
@@ -53,21 +57,31 @@
 	let event = $state<EventInfo | null>(null);
 	let cards = $state<Map<number, Card>>(new Map());
 	let keyOpen = $state(false);
+	let keyMenuOpen = $state(false);
+	let showWords = $state(false);
+	let forgetOpen = $state(false);
 	let slotPick = $state<number | null>(null);
 	let withdrawOpen = $state(false);
+	// The clock the page judges the opening and the blackouts by, every
+	// 30 s: a page left open crosses them.
+	let now = $state(Date.now());
+	let clock: ReturnType<typeof setInterval> | null = null;
 	// A device link opened here (SPEC §4.2): the code of the device asking
-	// for the key, and where the sending stands.
+	// for the key, where the sending stands, and the confirmation code the
+	// other device asks the voter to compare.
 	let linkCode = $state<LinkCode | null>(null);
 	let linkState = $state<'ask' | 'sending' | 'sent' | 'failed'>('ask');
 	let linkError = $state('');
+	let linkConfirm = $state('');
 	async function sendKey() {
 		if (!linkCode) return;
 		linkState = 'sending';
 		try {
-			await session.sendKey(linkCode);
+			linkConfirm = await session.sendKey(linkCode);
 			linkState = 'sent';
 		} catch (e) {
-			linkError = e instanceof Error ? e.message : String(e);
+			const ve = toVoteError(e);
+			linkError = describeError(ve.code, ve.detail, currentLang);
 			linkState = 'failed';
 		}
 	}
@@ -83,31 +97,31 @@
 	let mask = $derived($setupStore?.setup.mask ?? 0);
 	let kReal = $derived($setupStore?.setup.k_real ?? 10);
 	// The page stops taking ballots 10 minutes before the close (SPEC §9.3).
-	let open = $derived($phase !== 'closed' && !!$setupStore && Date.now() < Date.parse($setupStore.setup.closes) - 10 * 60_000);
-	let blackout = $derived(($setupStore?.setup.blackouts ?? []).some((b) => Date.now() >= Date.parse(b.from) && Date.now() < Date.parse(b.to)));
-	let hasKey = $derived(!!$voteKey && $voteKey.slug === slug);
+	let open = $derived($phase !== 'closed' && !!$setupStore && now < Date.parse($setupStore.setup.closes) - 10 * 60_000);
+	let blackout = $derived(($setupStore?.setup.blackouts ?? []).some((b) => now >= Date.parse(b.from) && now < Date.parse(b.to)));
+	let key = $derived($voteKey && $voteKey.slug === slug ? $voteKey : null);
+	let hasKey = $derived(!!key);
+	let joined = $derived(!!key && key.position >= 0);
 	let ready = $derived($phase === 'ready');
-	let busy = $derived($ballotStore.state === 'proving' || $ballotStore.state === 'sending');
+	let busy = $derived($ballotStore.state === 'proving' || $ballotStore.state === 'sending' || $ballotStore.state === 'sent');
+	let inFlight = $derived(busy || $ballotStore.state === 'received' || $ballotStore.state === 'verified' || $ballotStore.state === 'missing');
 
-	// The ballot shown: the last one cast from this device (kept with the
-	// key), as slots.
-	let shown = $derived<number[]>($ballotStore.ranking ? $ballotStore.ranking.slots.slice(0, $ballotStore.ranking.len) : rememberedSlots());
+	// The ballot shown: the one in flight or acknowledged this visit, else
+	// the last one this key cast as the device knows it (kept with the
+	// key, carried by a device link).
+	let shown = $derived<number[]>(inFlight && $ballotStore.ranking ? $ballotStore.ranking.slots.slice(0, $ballotStore.ranking.len) : (key?.slots ?? []));
 	let endsBlank = $derived(shown.at(-1) === BLANK);
 	let choosable = $derived(options.filter((o) => o.kind === 'candidate' && !shown.includes(o.slot)));
+	// A key restored from its words knows its last sequence number but not
+	// its ranking: the page says a ballot is in the log.
+	let loggedUnknown = $derived(!!key && key.seq > 0 && key.slots === undefined && !inFlight);
+	let canResend = $derived($ballotStore.state === 'failed' && !!$ballotStore.kept);
+	let canRetry = $derived(($ballotStore.state === 'failed' || $ballotStore.state === 'rejected') && !!$ballotStore.ranking);
 
-	const REMEMBER = 'vote2_ballot';
-	function rememberedSlots(): number[] {
-		try {
-			const raw = localStorage.getItem(`${REMEMBER}:${slug}`);
-			return raw ? (JSON.parse(raw) as number[]) : [];
-		} catch {
-			return [];
-		}
-	}
-	function remember(slots: number[]) {
-		try {
-			localStorage.setItem(`${REMEMBER}:${slug}`, JSON.stringify(slots));
-		} catch {}
+	function failed(e: unknown) {
+		const ve = toVoteError(e);
+		const b = $ballotStore;
+		actionError = describeError(b.state === 'rejected' || b.state === 'failed' ? (b.reason ?? ve.code) : ve.code, b.detail ?? ve.detail, currentLang);
 	}
 
 	async function change(next: number[]): Promise<boolean> {
@@ -116,13 +130,33 @@
 		const r: Ranking = { len: next.length, slots: [next[0] ?? 0, next[1] ?? 0, next[2] ?? 0] };
 		try {
 			await session.cast(r);
-			remember(next);
 			return true;
 		} catch (e) {
-			const reason = $ballotStore.reason ?? (e instanceof Error ? e.message : String(e));
-			actionError = tr(`v2.reason.${reason}`, currentLang) !== `v2.reason.${reason}` ? tr(`v2.reason.${reason}`, currentLang) : reason;
+			failed(e);
 			return false;
 		}
+	}
+
+	// resend posts the proven ballot no relay acknowledged; retry proves
+	// the attempted ranking again.
+	async function resend() {
+		actionError = '';
+		try {
+			await session.resend();
+		} catch (e) {
+			failed(e);
+		}
+	}
+	function retry() {
+		const r = $ballotStore.ranking;
+		if (r) void change(r.slots.slice(0, r.len));
+	}
+
+	function forgetKey() {
+		forgetOpen = false;
+		keyMenuOpen = false;
+		showWords = false;
+		session.forgetKey();
 	}
 
 	function placed(cur: number[], choice: number, at: number | null): number[] {
@@ -137,7 +171,7 @@
 	}
 
 	function pick(choice: number, at: number | null) {
-		if (!hasKey) {
+		if (!joined) {
 			keyOpen = true;
 			return;
 		}
@@ -221,7 +255,7 @@
 		return total > 0 ? `${Math.round((100 * n) / total)}%` : '—';
 	}
 	function ago(iso: string): string {
-		const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+		const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60000));
 		if (m < 1) return currentLang === 'en' ? 'just now' : 'à l’instant';
 		if (m < 60) return currentLang === 'en' ? `${m} min ago` : `il y a ${m} min`;
 		const h = Math.round(m / 60);
@@ -237,6 +271,13 @@
 		const o = bySlot.get(slot);
 		return o?.person_id ? cards.get(o.person_id)?.image_url : undefined;
 	}
+	function keyStatusKey(): string {
+		if (!key) return 'profile.key.none';
+		if (key.prf) return 'profile.key.passkey';
+		if (key.backups.words) return 'profile.key.words';
+		if (key.backups.linked > 0) return 'profile.key.linked';
+		return 'profile.key.unprotected';
+	}
 
 	let results = $derived.by(() => {
 		const t: Tally | null = $tallyStore;
@@ -245,12 +286,24 @@
 	});
 	let winnerSlot = $derived(results?.condorcet_winner ?? null);
 
-	onMount(async () => {
+	// load reads the event's card files (a failure there is not the end:
+	// the page shows the slug) then starts the session, which names any
+	// failure of its own with a retry.
+	async function load() {
 		const src = defaultSources();
-		const [ev, cs] = await Promise.all([src.json<EventInfo>('event.json'), src.json<Card[]>('candidates.json')]);
-		event = ev;
-		cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+		try {
+			const [ev, cs] = await Promise.all([src.json<EventInfo>('event.json'), src.json<Card[]>('candidates.json')]);
+			event = ev;
+			cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+		} catch (e) {
+			console.warn('vote: event files', e);
+		}
 		await session.init();
+	}
+
+	onMount(async () => {
+		clock = setInterval(() => (now = Date.now()), 30_000);
+		await load();
 		checkLink();
 		window.addEventListener('hashchange', checkLink);
 	});
@@ -262,10 +315,12 @@
 			linkCode = code;
 			linkState = 'ask';
 			linkError = '';
+			linkConfirm = '';
 		}
 	}
 	onDestroy(() => {
 		session.destroy();
+		if (clock) clearInterval(clock);
 		if (typeof window !== 'undefined') window.removeEventListener('hashchange', checkLink);
 	});
 </script>
@@ -276,8 +331,8 @@
 
 {#if $phase === 'error'}
 	<div class="state error">
-		<p>{$sessionError}</p>
-		<button class="btn" onclick={() => session.init()}>{tr('home.retry', currentLang)}</button>
+		<p>{describeError($sessionError, $sessionErrorDetail, currentLang)}</p>
+		<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
 	</div>
 {:else if $phase === 'loading' || !$setupStore}
 	<p class="state loading"><Spinner label={tr('person.loading', currentLang)} /></p>
@@ -323,7 +378,7 @@
 						<summary class="state-icon state-icon--logged" aria-label={tr('v2.status.verified', currentLang)}>
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
 						</summary>
-						<p>{tr('v2.status.verified.help', currentLang)}</p>
+						<p>{tr($ballotStore.late ? 'v2.status.late.help' : 'v2.status.verified.help', currentLang)}</p>
 					</details>
 				{:else if $ballotStore.state === 'received'}
 					<details class="help status-tip">
@@ -355,13 +410,26 @@
 			</h2>
 			{#if !hasKey}
 				<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.key.get', currentLang)}</button>
-			{:else if $phase === 'joining' || $phase === 'registering'}
-				<span class="joining"><Spinner size="sm" label={tr('v2.join.waiting', currentLang)} /> {tr('v2.join.waiting', currentLang)}</span>
+			{:else if !joined}
+				{#if $registration.state === 'posting'}
+					<span class="joining"><Spinner size="sm" label={tr('v2.join.posting', currentLang)} /> {tr('v2.join.posting', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
+				{:else if $registration.state === 'acked'}
+					<span class="joining"><Spinner size="sm" label={tr('v2.join.acked', currentLang)} /> {tr('v2.join.acked', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
+				{:else if $registration.state === 'failed'}
+					<span class="joining joining--fault"><span class="state-icon state-icon--fault" aria-hidden="true">!</span> {tr('v2.join.failed', currentLang)} <button class="btn btn-small" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
+				{:else}
+					<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.join.idle', currentLang)}</button>
+				{/if}
+			{:else}
+				<button class="btn btn-small btn-quiet" onclick={() => (keyMenuOpen = true)}>{tr('v2.key.menu', currentLang)}</button>
 			{/if}
 		</div>
 		<p class="hint">{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: 3 })}</p>
 		{#if hasKey && $warm !== 'ready' && $warm !== 'idle'}
 			<p class="hint muted">{tr(`v2.warm.${$warm}`, currentLang)}</p>
+		{/if}
+		{#if loggedUnknown}
+			<p class="hint">{tr('v2.ballot.logged', currentLang, { seq: key?.seq ?? 0 })}</p>
 		{/if}
 		<ol class="slots" style="--n: 3" use:sortable>
 			{#each [0, 1, 2] as i (i)}
@@ -412,7 +480,7 @@
 		</ol>
 		{#if open}
 			<div class="ballot-actions">
-				{#if event && ($ballotStore.state === 'verified' || $ballotStore.state === 'received' || ($voteKey?.lastBallot && $voteKey.lastBallot.state !== 'missing'))}
+				{#if event && ($ballotStore.state === 'verified' || $ballotStore.state === 'received' || (key?.lastBallot && key.lastBallot.state !== 'missing'))}
 					<ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} />
 				{/if}
 				{#if shown.length === 0}
@@ -421,6 +489,11 @@
 				{/if}
 				{#if shown.length > 0}
 					<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+				{/if}
+				{#if canResend}
+					<button class="btn btn-small btn-primary" onclick={resend} disabled={busy}>{tr('v2.ballot.resend', currentLang)}</button>
+				{:else if canRetry}
+					<button class="btn btn-small btn-primary" onclick={retry} disabled={busy}>{tr('v2.ballot.retry', currentLang)}</button>
 				{/if}
 			</div>
 		{/if}
@@ -459,19 +532,52 @@
 	</Modal>
 
 	<Modal open={!!linkCode} title={tr('v2.link.send.title', currentLang)} onclose={closeLink} closeLabel={tr('auth.close', currentLang)}>
-		{#if !hasKey || ($voteKey?.position ?? -1) < 0}
+		{#if !joined}
 			<p class="dialog-text">{tr('v2.link.send.nokey', currentLang)}</p>
 		{:else if linkState === 'sent'}
 			<p class="dialog-text">{tr('v2.link.send.sent', currentLang)}</p>
+			<p class="dialog-text">{tr('v2.link.send.code', currentLang)}</p>
+			<p class="confirm-code">{linkConfirm}</p>
+			<p class="dialog-text">{tr('v2.link.send.hint', currentLang)}</p>
 		{:else}
 			<p class="dialog-text">{tr('v2.link.send.text', currentLang)}</p>
 			{#if linkState === 'failed'}<p class="save-error" role="alert">{linkError}</p>{/if}
 		{/if}
 		{#snippet actions()}
 			<button class="btn" onclick={closeLink}>{tr('auth.close', currentLang)}</button>
-			{#if hasKey && ($voteKey?.position ?? -1) >= 0 && linkState !== 'sent'}
+			{#if joined && linkState !== 'sent'}
 				<button class="btn btn-primary" onclick={sendKey} disabled={linkState === 'sending'}>{tr('v2.link.send.button', currentLang)}</button>
 			{/if}
+		{/snippet}
+	</Modal>
+
+	<Modal open={keyMenuOpen} title={tr('profile.key.title', currentLang)} onclose={() => ((keyMenuOpen = false), (showWords = false))} closeLabel={tr('auth.close', currentLang)}>
+		<p class="dialog-text">{tr('profile.key.story', currentLang)}</p>
+		<p class="dialog-text">{tr(keyStatusKey(), currentLang)}</p>
+		{#if key?.words}
+			{#if showWords}
+				<p class="dialog-text">{tr('v2.key.words.again', currentLang)}</p>
+				<ol class="words">
+					{#each key.words.split(' ') as w, i (i)}<li>{w}</li>{/each}
+				</ol>
+			{:else}
+				<button class="btn btn-small" onclick={() => (showWords = true)}>{tr('v2.key.words.show', currentLang)}</button>
+			{/if}
+		{/if}
+		<details class="lost">
+			<summary>{tr('profile.key.lost.title', currentLang)}</summary>
+			<p class="dialog-text">{tr('profile.key.lost.text', currentLang)}</p>
+		</details>
+		{#snippet actions()}
+			<button class="btn btn-quiet danger" onclick={() => (forgetOpen = true)}>{tr('profile.key.forget', currentLang)}</button>
+		{/snippet}
+	</Modal>
+
+	<Modal open={forgetOpen} title={tr('profile.key.forget.title', currentLang)} onclose={() => (forgetOpen = false)} closeLabel={tr('auth.close', currentLang)}>
+		<p class="dialog-text">{tr(key?.prf || key?.backups.words ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
+		{#snippet actions()}
+			<button class="btn" onclick={() => (forgetOpen = false)}>{tr('vote.cancel', currentLang)}</button>
+			<button class="btn btn-danger" onclick={forgetKey}>{tr('profile.key.forget', currentLang)}</button>
 		{/snippet}
 	</Modal>
 
@@ -492,6 +598,11 @@
 			<p class="state">{tr('v2.results.none', currentLang, { k: kReal })}</p>
 		{:else}
 			<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyStore.at) })}</p>
+			{#if $tallyVerified === false}
+				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
+			{:else if $tallyVerified}
+				<p class="updated">{tr('v2.results.verified', currentLang)}</p>
+			{/if}
 			<ol class="vote-list">
 				{#each results.options as o (o.slot)}
 					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={o.rank === 1} class:vote-row--blank={o.kind === 'blank'}>
@@ -520,6 +631,44 @@
 {/if}
 
 <style>
+	.joining--fault {
+		color: var(--red);
+	}
+	.link-btn {
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--text-secondary);
+		text-decoration: underline;
+		cursor: pointer;
+		font: inherit;
+	}
+	.confirm-code {
+		margin: 0 0 0.9rem;
+		text-align: center;
+		font-family: var(--font-mono, monospace);
+		font-size: 2rem;
+		letter-spacing: 0.3em;
+		color: var(--text-primary);
+	}
+	.words {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.35rem 0.8rem;
+		margin: 0 0 0.9rem;
+		padding-left: 1.4rem;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.95rem;
+	}
+	.lost summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+		margin-bottom: 0.5rem;
+	}
+	.danger {
+		color: var(--red);
+	}
 	.slots {
 		list-style: none;
 		margin: 0.75rem 0 1rem;
