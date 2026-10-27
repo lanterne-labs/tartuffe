@@ -83,7 +83,7 @@ type stubStanceProcessor struct {
 	storer *PostgresStorer
 }
 
-func (s *stubStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string) (*core.StanceProcessResult, error) {
+func (s *stubStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string, _ *time.Time) (*core.StanceProcessResult, error) {
 	label := factText
 	if len(label) > 120 {
 		label = label[:120]

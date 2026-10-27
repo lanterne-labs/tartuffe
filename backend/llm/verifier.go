@@ -42,7 +42,7 @@ const verifyMaxTokens = 1536
 // A statement that stands for a group of restatements carries them in Also,
 // so the pass judges the same details the detector saw.
 func VerifyContradiction(ctx context.Context, c *Client, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error) {
-	prompt := fmt.Sprintf(promptrules.RefuteContradictionPrompt, a.Render(), b.Render(), claimedReason)
+	prompt := fmt.Sprintf(promptrules.RefuteContradictionPrompt, a.Dated(), b.Dated(), claimedReason)
 
 	content, _, err := c.Chat(ctx, ChatRequest{
 		Messages:    []ChatMessage{{Role: "user", Content: prompt}},

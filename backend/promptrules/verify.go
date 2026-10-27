@@ -36,6 +36,8 @@ A REAL contradiction (answer YES) is the person's own statements or actions conf
 ` + FalsePositivePatterns + `
 ` + RestatementsRule + `
 
+**DATES:** each statement is preceded by "(dated YYYY-MM-DD)" when its date is known, "(undated)" else. Use them: a position and its opposite on the SAME question, both dated, is a reversal whatever the order; a yearly text (the budget, the PLF) at dates about a year apart is two texts; a decision deferred to after an event and the decision taken after it is the announced sequence; with an undated statement, be skeptical of a reversal.
+
 The reason it was flagged is a hint from another model, not evidence: judge the two statements as written. If the reason relies on words, facts or events that NEITHER statement contains, it may describe another pair: answer NO unless the two statements contradict each other on their own.
 
 Decision procedure:

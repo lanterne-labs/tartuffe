@@ -161,8 +161,8 @@ func RunAudit(ctx context.Context, storer *storage.PostgresStorer, opts AuditOpt
 			stopped = err
 			break
 		}
-		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID]}
-		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID]}
+		stmtA := promptrules.Statement{Text: row.FactAText, Also: members[row.FactAID], Date: promptrules.DateOf(row.FactADate)}
+		stmtB := promptrules.Statement{Text: row.FactBText, Also: members[row.FactBID], Date: promptrules.DateOf(row.FactBDate)}
 		// Verdict pinning: a row audited KEEP under identical inputs (facts and
 		// their other wordings, dates, reason, prompt/rulebook) is not
 		// re-judged — the verdict is a pure function of those inputs, so

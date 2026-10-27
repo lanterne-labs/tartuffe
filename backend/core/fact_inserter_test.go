@@ -55,7 +55,7 @@ func (f *fakeInserterStorer) LinkPersonsToSourceMention(ctx context.Context, sou
 // fakeStanceProcessor satisfies the mandatory stance routing without an LLM.
 type fakeStanceProcessor struct{}
 
-func (fakeStanceProcessor) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (fakeStanceProcessor) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string, _ *time.Time) (*StanceProcessResult, error) {
 	return &StanceProcessResult{Verdict: "NEW_STANCE", StanceID: 1}, nil
 }
 

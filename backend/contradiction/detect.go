@@ -885,8 +885,8 @@ func decidePair(ctx context.Context, verifier pairVerifier, groupJudge core.Same
 	}
 	if d.contradiction {
 		keep, refutation, err := verifier.VerifyContradiction(ctx,
-			promptrules.Statement{Text: p.factAText, Also: p.alsoA},
-			promptrules.Statement{Text: p.factBText, Also: p.alsoB}, r.Reason)
+			promptrules.Statement{Text: p.factAText, Also: p.alsoA, Date: promptrules.DateOf(p.factADate)},
+			promptrules.Statement{Text: p.factBText, Also: p.alsoB, Date: promptrules.DateOf(p.factBDate)}, r.Reason)
 		switch {
 		case errors.Is(err, llm.ErrUnavailable):
 			return pairDecision{}, err

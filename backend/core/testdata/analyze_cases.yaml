@@ -165,3 +165,25 @@ cases:
     must_flag: [502]
     must_not_flag: []
     notes: "A vote on l'ensemble IS the position — the amendment-vote exemption must not leak onto text-level votes."
+
+  # ── Le Pen review of 2026-10-27 (mirror-ds6.11): "the budget" a year apart
+  # ── is two texts. The judge sees the dates since that day; without them it
+  # ── flagged prod 1963 (and 1961, 1708) as a reversal.
+  - name: "F_two_budgets_a_year_apart_must_not_flag"
+    summary: >-
+      Marine Le Pen s'oppose aux budgets du gouvernement qu'elle juge dans la
+      continuité de la politique d'Emmanuel Macron, tout en se disant prête à
+      des compromis budgétaires.
+    key_facts:
+      - id: 131586
+        verb: ANNOUNCED
+        text: "Marine Le Pen a annoncé que le RN voterait contre le budget, qu'elle présente comme traduisant la politique d'Emmanuel Macron."
+        date: "2025-10-24"
+      - id: 105881
+        verb: OPPOSED
+        text: "Marine Le Pen a déclaré être contre le budget parce qu'elle est contre l'absence totale d'économies sur le train de vie de l'État."
+        date: "2026-01-17"
+    new_fact: "Marine Le Pen a déclaré au sommet Paris Playbook de POLITICO qu'elle prévoit d'amender le budget plutôt que de le bloquer."
+    new_fact_date: "2026-10-01"
+    must_not_flag: [131586, 105881]
+    notes: "October 2025 and January 2026 are about the 2026 budget; October 2026 about the 2027 budget. Two texts, no reversal."

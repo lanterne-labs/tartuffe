@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"digital-mirror/backend/core"
 )
@@ -98,7 +99,7 @@ func newVotePlacer(ctx context.Context, store voteSubjectStore, stancer voteStan
 }
 
 // ProcessNewFact places one ballot and writes its stance membership.
-func (p *votePlacer) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string) (*core.StanceProcessResult, error) {
+func (p *votePlacer) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string, _ *time.Time) (*core.StanceProcessResult, error) {
 	d := core.StanceDecision{StanceID: p.known[personID], Verdict: core.VerdictNewInfo}
 	if d.StanceID == 0 {
 		var err error
