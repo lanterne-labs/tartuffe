@@ -864,6 +864,13 @@ Differences from the text above:
   a later visit shows it and finishes it. The checkpoint subscription
   moves to the next relay of the ranking when a relay cannot be reached.
 
-Not built yet: the git-backed mirror and the `github.io` app origin
-(§8.3, Q3), the device link for v2 keys, keyboard reordering of the
-ranking, the final shuffle (§9.4).
+- The git-backed mirror (`dm vote ingest --mirror-git REMOTE`): each
+  checkpoint one commit, its hash the token the note names, read through
+  jsDelivr by commit and the latest files through the repository's pages
+  (the browser's `Sources` tries a commit-aware mirror first for a token).
+- The ranking can be reordered with the keyboard (buttons on each slot)
+  besides the drag.
+
+Not built yet: the `github.io` app origin and the mirror repository (Q3,
+the owner's choice of organisation), the device link for v2 keys, the
+final shuffle (§9.4).

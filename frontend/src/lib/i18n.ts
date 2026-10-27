@@ -109,6 +109,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'vote.title': { fr: 'Mon vote', en: 'My vote' },
 	'vote.hint': { fr: 'Classez jusqu’à {n} candidats, par ordre de préférence.', en: 'Rank up to {n} candidates, in order of preference.' },
 	'vote.closed_hint': { fr: 'Le vote est clos.', en: 'Voting is closed.' },
+	'vote.move_up': { fr: 'Monter {name}', en: 'Move {name} up' },
+	'vote.move_down': { fr: 'Descendre {name}', en: 'Move {name} down' },
 	'vote.remove_named': { fr: 'Retirer mon vote pour {name}', en: 'Remove my vote for {name}' },
 	'vote.withdraw_all': { fr: 'Retirer mon vote', en: 'Remove my vote' },
 	'vote.withdraw.title': { fr: 'Retirer votre vote ?', en: 'Remove your vote?' },

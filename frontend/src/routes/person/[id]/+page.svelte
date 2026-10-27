@@ -843,36 +843,6 @@
 		flex-shrink: 0;
 	}
 
-	.lang-toggle {
-		display: inline-flex;
-		gap: 2px;
-		padding: 2px;
-		background: var(--bg-card);
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		flex-shrink: 0;
-		margin-left: 0.5rem;
-	}
-	.lang-pill {
-		background: transparent;
-		border: none;
-		padding: 0.25rem 0.6rem;
-		border-radius: var(--radius-full);
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: all var(--transition-normal);
-	}
-	.lang-pill:hover {
-		color: var(--text-primary);
-	}
-	.lang-pill.active {
-		background: var(--accent);
-		color: white;
-	}
-
 	/* Score Breakdown */
 	.score-breakdown {
 		display: flex;
@@ -1095,53 +1065,6 @@
 		position: relative;
 	}
 
-	/* Report-issue affordance: small warning icon used on fact cards. Stance cards
-	   place their report button inside the meta line (no absolute positioning) so it
-	   doesn't collide with the per-stance gauge. */
-	.report-btn {
-		position: absolute;
-		top: 0.5rem;
-		right: 0.5rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: var(--text-secondary);
-		opacity: 0.5;
-		cursor: pointer;
-		transition: color var(--transition-fast), opacity var(--transition-fast), background var(--transition-fast);
-	}
-	.report-btn:hover,
-	.report-btn:focus-visible {
-		color: var(--red);
-		opacity: 1;
-		background: rgba(255, 255, 255, 0.05);
-		outline: none;
-	}
-
-	.meta-report-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		margin-left: auto;
-		background: transparent;
-		border: none;
-		color: var(--text-muted);
-		opacity: 0.6;
-		cursor: pointer;
-		transition: color var(--transition-fast), opacity var(--transition-fast);
-	}
-	.meta-report-btn:hover {
-		color: var(--red);
-		opacity: 1;
-	}
-
 	/* Stance card */
 	.stance-card {
 		padding: 0;
@@ -1169,14 +1092,6 @@
 	.stance-clickable:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: -2px;
-	}
-
-	.stance-clickable.disabled {
-		cursor: default;
-	}
-
-	.stance-clickable.disabled:hover {
-		background: transparent;
 	}
 
 	.stance-top {
@@ -1327,12 +1242,6 @@
 		opacity: 0.8;
 	}
 
-	.stance-contradictions {
-		margin: 0 1.25rem 1rem;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--border-card);
-	}
-
 	.stance-more-row {
 		display: flex;
 		gap: 1rem;
@@ -1358,52 +1267,9 @@
 		border-radius: var(--radius-full);
 	}
 
-	/* Facts disclosure (de-emphasized — stances are the headline). */
-	.facts-disclosure {
-		margin-top: 1.5rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--border-card);
-	}
-
-	.facts-disclosure-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		background: transparent;
-		border: none;
-		padding: 0.25rem 0;
-		font-family: var(--font-family);
-		font-size: 0.813rem;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: color var(--transition-fast);
-	}
-
-	.facts-disclosure-toggle:hover {
-		color: var(--text-primary);
-	}
-
-	.facts-list {
-		margin-top: 0.75rem;
-	}
-
-	/* Fact Card (used inside the facts disclosure) */
-	.fact-card.highlighted {
-		border-color: var(--accent);
-		box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-glow);
-		animation: pulse-glow 1s ease-in-out;
-	}
-
 	@keyframes pulse-glow {
 		0%, 100% { box-shadow: 0 0 0 3px var(--accent-glow); }
 		50% { box-shadow: 0 0 0 6px var(--accent-glow); }
-	}
-
-	.fact-text {
-		font-size: 0.938rem;
-		line-height: 1.6;
-		color: var(--text-primary);
-		margin-bottom: 0.75rem;
 	}
 
 	.fact-id {
@@ -1411,11 +1277,6 @@
 		font-weight: 600;
 		color: var(--text-muted);
 		margin-right: 0.25rem;
-	}
-
-	.fact-source a {
-		color: var(--accent);
-		font-size: 0.813rem;
 	}
 
 	.quote-block {
@@ -1427,81 +1288,6 @@
 		background: var(--bg-secondary);
 		border-radius: var(--radius-sm);
 		border-left: 3px solid var(--accent);
-	}
-
-	/* Fact Persons */
-	.fact-persons-section {
-		margin-top: 0.75rem;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--border-card);
-	}
-
-	.persons-toggle {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.75rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.75rem;
-		font-family: var(--font-family);
-		color: var(--text-secondary);
-		transition: border-color var(--transition-fast);
-	}
-
-	.persons-toggle:hover {
-		border-color: var(--border-card-hover);
-	}
-
-	.fact-persons-grid {
-		margin-top: 0.5rem;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-		gap: 0.5rem;
-	}
-
-	.person-chip {
-		display: flex;
-		justify-content: space-between;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		color: inherit;
-		font-size: 0.75rem;
-		transition: border-color var(--transition-fast);
-	}
-
-	.person-chip:hover {
-		border-color: var(--accent);
-	}
-
-	.person-chip-name {
-		color: var(--text-primary);
-		text-transform: capitalize;
-	}
-
-	.person-chip-score {
-		color: var(--text-muted);
-	}
-
-	.load-more-inline {
-		grid-column: 1 / -1;
-		padding: 0.375rem;
-		background: transparent;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		color: var(--accent);
-		font-size: 0.75rem;
-		font-family: var(--font-family);
-		transition: background var(--transition-fast);
-	}
-
-	.load-more-inline:hover {
-		background: var(--bg-secondary);
 	}
 
 	.empty-mini {
@@ -1524,36 +1310,6 @@
 
 	.link-btn:hover {
 		color: var(--accent-hover);
-	}
-
-	/* Load More */
-	.load-more {
-		text-align: center;
-		padding: 2rem;
-	}
-
-	.load-more-btn {
-		background: transparent;
-		color: var(--accent);
-		border: 1px solid var(--accent);
-		padding: 0.625rem 1.5rem;
-		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 500;
-		font-family: var(--font-family);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.load-more-btn:hover:not(:disabled) {
-		background: var(--accent);
-		color: white;
-		box-shadow: var(--shadow-glow);
-	}
-
-	.load-more-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	/* Skeleton */

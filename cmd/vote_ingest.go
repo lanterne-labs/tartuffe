@@ -36,7 +36,9 @@ event's circuit: --vk, from dm vote setup.`,
 func init() {
 	voteCmd.AddCommand(voteIngestCmd)
 	voteIngestCmd.Flags().String("vk", "", "the circuit's verification key file of dm vote setup (required)")
-	voteIngestCmd.Flags().String("mirror-dir", "", "directory of the public data mirror (SPEC §8.3), served by a static host")
+	voteIngestCmd.Flags().String("mirror-dir", "", "directory of the public data mirror (SPEC §8.3), served by a static host; with --mirror-git, the clone")
+	voteIngestCmd.Flags().String("mirror-git", "", "git remote of the mirror (with credentials: https://x-access-token:TOKEN@github.com/org/repo.git): each checkpoint is a commit, read through jsDelivr by its hash")
+	voteIngestCmd.Flags().String("mirror-branch", "main", "the mirror repository's branch")
 	voteIngestCmd.Flags().String("artifact", "", "the compiled circuit (ballot.json of dm vote setup), published on the mirror")
 	voteIngestCmd.Flags().Bool("dev-accept-any-passport", false, "accept every registration without a passport proof (local trials only)")
 	_ = voteIngestCmd.MarkFlagRequired("vk")
@@ -139,7 +141,14 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		mirror = &vote.DirMirror{Dir: dir}
+		if remote, _ := cmd.Flags().GetString("mirror-git"); remote != "" {
+			branch, _ := cmd.Flags().GetString("mirror-branch")
+			if mirror, err = vote.NewGitMirror(ctx, dir, remote, branch); err != nil {
+				return err
+			}
+		} else {
+			mirror = &vote.DirMirror{Dir: dir}
+		}
 	}
 	in, err := vote.NewIngest(ctx, store, vote.Config{
 		Event:    e,

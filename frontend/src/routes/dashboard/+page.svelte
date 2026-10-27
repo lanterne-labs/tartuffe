@@ -405,39 +405,6 @@
 		margin: 0 auto;
 	}
 
-	.dashboard-header {
-		margin-bottom: 2.25rem;
-		padding-bottom: 1.25rem;
-		border-bottom: 1px solid var(--border-card);
-		position: relative;
-	}
-
-	.dashboard-header::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		bottom: -1px;
-		width: 3rem;
-		height: 1px;
-		background: var(--accent);
-	}
-
-	.dashboard-header h1 {
-		font-family: var(--font-serif);
-		font-size: 2.5rem;
-		font-weight: 600;
-		letter-spacing: 0.005em;
-		line-height: 1.1;
-		margin-bottom: 0.5rem;
-	}
-
-	.subtitle {
-		color: var(--text-secondary);
-		font-size: 0.8125rem;
-		letter-spacing: 0.04em;
-		font-style: italic;
-	}
-
 	/* Error Banner */
 	.error-banner {
 		background: var(--error-bg);

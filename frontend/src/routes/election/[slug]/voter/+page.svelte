@@ -173,6 +173,16 @@
 	function remove(id: number) {
 		change(shown.filter((x) => x !== id));
 	}
+	// move swaps a candidate with its neighbour (the keyboard's way to
+	// reorder; the drag is the finger's).
+	function move(id: number, dir: -1 | 1) {
+		const cands = shown.filter((x) => x !== BLANK);
+		const i = cands.indexOf(id);
+		const j = i + dir;
+		if (i < 0 || j < 0 || j >= cands.length) return;
+		[cands[i], cands[j]] = [cands[j], cands[i]];
+		change(endsBlank ? [...cands, BLANK] : cands);
+	}
 	async function withdrawAll() {
 		withdrawOpen = false;
 		await change([]);
@@ -345,6 +355,12 @@
 						</button>
 						{#if open}
 							<button class="unpick" onclick={() => remove(id)} disabled={busy} aria-label={tr('vote.remove_named', currentLang, { name: nameOf(id) })}>×</button>
+						{/if}
+						{#if movable(id)}
+							<span class="slot-move">
+								<button onclick={() => move(id, -1)} disabled={busy || i === 0} aria-label={tr('vote.move_up', currentLang, { name: nameOf(id) })}>▲</button>
+								<button onclick={() => move(id, 1)} disabled={busy || i >= shown.filter((x) => x !== BLANK).length - 1} aria-label={tr('vote.move_down', currentLang, { name: nameOf(id) })}>▼</button>
+							</span>
 						{/if}
 					{:else if open}
 						<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
@@ -655,24 +671,41 @@
 		line-height: 1;
 		cursor: pointer;
 	}
+	.slot-move {
+		position: absolute;
+		left: 0.3rem;
+		top: 0.3rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		opacity: 0;
+		transition: opacity var(--transition-fast);
+	}
+	.slot:hover .slot-move,
+	.slot:focus-within .slot-move {
+		opacity: 1;
+	}
+	.slot-move button {
+		width: 1.5rem;
+		height: 1.3rem;
+		border: none;
+		border-radius: var(--radius-sm, 0.3rem);
+		background: color-mix(in oklch, var(--bg-elevated, #222) 80%, transparent);
+		color: var(--text-muted);
+		font-size: 0.6rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.slot-move button:hover:not(:disabled) {
+		color: var(--text-primary);
+	}
+	.slot-move button:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
 	.unpick:hover {
 		color: var(--red);
 		background: color-mix(in oklch, var(--red) 12%, transparent);
-	}
-	.protect {
-		display: block;
-		width: 100%;
-		margin: 0.5rem 0 0;
-		padding: 0.55rem 0.8rem;
-		text-align: center;
-		background: color-mix(in oklch, var(--accent) 12%, var(--bg-card));
-		border: 1px solid var(--accent);
-		border-radius: var(--radius-md);
-		color: var(--text-primary);
-		font: inherit;
-		font-size: 0.88rem;
-		font-weight: 600;
-		cursor: pointer;
 	}
 	.state-icon {
 		display: inline-grid;
@@ -711,16 +744,6 @@
 	}
 	.state-icon--logged svg .tick {
 		stroke-width: 2.2;
-	}
-	.verify {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		margin-top: 0.75rem;
-	}
-	.verify--results {
-		justify-content: center;
-		margin: 1.25rem auto 0;
 	}
 	.help {
 		position: relative;
@@ -776,13 +799,6 @@
 		font-weight: 400;
 		text-align: left;
 	}
-	.steps-box {
-		margin: 0.6rem 0 0;
-	}
-	.steps-box--results {
-		width: fit-content;
-		margin: 0.75rem auto 0;
-	}
 	.state-icon--fault {
 		background: var(--red);
 		color: white;
@@ -799,24 +815,8 @@
 		background: transparent;
 		color: var(--text-secondary);
 	}
-	.bar-fill--blank {
-		background: var(--text-muted) !important;
-	}
-	.vote-row--blank .name,
-	.board-row--blank .name {
+	.vote-row--blank .name {
 		font-style: italic;
-	}
-	.log-fault {
-		display: grid;
-		gap: 0.4rem;
-		justify-items: start;
-		margin: 0.75rem 0 0;
-		padding: 0.75rem 0.9rem;
-		border: 1px solid var(--red);
-		border-radius: var(--radius-md);
-		background: color-mix(in oklch, var(--red) 10%, var(--bg-card));
-		font-size: 0.88rem;
-		line-height: 1.45;
 	}
 	:global(:root) {
 		--poll-blue: #6f8fc9;
@@ -922,13 +922,6 @@
 		margin: 0.5rem 0 0.75rem;
 		line-height: 1.45;
 	}
-	.profile-link {
-		font-size: 0.85rem;
-		color: var(--text-secondary);
-	}
-	.profile-link:hover {
-		color: var(--text-primary);
-	}
 	.dialog-text {
 		font-size: 0.9rem;
 		line-height: 1.5;
@@ -945,78 +938,6 @@
 		color: var(--red);
 		font-size: 0.85rem;
 		margin: 0.6rem 0 0;
-	}
-
-	.views {
-		display: flex;
-		justify-content: center;
-		gap: 3px;
-		width: fit-content;
-		margin: 0 auto 1.25rem;
-		padding: 4px;
-		background: var(--bg-card);
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-	}
-	.view-tab {
-		padding: 0.45rem 1.1rem;
-		border: none;
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-secondary);
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-	.view-tab:hover {
-		color: var(--text-primary);
-	}
-	.view-tab.active {
-		background: var(--accent);
-		color: white;
-	}
-
-	.differ {
-		max-width: 52rem;
-		margin: 0 auto 1rem;
-		padding: 0.8rem 1rem;
-		border-left: 3px solid var(--accent);
-		border-radius: var(--radius-sm);
-		background: var(--accent-glow);
-		font-size: 0.95rem;
-		line-height: 1.5;
-	}
-	.lists {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1.25rem;
-		max-width: 60rem;
-		margin: 0 auto;
-	}
-	.lists--one {
-		grid-template-columns: 1fr;
-		max-width: 40rem;
-	}
-	.list h3 {
-		margin: 0 0 0.5rem;
-		font-family: var(--font-serif);
-		font-size: 1.2rem;
-	}
-	.list h3 small {
-		margin-left: 0.3rem;
-		font-family: var(--font-family);
-		font-size: 0.75rem;
-		font-weight: 500;
-		color: var(--text-muted);
-	}
-	.board-note {
-		max-width: 46rem;
-		margin: 0.9rem auto 0;
-		font-size: 0.8rem;
-		line-height: 1.5;
-		color: var(--text-muted);
-		text-align: center;
 	}
 	.vote-list {
 		list-style: none;
@@ -1082,181 +1003,9 @@
 		font-size: 0.7rem;
 		font-weight: 700;
 	}
-	.vote-bar-line {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-	.vote-bar-line .value {
-		min-width: 3rem;
-		font-size: 1.1rem;
-		text-align: right;
-	}
-
-	.gauge-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-		gap: 1rem;
-		max-width: 60rem;
-		margin: 0 auto;
-	}
-	.gauge-card {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 1.25rem 1rem 1rem;
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-	}
-	.gauge-card--mine {
-		border-color: var(--accent);
-	}
-	.gauge-rank {
-		position: absolute;
-		top: 0.75rem;
-		left: 0.9rem;
-		font-size: 0.8rem;
-		font-weight: 700;
-		color: var(--text-muted);
-	}
-
-	.board {
-		max-width: 60rem;
-		margin: 0 auto;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		overflow: hidden;
-	}
-	.board-head,
-	.board-row {
-		display: grid;
-		grid-template-columns: 1fr minmax(9rem, 14rem) 1fr;
-		align-items: center;
-	}
-	.board-head {
-		border-bottom: 1px solid var(--glass-border);
-		background: var(--bg-secondary);
-	}
-	.col-head {
-		padding: 0.8rem 1.25rem;
-		background: none;
-		border: none;
-		font: inherit;
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-	button.col-head {
-		cursor: pointer;
-		transition: color var(--transition-fast);
-	}
-	button.col-head:hover:not(:disabled),
-	.col-head.active {
-		color: var(--text-primary);
-	}
-	button.col-head:disabled {
-		cursor: default;
-	}
-	.col-head--vote {
-		text-align: right;
-	}
-	.col-head--name {
-		text-align: center;
-	}
-	.col-head--honesty {
-		text-align: left;
-	}
-
-	.board-row {
-		border-bottom: 1px solid var(--border-card);
-		transition: background var(--transition-fast);
-	}
-	.board-row:last-child {
-		border-bottom: none;
-	}
-	.board-row:hover {
-		background: var(--bg-card-hover);
-	}
-	.board-row--mine {
-		background: var(--accent-glow);
-	}
-	.board-row--mine:hover {
-		background: var(--accent-glow);
-	}
-
-	.cell {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-		padding: 1rem 1.25rem;
-		min-width: 0;
-	}
-	/* The bars grow outwards from the central column. */
-	.cell--vote {
-		align-items: flex-end;
-		text-align: right;
-	}
-	.cell--honesty {
-		align-items: flex-start;
-	}
-	.value-line {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-	.value {
-		font-size: 1.5rem;
-		font-weight: 700;
-		line-height: 1;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-primary);
-	}
-	.value--muted {
-		color: var(--text-muted);
-	}
-	.bar {
-		display: flex;
-		width: 100%;
-		max-width: 16rem;
-		height: 8px;
-		border-radius: var(--radius-full);
-		background: var(--bg-secondary);
-		overflow: hidden;
-	}
-	.bar span {
-		display: block;
-		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width var(--transition-slow);
-	}
-	.bar--vote {
-		justify-content: flex-end;
-	}
-	.bar--wide {
-		max-width: none;
-		flex: 1;
-		height: 12px;
-	}
-	.bar-fill--vote {
-		background: var(--poll-blue);
-	}
 	.meta {
 		font-size: 0.72rem;
 		color: var(--text-muted);
-	}
-
-	.cell--name {
-		align-items: center;
-		text-align: center;
-		gap: 0.5rem;
-		border-left: 1px solid var(--border-card);
-		border-right: 1px solid var(--border-card);
 	}
 	.who {
 		display: flex;
@@ -1289,71 +1038,6 @@
 		line-height: 1.25;
 		transition: color var(--transition-fast);
 	}
-	.pick {
-		padding: 0.25rem 0.8rem;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-secondary);
-		font-size: 0.75rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-	.pick:hover:not(:disabled) {
-		border-color: var(--accent);
-		color: var(--text-primary);
-	}
-	.pick:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-	.pick--full {
-		border-style: dashed;
-	}
-	.pick--mine {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: white;
-	}
-
-	.how {
-		max-width: 46rem;
-		margin: 3rem auto 1rem;
-		padding: 1.25rem 1.5rem;
-		border-top: 1px solid var(--glass-border);
-	}
-	.how summary {
-		font-family: var(--font-serif);
-		font-size: 1.2rem;
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-	.how summary:hover {
-		color: var(--text-primary);
-	}
-	.how[open] summary {
-		margin-bottom: 0.75rem;
-	}
-	.how ul {
-		margin: 0;
-		padding-left: 1.1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		color: var(--text-secondary);
-		font-size: 0.9rem;
-		line-height: 1.5;
-	}
-	.how :global(strong) {
-		color: var(--text-primary);
-	}
-
-	@media (max-width: 760px) {
-		.lists {
-			grid-template-columns: 1fr;
-		}
-	}
 
 	@media (max-width: 560px) {
 		.ballot {
@@ -1371,18 +1055,6 @@
 		}
 		.slot-name {
 			font-size: 0.82rem;
-		}
-		.board-head,
-		.board-row {
-			grid-template-columns: 1fr 7.5rem 1fr;
-		}
-		.cell,
-		.col-head {
-			padding-left: 0.6rem;
-			padding-right: 0.6rem;
-		}
-		.value {
-			font-size: 1.15rem;
 		}
 		.photo {
 			width: 48px;

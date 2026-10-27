@@ -8,27 +8,37 @@ export interface MirrorSource {
 	// url builds the address of a path for a commit token ('' for the
 	// latest files).
 	url(path: string, token: string): string;
+	// byCommit: the source honours the token (a read at a commit goes to
+	// such sources first; a directory serves the latest files only).
+	byCommit: boolean;
 }
 
 // dirSource serves a directory: tokens are ignored, the files are the
 // latest.
 export function dirSource(base: string): MirrorSource {
 	const b = base.replace(/\/$/, '');
-	return { url: (path) => `${b}/${path}` };
+	return { url: (path) => `${b}/${path}`, byCommit: false };
 }
 
 // jsDelivrSource reads a GitHub repository by commit.
 export function jsDelivrSource(repo: string, branch = 'main'): MirrorSource {
-	return { url: (path, token) => `https://cdn.jsdelivr.net/gh/${repo}@${token || branch}/${path}` };
+	return { url: (path, token) => `https://cdn.jsdelivr.net/gh/${repo}@${token || branch}/${path}`, byCommit: true };
 }
 
 export class Sources {
 	constructor(private readonly mirrors: MirrorSource[]) {}
 
+	// order lists the mirrors to try: for a commit, the ones that read by
+	// commit first, the others as a fallback (their latest files).
+	private order(token: string): MirrorSource[] {
+		if (!token) return this.mirrors;
+		return [...this.mirrors.filter((m) => m.byCommit), ...this.mirrors.filter((m) => !m.byCommit)];
+	}
+
 	// text fetches a file, trying each mirror; null when no mirror has it.
 	async text(path: string, token = ''): Promise<string | null> {
 		let lastErr: unknown = null;
-		for (const m of this.mirrors) {
+		for (const m of this.order(token)) {
 			try {
 				const res = await fetch(m.url(path, token), { credentials: 'omit', cache: token ? 'force-cache' : 'no-cache' });
 				if (res.status === 404) return null;
@@ -48,7 +58,7 @@ export class Sources {
 	}
 
 	async bytes(path: string, token = ''): Promise<Uint8Array | null> {
-		for (const m of this.mirrors) {
+		for (const m of this.order(token)) {
 			try {
 				const res = await fetch(m.url(path, token), { credentials: 'omit' });
 				if (res.status === 404) return null;
