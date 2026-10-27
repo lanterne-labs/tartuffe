@@ -35,12 +35,14 @@ func TestOTSParseVerifyUpgrade(t *testing.T) {
 		var w bytes.Buffer
 		w.Write(otsHeader)
 		w.Write(digest[:])
-		w.WriteByte(0xff)
-		w.WriteByte(0x00)
-		w.Write(otsTagPending[:])
-		var uri bytes.Buffer
-		otsWriteVarbytes(&uri, []byte(calendar))
-		otsWriteVarbytes(&w, uri.Bytes())
+		for i := 0; i < 2; i++ { // two pending branches at the calendar
+			w.WriteByte(0xff)
+			w.WriteByte(0x00)
+			w.Write(otsTagPending[:])
+			var uri bytes.Buffer
+			otsWriteVarbytes(&uri, []byte(calendar))
+			otsWriteVarbytes(&w, uri.Bytes())
+		}
 		w.WriteByte(otsOpAppend)
 		otsWriteVarbytes(&w, []byte("ab"))
 		w.WriteByte(otsOpSHA256)
@@ -63,7 +65,7 @@ func TestOTSParseVerifyUpgrade(t *testing.T) {
 	want := sha256.Sum256(append(append([]byte{}, digest[:]...), []byte("ab")...))
 	roots := fakeRoots{7: want[:]}
 	heights, pending, err := VerifyOTS(context.Background(), file, digest, roots)
-	if err != nil || len(heights) != 1 || heights[0] != 7 || len(pending) != 1 || pending[0] != cal.URL {
+	if err != nil || len(heights) != 1 || heights[0] != 7 || len(pending) != 2 || pending[0] != cal.URL {
 		t.Fatalf("verify: %v %v %v", heights, pending, err)
 	}
 	wrong := fakeRoots{7: []byte("no")}
@@ -82,7 +84,7 @@ func TestOTSParseVerifyUpgrade(t *testing.T) {
 	want9 := sha256.Sum256(append([]byte("cd"), digest[:]...))
 	roots[9] = want9[:]
 	heights, pending, err = VerifyOTS(context.Background(), o.Bytes(), digest, roots)
-	if err != nil || len(heights) != 2 || len(pending) != 0 {
+	if err != nil || len(heights) != 3 || len(pending) != 0 {
 		t.Fatalf("after upgrade: %v %v %v", heights, pending, err)
 	}
 	// A calendar with nothing yet leaves the stamp as it is.

@@ -314,7 +314,11 @@ func (o *OTS) Upgrade(ctx context.Context, client *http.Client) (bool, error) {
 	var errs []error
 	var walk func(s *otsStamp)
 	walk = func(s *otsStamp) {
-		kept := s.attestations[:0]
+		// Each pending attestation is asked on its own; a calendar's
+		// continuation (operations down to a Bitcoin attestation) joins
+		// the node in its place, and the other branches stay.
+		var kept []otsAtt
+		var spliced []otsOp
 		for _, a := range s.attestations {
 			if a.tag != otsTagPending {
 				kept = append(kept, a)
@@ -335,15 +339,14 @@ func (o *OTS) Upgrade(ctx context.Context, client *http.Client) (bool, error) {
 				kept = append(kept, a)
 				continue
 			}
-			// The calendar's continuation replaces the pending attestation.
-			s.attestations = append(kept, more.attestations...)
-			s.ops = append(s.ops, more.ops...)
+			kept = append(kept, more.attestations...)
+			spliced = append(spliced, more.ops...)
 			changed = true
-			kept = s.attestations
-			break
 		}
 		s.attestations = kept
-		for _, op := range s.ops {
+		existing := s.ops
+		s.ops = append(existing, spliced...)
+		for _, op := range existing {
 			walk(op.child)
 		}
 	}
