@@ -257,8 +257,8 @@ type Tools struct {
 	BB    string
 }
 
-// FindTools looks for nargo (PATH, then ~/.nargo/bin) and bb (BB env, then
-// the binary shipped with bb.js under frontend/node_modules).
+// FindTools looks for nargo (PATH, then ~/.nargo/bin) and bb (FindBB): what
+// the setup needs to compile the circuit.
 func FindTools(repo string) (Tools, error) {
 	var t Tools
 	if p, err := exec.LookPath("nargo"); err == nil {
@@ -269,21 +269,31 @@ func FindTools(repo string) (Tools, error) {
 	if _, err := os.Stat(t.Nargo); err != nil {
 		return t, errors.New("vote: nargo not found (PATH or ~/.nargo/bin)")
 	}
+	bb, err := FindBB(repo)
+	if err != nil {
+		return t, err
+	}
+	t.BB = bb
+	return t, nil
+}
+
+// FindBB looks for bb, the proof verifier: the BB environment variable
+// (the ingest's image sets it), then the PATH, then the binary shipped with
+// bb.js under frontend/node_modules. The ingest and the audit need bb alone.
+func FindBB(repo string) (string, error) {
 	if p := os.Getenv("BB"); p != "" {
-		t.BB = p
-	} else {
-		matches, _ := filepath.Glob(filepath.Join(repo, "frontend", "node_modules", "@aztec", "bb.js", "build", "*", "bb"))
-		for _, m := range matches {
-			if out, err := exec.Command(m, "--version").Output(); err == nil && len(out) > 0 {
-				t.BB = m
-				break
-			}
+		return p, nil
+	}
+	if p, err := exec.LookPath("bb"); err == nil {
+		return p, nil
+	}
+	matches, _ := filepath.Glob(filepath.Join(repo, "frontend", "node_modules", "@aztec", "bb.js", "build", "*", "bb"))
+	for _, m := range matches {
+		if out, err := exec.Command(m, "--version").Output(); err == nil && len(out) > 0 {
+			return m, nil
 		}
 	}
-	if t.BB == "" {
-		return t, errors.New("vote: bb not found (BB env or frontend/node_modules/@aztec/bb.js/build)")
-	}
-	return t, nil
+	return "", errors.New("vote: bb not found (BB env, PATH or frontend/node_modules/@aztec/bb.js/build)")
 }
 
 // Built is what compiling the circuit for a key set gives.

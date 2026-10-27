@@ -887,5 +887,15 @@ Differences from the text above:
 - The device link (§4.2): the new device's QR code or URL, the sending
   device's confirmation, the sealed secret through a relay.
 
-Not built yet: the `github.io` app origin and the mirror repository (Q3,
-the owner's choice of organisation), the final shuffle (§9.4).
+- Deployment (2026-10-27): the repositories exist under `tartuffeme`
+  (the app and the data public, with the write deploy keys of the
+  workflow and of the ingest); the ingest is the host service
+  `ingest` built from `Dockerfile.ingest` (Debian: bb, git, ssh, Node,
+  the election files of `deploy/ingest/<slug>/`); the API allows the
+  app's origin and pins the log key's verifier (the workflow's variable
+  `VOTE_LOG_VERIFIER_KEY`, the frontend's `VITE_VOTE_LOG_KEY`).
+
+Not built yet: the final shuffle (§9.4). Not done yet: the election's
+own setup in production (the tallier's keygen, `dm vote setup` with the
+relays, its files committed under `deploy/ingest/presidentielle-2027/`,
+`app_hash` from the first published build), the tallier's machine.

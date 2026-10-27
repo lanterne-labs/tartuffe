@@ -97,7 +97,7 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		passport = vote.Passport{Z: z, Scope: "tartuffe-vote/2:" + e.Slug}
 	}
 	repo, _ := filepath.Abs(".")
-	tools, err := vote.FindTools(repo)
+	bb, err := vote.FindBB(repo)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func runVoteIngest(cmd *cobra.Command, args []string) error {
 		Mail:     mail,
 		Signer:   pollsCfg.Signer,
 		Passport: passport,
-		BB:       tools.BB,
+		BB:       bb,
 		VK:       vk,
 		Stamp: func(ctx context.Context, size int64, note []byte) error {
 			_, err := store.Log.StampNote(ctx, size, note)

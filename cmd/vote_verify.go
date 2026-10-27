@@ -109,11 +109,11 @@ func runVoteVerify(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		repo, _ := filepath.Abs(".")
-		tools, err := vote.FindTools(repo)
+		bb, err := vote.FindBB(repo)
 		if err != nil {
 			return err
 		}
-		if opt.Verifier, err = vote.NewVerifier(tools.BB, vk); err != nil {
+		if opt.Verifier, err = vote.NewVerifier(bb, vk); err != nil {
 			return err
 		}
 	}
