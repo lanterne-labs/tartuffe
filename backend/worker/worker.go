@@ -163,8 +163,13 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 				return 0 // the next task at once
 			}
 		}
-		if errors.Is(err, errIdleFailed) {
+		var far *farResetError
+		switch {
+		case errors.Is(err, errIdleFailed):
 			return opts.Backoff
+		case errors.As(err, &far):
+			// The work waits for the reset; the tasks need the LLM too.
+			return max(time.Until(far.at), opts.Poll)
 		}
 		return opts.Poll
 	}
@@ -257,8 +262,12 @@ func Run(ctx context.Context, tasks Tasks, runner Runner, idle Idle, opts Option
 		case err := <-besideDone:
 			besideRunning = false
 			besideNext = time.Now().Add(opts.Poll)
-			if errors.Is(err, errIdleFailed) {
+			var far *farResetError
+			switch {
+			case errors.Is(err, errIdleFailed):
 				besideNext = time.Now().Add(opts.Backoff)
+			case errors.As(err, &far):
+				besideNext = far.at
 			}
 		case <-time.After(wait):
 		case <-ctx.Done():
@@ -280,8 +289,18 @@ func runHousekeeping(ctx context.Context, work func(context.Context) error, opts
 	case err == nil || ctx.Err() != nil:
 		return nil
 	case errors.Is(err, llm.ErrUnavailable):
+		until := time.Now().Add(opts.MaxLLMWait)
+		var ue *llm.UnavailableError
+		if errors.As(err, &ue) && ue.RetryAt.After(until) {
+			// A reset too far away to wait for: the work is tried again at
+			// the reset, not at every poll (2026-10-27: the feed, cut by the
+			// seats at their limit for 80 min and the API at its day cap,
+			// re-downloaded and re-parsed the votes every minute until then).
+			log.Warn().Err(err).Time("retry_at", ue.RetryAt).Msg("Worker: LLM unavailable until its reset; the housekeeping waits for it")
+			return &farResetError{at: ue.RetryAt}
+		}
 		log.Warn().Err(err).Msg("Worker: LLM unavailable during the housekeeping; waiting")
-		if back, _ := llm.WaitForEndpoint(ctx, err, time.Now().Add(opts.MaxLLMWait)); back {
+		if back, _ := llm.WaitForEndpoint(ctx, err, until); back {
 			return errRecovered
 		}
 		return errWaited
@@ -290,6 +309,18 @@ func runHousekeeping(ctx context.Context, work func(context.Context) error, opts
 	notify(ctx, opts, "❌ <b>Worker housekeeping failed</b>\n"+html.EscapeString(err.Error()))
 	return fmt.Errorf("%w: %w", errIdleFailed, err)
 }
+
+// farResetError marks a housekeeping that stopped on an unavailable LLM
+// whose reset is after the end of the wait (MaxLLMWait): the loop tries the
+// work again at the reset, as a task in the same case waits for it. It is an
+// errWaited for the callers that only tell a wait from a failure.
+type farResetError struct{ at time.Time }
+
+func (e *farResetError) Error() string {
+	return "waited for the LLM: its reset is at " + e.at.UTC().Format(time.RFC3339)
+}
+
+func (e *farResetError) Is(target error) bool { return target == errWaited }
 
 // notify sends msg to the operator when opts.Notify is set.
 func notify(ctx context.Context, opts Options, msg string) {
