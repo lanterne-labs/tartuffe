@@ -6,9 +6,13 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { API_BASE } from '$lib/config';
-	import { lang, type Lang } from '$lib/i18n';
+	import { lang, tr, type Lang } from '$lib/i18n';
 	import { eventPaths, showVoters } from '$lib/event';
 	import type { PollResponse } from '$lib/types';
+	import { defaultSources } from '$lib/vote/sources';
+	import type { Tally } from '$lib/vote/session';
+	import type { Setup } from '$lib/vote/protocol';
+	import { displayName } from '$lib/share';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -16,6 +20,12 @@
 	let paths = $derived(eventPaths(slug));
 
 	let poll = $state<PollResponse | null>(null);
+	// The current results, read from the public mirror like the vote page
+	// does: the latest tally, the setup (slot → person) and the cards
+	// (names, photos). Absent until a first tally exists.
+	let tally = $state<Tally | null>(null);
+	let setup = $state<Setup | null>(null);
+	let cards = $state<Map<number, { name: string; image_url?: string }>>(new Map());
 	onMount(async () => {
 		try {
 			const res = await fetch(`${API_BASE}/api/polls/${encodeURIComponent(slug)}`);
@@ -23,11 +33,44 @@
 		} catch (err) {
 			console.error('failed to load the event', err);
 		}
+		try {
+			const src = defaultSources();
+			const [t, s, cs] = await Promise.all([src.json<Tally>('tallies/latest.json'), src.json<Setup>('setup.json'), src.json<{ person_id: number; name: string; image_url?: string }[]>('candidates.json')]);
+			tally = t;
+			setup = s;
+			cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+		} catch (err) {
+			console.warn('event: the mirror', err);
+		}
 	});
 	let ends = $derived(poll?.event.closes_at ? new Date(poll.event.closes_at) : null);
 	let daysLeft = $derived(ends ? Math.max(0, Math.ceil((ends.getTime() - Date.now()) / 86_400_000)) : null);
-	let voters = $derived(poll?.results.voters ?? null);
-	let candidates = $derived(poll?.results.options.filter((o) => o.kind === 'candidate').length ?? null);
+	let voters = $derived(poll?.results.voters ?? tally?.results?.voters ?? null);
+	let candidates = $derived(poll?.results.options.filter((o) => o.kind === 'candidate').length ?? setup?.setup.options.filter((o) => o.kind === 'candidate').length ?? null);
+	// The top 3 by first-choice share, and the winner of the ranking.
+	let top3 = $derived.by(() => {
+		const r = tally?.results;
+		if (!r || r.voters <= 0) return [];
+		return [...r.options].sort((a, b) => b.first - a.first || a.rank - b.rank).slice(0, 3);
+	});
+	let winnerName = $derived(tally?.results?.condorcet_winner !== undefined ? nameOf(tally.results.condorcet_winner) : '');
+
+	function nameOf(slot: number): string {
+		const o = setup?.setup.options.find((x) => x.slot === slot) ?? tally?.results?.options.find((x) => x.slot === slot);
+		if (!o) return `#${slot}`;
+		if (o.kind === 'blank') return tr('vote.blank.name', currentLang);
+		const pid = (o as { person_id?: number }).person_id;
+		return displayName((pid ? cards.get(pid)?.name : undefined) ?? o.name ?? `#${slot}`);
+	}
+	function imageOf(slot: number): string | undefined {
+		const o = setup?.setup.options.find((x) => x.slot === slot) as { person_id?: number } | undefined;
+		return o?.person_id ? cards.get(o.person_id)?.image_url : undefined;
+	}
+	function pctText(n: number, total: number): string {
+		if (total <= 0) return '—';
+		const v = Math.round((100 * n) / total);
+		return currentLang === 'en' ? `${v}%` : `${v} %`;
+	}
 
 	function dateText(d: Date): string {
 		return d.toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -39,21 +82,21 @@
 			until: 'Jusqu’au {d}',
 			title1: 'Votez.',
 			title2: 'Personne ne saura pour qui.',
-			lead: 'Scannez votre passeport, puis classez vos 3 candidats préférés. Personne, ni nous ni l’État, ne sait qui a voté quoi, et tout le monde peut recompter.',
+			lead: 'Scannez votre passeport, puis classez vos 3 candidats préférés. Personne ne saura pour qui vous avez voté, et tout le monde peut recompter.',
 			vote: 'Voter maintenant',
 			how: 'Comment ça marche',
 			votersNow: '{n} votants · {c} candidats',
 			candidatesNow: '{c} candidats',
 			stats: [
 				['0', 'lien entre vous et votre vote'],
-				['1', 'voix par document'],
+				['1', 'voix par passeport'],
 				['3', 'choix, classés'],
 				['100 %', 'recomptable par tous']
 			],
 			stepsKicker: 'Trois gestes',
 			stepsTitle: 'Une minute, une seule fois.',
 			steps: [
-				['Scannez votre document', 'Vous ne le faites qu’une fois : il prouve seulement que vous êtes majeur et français.'],
+				['Scannez votre passeport', 'Vous ne le faites qu’une fois : il prouve seulement que vous êtes majeur et français.'],
 				['Classez jusqu’à 3 candidats', 'Vous pouvez aussi voter blanc, et changer votre vote à tout moment.'],
 				['Vérifiez', 'Votre navigateur s’assure que votre vote est bien compté.']
 			],
@@ -63,9 +106,9 @@
 			anonLabels: ['Votre document', 'Votre clé', 'Votre bulletin'],
 			anonCut: 'aucun lien',
 			countKicker: 'Même vote, deux résultats',
-			countTitle: 'Et si le premier tour mentait ?',
-			countBody: 'Les mêmes bulletins sont comptés de deux façons. Au scrutin majoritaire, seul le premier choix compte. Avec le classement, le gagnant est celui qu’une majorité préfère à chacun des autres.',
-			countMajority: 'Au scrutin majoritaire',
+			countTitle: 'Et si le premier tour mentait ?',
+			countBody: 'Les mêmes bulletins sont comptés de deux façons. Au premier choix seulement, on ne compte que le candidat placé en tête par chaque votant, comme au premier tour. Avec le classement, le gagnant est celui qu’une majorité préfère à chacun des autres.',
+			countMajority: 'Premier choix seulement',
 			countRanking: 'Avec le classement',
 			countWinner: 'bat chacun des autres',
 			countMore: 'Comprendre les deux comptages',
@@ -74,9 +117,9 @@
 			honestyTitle: 'Votez, et jugez sur pièces.',
 			honestyBody: 'Chaque candidat est affiché avec son score d’honnêteté, calculé à partir de ses contradictions, sources à l’appui.',
 			checkTitle: 'Impossible de tricher sans que ça se voie.',
-			checkBody: 'Chaque bulletin entre dans un registre public signé et horodaté sur Bitcoin. Tout le monde peut le télécharger et recompter.',
+			checkBody: 'Chaque bulletin entre, chiffré, dans une liste publique que personne ne peut modifier après coup. Tout le monde peut la télécharger et recompter.',
 			checkMore: 'Comment vérifier',
-			disclaimer: 'C’est une consultation ouverte, pas un sondage : les votants ne sont pas représentatifs. Les résultats sont masqués la veille et le jour du scrutin.',
+			disclaimer: 'Ce n’est ni un scrutin officiel ni un sondage : les votants ne sont pas représentatifs. Les résultats sont masqués la veille et le jour de l’élection.',
 			finalTitle: 'J-{n}. À vous de voter.',
 			finalTitleNoDate: 'À vous de voter.',
 			labLine: 'Une expérience du labo tartuffe.me.',
@@ -90,21 +133,21 @@
 			until: 'Until {d}',
 			title1: 'Vote.',
 			title2: 'No one will know for whom.',
-			lead: 'One scan of your passport, then your 3 favourite candidates. Nobody, neither we nor the State, knows who voted what. And anyone can recount.',
+			lead: 'One scan of your passport, then your 3 favourite candidates. Nobody will know whom you voted for, and anyone can recount.',
 			vote: 'Vote now',
 			how: 'How it works',
 			votersNow: '{n} voters · {c} candidates',
 			candidatesNow: '{c} candidates',
 			stats: [
 				['0', 'link between you and your vote'],
-				['1', 'vote per document'],
+				['1', 'vote per passport'],
 				['3', 'choices, ranked'],
 				['100 %', 'recountable by anyone']
 			],
 			stepsKicker: 'Three steps',
 			stepsTitle: 'One minute, once.',
 			steps: [
-				['Scan your document', 'Only once. Adult and French, nothing more.'],
+				['Scan your passport', 'Only once. Adult and French, nothing more.'],
 				['Rank up to 3 candidates', 'Or vote blank. Change it any time.'],
 				['Check', 'Your browser makes sure your vote is counted.']
 			],
@@ -115,8 +158,8 @@
 			anonCut: 'no link',
 			countKicker: 'Same votes, two results',
 			countTitle: 'What if the first round lied?',
-			countBody: 'The same ballots, counted twice. With the one-round majority vote, only the first choice counts. With the ranking, the winner is the one a majority prefers to each other candidate.',
-			countMajority: 'One-round majority vote',
+			countBody: 'The same ballots, counted twice. With the first choice only, only the candidate each voter put first is counted, as in a first round. With the ranking, the winner is the one a majority prefers to each other candidate.',
+			countMajority: 'First choice only',
 			countRanking: 'With the ranking',
 			countWinner: 'beats each other one',
 			countMore: 'Understand the two counts',
@@ -125,9 +168,9 @@
 			honestyTitle: 'Vote, and look at their record.',
 			honestyBody: 'Next to each candidate, their honesty score: their contradictions, with sources.',
 			checkTitle: 'We cannot cheat without it showing.',
-			checkBody: 'Every ballot goes into a signed public ledger, timestamped on Bitcoin. Anyone can download it and recount.',
+			checkBody: 'Every ballot goes, encrypted, into a public list that nobody can alter afterwards. Anyone can download it and recount.',
 			checkMore: 'How to check',
-			disclaimer: 'An open consultation, not an opinion poll: the voters are not representative. Results hidden the day before and the day of the vote.',
+			disclaimer: 'Neither an official election nor an opinion poll: the voters are not representative. Results hidden the day before and the day of the election.',
 			finalTitle: '{n} days left. Your turn.',
 			finalTitleNoDate: 'Your turn.',
 			labLine: 'An experiment of the tartuffe.me lab.',
@@ -159,6 +202,7 @@
 			<span class="kicker">{c.kicker}{#if ends}<span class="until"> · {c.until.replace('{d}', dateText(ends))}</span>{/if}</span>
 			<h1>{c.title1}<br /><em>{c.title2}</em></h1>
 			<p class="lead">{c.lead}</p>
+			<p class="needs">{tr('event.needs', currentLang)}</p>
 			<div class="actions">
 				<a class="btn-main" href={paths.vote}>{c.vote} →</a>
 				<a class="btn-alt" href={paths.how}>{c.how}</a>
@@ -189,6 +233,27 @@
 			</svg>
 		</div>
 	</section>
+
+	{#if top3.length && tally?.results}
+		<section class="top3" aria-labelledby="top3-title">
+			<h2 id="top3-title">{tr('poll.top3.title', currentLang)}</h2>
+			<ol>
+				{#each top3 as o, i (o.slot)}
+					<li class:first={i === 0}>
+						{#if imageOf(o.slot)}
+							<img src={imageOf(o.slot)} alt="" />
+						{:else}
+							<span class="initial" aria-hidden="true">{o.kind === 'blank' ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
+						{/if}
+						<span class="top3-name">{nameOf(o.slot)}</span>
+						<strong>{pctText(o.first, tally.results.voters)}</strong>
+					</li>
+				{/each}
+			</ol>
+			{#if winnerName}<p class="top3-winner">{tr('poll.winner.line', currentLang, { name: winnerName })}</p>{/if}
+			<p class="more"><a href={paths.vote}>{tr('profile.go_results', currentLang)} →</a></p>
+		</section>
+	{/if}
 
 	<ul class="stats">
 		{#each c.stats as [n, label]}<li><strong>{n}</strong><span>{label}</span></li>{/each}
@@ -316,7 +381,7 @@
 			<a class="btn-alt" href={paths.how}>{c.how}</a>
 		</div>
 		<p class="disclaimer">{c.disclaimer}</p>
-		<p class="lab-line">{c.labLine} <a href="/lab">{c.labLink} →</a></p>
+		<p class="lab-line">{tr('event.who', currentLang)} <a href="/lab">{c.labLink} →</a></p>
 	</section>
 </article>
 
@@ -365,10 +430,79 @@
 		max-width: 36rem;
 		margin: 0 0 1.5rem;
 	}
+	.needs {
+		margin: -0.9rem 0 1.3rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.75rem;
+	}
+	/* The current top 3, from the mirror. */
+	.top3 {
+		margin: 0 0 2.5rem;
+		padding: 1.1rem 1.2rem;
+		border: 1px solid var(--event);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+	}
+	.top3 h2 {
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+		margin: 0 0 0.8rem;
+		font-family: inherit;
+	}
+	.top3 ol {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		gap: 0.45rem;
+	}
+	.top3 li {
+		display: grid;
+		grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.7rem;
+		padding: 0.35rem 0.5rem;
+		border-radius: var(--radius-sm);
+	}
+	.top3 li.first {
+		background: var(--event-glow);
+	}
+	.top3 img,
+	.top3 .initial {
+		width: 2.2rem;
+		height: 2.2rem;
+		border-radius: 50%;
+		object-fit: cover;
+		display: grid;
+		place-items: center;
+		background: var(--bg-secondary);
+		font-weight: 700;
+		color: var(--text-secondary);
+	}
+	.top3-name {
+		font-weight: 600;
+	}
+	.top3 strong {
+		font-size: 1.3rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+	.top3-winner {
+		margin: 0.8rem 0 0;
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+	}
+	.top3 .more {
+		margin: 0.5rem 0 0;
 	}
 	.btn-main,
 	.btn-alt {

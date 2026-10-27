@@ -160,7 +160,11 @@
 		<span class="badge">{tr('zk.badge', lang)}</span>
 	</div>
 	<p class="why">{tr('zk.why', lang)}</p>
-	<p class="why">{tr('v2.passport.only', lang)}</p>
+	<p class="why">{tr('zk.needs', lang)}</p>
+	<details class="only">
+		<summary>{tr('v2.passport.only.label', lang)}</summary>
+		<p>{tr('v2.passport.only', lang)}</p>
+	</details>
 	{#if step === 'idle'}
 		<ZKProofAnimation {lang} />
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
@@ -188,7 +192,9 @@
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
 	{:else if step === 'error'}
 		<p class="status err" role="alert">{error}</p>
-		{#if detail}<p class="muted small detail">{detail}</p>{/if}
+		{#if detail}
+			<details class="tech"><summary>{tr('v2.details', lang)}</summary><p class="muted small detail">{detail}</p></details>
+		{/if}
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
 	{/if}
 	{#if devMode}
@@ -197,6 +203,33 @@
 </section>
 
 <style>
+	.only {
+		margin: -0.3rem 0 0.8rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+	.only summary {
+		cursor: pointer;
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+	}
+	.only p {
+		margin: 0.3rem 0 0;
+		line-height: 1.45;
+	}
+	.tech {
+		margin: 0 0 0.6rem;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+	.tech summary {
+		cursor: pointer;
+	}
+	.tech p {
+		margin: 0.3rem 0 0;
+		font-family: var(--font-mono, monospace);
+		overflow-wrap: anywhere;
+	}
 	.flow {
 		margin: 0.75rem 0;
 	}

@@ -122,7 +122,10 @@
 		<p class="verdict verdict--none">{tr('v2.complaint.nosetup', currentLang)}</p>
 		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
 	{:else if verdict.kind === 'error'}
-		<p class="verdict verdict--none" role="alert">{tr('v2.complaint.error', currentLang, { detail: verdict.detail ?? '' })}</p>
+		<p class="verdict verdict--none" role="alert">{tr('v2.complaint.error', currentLang)}</p>
+		{#if verdict.detail}
+			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{verdict.detail}</p></details>
+		{/if}
 		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
 	{:else if verdict.kind === 'notfound'}
 		<p class="verdict verdict--none">{tr('v2.complaint.notfound', currentLang)}</p>
@@ -145,7 +148,7 @@
 	{/if}
 	{#if complaintId}
 		<p class="links">
-			<a href={neventLink(complaintId, relays)} rel="noopener">njump.me</a> · <a href={paths.how}>{tr('event.menu.how', currentLang)}</a>
+			<a href={neventLink(complaintId, relays)} rel="noopener">{tr('v2.complaint.post', currentLang)}</a> · <a href={paths.how}>{tr('event.menu.how', currentLang)}</a>
 		</p>
 	{/if}
 </article>
@@ -155,6 +158,19 @@
 		max-width: 40rem;
 		margin: 0 auto;
 		padding: 1.5rem 1rem 3rem;
+	}
+	.tech {
+		margin: 0 0 0.9rem;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+	.tech summary {
+		cursor: pointer;
+	}
+	.tech p {
+		margin: 0.3rem 0 0;
+		font-family: var(--font-mono, monospace);
+		overflow-wrap: anywhere;
 	}
 	.lead {
 		color: var(--muted, #9aa);

@@ -48,7 +48,7 @@ describe('the tallier signature', () => {
 		expect(verifyTallySig(pub, body)).toBeNull();
 		expect(verifyTallySig(pub, { ...body, upto: 6 })).not.toBeNull();
 		expect(verifyTallySig(pub, { ...body, sig: '00' + body.sig.slice(2) })).not.toBeNull();
-		expect(verifyTallySig(undefined, body)).toMatch(/unsigned/);
+		expect(verifyTallySig(undefined, body)).toBeNull();
 		expect(verifyTallySig(pub, { ...body, sig: undefined })).toMatch(/no tallier/);
 	});
 });

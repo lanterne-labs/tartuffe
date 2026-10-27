@@ -994,6 +994,22 @@ Differences from the text above:
   link's confirmation code, the clock, DLEQ checks) are in the same
   change set.
 
+- Copy and UX pass (2026-10-27, a reviewer as a first-time visitor on a
+  phone): the key is hidden behind « Voter avec mon passeport » (Face ID or
+  fingerprint first, the 12 words and the other ways under « Autres
+  options »); what is needed is said before the first tap; the vote's
+  state is a sentence under the ballot (« Votre vote est enregistré… »,
+  with the close date) and a nudge to share; the results are titled, with
+  two tabs (the ranking, the first choices only), one big number per row
+  (the first-choice share), the winner's one-line meaning, the honesty
+  score as a chip, the blank vote's tooltip, and the 10-ballot rule
+  explained in plain words; the landing shows the current top 3 and says
+  who runs this and that it is neither an official election nor a poll;
+  the how-it-works page opens with a five-line short version; no relay,
+  checkpoint, log, proof or mirror word reaches the voter (they live under
+  « Détails techniques »); every « signalez-le » links to the corrections
+  page; French typography normalised (narrow no-break spaces).
+
 Not built yet: the final shuffle (§9.4). Not done yet: the election's
 own setup in production (the tallier's keygen, `dm vote setup` with the
 relays, its files committed under `deploy/ingest/presidentielle-2027/`,

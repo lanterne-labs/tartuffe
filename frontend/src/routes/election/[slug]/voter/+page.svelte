@@ -20,7 +20,7 @@
 	import { defaultSources } from '$lib/vote/sources';
 	import { neventLink } from '$lib/vote/mailbox';
 	import { parseLink, type LinkCode } from '$lib/vote/link';
-	import { describeError, toVoteError } from '$lib/vote/errors';
+	import { describeError, toVoteError, reportLink } from '$lib/vote/errors';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -89,7 +89,10 @@
 		linkCode = null;
 		history.replaceState(null, '', window.location.pathname + window.location.search);
 	}
+	// What went wrong, as the voter's sentence (HTML: the "report it" link)
+	// and, apart, the raw detail for the curious.
 	let actionError = $state('');
+	let actionDetail = $state('');
 
 	// The options of the setup in force: slot → candidate card or blank.
 	let options = $derived(($setupStore?.setup.options ?? []).filter((o) => o.kind === 'candidate' || o.kind === 'blank'));
@@ -122,11 +125,13 @@
 		const ve = toVoteError(e);
 		const b = $ballotStore;
 		actionError = describeError(b.state === 'rejected' || b.state === 'failed' ? (b.reason ?? ve.code) : ve.code, b.detail ?? ve.detail, currentLang);
+		actionDetail = b.detail ?? ve.detail ?? '';
 	}
 
 	async function change(next: number[]): Promise<boolean> {
 		if (busy || !ready) return false;
 		actionError = '';
+		actionDetail = '';
 		const r: Ranking = { len: next.length, slots: [next[0] ?? 0, next[1] ?? 0, next[2] ?? 0] };
 		try {
 			await session.cast(r);
@@ -251,8 +256,11 @@
 	function closesText(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
+	// pct: « 35 % » in French (a narrow no-break space), "35%" in English.
 	function pct(n: number, total: number): string {
-		return total > 0 ? `${Math.round((100 * n) / total)}%` : '—';
+		if (total <= 0) return '—';
+		const v = Math.round((100 * n) / total);
+		return currentLang === 'en' ? `${v}%` : `${v} %`;
 	}
 	function ago(iso: string): string {
 		const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60000));
@@ -285,6 +293,36 @@
 		return t.results;
 	});
 	let winnerSlot = $derived(results?.condorcet_winner ?? null);
+	// The two readings of the same results: the ranking (the order the
+	// tally gives) and the first choices only (the same rows, re-sorted by
+	// their first-choice share).
+	let tab = $state<'ranking' | 'first'>('ranking');
+	let rows = $derived.by(() => {
+		const list = results?.options ?? [];
+		if (tab === 'ranking') return list;
+		return [...list].sort((a, b) => b.first - a.first || a.rank - b.rank);
+	});
+	let winnerName = $derived(winnerSlot !== null ? nameOf(winnerSlot) : '');
+	// The consistency score of a candidate, from its card; none for the
+	// blank or a card without one.
+	function scoreOf(slot: number): number | null {
+		const o = bySlot.get(slot);
+		const s = o?.person_id ? cards.get(o.person_id)?.honesty_score : undefined;
+		// The cards carry the score as the site stores it (0 to 1).
+		return typeof s === 'number' && Number.isFinite(s) ? Math.round(s * 100) : null;
+	}
+	// The votes still to change before the results move again.
+	let toNext = $derived(Math.max(0, kReal - ($statsStore?.since_tally ?? 0)));
+	// The sentence under the ballot that says where the vote stands.
+	let statusLine = $derived.by(() => {
+		const s = $ballotStore.state;
+		const d = $setupStore ? closesText($setupStore.setup.closes) : '';
+		if (s === 'proving' || s === 'sending' || s === 'sent') return tr('v2.status.line.busy', currentLang);
+		if (s === 'received') return tr('v2.status.line.received', currentLang, { d });
+		if (s === 'verified') return tr('v2.status.line.verified', currentLang, { d });
+		return '';
+	});
+	let voted = $derived($ballotStore.state === 'verified' || $ballotStore.state === 'received' || (!!key?.lastBallot && key.lastBallot.state !== 'missing'));
 
 	// load reads the event's card files (a failure there is not the end:
 	// the page shows the slug) then starts the session, which names any
@@ -331,7 +369,10 @@
 
 {#if $phase === 'error'}
 	<div class="state error">
-		<p>{describeError($sessionError, $sessionErrorDetail, currentLang)}</p>
+		<p>{@html describeError($sessionError, $sessionErrorDetail, currentLang)}</p>
+		{#if $sessionErrorDetail}
+			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{$sessionErrorDetail}</p></details>
+		{/if}
 		<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
 	</div>
 {:else if $phase === 'loading' || !$setupStore}
@@ -359,10 +400,12 @@
 		<p class="live">
 			<span>{tr('v2.counter.ballots', currentLang, { n: $statsStore.ballots.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
 			<span class="dot"></span>
-			<span>{tr('v2.counter.since', currentLang, { n: $statsStore.since_tally })}</span>
-			<span class="dot"></span>
-			<span>{tr('v2.counter.next', currentLang, { k: kReal })}</span>
+			<span>{tr(toNext === 0 ? 'v2.counter.next.zero' : toNext === 1 ? 'v2.counter.next.one' : 'v2.counter.next', currentLang, { m: toNext })}</span>
 		</p>
+		<details class="rule">
+			<summary>{tr('poll.rule.q', currentLang)}</summary>
+			<p>{tr('poll.rule', currentLang, { k: kReal })}</p>
+		</details>
 	{/if}
 
 	{#if blackout}
@@ -390,17 +433,7 @@
 				{:else if $ballotStore.state === 'missing'}
 					<details class="help status-tip">
 						<summary class="state-icon state-icon--fault" aria-label={tr('v2.status.missing', currentLang)}>!</summary>
-						<p>{tr('v2.status.missing.help', currentLang)}</p>
-						{#if $ballotStore.complaints?.length}
-							<p>
-								{tr('v2.status.missing.links', currentLang)}
-								{#each $ballotStore.complaints as id, i (id)}
-									{#if i > 0}, {/if}
-									<a href="{paths.complaint}?id={id}">{tr('v2.status.missing.verify', currentLang)}</a>
-									(<a href={neventLink(id, $setupStore?.setup.relays.map((r) => r.url) ?? [])} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
-								{/each}
-							</p>
-						{/if}
+						<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
 					</details>
 				{:else if busy}
 					<span class="state-icon" title={tr(`v2.status.${$ballotStore.state}`, currentLang)}><Spinner size="sm" label={tr(`v2.status.${$ballotStore.state}`, currentLang)} /></span>
@@ -424,7 +457,12 @@
 				<button class="btn btn-small btn-quiet" onclick={() => (keyMenuOpen = true)}>{tr('v2.key.menu', currentLang)}</button>
 			{/if}
 		</div>
-		<p class="hint">{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: 3 })}</p>
+		<p class="hint">
+			{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: 3 })}
+			{#if open && shown.filter((x) => x !== BLANK).length > 1}
+				{tr('vote.hint.move', currentLang)}
+			{/if}
+		</p>
 		{#if hasKey && $warm !== 'ready' && $warm !== 'idle'}
 			<p class="hint muted">{tr(`v2.warm.${$warm}`, currentLang)}</p>
 		{/if}
@@ -478,9 +516,29 @@
 				</li>
 			{/each}
 		</ol>
+		{#if statusLine}
+			<p class="status-line" class:status-line--ok={$ballotStore.state === 'received' || $ballotStore.state === 'verified'} aria-live="polite">{statusLine}</p>
+		{:else if $ballotStore.state === 'missing'}
+			<div class="status-line status-line--fault" role="alert">
+				<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
+				{#if $ballotStore.complaints?.length}
+					<p>
+						{tr('v2.status.missing.links', currentLang)}
+						{#each $ballotStore.complaints as id, i (id)}
+							{#if i > 0}, {/if}
+							<a href="{paths.complaint}?id={id}">{tr('v2.status.missing.verify', currentLang)}</a>
+							(<a href={neventLink(id, $setupStore?.setup.relays.map((r) => r.url) ?? [])} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
+						{/each}
+					</p>
+				{/if}
+			</div>
+		{/if}
 		{#if open}
+			{#if event && voted}
+				<p class="nudge">{tr('v2.share.nudge', currentLang)}</p>
+			{/if}
 			<div class="ballot-actions">
-				{#if event && ($ballotStore.state === 'verified' || $ballotStore.state === 'received' || (key?.lastBallot && key.lastBallot.state !== 'missing'))}
+				{#if event && voted}
 					<ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} />
 				{/if}
 				{#if shown.length === 0}
@@ -498,7 +556,10 @@
 			</div>
 		{/if}
 		{#if actionError}
-			<p class="save-error" role="alert">{actionError}</p>
+			<p class="save-error" role="alert">{@html actionError}</p>
+			{#if actionDetail}
+				<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{actionDetail}</p></details>
+			{/if}
 		{/if}
 	</section>
 
@@ -512,6 +573,9 @@
 						<span class="pick-initial" aria-hidden="true">{nameOf(o.slot).charAt(0).toUpperCase()}</span>
 					{/if}
 					<span>{nameOf(o.slot)}</span>
+					{#if scoreOf(o.slot) !== null}
+						<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o.slot) ?? 0 })}</span>
+					{/if}
 				</button>
 			{/each}
 			{#if !shown.includes(BLANK)}
@@ -591,11 +655,11 @@
 	{/snippet}
 
 	<section class="results" aria-labelledby="results-title">
-		<h2 id="results-title">{tr('poll.list.ranking', currentLang)}</h2>
+		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
 		{#if blackout}
 			<p class="state">{tr('v2.blackout', currentLang)}</p>
 		{:else if !results || !$tallyStore}
-			<p class="state">{tr('v2.results.none', currentLang, { k: kReal })}</p>
+			<p class="state">{tr(toNext === 1 ? 'v2.results.none.one' : 'v2.results.none', currentLang, { k: kReal, m: toNext })}</p>
 		{:else}
 			<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyStore.at) })}</p>
 			{#if $tallyVerified === false}
@@ -603,10 +667,21 @@
 			{:else if $tallyVerified}
 				<p class="updated">{tr('v2.results.verified', currentLang)}</p>
 			{/if}
+			<div class="tabs" role="tablist">
+				<button role="tab" class="tab" class:tab--on={tab === 'ranking'} aria-selected={tab === 'ranking'} onclick={() => (tab = 'ranking')}>{tr('poll.tab.ranking', currentLang)}</button>
+				<button role="tab" class="tab" class:tab--on={tab === 'first'} aria-selected={tab === 'first'} onclick={() => (tab = 'first')}>{tr('poll.tab.first', currentLang)}</button>
+			</div>
+			<details class="explain">
+				<summary><span class="explain-lead">{tr(tab === 'ranking' ? 'poll.explain.ranking.lead' : 'poll.explain.first.lead', currentLang)}</span> <span class="explain-q">{tr('poll.explain.q', currentLang)}</span></summary>
+				<p>{tr(tab === 'ranking' ? 'poll.explain.ranking.rest' : 'poll.explain.first.rest', currentLang)}</p>
+			</details>
+			{#if tab === 'ranking' && winnerName}
+				<p class="winner-line">{tr('poll.winner.line', currentLang, { name: winnerName })}</p>
+			{/if}
 			<ol class="vote-list">
-				{#each results.options as o (o.slot)}
-					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={o.rank === 1} class:vote-row--blank={o.kind === 'blank'}>
-						<span class="vote-rank">{o.rank}</span>
+				{#each rows as o, i (o.slot)}
+					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={i === 0} class:vote-row--blank={o.kind === 'blank'}>
+						<span class="vote-rank">{tab === 'ranking' ? o.rank : i + 1}</span>
 						<div class="vote-main">
 							<span class="who">
 								{#if imageOf(o.slot)}
@@ -615,12 +690,18 @@
 									<span class="photo photo--empty">{o.kind === 'blank' ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 								{/if}
 								<span class="name">{nameOf(o.slot)}</span>
+								{#if o.kind === 'blank'}
+									{@render help(tr('vote.blank.tip', currentLang))}
+								{:else if scoreOf(o.slot) !== null}
+									<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o.slot) ?? 0 })}</span>
+								{/if}
 							</span>
-							{#if winnerSlot === o.slot}
+							{#if tab === 'ranking' && winnerSlot === o.slot}
 								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
 							{/if}
-							<span class="meta">{tr('poll.first_ranked', currentLang, { f: pct(o.first, results.voters), r: pct(o.ranked, results.voters) })}</span>
+							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, results.voters) })}</span>
 						</div>
+						<span class="big"><strong>{pct(o.first, results.voters)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
 					</li>
 				{/each}
 			</ol>
@@ -1300,5 +1381,156 @@
 		text-align: center;
 		margin: 2rem 0;
 		font-size: 0.9rem;
+	}
+	/* The arrows to reorder are always there where there is no hover. */
+	@media (hover: none) {
+		.slot-move {
+			opacity: 1;
+		}
+	}
+	/* Where the vote stands, under the slots. */
+	.status-line {
+		margin: 0 0 0.9rem;
+		padding: 0.6rem 0.8rem;
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+		font-size: 0.9rem;
+		line-height: 1.45;
+		color: var(--text-secondary);
+	}
+	.status-line--ok {
+		background: color-mix(in oklch, var(--green) 14%, var(--bg-card));
+		color: var(--text-primary);
+	}
+	.status-line--fault {
+		background: color-mix(in oklch, var(--red) 12%, var(--bg-card));
+		color: var(--text-primary);
+	}
+	.status-line--fault p {
+		margin: 0 0 0.4rem;
+	}
+	.status-line--fault p:last-child {
+		margin: 0;
+	}
+	.nudge {
+		margin: 0 0 0.6rem;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.tech {
+		margin: 0.4rem 0 0;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+	.tech summary {
+		cursor: pointer;
+	}
+	.tech p {
+		margin: 0.3rem 0 0;
+		font-family: var(--font-mono, monospace);
+		overflow-wrap: anywhere;
+	}
+	.rule {
+		max-width: 46rem;
+		margin: -0.75rem auto 1.5rem;
+		text-align: center;
+		font-size: 0.82rem;
+		color: var(--text-secondary);
+	}
+	.rule summary {
+		cursor: pointer;
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+	}
+	.rule p {
+		margin: 0.5rem auto 0;
+		max-width: 38rem;
+		line-height: 1.5;
+		text-align: left;
+	}
+	.chip {
+		display: inline-block;
+		padding: 0.08rem 0.45rem;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--glass-border);
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-size: 0.68rem;
+		font-weight: 600;
+		line-height: 1.4;
+		white-space: nowrap;
+		cursor: help;
+	}
+	.pick-card .chip {
+		font-size: 0.64rem;
+	}
+	.tabs {
+		display: flex;
+		gap: 0.4rem;
+		margin: 0 0 0.6rem;
+	}
+	.tab {
+		padding: 0.4rem 0.9rem;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--text-secondary);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.tab--on {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: white;
+	}
+	.explain {
+		margin: 0 0 0.75rem;
+		font-size: 0.85rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
+	}
+	.explain summary {
+		cursor: pointer;
+	}
+	.explain-q {
+		color: var(--accent-hover);
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+	}
+	.explain p {
+		margin: 0.4rem 0 0;
+	}
+	.winner-line {
+		margin: 0 0 0.75rem;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--text-primary);
+	}
+	.big {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		line-height: 1.1;
+	}
+	.big strong {
+		font-size: 1.35rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		color: var(--text-primary);
+	}
+	.big small {
+		font-size: 0.68rem;
+		color: var(--text-muted);
+	}
+	.vote-row .who {
+		flex-wrap: wrap;
+	}
+	.vote-row .help summary {
+		width: 1.1rem;
+		height: 1.1rem;
+		font-size: 0.65rem;
 	}
 </style>

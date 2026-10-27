@@ -25,6 +25,9 @@
 			kicker: string;
 			title: string;
 			lead: string;
+			briefTitle: string;
+			brief: string[];
+			levelsMore: string;
 			toc: string;
 			parts: Part[];
 			getTitle: string;
@@ -48,46 +51,55 @@
 			kicker: 'Comment ça marche',
 			title: 'Un vote que personne ne peut lire. Pas même nous.',
 			lead: 'Votre passeport prouve votre droit de participer. Votre bulletin part chiffré, sans votre nom, votre clé ni votre adresse. Seuls les totaux sont déchiffrés, avec une preuve, et tout le monde peut les recompter.',
+			briefTitle: 'En bref',
+			brief: [
+				'Votre passeport prouve, une seule fois et sur votre téléphone, que vous êtes majeur et français. Nous ne voyons ni votre nom ni votre photo.',
+				'Vous classez jusqu’à 3 candidats, ou votez blanc, et pouvez changer d’avis jusqu’à la clôture.',
+				'Votre bulletin part chiffré, sans votre nom ni votre adresse : personne, pas même nous, ne peut le lire.',
+				'Seuls les totaux sont déchiffrés, par paquets d’au moins 10 votes, et tout le monde peut les recompter.',
+				'C’est une expérience de tartuffe.me, site indépendant : ni un scrutin officiel, ni un sondage représentatif.'
+			],
+			levelsMore: 'Lire le détail',
 			toc: 'Sommaire',
 			parts: [
 				{
 					id: 'cle',
 					title: '1. Obtenir sa clé de vote',
 					body: [
-						'Un passeport, une clé, une voix : sans passeport, on pourrait créer cent clés. Le passeport ne sert qu’à prouver que vous êtes majeur et français ; c’est la clé qui vote.',
-						'Votre navigateur crée la clé : à partir de votre passkey (Face ID, empreinte), qui la retrouve sur vos autres appareils, ou de 12 mots à noter. Il en calcule l’empreinte publique, la seule chose qui sortira de l’appareil.',
-						'L’app ZKPassport lit la puce (NFC) et calcule sur le téléphone une preuve : « passeport authentique, signé par l’État, en cours de validité ; titulaire majeur et français », liée à l’empreinte de votre clé. Elle ne révèle ni nom ni numéro, seulement un identifiant propre au passeport et à ce site.',
-						'L’inscription part sur un relais public, pas chez nous. Notre serveur la lit, vérifie la preuve et l’inscrit dans le registre public, preuve comprise : chacun peut vérifier que chaque clé de la liste des votants vient d’un vrai passeport, et qu’aucun passeport n’en a deux. Quelques secondes plus tard, vous pouvez voter.'
+						'Un passeport, une clé, une voix : sans passeport, on pourrait créer cent clés. Le passeport ne sert qu’à prouver que vous êtes majeur et français ; c’est la clé qui vote.',
+						'Votre navigateur crée la clé : à partir de Face ID ou de votre empreinte (une « clé d’accès »), qui la retrouve sur vos autres appareils, ou de 12 mots à noter. Il en calcule l’empreinte publique, la seule chose qui sortira de l’appareil.',
+						'L’app ZKPassport lit la puce (NFC) et calcule sur le téléphone une preuve : « passeport authentique, signé par l’État, en cours de validité ; titulaire majeur et français », liée à l’empreinte de votre clé. Elle ne révèle ni nom ni numéro, seulement un identifiant propre au passeport et à ce site.',
+						'L’inscription part sur un relais public, pas chez nous. Notre serveur la lit, vérifie la preuve et l’inscrit dans le registre public, preuve comprise : chacun peut vérifier que chaque clé de la liste des votants vient d’un vrai passeport, et qu’aucun passeport n’en a deux. Quelques secondes plus tard, vous pouvez voter.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'App ZKPassport', sub: 'votre téléphone' }, { label: 'Relais', sub: 'publics, tenus par d’autres' }, { label: 'tartuffe.me' }, { label: 'Registre public' }],
 						steps: [
-							{ at: 0, note: 'Crée la clé secrète s (passkey ou 12 mots) et son empreinte publique.', span: 2 },
-							{ from: 0, to: 1, label: 'QR code : « majeur ? français ? passeport valide ? », lié à l’empreinte' },
+							{ at: 0, note: 'Crée la clé secrète s (Face ID, empreinte ou 12 mots) et son empreinte publique.', span: 2 },
+							{ from: 0, to: 1, label: 'QR code : « majeur ? français ? passeport valide ? », lié à l’empreinte' },
 							{ at: 1, note: 'Lit la puce, calcule la preuve. Les données restent sur le téléphone.', span: 2 },
-							{ from: 1, to: 0, label: 'preuve : oui, oui, oui. Ni nom ni numéro', dashed: true },
-							{ from: 0, to: 2, label: 'inscription : empreinte + preuve' },
+							{ from: 1, to: 0, label: 'preuve : oui, oui, oui. Ni nom ni numéro', dashed: true },
+							{ from: 0, to: 2, label: 'inscription : empreinte + preuve' },
 							{ from: 3, to: 2, label: 'lit les inscriptions' },
 							{ at: 3, note: 'Vérifie la preuve, un passeport = une clé.', span: 2 },
 							{ from: 3, to: 4, label: 'inscription publiée, preuve comprise' },
 							{ from: 3, to: 2, label: 'accusé de réception signé', dashed: true }
 						],
-						caption: 'Le passeport ouvre le vote ; c’est la clé, que vous êtes seul à détenir, qui vote.'
+						caption: 'Le passeport ouvre le vote ; c’est la clé, que vous êtes seul à détenir, qui vote.'
 					},
 					more: [
 						[
-							'Une preuve « à divulgation nulle de connaissance » ?',
+							'Une preuve « à divulgation nulle de connaissance » ?',
 							[
 								'C’est une preuve qu’une affirmation est vraie, qui ne révèle rien d’autre.',
-								'Imaginez qu’au lieu de montrer votre carte d’identité, vous remettiez un certificat infalsifiable qui dit seulement « majeur ». Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans avoir à faire confiance au téléphone.',
-								'La preuve repose sur la signature de l’État inscrite dans la puce : un faux passeport ne peut pas en produire.'
+								'Imaginez qu’au lieu de montrer votre carte d’identité, vous remettiez un certificat infalsifiable qui dit seulement « majeur ». Ici, c’est votre téléphone qui le calcule, et chacun peut le vérifier sans avoir à faire confiance au téléphone.',
+								'La preuve repose sur la signature de l’État inscrite dans la puce : un faux passeport ne peut pas en produire.'
 							]
 						],
 						[
 							'L’identifiant du passeport',
 							[
-								'Il est calculé à partir des données de la puce et du nom du site : le même passeport donne toujours le même identifiant ici, d’où une clé par passeport. Il change d’un site à l’autre et ne mène pas à votre nom.',
-								'Il est public, dans le registre : c’est ce qui permet à chacun de vérifier qu’aucun passeport n’a deux clés. L’État, qui connaît les puces qu’il a signées, pourrait donc savoir qu’un passeport s’est inscrit. Jamais pour qui il vote.'
+								'Il est calculé à partir des données de la puce et du nom du site : le même passeport donne toujours le même identifiant ici, d’où une clé par passeport. Il change d’un site à l’autre et ne mène pas à votre nom.',
+								'Il est public, dans le registre : c’est ce qui permet à chacun de vérifier qu’aucun passeport n’a deux clés. L’État, qui connaît les puces qu’il a signées, pourrait donc savoir qu’un passeport s’est inscrit. Jamais pour qui il vote.'
 							]
 						]
 					]
@@ -96,51 +108,51 @@
 					id: 'vote',
 					title: '2. Voter',
 					body: [
-						'Vous classez jusqu’à 3 candidats, par ordre de préférence, ou vous votez blanc. Vous pouvez changer d’avis jusqu’à la clôture : seul le dernier bulletin compte.',
-						'Votre navigateur chiffre le bulletin avec la clé de l’élection, puis calcule une preuve (une seconde environ) : « ce bulletin vient d’une clé de la liste des votants, sans dire laquelle ; il respecte les règles ; il est chiffré correctement ». La preuve porte aussi votre pseudonyme, le même pour tous vos bulletins et sans lien avec votre clé : un nouveau bulletin remplace l’ancien.',
-						'Le bulletin ne passe pas par nous : il part sur un relais public, signé par une clé jetable. Notre serveur lit les relais, vérifie la preuve et ajoute le bulletin, toujours chiffré, au registre public. Toutes les 20 secondes, il signe l’état du registre (un point de contrôle).',
-						'Sur la page, « Bulletin reçu » apparaît en quelques secondes, puis « Bulletin dans le registre » quand votre navigateur l’y a retrouvé, intact. Il ne demande jamais « mon bulletin » à notre serveur : il lit la même liste que tout le monde.'
+						'Vous classez jusqu’à 3 candidats, par ordre de préférence, ou vous votez blanc. Vous pouvez changer d’avis jusqu’à la clôture : seul le dernier bulletin compte.',
+						'Votre navigateur chiffre le bulletin avec la clé de l’élection, puis calcule une preuve (une seconde environ) : « ce bulletin vient d’une clé de la liste des votants, sans dire laquelle ; il respecte les règles ; il est chiffré correctement ». La preuve porte aussi votre pseudonyme, le même pour tous vos bulletins et sans lien avec votre clé : un nouveau bulletin remplace l’ancien.',
+						'Le bulletin ne passe pas par nous : il part sur un relais public, signé par une clé jetable. Notre serveur lit les relais, vérifie la preuve et ajoute le bulletin, toujours chiffré, au registre public. Toutes les 20 secondes, il signe l’état du registre (un point de contrôle).',
+						'Sur la page, « Vote enregistré » apparaît en quelques secondes, puis « Vote enregistré et vérifié » quand votre navigateur l’a retrouvé dans le registre public, intact. Il ne demande jamais « mon bulletin » à notre serveur : il lit la même liste que tout le monde.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'Relais', sub: 'publics, tenus par d’autres' }, { label: 'tartuffe.me' }, { label: 'Registre public' }],
 						steps: [
-							{ at: 0, note: 'Chiffre le classement, prouve « une clé de la liste » et les règles, donne le pseudonyme.', span: 2 },
+							{ at: 0, note: 'Chiffre le classement, prouve « une clé de la liste » et les règles, donne le pseudonyme.', span: 2 },
 							{ from: 0, to: 1, label: 'bulletin chiffré + preuve, clé jetable' },
 							{ from: 2, to: 1, label: 'lit les nouveaux bulletins' },
 							{ at: 2, note: 'Vérifie la preuve. Un nouveau bulletin remplace l’ancien du même pseudonyme.', span: 2 },
 							{ from: 2, to: 1, label: 'accusé de réception signé', dashed: true },
 							{ from: 2, to: 3, label: 'bulletin chiffré + point de contrôle signé' }
 						],
-						caption: 'Notre serveur ne reçoit pas votre bulletin de vous : il le lit sur les relais, parmi les autres.'
+						caption: 'Notre serveur ne reçoit pas votre bulletin de vous : il le lit sur les relais, parmi les autres.'
 					}
 				},
 				{
 					id: 'comptage',
 					title: '3. Compter sans lire',
 					body: [
-						'Les bulletins chiffrés s’additionnent sans être ouverts. Pour publier des résultats, notre serveur ne déchiffre que la somme, et joint une preuve que ce déchiffrement est le bon : chacun peut refaire l’addition à partir du registre et vérifier la preuve.',
-						'Les résultats avancent par lots d’au moins 10 bulletins modifiés. Une mise à jour révèle la différence avec la précédente : avec un seul bulletin, ce serait ce bulletin. Avec dix, c’est une somme que personne ne peut démêler. Aux heures creuses, les résultats attendent donc ; le compteur de bulletins reçus, lui, bouge à chaque vote.',
-						'« Avec le classement » : on oppose les candidats deux à deux à partir des totaux. Celui qui bat tous les autres est le gagnant de Condorcet ; s’il n’y en a pas, la méthode de Schulze donne tout de même un ordre. Les premiers choix sont affichés aussi, comme au premier tour.',
-						'La clé de l’élection est chez nous, sur une machine sans accès entrant. Elle pourrait déchiffrer un bulletin seul : c’est la limite de ce vote, dite plus bas. Elle est détruite 30 jours après la clôture.',
-						'Les résultats sont affichés dès le premier lot, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
+						'Les bulletins chiffrés s’additionnent sans être ouverts. Pour publier des résultats, notre serveur ne déchiffre que la somme, et joint une preuve que ce déchiffrement est le bon : chacun peut refaire l’addition à partir du registre et vérifier la preuve.',
+						'Les résultats avancent par lots d’au moins 10 bulletins modifiés. Une mise à jour révèle la différence avec la précédente : avec un seul bulletin, ce serait ce bulletin. Avec dix, c’est une somme que personne ne peut démêler. Aux heures creuses, les résultats attendent donc ; le compteur de bulletins reçus, lui, bouge à chaque vote.',
+						'« Avec le classement » : on oppose les candidats deux à deux à partir des totaux. Celui qui bat tous les autres est le gagnant de Condorcet ; s’il n’y en a pas, la méthode de Schulze donne tout de même un ordre. Les premiers choix sont affichés aussi, comme au premier tour.',
+						'La clé de l’élection est chez nous, sur une machine sans accès entrant. Elle pourrait déchiffrer un bulletin seul : c’est la limite de ce vote, dite plus bas. Elle est détruite 30 jours après la clôture.',
+						'Les résultats sont affichés dès le premier lot, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
 					]
 				},
 				{
 					id: 'blanc',
 					title: '4. Le vote blanc compte',
 					body: [
-						'C’est un bulletin à part entière : « j’ai voté, mais aucun ne me convainc ». Il ne classe personne, mais il compte parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
-						'Vous pouvez aussi le placer après vos candidats : il signifie alors « les autres, non ». Il affronte chaque candidat en duel, comme s’il en était un : un candidat que la majorité place sous le vote blanc passe derrière lui dans le classement.',
-						'Retirer son vote, c’est autre chose : le bulletin ne compte plus. Dans le registre, un retrait ressemble à n’importe quel bulletin.'
+						'C’est un bulletin à part entière : « j’ai voté, mais aucun ne me convainc ». Il ne classe personne, mais il compte parmi les votants et dans chaque pourcentage, avec sa propre ligne.',
+						'Vous pouvez aussi le placer après vos candidats : il signifie alors « les autres, non ». Il affronte chaque candidat en duel, comme s’il en était un : un candidat que la majorité place sous le vote blanc passe derrière lui dans le classement.',
+						'Retirer son vote, c’est autre chose : le bulletin ne compte plus. Dans le registre, un retrait ressemble à n’importe quel bulletin.'
 					]
 				},
 				{
 					id: 'journal',
 					title: '5. Vérifier, sans nous faire confiance',
 					body: [
-						'Inscriptions, bulletins chiffrés et totaux entrent dans un registre public, un arbre de Merkle comme ceux qui surveillent les certificats du web. Notre serveur en signe l’état toutes les 20 secondes ; chaque point de contrôle engage tout ce qui précède, et son empreinte est horodatée dans Bitcoin : impossible ensuite de faire passer un autre registre pour celui de cette date.',
+						'Inscriptions, bulletins chiffrés et totaux entrent dans un registre public, un arbre de Merkle comme ceux qui surveillent les certificats du web. Notre serveur en signe l’état toutes les 20 secondes ; chaque point de contrôle engage tout ce qui précède, et son empreinte est horodatée dans Bitcoin : impossible ensuite de faire passer un autre registre pour celui de cette date.',
 						'Votre navigateur garde les points de contrôle qu’il a vus et vérifie que chaque nouveau prolonge l’ancien sans rien effacer, puis que votre bulletin figure dans le registre, tel qu’envoyé.',
-						'Chacun peut tout télécharger et tout recompter avec l’outil open source « dm vote verify » : les signatures, l’arbre, chaque preuve de passeport, chaque preuve de bulletin, l’addition des bulletins, les preuves de déchiffrement et les résultats.'
+						'Chacun peut tout télécharger et tout recompter avec l’outil open source « dm vote verify » : les signatures, l’arbre, chaque preuve de passeport, chaque preuve de bulletin, l’addition des bulletins, les preuves de déchiffrement et les résultats.'
 					],
 					diagram: {
 						actors: [{ label: 'Votre navigateur' }, { label: 'tartuffe.me' }, { label: 'Bitcoin', sub: 'OpenTimestamps' }, { label: 'N’importe qui' }],
@@ -149,7 +161,7 @@
 							{ from: 1, to: 2, label: 'empreinte du point de contrôle, toutes les 20 s' },
 							{ at: 0, note: 'Vérifie que le registre n’a fait que grandir et contient mon bulletin, chiffré, intact.', span: 2 },
 							{ from: 3, to: 1, label: 'télécharge tout le registre' },
-							{ at: 3, note: 'dm vote verify : rejoue inscriptions, preuves, additions et déchiffrements.', span: 2 }
+							{ at: 3, note: 'dm vote verify : rejoue inscriptions, preuves, additions et déchiffrements.', span: 2 }
 						],
 						caption: 'Changer, effacer ou oublier un bulletin se verrait.'
 					}
@@ -158,14 +170,14 @@
 					id: 'appareils',
 					title: '6. Plusieurs appareils, clé perdue',
 					body: [
-						'Votre clé vient de votre passkey, que votre téléphone retrouve sur vos autres appareils ; ou de 12 mots, à noter avant le premier bulletin. Avec l’un ou l’autre, vous changez votre bulletin depuis n’importe quel appareil, jusqu’à la clôture.',
-						'Tout perdu, clé et copies ? Votre dernier bulletin reste compté, tel quel. Un passeport ne donne qu’une clé, et personne ne peut relier un bulletin à sa clé : nous ne pouvons donc ni l’annuler ni vous en donner une seconde. Un passeport ne compte jamais pour deux voix.'
+						'Votre clé vient de Face ID ou de votre empreinte, que votre téléphone retrouve sur vos autres appareils ; ou de 12 mots, à noter avant le premier bulletin. Avec l’un ou l’autre, vous changez votre bulletin depuis n’importe quel appareil, jusqu’à la clôture.',
+						'Tout perdu, clé et copies ? Votre dernier bulletin reste compté, tel quel. Un passeport ne donne qu’une clé, et personne ne peut relier un bulletin à sa clé : nous ne pouvons donc ni l’annuler ni vous en donner une seconde. Un passeport ne compte jamais pour deux voix.'
 					]
 				}
 			],
 			getTitle: 'Ce que nous recevons',
 			get: [
-				'« Majeur, français, passeport valide : oui », prouvés par ZKPassport.',
+				'« Majeur, français, passeport valide : oui », prouvés par ZKPassport.',
 				'L’identifiant du passeport pour ce site, et l’empreinte publique de votre clé. La clé, elle, reste sur vos appareils.',
 				'Des bulletins chiffrés et leur preuve, lus sur les relais.',
 				'La somme des bulletins, déchiffrée par lots d’au moins 10.'
@@ -173,8 +185,8 @@
 			neverTitle: 'Ce que nous ne voyons jamais',
 			never: [
 				'Votre nom, votre photo, votre date de naissance, le numéro du passeport.',
-				'L’adresse IP de votre navigateur : il ne nous parle jamais, ni pour s’inscrire, ni pour voter, ni pour vérifier.',
-				'Quel bulletin est le vôtre : un bulletin ne porte ni votre passeport, ni votre clé, ni votre compte.',
+				'L’adresse IP de votre navigateur : il ne nous parle jamais, ni pour s’inscrire, ni pour voter, ni pour vérifier.',
+				'Quel bulletin est le vôtre : un bulletin ne porte ni votre passeport, ni votre clé, ni votre compte.',
 				'Votre clé en clair, vos 12 mots, votre visage, votre empreinte.'
 			],
 			levelsTitle: 'Votre niveau de confidentialité',
@@ -185,43 +197,43 @@
 					how: 'Rien à faire.',
 					lines: [
 						'Personne ne peut lire votre bulletin, sauf la clé de l’élection, qui ne sait pas de qui il vient.',
-						'Notre serveur ne voit jamais votre adresse IP : vos envois passent par les relais, vos lectures par un miroir public.',
+						'Notre serveur ne voit jamais votre adresse IP : vos envois passent par les relais, vos lectures par un miroir public.',
 						'Les relais voient l’adresse IP de votre navigateur, comme tout site visité, et un bulletin chiffré qu’ils ne peuvent pas lire.',
 						'L’État, qui connaît les puces de ses passeports, pourrait savoir que le vôtre s’est inscrit. Jamais pour qui il vote.'
 					]
 				},
 				{
 					name: 'Avec Tor',
-					how: 'Ouvrez tartuffe.me dans Tor Browser, au niveau de sécurité « Standard » (les deux autres bloquent le calcul de la preuve).',
+					how: 'Ouvrez tartuffe.me dans Tor Browser, au niveau de sécurité « Standard » (les deux autres bloquent le calcul de la preuve).',
 					lines: [
 						'Les relais et le miroir ne voient qu’une adresse du réseau Tor.',
 						'Votre fournisseur d’accès ne voit pas que vous votez.',
-						'Pas de passkey dans Tor Browser : notez les 12 mots, à saisir à chaque visite. Comptez quelques secondes de plus pour la preuve.'
+						'Pas de Face ID ni d’empreinte dans Tor Browser : notez les 12 mots, à saisir à chaque visite. Comptez quelques secondes de plus pour la preuve.'
 					]
 				}
 			],
 			knownTitle: 'À tous les niveaux',
 			known: [
-				'Un votant peut prouver son vote à un tiers, en révélant le secret qui l’a chiffré : l’achat de votes n’est pas empêché. Qui a votre clé ou vos 12 mots vote à votre place.',
-				'La clé de l’élection, chez nous, pourrait déchiffrer un bulletin seul, sans savoir de qui il vient ; nous publions seulement les sommes, avec leurs preuves.',
+				'Un votant peut prouver son vote à un tiers, en révélant le secret qui l’a chiffré : l’achat de votes n’est pas empêché. Qui a votre clé ou vos 12 mots vote à votre place.',
+				'La clé de l’élection, chez nous, pourrait déchiffrer un bulletin seul, sans savoir de qui il vient ; nous publions seulement les sommes, avec leurs preuves.',
 				'Nous servons le code de cette page. Il est open source, et le registre peut être vérifié par d’autres que nous.',
 				'Un seul serveur lit les relais et écrit le registre. Le registre signé et horodaté dans Bitcoin rend toute triche visible.',
-				'Il faut un smartphone NFC et un passeport à puce. La carte d’identité n’est pas acceptée pour l’instant : avec les deux, une même personne aurait deux voix.',
-				'Qui aurait une copie complète de la puce de votre passeport pourrait l’inscrire avant vous : vous trouveriez alors votre passeport déjà pris.',
+				'Il faut un smartphone NFC et un passeport à puce. La carte d’identité n’est pas acceptée pour l’instant : avec les deux, une même personne aurait deux voix.',
+				'Qui aurait une copie complète de la puce de votre passeport pourrait l’inscrire avant vous : vous trouveriez alors votre passeport déjà pris.',
 				'La demande ZKPassport passe par leur relais, chiffrée de bout en bout. ZKPassport est open source, audité en interne, pas encore par un tiers.'
 			],
 			eraseTitle: 'Retirer son vote, effacer sa clé',
 			erase: [
-				'Votre vote n’est lié à aucun compte : retirez-le sur la page du vote, avec votre clé. Dans le registre, un retrait ressemble à un bulletin.',
-				'« Retirer la clé de cet appareil », dans le menu « Ma clé » de la page du vote, l’efface de ce navigateur ; Face ID ou une clé d’accès (« Retrouver ma clé »), vos 12 mots ou votre autre appareil la retrouvent.'
+				'Votre vote n’est lié à aucun compte : retirez-le sur la page du vote, avec votre clé. Dans le registre, un retrait ressemble à un bulletin.',
+				'« Retirer la clé de cet appareil », dans le menu « Ma clé » de la page du vote, l’efface de ce navigateur ; Face ID ou empreinte (« Retrouver ma clé »), vos 12 mots ou votre autre appareil la retrouvent.'
 			],
 			techTitle: 'Pour les curieux',
 			tech: [
-				'Bulletin : chiffrement ElGamal exponentiel sur la courbe Grumpkin, 10 chiffrés pour 66 valeurs (premiers choix, candidats classés, duels), preuve UltraHonk d’un circuit Noir (15 000 contraintes, sans cérémonie à nous : le setup universel d’Aztec).',
-				'Liste des votants : arbre de Merkle Poseidon2 de profondeur 20 ; le navigateur met son chemin à jour à partir de fichiers publics, sans jamais demander sa propre feuille.',
-				'Totaux : preuves de Chaum-Pedersen pour chaque composante ; classement par la méthode de Schulze sur les marges.',
-				'Registre : arbre de Merkle au sens de la RFC 6962 ; points de contrôle en « notes signées » Ed25519 (format C2SP), horodatés par OpenTimestamps.',
-				'Recompter soi-même : dm vote verify presidentielle-2027 --api https://tartuffe.me. La spécification complète : docs/vote/SPEC.md.'
+				'Bulletin : chiffrement ElGamal exponentiel sur la courbe Grumpkin, 10 chiffrés pour 66 valeurs (premiers choix, candidats classés, duels), preuve UltraHonk d’un circuit Noir (15 000 contraintes, sans cérémonie à nous : le setup universel d’Aztec).',
+				'Liste des votants : arbre de Merkle Poseidon2 de profondeur 20 ; le navigateur met son chemin à jour à partir de fichiers publics, sans jamais demander sa propre feuille.',
+				'Totaux : preuves de Chaum-Pedersen pour chaque composante ; classement par la méthode de Schulze sur les marges.',
+				'Registre : arbre de Merkle au sens de la RFC 6962 ; points de contrôle en « notes signées » Ed25519 (format C2SP), horodatés par OpenTimestamps.',
+				'Recompter soi-même : dm vote verify presidentielle-2027 --api https://tartuffe.me. La spécification complète : docs/vote/SPEC.md.'
 			],
 			links: [
 				['Code de ZKPassport (Apache-2.0)', 'https://github.com/zkpassport'],
@@ -234,6 +246,15 @@
 			kicker: 'How it works',
 			title: 'A vote nobody can read. Not even us.',
 			lead: 'Your passport proves your right to take part. Your ballot leaves encrypted, without your name, your key or your address. Only the totals are decrypted, with a proof, and anyone can recount them.',
+			briefTitle: 'In short',
+			brief: [
+				'Your passport proves, once and on your phone, that you are an adult French national. We see neither your name nor your photo.',
+				'You rank up to 3 candidates, or vote blank, and can change your mind until the close.',
+				'Your ballot leaves encrypted, without your name or address: nobody, not even us, can read it.',
+				'Only the totals are decrypted, in batches of at least 10 votes, and anyone can recount them.',
+				'It is an experiment by tartuffe.me, an independent site: neither an official election nor a representative poll.'
+			],
+			levelsMore: 'Read the detail',
 			toc: 'Contents',
 			parts: [
 				{
@@ -241,14 +262,14 @@
 					title: '1. Getting your voting key',
 					body: [
 						'One passport, one key, one vote: without a passport, anyone could make a hundred keys. The passport only proves that you are an adult and French; the key is what votes.',
-						'Your browser makes the key: from your passkey (Face ID, fingerprint), which brings it to your other devices, or from 12 words to write down. It computes the key’s public fingerprint, the only thing that leaves the device.',
+						'Your browser makes the key: from Face ID or your fingerprint (a “passkey”), which brings it to your other devices, or from 12 words to write down. It computes the key’s public fingerprint, the only thing that leaves the device.',
 						'The ZKPassport app reads the chip (NFC) and computes a proof on the phone: “genuine passport, signed by the State, still valid; holder adult and French”, bound to your key’s fingerprint. It reveals neither name nor number, only an identifier specific to the passport and to this site.',
 						'The registration goes to a public relay, not to us. Our server reads it, checks the proof and writes it to the public log, proof included: anyone can check that every key in the voter list comes from a real passport, and that no passport has two. A few seconds later, you can vote.'
 					],
 					diagram: {
 						actors: [{ label: 'Your browser' }, { label: 'ZKPassport app', sub: 'your phone' }, { label: 'Relays', sub: 'public, run by others' }, { label: 'tartuffe.me' }, { label: 'Public log' }],
 						steps: [
-							{ at: 0, note: 'Makes the secret key s (passkey or 12 words) and its public fingerprint.', span: 2 },
+							{ at: 0, note: 'Makes the secret key s (Face ID, fingerprint or 12 words) and its public fingerprint.', span: 2 },
 							{ from: 0, to: 1, label: 'QR code: “adult? French? valid passport?”, bound to the fingerprint' },
 							{ at: 1, note: 'Reads the chip, computes the proof. The data stays on the phone.', span: 2 },
 							{ from: 1, to: 0, label: 'proof: yes, yes, yes. No name, no number', dashed: true },
@@ -285,7 +306,7 @@
 						'You rank up to 3 candidates, in order of preference, or vote blank. You can change your mind until the close: only the last ballot counts.',
 						'Your browser encrypts the ballot with the election’s key, then computes a proof (about a second): “this ballot comes from a key of the voter list, without saying which; it follows the rules; it is correctly encrypted”. The proof also carries your pseudonym, the same for all your ballots and unlinked to your key: a new ballot replaces the old one.',
 						'The ballot does not go through us: it goes to a public relay, signed by a throwaway key. Our server reads the relays, checks the proof and adds the ballot, still encrypted, to the public log. Every 20 seconds it signs the log’s state (a checkpoint).',
-						'On the page, “Ballot received” appears within seconds, then “Ballot in the log” once your browser has found it there, intact. It never asks our server for “my ballot”: it reads the same list as everyone.'
+						'On the page, “Vote recorded” appears within seconds, then “Vote recorded and checked” once your browser has found it in the public log, intact. It never asks our server for “my ballot”: it reads the same list as everyone.'
 					],
 					diagram: {
 						actors: [{ label: 'Your browser' }, { label: 'Relays', sub: 'public, run by others' }, { label: 'tartuffe.me' }, { label: 'Public log' }],
@@ -344,7 +365,7 @@
 					id: 'appareils',
 					title: '6. Several devices, a lost key',
 					body: [
-						'Your key comes from your passkey, which your phone brings to your other devices; or from 12 words, to write down before the first ballot. With either, you change your ballot from any device, until the close.',
+						'Your key comes from Face ID or your fingerprint, which your phone brings to your other devices; or from 12 words, to write down before the first ballot. With either, you change your ballot from any device, until the close.',
 						'Lost everything, key and copies? Your last ballot stays counted, as it is. A passport gives only one key, and nobody can link a ballot to its key: so we can neither cancel it nor give you a second key. A passport never counts for two votes.'
 					]
 				}
@@ -382,7 +403,7 @@
 					lines: [
 						'The relays and the mirror see only a Tor network address.',
 						'Your internet provider does not see that you vote.',
-						'No passkey in Tor Browser: write down the 12 words, to enter at each visit. Count a few more seconds for the proof.'
+						'No Face ID or fingerprint in Tor Browser: write down the 12 words, to enter at each visit. Count a few more seconds for the proof.'
 					]
 				}
 			],
@@ -399,7 +420,7 @@
 			eraseTitle: 'Withdrawing your vote, erasing your key',
 			erase: [
 				'Your vote is tied to no account: withdraw it on the vote page, with your key. In the log, a withdrawal looks like a ballot.',
-				'“Remove the key from this device”, in the “My key” menu of the vote page, erases it from this browser; Face ID or a passkey (“Find my key”), your 12 words or your other device bring it back.'
+				'“Remove the key from this device”, in the “My key” menu of the vote page, erases it from this browser; Face ID or fingerprint (“Find my key”), your 12 words or your other device bring it back.'
 			],
 			techTitle: 'For the curious',
 			tech: [
@@ -430,6 +451,11 @@
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
 	</header>
+
+	<section class="brief" aria-labelledby="brief-title">
+		<h2 id="brief-title">{c.briefTitle}</h2>
+		<ol>{#each c.brief as line}<li>{line}</li>{/each}</ol>
+	</section>
 
 	<nav class="toc" aria-label={c.toc}>
 		{#each c.parts as p (p.id)}<a href="#{p.id}">{p.title}</a>{/each}
@@ -471,6 +497,8 @@
 	<section class="part" id="niveaux">
 		<h2>{c.levelsTitle}</h2>
 		<p>{c.levelsLead}</p>
+		<details class="more">
+		<summary>{c.levelsMore}</summary>
 		<div class="levels">
 			{#each c.levels as level, i (i)}
 				<div class="box level">
@@ -488,6 +516,7 @@
 		</div>
 		<h3 class="known-title">{c.knownTitle}</h3>
 		<ul class="known">{#each c.known as line}<li>{line}</li>{/each}</ul>
+		</details>
 	</section>
 
 	<section class="part">
@@ -533,6 +562,29 @@
 		color: var(--text-secondary);
 		line-height: 1.6;
 		text-wrap: balance;
+	}
+	/* The short version: five lines before anything else. */
+	.brief {
+		margin: 0 0 1.75rem;
+		padding: 1.1rem 1.3rem;
+		border: 1px solid var(--event);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+	}
+	.brief h2 {
+		margin: 0 0 0.6rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--event);
+	}
+	.brief ol {
+		margin: 0;
+		padding-left: 1.3rem;
+		display: grid;
+		gap: 0.4rem;
+		line-height: 1.5;
 	}
 	.toc {
 		display: flex;

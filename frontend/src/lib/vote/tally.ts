@@ -33,7 +33,9 @@ const SIG_PREFIX = 'tartuffe-vote/2/tally\n';
 // verifyTallySig returns null when the signature holds under the key,
 // else what fails. A setup without a key (a trial) is "unsigned".
 export function verifyTallySig(tallyPubkey: string | undefined, t: TallyBody): string | null {
-	if (!tallyPubkey) return 'unsigned (the setup names no tally key)';
+	// A setup without a key (a trial log) has nothing to check: the
+	// auditor warns, the page does not accuse.
+	if (!tallyPubkey) return null;
 	if (!/^[0-9a-f]{64}$/.test(tallyPubkey)) return 'malformed tally key';
 	if (!t.sig || !/^[0-9a-f]{128}$/.test(t.sig)) return 'no tallier signature';
 	const { sig, ...rest } = t;

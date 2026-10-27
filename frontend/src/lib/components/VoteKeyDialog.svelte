@@ -34,12 +34,15 @@
 	let registration = $state<RegistrationStatus>({ state: 'idle' });
 	$effect(() => session.registration.subscribe((v) => (registration = v)));
 
-	type Step = 'choose' | 'words' | 'confirm' | 'passkey-made' | 'passport' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
+	type Step = 'choose' | 'words' | 'confirm' | 'passport' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
 	let step: Step = $state('choose');
 	let words = $state('');
 	let confirmIdx = $state<[number, number, number]>([2, 6, 10]);
 	let confirmInput = $state(['', '', '']);
+	// What went wrong: the voter's sentence (HTML, the "report it" link)
+	// and the raw detail, shown apart.
 	let error = $state('');
+	let errorDetail = $state('');
 	let busy = $state(false);
 	let restoreWords = $state('');
 	let linkUrl = $state('');
@@ -108,11 +111,15 @@
 	function fail(e: unknown) {
 		const ve = toVoteError(e);
 		error = describeError(ve.code, ve.detail, lang);
+		errorDetail = ve.detail;
 	}
 
+	// make creates the key: with 12 words, they are shown and confirmed
+	// first; with Face ID or the fingerprint, the passport comes at once.
 	async function make(prefer: 'passkey' | 'words') {
 		busy = true;
 		error = '';
+		errorDetail = '';
 		try {
 			const got = await session.newKey(prefer);
 			if (got.words) {
@@ -121,7 +128,7 @@
 				confirmInput = ['', '', ''];
 				step = 'words';
 			} else {
-				step = 'passkey-made';
+				step = 'passport';
 			}
 		} catch (e) {
 			fail(e);
@@ -245,6 +252,7 @@
 	function back() {
 		stopReceiving();
 		error = '';
+		errorDetail = '';
 		step = 'choose';
 	}
 
@@ -274,6 +282,7 @@
 	});
 	let failedCode = $derived(registration.state === 'failed' ? (registration.code ?? '') : '');
 	let failedStale = $derived(registration.state === 'failed' && !!registration.stale);
+	let failedDetail = $derived(registration.state === 'failed' ? (registration.detail ?? '') : errorDetail);
 </script>
 
 <Modal {open} title={tr('v2.key.title', lang)} onclose={close} closeLabel={tr('auth.close', lang)}>
@@ -282,13 +291,20 @@
 		<div class="choices">
 			{#if canPasskey}
 				<button class="btn btn-primary" onclick={() => make('passkey')} disabled={busy}>{tr('v2.key.passkey', lang)}</button>
+			{:else}
+				<button class="btn btn-primary" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words.primary', lang)}</button>
 			{/if}
-			<button class="btn" class:btn-primary={!canPasskey} onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
-			{#if canPasskey}
-				<button class="link" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
-			{/if}
-			<button class="link" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
-			<button class="link" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
+			<details class="other">
+				<summary>{tr('v2.key.other', lang)}</summary>
+				<div class="choices">
+					{#if canPasskey}
+						<button class="btn" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
+						<button class="btn" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
+					{/if}
+					<button class="btn" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
+					<button class="btn" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
+				</div>
+			</details>
 		</div>
 	{:else if step === 'words'}
 		<p class="text"><strong>{tr('v2.key.words.title', lang)}</strong></p>
@@ -311,22 +327,27 @@
 			<button class="btn" onclick={() => (step = 'words')}>{tr('key.back', lang)}</button>
 			<button class="btn btn-primary" onclick={checkWords}>{tr('v2.key.continue', lang)}</button>
 		</div>
-	{:else if step === 'passkey-made'}
-		<p class="text">{tr('v2.key.passkey.only', lang)}</p>
-		<p class="text warn">{tr('v2.key.words.warning', lang)}</p>
-		<button class="btn btn-primary" onclick={() => (step = 'passport')}>{tr('v2.key.continue', lang)}</button>
 	{:else if step === 'passport' && request}
 		<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} {simulate} onSuccess={onProof} />
 	{:else if step === 'posting' || step === 'done' || step === 'pending' || step === 'failed'}
 		<div class="steps-box"><Steps steps={posting} /></div>
 		{#if step === 'posting'}
-			{#if progressText}<p class="text small">{progressText}</p>{/if}
+			<p class="text small">{tr('v2.key.posting.simple', lang)}</p>
+			{#if progressText}
+				<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{progressText}</p></details>
+			{/if}
 		{:else if step === 'done' || step === 'pending'}
 			<p class="text">{tr(step === 'pending' && registration.state === 'acked' ? 'v2.key.pending.acked' : 'v2.key.joined', lang)}</p>
+			{#if key?.prf}
+				<p class="text small">{tr('v2.key.passkey.note', lang)}</p>
+			{/if}
 			<button class="btn btn-primary" onclick={close}>{tr('auth.close', lang)}</button>
 		{:else}
 			<p class="text"><strong>{tr('v2.key.failed.title', lang)}</strong></p>
-			<p class="error" role="alert">{failedText}</p>
+			<p class="error" role="alert">{@html failedText}</p>
+			{#if failedDetail}
+				<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{failedDetail}</p></details>
+			{/if}
 			<div class="choices">
 				{#if failedCode === 'reg:uid_used' || !key}
 					{#if canPasskey}
@@ -355,7 +376,7 @@
 		{:else}
 			<p class="text">{tr('v2.key.link.show', lang)}</p>
 			{#if linkQr}
-				<img class="qr" src={linkQr} alt="QR" width="240" height="240" />
+				<img class="qr" src={linkQr} alt={tr('v2.key.link.qr_alt', lang)} width="240" height="240" />
 			{/if}
 			<p class="url"><code>{linkUrl}</code></p>
 			<div class="row">
@@ -368,7 +389,7 @@
 		<p class="text">{tr(step === 'linked' ? 'v2.key.link.done' : 'v2.key.restored', lang)}</p>
 		<button class="btn btn-primary" onclick={close}>{tr('auth.close', lang)}</button>
 	{:else if step === 'restore'}
-		<p class="text">{tr('v2.key.restore', lang)}</p>
+		<p class="text">{tr('v2.key.restore.hint', lang)}</p>
 		<textarea rows="3" bind:value={restoreWords} placeholder={tr('v2.key.restore.placeholder', lang)} autocapitalize="none"></textarea>
 		<div class="row">
 			<button class="btn" onclick={() => (step = 'choose')}>{tr('key.back', lang)}</button>
@@ -376,7 +397,10 @@
 		</div>
 	{/if}
 	{#if error && step !== 'failed'}
-		<p class="error" role="alert">{error}</p>
+		<p class="error" role="alert">{@html error}</p>
+		{#if errorDetail}
+			<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{errorDetail}</p></details>
+		{/if}
 	{/if}
 </Modal>
 
@@ -385,6 +409,32 @@
 		margin: 0 0 0.9rem;
 		line-height: 1.55;
 		color: var(--text-secondary);
+	}
+	.other {
+		margin-top: 0.3rem;
+	}
+	.other summary {
+		cursor: pointer;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+	}
+	.other .choices {
+		margin-top: 0.6rem;
+	}
+	.tech {
+		margin: 0 0 0.9rem;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+	.tech summary {
+		cursor: pointer;
+	}
+	.tech p {
+		margin: 0.3rem 0 0;
+		font-family: var(--font-mono, monospace);
+		overflow-wrap: anywhere;
 	}
 	.small {
 		font-size: 0.82rem;
@@ -395,14 +445,6 @@
 	.choices {
 		display: grid;
 		gap: 0.6rem;
-	}
-	.link {
-		background: none;
-		border: none;
-		color: var(--text-secondary);
-		text-decoration: underline;
-		cursor: pointer;
-		font-size: 0.85rem;
 	}
 	.words {
 		display: grid;
