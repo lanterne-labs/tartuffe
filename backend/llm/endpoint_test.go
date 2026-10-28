@@ -129,7 +129,7 @@ func TestProfileRouting(t *testing.T) {
 	t.Setenv("PATH", dir)
 	t.Setenv("CLAUDE_TEAM_PLAN_TOKENS", "alice=tok-alice")
 	t.Setenv("CLAUDE_TEAM_PLAN_SEAT", "alice")
-	opus := map[Task]bool{TaskOccurrence: true, TaskDedupBatch: true, TaskEntityDedup: true, TaskAudit: true}
+	opus := map[Task]bool{TaskOccurrence: true, TaskDedupBatch: true, TaskEntityDedup: true, TaskAudit: true, TaskVerify: true}
 	for _, key := range []string{"", "sk-test"} {
 		t.Setenv("ANTHROPIC_API_KEY", key)
 		r, err = profileRouting(profileClaudeTeam)

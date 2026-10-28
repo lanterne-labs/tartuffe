@@ -526,11 +526,15 @@ const claudeTeamModel = "claude-sonnet-5-5"
 // claudeTeamOpusModel serves claudeTeamOpusTasks on the claude-team profile.
 const claudeTeamOpusModel = "claude-opus-5-5"
 
-// claudeTeamOpusTasks are the grouping chain and the audit. Measured
-// (2026-10-10/11): occurrence 1 % wrong groups (Sonnet 5 %), dedup-batch
-// 16/17 (Sonnet 12/18 with 4 refusals), entity-dedup 21/21 (Sonnet 20/21),
-// audit 24/26 false contradictions removed (Sonnet 20/26).
-var claudeTeamOpusTasks = []Task{TaskOccurrence, TaskDedupBatch, TaskEntityDedup, TaskAudit}
+// claudeTeamOpusTasks are the grouping chain, the audit and the verifier.
+// Measured (2026-10-10/11): occurrence 1 % wrong groups (Sonnet 5 %),
+// dedup-batch 16/17 (Sonnet 12/18 with 4 refusals), entity-dedup 21/21
+// (Sonnet 20/21), audit 24/26 false contradictions removed (Sonnet 20/26).
+// Verify (2026-10-28, 191 reviewed production contradictions, mirror-1g9):
+// false ones dropped 85/109 (Sonnet 68/109), real ones kept 58/82 (Sonnet
+// 62/82); Opus applies the rules no prompt states yet (44/46 dropped against
+// 35/45). One call per proposed contradiction: a small share of the calls.
+var claudeTeamOpusTasks = []Task{TaskOccurrence, TaskDedupBatch, TaskEntityDedup, TaskAudit, TaskVerify}
 
 // profileRouting builds the routing of a profile, with the endpoints that it
 // needs:
@@ -552,9 +556,9 @@ func profileRouting(profile string) (*Routing, error) {
 			return nil, fmt.Errorf("LLM_PROFILE %s: %w", profile, err)
 		}
 		r := ClaudeRouting(EndpointClaudeTeam, e, claudeTeamModel)
-		// Sonnet 5.5 serves every task, except the grouping chain and the
-		// audit: there Opus 5.5 made clearly fewer errors on the goldens and
-		// evals of 2026-10-10/11 (mirror-rxl.10). The effort rule stays.
+		// Sonnet 5.5 serves every task, except the grouping chain, the audit
+		// and the verifier: there Opus 5.5 made clearly fewer errors on the
+		// goldens and evals (see claudeTeamOpusTasks). The effort rule stays.
 		for _, task := range claudeTeamOpusTasks {
 			r.Tasks[task] = Route{Endpoint: EndpointClaudeTeam, Model: claudeTeamOpusModel, Effort: claudeEffort(task)}
 		}

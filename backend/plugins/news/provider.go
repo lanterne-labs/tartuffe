@@ -1235,6 +1235,7 @@ func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins
 // newFactInserter builds the inserter every news insertion path uses:
 // same-claim facts grouped with the fact they restate.
 func (p *Provider) newFactInserter() *core.FactInserter {
+	var _ core.QuoteElsewhereStorer = p.Storer // the page-furniture guard runs on the news facts
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 	inserter.EnableDedupe(p.Storer)
 	return inserter
