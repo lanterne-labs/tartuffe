@@ -682,6 +682,7 @@ func TestRemoteLLMExtractor_SecondHandClaims(t *testing.T) {
 		name, person, title, text string
 		leak                      *regexp.Regexp // a fact matching it is the bad case
 		keep                      *regexp.Regexp // the real position that must stay
+		published                 string         // the article's date (YYYY-MM-DD), optional
 	}{
 		{
 			name:   "entourage",
@@ -757,6 +758,46 @@ Elle a par ailleurs promis une baisse de la TVA sur l'énergie à 5,5 % dès l'�
 			leak: regexp.MustCompile(`(?i)rejet|contest|nié|dément`),
 			keep: regexp.MustCompile(`(?i)assum|choix de société`),
 		},
+		// mirror-ds6.23: a political scientist sorting the candidates
+		// (fact 90691: "celles qui refusent le principe d'une primaire :
+		// François Hollande et Raphaël Glucksmann") is not his position.
+		{
+			name:   "pollster classification",
+			person: "Raphaël Glucksmann",
+			title:  "Primaire à gauche : « Le paysage est encore très mouvant », selon le politologue Bruno Cautrès",
+			text: `Pour le politologue Bruno Cautrès, chercheur au Cevipof, la gauche se divise en trois familles : « Il y a ceux qui veulent une primaire de toute la gauche, ceux qui hésitent, et celles qui refusent le principe d'une primaire : François Hollande et Raphaël Glucksmann. »
+
+De son côté, Raphaël Glucksmann a déclaré samedi à Lille : « Je ne ferai pas alliance avec La France insoumise, ni en 2027 ni après. »`,
+			leak: regexp.MustCompile(`(?i)primaire`),
+			keep: regexp.MustCompile(`(?i)insoumise|LFI|alliance`),
+		},
+		// mirror-ds6.25: a recall of an event a year earlier ("Il y a un
+		// an, Philippe appelait...") read as news of the article's day
+		// (facts 95875, 95932). The fact must carry the event's date.
+		{
+			name:      "recalled event",
+			person:    "Édouard Philippe",
+			title:     "Édouard Philippe, un an après la rupture avec Emmanuel Macron",
+			published: "2026-10-21",
+			text: `Il y a un an, Édouard Philippe appelait Emmanuel Macron à organiser une élection présidentielle anticipée, une fois le budget adopté. Le président n'en a rien fait.
+
+Ce mardi, sur France Inter, le maire du Havre a promis : « Si je suis élu, je présenterai une vingtaine d'ordonnances dès juillet 2027. »`,
+			leak: regexp.MustCompile(`(?i)^[^0-9]*anticipée[^0-9]*$`),
+			keep: regexp.MustCompile(`(?i)ordonnances`),
+		},
+		// mirror-ds6.24: a subject named by its role resolved to the wrong
+		// target (fact 40331: "le patron de Place publique" attributed to
+		// Olivier Faure).
+		{
+			name:   "role subject",
+			person: "Olivier Faure",
+			title:  "Débat de la primaire socialiste : le mot « génocide » divise",
+			text: `Lors du deuxième débat de la primaire, Olivier Faure a estimé qu'« il faut nommer les choses : ce qui se passe à Gaza est un génocide ».
+
+Le patron de Place publique, lui, se refuse toujours à employer le terme de génocide, arguant que la Cour pénale internationale ne l'utilise pas.`,
+			leak: regexp.MustCompile(`(?i)faure[^.]*(refus|CPI|Cour pénale)`), // the refusal is Glucksmann's
+			keep: regexp.MustCompile(`(?i)génocide`),
+		},
 	}
 	ctx := context.Background()
 	const samples = 3
@@ -765,6 +806,7 @@ Elle a par ailleurs promis une baisse de la TVA sur l'énergie à 5,5 % dès l'�
 		c := cases[i/samples]
 		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, c.person, extractor.ExtractedContent{
 			URL: "http://example.com/" + strings.ReplaceAll(c.name, " ", "-"), Title: c.title, Content: c.text,
+			DatePublished: publishedDate(t, c.published),
 		})
 	})
 	for ci, c := range cases {
@@ -799,4 +841,19 @@ Elle a par ailleurs promis une baisse de la TVA sur l'énergie à 5,5 % dès l'�
 			t.Errorf("%s: the real position survived in only %d of %d runs", c.name, keepRuns, samples)
 		}
 	}
+}
+
+// publishedDate parses a case's optional article date (YYYY-MM-DD); empty
+// is nil, as an article without a date.
+func publishedDate(t *testing.T, s string) *time.Time {
+	t.Helper()
+	if s == "" {
+		return nil
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Errorf("published %q: %v", s, err)
+		return nil
+	}
+	return &d
 }

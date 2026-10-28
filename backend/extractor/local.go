@@ -79,7 +79,7 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 	out := &ExtractedContent{
 		URL:     url,
 		Title:   result.Metadata.Title,
-		Content: stripTrailingSidebarSections(content), // share the same tail-trim heuristic
+		Content: stripTrailingSidebarSections(stripLeadBeforeTitle(content, result.Metadata.Title)), // the ticker above the title, the sidebar below the body
 	}
 	if !result.Metadata.Date.IsZero() {
 		d := result.Metadata.Date

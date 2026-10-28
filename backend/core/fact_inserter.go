@@ -280,6 +280,16 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 			Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
 		return factOutcome{skipped: true}, nil
 	}
+	// The quote is already stored from a page of another date: the site's
+	// ticker or related links, not this article.
+	if isPageFurniture(err) {
+		log.Info().
+			Str("source_url", fact.SourceURL).
+			Str("subject", fact.SubjectEntity).
+			Str("quote", util.TruncateString(fact.OriginalQuote, 100)).
+			Msg("Skipping fact: its quote is already stored from a page of another date (site furniture)")
+		return factOutcome{skipped: true}, nil
+	}
 	return factOutcome{}, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, n, err)
 }
 
@@ -316,6 +326,12 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 			return 0, 0, fmt.Errorf("failed to resolve subject entity: %s", input.SubjectEntity)
 		}
 		subjectID = subjectIDs[0]
+	}
+
+	// A quote the person already has from a page of another date is the
+	// site's furniture (ticker, related links), not this article's.
+	if err := fi.checkPageFurniture(ctx, subjectID, input); err != nil {
+		return 0, 0, err
 	}
 
 	// Same-occurrence check before inserting: embedding distance and text

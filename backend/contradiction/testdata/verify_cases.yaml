@@ -142,13 +142,16 @@ cases:
   # ---- Prod-sourced cases from the 2026-05-31 live reverify (gh#23) ----
 
   # Denounce a named person, then formally ally with them = real reversal (KEEP).
-  - name: "TP_103_maximi_denounce_then_ally"
+  - name: "FP_103_maximi_blame_after_merger"
     fact_a: "Marianne Maximi a affirmé que la responsabilité du basculement de Clermont-Ferrand à droite est dans le camp d'Olivier Bianchi."
     fact_b: "Marianne Maximi et Olivier Bianchi ont annoncé la fusion de leurs listes pour le second tour des municipales à Clermont-Ferrand le 16 mars 2026."
     claimed_reason: "L'annonce d'une fusion avec Olivier Bianchi contredit l'affirmation que la responsabilité du basculement de la ville à droite lui incombe."
-    expect: keep
-    bucket: denounce_then_ally
-    notes: "Publicly blamed Bianchi, then merged lists with him — a real public-position reversal toward a named person."
+    expect: drop
+    bucket: learning_over_time
+    notes: "Flipped to drop on 2026-10-28 with the prod dates: the merger was announced 2026-03-16 (fact 2305), the blame for the city's swing to the right came 2026-03-23 (fact 2302), after the second round was lost. Blaming an ally after a shared defeat is not denounce-then-ally, which needs the blame first. Opus saw it undated. Verify-only: the auditor (Opus, 2026-10-28) still keeps it with the dates; the verifier stops it at insertion."
+    date_a: "2026-03-23"
+    date_b: "2026-03-16"
+    judges: [verify]
 
   # Pro-nuclear + anti-renewables is a coherent policy COMBO, not self-contradiction (DROP).
   - name: "FP_106_amblard_coherent_policy_combo"
@@ -276,7 +279,8 @@ cases:
     claimed_reason: "L'annonce de se présenter à sa propre succession contredit l'annonce ultérieure de ne pas se présenter aux mêmes élections."
     expect: keep
     bucket: position_reversal
-    notes: "Announced X ('I will run') then announced NOT-X ('I will not run') for the SAME election — a reversal. The auditor wrongly filed it under announcement_then_action (which is announce-then-DO-consistently)."
+    notes: "Announced X ('I will run') then announced NOT-X ('I will not run') for the SAME election — a reversal. The auditor wrongly filed it under announcement_then_action (which is announce-then-DO-consistently). Audit-only since 2026-10-28: fact B (3959) has no date and the name 'Patrice Martin' covers several people in the DB (a painter, a CNOSF candidate), so the verifier's doubt that A and B are one election and one person is fair."
+    judges: [audit]
 
   # Said he would NOT be a candidate, then led a winning list (i.e. WAS a candidate) — a stated
   # position broken by his own contrary action, NOT a benign announcement. (KEEP)
@@ -534,10 +538,10 @@ cases:
     fact_a: "Marine Le Pen a affirmé son innocence sur TF1 suite à sa condamnation à un an de prison avec bracelet électronique et 15 mois d'inéligibilité."
     fact_b: "Marine Le Pen a annoncé son pourvoi en cassation le mardi 7 juillet 2026, suite à sa condamnation en appel pour détournement de fonds publics prévoyant 15 mois d'inéligibilité."
     claimed_reason: "L'affirmation d'innocence de Marine Le Pen est contredite par sa condamnation pour détournement de fonds publics."
-    expect: drop
+    expect: keep
     bucket: coherent_defense
     judges: [verify]
-    notes: "Contesting a conviction up to the Cour de cassation is consistent with affirming innocence; the conviction mentioned in B is the context of the appeal, not B's act. Verify-only: the verifier drops it 3/3 (it stops such rows at insertion); the auditor keeps it 3/3 (2026-10-01), so the stored row was dismissed by hand."
+    notes: "Flipped to keep on 2026-10-28: the user kept the court-verdict rule (CLAIM vs AUTHORITATIVE FINDING, mirror-ds6.7) on 2026-10-27, and B carries the appeal conviction in the same matter as her claim of innocence. Opus (verifier since 2026-10-28) keeps it, as the auditor did. Before: dropped as a coherent defense (appeal + innocence)."
 
   # ---- The claimed reason describes another pair (stance analysis, prod #1205) ----
   - name: "FP_1205_melenchon_reason_of_another_pair"
@@ -651,3 +655,154 @@ cases:
     expect: drop
     bucket: same_direction
     notes: "A second lever toward the same goal, the first one not dropped. Prod 1334, 1335, 1336."
+
+  # ---- Review of 2026-10-27 over every person (mirror-ds6.15 to ds6.22): false positives ----
+  - name: "FP_2084_retailleau_past_denial_later_act"
+    fact_a: "Bruno Retailleau a critiqué le Rassemblement national, le qualifiant de \"parti de la girouette\", suite à la visite de Jordan Bardella à Londres et son accord avec Nigel Farage."
+    fact_b: "Bruno Retailleau a affirmé ne s'être jamais situé vis-à-vis du Rassemblement national."
+    claimed_reason: "Il affirme ne s'être jamais situé par rapport au RN alors qu'il l'a publiquement attaqué en le qualifiant de « parti de la girouette »."
+    expect: drop
+    bucket: learning_over_time
+    notes: "A past-tense denial of Oct 2024 cannot be broken by a criticism of Sept 2026. Prod 2082-2090 (fact 139941, 7 rows)."
+    date_a: "2026-09-12"
+    date_b: "2024-10-14"
+
+  - name: "FP_1573_philippe_act_before_pledge"
+    fact_a: "Edouard Philippe a jugé « dangereux » l'hypothèse du maintien de la candidature de Gabriel Attal à la présidentielle 2027."
+    fact_b: "Édouard Philippe a affirmé qu'il veillera à ne jamais critiquer les autres représentants du bloc central."
+    claimed_reason: "Il promet de ne jamais critiquer les autres représentants du bloc central, mais il a jugé « dangereux » le maintien de la candidature de Gabriel Attal."
+    expect: drop
+    bucket: learning_over_time
+    notes: "The criticism (June 30) predates the pledge about future conduct (Aug 24). Prod 1573."
+    date_a: "2026-06-30"
+    date_b: "2026-08-24"
+
+  - name: "FP_2096_retailleau_bill_scope_vs_platform"
+    fact_a: "Bruno Retailleau a promis que, s'il est élu, il supprimera le droit du sol, au motif que l'assimilation, contrepartie du droit du sol, ne fonctionne plus."
+    fact_b: "Bruno Retailleau a déclaré ne pas vouloir aller au-delà de ce qui a déjà été voté dans la loi immigration, hormis la durée de rétention."
+    claimed_reason: "Il promet de supprimer le droit du sol, mais déclare ne pas vouloir aller au-delà de la loi immigration déjà votée, hors rétention."
+    expect: drop
+    bucket: different_events
+    notes: "B scopes the bill he prepared as minister in Oct 2024; A is his presidential platform of July 2026. Prod 2092-2101, 2104 (fact 139969)."
+    date_a: "2026-07-03"
+    date_b: "2024-10-14"
+
+  - name: "FP_2107_retailleau_censured_provision"
+    fact_a: "Bruno Retailleau a affirmé qu'il est nécessaire de rétablir le délit de séjour irrégulier, censuré par le Conseil constitutionnel, sans peine d'emprisonnement."
+    fact_b: "Bruno Retailleau a déclaré ne pas vouloir aller au-delà de ce qui a déjà été voté dans la loi immigration, hormis la durée de rétention."
+    claimed_reason: "Il affirme ne rien vouloir ajouter à la loi immigration hors rétention, alors qu'il réclame le rétablissement du délit de séjour irrégulier."
+    expect: drop
+    bucket: same_direction
+    notes: "The délit de séjour irrégulier was voted in Dec 2023 and censured: within what was voted. Prod 2105, 2107, 2108, 2114, 2192."
+    date_a: "2024-10-01"
+    date_b: "2024-10-14"
+
+  - name: "FP_1915_zemmour_speech_conviction"
+    fact_a: "Éric Zemmour a vu sa condamnation pour injure à caractère raciste confirmée par la cour d'appel de Paris, avec une amende de 4000 euros, pour avoir qualifié le prénom d'Hapsatou Sy d'« insulte à la France »."
+    fact_b: "Eric Zemmour a affirmé avoir été condamné par la justice uniquement pour des opinions et non être un délinquant."
+    claimed_reason: "Il prétend n'avoir été condamné que pour des opinions, alors que la cour d'appel a confirmé sa condamnation pour injure raciste, un délit."
+    expect: drop
+    bucket: conviction_vs_acknowledgment
+    notes: "A conviction for words is what 'condamné pour des opinions' describes. Prod 1913-1916."
+    date_a: "2026-10-22"
+    date_b: "2025-12-08"
+
+  - name: "FP_2060_zemmour_later_conviction"
+    fact_a: "Par jugement du 16 janvier 2026, le tribunal judiciaire de Paris a jugé qu'Eric Zemmour avait commis une contrefaçon du film documentaire « Le Collège d'à côté » en publiant un montage d'extraits sortis de leur contexte."
+    fact_b: "Eric Zemmour a affirmé n'avoir été condamné que pour des délits d'opinion."
+    claimed_reason: "Il affirme n'avoir été condamné que pour des délits d'opinion, alors que le tribunal l'a jugé coupable de contrefaçon d'un film documentaire."
+    expect: drop
+    bucket: learning_over_time
+    notes: "The April 2024 claim describes his convictions up to that date; the contrefaçon judgment of January 2026 comes after it, so it cannot break it (ORDER rule). Prod 2060, reviewed real by mistake on 2026-10-27; re-recorded false."
+    date_a: "2026-02-11"
+    date_b: "2024-04-03"
+  - name: "FP_1736_attal_single_candidacy_pledge"
+    fact_a: "Gabriel Attal a officiellement lancé sa candidature à l'élection présidentielle française de 2027 le 21 juillet."
+    fact_b: "Gabriel Attal a déclaré qu'il ne serait pas candidat contre Edouard Philippe à l'élection présidentielle."
+    claimed_reason: "Attal a officiellement lancé sa candidature, ce qui contredit le fait de ne pas se présenter contre Philippe."
+    expect: drop
+    bucket: condition_later_met
+    notes: "A single-candidacy pledge is a withdrawal mechanism: campaigning until the designation is compatible. Prod 1730-1749, 1776 (20 rows)."
+    date_a: "2026-07-20"
+    date_b: "2026-10-24"
+
+  - name: "FP_2125_retailleau_state_of_mind"
+    fact_a: "Bruno Retailleau a annoncé son intention d'aller 'au bout' de sa candidature pour l'élection présidentielle de 2027."
+    fact_b: "Bruno Retailleau a affirmé qu'il ne pense pas du tout à 2027."
+    claimed_reason: "Il dit ne pas penser du tout à 2027 alors qu'il a annoncé vouloir aller jusqu'au bout de sa candidature à la présidentielle de 2027."
+    expect: drop
+    bucket: date_only_no_commitment
+    notes: "A present state of mind in Oct 2024 commits to nothing; the candidacy of 2026 is a change of mind. Prod 2125-2173 (31 rows on fact 140178, reviewed debatable)."
+    date_a: "2026-08-04"
+    date_b: "2024-10-23"
+  - name: "FP_1523_philippe_label_vs_own_wording"
+    fact_a: "Edouard Philippe a appelé à la démission du président Emmanuel Macron après l'effondrement du premier gouvernement de Sébastien Lecornu, en octobre 2025."
+    fact_b: "Edouard Philippe a déclaré qu'il n'appelait pas à la démission d'Emmanuel Macron, mais à une élection présidentielle anticipée."
+    claimed_reason: "Il affirme ne pas appeler à la démission de Macron alors qu'il a explicitement appelé à cette démission après l'effondrement du gouvernement Lecornu."
+    expect: drop
+    bucket: third_party_narrative
+    notes: "A is the outlets' label of his October 2025 call for an early election, written as the fixed extraction (RECALLED EVENTS) writes it; B is his own wording of the same act, refusing the label. Prod 1523, 1524, 1525, 1755."
+    date_a: "2026-10-22"
+    date_b: "2025-12-03"
+
+  - name: "FP_1432_glucksmann_two_primaries"
+    fact_a: "Raphaël Glucksmann a longtemps rejeté l'idée d'une primaire réunissant l'ensemble de la gauche, La France insoumise comprise, en raison de son refus de toute alliance avec LFI."
+    fact_b: "Raphaël Glucksmann a déclaré qu'il avait toujours dit que la primaire du Parti socialiste et de Place publique était le moment de la clarification et de la refondation."
+    claimed_reason: "Il affirme avoir toujours vu la primaire comme un tremplin, alors qu'il l'avait longtemps rejetée."
+    expect: drop
+    bucket: different_subjects
+    notes: "Two primaries, two perimeters. Prod 1432, also 1438, 1190 family."
+    date_a: "2026-07-20"
+    date_b: "2026-10-12"
+
+  - name: "FP_1315_chenu_same_interview"
+    fact_a: "Sébastien Chenu a précisé que le Rassemblement national prévoyait de soumettre l'interdiction du voile dans l'ensemble des bâtiments publics à un référendum."
+    fact_b: "Sébastien Chenu a déclaré que ce qui sera soumis à référendum est l'interdiction de l'islamisme, de ses financements et de ses expressions, et non l'interdiction du voile en tant que telle."
+    claimed_reason: "Chenu affirme que le référendum ne portera pas sur l'interdiction du voile en soi, alors qu'il avait précisé qu'il porterait sur l'interdiction du voile dans tous les bâtiments publics."
+    expect: drop
+    bucket: complementary_facts
+    notes: "Same BFMTV interview: two facets of one position. Prod 1315, 1342."
+    date_a: "2026-07-20"
+    date_b: "2026-07-20"
+
+  - name: "FP_2196_coquerel_two_amendments"
+    fact_a: "Éric Coquerel a affirmé que l'amendement n'est absolument pas contraire au droit européen."
+    fact_b: "Éric Coquerel a reconnu qu'il faudrait modifier le texte de l'amendement pour que les dispositions sur les dividendes soient conformes à la directive « mère-fille »."
+    claimed_reason: "Il affirmait que l'amendement n'était absolument pas contraire au droit européen, puis reconnaît qu'il faut le modifier pour le rendre conforme à la directive mère-fille."
+    expect: drop
+    bucket: different_events
+    notes: "'L'amendement' of PLF 2025 (Nov 2024) and the dividends amendment of PLF 2026 (Nov 2025): two amendments. Prod 2196, also 1815."
+    date_a: "2024-11-05"
+    date_b: "2025-11-13"
+
+  - name: "FP_1757_retailleau_reason_adds_party"
+    fact_a: "Bruno Retailleau exclut tout ralliement à Édouard Philippe ou rapprochement avec le Rassemblement national."
+    fact_b: "Bruno Retailleau prône la signature d'une charte obligeant les vaincus de la primaire de la droite à se rallier au vainqueur."
+    claimed_reason: "Il exclut tout ralliement à Édouard Philippe, mais prône une charte qui l'obligerait à se rallier au vainqueur de la primaire, Philippe y compris."
+    expect: drop
+    bucket: different_subjects
+    notes: "The reason adds 'Philippe y compris', which neither statement says. Prod 1757; same family 1186, 1380, 2065."
+    judges: ["verify"]
+    date_a: "2026-09-26"
+    date_b: "2026-10-24"
+
+  - name: "FP_1929_retailleau_reason_reversed_order"
+    fact_a: "Bruno Retailleau a rejeté toute alliance électorale avec le centrisme macroniste pour 2027, qualifiant l'« en-même-temps » de « grand vide »."
+    fact_b: "Bruno Retailleau a déclaré ne pas être contre le maintien dans un gouvernement avec les centristes de Macron, tant que cela n'implique pas moins de membres de son parti."
+    claimed_reason: "Il rejetait toute alliance avec le centrisme macroniste, puis se dit ouvert à un gouvernement avec les centristes de Macron."
+    expect: drop
+    bucket: different_subjects
+    notes: "The reason runs the reversal from Sept 2026 to Oct 2025 (wrong order), and a cabinet then vs an electoral alliance for 2027 are two questions. Prod 1929, 1930."
+    date_a: "2026-09-11"
+    date_b: "2025-10-06"
+
+  # ---- Review of 2026-10-27: real ones the new rules must keep ----
+  - name: "TP_1509_zemmour_thesis_then_not_my_subject"
+    fact_a: "Eric Zemmour affirme que Vichy, par un certain sens de la légalité, a négocié avec l'Allemagne nazie pour garder les Juifs français en France."
+    fact_b: "Eric Zemmour a déclaré à propos du sort des Juifs sous Vichy : « ce n'est pas mon sujet, je ne l'ai pas étudié »."
+    claimed_reason: "Il soutient une thèse précise sur le sort des Juifs sous Vichy, puis affirme que ce n'est pas son sujet et qu'il ne l'a pas étudié."
+    expect: keep
+    bucket: learning_over_time
+    notes: "Claiming knowledge, then disclaiming it before a court. Prod 1509-1520 (reviewed real; Opus dropped them as 'a tension' before this rule)."
+    date_a: "2021-11-18"
+    date_b: "2021-12-07"
