@@ -142,13 +142,16 @@ cases:
   # ---- Prod-sourced cases from the 2026-05-31 live reverify (gh#23) ----
 
   # Denounce a named person, then formally ally with them = real reversal (KEEP).
-  - name: "TP_103_maximi_denounce_then_ally"
+  - name: "FP_103_maximi_blame_after_merger"
     fact_a: "Marianne Maximi a affirmé que la responsabilité du basculement de Clermont-Ferrand à droite est dans le camp d'Olivier Bianchi."
     fact_b: "Marianne Maximi et Olivier Bianchi ont annoncé la fusion de leurs listes pour le second tour des municipales à Clermont-Ferrand le 16 mars 2026."
     claimed_reason: "L'annonce d'une fusion avec Olivier Bianchi contredit l'affirmation que la responsabilité du basculement de la ville à droite lui incombe."
-    expect: keep
-    bucket: denounce_then_ally
-    notes: "Publicly blamed Bianchi, then merged lists with him — a real public-position reversal toward a named person."
+    expect: drop
+    bucket: learning_over_time
+    notes: "Flipped to drop on 2026-10-28 with the prod dates: the merger was announced 2026-03-16 (fact 2305), the blame for the city's swing to the right came 2026-03-23 (fact 2302), after the second round was lost. Blaming an ally after a shared defeat is not denounce-then-ally, which needs the blame first. Opus saw it undated. Verify-only: the auditor (Opus, 2026-10-28) still keeps it with the dates; the verifier stops it at insertion."
+    date_a: "2026-03-23"
+    date_b: "2026-03-16"
+    judges: [verify]
 
   # Pro-nuclear + anti-renewables is a coherent policy COMBO, not self-contradiction (DROP).
   - name: "FP_106_amblard_coherent_policy_combo"
@@ -276,7 +279,8 @@ cases:
     claimed_reason: "L'annonce de se présenter à sa propre succession contredit l'annonce ultérieure de ne pas se présenter aux mêmes élections."
     expect: keep
     bucket: position_reversal
-    notes: "Announced X ('I will run') then announced NOT-X ('I will not run') for the SAME election — a reversal. The auditor wrongly filed it under announcement_then_action (which is announce-then-DO-consistently)."
+    notes: "Announced X ('I will run') then announced NOT-X ('I will not run') for the SAME election — a reversal. The auditor wrongly filed it under announcement_then_action (which is announce-then-DO-consistently). Audit-only since 2026-10-28: fact B (3959) has no date and the name 'Patrice Martin' covers several people in the DB (a painter, a CNOSF candidate), so the verifier's doubt that A and B are one election and one person is fair."
+    judges: [audit]
 
   # Said he would NOT be a candidate, then led a winning list (i.e. WAS a candidate) — a stated
   # position broken by his own contrary action, NOT a benign announcement. (KEEP)
@@ -534,10 +538,10 @@ cases:
     fact_a: "Marine Le Pen a affirmé son innocence sur TF1 suite à sa condamnation à un an de prison avec bracelet électronique et 15 mois d'inéligibilité."
     fact_b: "Marine Le Pen a annoncé son pourvoi en cassation le mardi 7 juillet 2026, suite à sa condamnation en appel pour détournement de fonds publics prévoyant 15 mois d'inéligibilité."
     claimed_reason: "L'affirmation d'innocence de Marine Le Pen est contredite par sa condamnation pour détournement de fonds publics."
-    expect: drop
+    expect: keep
     bucket: coherent_defense
     judges: [verify]
-    notes: "Contesting a conviction up to the Cour de cassation is consistent with affirming innocence; the conviction mentioned in B is the context of the appeal, not B's act. Verify-only: the verifier drops it 3/3 (it stops such rows at insertion); the auditor keeps it 3/3 (2026-10-01), so the stored row was dismissed by hand."
+    notes: "Flipped to keep on 2026-10-28: the user kept the court-verdict rule (CLAIM vs AUTHORITATIVE FINDING, mirror-ds6.7) on 2026-10-27, and B carries the appeal conviction in the same matter as her claim of innocence. Opus (verifier since 2026-10-28) keeps it, as the auditor did. Before: dropped as a coherent defense (appeal + innocence)."
 
   # ---- The claimed reason describes another pair (stance analysis, prod #1205) ----
   - name: "FP_1205_melenchon_reason_of_another_pair"
@@ -703,13 +707,13 @@ cases:
     date_a: "2026-10-22"
     date_b: "2025-12-08"
 
-  - name: "TP_2060_zemmour_copyright_conviction"
+  - name: "FP_2060_zemmour_later_conviction"
     fact_a: "Par jugement du 16 janvier 2026, le tribunal judiciaire de Paris a jugé qu'Eric Zemmour avait commis une contrefaçon du film documentaire « Le Collège d'à côté » en publiant un montage d'extraits sortis de leur contexte."
     fact_b: "Eric Zemmour a affirmé n'avoir été condamné que pour des délits d'opinion."
     claimed_reason: "Il affirme n'avoir été condamné que pour des délits d'opinion, alors que le tribunal l'a jugé coupable de contrefaçon d'un film documentaire."
-    expect: keep
-    bucket: conviction_vs_acknowledgment
-    notes: "Counter-case of FP_1915: a conviction for an act that is not speech breaks the claim. Prod 2060 (reviewed real)."
+    expect: drop
+    bucket: learning_over_time
+    notes: "The April 2024 claim describes his convictions up to that date; the contrefaçon judgment of January 2026 comes after it, so it cannot break it (ORDER rule). Prod 2060, reviewed real by mistake on 2026-10-27; re-recorded false."
     date_a: "2026-02-11"
     date_b: "2024-04-03"
   - name: "FP_1736_attal_single_candidacy_pledge"
@@ -778,6 +782,7 @@ cases:
     expect: drop
     bucket: different_subjects
     notes: "The reason adds 'Philippe y compris', which neither statement says. Prod 1757; same family 1186, 1380, 2065."
+    judges: ["verify"]
     date_a: "2026-09-26"
     date_b: "2026-10-24"
 
@@ -801,13 +806,3 @@ cases:
     notes: "Claiming knowledge, then disclaiming it before a court. Prod 1509-1520 (reviewed real; Opus dropped them as 'a tension' before this rule)."
     date_a: "2021-11-18"
     date_b: "2021-12-07"
-
-  - name: "TP_2174_retailleau_ban_lfi"
-    fact_a: "Bruno Retailleau a lancé dans le débat public la question de l'interdiction de LFI, reconnaissant que c'est très difficile en droit."
-    fact_b: "Bruno Retailleau a déclaré qu'il ne lui appartient pas d'interdire un mouvement politique, en parlant des Insoumis."
-    claimed_reason: "Il a suggéré de faire interdire LFI, alors qu'il affirmait qu'il ne lui appartient pas d'interdire un mouvement politique comme les Insoumis."
-    expect: keep
-    bucket: different_subjects
-    notes: "Nov 2024 'not for me to ban the Insoumis', Oct 2026 raising the ban of LFI: the same question, his own words both sides. Prod 2174-2180 (reviewed real)."
-    date_a: "2026-09-30"
-    date_b: "2024-11-06"
