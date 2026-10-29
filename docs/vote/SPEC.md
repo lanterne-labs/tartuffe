@@ -553,7 +553,7 @@ The difference between two consecutive results is exactly the sum of the
 ballots that changed in between, whatever else surrounds them. An update that
 holds one changed ballot publishes that ballot's full ranking. So:
 
-**A tally is published only when at least `K_REAL` (10) distinct pseudonyms
+**A tally is published only when at least `K_REAL` distinct pseudonyms
 hold a ballot whose decrypted values differ from the ballot the previous
 tally counted for them** (a first ballot and a withdrawal count as changes;
 a recast identical to the counted ballot does not, nor does a change undone
@@ -857,7 +857,7 @@ proof verification and a 100 GB log for a full audit, incremental afterwards;
 | `N` | 10 | 7 candidates, blank, 2 reserved |
 | `V`, `J`, `L` | 66, 10, 36 | values, ciphertexts, bits per digit |
 | `D` | 20 | a million leaves |
-| `K_REAL` | 10 | changed ballots per tally: the anonymity set of an update |
+| `K_REAL` | 1 at the launch (the owner's choice of 2026-10-29: no waiting; 10 was the value weighed against the 1-in-10 attribution) | changed ballots per tally: the anonymity set of an update; with 1, an update reveals the changed ballot's content, unlinkable to a person except by the relay that saw the post (address and time) |
 | `R_MIN` | 32 | later registrants a first ballot's root must share, when possible |
 | `ANCHOR_AGE` | 24 h | how old a ballot's root may be |
 | `validity` | 1 h | ZKPassport proof age, and the registration freshness bound |
@@ -1009,6 +1009,14 @@ Differences from the text above:
   checkpoint, log, proof or mirror word reaches the voter (they live under
   « Détails techniques »); every « signalez-le » links to the corrections
   page; French typography normalised (narrow no-break spaces).
+
+- `K_REAL` is 1 for the launch (2026-10-29, the owner: « I can't stand the
+  idea of having to wait »): every changed ballot brings a results update
+  after the firing lag, and the update reveals that ballot's ranking. The
+  log links it to nobody; the relay that took the ballot saw an address and
+  a time, and a results update follows within minutes: that correlation is
+  the accepted residual (§10). Raising `K_REAL` later is a new event. The
+  texts say so in plain words (the rule paragraph has a one-vote variant).
 
 Not built yet: the final shuffle (§9.4). Not done yet: the election's
 own setup in production (the tallier's keygen, `dm vote setup` with the

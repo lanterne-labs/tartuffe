@@ -56,7 +56,7 @@
 				'Votre passeport prouve, une seule fois et sur votre téléphone, que vous êtes majeur et français. Nous ne voyons ni votre nom ni votre photo.',
 				'Vous classez jusqu’à 3 candidats, ou votez blanc, et pouvez changer d’avis jusqu’à la clôture.',
 				'Votre bulletin part chiffré, sans votre nom ni votre adresse : personne, pas même nous, ne peut le lire.',
-				'Seuls les totaux sont déchiffrés, par paquets d’au moins 10 votes, et tout le monde peut les recompter.',
+				'Seuls les totaux sont déchiffrés, après chaque vote, et tout le monde peut les recompter.',
 				'C’est une expérience de tartuffe.me, site indépendant : ni un scrutin officiel, ni un sondage représentatif.'
 			],
 			levelsMore: 'Lire le détail',
@@ -131,7 +131,7 @@
 					title: '3. Compter sans lire',
 					body: [
 						'Les bulletins chiffrés s’additionnent sans être ouverts. Pour publier des résultats, notre serveur ne déchiffre que la somme, et joint une preuve que ce déchiffrement est le bon : chacun peut refaire l’addition à partir du registre et vérifier la preuve.',
-						'Les résultats avancent par lots d’au moins 10 bulletins modifiés. Une mise à jour révèle la différence avec la précédente : avec un seul bulletin, ce serait ce bulletin. Avec dix, c’est une somme que personne ne peut démêler. Aux heures creuses, les résultats attendent donc ; le compteur de bulletins reçus, lui, bouge à chaque vote.',
+						'Un réglage de l’élection, K_REAL, fixe combien de bulletins modifiés déclenchent une mise à jour des résultats. Au lancement il vaut 1 : les résultats bougent après chaque vote, avec un court délai aléatoire. Une mise à jour révèle alors la différence avec la précédente, c’est-à-dire ce bulletin, sans lien avec son auteur : le registre ne relie le pseudonyme ni au passeport ni à une adresse ; seul le serveur de transport qui a reçu le bulletin voit une adresse et une heure. Un réglage plus haut ferait de chaque mise à jour une somme de plusieurs bulletins que personne ne peut démêler, au prix de l’attente.',
 						'« Avec le classement » : on oppose les candidats deux à deux à partir des totaux. Celui qui bat tous les autres est le gagnant de Condorcet ; s’il n’y en a pas, la méthode de Schulze donne tout de même un ordre. Les premiers choix sont affichés aussi, comme au premier tour.',
 						'La clé de l’élection est chez nous, sur une machine sans accès entrant. Elle pourrait déchiffrer un bulletin seul : c’est la limite de ce vote, dite plus bas. Elle est détruite 30 jours après la clôture.',
 						'Les résultats sont affichés dès le premier lot, sauf la veille et le jour du scrutin, comme l’exige la loi. Ce n’est pas un sondage : les votants ne sont pas représentatifs.'
@@ -180,7 +180,7 @@
 				'« Majeur, français, passeport valide : oui », prouvés par ZKPassport.',
 				'L’identifiant du passeport pour ce site, et l’empreinte publique de votre clé. La clé, elle, reste sur vos appareils.',
 				'Des bulletins chiffrés et leur preuve, lus sur les relais.',
-				'La somme des bulletins, déchiffrée par lots d’au moins 10.'
+				'La somme des bulletins, déchiffrée à chaque mise à jour.'
 			],
 			neverTitle: 'Ce que nous ne voyons jamais',
 			never: [
@@ -251,7 +251,7 @@
 				'Your passport proves, once and on your phone, that you are an adult French national. We see neither your name nor your photo.',
 				'You rank up to 3 candidates, or vote blank, and can change your mind until the close.',
 				'Your ballot leaves encrypted, without your name or address: nobody, not even us, can read it.',
-				'Only the totals are decrypted, in batches of at least 10 votes, and anyone can recount them.',
+				'Only the totals are decrypted, after every vote, and anyone can recount them.',
 				'It is an experiment by tartuffe.me, an independent site: neither an official election nor a representative poll.'
 			],
 			levelsMore: 'Read the detail',
@@ -326,7 +326,7 @@
 					title: '3. Counting without reading',
 					body: [
 						'Encrypted ballots add up without being opened. To publish results, our server decrypts only the sum, and attaches a proof that this decryption is right: anyone can redo the addition from the log and check the proof.',
-						'Results move in batches of at least 10 changed ballots. An update reveals the difference from the previous one: with a single ballot, that would be the ballot. With ten, it is a sum nobody can untangle. At quiet hours the results therefore wait; the counter of ballots received moves at every vote.',
+						'A setting of the election, K_REAL, says how many changed ballots trigger a results update. At launch it is 1: results move after every vote, with a short random delay. An update then reveals the difference from the previous one, that is, that ballot, with no link to its author: the log ties the pseudonym neither to the passport nor to an address; only the transport server that received the ballot sees an address and a time. A higher setting would make every update a sum of several ballots nobody can untangle, at the price of waiting.',
 						'“With the ranking”: the candidates are set against each other in pairs from the totals. The one who beats every other is the Condorcet winner; if there is none, the Schulze method still gives an order. First choices are shown too, as in a first round.',
 						'The election key is with us, on a machine with no inbound access. It could decrypt a single ballot: that is the limit of this vote, stated below. It is destroyed 30 days after the close.',
 						'Results are shown from the first batch, except the day before and the day of the election, as the law requires. This is not an opinion poll: the voters are not representative.'
@@ -375,7 +375,7 @@
 				'“Adult, French, valid passport: yes”, proved by ZKPassport.',
 				'The passport’s identifier for this site, and your key’s public fingerprint. The key itself stays on your devices.',
 				'Encrypted ballots and their proofs, read from the relays.',
-				'The sum of the ballots, decrypted in batches of at least 10.'
+				'The sum of the ballots, decrypted at every update.'
 			],
 			neverTitle: 'What we never see',
 			never: [

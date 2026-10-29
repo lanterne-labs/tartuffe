@@ -403,8 +403,8 @@
 			<span>{tr(toNext === 0 ? 'v2.counter.next.zero' : toNext === 1 ? 'v2.counter.next.one' : 'v2.counter.next', currentLang, { m: toNext })}</span>
 		</p>
 		<details class="rule">
-			<summary>{tr('poll.rule.q', currentLang)}</summary>
-			<p>{tr('poll.rule', currentLang, { k: kReal })}</p>
+			<summary>{tr(kReal === 1 ? 'poll.rule.q.one' : 'poll.rule.q', currentLang)}</summary>
+			<p>{tr(kReal === 1 ? 'poll.rule.one' : 'poll.rule', currentLang, { k: kReal })}</p>
 		</details>
 	{/if}
 
@@ -659,7 +659,7 @@
 		{#if blackout}
 			<p class="state">{tr('v2.blackout', currentLang)}</p>
 		{:else if !results || !$tallyStore}
-			<p class="state">{tr(toNext === 1 ? 'v2.results.none.one' : 'v2.results.none', currentLang, { k: kReal, m: toNext })}</p>
+			<p class="state">{tr(kReal === 1 ? 'v2.results.none.first' : toNext === 1 ? 'v2.results.none.one' : 'v2.results.none', currentLang, { k: kReal, m: toNext })}</p>
 		{:else}
 			<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyStore.at) })}</p>
 			{#if $tallyVerified === false}

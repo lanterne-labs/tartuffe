@@ -59,8 +59,9 @@ artifact, the verification key and the setup body to
 (`tally_pubkey`, `nostr_pubkey`, the relays, the options from the event)
 and appends it to the log. The relays: the ones `dm vote relays probe`
 found to keep both kinds (docs/vote/relays-probe.json); at least three.
-Optional flags: `--k-real` (10), `--tally-min-gap`, `--app-hash` (step 4,
-or a later setup), `--srs-hash`.
+Optional flags: `--k-real 1` (the launch value: results at every vote;
+the default 10 batches ten changed ballots per update), `--tally-min-gap`,
+`--app-hash` (step 4, or a later setup), `--srs-hash`.
 
 Commit the setup files for the ingest's image:
 
