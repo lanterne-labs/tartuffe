@@ -567,9 +567,11 @@ first time in that range.
 
 **Firing lag.** Firing at the very checkpoint that reaches `K_REAL` would
 say that its last ballot was a real change. So once the count is reached,
-the tallier fires at each following checkpoint with probability 1/2, one
-coin per checkpoint however often it looks at it (geometric lag, a few
-checkpoints on average), and `upto` is that checkpoint's last entry. The daily variant fires at a fixed `tally_at` time
+the tallier fires in each following checkpoint period (`CHECKPOINT_PERIOD`
+of time, whether or not a checkpoint was published in it: at quiet times
+none is, and a lone voter must not wait for the next one) with probability
+1/2, one coin per period (geometric lag, a few periods on average), and
+`upto` is the last checkpoint's last entry. The daily variant fires at a fixed `tally_at` time
 of day, provided the count is reached, else it skips the day.
 
 When the rule fires, the tallier:

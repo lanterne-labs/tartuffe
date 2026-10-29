@@ -64,7 +64,8 @@ type Tallier struct {
 	counted         map[string][ballot.V]int64 // pseudonym → the values the last tally counted
 	scanned         int64                      // log seq up to which ballots were decrypted
 	armedAt         int64                      // the checkpoint when K_REAL was reached, 0 when not
-	judged          int64                      // the last checkpoint the firing coin was flipped at
+	armedBucket     int64                      // the checkpoint period (of time) it was reached in
+	judged          int64                      // the last period the firing coin was flipped in
 	closed          bool
 	waitingSnapshot bool
 	lease           *Lease
@@ -254,14 +255,22 @@ func (t *Tallier) Step(ctx context.Context) error {
 	// The firing lag: not at the checkpoint that reached K_REAL, then at
 	// each later checkpoint with probability 1/2: one coin per checkpoint,
 	// whatever the number of steps it stays current.
+	// One coin per checkpoint period of time, whether or not the ingest
+	// published a checkpoint in it: at quiet times none is, and a lone
+	// voter must not wait for the next one.
+	period := s.CheckpointPeriod
+	if period <= 0 {
+		period = DefaultCheckpointPeriod
+	}
+	bucket := now.Unix() / period
 	if t.armedAt == 0 {
-		t.armedAt = cp.Index
+		t.armedAt, t.armedBucket = cp.Index, bucket
 		return nil
 	}
-	if cp.Index == t.armedAt || cp.Index == t.judged {
+	if (cp.Index == t.armedAt && bucket == t.armedBucket) || bucket == t.judged {
 		return nil
 	}
-	t.judged = cp.Index
+	t.judged = bucket
 	if t.rand() < 0.5 {
 		return nil
 	}
