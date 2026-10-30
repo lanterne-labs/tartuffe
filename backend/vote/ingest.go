@@ -17,7 +17,6 @@ import (
 	"digital-mirror/backend/accounts/providers"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/vote/ballot"
-	"digital-mirror/backend/vote/poseidon2"
 )
 
 // PassportVerifier checks a registration's ZKPassport proof for the event:
@@ -606,7 +605,10 @@ func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Ti
 	if err := json.Unmarshal(content, &r); err != nil || r.V != Version || r.Event != in.cfg.Event.ID || r.UID == "" || len(r.Proof) == 0 {
 		return pendingEntry{}, ReasonMalformed, nil
 	}
-	id, err := parseField(r.ID)
+	if _, err := parseField(r.ID); err != nil {
+		return pendingEntry{}, ReasonMalformed, nil
+	}
+	regKey, _, err := registerKey(r)
 	if err != nil {
 		return pendingEntry{}, ReasonMalformed, nil
 	}
@@ -642,7 +644,13 @@ func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Ti
 	} else if used {
 		return pendingEntry{}, ReasonIDUsed, nil
 	}
-	custom := RegistrationBinding(in.cfg.Event.ID, id)
+	// The key's holder chose the leaf (regsign.go); then the proof binds
+	// the key.
+	if _, err := VerifyRegisterSig(content); err != nil {
+		log.Debug().Err(err).Msg("vote: registration signature refused")
+		return pendingEntry{}, ReasonBadSig, nil
+	}
+	custom := RegistrationBinding(in.cfg.Event.ID, regKey)
 	uid, err := in.cfg.Passport.VerifyRegistration(ctx, r.Proof, custom, r.ProofDate)
 	if err != nil {
 		if !errors.Is(err, providers.ErrInvalidProof) {
@@ -654,15 +662,12 @@ func (in *Ingest) checkRegister(ctx context.Context, content []byte, now time.Ti
 	if uid != r.UID {
 		return pendingEntry{}, ReasonBadProof, nil
 	}
-	body, _ := Canonical(r)
+	// Logged as posted: the signature covers these bytes.
+	body, err := compactBody(content)
+	if err != nil {
+		return pendingEntry{}, ReasonMalformed, nil
+	}
 	return pendingEntry{kind: KindRegister, body: body, hash: BodyHash(body), uid: r.UID, id: r.ID, proofDate: r.ProofDate}, "", nil
-}
-
-// RegistrationBinding is custom_data = H(T_REG, event, ID), lower-case hex.
-func RegistrationBinding(eventID int64, id fr.Element) string {
-	h := poseidon2.Hash(ballot.TagReg, fieldOf(eventID), id)
-	b := h.Bytes()
-	return "0x" + hexOf(b[:])
 }
 
 // Checkpoint logs the pending entries ordered by hash, assigns the new

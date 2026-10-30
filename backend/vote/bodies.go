@@ -19,7 +19,8 @@ import (
 // The bodies voters post and the log holds (SPEC §4, §6.4, §8.1).
 
 // Register is a registration: the leaf ID, the ZKPassport unique
-// identifier and proof bundle, and the proof's date.
+// identifier and proof bundle, the proof's date, and the registration key
+// the proof binds with its signature over the body (regsign.go).
 type Register struct {
 	V         int             `json:"v"`
 	Event     int64           `json:"event"`
@@ -27,6 +28,8 @@ type Register struct {
 	UID       string          `json:"uid"`
 	Proof     json.RawMessage `json:"proof"`
 	ProofDate time.Time       `json:"proof_date"`
+	Key       string          `json:"key"`
+	Sig       string          `json:"sig,omitempty"`
 }
 
 // Ballot is a ballot as posted: its public inputs, the compressed
@@ -65,6 +68,7 @@ const (
 	ReasonUnknownSetup = "unknown_setup"
 	ReasonOldRoot      = "old_root"
 	ReasonBadProof     = "bad_proof"
+	ReasonBadSig       = "bad_sig"
 	ReasonDuplicate    = "duplicate"
 	ReasonStaleSeq     = "stale_seq"
 	ReasonStaleDate    = "stale_date"

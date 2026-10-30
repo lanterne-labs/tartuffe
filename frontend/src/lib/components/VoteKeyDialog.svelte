@@ -13,7 +13,7 @@
 	import VotePassport from './VotePassport.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import type { VoteSession, LinkReceiver, RegistrationStatus } from '$lib/vote/session';
-	import { prfSupported, prfCapability, voteKey } from '$lib/vote/key';
+	import { prfSupported, prfCapability, voteKey, type VoteKey } from '$lib/vote/key';
 	import { describeError, toVoteError } from '$lib/vote/errors';
 	import { serverNow } from '$lib/vote/mailbox';
 	import { writable } from 'svelte/store';
@@ -34,8 +34,12 @@
 	let registration = $state<RegistrationStatus>({ state: 'idle' });
 	$effect(() => session.registration.subscribe((v) => (registration = v)));
 
-	type Step = 'choose' | 'words' | 'confirm' | 'passport' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
-	let step: Step = $state('choose');
+	// The steps of a first registration (SPEC §4): the passport scan,
+	// then the key (kept with a passkey, or with the 12 words typed back),
+	// then the post. A key that exists comes back to 'passport' only for a
+	// new scan.
+	type Step = 'passport' | 'keep' | 'words' | 'confirm' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
+	let step: Step = $state('passport');
 	let words = $state('');
 	let confirmIdx = $state<[number, number, number]>([2, 6, 10]);
 	let confirmInput = $state(['', '', '']);
@@ -51,7 +55,20 @@
 	let receiver: LinkReceiver | null = null;
 	let offer = writable<string | null>(null);
 	let key = $derived($voteKey && $voteKey.slug === session.slug ? $voteKey : null);
-	let request = $derived(key ? session.registrationRequest(key) : null);
+	// request is what the passport flow binds: the key's registration key
+	// for a new scan, else the pending scan's (made on entering the step).
+	let request = $state<{ customData: string; scope: string } | null>(null);
+	$effect(() => {
+		if (step !== 'passport') return;
+		const k = key;
+		untrack(() => {
+			try {
+				request = k ? session.registrationRequest(k) : session.scanRequest();
+			} catch (e) {
+				fail(e);
+			}
+		});
+	});
 	let canPasskey = $state(prfSupported());
 	$effect(() => {
 		void prfCapability().then((c) => {
@@ -83,7 +100,7 @@
 		error = '';
 		const k = key;
 		if (!k) {
-			step = 'choose';
+			step = session.scanReady() ? 'keep' : 'passport';
 			return;
 		}
 		if (k.position >= 0) {
@@ -99,7 +116,8 @@
 			confirmIdx = pickPositions();
 			confirmInput = ['', '', ''];
 			step = 'words';
-		} else step = 'passport';
+		} else if (session.scanReady()) void post(k);
+		else step = 'passport';
 	}
 
 	function pickPositions(): [number, number, number] {
@@ -114,8 +132,9 @@
 		errorDetail = ve.detail;
 	}
 
-	// make creates the key: with 12 words, they are shown and confirmed
-	// first; with Face ID or the fingerprint, the passport comes at once.
+	// make creates the key after the scan: with 12 words, they are shown
+	// and confirmed first; with Face ID or the fingerprint, the
+	// registration is posted at once.
 	async function make(prefer: 'passkey' | 'words') {
 		busy = true;
 		error = '';
@@ -128,7 +147,7 @@
 				confirmInput = ['', '', ''];
 				step = 'words';
 			} else {
-				step = 'passport';
+				await post(got.key);
 			}
 		} catch (e) {
 			fail(e);
@@ -146,20 +165,44 @@
 		}
 		error = '';
 		session.confirmWords();
-		step = 'passport';
+		const k = key;
+		if (k && session.scanReady()) void post(k);
+		else step = 'passport';
 	}
 
-	// onProof posts the registration; the session's registration store
-	// carries the progress and the outcome, this dialog shows them.
-	async function onProof({ proofs, result }: { proofs: unknown; result: unknown; at: Date }) {
-		const k = key;
-		if (!k) return;
+	// post registers a key with the proof of the pending scan; the
+	// session's registration store carries the progress and the outcome,
+	// this dialog shows them. A proof past its validity sends the voter
+	// back to the scan, with the same key.
+	async function post(k: VoteKey) {
 		step = 'posting';
 		error = '';
-		const uid = String((result as { uniqueIdentifier?: string })?.uniqueIdentifier ?? '');
 		try {
-			// The proof's date on the server's clock (SPEC §4 step 4).
-			await session.register(k, uid, { proofs, result }, new Date(serverNow()));
+			await session.registerFromScan(k);
+			step = 'done';
+		} catch (e) {
+			fail(e);
+			step = toVoteError(e).code === 'stale_proof' ? 'passport' : 'failed';
+		}
+	}
+
+	// onProof takes the passport's answer: before any key, the scan is
+	// kept and the key comes next; for a key scanning again, the
+	// registration is posted at once.
+	async function onProof({ proofs, result }: { proofs: unknown; result: unknown; at: Date }) {
+		const uid = String((result as { uniqueIdentifier?: string })?.uniqueIdentifier ?? '');
+		// The proof's date on the server's clock (SPEC §4 step 4).
+		const proofDate = new Date(serverNow());
+		const k = key;
+		error = '';
+		if (!k) {
+			session.recordScan(uid, { proofs, result }, proofDate);
+			step = 'keep';
+			return;
+		}
+		step = 'posting';
+		try {
+			await session.register(k, uid, { proofs, result }, proofDate);
 			step = 'done';
 		} catch (e) {
 			fail(e);
@@ -233,7 +276,7 @@
 			const ve = toVoteError(e);
 			if (ve.code === 'stopped') return;
 			error = ve.code === 'not_registered' ? tr('v2.key.restore.notfound', lang) : describeError(ve.code, ve.detail, lang);
-			if (step === 'link') step = 'choose';
+			if (step === 'link') step = 'passport';
 		}
 	}
 
@@ -253,7 +296,7 @@
 		stopReceiving();
 		error = '';
 		errorDetail = '';
-		step = 'choose';
+		step = 'passport';
 	}
 
 	function close() {
@@ -286,12 +329,34 @@
 </script>
 
 <Modal {open} title={tr('v2.key.title', lang)} onclose={close} closeLabel={tr('auth.close', lang)}>
-	{#if step === 'choose'}
-		<p class="text">{tr('v2.key.intro', lang)}</p>
-		<ol class="plan">
-			<li><strong>{tr('v2.key.step.key', lang)}</strong> {tr('v2.key.step.key.text', lang)}</li>
-			<li><strong>{tr('v2.key.step.passport', lang)}</strong> {tr('v2.key.step.passport.text', lang)}</li>
-		</ol>
+	{#if step === 'passport'}
+		{#if !key}
+			<p class="text">{tr('v2.key.intro', lang)}</p>
+			<ol class="plan">
+				<li><strong>{tr('v2.key.step.passport', lang)}</strong> {tr('v2.key.step.passport.text', lang)}</li>
+				<li><strong>{tr('v2.key.step.key', lang)}</strong> {tr('v2.key.step.key.text', lang)}</li>
+			</ol>
+		{:else}
+			<p class="text small">{tr('v2.key.pending.idle', lang)}</p>
+		{/if}
+		{#if request}
+			<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} {simulate} onSuccess={onProof} />
+		{/if}
+		{#if !key}
+			<details class="other">
+				<summary>{tr('v2.key.other', lang)}</summary>
+				<div class="choices">
+					{#if canPasskey}
+						<button class="btn" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
+					{/if}
+					<button class="btn" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
+					<button class="btn" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
+				</div>
+			</details>
+		{/if}
+	{:else if step === 'keep'}
+		<p class="text"><strong>{tr('v2.key.keep.title', lang)}</strong> {tr('v2.key.keep.text', lang)}</p>
+		<p class="text warn">{tr('v2.key.keep.lose', lang)}</p>
 		<p class="text"><strong>{tr('v2.key.choose', lang)}</strong></p>
 		<div class="choices">
 			{#if canPasskey}
@@ -301,17 +366,9 @@
 				<button class="btn btn-primary" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words.primary', lang)}</button>
 				<p class="text small hint">{tr('v2.key.words.hint', lang)}</p>
 			{/if}
-			<details class="other">
-				<summary>{tr('v2.key.other', lang)}</summary>
-				<div class="choices">
-					{#if canPasskey}
-						<button class="btn" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
-						<button class="btn" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
-					{/if}
-					<button class="btn" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
-					<button class="btn" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
-				</div>
-			</details>
+			{#if canPasskey}
+				<button class="btn" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
+			{/if}
 		</div>
 	{:else if step === 'words'}
 		<p class="text"><strong>{tr('v2.key.words.title', lang)}</strong></p>
@@ -334,9 +391,6 @@
 			<button class="btn" onclick={() => (step = 'words')}>{tr('key.back', lang)}</button>
 			<button class="btn btn-primary" onclick={checkWords}>{tr('v2.key.continue', lang)}</button>
 		</div>
-	{:else if step === 'passport' && request}
-		<p class="text small">{tr('v2.key.step2', lang)}</p>
-		<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} {simulate} onSuccess={onProof} />
 	{:else if step === 'posting' || step === 'done' || step === 'pending' || step === 'failed'}
 		<div class="steps-box"><Steps steps={posting} /></div>
 		{#if step === 'posting'}
@@ -400,7 +454,7 @@
 		<p class="text">{tr('v2.key.restore.hint', lang)}</p>
 		<textarea rows="3" bind:value={restoreWords} placeholder={tr('v2.key.restore.placeholder', lang)} autocapitalize="none"></textarea>
 		<div class="row">
-			<button class="btn" onclick={() => (step = 'choose')}>{tr('key.back', lang)}</button>
+			<button class="btn" onclick={back}>{tr('key.back', lang)}</button>
 			<button class="btn btn-primary" onclick={restore} disabled={busy || !restoreWords.trim()}>{tr('v2.key.continue', lang)}</button>
 		</div>
 	{/if}

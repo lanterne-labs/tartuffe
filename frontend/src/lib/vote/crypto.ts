@@ -67,7 +67,10 @@ export function h(...xs: bigint[]): bigint {
 export const leafOf = (event: bigint, s: bigint) => h(T_ID, event, s);
 export const nullifierOf = (event: bigint, s: bigint) => h(T_NULL, event, s);
 export const node = (l: bigint, r: bigint) => h(T_NODE, l, r);
-export const registrationBinding = (event: bigint, id: bigint) => hex(h(T_REG, event, id));
+// registrationBinding is the custom data the passport proof binds (SPEC
+// §4): the registration key's x-only public key in two 16-byte limbs, as
+// the PRF output.
+export const registrationBinding = (event: bigint, key: Uint8Array) => hex(h(T_REG, event, fromBytes(key.slice(0, 16)), fromBytes(key.slice(16, 32))));
 
 // Zero hashes per level, for empty subtrees.
 let zeros: bigint[] | null = null;

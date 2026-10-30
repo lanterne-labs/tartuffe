@@ -313,8 +313,11 @@ func Audit(ctx context.Context, src LogSource, opt Options) (*Report, error) {
 					rep.problem("registration %d: proof date %s, logged %s", e.Seq, r.ProofDate.Format(time.RFC3339), cpAt(cp).Format(time.RFC3339))
 				}
 			}
-			if opt.Passport != nil {
-				uid, err := opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(opt.EventID, leaf), r.ProofDate)
+			regKey, err := VerifyRegisterSig([]byte(e.Body))
+			if err != nil {
+				rep.problem("registration %d: %v", e.Seq, err)
+			} else if opt.Passport != nil {
+				uid, err := opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(opt.EventID, regKey), r.ProofDate)
 				if err != nil || uid != r.UID {
 					rep.problem("registration %d: passport proof: %v", e.Seq, err)
 				}
@@ -610,7 +613,7 @@ func noteText(note string) string {
 
 func knownReason(r string) bool {
 	switch r {
-	case ReasonMalformed, ReasonUnknownSetup, ReasonOldRoot, ReasonBadProof, ReasonDuplicate, ReasonStaleSeq, ReasonStaleDate, ReasonUIDUsed, ReasonIDUsed, ReasonClosed:
+	case ReasonMalformed, ReasonUnknownSetup, ReasonOldRoot, ReasonBadProof, ReasonBadSig, ReasonDuplicate, ReasonStaleSeq, ReasonStaleDate, ReasonUIDUsed, ReasonIDUsed, ReasonClosed:
 		return true
 	}
 	return false
@@ -767,17 +770,21 @@ func (c *rejectChecker) check(ctx context.Context, cp Checkpoint, rj Reject) str
 	if rerr == nil && (r.V != Version || r.Event != c.opt.EventID || r.UID == "" || len(r.Proof) == 0) {
 		rerr = errors.New("not a registration of this event")
 	}
-	var leaf fr.Element
 	if rerr == nil {
-		if leaf, rerr = parseField(r.ID); rerr != nil {
+		if _, rerr = parseField(r.ID); rerr != nil {
 			rerr = fmt.Errorf("id: %w", rerr)
 		}
 	}
 	isBallot, isReg := perr == nil, rerr == nil
 	switch rj.Reason {
 	case ReasonMalformed:
-		if isBallot || isReg {
+		if isBallot {
 			return "the body parses"
+		}
+		if isReg {
+			if _, _, err := registerKey(r); err == nil {
+				return "the body parses"
+			}
 		}
 	case ReasonClosed:
 		if at.Before(cur.Setup.Closes) && (c.closedAt == nil || at.Before(*c.closedAt)) {
@@ -845,11 +852,22 @@ func (c *rejectChecker) check(ctx context.Context, cp Checkpoint, rj Reject) str
 				c.unchecked++
 				return ""
 			}
-			if uid, err := c.opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(c.opt.EventID, leaf), r.ProofDate); err == nil && uid == r.UID {
+			regKey, err := VerifyRegisterSig(body)
+			if err != nil {
+				return ""
+			}
+			if uid, err := c.opt.Passport.VerifyRegistration(ctx, r.Proof, RegistrationBinding(c.opt.EventID, regKey), r.ProofDate); err == nil && uid == r.UID {
 				return "the passport proof verifies"
 			}
 		} else {
 			return "the body does not parse"
+		}
+	case ReasonBadSig:
+		if !isReg {
+			return "not a registration"
+		}
+		if _, err := VerifyRegisterSig(body); err == nil {
+			return "the registration's signature verifies"
 		}
 	case ReasonStaleDate:
 		if !isReg {

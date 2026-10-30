@@ -3,7 +3,8 @@
 // Mailbox and the Sources; the UI drives it and shows its states.
 
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { compress, hex, big, leafOf, nullifierOf, registrationBinding, values, pack, type Ranking, validRanking } from './crypto';
 import { clockKnown, sinceRecent, verifyEvent, type Mailbox, type Posted, type Prepared, type NostrEvent } from './mailbox';
 import type { Sources, Read } from './sources';
@@ -176,17 +177,57 @@ export interface RegisterBody {
 	uid: string;
 	proof: unknown;
 	proof_date: string;
+	// key is the registration key the proof binds (x-only secp256k1 public
+	// key, hex); sig its BIP340 signature over the canonical body without
+	// sig, under a domain prefix (SPEC §4, backend/vote/regsign.go).
+	key: string;
+	sig?: string;
 }
 
-// registrationRequest is what the ZKPassport flow needs for a key: the
-// bound custom data and the scope.
-export function registrationRequest(key: VoteKey, slug: string): { customData: string; scope: string } {
-	return { customData: registrationBinding(BigInt(key.eventId), big(key.leaf)), scope: `tartuffe-vote/2:${slug}` };
+const REGISTER_SIG_PREFIX = 'tartuffe-vote/2/register\n';
+
+// newRegSecret draws a registration key: made before the scan, it is what
+// the passport proof binds, so the key's holder alone chooses the leaf
+// the proof registers.
+export function newRegSecret(): string {
+	return bytesToHex(schnorr.utils.randomSecretKey());
+}
+
+// regPubkey gives the x-only public key of a registration secret.
+export function regPubkey(regSecret: string): Uint8Array {
+	return schnorr.getPublicKey(hexToBytes(regSecret));
+}
+
+// registrationRequest is what the ZKPassport flow binds: the custom data
+// of the registration key and the scope.
+export function registrationRequest(regSecret: string, eventId: number, slug: string): { customData: string; scope: string } {
+	return { customData: registrationBinding(BigInt(eventId), regPubkey(regSecret)), scope: `tartuffe-vote/2:${slug}` };
+}
+
+// registerSigningHash is what the registration key signs.
+function registerSigningHash(body: RegisterBody): Uint8Array {
+	const unsigned = { ...body };
+	delete unsigned.sig;
+	return sha256(new TextEncoder().encode(REGISTER_SIG_PREFIX + canonical(unsigned)));
 }
 
 export function registerBody(key: VoteKey, uid: string, proof: unknown, proofDate: Date): string {
-	const body: RegisterBody = { v: 2, event: key.eventId, id: key.leaf, uid, proof, proof_date: proofDate.toISOString() };
+	if (!key.regSecret) throw new VoteError('not_ready', 'no registration key');
+	const sk = hexToBytes(key.regSecret);
+	const body: RegisterBody = { v: 2, event: key.eventId, id: key.leaf, uid, proof, proof_date: proofDate.toISOString(), key: bytesToHex(schnorr.getPublicKey(sk)) };
+	body.sig = bytesToHex(schnorr.sign(registerSigningHash(body), sk));
 	return canonical(body);
+}
+
+// verifyRegisterSig checks a register body's signature under its key
+// (tests; the server and the auditor do the same).
+export function verifyRegisterSig(body: RegisterBody): boolean {
+	if (!body.sig) return false;
+	try {
+		return schnorr.verify(hexToBytes(body.sig), registerSigningHash(body), hexToBytes(body.key));
+	} catch {
+		return false;
+	}
 }
 
 // --- Ballots ---
@@ -288,7 +329,9 @@ export function canonical(v: unknown): string {
 		}
 		return x;
 	};
-	return JSON.stringify(sort(v));
+	// As Go's encoding/json writes it: <, >, & and the line separators
+	// escaped, so both sides hash and sign the same bytes.
+	return JSON.stringify(sort(v)).replace(/[<>&\u2028\u2029]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 }
 
 // complaintBody is what the browser posts when its acknowledged ballot is

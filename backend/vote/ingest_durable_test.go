@@ -99,7 +99,7 @@ func TestPendingSurvivesRestartAndFailuresDefer(t *testing.T) {
 		t.Fatalf("a second ingest started: %v", err)
 	}
 	leaf := "0x" + strings.Repeat("00", 31) + "2a"
-	reg, _ := Canonical(Register{V: Version, Event: 1, ID: leaf, UID: "uid-1", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
+	reg := signedRegister(t, Register{V: Version, Event: 1, ID: leaf, UID: "uid-1", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
 	m := Message{ID: "reg1", Box: "wss://a.test", Kind: MsgRegister, Body: reg, Time: time.Now().Unix()}
 	// The verifier cannot run: no acknowledgement, nothing pending, the
 	// message waits for the next tick.
@@ -167,10 +167,30 @@ func TestPendingSurvivesRestartAndFailuresDefer(t *testing.T) {
 		t.Fatalf("cursor %d, delivered %d", c, m.Time)
 	}
 	// An upper-case leaf is malformed.
-	upper, _ := Canonical(Register{V: Version, Event: 1, ID: leaf[:64] + "2A", UID: "uid-2", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
+	upper := signedRegister(t, Register{V: Version, Event: 1, ID: leaf[:64] + "2A", UID: "uid-2", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
 	in2.Handle(ctx, Message{ID: "reg-upper", Box: "wss://a.test", Kind: MsgRegister, Body: upper, Time: time.Now().Unix()})
 	posts = mail.posts["wss://a.test"]
 	if err := json.Unmarshal([]byte(posts[len(posts)-1].Body), &ack); err != nil || ack.Reason != ReasonMalformed {
 		t.Fatalf("upper-case leaf: %+v", ack)
+	}
+	// A registration without its key is malformed; one whose leaf was
+	// changed after the signature (a relay reposting a proof it saw under
+	// a leaf of its own) is bad_sig.
+	unsigned, _ := Canonical(Register{V: Version, Event: 1, ID: leaf, UID: "uid-3", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
+	in2.Handle(ctx, Message{ID: "reg-unsigned", Box: "wss://a.test", Kind: MsgRegister, Body: unsigned, Time: time.Now().Unix()})
+	posts = mail.posts["wss://a.test"]
+	if err := json.Unmarshal([]byte(posts[len(posts)-1].Body), &ack); err != nil || ack.Reason != ReasonMalformed {
+		t.Fatalf("unsigned registration: %+v", ack)
+	}
+	var forged Register
+	if err := json.Unmarshal(signedRegister(t, Register{V: Version, Event: 1, ID: leaf, UID: "uid-4", Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()}), &forged); err != nil {
+		t.Fatal(err)
+	}
+	forged.ID = "0x" + strings.Repeat("00", 31) + "2b"
+	forgedBody, _ := Canonical(forged)
+	in2.Handle(ctx, Message{ID: "reg-forged", Box: "wss://a.test", Kind: MsgRegister, Body: forgedBody, Time: time.Now().Unix()})
+	posts = mail.posts["wss://a.test"]
+	if err := json.Unmarshal([]byte(posts[len(posts)-1].Body), &ack); err != nil || ack.Reason != ReasonBadSig {
+		t.Fatalf("forged leaf: %+v", ack)
 	}
 }

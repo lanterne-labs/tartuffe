@@ -138,18 +138,30 @@ Adversaries:
 
 ## 4. Registration
 
-1. The browser obtains the voter secret `s` (§4.1) **before** the scan, and
-   confirms its backup (§4.2). It computes the leaf `ID = H(T_ID, event, s)`.
-2. It opens the ZKPassport request: `age ≥ 18`, `nationality = FRA`,
-   `document_type = passport`, `custom_data = H(T_REG, event, ID)`, domain =
-   the app origin (§6.5), scope `tartuffe-vote/2:<slug>`, unique identifier
-   type non-salted, proof mode `compressed` (one proof), **on-device proving**
-   (no `cloudProverUrl`), `validity` 1 h. The age circuit also asserts the
-   passport is not expired at the proof date.
-3. It posts `register {v, event, id: ID, uid, proof, proof_date}` as a Nostr
-   event to its registration relay (§7.1), `uid` the ZKPassport unique
-   identifier for that domain and scope, `proof` the compressed proof and
-   query result.
+1. The scan comes first: the browser draws a **registration key** `R`
+   (secp256k1, kept in its storage with the scan) and opens the ZKPassport
+   request: `age ≥ 18`, `nationality = FRA`, `document_type = passport`,
+   `custom_data = H(T_REG, event, R_lo, R_hi)` (the x-only public key in
+   two 16-byte limbs), domain = the app origin (§6.5), scope
+   `tartuffe-vote/2:<slug>`, unique identifier type non-salted, proof mode
+   `compressed` (one proof), **on-device proving** (no `cloudProverUrl`),
+   `validity` 1 h. The age circuit also asserts the passport is not expired
+   at the proof date. The proof binds `R`, not the leaf: the voter secret
+   does not exist yet, and a voter who has just scanned a passport accepts
+   the one biometric prompt that follows more readily than one asked
+   before anything happened.
+2. Then the browser obtains the voter secret `s` (§4.1) and confirms its
+   backup (§4.2). It computes the leaf `ID = H(T_ID, event, s)`. The
+   proof is kept until then (and across a closed dialog); past its
+   validity the passport is scanned again, with the same `R`.
+3. It posts `register {v, event, id: ID, uid, proof, proof_date, key: R,
+   sig}` as a Nostr event to its registration relay (§7.1), `uid` the
+   ZKPassport unique identifier for that domain and scope, `proof` the
+   compressed proof and query result, `sig` the BIP340 signature by `R`
+   of SHA-256(`"tartuffe-vote/2/register\n"` ‖ the canonical body
+   without `sig`). The proof binds `R` and `R` signs the leaf: a relay
+   that saw the registration cannot post the proof again under a leaf of
+   its own, and the log alone shows who chose the leaf.
 4. Our server, which watches the relays continuously, checks **freshness**
    first: `|proof_date − now| ≤ validity + 5 min`, else `reject stale_date`
    (without this bound a phone with its clock set to 2033 proves "adult" for
@@ -167,8 +179,10 @@ Adversaries:
    of the checkpoint, which is by hash (§8.1), not by arrival. The browser
    waits up to 60 s for the acknowledgement (verification queues at launch)
    before reposting to its next relay.
-5. Rules: one `register` per `uid` per event, ever (`reject uid_used`); one
-   per `ID` (`reject id_used`); `custom_data` compared as lower-case hex. A
+5. Rules: `key` parses and `sig` verifies (`reject malformed`,
+   `reject bad_sig`); one `register` per `uid` per event, ever
+   (`reject uid_used`); one per `ID` (`reject id_used`); `custom_data`
+   compared as lower-case hex. A
    registration on a relay, acknowledged and not logged, is withholding
    (§12.6).
 6. A voter who lost `s` and every backup keeps their last ballot but cannot
@@ -187,7 +201,7 @@ a per-person identifier would need ZKPassport to add one.
 Where the platform offers the WebAuthn PRF extension, the secret is derived
 from the voter's passkey: `s = H(T_PRF, prf_lo, prf_hi)` with the 32-byte PRF
 output of input `"tartuffe-vote/2/<slug>"` split in two 16-byte limbs. The
-passkey is created before the scan (PRF output is usually available only at
+passkey is created after the scan (PRF output is usually available only at
 assertion time: two biometric prompts). Apple and Google sync passkeys across
 the voter's devices, so a lost phone does not lose the key; the passkey
 provider learns that a passkey for the app origin exists, nothing else.
@@ -216,8 +230,8 @@ browsing, Tor Browser and in-app webviews are detected: the first two force
 the 12 words (their storage is wiped), the webviews are sent to the system
 browser (no passkeys, no threads). Safari deletes a site's storage after 7
 days of use without a visit: with a PRF passkey nothing is lost; with a
-random `s`, `persist()` and the backup cover it. The UI says before the scan:
-« Si vous perdez cette clé, votre dernier bulletin reste compté et vous ne
+random `s`, `persist()` and the backup cover it. The UI says before the key
+is made: « Si vous la perdez, votre dernier bulletin reste compté et vous ne
 pourrez plus le changer. »
 
 ## 5. The tree
@@ -775,8 +789,9 @@ times of first sighting:
    with the certificate registry root valid at that date (Ethereum RPC): age,
    nationality, passport, not expired (the base proof does not check the
    expiry: the request carries `expiry_date >= <the proof's day>`, and the
-   verifier requires that query, against that day), `custom_data =
-   H(T_REG, event, ID)`, domain and scope; `uid` and `ID` unique.
+   verifier requires that query, against that day), `sig` verifies under
+   `key`, `custom_data = H(T_REG, event, key_lo, key_hi)`, domain and
+   scope; `uid` and `ID` unique.
 4. **Tree:** every checkpoint root is the root of the leaves logged so far.
 5. **Ballots:** every `ballot` verifies against its setup, a checkpoint root
    at most `anchor_age` older than its checkpoint, and the `seq` rule (a
@@ -999,9 +1014,10 @@ Differences from the text above:
 - Copy and UX pass (2026-10-27, a reviewer as a first-time visitor on a
   phone): the key is hidden behind « Voter avec mon passeport » (Face ID or
   fingerprint first, the 12 words and the other ways under « Autres
-  options »); the dialog names the two steps in order (the key, kept
-  with Face ID or the 12 words, then the passport) so the biometric
-  prompt is never a surprise; what is needed is said before the first tap; the vote's
+  options »); the dialog names the two steps in order and the passport
+  comes first (2026-10-30, the owner: a voter who has just scanned
+  accepts Face ID for the key; asked first, it made no sense), which the
+  registration key makes possible (§4); what is needed is said before the first tap; the vote's
   state is a sentence under the ballot (« Votre vote est enregistré… »,
   with the close date) and a nudge to share; the results are titled, with
   two tabs (the ranking, the first choices only), one big number per row

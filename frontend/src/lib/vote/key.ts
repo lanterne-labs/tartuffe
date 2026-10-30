@@ -34,6 +34,9 @@ export interface VoteKey {
 	// when a box first took it, and the checkpoint the acknowledgement
 	// named once it came.
 	registration?: Registration;
+	// regSecret is the registration key (secp256k1 secret, hex) the
+	// passport proof binds (SPEC §4): kept for a new scan of the same key.
+	regSecret?: string;
 	// sticky is the box ballots go to; ranking the full order.
 	ranking: string[];
 	sticky: string;
@@ -78,7 +81,41 @@ export interface LastBallot {
 	complaints?: string[];
 }
 
+// Scan is a passport scan made before the key exists (SPEC §4): the
+// registration key the proof binds, then the proof once the app answered,
+// kept until the key is made and the registration posted.
+export interface Scan {
+	slug: string;
+	eventId: number;
+	regSecret: string;
+	uid?: string;
+	proof?: unknown;
+	proofDate?: number;
+}
+
 const STORAGE_KEY = 'vote2_key';
+const SCAN_KEY = 'vote2_scan';
+
+function readStoredScan(): Scan | null {
+	if (typeof window === 'undefined') return null;
+	try {
+		const raw = window.localStorage.getItem(SCAN_KEY);
+		return raw ? (JSON.parse(raw) as Scan) : null;
+	} catch {
+		return null;
+	}
+}
+
+export const pendingScan = writable<Scan | null>(readStoredScan());
+
+if (typeof window !== 'undefined') {
+	pendingScan.subscribe((s) => {
+		try {
+			if (s) window.localStorage.setItem(SCAN_KEY, JSON.stringify(s));
+			else window.localStorage.removeItem(SCAN_KEY);
+		} catch {}
+	});
+}
 
 function readStored(): VoteKey | null {
 	if (typeof window === 'undefined') return null;

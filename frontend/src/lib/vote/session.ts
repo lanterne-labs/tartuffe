@@ -10,14 +10,14 @@
 
 import { writable, get, type Writable } from 'svelte/store';
 import { bb, big, hex, nullifierOf, type Ranking } from './crypto';
-import { voteKey, newVoteKey, createPasskeySecret, prfSupported, assertPRF, secretFromPRF, secretFromWords, normalizeWords, newWords, type VoteKey, type LastBallot } from './key';
+import { voteKey, pendingScan, newVoteKey, createPasskeySecret, prfSupported, assertPRF, secretFromPRF, secretFromWords, normalizeWords, newWords, type VoteKey, type LastBallot, type Scan } from './key';
 import { NostrMailbox, linkTag, noteServerTime, serverNow, sinceRecent, type Mailbox, type NostrEvent, type Prepared } from './mailbox';
 import { defaultSources, type Sources } from './sources';
 import { warmUp, type Prover } from './prove';
 import { ensureIsolated } from './isolate';
 import { newReceiver, linkURL, seal, open as openLink, type LinkCode, type LinkPayload } from './link';
 import { findPosition, updatePath, type PathState } from './tree';
-import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, findReceipt, myPosition, complaintBody, chooseAnchor, type Setup, type Ack, type CheckpointInfo, type PostProgress } from './protocol';
+import { parseCheckpoint, postWithAck, makeBallot, registerBody, registrationRequest, newRegSecret, findReceipt, myPosition, complaintBody, chooseAnchor, type Setup, type Ack, type CheckpointInfo, type PostProgress } from './protocol';
 import { openCheckpoint } from './checkpoint';
 import { verifyTally, verifyTallySig, type TallyBody } from './tally';
 import { VoteError, toVoteError } from './errors';
@@ -359,16 +359,50 @@ export class VoteSession {
 
 	// --- Registration ---
 
-	// newKey makes a key: from a passkey, or from 12 words (then confirmed
-	// before the first ballot). The key is kept at once: the dialog may be
-	// closed before the scan and resumed later with the same key.
+	// scanRequest is what the passport flow binds before any key exists
+	// (SPEC §4): the pending scan's registration key, made now when there
+	// is none for this event.
+	scanRequest(): { customData: string; scope: string } {
+		const setup = this.requireSetup();
+		let scan = get(pendingScan);
+		if (!scan || scan.slug !== this.slug || scan.eventId !== setup.setup.event) {
+			scan = { slug: this.slug, eventId: setup.setup.event, regSecret: newRegSecret() };
+			pendingScan.set(scan);
+		}
+		return registrationRequest(scan.regSecret, scan.eventId, this.slug);
+	}
+
+	// recordScan keeps the proof of the pending scan until the key is
+	// made: the dialog may be closed in between and the scan resumed.
+	recordScan(uid: string, proof: unknown, proofDate: Date) {
+		pendingScan.update((s) => (s ? { ...s, uid, proof, proofDate: proofDate.getTime() } : s));
+	}
+
+	// scanReady gives the pending scan when it holds a proof still within
+	// the setup's validity (with the margin a post needs), else null: the
+	// passport must be scanned again.
+	scanReady(): Scan | null {
+		const setup = get(this.setup);
+		const s = get(pendingScan);
+		if (!setup || !s || s.slug !== this.slug || s.eventId !== setup.setup.event || !s.proof || !s.uid || !s.proofDate) return null;
+		if (serverNow() - s.proofDate > (setup.setup.validity - 300) * 1000) return null;
+		return s;
+	}
+
+	// newKey makes a key after the scan: from a passkey, or from 12 words
+	// (then confirmed before the first ballot). The key takes the pending
+	// scan's registration key, so the proof held registers it. The key is
+	// kept at once: the dialog may be closed and resumed with the same key.
 	async newKey(prefer: 'passkey' | 'words'): Promise<{ key: VoteKey; words?: string }> {
 		const setup = this.requireSetup();
 		const boxes = this.boxes();
+		const scan = get(pendingScan);
+		const regSecret = scan && scan.slug === this.slug && scan.eventId === setup.setup.event ? scan.regSecret : newRegSecret();
 		if (prefer === 'passkey') {
 			if (!prfSupported()) throw new VoteError('passkey_unsupported');
 			const got = await createPasskeySecret(this.slug);
 			const key = newVoteKey(this.slug, setup.setup.event, got.secret, true, boxes);
+			key.regSecret = regSecret;
 			voteKey.set(key);
 			this.registration.set({ state: 'idle' });
 			this.phase.set('joining');
@@ -377,10 +411,19 @@ export class VoteSession {
 		const words = newWords();
 		const key = newVoteKey(this.slug, setup.setup.event, secretFromWords(words), false, boxes);
 		key.words = words;
+		key.regSecret = regSecret;
 		voteKey.set(key);
 		this.registration.set({ state: 'idle' });
 		this.phase.set('joining');
 		return { key, words };
+	}
+
+	// registerFromScan posts the registration of a key with the proof of
+	// the pending scan.
+	async registerFromScan(key: VoteKey): Promise<void> {
+		const s = this.scanReady();
+		if (!s) throw new VoteError('stale_proof');
+		await this.register(key, s.uid!, s.proof, new Date(s.proofDate!));
 	}
 
 	// confirmWords records that the voter typed the words back.
@@ -391,6 +434,7 @@ export class VoteSession {
 	// forgetKey removes the key from this device (the vote stays counted).
 	forgetKey() {
 		voteKey.set(null);
+		pendingScan.set(null);
 		this.ballot.set({ state: 'idle' });
 		this.registration.set({ state: 'idle' });
 		this.path = null;
@@ -434,6 +478,7 @@ export class VoteSession {
 		if (hint?.last) key.lastBallot = { ...hint.last };
 		if (hint?.words) key.words = hint.words;
 		voteKey.set(key);
+		pendingScan.set(null);
 		this.registration.set({ state: 'acked' });
 		this.phase.set('ready');
 		this.ballot.set({ state: 'idle' });
@@ -555,9 +600,15 @@ export class VoteSession {
 		throw new VoteError('no_relay', lastErr);
 	}
 
-	// registrationRequest is what the ZKPassport component binds.
+	// registrationRequest is what a new scan for an existing key binds
+	// (the proof went stale, or the registration failed): the key's
+	// registration key, given one when the record has none.
 	registrationRequest(key: VoteKey) {
-		return registrationRequest(key, this.slug);
+		if (!key.regSecret) {
+			key.regSecret = newRegSecret();
+			voteKey.update((x) => (x ? { ...x, regSecret: key.regSecret } : x));
+		}
+		return registrationRequest(key.regSecret, key.eventId, this.slug);
 	}
 
 	// register posts the registration of a key with its passport proof and
@@ -573,6 +624,8 @@ export class VoteSession {
 		const first = !key.registration?.sentAt;
 		key.registration = { box: key.ranking[0], id: msg.id, raw: msg.raw, body, proofDate: proofDate.getTime(), sentAt: key.registration?.sentAt };
 		voteKey.set(key);
+		// The key holds the request now; the scan served.
+		pendingScan.set(null);
 		await this.postRegistration(key, msg, first, setup);
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,6 +52,24 @@ func (m *memMailbox) PostAll(ctx context.Context, msg Outgoing) int {
 		_ = m.Post(ctx, b, msg)
 	}
 	return len(m.boxes)
+}
+
+// signedRegister canonicalizes a registration under a fresh registration
+// key (regsign.go): the ingest refuses an unsigned one.
+func signedRegister(t testing.TB, r Register) []byte {
+	t.Helper()
+	sk, err := btcec.NewPrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SignRegister(&r, sk); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Canonical(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 type fakePassport struct{ uid string }
@@ -181,7 +200,7 @@ func TestIngestOnDevVectors(t *testing.T) {
 	// positions follow the vector's order (a checkpoint orders its entries
 	// by hash).
 	for i, leaf := range v.Tree.Leaves {
-		reg, _ := Canonical(Register{V: Version, Event: 1, ID: leaf, UID: "uid-" + string(rune('a'+i)), Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
+		reg := signedRegister(t, Register{V: Version, Event: 1, ID: leaf, UID: "uid-" + string(rune('a'+i)), Proof: json.RawMessage(`{"proofs":[],"result":{}}`), ProofDate: time.Now()})
 		in.cfg.Passport = fakePassport{uid: "uid-" + string(rune('a'+i))}
 		m := Message{ID: "reg" + string(rune('a'+i)), Box: "wss://a.test", Kind: MsgRegister, Body: reg}
 		voterEvent(m)
