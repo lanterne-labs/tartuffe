@@ -163,13 +163,14 @@ func (s *PostgresStorer) ListUnfinishedDocuments(ctx context.Context, sourceType
 	return out, rows.Err()
 }
 
-// MarkDocumentExtracted moves the document to extracted with its facts count
-// and deletes the raw content: the row is now only the marker that the URL
-// was processed.
+// MarkDocumentExtracted moves the document to extracted with its facts count.
+// The content stays: a review checks a fact against its page, and a new
+// extraction rule can be tried on the stored pages (review of 2026-10-30,
+// mirror-9hr; the text of a news page is about 24 KB).
 func (s *PostgresStorer) MarkDocumentExtracted(ctx context.Context, id int64, factsCount int) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE source_documents
-		SET state = $2, facts_count = $3, content = '', last_error = NULL,
+		SET state = $2, facts_count = $3, last_error = NULL,
 		    attempts = attempts + 1, extracted_at = NOW()
 		WHERE id = $1`, id, core.DocExtracted, factsCount)
 	if err != nil {

@@ -806,3 +806,63 @@ cases:
     notes: "Claiming knowledge, then disclaiming it before a court. Prod 1509-1520 (reviewed real; Opus dropped them as 'a tension' before this rule)."
     date_a: "2021-11-18"
     date_b: "2021-12-07"
+
+  - name: "FP_2307_bardella_loyalty_vs_internal_ultimatum"
+    fact_a: "Selon Libération, Jordan Bardella a claqué la porte d'une réunion de travail au RN en lançant « c'est elle ou moi » à propos d'une réintégration de Marion Maréchal en belle position."
+    fact_b: "Jordan Bardella a promis qu'il sera toujours loyal à Marine Le Pen lors d'un débat sur BFM-TV le 11 décembre 2025."
+    claimed_reason: "Après avoir promis d'être « toujours loyal » à Marine Le Pen, il lui a lancé un ultimatum (« C'est elle ou moi ») en réaction à sa décision sur Marion Maréchal."
+    expect: drop
+    bucket: symbolic_counter_gesture
+    notes: "An ultimatum inside the party about a list place does not break a pledge of loyalty to its leader. Prod 2307 (review 2026-10-30)."
+    date_a: "2026-09-07"
+    date_b: "2025-12-11"
+
+  - name: "FP_2303_rn_target_vote_vs_tool_abolition"
+    fact_a: "Rassemblement National a collectivement voté POUR l'article 9 (« Fixe des objectifs de 380 000 rénovations énergétiques performantes d'ici 2030 et d'économies d'énergie cumulées de 2026 à 2035 soutenues par les certificats d'économies d'énergie ») du texte de loi : « Fixe des objectifs nationaux pour la production d'énergie et la réduction des émissions de gaz à effet de serre entre 2025 et 2035. »"
+    fact_b: "Le Rassemblement national a promis, en cas d'élection, la suppression des CEE."
+    claimed_reason: "Le RN a voté pour un article fondant les objectifs de rénovation sur les CEE, puis promet de supprimer ces mêmes certificats."
+    expect: drop
+    bucket: different_subjects
+    notes: "A vote for renovation targets is not a position on the funding tool named in them. Prod 2303 (review 2026-10-30, debatable)."
+    date_a: "2025-06-18"
+    date_b: "2026-10-28"
+
+  - name: "FP_2206_bardella_allies_to_reach_majority"
+    fact_a: "Jordan Bardella a annoncé en juin 2024 qu'il refuserait le poste de Premier ministre si son parti n'obtenait pas la majorité absolue."
+    fact_b: "Jordan Bardella a assuré que, s'il lui manque quelques députés pour une majorité absolue, il regarderait le résultat des élections et tendrait la main autour de lui."
+    claimed_reason: "Il avait promis de refuser Matignon sans majorité absolue, puis s'est dit prêt à gouverner avec une majorité relative et des alliés."
+    expect: drop
+    bucket: condition_later_met
+    notes: "Reaching out to complete an absolute majority pursues the condition he set. Prod 2206, 2225, 2244 (review 2026-10-30, debatable)."
+    date_a: "2026-10-14"
+    date_b: "2025-10-06"
+
+  - name: "FP_2223_melenchon_ambush_opposite_actors"
+    fact_a: "Jean-Luc Mélenchon a affirmé que jamais aucun guet-apens n'a été monté contre le jeune Quentin."
+    fact_b: "Jean-Luc Mélenchon a affirmé que Némésis avait tendu un piège, un « traquenard », et provoqué la rixe violente qui a mené à la mort de Quentin Deranque."
+    claimed_reason: "Mélenchon affirme qu'un « traquenard » a été tendu par Némésis alors qu'il avait affirmé que jamais aucun guet-apens n'avait été monté contre Quentin."
+    expect: drop
+    bucket: different_subjects
+    notes: "No ambush against Quentin (by the antifa side) and a trap set by Némésis assign the act to opposite actors: one story. Prod 2223 (review 2026-10-30)."
+    date_a: "2026-02-17"
+    date_b: "2026-02-26"
+
+  - name: "FP_2252_attal_state_vs_public_deficit"
+    fact_a: "Gabriel Attal a affirmé que si le déficit a augmenté l'an dernier, c'est parce qu'il faut réformer notre modèle social."
+    fact_b: "Gabriel Attal a affirmé que le déficit budgétaire de l'État en 2024 s'est réduit de 17 milliards d'euros."
+    claimed_reason: "Il a affirmé en février 2025 que le déficit de l'État avait baissé de 17 milliards en 2024, puis en juillet 2025 que le déficit avait augmenté l'an dernier."
+    expect: drop
+    bucket: numbers_measurements
+    notes: "The State budget deficit fell while the public deficit (social security, local authorities) rose. Prod 2252 (review 2026-10-30)."
+    date_a: "2025-07-16"
+    date_b: "2025-02-04"
+
+  - name: "FP_2297_faure_leader_judgment_vs_rapprochement"
+    fact_a: "Olivier Faure est favorable à un rapprochement de l'ensemble de la gauche à l'Assemblée nationale, incluant La France insoumise."
+    fact_b: "Olivier Faure a affirmé lundi 23 mars 2026 que Jean-Luc Mélenchon était « devenu le boulet de la gauche »."
+    claimed_reason: "Faure qualifiait Mélenchon de « boulet de la gauche » en mars, puis se dit favorable en octobre à un rapprochement incluant LFI."
+    expect: drop
+    bucket: different_subjects
+    notes: "A judgment of a leader is not a refusal to cooperate with his party's deputies. Prod 2297 (review 2026-10-30)."
+    date_a: "2026-10-09"
+    date_b: "2026-03-23"
