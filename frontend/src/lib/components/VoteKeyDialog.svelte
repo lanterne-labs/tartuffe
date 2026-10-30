@@ -288,11 +288,18 @@
 <Modal {open} title={tr('v2.key.title', lang)} onclose={close} closeLabel={tr('auth.close', lang)}>
 	{#if step === 'choose'}
 		<p class="text">{tr('v2.key.intro', lang)}</p>
+		<ol class="plan">
+			<li><strong>{tr('v2.key.step.key', lang)}</strong> {tr('v2.key.step.key.text', lang)}</li>
+			<li><strong>{tr('v2.key.step.passport', lang)}</strong> {tr('v2.key.step.passport.text', lang)}</li>
+		</ol>
+		<p class="text"><strong>{tr('v2.key.choose', lang)}</strong></p>
 		<div class="choices">
 			{#if canPasskey}
 				<button class="btn btn-primary" onclick={() => make('passkey')} disabled={busy}>{tr('v2.key.passkey', lang)}</button>
+				<p class="text small hint">{tr('v2.key.passkey.hint', lang)}</p>
 			{:else}
 				<button class="btn btn-primary" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words.primary', lang)}</button>
+				<p class="text small hint">{tr('v2.key.words.hint', lang)}</p>
 			{/if}
 			<details class="other">
 				<summary>{tr('v2.key.other', lang)}</summary>
@@ -328,6 +335,7 @@
 			<button class="btn btn-primary" onclick={checkWords}>{tr('v2.key.continue', lang)}</button>
 		</div>
 	{:else if step === 'passport' && request}
+		<p class="text small">{tr('v2.key.step2', lang)}</p>
 		<VotePassport {lang} {domain} scope={request.scope} customData={request.customData} {devMode} {simulate} onSuccess={onProof} />
 	{:else if step === 'posting' || step === 'done' || step === 'pending' || step === 'failed'}
 		<div class="steps-box"><Steps steps={posting} /></div>
@@ -409,6 +417,21 @@
 		margin: 0 0 0.9rem;
 		line-height: 1.55;
 		color: var(--text-secondary);
+	}
+	.plan {
+		margin: 0 0 1rem;
+		padding-left: 1.3rem;
+		line-height: 1.55;
+		color: var(--text-secondary);
+		display: grid;
+		gap: 0.5rem;
+	}
+	.plan strong {
+		color: var(--text-primary);
+	}
+	.hint {
+		margin: -0.2rem 0 0.2rem;
+		color: var(--text-muted);
 	}
 	.other {
 		margin-top: 0.3rem;

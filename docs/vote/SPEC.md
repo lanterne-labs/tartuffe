@@ -999,7 +999,9 @@ Differences from the text above:
 - Copy and UX pass (2026-10-27, a reviewer as a first-time visitor on a
   phone): the key is hidden behind « Voter avec mon passeport » (Face ID or
   fingerprint first, the 12 words and the other ways under « Autres
-  options »); what is needed is said before the first tap; the vote's
+  options »); the dialog names the two steps in order (the key, kept
+  with Face ID or the 12 words, then the passport) so the biometric
+  prompt is never a surprise; what is needed is said before the first tap; the vote's
   state is a sentence under the ballot (« Votre vote est enregistré… »,
   with the close date) and a nudge to share; the results are titled, with
   two tabs (the ranking, the first choices only), one big number per row
