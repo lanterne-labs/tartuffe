@@ -65,6 +65,9 @@ type RedateUnmatched struct {
 // redatePage is how many rows one storage call reads.
 const redatePage = 1000
 
+// redateFetchSlice is how many tweets are fetched and stored at a time.
+const redateFetchSlice = 500
+
 // Redate runs the repair; see the package comment above.
 func Redate(ctx context.Context, storer RedateStorer, fetcher RedateFetcher, opts RedateOptions) (RedateReport, error) {
 	var rep RedateReport
@@ -89,13 +92,16 @@ func Redate(ctx context.Context, storer RedateStorer, fetcher RedateFetcher, opt
 			missingText = append(missingText, id)
 		}
 	}
-	if len(missingText) > 0 {
-		fetched, err := fetcher.FetchTweetsByIDs(ctx, missingText)
+	// Fetched and stored in slices, so that a run cut short keeps what it
+	// restored: the next run fetches only the tweets still without text.
+	for start := 0; start < len(missingText); start += redateFetchSlice {
+		end := min(start+redateFetchSlice, len(missingText))
+		fetched, err := fetcher.FetchTweetsByIDs(ctx, missingText[start:end])
 		if err != nil {
-			return rep, fmt.Errorf("fetching %d tweets by id: %w", len(missingText), err)
+			return rep, fmt.Errorf("fetching tweets %d-%d of %d by id: %w", start, end, len(missingText), err)
 		}
-		rep.TweetsFetched = len(fetched)
-		rep.TweetsMissing = len(missingText) - len(fetched)
+		rep.TweetsFetched += len(fetched)
+		rep.TweetsMissing += end - start - len(fetched)
 		for _, tw := range fetched {
 			i, ok := byID[tw.ID]
 			if !ok {
@@ -109,6 +115,7 @@ func Redate(ctx context.Context, storer RedateStorer, fetcher RedateFetcher, opt
 				return rep, err
 			}
 		}
+		log.Info().Int("fetched", end).Int("of", len(missingText)).Int("missing", rep.TweetsMissing).Msg("twitter redate: tweets restored")
 	}
 
 	// The tweets of each handle, as the matcher reads them.
