@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -16,6 +17,10 @@ import (
 
 const (
 	twitterAPIIOBaseURL   = "https://api.twitterapi.io/twitter/tweet/advanced_search"
+	twitterAPIIOLookupURL = "https://api.twitterapi.io/twitter/tweets"
+	// lookupIDsPerCall is how many tweet ids one lookup request takes: the
+	// API refuses more ("max 50 tweet_ids per request").
+	lookupIDsPerCall      = 50
 	httpTimeout           = 30 * time.Second
 	defaultQPSDelayMillis = 5000 // 5 seconds for free tier (1 req per 5s)
 )
@@ -208,4 +213,76 @@ func mapTweet(t twitterAPIIOTweet) Tweet {
 	}
 
 	return tweet
+}
+
+// FetchTweetsByIDs returns the tweets with the given ids, in calls of
+// lookupIDsPerCall ids. A deleted or protected tweet is simply absent from
+// the result.
+func (f *TwitterAPIIOFetcher) FetchTweetsByIDs(ctx context.Context, ids []string) ([]Tweet, error) {
+	var out []Tweet
+	for start := 0; start < len(ids); start += lookupIDsPerCall {
+		end := min(start+lookupIDsPerCall, len(ids))
+		if start > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(f.qpsDelay):
+			}
+		}
+		tweets, err := f.lookup(ctx, ids[start:end])
+		if err != nil {
+			return out, err
+		}
+		out = append(out, tweets...)
+	}
+	return out, nil
+}
+
+// lookup is one lookup call, bounded by httpTimeout through the context (a
+// dead HTTP/2 connection otherwise hangs the call for good: the dry run of
+// 2026-10-30 sat 25 minutes on one request) and tried twice.
+func (f *TwitterAPIIOFetcher) lookup(ctx context.Context, ids []string) ([]Tweet, error) {
+	params := url.Values{}
+	params.Set("tweet_ids", strings.Join(ids, ","))
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		cctx, cancel := context.WithTimeout(ctx, httpTimeout)
+		tweets, err := f.lookupOnce(cctx, params)
+		cancel()
+		if err == nil {
+			return tweets, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+		log.Warn().Err(err).Int("attempt", attempt).Int("ids", len(ids)).Msg("twitter: tweet lookup failed")
+	}
+	return nil, lastErr
+}
+
+func (f *TwitterAPIIOFetcher) lookupOnce(ctx context.Context, params url.Values) ([]Tweet, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, twitterAPIIOLookupURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("X-API-Key", f.apiKey)
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tweet lookup request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("tweet lookup returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var apiResp twitterAPIIOResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to decode tweet lookup response: %w", err)
+	}
+	out := make([]Tweet, 0, len(apiResp.Tweets))
+	for _, t := range apiResp.Tweets {
+		out = append(out, mapTweet(t))
+	}
+	return out, nil
 }

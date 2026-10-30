@@ -184,7 +184,34 @@ func TestFactLang(t *testing.T) {
 			t.Errorf("%s: factLang = %q, want %q", c.name, got, c.want)
 		}
 	}
-	if got := factLang(backend.Fact{}, []Tweet{{Lang: "es"}}); got != "es" {
+	if got := factLang(backend.Fact{OriginalQuote: "hola amigos"}, []Tweet{{Lang: "es", Text: "¡Hola, amigos!"}}); got != "es" {
 		t.Errorf("tweet fallback: factLang = %q, want es", got)
+	}
+}
+
+// A fact is matched to the tweet that holds its quote, not to the first tweet
+// of the batch: the extractor's SourceURL is the profile's.
+func TestFindMatchingTweet(t *testing.T) {
+	batch := []Tweet{
+		{URL: "https://x.com/a/status/1", Text: "Bonne fête à tous les agriculteurs !"},
+		{URL: "https://x.com/a/status/2", Text: "Il est temps d’organiser une grande primaire. Pour proposer un nouvel espoir https://t.co/x"},
+		{URL: "https://x.com/a/status/3", Text: "Nous voterons contre ce budget, qui matraque les classes moyennes."},
+	}
+	cases := []struct {
+		name, quote, url, want string
+	}{
+		{"quote held whole", "Il est temps d'organiser une grande primaire.", "https://x.com/a", "https://x.com/a/status/2"},
+		{"quote trimmed and retyped", "nous voterons contre ce budget qui matraque", "https://x.com/a", "https://x.com/a/status/3"},
+		{"URL named", "", "https://x.com/a/status/1", "https://x.com/a/status/1"},
+		{"no tweet holds it", "La dissuasion nucléaire n'est pas partageable.", "https://x.com/a", ""},
+	}
+	for _, c := range cases {
+		got := ""
+		if tw := findMatchingTweet(backend.Fact{OriginalQuote: c.quote, SourceURL: c.url}, batch); tw != nil {
+			got = tw.URL
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
 	}
 }

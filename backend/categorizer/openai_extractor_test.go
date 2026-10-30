@@ -785,6 +785,19 @@ Ce mardi, sur France Inter, le maire du Havre a promis : « Si je suis élu, je 
 			leak: regexp.MustCompile(`(?i)^[^0-9]*anticipée[^0-9]*$`),
 			keep: regexp.MustCompile(`(?i)ordonnances`),
 		},
+		// mirror-afv: a writer's sentence grouping several people under one
+		// verb (fact 4885: "Attal, Philippe et Retailleau réfutent...")
+		// became each person's own refusal; it fed 4 contradictions.
+		{
+			name:   "several people under one verb",
+			person: "Bruno Retailleau",
+			title:  "Bloc central : la primaire que personne ne veut",
+			text: `Gabriel Attal, Édouard Philippe et Bruno Retailleau réfutent toute idée de primaire au sein du bloc central, chacun se voyant déjà candidat.
+
+Interrogé mardi sur RTL, Bruno Retailleau a seulement déclaré : « Je serai candidat à la présidentielle, et les Français trancheront. »`,
+			leak: regexp.MustCompile(`(?i)réfut|primaire`),
+			keep: regexp.MustCompile(`(?i)candidat`),
+		},
 		// mirror-ds6.24: a subject named by its role resolved to the wrong
 		// target (fact 40331: "le patron de Place publique" attributed to
 		// Olivier Faure).

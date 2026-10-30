@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/rs/zerolog/log"
 )
@@ -329,7 +330,16 @@ func (p *Provider) extractTweetBatch(ctx context.Context, handle Handle, factIns
 
 	factsByDoc := make(map[int64]int, len(batchDocs))
 	for _, fact := range facts {
-		sourceURL := matchFactToTweetURL(fact, batch)
+		// The tweet the fact comes from gives its URL and date. A fact no
+		// tweet of the batch holds has no source: it is skipped.
+		tw := findMatchingTweet(fact, batch)
+		if tw == nil {
+			log.Warn().Str("handle", handle.Handle).Str("quote", util.TruncateString(fact.OriginalQuote, 80)).
+				Msg("twitter: no tweet of the batch holds the fact's quote; the fact is skipped")
+			metrics.IncrementTweets("fact_unmatched")
+			continue
+		}
+		sourceURL, tweetCreatedAt := tw.URL, tw.CreatedAt
 
 		embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 		if core.FailsDocument(ctx, err) {
@@ -343,7 +353,6 @@ func (p *Provider) extractTweetBatch(ctx context.Context, handle Handle, factIns
 
 		// Publication date — the tweet API's CreatedAt is authoritative;
 		// a date the LLM read in the body is only a fallback.
-		tweetCreatedAt := matchFactToTweetCreatedAt(fact, batch)
 		finalPubAt := core.PickPublishedAt(tweetCreatedAt, fact.ArticlePublishedAt, fact.PublishedAt)
 
 		input := core.StoreFactInput{
@@ -582,27 +591,6 @@ func formatTweetBatch(tweets []Tweet) string {
 	return sb.String()
 }
 
-// matchFactToTweetURL tries to match a fact's source URL to a tweet in the batch.
-// Falls back to the first tweet's URL if no match is found.
-func matchFactToTweetURL(fact backend.Fact, batch []Tweet) string {
-	// If the LLM set SourceURL, try to match it
-	if fact.SourceURL != "" {
-		for _, tw := range batch {
-			if tw.URL == fact.SourceURL {
-				return tw.URL
-			}
-		}
-		// LLM set a URL but it's not in our batch — use it anyway (it might be correct)
-		return fact.SourceURL
-	}
-
-	// Fallback: use the first tweet's URL
-	if len(batch) > 0 {
-		return batch[0].URL
-	}
-	return ""
-}
-
 // factLang is the language of the fact text: the one the extractor gives,
 // else the tweet's. Twitter's lang is a guess about the tweet, not the fact,
 // and is often no language at all (qme: media only, zxx: no text, und:
@@ -623,20 +611,14 @@ func isLanguageCode(lang string) bool {
 	return lang != "" && lang != "und" && lang != "zxx" && !strings.HasPrefix(lang, "q")
 }
 
-// matchFactToTweetCreatedAt returns the CreatedAt of the tweet matching a fact's
-// SourceURL. Falls back to the first tweet's CreatedAt. Returns nil only when
-// the batch is empty or the matched tweet has no timestamp. This is the
-// primary structured pub-date source for Twitter facts.
-func matchFactToTweetCreatedAt(fact backend.Fact, batch []Tweet) *time.Time {
-	if tw := findMatchingTweet(fact, batch); tw != nil {
-		return tw.CreatedAt
-	}
-	return nil
-}
-
-// findMatchingTweet returns the tweet whose URL matches the fact's SourceURL,
-// or the first tweet in the batch as a fallback. Returns nil only when the
-// batch itself is empty. Shared by the per-field matchFactToTweet* helpers.
+// findMatchingTweet returns the tweet of the batch a fact comes from: the
+// one whose URL the fact names, else the one whose text holds the fact's
+// quote, else the one sharing most of the quote's words (at least
+// tweetQuoteMinOverlap of them); nil when none does. The extractor reads the
+// batch as one page whose URL is the profile, so a fact's SourceURL is
+// almost never a tweet's: the old fallback to the first tweet gave all the
+// facts of a batch of 20 the first tweet's URL and date (review of
+// 2026-10-30: all 17013 tweet facts carried the profile URL).
 func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 	if fact.SourceURL != "" {
 		for i := range batch {
@@ -645,8 +627,47 @@ func findMatchingTweet(fact backend.Fact, batch []Tweet) *Tweet {
 			}
 		}
 	}
-	if len(batch) > 0 {
-		return &batch[0]
+	quote := quoteWords(fact.OriginalQuote)
+	if len(quote) == 0 {
+		return nil
+	}
+	joined := " " + strings.Join(quote, " ") + " "
+	var best *Tweet
+	bestOverlap := 0.0
+	for i := range batch {
+		words := quoteWords(batch[i].Text)
+		if strings.Contains(" "+strings.Join(words, " ")+" ", joined) {
+			return &batch[i]
+		}
+		set := make(map[string]bool, len(words))
+		for _, w := range words {
+			set[w] = true
+		}
+		hits := 0
+		for _, w := range quote {
+			if set[w] {
+				hits++
+			}
+		}
+		if o := float64(hits) / float64(len(quote)); o > bestOverlap {
+			best, bestOverlap = &batch[i], o
+		}
+	}
+	if bestOverlap >= tweetQuoteMinOverlap {
+		return best
 	}
 	return nil
+}
+
+// tweetQuoteMinOverlap is the share of a quote's words a tweet must hold to
+// be its source when no tweet holds the quote whole (the extractor trims,
+// fixes typos and cuts URLs out of the quote).
+const tweetQuoteMinOverlap = 0.6
+
+// quoteWords lowercases a text and splits it into its words (letters and
+// digits), so that punctuation, quotes and spacing do not break a match.
+func quoteWords(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
