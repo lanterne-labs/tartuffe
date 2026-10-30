@@ -148,11 +148,25 @@ a name that people actually use to refer to it (not a description).
       → accept. Advocacy organizations active in public/political debate
       (anti-racism leagues, unions, NGOs) stay IN scope — do not reject them
       under this rule.
+  R11. An organ of the STATE or of a public authority that acts by law, not by
+      political choice: a court or tribunal ("tribunal de l'union européenne",
+      "cour d'appel de Paris", "Conseil d'État"), a prosecutor's office
+      ("parquet de Bobigny", "parquet national financier"), a préfecture, a
+      police or gendarmerie unit, an administration or agency ("Viginum",
+      "ANSSI", "Haute Autorité de santé"), a central bank, a regulator, an
+      electoral or audit body, the European Commission or another EU
+      institution as a body. Their rulings, decisions and statements are
+      findings about politicians, not positions of a politician: they are not
+      tracked. The PEOPLE who speak for them are tracked only when they are
+      politicians (a minister, an elected official), never a judge, a
+      prosecutor or a civil servant acting as such. A government, a party, a
+      parliamentary group, a city council majority or a ministry's political
+      head stays IN scope: they are elected or political actors.
 
 ═══ DECISION RULE ═══
 
-If the candidate matches a REJECT pattern (R1–R10), return real=false EVEN IF
-it also matches an ACCEPT signal — scope (R10) and shape (R1–R9) rejections
+If the candidate matches a REJECT pattern (R1–R11), return real=false EVEN IF
+it also matches an ACCEPT signal — scope (R10, R11) and shape (R1–R9) rejections
 override existence evidence. Otherwise, if it matches an ACCEPT signal
 (A/B/C/D), return real=true.
 Note real=false here means "do not track", EVEN IF wiki/google
@@ -164,7 +178,7 @@ plausible google evidence; lean REJECT when both sources are empty and the
 name reads as a descriptive phrase.
 
 Respond with ONLY this JSON, nothing else:
-{"reason": "<one short sentence citing the deciding rule (A/B/C/D or R1–R9) and the evidence>", "real": true|false}
+{"reason": "<one short sentence citing the deciding rule (A/B/C/D or R1–R11) and the evidence>", "real": true|false}
 
 INPUT:
 ` + string(inputJSON)

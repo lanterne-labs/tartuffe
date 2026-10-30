@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"time"
 
 	"digital-mirror/backend/core"
@@ -143,6 +144,11 @@ func (s *PostgresStorer) ListUnfinishedDocuments(ctx context.Context, sourceType
 		return nil, fmt.Errorf("listing unfinished %s documents: %w", sourceType, err)
 	}
 	defer rows.Close()
+	return scanDocuments(rows)
+}
+
+// scanDocuments reads documents from a query selecting the full row.
+func scanDocuments(rows pgx.Rows) ([]core.SourceDocument, error) {
 	var out []core.SourceDocument
 	for rows.Next() {
 		var d core.SourceDocument
@@ -198,6 +204,38 @@ func (s *PostgresStorer) MarkDocumentFailed(ctx context.Context, id int64, extra
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("marking document %d failed: no such document", id)
+	}
+	return nil
+}
+
+// ListDocuments returns up to limit documents of the source type with an id
+// above afterID, by id: keyset pagination over the whole table.
+func (s *PostgresStorer) ListDocuments(ctx context.Context, sourceType string, afterID int64, limit int) ([]core.SourceDocument, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, source_type, url, COALESCE(person_id, 0), title, content, published_at, metadata,
+		       fetched_at, state, attempts, facts_count
+		FROM source_documents
+		WHERE source_type = $1 AND id > $2
+		ORDER BY id
+		LIMIT $3`, sourceType, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s documents: %w", sourceType, err)
+	}
+	defer rows.Close()
+	return scanDocuments(rows)
+}
+
+// SetDocumentContent restores the content and the publication date of a
+// document whose text was deleted at extraction (before 2026-10-30).
+func (s *PostgresStorer) SetDocumentContent(ctx context.Context, id int64, content string, publishedAt *time.Time) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE source_documents SET content = $2, published_at = COALESCE($3, published_at) WHERE id = $1`,
+		id, content, publishedAt)
+	if err != nil {
+		return fmt.Errorf("setting the content of document %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("setting the content of document %d: no such document", id)
 	}
 	return nil
 }

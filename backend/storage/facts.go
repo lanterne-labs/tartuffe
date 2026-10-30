@@ -1498,3 +1498,55 @@ func (s *PostgresStorer) SetFactEnglish(ctx context.Context, factID int64, engli
 	}
 	return nil
 }
+
+// FactSourceRow is a fact_sources row as the repairs of sources read it.
+type FactSourceRow struct {
+	ID            int64
+	FactID        int64
+	SourceURL     string
+	OriginalQuote string
+	PublishedAt   *time.Time
+	Metadata      map[string]any
+}
+
+// ListFactSourcesByType returns up to limit fact_sources rows of the source
+// type with an id above afterID, by id.
+func (s *PostgresStorer) ListFactSourcesByType(ctx context.Context, sourceType string, afterID int64, limit int) ([]FactSourceRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, fact_id, source_url, COALESCE(original_quote, ''), published_at, COALESCE(metadata, '{}')
+		FROM fact_sources
+		WHERE source_type = $1 AND id > $2
+		ORDER BY id
+		LIMIT $3`, sourceType, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s fact sources: %w", sourceType, err)
+	}
+	defer rows.Close()
+	var out []FactSourceRow
+	for rows.Next() {
+		var r FactSourceRow
+		var meta []byte
+		if err := rows.Scan(&r.ID, &r.FactID, &r.SourceURL, &r.OriginalQuote, &r.PublishedAt, &meta); err != nil {
+			return nil, fmt.Errorf("scanning fact source: %w", err)
+		}
+		if len(meta) > 0 {
+			if err := json.Unmarshal(meta, &r.Metadata); err != nil {
+				return nil, fmt.Errorf("decoding metadata of fact source %d: %w", r.ID, err)
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetFactSourceURLAndDate moves a fact source to the page it comes from.
+func (s *PostgresStorer) SetFactSourceURLAndDate(ctx context.Context, id int64, sourceURL string, publishedAt *time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE fact_sources SET source_url = $2, published_at = $3 WHERE id = $1`, id, sourceURL, publishedAt)
+	if err != nil {
+		return fmt.Errorf("setting the source of fact source %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("setting the source of fact source %d: no such row", id)
+	}
+	return nil
+}

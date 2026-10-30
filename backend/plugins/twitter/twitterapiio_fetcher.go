@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -16,6 +17,9 @@ import (
 
 const (
 	twitterAPIIOBaseURL   = "https://api.twitterapi.io/twitter/tweet/advanced_search"
+	twitterAPIIOLookupURL = "https://api.twitterapi.io/twitter/tweets"
+	// lookupIDsPerCall is how many tweet ids one lookup request takes.
+	lookupIDsPerCall      = 100
 	httpTimeout           = 30 * time.Second
 	defaultQPSDelayMillis = 5000 // 5 seconds for free tier (1 req per 5s)
 )
@@ -208,4 +212,47 @@ func mapTweet(t twitterAPIIOTweet) Tweet {
 	}
 
 	return tweet
+}
+
+// FetchTweetsByIDs returns the tweets with the given ids, in calls of
+// lookupIDsPerCall ids. A deleted or protected tweet is simply absent from
+// the result.
+func (f *TwitterAPIIOFetcher) FetchTweetsByIDs(ctx context.Context, ids []string) ([]Tweet, error) {
+	var out []Tweet
+	for start := 0; start < len(ids); start += lookupIDsPerCall {
+		end := min(start+lookupIDsPerCall, len(ids))
+		if start > 0 {
+			select {
+			case <-ctx.Done():
+				return out, ctx.Err()
+			case <-time.After(f.qpsDelay):
+			}
+		}
+		params := url.Values{}
+		params.Set("tweet_ids", strings.Join(ids[start:end], ","))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, twitterAPIIOLookupURL+"?"+params.Encode(), nil)
+		if err != nil {
+			return out, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("X-API-Key", f.apiKey)
+		resp, err := f.client.Do(req)
+		if err != nil {
+			return out, fmt.Errorf("tweet lookup request failed: %w", err)
+		}
+		var apiResp twitterAPIIOResponse
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return out, fmt.Errorf("tweet lookup returned status %d: %s", resp.StatusCode, string(body))
+		}
+		err = json.NewDecoder(resp.Body).Decode(&apiResp)
+		resp.Body.Close()
+		if err != nil {
+			return out, fmt.Errorf("failed to decode tweet lookup response: %w", err)
+		}
+		for _, t := range apiResp.Tweets {
+			out = append(out, mapTweet(t))
+		}
+	}
+	return out, nil
 }
