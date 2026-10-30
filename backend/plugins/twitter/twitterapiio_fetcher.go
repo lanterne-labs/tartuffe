@@ -18,8 +18,9 @@ import (
 const (
 	twitterAPIIOBaseURL   = "https://api.twitterapi.io/twitter/tweet/advanced_search"
 	twitterAPIIOLookupURL = "https://api.twitterapi.io/twitter/tweets"
-	// lookupIDsPerCall is how many tweet ids one lookup request takes.
-	lookupIDsPerCall      = 100
+	// lookupIDsPerCall is how many tweet ids one lookup request takes: the
+	// API refuses more ("max 50 tweet_ids per request").
+	lookupIDsPerCall      = 50
 	httpTimeout           = 30 * time.Second
 	defaultQPSDelayMillis = 5000 // 5 seconds for free tier (1 req per 5s)
 )
