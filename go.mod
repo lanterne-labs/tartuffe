@@ -6,6 +6,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
+	github.com/btcsuite/btcd/btcec/v2 v2.3.4
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/consensys/gnark-crypto v0.14.0
 	github.com/coreos/go-oidc/v3 v3.15.0
@@ -30,7 +31,6 @@ require (
 require (
 	github.com/ImVexed/fasturl v0.0.0-20230304231329-4e41488060f3 // indirect
 	github.com/bits-and-blooms/bitset v1.14.2 // indirect
-	github.com/btcsuite/btcd/btcec/v2 v2.3.4 // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/bytedance/sonic v1.13.1 // indirect
 	github.com/bytedance/sonic/loader v0.2.4 // indirect
