@@ -58,6 +58,8 @@ The worker (`backend/worker`) replaces the nightly cron. It runs the work in the
 ./dm vote keygen|setup|log-key|ingest|tally|verify          # tartuffe-vote/2, see below
 ```
 
+**The frontend no longer speaks tartuffe-vote/2**: its vote pages run isoloir through `@isoloir/web` (see "The vote app" below). The bullets of this section describe the Go backend's tartuffe-vote/2; the browser files they name (`lib/vote/key.ts`, `crypto.ts`, `tree.ts`, `link.ts`, `prove.ts`, `protocol.ts`, `checkpoint.ts`, `mailbox.ts`) are gone.
+
 An event (`poll_events`, seeded: `presidentielle-2027`) lists candidates among the tracked persons. The vote is **tartuffe-vote/2** (`docs/vote/SPEC.md`: the design, its properties and residuals; `backend/vote`, `circuits/ballot`, `frontend/src/lib/vote`). One period for the whole election; the results are final at the close. The browser never talks to our server: it reads the app and the public data from static hosts (`VITE_VOTE_MIRROR`, a directory, or `VITE_VOTE_MIRROR_REPO`, a GitHub repo through jsDelivr) and sends through public Nostr relays. The GitHub organisation is `tartuffeme`: the code is `tartuffeme/mirror` (private), the data mirror `tartuffeme/vote-data` (public; the ingest pushes it with `--mirror-git git@github.com:tartuffeme/vote-data.git` and the deploy key in `VOTE_MIRROR_SSH_KEY`; latest files at `https://tartuffeme.github.io/vote-data/`), the app `tartuffeme/tartuffeme.github.io` (public; the workflow `.github/workflows/vote-app.yml` builds `npm run build:vote`, a static SvelteKit build of the vote routes only, `frontend/scripts/vote-app.mjs`, and pushes it with the secret `VOTE_APP_DEPLOY_KEY`; the API must list `https://tartuffeme.github.io` in `ALLOWED_ORIGINS`, and the ingest's `ZKPASSPORT_DOMAIN` is that host).
 - **Setup.** `dm vote keygen <slug> --out keys.json` makes the election keys on the tallier (the secret file never leaves it; `keys.pub.json` goes to the setup). `dm vote setup <slug> --keys keys.pub.json --relays wss://…` compiles `circuits/ballot` for the event's public keys (Noir, bb; `vote.FindTools`), writes the artifact and verification key to `circuits/ballot/target/setup-<slug>/`, and logs the setup entry (candidates, blank slot, mask, relays, close, blackouts, `K_REAL`, `R_MIN`, anchor age, checkpoint period; SPEC §11). `dm vote log-key` makes the log's signing key (`VOTE_LOG_KEY`: set once, never change).
 - **Voting key.** The browser makes a secret `s` (`lib/vote/key.ts`: from a passkey's PRF, or 12 French words, BIP39) and its public id `H(T_ID, s)` (Poseidon2 on BN254, `lib/vote/crypto.ts` = `backend/vote/poseidon2`). The ZKPassport proof (`VotePassport.svelte`, documentType passport only: a passport and an ID card would be two votes) binds `custom_data = H(T_REG, event, id)`; the registration (`kind 7021`) goes to the registration relay of the device (`relayRanking`: rendezvous hashing of the device's key over the setup's relays; rank 0 registers, the others carry the ballots). The ingest verifies it (`vote.Passport` through `providers.ZKPassport.VerifyBound`; freshness within the setup's `validity`), refuses a passport that already has an id (`vote2_registrations.uid`), and logs it, proof included: the voter list is public and anyone checks every passport proof.
@@ -248,21 +250,47 @@ cd circuits/ballot && nargo test && nargo compile           # the circuit (nargo
   tallies and the close (signed). A second ingest or tallier refuses to
   start (a lease on the database). The order of operations for a launch,
   with the commands, is `docs/vote/LAUNCH.md`.
-- Local trial: `--dev-accept-any-passport` on the ingest and
-  `VITE_VOTE_SIMULATE_PASSPORT=1` on Vite stand in for the ZKPassport app;
-  the ingest refuses the flag on the host. `VITE_VOTE_MIRROR` names the
-  mirror directory's URL (symlink it into `frontend/static/mirror` in dev).
-  `VITE_VOTE_APP_ORIGIN` (the site's build only: `https://tartuffeme.github.io`)
-  sends the vote and complaint pages of tartuffe.me to the app origin, where
-  the keys and the passport proofs live; unset in dev and in the app's build.
-  `npm run build:vote` rewrites `.svelte-kit/generated` for the app's routes:
-  run `npx vite build` after it when the dev server is running.
 - Go tests of `backend/vote` need `DATABASE_URL` (mirror_test) and the
   circuit's `out/native/vk` for the proof checks (`bb write_vk` in
-  `circuits/ballot`); `frontend`: `npx vitest run src/lib/vote` checks the
-  browser's arithmetic against the circuit's vectors.
+  `circuits/ballot`).
 - A setup change that touches a fixed field (keys, `vk_hash`, `k_real`,
   `closes`…) is a new event (SPEC §11).
+
+### The vote app (frontend, isoloir)
+
+The vote pages (`frontend/src/routes/election/[slug]/`, `VoteKeyDialog`,
+`VotePassport`) run the isoloir protocol through the library
+`@isoloir/web` (the repository `isoloir`, beside this one: read its
+`js/README.md` and `SPEC.md`). `src/lib/vote/isoloir.ts` builds one
+`Session` per event and gives its state as Svelte stores; the protocol is
+the library's, never the app's. The library is not on npm: it is vendored
+as `frontend/vendor/isoloir-web-<v>.tgz` (`frontend/scripts/vendor-isoloir.sh`
+rebuilds it from the isoloir checkout, `ISOLOIR_SRC` to point elsewhere;
+then `npm install`).
+
+- Settings (build time): `VITE_VOTE_ORIGIN` (the ledger's origin, e.g.
+  `tartuffe.me/isoloir`), `VITE_VOTE_LOG_KEY` (the log's verifier key,
+  pinned), `VITE_VOTE_REGISTRY` (default 1), `VITE_VOTE_POLLS` (the poll of
+  each event, `slug:id,…`), `VITE_VOTE_MIRROR` (the mirror as a directory
+  URL) and/or `VITE_VOTE_MIRROR_REPO` (owner/repo, read by commit through
+  jsDelivr). `VITE_VOTE_SIMULATE_PASSPORT=1` stands in for the ZKPassport
+  app (a `dev` registry only), `VITE_ZKPASSPORT_DEV=1` the SDK's dev mode,
+  `VITE_VOTE_APP_ORIGIN` (the site's build only) sends the vote pages of
+  tartuffe.me to the app's origin.
+- The candidates: the poll's options are names in slot order (blank last);
+  their cards (person id, photo, honesty score) come from
+  `GET /api/polls/<slug>`, matched by name. `npm run build:vote` fetches
+  them into `static/vote/candidates/<slug>.json` (needs `VITE_API_BASE`),
+  so the published app never calls the API for them.
+- Local stack (from the isoloir checkout, `target/release/isoloir`; README
+  "A local trial"): `isoloir relay`, `isoloir genesis`, `isoloir ingest
+  --dev --no-stamps --mirror-dir <dir>`, `isoloir submit registry|poll`
+  (a `dev` registry, a ranked poll), `isoloir trustee --once` for a tally.
+  Symlink the mirror into `frontend/static/mirror`, set
+  `VITE_VOTE_MIRROR=http://localhost:<port>/mirror` and the other settings,
+  and fetch the SRS once (`scripts/srs.sh`). `npm run build:vote` rewrites
+  `.svelte-kit/generated` for the app's routes: restart the dev server
+  after it.
 
 ## Deployment (the host)
 

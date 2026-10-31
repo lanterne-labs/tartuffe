@@ -1,9 +1,10 @@
-# The vote app (tartuffe-vote/2) as static files on https://tartuffeme.github.io:
-# built from the frontend with the vote's settings, pushed to the public
-# repository tartuffeme/tartuffeme.github.io with a deploy key (the secret
+# The vote app (isoloir, through @isoloir/web) as static files on
+# https://tartuffeme.github.io: built from the frontend with the vote's
+# settings (the repository variables VOTE_*), the candidates' cards fetched
+# from the API at build time, pushed to the public repository
+# tartuffeme/tartuffeme.github.io with a deploy key (the secret
 # VOTE_APP_DEPLOY_KEY: the private key whose public half is a write deploy
-# key of that repository). The build's hash is in the commit message: what
-# the setup entry's app_hash names.
+# key of that repository).
 name: vote-app
 on:
   push:
@@ -26,22 +27,30 @@ jobs:
       - name: SRS
         working-directory: frontend
         run: ./scripts/srs.sh
-      - name: Build
+      - name: Settings
+        env:
+          VOTE_ORIGIN: ${{ vars.VOTE_ORIGIN }}
+          VOTE_LOG_KEY: ${{ vars.VOTE_LOG_KEY }}
+          VOTE_POLLS: ${{ vars.VOTE_POLLS }}
+        run: |
+          set -eu
+          for v in VOTE_ORIGIN VOTE_LOG_KEY VOTE_POLLS; do
+            eval "x=\${$v:-}"
+            [ -n "$x" ] || { echo "the repository variable $v is not set"; exit 1; }
+          done
+      # The candidates (GET /api/polls/<slug> for each event of VOTE_POLLS)
+      # are fetched by the build itself (scripts/vote-app.mjs), from VITE_API_BASE.
+      - name: Build, with the candidates
         working-directory: frontend
         env:
-          VITE_API_BASE: https://tartuffe.me
-          VITE_VOTE_MIRROR: https://tartuffeme.github.io/vote-data
-          VITE_VOTE_MIRROR_REPO: tartuffeme/vote-data
-          VITE_ZKPASSPORT_DOMAIN: tartuffeme.github.io
-          VITE_VOTE_LOG_KEY: ${{ vars.VOTE_LOG_VERIFIER_KEY }}
+          VITE_API_BASE: ${{ vars.VOTE_API_BASE || 'https://tartuffe.me' }}
+          VITE_VOTE_ORIGIN: ${{ vars.VOTE_ORIGIN }}
+          VITE_VOTE_LOG_KEY: ${{ vars.VOTE_LOG_KEY }}
+          VITE_VOTE_REGISTRY: ${{ vars.VOTE_REGISTRY || '1' }}
+          VITE_VOTE_POLLS: ${{ vars.VOTE_POLLS }}
+          VITE_VOTE_MIRROR: ${{ vars.VOTE_MIRROR || 'https://tartuffeme.github.io/vote-data' }}
+          VITE_VOTE_MIRROR_REPO: ${{ vars.VOTE_MIRROR_REPO || 'tartuffeme/vote-data' }}
         run: npm run build:vote
-      - name: Hash
-        id: hash
-        working-directory: frontend
-        run: |
-          h=$(find build-vote -type f ! -path '*/srs/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-64)
-          echo "app_hash=$h" >> "$GITHUB_OUTPUT"
-          echo "app_hash $h"
       - name: Publish
         env:
           DEPLOY_KEY: ${{ secrets.VOTE_APP_DEPLOY_KEY }}
@@ -57,5 +66,5 @@ jobs:
           touch pages/.nojekyll
           cd pages
           git add -A
-          git -c user.name=tartuffe-vote -c user.email=vote@tartuffe.me commit -q -m "build ${GITHUB_SHA::12}, app_hash ${{ steps.hash.outputs.app_hash }}" || { echo "nothing changed"; exit 0; }
+          git -c user.name=tartuffe-vote -c user.email=vote@tartuffe.me commit -q -m "build ${GITHUB_SHA::12}" || { echo "nothing changed"; exit 0; }
           git push -q origin HEAD:main
