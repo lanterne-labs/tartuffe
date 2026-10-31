@@ -234,6 +234,7 @@ func (f *TwitterAPIIOFetcher) FetchTweetsByIDs(ctx context.Context, ids []string
 			return out, err
 		}
 		out = append(out, tweets...)
+		log.Debug().Int("asked", end-start).Int("got", len(tweets)).Int("done", end).Int("of", len(ids)).Msg("twitter: tweet lookup")
 	}
 	return out, nil
 }
