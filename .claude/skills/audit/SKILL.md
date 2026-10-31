@@ -40,6 +40,14 @@ work, Fish shell quirks).
   `debatable` only when the facts truly leave it open. The rules the judges
   apply are in `backend/promptrules/{false_positives.txt,verify.go,contradiction.go}`.
 
+## Run long work in the background
+
+The user keeps talking to you during an audit. Start every command that can
+take more than a minute or two in the background (`run_in_background`): the
+goldens, the replay, dry runs and repairs against prod, the rescore, the
+deploy watch. Reviewers and samplers are background agents. Answer the user
+while they run, and report when each one ends.
+
 ## Setup
 
 ```bash
