@@ -57,7 +57,7 @@ func TestParsePage(t *testing.T) {
 		t.Errorf("second exchange: %+v", ex[1])
 	}
 	out := render(nunezInterview, "Laurent Nuñez", ex)
-	for _, want := range []string{"Interview de Laurent Nuñez (Ministre de l'intérieur), France Inter, le 2025-12-30.", attribution, "Question (SIMON LE BARON) :", "LAURENT NUNEZ : Je vais vous expliquer"} {
+	for _, want := range []string{"Interview de Laurent Nuñez (Ministre de l'intérieur), France Inter, le 30 décembre 2025.", attribution, "Question (SIMON LE BARON) :", "LAURENT NUNEZ : Je vais vous expliquer"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered text lacks %q", want)
 		}

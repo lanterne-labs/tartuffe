@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -342,7 +343,8 @@ func render(s Speech, person string, exchanges []exchange) string {
 		fmt.Fprintf(&b, ", %s", s.Media)
 	}
 	if !s.Spoken.IsZero() {
-		fmt.Fprintf(&b, ", le %s", s.Spoken.Format("2006-01-02"))
+		// In words: the extractor copies the date it reads into the facts.
+		fmt.Fprintf(&b, ", le %s", frenchDate(s.Spoken))
 	}
 	fmt.Fprintf(&b, ".\nTitre : %s\n%s\n", s.Title, attribution)
 	for _, ex := range exchanges {
@@ -442,4 +444,15 @@ func (ing *ingester) extract(ctx context.Context, t plugins.Target, doc core.Sou
 		inserted += r.Inserted + r.Skipped
 	}
 	return inserted, nil
+}
+
+var frenchMonths = [...]string{"janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+
+// frenchDate writes t as "3 mars 2025" ("1er" for the first day).
+func frenchDate(t time.Time) string {
+	day := strconv.Itoa(t.Day())
+	if t.Day() == 1 {
+		day = "1er"
+	}
+	return fmt.Sprintf("%s %s %d", day, frenchMonths[t.Month()-1], t.Year())
 }

@@ -168,13 +168,13 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		}
 
 		finalFacts = append(finalFacts, backend.Fact{
-			SubjectEntity:        rawFact.SubjectEntity,     // Primary entity this fact is about
-			SubjectEntityType:    rawFact.SubjectEntityType, // Entity type (human/party/organization)
-			NormalizedFactText:   rawFact.NormalizedFact,    // Native-language fact text
-			NormalizedFactTextEn: rawFact.NormalizedFactEn,  // English translation (empty if source is English)
-			Lang:                 rawFact.Lang,              // BCP-47 source language
-			EmbeddingText:        rawFact.EmbeddingText,     // Name-free version for embeddings
-			OriginalQuote:        rawFact.OriginalQuote,     // Map to correct field
+			SubjectEntity:        rawFact.SubjectEntity,                                 // Primary entity this fact is about
+			SubjectEntityType:    rawFact.SubjectEntityType,                             // Entity type (human/party/organization)
+			NormalizedFactText:   isoDatesInWords(rawFact.NormalizedFact, rawFact.Lang), // Native-language fact text, dates in words
+			NormalizedFactTextEn: rawFact.NormalizedFactEn,                              // English translation (empty if source is English)
+			Lang:                 rawFact.Lang,                                          // BCP-47 source language
+			EmbeddingText:        rawFact.EmbeddingText,                                 // Name-free version for embeddings
+			OriginalQuote:        rawFact.OriginalQuote,                                 // Map to correct field
 			CanonicalVerb:        rawFact.CanonicalVerb,
 			InvolvedPeople:       rawFact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:            sourceURL,              // Add context passed from extractor
