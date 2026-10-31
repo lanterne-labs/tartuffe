@@ -39,7 +39,7 @@ func TestDeriveDeputyFactsSkipNonVoting(t *testing.T) {
 	}, LawSummary{}, testObjectPhrase)
 
 	require.Len(t, facts, 1)
-	require.Equal(t, "Marie Curie s'est abstenu lors du vote sur "+testObjectPhrase, facts[0].FactText)
+	require.Equal(t, "Marie Curie a choisi l'abstention lors du vote sur "+testObjectPhrase, facts[0].FactText)
 }
 
 // A party's majority fact names the party.

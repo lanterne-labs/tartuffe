@@ -352,3 +352,35 @@ func (s *Store) ReopenPairsOf(ctx context.Context, factIDs []int64) (persons []i
 	}
 	return persons, removed, nil
 }
+
+// StoredLawSummaries returns the summary already given to the facts of each
+// law key that has facts: a law whose facts are built in two runs keeps one
+// wording (scrutin 17-7980 had 301 facts with one summary and 246 with
+// another, audit of 2026-10-31). A stored summary passed the AI filter, so
+// its confidence is 1.
+func (s *Store) StoredLawSummaries(ctx context.Context, keys []string) (map[string]LawSummary, error) {
+	out := make(map[string]LawSummary, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (metadata->>'law_key') metadata->>'law_key', COALESCE(metadata->>'law_short_title', ''), metadata->>'law_summary'
+		FROM fact_sources
+		WHERE source_type = 'assemblee_law_page' AND metadata->>'law_key' = ANY($1)
+		  AND COALESCE(metadata->>'law_summary', '') <> ''
+		ORDER BY metadata->>'law_key', id`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("loading the stored law summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var sum LawSummary
+		if err := rows.Scan(&key, &sum.ShortTitle, &sum.SimpleStatement); err != nil {
+			return nil, fmt.Errorf("scanning a stored law summary: %w", err)
+		}
+		sum.Confidence = 1
+		out[key] = sum
+	}
+	return out, rows.Err()
+}
