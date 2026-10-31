@@ -52,3 +52,4 @@ scoped_persons*.txt
 
 # macOS
 .DS_Store
+!.claude/skills/**/*.md
