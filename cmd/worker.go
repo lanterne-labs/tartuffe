@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -86,6 +88,18 @@ func runWorker(cmd *cobra.Command, args []string) error {
 	// instead of waiting out the retry backoff per call.
 	if !llm.ProbePrimary(ctx) {
 		log.Warn().Msg("Worker: primary LLM endpoint unreachable; routing the calls to the fallback")
+	}
+
+	// WORKER_PAUSED=true stops all the work: no task is claimed, no feed and
+	// no maintenance pass run; the process only serves its metrics until the
+	// variable is removed (a variable change on the host restarts the
+	// service). It is the switch to stop extracting while the data is
+	// audited.
+	if paused, _ := strconv.ParseBool(os.Getenv("WORKER_PAUSED")); paused {
+		log.Warn().Msg("Worker: paused (WORKER_PAUSED=true); no task, feed or maintenance runs until the variable is removed")
+		<-ctx.Done()
+		log.Info().Msg("Worker stopped while paused")
+		return nil
 	}
 
 	d := deps.New(storer)
