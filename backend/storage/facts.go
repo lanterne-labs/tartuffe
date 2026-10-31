@@ -1579,3 +1579,38 @@ func (s *PostgresStorer) FindActiveFactByQuote(ctx context.Context, personID int
 	}
 	return &sf, nil
 }
+
+// FactText is a fact's id, text and language.
+type FactText struct {
+	ID   int64
+	Text string
+	Lang string
+}
+
+// ListFactsWithISODates returns the facts whose text holds an ISO date
+// ("2026-10-28"), for their rewrite in words.
+func (s *PostgresStorer) ListFactsWithISODates(ctx context.Context) ([]FactText, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, fact_text, COALESCE(lang, '') FROM facts WHERE fact_text ~ '\m\d{4}-\d{2}-\d{2}\M' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing facts with ISO dates: %w", err)
+	}
+	defer rows.Close()
+	var out []FactText
+	for rows.Next() {
+		var f FactText
+		if err := rows.Scan(&f.ID, &f.Text, &f.Lang); err != nil {
+			return nil, fmt.Errorf("scanning fact: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// SetFactText rewrites a fact's text; the embedding is of embedding_text,
+// which is kept.
+func (s *PostgresStorer) SetFactText(ctx context.Context, id int64, text string) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE facts SET fact_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id, text); err != nil {
+		return fmt.Errorf("setting the text of fact %d: %w", id, err)
+	}
+	return nil
+}

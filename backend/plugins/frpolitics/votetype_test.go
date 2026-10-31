@@ -73,13 +73,13 @@ func TestSplitArticle(t *testing.T) {
 // article before the bill phrase; an amendment keeps its wording.
 func TestVotedObjectPhraseArticle(t *testing.T) {
 	summary := LawSummary{SimpleStatement: "Crée un droit à l'aide à mourir."}
-	if got := votedObjectPhrase("l'article 7", summary); got != "l'article 7 du texte de loi : « Crée un droit à l'aide à mourir. »" {
+	if got := votedObjectPhrase("l'article 7", "", summary); got != "l'article 7 du texte de loi : « Crée un droit à l'aide à mourir. »" {
 		t.Errorf("article phrase = %q", got)
 	}
-	if got := votedObjectPhrase("", summary); got != "le texte de loi : « Crée un droit à l'aide à mourir. »" {
+	if got := votedObjectPhrase("", "", summary); got != "le texte de loi : « Crée un droit à l'aide à mourir. »" {
 		t.Errorf("whole-text phrase = %q", got)
 	}
-	if got := votedObjectPhrase("l'amendement n° 3 (RN) visant à supprimer l'article", summary); got != "l'amendement n° 3 (RN) visant à supprimer l'article, déposé sur le texte de loi : « Crée un droit à l'aide à mourir. »" {
+	if got := votedObjectPhrase("l'amendement n° 3 (RN) visant à supprimer l'article", "", summary); got != "l'amendement n° 3 (RN) visant à supprimer l'article, déposé sur le texte de loi : « Crée un droit à l'aide à mourir. »" {
 		t.Errorf("amendment phrase = %q", got)
 	}
 }
@@ -95,7 +95,7 @@ func TestResolveVotedObjectArticle(t *testing.T) {
 	if !isArticlePhrase("l’article 7") {
 		t.Error("the curly apostrophe is an article phrase too")
 	}
-	if got := votedObjectPhrase("la première partie", LawSummary{}); got != "la première partie du texte de loi" {
+	if got := votedObjectPhrase("la première partie", "", LawSummary{}); got != "la première partie du texte de loi" {
 		t.Errorf("part phrase without a statement = %q", got)
 	}
 	if got := summaryTitle(Law{Title: "la première partie du projet de loi de finances pour 2026 (première lecture)."}); got != "projet de loi de finances pour 2026 (première lecture)." {
@@ -120,7 +120,7 @@ func TestCensureObject(t *testing.T) {
 		t.Errorf("object = %q", o2)
 	}
 	o3, _, _ := resolveVotedObject(context.Background(), m3, nil)
-	p2, p3 := votedObjectPhrase(o2, summary), votedObjectPhrase(o3, summary)
+	p2, p3 := votedObjectPhrase(o2, "", summary), votedObjectPhrase(o3, "", summary)
 	if p2 == p3 {
 		t.Fatalf("two motions share the phrase %q", p2)
 	}
@@ -128,7 +128,7 @@ func TestCensureObject(t *testing.T) {
 	if p3 != want {
 		t.Errorf("phrase = %q\nwant     %q", p3, want)
 	}
-	if got := votedObjectPhrase(o2, LawSummary{}); got != o2 {
+	if got := votedObjectPhrase(o2, "", LawSummary{}); got != o2 {
 		t.Errorf("phrase without a statement = %q", got)
 	}
 	// Another motion is named by its title, without the bill summary: a
@@ -139,7 +139,20 @@ func TestCensureObject(t *testing.T) {
 		t.Fatalf("rejet préalable: (%q, %v, %v), want resolved", o, ok, err)
 	}
 	want = "la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi visant à offrir des réponses immédiates aux phénomènes troublant l'ordre public (première lecture)"
-	if got := votedObjectPhrase(o, LawSummary{SimpleStatement: "Offre des réponses immédiates aux phénomènes troublant l'ordre public."}); got != want {
+	if got := votedObjectPhrase(o, "", LawSummary{SimpleStatement: "Offre des réponses immédiates aux phénomènes troublant l'ordre public."}); got != want {
 		t.Errorf("rejet phrase = %q\nwant         %q", got, want)
+	}
+}
+
+// A resolution is not a law: its votes name it as such (audit of 2026-10-31).
+func TestVotedObjectPhraseNamesAResolution(t *testing.T) {
+	title := "l'article unique de la proposition de résolution européenne sur le protocole de l'OMS pour éliminer le commerce illicite des produits du tabac"
+	got := votedObjectPhrase("l'article unique", title, LawSummary{SimpleStatement: "Invite l'UE à ratifier le protocole de l'OMS."})
+	want := "l'article unique de la proposition de résolution : « Invite l'UE à ratifier le protocole de l'OMS. »"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := votedObjectPhrase("", "l'ensemble du projet de loi de finances pour 2027", LawSummary{SimpleStatement: "Fixe le budget."}); got != "le texte de loi : « Fixe le budget. »" {
+		t.Errorf("a bill keeps its phrase, got %q", got)
 	}
 }

@@ -108,6 +108,30 @@ func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	}
 }
 
+// textNoun names the kind of text a scrutin title votes on: a proposition
+// de résolution or a résolution européenne is not a law, and calling it "le
+// texte de loi" misstates the vote (2 of 100 audited vote facts, 2026-10-31).
+func textNoun(title string) string {
+	t := strings.ToLower(title)
+	switch {
+	case strings.Contains(t, "proposition de résolution"), strings.Contains(t, "proposition de resolution"):
+		return "la proposition de résolution"
+	case strings.Contains(t, "projet de loi organique"), strings.Contains(t, "proposition de loi organique"):
+		return "le texte de loi organique"
+	default:
+		return "le texte de loi"
+	}
+}
+
+// lawPhraseFor is prepareLawPhrase with the noun of the scrutin's text.
+func lawPhraseFor(title, lawSimple string) string {
+	phrase := prepareLawPhrase(lawSimple)
+	if noun := textNoun(title); noun != "le texte de loi" {
+		phrase = noun + strings.TrimPrefix(phrase, "le texte de loi")
+	}
+	return phrase
+}
+
 func prepareLawPhrase(lawSimple string) string {
 	// The summarizer's simple_statement is a full French sentence ("Crée un
 	// cadre stable..."), not a noun phrase; wrapping it in guillemets after

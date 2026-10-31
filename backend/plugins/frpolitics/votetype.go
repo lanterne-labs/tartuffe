@@ -264,19 +264,22 @@ func frenchDate(t time.Time) string {
 // by the article or the amendment when the ballot judged one; the censure
 // motion followed by its purpose; any other motion alone (see
 // resolveVotedObject).
-func votedObjectPhrase(object string, summary LawSummary) string {
-	billPhrase := prepareLawPhrase(summary.SimpleStatement)
+func votedObjectPhrase(object, title string, summary LawSummary) string {
+	billPhrase := lawPhraseFor(title, summary.SimpleStatement)
 	switch {
 	case object == "":
 		return billPhrase
 	case strings.HasPrefix(object, censurePrefix):
-		return object + strings.TrimPrefix(billPhrase, "le texte de loi")
+		return object + strings.TrimPrefix(strings.TrimPrefix(billPhrase, textNoun(title)), "le texte de loi")
 	case strings.HasPrefix(strings.ToLower(object), motionPrefix):
 		// The title names the text; a summary of the bill would read as
 		// the object of the vote.
 		return object
 	case isArticlePhrase(object):
-		return object + " du " + strings.TrimPrefix(billPhrase, "le ")
+		if rest, ok := strings.CutPrefix(billPhrase, "le "); ok {
+			return object + " du " + rest
+		}
+		return object + " de " + billPhrase
 	default:
 		return object + ", déposé sur " + billPhrase
 	}

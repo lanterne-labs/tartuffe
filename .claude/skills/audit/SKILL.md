@@ -70,7 +70,7 @@ takes the next band below the cursor:
 |---|---|---|
 | facts | ids from `facts_below - 8000` to `facts_below`; sample ~240 text facts and ~100 votes at random inside the band | the band's lower end |
 | stances | ids from `stances_below - 1500` to `stances_below`; sample ~70 with 3–40 facts | the band's lower end |
-| contradictions | the 40 rows whose LATEST review is the oldest (`reviewed_at` ascending), whatever their verdict, skipping those reviewed in the last 7 days | (no cursor: the order is by review age) |
+| contradictions | the 40 rows whose LATEST review is the oldest (`reviewed_at` ascending), whatever their verdict, skipping those reviewed in the last 2 days | (no cursor: the order is by review age) |
 
 When a cursor reaches the lowest id, it wraps to the newest ids and starts
 again: the rules have changed since. Save the new cursor at the end of the

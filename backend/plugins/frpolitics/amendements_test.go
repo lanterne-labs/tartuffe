@@ -65,7 +65,7 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 	if !ok {
 		t.Fatal("resolveVotedObject gated a resolvable sous-amendement")
 	}
-	phrase := votedObjectPhrase(amendment, LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"})
+	phrase := votedObjectPhrase(amendment, "", LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"})
 	t.Logf("phrase: %s", phrase)
 	for _, want := range []string{"le sous-amendement n° 372", "(UDR)", "visant à accorder", "déposé sur le texte de loi"} {
 		if !strings.Contains(phrase, want) {

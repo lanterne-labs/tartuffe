@@ -179,7 +179,7 @@ func TestArticleResolver(t *testing.T) {
 	if object != want {
 		t.Errorf("object = %q, want %q", object, want)
 	}
-	phrase := votedObjectPhrase(object, LawSummary{SimpleStatement: "Crée un droit à l'aide à mourir."})
+	phrase := votedObjectPhrase(object, "", LawSummary{SimpleStatement: "Crée un droit à l'aide à mourir."})
 	if phrase != want+" du texte de loi : « Crée un droit à l'aide à mourir. »" {
 		t.Errorf("phrase = %q", phrase)
 	}
