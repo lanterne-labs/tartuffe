@@ -98,7 +98,7 @@ var pollIsoloirSetupCmd = &cobra.Command{
 	Long: `Print the poll setup (isoloir SPEC §7) of an event, to log with
 isoloir submit poll: a ranked poll of the event's candidates (by name), the
 blank last, ranked up to the event's max choices with pairwise margins,
-encrypted for one decrypter, results open after every changed ballot
+encrypted for one authority, results open after every changed ballot
 (k_real 1) outside the blackouts, linked re-votes. A poll's options never
 change once logged: add the candidates first (dm poll candidate add).`,
 	Annotations: map[string]string{"needs_db": "true"},
@@ -124,8 +124,8 @@ func init() {
 	f := pollIsoloirSetupCmd.Flags()
 	f.Int("id", 0, "the poll's id in the ledger (required)")
 	f.Int("registry", 1, "the registry it draws its voters from")
-	f.String("pk", "", "the decrypter's public key (isoloir keygen decrypter: pk)")
-	f.String("sign-key", "", "the decrypter's signing key (isoloir keygen decrypter: sign_key)")
+	f.String("pk", "", "the authority's public key (isoloir keygen authority: pk)")
+	f.String("sign-key", "", "the authority's signing key (isoloir keygen authority: sign_key)")
 	f.String("circuit", "", "the circuit variant (isoloir check poll prints it), e.g. rankedm12_single_linked_d20")
 	f.String("vk-hash", "", "its verification key hash (isoloir circuits prints it)")
 	pollEventCmd.AddCommand(pollEventSetCmd)
@@ -428,7 +428,7 @@ func runPollIsoloirSetup(cmd *cobra.Command, args []string) error {
 	poll := map[string]any{
 		"v": 1, "id": id, "version": 1, "registry": registry, "title": e.TitleFR,
 		"kind":       map[string]any{"type": "ranked", "options": names, "blank": true, "depth": e.MaxChoices, "margins": true},
-		"encryption": map[string]any{"mode": "elgamal", "pk": pk, "decrypter": map[string]any{"type": "single", "sign_key": signKey}},
+		"encryption": map[string]any{"mode": "elgamal", "pk": pk, "authority": map[string]any{"type": "single", "sign_key": signKey}},
 		"publish":    map[string]any{"mode": "open", "k_real": 1, "min_gap": 0, "coin": false},
 		"revote":     "linked",
 		"opens":      opens.Unix(),

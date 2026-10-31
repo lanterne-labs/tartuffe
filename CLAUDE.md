@@ -213,10 +213,10 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
 
 ## The anonymous vote (isoloir)
 
-The vote is [isoloir](https://github.com/tartuffeme/isoloir) (its own repository, beside this one; read its `SPEC.md` and README): passport eligibility through ZKPassport, ballots proved in the browser (Noir, UltraHonk), posted to Nostr relays, logged by the ledger's ingest in a signed append-only log (RFC 6962), mirrored to `tartuffeme/vote-data`, decrypted as sums by the trustee with proofs. isoloir knows nothing of tartuffe: keep it that way, a need of ours is a generic feature there.
+The vote is [isoloir](https://github.com/tartuffeme/isoloir) (its own repository, beside this one; read its `SPEC.md` and README): passport eligibility through ZKPassport, ballots proved in the browser (Noir, UltraHonk), posted to Nostr relays, logged by the ledger's ingest in a signed append-only log (RFC 6962), mirrored to `tartuffeme/vote-data`, decrypted as sums by the authority with proofs. isoloir knows nothing of tartuffe: keep it that way, a need of ours is a generic feature there.
 
 - **Ledger** (`tartuffe.me/vote-log`): the host service `ingest`, built from the isoloir repository (`isoloir ingest --mirror-dir /app/mirror`), the log's only writer. The log key is `ISOLOIR_LOG_KEY` (its verifier key is the frontend's `VITE_VOTE_LOG_KEY`).
-- **Trustee**: the host service `tally` (`isoloir trustee --db $DATABASE_URL`), with `ISOLOIR_DECRYPTER_KEYS`; no inbound port.
+- **Authority**: the host service `tally` (`isoloir authority --db $DATABASE_URL`), with `ISOLOIR_AUTHORITY_KEYS`; no inbound port.
 - **A poll**: `dm poll isoloir-setup` prints its JSON, `isoloir submit poll <file>` posts it. A change to a fixed field (keys, circuit, `k_real`) is a new poll.
 - Audit: `isoloir audit` (anyone, from the mirror).
 
@@ -249,7 +249,7 @@ then `npm install`).
 - Local stack (from the isoloir checkout, `target/release/isoloir`; README
   "A local trial"): `isoloir relay`, `isoloir genesis`, `isoloir ingest
   --dev --no-stamps --mirror-dir <dir>`, `isoloir submit registry|poll`
-  (a `dev` registry, a ranked poll), `isoloir trustee --once` for a tally.
+  (a `dev` registry, a ranked poll), `isoloir authority --once` for a tally.
   Symlink the mirror into `frontend/static/mirror`, set
   `VITE_VOTE_MIRROR=http://localhost:<port>/mirror` and the other settings,
   and fetch the SRS once (`scripts/srs.sh`). `npm run build:vote` rewrites
@@ -264,7 +264,7 @@ Services on the host:
   Sign-in on `mirror`: `AUTH_PROVIDERS` (`google`; `noop` to test). The vote needs no account.
 - **`worker`** — long-lived `dm worker run` (root `Dockerfile`, start command set in the service settings). Claims the collection tasks (`dm collect add`) and runs the ingest of their plugin for their person and period, as many tasks at once as the LLM endpoint serves (`llm.Concurrency()`: one on the local GPU box, on claude-team the processes of every seat: `CLAUDE_TEAM_PLAN_PROCS_PER_SEAT`, default 4, times the seats; every seat that is not at its limit serves at the same time); the facts of one person are inserted one at a time across the tasks. The daily feed and the maintenance pass in the order of priority (see Collection tasks above). Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `mirror` except no HTTP `PORT`. On a deploy the tasks it is on go back to pending and resumes where its fetch log stopped.
 - **`ingest`** — the isoloir ledger (`isoloir ingest --mirror-dir /app/mirror --zkverifier /app/zkverifier/verify.mjs`), built from the `Dockerfile` of `tartuffeme/isoloir`. Needs `DATABASE_URL`, `ISOLOIR_LOG_KEY`, `ISOLOIR_NOSTR_KEY`, `ISOLOIR_MIRROR_GIT` (`tartuffeme/vote-data`), `ISOLOIR_MIRROR_SSH_KEY`, `ISOLOIR_ETH_RPC`. The only writer of the log: one instance.
-- **`tally`** — the isoloir trustee (`isoloir trustee --db $DATABASE_URL --zkverifier /app/zkverifier/verify.mjs`), same image. Needs `DATABASE_URL`, `ISOLOIR_LOG_KEY`, `ISOLOIR_DECRYPTER_KEYS`, `ISOLOIR_MIRROR_GIT`.
+- **`tally`** — the isoloir authority (`isoloir authority --db $DATABASE_URL --zkverifier /app/zkverifier/verify.mjs`), same image. Needs `DATABASE_URL`, `ISOLOIR_LOG_KEY`, `ISOLOIR_AUTHORITY_KEYS`, `ISOLOIR_MIRROR_GIT`.
 - **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`). Grafana alerts (`grafana/provisioning/alerting/worker.yml`: feed missing after 06:00 UTC, no maintenance pass ended for 12 h) go to Telegram: the service needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before it is deployed.
 
 To collect facts, add tasks with `./dm collect add`; the worker runs them.
