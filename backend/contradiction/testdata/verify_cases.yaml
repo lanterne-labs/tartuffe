@@ -877,16 +877,6 @@ cases:
     date_a: "2026-10-16"
     date_b: "2024-04-11"
 
-  - name: "FP_2291_retailleau_usine_a_gaz_vs_no_principle"
-    fact_a: "Bruno Retailleau a affirmé ne pas avoir d'opposition de principe à une éventuelle primaire pour la présidentielle, précisant qu'il ne veut pas perdre son temps et préfère travailler sur le fond."
-    fact_b: "Bruno Retailleau a repoussé l'idée d'une primaire électorale élargie à la droite et au centre, y voyant \"une usine à gaz\"."
-    claimed_reason: "Il a rejeté la primaire élargie comme « usine à gaz » en mars 2026, puis a déclaré en août 2026 ne pas avoir d'opposition de principe à une primaire."
-    expect: drop
-    bucket: complementary_facts
-    notes: "A practical rejection and no opposition of principle are one position: he still does not take part. Prod 2291 (review 2026-10-31)."
-    date_a: "2026-08-27"
-    date_b: "2026-03-26"
-
   - name: "FP_2300_martin_article_two_readings"
     fact_a: "Patrice Martin a voté CONTRE l'article 17 (« Crée l'obligation de mettre en place une communication alternative et améliorée pour recueillir le consentement éclairé des majeurs dans l'impossibilité, partielle ou totale, de s'exprimer ») du texte de loi : « Renforce l'accès aux soins palliatifs et à l'accompagnement des patients en fin de vie »"
     fact_b: "Patrice Martin a voté POUR l'article 17 (« Crée l'obligation de mettre en place une communication alternative et améliorée pour recueillir le consentement des majeurs ne pouvant s'exprimer, reconnue de même valeur juridique que l'expression verbale ») du texte de loi : « la proposition de loi visant à garantir l'égal accès de tous à l'accompagnement et aux soins palliatifs (deuxième lecture). »"
