@@ -2,6 +2,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -236,6 +237,12 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 		}
 		page++
 	}
+
+	links := make([]*string, len(all))
+	for i := range all {
+		links[i] = &all[i].Link
+	}
+	resolveGoogleLinks(context.Background(), links)
 
 	log.Debug().Int("count", len(all)).Str("query", query).Msg("Serper news search completed")
 	return all, nil

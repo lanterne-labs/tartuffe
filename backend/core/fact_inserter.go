@@ -7,6 +7,7 @@ import (
 	"digital-mirror/backend/util"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -162,6 +163,16 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 		storer:          storer,
 		stanceProcessor: stance,
 	}
+}
+
+// sameQuoteMinRunes is the shortest quote taken as the identity of an
+// occurrence: a short quote ("Non.", a slogan) recurs on other occasions.
+const sameQuoteMinRunes = 40
+
+// QuoteLookupStorer finds a person's active fact by its source quote.
+// Implemented by storage.PostgresStorer; a Storer without it goes to the gate.
+type QuoteLookupStorer interface {
+	FindActiveFactByQuote(ctx context.Context, personID int64, quote string, sourceTypes []string) (*SimilarFact, error)
 }
 
 // EnableDedupe turns on claim grouping: an incoming fact that reports an
@@ -425,6 +436,15 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 	rule, err := groupEvidenceRule()
 	if err != nil {
 		return nil, OccurrenceDifferent, nil, err
+	}
+	// The same quote of the same person is the same occurrence: no gate.
+	if qs, ok := fi.storer.(QuoteLookupStorer); ok && len([]rune(strings.TrimSpace(input.OriginalQuote))) >= sameQuoteMinRunes {
+		same, err := qs.FindActiveFactByQuote(ctx, subjectID, input.OriginalQuote, rule.SourceTypes)
+		if err != nil {
+			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).Msg("Same-quote lookup failed, proceeding with the gate")
+		} else if same != nil {
+			return same, OccurrenceSame, map[int64]OccurrenceVerdict{same.ID: OccurrenceSame}, nil
+		}
 	}
 	similar, err := fi.storer.FindSimilarActiveFacts(ctx, SimilarFactQuery{
 		PersonIDs:   []int64{subjectID},

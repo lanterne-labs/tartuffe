@@ -1773,7 +1773,8 @@ func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int
 SUMMARY RULES:
 - 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
 - If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
-- Do not add facts or claims beyond what's in the listed facts.
+- A tension exists ONLY when the facts conflict as the contradiction judges define it: a reversal on the same question, a broken promise, a denial against a finding, a rule the person then exempts themself from. NEVER call a tension: a vote on an amendment or a sous-amendement against a stated position (the ballot judges the amendment only), a deadline or a promise whose time has not come, two figures of different aggregates (the State deficit and the public deficit, a total and a share), a fact whose object is missing or unnamed, or a mere difference of emphasis. When in doubt, describe both facts without the word tension.
+- Every sentence must be traceable to a listed fact: no inference about motives, no "contraste" or "paradoxe" the facts do not state. Do not add facts or claims beyond what's in the listed facts.
 
 FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
@@ -1879,6 +1880,7 @@ func (sm *StanceManager) foldStanceMetadata(ctx context.Context, label, summary 
 SUMMARY RULES:
 - 2-4 sentences, French (up to 6 when several ⚠ tensions must be kept). Integrate the new facts into the current summary: keep what the current summary says about earlier facts (rewrite for length, never drop a position or a tension it already records), add what the new facts say / do.
 - Every ⚠ tension MUST be preserved explicitly: state both positions and that the position shifted, was walked back, or conflicts. Do not smooth a contradiction into one narrative. If there are more tensions than the summary can name, keep the most recent ones individually and say that the position has shifted repeatedly on this subject.
+- A NEW tension is stated only when a new fact conflicts with the summary or another new fact as the contradiction judges define it (a reversal on the same question, a broken promise, a denial against a finding, a self-exempted rule). Never from an amendment vote against a stated position, a promise whose time has not come, two figures of different aggregates, or a fact with an unnamed object. Every sentence must be traceable to the current summary or a new fact: no inferred "contraste" or "paradoxe".
 - Do not add facts or claims beyond the current summary and the new facts.
 
 %s

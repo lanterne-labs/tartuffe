@@ -38,7 +38,8 @@ The content below consists of tweets (social media posts). Apply these rules:
 - Skip retweets and quote-tweets that don't add original factual content.
 - A single tweet may contain multiple facts — extract all of them.
 - Hashtags and @mentions may provide context but are not facts by themselves.
-- Dates mentioned in tweets should be interpreted relative to the tweet's timestamp.`
+- A relative date in a tweet ("demain", "hier", "ce soir", "lundi") resolves against the "Date:" line of THAT tweet, never against the REFERENCE DATE above nor against another tweet's Date line of the batch: "demain matin" in a tweet dated 2026-10-11 is 2026-10-12.
+- An announcement of an appearance ("je serai l'invité de BFMTV demain", "rendez-vous ce soir sur TF1"), a greeting, a tribute or a thank-you is NOT a fact: nothing in it can be contradicted.`
 
 // Provider orchestrates tweet fetching and fact extraction for twitter handles.
 // Storer inserts the facts; Store holds the plugin's handles and fetch log.
