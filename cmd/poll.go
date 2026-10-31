@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"context"
 	"fmt"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
-	"digital-mirror/backend/vote"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
@@ -92,12 +92,18 @@ var pollCandidateRemoveCmd = &cobra.Command{
 	RunE:        runPollCandidateRemove,
 }
 
-var pollResultsCmd = &cobra.Command{
-	Use:         "results [slug]",
-	Short:       "Print the results as the site shows them now",
+var pollIsoloirSetupCmd = &cobra.Command{
+	Use:   "isoloir-setup [slug]",
+	Short: "Print the isoloir poll setup of an event (its candidates, close and blackouts)",
+	Long: `Print the poll setup (isoloir SPEC §7) of an event, to log with
+isoloir submit poll: a ranked poll of the event's candidates (by name), the
+blank last, ranked up to the event's max choices with pairwise margins,
+encrypted for one decrypter, results open after every changed ballot
+(k_real 1) outside the blackouts, linked re-votes. A poll's options never
+change once logged: add the candidates first (dm poll candidate add).`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.ExactArgs(1),
-	RunE:        runPollResults,
+	RunE:        runPollIsoloirSetup,
 }
 
 var pollPurgeUsersCmd = &cobra.Command{
@@ -112,28 +118,21 @@ the test ballots.`,
 	RunE:        runPollPurgeUsers,
 }
 
-var pollResetVotesCmd = &cobra.Command{
-	Use:   "reset-votes",
-	Short: "Delete every voting key, ballot and log entry (before a launch)",
-	Long: `Delete the registrations, the ballots, the checkpoints and the public log. A
-ballot is anonymous: the test ballots cannot be told from the others, so before
-a launch everything goes. Never once real voters have voted. Stop the ingest
-and the tallier first: they hold the tree and the counted ballots in memory,
-and start again from the log.`,
-	Annotations: map[string]string{"needs_db": "true"},
-	Args:        cobra.NoArgs,
-	RunE:        runPollResetVotes,
-}
-
 func init() {
 	rootCmd.AddCommand(pollCmd)
-	pollCmd.AddCommand(pollListCmd, pollEventCmd, pollBlackoutCmd, pollCandidateCmd, pollResultsCmd, pollPurgeUsersCmd, pollResetVotesCmd)
-	pollResetVotesCmd.Flags().Bool("yes", false, "confirm")
+	pollCmd.AddCommand(pollListCmd, pollEventCmd, pollBlackoutCmd, pollCandidateCmd, pollIsoloirSetupCmd, pollPurgeUsersCmd)
+	f := pollIsoloirSetupCmd.Flags()
+	f.Int("id", 0, "the poll's id in the ledger (required)")
+	f.Int("registry", 1, "the registry it draws its voters from")
+	f.String("pk", "", "the decrypter's public key (isoloir keygen decrypter: pk)")
+	f.String("sign-key", "", "the decrypter's signing key (isoloir keygen decrypter: sign_key)")
+	f.String("circuit", "", "the circuit variant (isoloir check poll prints it), e.g. rankedm12_single_linked_d20")
+	f.String("vk-hash", "", "its verification key hash (isoloir circuits prints it)")
 	pollEventCmd.AddCommand(pollEventSetCmd)
 	pollBlackoutCmd.AddCommand(pollBlackoutAddCmd, pollBlackoutClearCmd)
 	pollCandidateCmd.AddCommand(pollCandidateAddCmd, pollCandidateRemoveCmd)
 
-	f := pollEventSetCmd.Flags()
+	f = pollEventSetCmd.Flags()
 	f.String("title-fr", "", "title in French")
 	f.String("title-en", "", "title in English")
 	f.String("description-fr", "", "description in French")
@@ -380,8 +379,18 @@ func pollCandidates(args []string, change func(context.Context, *storage.Postgre
 	return nil
 }
 
-func runPollResults(cmd *cobra.Command, args []string) error {
+func runPollIsoloirSetup(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
+	f := cmd.Flags()
+	id, _ := f.GetInt("id")
+	registry, _ := f.GetInt("registry")
+	pk, _ := f.GetString("pk")
+	signKey, _ := f.GetString("sign-key")
+	circuit, _ := f.GetString("circuit")
+	vkHash, _ := f.GetString("vk-hash")
+	if id <= 0 || pk == "" || signKey == "" || circuit == "" || vkHash == "" {
+		return fmt.Errorf("--id, --pk, --sign-key, --circuit and --vk-hash are required")
+	}
 	storer, err := openPollStorer(ctx)
 	if err != nil {
 		return err
@@ -391,34 +400,49 @@ func runPollResults(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	// The operator sees the counts even while the site hides them.
-	full := *e
-	full.MinVoters, full.Blackouts = 0, nil
-	got, err := vote.ResultsOf(vote.NewStore(storer.Pool()), api.PersonCards{Storer: storer})(ctx, &full)
+	if e.ClosesAt == nil {
+		return fmt.Errorf("%s has no close date (dm poll event set)", e.Slug)
+	}
+	store := polls.NewPGStore(storer.Pool())
+	opts, err := polls.NewService(store, api.PersonCards{Storer: storer}).Options(ctx, e)
 	if err != nil {
 		return err
 	}
-	r := got.(vote.PollResults)
-	if r.UpdatedAt == nil {
-		fmt.Printf("%s: no tally yet\n", e.TitleFR)
-		return nil
-	}
-	fmt.Printf("%s: %d voter(s), results of %s\n", e.TitleFR, r.Voters, r.UpdatedAt.UTC().Format(time.RFC3339))
-	fmt.Printf("%4s %-30s %7s %7s  %7s\n", "RANK", "OPTION", "FIRST", "RANKED", "HONESTY")
-	for _, o := range r.Options {
-		name := o.Name
-		if o.Kind == "blank" {
-			name = "(vote blanc)"
+	var names []string
+	for _, o := range opts {
+		if o.Kind == "candidate" {
+			names = append(names, o.Name)
 		}
-		rank, first, ranked := "-", "-", "-"
-		if o.Rank != nil {
-			rank, first, ranked = fmt.Sprint(*o.Rank), fmt.Sprint(*o.First), fmt.Sprint(*o.Ranked)
-		}
-		fmt.Printf("%4s %-30.30s %7s %7s  %7.0f\n", rank, name, first, ranked, 100*o.Honesty)
 	}
-	if r.CondorcetWinner != nil {
-		fmt.Printf("Condorcet winner: slot %d\n", *r.CondorcetWinner)
+	if len(names) < 2 {
+		return fmt.Errorf("%s has %d candidate(s): add them first (dm poll candidate add)", e.Slug, len(names))
 	}
+	blackouts := []map[string]int64{}
+	for _, b := range e.Blackouts {
+		blackouts = append(blackouts, map[string]int64{"from": b.StartsAt.Unix(), "to": b.EndsAt.Unix()})
+	}
+	opens := e.OpensAt
+	if opens.Before(time.Now()) {
+		opens = time.Now()
+	}
+	poll := map[string]any{
+		"v": 1, "id": id, "version": 1, "registry": registry, "title": e.TitleFR,
+		"kind":       map[string]any{"type": "ranked", "options": names, "blank": true, "depth": e.MaxChoices, "margins": true},
+		"encryption": map[string]any{"mode": "elgamal", "pk": pk, "decrypter": map[string]any{"type": "single", "sign_key": signKey}},
+		"publish":    map[string]any{"mode": "open", "k_real": 1, "min_gap": 0, "coin": false},
+		"revote":     "linked",
+		"opens":      opens.Unix(),
+		"closes":     e.ClosesAt.Unix(),
+		"circuit":    map[string]any{"name": circuit, "vk_hash": vkHash},
+	}
+	if len(blackouts) > 0 {
+		poll["blackouts"] = blackouts
+	}
+	out, err := json.MarshalIndent(poll, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
 	return nil
 }
 
@@ -445,19 +469,3 @@ func runPollPurgeUsers(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runPollResetVotes(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-	if yes, _ := cmd.Flags().GetBool("yes"); !yes {
-		return fmt.Errorf("this deletes every voting key, ballot and log entry: add --yes")
-	}
-	storer, err := openPollStorer(ctx)
-	if err != nil {
-		return err
-	}
-	defer storer.Close()
-	if err := vote.NewStore(storer.Pool()).Reset(ctx); err != nil {
-		return err
-	}
-	fmt.Println("registrations, ballots, checkpoints and the public log deleted")
-	return nil
-}

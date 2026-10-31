@@ -2,7 +2,6 @@ package polls
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"digital-mirror/backend/httpx"
@@ -34,37 +33,23 @@ func (s *Service) pollEvent(w http.ResponseWriter, r *http.Request) (*Event, boo
 	return e, true
 }
 
-// handleGetPoll returns the event and its results as the site shows them.
+// handleGetPoll returns the event and its candidates. The results are
+// the vote ledger's (isoloir), on its mirror.
 func (s *Service) handleGetPoll(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.pollEvent(w, r)
 	if !ok {
 		return
 	}
-	var results any
-	if s.ResultsOf != nil {
-		var err error
-		if results, err = s.ResultsOf(r.Context(), e); err != nil {
-			httpx.InternalError(w, err, "failed to get poll results")
-			return
-		}
+	options, err := s.Options(r.Context(), e)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get poll candidates")
+		return
 	}
 	now := time.Now()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"event":    e,
-		"results":  results,
+		"results":  map[string]any{"options": options},
 		"open":     IsOpen(e, now),
 		"blackout": InBlackout(e, now),
 	})
-}
-
-// handleLog serves the public log's entries (anyone recounts them).
-func (s *Service) handleLog(w http.ResponseWriter, r *http.Request) {
-	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	entries, err := s.box.Log(r.Context(), after, limit)
-	if err != nil {
-		httpx.InternalError(w, err, "failed to read vote log")
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, entries)
 }

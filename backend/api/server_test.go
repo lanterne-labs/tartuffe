@@ -48,7 +48,7 @@ func (onePoll) Cards(context.Context, []int64) (map[int64]polls.Card, error) {
 // reached by these tests), with noop sign-in.
 func newServer(pingErr error) *Server {
 	acc := accounts.NewService(accountstest.NewMemStore(), providers.NewRegistry(providers.Noop{}))
-	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, nil, onePoll{}, polls.Config{}))
+	return NewServer(pinger{pingErr}, acc, mirror.NewService(nil, acc), polls.NewService(onePoll{}, onePoll{}))
 }
 
 func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
@@ -85,11 +85,6 @@ func TestRoutes(t *testing.T) {
 		"POST /api/auth/sessions",
 		"GET /api/polls",
 		"GET /api/polls/{slug}",
-		"GET /api/vote-log",
-		"GET /api/vote-log/key",
-		"GET /api/vote-log/proof/append",
-		"GET /api/vote-log/proof/entry",
-		"GET /api/vote-log/stamps",
 		"GET /api/person/{id}/score",
 		"GET /api/feed",
 		"GET /api/share/{kind}/{id}",
@@ -122,10 +117,10 @@ func TestSecurityHeaders(t *testing.T) {
 
 // TestVotePreflight: the frontend is on another origin, so removing a vote
 // (DELETE) or giving a +1 (PUT) needs the CORS preflight to allow the method.
-func TestVotePreflight(t *testing.T) {
+func TestPreflight(t *testing.T) {
 	h := newServer(nil).Handler()
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
-		req := httptest.NewRequest(http.MethodOptions, "/api/polls/presidentielle-2027/votes/10", nil)
+		req := httptest.NewRequest(http.MethodOptions, "/api/auth/me", nil)
 		req.Header.Set("Origin", "http://localhost:3000")
 		req.Header.Set("Access-Control-Request-Method", method)
 		req.Header.Set("Access-Control-Request-Headers", "Authorization")

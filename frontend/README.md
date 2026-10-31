@@ -3,7 +3,7 @@
 SvelteKit 5 (Svelte 5 runes), TypeScript, Vite. The API it reads is the Go
 server of the repository (`dm web serve`); the vote page talks to no server
 of ours at all: it reads the public data mirror and posts through Nostr
-relays (`src/lib/vote`, `docs/vote/SPEC.md`).
+relays, through isoloir's `@isoloir/web` (`src/lib/vote/isoloir.ts`).
 
 ```bash
 npm install

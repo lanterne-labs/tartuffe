@@ -38,14 +38,7 @@ func Serve(ctx context.Context, storer *storage.PostgresStorer, cfg Config) erro
 		names = append(names, p.Name)
 	}
 	log.Info().Strs("auth_providers", names).Msg("Sign-in providers enabled")
-	pollsCfg, err := PollsFromEnv()
-	if err != nil {
-		return err
-	}
-	acc, m, p := Wire(storer, reg, pollsCfg)
-	if err := p.FillTree(ctx); err != nil {
-		log.Error().Err(err).Msg("fill the vote log's tree")
-	}
+	acc, m, p := Wire(storer, reg)
 	server := NewServer(storer, acc, m, p)
 	storer.StartMetricsCollectors(ctx)
 

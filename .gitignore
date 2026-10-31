@@ -22,7 +22,6 @@ scraped_content/
 !README.md
 !CHANGES.md
 !CLAUDE.md
-!docs/vote/*.md
 
 # Claude Code
 .claude/

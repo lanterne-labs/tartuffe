@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"github.com/rs/zerolog/log"
 	"os"
 
 	"digital-mirror/backend/accounts"
@@ -12,45 +9,15 @@ import (
 	"digital-mirror/backend/mirror"
 	"digital-mirror/backend/polls"
 	"digital-mirror/backend/storage"
-	"digital-mirror/backend/vote"
 )
 
-// Wire builds the three parts on the database of storer: the polls check
-// the voters' documents through the accounts (never their accounts: no
-// ballot names one), and get the candidates' cards from the mirror.
-func Wire(storer *storage.PostgresStorer, reg *providers.Registry, cfg polls.Config) (*accounts.Service, *mirror.Service, *polls.Service) {
+// Wire builds the three parts on the database of storer: the polls get
+// the candidates' cards from the mirror.
+func Wire(storer *storage.PostgresStorer, reg *providers.Registry) (*accounts.Service, *mirror.Service, *polls.Service) {
 	acc := accounts.NewService(accounts.NewPGStore(storer.Pool()), reg)
 	acc.SubjectKey = []byte(os.Getenv("AUTH_SUBJECT_KEY"))
-	store := polls.NewPGStore(storer.Pool())
-	p := polls.NewService(store, store, PersonCards{storer}, cfg)
-	vs := vote.NewStore(storer.Pool())
-	p.Extra = vote.Routes(vs)
-	p.ResultsOf = vote.ResultsOf(vs, PersonCards{storer})
+	p := polls.NewService(polls.NewPGStore(storer.Pool()), PersonCards{storer})
 	return acc, mirror.NewService(storer, acc), p
-}
-
-// PollsFromEnv reads the polls' config: the key of the log's checkpoints
-// (VOTE_LOG_KEY, from `dm vote log-key`). Unset, a key is made at start
-// locally, with a warning (the checkpoints of a restart then fail to
-// verify); on the host the start is refused: a key that changes at each
-// deploy would break every pinned checkpoint.
-func PollsFromEnv() (polls.Config, error) {
-	cfg := polls.Config{}
-	skey := os.Getenv("VOTE_LOG_KEY")
-	var err error
-	if skey == "" {
-		if os.Getenv("DM_PRODUCTION") != "" {
-			return polls.Config{}, errors.New("VOTE_LOG_KEY is not set: required on the host (dm vote log-key, set once, never changed)")
-		}
-		log.Warn().Msg("VOTE_LOG_KEY is not set: the vote log's checkpoints are signed by a key made now, that the next start replaces")
-		if skey, _, err = polls.GenerateLogKey(); err != nil {
-			return polls.Config{}, err
-		}
-	}
-	if cfg.Signer, err = polls.NewLogSigner(skey); err != nil {
-		return polls.Config{}, fmt.Errorf("VOTE_LOG_KEY: %w", err)
-	}
-	return cfg, nil
 }
 
 // PersonCards gives the polls the cards of the mirror's persons.
