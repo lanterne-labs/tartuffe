@@ -23,8 +23,9 @@ scraped_content/
 !CHANGES.md
 !CLAUDE.md
 
-# Claude Code
-.claude/
+# Claude Code (the project skills are versioned)
+.claude/*
+!.claude/skills/
 
 # Dolt database files (added by bd init)
 .dolt/
