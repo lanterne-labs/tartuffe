@@ -28,11 +28,16 @@ work, Fish shell quirks).
   filter output with `grep -v 'sk-ant'`. Seat tokens live in
   `CLAUDE_TEAM_PLAN_TOKENS` (named by account: `test1`, `seat-2`,
   `keio`); the user's own account is never a seat.
-- Contradiction definition ("option 1", chosen 2026-10-22): a reversal on the
-  same question, a broken promise, inconsistent conduct and hypocrisy are real;
-  a court verdict against the person's denial is real (CLAIM ↔ AUTHORITATIVE
-  FINDING). `debatable` only when the facts truly leave it open; `false` for
-  unrelated facts or a reason the pair does not support. The rules the judges
+- Contradiction definition (revised by the user on 2026-10-31, bd memory
+  `contradiction-definition`): real at any gap are the person's words against
+  their own ACTS (a vote, a decision, an alliance, a candidacy), a broken
+  PROMISE or pledge, a stated-condition walk-back, a DENIAL of their own
+  earlier position, a self-exempting double standard, and a claim against a
+  court verdict. A change of OPINION alone is real only when the two
+  opposite opinions are at most about three months apart and the person
+  does not explain it; further apart, or explained, it is an evolution:
+  `false`. Anybody may change their mind; the site must not call that a lie.
+  `debatable` only when the facts truly leave it open. The rules the judges
   apply are in `backend/promptrules/{false_positives.txt,verify.go,contradiction.go}`.
 
 ## Setup
