@@ -217,6 +217,12 @@ func (s *flexibleString) UnmarshalJSON(data []byte) error {
 // across multiple sequential analyze calls; contradictions are unioned.
 const keyFactBatchSize = 40
 
+// stanceContextTokens is the context of the endpoint that serves task in
+// the active routing (14K on the local box, 200K on Claude): the budget of
+// the prompt is sized on it, not on a constant of one model (the 12K of the
+// first local model left no room once the rules grew).
+func stanceContextTokens(task llm.Task) int { return llm.ContextTokens(task) }
+
 // Token budget for the stance-analyze LLM call. The analyze prompt is dominated
 // by the shared promptrules.ContradictionRules body (~6.3K tokens) plus the
 // template prose; with the model's 12K context that leaves little room, so the
@@ -226,10 +232,9 @@ const keyFactBatchSize = 40
 // back facts in prod (the old code reserved 4K output against an 8K base = 12K,
 // leaving zero room for facts).
 const (
-	stanceMaxContextTokens    = 12000 // gemma-4 via litellm
-	stanceAnalyzeOutputTokens = 2048  // was 4000; budget-batching bounds entries/output per call so this is ample
-	stanceContextSafetyTokens = 600   // absorbs token-estimate error
-	stanceCharsPerToken       = 4     // measured ~4.1 on the French analyze prompt; 4 is slightly conservative
+	stanceAnalyzeOutputTokens = 2048 // was 4000; budget-batching bounds entries/output per call so this is ample
+	stanceContextSafetyTokens = 600  // absorbs token-estimate error
+	stanceCharsPerToken       = 4    // measured ~4.1 on the French analyze prompt; 4 is slightly conservative
 	// stanceTemplateProseTokens is the fixed analyze-template prose AROUND the
 	// shared rules (which are measured directly in estimateStanceBaseTokens).
 	// Bump only if you substantially edit the analyze template in callLLM.
@@ -619,7 +624,7 @@ func estimateStanceBaseTokens(stanceSummary, newFactText string) int {
 }
 
 // chunkKeyFactsByBudget batches key facts so each analyze call fits the model's
-// context: base prompt + facts + output reservation + safety ≤ stanceMaxContextTokens.
+// context: base prompt + facts + output reservation + safety ≤ stanceContextTokens().
 // Falls back to a minimal budget (with a WARN) if the base prompt alone is near
 // the ceiling — that signals the analyze template itself needs trimming. Never
 // emits an empty batch, so a single oversized fact is still attempted alone.
@@ -628,7 +633,7 @@ func chunkKeyFactsByBudget(stanceSummary, newFactText string, facts []StanceFact
 		return nil
 	}
 	base := estimateStanceBaseTokens(stanceSummary, newFactText)
-	factsBudget := stanceMaxContextTokens - stanceAnalyzeOutputTokens - stanceContextSafetyTokens - base
+	factsBudget := stanceContextTokens(llm.TaskStanceAnalyze) - stanceAnalyzeOutputTokens - stanceContextSafetyTokens - base
 	if factsBudget < stanceMinFactsBudget {
 		log.Warn().
 			Int("base_tokens", base).
@@ -1074,7 +1079,7 @@ func newFactsFromStanceFacts(facts []StanceFactInfo, tensions map[int64][]Stance
 
 // refreshFactsBudgetTokens is the fact-text budget of one refresh call.
 func refreshFactsBudgetTokens() int {
-	return stanceMaxContextTokens - stanceRefreshOutputTokens - stanceContextSafetyTokens - stanceRefreshPromptTokens
+	return stanceContextTokens(llm.TaskStanceLabel) - stanceRefreshOutputTokens - stanceContextSafetyTokens - stanceRefreshPromptTokens
 }
 
 // fullRefreshFits reports whether inlining every fact into the full-rebuild

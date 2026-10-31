@@ -81,8 +81,14 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 			len(content), url, localMinContentChars)
 	}
 
+	// The page's URL after the redirects: a Google redirect, a moved article
+	// or a shortlink is never the source of a fact (review of 2026-10-31).
+	finalURL := url
+	if page.URL != "" {
+		finalURL = page.URL
+	}
 	out := &ExtractedContent{
-		URL:     url,
+		URL:     finalURL,
 		Title:   result.Metadata.Title,
 		Content: stripTrailingSidebarSections(stripLeadBeforeTitle(content, result.Metadata.Title)), // the ticker above the title, the sidebar below the body
 	}
