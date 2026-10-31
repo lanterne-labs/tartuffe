@@ -26,3 +26,6 @@ static/mirror
 
 .vote-routes/
 build-vote/
+
+# The vote app build writes the candidates here (scripts/vote-app.mjs).
+static/vote/

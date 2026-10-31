@@ -2,8 +2,40 @@
 // app's own frame (src/vote-app), as static files (build-vote/), with
 // VOTE_APP=1 so that svelte.config.js takes the static adapter and the
 // assembled routes (.vote-routes/).
-import { cpSync, rmSync, mkdirSync, existsSync, lstatSync, readlinkSync, symlinkSync } from 'node:fs';
+//
+// The published app never calls the site's API: the candidates' cards of
+// each event of VITE_VOTE_POLLS (slug:id,…) are fetched here from
+// VITE_API_BASE (GET /api/polls/<slug>) into static/vote/candidates/<slug>.json,
+// and the app reads them (VITE_VOTE_STATIC_CANDIDATES=1).
+import { cpSync, rmSync, mkdirSync, existsSync, lstatSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+
+const api = (process.env.VITE_API_BASE ?? '').replace(/\/$/, '');
+const slugs = (process.env.VITE_VOTE_POLLS ?? '')
+	.split(',')
+	.map((p) => p.split(':')[0].trim())
+	.filter(Boolean);
+if (!api) throw new Error('vote app: VITE_API_BASE is not set (the candidates come from its /api/polls/<slug>)');
+if (slugs.length === 0) throw new Error('vote app: VITE_VOTE_POLLS names no event (slug:id,…)');
+
+const candidates = 'static/vote';
+rmSync(candidates, { recursive: true, force: true });
+mkdirSync(`${candidates}/candidates`, { recursive: true });
+for (const slug of slugs) {
+	const url = `${api}/api/polls/${encodeURIComponent(slug)}`;
+	const res = await fetch(url);
+	if (!res.ok) throw new Error(`vote app: ${url} answered HTTP ${res.status}`);
+	const p = await res.json();
+	// What the vote pages show of the event and its candidates (lib/vote/candidates.ts).
+	const meta = {
+		event: p.event,
+		candidates: p.results.options
+			.filter((o) => o.kind === 'candidate')
+			.map((o) => ({ name: o.name, person_id: o.person_id ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
+	};
+	writeFileSync(`${candidates}/candidates/${slug}.json`, JSON.stringify(meta));
+	console.log(`vote app: ${slug}, ${meta.candidates.length} candidates`);
+}
 
 const routes = '.vote-routes';
 rmSync(routes, { recursive: true, force: true });
@@ -15,8 +47,9 @@ const mirror = 'static/mirror';
 const mirrorTarget = existsSync(mirror) && lstatSync(mirror).isSymbolicLink() ? readlinkSync(mirror) : null;
 if (mirrorTarget) rmSync(mirror);
 try {
-	execSync('npx vite build', { stdio: 'inherit', env: { ...process.env, VOTE_APP: '1' } });
+	execSync('npx vite build', { stdio: 'inherit', env: { ...process.env, VOTE_APP: '1', VITE_VOTE_STATIC_CANDIDATES: '1' } });
 } finally {
 	if (mirrorTarget) symlinkSync(mirrorTarget, mirror);
 	rmSync(routes, { recursive: true, force: true });
+	rmSync(candidates, { recursive: true, force: true });
 }
