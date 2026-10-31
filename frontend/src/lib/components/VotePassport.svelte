@@ -1,41 +1,48 @@
 <script lang="ts">
-	// The passport scan of tartuffe-vote/2 (SPEC §4, step 2): the ZKPassport
-	// app proves on the phone that the holder is an adult French national
-	// with a valid passport, and binds the registration's custom data into
-	// the proof. Nothing goes to our server: onSuccess posts the proof to
-	// the mailbox. No cloud prover: the proof is made on the device. The
-	// identifier is the document's own, non-salted one, so that a passport
-	// cannot register twice under another identifier.
+	// The passport scan (isoloir SPEC §6, step 1): the ZKPassport app proves
+	// on the phone that the holder meets the registry's rules (an adult
+	// French national with a valid passport) and binds the registration
+	// key's custom data into the proof. Nothing goes to our server: the
+	// proof goes to the session, which posts it with the registration. No
+	// cloud prover: the proof is made on the device. The identifier is the
+	// document's own, non-salted one, so that a passport cannot register
+	// twice under another identifier. The query is the registry's: the
+	// ingest's verifier rebuilds it from the same rules.
 	import Steps, { type StepState } from './Steps.svelte';
 	import { onDestroy } from 'svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import favicon from '$lib/assets/favicon.svg';
 	import ZKProofAnimation from './ZKProofAnimation.svelte';
 	import { messageOf } from '$lib/vote/errors';
+	import type { PassportProof, RegistrationRequest } from '@isoloir/web';
 
 	interface Props {
 		lang: Lang;
-		domain: string;
-		scope: string;
-		customData: string;
+		request: RegistrationRequest;
+		// The server's clock, ms (the session's): the proof's day and date.
+		serverNow: () => number;
 		devMode?: boolean;
 		// simulate shows a button that stands in for the app (local trials).
 		simulate?: boolean;
-		// onSuccess takes the proof; what it does with it (the registration)
+		// onProof takes the proof; what it does with it (the registration)
 		// is the caller's, with its own states: it never throws back here.
-		onSuccess: (payload: { proofs: unknown; result: unknown; at: Date }) => Promise<void>;
+		onProof: (p: PassportProof) => Promise<void>;
 	}
 
-	let { lang, domain, scope, customData, devMode = false, simulate = false, onSuccess }: Props = $props();
+	let { lang, request, serverNow, devMode = false, simulate = false, onProof }: Props = $props();
 
 	// The app, once it took the request, is given this long before the
 	// page says it does not answer (the voter can always cancel before).
 	const APP_TIMEOUT = 3 * 60_000;
 
+	// The proof's date, Unix seconds, on the server's clock (SPEC §6 step 4).
+	const proofDate = () => Math.floor(serverNow() / 1000);
+
+	// A dev registry takes any bundle that names a uid.
 	async function simulateScan() {
 		step = 'posting';
 		const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-		await onSuccess({ proofs: [{ simulated: id }], result: { uniqueIdentifier: 'dev-' + id, customData }, at: new Date() });
+		await onProof({ uid: 'dev-' + id, proof: { uid: 'dev-' + id, simulated: true, customData: request.customData }, proofDate: proofDate() });
 	}
 
 	type Step = 'idle' | 'starting' | 'scan' | 'received' | 'proving' | 'posting' | 'rejected' | 'error';
@@ -85,28 +92,29 @@
 		step = 'starting';
 		try {
 			const { ZKPassport, NullifierType } = await import('@zkpassport/sdk');
-			const zk = new ZKPassport(domain);
+			const e = request.eligibility;
+			const zk = new ZKPassport(request.domain);
 			let builder = await zk.request({
 				name: 'tartuffe.me',
 				logo: new URL(favicon, window.location.origin).href,
 				purpose: tr('zk.purpose', lang),
-				scope,
+				scope: request.scope,
 				devMode,
 				mode: 'compressed',
-				// The proof is valid for an hour (SPEC §4 step 2); the server
+				// The proof is valid as long as the registry says; the ingest
 				// judges freshness by proof_date.
-				validity: 3600,
+				validity: request.validity,
 				uniqueIdentifierType: NullifierType.NON_SALTED
 			});
-			builder = builder.gte('age', 18);
+			if (e.min_age) builder = builder.gte('age', e.min_age);
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			builder = builder.in('nationality', ['FRA' as any]);
+			if (e.nationality?.length) builder = builder.in('nationality', e.nationality as any);
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			builder = (builder as any).eq('document_type', 'passport');
-			// A passport still valid today: the base proof does not check
-			// the expiry, a query does (the verifier expects today's date).
-			builder = builder.gte('expiry_date', new Date());
-			builder = builder.bind('custom_data', customData);
+			if (e.document_type) builder = (builder as any).eq('document_type', e.document_type);
+			// A passport still valid on the proof's day: the base proof does
+			// not check the expiry, a query does (the verifier expects that day).
+			if (e.require_expiry) builder = builder.gte('expiry_date', new Date(serverNow()));
+			builder = builder.bind('custom_data', request.customData);
 			const req = builder.done();
 			url = req.url;
 			const QRCode = await import('qrcode');
@@ -127,11 +135,19 @@
 				if (cancelled) return;
 				fail(e);
 			});
-			req.onSuccess(async ({ proofs, result }: { proofs: unknown; result: unknown }) => {
+			// The result names the document's identifier; the proofs are
+			// verified by the ingest (its verifier rebuilds this query), so a
+			// verdict of the browser is only logged.
+			req.onResult(async ({ uniqueIdentifier, verified, result, proofs }) => {
 				if (cancelled) return;
 				if (appTimer) clearTimeout(appTimer);
+				if (!verified) console.warn('zkpassport: the SDK did not verify the proofs in the browser; the ingest will');
+				if (!uniqueIdentifier) {
+					fail(new Error('the passport app returned no unique identifier'));
+					return;
+				}
 				step = 'posting';
-				await onSuccess({ proofs, result, at: new Date() });
+				await onProof({ uid: uniqueIdentifier, proof: { proofs, result }, proofDate: proofDate() });
 			});
 		} catch (err) {
 			fail(err);

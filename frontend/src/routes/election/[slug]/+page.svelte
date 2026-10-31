@@ -5,13 +5,12 @@
 	// /fonctionnement.
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { API_BASE } from '$lib/config';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { eventPaths, showVoters } from '$lib/event';
-	import type { PollResponse } from '$lib/types';
-	import { defaultSources } from '$lib/vote/sources';
-	import type { Tally } from '$lib/vote/session';
-	import type { Setup } from '$lib/vote/protocol';
+	import type { PollEvent } from '$lib/types';
+	import { latestTally, type LatestTally } from '$lib/vote/isoloir';
+	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
+	import { rankedRows, byFirst } from '$lib/vote/results';
 	import { displayName } from '$lib/share';
 
 	let currentLang = $state<Lang>('fr');
@@ -19,52 +18,50 @@
 	let slug = $derived($page.params.slug ?? '');
 	let paths = $derived(eventPaths(slug));
 
-	let poll = $state<PollResponse | null>(null);
+	let event = $state<PollEvent | null>(null);
+	let cardCount = $state<number | null>(null);
 	// The current results, read from the public mirror like the vote page
-	// does: the latest tally, the setup (slot → person) and the cards
-	// (names, photos). Absent until a first tally exists.
-	let tally = $state<Tally | null>(null);
-	let setup = $state<Setup | null>(null);
-	let cards = $state<Map<number, { name: string; image_url?: string }>>(new Map());
+	// does: the latest tally, proven in the signed log and verified here,
+	// and the poll's options (names in slot order, the blank last); the
+	// site's cards give the photos. Absent until a first tally exists.
+	let latest = $state<LatestTally | null>(null);
+	let cards = $state<Map<string, Candidate>>(new Map());
 	onMount(async () => {
 		try {
-			const res = await fetch(`${API_BASE}/api/polls/${encodeURIComponent(slug)}`);
-			if (res.ok) poll = await res.json();
+			const meta = await loadEventMeta(slug);
+			event = meta.event;
+			cards = byName(meta.candidates);
+			cardCount = meta.candidates.length;
 		} catch (err) {
 			console.error('failed to load the event', err);
 		}
 		try {
-			const src = defaultSources();
-			const [t, s, cs] = await Promise.all([src.json<Tally>('tallies/latest.json'), src.json<Setup>('setup.json'), src.json<{ person_id: number; name: string; image_url?: string }[]>('candidates.json')]);
-			tally = t;
-			setup = s;
-			cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+			latest = await latestTally(slug);
 		} catch (err) {
 			console.warn('event: the mirror', err);
 		}
 	});
-	let ends = $derived(poll?.event.closes_at ? new Date(poll.event.closes_at) : null);
+	let ends = $derived(event?.closes_at ? new Date(event.closes_at) : null);
 	let daysLeft = $derived(ends ? Math.max(0, Math.ceil((ends.getTime() - Date.now()) / 86_400_000)) : null);
-	let voters = $derived(poll?.results.voters ?? tally?.results?.voters ?? null);
-	let candidates = $derived(poll?.results.options.filter((o) => o.kind === 'candidate').length ?? setup?.setup.options.filter((o) => o.kind === 'candidate').length ?? null);
+	// Only a tally that verified is shown.
+	let shown = $derived(latest?.verdict.ok ? rankedRows(latest.verdict.results) : null);
+	let voters = $derived(shown?.counted ?? null);
+	let options = $derived(latest?.poll.kind.options ?? []);
+	let blankSlot = $derived(latest?.poll.kind.blank ? options.length : -1);
+	let candidates = $derived(latest ? options.length : cardCount);
 	// The top 3 by first-choice share, and the winner of the ranking.
-	let top3 = $derived.by(() => {
-		const r = tally?.results;
-		if (!r || r.voters <= 0) return [];
-		return [...r.options].sort((a, b) => b.first - a.first || a.rank - b.rank).slice(0, 3);
-	});
-	let winnerName = $derived(tally?.results?.condorcet_winner !== undefined ? nameOf(tally.results.condorcet_winner) : '');
+	let top3 = $derived(shown && shown.counted > 0 ? byFirst(shown.rows).slice(0, 3) : []);
+	let winnerName = $derived(shown?.condorcet != null ? nameOf(shown.condorcet) : '');
 
 	function nameOf(slot: number): string {
-		const o = setup?.setup.options.find((x) => x.slot === slot) ?? tally?.results?.options.find((x) => x.slot === slot);
-		if (!o) return `#${slot}`;
-		if (o.kind === 'blank') return tr('vote.blank.name', currentLang);
-		const pid = (o as { person_id?: number }).person_id;
-		return displayName((pid ? cards.get(pid)?.name : undefined) ?? o.name ?? `#${slot}`);
+		if (slot === blankSlot) return tr('vote.blank.name', currentLang);
+		const n = options[slot];
+		if (n === undefined) return `#${slot}`;
+		return displayName(cards.get(nameKey(n))?.name ?? n);
 	}
 	function imageOf(slot: number): string | undefined {
-		const o = setup?.setup.options.find((x) => x.slot === slot) as { person_id?: number } | undefined;
-		return o?.person_id ? cards.get(o.person_id)?.image_url : undefined;
+		const n = options[slot];
+		return n === undefined ? undefined : cards.get(nameKey(n))?.image_url;
 	}
 	function pctText(n: number, total: number): string {
 		if (total <= 0) return '—';
@@ -234,7 +231,7 @@
 		</div>
 	</section>
 
-	{#if top3.length && tally?.results}
+	{#if top3.length && shown}
 		<section class="top3" aria-labelledby="top3-title">
 			<h2 id="top3-title">{tr('poll.top3.title', currentLang)}</h2>
 			<ol>
@@ -243,10 +240,10 @@
 						{#if imageOf(o.slot)}
 							<img src={imageOf(o.slot)} alt="" />
 						{:else}
-							<span class="initial" aria-hidden="true">{o.kind === 'blank' ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
+							<span class="initial" aria-hidden="true">{o.blank ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 						{/if}
 						<span class="top3-name">{nameOf(o.slot)}</span>
-						<strong>{pctText(o.first, tally.results.voters)}</strong>
+						<strong>{pctText(o.first, shown.counted)}</strong>
 					</li>
 				{/each}
 			</ol>

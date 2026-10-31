@@ -1,9 +1,11 @@
 <script lang="ts">
-	// The vote page of tartuffe-vote/2 (docs/vote/SPEC.md). Everything it
-	// shows comes from the public mirror and the mailbox (lib/vote/session):
-	// the event, the setup in force, the latest checkpoint and tally, the
-	// live counters; the voter's key, ballot and receipt. It never calls our
-	// server. Every wait here has a visible state and a next action.
+	// The vote page (isoloir, docs: the @isoloir/web README). Everything it
+	// shows comes from the session (lib/vote/isoloir): the poll's setup and
+	// the latest checkpoint and tally, read from the public mirror and each
+	// proven in the signed log; the voter's key, ballot and receipt. The
+	// candidates' cards come from the site (lib/vote/candidates). It never
+	// calls our vote server. Every wait here has a visible state and a next
+	// action.
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { displayName } from '$lib/share';
@@ -14,48 +16,24 @@
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
-	import { VoteSession, type Tally } from '$lib/vote/session';
-	import { voteKey } from '$lib/vote/key';
-	import { BLANK, type Ranking } from '$lib/vote/crypto';
-	import { defaultSources } from '$lib/vote/sources';
-	import { neventLink } from '$lib/vote/mailbox';
-	import { parseLink, type LinkCode } from '$lib/vote/link';
+	import { sessionFor, parseLink, neventLink, voteKey } from '$lib/vote/isoloir';
+	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
+	import { rankedRows, byFirst } from '$lib/vote/results';
 	import { describeError, toVoteError, reportLink } from '$lib/vote/errors';
+	import type { PollEvent } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
 	let slug = $derived($page.params.slug ?? '');
 	let paths = $derived(eventPaths(slug));
-	const session = new VoteSession($page.params.slug ?? '');
-	const phase = session.phase;
-	const setupStore = session.setup;
-	const tallyStore = session.tally;
-	const tallyVerified = session.tallyVerified;
-	const statsStore = session.stats;
-	const ballotStore = session.ballot;
-	const registration = session.registration;
-	const warm = session.warm;
-	const sessionError = session.error;
-	const sessionErrorDetail = session.errorDetail;
+	const vs = sessionFor($page.params.slug ?? '');
+	const st = vs.state;
+	const warm = vs.warm;
+	const tallyAt = vs.tallyAt;
 
-	interface EventInfo {
-		id: number;
-		slug: string;
-		title_fr: string;
-		title_en: string;
-		description_fr: string;
-		description_en: string;
-		closes_at?: string;
-	}
-	interface Card {
-		person_id: number;
-		name: string;
-		image_url?: string;
-		honesty_score: number;
-	}
-	let event = $state<EventInfo | null>(null);
-	let cards = $state<Map<number, Card>>(new Map());
+	let event = $state<PollEvent | null>(null);
+	let cards = $state<Map<string, Candidate>>(new Map());
 	let keyOpen = $state(false);
 	let keyMenuOpen = $state(false);
 	let showWords = $state(false);
@@ -66,10 +44,10 @@
 	// 30 s: a page left open crosses them.
 	let now = $state(Date.now());
 	let clock: ReturnType<typeof setInterval> | null = null;
-	// A device link opened here (SPEC §4.2): the code of the device asking
-	// for the key, where the sending stands, and the confirmation code the
+	// A device link opened here (SPEC §14): the public key of the device
+	// asking for the key, where the sending stands, and the six digits the
 	// other device asks the voter to compare.
-	let linkCode = $state<LinkCode | null>(null);
+	let linkCode = $state<string | null>(null);
 	let linkState = $state<'ask' | 'sending' | 'sent' | 'failed'>('ask');
 	let linkError = $state('');
 	let linkConfirm = $state('');
@@ -77,11 +55,12 @@
 		if (!linkCode) return;
 		linkState = 'sending';
 		try {
-			linkConfirm = await session.sendKey(linkCode);
+			const sent = await vs.sendKeyTo(linkCode);
+			linkConfirm = sent.code;
 			linkState = 'sent';
 		} catch (e) {
 			const ve = toVoteError(e);
-			linkError = describeError(ve.code, ve.detail, currentLang);
+			linkError = describeError(ve.code, currentLang);
 			linkState = 'failed';
 		}
 	}
@@ -94,37 +73,51 @@
 	let actionError = $state('');
 	let actionDetail = $state('');
 
-	// The options of the setup in force: slot → candidate card or blank.
-	let options = $derived(($setupStore?.setup.options ?? []).filter((o) => o.kind === 'candidate' || o.kind === 'blank'));
-	let bySlot = $derived(new Map(options.map((o) => [o.slot, o])));
-	let mask = $derived($setupStore?.setup.mask ?? 0);
-	let kReal = $derived($setupStore?.setup.k_real ?? 10);
-	// The page stops taking ballots 10 minutes before the close (SPEC §9.3).
-	let open = $derived($phase !== 'closed' && !!$setupStore && now < Date.parse($setupStore.setup.closes) - 10 * 60_000);
-	let blackout = $derived(($setupStore?.setup.blackouts ?? []).some((b) => now >= Date.parse(b.from) && now < Date.parse(b.to)));
-	let key = $derived($voteKey && $voteKey.slug === slug ? $voteKey : null);
+	let poll = $derived($st.poll);
+	let kind = $derived($st.kind);
+	// The options of the poll: slot k is the k-th name, the blank last.
+	let names = $derived(kind?.options ?? []);
+	let BLANK = $derived(kind?.blank_slot ?? -1);
+	let depth = $derived(kind?.rank_depth ?? 3);
+	let candidateSlots = $derived(names.map((_, i) => i));
+	let kReal = $derived(poll?.publish.mode === 'open' ? poll.publish.k_real : 1);
+	let closesAt = $derived(poll ? poll.closes * 1000 : 0);
+	// The page stops taking ballots 10 minutes before the close.
+	let open = $derived($st.pollStatus === 'open' && now < closesAt - 10 * 60_000);
+	let blackout = $derived((poll?.blackouts ?? []).some((b) => now >= b.from * 1000 && now < b.to * 1000));
+	let key = $derived($st.key);
 	let hasKey = $derived(!!key);
-	let joined = $derived(!!key && key.position >= 0);
-	let ready = $derived($phase === 'ready');
-	let busy = $derived($ballotStore.state === 'proving' || $ballotStore.state === 'sending' || $ballotStore.state === 'sent');
-	let inFlight = $derived(busy || $ballotStore.state === 'received' || $ballotStore.state === 'verified' || $ballotStore.state === 'missing');
+	let joined = $derived(!!key && key.position !== null);
+	let ready = $derived($st.phase === 'ready');
+	let ballot = $derived($st.ballot);
+	let busy = $derived(ballot.state === 'drafting' || ballot.state === 'proving' || ballot.state === 'posting' || ballot.state === 'sent');
+	let accepted = $derived(ballot.state === 'acked' || ballot.state === 'verified' || ballot.state === 'missing');
+	let inFlight = $derived(busy || accepted);
+	const rankOf = (c: { pick: number | null } | { rank: number[] } | undefined): number[] | null => (c && 'rank' in c ? c.rank : null);
+	// The last ballot this key cast and the ingest took, as this device
+	// knows it: what the slots show while nothing is in flight.
+	let lastAccepted = $state<number[] | null>(null);
+	$effect(() => {
+		if (accepted) lastAccepted = rankOf(ballot.choice);
+	});
 
-	// The ballot shown: the one in flight or acknowledged this visit, else
-	// the last one this key cast as the device knows it (kept with the
-	// key, carried by a device link).
-	let shown = $derived<number[]>(inFlight && $ballotStore.ranking ? $ballotStore.ranking.slots.slice(0, $ballotStore.ranking.len) : (key?.slots ?? []));
-	let endsBlank = $derived(shown.at(-1) === BLANK);
-	let choosable = $derived(options.filter((o) => o.kind === 'candidate' && !shown.includes(o.slot)));
-	// A key restored from its words knows its last sequence number but not
-	// its ranking: the page says a ballot is in the log.
-	let loggedUnknown = $derived(!!key && key.seq > 0 && key.slots === undefined && !inFlight);
-	let canResend = $derived($ballotStore.state === 'failed' && !!$ballotStore.kept);
-	let canRetry = $derived(($ballotStore.state === 'failed' || $ballotStore.state === 'rejected') && !!$ballotStore.ranking);
+	// The ballot shown: the one in flight or acknowledged, else the last
+	// one accepted.
+	let shown = $derived<number[]>(inFlight ? (rankOf(ballot.choice) ?? []) : (lastAccepted ?? []));
+	let endsBlank = $derived(shown.length > 0 && shown.at(-1) === BLANK);
+	let choosable = $derived(candidateSlots.filter((s) => !shown.includes(s)));
+	// A key restored from its words, or sent by another device, knows its
+	// last sequence number but not its ranking: the page says a ballot is
+	// in the log.
+	let loggedUnknown = $derived(!!key && $st.revote.seq !== null && !ballot.choice && !inFlight);
+	let canResend = $derived(ballot.state === 'failed' && !!ballot.kept);
+	let canRetry = $derived((ballot.state === 'failed' || ballot.state === 'rejected') && !ballot.kept && !!rankOf(ballot.choice));
 
 	function failed(e: unknown) {
 		const ve = toVoteError(e);
-		const b = $ballotStore;
-		actionError = describeError(b.state === 'rejected' || b.state === 'failed' ? (b.reason ?? ve.code) : ve.code, b.detail ?? ve.detail, currentLang);
+		const b = $st.ballot;
+		const code = b.state === 'rejected' || b.state === 'failed' ? (b.reason ?? ve.code) : ve.code;
+		actionError = describeError(code, currentLang);
 		actionDetail = b.detail ?? ve.detail ?? '';
 	}
 
@@ -132,9 +125,8 @@
 		if (busy || !ready) return false;
 		actionError = '';
 		actionDetail = '';
-		const r: Ranking = { len: next.length, slots: [next[0] ?? 0, next[1] ?? 0, next[2] ?? 0] };
 		try {
-			await session.cast(r);
+			await vs.need().cast({ rank: next });
 			return true;
 		} catch (e) {
 			failed(e);
@@ -147,21 +139,22 @@
 	async function resend() {
 		actionError = '';
 		try {
-			await session.resend();
+			await vs.need().resendBallot();
 		} catch (e) {
 			failed(e);
 		}
 	}
 	function retry() {
-		const r = $ballotStore.ranking;
-		if (r) void change(r.slots.slice(0, r.len));
+		const r = rankOf(ballot.choice);
+		if (r) void change(r);
 	}
 
 	function forgetKey() {
 		forgetOpen = false;
 		keyMenuOpen = false;
 		showWords = false;
-		session.forgetKey();
+		lastAccepted = null;
+		vs.need().forgetKey();
 	}
 
 	function placed(cur: number[], choice: number, at: number | null): number[] {
@@ -172,7 +165,7 @@
 		const i = at === null ? body.length : Math.min(at, body.length);
 		if (at !== null && i < body.length) body[i] = choice;
 		else body.splice(i, 0, choice);
-		return tail && body.length < 3 ? [...body, BLANK] : body;
+		return tail && body.length < depth ? [...body, BLANK] : body;
 	}
 
 	function pick(choice: number, at: number | null) {
@@ -181,8 +174,8 @@
 			return;
 		}
 		const next = placed(shown, choice, at);
-		if (next.length > 3) {
-			actionError = tr('vote.error.full', currentLang, { n: 3 });
+		if (next.length > depth) {
+			actionError = tr('vote.error.full', currentLang, { n: depth });
 			return;
 		}
 		if (JSON.stringify(next) === JSON.stringify(shown)) return;
@@ -253,103 +246,110 @@
 		if (currentLang === 'en') return n === 1 ? '1st' : n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`;
 		return n === 1 ? '1er' : `${n}e`;
 	}
-	function closesText(iso: string): string {
-		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+	function closesText(ms: number): string {
+		return new Date(ms).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
 	// pct: « 35 % » in French (a narrow no-break space), "35%" in English.
 	function pct(n: number, total: number): string {
 		if (total <= 0) return '—';
 		const v = Math.round((100 * n) / total);
-		return currentLang === 'en' ? `${v}%` : `${v} %`;
+		return currentLang === 'en' ? `${v}%` : `${v}\u202f%`;
 	}
-	function ago(iso: string): string {
-		const m = Math.max(0, Math.round((now - Date.parse(iso)) / 60000));
+	function ago(ms: number): string {
+		const m = Math.max(0, Math.round((now - ms) / 60000));
 		if (m < 1) return currentLang === 'en' ? 'just now' : 'à l’instant';
-		if (m < 60) return currentLang === 'en' ? `${m} min ago` : `il y a ${m} min`;
+		if (m < 60) return currentLang === 'en' ? `${m} min ago` : `il y a ${m}\u00a0min`;
 		const h = Math.round(m / 60);
-		return currentLang === 'en' ? `${h} h ago` : `il y a ${h} h`;
+		return currentLang === 'en' ? `${h} h ago` : `il y a ${h}\u00a0h`;
+	}
+	function cardOf(slot: number): Candidate | undefined {
+		const n = names[slot];
+		return n === undefined ? undefined : cards.get(nameKey(n));
 	}
 	function nameOf(slot: number): string {
-		const o = bySlot.get(slot);
-		if (!o) return `#${slot}`;
-		if (o.kind === 'blank') return tr('vote.blank.name', currentLang);
-		return displayName(cards.get(o.person_id ?? 0)?.name ?? o.name ?? `#${slot}`);
+		if (slot === BLANK) return tr('vote.blank.name', currentLang);
+		const n = names[slot];
+		if (n === undefined) return `#${slot}`;
+		return displayName(cardOf(slot)?.name ?? n);
 	}
 	function imageOf(slot: number): string | undefined {
-		const o = bySlot.get(slot);
-		return o?.person_id ? cards.get(o.person_id)?.image_url : undefined;
+		return cardOf(slot)?.image_url;
 	}
 	function keyStatusKey(): string {
-		if (!key) return 'profile.key.none';
-		if (key.prf) return 'profile.key.passkey';
-		if (key.backups.words) return 'profile.key.words';
-		if (key.backups.linked > 0) return 'profile.key.linked';
+		const k = $voteKey;
+		if (!k) return 'profile.key.none';
+		if (k.source === 'passkey') return 'profile.key.passkey';
+		if (k.backups.words) return 'profile.key.words';
+		if (k.backups.linked > 0 || k.source === 'link') return 'profile.key.linked';
 		return 'profile.key.unprotected';
 	}
 
-	let results = $derived.by(() => {
-		const t: Tally | null = $tallyStore;
-		if (!t?.results) return null;
-		return t.results;
-	});
-	let winnerSlot = $derived(results?.condorcet_winner ?? null);
-	// The two readings of the same results: the ranking (the order the
-	// tally gives) and the first choices only (the same rows, re-sorted by
-	// their first-choice share).
+	// The results: the last tally that verified; a newer one that did not
+	// is said so, and when none verified, the one that did not is shown as
+	// such.
+	let verdict = $derived($st.tally ?? $st.tallyUnverified?.verdict ?? null);
+	let verified = $derived(!!$st.tally);
+	let results = $derived(rankedRows(verdict?.results));
+	let winnerSlot = $derived(results?.condorcet ?? null);
+	// The two readings of the same results: the ranking and the first
+	// choices only (the same rows, re-sorted by their first-choice share).
 	let tab = $state<'ranking' | 'first'>('ranking');
-	let rows = $derived.by(() => {
-		const list = results?.options ?? [];
-		if (tab === 'ranking') return list;
-		return [...list].sort((a, b) => b.first - a.first || a.rank - b.rank);
-	});
+	let rows = $derived(results ? (tab === 'ranking' ? results.rows : byFirst(results.rows)) : []);
 	let winnerName = $derived(winnerSlot !== null ? nameOf(winnerSlot) : '');
 	// The consistency score of a candidate, from its card; none for the
 	// blank or a card without one.
 	function scoreOf(slot: number): number | null {
-		const o = bySlot.get(slot);
-		const s = o?.person_id ? cards.get(o.person_id)?.honesty_score : undefined;
+		const s = slot === BLANK ? undefined : cardOf(slot)?.honesty_score;
 		// The cards carry the score as the site stores it (0 to 1).
 		return typeof s === 'number' && Number.isFinite(s) ? Math.round(s * 100) : null;
 	}
-	// The votes still to change before the results move again.
-	let toNext = $derived(Math.max(0, kReal - ($statsStore?.since_tally ?? 0)));
 	// The sentence under the ballot that says where the vote stands.
 	let statusLine = $derived.by(() => {
-		const s = $ballotStore.state;
-		const d = $setupStore ? closesText($setupStore.setup.closes) : '';
-		if (s === 'proving' || s === 'sending' || s === 'sent') return tr('v2.status.line.busy', currentLang);
-		if (s === 'received') return tr('v2.status.line.received', currentLang, { d });
+		const s = ballot.state;
+		const d = closesAt ? closesText(closesAt) : '';
+		if (busy) return tr('v2.status.line.busy', currentLang);
+		if (s === 'acked') return tr('v2.status.line.received', currentLang, { d });
 		if (s === 'verified') return tr('v2.status.line.verified', currentLang, { d });
 		return '';
 	});
-	let voted = $derived($ballotStore.state === 'verified' || $ballotStore.state === 'received' || (!!key?.lastBallot && key.lastBallot.state !== 'missing'));
+	let busyLabel = $derived(tr(ballot.state === 'drafting' || ballot.state === 'proving' ? 'v2.status.proving' : 'v2.status.sending', currentLang));
+	let voted = $derived(accepted || (lastAccepted !== null && lastAccepted.length > 0));
+	let registration = $derived($st.registration);
+	let regPosting = $derived(registration.state === 'posting' || registration.state === 'sent');
+	let regFailed = $derived(registration.state === 'failed' || registration.state === 'rejected' || registration.state === 'missing');
+	let errorCode = $derived($st.error?.code ?? '');
+	let errorDetail = $derived($st.error?.detail ?? '');
 
-	// load reads the event's card files (a failure there is not the end:
-	// the page shows the slug) then starts the session, which names any
-	// failure of its own with a retry.
+	// The prover warms up once the key is registered.
+	$effect(() => {
+		if (joined && $warm === 'idle') vs.warmUp();
+	});
+
+	// load reads the candidates' cards (a failure there is not the end:
+	// the page shows the plain names) then starts the session, which names
+	// any failure of its own with a retry.
 	async function load() {
-		const src = defaultSources();
 		try {
-			const [ev, cs] = await Promise.all([src.json<EventInfo>('event.json'), src.json<Card[]>('candidates.json')]);
-			event = ev;
-			cards = new Map((cs ?? []).map((c) => [c.person_id, c]));
+			const meta = await loadEventMeta(slug);
+			event = meta.event;
+			cards = byName(meta.candidates);
 		} catch (e) {
-			console.warn('vote: event files', e);
+			console.warn('vote: the candidates', e);
 		}
-		await session.init();
+		await vs.init();
 	}
 
 	onMount(async () => {
 		clock = setInterval(() => (now = Date.now()), 30_000);
-		await load();
 		checkLink();
 		window.addEventListener('hashchange', checkLink);
+		await load();
 	});
 	// A device link in the URL, opened here (a scanned QR code) or
 	// navigated to (the hash alone changes without a reload).
 	function checkLink() {
 		const code = parseLink(window.location.hash);
-		if (code && code.pub !== linkCode?.pub) {
+		if (code && code !== linkCode) {
 			linkCode = code;
 			linkState = 'ask';
 			linkError = '';
@@ -357,7 +357,7 @@
 		}
 	}
 	onDestroy(() => {
-		session.destroy();
+		vs.destroy();
 		if (clock) clearInterval(clock);
 		if (typeof window !== 'undefined') window.removeEventListener('hashchange', checkLink);
 	});
@@ -367,15 +367,15 @@
 	<title>{event ? `${currentLang === 'en' ? event.title_en : event.title_fr} — tartuffe.me` : 'tartuffe.me'}</title>
 </svelte:head>
 
-{#if $phase === 'error'}
+{#if $st.phase === 'error'}
 	<div class="state error">
-		<p>{@html describeError($sessionError, $sessionErrorDetail, currentLang)}</p>
-		{#if $sessionErrorDetail}
-			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{$sessionErrorDetail}</p></details>
+		<p>{@html describeError(errorCode, currentLang)}</p>
+		{#if errorDetail}
+			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{errorDetail}</p></details>
 		{/if}
 		<button class="btn" onclick={load}>{tr('home.retry', currentLang)}</button>
 	</div>
-{:else if $phase === 'loading' || !$setupStore}
+{:else if $st.phase === 'loading' || !poll}
 	<p class="state loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 {:else}
 	<header class="hero">
@@ -383,12 +383,12 @@
 		<h1>{event ? (currentLang === 'en' ? event.title_en : event.title_fr) : slug}</h1>
 		{#if event}<p class="lead">{currentLang === 'en' ? event.description_en : event.description_fr}</p>{/if}
 		<p class="meta">
-			{#if results && showVoters(results.voters)}
-				<strong>{tr('poll.voters', currentLang, { n: results.voters.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</strong>
+			{#if results && showVoters(results.counted)}
+				<strong>{tr('poll.voters', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</strong>
 				<span class="dot"></span>
 			{/if}
 			{#if open}
-				{tr('poll.closes', currentLang, { d: closesText($setupStore.setup.closes) })}
+				{tr('poll.closes', currentLang, { d: closesText(closesAt) })}
 			{:else}
 				{tr('poll.closed', currentLang)}
 			{/if}
@@ -396,12 +396,12 @@
 		<p class="disclaimer">{tr('poll.disclaimer', currentLang)}</p>
 	</header>
 
-	{#if $statsStore}
-		<p class="live">
-			<span>{tr('v2.counter.ballots', currentLang, { n: $statsStore.ballots.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
-			<span class="dot"></span>
-			<span>{tr(toNext === 0 ? 'v2.counter.next.zero' : toNext === 1 ? 'v2.counter.next.one' : 'v2.counter.next', currentLang, { m: toNext })}</span>
-		</p>
+	{#if poll.publish.mode === 'open'}
+		{#if results}
+			<p class="live">
+				<span>{tr(results.counted === 1 ? 'v2.counter.counted.one' : 'v2.counter.counted', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
+			</p>
+		{/if}
 		<details class="rule">
 			<summary>{tr(kReal === 1 ? 'poll.rule.q.one' : 'poll.rule.q', currentLang)}</summary>
 			<p>{tr(kReal === 1 ? 'poll.rule.one' : 'poll.rule', currentLang, { k: kReal })}</p>
@@ -416,39 +416,39 @@
 		<div class="ballot-head">
 			<h2 id="ballot-title">
 				{tr('vote.title', currentLang)}
-				{#if $ballotStore.state === 'verified'}
+				{#if ballot.state === 'verified'}
 					<details class="help status-tip">
 						<summary class="state-icon state-icon--logged" aria-label={tr('v2.status.verified', currentLang)}>
 							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
 						</summary>
-						<p>{tr($ballotStore.late ? 'v2.status.late.help' : 'v2.status.verified.help', currentLang)}</p>
+						<p>{tr(ballot.late ? 'v2.status.late.help' : 'v2.status.verified.help', currentLang)}</p>
 					</details>
-				{:else if $ballotStore.state === 'received'}
+				{:else if ballot.state === 'acked'}
 					<details class="help status-tip">
 						<summary class="state-icon state-icon--ok" aria-label={tr('v2.status.received', currentLang)}>
 							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
 						</summary>
 						<p>{tr('v2.status.received.help', currentLang)}</p>
 					</details>
-				{:else if $ballotStore.state === 'missing'}
+				{:else if ballot.state === 'missing'}
 					<details class="help status-tip">
 						<summary class="state-icon state-icon--fault" aria-label={tr('v2.status.missing', currentLang)}>!</summary>
 						<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
 					</details>
 				{:else if busy}
-					<span class="state-icon" title={tr(`v2.status.${$ballotStore.state}`, currentLang)}><Spinner size="sm" label={tr(`v2.status.${$ballotStore.state}`, currentLang)} /></span>
-				{:else if $ballotStore.state === 'rejected' || $ballotStore.state === 'failed'}
+					<span class="state-icon" title={busyLabel}><Spinner size="sm" label={busyLabel} /></span>
+				{:else if ballot.state === 'rejected' || ballot.state === 'failed'}
 					<span class="state-icon state-icon--fault" title={actionError} aria-label={actionError}>!</span>
 				{/if}
 			</h2>
 			{#if !hasKey}
 				<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.key.get', currentLang)}</button>
 			{:else if !joined}
-				{#if $registration.state === 'posting'}
+				{#if regPosting}
 					<span class="joining"><Spinner size="sm" label={tr('v2.join.posting', currentLang)} /> {tr('v2.join.posting', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
-				{:else if $registration.state === 'acked'}
+				{:else if registration.state === 'acked'}
 					<span class="joining"><Spinner size="sm" label={tr('v2.join.acked', currentLang)} /> {tr('v2.join.acked', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
-				{:else if $registration.state === 'failed'}
+				{:else if regFailed}
 					<span class="joining joining--fault"><span class="state-icon state-icon--fault" aria-hidden="true">!</span> {tr('v2.join.failed', currentLang)} <button class="btn btn-small" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
 				{:else}
 					<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.join.idle', currentLang)}</button>
@@ -458,16 +458,16 @@
 			{/if}
 		</div>
 		<p class="hint">
-			{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: 3 })}
+			{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: depth })}
 			{#if open && shown.filter((x) => x !== BLANK).length > 1}
 				{tr('vote.hint.move', currentLang)}
 			{/if}
 		</p>
-		{#if hasKey && $warm !== 'ready' && $warm !== 'idle'}
+		{#if hasKey && ($warm === 'loading' || $warm === 'failed')}
 			<p class="hint muted">{tr(`v2.warm.${$warm}`, currentLang)}</p>
 		{/if}
 		{#if loggedUnknown}
-			<p class="hint">{tr('v2.ballot.logged', currentLang, { seq: key?.seq ?? 0 })}</p>
+			<p class="hint">{tr('v2.ballot.logged', currentLang)}</p>
 		{/if}
 		<ol class="slots" style="--n: 3" use:sortable>
 			{#each [0, 1, 2] as i (i)}
@@ -517,17 +517,17 @@
 			{/each}
 		</ol>
 		{#if statusLine}
-			<p class="status-line" class:status-line--ok={$ballotStore.state === 'received' || $ballotStore.state === 'verified'} aria-live="polite">{statusLine}</p>
-		{:else if $ballotStore.state === 'missing'}
+			<p class="status-line" class:status-line--ok={ballot.state === 'acked' || ballot.state === 'verified'} aria-live="polite">{statusLine}</p>
+		{:else if ballot.state === 'missing'}
 			<div class="status-line status-line--fault" role="alert">
 				<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
-				{#if $ballotStore.complaints?.length}
+				{#if ballot.complaints?.length}
 					<p>
 						{tr('v2.status.missing.links', currentLang)}
-						{#each $ballotStore.complaints as id, i (id)}
+						{#each ballot.complaints as id, i (id)}
 							{#if i > 0}, {/if}
 							<a href="{paths.complaint}?id={id}">{tr('v2.status.missing.verify', currentLang)}</a>
-							(<a href={neventLink(id, $setupStore?.setup.relays.map((r) => r.url) ?? [])} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
+							(<a href={neventLink(id, $st.channels.filter((c) => c.type === 'nostr').map((c) => c.url))} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
 						{/each}
 					</p>
 				{/if}
@@ -565,20 +565,20 @@
 
 	<Modal open={slotPick !== null} title={slotPick === null ? '' : tr('vote.slot.choice', currentLang, { rank: rankWord(slotPick + 1) })} onclose={() => (slotPick = null)} closeLabel={tr('auth.close', currentLang)}>
 		<div class="picker">
-			{#each choosable as o (o.slot)}
-				<button class="pick-card" onclick={() => chooseFor(o.slot)} disabled={busy}>
-					{#if imageOf(o.slot)}
-						<img src={imageOf(o.slot)} alt="" />
+			{#each choosable as o (o)}
+				<button class="pick-card" onclick={() => chooseFor(o)} disabled={busy}>
+					{#if imageOf(o)}
+						<img src={imageOf(o)} alt="" />
 					{:else}
-						<span class="pick-initial" aria-hidden="true">{nameOf(o.slot).charAt(0).toUpperCase()}</span>
+						<span class="pick-initial" aria-hidden="true">{nameOf(o).charAt(0).toUpperCase()}</span>
 					{/if}
-					<span>{nameOf(o.slot)}</span>
-					{#if scoreOf(o.slot) !== null}
-						<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o.slot) ?? 0 })}</span>
+					<span>{nameOf(o)}</span>
+					{#if scoreOf(o) !== null}
+						<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o) ?? 0 })}</span>
 					{/if}
 				</button>
 			{/each}
-			{#if !shown.includes(BLANK)}
+			{#if kind?.blank && !shown.includes(BLANK)}
 				<button class="pick-card pick-card--blank" onclick={() => chooseFor(BLANK)} disabled={busy}>
 					<span class="pick-initial" aria-hidden="true">◻</span>
 					<span>{tr('vote.blank.name', currentLang)}</span>
@@ -618,11 +618,11 @@
 	<Modal open={keyMenuOpen} title={tr('profile.key.title', currentLang)} onclose={() => ((keyMenuOpen = false), (showWords = false))} closeLabel={tr('auth.close', currentLang)}>
 		<p class="dialog-text">{tr('profile.key.story', currentLang)}</p>
 		<p class="dialog-text">{tr(keyStatusKey(), currentLang)}</p>
-		{#if key?.words}
+		{#if key?.hasWords}
 			{#if showWords}
 				<p class="dialog-text">{tr('v2.key.words.again', currentLang)}</p>
 				<ol class="words">
-					{#each key.words.split(' ') as w, i (i)}<li>{w}</li>{/each}
+					{#each (vs.session?.words() ?? '').split(' ') as w, i (i)}<li>{w}</li>{/each}
 				</ol>
 			{:else}
 				<button class="btn btn-small" onclick={() => (showWords = true)}>{tr('v2.key.words.show', currentLang)}</button>
@@ -638,14 +638,14 @@
 	</Modal>
 
 	<Modal open={forgetOpen} title={tr('profile.key.forget.title', currentLang)} onclose={() => (forgetOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-		<p class="dialog-text">{tr(key?.prf || key?.backups.words ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
+		<p class="dialog-text">{tr(key?.backedUp ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
 		{#snippet actions()}
 			<button class="btn" onclick={() => (forgetOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 			<button class="btn btn-danger" onclick={forgetKey}>{tr('profile.key.forget', currentLang)}</button>
 		{/snippet}
 	</Modal>
 
-	<VoteKeyDialog open={keyOpen} lang={currentLang} {session} domain={import.meta.env.VITE_ZKPASSPORT_DOMAIN ?? window.location.hostname} devMode={import.meta.env.VITE_ZKPASSPORT_DEV === '1'} simulate={import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1'} onclose={() => (keyOpen = false)} />
+	<VoteKeyDialog open={keyOpen} lang={currentLang} session={vs} devMode={import.meta.env.VITE_ZKPASSPORT_DEV === '1'} simulate={import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1'} onclose={() => (keyOpen = false)} />
 
 	{#snippet help(text: string)}
 		<details class="help">
@@ -658,13 +658,19 @@
 		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
 		{#if blackout}
 			<p class="state">{tr('v2.blackout', currentLang)}</p>
-		{:else if !results || !$tallyStore}
-			<p class="state">{tr(kReal === 1 ? 'v2.results.none.first' : toNext === 1 ? 'v2.results.none.one' : 'v2.results.none', currentLang, { k: kReal, m: toNext })}</p>
-		{:else}
-			<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyStore.at) })}</p>
-			{#if $tallyVerified === false}
+		{:else if !results}
+			{#if $st.tallyUnverified}
 				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
-			{:else if $tallyVerified}
+			{/if}
+			<p class="state">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
+		{:else}
+			{#if $tallyAt}
+				<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyAt) })}</p>
+			{/if}
+			{#if $st.tallyUnverified}
+				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
+			{/if}
+			{#if verified}
 				<p class="updated">{tr('v2.results.verified', currentLang)}</p>
 			{/if}
 			<div class="tabs" role="tablist">
@@ -680,17 +686,17 @@
 			{/if}
 			<ol class="vote-list">
 				{#each rows as o, i (o.slot)}
-					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={i === 0} class:vote-row--blank={o.kind === 'blank'}>
+					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={i === 0} class:vote-row--blank={o.blank}>
 						<span class="vote-rank">{tab === 'ranking' ? o.rank : i + 1}</span>
 						<div class="vote-main">
 							<span class="who">
 								{#if imageOf(o.slot)}
 									<img src={imageOf(o.slot)} alt="" class="photo" />
 								{:else}
-									<span class="photo photo--empty">{o.kind === 'blank' ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
+									<span class="photo photo--empty">{o.blank ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 								{/if}
 								<span class="name">{nameOf(o.slot)}</span>
-								{#if o.kind === 'blank'}
+								{#if o.blank}
 									{@render help(tr('vote.blank.tip', currentLang))}
 								{:else if scoreOf(o.slot) !== null}
 									<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o.slot) ?? 0 })}</span>
@@ -699,9 +705,9 @@
 							{#if tab === 'ranking' && winnerSlot === o.slot}
 								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
 							{/if}
-							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, results.voters) })}</span>
+							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, results.counted) })}</span>
 						</div>
-						<span class="big"><strong>{pct(o.first, results.voters)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
+						<span class="big"><strong>{pct(o.first, results.counted)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
 					</li>
 				{/each}
 			</ol>

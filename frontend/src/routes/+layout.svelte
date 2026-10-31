@@ -18,7 +18,7 @@
 	import { session, signOut, refreshUser } from '$lib/auth';
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
 	import EventBanner from '$lib/components/EventBanner.svelte';
-	import { voteKey } from '$lib/vote/key';
+	import { voteKey } from '$lib/vote/isoloir';
 	import { eventPaths } from '$lib/event';
 	import type { PollEvent } from '$lib/types';
 

@@ -9,7 +9,7 @@
 	import { lang, tr } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
 	import { session, signInOpen, signOut, setDisplayName, authFetch } from '$lib/auth';
-	import { voteKey } from '$lib/vote/key';
+	import { voteKey, forgetKey as forgetVoteKey, pollOf } from '$lib/vote/isoloir';
 	import Modal from '$lib/components/Modal.svelte';
 	import { getMyReports } from '$lib/reports';
 	import type { PollEvent, UserReport } from '$lib/types';
@@ -93,10 +93,7 @@
 
 	function forgetKey() {
 		forgetOpen = false;
-		voteKey.set(null);
-		try {
-			for (const k of Object.keys(localStorage)) if (k.startsWith('vote2_ballot:')) localStorage.removeItem(k);
-		} catch {}
+		forgetVoteKey();
 	}
 
 	function dateText(iso: string): string {
@@ -109,15 +106,11 @@
 	}
 
 	function ballotText(e: PollEvent): string {
-		try {
-			const raw = localStorage.getItem(`vote2_ballot:${e.slug}`);
-			const slots = raw ? (JSON.parse(raw) as number[]) : [];
-			if (slots.length === 0) return tr('profile.ballot.none', currentLang);
-			if (slots.length === 1 && slots[0] === 7) return tr('profile.ballot.blank', currentLang);
-			return tr(slots.length === 1 ? 'profile.ballot.one' : 'profile.ballot.many', currentLang, { n: slots.length });
-		} catch {
-			return tr('profile.ballot.none', currentLang);
-		}
+		// The last ranking this device cast in the event's poll.
+		const id = pollOf(e.slug);
+		const slots = (id !== null ? key?.choices[String(id)] : null) ?? [];
+		if (slots.length === 0) return tr('profile.ballot.none', currentLang);
+		return tr(slots.length === 1 ? 'profile.ballot.one' : 'profile.ballot.many', currentLang, { n: slots.length });
 	}
 
 	// The pseudonym, shown to the user alone; editing it in place.
@@ -154,7 +147,7 @@
 
 	<section class="card key" aria-labelledby="key-title">
 		<h2 id="key-title">{tr('profile.key.title', currentLang)}</h2>
-		{#if !key || key.position < 0}
+		{#if !key || !key.registered}
 			<p class="muted">{tr('profile.key.none', currentLang)}</p>
 			{#if events?.find((e) => e.featured)}
 				<a class="btn btn-primary" href={eventPaths(events.find((e) => e.featured)!.slug).vote}>{tr('v2.key.get', currentLang)}</a>
@@ -162,7 +155,7 @@
 		{:else}
 			<p class="ok">{tr('profile.key.ready', currentLang)}</p>
 			<p class="muted">{tr('profile.key.story', currentLang)}</p>
-			<p class="muted">{tr(key.prf ? 'profile.key.passkey' : key.backups.words ? 'profile.key.words' : key.backups.linked > 0 ? 'profile.key.linked' : 'profile.key.unprotected', currentLang)}</p>
+			<p class="muted">{tr(key.source === 'passkey' ? 'profile.key.passkey' : key.backups.words ? 'profile.key.words' : key.backups.linked > 0 || key.source === 'link' ? 'profile.key.linked' : 'profile.key.unprotected', currentLang)}</p>
 			<details class="lost">
 				<summary>{tr('profile.key.lost.title', currentLang)}</summary>
 				<p class="muted">{tr('profile.key.lost.text', currentLang)}</p>
@@ -198,7 +191,7 @@
 						{/if}
 					</span>
 				</div>
-				<p class="muted">{key && key.position >= 0 ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
+				<p class="muted">{key && key.registered ? ballotText(ev) : tr('profile.ballot.no_key', currentLang)}</p>
 				<a href={eventPaths(ev.slug).vote} class="btn" class:btn-primary={isOpen(ev)}>
 					{isOpen(ev) ? tr('profile.go_vote', currentLang) : tr('profile.go_results', currentLang)}
 				</a>
@@ -285,7 +278,7 @@
 </Modal>
 
 <Modal open={forgetOpen} title={tr('profile.key.forget.title', currentLang)} onclose={() => (forgetOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-	<p class="muted">{tr(key?.prf || key?.backups.words ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
+	<p class="muted">{tr(key?.source === 'passkey' || key?.backups.words ? 'profile.key.forget.text' : 'profile.key.forget.text_unprotected', currentLang)}</p>
 	{#snippet actions()}
 		<button class="btn" onclick={() => (forgetOpen = false)}>{tr('vote.cancel', currentLang)}</button>
 		<button class="btn btn-danger" onclick={forgetKey}>{tr('profile.key.forget', currentLang)}</button>

@@ -374,7 +374,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'corrections.reason': { fr: 'Raison', en: 'Reason' },
 	'corrections.empty': { fr: 'Aucune correction pour l’instant.', en: 'No correction yet.' },
 	'corrections.on': { fr: 'corrigé le {d}', en: 'corrected on {d}' },
-	// tartuffe-vote/2 (the vote page, lib/vote)
+	// The vote (isoloir, the vote page, lib/vote)
 	'v2.counter.ballots': { fr: '{n} votes reçus', en: '{n} votes received' },
 	'v2.counter.next': { fr: 'prochaine mise à jour dans {m} votes', en: 'next update in {m} votes' },
 	'v2.counter.next.one': { fr: 'prochaine mise à jour au prochain vote', en: 'next update at the next vote' },
@@ -464,7 +464,9 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'profile.key.passkey': { fr: 'Protégée par Face ID ou empreinte, qui la retrouve sur vos autres appareils.', en: 'Protected by Face ID or fingerprint, which brings it to your other devices.' },
 	'profile.key.words': { fr: 'Sauvegardée par vos 12 mots.', en: 'Backed up by your 12 words.' },
 
-	// The vote: what went wrong and what to do (lib/vote/errors.ts).
+	// The vote: what went wrong and what to do (lib/vote/errors.ts): the
+	// library's codes under v2.error, the ingest's reasons for a ballot under
+	// v2.reason and for a registration under v2.reg.
 	'v2.error.not_ready': { fr: 'La page n’est pas prête : patientez quelques secondes, puis réessayez.', en: 'The page is not ready yet: wait a few seconds, then try again.' },
 	'v2.error.no_setup': { fr: 'Le vote ne se charge pas encore. Réessayez dans un instant.', en: 'The vote is not loading yet. Try again in a moment.' },
 	'v2.error.mirror': { fr: 'Impossible de charger le vote. Vérifiez votre connexion, puis réessayez : rien n’est perdu.', en: 'The vote could not be loaded. Check your connection, then try again: nothing is lost.' },
@@ -487,6 +489,35 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.error.stopped': { fr: 'Annulé.', en: 'Cancelled.' },
 	'v2.error.rejected': { fr: 'Vote refusé. Rechargez la page et réessayez.', en: 'Vote refused. Reload the page and try again.' },
 	'v2.error.unknown': { fr: 'Une erreur inattendue. Réessayez ; si cela persiste, {report}.', en: 'An unexpected error. Try again; if it persists, {report}.' },
+	'v2.error.unproven': { fr: 'La copie publique sert un fichier que la liste signée ne contient pas. Rechargez la page ; si cela persiste, {report}.', en: 'The public copy serves a file the signed list does not hold. Reload the page; if it persists, {report}.' },
+	'v2.error.stale_mirror': { fr: 'La copie publique n’est plus à jour depuis plus de 30 minutes : votre bulletin n’est pas préparé sur une liste ancienne. Réessayez dans un moment ; si cela persiste, {report}.', en: 'The public copy has not been updated for more than 30 minutes: your ballot is not prepared against an old list. Try again in a moment; if it persists, {report}.' },
+	'v2.error.link_unavailable': { fr: 'Ce vote ne permet pas d’envoyer une clé d’un appareil à l’autre. Utilisez vos 12 mots ou Face ID.', en: 'This vote cannot send a key from one device to another. Use your 12 words or Face ID.' },
+	'v2.error.passkey_not_backed_up': { fr: 'Cette clé d’accès reste sur cet appareil : elle ne sauvegarde pas votre clé de vote. Gardez-la plutôt avec 12 mots.', en: 'This passkey stays on this device: it does not back up your voting key. Keep it with 12 words instead.' },
+	'v2.error.backup_required': { fr: 'Votre clé n’est pas encore sauvegardée : confirmez vos 12 mots avant de continuer.', en: 'Your key is not backed up yet: confirm your 12 words before going on.' },
+	'v2.error.previous_pending': { fr: 'Votre bulletin précédent n’est pas encore dans la liste publique. Réessayez dans une minute.', en: 'Your previous ballot is not in the public list yet. Try again in a minute.' },
+	'v2.error.bad_choice': { fr: 'Ce classement n’est pas permis : retirez un candidat et réessayez.', en: 'This ranking is not allowed: remove a candidate and try again.' },
+	'v2.error.prover_mismatch': { fr: 'Votre bulletin n’a pas pu être préparé correctement. Rechargez la page et réessayez ; si cela persiste, {report}.', en: 'Your ballot could not be prepared correctly. Reload the page and try again; if it persists, {report}.' },
+	'v2.error.pending': { fr: 'Votre bulletin précédent attend sa confirmation : renvoyez-le d’abord.', en: 'Your previous ballot waits for its confirmation: send it again first.' },
+	'v2.error.key_exists': { fr: 'Cet appareil a déjà une clé de vote.', en: 'This device already has a voting key.' },
+	'v2.error.bad_link_key': { fr: 'Ce lien d’appareil est incomplet : affichez un nouveau code sur l’autre appareil.', en: 'This device link is incomplete: show a new code on the other device.' },
+	'v2.error.not_open': { fr: 'Le vote n’est pas encore ouvert.', en: 'The vote is not open yet.' },
+	'v2.error.closed': { fr: 'Le vote est clos.', en: 'The vote is closed.' },
+	'v2.reason.full': { fr: 'Le vote est complet : il ne prend plus de bulletin.', en: 'The vote is full: it takes no more ballots.' },
+	'v2.reason.seq_gap': { fr: 'Votre bulletin ne suit pas le précédent de cette clé : rechargez la page et réessayez.', en: 'Your ballot does not follow this key’s previous one: reload the page and try again.' },
+	'v2.reason.not_open': { fr: 'Le vote n’est pas encore ouvert.', en: 'The vote is not open yet.' },
+	'v2.reason.revote_off': { fr: 'Ce vote ne permet pas de changer son bulletin.', en: 'This vote does not allow changing one’s ballot.' },
+	'v2.reason.unknown': { fr: 'La page n’est plus à jour : rechargez-la.', en: 'The page is out of date: reload it.' },
+	'v2.reason.version': { fr: 'La page n’est plus à jour : rechargez-la.', en: 'The page is out of date: reload it.' },
+	'v2.reason.bad_sig': { fr: 'Vote refusé : rechargez la page et réessayez.', en: 'Vote refused: reload the page and try again.' },
+	'v2.reason.stale_date': { fr: 'L’heure de votre appareil ne correspond pas à celle du serveur : vérifiez-la, puis réessayez.', en: 'Your device’s clock does not match the server’s: check it, then try again.' },
+	'v2.reason.rejected': { fr: 'Vote refusé. Rechargez la page et réessayez.', en: 'Vote refused. Reload the page and try again.' },
+	'v2.reg.full': { fr: 'Les inscriptions sont complètes : plus de place pour une nouvelle clé.', en: 'Registrations are full: no room for a new key.' },
+	'v2.reg.unknown': { fr: 'La page n’est plus à jour : rechargez-la, puis recommencez.', en: 'The page is out of date: reload it, then start again.' },
+	'v2.reg.version': { fr: 'La page n’est plus à jour : rechargez-la, puis recommencez.', en: 'The page is out of date: reload it, then start again.' },
+	'v2.reg.not_open': { fr: 'Les inscriptions ne sont pas encore ouvertes.', en: 'Registrations are not open yet.' },
+	'v2.warm.loading': { fr: 'Préparation du vote…', en: 'Preparing the vote…' },
+	'v2.counter.counted': { fr: '{n} votes comptés', en: '{n} votes counted' },
+	'v2.counter.counted.one': { fr: '1 vote compté', en: '1 vote counted' },
 	// A registration's rejection (SPEC §4 step 5).
 	'v2.reg.uid_used': { fr: 'Ce passeport a déjà une clé de vote : un passeport n’en donne qu’une. Retrouvez-la avec Face ID ou empreinte, vos 12 mots, ou depuis votre autre appareil.', en: 'This passport already has a voting key: a passport gives only one. Find it again with Face ID or fingerprint, your 12 words, or from your other device.' },
 	'v2.reg.id_used': { fr: 'Cette clé est déjà inscrite : vous pouvez voter.', en: 'This key is already registered: you can vote.' },

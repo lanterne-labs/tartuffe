@@ -1,30 +1,53 @@
 <script lang="ts">
-	// A complaint (SPEC §7.2), checked in the reader's browser: the ack our
-	// server signed, the checkpoint it names (signed by the log key), and
-	// whether that checkpoint's entries hold the ballot. Everything comes
-	// from the relays and the mirror; nothing from our server directly.
-	// Every outcome is a named verdict; a failure to read names itself and
-	// offers to read again.
+	// A complaint (isoloir SPEC §11.3), checked in the reader's browser: the
+	// ack the ingest signed, the checkpoint it names (signed by the log key
+	// pinned in this app), and whether that checkpoint's entries hold the
+	// body. Everything comes from the relays and the mirror; nothing from
+	// our server directly. Every outcome is a named verdict; a failure to
+	// read names itself and offers to read again.
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { eventPaths } from '$lib/event';
-	import { NostrMailbox, verifyEvent, neventLink, type NostrEvent } from '$lib/vote/mailbox';
-	import { defaultSources } from '$lib/vote/sources';
-	import { parseCheckpoint, type Setup, type Ack, type MirrorEntry } from '$lib/vote/protocol';
-	import { openCheckpoint } from '$lib/vote/checkpoint';
+	import { Mirror, WebSocketTransport, IsoloirError, type LedgerSetup, type NostrEvent } from '@isoloir/web';
+	import { core, mirrorSources, settingsProblem, neventLink, LOG_KEY } from '$lib/vote/isoloir';
 	import { messageOf } from '$lib/vote/errors';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
-	let slug = $derived($page.params.slug ?? '');
-	let paths = $derived(eventPaths(slug));
+	let paths = $derived(eventPaths($page.params.slug ?? ''));
 	let id = $derived($page.url.searchParams.get('id') ?? '');
 
 	type Verdict = { kind: 'loading' | 'noid' | 'nosetup' | 'error' | 'notfound' | 'badack' | 'nocp' | 'badcp' | 'present' | 'absent'; pi?: string; n?: number; seq?: number; at?: string; detail?: string };
 	let verdict = $state<Verdict>({ kind: 'loading' });
 	let relays = $state<string[]>([]);
 	let complaintId = $state('');
+
+	const FETCH_TIMEOUT = 20_000;
+
+	// fetchEvent reads an event by id from the relays, the first that has it.
+	function fetchEvent(urls: string[], eventId: string): Promise<NostrEvent | null> {
+		const t = new WebSocketTransport();
+		return new Promise((resolve) => {
+			let left = urls.length;
+			const stops: (() => void)[] = [];
+			const finish = (e: NostrEvent | null) => {
+				clearTimeout(timer);
+				stops.splice(0).forEach((s) => s());
+				resolve(e);
+			};
+			const timer = setTimeout(() => finish(null), FETCH_TIMEOUT);
+			if (left === 0) finish(null);
+			for (const url of urls) {
+				stops.push(
+					t.subscribe(url, { ids: [eventId] }, (e) => e.id === eventId && finish(e), {
+						onEose: () => --left === 0 && finish(null),
+						onDown: () => --left === 0 && finish(null)
+					})
+				);
+			}
+		});
+	}
 
 	async function check() {
 		verdict = { kind: 'loading' };
@@ -33,69 +56,65 @@
 			return;
 		}
 		try {
-			const src = defaultSources();
-			const setup = await src.json<Setup>('setup.json');
-			if (!setup) {
+			if (settingsProblem($page.params.slug ?? '')) {
 				verdict = { kind: 'nosetup' };
 				return;
 			}
-			relays = setup.setup.relays.map((r) => r.url);
+			const c = await core();
+			const mirror = new Mirror(c, mirrorSources(), LOG_KEY);
+			const ledger = await mirror.setup<LedgerSetup>('setup/ledger.json', 'ledger');
+			if (!ledger) {
+				verdict = { kind: 'nosetup' };
+				return;
+			}
+			relays = ledger.body.channels.filter((ch) => ch.type === 'nostr').map((ch) => ch.url);
 			complaintId = id;
-			const mail = new NostrMailbox(relays, `tartuffe-vote/2/${slug}`, setup.setup.nostr_pubkey);
-			const ev = await mail.fetchEvent(id, 20_000);
-			if (!ev) {
+			const ev = await fetchEvent(relays, id);
+			if (!ev || !c.verifyEvent(ev)) {
 				verdict = { kind: 'notfound' };
 				return;
 			}
-			let body: { ack?: NostrEvent; pi_hash?: string; nostr_id?: string };
+			// The complaint: {v, ack: <the ack event>, body: <the body, as JSON>}.
+			let ackHash = '';
+			let n = 0;
 			try {
-				body = JSON.parse(ev.content);
-			} catch {
-				verdict = { kind: 'badack' };
+				const body = JSON.parse(ev.content) as { ack?: NostrEvent; body?: unknown };
+				if (!body.ack || body.body === undefined) throw new Error('no ack or body');
+				const ack = c.readAck(body.ack, ledger.body.ingest);
+				if (ack.outcome !== 'accepted' || ack.checkpoint === undefined) throw new Error('not an acceptance naming a checkpoint');
+				if (c.bodyHash(c.canonical(body.body)) !== ack.hash) throw new Error('the ack is of another body');
+				ackHash = ack.hash;
+				n = ack.checkpoint;
+			} catch (e) {
+				verdict = { kind: 'badack', detail: messageOf(e) };
 				return;
 			}
-			const ackEv = body.ack;
-			if (!ackEv || !verifyEvent(ackEv) || ackEv.pubkey !== setup.setup.nostr_pubkey) {
-				verdict = { kind: 'badack' };
-				return;
-			}
-			let ack: Ack;
+			let cp;
 			try {
-				ack = JSON.parse(ackEv.content);
-			} catch {
-				verdict = { kind: 'badack' };
-				return;
-			}
-			const pi = ack.pi_hash ?? body.pi_hash ?? '';
-			const n = ack.checkpoint;
-			const note = await src.text(`checkpoints/${n}.txt`);
-			if (!note) {
-				verdict = { kind: 'nocp', pi, n };
-				return;
-			}
-			const key = (import.meta.env.VITE_VOTE_LOG_KEY as string | undefined) || (await src.text('log-key.txt'))?.trim() || '';
-			if (key && !openCheckpoint(note, key)) {
-				verdict = { kind: 'badcp', pi, n };
-				return;
-			}
-			const info = parseCheckpoint(note);
-			if (!info) {
-				verdict = { kind: 'badcp', pi, n };
-				return;
-			}
-			// The entries of that checkpoint: in the files of its hour and the
-			// hours around it, read at the checkpoint's own mirror commit.
-			const at = new Date(info.time * 1000);
-			for (const dt of [0, -3_600_000, 3_600_000]) {
-				const hour = new Date(at.getTime() + dt).toISOString().slice(0, 13);
-				const list = await src.json<MirrorEntry[]>(`entries/${hour}.json`, info.mirror);
-				const found = list?.find((e) => e.hash === pi && e.checkpoint === n);
-				if (found) {
-					verdict = { kind: 'present', pi, n, seq: found.log_seq };
+				cp = await mirror.checkpoint(n);
+			} catch (e) {
+				if (e instanceof IsoloirError && e.code === 'log_key') {
+					verdict = { kind: 'badcp', pi: ackHash, n, detail: e.detail };
 					return;
 				}
+				throw e;
 			}
-			verdict = { kind: 'absent', pi, n, at: at.toLocaleString(currentLang === 'fr' ? 'fr-FR' : 'en-GB', { timeZone: 'Europe/Paris' }) };
+			if (!cp) {
+				verdict = { kind: 'nocp', pi: ackHash, n };
+				return;
+			}
+			const entries = await mirror.entries(n, cp.mirror ?? '');
+			if (entries === null) {
+				verdict = { kind: 'nocp', pi: ackHash, n };
+				return;
+			}
+			const found = entries.find((e) => c.bodyHash(e.body) === ackHash);
+			if (found) {
+				verdict = { kind: 'present', pi: ackHash, n, seq: found.seq };
+				return;
+			}
+			const at = new Date(cp.time * 1000);
+			verdict = { kind: 'absent', pi: ackHash, n, at: at.toLocaleString(currentLang === 'fr' ? 'fr-FR' : 'en-GB', { timeZone: 'Europe/Paris' }) };
 		} catch (e) {
 			console.error('complaint', e);
 			verdict = { kind: 'error', detail: messageOf(e) };
@@ -132,6 +151,9 @@
 		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
 	{:else if verdict.kind === 'badack'}
 		<p class="verdict verdict--none">{tr('v2.complaint.badack', currentLang)}</p>
+		{#if verdict.detail}
+			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{verdict.detail}</p></details>
+		{/if}
 	{:else}
 		<p>{tr('v2.complaint.ack', currentLang, { pi: short(verdict.pi ?? ''), n: verdict.n ?? 0 })}</p>
 		{#if verdict.kind === 'nocp'}
