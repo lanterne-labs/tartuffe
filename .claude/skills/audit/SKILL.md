@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Full quality audit of Digital Mirror's production data, with the fixes. Reviews the new and debatable contradictions, audits random samples of facts, votes, debates, stances and entities, turns every judgement gap and data bug found into a prompt rule or code fix with a golden or a test, ships it (goldens on the Batches API, PR, merge, deploy), and prepares the data cleanup for the user's approval. Use it whenever the user types /audit, or asks to review the contradictions, check the latest facts, "make another pass", look for bugs in the data, or check what the worker produced since the last pass.
+description: Full quality audit of Digital Mirror's production data, with the fixes. Reviews the new and debatable contradictions and re-reviews the oldest-reviewed ones, audits random samples of facts, votes, debates, stances and entities from both the latest window and a slice of history walked backwards run after run (so there is always something to audit), turns every judgement gap and data bug found into a prompt rule or code fix with a golden or a test, ships it (goldens on the Batches API, PR, merge, deploy), and prepares the data cleanup for the user's approval. Use it whenever the user types /audit, or asks to review the contradictions, check the latest facts, "make another pass", look for bugs in the data, or check what the worker produced since the last pass.
 ---
 
 # /audit — review the data, fix what it shows, ship it
@@ -47,9 +47,36 @@ go build -o dm .
   Never from a branch that adds a migration not yet deployed.
 - Read-only SQL: `psql "$DBURL" -X -At -F ' | ' -c "..."`.
 - Write SQL (approved cleanups only): `scripts/qw.py` of this skill.
-- The window starts at the last audit: `bd memories audit-last-run`. If there
-  is none, use the last 3 days.
 - Work in the session's scratchpad directory, in a folder `audit-<date>/`.
+
+## What one run looks at: the new window and a slice of history
+
+Every run has something to audit. It always covers two things:
+
+1. **The new window**: what the worker produced since the last audit
+   (`bd memories audit-last-run`; if there is none, the last 3 days). It shows
+   whether the latest code works.
+2. **A slice of history**: older data, walked backwards a step per run, so
+   that every fact, stance and contradiction is audited in turn under the
+   current rules. Most of the data was made by older prompts and code, so that
+   is where most of the errors are.
+
+The position in history is a cursor in bd: `bd memories audit-cursor`, one
+line such as `facts_below=152000 stances_below=21000`. If there is none, start
+at the newest ids (`max(id)+1` of `facts` and `stance_documents`). Each run
+takes the next band below the cursor:
+
+| data | the slice of one run | cursor moves to |
+|---|---|---|
+| facts | ids from `facts_below - 8000` to `facts_below`; sample ~240 text facts and ~100 votes at random inside the band | the band's lower end |
+| stances | ids from `stances_below - 1500` to `stances_below`; sample ~70 with 3–40 facts | the band's lower end |
+| contradictions | the 40 rows whose LATEST review is the oldest (`reviewed_at` ascending), whatever their verdict, skipping those reviewed in the last 7 days | (no cursor: the order is by review age) |
+
+When a cursor reaches the lowest id, it wraps to the newest ids and starts
+again: the rules have changed since. Save the new cursor at the end of the
+run (step 6). The new window and the history slice go through the same steps
+below; the report gives their error rates side by side, which shows how much
+better the current code does than the old one.
 
 ## 1. Measure
 
@@ -68,9 +95,11 @@ last maintenance pass.
 
 ## 2. Review the contradictions
 
-Take every contradiction with no review and every one whose last verdict is
-`debatable` (a rule added since may settle it). Dump them with their facts,
-dates and every source quote:
+Take every contradiction with no review, every one whose last verdict is
+`debatable` (a rule added since may settle it), and the history slice: the 40
+rows whose latest review is the oldest, `real` ones included (a rule added
+since may show one is false, and a fact behind it may have been wrongly
+extracted). Dump them with their facts, dates and every source quote:
 
 ```bash
 env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review sample --reviewer <model> --max 0 > sample.jsonl
@@ -95,7 +124,9 @@ env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review record -
 ## 3. Audit samples
 
 In parallel with step 2, one agent per sample, each writing
-`<sample>.audit.jsonl` and a short patterns note:
+`<sample>.audit.jsonl` and a short patterns note. Draw each sample from the
+new window and from the history band, about half and half (all from the band
+when the window is empty), and tag every row with where it came from:
 
 | sample | size | what to judge |
 |---|---|---|
@@ -168,12 +199,16 @@ printed.
 ## 6. Report and close
 
 The report, in this order, short:
-1. The gauges of step 1 against the last audit.
-2. Contradictions: real / debatable / false, and the causes of the false ones.
-3. Each sample's error rate by type, with two examples.
+1. The gauges of step 1 against the last audit, and the history band audited
+   (ids and dates it covers).
+2. Contradictions: real / debatable / false, and the causes of the false ones,
+   new rows and re-reviewed old rows apart.
+3. Each sample's error rate by type, new window and history band side by side,
+   with two examples.
 4. What was fixed (rules, code, goldens table), the PR and the deploy.
 5. What waits for the user: the cleanup script, decisions to take.
 6. The bd issues filed.
 
 Then: `bd remember --key audit-last-run "<UTC timestamp>: <the gauges in one line>"`,
+`bd remember --key audit-cursor "facts_below=<N> stances_below=<M> (run of <date>)"`,
 `git pull --rebase`, `bd dolt push`, `git push`, `git status`.
