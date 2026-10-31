@@ -94,12 +94,35 @@ func splitArticle(titre string) (article, bill string, ok bool) {
 // describes a text it can see from its title; the article's content is not
 // in the title, and a model asked about it says so in its statement.
 func summaryTitle(law Law) string {
-	if ClassifyScrutinObject(law.Title) == ObjectArticle {
+	switch ClassifyScrutinObject(law.Title) {
+	case ObjectArticle:
 		if _, bill, ok := splitArticle(law.Title); ok {
+			return bill
+		}
+	case ObjectAmendement, ObjectSousAmendement:
+		// The summarizer given the whole title ("l'amendement n° 91 de Mme
+		// Erodi à l'article 8 de la proposition de loi ...") describes the
+		// amendment, and votedObjectPhrase then presents that as the bill
+		// (audit of 2026-10-31: 17 of 103 vote facts). The bill is what
+		// follows the first "projet de loi" / "proposition de loi".
+		if bill, ok := billOfAmendmentTitle(law.Title); ok {
 			return bill
 		}
 	}
 	return law.Title
+}
+
+// amendmentBillRe finds the bill an amendment title ends with.
+var amendmentBillRe = regexp.MustCompile(`(?i)((?:la |le |l['’])?(?:projet|proposition)\s+de\s+(?:loi|résolution|resolution).*)$`)
+
+// billOfAmendmentTitle returns the bill named in the title of a scrutin on
+// an amendment or a sous-amendement.
+func billOfAmendmentTitle(titre string) (string, bool) {
+	m := amendmentBillRe.FindStringSubmatch(strings.TrimSpace(titre))
+	if m == nil {
+		return "", false
+	}
+	return strings.TrimSpace(m[1]), true
 }
 
 // scrutinNumeroRe pulls the amendment number out of a scrutin title

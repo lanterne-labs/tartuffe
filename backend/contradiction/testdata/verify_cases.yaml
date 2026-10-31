@@ -866,3 +866,33 @@ cases:
     notes: "A judgment of a leader is not a refusal to cooperate with his party's deputies. Prod 2297 (review 2026-10-30)."
     date_a: "2026-10-09"
     date_b: "2026-03-23"
+
+  - name: "FP_2198_attal_assessment_then_plan"
+    fact_a: "Gabriel Attal a promis d'actionner dès son élection un frein d'urgence de 20 milliards d'euros d'économies pour stopper l'hémorragie."
+    fact_b: "Gabriel Attal a affirmé que l'état des finances publiques de la France est tenu."
+    claimed_reason: "Affirmer que les finances publiques sont tenues contredit la nécessité d'un frein d'urgence pour « stopper l'hémorragie »."
+    expect: drop
+    bucket: different_events
+    notes: "An assessment of April 2024 vs a plan of October 2026: the situation changed. Prod 2198 (review 2026-10-31)."
+    date_a: "2026-10-16"
+    date_b: "2024-04-11"
+
+  - name: "FP_2300_martin_article_two_readings"
+    fact_a: "Patrice Martin a voté CONTRE l'article 17 (« Crée l'obligation de mettre en place une communication alternative et améliorée pour recueillir le consentement éclairé des majeurs dans l'impossibilité, partielle ou totale, de s'exprimer ») du texte de loi : « Renforce l'accès aux soins palliatifs et à l'accompagnement des patients en fin de vie »"
+    fact_b: "Patrice Martin a voté POUR l'article 17 (« Crée l'obligation de mettre en place une communication alternative et améliorée pour recueillir le consentement des majeurs ne pouvant s'exprimer, reconnue de même valeur juridique que l'expression verbale ») du texte de loi : « la proposition de loi visant à garantir l'égal accès de tous à l'accompagnement et aux soins palliatifs (deuxième lecture). »"
+    claimed_reason: "Il a voté contre l'article 17 sur la communication alternative pour le consentement en mai 2025, puis pour ce même article en février 2026."
+    expect: drop
+    bucket: different_events
+    notes: "First and second reading of an article whose wording changed. Prod 2300 (review 2026-10-31)."
+    date_a: "2025-05-16"
+    date_b: "2026-02-18"
+
+  - name: "FP_1610_lepen_one_plan_several_outlets"
+    fact_a: "Marine Le Pen a promis de ramener le déficit public sous les 3% du PIB en 18 mois."
+    fact_b: "Marine Le Pen a présenté un plan, sous forme de scénario en cas de victoire de son parti à la présidentielle, ramenant le déficit à 2,2 % du PIB en 2032."
+    claimed_reason: "Marine Le Pen a elle-même promis un retour sous les 3 % de déficit en cinq ans (2030), puis en 18 mois, deux échéances incompatibles pour le même engagement."
+    expect: drop
+    bucket: numbers_measurements
+    notes: "One plan presented on one day, read by two outlets (primary balance vs total deficit path). Prod 1610, 1452 (review 2026-10-31)."
+    date_a: "2026-10-06"
+    date_b: "2026-10-06"

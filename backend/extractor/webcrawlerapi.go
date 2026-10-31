@@ -124,6 +124,7 @@ func (e *WebcrawlerAPIExtractor) ExtractContent(url string) (*ExtractedContent, 
 
 	cleaned := stripTrailingSidebarSections(stripLeadBeforeTitle(result.Markdown, result.PageTitle))
 
+	// The API does not report the page's final URL: the asked one stands.
 	extracted := &ExtractedContent{
 		URL:           url,
 		Title:         result.PageTitle,

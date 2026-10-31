@@ -4,7 +4,8 @@ import "time"
 
 // ExtractedContent holds the structured data retrieved from a web page.
 type ExtractedContent struct {
-	// URL is the original URL from which the content was extracted.
+	// URL is the URL the page was read at, after the redirects the fetch
+	// followed: the source of the facts, which may differ from the URL asked.
 	URL string `json:"url"`
 	// Title is the title of the web page.
 	Title string `json:"title"`

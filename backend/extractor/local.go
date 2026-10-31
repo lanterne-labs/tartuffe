@@ -34,6 +34,11 @@ type localExtractor struct{}
 
 // newLocalExtractor returns a ready-to-use localExtractor. Unlike the other
 // extractors, no env config is required — it's always available.
+// earliestPageYear is the first year a page date is believed: earlier dates
+// are placeholders of the site (2001-01-01 on facebook video pages, review of
+// 2026-10-31).
+const earliestPageYear = 1995
+
 func newLocalExtractor() *localExtractor {
 	return &localExtractor{}
 }
@@ -76,13 +81,20 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 			len(content), url, localMinContentChars)
 	}
 
+	// The page's URL after the redirects: a Google redirect, a moved article
+	// or a shortlink is never the source of a fact (review of 2026-10-31).
+	finalURL := url
+	if page.URL != "" {
+		finalURL = page.URL
+	}
 	out := &ExtractedContent{
-		URL:     url,
+		URL:     finalURL,
 		Title:   result.Metadata.Title,
 		Content: stripTrailingSidebarSections(stripLeadBeforeTitle(content, result.Metadata.Title)), // the ticker above the title, the sidebar below the body
 	}
-	if !result.Metadata.Date.IsZero() {
-		d := result.Metadata.Date
+	// A page's date before the web is a placeholder (facebook video pages
+	// carry 2001-01-01), not a publication date.
+	if d := result.Metadata.Date; !d.IsZero() && d.Year() >= earliestPageYear {
 		out.DatePublished = &d
 	}
 

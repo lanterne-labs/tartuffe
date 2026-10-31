@@ -575,10 +575,37 @@ func (p *Provider) extractAndInsertFromArticles(
 	// Fetch step of the document state machine: every scraped article is
 	// saved now, before any LLM call. Empty and thin pages are saved as
 	// extracted with no facts: nothing to do, and never scraped again.
+	// A page read at another URL than the search gave (a Google redirect, a
+	// moved article) is stored under the URL it was read at; when that page
+	// is already known, the result is a second link to it: nothing to do.
+	redirected := map[int]string{}
+	var finals []string
+	for i, article := range articlesToProcess {
+		if c := extractedContents[i]; extractionErrors[i] == nil && c != nil && c.URL != "" && c.URL != article.Link {
+			redirected[i] = c.URL
+			finals = append(finals, c.URL)
+		}
+	}
+	knownFinal := map[string]bool{}
+	if len(finals) > 0 {
+		var err error
+		if knownFinal, err = p.Storer.KnownDocumentURLs(ctx, "news", finals); err != nil {
+			return fmt.Errorf("news: checking the redirected pages: %w", err)
+		}
+	}
+
 	var docs []core.SourceDocument
 	var nothingToExtract []string
 	for i, article := range articlesToProcess {
 		content := extractedContents[i]
+		if final, ok := redirected[i]; ok {
+			if knownFinal[final] {
+				log.Debug().Str("url", article.Link).Str("final_url", final).Msg("news: the page is already known under its final URL")
+				webfetch.Note(ctx, "news", article.Link, "article_known")
+				continue
+			}
+			article.Link = final
+		}
 		if extractErr := extractionErrors[i]; extractErr != nil {
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)

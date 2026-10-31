@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"digital-mirror/backend/llm"
 	"fmt"
 	"math"
 	"testing"
@@ -280,8 +281,8 @@ func TestChunkKeyFactsByBudget(t *testing.T) {
 			total := base + factTokens + stanceAnalyzeOutputTokens + stanceContextSafetyTokens
 			// Allow the single-fact degenerate case to exceed (nothing batching can
 			// do when one fact + base already overflows); otherwise must fit.
-			if total > stanceMaxContextTokens && len(b) > 1 {
-				t.Errorf("batch %d overflows: %d > %d (base=%d facts=%d)", i, total, stanceMaxContextTokens, base, factTokens)
+			if total > stanceContextTokens(llm.TaskStanceAnalyze) && len(b) > 1 {
+				t.Errorf("batch %d overflows: %d > %d (base=%d facts=%d)", i, total, stanceContextTokens(llm.TaskStanceAnalyze), base, factTokens)
 			}
 		}
 	}

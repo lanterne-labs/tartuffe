@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/metrics"
@@ -1549,4 +1550,32 @@ func (s *PostgresStorer) SetFactSourceURLAndDate(ctx context.Context, id int64, 
 		return fmt.Errorf("setting the source of fact source %d: no such row", id)
 	}
 	return nil
+}
+
+// FindActiveFactByQuote returns the person's active fact (not a member of a
+// claim group) whose source quote is the same text as quote, letters and
+// digits compared, or nil. Two reports with the same quote of one person
+// are one occurrence by definition: the inserter groups them without the
+// gate (review of 2026-10-31: a document extracted again after a cut run
+// stored its facts two or three times, and the gate missed some).
+func (s *PostgresStorer) FindActiveFactByQuote(ctx context.Context, personID int64, quote string, sourceTypes []string) (*core.SimilarFact, error) {
+	var sf core.SimilarFact
+	err := s.pool.QueryRow(ctx, `
+		SELECT f.id, f.fact_text, COALESCE(f.canonical_verb, '')
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		JOIN facts f ON f.id = fs.fact_id
+		WHERE fm.person_id = $1
+		  AND fs.source_type = ANY($3)
+		  AND lower(regexp_replace(fs.original_quote, '[^[:alnum:]]+', '', 'g')) = lower(regexp_replace($2, '[^[:alnum:]]+', '', 'g'))
+		  AND NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = f.id)
+		ORDER BY f.id
+		LIMIT 1`, personID, quote, sourceTypes).Scan(&sf.ID, &sf.Text, &sf.CanonicalVerb)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding the fact with the same quote: %w", err)
+	}
+	return &sf, nil
 }
