@@ -89,12 +89,15 @@ func buildCollectiveVoteStatement(pos VotePosition, lawPhrase string) string {
 	case VoteAgainst:
 		return fmt.Sprintf("a collectivement voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("s'est collectivement abstenu lors du vote sur %s", lawPhrase)
+		return fmt.Sprintf("a collectivement choisi l'abstention lors du vote sur %s", lawPhrase)
 	default:
 		return fmt.Sprintf("n'a pas pris part au vote collectif sur %s", lawPhrase)
 	}
 }
 
+// buildVoteStatement is the vote of one deputy. The abstention is worded
+// without a past participle: the AN records give no civility, and "s'est
+// abstenu" was wrong for every woman deputy (audit of 2026-10-31).
 func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	switch pos {
 	case VoteFor:
@@ -102,7 +105,7 @@ func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	case VoteAgainst:
 		return fmt.Sprintf("a voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("s'est abstenu lors du vote sur %s", lawPhrase)
+		return fmt.Sprintf("a choisi l'abstention lors du vote sur %s", lawPhrase)
 	default:
 		return fmt.Sprintf("n'a pas pris part au vote sur %s", lawPhrase)
 	}
