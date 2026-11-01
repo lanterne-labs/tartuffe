@@ -11,7 +11,9 @@ import (
 // derivePartyMajorityFacts builds party-level facts based on majority positions
 // The participation floor of a group's collective vote: at least
 // groupVoteMinVoters members voting, and at least groupVoteMinShare of the
-// members present (NonVot counts the absent).
+// group's members (nombreMembresGroupe; nonVotants are the members present
+// who did not vote, usually 0, so they cannot stand for the absent: the
+// review of 2026-11-01 found 7 of 69 PS deputies making a "collective" vote).
 const (
 	groupVoteMinVoters = 3
 	groupVoteMinShare  = 0.2
@@ -25,7 +27,11 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 		// or fewer than groupVoteMinVoters and groupVoteMinShare of the
 		// members (2 of 23 LIOT deputies made a "collective" vote,
 		// 2026-11-01), gives no fact.
-		if total == 0 || total < groupVoteMinVoters || float64(total) < groupVoteMinShare*float64(total+stats.NonVot) {
+		members := stats.Members
+		if members < total+stats.NonVot {
+			members = total + stats.NonVot
+		}
+		if total == 0 || total < groupVoteMinVoters || float64(total) < groupVoteMinShare*float64(members) {
 			continue
 		}
 		var majorityFrac float64
@@ -59,6 +65,11 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 		}
 		if strings.TrimSpace(name) == "" {
 			// Strict mode: skip when we cannot resolve a proper name
+			continue
+		}
+		// The non-attached deputies are not a group: their votes are each
+		// their own, never a collective position.
+		if isNonInscrits(name) {
 			continue
 		}
 
@@ -178,4 +189,11 @@ func prepareLawPhrase(lawSimple string) string {
 		return "le texte de loi"
 	}
 	return fmt.Sprintf("le texte de loi : « %s »", guard)
+}
+
+// isNonInscrits reports whether an organe name is the non-attached deputies
+// ("Non inscrit", "Non inscrits", "NI").
+func isNonInscrits(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "ni" || strings.HasPrefix(n, "non inscrit") || strings.HasPrefix(n, "non-inscrit")
 }

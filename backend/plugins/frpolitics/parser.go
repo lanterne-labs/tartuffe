@@ -138,6 +138,7 @@ func ParseScrutin(s scrutinJSON) (Law, LawGroupStats, error) {
 			Against:  toInt(g.Vote.DecompteVoix.Contre),
 			Abst:     toInt(g.Vote.DecompteVoix.Abstentions),
 			NonVot:   toInt(g.Vote.DecompteVoix.NonVotants),
+			Members:  toInt(g.NombreMembresGroupe),
 		}
 	}
 	return law, groups, nil

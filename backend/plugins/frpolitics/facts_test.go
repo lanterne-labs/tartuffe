@@ -66,6 +66,13 @@ func TestDerivePartyMajorityFactsParticipationFloor(t *testing.T) {
 	require.Empty(t, derivePartyMajorityFacts(law, tooFew, 0.5, organes, LawSummary{}, testObjectPhrase))
 	enough := LawGroupStats{"PO1": {Position: VoteFor, For: 5, NonVot: 18}}
 	require.Len(t, derivePartyMajorityFacts(law, enough, 0.5, organes, LawSummary{}, testObjectPhrase), 1)
+	// nonVotants is usually 0: the group's size is the base (7 of 69 PS).
+	minority := LawGroupStats{"PO1": {Position: VoteFor, For: 7, Members: 69}}
+	require.Empty(t, derivePartyMajorityFacts(law, minority, 0.5, organes, LawSummary{}, testObjectPhrase))
+	half := LawGroupStats{"PO1": {Position: VoteFor, For: 20, Members: 69}}
+	require.Len(t, derivePartyMajorityFacts(law, half, 0.5, organes, LawSummary{}, testObjectPhrase), 1)
+	ni := map[string]OrganeInfo{"PO2": {OrganeRef: "PO2", ShortName: "NI", LongName: "Non inscrit"}}
+	require.Empty(t, derivePartyMajorityFacts(law, LawGroupStats{"PO2": {Position: VoteFor, For: 8, Members: 9}}, 0.5, ni, LawSummary{}, testObjectPhrase))
 }
 
 // A vote on a declaration of the Government (art. 50-1) is not "le texte de
