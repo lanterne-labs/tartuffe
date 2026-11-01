@@ -5,6 +5,7 @@
 	// own pages (/election/...): one line points there.
 	import { eventPaths } from '$lib/event';
 	import { lang } from '$lib/i18n';
+	import TartuffeScore, { LEVELS } from '$lib/components/TartuffeScore.svelte';
 	import Pipeline from '$lib/components/about/Pipeline.svelte';
 	import ContradictionFlow from '$lib/components/about/ContradictionFlow.svelte';
 	import BundleDiagram from '$lib/components/about/BundleDiagram.svelte';
@@ -59,7 +60,9 @@
 
 			scoreKicker: 'Le Tartuffe-Score',
 			scoreTitle: 'De cohérent à tartuffe',
-			scoreLead: 'On part de 0, tout à gauche du baromètre. Chaque contradiction distincte pousse le repère vers « tartuffe ».',
+			scoreLead: 'On part de 0, tout à gauche du baromètre. Chaque contradiction distincte pousse le repère vers la droite, d’un niveau à l’autre.',
+			levelsTitle: 'Les cinq niveaux',
+			levelsNote: 'Sur 100, et le niveau qu’il donne. Sous 10 faits : « Pas assez de faits ».',
 			formulaLabel: 'La formule',
 			defs: [
 				['F', 'le nombre de faits connus sur la personne'],
@@ -134,7 +137,9 @@
 
 			scoreKicker: 'The Tartuffe-Score',
 			scoreTitle: 'From coherent to tartuffe',
-			scoreLead: 'It starts at 0, at the left end of the barometer. Each distinct contradiction pushes the marker towards “tartuffe”.',
+			scoreLead: 'It starts at 0, at the left end of the barometer. Each distinct contradiction pushes the marker to the right, from one level to the next.',
+			levelsTitle: 'The five levels',
+			levelsNote: 'Out of 100, and the level it gives. Under 10 facts: “Not enough facts”.',
 			formulaLabel: 'The formula',
 			defs: [
 				['F', 'the number of known facts about the person'],
@@ -260,6 +265,17 @@
 			<BundleDiagram lang={currentLang} />
 			<p class="bundle-note">{c.bundleNote}</p>
 		</div>
+
+		<h3 class="try">{c.levelsTitle}</h3>
+		<ul class="levels">
+			{#each LEVELS as lo, i}
+				<li>
+					<span class="lvl-range">{lo}–{(LEVELS[i + 1] ?? 101) - 1}</span>
+					<span class="lvl-bar"><TartuffeScore honesty={1 - (lo + Math.min(4, ((LEVELS[i + 1] ?? 100) - lo) / 2)) / 100} lang={currentLang} /></span>
+				</li>
+			{/each}
+		</ul>
+		<p class="levels-note">{c.levelsNote}</p>
 
 		<ul class="rules">
 			{#each c.rules as [n, t]}
@@ -511,6 +527,37 @@
 		font-style: italic;
 	}
 
+	.levels {
+		list-style: none;
+		padding: 0;
+		margin: 0 auto 0.75rem;
+		max-width: 26rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+	.levels li {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.9rem;
+	}
+	.lvl-range {
+		flex: 0 0 3.5rem;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		font-weight: 700;
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+	}
+	.lvl-bar {
+		flex: 1;
+	}
+	.levels-note {
+		text-align: center;
+		color: var(--text-muted);
+		font-size: 0.85rem;
+		margin: 0 0 2rem;
+	}
 	.rules {
 		list-style: none;
 		padding: 0;

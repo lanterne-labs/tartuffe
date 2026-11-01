@@ -500,9 +500,9 @@
 
 		{#if person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
-				<TartuffeScore honesty={person.own_score ?? person.honesty_score} lang={currentLang} size="md" caption={tr('person.own_score', currentLang)} ends={false} />
-				<TartuffeScore honesty={person.members_score} lang={currentLang} size="md" caption={tr('person.members_score', currentLang)} ends={false} />
-				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="md" caption={tr('person.aggregate', currentLang)} ends={false} />
+				<TartuffeScore honesty={person.own_score ?? person.honesty_score} lang={currentLang} size="md" caption={tr('person.own_score', currentLang)} />
+				<TartuffeScore honesty={person.members_score} lang={currentLang} size="md" caption={tr('person.members_score', currentLang)} />
+				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="md" caption={tr('person.aggregate', currentLang)} />
 			</div>
 		{/if}
 
@@ -527,7 +527,7 @@
 									</div>
 								{/if}
 								<span class="member-name">{member.name}</span>
-								<span class="member-score"><TartuffeScore honesty={member.honesty_score} lang={currentLang} ends={false} /></span>
+								<span class="member-score"><TartuffeScore honesty={member.honesty_score} lang={currentLang} /></span>
 							</a>
 						{/each}
 					</div>
@@ -627,7 +627,7 @@
 										</div>
 									</div>
 									<div class="stance-gauge">
-										<TartuffeScore honesty={stance.score} lang={currentLang} ends={false} />
+										<TartuffeScore honesty={stance.score} lang={currentLang} />
 										<ScoreHelp name={person.name} stance={{ label: topic, facts: stance.fact_count, pairs: stance.contradiction_pairs ?? stance.contradiction_count }} />
 									</div>
 								</div>

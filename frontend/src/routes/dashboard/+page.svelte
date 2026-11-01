@@ -255,7 +255,7 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} ends={false} /></div>
+									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<ScoreHelp name={person.name} personId={person.id} />
@@ -297,7 +297,7 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} ends={false} /></div>
+									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 								<ScoreHelp name={person.name} personId={person.id} />

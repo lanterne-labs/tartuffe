@@ -328,7 +328,7 @@
 				<div class="main">
 					<div class="head">
 						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
-						<span class="score"><TartuffeScore honesty={it.person.honesty_score} lang={currentLang} ends={false} /></span>
+						<span class="score"><TartuffeScore honesty={it.person.honesty_score} lang={currentLang} /></span>
 						{#if it.score_effect != null}
 							<span
 								class="ticker"
