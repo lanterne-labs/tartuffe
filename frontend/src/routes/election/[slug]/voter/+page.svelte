@@ -101,9 +101,13 @@
 		if (accepted) lastAccepted = rankOf(ballot.choice);
 	});
 
-	// The ballot shown: the one in flight or acknowledged, else the last
-	// one accepted.
-	let shown = $derived<number[]>(inFlight ? (rankOf(ballot.choice) ?? []) : (lastAccepted ?? []));
+	// The ballot committed: the one in flight or acknowledged, else the
+	// last one accepted. The voter composes a draft on top of it and sends
+	// it with the submit button: nothing goes out while they hesitate.
+	let committed = $derived<number[]>(inFlight ? (rankOf(ballot.choice) ?? []) : (lastAccepted ?? []));
+	let draft = $state<number[] | null>(null);
+	let shown = $derived<number[]>(draft ?? committed);
+	let dirty = $derived(draft !== null && JSON.stringify(draft) !== JSON.stringify(committed));
 	let endsBlank = $derived(shown.length > 0 && shown.at(-1) === BLANK);
 	let choosable = $derived(candidateSlots.filter((s) => !shown.includes(s)));
 	// A key restored from its words, or sent by another device, knows its
@@ -169,17 +173,29 @@
 	}
 
 	function pick(choice: number, at: number | null) {
-		if (!joined) {
-			keyOpen = true;
-			return;
-		}
 		const next = placed(shown, choice, at);
 		if (next.length > depth) {
 			actionError = tr('vote.error.full', currentLang, { n: depth });
 			return;
 		}
 		if (JSON.stringify(next) === JSON.stringify(shown)) return;
-		change(next);
+		draft = next;
+	}
+
+	// submit sends the draft: a voter without a key gets the key dialog
+	// first, and submits again once registered.
+	async function submit() {
+		if (draft === null) return;
+		if (!joined) {
+			keyOpen = true;
+			return;
+		}
+		if (await change(draft)) draft = null;
+	}
+	function cancelDraft() {
+		draft = null;
+		actionError = '';
+		actionDetail = '';
 	}
 
 	let suppressClick = false;
@@ -210,7 +226,7 @@
 				const cands = shown.filter((x) => x !== BLANK);
 				const [moved] = cands.splice(from, 1);
 				cands.splice(to, 0, moved);
-				change(endsBlank ? [...cands, BLANK] : cands);
+				draft = endsBlank ? [...cands, BLANK] : cands;
 			}
 		});
 		return { destroy: () => s.destroy() };
@@ -225,7 +241,7 @@
 		pick(choice, at);
 	}
 	function remove(id: number) {
-		change(shown.filter((x) => x !== id));
+		draft = shown.filter((x) => x !== id);
 	}
 	// move swaps a candidate with its neighbour (the keyboard's way to
 	// reorder; the drag is the finger's).
@@ -235,10 +251,11 @@
 		const j = i + dir;
 		if (i < 0 || j < 0 || j >= cands.length) return;
 		[cands[i], cands[j]] = [cands[j], cands[i]];
-		change(endsBlank ? [...cands, BLANK] : cands);
+		draft = endsBlank ? [...cands, BLANK] : cands;
 	}
 	async function withdrawAll() {
 		withdrawOpen = false;
+		draft = null;
 		await change([]);
 	}
 
@@ -541,11 +558,10 @@
 				{#if event && voted}
 					<ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} />
 				{/if}
-				{#if shown.length === 0}
-					<button class="btn btn-small" onclick={() => pick(BLANK, null)} disabled={busy}>◻ {tr('vote.blank.button', currentLang)}</button>
-					{@render help(tr('vote.blank.help', currentLang))}
-				{/if}
-				{#if shown.length > 0}
+				{#if dirty}
+					<button class="btn btn-primary submit" onclick={submit} disabled={busy}>{tr('vote.submit', currentLang)}</button>
+					<button class="btn btn-small btn-quiet" onclick={cancelDraft} disabled={busy}>{tr('vote.cancel', currentLang)}</button>
+				{:else if committed.length > 0}
 					<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
 				{/if}
 				{#if canResend}
@@ -1221,8 +1237,13 @@
 	.ballot-actions {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 0.6rem;
 		flex-wrap: wrap;
+	}
+	.submit {
+		padding: 0.7rem 1.4rem;
+		font-size: 0.95rem;
 	}
 	.save-error {
 		color: var(--red);

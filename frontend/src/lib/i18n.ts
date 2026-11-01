@@ -201,7 +201,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.label': { fr: 'Expérience temporaire du labo', en: 'Temporary experiment of the lab' },
 	'event.tag': { fr: 'Expérience temporaire', en: 'Temporary experiment' },
 	'event.tag_short': { fr: 'Événement', en: 'Event' },
-	'event.pitch': { fr: 'Votez en ligne avec votre passeport. Personne ne saura pour qui, et tout le monde peut recompter.', en: 'Vote online with your passport. Nobody will know for whom, and anyone can recount.' },
+	'event.pitch': { fr: 'Votez dès maintenant, en ligne, et suivez les résultats en direct. Ouvert à tous les citoyens, anonyme grâce au passeport.', en: 'Vote now, online, and follow the results live. Open to every citizen, anonymous thanks to your passport.' },
 	'event.needs': { fr: 'Il vous faut votre passeport et un smartphone. Deux minutes, une seule fois.', en: 'You need your passport and a smartphone. Two minutes, once.' },
 	'event.who': { fr: 'Une expérience de tartuffe.me, un site indépendant et sans publicité qui compare ce que disent et font les responsables politiques.', en: 'An experiment by tartuffe.me, an independent, ad-free site that compares what politicians say and do.' },
 	'event.ends': { fr: 'Fin le {d} (J-{n})', en: 'Ends {d} ({n} days left)' },
@@ -237,7 +237,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'poll.top3.title': { fr: 'En tête aujourd’hui, au premier choix', en: 'Leading today, by first choice' },
 	'poll.winner.line': { fr: 'Avec le classement : {name}, préféré à chacun des autres par une majorité.', en: 'With the ranking: {name}, preferred to every other candidate by a majority.' },
 	'key.back': { fr: 'Retour', en: 'Back' },
-	'vote.blank.button': { fr: 'Voter blanc', en: 'Vote blank' },
+	'vote.submit': { fr: 'Valider mon vote', en: 'Submit my vote' },
 	'vote.blank.name': { fr: 'Vote blanc', en: 'Blank vote' },
 	'profile.key.title': { fr: 'Ma clé de vote', en: 'My voting key' },
 	'profile.key.none': { fr: 'Cet appareil n’a pas de clé de vote. Votez une première fois avec votre passeport sur la page du vote, ou retrouvez votre clé avec vos 12 mots. Aucun compte n’est nécessaire.', en: 'No voting key on this device. Vote once with your passport on the vote page, or find your key again with your 12 words. No account needed.' },
@@ -296,7 +296,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'share.text.person': { fr: '{name} : {score}/100 de cohérence sur tartuffe.me', en: '{name}: {score}/100 for consistency on tartuffe.me' },
 	'share.text.stance': { fr: 'Les déclarations et les votes de {name} sur « {topic} »', en: 'What {name} says and votes on “{topic}”' },
 	'share.text.contradiction': { fr: '{name} : « {a} » puis « {b} »', en: '{name}: “{a}”, then “{b}”' },
-	'share.text.event': { fr: 'J’ai voté : {name}. Personne ne saura pour qui, et tout le monde peut recompter.', en: 'I voted: {name}. Nobody will know for whom, and anyone can recount.' },
+	'share.text.event': { fr: 'J’ai voté à {name} sur tartuffe.me : un vote en ligne ouvert à tous, résultats en direct, anonyme grâce au passeport. À votre tour !', en: 'I voted in {name} on tartuffe.me: an online vote open to all, live results, anonymous thanks to the passport. Your turn!' },
 	'share.text.fact': { fr: '{name} : « {fact} »', en: '{name}: “{fact}”' },
 
 	// Score explanation

@@ -319,8 +319,25 @@
 
 	function close() {
 		stopReceiving();
+		clearSuccess();
 		onclose();
 	}
+
+	// The success state closes the dialog by itself after 3 s: long enough
+	// to read one line and see the check, short enough not to be in the
+	// way (the page shows the same state in its header).
+	let successTimer: ReturnType<typeof setTimeout> | null = null;
+	function clearSuccess() {
+		if (successTimer) clearTimeout(successTimer);
+		successTimer = null;
+	}
+	$effect(() => {
+		const success = open && (step === 'done' || step === 'pending');
+		untrack(() => {
+			if (success && !successTimer) successTimer = setTimeout(close, 3000);
+			else if (!success) clearSuccess();
+		});
+	});
 
 	const posting = $derived.by((): { label: string; state: StepState }[] => {
 		const s: Step = step;
@@ -364,6 +381,7 @@
 {/snippet}
 
 <Modal {open} title={tr('v2.key.title', lang)} onclose={close} closeLabel={tr('auth.close', lang)}>
+	<div class="centered">
 	{#if step === 'passport'}
 		{#if key}
 			<p class="text small">{tr('v2.key.pending.idle', lang)}</p>
@@ -420,19 +438,23 @@
 			<button class="btn" onclick={() => (step = 'words')}>{tr('key.back', lang)}</button>
 			<button class="btn btn-primary" onclick={checkWords}>{tr('v2.key.continue', lang)}</button>
 		</div>
-	{:else if step === 'posting' || step === 'done' || step === 'pending' || step === 'failed'}
+	{:else if step === 'done' || step === 'pending'}
+		<!-- The check draws itself, then the dialog closes on its own: the
+		     page carries on from there. -->
+		<div class="success" role="status">
+			<svg class="check" viewBox="0 0 52 52" aria-hidden="true">
+				<circle cx="26" cy="26" r="24" />
+				<path d="M14 27l8 8 16-16" />
+			</svg>
+			<p class="text">{tr(step === 'pending' && registration.state === 'acked' ? 'v2.key.pending.acked' : 'v2.key.joined', lang)}</p>
+		</div>
+	{:else if step === 'posting' || step === 'failed'}
 		<div class="steps-box"><Steps steps={posting} /></div>
 		{#if step === 'posting'}
 			<p class="text small">{tr('v2.key.posting.simple', lang)}</p>
 			{#if progressText}
 				<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{progressText}</p></details>
 			{/if}
-		{:else if step === 'done' || step === 'pending'}
-			<p class="text">{tr(step === 'pending' && registration.state === 'acked' ? 'v2.key.pending.acked' : 'v2.key.joined', lang)}</p>
-			{#if key?.source === 'passkey'}
-				<p class="text small">{tr('v2.key.passkey.note', lang)}</p>
-			{/if}
-			<button class="btn btn-primary" onclick={close}>{tr('auth.close', lang)}</button>
 		{:else}
 			<p class="text"><strong>{tr('v2.key.failed.title', lang)}</strong></p>
 			<p class="error" role="alert">{@html failedText}</p>
@@ -489,13 +511,65 @@
 			<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{errorDetail}</p></details>
 		{/if}
 	{/if}
+	</div>
 </Modal>
 
 <style>
+	/* Everything in the dialog reads centred: the texts, the rows of
+	   buttons, the words. */
+	.centered {
+		text-align: center;
+	}
+	.centered .row {
+		justify-content: center;
+	}
 	.text {
 		margin: 0 0 0.9rem;
 		line-height: 1.55;
 		color: var(--text-secondary);
+	}
+	.success {
+		display: grid;
+		justify-items: center;
+		gap: 0.9rem;
+		padding: 0.75rem 0 0.25rem;
+	}
+	.success .text {
+		margin: 0;
+	}
+	.check {
+		width: 76px;
+		height: 76px;
+	}
+	.check circle {
+		fill: none;
+		stroke: var(--green);
+		stroke-width: 2.5;
+		stroke-dasharray: 151;
+		stroke-dashoffset: 151;
+		animation: draw 0.5s ease-out forwards;
+	}
+	.check path {
+		fill: none;
+		stroke: var(--green);
+		stroke-width: 3.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		stroke-dasharray: 36;
+		stroke-dashoffset: 36;
+		animation: draw 0.35s ease-out 0.45s forwards;
+	}
+	@keyframes draw {
+		to {
+			stroke-dashoffset: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.check circle,
+		.check path {
+			animation: none;
+			stroke-dashoffset: 0;
+		}
 	}
 	.hint {
 		margin: -0.2rem 0 0.2rem;
