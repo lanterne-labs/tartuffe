@@ -502,7 +502,7 @@
 				<li class="slot" class:filled={id !== undefined} class:next={open && id === undefined && i === shown.length} class:movable={movable(id)}>
 					{#if id === BLANK}
 						<button class="slot-add" onclick={() => openSlot(i)} disabled={busy || !open}>
-							<span class="slot-photo slot-photo--blank" aria-hidden="true">◻<span class="slot-rank">{i + 1}</span></span>
+							<span class="slot-photo slot-photo--blank" aria-hidden="true"><span class="slot-rank">{i + 1}</span></span>
 							<span class="slot-name slot-name--plain">{tr('vote.blank.name', currentLang)}</span>
 						</button>
 						{#if open}
@@ -529,13 +529,17 @@
 								<button onclick={() => move(id, 1)} disabled={busy || i >= shown.filter((x) => x !== BLANK).length - 1} aria-label={tr('vote.move_down', currentLang, { name: nameOf(id) })}>▼</button>
 							</span>
 						{/if}
-					{:else if open}
+					{:else if open && i === shown.length}
 						<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
-							<span class="slot-photo slot-photo--empty">
-								{#if i === shown.length}<span class="slot-plus" aria-hidden="true">+</span>{:else}<span class="slot-rank">{i + 1}</span>{/if}
-							</span>
+							<span class="slot-photo slot-photo--empty"><span class="slot-plus" aria-hidden="true">+</span></span>
 							<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
 						</button>
+					{:else if open}
+						<!-- Locked until the slots before it are filled: the ranking has no gaps. -->
+						<div class="slot-locked" aria-label={tr('vote.slot.locked', currentLang, { rank: rankWord(i + 1) })}>
+							<span class="slot-photo slot-photo--empty slot-photo--locked"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /></svg></span>
+							<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
+						</div>
 					{:else}
 						<div class="slot-photo slot-photo--empty"><span class="slot-rank">{i + 1}</span></div>
 						<span class="slot-name slot-name--empty">{tr('vote.slot.choice', currentLang, { rank: rankWord(i + 1) })}</span>
@@ -599,7 +603,7 @@
 					{:else}
 						<span class="pick-initial" aria-hidden="true">{nameOf(o).charAt(0).toUpperCase()}</span>
 					{/if}
-					<span>{nameOf(o)}</span>
+					<span class="pick-name">{nameOf(o)}</span>
 					{#if scoreOf(o) !== null}
 						<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o) ?? 0 })}</span>
 					{/if}
@@ -608,7 +612,7 @@
 			{#if kind?.blank && !shown.includes(BLANK)}
 				<button class="pick-card pick-card--blank" onclick={() => chooseFor(BLANK)} disabled={busy}>
 					<span class="pick-initial" aria-hidden="true">◻</span>
-					<span>{tr('vote.blank.name', currentLang)}</span>
+					<span class="pick-name">{tr('vote.blank.name', currentLang)}</span>
 				</button>
 			{/if}
 		</div>
@@ -854,9 +858,10 @@
 		min-width: min(28rem, 80vw);
 	}
 	.pick-card {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
+		display: grid;
+		grid-template-rows: 3.2rem 2.4em auto;
+		justify-items: center;
+		align-items: start;
 		gap: 0.4rem;
 		padding: 0.6rem 0.3rem;
 		border: 1px solid transparent;
@@ -894,8 +899,17 @@
 		font-size: 1.4rem;
 		color: var(--text-secondary);
 	}
-	.pick-card--blank {
-		color: var(--text-secondary);
+	.pick-card--blank .pick-initial {
+		background: #fff;
+		color: #0a0a0f;
+		border: 1px solid var(--glass-border);
+		font-size: 1.1rem;
+	}
+	.pick-name {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
 	}
 	.slot-photo {
 		position: relative;
@@ -927,10 +941,29 @@
 	.slot.next .slot-photo--empty {
 		border-color: var(--accent);
 	}
+	/* The blank vote: a white disc. */
 	.slot-photo--blank {
-		font-size: 2rem;
-		color: var(--text-secondary);
-		box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px var(--text-muted);
+		background: #fff;
+		box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px #fff;
+	}
+	.slot-locked {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.45rem;
+		opacity: 0.55;
+	}
+	.slot-photo--locked svg {
+		width: 1.5rem;
+		height: 1.5rem;
+		fill: none;
+		stroke: var(--text-muted);
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.vote-row--blank .photo--empty {
+		background: #fff;
+		color: #0a0a0f;
 	}
 	.slot-rank {
 		position: absolute;
@@ -1245,12 +1278,23 @@
 		font-size: 1.05rem;
 		box-shadow: var(--shadow-glow);
 	}
+	.ballot {
+		position: relative;
+	}
 	.ballot-head {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		flex-wrap: wrap;
+		gap: 0.5rem;
+		text-align: center;
+	}
+	.ballot-head .btn-quiet {
+		position: absolute;
+		top: 0.9rem;
+		right: 0.9rem;
+	}
+	.hint {
+		text-align: center;
 	}
 	.ballot h2 {
 		font-family: var(--font-serif);
@@ -1510,8 +1554,16 @@
 	}
 	.tabs {
 		display: flex;
+		justify-content: center;
 		gap: 0.4rem;
 		margin: 0 0 0.6rem;
+	}
+	.results h2,
+	.updated,
+	.winner-line,
+	.explain,
+	.explain summary {
+		text-align: center;
 	}
 	.tab {
 		padding: 0.4rem 0.9rem;

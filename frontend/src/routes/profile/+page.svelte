@@ -289,6 +289,7 @@
 	.profile {
 		max-width: 46rem;
 		margin: 1rem auto 3rem;
+		text-align: center;
 	}
 	h1 {
 		font-family: var(--font-serif);
@@ -328,7 +329,7 @@
 	.event-head {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: center;
 		gap: 0.75rem;
 		flex-wrap: wrap;
 		margin-bottom: 0.75rem;
@@ -362,6 +363,7 @@
 	.name-form {
 		display: flex;
 		flex-wrap: wrap;
+		justify-content: center;
 		gap: 0.5rem;
 		margin-bottom: 0.4rem;
 	}

@@ -185,3 +185,19 @@ html {
   justify-content: center;
   padding: 1rem 0;
 }
+
+/* The site reads centred: every title, kicker and lead, on every page.
+   Lists and tables keep their rows; what a page wants left, it says. */
+.page-content h1,
+.page-content h2,
+.page-content h3,
+.page-content h4,
+.page-content .kicker,
+.page-content .sec-kicker,
+.page-content .lead {
+  text-align: center;
+}
+.page-content .lead {
+  margin-left: auto;
+  margin-right: auto;
+}

@@ -78,8 +78,8 @@
 			kicker: 'Consultation citoyenne · Présidentielle 2027',
 			until: 'Jusqu’au {d}',
 			title1: 'Votez.',
-			title2: 'Personne ne saura pour qui.',
-			lead: 'Scannez votre passeport, puis classez vos 3 candidats préférés. Personne ne saura pour qui vous avez voté, et tout le monde peut recompter.',
+			title2: 'Les résultats en direct.',
+			lead: 'Un vote en ligne ouvert à tous les citoyens, avant l’heure. Classez vos 3 candidats préférés, suivez les résultats en direct, changez d’avis jusqu’à la clôture. Et personne ne saura pour qui vous avez voté.',
 			vote: 'Voter maintenant',
 			how: 'Comment ça marche',
 			votersNow: '{n} votants · {c} candidats',
@@ -129,8 +129,8 @@
 			kicker: 'Citizen pre-poll · 2027 presidential election',
 			until: 'Until {d}',
 			title1: 'Vote.',
-			title2: 'No one will know for whom.',
-			lead: 'One scan of your passport, then your 3 favourite candidates. Nobody will know whom you voted for, and anyone can recount.',
+			title2: 'Live results.',
+			lead: 'An online vote open to every citizen, ahead of time. Rank your 3 favourite candidates, follow the results live, change your mind until the close. And nobody will know whom you voted for.',
 			vote: 'Vote now',
 			how: 'How it works',
 			votersNow: '{n} voters · {c} candidates',
@@ -393,6 +393,7 @@
 		gap: 2.5rem;
 		align-items: center;
 		margin: 2.5rem 0 2.5rem;
+		text-align: center;
 	}
 	.kicker,
 	.sec-kicker {
@@ -436,6 +437,7 @@
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
+		justify-content: center;
 		gap: 0.75rem;
 	}
 	/* The current top 3, from the mirror. */
@@ -691,6 +693,7 @@
 	/* Blocks */
 	.block {
 		margin: 0 0 4.5rem;
+		text-align: center;
 	}
 	h2 {
 		font-family: var(--font-serif);
@@ -703,6 +706,8 @@
 		color: var(--text-secondary);
 		line-height: 1.65;
 		max-width: 40rem;
+		margin-left: auto;
+		margin-right: auto;
 	}
 	.steps {
 		list-style: none;
@@ -721,6 +726,8 @@
 		background: radial-gradient(ellipse 80% 60% at 0% 0%, var(--event-glow), transparent 70%), var(--bg-card);
 	}
 	.step-icon {
+		display: block;
+		margin: 0 auto;
 		width: 2.6rem;
 		height: 2.6rem;
 		color: var(--event);

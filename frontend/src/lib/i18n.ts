@@ -105,6 +105,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'poll.hidden.blackout': { fr: 'Les résultats sont masqués : la loi interdit de les publier la veille et le jour de l’élection.', en: 'Results hidden: the law forbids publishing them the day before and the day of the election.' },
 	'poll.how.title': { fr: 'Comment ça marche', en: 'How it works' },
 	'vote.slot.choice': { fr: '{rank} choix', en: '{rank} choice' },
+	'vote.slot.locked': { fr: '{rank} choix, après le précédent', en: '{rank} choice, after the previous one' },
 	'vote.blank.help': { fr: 'Vote blanc : « j’ai voté, mais aucun ne me convainc ». Il compte dans les pourcentages. Placé après vos candidats, il veut dire « les autres, non » et il est classé face à eux.', en: 'Blank vote: “I voted, but none convinces me.” It counts in the percentages. After your candidates, it means “not the others” and is ranked against them.' },
 	'vote.blank.tip': { fr: 'Vote blanc : « j’ai voté, mais aucun ne me convainc ». Il compte dans les pourcentages et peut être classé face aux candidats.', en: 'Blank vote: “I voted, but none convinces me.” It counts in the percentages and can be ranked against the candidates.' },
 	'vote.title': { fr: 'Mon vote', en: 'My vote' },

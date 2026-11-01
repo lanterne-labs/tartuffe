@@ -534,9 +534,15 @@
 </article>
 
 <style>
-	.how {
+	article.how {
 		max-width: 46rem;
 		margin: 0 auto;
+		text-align: center;
+	}
+	article.how ul,
+	article.how ol {
+		padding-left: 0;
+		list-style-position: inside;
 	}
 	.hero {
 		text-align: center;
