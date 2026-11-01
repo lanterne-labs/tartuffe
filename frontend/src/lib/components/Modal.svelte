@@ -61,12 +61,15 @@
 	}
 	.modal-body {
 		padding: 1.25rem 1.5rem 1.5rem;
+		text-align: center;
 	}
+	/* The title centred, the close in the corner. */
 	header {
+		position: relative;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
+		justify-content: center;
+		padding: 0 1.75rem;
 		margin-bottom: 0.75rem;
 	}
 	h2 {
@@ -76,6 +79,10 @@
 		margin: 0;
 	}
 	.close {
+		position: absolute;
+		right: 0;
+		top: 50%;
+		transform: translateY(-50%);
 		background: none;
 		border: none;
 		color: var(--text-muted);
@@ -88,7 +95,7 @@
 	}
 	footer {
 		display: flex;
-		justify-content: flex-end;
+		justify-content: center;
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		margin-top: 1.25rem;

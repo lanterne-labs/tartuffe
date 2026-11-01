@@ -39,7 +39,6 @@
 	let showWords = $state(false);
 	let forgetOpen = $state(false);
 	let slotPick = $state<number | null>(null);
-	let withdrawOpen = $state(false);
 	// The clock the page judges the opening and the blackouts by, every
 	// 30 s: a page left open crosses them.
 	let now = $state(Date.now());
@@ -192,10 +191,12 @@
 		}
 		if (await change(draft)) draft = null;
 	}
-	function cancelDraft() {
-		draft = null;
-		actionError = '';
-		actionDetail = '';
+	// The key's copies: none is a warning on the key button.
+	let keyUnprotected = $derived(!!$voteKey && keyStatusKey() === 'profile.key.unprotected');
+	// The gauge of a consistency score, in the site's colours.
+	const GAUGE = ['var(--red)', 'color-mix(in oklch, var(--red) 50%, var(--amber))', 'var(--amber)', 'color-mix(in oklch, var(--amber) 50%, var(--green))', 'var(--green)'];
+	function gaugeColor(score: number): string {
+		return GAUGE[Math.min(4, Math.max(0, Math.floor(score / 20)))];
 	}
 
 	let suppressClick = false;
@@ -252,11 +253,6 @@
 		if (i < 0 || j < 0 || j >= cands.length) return;
 		[cands[i], cands[j]] = [cands[j], cands[i]];
 		draft = endsBlank ? [...cands, BLANK] : cands;
-	}
-	async function withdrawAll() {
-		withdrawOpen = false;
-		draft = null;
-		await change([]);
 	}
 
 	function rankWord(n: number): string {
@@ -472,8 +468,6 @@
 				{:else}
 					<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.join.idle', currentLang)}</button>
 				{/if}
-			{:else if hasKey}
-				<button class="btn btn-small btn-quiet" onclick={() => (keyMenuOpen = true)}>{tr('v2.key.menu', currentLang)}</button>
 			{/if}
 		</div>
 		<!-- Without a key the ballot shows through a blur, behind the one
@@ -565,18 +559,11 @@
 			</div>
 		{/if}
 		{#if open}
-			{#if event && voted}
-				<p class="nudge">{tr('v2.share.nudge', currentLang)}</p>
-			{/if}
 			<div class="ballot-actions">
-				{#if event && voted}
-					<ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} />
-				{/if}
 				{#if dirty}
-					<button class="btn btn-primary submit" onclick={submit} disabled={busy}>{tr('vote.submit', currentLang)}</button>
-					<button class="btn btn-small btn-quiet" onclick={cancelDraft} disabled={busy}>{tr('vote.cancel', currentLang)}</button>
-				{:else if committed.length > 0}
-					<button class="btn btn-small btn-quiet" onclick={() => (withdrawOpen = true)} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
+					<button class="btn submit" class:btn-primary={draft !== null && draft.length > 0} class:btn-danger={draft !== null && draft.length === 0} onclick={submit} disabled={busy}>{tr(draft !== null && draft.length === 0 ? 'vote.withdraw_all' : 'vote.submit', currentLang)}</button>
+				{:else if event && voted}
+					<div class="share-big"><ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} /></div>
 				{/if}
 				{#if canResend}
 					<button class="btn btn-small btn-primary" onclick={resend} disabled={busy}>{tr('v2.ballot.resend', currentLang)}</button>
@@ -584,12 +571,21 @@
 					<button class="btn btn-small btn-primary" onclick={retry} disabled={busy}>{tr('v2.ballot.retry', currentLang)}</button>
 				{/if}
 			</div>
+			{#if event && voted && !dirty}
+				<p class="nudge">{tr('v2.share.nudge', currentLang)}</p>
+			{/if}
 		{/if}
 		{#if actionError}
 			<p class="save-error" role="alert">{@html actionError}</p>
 			{#if actionDetail}
 				<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{actionDetail}</p></details>
 			{/if}
+		{/if}
+		{#if hasKey}
+			<button class="btn btn-small key-btn" class:key-btn--warn={keyUnprotected} onclick={() => (keyMenuOpen = true)}>
+				<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /></svg>
+				{tr('v2.key.menu', currentLang)}{#if keyUnprotected}<span class="key-warn">· {tr('v2.key.menu.unprotected', currentLang)}</span>{/if}
+			</button>
 		{/if}
 		</div>
 	</section>
@@ -605,7 +601,7 @@
 					{/if}
 					<span class="pick-name">{nameOf(o)}</span>
 					{#if scoreOf(o) !== null}
-						<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o) ?? 0 })}</span>
+						<span class="gauge" title={tr('vote.score.tip', currentLang)}><span class="gauge-bar"><span class="gauge-fill" style="width: {scoreOf(o) ?? 0}%; background: {gaugeColor(scoreOf(o) ?? 0)}"></span></span><span class="gauge-num">{scoreOf(o)}</span></span>
 					{/if}
 				</button>
 			{/each}
@@ -616,14 +612,6 @@
 				</button>
 			{/if}
 		</div>
-	</Modal>
-
-	<Modal open={withdrawOpen} title={tr('vote.withdraw.title', currentLang)} onclose={() => (withdrawOpen = false)} closeLabel={tr('auth.close', currentLang)}>
-		<p class="dialog-text">{tr('vote.withdraw.text', currentLang)}</p>
-		{#snippet actions()}
-			<button class="btn" onclick={() => (withdrawOpen = false)}>{tr('vote.cancel', currentLang)}</button>
-			<button class="btn btn-danger" onclick={withdrawAll} disabled={busy}>{tr('vote.withdraw_all', currentLang)}</button>
-		{/snippet}
 	</Modal>
 
 	<Modal open={!!linkCode} title={tr('v2.link.send.title', currentLang)} onclose={closeLink} closeLabel={tr('auth.close', currentLang)}>
@@ -725,12 +713,14 @@
 								{:else}
 									<span class="photo photo--empty">{o.blank ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 								{/if}
-								<span class="name">{nameOf(o.slot)}</span>
-								{#if o.blank}
-									{@render help(tr('vote.blank.tip', currentLang))}
-								{:else if scoreOf(o.slot) !== null}
-									<span class="chip" title={tr('vote.score.tip', currentLang)}>{tr('vote.score.chip', currentLang, { s: scoreOf(o.slot) ?? 0 })}</span>
-								{/if}
+								<span class="who-text">
+									<span class="name">{nameOf(o.slot)}</span>
+									{#if o.blank}
+										{@render help(tr('vote.blank.tip', currentLang))}
+									{:else if scoreOf(o.slot) !== null}
+										<span class="gauge" title={tr('vote.score.tip', currentLang)}><span class="gauge-bar"><span class="gauge-fill" style="width: {scoreOf(o.slot) ?? 0}%; background: {gaugeColor(scoreOf(o.slot) ?? 0)}"></span></span><span class="gauge-num">{scoreOf(o.slot)}</span></span>
+									{/if}
+								</span>
 							</span>
 							{#if tab === 'ranking' && winnerSlot === o.slot}
 								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
@@ -853,13 +843,13 @@
 	}
 	.picker {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
 		gap: 0.5rem;
 		min-width: min(28rem, 80vw);
 	}
 	.pick-card {
 		display: grid;
-		grid-template-rows: 3.2rem 2.4em auto;
+		grid-template-rows: 4.6rem 2.4em auto;
 		justify-items: center;
 		align-items: start;
 		gap: 0.4rem;
@@ -886,8 +876,8 @@
 	}
 	.pick-card img,
 	.pick-initial {
-		width: 3.2rem;
-		height: 3.2rem;
+		width: 4.6rem;
+		height: 4.6rem;
 		border-radius: 50%;
 		object-fit: cover;
 	}
@@ -908,6 +898,7 @@
 	.pick-name {
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
+		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
 	}
@@ -922,8 +913,11 @@
 		box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px var(--accent);
 	}
 	.slot-photo img {
+		/* A square whatever the source (a 3:4 portrait kept its height and
+		   ran under the name). */
 		width: 100%;
-		height: 100%;
+		height: auto;
+		aspect-ratio: 1 / 1;
 		border-radius: 50%;
 		object-fit: cover;
 	}
@@ -968,7 +962,7 @@
 	.slot-rank {
 		position: absolute;
 		left: -0.2rem;
-		bottom: -0.2rem;
+		top: -0.2rem;
 		width: 1.6rem;
 		height: 1.6rem;
 		display: grid;
@@ -1288,10 +1282,66 @@
 		gap: 0.5rem;
 		text-align: center;
 	}
-	.ballot-head .btn-quiet {
-		position: absolute;
-		top: 0.9rem;
-		right: 0.9rem;
+	.key-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: 1.1rem auto 0;
+	}
+	.key-btn svg {
+		width: 1rem;
+		height: 1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.key-btn--warn {
+		border-color: var(--amber);
+		color: var(--amber);
+	}
+	.key-warn {
+		font-weight: 400;
+	}
+	.share-big :global(.share-btn) {
+		height: auto;
+		padding: 0.7rem 1.4rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: white;
+		background: var(--accent);
+		border-color: var(--accent);
+		border-radius: var(--radius-sm);
+	}
+	.share-big :global(.share-btn:hover) {
+		color: white;
+		background: var(--accent-hover);
+		border-color: var(--accent-hover);
+	}
+	.gauge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		width: 6rem;
+		max-width: 100%;
+	}
+	.gauge-bar {
+		flex: 1;
+		height: 6px;
+		border-radius: 3px;
+		background: var(--bg-secondary);
+		overflow: hidden;
+	}
+	.gauge-fill {
+		display: block;
+		height: 100%;
+		border-radius: 3px;
+	}
+	.gauge-num {
+		font-size: 0.72rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 	.hint {
 		text-align: center;
@@ -1365,6 +1415,13 @@
 	.vote-main {
 		display: flex;
 		flex-direction: column;
+		gap: 0.3rem;
+		min-width: 0;
+	}
+	.who-text {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
 		gap: 0.3rem;
 		min-width: 0;
 	}
@@ -1519,9 +1576,10 @@
 		margin: 0;
 	}
 	.nudge {
-		margin: 0 0 0.6rem;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
+		margin: 0.75rem 0 0;
+		font-size: 0.95rem;
+		text-align: center;
+		color: var(--text-primary);
 	}
 	.tech {
 		margin: 0.4rem 0 0;
@@ -1535,22 +1593,6 @@
 		margin: 0.3rem 0 0;
 		font-family: var(--font-mono, monospace);
 		overflow-wrap: anywhere;
-	}
-	.chip {
-		display: inline-block;
-		padding: 0.08rem 0.45rem;
-		border-radius: var(--radius-full);
-		border: 1px solid var(--glass-border);
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-size: 0.68rem;
-		font-weight: 600;
-		line-height: 1.4;
-		white-space: nowrap;
-		cursor: help;
-	}
-	.pick-card .chip {
-		font-size: 0.64rem;
 	}
 	.tabs {
 		display: flex;
