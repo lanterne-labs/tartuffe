@@ -112,14 +112,11 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'vote.hint': { fr: 'Classez jusqu’à {n} candidats, par ordre de préférence.', en: 'Rank up to {n} candidates, in order of preference.' },
 	'vote.hint.move': { fr: 'Maintenez un candidat pour le déplacer.', en: 'Hold a candidate to move it.' },
 	'score.name': { fr: 'Tartuffe-Score', en: 'Tartuffe-Score' },
-	'score.value': { fr: 'Tartuffe-Score : {n} sur 100', en: 'Tartuffe-Score: {n} out of 100' },
+	'score.short': { fr: 'Tartuffe-Score : {n}/100', en: 'Tartuffe-Score: {n}/100' },
+	'score.tip': { fr: 'Plus le score est haut, plus nous avons trouvé de contradictions entre ce que la personne a dit et ce qu’elle a fait.', en: 'The higher the score, the more contradictions we found between what the person said and what they did.' },
+	'score.tip.more': { fr: 'Comment on le calcule →', en: 'How it is computed →' },
 	'score.unrated': { fr: 'Pas assez de faits', en: 'Not enough facts' },
 	'score.unrated.n': { fr: 'Pas assez de faits ({f})', en: 'Not enough facts ({f})' },
-	'score.level.0': { fr: 'Cohérent', en: 'Coherent' },
-	'score.level.1': { fr: 'Plutôt cohérent', en: 'Mostly coherent' },
-	'score.level.2': { fr: 'Un peu tartuffe', en: 'A bit tartuffe' },
-	'score.level.3': { fr: 'Très tartuffe', en: 'Very tartuffe' },
-	'score.level.4': { fr: 'Complètement tartuffe', en: 'Completely tartuffe' },
 	'score.evidence': { fr: '{c} contradictions sur {f} faits', en: '{c} contradictions out of {f} facts' },
 	'score.evidence.one': { fr: '1 contradiction sur {f} faits', en: '1 contradiction out of {f} facts' },
 	'score.legend': { fr: 'Le repère : le Tartuffe-Score, de cohérent à tartuffe, d’après les contradictions.', en: 'The marker: the Tartuffe-Score, from coherent to tartuffe, from the contradictions.' },
@@ -307,13 +304,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 
 	// Score explanation
 	'score.help': { fr: 'Comment ce score est calculé', en: 'How this score is computed' },
-	'score.title': { fr: 'Le Tartuffe-Score de {name}', en: 'The Tartuffe-Score of {name}' },
-	'score.title.stance': { fr: '« {topic} »', en: '“{topic}”' },
-	'score.error': { fr: 'Le détail du score est indisponible. Réessayez dans un instant.', en: 'Score details unavailable. Try again in a moment.' },
-	'score.facts': { fr: 'Faits', en: 'Facts' },
-	'score.contradictions': { fr: 'Contradictions', en: 'Contradictions' },
 	'score.members': { fr: 'Membres', en: 'Members' },
-	'score.what': { fr: 'Le Tartuffe-Score mesure l’écart entre les paroles et les actes, pas la vérité : de 0 (cohérent) à 100 (tartuffe).', en: 'The Tartuffe-Score measures the gap between words and deeds, not the truth: from 0 (coherent) to 100 (tartuffe).' },
 	'score.more': { fr: 'La méthode en détail', en: 'The method in detail' },
 
 	// Reports

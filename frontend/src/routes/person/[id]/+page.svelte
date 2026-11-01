@@ -12,7 +12,6 @@
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
-	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
 	import type { ShareTarget } from '$lib/types';
 	import { tick } from 'svelte';
@@ -492,7 +491,6 @@
 			<div class="hero-gauge">
 				<div class="gauge-row">
 					<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="lg" facts={person.fact_count} contradictions={person.contradiction_count} showEvidence={false} />
-					<ScoreHelp name={person.name} personId={person.id} />
 				</div>
 				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
 			</div>
@@ -628,7 +626,6 @@
 									</div>
 									<div class="stance-gauge">
 										<TartuffeScore honesty={stance.score} lang={currentLang} />
-										<ScoreHelp name={person.name} stance={{ label: topic, facts: stance.fact_count, pairs: stance.contradiction_pairs ?? stance.contradiction_count }} />
 									</div>
 								</div>
 							</div>

@@ -1,11 +1,9 @@
 <script lang="ts">
 	// The Tartuffe-Score as a barometer: a continuous track from coherent
-	// (green) to tartuffe (red), a marker where the person sits, and the name
-	// of their level (one of five) under it. No number as the headline: the
-	// level says it, and the evidence under it (contradictions over facts)
-	// says how solid it is. Too few facts is an empty dashed track, no marker
-	// and "not enough facts". The number out of 100 is in the tooltip and the
-	// methodology, never the headline.
+	// (green) to tartuffe (red), a marker where the person sits, and under it
+	// "Tartuffe-Score: X/100" with a small "?" saying what a higher score
+	// means. The evidence (contradictions over facts) says how solid it is.
+	// Too few facts is an empty dashed track, no marker and "not enough facts".
 	import { tr, type Lang } from '$lib/i18n';
 
 	interface Props {
@@ -14,7 +12,7 @@
 		lang: Lang;
 		/** sm: a list row or a card; md: a block; lg: a page header. */
 		size?: 'sm' | 'md' | 'lg';
-		/** The name of the level under the track. */
+		/** The score out of 100 and its "?" under the track. */
 		named?: boolean;
 		/** The evidence line, shown when both counts are given. */
 		facts?: number;
@@ -32,17 +30,33 @@
 	const MIN_FACTS = 10;
 	let tartuffe = $derived(tartuffeOf(honesty));
 	let unrated = $derived(tartuffe === null || (facts !== undefined && facts < MIN_FACTS));
-	let level = $derived(tartuffe === null ? 0 : levelOf(tartuffe));
 	// The marker keeps off the very ends so that 0 and 100 still show it whole.
 	let at = $derived(tartuffe === null ? 0 : 3 + (tartuffe / 100) * 94);
-	let name = $derived(
-		unrated ? (facts !== undefined ? tr('score.unrated.n', lang, { f: facts }) : tr('score.unrated', lang)) : tr(`score.level.${level}`, lang)
+	let value = $derived(
+		unrated ? (facts !== undefined ? tr('score.unrated.n', lang, { f: facts }) : tr('score.unrated', lang)) : tr('score.short', lang, { n: tartuffe ?? 0 })
 	);
 	let evidence = $derived.by(() => {
 		if (unrated || facts === undefined || contradictions === undefined) return '';
 		return tr(contradictions === 1 ? 'score.evidence.one' : 'score.evidence', lang, { c: contradictions, f: facts });
 	});
-	let label = $derived(unrated ? name : `${name}. ${tr('score.value', lang, { n: tartuffe ?? 0 })}`);
+
+	// The small "?": one sentence on what the number means. It can sit inside
+	// a card that is a link, so its clicks stay here.
+	let help = $state(false);
+	let root: HTMLElement | undefined = $state();
+	function toggle(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		help = !help;
+	}
+	// A click in the bubble stays in it, except on its own link.
+	function keep(e: MouseEvent) {
+		e.stopPropagation();
+		if (!(e.target as Element | null)?.closest('a')) e.preventDefault();
+	}
+	function outside(e: MouseEvent) {
+		if (help && root && !root.contains(e.target as Node)) help = false;
+	}
 </script>
 
 <script lang="ts" module>
@@ -50,25 +64,31 @@
 	export function tartuffeOf(honesty: number | null | undefined): number | null {
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
 	}
-	/** The lower bounds of the five levels: equal fifths of the track, so the name says where the marker is. */
-	export const LEVELS = [0, 20, 40, 60, 80];
-	/** The level of a Tartuffe value: 0 coherent to 4 completely tartuffe. */
-	export function levelOf(t: number): number {
-		let i = 0;
-		while (i + 1 < LEVELS.length && t >= LEVELS[i + 1]) i++;
-		return i;
-	}
 </script>
 
-<span class="ts ts--{size}" class:ts--unrated={unrated} role="img" aria-label={evidence ? `${label}. ${evidence}` : label} title={evidence ? `${label}. ${evidence}` : label}>
+<svelte:window onclick={outside} onkeydown={(e) => e.key === 'Escape' && (help = false)} />
+
+<span class="ts ts--{size}" class:ts--unrated={unrated}>
 	{#if caption}<span class="caption">{caption}</span>{/if}
-	<span class="track">
+	<span class="track" role="img" aria-label={evidence ? `${value}. ${evidence}` : value}>
 		{#if !unrated}
 			<span class="marker" class:marker--in={animate} style="left: {at}%"></span>
 		{/if}
 	</span>
 	{#if named}
-		<span class="name name--{unrated ? 'none' : level}">{name}</span>
+		<span class="value" bind:this={root}>
+			<span class:value--none={unrated}>{value}</span>
+			{#if !unrated}
+				<button class="q" onclick={toggle} aria-expanded={help} aria-label={tr('score.help', lang)}>?</button>
+				{#if help}
+					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+					<span class="tip" role="note" onclick={keep}>
+						{tr('score.tip', lang)}
+						<a href="/about#score">{tr('score.tip.more', lang)}</a>
+					</span>
+				{/if}
+			{/if}
+		</span>
 	{/if}
 	{#if evidence && showEvidence}
 		<span class="evidence">{evidence}</span>
@@ -102,17 +122,6 @@
 		margin: 0.3rem 0 0;
 		border-radius: 999px;
 		background: linear-gradient(90deg, var(--green), var(--amber) 50%, var(--red));
-	}
-	.name--0 { --c: var(--green); }
-	.name--1 { --c: color-mix(in oklch, var(--green) 55%, var(--amber)); }
-	.name--2 { --c: var(--amber); }
-	.name--3 { --c: color-mix(in oklch, var(--amber) 45%, var(--red)); }
-	.name--4 { --c: var(--red); }
-	.ts--md .track {
-		height: 0.5rem;
-	}
-	.ts--lg .track {
-		height: 0.6rem;
 	}
 	.ts--unrated .track {
 		background: transparent;
@@ -148,27 +157,91 @@
 		width: 1.25rem;
 		height: 1.25rem;
 	}
-	.name {
+	.value {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.3rem;
 		margin-top: 0.2rem;
 		font-size: 0.74rem;
 		font-weight: 700;
 		line-height: 1.2;
-		color: var(--c);
-		text-align: center;
+		color: var(--text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
-	.ts--sm .name {
-		text-align: left;
+	.ts--sm .value {
+		justify-content: flex-start;
 	}
-	.ts--md .name {
+	.ts--md .value {
 		font-size: 0.85rem;
 	}
-	.ts--lg .name {
+	.ts--lg .value {
 		font-size: 1.05rem;
+		color: var(--text-primary);
 	}
-	.name--none {
+	.value--none {
 		color: var(--text-muted);
 		font-weight: 600;
 		font-style: italic;
+	}
+	.q {
+		width: 1.05rem;
+		height: 1.05rem;
+		padding: 0;
+		border-radius: 50%;
+		border: 1px solid var(--glass-border);
+		background: transparent;
+		color: var(--text-muted);
+		font-size: 0.65rem;
+		font-weight: 700;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.q:hover,
+	.q[aria-expanded='true'] {
+		color: var(--text-primary);
+		border-color: var(--text-muted);
+	}
+	.tip {
+		position: absolute;
+		top: calc(100% + 0.4rem);
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 20;
+		width: min(16rem, 80vw);
+		padding: 0.6rem 0.75rem;
+		border-radius: var(--radius-md, 10px);
+		background: var(--bg-elevated, #1c1a22);
+		border: 1px solid var(--glass-border);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+		font-size: 0.8rem;
+		font-weight: 500;
+		font-style: normal;
+		line-height: 1.4;
+		color: var(--text-primary);
+		text-align: center;
+	}
+	.ts--sm .tip {
+		left: 0;
+		transform: none;
+		text-align: left;
+	}
+	/* In a page block the bubble opens in the flow: a card that clips its
+	   overflow would cut it. */
+	.ts--md .tip,
+	.ts--lg .tip {
+		position: static;
+		transform: none;
+		flex-basis: 100%;
+		margin: 0.4rem auto 0;
+	}
+	.tip a {
+		display: block;
+		margin-top: 0.35rem;
+		font-weight: 600;
+		color: var(--accent-hover, var(--accent));
 	}
 	.evidence {
 		font-size: 0.74rem;

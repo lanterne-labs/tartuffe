@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { eventPaths, showVoters } from '$lib/event';
-	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
@@ -258,7 +257,6 @@
 									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
-								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
 					{/each}
@@ -300,7 +298,6 @@
 									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
-								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
 					{/each}
@@ -354,7 +351,6 @@
 						</div>
 						<div class="score-ring-wrapper">
 							
-							<ScoreHelp name={person.name} personId={person.id} />
 						</div>
 					</div>
 				</a>

@@ -69,7 +69,6 @@
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
 			exDidSrc: 'Scrutin à l’Assemblée',
 			exClash: 'Contradiction',
-			exScore: 'Tartuffe-Score',
 			steps: [
 				['On relève', 'Ses déclarations et ses votes.'],
 				['On confronte', 'Quand ils se contredisent, on le note.'],
@@ -113,7 +112,6 @@
 			exDid: 'Votes to raise the retirement age to 64.',
 			exDidSrc: 'Vote in Parliament',
 			exClash: 'Contradiction',
-			exScore: 'Tartuffe-Score',
 			steps: [
 				['We listen', 'What they say, how they vote.'],
 				['We compare', 'The two clash? It’s on record.'],
@@ -205,7 +203,6 @@
 				</div>
 
 				<div class="ex-score">
-					<span class="ex-label">{c.exScore}</span>
 					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" animate />
 				</div>
 			</div>
@@ -522,12 +519,6 @@
 		flex-direction: column;
 		align-items: center;
 		text-align: center;
-	}
-	.ex-label {
-		margin-bottom: 0.2rem;
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: var(--text-secondary);
 	}
 	.ex-score {
 		width: min(20rem, 100%);
