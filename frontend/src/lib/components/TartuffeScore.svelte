@@ -50,8 +50,8 @@
 	export function tartuffeOf(honesty: number | null | undefined): number | null {
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
 	}
-	/** The lower bounds of the five levels, on the Tartuffe value 0 to 100. */
-	export const LEVELS = [0, 5, 15, 30, 50];
+	/** The lower bounds of the five levels: equal fifths of the track, so the name says where the marker is. */
+	export const LEVELS = [0, 20, 40, 60, 80];
 	/** The level of a Tartuffe value: 0 coherent to 4 completely tartuffe. */
 	export function levelOf(t: number): number {
 		let i = 0;

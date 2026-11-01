@@ -271,7 +271,7 @@
 			{#each LEVELS as lo, i}
 				<li>
 					<span class="lvl-range">{lo}–{(LEVELS[i + 1] ?? 101) - 1}</span>
-					<span class="lvl-bar"><TartuffeScore honesty={1 - (lo + Math.min(4, ((LEVELS[i + 1] ?? 100) - lo) / 2)) / 100} lang={currentLang} /></span>
+					<span class="lvl-bar"><TartuffeScore honesty={1 - (lo + 10) / 100} lang={currentLang} /></span>
 				</li>
 			{/each}
 		</ul>
