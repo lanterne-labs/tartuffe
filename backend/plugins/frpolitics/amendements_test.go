@@ -28,6 +28,11 @@ func TestCleanAmdTextAndPurpose(t *testing.T) {
 	if purposePhrase(&AmendementInfo{}) != "" {
 		t.Error("empty amendment must yield empty purpose (gate)")
 	}
+	// A long exposé is cut inside the guillemets, never the closing » (2026-11-01).
+	long := purposePhrase(&AmendementInfo{Expose: strings.Repeat("Par cet amendement de repli, le groupe souhaite supprimer l'obligation. ", 6)})
+	if !strings.HasSuffix(long, "… »") || len([]rune(long)) > purposeMaxRunes+40 {
+		t.Errorf("long exposé = %q, want it cut before the closing »", long)
+	}
 }
 
 // TestLookupAmendement_ProdCase resolves the exact sous-amendement behind prod

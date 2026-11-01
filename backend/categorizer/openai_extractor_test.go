@@ -870,3 +870,54 @@ func publishedDate(t *testing.T, s string) *time.Time {
 	}
 	return &d
 }
+
+// TestRemoteLLMExtractor_ReferentStaysInQuote locks the REFERENTS rule of the
+// 2026-11-01 audit (7 % of the band's news facts): the fact named the target
+// the article's framing gave while the quote held only "un projet" (prod fact
+// 166871 "gouvernement du Rassemblement national" from « un projet qui n'est
+// pas le bon »). The fact may name the RN only when the quote carries the
+// sentence that names it.
+func TestRemoteLLMExtractor_ReferentStaysInQuote(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Bruno Retailleau exclut toute alliance avec le RN malgré certaines convergences
+
+Invité de RTL ce mardi, le président des Républicains a été interrogé sur les points communs
+entre son programme et celui du Rassemblement national. « Je n'apporterai jamais mon concours
+à un projet qui n'est pas le bon pour la France », a-t-il répondu, avant d'ajouter : « Nous
+avons des convergences sur l'immigration, cela ne fait pas une alliance. »`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/referent",
+		Title:   "Bruno Retailleau exclut toute alliance avec le RN",
+		Content: mockText,
+	}
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Bruno Retailleau", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] normalized=%q quote=%q", i+1, f.NormalizedFactText, f.OriginalQuote)
+		// The prod error: the fact built on « un projet qui n'est pas le bon »
+		// named the RN. (The "convergences" sentence, whose referent the
+		// framing gives unambiguously, is left to the model's judgement.)
+		fact := strings.ToLower(f.NormalizedFactText + " " + f.NormalizedFactTextEn)
+		quote := strings.ToLower(f.OriginalQuote)
+		if !strings.Contains(quote, "concours") {
+			continue
+		}
+		namesRN := strings.Contains(fact, "rassemblement national") || strings.Contains(fact, " rn") || strings.Contains(fact, "national rally")
+		if namesRN && !strings.Contains(quote, "rassemblement national") && !strings.Contains(quote, " rn") {
+			t.Errorf("Fact %d names the RN while its quote does not: %q / %q", i+1, f.NormalizedFactText, f.OriginalQuote)
+		}
+	}
+}

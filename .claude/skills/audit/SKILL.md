@@ -90,7 +90,7 @@ takes the next band below the cursor:
 
 | data | the slice of one run | cursor moves to |
 |---|---|---|
-| facts | ids from `facts_below - 8000` to `facts_below`; sample ~240 text facts and ~100 votes at random inside the band | the band's lower end |
+| facts | ids from `facts_below - 8000` to `facts_below`; sample ~240 text facts and ~100 votes at random inside the band, ACTIVE facts only (`NOT EXISTS fact_relations duplicate` on the fact: the grouped duplicates are not errors and swamp the sample, 2026-11-01: 161/240) | the band's lower end |
 | stances | ids from `stances_below - 1500` to `stances_below`; sample ~70 with 3–40 facts | the band's lower end |
 | contradictions | the 40 rows whose LATEST review is the oldest (`reviewed_at` ascending), whatever their verdict, skipping those reviewed in the last 2 days | (no cursor: the order is by review age) |
 
