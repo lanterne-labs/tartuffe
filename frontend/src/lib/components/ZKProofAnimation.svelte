@@ -9,6 +9,15 @@
 </script>
 
 <figure class="anim">
+	<figcaption>
+		<strong class="never">{tr('zk.anim.never', lang)}</strong>
+		<span class="only">
+			{tr('zk.anim.only', lang)}
+			<b class="tag">{tr('zk.anim.french', lang)}</b>
+			{tr('zk.anim.and', lang)}
+			<b class="tag">{tr('zk.anim.adult', lang)}</b>
+		</span>
+	</figcaption>
 	<svg viewBox="0 0 340 150" role="img" aria-label={tr('zk.anim.alt', lang)}>
 		<!-- The document: the data page of a passport. -->
 		<g class="doc">
@@ -77,15 +86,6 @@
 		<text x="292" y="144" text-anchor="middle" class="caption">{tr('zk.anim.server', lang)}</text>
 	</svg>
 
-	<figcaption>
-		<strong class="never">{tr('zk.anim.never', lang)}</strong>
-		<span class="only">
-			{tr('zk.anim.only', lang)}
-			<b class="tag">{tr('zk.anim.french', lang)}</b>
-			{tr('zk.anim.and', lang)}
-			<b class="tag">{tr('zk.anim.adult', lang)}</b>
-		</span>
-	</figcaption>
 </figure>
 
 <style>
@@ -334,12 +334,13 @@
 		}
 	}
 
+	/* The words first, the picture under them. */
 	figcaption {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.35rem;
-		margin-top: 0.6rem;
+		margin-bottom: 0.6rem;
 		text-align: center;
 	}
 	.never {
