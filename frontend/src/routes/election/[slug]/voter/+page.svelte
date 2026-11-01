@@ -13,6 +13,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
@@ -193,11 +194,6 @@
 	}
 	// The key's copies: none is a warning on the key button.
 	let keyUnprotected = $derived(!!$voteKey && keyStatusKey() === 'profile.key.unprotected');
-	// The gauge of a consistency score, in the site's colours.
-	const GAUGE = ['var(--red)', 'color-mix(in oklch, var(--red) 50%, var(--amber))', 'var(--amber)', 'color-mix(in oklch, var(--amber) 50%, var(--green))', 'var(--green)'];
-	function gaugeColor(score: number): string {
-		return GAUGE[Math.min(4, Math.max(0, Math.floor(score / 20)))];
-	}
 
 	let suppressClick = false;
 	function movable(id: number | undefined): boolean {
@@ -591,6 +587,7 @@
 	</section>
 
 	<Modal open={slotPick !== null} title={slotPick === null ? '' : tr('vote.slot.choice', currentLang, { rank: rankWord(slotPick + 1) })} onclose={() => (slotPick = null)} closeLabel={tr('auth.close', currentLang)}>
+		<p class="legend">{tr('score.legend', currentLang)}</p>
 		<div class="picker">
 			{#each choosable as o (o)}
 				<button class="pick-card" onclick={() => chooseFor(o)} disabled={busy}>
@@ -601,7 +598,7 @@
 					{/if}
 					<span class="pick-name">{nameOf(o)}</span>
 					{#if scoreOf(o) !== null}
-						<span class="gauge" title={tr('vote.score.tip', currentLang)}><span class="gauge-bar"><span class="gauge-fill" style="width: {scoreOf(o) ?? 0}%; background: {gaugeColor(scoreOf(o) ?? 0)}"></span></span><span class="gauge-num">{scoreOf(o)}</span></span>
+						<TartuffeScore honesty={cardOf(o)?.honesty_score} lang={currentLang} />
 					{/if}
 				</button>
 			{/each}
@@ -681,6 +678,7 @@
 			{#if $st.tallyUnverified}
 				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
 			{/if}
+			<p class="legend legend--results">{tr('score.legend', currentLang)}</p>
 			{#if !results}
 				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
 			{:else}
@@ -718,7 +716,7 @@
 									{#if o.blank}
 										{@render help(tr('vote.blank.tip', currentLang))}
 									{:else if scoreOf(o.slot) !== null}
-										<span class="gauge" title={tr('vote.score.tip', currentLang)}><span class="gauge-bar"><span class="gauge-fill" style="width: {scoreOf(o.slot) ?? 0}%; background: {gaugeColor(scoreOf(o.slot) ?? 0)}"></span></span><span class="gauge-num">{scoreOf(o.slot)}</span></span>
+										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} />
 									{/if}
 								</span>
 							</span>
@@ -1318,30 +1316,15 @@
 		background: var(--accent-hover);
 		border-color: var(--accent-hover);
 	}
-	.gauge {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		width: 6rem;
-		max-width: 100%;
+	.legend--results {
+		text-align: center;
+		margin: 0 0 0.75rem;
 	}
-	.gauge-bar {
-		flex: 1;
-		height: 6px;
-		border-radius: 3px;
-		background: var(--bg-secondary);
-		overflow: hidden;
-	}
-	.gauge-fill {
-		display: block;
-		height: 100%;
-		border-radius: 3px;
-	}
-	.gauge-num {
-		font-size: 0.72rem;
-		font-weight: 600;
+	.legend {
+		margin: -0.25rem 0 0.9rem;
+		font-size: 0.8rem;
+		line-height: 1.45;
 		color: var(--text-secondary);
-		font-variant-numeric: tabular-nums;
 	}
 	.hint {
 		text-align: center;
