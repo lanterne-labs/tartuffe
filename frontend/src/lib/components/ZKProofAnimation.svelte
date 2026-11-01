@@ -85,7 +85,6 @@
 			{tr('zk.anim.and', lang)}
 			<b class="tag">{tr('zk.anim.adult', lang)}</b>
 		</span>
-		<span class="note">{tr('zk.anim.note', lang)}</span>
 	</figcaption>
 </figure>
 
@@ -367,10 +366,5 @@
 		color: #0a0a0f;
 		font-weight: 800;
 		white-space: nowrap;
-	}
-	.note {
-		font-size: 0.75rem;
-		line-height: 1.4;
-		color: var(--text-muted);
 	}
 </style>

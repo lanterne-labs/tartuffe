@@ -178,6 +178,7 @@
 	<details class="only">
 		<summary>{tr('zk.more', lang)}</summary>
 		<p>{tr('zk.why', lang)}</p>
+		<p>{tr('zk.anim.note', lang)}</p>
 		<p>{tr('zk.needs', lang)}</p>
 		<p>{tr('v2.passport.only', lang)}</p>
 	</details>

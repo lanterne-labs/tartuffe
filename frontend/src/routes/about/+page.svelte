@@ -92,11 +92,11 @@
 			correctionsLink: 'Voir les corrections',
 
 			privacyKicker: 'Confidentialité',
-			privacyTitle: 'Nous ne savons pas qui vous êtes',
+			privacyTitle: 'Vous restez anonyme',
 			privacy: [
-				['Pas d’e-mail.', 'Google ne nous transmet ni votre e-mail ni votre nom.'],
-				['Pas d’identité.', 'Votre passeport prouve « français et majeur » sans quitter votre téléphone.'],
-				['Pas de traceur.', 'Ni publicité, ni mesure d’audience, ni adresse IP conservée.']
+				['Sans e-mail.', 'Google ne nous transmet qu’un identifiant anonyme.'],
+				['Votre identité reste à vous.', 'Votre passeport prouve « français et majeur » sans quitter votre téléphone.'],
+				['Sans traceur.', 'Sans publicité, sans mesure d’audience, sans adresse IP conservée.']
 			],
 			privacyLink: 'Tout le détail',
 
@@ -167,11 +167,11 @@
 			correctionsLink: 'See the corrections',
 
 			privacyKicker: 'Privacy',
-			privacyTitle: 'We don’t know who you are',
+			privacyTitle: 'You stay anonymous',
 			privacy: [
-				['No e-mail.', 'Google gives us neither your e-mail nor your name.'],
-				['No identity.', 'Your passport proves “French, adult” without leaving your phone.'],
-				['No tracker.', 'No ads, no audience measurement, no IP address kept.']
+				['E-mail-free.', 'Google gives us only an anonymous identifier.'],
+				['Your identity stays yours.', 'Your passport proves “French, adult” without leaving your phone.'],
+				['Tracker-free.', 'Without ads, audience measurement or a kept IP address.']
 			],
 			privacyLink: 'All the details',
 

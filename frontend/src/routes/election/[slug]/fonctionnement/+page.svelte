@@ -49,13 +49,13 @@
 	> = {
 		fr: {
 			kicker: 'Comment ça marche',
-			title: 'Un vote que personne ne peut lire. Pas même nous.',
+			title: 'Votre vote reste secret. Même pour nous.',
 			lead: 'Votre passeport prouve votre droit de participer. Votre bulletin part chiffré, sans votre nom, votre clé ni votre adresse. Seuls les totaux sont déchiffrés, avec une preuve, et tout le monde peut les recompter.',
 			briefTitle: 'En bref',
 			brief: [
-				'Votre passeport prouve, une seule fois et sur votre téléphone, que vous êtes majeur et français. Nous ne voyons ni votre nom ni votre photo.',
+				'Votre passeport prouve, une seule fois et sur votre téléphone, que vous êtes majeur et français. Votre nom et votre photo restent sur votre téléphone.',
 				'Vous classez jusqu’à 3 candidats, ou votez blanc, et pouvez changer d’avis jusqu’à la clôture.',
-				'Votre bulletin part chiffré, sans votre nom ni votre adresse : personne, pas même nous, ne peut le lire.',
+				'Votre bulletin part chiffré, sans votre nom ni votre adresse : vous seul savez ce qu’il contient.',
 				'Seuls les totaux sont déchiffrés, après chaque vote, et tout le monde peut les recompter.',
 				'C’est une expérience de tartuffe.me, site indépendant : ni un scrutin officiel, ni un sondage représentatif.'
 			],
@@ -182,11 +182,11 @@
 				'Des bulletins chiffrés et leur preuve, lus sur les relais.',
 				'La somme des bulletins, déchiffrée à chaque mise à jour.'
 			],
-			neverTitle: 'Ce que nous ne voyons jamais',
+			neverTitle: 'Ce qui reste chez vous',
 			never: [
 				'Votre nom, votre photo, votre date de naissance, le numéro du passeport.',
-				'L’adresse IP de votre navigateur : il ne nous parle jamais, ni pour s’inscrire, ni pour voter, ni pour vérifier.',
-				'Quel bulletin est le vôtre : un bulletin ne porte ni votre passeport, ni votre clé, ni votre compte.',
+				'L’adresse IP de votre navigateur : il s’inscrit, vote et vérifie auprès des relais et du miroir public, pas de notre serveur.',
+				'Quel bulletin est le vôtre : un bulletin voyage sans votre passeport, votre clé ni votre compte.',
 				'Votre clé en clair, vos 12 mots, votre visage, votre empreinte.'
 			],
 			levelsTitle: 'Votre niveau de confidentialité',
@@ -196,8 +196,8 @@
 					name: 'Par défaut',
 					how: 'Rien à faire.',
 					lines: [
-						'Personne ne peut lire votre bulletin, sauf la clé de l’élection, qui ne sait pas de qui il vient.',
-						'Notre serveur ne voit jamais votre adresse IP : vos envois passent par les relais, vos lectures par un miroir public.',
+						'Seule la clé de l’élection peut ouvrir votre bulletin, et elle ignore de qui il vient.',
+						'Votre adresse IP reste entre votre navigateur et les relais : vos envois passent par eux, vos lectures par un miroir public.',
 						'Les relais voient l’adresse IP de votre navigateur, comme tout site visité, et un bulletin chiffré qu’ils ne peuvent pas lire.',
 						'L’État, qui connaît les puces de ses passeports, pourrait savoir que le vôtre s’est inscrit. Jamais pour qui il vote.'
 					]
@@ -244,13 +244,13 @@
 		},
 		en: {
 			kicker: 'How it works',
-			title: 'A vote nobody can read. Not even us.',
+			title: 'Your vote stays secret. Even from us.',
 			lead: 'Your passport proves your right to take part. Your ballot leaves encrypted, without your name, your key or your address. Only the totals are decrypted, with a proof, and anyone can recount them.',
 			briefTitle: 'In short',
 			brief: [
-				'Your passport proves, once and on your phone, that you are an adult French national. We see neither your name nor your photo.',
+				'Your passport proves, once and on your phone, that you are an adult French national. Your name and photo stay on your phone.',
 				'You rank up to 3 candidates, or vote blank, and can change your mind until the close.',
-				'Your ballot leaves encrypted, without your name or address: nobody, not even us, can read it.',
+				'Your ballot leaves encrypted, without your name or address: you alone know what it holds.',
 				'Only the totals are decrypted, after every vote, and anyone can recount them.',
 				'It is an experiment by tartuffe.me, an independent site: neither an official election nor a representative poll.'
 			],
@@ -377,11 +377,11 @@
 				'Encrypted ballots and their proofs, read from the relays.',
 				'The sum of the ballots, decrypted at every update.'
 			],
-			neverTitle: 'What we never see',
+			neverTitle: 'What stays with you',
 			never: [
 				'Your name, your photo, your date of birth, the passport number.',
-				'Your browser’s IP address: it never talks to us, neither to register, nor to vote, nor to check.',
-				'Which ballot is yours: a ballot carries neither your passport, nor your key, nor your account.',
+				'Your browser’s IP address: it registers, votes and checks with the relays and the public mirror, not with our server.',
+				'Which ballot is yours: a ballot travels without your passport, your key or your account.',
 				'Your key in clear, your 12 words, your face, your fingerprint.'
 			],
 			levelsTitle: 'Your level of privacy',
@@ -391,8 +391,8 @@
 					name: 'By default',
 					how: 'Nothing to do.',
 					lines: [
-						'Nobody can read your ballot, except the election key, which does not know whose it is.',
-						'Our server never sees your IP address: what you send goes through the relays, what you read comes from a public mirror.',
+						'Only the election key can open your ballot, and it has no idea whose it is.',
+						'Your IP address stays between your browser and the relays: what you send goes through them, what you read comes from a public mirror.',
 						'The relays see your browser’s IP address, as any site visited does, and an encrypted ballot they cannot read.',
 						'The State, which knows the chips of its passports, could tell that yours registered. Never whom it votes for.'
 					]

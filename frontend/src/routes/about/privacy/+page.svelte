@@ -31,11 +31,11 @@
 	}> = {
 		fr: {
 			kicker: 'Confidentialité',
-			title: 'Nous ne savons pas qui vous êtes.',
-			lead: 'C’est voulu : un site qui juge les responsables politiques ne doit rien savoir de ses lecteurs. Voici, point par point, ce que nous recevons, ce que nous gardons, et ce que nous ne voyons jamais.',
-			pills: ['Pas de pub', 'Pas de traceur', 'Pas d’e-mail', 'Pas d’adresse IP conservée'],
+			title: 'Vous restez anonyme.',
+			lead: 'C’est voulu : un site qui juge les responsables politiques laisse ses lecteurs tranquilles. Voici, point par point, ce que nous recevons, ce que nous gardons, et ce qui reste chez vous.',
+			pills: ['Sans pub', 'Sans traceur', 'Sans e-mail', 'Adresse IP non conservée'],
 			getLabel: 'Ce que nous recevons',
-			neverLabel: 'Jamais',
+			neverLabel: 'Reste chez vous',
 			parts: [
 				{
 					title: 'Lire le site',
@@ -84,19 +84,19 @@
 			erase: [
 				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.'
 			],
-			promiseTitle: 'Ce que nous ne ferons jamais',
-			promises: ['Vendre, louer ou partager des données.', 'Afficher de la publicité.', 'Vous envoyer des e-mails : nous n’avons pas le vôtre.', 'Croiser vos données avec celles d’autres sites.'],
+			promiseTitle: 'Nos engagements',
+			promises: ['Vos données restent ici : jamais vendues, louées ni partagées.', 'Le site vit sans publicité.', 'Votre boîte mail reste tranquille : nous n’avons pas votre adresse.', 'Vos données restent à part de celles d’autres sites.'],
 			hosting: 'Le site est hébergé chez the host, qui peut journaliser les connexions comme tout hébergeur.',
 			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
 			back: 'À propos'
 		},
 		en: {
 			kicker: 'Privacy',
-			title: 'We don’t know who you are.',
-			lead: 'On purpose: a site that judges politicians must know nothing about its readers. Here, point by point, is what we receive, what we keep, and what we never see.',
-			pills: ['No ads', 'No trackers', 'No e-mail', 'No IP address kept'],
+			title: 'You stay anonymous.',
+			lead: 'On purpose: a site that judges politicians leaves its readers alone. Here, point by point, is what we receive, what we keep, and what stays with you.',
+			pills: ['Ad-free', 'Tracker-free', 'E-mail-free', 'IP address not kept'],
 			getLabel: 'What we receive',
-			neverLabel: 'Never',
+			neverLabel: 'Stays with you',
 			parts: [
 				{
 					title: 'Reading the site',
@@ -133,8 +133,8 @@
 			erase: [
 				'On your profile, “Delete my account” erases at once the account, its sessions and its +1. Your reports stay, detached from you: they served to correct the site.'
 			],
-			promiseTitle: 'What we will never do',
-			promises: ['Sell, rent or share data.', 'Show ads.', 'Send you e-mails: we don’t have yours.', 'Match your data with other sites’.'],
+			promiseTitle: 'Our commitments',
+			promises: ['Your data stays here: never sold, rented or shared.', 'The site runs without ads.', 'Your inbox stays quiet: we don’t have your address.', 'Your data stays apart from other sites’.'],
 			hosting: 'The site is hosted by the host, which may log connections like any host.',
 			eventLine: 'The presidential vote is a separate experiment of the lab: its anonymity is explained on its own page',
 			back: 'About'
