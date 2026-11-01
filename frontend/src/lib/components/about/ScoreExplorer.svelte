@@ -1,9 +1,11 @@
 <script lang="ts">
-	// An interactive chart of the honesty score: the reader picks a number of
-	// distinct contradictions (B), of facts (F) and of extra pairs inside the
-	// bundles (E), and sees the score and its curve over B change live.
-	// score = 100 · exp(−1.5·B / max(F, 75) − 0.03·B − 0.05·ln(1 + E))
+	// An interactive chart of the Tartuffe-Score: the reader picks a number
+	// of distinct contradictions (B), of facts (F) and of extra pairs inside
+	// the bundles (E), and sees the score, its barometer and its curve over
+	// B change live.
+	// Tartuffe-Score = 100 · (1 − exp(−1.5·B / max(F, 75) − 0.03·B − 0.05·ln(1 + E)))
 	import type { Lang } from '$lib/i18n';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 
 	let { lang }: { lang: Lang } = $props();
 
@@ -12,8 +14,8 @@
 	const factOptions = [75, 300, 1000];
 
 	function score(b: number, f: number, e: number): number {
-		if (f <= 0) return 100;
-		return 100 * Math.exp((-1.5 * b) / Math.max(f, FLOOR) - 0.03 * b - 0.05 * Math.log(1 + e));
+		if (f <= 0) return 0;
+		return 100 * (1 - Math.exp((-1.5 * b) / Math.max(f, FLOOR) - 0.03 * b - 0.05 * Math.log(1 + e)));
 	}
 
 	let b = $state(1);
@@ -45,7 +47,7 @@
 	let areaPath = $derived(`${mainPath}L${x(B_MAX)},${y(0)}L${x(0)},${y(0)}Z`);
 	let ghosts = $derived(factOptions.filter((o) => o !== f).map((o) => ({ f: o, d: curve(o, e) })));
 
-	let tone = $derived(value >= 80 ? 'var(--green)' : value >= 50 ? 'var(--amber)' : 'var(--red)');
+	let tone = $derived(value < 20 ? 'var(--green)' : value < 50 ? 'var(--amber)' : 'var(--red)');
 
 	const text = {
 		fr: {
@@ -53,22 +55,22 @@
 			facts: 'Faits connus (F)',
 			extra: 'Paires en plus dans les mêmes lots (E)',
 			floor: '≤ 75',
-			score: 'score',
+			score: 'Tartuffe-Score',
 			axisX: 'contradictions distinctes',
-			few: 'Avec si peu de faits, un score élevé veut surtout dire que l’on sait encore peu de choses sur cette personne.',
+			few: 'Avec si peu de faits, un score bas veut surtout dire que l’on sait encore peu de choses sur cette personne.',
 			many: 'Avec beaucoup de faits, chaque contradiction pèse moins : elle est rapportée à tout ce que l’on sait.',
-			alt: 'Courbe du score en fonction du nombre de contradictions'
+			alt: 'Courbe du Tartuffe-Score en fonction du nombre de contradictions'
 		},
 		en: {
 			contradictions: 'Distinct contradictions (B)',
 			facts: 'Known facts (F)',
 			extra: 'Extra pairs inside the same bundles (E)',
 			floor: '≤ 75',
-			score: 'score',
+			score: 'Tartuffe-Score',
 			axisX: 'distinct contradictions',
-			few: 'With so few facts, a high score mostly means we still know little about this person.',
+			few: 'With so few facts, a low score mostly means we still know little about this person.',
 			many: 'With many facts, each contradiction weighs less: it is measured against everything we know.',
-			alt: 'Curve of the score as a function of the number of contradictions'
+			alt: 'Curve of the Tartuffe-Score as a function of the number of contradictions'
 		}
 	};
 	let c = $derived(text[lang]);
@@ -105,8 +107,9 @@
 		<div class="readout" style:--tone={tone}>
 			<span class="big">{shown}</span><span class="out">/100</span>
 		</div>
+		<TartuffeScore honesty={1 - value / 100} {lang} size="md" />
 		<p class="formula" aria-hidden="true">
-			100 × exp(−1{dec}5×{b}/{Math.max(f, FLOOR)} − 0{dec}03×{b} − 0{dec}05×ln(1+{e}))
+			100 × (1 − exp(−1{dec}5×{b}/{Math.max(f, FLOOR)} − 0{dec}03×{b} − 0{dec}05×ln(1+{e})))
 		</p>
 		<p class="hint">{f <= FLOOR ? c.few : c.many}</p>
 	</div>

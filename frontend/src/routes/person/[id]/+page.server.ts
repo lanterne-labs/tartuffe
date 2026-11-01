@@ -16,7 +16,6 @@ function pointed(url: URL): { kind: ShareKind; id: string } | null {
 
 function describe(target: ShareTarget): { title: string; description: string } {
 	const t = { ...target, person_name: displayName(target.person_name) };
-	const score = Math.round(t.honesty_score * 100);
 	const counts = `${t.contradiction_count} contradiction${t.contradiction_count === 1 ? '' : 's'} sur ${t.fact_count} fait${t.fact_count === 1 ? '' : 's'}`;
 	switch (t.kind) {
 		case 'stance':
@@ -29,7 +28,7 @@ function describe(target: ShareTarget): { title: string; description: string } {
 		case 'fact':
 			return { title: `${t.person_name}${t.stance_label ? ` — ${t.stance_label}` : ''}`, description: clip(t.quote || t.text, 240) };
 		default:
-			return { title: `${t.person_name} — ${score}/100 en cohérence`, description: `${counts}, avec leurs sources, sur tartuffe.me.` };
+			return { title: `Le Tartuffe-Score de ${t.person_name}`, description: `${counts}, avec leurs sources, sur tartuffe.me.` };
 	}
 }
 

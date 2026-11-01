@@ -8,7 +8,7 @@
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
-	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
@@ -378,11 +378,6 @@
 	}
 
 
-	function getHonestyColor(score: number): string {
-		if (score >= 0.8) return 'var(--green)';
-		if (score >= 0.4) return 'var(--amber)';
-		return 'var(--red)';
-	}
 
 	// A label as a sentence: its first letter upper case.
 	function sentence(s: string | null | undefined): string {
@@ -496,7 +491,7 @@
 			</div>
 			<div class="hero-gauge">
 				<div class="gauge-row">
-					<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
+					<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="lg" facts={person.fact_count} contradictions={person.contradiction_count} showEvidence={false} />
 					<ScoreHelp name={person.name} personId={person.id} />
 				</div>
 				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
@@ -505,9 +500,9 @@
 
 		{#if person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
-				<ScoreGauge score={person.own_score ?? person.honesty_score} size={56} showLabel label={tr('person.own_score', currentLang)} />
-				<ScoreGauge score={person.members_score} size={56} showLabel label={tr('person.members_score', currentLang)} />
-				<ScoreGauge score={person.honesty_score} size={56} showLabel label={tr('person.aggregate', currentLang)} />
+				<TartuffeScore honesty={person.own_score ?? person.honesty_score} lang={currentLang} size="md" caption={tr('person.own_score', currentLang)} ends={false} />
+				<TartuffeScore honesty={person.members_score} lang={currentLang} size="md" caption={tr('person.members_score', currentLang)} ends={false} />
+				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="md" caption={tr('person.aggregate', currentLang)} ends={false} />
 			</div>
 		{/if}
 
@@ -532,9 +527,7 @@
 									</div>
 								{/if}
 								<span class="member-name">{member.name}</span>
-								<span class="member-score" style="color: {getHonestyColor(member.honesty_score)}">
-									{(member.honesty_score * 100).toFixed(0)}%
-								</span>
+								<span class="member-score"><TartuffeScore honesty={member.honesty_score} lang={currentLang} ends={false} /></span>
 							</a>
 						{/each}
 					</div>
@@ -634,7 +627,7 @@
 										</div>
 									</div>
 									<div class="stance-gauge">
-										<ScoreGauge score={stance.score} size={56} />
+										<TartuffeScore honesty={stance.score} lang={currentLang} ends={false} />
 										<ScoreHelp name={person.name} stance={{ label: topic, facts: stance.fact_count, pairs: stance.contradiction_pairs ?? stance.contradiction_count }} />
 									</div>
 								</div>
@@ -837,17 +830,19 @@
 	.gauge-row {
 		display: flex;
 		align-items: flex-start;
-		gap: 0.3rem;
+		gap: 0.4rem;
+		width: 100%;
 	}
 	.hero-gauge {
 		flex-shrink: 0;
+		width: min(20rem, 100%);
 	}
 
 	/* Score Breakdown */
 	.score-breakdown {
 		display: flex;
 		justify-content: center;
-		gap: 2rem;
+		gap: 1.25rem;
 		margin-bottom: 1.5rem;
 		padding: 1rem 1.5rem;
 		background: var(--bg-card);
@@ -948,8 +943,8 @@
 	}
 
 	.member-score {
-		font-weight: 600;
-		font-size: 0.688rem;
+		display: block;
+		width: 4.5rem;
 	}
 
 	/* Error */
@@ -1385,10 +1380,10 @@
 	}
 	.stance-gauge {
 		display: flex;
-		flex-direction: column;
-		align-items: center;
+		align-items: flex-start;
 		gap: 0.3rem;
 		flex-shrink: 0;
+		width: 8.5rem;
 	}
 	.fact-actions {
 		display: flex;

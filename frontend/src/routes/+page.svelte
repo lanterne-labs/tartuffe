@@ -1,4 +1,5 @@
 <script lang="ts">
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	// The landing page: the contradiction checker first (the slogan, one
 	// made-up example of a contradiction and its score, the ranking and the
 	// feed), then the lab's temporary event, the private presidential vote,
@@ -47,8 +48,9 @@
 	function dateText(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
-	// The score of the example: one contradiction among few facts.
-	const SCORE = 92;
+	// The example: one contradiction among few facts, as the API would
+	// give it (an honesty score, 0 to 1).
+	const HONESTY = 0.62;
 
 	const content = {
 		fr: {
@@ -59,7 +61,7 @@
 			ctaFeed: 'Lire le fil',
 
 			exKicker: 'Concrètement',
-			exTitle: 'Une contradiction, et le score baisse',
+			exTitle: 'Une contradiction, et le Tartuffe-Score monte',
 			exWho: 'Un député',
 			exTag: 'Exemple',
 			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
@@ -67,25 +69,25 @@
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
 			exDidSrc: 'Scrutin à l’Assemblée',
 			exClash: 'Contradiction',
-			exScore: 'Score d’honnêteté',
+			exScore: 'Tartuffe-Score',
 			steps: [
 				['On relève', 'Ses déclarations et ses votes.'],
 				['On confronte', 'Quand ils se contredisent, on le note.'],
-				['On publie', 'Son score baisse, preuves à l’appui.']
+				['On publie', 'Son Tartuffe-Score monte, preuves à l’appui.']
 			],
 			exNote: 'On mesure la cohérence, pas la vérité.',
 
 			svcKicker: 'Deux façons de suivre',
 			svcTitle: 'Tout est en accès libre',
 			services: [
-				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Chaque élu et chaque parti, noté sur 100. Cherchez un nom, comparez.', cta: 'Ouvrir' },
+				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Chaque élu et chaque parti, de cohérent à tartuffe. Cherchez un nom, comparez.', cta: 'Ouvrir' },
 				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, au fil de l’eau. Un +1 les fait remonter.', cta: 'Lire' }
 			],
 			aboutLink: 'Comment le score est calculé',
 
 			evTag: 'Expérience temporaire du labo',
 			evTitle: 'Présidentielle 2027 : voter en ligne, vraiment en secret',
-			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le score d’honnêteté de chaque candidat s’affiche à côté.',
+			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le Tartuffe-Score de chaque candidat s’affiche à côté.',
 			evEnds: 'Jusqu’au {d}',
 			evCta: 'Voter',
 			evMore: 'Découvrir l’expérience',
@@ -103,7 +105,7 @@
 			ctaFeed: 'Read the feed',
 
 			exKicker: 'At a glance',
-			exTitle: 'One contradiction, one score',
+			exTitle: 'One contradiction, the Tartuffe-Score rises',
 			exWho: 'A politician',
 			exTag: 'Example',
 			exSaid: '“I will never touch the retirement age.”',
@@ -111,25 +113,25 @@
 			exDid: 'Votes to raise the retirement age to 64.',
 			exDidSrc: 'Vote in Parliament',
 			exClash: 'Contradiction',
-			exScore: 'Honesty score',
+			exScore: 'Tartuffe-Score',
 			steps: [
 				['We listen', 'What they say, how they vote.'],
 				['We compare', 'The two clash? It’s on record.'],
-				['We show', 'The score drops. With the sources.']
+				['We show', 'The Tartuffe-Score rises. With the sources.']
 			],
 			exNote: 'Consistency, not truth.',
 
 			svcKicker: 'Two ways to use it',
 			svcTitle: 'Everything is public',
 			services: [
-				{ href: '/dashboard', icon: 'rank', title: 'The ranking', body: 'Every politician and party, scored out of 100. Search, compare.', cta: 'Open' },
+				{ href: '/dashboard', icon: 'rank', title: 'The ranking', body: 'Every politician and party, from coherent to tartuffe. Search, compare.', cta: 'Open' },
 				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' }
 			],
 			aboutLink: 'How the score is computed',
 
 			evTag: 'A temporary experiment of the lab',
 			evTitle: 'Presidential 2027: online voting, truly private',
-			evBody: 'Rank up to 3 candidates, or vote blank, with your passport. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s honesty score is right beside.',
+			evBody: 'Rank up to 3 candidates, or vote blank, with your passport. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s Tartuffe-Score is right beside.',
 			evEnds: 'Until {d}',
 			evCta: 'Vote',
 			evMore: 'Discover the experiment',
@@ -142,9 +144,6 @@
 	};
 	let c = $derived(content[currentLang]);
 
-	// The ring of the score: its circumference and the part left empty.
-	const R = 42;
-	const C = 2 * Math.PI * R;
 </script>
 
 <svelte:head>
@@ -206,12 +205,8 @@
 				</div>
 
 				<div class="ex-score">
-					<svg viewBox="0 0 100 100" aria-hidden="true">
-						<circle cx="50" cy="50" r={R} class="ring-bg" />
-						<circle cx="50" cy="50" r={R} class="ring" stroke-dasharray={C} style="--off: {C * (1 - SCORE / 100)}; --full: {C}" />
-					</svg>
-					<span class="ex-num">{SCORE}<small>/100</small></span>
 					<span class="ex-label">{c.exScore}</span>
+					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" animate />
 				</div>
 			</div>
 		</div>
@@ -528,42 +523,15 @@
 		align-items: center;
 		text-align: center;
 	}
-	.ex-score svg {
-		width: 8.5rem;
-		height: 8.5rem;
-		transform: rotate(-90deg);
-	}
-	.ring-bg,
-	.ring {
-		fill: none;
-		stroke-width: 7;
-	}
-	.ring-bg {
-		stroke: var(--bg-secondary);
-	}
-	.ring {
-		stroke: var(--green);
-		stroke-linecap: round;
-		stroke-dashoffset: var(--off);
-	}
-	.ex-num {
-		position: absolute;
-		top: 4.25rem;
-		transform: translateY(-50%);
-		font-family: var(--font-serif);
-		font-size: 2.3rem;
-		font-weight: 600;
-		font-variant-numeric: lining-nums;
-		line-height: 1;
-	}
-	.ex-num small {
-		font-size: 1rem;
-		color: var(--text-muted);
-	}
 	.ex-label {
-		margin-top: 0.4rem;
+		margin-bottom: 0.2rem;
 		font-size: 0.8rem;
+		font-weight: 600;
 		color: var(--text-secondary);
+	}
+	.ex-score {
+		width: min(20rem, 100%);
+		margin: 0 auto;
 	}
 	.steps {
 		list-style: none;
@@ -677,12 +645,12 @@
 		opacity: 1;
 		transform: none;
 	}
-	section:global(.reveal) .ring {
-		stroke-dashoffset: var(--full);
-		transition: stroke-dashoffset 1.4s ease 0.3s;
+	/* The example's marker slides once the section is in view. */
+	section:global(.reveal) :global(.marker--in) {
+		animation-play-state: paused;
 	}
-	section:global(.reveal.shown) .ring {
-		stroke-dashoffset: var(--off);
+	section:global(.reveal.shown) :global(.marker--in) {
+		animation-play-state: running;
 	}
 
 	@media (max-width: 680px) {

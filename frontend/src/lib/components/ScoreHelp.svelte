@@ -6,6 +6,7 @@
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
 	import { scoreTerms, stanceInputs } from '$lib/score';
+	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
 	import { displayName } from '$lib/share';
 	import type { ScoreExplanation } from '$lib/types';
 
@@ -64,7 +65,8 @@
 		{:else if !inputs || score == null}
 			<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 		{:else}
-			<p class="big"><strong>{Math.round((score ?? 0) * 100)}</strong>/100</p>
+			<p class="big"><strong>{tartuffeOf(score) ?? 0}</strong>/100</p>
+			<div class="baro"><TartuffeScore honesty={score} lang={currentLang} size="md" facts={inputs.facts} contradictions={inputs.bundles} showEvidence={false} /></div>
 			<p class="what">{tr('score.what', currentLang)}</p>
 
 			<dl class="inputs">
@@ -81,6 +83,11 @@
 </span>
 
 <style>
+	.baro {
+		display: flex;
+		justify-content: center;
+		margin: 0 0 0.75rem;
+	}
 	.score-help {
 		display: inline-flex;
 		vertical-align: middle;

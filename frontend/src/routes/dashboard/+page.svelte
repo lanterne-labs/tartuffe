@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { eventPaths, showVoters } from '$lib/event';
 	import ScoreHelp from '$lib/components/ScoreHelp.svelte';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
@@ -50,7 +51,6 @@
 
 	const PANEL_SIZE = 3;
 	const PANEL_MIN_FACTS = 3;
-	const SCORE_CIRCUMFERENCE = 2 * Math.PI * 14;
 
 	function handleSearchInput(event: Event) {
 		const target = event.target as HTMLInputElement;
@@ -131,11 +131,6 @@
 	}
 
 
-	function getHonestyColor(score: number): string {
-		if (score >= 0.8) return 'var(--green)';
-		if (score >= 0.4) return 'var(--amber)';
-		return 'var(--red)';
-	}
 
 	function handleRealtimeEvent(_event: any) {
 		refreshAll();
@@ -260,9 +255,9 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
+									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} ends={false} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
-								<div class="rank-score rank-score--good">{(person.honesty_score * 100).toFixed(0)}</div>
 								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
@@ -302,9 +297,9 @@
 								{/if}
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
+									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} ends={false} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
-								<div class="rank-score rank-score--bad">{(person.honesty_score * 100).toFixed(0)}</div>
 								<ScoreHelp name={person.name} personId={person.id} />
 							</a>
 						</li>
@@ -351,32 +346,14 @@
 										<span class="badge">{tr('home.party_badge', currentLang)}</span>
 									{/if}
 								</div>
+								<div class="card-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} facts={person.fact_count} contradictions={person.contradiction_count} showEvidence={false} /></div>
 								<div class="card-meta">
 									{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
 								</div>
 							</div>
 						</div>
 						<div class="score-ring-wrapper">
-							<svg class="score-ring" viewBox="0 0 36 36">
-								<circle
-									cx="18" cy="18" r="14"
-									fill="none"
-									stroke="var(--bg-secondary)"
-									stroke-width="3"
-								/>
-								<circle
-									cx="18" cy="18" r="14"
-									fill="none"
-									stroke={getHonestyColor(person.honesty_score)}
-									stroke-width="3"
-									stroke-linecap="round"
-									stroke-dasharray="{person.honesty_score * SCORE_CIRCUMFERENCE} {SCORE_CIRCUMFERENCE}"
-									transform="rotate(-90 18 18)"
-								/>
-								<text x="18" y="18" text-anchor="middle" dominant-baseline="central" class="ring-text">
-									{(person.honesty_score * 100).toFixed(0)}
-								</text>
-							</svg>
+							
 							<ScoreHelp name={person.name} personId={person.id} />
 						</div>
 					</div>
@@ -634,15 +611,13 @@
 	}
 
 	.rank-score {
-		font-size: 1.125rem;
-		font-weight: 700;
-		flex-shrink: 0;
-		min-width: 2.25rem;
-		text-align: right;
+		width: min(11rem, 100%);
+		margin: 0.15rem 0 0.1rem;
 	}
-
-	.rank-score--good { color: var(--green); }
-	.rank-score--bad { color: var(--red); }
+	.card-score {
+		width: min(13rem, 100%);
+		margin: 0.2rem 0 0.15rem;
+	}
 
 	.skeleton-row {
 		display: flex;
@@ -745,6 +720,7 @@
 	}
 
 	.card-info {
+		flex: 1;
 		min-width: 0;
 	}
 
@@ -795,16 +771,7 @@
 		gap: 0.35rem;
 	}
 
-	.score-ring {
-		width: 52px;
-		height: 52px;
-	}
 
-	.ring-text {
-		font-size: 9px;
-		font-weight: 600;
-		fill: var(--text-primary);
-	}
 
 	/* Skeleton */
 	.skeleton-card {

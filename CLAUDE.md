@@ -131,6 +131,7 @@ go test -v ./backend/storage -run TestSpecificName
 4. **Embedding**: Generate vector embeddings via OpenAI-compatible API, store in pgvector
 5. **Contradiction Detection**: Query K-nearest neighbors per person, compare with LLM
 6. **Score Update**: Recalculate honesty score: `exp(-1.5 * B/max(F, 75) - 0.03 * B - 0.05 * ln(1 + E))`, F facts, B distinct contradictions (the pairs of one stance count once), E the extra pairs (`backend/core/honesty.go`; the site explains it with the same numbers, `frontend/src/lib/score.ts`)
+   The site never shows this number as is: it shows the **Tartuffe-Score**, 100 × (1 − honesty), as a barometer from « cohérent » to « tartuffe » (`frontend/src/lib/components/TartuffeScore.svelte`, no number in the headline, no marker under 10 facts). The API keeps `honesty_score`.
 7. **Event Emission**: Insert events to `event_log` table for SSE streaming
 
 ### Key Components

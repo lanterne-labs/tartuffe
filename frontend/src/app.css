@@ -194,10 +194,12 @@ html {
 .page-content h4,
 .page-content .kicker,
 .page-content .sec-kicker,
-.page-content .lead {
+.page-content .lead,
+.page-content .section-lead {
   text-align: center;
 }
-.page-content .lead {
+.page-content .lead,
+.page-content .section-lead {
   margin-left: auto;
   margin-right: auto;
 }

@@ -5,6 +5,7 @@
 	// all kept in the URL so a filtered feed can be shared. A new
 	// contradiction while the page is open shows a banner to load it.
 	import Spinner from '$lib/components/Spinner.svelte';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -197,11 +198,6 @@
 		}).format(pct / 100);
 	}
 
-	function scoreColor(s: number): string {
-		if (s >= 0.8) return 'var(--green)';
-		if (s >= 0.4) return 'var(--amber)';
-		return 'var(--red)';
-	}
 
 	let unsub: (() => void) | null = null;
 	onMount(() => {
@@ -332,16 +328,16 @@
 				<div class="main">
 					<div class="head">
 						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
-						<span class="score" style="color: {scoreColor(it.person.honesty_score)}">{Math.round(it.person.honesty_score * 100)}</span>
+						<span class="score"><TartuffeScore honesty={it.person.honesty_score} lang={currentLang} ends={false} /></span>
 						{#if it.score_effect != null}
 							<span
 								class="ticker"
 								class:down={it.score_effect < 0}
 								title={tr('feed.effect', currentLang, { name: it.person.name })}
-								aria-label={`${tr('feed.effect', currentLang, { name: it.person.name })} : ${move(it.score_effect)}`}
+								aria-label={`${tr('feed.effect', currentLang, { name: it.person.name })} : ${move(-it.score_effect)}`}
 							>
-								<span aria-hidden="true">{it.score_effect < 0 ? '▼' : '▲'}</span>
-								{move(it.score_effect)}
+								<span aria-hidden="true">{it.score_effect < 0 ? '▲' : '▼'}</span>
+								{move(-it.score_effect)}
 							</span>
 						{/if}
 						{#if it.kind === 'contradiction'}
@@ -719,9 +715,8 @@
 		text-overflow: ellipsis;
 	}
 	.score {
-		font-weight: 700;
-		font-size: 0.8rem;
 		flex-shrink: 0;
+		width: 4.5rem;
 	}
 	.ticker {
 		flex-shrink: 0;

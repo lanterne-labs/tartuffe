@@ -39,7 +39,7 @@
 		fr: {
 			metaTitle: 'À propos — tartuffe.me',
 			metaDesc:
-				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule un score de cohérence. Méthode, limites et neutralité.',
+				'Comment tartuffe.me collecte les votes et déclarations des responsables politiques, détecte leurs contradictions et calcule son Tartuffe-Score. Méthode, limites et neutralité.',
 			kicker: 'À propos',
 			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente.',
 			labLink: 'Le labo',
@@ -57,9 +57,9 @@
 				'Les deux faits sont présentés côte à côte, datés, cités et sourcés.'
 			],
 
-			scoreKicker: 'Le score',
-			scoreTitle: 'Un score sur 100',
-			scoreLead: 'On part de 100. Chaque contradiction distincte fait baisser le score.',
+			scoreKicker: 'Le Tartuffe-Score',
+			scoreTitle: 'De cohérent à tartuffe',
+			scoreLead: 'On part de 0, tout à gauche du baromètre. Chaque contradiction distincte pousse le repère vers « tartuffe ».',
 			formulaLabel: 'La formule',
 			defs: [
 				['F', 'le nombre de faits connus sur la personne'],
@@ -69,17 +69,17 @@
 			bundleNote:
 				'Trois faits qui se contredisent sur les retraites forment trois paires, mais un seul lot : on ne compte pas trois fois le même revirement.',
 			rules: [
-				['100', 'pour une personne sans aucun fait : il n’y a rien à reprocher, mais rien à juger non plus.'],
-				['≈ 95', 'pour une seule contradiction.'],
-				['75', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits n’écrase pas le score.'],
+				['< 10', 'faits : pas de repère, il n’y a pas encore assez à juger.'],
+				['≈ 5', 'pour une seule contradiction.'],
+				['75', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits ne fait pas bondir le score.'],
 				['½ + ½', 'pour un parti : la moitié vient de son propre score, l’autre moitié de la moyenne de ses membres.']
 			],
 			tryTitle: 'Essayez',
 			readTitle: 'Comment le lire',
-			readLow: 'Un score bas',
+			readLow: 'Un repère vers « tartuffe »',
 			readLowBody: ': beaucoup de contradictions pour ce que l’on sait.',
-			readHigh: 'Un score élevé avec peu de faits',
-			readHighBody: ': on en sait peu, ce qui ne veut pas dire « honnête ». Regardez le nombre de faits.',
+			readHigh: 'Un repère vers « cohérent » avec peu de faits',
+			readHighBody: ' : on en sait peu, ce qui ne veut pas dire « cohérent ». Regardez le nombre de faits.',
 
 			limitsKicker: 'Fiabilité',
 			limitsTitle: 'L’IA détecte, vous corrigez',
@@ -114,7 +114,7 @@
 		en: {
 			metaTitle: 'About — tartuffe.me',
 			metaDesc:
-				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes a consistency score. Method, limits and neutrality.',
+				'How tartuffe.me collects the votes and statements of politicians, detects their contradictions and computes its Tartuffe-Score. Method, limits and neutrality.',
 			kicker: 'About',
 			labLine: 'Tartuffe is the first product of the tartuffe.me lab, an R&D lab for more transparent democracies.',
 			labLink: 'The lab',
@@ -132,9 +132,9 @@
 				'Both facts side by side, dated, quoted, sourced.'
 			],
 
-			scoreKicker: 'The score',
-			scoreTitle: 'A score out of 100',
-			scoreLead: 'It starts at 100. Each distinct contradiction lowers it.',
+			scoreKicker: 'The Tartuffe-Score',
+			scoreTitle: 'From coherent to tartuffe',
+			scoreLead: 'It starts at 0, at the left end of the barometer. Each distinct contradiction pushes the marker towards “tartuffe”.',
 			formulaLabel: 'The formula',
 			defs: [
 				['F', 'the number of known facts about the person'],
@@ -144,17 +144,17 @@
 			bundleNote:
 				'Three facts that contradict each other on pensions form three pairs, but a single bundle: the same U-turn is not counted three times.',
 			rules: [
-				['100', 'for a person with no facts at all: nothing to hold against them, but nothing to judge either.'],
-				['≈ 95', 'with one contradiction.'],
-				['75', 'facts at least in the computation: one contradiction among very few facts does not crush the score.'],
+				['< 10', 'facts: no marker, not enough to judge yet.'],
+				['≈ 5', 'with one contradiction.'],
+				['75', 'facts at least in the computation: one contradiction among very few facts does not send the score soaring.'],
 				['½ + ½', 'for a party: half comes from its own score, half from the average of its members.']
 			],
 			tryTitle: 'Try it',
 			readTitle: 'How to read it',
-			readLow: 'A low score',
+			readLow: 'A marker towards “tartuffe”',
 			readLowBody: ': many contradictions for what we know.',
-			readHigh: 'A high score with few facts',
-			readHighBody: ': we know little, not “honest”. Check the number of facts.',
+			readHigh: 'A marker towards “coherent” with few facts',
+			readHighBody: ': we know little, not “coherent”. Check the number of facts.',
 
 			limitsKicker: 'Reliability',
 			limitsTitle: 'The AI detects, you correct',
@@ -245,9 +245,9 @@
 		<div class="formula-box">
 			<span class="formula-label">{c.formulaLabel}</span>
 			<p class="formula">
-				<span class="fx">score</span> = 100 × exp(
+				<span class="fx">Tartuffe-Score</span> = 100 × (1 − exp(
 				<span class="frac"><span>−1{currentLang === 'fr' ? ',' : '.'}5 × <b>B</b></span><span>max(<b>F</b>, 75)</span></span>
-				− 0{currentLang === 'fr' ? ',' : '.'}03 × <b>B</b> − 0{currentLang === 'fr' ? ',' : '.'}05 × ln(1 + <b>E</b>) )
+				− 0{currentLang === 'fr' ? ',' : '.'}03 × <b>B</b> − 0{currentLang === 'fr' ? ',' : '.'}05 × ln(1 + <b>E</b>) ))
 			</p>
 			<dl class="defs">
 				{#each c.defs as [k, v]}
