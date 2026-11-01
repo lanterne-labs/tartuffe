@@ -485,17 +485,24 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					<p class="hero-label">{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</p>
-					<p class="hero-summary">
-						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
-						<span class="dot">·</span>
-						{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
-					</p>
+					{#if person.candidate}
+						<p class="hero-label">{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</p>
+						<p class="hero-summary">
+							{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
+							<span class="dot">·</span>
+							{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
+						</p>
+					{:else}
+						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
+						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
+					{/if}
 				</div>
 			</div>
-			<div class="hero-gauge">
-				<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
-			</div>
+			{#if person.candidate}
+				<div class="hero-gauge">
+					<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
+				</div>
+			{/if}
 		</div>
 
 		{#if person.entity_type !== 'human' && person.members_score != null}
@@ -807,6 +814,13 @@
 		color: var(--text-secondary);
 		font-size: 0.875rem;
 		margin-top: 0.25rem;
+	}
+
+	.hero-note {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		margin-top: 0.5rem;
+		max-width: 60ch;
 	}
 
 	.hero-summary {
