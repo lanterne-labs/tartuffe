@@ -38,7 +38,9 @@
 	// The steps of a first registration: the passport scan, then the key
 	// (kept with a passkey, or with the 12 words typed back), then the post.
 	// A key that exists comes back to 'passport' only for a new scan.
-	type Step = 'passport' | 'keep' | 'words' | 'confirm' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
+	// 'existing' is the panel of the ways back in for a voter who already
+	// has a key: the passkey, the 12 words, a link from another device.
+	type Step = 'passport' | 'existing' | 'keep' | 'words' | 'confirm' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
 	let step: Step = $state('passport');
 	let words = $state('');
 	let confirmIdx = $state<number[]>([3, 7, 11]);
@@ -332,32 +334,34 @@
 	let canResend = $derived(registration.state === 'failed' || registration.state === 'missing');
 </script>
 
+{#snippet ways()}
+	<!-- The ways back in for a voter who already has a key. -->
+	<div class="choices">
+		{#if canPasskey}
+			<button class="btn btn-way" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
+		{/if}
+		<button class="btn btn-way" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
+		<button class="btn btn-way" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
+	</div>
+{/snippet}
+
 <Modal {open} title={tr('v2.key.title', lang)} onclose={close} closeLabel={tr('auth.close', lang)}>
 	{#if step === 'passport'}
-		{#if !key}
-			<p class="text">{tr('v2.key.intro', lang)}</p>
-			<ol class="plan">
-				<li><strong>{tr('v2.key.step.passport', lang)}</strong> {tr('v2.key.step.passport.text', lang)}</li>
-				<li><strong>{tr('v2.key.step.key', lang)}</strong> {tr('v2.key.step.key.text', lang)}</li>
-			</ol>
-		{:else}
+		{#if key}
 			<p class="text small">{tr('v2.key.pending.idle', lang)}</p>
 		{/if}
 		{#if request}
 			<VotePassport {lang} {request} serverNow={() => session.need().serverNow()} {devMode} {simulate} {onProof} />
 		{/if}
 		{#if !key}
-			<details class="other">
-				<summary>{tr('v2.key.other', lang)}</summary>
-				<div class="choices">
-					{#if canPasskey}
-						<button class="btn" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
-					{/if}
-					<button class="btn" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
-					<button class="btn" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
-				</div>
-			</details>
+			<button class="btn btn-way existing" onclick={() => (step = 'existing')} disabled={busy}>{tr('v2.key.existing', lang)}</button>
 		{/if}
+	{:else if step === 'existing'}
+		<p class="text"><strong>{tr('v2.key.existing.title', lang)}</strong></p>
+		{@render ways()}
+		<div class="row back-row">
+			<button class="btn" onclick={back}>{tr('key.back', lang)}</button>
+		</div>
 	{:else if step === 'keep'}
 		<p class="text"><strong>{tr('v2.key.keep.title', lang)}</strong> {tr('v2.key.keep.text', lang)}</p>
 		<p class="text warn">{tr('v2.key.keep.lose', lang)}</p>
@@ -414,22 +418,18 @@
 			{#if failedDetail}
 				<details class="tech"><summary>{tr('v2.details', lang)}</summary><p>{failedDetail}</p></details>
 			{/if}
-			<div class="choices">
-				{#if failedCode === 'reg:uid_used' || !key}
-					{#if canPasskey}
-						<button class="btn" onclick={restorePasskey} disabled={busy}>{tr('v2.key.passkey.restore', lang)}</button>
-					{/if}
-					<button class="btn" onclick={() => (step = 'restore')} disabled={busy}>{tr('v2.key.restore', lang)}</button>
-					<button class="btn" onclick={receiveLink} disabled={busy}>{tr('v2.key.link', lang)}</button>
-				{:else if failedCode === 'reg:closed'}
-					<button class="btn" onclick={close}>{tr('auth.close', lang)}</button>
-				{:else}
+			{#if failedCode === 'reg:uid_used' || !key}
+				{@render ways()}
+			{:else if failedCode === 'reg:closed'}
+				<div class="choices"><button class="btn" onclick={close}>{tr('auth.close', lang)}</button></div>
+			{:else}
+				<div class="choices">
 					{#if !failedStale && canResend}
 						<button class="btn btn-primary" onclick={resend} disabled={busy}>{tr('v2.key.resend', lang)}</button>
 					{/if}
 					<button class="btn" class:btn-primary={failedStale || !canResend} onclick={rescan} disabled={busy}>{tr('v2.key.rescan', lang)}</button>
-				{/if}
-			</div>
+				</div>
+			{/if}
 		{/if}
 	{:else if step === 'link'}
 		{#if offer}
@@ -476,33 +476,23 @@
 		line-height: 1.55;
 		color: var(--text-secondary);
 	}
-	.plan {
-		margin: 0 0 1rem;
-		padding-left: 1.3rem;
-		line-height: 1.55;
-		color: var(--text-secondary);
-		display: grid;
-		gap: 0.5rem;
-	}
-	.plan strong {
-		color: var(--text-primary);
-	}
 	.hint {
 		margin: -0.2rem 0 0.2rem;
 		color: var(--text-muted);
 	}
-	.other {
-		margin-top: 0.3rem;
+	/* The ways back in and the button to them: full width, the size of
+	   the primary action. */
+	.btn-way {
+		width: 100%;
+		padding: 0.7rem 1rem;
+		font-size: 0.95rem;
+		text-align: center;
 	}
-	.other summary {
-		cursor: pointer;
-		font-size: 0.85rem;
-		color: var(--text-secondary);
-		text-decoration: underline;
-		text-underline-offset: 0.15em;
+	.existing {
+		margin-top: 0.9rem;
 	}
-	.other .choices {
-		margin-top: 0.6rem;
+	.back-row {
+		margin-top: 0.9rem;
 	}
 	.tech {
 		margin: 0 0 0.9rem;

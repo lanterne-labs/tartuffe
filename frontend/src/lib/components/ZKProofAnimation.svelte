@@ -349,14 +349,19 @@
 		line-height: 1.2;
 		color: var(--text-primary);
 	}
+	/* One line, whatever the width: the font shrinks before it wraps. */
 	.only {
-		font-size: 0.95rem;
+		display: flex;
+		align-items: center;
+		gap: 0.3em;
+		white-space: nowrap;
+		font-size: clamp(0.7rem, 3.2vw, 0.95rem);
 		font-weight: 600;
 		color: var(--text-primary);
 	}
 	.tag {
 		display: inline-block;
-		padding: 0.05rem 0.55rem;
+		padding: 0.05rem 0.5rem;
 		border-radius: var(--radius-full);
 		background: var(--green);
 		color: #0a0a0f;

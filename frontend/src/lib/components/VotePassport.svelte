@@ -175,10 +175,10 @@
 		<h3>{tr('zk.title', lang)}</h3>
 		<span class="badge">{tr('zk.badge', lang)}</span>
 	</div>
-	<p class="why">{tr('zk.why', lang)}</p>
-	<p class="why">{tr('zk.needs', lang)}</p>
 	<details class="only">
-		<summary>{tr('v2.passport.only.label', lang)}</summary>
+		<summary>{tr('zk.more', lang)}</summary>
+		<p>{tr('zk.why', lang)}</p>
+		<p>{tr('zk.needs', lang)}</p>
 		<p>{tr('v2.passport.only', lang)}</p>
 	</details>
 	{#if step === 'idle'}
@@ -220,8 +220,8 @@
 
 <style>
 	.only {
-		margin: -0.3rem 0 0.8rem;
-		font-size: 0.8rem;
+		margin: 0 0 0.8rem;
+		font-size: 0.82rem;
 		color: var(--text-muted);
 	}
 	.only summary {
@@ -230,8 +230,9 @@
 		text-underline-offset: 0.15em;
 	}
 	.only p {
-		margin: 0.3rem 0 0;
+		margin: 0.45rem 0 0;
 		line-height: 1.45;
+		color: var(--text-secondary);
 	}
 	.tech {
 		margin: 0 0 0.6rem;
@@ -260,17 +261,11 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 0.5rem;
-		margin-bottom: 0.25rem;
+		margin-bottom: 0.5rem;
 	}
 	h3 {
 		font-size: 0.95rem;
 		margin: 0;
-	}
-	.why {
-		margin: 0 0 0.75rem;
-		font-size: 0.9rem;
-		line-height: 1.5;
-		color: var(--text-secondary);
 	}
 	.badge {
 		font-size: 0.65rem;
