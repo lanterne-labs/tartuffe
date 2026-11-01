@@ -60,6 +60,7 @@ func init() {
 	collectAddCmd.Flags().String("to", "", "day after the last day of the period, YYYY-MM-DD (default: today)")
 	collectAddCmd.Flags().StringSlice("plugins", nil, "plugins to ask (default: every plugin that reads by period)")
 	collectAddCmd.Flags().Int("priority", 0, "tasks of a higher priority run first")
+	collectAddCmd.Flags().Bool("not-candidate", false, "add the tasks although the person is not a candidate (the facts are stored without a stance)")
 	collectAddCmd.Flags().String("operation", "", "name of the batch the tasks belong to, followed as one whole in Grafana (Operations), e.g. \"backfill 2y\"")
 	_ = collectAddCmd.MarkFlagRequired("from")
 	collectListCmd.Flags().String("status", "", "only this status (pending, running, done, failed, cancelled)")
@@ -108,6 +109,9 @@ func runCollectAdd(cmd *cobra.Command, args []string) error {
 	defer storer.Close()
 	person, ok, err := resolvePersonInteractive(ctx, storer, args[0], false)
 	if err != nil || !ok {
+		return err
+	}
+	if err := requireCandidate(ctx, storer, person, cmd); err != nil {
 		return err
 	}
 

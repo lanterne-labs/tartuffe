@@ -26,6 +26,7 @@ type fakeStorer struct {
 	rankedArgs struct {
 		limit, offset, minFacts  int
 		entityType, search, sort string
+		candidate                string
 	}
 	ranked []storage.PersonSummary
 
@@ -39,9 +40,10 @@ type fakeStorer struct {
 
 func (f *fakeStorer) Ping(context.Context) error { return f.pingErr }
 
-func (f *fakeStorer) GetPersonsRankedByScore(_ context.Context, limit, offset int, entityType, search, sort string, minFacts int) ([]storage.PersonSummary, error) {
+func (f *fakeStorer) GetPersonsRankedByScore(_ context.Context, limit, offset int, entityType, search, sort string, minFacts int, candidate string) ([]storage.PersonSummary, error) {
 	f.rankedArgs.limit, f.rankedArgs.offset, f.rankedArgs.minFacts = limit, offset, minFacts
 	f.rankedArgs.entityType, f.rankedArgs.search, f.rankedArgs.sort = entityType, search, sort
+	f.rankedArgs.candidate = candidate
 	return f.ranked, nil
 }
 
@@ -171,6 +173,15 @@ func TestGetPersons_MinFactsFloorAndPagination(t *testing.T) {
 	assert.Equal(t, "human", fs.rankedArgs.entityType)
 	assert.Equal(t, "ma", fs.rankedArgs.search)
 	assert.Equal(t, "honesty_asc", fs.rankedArgs.sort)
+	assert.Equal(t, "", fs.rankedArgs.candidate)
+
+	// The candidate filter: the candidates, the others, or everyone.
+	get(t, h, "/api/persons?candidate=true")
+	assert.Equal(t, "true", fs.rankedArgs.candidate)
+	get(t, h, "/api/persons?candidate=false")
+	assert.Equal(t, "false", fs.rankedArgs.candidate)
+	bad := get(t, h, "/api/persons?candidate=maybe")
+	assert.Equal(t, http.StatusBadRequest, bad.Code)
 }
 
 func TestGetPersonMembers(t *testing.T) {

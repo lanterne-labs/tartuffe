@@ -962,7 +962,7 @@ func TestPersonSummaryQueries(t *testing.T) {
 	assert.Equal(t, 1, byID.StanceCount, "the stub stance processor gives every fact a stance")
 	assert.Equal(t, 0, byID.ContradictionCount)
 
-	ranked, err := storer.GetPersonsRankedByScore(ctx, 10, 0, "party", "testperson", "", 1)
+	ranked, err := storer.GetPersonsRankedByScore(ctx, 10, 0, "party", "testperson", "", 1, "")
 	require.NoError(t, err)
 	require.Len(t, ranked, 1)
 	assert.Equal(t, byID.ID, ranked[0].ID)

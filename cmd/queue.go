@@ -52,6 +52,7 @@ var queueListCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(queueCmd)
 
+	queueAddCmd.Flags().Bool("not-candidate", false, "watch the person although they are not a candidate (the facts are stored without a stance)")
 	queueCmd.AddCommand(queueAddCmd)
 	queueCmd.AddCommand(queueRemoveCmd)
 	queueCmd.AddCommand(queueListCmd)
@@ -70,6 +71,9 @@ func runQueueAdd(cmd *cobra.Command, args []string) error {
 
 	person, ok, err := resolvePersonInteractive(ctx, storer, args[0], false)
 	if err != nil || !ok {
+		return err
+	}
+	if err := requireCandidate(ctx, storer, person, cmd); err != nil {
 		return err
 	}
 	if err := storer.AddToSearchQueue(ctx, person.ID); err != nil {

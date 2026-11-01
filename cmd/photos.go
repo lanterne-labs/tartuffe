@@ -69,7 +69,7 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 	var persons []storage.PersonSummary
 	switch {
 	case all && force:
-		persons, err = storer.GetPersonsRankedByScore(ctx, 10000, 0, "", "", "", 0)
+		persons, err = storer.GetPersonsRankedByScore(ctx, 10000, 0, "", "", "", 0, "")
 		if err != nil {
 			return fmt.Errorf("failed to get persons: %w", err)
 		}

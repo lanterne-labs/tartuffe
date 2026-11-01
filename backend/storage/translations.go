@@ -70,23 +70,27 @@ func (s *PostgresStorer) ListTranslatableItems(ctx context.Context, entityTypes 
 	for _, et := range entityTypes {
 		want[et] = true
 	}
+	// personSQL is the condition that the row belongs to a candidate (the
+	// translations are made for the candidates only, candidates.go).
 	specs := []struct {
-		entityType, field, table, textCol, srcLangExpr string
+		entityType, field, table, textCol, srcLangExpr, personSQL string
 	}{
-		{"fact", "text", "facts", "fact_text", "coalesce(e.lang, '')"},
+		{"fact", "text", "facts", "fact_text", "coalesce(e.lang, '')",
+			`EXISTS (SELECT 1 FROM fact_sources fs JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+			         JOIN persons p ON p.id = fm.person_id WHERE fs.fact_id = e.id AND ` + CandidateSQL + `)`},
 		// Stance label/summary are pinned to French (refreshStanceMetadata), so the
 		// source is 'fr' — the translate phase then only needs to fill the other
 		// languages (no redundant fr=native row).
-		{"stance", "label", "stance_documents", "cluster_label", "'fr'"},
-		{"stance", "summary", "stance_documents", "summary", "'fr'"},
-		{"contradiction", "reason", "contradictions", "reason", "'fr'"},
+		{"stance", "label", "stance_documents", "cluster_label", "'fr'", byPersonID},
+		{"stance", "summary", "stance_documents", "summary", "'fr'", byPersonID},
+		{"contradiction", "reason", "contradictions", "reason", "'fr'", byPersonID},
 	}
 	var all []TranslatableItem
 	for _, sp := range specs {
 		if len(want) > 0 && !want[sp.entityType] {
 			continue
 		}
-		items, err := s.collectTranslatable(ctx, sp.entityType, sp.field, sp.table, sp.textCol, sp.srcLangExpr)
+		items, err := s.collectTranslatable(ctx, sp.entityType, sp.field, sp.table, sp.textCol, sp.srcLangExpr, sp.personSQL)
 		if err != nil {
 			return nil, err
 		}
@@ -95,18 +99,21 @@ func (s *PostgresStorer) ListTranslatableItems(ctx context.Context, entityTypes 
 	return all, nil
 }
 
-// collectTranslatable runs one source query. table/textCol/srcLangExpr are
-// hardcoded constants from ListTranslatableItems (never user input), so the
-// fmt.Sprintf interpolation is safe.
-func (s *PostgresStorer) collectTranslatable(ctx context.Context, entityType, field, table, textCol, srcLangExpr string) ([]TranslatableItem, error) {
+// byPersonID is the personSQL of a table with a person_id column.
+const byPersonID = `EXISTS (SELECT 1 FROM persons p WHERE p.id = e.person_id AND ` + CandidateSQL + `)`
+
+// collectTranslatable runs one source query. table/textCol/srcLangExpr/personSQL
+// are hardcoded constants from ListTranslatableItems (never user input), so
+// the fmt.Sprintf interpolation is safe.
+func (s *PostgresStorer) collectTranslatable(ctx context.Context, entityType, field, table, textCol, srcLangExpr, personSQL string) ([]TranslatableItem, error) {
 	q := fmt.Sprintf(`
 		SELECT e.id, e.%[1]s, %[2]s,
 		       coalesce((SELECT jsonb_object_agg(t.lang, t.source_hash)
 		                 FROM translations t
 		                 WHERE t.entity_type = $1 AND t.entity_id = e.id AND t.field = $2), '{}')::text
 		FROM %[3]s e
-		WHERE coalesce(e.%[1]s, '') <> ''`,
-		textCol, srcLangExpr, table)
+		WHERE coalesce(e.%[1]s, '') <> '' AND %[4]s`,
+		textCol, srcLangExpr, table, personSQL)
 
 	rows, err := s.pool.Query(ctx, q, entityType, field)
 	if err != nil {
