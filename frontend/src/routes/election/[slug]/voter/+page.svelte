@@ -18,7 +18,7 @@
 	import { eventPaths, showVoters } from '$lib/event';
 	import { sessionFor, parseLink, neventLink, voteKey } from '$lib/vote/isoloir';
 	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
-	import { rankedRows, byFirst } from '$lib/vote/results';
+	import { rankedRows, byFirst, type Shown } from '$lib/vote/results';
 	import { describeError, toVoteError, reportLink } from '$lib/vote/errors';
 	import type { PollEvent } from '$lib/types';
 
@@ -268,7 +268,7 @@
 	}
 	// pct: « 35 % » in French (a narrow no-break space), "35%" in English.
 	function pct(n: number, total: number): string {
-		if (total <= 0) return '—';
+		if (total <= 0) return currentLang === 'en' ? '0%' : '0\u202f%';
 		const v = Math.round((100 * n) / total);
 		return currentLang === 'en' ? `${v}%` : `${v}\u202f%`;
 	}
@@ -311,7 +311,15 @@
 	// The two readings of the same results: the ranking and the first
 	// choices only (the same rows, re-sorted by their first-choice share).
 	let tab = $state<'ranking' | 'first'>('ranking');
-	let rows = $derived(results ? (tab === 'ranking' ? results.rows : byFirst(results.rows)) : []);
+	// Before the first tally, the same table at zero: the candidates are
+	// there to see, the numbers come.
+	let emptyResults = $derived<Shown>({
+		counted: 0,
+		rows: [...candidateSlots, ...(kind?.blank ? [BLANK] : [])].map((slot) => ({ slot, blank: slot === BLANK, first: 0, ranked: 0, wins: 0, rank: 1 })),
+		condorcet: null
+	});
+	let table = $derived(results ?? emptyResults);
+	let rows = $derived(tab === 'ranking' ? table.rows : byFirst(table.rows));
 	let winnerName = $derived(winnerSlot !== null ? nameOf(winnerSlot) : '');
 	// The consistency score of a candidate, from its card; none for the
 	// blank or a card without one.
@@ -419,10 +427,6 @@
 				<span>{tr(results.counted === 1 ? 'v2.counter.counted.one' : 'v2.counter.counted', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
 			</p>
 		{/if}
-		<details class="rule">
-			<summary>{tr(kReal === 1 ? 'poll.rule.q.one' : 'poll.rule.q', currentLang)}</summary>
-			<p>{tr(kReal === 1 ? 'poll.rule.one' : 'poll.rule', currentLang, { k: kReal })}</p>
-		</details>
 	{/if}
 
 	{#if blackout}
@@ -458,9 +462,7 @@
 					<span class="state-icon state-icon--fault" title={actionError} aria-label={actionError}>!</span>
 				{/if}
 			</h2>
-			{#if !hasKey}
-				<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.key.get', currentLang)}</button>
-			{:else if !joined}
+			{#if hasKey && !joined}
 				{#if regPosting}
 					<span class="joining"><Spinner size="sm" label={tr('v2.join.posting', currentLang)} /> {tr('v2.join.posting', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
 				{:else if registration.state === 'acked'}
@@ -470,10 +472,18 @@
 				{:else}
 					<button class="btn btn-primary" onclick={() => (keyOpen = true)}>{tr('v2.join.idle', currentLang)}</button>
 				{/if}
-			{:else}
+			{:else if hasKey}
 				<button class="btn btn-small btn-quiet" onclick={() => (keyMenuOpen = true)}>{tr('v2.key.menu', currentLang)}</button>
 			{/if}
 		</div>
+		<!-- Without a key the ballot shows through a blur, behind the one
+		     button that opens it. -->
+		<div class="ballot-body" class:ballot-body--locked={!hasKey}>
+		{#if !hasKey}
+			<div class="unlock">
+				<button class="btn btn-primary unlock-btn" onclick={() => (keyOpen = true)}>{tr('v2.key.get', currentLang)}</button>
+			</div>
+		{/if}
 		<p class="hint">
 			{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: depth })}
 			{#if open && shown.filter((x) => x !== BLANK).length > 1}
@@ -577,6 +587,7 @@
 				<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{actionDetail}</p></details>
 			{/if}
 		{/if}
+		</div>
 	</section>
 
 	<Modal open={slotPick !== null} title={slotPick === null ? '' : tr('vote.slot.choice', currentLang, { rank: rankWord(slotPick + 1) })} onclose={() => (slotPick = null)} closeLabel={tr('auth.close', currentLang)}>
@@ -674,20 +685,19 @@
 		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
 		{#if blackout}
 			<p class="state">{tr('v2.blackout', currentLang)}</p>
-		{:else if !results}
-			{#if $st.tallyUnverified}
-				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
-			{/if}
-			<p class="state">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
 		{:else}
-			{#if $tallyAt}
-				<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyAt) })}</p>
-			{/if}
 			{#if $st.tallyUnverified}
 				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
 			{/if}
-			{#if verified}
-				<p class="updated">{tr('v2.results.verified', currentLang)}</p>
+			{#if !results}
+				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
+			{:else}
+				{#if $tallyAt}
+					<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyAt) })}</p>
+				{/if}
+				{#if verified}
+					<p class="updated">{tr('v2.results.verified', currentLang)}</p>
+				{/if}
 			{/if}
 			<div class="tabs" role="tablist">
 				<button role="tab" class="tab" class:tab--on={tab === 'ranking'} aria-selected={tab === 'ranking'} onclick={() => (tab = 'ranking')}>{tr('poll.tab.ranking', currentLang)}</button>
@@ -702,8 +712,8 @@
 			{/if}
 			<ol class="vote-list">
 				{#each rows as o, i (o.slot)}
-					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={i === 0} class:vote-row--blank={o.blank}>
-						<span class="vote-rank">{tab === 'ranking' ? o.rank : i + 1}</span>
+					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={!!results && i === 0} class:vote-row--blank={o.blank}>
+						<span class="vote-rank">{results ? (tab === 'ranking' ? o.rank : i + 1) : '–'}</span>
 						<div class="vote-main">
 							<span class="who">
 								{#if imageOf(o.slot)}
@@ -721,9 +731,9 @@
 							{#if tab === 'ranking' && winnerSlot === o.slot}
 								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
 							{/if}
-							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, results.counted) })}</span>
+							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, table.counted) })}</span>
 						</div>
-						<span class="big"><strong>{pct(o.first, results.counted)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
+						<span class="big"><strong>{pct(o.first, table.counted)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
 					</li>
 				{/each}
 			</ol>
@@ -1133,6 +1143,10 @@
 		color: var(--text-secondary);
 		padding: 3rem 1rem;
 	}
+	.state--soon {
+		padding: 0.25rem 1rem 1rem;
+		font-size: 0.9rem;
+	}
 	.state.error {
 		color: var(--red);
 	}
@@ -1208,6 +1222,27 @@
 		background: var(--bg-card);
 		border: 1px solid var(--accent);
 		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-glow);
+	}
+	.ballot-body {
+		position: relative;
+	}
+	.ballot-body--locked > :not(.unlock) {
+		filter: blur(5px);
+		pointer-events: none;
+		user-select: none;
+	}
+	.unlock {
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	.unlock-btn {
+		padding: 0.9rem 1.6rem;
+		font-size: 1.05rem;
 		box-shadow: var(--shadow-glow);
 	}
 	.ballot-head {
@@ -1456,25 +1491,6 @@
 		margin: 0.3rem 0 0;
 		font-family: var(--font-mono, monospace);
 		overflow-wrap: anywhere;
-	}
-	.rule {
-		max-width: 46rem;
-		margin: -0.75rem auto 1.5rem;
-		text-align: center;
-		font-size: 0.82rem;
-		color: var(--text-secondary);
-	}
-	.rule summary {
-		cursor: pointer;
-		color: var(--text-muted);
-		text-decoration: underline;
-		text-underline-offset: 0.15em;
-	}
-	.rule p {
-		margin: 0.5rem auto 0;
-		max-width: 38rem;
-		line-height: 1.5;
-		text-align: left;
 	}
 	.chip {
 		display: inline-block;
