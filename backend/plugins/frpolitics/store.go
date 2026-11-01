@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"digital-mirror/backend/core"
@@ -276,6 +277,55 @@ func (s *Store) RearticleBallots(ctx context.Context, lawKey, article, object st
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// TruncatedAmendmentRe matches, in a ballot, the amendment object whose
+// quoted exposé was cut inside the guillemets ("dont l'objet est : « … ,
+// déposé sur"): the object, from "l'amendement n° N" to the ellipsis, with
+// the ", déposé sur" that follows (ReamendBallots puts it back). The pattern
+// is POSIX ARE and RE2 at once: the test compiles it with Go's regexp.
+const TruncatedAmendmentRe = `(l'amendement|le sous-amendement) n° [0-9]+( \([^)]*\))? dont (l'objet|le dispositif) est : « [^»]*…, déposé sur`
+
+// TruncatedAmendmentBallots counts the ballots of the scrutin lawKey whose
+// amendment object lost its closing » (TruncatedAmendmentRe).
+func (s *Store) TruncatedAmendmentBallots(ctx context.Context, lawKey string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.metadata->>'law_key' = $1 AND f.fact_text ~ $2`, lawKey, TruncatedAmendmentRe).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting the truncated ballots of %s: %w", lawKey, err)
+	}
+	return n, nil
+}
+
+// ReamendBallots rewrites the truncated amendment object of the ballots of
+// the scrutin lawKey with object (the amendment and its purpose, closed) and
+// returns the ids of the facts it rewrote. The pair verdicts stay: the vote
+// is the same, the quote is only completed. The English text is reset for
+// the translation repair.
+func (s *Store) ReamendBallots(ctx context.Context, lawKey, object string) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE facts f
+		SET fact_text = regexp_replace(f.fact_text, $2, $3),
+		    fact_text_en = NULL, updated_at = now()
+		FROM fact_sources fs
+		WHERE fs.fact_id = f.id AND fs.metadata->>'law_key' = $1 AND f.fact_text ~ $2
+		RETURNING f.id`, lawKey, TruncatedAmendmentRe, strings.ReplaceAll(object, `\`, `\\`)+", déposé sur")
+	if err != nil {
+		return nil, fmt.Errorf("rewriting the truncated ballots of %s: %w", lawKey, err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("rewriting the truncated ballots of %s: %w", lawKey, err)
 		}
 		ids = append(ids, id)
 	}

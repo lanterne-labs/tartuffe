@@ -36,6 +36,7 @@ func init() {
 
 	// Flags for frpolitics
 	frpoliticsCmd.Flags().String("mode", "votes", frpolitics.ModeHelp())
+	frpoliticsCmd.Flags().Bool("dry-run", false, "reamend mode: count the ballots to rewrite, write nothing")
 	frpoliticsCmd.Flags().Bool("rejudge", false, "rearticle mode: remove the contradictions on the rewritten ballots and the verdicts of their pairs, so they are judged again")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
@@ -108,6 +109,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 	}
 
 	rejudge, _ := cmd.Flags().GetBool("rejudge")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	maxDocs, _ := cmd.Flags().GetInt("max-docs")
 	newestFirst, _ := cmd.Flags().GetBool("newest-first")
 	prioritizePress, _ := cmd.Flags().GetBool("prioritize-press")
@@ -118,6 +120,7 @@ func runFrpoliticsPlugin(cmd *cobra.Command, args []string) error {
 		MaxLaws:         maxLaws,
 		PartyThreshold:  threshold,
 		Rejudge:         rejudge,
+		DryRun:          dryRun,
 		MaxDocs:         maxDocs,
 		NewestFirst:     newestFirst,
 		PrioritizePress: prioritizePress,
