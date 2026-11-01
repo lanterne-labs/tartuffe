@@ -1813,6 +1813,8 @@ const stanceSummaryRules = `SUMMARY RULES:
 - Do not narrate what happened (announcements, events, who said what to whom): describe the stance.
 - Do not judge or name contradictions, tensions, contrasts or paradoxes: the contradictions are shown separately.
 - Every claim must be supported by the facts; no inference about motives.
+- Describe the person, never the list below: no "les faits listés", "les faits relevés", "les éléments ci-dessus". The reader sees a position, not a list.
+- No order in time between undated facts: "passé de X à Y", "d'abord, puis" need dated facts.
 `
 
 const stanceSummaryMaxRunes = 420

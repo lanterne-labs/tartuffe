@@ -57,6 +57,27 @@ func TestDerivePartyMajorityFactsNameTheParty(t *testing.T) {
 	require.Equal(t, testObjectPhrase, facts[0].EmbeddingText)
 }
 
+// A group whose members mostly did not vote gives no collective fact
+// (2 voters of 23 LIOT deputies, 2026-11-01).
+func TestDerivePartyMajorityFactsParticipationFloor(t *testing.T) {
+	law := Law{Key: "17-1", URL: "https://an.test/17-1"}
+	organes := map[string]OrganeInfo{"PO1": {OrganeRef: "PO1", ShortName: "LIOT", LongName: "Libertés, Indépendants, Outre-mer et Territoires"}}
+	tooFew := LawGroupStats{"PO1": {Position: VoteFor, For: 2, NonVot: 21}}
+	require.Empty(t, derivePartyMajorityFacts(law, tooFew, 0.5, organes, LawSummary{}, testObjectPhrase))
+	enough := LawGroupStats{"PO1": {Position: VoteFor, For: 5, NonVot: 18}}
+	require.Len(t, derivePartyMajorityFacts(law, enough, 0.5, organes, LawSummary{}, testObjectPhrase), 1)
+}
+
+// A vote on a declaration of the Government (art. 50-1) is not "le texte de
+// loi"; the phrase is the declaration itself (one scrutin, 468 ballots on
+// 2026-11-01).
+func TestLawPhraseForDeclaration(t *testing.T) {
+	title := "la déclaration du Gouvernement portant sur la lutte contre le narcotrafic (application de l'article 50-1 de la Constitution)"
+	got := lawPhraseFor(title, "Approuve la déclaration du Gouvernement visant à renforcer la lutte contre le narcotrafic.")
+	require.Equal(t, "la déclaration du Gouvernement visant à renforcer la lutte contre le narcotrafic.", got)
+	require.Equal(t, "la déclaration du Gouvernement : « Autre résumé »", lawPhraseFor(title, "Autre résumé"))
+}
+
 // Every record becomes its own single-subject input; records on one scrutin
 // share the embedding of their common EmbeddingText and the vote subject.
 func TestBuildVoteFactInputsOnePerRecord(t *testing.T) {

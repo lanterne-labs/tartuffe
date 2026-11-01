@@ -165,13 +165,19 @@ func purposePhrase(info *AmendementInfo) string {
 			rest := strings.TrimSuffix(strings.TrimSpace(e[len(m):]), ".")
 			return capRunes("visant à "+rest, 220)
 		}
-		return capRunes("dont l'objet est : « "+e+" »", 240)
+		return "dont l'objet est : « " + capRunes(e, purposeMaxRunes) + " »"
 	}
 	if d := strings.TrimSpace(info.Dispositif); d != "" {
-		return capRunes("dont le dispositif est : « "+d+" »", 240)
+		return "dont le dispositif est : « " + capRunes(d, purposeMaxRunes) + " »"
 	}
 	return ""
 }
+
+// purposeMaxRunes caps the quoted exposé or dispositif. The cap is applied to
+// the text BEFORE the guillemets: a cap on the whole phrase cut the closing »
+// off a long exposé ("… à l'officier d'état civil. À travers …, déposé sur"),
+// 19,223 ballots on 2026-11-01.
+const purposeMaxRunes = 200
 
 func capRunes(s string, n int) string {
 	r := []rune(s)

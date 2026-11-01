@@ -917,6 +917,26 @@ cases:
     date_a: "2026-06-07"
     date_b: "2000-08-31"
 
+  - name: "FP_2329_retailleau_par_principe_qualified_denial"
+    fact_a: "Bruno Retailleau a déclaré fin août sur France 2 qu'il n'a jamais dit non par principe à la primaire électorale."
+    fact_b: "Bruno Retailleau a repoussé l'idée d'une primaire électorale élargie à la droite et au centre, y voyant \"une usine à gaz\"."
+    claimed_reason: "Après avoir rejeté l'idée même d'une primaire élargie, il affirme n'avoir jamais dit non par principe à la primaire, ce qui nie sa propre position antérieure."
+    expect: drop
+    bucket: vague_vs_specific
+    notes: "A denial of principle ('jamais non PAR PRINCIPE') against a practical objection to ONE form (a primary widened to the centre, 'une usine à gaz'): different scopes. Prod 2329 (2026-11-01)."
+    date_a: "2026-09-09"
+    date_b: "2026-03-26"
+
+  - name: "FP_2336_attal_recettes_invented_horn"
+    fact_a: "Gabriel Attal a attribué le dérapage du déficit à des recettes (impôt sur les sociétés, impôt sur le revenu et TVA) moindres qu'anticipé, dont il dit avoir été informé début 2024."
+    fact_b: "Gabriel Attal a affirmé que les dépenses de l'État n'étaient pas supérieures à ce qui était prévu et que la chute brutale des recettes explique une partie importante du décalage du solde."
+    claimed_reason: "Il exclut d'abord toute dépense supplémentaire comme cause du dérapage, puis cite des dépenses en hausse parmi les causes."
+    expect: drop
+    bucket: same_direction
+    notes: "Both facts blame lower receipts; neither names higher spending: the reason's second horn is in no fact. Prod 2336 (2026-11-01)."
+    date_a: "2025-02-04"
+    date_b: "2024-11-08"
+
   - name: "TP_112b_christophe_motivation_reversal_weeks"
     fact_a: "Paul Christophe s'est dit « très motivé » pour prendre ce poste ministériel."
     fact_b: "Paul Christophe a déclaré ne pas être « particulièrement enthousiaste » à l'idée de prendre ce poste."
