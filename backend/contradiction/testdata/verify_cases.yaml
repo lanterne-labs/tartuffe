@@ -303,9 +303,9 @@ cases:
     fact_a: "Bruno Retailleau plaide depuis plusieurs mois pour une grande primaire incluant des personnalités comme Gérald Darmanin et Sarah Knafo."
     fact_b: "Bruno Retailleau a exprimé n'être pas favorable à l'idée d'une primaire."
     claimed_reason: "Plaider pour une grande primaire contredit le fait de ne pas être favorable à l'idée d'une primaire."
-    expect: keep
+    expect: drop
     bucket: position_reversal
-    notes: "Advocating FOR a primary vs being against one is a position reversal on the same subject. The auditor wrongly dismissed both as third_party_narrative because they are phrased as reported speech ('plaide'/'a exprimé') — but reported speech of the person's own position counts as his utterance."
+    notes: "Undated opinion change: under the definition of 2026-10-31 an opinion reversal counts only within about three months and unexplained; with no dates that cannot be shown, so drop. (Was keep under the old definition.) Advocating FOR a primary vs being against one is a position reversal on the same subject. The auditor wrongly dismissed both as third_party_narrative because they are phrased as reported speech ('plaide'/'a exprimé') — but reported speech of the person's own position counts as his utterance."
 
   # Abolishing the legal retirement age (no age floor at all) is the OPPOSITE of hardening
   # (raising the age in) Macron's reform — a direction inversion the auditor misreads. (KEEP)
