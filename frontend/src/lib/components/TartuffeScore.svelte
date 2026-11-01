@@ -1,7 +1,7 @@
 <script lang="ts">
-	// The Tartuffe-Score as a barometer: a track of five levels from coherent
-	// (green) to completely tartuffe (red), a marker where the person sits,
-	// and the name of the level under it. No number as the headline: the
+	// The Tartuffe-Score as a barometer: a continuous track from coherent
+	// (green) to tartuffe (red), a marker where the person sits, and the name
+	// of their level (one of five) under it. No number as the headline: the
 	// level says it, and the evidence under it (contradictions over facts)
 	// says how solid it is. Too few facts is an empty dashed track, no marker
 	// and "not enough facts". The number out of 100 is in the tooltip and the
@@ -34,7 +34,7 @@
 	let unrated = $derived(tartuffe === null || (facts !== undefined && facts < MIN_FACTS));
 	let level = $derived(tartuffe === null ? 0 : levelOf(tartuffe));
 	// The marker keeps off the very ends so that 0 and 100 still show it whole.
-	let at = $derived(tartuffe === null ? 0 : 3 + positionOf(tartuffe) * 94);
+	let at = $derived(tartuffe === null ? 0 : 3 + (tartuffe / 100) * 94);
 	let name = $derived(
 		unrated ? (facts !== undefined ? tr('score.unrated.n', lang, { f: facts }) : tr('score.unrated', lang)) : tr(`score.level.${level}`, lang)
 	);
@@ -58,19 +58,11 @@
 		while (i + 1 < LEVELS.length && t >= LEVELS[i + 1]) i++;
 		return i;
 	}
-	/** Where a Tartuffe value sits on the track, 0 to 1: each level takes a fifth. */
-	function positionOf(t: number): number {
-		const i = levelOf(t);
-		const lo = LEVELS[i];
-		const hi = LEVELS[i + 1] ?? 100;
-		return (i + Math.min(1, (t - lo) / (hi - lo))) / LEVELS.length;
-	}
 </script>
 
 <span class="ts ts--{size}" class:ts--unrated={unrated} role="img" aria-label={evidence ? `${label}. ${evidence}` : label} title={evidence ? `${label}. ${evidence}` : label}>
 	{#if caption}<span class="caption">{caption}</span>{/if}
 	<span class="track">
-		{#each LEVELS as _, i}<span class="seg seg--{i}" class:seg--on={!unrated && i === level}></span>{/each}
 		{#if !unrated}
 			<span class="marker" class:marker--in={animate} style="left: {at}%"></span>
 		{/if}
@@ -108,31 +100,14 @@
 		position: relative;
 		height: 0.42rem;
 		margin: 0.3rem 0 0;
-		display: flex;
-		gap: 2px;
+		border-radius: 999px;
+		background: linear-gradient(90deg, var(--green), var(--amber) 50%, var(--red));
 	}
-	/* Five levels, green to red; the level the person is in is lit. */
-	.seg {
-		flex: 1;
-		opacity: 0.55;
-	}
-	.seg:first-child {
-		border-radius: 999px 0 0 999px;
-	}
-	.seg:last-child {
-		border-radius: 0 999px 999px 0;
-	}
-	.seg--on {
-		opacity: 1;
-	}
-	.seg--0, .name--0 { --c: var(--green); }
-	.seg--1, .name--1 { --c: color-mix(in oklch, var(--green) 55%, var(--amber)); }
-	.seg--2, .name--2 { --c: var(--amber); }
-	.seg--3, .name--3 { --c: color-mix(in oklch, var(--amber) 45%, var(--red)); }
-	.seg--4, .name--4 { --c: var(--red); }
-	.seg {
-		background: var(--c);
-	}
+	.name--0 { --c: var(--green); }
+	.name--1 { --c: color-mix(in oklch, var(--green) 55%, var(--amber)); }
+	.name--2 { --c: var(--amber); }
+	.name--3 { --c: color-mix(in oklch, var(--amber) 45%, var(--red)); }
+	.name--4 { --c: var(--red); }
 	.ts--md .track {
 		height: 0.5rem;
 	}
@@ -140,11 +115,8 @@
 		height: 0.6rem;
 	}
 	.ts--unrated .track {
+		background: transparent;
 		border: 1px dashed var(--glass-border);
-		border-radius: 999px;
-	}
-	.ts--unrated .seg {
-		display: none;
 	}
 	.marker {
 		position: absolute;
