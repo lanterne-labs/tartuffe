@@ -39,6 +39,15 @@ work, Fish shell quirks).
   `false`. Anybody may change their mind; the site must not call that a lie.
   `debatable` only when the facts truly leave it open. The rules the judges
   apply are in `backend/promptrules/{false_positives.txt,verify.go,contradiction.go}`.
+- Debatable rows (decided with the user on 2026-11-01): a short reversal of a
+  few weeks whose second statement is not plainly the opposite, and a
+  self-exempting double standard, are KEPT; a pledge downgraded or replaced
+  with no act, a general value against a specific measure, a prediction about
+  someone else, a gap of many years, an explained learning, a doubtful fact
+  and a likely vote error are DISMISSED. The site stays silent when unsure.
+- The candidates (`dm persons candidate list`, bd memory `candidates`) are
+  the only persons the pass judges; a contradiction of another person found
+  before stays (the user: "we don't hide good contradictions").
 
 ## Run long work in the background
 
