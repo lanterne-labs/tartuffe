@@ -525,7 +525,7 @@
 	.rank-panel-header {
 		display: flex;
 		align-items: baseline;
-		justify-content: space-between;
+		justify-content: center;
 		margin-bottom: 0.75rem;
 	}
 
@@ -612,11 +612,11 @@
 
 	.rank-score {
 		width: min(11rem, 100%);
-		margin: 0.15rem 0 0.1rem;
+		margin: 0.15rem 0 0.4rem;
 	}
 	.card-score {
 		width: min(13rem, 100%);
-		margin: 0.2rem 0 0.15rem;
+		margin: 0.2rem 0 0.4rem;
 	}
 
 	.skeleton-row {
