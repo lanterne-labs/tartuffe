@@ -40,7 +40,7 @@
 	// A key that exists comes back to 'passport' only for a new scan.
 	// 'existing' is the panel of the ways back in for a voter who already
 	// has a key: the passkey, the 12 words, a link from another device.
-	type Step = 'passport' | 'existing' | 'keep' | 'words' | 'confirm' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
+	type Step = 'passport' | 'existing' | 'keep' | 'skip' | 'words' | 'confirm' | 'posting' | 'failed' | 'pending' | 'done' | 'restore' | 'link' | 'linked' | 'restored';
 	let step: Step = $state('passport');
 	let words = $state('');
 	let confirmIdx = $state<number[]>([3, 7, 11]);
@@ -150,6 +150,24 @@
 			// A platform without PRF offers the words alone from now on.
 			const code = toVoteError(e).code;
 			if (code === 'passkey_noprf' || code === 'passkey_unsupported') canPasskey = false;
+		} finally {
+			busy = false;
+		}
+	}
+
+	// skip registers without a backup, after the warning: the key (one of
+	// 12 words, readable later from the profile) stays on this device alone.
+	async function skip() {
+		busy = true;
+		error = '';
+		errorDetail = '';
+		try {
+			const s = session.need();
+			if (!key) s.createKeyFromWords();
+			s.declineBackup();
+			await post();
+		} catch (e) {
+			fail(e);
 		} finally {
 			busy = false;
 		}
@@ -363,20 +381,23 @@
 			<button class="btn" onclick={back}>{tr('key.back', lang)}</button>
 		</div>
 	{:else if step === 'keep'}
-		<p class="text"><strong>{tr('v2.key.keep.title', lang)}</strong> {tr('v2.key.keep.text', lang)}</p>
-		<p class="text warn">{tr('v2.key.keep.lose', lang)}</p>
-		<p class="text"><strong>{tr('v2.key.choose', lang)}</strong></p>
+		<p class="text"><strong>{tr('v2.key.keep.title', lang)}</strong> {tr(canPasskey ? 'v2.key.keep.text' : 'v2.key.keep.text.words', lang)}</p>
 		<div class="choices">
 			{#if canPasskey}
-				<button class="btn btn-primary" onclick={() => make('passkey')} disabled={busy}>{tr('v2.key.passkey', lang)}</button>
-				<p class="text small hint">{tr('v2.key.passkey.hint', lang)}</p>
+				<button class="btn btn-primary btn-way" onclick={() => make('passkey')} disabled={busy}>{tr('v2.key.passkey', lang)}</button>
+				<button class="btn btn-way" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
 			{:else}
-				<button class="btn btn-primary" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words.primary', lang)}</button>
+				<button class="btn btn-primary btn-way" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
 				<p class="text small hint">{tr('v2.key.words.hint', lang)}</p>
 			{/if}
-			{#if canPasskey}
-				<button class="btn" onclick={() => make('words')} disabled={busy}>{tr('v2.key.words', lang)}</button>
-			{/if}
+		</div>
+		<button class="skip" onclick={() => (step = 'skip')} disabled={busy}>{tr('v2.key.skip', lang)}</button>
+	{:else if step === 'skip'}
+		<p class="text"><strong>{tr('v2.key.skip.title', lang)}</strong></p>
+		<p class="text warn">{tr('v2.key.skip.text', lang)}</p>
+		<div class="row">
+			<button class="btn" onclick={() => (step = 'keep')} disabled={busy}>{tr('key.back', lang)}</button>
+			<button class="btn btn-primary" onclick={skip} disabled={busy}>{tr('v2.key.skip.confirm', lang)}</button>
 		</div>
 	{:else if step === 'words'}
 		<p class="text"><strong>{tr('v2.key.words.title', lang)}</strong></p>
@@ -490,6 +511,22 @@
 	}
 	.existing {
 		margin-top: 0.9rem;
+	}
+	/* The way past the backup: a link under the choices. */
+	.skip {
+		display: block;
+		margin: 0.9rem auto 0;
+		background: none;
+		border: none;
+		color: var(--text-secondary);
+		text-decoration: underline;
+		text-underline-offset: 0.15em;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+	.skip:disabled {
+		opacity: 0.45;
+		cursor: default;
 	}
 	.back-row {
 		margin-top: 0.9rem;
