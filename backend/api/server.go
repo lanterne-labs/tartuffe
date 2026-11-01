@@ -26,7 +26,7 @@ import (
 // Storer is the storage surface the HTTP handlers use.
 type Storer interface {
 	Ping(ctx context.Context) error
-	GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int) ([]storage.PersonSummary, error)
+	GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int, candidate string) ([]storage.PersonSummary, error)
 	GetPersonByID(ctx context.Context, personID int64) (*storage.PersonSummary, error)
 	GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedFacts, error)
 	GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedContradictions, error)

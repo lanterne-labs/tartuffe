@@ -267,6 +267,7 @@ func (s *PostgresStorer) ListStancesPendingRefresh(ctx context.Context, limit in
 	rows, err := s.pool.Query(ctx, `
 		SELECT sd.id
 		FROM stance_documents sd
+		JOIN persons p ON p.id = sd.person_id AND `+CandidateSQL+`
 		JOIN stance_document_facts sdf ON sdf.stance_document_id = sd.id
 		GROUP BY sd.id, sd.summarized_at
 		HAVING count(*) >= 2

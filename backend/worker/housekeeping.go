@@ -396,16 +396,20 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 			}
 		}
 	}
+	// The pass is over the candidates (storage.CandidateSQL): every step
+	// lists its persons under that predicate, the detection takes them here.
 	var persons []storage.PersonInfo
 	all := since.IsZero() || deleted > 0
-	if !all {
+	if all {
+		persons, err = storer.ListCandidates(ctx)
+	} else {
 		persons, err = storer.PersonsWithFactsSince(ctx, since)
-		if err := step("persons with new facts", err); err != nil {
-			return err
-		}
+	}
+	if err := step("persons to detect", err); err != nil {
+		return err
 	}
 	cut := false
-	if all || len(persons) > 0 {
+	if len(persons) > 0 {
 		var res contradiction.DetectResult
 		res, err = contradiction.RunDetection(ctx, storer, contradiction.DetectOptions{Persons: persons, MaxPairs: detectBudget})
 		if err := step("detection", err); err != nil {

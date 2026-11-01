@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -47,6 +48,8 @@ type FactInserter struct {
 	stanceProcessor StanceProcessor
 	groupStorer     GroupStorer         // Set by EnableDedupe; stores the group a same-claim fact joins
 	dedupeJudge     SameOccurrenceJudge // Set by EnableDedupe; the mandatory last decider on grouping
+	candidatesMu    sync.Mutex
+	candidates      map[int64]bool // the candidate flag of the persons seen (isCandidate)
 }
 
 // dedupeEmbeddingFloor is the cosine similarity at or above which an existing
@@ -173,6 +176,38 @@ const sameQuoteMinRunes = 40
 // Implemented by storage.PostgresStorer; a Storer without it goes to the gate.
 type QuoteLookupStorer interface {
 	FindActiveFactByQuote(ctx context.Context, personID int64, quote string, sourceTypes []string) (*SimilarFact, error)
+}
+
+// CandidateStorer tells whether a person is a candidate: the AI work after
+// extraction (the grouping gate, the stance) runs for the candidates only
+// (storage/candidates.go). Implemented by storage.PostgresStorer; a Storer
+// without it processes every person (tests).
+type CandidateStorer interface {
+	IsCandidate(ctx context.Context, personID int64) (bool, error)
+}
+
+// isCandidate reports whether the person gets the AI work after extraction.
+// The answer is cached for the inserter's life: a run inserts thousands of
+// facts of a few hundred deputies.
+func (fi *FactInserter) isCandidate(ctx context.Context, personID int64) (bool, error) {
+	cs, ok := fi.storer.(CandidateStorer)
+	if !ok {
+		return true, nil
+	}
+	fi.candidatesMu.Lock()
+	defer fi.candidatesMu.Unlock()
+	if v, seen := fi.candidates[personID]; seen {
+		return v, nil
+	}
+	v, err := cs.IsCandidate(ctx, personID)
+	if err != nil {
+		return false, err
+	}
+	if fi.candidates == nil {
+		fi.candidates = map[int64]bool{}
+	}
+	fi.candidates[personID] = v
+	return v, nil
 }
 
 // EnableDedupe turns on claim grouping: an incoming fact that reports an
@@ -345,6 +380,14 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		return 0, 0, err
 	}
 
+	// The gate and the stance are for the candidates (CandidateStorer):
+	// another person's fact is stored as it is, without a stance, and the
+	// maintenance pass leaves the person out.
+	candidate, err := fi.isCandidate(ctx, subjectID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("candidate flag of %s: %w", input.SubjectEntity, err)
+	}
+
 	// Same-occurrence check before inserting: embedding distance and text
 	// similarity nominate the subject's active facts as candidates, storage
 	// keeps the ones that meet the evidence rule, and the LLM gate is the
@@ -355,7 +398,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	var groupTarget *SimilarFact
 	groupVerdict := OccurrenceDifferent
 	var judged map[int64]OccurrenceVerdict
-	if len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
+	if candidate && len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
 		target, verdict, verdicts, err := fi.findGroupTarget(ctx, subjectID, input)
 		if err != nil {
 			return 0, 0, err
@@ -389,6 +432,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	if err := fi.storer.LinkPersonsToSourceMention(ctx, sourceID, []int64{subjectID}); err != nil {
 		fi.compensateDelete(ctx, factID, "linking subject entity")
 		return 0, 0, fmt.Errorf("failed to link subject entity: %w", err)
+	}
+	if !candidate {
+		log.Debug().Int64("fact_id", factID).Str("subject_entity", input.SubjectEntity).Msg("Inserted fact of a person who is not a candidate; no stance")
+		return factID, subjectID, nil
 	}
 
 	// Fold path: the fact is a same-claim restatement — group it with the fact

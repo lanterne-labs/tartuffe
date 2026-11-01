@@ -380,16 +380,19 @@ func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, ent
 
 // PersonSummary represents a summary of a person for the API
 type PersonSummary struct {
-	ID                 int64    `json:"id"`
-	Name               string   `json:"name"`
-	EntityType         *string  `json:"entity_type,omitempty"`
-	HonestyScore       float64  `json:"honesty_score"`
-	OwnScore           *float64 `json:"own_score,omitempty"`
-	MembersScore       *float64 `json:"members_score,omitempty"`
-	ImageURL           *string  `json:"image_url,omitempty"`
-	FactCount          int      `json:"fact_count"`
-	StanceCount        int      `json:"stance_count"`
-	ContradictionCount int      `json:"contradiction_count"`
+	ID           int64    `json:"id"`
+	Name         string   `json:"name"`
+	EntityType   *string  `json:"entity_type,omitempty"`
+	HonestyScore float64  `json:"honesty_score"`
+	OwnScore     *float64 `json:"own_score,omitempty"`
+	MembersScore *float64 `json:"members_score,omitempty"`
+	ImageURL     *string  `json:"image_url,omitempty"`
+	// Candidate: the AI work after extraction (stances, contradiction
+	// detection) runs for this person (candidates.go).
+	Candidate          bool `json:"candidate"`
+	FactCount          int  `json:"fact_count"`
+	StanceCount        int  `json:"stance_count"`
+	ContradictionCount int  `json:"contradiction_count"`
 }
 
 // GetPersonsRankedByScore returns persons ranked by the chosen sort order.
@@ -398,7 +401,8 @@ type PersonSummary struct {
 // sort can be "honesty_desc" (highest score first), "honesty_asc" (lowest first),
 // or empty for the default (fact count desc, then honesty desc).
 // minFacts filters out persons with fewer than minFacts (deduped) facts.
-func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int) ([]PersonSummary, error) {
+// candidate keeps the candidates ("true"), the others ("false") or everyone ("").
+func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int, candidate string) ([]PersonSummary, error) {
 	var orderBy string
 	switch sort {
 	case "honesty_desc":
@@ -415,10 +419,11 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 		WHERE ($3 = '' OR p.entity_type = $3)
 		  AND ($4 = '' OR p.name ILIKE '%%' || $4 || '%%')
 		  AND p.fact_count >= $5
+		  AND ($6 = '' OR ($6 = 'true') = (`+CandidateSQL+`))
 		ORDER BY %s
 		LIMIT $1 OFFSET $2`, orderBy)
 
-	rows, err := s.pool.Query(ctx, query, limit, offset, entityType, search, minFacts)
+	rows, err := s.pool.Query(ctx, query, limit, offset, entityType, search, minFacts, candidate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons: %w", err)
 	}
