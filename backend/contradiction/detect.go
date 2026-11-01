@@ -628,6 +628,13 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 	if err != nil {
 		log.Warn().Err(err).Msg("Embedding generator unavailable; new contradictions will not be bundled by LLM fallback")
 	}
+	// A pair restating a recorded contradiction of the person (the same
+	// position reported again) is not recorded again (mirror-mtn).
+	restate, rErr := core.NewRestatementJudgeFromEnv()
+	if rErr != nil {
+		log.Warn().Err(rErr).Msg("detection: no restatement judge; a contradiction counted twice is recorded twice")
+		restate = nil
+	}
 	var bundler *Bundler
 	if embedder != nil {
 		bundler, err = NewBundlerFromEnv(storer, embedder)
@@ -743,6 +750,9 @@ func judgePairs(ctx context.Context, storer *storage.PostgresStorer, allPersonPa
 					if !opts.DryRun {
 						// A verdict already paid for is recorded even when the deadline
 						// passed meanwhile (the write must not fail on the cancelled ctx).
+						if restated, _ := core.RestatesExisting(context.WithoutCancel(ctx), storer, restate, pp.personName, pp.personID, batch[j].factAID, batch[j].factBID, result.Reason); restated > 0 {
+							continue
+						}
 						contradictionID, needsBundler, err := storer.RecordContradictionImmediate(context.WithoutCancel(ctx), pp.personID, batch[j].factAID, batch[j].factBID, result.Reason, result.ReasonEn)
 						if err != nil {
 							log.Error().Err(err).Msg("Failed to record contradiction")

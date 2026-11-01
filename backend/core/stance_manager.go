@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog/log"
 )
@@ -249,6 +250,9 @@ const (
 type StanceManager struct {
 	storer StanceStorer
 	client *llm.Client
+	// restate keeps a contradiction counted twice out (RestatesExisting);
+	// nil: no check.
+	restate *RestatementJudge
 }
 
 // NewStanceManagerFromEnv creates a new StanceManager using OPEN_AI_* environment variables.
@@ -258,7 +262,12 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &StanceManager{storer: storer, client: client}, nil
+	restate, err := NewRestatementJudgeFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("stance manager: no restatement judge; a contradiction counted twice is recorded twice")
+		restate = nil
+	}
+	return &StanceManager{storer: storer, client: client, restate: restate}, nil
 }
 
 // ErrStanceRefreshPending marks a ProcessNewFact error returned after the fact
@@ -948,6 +957,11 @@ func (sm *StanceManager) recordStanceContradictions(
 		// The bundler-needed signal is dropped: both facts are in the same
 		// stance OF THIS PERSON, so the person-scoped fast path in storage
 		// always sets bundle_stance_id directly.
+		if rs, ok := sm.storer.(RestatementStorer); ok {
+			if restated, _ := RestatesExisting(ctx, rs, sm.restate, "", personID, factID, c.KeyFactID, c.Reason); restated > 0 {
+				continue
+			}
+		}
 		if _, _, err := sm.storer.RecordContradictionImmediate(ctx, personID, factID, c.KeyFactID, c.Reason, c.ReasonEn); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", stanceID).
@@ -1775,11 +1789,7 @@ func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int
 
 `+stanceLabelRules+`
 
-SUMMARY RULES:
-- 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
-- If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
-- A tension exists ONLY when the facts conflict as the contradiction judges define it: a reversal on the same question, a broken promise, a denial against a finding, a rule the person then exempts themself from. NEVER call a tension: a vote on an amendment or a sous-amendement against a stated position (the ballot judges the amendment only), a deadline or a promise whose time has not come, two figures of different aggregates (the State deficit and the public deficit, a total and a share), a fact whose object is missing or unnamed, or a mere difference of emphasis. When in doubt, describe both facts without the word tension.
-- Every sentence must be traceable to a listed fact: no inference about motives, no "contraste" or "paradoxe" the facts do not state. Do not add facts or claims beyond what's in the listed facts.
+`+stanceSummaryRules+`
 
 FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
@@ -1788,6 +1798,24 @@ FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 
 	return sm.callRefreshLLM(ctx, prompt)
 }
+
+// stanceSummaryRules is the single source of what a stance summary is,
+// shared by the full rebuild, the incremental refresh and the merge. A
+// summary is read in a list of stances on a person's page, above the facts
+// and their sources: it says the position at a glance. Before 2026-11-01 it
+// listed measures, figures, dates and events (median 436 characters, 7579
+// stances over 600, up to 4017), and the incremental refresh kept adding.
+// The contradictions have their own cards: a summary does not judge them
+// (the "tensions" it named were often not contradictions at all).
+const stanceSummaryRules = `SUMMARY RULES:
+- At most 2 sentences and about 300 characters. It says, at a glance, the person's POSITION on the subject and its direction (for, against, demanding, opposing, how it moved over time if it clearly did).
+- High level only: no list of measures, no figures, no dates, no places, no names of laws or events, no quotes, unless one of them IS the position (a single flagship measure, the one figure the person campaigns on). The facts below the summary carry the details and their sources.
+- Do not narrate what happened (announcements, events, who said what to whom): describe the stance.
+- Do not judge or name contradictions, tensions, contrasts or paradoxes: the contradictions are shown separately.
+- Every claim must be supported by the facts; no inference about motives.
+`
+
+const stanceSummaryMaxRunes = 420
 
 // stanceLabelRules is the single source of what a stance label may be, shared
 // by topic assignment, the fallback label generator, the full rebuild and the
@@ -1836,7 +1864,7 @@ const stanceRefreshLanguageAndFormat = `LANGUAGE RULES:
 - Write "label" and "summary" in FRENCH, always — even when some or all listed facts are in English. Do NOT emit any translation here; English (and any other language) is produced separately by the translation phase.
 
 Return ONLY valid JSON:
-{"label": "subject-area label in French", "summary": "2-4 sentence summary in French"}`
+{"label": "subject-area label in French", "summary": "at most 2 sentences, about 300 characters, in French"}`
 
 // formatRefreshNewFact renders one new fact for the incremental prompt,
 // including the tensions the analyze verified for it.
@@ -1882,11 +1910,8 @@ func (sm *StanceManager) foldStanceMetadata(ctx context.Context, label, summary 
 `+stanceLabelRules+`
 - KEEP the current label unless the new facts fall outside it; then broaden it to a neutral subject that covers both the old summary and the new facts. Never narrow it.
 
-SUMMARY RULES:
-- 2-4 sentences, French (up to 6 when several ⚠ tensions must be kept). Integrate the new facts into the current summary: keep what the current summary says about earlier facts (rewrite for length, never drop a position or a tension it already records), add what the new facts say / do.
-- Every ⚠ tension MUST be preserved explicitly: state both positions and that the position shifted, was walked back, or conflicts. Do not smooth a contradiction into one narrative. If there are more tensions than the summary can name, keep the most recent ones individually and say that the position has shifted repeatedly on this subject.
-- A NEW tension is stated only when a new fact conflicts with the summary or another new fact as the contradiction judges define it (a reversal on the same question, a broken promise, a denial against a finding, a self-exempted rule). Never from an amendment vote against a stated position, a promise whose time has not come, two figures of different aggregates, or a fact with an unnamed object. Every sentence must be traceable to the current summary or a new fact: no inferred "contraste" or "paradoxe".
-- Do not add facts or claims beyond the current summary and the new facts.
+`+stanceSummaryRules+`
+- REWRITE the whole summary from the current one and the new facts so that it stays within that length: the new facts change the summary only when they change the position or its direction; a new detail, figure or event is not added.
 
 %s
 
@@ -1907,7 +1932,40 @@ func (sm *StanceManager) callRefreshLLM(ctx context.Context, prompt string) (str
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return "", "", fmt.Errorf("parsing refresh response: %w", err)
 	}
-	return strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary), nil
+	label, summary := strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary)
+	return label, sm.shortenSummary(ctx, summary), nil
+}
+
+// shortenSummary sends a summary over stanceSummaryMaxRunes back once to be
+// shortened to its position; a failed or still-long rewrite keeps the
+// original (logged): a long summary is better than none.
+func (sm *StanceManager) shortenSummary(ctx context.Context, summary string) string {
+	if utf8.RuneCountInString(summary) <= stanceSummaryMaxRunes {
+		return summary
+	}
+	prompt := `Shorten this summary of a politician's stance to AT MOST 2 sentences and about 300 characters, in French. Keep only the position and its direction; drop measures, figures, dates, places, events and any mention of tension or contrast. Do not add anything.
+
+SUMMARY:
+` + summary + `
+
+Return ONLY valid JSON: {"summary": "the shortened summary"}`
+	content, err := sm.callJSONLLM(ctx, "You shorten texts. Return only valid JSON.", prompt, 0.0, stanceRefreshOutputTokens, llm.TaskStanceLabel)
+	if err != nil {
+		log.Warn().Err(err).Int("runes", utf8.RuneCountInString(summary)).Msg("stance summary: shortening failed; the long summary is kept")
+		return summary
+	}
+	var resp struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(content), &resp); err != nil || strings.TrimSpace(resp.Summary) == "" {
+		log.Warn().Err(err).Msg("stance summary: shortening returned no summary; the long summary is kept")
+		return summary
+	}
+	short := strings.TrimSpace(resp.Summary)
+	if utf8.RuneCountInString(short) >= utf8.RuneCountInString(summary) {
+		return summary
+	}
+	return short
 }
 
 // parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.
@@ -2099,8 +2157,7 @@ UNIFIED LABEL RULES (for the `+"`label`"+` field of each merge):
 - Length: 4-12 words. Max 120 chars.
 
 UNIFIED SUMMARY RULES (for the `+"`summary`"+` field):
-- 1-3 sentences describing what the person has said / done across all merged stances on this subject.
-- If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
+`+stanceSummaryRules+`
 
 **LANGUAGE RULE:** Write the unified `+"`summary`"+` and `+"`label`"+` in the same language as the stances provided. If stances span multiple languages, use French.
 

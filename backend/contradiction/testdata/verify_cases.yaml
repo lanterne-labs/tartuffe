@@ -896,3 +896,83 @@ cases:
     notes: "One plan presented on one day, read by two outlets (primary balance vs total deficit path). Prod 1610, 1452 (review 2026-10-31)."
     date_a: "2026-10-06"
     date_b: "2026-10-06"
+
+  - name: "FP_1761_melenchon_corsica_explained_evolution"
+    fact_a: "Jean-Luc Mélenchon est désormais favorable à l'autonomie de la Corse, après avoir été initialement hostile à celle-ci, une évolution qu'il justifie par les résultats des nationalistes depuis 2015 et des rencontres avec des députés."
+    fact_b: "Fin août 2000, dans une tribune intitulée 'Jacobin, justement' publiée dans Marianne, Jean-Luc Mélenchon a écrit 'Mieux vaut perdre la Corse que la République', prenant ses distances avec le processus de Matignon."
+    claimed_reason: "Il se disait jacobin en 2000 et préférait perdre la Corse, mais il se dit désormais favorable à l'autonomie corse."
+    expect: drop
+    bucket: learning_over_time
+    notes: "An opinion that changed over 26 years, and that he explains: an evolution, not a contradiction (the user's example, 2026-10-31). Prod 1761."
+    date_a: "2026-06-15"
+    date_b: "2000-08-31"
+
+  - name: "FP_1762_melenchon_corsica_long_gap_promise_is_new"
+    fact_a: "Jean-Luc Mélenchon a promis l'autonomie à la Corse et aux Antilles lors de son premier meeting de campagne à Saint-Denis le 7 juin 2026."
+    fact_b: "Fin août 2000, dans une tribune intitulée 'Jacobin, justement' publiée dans Marianne, Jean-Luc Mélenchon a écrit 'Mieux vaut perdre la Corse que la République', prenant ses distances avec le processus de Matignon."
+    claimed_reason: "Il préférait perdre la Corse que la République en 2000, puis il a promis l'autonomie à la Corse en 2026."
+    expect: drop
+    bucket: learning_over_time
+    notes: "An opinion of 2000 and a promise of 2026: the promise is not broken, the opinion evolved over 26 years. Prod 1762, 1927 (2026-10-31)."
+    date_a: "2026-06-07"
+    date_b: "2000-08-31"
+
+  - name: "TP_112b_christophe_motivation_reversal_weeks"
+    fact_a: "Paul Christophe s'est dit « très motivé » pour prendre ce poste ministériel."
+    fact_b: "Paul Christophe a déclaré ne pas être « particulièrement enthousiaste » à l'idée de prendre ce poste."
+    claimed_reason: "Il se disait très motivé pour le poste, puis affirme ne pas être particulièrement enthousiaste."
+    expect: keep
+    bucket: paraphrase_same_position
+    notes: "The same opinion flipped within three weeks, unexplained: a short-term reversal stays a contradiction (definition of 2026-10-31)."
+    date_a: "2026-09-02"
+    date_b: "2026-09-23"
+
+  - name: "TP_1242_wauquiez_never_alliance_then_call_to_unite"
+    fact_a: "Laurent Wauquiez a lancé un appel à l'union des trois candidats de la droite et du centre : Édouard Philippe, Gabriel Attal et Bruno Retailleau."
+    fact_b: "Laurent Wauquiez avait affirmé à plusieurs reprises qu'il n'y 'aurait jamais d'alliance entre lui et Édouard Philippe'."
+    claimed_reason: "Après avoir affirmé qu'il n'y aurait jamais d'alliance avec Édouard Philippe, il appelle à l'union des candidats dont Philippe."
+    expect: keep
+    bucket: different_subjects
+    notes: "A pledge 'never an alliance with X' is broken by a call to unite with X, whatever the form. Prod 1242, 1238 (replay of 2026-10-31)."
+    date_a: "2026-07-02"
+    date_b: "2025-11-15"
+
+  - name: "TP_1303_lepen_ineligibility_problem_after_own_conviction"
+    fact_a: "Marine Le Pen a affirmé que l'inéligibilité posait un problème démocratique puisque les Français ne pouvaient pas décider de leurs candidats."
+    fact_b: "En 2013, Marine Le Pen a réclamé des peines d'inéligibilité à vie pour les élus condamnés pour détournement de fonds publics."
+    claimed_reason: "Elle réclamait l'inéligibilité à vie des élus condamnés, puis juge l'inéligibilité antidémocratique une fois condamnée elle-même."
+    expect: keep
+    bucket: vague_vs_specific
+    notes: "An opinion changed once the sanction applies to herself is the self-exempting double standard at any gap, not an evolution. Prod 1303."
+    date_a: "2026-07-07"
+    date_b: "2013-03-10"
+
+  - name: "TP_2289_lepen_cassation_for_innocence_vs_conviction"
+    fact_a: "Marine Le Pen a été condamnée en appel à 45 mois d'inéligibilité et à 3 ans d'emprisonnement dans l'affaire des assistants parlementaires."
+    fact_b: "Marine Le Pen a formé un pourvoi en cassation contre la décision de la cour d'appel de Paris du 7 juillet, entendant faire reconnaître son innocence."
+    claimed_reason: "Condamnée en appel, elle forme un pourvoi en cassation pour faire reconnaître son innocence."
+    expect: keep
+    bucket: accusation_not_finding
+    notes: "A cassation appeal to establish her innocence is a claim of innocence against the conviction. Prod 2289."
+    date_a: "2026-07-07"
+    date_b: "2026-10-28"
+
+  - name: "FP_1517_zemmour_disclaimer_before_thesis"
+    fact_a: "Eric Zemmour a affirmé que le régime de Vichy avait agi pour protéger les Juifs plutôt que pour les persécuter."
+    fact_b: "Eric Zemmour a déclaré à propos du sort des Juifs sous Vichy : 'ce n'est pas mon sujet, je ne l'ai pas étudié'."
+    claimed_reason: "Il défend une thèse sur Vichy et les Juifs tout en affirmant que ce n'est pas son sujet."
+    expect: drop
+    bucket: learning_over_time
+    notes: "The disclaimer (8 Dec 2021) comes BEFORE the thesis (5 Jan 2022): not a denial of an earlier position. Prod 1517, 1514, 1515, 1608."
+    date_a: "2022-01-05"
+    date_b: "2021-12-08"
+
+  - name: "FP_2256_melenchon_admits_he_was_partly_wrong"
+    fact_a: "Jean-Luc Mélenchon a déclaré être contre l'exécution immédiate de la peine d'inéligibilité."
+    fact_b: "Jean-Luc Mélenchon a reconnu avoir eu «tort en partie» au sujet de l'exécution provisoire de la condamnation de Marine Le Pen, estimant qu'elle est parfois une nécessité absolue quand un prévenu met les autres en danger."
+    claimed_reason: "Après s'être déclaré contre l'exécution immédiate de l'inéligibilité, il reconnaît avoir eu tort en partie et la juge parfois absolument nécessaire."
+    expect: drop
+    bucket: learning_over_time
+    notes: "He acknowledges his change ('j'ai eu tort en partie'): an explained change is never a contradiction (the user's example, 2026-11-01). Prod 2256."
+    date_a: "2025-04-02"
+    date_b: "2025-10-20"
