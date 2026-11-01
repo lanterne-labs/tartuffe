@@ -93,6 +93,72 @@ func BackfillArticles(ctx context.Context, storer *storage.PostgresStorer, opts 
 	return RearticleBallots(ctx, storer, store, newArticleResolver(store, laws, orgCache), laws, rejudge)
 }
 
+// ReamendResult is what ReamendBallots did.
+type ReamendResult struct {
+	// Scrutins and Ballots count the amendment scrutins and the ballots
+	// rewritten (with dryRun: that would be).
+	Scrutins int
+	Ballots  int
+	// Gated lists the scrutins whose amendment the archive does not give:
+	// their ballots keep the cut quote.
+	Gated []string
+}
+
+// ReamendBallots rewrites the ballots of the amendment scrutins among laws
+// whose quoted object was cut inside the guillemets (purposePhrase capped
+// the whole phrase before 2026-11-01: 19,223 ballots) with the object as
+// the archive gives it now. The pair verdicts stay: the quote is completed,
+// the vote is the same. With dryRun nothing is written.
+func ReamendBallots(ctx context.Context, store *Store, laws []Law, orgCache map[string]OrganeInfo, dryRun bool) (ReamendResult, error) {
+	var res ReamendResult
+	for _, law := range laws {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+		if t := ClassifyScrutinObject(law.Title); t != ObjectAmendement && t != ObjectSousAmendement {
+			continue
+		}
+		n, err := store.TruncatedAmendmentBallots(ctx, law.Key)
+		if err != nil {
+			return res, err
+		}
+		if n == 0 {
+			continue
+		}
+		object, ok, err := resolveVotedObject(ctx, law, orgCache)
+		if err != nil {
+			return res, fmt.Errorf("amendment of %s: %w", law.Key, err)
+		}
+		if !ok || object == "" {
+			res.Gated = append(res.Gated, law.Key)
+			continue
+		}
+		res.Scrutins++
+		if dryRun {
+			res.Ballots += n
+			log.Info().Str("law_key", law.Key).Str("object", object).Int("ballots", n).Msg("frpolitics: ballots of the amendment would be rewritten")
+			continue
+		}
+		ids, err := store.ReamendBallots(ctx, law.Key, object)
+		if err != nil {
+			return res, err
+		}
+		res.Ballots += len(ids)
+		log.Info().Str("law_key", law.Key).Str("object", object).Int("ballots", len(ids)).Msg("frpolitics: ballots of the amendment rewritten")
+	}
+	return res, nil
+}
+
+// BackfillAmendments discovers the scrutins of opts (Since, Legislatures)
+// and rewrites the truncated ballots of their amendment scrutins.
+func BackfillAmendments(ctx context.Context, storer *storage.PostgresStorer, opts Options, dryRun bool) (ReamendResult, error) {
+	laws, _, _, orgCache, _, err := discoverAndParse(ctx, opts)
+	if err != nil {
+		return ReamendResult{}, err
+	}
+	return ReamendBallots(ctx, NewStore(storer), laws, orgCache, dryRun)
+}
+
 // RemotionResult is what RemotionBallots did.
 type RemotionResult struct {
 	// Scrutins and Ballots count the motions and the ballots rewritten.
