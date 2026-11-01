@@ -11,7 +11,12 @@
 		return unsub;
 	});
 
-	let persons: PersonSummary[] = $state([]);
+	let persons: PersonSummary[] = $state([]); // the candidates
+	let sourced: PersonSummary[] = $state([]); // the others: facts, no detection
+	let sourcedLoading = $state(true);
+	let sourcedPage = $state(0);
+	let sourcedHasMore = $state(true);
+	const SOURCED_PAGE = 24;
 	let topHonest: PersonSummary[] = $state([]);
 	let topDishonest: PersonSummary[] = $state([]);
 	let panelsLoading = $state(true);
@@ -37,6 +42,7 @@
 		}
 		debounceTimer = setTimeout(() => {
 			loadPersons(0);
+			loadSourced(0);
 			loadPanels();
 		}, 300);
 	}
@@ -56,7 +62,7 @@
 		try {
 			loading = true;
 			const offset = page * pageSize;
-			const qs = buildQuery({ limit: pageSize, offset });
+			const qs = buildQuery({ limit: pageSize, offset, candidate: 'true' });
 			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
 
 			if (!response.ok) {
@@ -74,11 +80,31 @@
 		}
 	}
 
+	// The others: their facts are collected, nothing is judged. Shown after
+	// the candidates, without a score.
+	async function loadSourced(page = 0) {
+		try {
+			sourcedLoading = true;
+			const qs = buildQuery({ limit: SOURCED_PAGE, offset: page * SOURCED_PAGE, candidate: 'false' });
+			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
+			if (!response.ok) return;
+			const data: PersonSummary[] = (await response.json()) ?? [];
+			sourced = page === 0 ? data : [...sourced, ...data];
+			sourcedHasMore = data.length === SOURCED_PAGE;
+			sourcedPage = page;
+		} catch (err) {
+			// Non-fatal: the candidates' error banner covers retries.
+		} finally {
+			sourcedLoading = false;
+		}
+	}
+
+	// The rankings are among the candidates: only they have a score.
 	async function loadPanels() {
 		try {
 			panelsLoading = true;
-			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS });
-			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS });
+			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
+			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
 			const [bestRes, worstRes] = await Promise.all([
 				fetch(`${API_BASE}/api/persons?${bestQs}`),
 				fetch(`${API_BASE}/api/persons?${worstQs}`)
@@ -95,11 +121,12 @@
 	function setFilter(filter: '' | 'party' | 'human') {
 		entityFilter = filter;
 		loadPersons(0);
+		loadSourced(0);
 		loadPanels();
 	}
 
 	async function refreshAll() {
-		await Promise.all([loadPersons(0), loadPanels()]);
+		await Promise.all([loadPersons(0), loadSourced(0), loadPanels()]);
 	}
 
 	function loadMore() {
@@ -126,6 +153,7 @@
 
 	onMount(() => {
 		loadPersons();
+		loadSourced();
 		loadPanels();
 		realtimeManager.connect();
 		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
@@ -278,7 +306,10 @@
 		</section>
 	</div>
 
-	<h2 class="section-title">{tr('home.all_entities', currentLang)}</h2>
+	<header class="section-header">
+		<h2 class="section-title">{tr('home.candidates', currentLang)}</h2>
+		<p class="section-sub">{tr('home.candidates_sub', currentLang)}</p>
+	</header>
 
 	{#if loading && persons.length === 0}
 		<div class="persons-grid">
@@ -361,6 +392,47 @@
 			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
 		</div>
 	{/if}
+
+	<section class="sourced">
+		<header class="section-header">
+			<h2 class="section-title">{tr('home.sourced', currentLang)}</h2>
+			<p class="section-sub">{tr('home.sourced_note', currentLang)}</p>
+		</header>
+		{#if sourcedLoading && sourced.length === 0}
+			<div class="sourced-row">
+				{#each Array(8) as _}
+					<div class="mini-card skeleton-card">
+						<div class="skeleton skeleton-avatar"></div>
+						<div class="skeleton skeleton-name"></div>
+					</div>
+				{/each}
+			</div>
+		{:else if sourced.length === 0}
+			<p class="empty">{tr('home.no_results', currentLang)}</p>
+		{:else}
+			<div class="sourced-row">
+				{#each sourced as person (person.id)}
+					<a href="/person/{person.id}" class="mini-card">
+						{#if person.image_url}
+							<img src={person.image_url} alt={person.name} class="avatar" />
+						{:else}
+							<div class="avatar avatar-placeholder">{person.name.charAt(0).toUpperCase()}</div>
+						{/if}
+						<div class="mini-name">
+							{person.name}
+							{#if person.entity_type === 'party'}
+								<span class="badge">{tr('home.party_badge', currentLang)}</span>
+							{/if}
+						</div>
+						<div class="mini-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
+					</a>
+				{/each}
+				{#if sourcedHasMore && !sourcedLoading}
+					<button class="mini-card mini-more" onclick={() => loadSourced(sourcedPage + 1)}>{tr('home.load_more', currentLang)}</button>
+				{/if}
+			</div>
+		{/if}
+	</section>
 </div>
 
 <style>
@@ -685,6 +757,77 @@
 		letter-spacing: -0.01em;
 		margin-bottom: 1rem;
 		color: var(--text-primary);
+	}
+
+	.section-header {
+		margin-bottom: 1rem;
+	}
+
+	.section-header .section-title {
+		margin-bottom: 0.25rem;
+	}
+
+	.section-sub {
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		max-width: 60ch;
+	}
+
+	/* The others: a horizontal row of small cards, no score */
+	.sourced {
+		margin-top: 3rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--border-card);
+	}
+
+	.sourced-row {
+		display: flex;
+		gap: 0.75rem;
+		overflow-x: auto;
+		padding: 0.25rem 0 0.75rem;
+		scroll-snap-type: x proximity;
+	}
+
+	.mini-card {
+		flex: 0 0 9.5rem;
+		scroll-snap-align: start;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 0.5rem;
+		padding: 1rem 0.75rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-md);
+		text-decoration: none;
+		color: inherit;
+		transition: border-color 0.15s ease, transform 0.15s ease;
+	}
+
+	.mini-card:hover {
+		border-color: var(--accent);
+		transform: translateY(-1px);
+	}
+
+	.mini-name {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		line-height: 1.25;
+		text-transform: capitalize;
+	}
+
+	.mini-meta {
+		font-size: 0.7rem;
+		color: var(--text-muted);
+	}
+
+	.mini-more {
+		justify-content: center;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		cursor: pointer;
 	}
 
 	/* Grid */
