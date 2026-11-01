@@ -26,6 +26,11 @@ import (
 // made on different days; the same candidacy against a hypocrisy rule and
 // against a "last campaign" pledge.
 //
+// On the 375 labelled pairs (TestRestatementEval, Sonnet, 2026-11-01) the
+// prompt keeps the different pairs apart 31/31 and catches 322/343 of the
+// same ones (264/343 before the rules on old messages denied in one go,
+// variants of one opposite position and self-exemption).
+//
 // The check runs BEFORE a new contradiction is recorded: a restating pair is
 // not stored, it is recorded as a judged pair (fact_pair_checks), so the
 // detector does not raise it again.
@@ -81,7 +86,9 @@ One fact of a person (the SHARED fact) is paired with two other facts of the sam
 SAME (answer "same"):
 - The same position or claim in other words, in another language, or repeated on another day or in another interview ("j'ai les mains propres" and "je suis innocente" against one verdict; "la primaire n'est pas possible" said in May and again in June).
 - The same act reported twice or by two outlets (one candidacy announcement, one accord signed, one vote reported twice); a first-instance ruling and the appeal ruling that confirms it in the same case.
-- Messages of one thread or one speech set against a single later statement.
+- Messages of one thread or one speech set against a single later statement; also old messages of ONE period brought out together (the posts of one account in one year, one leak) against ONE later denial ("ce n'a jamais été ma position"): whatever each message says, the person denies them in one go, so the denial is one inconsistency, however many messages.
+- VARIANTS of one opposite position, both against the shared fact: a narrower and a broader version of one proposal (a two-person tie-break vote and a large open primary are both a vote to choose the candidate, against "a primary is not possible"); two wordings of one thesis ("Vichy protected the Jews" and "Vichy sacrificed foreign Jews to save French Jews", against "I have not studied it"); an opinion and the campaign promise that carries it out (favourable to Corsican autonomy, then promising it, against "better lose Corsica"); a rule of one's own and an attack on opponents for breaking it ("never by taxes", "the RN prefers taxes", against joining a government that raises them). A statement and an ACT that take the same side ("against the primary" said and a manifesto for a candidate without a primary), set against one later act (taking part in the primary), are one reversal.
+- Against a rule or sanction the person demanded for others, everything by which they exempt THEMSELF once it applies to them is one self-exemption: attacking the sanction's principle ("l'inéligibilité pose un problème démocratique"), claiming eligibility, announcing or defending a candidacy, in whatever election.
 - Different sentences that take the SAME SIDE against the shared fact, even with different content: what matters is the position each states RELATIVE TO the shared fact, not the wording. Against a court verdict, "je suis innocente", "j'ai les mains propres", "mes arguments me disculpent" and a cassation appeal "pour établir mon innocence" are one PLAIN claim of innocence (but see DIFFERENT for specific denials); against "the convicted must be ineligible for life", "je suis éligible", "rien ne m'empêchera d'être candidate", "mon exclusion serait un vol démocratique" and the candidacy announcement are one self-exemption; against a pledge, the same breach announced and then confirmed is one breach. Ask: would a reader count these as two separate inconsistencies of the person, or as one inconsistency reported several times?
 
 DIFFERENT (answer "different"):
@@ -89,6 +96,7 @@ DIFFERENT (answer "different"):
 - Two distinct ACTS, each its own breach of one pledge: two criticisms made on different days, two votes on different texts.
 - Two different kinds of contradiction with the shared fact: the same candidacy against a hypocrisy rule ("the convicted must be ineligible") and against a pledge ("my last campaign").
 - Two different later positions (regulating crypto, then mining it).
+- A claim about what a text or an accord SAYS ("le protocole ne prévoit pas que les migrants soient renvoyés en France") and a WISH of the person on the same subject ("je souhaite qu'ils soient renvoyés dans leur pays d'origine"), against signing that accord: a factual claim and a demand are two claims, not variants of one position.
 
 Person: %s
 SHARED fact (%s): %s
