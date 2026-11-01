@@ -1,0 +1,200 @@
+# Golden regression set for the STANCE SUMMARY (refreshStanceMetadata: the
+# full rebuild of a stance's label and summary; rule body: stanceSummaryRules).
+# Each case is a real stance of the 2026-11-01 audit (prod ids), with the
+# problem its summary had then. The test checks the shape of the summary the
+# prompt writes now: at most 2 sentences and stanceSummaryMaxRunes runes, no
+# comment on the fact list, no tension or contradiction wording, no order in
+# time when `no_ordering` is set (undated facts), the `must_mention` words.
+#
+#   go test -v -run TestSummaryGolden ./backend/core/   (local-only, see TestAnalyzeGolden)
+
+cases:
+  - name: "chatelain_meta_fact_list"
+    stance_id: 44267
+    person: "cyrielle chatelain"
+    label: "protection de l'enfance et aide sociale à l'enfance"
+    must_mention: ["enfance"]
+    notes: "Prod 44267: the summary ended with 'Les faits listés ne font pas apparaître de contradiction' and ran over the cap (2026-11-01 audit)."
+    facts:
+      - id: 87726
+        verb: VOTED
+        date: "2025-12-11"
+        text: "Cyrielle Chatelain a voté POUR l'article 3 (« Compense les charges de l'État et des collectivités par une taxe additionnelle sur les tabacs et une majoration de la dotation globale de fonctionnement ») du texte de loi : « Renforce la protection des mineurs isolés et crée des mesures pour lutter contre le sans-abrisme. »"
+      - id: 141648
+        verb: VOTED
+        date: "2026-07-16"
+        text: "Cyrielle Chatelain a voté POUR l'article 3 (« Privilégie le placement de l'enfant chez l'autre parent, un proche ou un tiers digne de confiance, encadre l'évaluation de l'accueil et crée une indemnité versée au tiers par le département ») du texte de loi : « projet de loi relatif à la protection des enfants (première lecture). »"
+      - id: 170128
+        verb: VOTED
+        date: "2026-10-29"
+        text: "Cyrielle Chatelain a voté POUR l'article premier (« Étend jusqu'à vingt-cinq ans l'accompagnement des jeunes majeurs par l'aide sociale à l'enfance ou la PJJ, le rend de plein droit et opposable, et supprime les conditions de ressources ») du texte de loi : « Renforce la protection des jeunes majeurs sortant de l'aide sociale à l'enfance et de la protection judiciaire de la jeunesse en prolongeant leur accompagnement »"
+      - id: 174030
+        verb: VOTED
+        date: "2026-10-13"
+        text: "Cyrielle Chatelain a voté POUR l'article 32 bis (« Impose un référent éducatif pour chaque enfant suivi par l'aide sociale à l'enfance et plafonne le nombre d'enfants par référent (20, ou 8 en établissement) ») du texte de loi : « Renforce la prévention, la protection des victimes et la répression des violences sexuelles et sexistes contre les femmes et les enfants »"
+
+  - name: "marchand_meta_facts_releves"
+    stance_id: 44634
+    person: "bruno marchand"
+    label: "rémunération des artistes et créateurs sur les réseaux sociaux"
+    must_mention: ["artistes"]
+    notes: "Prod 44634: 'Les faits relevés portent sur des engagements… sans mesure concrète', over the cap."
+    facts:
+      - id: 147451
+        verb: STATED
+        date: "2026-10-27"
+        text: "Bruno Marchand a promis d'analyser toutes les options possibles pour rémunérer adéquatement l'utilisation du travail des artistes dans ses contenus sur les réseaux sociaux."
+      - id: 147473
+        verb: STATED
+        date: "2026-10-27"
+        text: "Bruno Marchand a affirmé que les personnalités politiques au Québec doivent donner l'exemple et trouver des solutions pour reconnaître à sa juste valeur le travail des créateurs."
+      - id: 147538
+        verb: STATED
+        date: "2026-10-27"
+        text: "Bruno Marchand a promis de tendre la main aux artistes pour obtenir leur autorisation avant d'utiliser leurs œuvres dans ses contenus sur les réseaux sociaux."
+
+  - name: "chenu_undated_chronology"
+    stance_id: 43922
+    person: "sebastien chenu"
+    label: "subventions publiques aux associations et syndicats"
+    no_ordering: true
+    must_mention: ["subventions"]
+    notes: "Prod 43922: 'Il est passé de l'opinion à la menace' ordered two UNDATED facts before a dated one."
+    facts:
+      - id: 136923
+        verb: STATED
+        text: "Sébastien Chenu estime que les associations qui prennent des positions politiques ne devraient pas recevoir de subventions publiques."
+      - id: 136959
+        verb: STATED
+        text: "Sébastien Chenu vise notamment la CGT pour ses prises de position contre le Rassemblement national, estimant qu'elle ne devrait pas recevoir de subventions publiques."
+      - id: 141517
+        verb: STATED
+        date: "2026-10-26"
+        text: "Sébastien Chenu a menacé de couper les subventions de la CGT en cas de victoire du Rassemblement national à la présidentielle 2027 (26 octobre 2026)."
+
+  - name: "di_crescenzo_interpretive_gloss"
+    stance_id: 44550
+    person: "alain di crescenzo"
+    label: "commerces sinistrés et soutien économique après les manifestations"
+    must_mention: ["commer"]
+    notes: "Prod 44550: 'ce qui souligne un écart entre la demande des commerçants et la réponse de l'État', a conclusion no fact states; figures listed."
+    facts:
+      - id: 146806
+        verb: STATED
+        date: "2026-10-27"
+        text: "Alain di Crescenzo a déclaré que sur 4 000 commerces visités par le réseau CCI, 2 488 ont été sinistrés, dont 1 161 fortement dégradés et 643 encore fermés."
+      - id: 147025
+        verb: STATED
+        date: "2026-10-27"
+        text: "Alain di Crescenzo, président de la CCI France, réclame une pause dans les manifestations."
+      - id: 147048
+        verb: STATED
+        date: "2026-10-27"
+        text: "Alain di Crescenzo a déclaré ne pas vouloir d'autodéfense de la part des commerçants le soir d'Halloween."
+      - id: 147117
+        verb: STATED
+        date: "2026-10-27"
+        text: "Alain di Crescenzo a affirmé que le dispositif de report de la TVA demandé à Emmanuel Macron n'est pas en place."
+
+  - name: "lalanne_interprets"
+    stance_id: 43901
+    person: "francis lalanne"
+    label: "réforme des institutions et assemblée constituante"
+    must_mention: ["constituante"]
+    notes: "Prod 43901: 'ce qui replace sa proposition…', 'ce qui radicalise l'idée': interpretation instead of the position."
+    facts:
+      - id: 136595
+        verb: STATED
+        date: "2026-10-25"
+        text: "Francis Lalanne propose la création d'une assemblée constituante."
+      - id: 156312
+        verb: STATED
+        date: "2026-10-28"
+        text: "Francis Lalanne a assumé, lors de son meeting au Coteau le 28 octobre 2026, la remise en cause de la République."
+      - id: 159048
+        verb: STATED
+        date: "2026-10-29"
+        text: "Francis Lalanne a proposé de sortir de la République pour créer la première démocratie de l'Histoire du monde."
+
+  - name: "cottrel_editorial_aside"
+    stance_id: 44732
+    person: "arthur cottrel"
+    label: "message discriminatoire sur la page Facebook de Reconquête Haute-Garonne"
+    notes: "Prod 44732: 'Ces explications relèvent de ses seules déclarations': an editorial aside."
+    facts:
+      - id: 151950
+        verb: STATED
+        date: "2025-09-03"
+        text: "Arthur Cottrel a affirmé que le message discriminatoire avait été posté par un militant qui n'aurait jamais dû avoir les droits sur le compte Facebook de Reconquête Haute-Garonne."
+      - id: 151970
+        verb: STATED
+        date: "2025-09-03"
+        text: "Arthur Cottrel a condamné les propos visant les recteurs de Toulouse, disant ne pas les partager, et s'est excusé publiquement auprès des deux fonctionnaires."
+      - id: 151972
+        verb: STATED
+        date: "2025-09-04"
+        text: "Arthur Cottrel a indiqué que le militant ne s'était pas rendu compte de ce qu'il écrivait parce qu'il utilisait une intelligence artificielle."
+      - id: 151989
+        verb: STATED
+        date: "2025-09-04"
+        text: "Arthur Cottrel a affirmé que l'opinion exprimée dans le message n'est partagée ni par lui, ni par Reconquête, ni par ses équipes, et s'en est désolidarisé totalement."
+
+  - name: "dupont_aignan_clean_control"
+    stance_id: 45055
+    person: "nicolas dupont-aignan"
+    label: "aide à mourir et fin de vie"
+    must_mention: ["aide à mourir"]
+    notes: "Control (clean in the audit): opposition to the aide à mourir; the summary must stay short and not repeat the two-day figure."
+    facts:
+      - id: 155703
+        verb: STATED
+        date: "2026-07-03"
+        text: "Nicolas Dupont-Aignan a jugé insuffisant le délai de réflexion prévu par le texte sur l'aide à mourir, qu'il a chiffré à deux jours."
+      - id: 155704
+        verb: STATED
+        date: "2026-07-03"
+        text: "Nicolas Dupont-Aignan s'est fermement opposé à la création d'une aide à mourir."
+      - id: 155711
+        verb: STATED
+        date: "2026-07-03"
+        text: "Nicolas Dupont-Aignan a estimé que la priorité aurait dû être de faire appliquer la loi Leonetti et de renforcer les soins palliatifs."
+
+  - name: "lopez_liguori_votes_control"
+    stance_id: 44669
+    person: "aurelien lopez-liguori"
+    label: "comptes et budget de la Sécurité sociale"
+    must_mention: ["sécurité sociale"]
+    notes: "Control (clean, vote-only stance): ballots on the Sécurité sociale accounts; no narration of the motions."
+    facts:
+      - id: 145242
+        verb: VOTED
+        date: "2025-06-10"
+        text: "Aurélien Lopez-Liguori a voté POUR la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi relative aux résultats de la gestion et portant approbation des comptes de l'année 2024 (première lecture)"
+      - id: 149119
+        verb: VOTED
+        date: "2025-11-08"
+        text: "Aurélien Lopez-Liguori a voté CONTRE l'article 14 (« Approuve le tableau d'équilibre 2026 des régimes obligatoires de base par branche, avec un déficit global de 17,5 milliards d'euros ») du texte de loi : « Fixe les recettes et les dépenses de la Sécurité sociale pour 2026 et encadre l'évolution des dépenses d'assurance maladie. »"
+      - id: 150759
+        verb: VOTED
+        date: "2024-10-15"
+        text: "Aurélien Lopez-Liguori a voté POUR la motion de rejet préalable, déposée par Mme Mathilde Panot, du projet de loi d'approbation des comptes de la sécurité sociale de l'année 2023 (première lecture)"
+
+  - name: "diop_dates_dropped_control"
+    stance_id: 45005
+    person: "dieynaba diop"
+    label: "racisme et injures racistes"
+    must_mention: ["racis"]
+    notes: "Control: three dated statements of one day; the summary must not carry the date or the place."
+    facts:
+      - id: 155294
+        verb: STATED
+        date: "2026-10-27"
+        text: "Dieynaba Diop a déclaré le 27 octobre 2026 à l'Assemblée nationale que le racisme n'est pas une opinion mais un délit, et qu'il doit être traité et poursuivi comme tel."
+      - id: 155295
+        verb: STATED
+        date: "2026-10-27"
+        text: "Dieynaba Diop a demandé le 27 octobre 2026 une loi qui interdise concrètement les injures racistes et les menaces de mort."
+      - id: 155296
+        verb: STATED
+        date: "2026-10-27"
+        text: "Dieynaba Diop a demandé le 27 octobre 2026 que celles et ceux qui répandent l'idéologie raciste se voient interdire l'accès aux plateaux de télévision."
