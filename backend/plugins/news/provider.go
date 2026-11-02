@@ -622,7 +622,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			PersonID:    target.PersonID,
 			Title:       content.Title,
 			Content:     content.Content,
-			PublishedAt: core.PickPublishedAt(nil, content.DatePublished, article.Date),
+			PublishedAt: core.PickPublishedAt(nil, content.DatePublished, article.Date, DateFromURL(article.Link, time.Now())),
 			Metadata:    documentMetadata(article, target, opts),
 		})
 		text := strings.TrimSpace(content.Content)
