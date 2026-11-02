@@ -47,6 +47,7 @@ var cliModes = []cliMode{
 	{"rearticle", "rewrite the ballots of the article scrutins with what the article does", runRearticleMode},
 	{"remotion", "name the motion in the stored ballots of the motion scrutins; reopens the pairs of the motions other than censure", runRemotionMode},
 	{"reamend", "complete the quoted object of the amendment ballots cut inside the guillemets (--dry-run to count)", runReamendMode},
+	{"resummarize", "give the amendment ballots whose bill summary describes the amendment the bill's summary (--dry-run to count, --rejudge to reopen their pairs)", runResummarizeMode},
 }
 
 // ModeHelp describes the modes for the --mode flag.
@@ -158,6 +159,22 @@ func runReamendMode(ctx context.Context, storer *storage.PostgresStorer, opts CL
 	}
 	fmt.Printf("%d amendment scrutins, %d ballots %s; %d scrutins gated (%s)\n",
 		res.Scrutins, res.Ballots, verb, len(res.Gated), strings.Join(res.Gated, ", "))
+	return nil
+}
+
+// runResummarizeMode gives the ballots of the amendment scrutins summarized
+// from the amendment's title (before 1298d12) the bill's summary.
+func runResummarizeMode(ctx context.Context, storer *storage.PostgresStorer, opts CLIOptions) error {
+	res, err := BackfillSummaries(ctx, storer, Options{Since: opts.Since, Legislatures: opts.Legislatures}, opts.DryRun, opts.Rejudge)
+	if err != nil {
+		return err
+	}
+	verb := "rewritten"
+	if opts.DryRun {
+		verb = "to rewrite (dry run)"
+	}
+	fmt.Printf("%d amendment scrutins with a stale summary, %d ballots %s; %d scrutins gated (%s); %d contradictions reopened\n",
+		res.Scrutins, res.Ballots, verb, len(res.Gated), strings.Join(res.Gated, ", "), res.Reopened)
 	return nil
 }
 

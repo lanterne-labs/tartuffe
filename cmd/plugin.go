@@ -36,8 +36,8 @@ func init() {
 
 	// Flags for frpolitics
 	frpoliticsCmd.Flags().String("mode", "votes", frpolitics.ModeHelp())
-	frpoliticsCmd.Flags().Bool("dry-run", false, "reamend mode: count the ballots to rewrite, write nothing")
-	frpoliticsCmd.Flags().Bool("rejudge", false, "rearticle mode: remove the contradictions on the rewritten ballots and the verdicts of their pairs, so they are judged again")
+	frpoliticsCmd.Flags().Bool("dry-run", false, "reamend and resummarize modes: count the ballots to rewrite, write nothing")
+	frpoliticsCmd.Flags().Bool("rejudge", false, "rearticle and resummarize modes: remove the contradictions on the rewritten ballots and the verdicts of their pairs, so they are judged again")
 	frpoliticsCmd.Flags().Int("max-docs", 0, "debats mode: max (speaker, séance) documents to extract this run (0 = unlimited)")
 	frpoliticsCmd.Flags().Bool("newest-first", false, "debats mode: process the most recent séances first")
 	frpoliticsCmd.Flags().Bool("prioritize-press", false, "debats mode: speakers with news/twitter facts first (backfill order)")
