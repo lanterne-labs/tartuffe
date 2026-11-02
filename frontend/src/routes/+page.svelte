@@ -203,7 +203,7 @@
 				</div>
 
 				<div class="ex-score">
-					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" animate />
+					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
 				</div>
 			</div>
 		</div>

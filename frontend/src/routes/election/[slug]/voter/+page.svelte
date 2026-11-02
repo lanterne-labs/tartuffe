@@ -591,15 +591,8 @@
 		<div class="picker">
 			{#each choosable as o (o)}
 				<button class="pick-card" onclick={() => chooseFor(o)} disabled={busy}>
-					{#if imageOf(o)}
-						<img src={imageOf(o)} alt="" />
-					{:else}
-						<span class="pick-initial" aria-hidden="true">{nameOf(o).charAt(0).toUpperCase()}</span>
-					{/if}
+					<TartuffeScore honesty={cardOf(o)?.honesty_score} lang={currentLang} image={imageOf(o)} initial={nameOf(o).charAt(0).toUpperCase()} />
 					<span class="pick-name">{nameOf(o)}</span>
-					{#if scoreOf(o) !== null}
-						<TartuffeScore honesty={cardOf(o)?.honesty_score} lang={currentLang} />
-					{/if}
 				</button>
 			{/each}
 			{#if kind?.blank && !shown.includes(BLANK)}
@@ -706,17 +699,15 @@
 						<span class="vote-rank">{results ? (tab === 'ranking' ? o.rank : i + 1) : '–'}</span>
 						<div class="vote-main">
 							<span class="who">
-								{#if imageOf(o.slot)}
-									<img src={imageOf(o.slot)} alt="" class="photo" />
+								{#if o.blank}
+									<span class="photo photo--empty">◻</span>
 								{:else}
-									<span class="photo photo--empty">{o.blank ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
+									<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
 								{/if}
 								<span class="who-text">
 									<span class="name">{nameOf(o.slot)}</span>
 									{#if o.blank}
 										{@render help(tr('vote.blank.tip', currentLang))}
-									{:else if scoreOf(o.slot) !== null}
-										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} />
 									{/if}
 								</span>
 							</span>
@@ -872,7 +863,6 @@
 		opacity: 0.5;
 		cursor: wait;
 	}
-	.pick-card img,
 	.pick-initial {
 		width: 4.6rem;
 		height: 4.6rem;

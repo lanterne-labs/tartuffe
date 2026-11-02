@@ -319,16 +319,11 @@
 			{@const link = sharePath(it.kind, it.id, it.person.id)}
 			<li class="item" class:is-contradiction={it.kind === 'contradiction'}>
 				<a href="/person/{it.person.id}" class="avatar-link" aria-label={it.person.name}>
-					{#if it.person.image_url}
-						<img src={it.person.image_url} alt="" class="avatar" loading="lazy" />
-					{:else}
-						<span class="avatar avatar-ph">{it.person.name.charAt(0).toUpperCase()}</span>
-					{/if}
+					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} />
 				</a>
 				<div class="main">
 					<div class="head">
 						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
-						<span class="score"><TartuffeScore honesty={it.person.honesty_score} lang={currentLang} /></span>
 						{#if it.score_effect != null}
 							<span
 								class="ticker"
@@ -691,32 +686,12 @@
 	.who:hover .name {
 		color: var(--accent-hover);
 	}
-	.avatar {
-		display: block;
-		width: 44px;
-		height: 44px;
-		border-radius: 50%;
-		object-fit: cover;
-	}
-	.avatar-ph {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-size: 1.1rem;
-		font-weight: 600;
-	}
 	.name {
 		font-weight: 600;
 		text-transform: capitalize;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-	.score {
-		flex-shrink: 0;
-		width: 4.5rem;
 	}
 	.ticker {
 		flex-shrink: 0;
@@ -840,10 +815,6 @@
 			grid-template-columns: 36px minmax(0, 1fr);
 			gap: 0.7rem;
 			padding: 0.95rem 0.9rem 0.7rem;
-		}
-		.avatar {
-			width: 36px;
-			height: 36px;
 		}
 	}
 	.sk {

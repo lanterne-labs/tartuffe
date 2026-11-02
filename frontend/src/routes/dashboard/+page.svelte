@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { eventPaths, showVoters } from '$lib/event';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
-	import ScoreLineup from '$lib/components/ScoreLineup.svelte';
+	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
@@ -249,16 +249,9 @@
 						<li>
 							<a href="/person/{person.id}" class="rank-row">
 								<span class="rank-pos">{i + 1}</span>
-								{#if person.image_url}
-									<img src={person.image_url} alt={person.name} class="rank-avatar" />
-								{:else}
-									<div class="rank-avatar rank-avatar-placeholder">
-										{person.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
+								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 							</a>
@@ -290,16 +283,9 @@
 						<li>
 							<a href="/person/{person.id}" class="rank-row">
 								<span class="rank-pos">{i + 1}</span>
-								{#if person.image_url}
-									<img src={person.image_url} alt={person.name} class="rank-avatar" />
-								{:else}
-									<div class="rank-avatar rank-avatar-placeholder">
-										{person.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
+								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
-									<div class="rank-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} /></div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
 								</div>
 							</a>
@@ -312,9 +298,8 @@
 
 	{#if candidates.length > 1}
 		<section class="lineup-section">
-			<h2 class="section-title">{tr('score.lineup.title', currentLang)}</h2>
-			<p class="lineup-lead">{tr('score.lineup.lead', currentLang)}</p>
-			<ScoreLineup people={candidates} lang={currentLang} />
+			<h2 class="section-title">{tr('score.compare.title', currentLang)}</h2>
+			<ScoreCompare people={candidates} lang={currentLang} />
 		</section>
 	{/if}
 
@@ -341,13 +326,7 @@
 				<a href="/person/{person.id}" class="card">
 					<div class="card-content">
 						<div class="card-left">
-							{#if person.image_url}
-								<img src={person.image_url} alt={person.name} class="avatar" />
-							{:else}
-								<div class="avatar avatar-placeholder">
-									{person.name.charAt(0).toUpperCase()}
-								</div>
-							{/if}
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 							<div class="card-info">
 								<div class="card-name">
 									{person.name}
@@ -355,14 +334,10 @@
 										<span class="badge">{tr('home.party_badge', currentLang)}</span>
 									{/if}
 								</div>
-								<div class="card-score"><TartuffeScore honesty={person.honesty_score} lang={currentLang} facts={person.fact_count} contradictions={person.contradiction_count} showEvidence={false} /></div>
 								<div class="card-meta">
 									{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
 								</div>
 							</div>
-						</div>
-						<div class="score-ring-wrapper">
-							
 						</div>
 					</div>
 				</a>
@@ -533,12 +508,6 @@
 	.lineup-section {
 		margin-bottom: 2.5rem;
 	}
-	.lineup-lead {
-		text-align: center;
-		color: var(--text-secondary);
-		font-size: 0.9rem;
-		margin: -0.5rem 0 1rem;
-	}
 
 	.rank-panel-header {
 		display: flex;
@@ -555,7 +524,6 @@
 
 	.rank-panel--best .rank-panel-header h2 { color: var(--green); }
 	.rank-panel--worst .rank-panel-header h2 { color: var(--red); }
-
 
 	.rank-list {
 		list-style: none;
@@ -588,25 +556,6 @@
 		flex-shrink: 0;
 	}
 
-	.rank-avatar {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-		border: 1px solid var(--border-card);
-	}
-
-	.rank-avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 1.25rem;
-	}
-
 	.rank-info {
 		flex: 1;
 		min-width: 0;
@@ -626,15 +575,6 @@
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-top: 0.125rem;
-	}
-
-	.rank-score {
-		width: min(11rem, 100%);
-		margin: 0.15rem 0 0.4rem;
-	}
-	.card-score {
-		width: min(13rem, 100%);
-		margin: 0.2rem 0 0.4rem;
 	}
 
 	.skeleton-row {
@@ -718,25 +658,6 @@
 		min-width: 0;
 	}
 
-	.avatar {
-		width: 64px;
-		height: 64px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 1.5rem;
-		border: 1px solid var(--border-card);
-	}
-
 	.card-info {
 		flex: 1;
 		min-width: 0;
@@ -780,16 +701,6 @@
 		border-radius: 50%;
 		background: var(--text-muted);
 	}
-
-	/* Score Ring */
-	.score-ring-wrapper {
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-	}
-
-
 
 	/* Skeleton */
 	.skeleton-card {
@@ -916,7 +827,6 @@
 		line-height: 1.1;
 		margin: 0.25rem 0 0.5rem;
 	}
-
 
 	.poll-hero-meta {
 		display: flex;

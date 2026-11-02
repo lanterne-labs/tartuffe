@@ -9,6 +9,7 @@
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
@@ -308,6 +309,18 @@
 		}
 	}
 
+	// The candidates, to place this one among them (only on a candidate's page).
+	let candidates: PersonSummary[] = $state([]);
+	async function loadCandidates() {
+		try {
+			const response = await fetch(`${API_BASE}/api/persons?candidate=true&limit=100`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			candidates = (await response.json()) ?? [];
+		} catch (err) {
+			console.error('failed to load the candidates', err);
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = null;
@@ -321,6 +334,7 @@
 		if (person?.entity_type === 'party') {
 			await loadMembers();
 		}
+		if (person?.candidate) loadCandidates();
 
 		loading = false;
 		await openPointed();
@@ -465,13 +479,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				{#if person.image_url}
-					<img src={person.image_url} alt={person.name} class="hero-avatar" />
-				{:else}
-					<div class="hero-avatar hero-avatar-placeholder">
-						{person.name.charAt(0).toUpperCase()}
-					</div>
-				{/if}
+				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 				<div class="hero-info">
 					<h1>
 						{person.name}
@@ -489,9 +497,6 @@
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<div class="gauge-row">
-					<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="lg" facts={person.fact_count} contradictions={person.contradiction_count} showEvidence={false} />
-				</div>
 				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
 			</div>
 		</div>
@@ -517,15 +522,8 @@
 					<div class="members-grid">
 						{#each members as member (member.id)}
 							<a href="/person/{member.id}" class="member-chip">
-								{#if member.image_url}
-									<img src={member.image_url} alt={member.name} class="member-avatar" />
-								{:else}
-									<div class="member-avatar member-avatar-placeholder">
-										{member.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
+								<TartuffeScore honesty={member.honesty_score} lang={currentLang} size="xs" image={member.image_url} initial={member.name.charAt(0).toUpperCase()} />
 								<span class="member-name">{member.name}</span>
-								<span class="member-score"><TartuffeScore honesty={member.honesty_score} lang={currentLang} /></span>
 							</a>
 						{/each}
 					</div>
@@ -722,6 +720,13 @@
 			{/if}
 		</section>
 
+		{#if person.candidate && candidates.length > 1}
+			<section class="compare-section">
+				<h2>{tr('score.compare.title', currentLang)}</h2>
+				<ScoreCompare people={candidates} lang={currentLang} focus={person.id} />
+			</section>
+		{/if}
+
 		<!-- Facts disclosure removed: facts now live inside each stance card under a
 		     "Facts" tab next to "Contradictions". See stance card markup above. -->
 
@@ -750,9 +755,10 @@
 	/* Hero */
 	.person-hero {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: space-between;
-		gap: 2rem;
+		justify-content: center;
+		gap: 1rem;
 		margin-bottom: 2rem;
 		padding: 1.5rem;
 		background: var(--bg-card);
@@ -762,31 +768,14 @@
 		border-radius: var(--radius-lg);
 	}
 
+	/* The dial with the portrait, the name and the summary under it. */
 	.hero-left {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 1.25rem;
-		flex: 1;
+		text-align: center;
+		gap: 0.75rem;
 		min-width: 0;
-	}
-
-	.hero-avatar {
-		width: 80px;
-		height: 80px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.hero-avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 2rem;
-		border: 1px solid var(--border-card);
 	}
 
 	.hero-info h1 {
@@ -798,7 +787,6 @@
 		gap: 0.5rem;
 		text-transform: capitalize;
 	}
-
 
 	.hero-summary {
 		color: var(--text-muted);
@@ -824,12 +812,6 @@
 		border-radius: var(--radius-full);
 	}
 
-	.gauge-row {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.4rem;
-		width: 100%;
-	}
 	.hero-gauge {
 		flex-shrink: 0;
 		width: min(20rem, 100%);
@@ -914,34 +896,10 @@
 		border-color: var(--accent);
 	}
 
-	.member-avatar {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.member-avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-muted);
-		font-weight: 600;
-		font-size: 0.625rem;
-		border: 1px solid var(--border-card);
-	}
-
 	.member-name {
 		color: var(--text-primary);
 		text-transform: capitalize;
 		flex: 1;
-	}
-
-	.member-score {
-		display: block;
-		width: 4.5rem;
 	}
 
 	/* Error */
@@ -984,6 +942,15 @@
 		color: var(--text-muted);
 		font-style: italic;
 		padding: 3rem;
+	}
+
+	.compare-section {
+		margin: 2rem 0 1.5rem;
+	}
+	.compare-section h2 {
+		text-align: center;
+		font-size: 1.15rem;
+		margin-bottom: 0.9rem;
 	}
 
 	/* Stances section: the headline content of the profile. */
