@@ -30,7 +30,7 @@
 		fr: {
 			kicker: 'Le labo',
 			title: 'Un laboratoire pour une démocratie plus transparente',
-			lead: 'tartuffe.me conçoit des outils au service de la démocratie. Nous les construisons, les publions et les testons en conditions réelles : des outils qui obligent le pouvoir à rendre des comptes, et que chacun peut vérifier.',
+			lead: 'tartuffe.me conçoit des outils au service de la démocratie. Nous les construisons, les publions et les testons en conditions réelles : des outils qui rendent l’action publique lisible par tous, et que chacun peut vérifier.',
 			whyTitle: 'Pourquoi maintenant',
 			why: [
 				'La défiance envers les responsables politiques n’a jamais été aussi forte, et la désinformation va plus vite que les démentis.',
@@ -68,7 +68,7 @@
 		en: {
 			kicker: 'The lab',
 			title: 'A lab for more transparent democracies',
-			lead: 'tartuffe.me is a research and development lab for the tools of democracy. We build, publish and test in real conditions tools that hold power to account, and that anyone can check.',
+			lead: 'tartuffe.me is a research and development lab for the tools of democracy. We build, publish and test in real conditions tools that make public action readable by everyone, and that anyone can check.',
 			whyTitle: 'Why now',
 			why: [
 				'Distrust of politicians has never been higher, and disinformation travels faster than denials.',

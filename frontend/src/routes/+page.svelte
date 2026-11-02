@@ -93,7 +93,7 @@
 
 			labKicker: 'Le labo',
 			labTitle: 'Un laboratoire au service de la démocratie',
-			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente, où les élus rendent des comptes, avec des preuves plutôt que des opinions. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
+			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente. Les nouvelles technologies permettent enfin à chacun de suivre ce que disent et font les élus, sources à l’appui, de façon lisible. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
 			labCta: 'Découvrir le labo'
 		},
 		en: {
@@ -136,7 +136,7 @@
 
 			labKicker: 'The lab',
 			labTitle: 'A lab for democracy',
-			labBody: 'tartuffe.me is a research and development lab for democratic tools: more transparency, more accountability, evidence rather than opinions. The contradiction checker is our first product; the private vote, our first experiment.',
+			labBody: 'tartuffe.me designs and tests tools for a more transparent democracy. New technology finally lets anyone follow what elected officials say and do, with sources, in a readable way. The contradiction checker is our first product; the private vote, our first experiment.',
 			labCta: 'Discover the lab'
 		}
 	};

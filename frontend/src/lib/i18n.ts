@@ -214,7 +214,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'profile.rename': { fr: 'Modifier', en: 'Edit' },
 	// The lab and its temporary events
 	'nav.lab': { fr: 'Le labo', en: 'The lab' },
-	'footer.lab': { fr: 'tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente, où les élus rendent des comptes.', en: 'tartuffe.me, an R&D lab for more transparent and accountable democracies.' },
+	'footer.lab': { fr: 'tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente : ce que font les élus, lisible par tous.', en: 'tartuffe.me, a lab of tools for a more transparent democracy: what elected officials do, readable by everyone.' },
 	'event.label': { fr: 'Expérience temporaire du labo', en: 'Temporary experiment of the lab' },
 	'event.tag': { fr: 'Expérience temporaire', en: 'Temporary experiment' },
 	'event.tag_short': { fr: 'Événement', en: 'Event' },
