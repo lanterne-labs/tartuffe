@@ -1,14 +1,15 @@
 <script lang="ts">
 	// The audit page: the visitor's browser recounts the whole vote from the
-	// public log (lib/vote/audit.ts), and shows each check as it runs: the
-	// log's signatures, the registrations, the ballots' proofs, the tallies,
-	// the relays. Everything it finds is listed; a check that could not run
-	// is a problem, never a pass.
+	// public log (lib/vote/audit.ts). While it runs, one card follows the
+	// reading. When it ends, the checks are told one by one: each card pops
+	// on top of the one before, and the diagram of the pipeline (voters,
+	// relays, server, public log, results) lights up the part it covers.
+	// Every anomaly is listed; a check that could not run is an anomaly.
 	import { page } from '$app/stores';
 	import { onDestroy } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
 	import { eventPaths } from '$lib/event';
-	import { settingsProblem, LOG_KEY, mirrorSources } from '$lib/vote/isoloir';
+	import { settingsProblem } from '$lib/vote/isoloir';
 	import type { AuditProgress, AuditResult } from '$lib/vote/audit';
 
 	let currentLang = $state<Lang>('fr');
@@ -19,78 +20,70 @@
 
 	type StepKey = 'log' | 'registrations' | 'ballots' | 'tallies' | 'relays';
 	const STEPS: StepKey[] = ['log', 'registrations', 'ballots', 'tallies', 'relays'];
-	const N = ' ';
+	const REPO = 'https://github.com/tartuffeme/isoloir';
 
 	const content = {
 		fr: {
-			kicker: 'Vérifier',
-			title: 'Recomptez tout le vote vous-même',
-			lead: 'Votre navigateur relit le registre public du début à la fin et refait chaque contrôle : chaque bulletin, chaque preuve, chaque résultat. Vous n’avez pas besoin de nous croire.',
-			start: 'Lancer la vérification',
-			again: 'Relancer la vérification',
+			title: 'Recomptez le vote vous-même',
+			lead: 'Votre navigateur refait chaque contrôle, à partir du registre public.',
+			start: 'Vérifier',
+			again: 'Vérifier à nouveau',
 			stop: 'Arrêter',
-			duration: 'Quelques secondes à quelques minutes selon le nombre de bulletins. Gardez la page ouverte.',
+			nodes: ['Électeurs', 'Relais', 'Serveur', 'Registre', 'Résultats'],
 			steps: {
-				log: ['Le registre', 'Chaque point de contrôle est signé, et aucun ne réécrit le précédent.'],
-				registrations: ['Les inscriptions', 'Chaque inscription porte une preuve de passeport, et un passeport ne s’inscrit qu’une fois.'],
-				ballots: ['Les bulletins', 'Chaque bulletin porte une preuve qu’il est valide, sans révéler le choix.'],
-				tallies: ['Les résultats', 'Chaque résultat publié est la somme des derniers bulletins de chacun, déchiffrée avec une preuve.'],
-				relays: ['Les relais', 'Aucun bulletin reçu par les relais n’a été écarté en silence.']
-			} as Record<StepKey, [string, string]>,
-			checkpoints: (a: number, b: number) => `${a} sur ${b} points de contrôle`,
-			proofs: (a: number, b: number) => `${a} preuves vérifiées sur ${b}`,
+				log: 'Registre signé, rien de réécrit',
+				registrations: 'Un passeport, une inscription',
+				ballots: 'Bulletins valides',
+				tallies: 'Résultats recomptés',
+				relays: 'Aucun bulletin écarté'
+			} as Record<StepKey, string>,
+			reading: (a: number, b: number) => `Lecture du registre · ${a}/${b}`,
+			checking: (a: number, b: number) => `Vérification des preuves · ${a}/${b}`,
+			replay: (a: number, b: number) => `Recomptage · ${a}/${b}`,
+			relaysRun: 'Lecture des relais',
+			checkpoints: (n: number) => `${n} points de contrôle`,
 			regs: (n: number) => `${n} inscription${n > 1 ? 's' : ''}`,
-			passports: (n: number) => `${n} passeport${n > 1 ? 's' : ''} vérifié${n > 1 ? 's' : ''}`,
-			simulated: 'inscriptions de test (passeport simulé)',
-			tallies: (n: number) => `${n} résultat${n > 1 ? 's' : ''} recompté${n > 1 ? 's' : ''}`,
-			events: (n: number, r: number) => `${n} messages lus sur ${r} relais`,
-			noRelays: 'pas de relais à lire',
-			replay: 'Deuxième lecture, avec les preuves vérifiées',
+			proofs: (n: number) => `${n} preuve${n > 1 ? 's' : ''} vérifiée${n > 1 ? 's' : ''}`,
+			tallies: (n: number) => `${n} résultat${n > 1 ? 's' : ''}`,
+			events: (n: number) => `${n} messages comparés`,
+			noRelays: 'aucun relais',
 			okTitle: 'Tout est vérifié',
-			okBody: (b: number, t: number) => `${b} bulletin${b > 1 ? 's' : ''} et ${t} résultat${t > 1 ? 's' : ''} recomptés dans votre navigateur. Aucune anomalie.`,
-			koTitle: (n: number) => `${n} anomalie${n > 1 ? 's' : ''} trouvée${n > 1 ? 's' : ''}`,
-			koBody: 'Votre navigateur a trouvé ce qui suit. Signalez-le : chacune peut être vérifiée par n’importe qui.',
+			koTitle: (n: number) => `${n} anomalie${n > 1 ? 's' : ''}`,
 			report: 'Signaler',
 			failed: 'La vérification n’a pas pu aller au bout',
-			warnings: 'Remarques',
-			experts: 'Pour les experts : la même vérification en ligne de commande',
-			expertsBody: 'Avec l’outil isoloir, compilé par vous depuis ses sources, et vos propres clés de vérification :',
+			code: 'Le code de la vérification',
 			notConfigured: 'La vérification n’est pas encore ouverte pour ce vote.',
 			back: 'Retour au vote'
 		},
 		en: {
-			kicker: 'Verify',
-			title: 'Recount the whole vote yourself',
-			lead: 'Your browser reads the public log from start to end and redoes every check: every ballot, every proof, every result. You do not need to trust us.',
-			start: 'Start the check',
-			again: 'Run it again',
+			title: 'Recount the vote yourself',
+			lead: 'Your browser redoes every check, from the public log.',
+			start: 'Verify',
+			again: 'Verify again',
 			stop: 'Stop',
-			duration: 'A few seconds to a few minutes depending on the number of ballots. Keep the page open.',
+			nodes: ['Voters', 'Relays', 'Server', 'Log', 'Results'],
 			steps: {
-				log: ['The log', 'Every checkpoint is signed, and none rewrites the one before.'],
-				registrations: ['The registrations', 'Every registration carries a passport proof, and a passport registers once.'],
-				ballots: ['The ballots', 'Every ballot carries a proof that it is valid, without revealing the choice.'],
-				tallies: ['The results', 'Every published result is the sum of everyone’s last ballot, decrypted with a proof.'],
-				relays: ['The relays', 'No ballot the relays received was silently dropped.']
-			} as Record<StepKey, [string, string]>,
-			checkpoints: (a: number, b: number) => `${a} of ${b} checkpoints`,
-			proofs: (a: number, b: number) => `${a} of ${b} proofs verified`,
+				log: 'Log signed, nothing rewritten',
+				registrations: 'One passport, one registration',
+				ballots: 'Valid ballots',
+				tallies: 'Results recounted',
+				relays: 'No ballot dropped'
+			} as Record<StepKey, string>,
+			reading: (a: number, b: number) => `Reading the log · ${a}/${b}`,
+			checking: (a: number, b: number) => `Checking the proofs · ${a}/${b}`,
+			replay: (a: number, b: number) => `Recounting · ${a}/${b}`,
+			relaysRun: 'Reading the relays',
+			checkpoints: (n: number) => `${n} checkpoints`,
 			regs: (n: number) => `${n} registration${n > 1 ? 's' : ''}`,
-			passports: (n: number) => `${n} passport${n > 1 ? 's' : ''} verified`,
-			simulated: 'test registrations (simulated passport)',
-			tallies: (n: number) => `${n} result${n > 1 ? 's' : ''} recounted`,
-			events: (n: number, r: number) => `${n} messages read from ${r} relay${r > 1 ? 's' : ''}`,
-			noRelays: 'no relay to read',
-			replay: 'Second reading, with the verified proofs',
+			proofs: (n: number) => `${n} proof${n > 1 ? 's' : ''} verified`,
+			tallies: (n: number) => `${n} result${n > 1 ? 's' : ''}`,
+			events: (n: number) => `${n} messages compared`,
+			noRelays: 'no relay',
 			okTitle: 'Everything checks out',
-			okBody: (b: number, t: number) => `${b} ballot${b > 1 ? 's' : ''} and ${t} result${t > 1 ? 's' : ''} recounted in your browser. No anomaly.`,
-			koTitle: (n: number) => `${n} anomal${n > 1 ? 'ies' : 'y'} found`,
-			koBody: 'Your browser found the following. Report it: anyone can check each one.',
+			koTitle: (n: number) => `${n} anomal${n > 1 ? 'ies' : 'y'}`,
 			report: 'Report',
 			failed: 'The check could not finish',
-			warnings: 'Notes',
-			experts: 'For experts: the same check on the command line',
-			expertsBody: 'With the isoloir tool, built by you from its sources, and your own verification keys:',
+			code: 'The code of the check',
 			notConfigured: 'The check is not open yet for this vote.',
 			back: 'Back to the vote'
 		}
@@ -101,17 +94,26 @@
 	let result = $state<AuditResult | null>(null);
 	let failure = $state<string | null>(null);
 	let running = $state(false);
+	// How many checks are told so far (after the audit, one by one).
+	let shown = $state(0);
 	let ctl: AbortController | null = null;
+	let timer: ReturnType<typeof setInterval> | null = null;
 
 	async function start() {
 		running = true;
 		result = null;
 		failure = null;
 		progress = null;
+		shown = 0;
+		if (timer) clearInterval(timer);
 		ctl = new AbortController();
 		try {
 			const { runAudit } = await import('$lib/vote/audit');
 			result = await runAudit((p) => (progress = p), ctl.signal);
+			timer = setInterval(() => {
+				shown++;
+				if (shown >= STEPS.length + 1 && timer) clearInterval(timer);
+			}, 650);
 		} catch (e) {
 			if (!ctl?.signal.aborted) failure = e instanceof Error ? e.message : String(e);
 			console.error('audit failed', e);
@@ -119,179 +121,176 @@
 			running = false;
 		}
 	}
-	function stop() {
+	onDestroy(() => {
 		ctl?.abort();
-	}
-	onDestroy(() => ctl?.abort());
+		if (timer) clearInterval(timer);
+	});
 
-	// Which step a problem belongs to (the auditor's own words).
+	// Which check a problem belongs to (the auditor's own words).
 	function stepOf(p: string): StepKey {
-		if (/\(register\)/.test(p) || /registr/i.test(p)) return 'registrations';
+		if (/\(register\)|registr/i.test(p)) return 'registrations';
 		if (/\(ballot\)/.test(p)) return 'ballots';
 		if (/tally|close/.test(p)) return 'tallies';
 		if (/relay|event |acknowledged/.test(p)) return 'relays';
 		return 'log';
 	}
-	let problems = $derived(result ? result.problems : []);
-	let failedSteps = $derived(new Set(problems.map(stepOf)));
-	let simulated = $derived(!!result?.warnings.some((w) => w.includes('dev provider')));
+	let failed = $derived(new Set((result?.problems ?? []).map(stepOf)));
+	// The checks told so far, the last one on top.
+	let told = $derived(STEPS.slice(0, Math.min(shown, STEPS.length)).reverse());
+	let done = $derived(!!result && shown > STEPS.length);
+	const passed = (k: StepKey) => STEPS.indexOf(k) < shown && !failed.has(k);
+	const missed = (k: StepKey) => STEPS.indexOf(k) < shown && failed.has(k);
 
-	type Status = 'wait' | 'run' | 'ok' | 'fail';
-	function status(k: StepKey): Status {
-		if (result) return failedSteps.has(k) ? 'fail' : 'ok';
-		if (!progress) return 'wait';
-		const ph = progress.phase;
-		if (k === 'relays') return ph === 'relays' ? 'run' : 'wait';
-		if (k === 'ballots' && ph === 'proofs') return 'run';
-		if (ph === 'download' || ph === 'replay') return k === 'tallies' && ph === 'download' ? 'wait' : 'run';
-		return ph === 'relays' || ph === 'done' ? 'ok' : 'wait';
-	}
-	function detail(k: StepKey): string {
-		const r = result ?? progress?.report ?? null;
-		const p = progress;
+	function count(k: StepKey): string {
+		const r = result;
+		if (!r) return '';
 		switch (k) {
 			case 'log':
-				return p ? c.checkpoints(p.checkpoint, p.checkpoints) : '';
+				return c.checkpoints(r.checkpoints);
 			case 'registrations':
-				if (!r) return '';
-				if (result && result.passports.checked) return `${c.regs(r.registrations)} · ${c.passports(result.passports.checked)}`;
-				return result && simulated ? `${c.regs(r.registrations)} · ${c.simulated}` : c.regs(r.registrations);
+				return c.regs(r.registrations);
 			case 'ballots':
-				return p ? c.proofs(p.verified, p.asked) : '';
+				return c.proofs(r.proofs.checked);
 			case 'tallies':
-				return r ? c.tallies(r.tallies) : '';
+				return c.tallies(r.tallies);
 			case 'relays':
-				if (result) return result.relays ? c.events(result.relays.events, result.relays.read.length) : c.noRelays;
-				return '';
+				return r.relays ? c.events(r.relays.events) : c.noRelays;
 		}
 	}
+	let live = $derived.by(() => {
+		const p = progress;
+		if (!p) return '';
+		if (p.phase === 'download') return c.reading(p.checkpoint, p.checkpoints);
+		if (p.phase === 'proofs') return c.checking(p.verified, p.asked);
+		if (p.phase === 'replay') return c.replay(p.checkpoint, p.checkpoints);
+		return c.relaysRun;
+	});
 	let pct = $derived(
 		!progress
-			? 0
+			? 2
 			: progress.phase === 'download'
 				? (progress.checkpoint / Math.max(1, progress.checkpoints)) * 45
 				: progress.phase === 'proofs'
 					? 45 + (progress.verified / Math.max(1, progress.asked)) * 15
 					: progress.phase === 'replay'
 						? 60 + (progress.checkpoint / Math.max(1, progress.checkpoints)) * 35
-						: progress.phase === 'relays'
-							? 97
-							: 100
+						: 98
 	);
-	let mirrorURL = $derived(mirrorSources()[0]?.url('', '') ?? '<mirror>');
-	let command = $derived(`isoloir audit --mirror ${mirrorURL} \\\n  --log-key "${LOG_KEY}" \\\n  --circuits ./circuits-vk --zkverifier ./zkverifier/verify.mjs --relays --bitcoin`);
+
+	// The pipeline: what each check covers, node by node and link by link.
+	const NODE_STEPS: StepKey[][] = [['registrations', 'ballots'], ['relays'], ['log'], ['log'], ['tallies']];
+	const LINK_STEPS: StepKey[] = ['relays', 'relays', 'log', 'tallies'];
+	function lit(ks: StepKey[]): 'idle' | 'ok' | 'ko' {
+		if (ks.some(missed)) return 'ko';
+		return ks.every(passed) ? 'ok' : 'idle';
+	}
+	const ICONS = [
+		'M12 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM5 20c0-3.6 3.1-6 7-6s7 2.4 7 6',
+		'M12 11v9M8.5 7.5a5 5 0 0 1 7 0M5.5 4.5a9 9 0 0 1 13 0M12 11.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
+		'M5 4h14v7H5zM5 13h14v7H5zM8 7.5h.01M8 16.5h.01',
+		'M6 4h10a3 3 0 0 1 3 3v13H9a3 3 0 0 1-3-3zM6 17a3 3 0 0 1 3-3h10M10 8h5',
+		'M6 20v-7M12 20V5M18 20v-10'
+	];
 </script>
 
 <div class="page-content audit">
-	<p class="kicker">{c.kicker}</p>
 	<h1>{c.title}</h1>
 	<p class="lead">{c.lead}</p>
 
 	{#if problem}
 		<p class="notice">{c.notConfigured}</p>
 	{:else}
-		<div class="actions">
-			{#if running}
-				<button class="btn btn--ghost" onclick={stop}>{c.stop}</button>
-			{:else}
-				<button class="btn btn--primary" onclick={start}>{result || failure ? c.again : c.start}</button>
-			{/if}
-			<p class="duration">{c.duration}</p>
+		<!-- The pipeline: each part lights up when its check is told. -->
+		<div class="pipe" class:pipe--run={running} aria-hidden="true">
+			{#each c.nodes as name, i (i)}
+				{#if i > 0}
+					<span class="link link--{lit([LINK_STEPS[i - 1]])}"><span class="dot"></span></span>
+				{/if}
+				<span class="node node--{lit(NODE_STEPS[i])}">
+					<span class="disc">
+						<svg viewBox="0 0 24 24"><path d={ICONS[i]} /></svg>
+						{#if lit(NODE_STEPS[i]) === 'ok'}<span class="tick">✓</span>{/if}
+					</span>
+					<span class="name">{name}</span>
+				</span>
+			{/each}
 		</div>
 
-		{#if progress || result || failure}
-			<div class="bar" aria-hidden="true"><span style="width: {pct}%"></span></div>
-			{#if progress?.phase === 'replay'}<p class="phase">{c.replay}</p>{/if}
+		{#if running}
+			<div class="card card--live">
+				<span class="spin"></span>
+				<span class="live">{live}</span>
+				<span class="bar"><span style="width: {pct}%"></span></span>
+			</div>
+			<button class="btn btn--ghost" onclick={() => ctl?.abort()}>{c.stop}</button>
+		{:else}
+			{#if done && result}
+				{#if result.ok}
+					<div class="verdict verdict--ok" role="status">
+						<svg viewBox="0 0 52 52" class="seal" aria-hidden="true"><circle cx="26" cy="26" r="24" /><path d="M15 27l7 7 15-16" /></svg>
+						<h2>{c.okTitle}</h2>
+					</div>
+				{:else}
+					<div class="verdict verdict--ko" role="alert">
+						<h2>{c.koTitle(result.problems.length)}</h2>
+						<ul class="problems">
+							{#each result.problems as p (p)}<li><code>{p}</code></li>{/each}
+						</ul>
+						<a class="btn btn--ghost" href="{REPO}/issues/new" target="_blank" rel="noopener">{c.report}</a>
+					</div>
+				{/if}
+			{:else if failure}
+				<div class="verdict verdict--ko" role="alert">
+					<h2>{c.failed}</h2>
+					<p><code>{failure}</code></p>
+				</div>
+			{/if}
+			{#if !result || done}
+				<button class="btn btn--primary" onclick={start}>{result || failure ? c.again : c.start}</button>
+			{/if}
 		{/if}
 
-		<ol class="steps">
-			{#each STEPS as k, i (k)}
-				{@const s = status(k)}
-				<li class="step step--{s}">
-					<span class="icon" aria-hidden="true">
-						{#if s === 'ok'}
-							<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-						{:else if s === 'fail'}
+		<ol class="stack">
+			{#each told as k (k)}
+				<li class="card" class:card--ko={failed.has(k)}>
+					<span class="icon">
+						{#if failed.has(k)}
 							<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></svg>
-						{:else if s === 'run'}
-							<span class="spin"></span>
 						{:else}
-							<span class="num">{i + 1}</span>
+							<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
 						{/if}
 					</span>
-					<div class="text">
-						<strong>{c.steps[k][0]}</strong>
-						<span class="what">{c.steps[k][1]}</span>
-						{#if detail(k)}<span class="count">{detail(k)}</span>{/if}
-					</div>
+					<span class="text">
+						<strong>{c.steps[k]}</strong>
+						<span class="count">{count(k)}</span>
+					</span>
 				</li>
 			{/each}
 		</ol>
-
-		{#if result}
-			{#if result.ok}
-				<div class="verdict verdict--ok" role="status">
-					<svg viewBox="0 0 52 52" class="seal" aria-hidden="true"><circle cx="26" cy="26" r="24" /><path d="M15 27l7 7 15-16" /></svg>
-					<h2>{c.okTitle}</h2>
-					<p>{c.okBody(result.ballots, result.tallies)}</p>
-				</div>
-			{:else}
-				<div class="verdict verdict--ko" role="alert">
-					<h2>{c.koTitle(result.problems.length)}</h2>
-					<p>{c.koBody}</p>
-					<ul class="problems">
-						{#each result.problems as p (p)}<li><code>{p}</code></li>{/each}
-					</ul>
-					<a class="btn btn--ghost" href="https://github.com/tartuffeme/isoloir/issues/new" target="_blank" rel="noopener">{c.report}</a>
-				</div>
-			{/if}
-			{#if result.warnings.length}
-				<details class="more">
-					<summary>{c.warnings} ({result.warnings.length})</summary>
-					<ul>{#each result.warnings as w (w)}<li><code>{w}</code></li>{/each}</ul>
-				</details>
-			{/if}
-		{:else if failure}
-			<div class="verdict verdict--ko" role="alert">
-				<h2>{c.failed}</h2>
-				<p><code>{failure}</code></p>
-			</div>
-		{/if}
-
-		<details class="more">
-			<summary>{c.experts}</summary>
-			<p>{c.expertsBody}</p>
-			<pre><code>{command}</code></pre>
-		</details>
 	{/if}
 
-	<p class="back"><a href={paths.vote}>← {c.back}</a></p>
+	<p class="links">
+		<a href={REPO} target="_blank" rel="noopener">{c.code} ↗</a>
+		<span aria-hidden="true">·</span>
+		<a href={paths.vote}>{c.back}</a>
+	</p>
 </div>
 
 <style>
 	.audit {
-		max-width: 40rem;
+		max-width: 34rem;
 		margin: 0 auto;
 		text-align: center;
 	}
-	.kicker {
-		text-transform: uppercase;
-		letter-spacing: 0.12em;
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: var(--accent-hover, var(--accent));
-		margin: 0 0 0.4rem;
-	}
 	h1 {
 		font-family: var(--font-serif);
-		font-size: clamp(1.7rem, 5vw, 2.4rem);
+		font-size: clamp(1.7rem, 5vw, 2.3rem);
 		line-height: 1.15;
-		margin: 0 0 0.8rem;
+		margin: 0.5rem 0 0.5rem;
 	}
 	.lead {
 		color: var(--text-secondary);
 		margin: 0 auto 1.6rem;
-		max-width: 34rem;
 	}
 	.notice {
 		padding: 1rem;
@@ -299,23 +298,125 @@
 		background: var(--bg-card);
 		color: var(--text-secondary);
 	}
-	.actions {
+
+	/* The pipeline */
+	.pipe {
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		margin: 0 auto 1.6rem;
+	}
+	.node {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 1.4rem;
+		gap: 0.35rem;
+		width: 3.9rem;
+		flex-shrink: 0;
 	}
+	.disc {
+		position: relative;
+		width: 2.9rem;
+		height: 2.9rem;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		background: var(--bg-card);
+		border: 1.5px solid var(--glass-border);
+		color: var(--text-muted);
+		transition:
+			background 0.4s,
+			border-color 0.4s,
+			color 0.4s;
+	}
+	.disc svg {
+		width: 1.35rem;
+		height: 1.35rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.node--ok .disc {
+		background: color-mix(in oklch, var(--green) 22%, var(--bg-card));
+		border-color: var(--green);
+		color: var(--green);
+		animation: pop 0.4s ease-out;
+	}
+	.node--ko .disc {
+		border-color: var(--red);
+		color: var(--red);
+	}
+	.tick {
+		position: absolute;
+		right: -0.25rem;
+		bottom: -0.25rem;
+		width: 1.1rem;
+		height: 1.1rem;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		background: var(--green);
+		color: #0a0a0f;
+		font-size: 0.65rem;
+		font-weight: 900;
+	}
+	.name {
+		font-size: 0.68rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+	.link {
+		position: relative;
+		flex: 1;
+		min-width: 0.8rem;
+		max-width: 3rem;
+		height: 2px;
+		margin-top: 1.45rem;
+		background: var(--glass-border);
+		overflow: hidden;
+		transition: background 0.4s;
+	}
+	.link--ok {
+		background: var(--green);
+	}
+	.link--ko {
+		background: var(--red);
+	}
+	.dot {
+		display: none;
+		position: absolute;
+		top: -1px;
+		width: 0.6rem;
+		height: 4px;
+		border-radius: 2px;
+		background: var(--accent-hover, var(--accent));
+	}
+	.pipe--run .link .dot {
+		display: block;
+		animation: flow 1.1s linear infinite;
+	}
+	@keyframes flow {
+		from {
+			left: -0.6rem;
+		}
+		to {
+			left: 100%;
+		}
+	}
+
+	/* The live card, the told checks, the verdict */
 	.btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		min-height: 3rem;
 		padding: 0 1.6rem;
+		margin: 0.2rem 0 1.2rem;
 		border-radius: var(--radius-full, 999px);
 		font: inherit;
 		font-weight: 700;
-		font-size: 1rem;
 		cursor: pointer;
 		text-decoration: none;
 	}
@@ -323,7 +424,8 @@
 		border: none;
 		background: var(--accent);
 		color: #fff;
-		width: min(100%, 22rem);
+		width: min(100%, 18rem);
+		font-size: 1.05rem;
 	}
 	.btn--primary:hover {
 		background: var(--accent-hover);
@@ -333,89 +435,89 @@
 		background: transparent;
 		color: var(--text-primary);
 	}
-	.duration {
-		margin: 0;
-		font-size: 0.8rem;
-		color: var(--text-muted);
+	.stack {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		text-align: left;
 	}
-	.bar {
-		height: 6px;
+	.card {
+		display: grid;
+		grid-template-columns: 2.1rem 1fr;
+		gap: 0.8rem;
+		align-items: center;
+		padding: 0.75rem 1rem;
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		border: 1px solid color-mix(in oklch, var(--green) 40%, transparent);
+		animation: drop 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+	.card--ko {
+		border-color: var(--red);
+	}
+	.card--live {
+		grid-template-columns: 2.1rem 1fr;
+		border-color: color-mix(in oklch, var(--accent) 50%, transparent);
+		margin-bottom: 0.8rem;
+		text-align: left;
+	}
+	.card--live .bar {
+		grid-column: 1 / -1;
+		height: 4px;
 		border-radius: 999px;
 		background: rgba(255, 255, 255, 0.08);
 		overflow: hidden;
-		margin: 0 0 0.5rem;
 	}
-	.bar span {
+	.card--live .bar span {
 		display: block;
 		height: 100%;
 		background: var(--accent);
 		transition: width 0.3s ease;
 	}
-	.phase {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		margin: 0 0 0.6rem;
+	.live {
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 	}
-	.steps {
-		list-style: none;
-		padding: 0;
-		margin: 1rem 0 1.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
-		text-align: left;
+	@keyframes drop {
+		from {
+			opacity: 0;
+			transform: translateY(-0.8rem) scale(0.97);
+		}
 	}
-	.step {
-		display: grid;
-		grid-template-columns: 2.4rem 1fr;
-		gap: 0.8rem;
-		align-items: start;
-		padding: 0.85rem 1rem;
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-		border: 1px solid var(--border-card, var(--glass-border));
-		transition: border-color 0.3s;
-	}
-	.step--run {
-		border-color: color-mix(in oklch, var(--accent) 60%, transparent);
-	}
-	.step--ok {
-		border-color: color-mix(in oklch, var(--green) 45%, transparent);
-	}
-	.step--fail {
-		border-color: var(--red);
+	@keyframes pop {
+		from {
+			transform: scale(0.8);
+		}
 	}
 	.icon {
-		width: 2.4rem;
-		height: 2.4rem;
+		width: 2.1rem;
+		height: 2.1rem;
 		border-radius: 50%;
 		display: grid;
 		place-items: center;
-		background: rgba(255, 255, 255, 0.06);
-		color: var(--text-muted);
-		font-weight: 700;
-	}
-	.step--ok .icon {
 		background: var(--green);
 		color: #0a0a0f;
-		animation: pop 0.35s ease-out;
 	}
-	.step--fail .icon {
+	.card--ko .icon {
 		background: var(--red);
 		color: #fff;
 	}
 	.icon svg {
-		width: 1.2rem;
-		height: 1.2rem;
+		width: 1.1rem;
+		height: 1.1rem;
 		fill: none;
 		stroke: currentColor;
-		stroke-width: 2.8;
+		stroke-width: 3;
 		stroke-linecap: round;
 		stroke-linejoin: round;
 	}
 	.spin {
-		width: 1.2rem;
-		height: 1.2rem;
+		justify-self: center;
+		width: 1.3rem;
+		height: 1.3rem;
 		border-radius: 50%;
 		border: 2.5px solid rgba(255, 255, 255, 0.15);
 		border-top-color: var(--accent-hover, var(--accent));
@@ -426,38 +528,25 @@
 			transform: rotate(360deg);
 		}
 	}
-	@keyframes pop {
-		from {
-			transform: scale(0.6);
-		}
-	}
 	.text {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
-	}
-	.what {
-		font-size: 0.85rem;
-		color: var(--text-secondary);
+		gap: 0.1rem;
 	}
 	.count {
 		font-size: 0.8rem;
-		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-secondary);
 		font-variant-numeric: tabular-nums;
 	}
 	.verdict {
-		padding: 1.4rem 1.2rem;
-		border-radius: var(--radius-lg, 18px);
+		padding: 1.2rem;
 		margin-bottom: 1rem;
+		border-radius: var(--radius-lg, 18px);
+		animation: drop 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 	}
 	.verdict h2 {
-		margin: 0.4rem 0 0.3rem;
+		margin: 0.4rem 0 0;
 		font-size: 1.35rem;
-	}
-	.verdict p {
-		margin: 0;
-		color: var(--text-secondary);
 	}
 	.verdict--ok {
 		background: color-mix(in oklch, var(--green) 14%, var(--bg-card));
@@ -473,7 +562,6 @@
 	}
 	.seal circle {
 		fill: var(--green);
-		stroke: none;
 	}
 	.seal path {
 		fill: none;
@@ -495,40 +583,27 @@
 		margin: 0.8rem 0 1rem;
 		padding-left: 1.2rem;
 	}
-	.problems code,
-	.more code {
+	.problems code {
 		font-size: 0.78rem;
 		word-break: break-word;
 	}
-	.more {
-		margin: 0.6rem 0;
-		text-align: left;
-		padding: 0.7rem 1rem;
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-	}
-	.more summary {
-		cursor: pointer;
-		font-weight: 600;
-		text-align: center;
-	}
-	.more pre {
-		overflow-x: auto;
-		padding: 0.7rem;
-		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.35);
-		font-size: 0.75rem;
-	}
-	.back {
+	.links {
+		display: flex;
+		justify-content: center;
+		gap: 0.6rem;
 		margin-top: 1.5rem;
+		font-size: 0.85rem;
 	}
-	.back a {
+	.links a {
 		color: var(--text-secondary);
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.spin,
 		.seal path,
-		.step--ok .icon {
+		.card,
+		.verdict,
+		.node--ok .disc,
+		.pipe--run .link .dot {
 			animation: none;
 			stroke-dashoffset: 0;
 		}
