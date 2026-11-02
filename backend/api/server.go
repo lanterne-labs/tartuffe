@@ -1,20 +1,24 @@
-// Package api is the Digital Mirror HTTP API: the Chi router, its middleware
-// stack, the JSON handlers and the SSE event stream. Serve wires the server
-// together with the long-lived background workers (metrics endpoint, balance
-// poller, pipeline watchdog, archiver) that only the web service runs.
+// Package api assembles the HTTP API: the Chi router, its middleware stack
+// (security headers, CORS, rate limits, metrics) and /health, with the three
+// parts of the site mounted under /api: mirror (the politicians' record),
+// accounts (the users) and polls (the votes). Each part owns its routes and
+// its tables. Serve wires them with the long-lived background workers
+// (metrics endpoint, balance poller, archiver) that only the web service
+// runs.
 package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	"digital-mirror/backend/core"
+	"digital-mirror/backend/accounts"
 	"digital-mirror/backend/metrics"
-	"digital-mirror/backend/storage"
+	"digital-mirror/backend/mirror"
+	"digital-mirror/backend/polls"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -23,65 +27,55 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Storer is the storage surface the HTTP handlers use.
-type Storer interface {
+// Pinger checks the database for /health.
+type Pinger interface {
 	Ping(ctx context.Context) error
-	GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int, candidate string) ([]storage.PersonSummary, error)
-	GetPersonByID(ctx context.Context, personID int64) (*storage.PersonSummary, error)
-	GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedFacts, error)
-	GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedContradictions, error)
-	GetPersonMembers(ctx context.Context, personID int64) ([]storage.MemberInfo, error)
-	GetPersonHistory(ctx context.Context, personID int64) ([]storage.HistoryPoint, error)
-	GetFactPersons(ctx context.Context, factID int64, limit int, offset int) ([]storage.PersonSummary, error)
-	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]core.StanceDocument, error)
-	GetStanceContradictionCounts(ctx context.Context, personID int64) (map[int64]int, error)
-	GetStanceGroupCounts(ctx context.Context, personID int64) (map[int64]int, error)
-	GetStanceContradictionGroups(ctx context.Context, stanceID int64) ([]storage.ContradictionGroup, error)
-	GetFactsInStance(ctx context.Context, stanceID int64) ([]storage.FactInStance, error)
-	GetMaxEventID(ctx context.Context) (int64, error)
-	GetEventsAfter(ctx context.Context, sinceID int64, limit int) ([]storage.Event, error)
 }
 
-// Server holds the HTTP router and its dependencies.
+// Server holds the HTTP router: the three parts of the site mounted side by
+// side under /api, each with its own routes and storage. mirror is the
+// record of the politicians, accounts the users, polls the votes.
 type Server struct {
-	storer Storer
-	router *chi.Mux
+	db       Pinger
+	mirror   *mirror.Service
+	accounts *accounts.Service
+	polls    *polls.Service
+	router   *chi.Mux
+	// keyIP keys the rate limits by client address.
+	keyIP func(r *http.Request) (string, error)
 }
 
-// NewServer builds the router with its middleware stack and routes.
-func NewServer(storer Storer) *Server {
+// NewServer builds the router with its middleware stack and mounts the
+// parts' routes.
+func NewServer(db Pinger, acc *accounts.Service, m *mirror.Service, p *polls.Service) *Server {
 	r := chi.NewRouter()
 
-	// Parse rate limit from env (default: 100 req/min per IP)
-	rateLimit := 100
-	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			rateLimit = parsed
-		}
-	}
+	// Rate limit from env (default: 600 req/min per client address). A page
+	// view makes about ten requests, and a mobile carrier puts many users
+	// behind one address: the limit stops floods, not readers.
+	rateLimit := envLimit("RATE_LIMIT_PER_MINUTE", 600)
+	keyIP := keyByClientIP(clientIPHeader())
 
 	// Middleware — applied in order:
-	// securityHeaders → Logger → Recoverer → Timeout → RateLimit → CORS → metrics
+	// securityHeaders → accessLog → Recoverer → Timeout → CORS → RateLimit → metrics
 	r.Use(securityHeaders)
-	r.Use(middleware.Logger)
+	r.Use(accessLog)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
-	r.Use(httprate.LimitByIP(rateLimit, 1*time.Minute))
 	r.Use(cors.Handler(cors.Options{
 		AllowOriginFunc:  corsOriginFunc(),
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	// After CORS, so a refused request still carries its CORS headers: the
+	// page then sees a 429, not an opaque network error.
+	r.Use(httprate.Limit(rateLimit, 1*time.Minute, httprate.WithKeyFuncs(keyIP)))
 	r.Use(metrics.Middleware)
 
-	server := &Server{
-		storer: storer,
-		router: r,
-	}
-
+	server := &Server{db: db, mirror: m, accounts: acc, polls: p, router: r, keyIP: keyIP}
 	server.setupRoutes()
 	return server
 }
@@ -132,13 +126,6 @@ func corsOriginFunc() func(r *http.Request, origin string) bool {
 	}
 }
 
-// httpInternalError logs err server-side and returns a generic 500 to the client,
-// preventing internal details (e.g. DB connection strings) from leaking.
-func httpInternalError(w http.ResponseWriter, err error, msg string) {
-	log.Error().Err(err).Msg(msg)
-	http.Error(w, "Internal server error", http.StatusInternalServerError)
-}
-
 // securityHeaders adds standard security headers to all responses.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,23 +144,28 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// setupRoutes configures all the API routes
+// setupRoutes mounts /health and the parts' routes under /api.
 func (s *Server) setupRoutes() {
 	// Health check endpoint (kept on main API for external LB probes)
 	s.router.Get("/health", s.handleHealth)
-
-	// API routes
 	s.router.Route("/api", func(r chi.Router) {
-		r.Get("/persons", s.handleGetPersons)
-		r.Get("/person/{id}", s.handleGetPerson)
-		r.Get("/person/{id}/facts", s.handleGetPersonFacts)
-		r.Get("/person/{id}/contradictions", s.handleGetPersonContradictions)
-		r.Get("/person/{id}/members", s.handleGetPersonMembers)
-		r.Get("/person/{id}/history", s.handleGetPersonHistory)
-		r.Get("/facts/{id}/persons", s.handleGetFactPersons)
-		r.Get("/person/{id}/stances", s.handleGetPersonStances)
-		r.Get("/stances/{id}/contradictions", s.handleGetStanceContradictions)
-		r.Get("/stances/{id}/facts", s.handleGetStanceFacts)
-		r.Get("/events", s.handleEventsSSE)
+		s.mirror.Routes(r)
+		// A proof costs a check: a tighter limit, shared by the challenges,
+		// the sign-ins and the verifications.
+		signin := accounts.SignInLimit(envLimit("SIGNIN_RATE_LIMIT_PER_MINUTE", 30), s.keyIP)
+		s.accounts.Routes(r, signin)
+		s.polls.Routes(r)
 	})
+}
+
+// handleHealth checks database connectivity and returns server health status.
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := s.db.Ping(r.Context()); err != nil {
+		log.Error().Err(err).Msg("health check: db ping failed")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "error"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }

@@ -1,1040 +1,666 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary } from '$lib/types';
-	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	// The landing page: the contradiction checker first (the slogan, one
+	// made-up example of a contradiction and its score, the ranking and the
+	// feed), then the lab's temporary event, the private presidential vote,
+	// in its own colour with its end date, then the lab itself. The ranking is
+	// at /dashboard.
+	import { eventPaths } from '$lib/event';
+	import { onMount } from 'svelte';
+	import { lang, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
-	import { lang, tr } from '$lib/i18n';
+	import type { PollEvent } from '$lib/types';
+	import Mirror from '$lib/components/about/Mirror.svelte';
 
-	let currentLang = $state<'fr' | 'en'>('fr');
-	$effect(() => {
-		const unsub = lang.subscribe((v) => (currentLang = v));
-		return unsub;
-	});
+	let currentLang = $state<Lang>('fr');
+	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
-	let persons: PersonSummary[] = $state([]); // the candidates
-	let sourced: PersonSummary[] = $state([]); // the others: facts, no detection
-	let sourcedLoading = $state(true);
-	let sourcedPage = $state(0);
-	let sourcedHasMore = $state(true);
-	const SOURCED_PAGE = 24;
-	let topHonest: PersonSummary[] = $state([]);
-	let topDishonest: PersonSummary[] = $state([]);
-	let panelsLoading = $state(true);
-	let loading = $state(true);
-	let error: string | null = $state(null);
-	let currentPage = $state(0);
-	let pageSize = 50;
-	let hasMore = $state(true);
-	let entityFilter: '' | 'party' | 'human' = $state('');
-	let searchQuery = $state('');
-	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	const PANEL_SIZE = 3;
-	const PANEL_MIN_FACTS = 3;
-	const SCORE_CIRCUMFERENCE = 2 * Math.PI * 14;
-
-	function handleSearchInput(event: Event) {
-		const target = event.target as HTMLInputElement;
-		searchQuery = target.value;
-
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-		}
-		debounceTimer = setTimeout(() => {
-			loadPersons(0);
-			loadSourced(0);
-			loadPanels();
-		}, 300);
+	// Fades a section in when it scrolls into view. Without JS, or with
+	// reduced motion, the section is simply shown.
+	function reveal(node: HTMLElement) {
+		if (typeof IntersectionObserver === 'undefined') return;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		node.classList.add('reveal');
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) {
+					node.classList.add('shown');
+					io.disconnect();
+				}
+			},
+			{ rootMargin: '0px 0px -10% 0px' }
+		);
+		io.observe(node);
+		return { destroy: () => io.disconnect() };
 	}
 
-	function buildQuery(extra: Record<string, string | number>): string {
-		const params = new URLSearchParams();
-		if (entityFilter) params.set('entity_type', entityFilter);
-		if (searchQuery) params.set('search', searchQuery);
-		for (const [k, v] of Object.entries(extra)) {
-			params.set(k, String(v));
-		}
-		return params.toString();
-	}
-
-	async function loadPersons(page = 0) {
-		error = null;
+	const POLL = eventPaths();
+	let featured = $state<PollEvent | null>(null);
+	onMount(async () => {
 		try {
-			loading = true;
-			const offset = page * pageSize;
-			const qs = buildQuery({ limit: pageSize, offset, candidate: 'true' });
-			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
-
-			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
-			}
-
-			const data = await response.json();
-			persons = page === 0 ? data : [...persons, ...data];
-			hasMore = data.length === pageSize;
-			currentPage = page;
+			const res = await fetch(`${API_BASE}/api/polls`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			featured = ((await res.json()) as PollEvent[]).find((e) => e.featured) ?? null;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
-		} finally {
-			loading = false;
+			console.error('failed to load the featured poll', err);
 		}
-	}
-
-	// The others: their facts are collected, nothing is judged. Shown after
-	// the candidates, without a score.
-	async function loadSourced(page = 0) {
-		try {
-			sourcedLoading = true;
-			const qs = buildQuery({ limit: SOURCED_PAGE, offset: page * SOURCED_PAGE, candidate: 'false' });
-			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
-			if (!response.ok) return;
-			const data: PersonSummary[] = (await response.json()) ?? [];
-			sourced = page === 0 ? data : [...sourced, ...data];
-			sourcedHasMore = data.length === SOURCED_PAGE;
-			sourcedPage = page;
-		} catch (err) {
-			// Non-fatal: the candidates' error banner covers retries.
-		} finally {
-			sourcedLoading = false;
-		}
-	}
-
-	// The rankings are among the candidates: only they have a score.
-	async function loadPanels() {
-		try {
-			panelsLoading = true;
-			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
-			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
-			const [bestRes, worstRes] = await Promise.all([
-				fetch(`${API_BASE}/api/persons?${bestQs}`),
-				fetch(`${API_BASE}/api/persons?${worstQs}`)
-			]);
-			if (bestRes.ok) topHonest = (await bestRes.json()) ?? [];
-			if (worstRes.ok) topDishonest = (await worstRes.json()) ?? [];
-		} catch (err) {
-			// Panel errors are non-fatal; main list error banner covers retries.
-		} finally {
-			panelsLoading = false;
-		}
-	}
-
-	function setFilter(filter: '' | 'party' | 'human') {
-		entityFilter = filter;
-		loadPersons(0);
-		loadSourced(0);
-		loadPanels();
-	}
-
-	async function refreshAll() {
-		await Promise.all([loadPersons(0), loadSourced(0), loadPanels()]);
-	}
-
-	function loadMore() {
-		loadPersons(currentPage + 1);
-	}
-
-	function getHonestyLabel(score: number): string {
-		if (score >= 0.8) return 'Honest';
-		if (score >= 0.4) return 'Mixed';
-		return 'Dishonest';
-	}
-
-	function getHonestyColor(score: number): string {
-		if (score >= 0.8) return 'var(--green)';
-		if (score >= 0.4) return 'var(--amber)';
-		return 'var(--red)';
-	}
-
-	function handleRealtimeEvent(_event: any) {
-		refreshAll();
-	}
-
-	let unsubscribe: (() => void) | null = null;
-
-	onMount(() => {
-		loadPersons();
-		loadSourced();
-		loadPanels();
-		realtimeManager.connect();
-		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
 	});
+	function dateText(iso: string): string {
+		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+	}
+	// The example: one contradiction among few facts, as the API would
+	// give it (an honesty score, 0 to 1).
+	const HONESTY = 0.62;
 
-	onDestroy(() => {
-		if (unsubscribe) {
-			unsubscribe();
+	const content = {
+		fr: {
+			title: 'Les actes suivent‑ils les paroles ?',
+			lead: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.',
+			pills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
+			ctaMain: 'Voir le classement',
+			ctaFeed: 'Lire le fil',
+
+			exKicker: 'Concrètement',
+			exTitle: 'Une contradiction, et le Tartuffe-Score monte',
+			exWho: 'Un député',
+			exTag: 'Exemple',
+			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
+			exSaidSrc: 'En interview',
+			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
+			exDidSrc: 'Scrutin à l’Assemblée',
+			exClash: 'Contradiction',
+			steps: [
+				['On relève', 'Ses déclarations et ses votes.'],
+				['On confronte', 'Quand ils se contredisent, on le note.'],
+				['On publie', 'Son Tartuffe-Score monte, preuves à l’appui.']
+			],
+			exNote: 'On mesure la cohérence, pas la vérité.',
+
+			svcKicker: 'Deux façons de suivre',
+			svcTitle: 'Tout est en accès libre',
+			services: [
+				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Chaque élu et chaque parti, de cohérent à tartuffe. Cherchez un nom, comparez.', cta: 'Ouvrir' },
+				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, au fil de l’eau. Un +1 les fait remonter.', cta: 'Lire' }
+			],
+			aboutLink: 'Comment le score est calculé',
+
+			evTag: 'Expérience temporaire du labo',
+			evTitle: 'Présidentielle 2027 : voter en ligne, vraiment en secret',
+			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le Tartuffe-Score de chaque candidat s’affiche à côté.',
+			evEnds: 'Jusqu’au {d}',
+			evCta: 'Voter',
+			evMore: 'Découvrir l’expérience',
+
+			labKicker: 'Le labo',
+			labTitle: 'Un laboratoire au service de la démocratie',
+			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente. Les nouvelles technologies permettent enfin à chacun de suivre ce que disent et font les élus, sources à l’appui, de façon lisible. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
+			labCta: 'Découvrir le labo'
+		},
+		en: {
+			title: 'Do their actions match their words?',
+			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
+			pills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
+			ctaMain: 'See the ranking',
+			ctaFeed: 'Read the feed',
+
+			exKicker: 'At a glance',
+			exTitle: 'One contradiction, the Tartuffe-Score rises',
+			exWho: 'A politician',
+			exTag: 'Example',
+			exSaid: '“I will never touch the retirement age.”',
+			exSaidSrc: 'Interview',
+			exDid: 'Votes to raise the retirement age to 64.',
+			exDidSrc: 'Vote in Parliament',
+			exClash: 'Contradiction',
+			steps: [
+				['We listen', 'What they say, how they vote.'],
+				['We compare', 'The two clash? It’s on record.'],
+				['We show', 'The Tartuffe-Score rises. With the sources.']
+			],
+			exNote: 'Consistency, not truth.',
+
+			svcKicker: 'Two ways to use it',
+			svcTitle: 'Everything is public',
+			services: [
+				{ href: '/dashboard', icon: 'rank', title: 'The ranking', body: 'Every politician and party, from coherent to tartuffe. Search, compare.', cta: 'Open' },
+				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' }
+			],
+			aboutLink: 'How the score is computed',
+
+			evTag: 'A temporary experiment of the lab',
+			evTitle: 'Presidential 2027: online voting, truly private',
+			evBody: 'Rank up to 3 candidates, or vote blank, with your passport. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s Tartuffe-Score is right beside.',
+			evEnds: 'Until {d}',
+			evCta: 'Vote',
+			evMore: 'Discover the experiment',
+
+			labKicker: 'The lab',
+			labTitle: 'A lab for democracy',
+			labBody: 'tartuffe.me designs and tests tools for a more transparent democracy. New technology finally lets anyone follow what elected officials say and do, with sources, in a readable way. The contradiction checker is our first product; the private vote, our first experiment.',
+			labCta: 'Discover the lab'
 		}
-		if (debounceTimer) {
-			clearTimeout(debounceTimer);
-		}
-		realtimeManager.disconnect();
-		clearOldEvents();
-	});
+	};
+	let c = $derived(content[currentLang]);
+
 </script>
 
 <svelte:head>
-	<title>tartuffe.me — the honesty ledger</title>
+	<title>tartuffe.me — {c.title}</title>
 </svelte:head>
 
-<div class="dashboard">
-	{#if error}
-		<div class="error-banner">
-			<p>{error}</p>
-			<button class="retry-btn" onclick={() => loadPersons(0)}>{tr('home.retry', currentLang)}</button>
-		</div>
+{#snippet icon(name: string)}
+	{#if name === 'rank'}
+		<path d="M5 20V11M12 20V5M19 20v-6" />
+	{:else if name === 'feed'}
+		<path d="M5 6h14M5 12h14M5 18h9" />
+	{:else}
+		<path d="M5 12l4 4 10-10" /><rect x="3" y="3" width="18" height="18" rx="4" />
 	{/if}
+{/snippet}
 
-	<div class="controls">
-		<div class="search-wrapper">
-			<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-				<circle cx="11" cy="11" r="8"></circle>
-				<path d="m21 21-4.35-4.35"></path>
-			</svg>
-			<input
-				type="text"
-				placeholder={tr('home.search_placeholder', currentLang)}
-				value={searchQuery}
-				oninput={handleSearchInput}
-				class="search-input"
-			/>
+<article class="landing">
+	<header class="hero">
+		<Mirror />
+		<h1>{c.title}</h1>
+		<p class="lead">{c.lead}</p>
+		<ul class="pills">
+			{#each c.pills as p}<li>{p}</li>{/each}
+		</ul>
+		<div class="ctas">
+			<a class="cta" href="/dashboard">{c.ctaMain}</a>
+			<a class="cta cta-ghost" href="/feed">{c.ctaFeed} →</a>
 		</div>
-
-		<div class="filter-pills" role="group" aria-label="Filter by entity type">
-			<button
-				class="pill"
-				class:active={entityFilter === ''}
-				onclick={() => setFilter('')}
-				aria-pressed={entityFilter === ''}
-			>{tr('home.filter.all', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'human'}
-				onclick={() => setFilter('human')}
-				aria-pressed={entityFilter === 'human'}
-			>{tr('home.filter.people', currentLang)}</button>
-			<button
-				class="pill"
-				class:active={entityFilter === 'party'}
-				onclick={() => setFilter('party')}
-				aria-pressed={entityFilter === 'party'}
-			>{tr('home.filter.parties', currentLang)}</button>
-		</div>
-	</div>
-
-	<div class="ranking-panels">
-		<section class="rank-panel rank-panel--best">
-			<header class="rank-panel-header">
-				<h2>{tr('home.most_honest', currentLang)}</h2>
-				<span class="rank-panel-sub">{tr('home.top_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
-			</header>
-			{#if panelsLoading && topHonest.length === 0}
-				<ul class="rank-list">
-					{#each Array(PANEL_SIZE) as _}
-						<li class="rank-row skeleton-row">
-							<div class="skeleton skeleton-rank-avatar"></div>
-							<div class="skeleton skeleton-rank-name"></div>
-							<div class="skeleton skeleton-rank-score"></div>
-						</li>
-					{/each}
-				</ul>
-			{:else if topHonest.length === 0}
-				<p class="empty">{tr('home.no_data', currentLang)}</p>
-			{:else}
-				<ol class="rank-list">
-					{#each topHonest as person, i (person.id)}
-						<li>
-							<a href="/person/{person.id}" class="rank-row">
-								<span class="rank-pos">{i + 1}</span>
-								{#if person.image_url}
-									<img src={person.image_url} alt={person.name} class="rank-avatar" />
-								{:else}
-									<div class="rank-avatar rank-avatar-placeholder">
-										{person.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
-								<div class="rank-info">
-									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
-								</div>
-								<div class="rank-score rank-score--good">{(person.honesty_score * 100).toFixed(0)}</div>
-							</a>
-						</li>
-					{/each}
-				</ol>
-			{/if}
-		</section>
-
-		<section class="rank-panel rank-panel--worst">
-			<header class="rank-panel-header">
-				<h2>{tr('home.least_honest', currentLang)}</h2>
-				<span class="rank-panel-sub">{tr('home.bottom_n_by_score', currentLang, { n: PANEL_SIZE })}</span>
-			</header>
-			{#if panelsLoading && topDishonest.length === 0}
-				<ul class="rank-list">
-					{#each Array(PANEL_SIZE) as _}
-						<li class="rank-row skeleton-row">
-							<div class="skeleton skeleton-rank-avatar"></div>
-							<div class="skeleton skeleton-rank-name"></div>
-							<div class="skeleton skeleton-rank-score"></div>
-						</li>
-					{/each}
-				</ul>
-			{:else if topDishonest.length === 0}
-				<p class="empty">{tr('home.no_data', currentLang)}</p>
-			{:else}
-				<ol class="rank-list">
-					{#each topDishonest as person, i (person.id)}
-						<li>
-							<a href="/person/{person.id}" class="rank-row">
-								<span class="rank-pos">{i + 1}</span>
-								{#if person.image_url}
-									<img src={person.image_url} alt={person.name} class="rank-avatar" />
-								{:else}
-									<div class="rank-avatar rank-avatar-placeholder">
-										{person.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
-								<div class="rank-info">
-									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
-								</div>
-								<div class="rank-score rank-score--bad">{(person.honesty_score * 100).toFixed(0)}</div>
-							</a>
-						</li>
-					{/each}
-				</ol>
-			{/if}
-		</section>
-	</div>
-
-	<header class="section-header">
-		<h2 class="section-title">{tr('home.candidates', currentLang)}</h2>
-		<p class="section-sub">{tr('home.candidates_sub', currentLang)}</p>
 	</header>
 
-	{#if loading && persons.length === 0}
-		<div class="persons-grid">
-			{#each Array(6) as _}
-				<div class="card skeleton-card">
-					<div class="skeleton-header">
-						<div class="skeleton skeleton-avatar"></div>
-						<div class="skeleton-text">
-							<div class="skeleton skeleton-name"></div>
-							<div class="skeleton skeleton-sub"></div>
-						</div>
-						<div class="skeleton skeleton-ring"></div>
+	<section class="example" use:reveal>
+		<span class="kicker">{c.exKicker}</span>
+		<h2>{c.exTitle}</h2>
+
+		<div class="ex-card">
+			<div class="ex-who">
+				<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true">
+					<circle cx="24" cy="24" r="24" class="av-bg" />
+					<circle cx="24" cy="19" r="8" class="av-fg" />
+					<path d="M9 42c2-9 8-13 15-13s13 4 15 13" class="av-fg" />
+				</svg>
+				<span class="ex-name">{c.exWho}</span>
+				<span class="ex-tag">{c.exTag}</span>
+			</div>
+
+			<div class="ex-body">
+				<div class="ex-facts">
+					<div class="ex-fact">
+						<span class="ex-year">2019</span>
+						<p>{c.exSaid}</p>
+						<span class="ex-src">{c.exSaidSrc}</span>
+					</div>
+					<div class="ex-clash" aria-hidden="true"><span>⚡ {c.exClash}</span></div>
+					<div class="ex-fact">
+						<span class="ex-year">2023</span>
+						<p>{c.exDid}</p>
+						<span class="ex-src">{c.exDidSrc}</span>
 					</div>
 				</div>
-			{/each}
+
+				<div class="ex-score">
+					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
+				</div>
+			</div>
 		</div>
-	{:else}
-		<div class="persons-grid">
-			{#each persons as person (person.id)}
-				<a href="/person/{person.id}" class="card">
-					<div class="card-content">
-						<div class="card-left">
-							{#if person.image_url}
-								<img src={person.image_url} alt={person.name} class="avatar" />
-							{:else}
-								<div class="avatar avatar-placeholder">
-									{person.name.charAt(0).toUpperCase()}
-								</div>
-							{/if}
-							<div class="card-info">
-								<div class="card-name">
-									{person.name}
-									{#if person.entity_type === 'party'}
-										<span class="badge">{tr('home.party_badge', currentLang)}</span>
-									{/if}
-								</div>
-								<div class="card-meta">
-									{person.fact_count} fact{person.fact_count !== 1 ? 's' : ''}
-									<span class="dot"></span>
-									{getHonestyLabel(person.honesty_score)}
-								</div>
-							</div>
-						</div>
-						<div class="score-ring-wrapper">
-							<svg class="score-ring" viewBox="0 0 36 36">
-								<circle
-									cx="18" cy="18" r="14"
-									fill="none"
-									stroke="var(--bg-secondary)"
-									stroke-width="3"
-								/>
-								<circle
-									cx="18" cy="18" r="14"
-									fill="none"
-									stroke={getHonestyColor(person.honesty_score)}
-									stroke-width="3"
-									stroke-linecap="round"
-									stroke-dasharray="{person.honesty_score * SCORE_CIRCUMFERENCE} {SCORE_CIRCUMFERENCE}"
-									transform="rotate(-90 18 18)"
-								/>
-								<text x="18" y="18" text-anchor="middle" dominant-baseline="central" class="ring-text">
-									{(person.honesty_score * 100).toFixed(0)}
-								</text>
-							</svg>
-						</div>
-					</div>
+
+		<ol class="steps">
+			{#each c.steps as [head, body], i}
+				<li><span class="step-n">{i + 1}</span><strong>{head}</strong><span>{body}</span></li>
+			{/each}
+		</ol>
+	</section>
+
+	<section class="services" use:reveal>
+		<span class="kicker">{c.svcKicker}</span>
+		<h2>{c.svcTitle}</h2>
+		<div class="svc-grid">
+			{#each c.services as s (s.href)}
+				<a class="svc" href={s.href}>
+					<svg class="svc-icon" viewBox="0 0 24 24" aria-hidden="true">{@render icon(s.icon)}</svg>
+					<h3>{s.title}</h3>
+					<p>{s.body}</p>
+					<span class="svc-cta">{s.cta} →</span>
 				</a>
 			{/each}
 		</div>
-	{/if}
-
-	{#if loading && persons.length > 0}
-		<div class="loading-indicator">
-			<div class="spinner"></div>
-		</div>
-	{/if}
-
-	{#if hasMore && !loading}
-		<div class="load-more">
-			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
-		</div>
-	{/if}
-
-	<section class="sourced">
-		<header class="section-header">
-			<h2 class="section-title">{tr('home.sourced', currentLang)}</h2>
-			<p class="section-sub">{tr('home.sourced_note', currentLang)}</p>
-		</header>
-		{#if sourcedLoading && sourced.length === 0}
-			<div class="sourced-row">
-				{#each Array(8) as _}
-					<div class="mini-card skeleton-card">
-						<div class="skeleton skeleton-avatar"></div>
-						<div class="skeleton skeleton-name"></div>
-					</div>
-				{/each}
-			</div>
-		{:else if sourced.length === 0}
-			<p class="empty">{tr('home.no_results', currentLang)}</p>
-		{:else}
-			<div class="sourced-row">
-				{#each sourced as person (person.id)}
-					<a href="/person/{person.id}" class="mini-card">
-						{#if person.image_url}
-							<img src={person.image_url} alt={person.name} class="avatar" />
-						{:else}
-							<div class="avatar avatar-placeholder">{person.name.charAt(0).toUpperCase()}</div>
-						{/if}
-						<div class="mini-name">
-							{person.name}
-							{#if person.entity_type === 'party'}
-								<span class="badge">{tr('home.party_badge', currentLang)}</span>
-							{/if}
-						</div>
-						<div class="mini-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
-					</a>
-				{/each}
-				{#if sourcedHasMore && !sourcedLoading}
-					<button class="mini-card mini-more" onclick={() => loadSourced(sourcedPage + 1)}>{tr('home.load_more', currentLang)}</button>
-				{/if}
-			</div>
-		{/if}
+		<p class="more"><a href="/about">{c.aboutLink} →</a></p>
 	</section>
-</div>
+
+	<section class="event" use:reveal>
+		<div class="ev-head">
+			<span class="ev-tag">{c.evTag}</span>
+			{#if featured?.closes_at}
+				<span class="ev-ends">{c.evEnds.replace('{d}', dateText(featured.closes_at))}</span>
+			{/if}
+		</div>
+		<h2>{c.evTitle}</h2>
+		<p>{c.evBody}</p>
+		<div class="ev-actions">
+			<a class="ev-cta" href={featured ? eventPaths(featured.slug).vote : POLL.vote}>{c.evCta} →</a>
+			<a class="ev-more" href={featured ? eventPaths(featured.slug).intro : POLL.intro}>{c.evMore}</a>
+		</div>
+	</section>
+
+	<section class="lab-teaser" use:reveal>
+		<span class="kicker">{c.labKicker}</span>
+		<h2>{c.labTitle}</h2>
+		<p>{c.labBody}</p>
+		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+	</section>
+</article>
 
 <style>
-	.dashboard {
-		max-width: 1200px;
-		margin: 0 auto;
+	.event {
+		margin: 4.5rem 0 0;
+		padding: 1.6rem 1.75rem;
+		border: 1px dashed var(--event);
+		border-radius: var(--radius-lg);
+		background: color-mix(in oklch, var(--event) 7%, var(--bg-card));
 	}
-
-	.dashboard-header {
-		margin-bottom: 2.25rem;
-		padding-bottom: 1.25rem;
-		border-bottom: 1px solid var(--border-card);
-		position: relative;
-	}
-
-	.dashboard-header::after {
-		content: '';
-		position: absolute;
-		left: 0;
-		bottom: -1px;
-		width: 3rem;
-		height: 1px;
-		background: var(--accent);
-	}
-
-	.dashboard-header h1 {
-		font-family: var(--font-serif);
-		font-size: 2.5rem;
-		font-weight: 600;
-		letter-spacing: 0.005em;
-		line-height: 1.1;
-		margin-bottom: 0.5rem;
-	}
-
-	.subtitle {
-		color: var(--text-secondary);
-		font-size: 0.8125rem;
-		letter-spacing: 0.04em;
-		font-style: italic;
-	}
-
-	/* Error Banner */
-	.error-banner {
-		background: var(--error-bg);
-		border: 1px solid var(--error-border);
-		border-radius: var(--radius-md);
-		padding: 1rem 1.25rem;
-		margin-bottom: 1.5rem;
+	.ev-head {
 		display: flex;
-		align-items: center;
+		flex-wrap: wrap;
 		justify-content: space-between;
-		gap: 1rem;
+		gap: 0.5rem 1rem;
+		align-items: center;
 	}
-
-	.error-banner p {
-		color: var(--red);
-		font-size: 0.875rem;
+	.ev-tag {
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--event);
 	}
-
-	.retry-btn {
-		background: var(--red);
-		color: white;
-		border: none;
-		padding: 0.375rem 0.875rem;
-		border-radius: var(--radius-sm);
-		font-size: 0.813rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: opacity var(--transition-fast);
+	.ev-ends {
+		font-size: 0.8rem;
+		font-weight: 600;
+		padding: 0.2rem 0.65rem;
+		border-radius: var(--radius-full);
+		border: 1px solid var(--event);
+		color: var(--text-primary);
 	}
-
-	.retry-btn:hover {
-		opacity: 0.9;
+	.event h2 {
+		margin: 0.6rem 0 0.6rem;
+		text-align: left;
 	}
-
-	/* Controls */
-	.controls {
+	.event p {
+		margin: 0 0 1.1rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		max-width: 40rem;
+	}
+	.ev-actions {
 		display: flex;
-		gap: 1rem;
-		margin-bottom: 1.5rem;
 		flex-wrap: wrap;
 		align-items: center;
+		gap: 0.75rem 1.25rem;
 	}
-
-	.search-wrapper {
-		position: relative;
-		flex: 1;
-		min-width: 200px;
-	}
-
-	.search-icon {
-		position: absolute;
-		left: 0.75rem;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-muted);
-		pointer-events: none;
-	}
-
-	.search-input {
-		width: 100%;
-		padding: 0.625rem 0.75rem 0.625rem 2.25rem;
-		font-size: 0.875rem;
-		font-family: var(--font-family);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-md);
-		background: var(--bg-secondary);
-		color: var(--text-primary);
-		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-	}
-
-	.search-input:focus {
-		outline: none;
-		border-color: var(--accent);
-		box-shadow: 0 0 0 3px var(--accent-glow);
-	}
-
-	.search-input::placeholder {
-		color: var(--text-muted);
-	}
-
-	.filter-pills {
-		display: inline-flex;
-		gap: 0;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
+	.ev-cta {
+		padding: 0.6rem 1.25rem;
 		border-radius: var(--radius-full);
-		padding: 0.25rem;
-	}
-
-	.pill {
-		background: transparent;
-		color: var(--text-secondary);
-		border: none;
-		padding: 0.5rem 1.1rem;
-		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 600;
-		font-family: var(--font-family);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.pill:hover {
-		color: var(--text-primary);
-	}
-
-	.pill.active {
-		background: var(--accent);
+		background: var(--event-strong);
 		color: white;
-		box-shadow: 0 0 12px var(--accent-glow);
+		font-weight: 600;
+		text-decoration: none;
 	}
-
-	/* Ranking panels */
-	.ranking-panels {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
-		margin-bottom: 2rem;
+	.ev-cta:hover {
+		background: var(--event);
 	}
-
-	@media (max-width: 720px) {
-		.ranking-panels {
-			grid-template-columns: 1fr;
-		}
+	.ev-more {
+		color: var(--text-secondary);
+		font-size: 0.9rem;
 	}
-
-	.rank-panel {
-		border-radius: var(--radius-md);
-		padding: 1.25rem;
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
-		box-shadow: var(--shadow-card);
+	.lab-teaser {
+		margin: 4.5rem 0 1rem;
+		text-align: center;
 	}
-
-	.rank-panel--best {
-		background: linear-gradient(180deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.04));
-		border: 1px solid rgba(34, 197, 94, 0.35);
+	.lab-teaser p {
+		max-width: 38rem;
+		margin: 0 auto 0.75rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		text-wrap: balance;
 	}
-
-	.rank-panel--worst {
-		background: linear-gradient(180deg, rgba(239, 68, 68, 0.12), rgba(239, 68, 68, 0.04));
-		border: 1px solid rgba(239, 68, 68, 0.35);
+	.landing {
+		max-width: 52rem;
+		margin: 0 auto;
+		overflow-x: clip;
 	}
-
-	.rank-panel-header {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		margin-bottom: 0.75rem;
+	.hero {
+		text-align: center;
+		margin: 1rem 0 5rem;
 	}
-
-	.rank-panel-header h2 {
-		font-size: 1rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
+	h1 {
+		font-family: var(--font-serif);
+		font-size: clamp(2.2rem, 7vw, 3.6rem);
+		font-weight: 600;
+		line-height: 1.05;
+		margin: 0.5rem auto 1.1rem;
+		max-width: 40rem;
+		text-wrap: balance;
 	}
-
-	.rank-panel--best .rank-panel-header h2 { color: var(--green); }
-	.rank-panel--worst .rank-panel-header h2 { color: var(--red); }
-
-	.rank-panel-sub {
-		font-size: 0.75rem;
-		color: var(--text-muted);
+	.lead {
+		font-size: 1.12rem;
+		color: var(--text-secondary);
+		line-height: 1.6;
+		max-width: 36rem;
+		margin: 0 auto 1.4rem;
+		text-wrap: balance;
 	}
-
-	.rank-list {
+	.pills {
 		list-style: none;
+		padding: 0;
+		margin: 0 0 2rem;
 		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	.rank-row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.5rem 0.625rem;
-		border-radius: var(--radius-sm);
-		text-decoration: none;
-		color: inherit;
-		transition: background var(--transition-fast);
-	}
-
-	.rank-row:hover {
-		background: rgba(255, 255, 255, 0.04);
-	}
-
-	.rank-pos {
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: var(--text-muted);
-		width: 1rem;
-		text-align: center;
-		flex-shrink: 0;
-	}
-
-	.rank-avatar {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-		border: 1px solid var(--border-card);
-	}
-
-	.rank-avatar-placeholder {
-		display: flex;
-		align-items: center;
+		flex-wrap: wrap;
 		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 1.25rem;
+		gap: 0.45rem;
 	}
-
-	.rank-info {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.rank-name {
-		font-weight: 600;
-		font-size: 0.938rem;
-		text-transform: capitalize;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		color: var(--text-primary);
-	}
-
-	.rank-meta {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		margin-top: 0.125rem;
-	}
-
-	.rank-score {
-		font-size: 1.125rem;
-		font-weight: 700;
-		flex-shrink: 0;
-		min-width: 2.25rem;
-		text-align: right;
-	}
-
-	.rank-score--good { color: var(--green); }
-	.rank-score--bad { color: var(--red); }
-
-	.skeleton-row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.5rem 0.625rem;
-	}
-
-	.skeleton-rank-avatar {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.skeleton-rank-name {
-		flex: 1;
-		height: 14px;
-	}
-
-	.skeleton-rank-score {
-		width: 2.25rem;
-		height: 18px;
-	}
-
-	.empty {
-		color: var(--text-muted);
-		font-size: 0.875rem;
-		padding: 0.5rem 0.625rem;
-	}
-
-	.section-title {
-		font-size: 1.1rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-		margin-bottom: 1rem;
-		color: var(--text-primary);
-	}
-
-	.section-header {
-		margin-bottom: 1rem;
-	}
-
-	.section-header .section-title {
-		margin-bottom: 0.25rem;
-	}
-
-	.section-sub {
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-		max-width: 60ch;
-	}
-
-	/* The others: a horizontal row of small cards, no score */
-	.sourced {
-		margin-top: 3rem;
-		padding-top: 1.5rem;
-		border-top: 1px solid var(--border-card);
-	}
-
-	.sourced-row {
-		display: flex;
-		gap: 0.75rem;
-		overflow-x: auto;
-		padding: 0.25rem 0 0.75rem;
-		scroll-snap-type: x proximity;
-	}
-
-	.mini-card {
-		flex: 0 0 9.5rem;
-		scroll-snap-align: start;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		text-align: center;
-		gap: 0.5rem;
-		padding: 1rem 0.75rem;
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-md);
-		text-decoration: none;
-		color: inherit;
-		transition: border-color 0.15s ease, transform 0.15s ease;
-	}
-
-	.mini-card:hover {
-		border-color: var(--accent);
-		transform: translateY(-1px);
-	}
-
-	.mini-name {
-		font-size: 0.8125rem;
-		font-weight: 600;
-		line-height: 1.25;
-		text-transform: capitalize;
-	}
-
-	.mini-meta {
-		font-size: 0.7rem;
-		color: var(--text-muted);
-	}
-
-	.mini-more {
-		justify-content: center;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-
-	/* Grid */
-	.persons-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-		gap: 1rem;
-	}
-
-	/* Card */
-	.card {
-		background: var(--bg-card);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-md);
-		padding: 1.25rem;
-		box-shadow: var(--shadow-card);
-		transition: transform var(--transition-normal), box-shadow var(--transition-normal), border-color var(--transition-normal);
-		display: block;
-		color: inherit;
-		text-decoration: none;
-	}
-
-	.card:hover {
-		transform: translateY(-2px);
-		box-shadow: var(--shadow-card-hover);
-		border-color: var(--border-card-hover);
-	}
-
-	.card-content {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-	}
-
-	.card-left {
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-		flex: 1;
-		min-width: 0;
-	}
-
-	.avatar {
-		width: 64px;
-		height: 64px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 1.5rem;
-		border: 1px solid var(--border-card);
-	}
-
-	.card-info {
-		min-width: 0;
-	}
-
-	.card-name {
-		font-weight: 600;
-		font-size: 0.938rem;
-		color: var(--text-primary);
-		text-transform: capitalize;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.badge {
-		background: rgba(59, 130, 246, 0.15);
-		color: var(--accent);
-		font-size: 0.688rem;
-		font-weight: 500;
-		padding: 0.125rem 0.5rem;
+	.pills li {
+		font-size: 0.78rem;
+		padding: 0.25rem 0.75rem;
 		border-radius: var(--radius-full);
-		flex-shrink: 0;
+		border: 1px solid var(--glass-border);
+		color: var(--text-secondary);
+		background: var(--bg-card);
 	}
-
-	.card-meta {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		margin-top: 0.125rem;
+	.ctas {
 		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-	}
-
-	.dot {
-		width: 3px;
-		height: 3px;
-		border-radius: 50%;
-		background: var(--text-muted);
-	}
-
-	/* Score Ring */
-	.score-ring-wrapper {
-		flex-shrink: 0;
-	}
-
-	.score-ring {
-		width: 52px;
-		height: 52px;
-	}
-
-	.ring-text {
-		font-size: 9px;
-		font-weight: 600;
-		fill: var(--text-primary);
-	}
-
-	/* Skeleton */
-	.skeleton-card {
-		padding: 1.25rem;
-	}
-
-	.skeleton-header {
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-	}
-
-	.skeleton-avatar {
-		width: 64px;
-		height: 64px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.skeleton-text {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.skeleton-name {
-		height: 14px;
-		width: 60%;
-	}
-
-	.skeleton-sub {
-		height: 10px;
-		width: 40%;
-	}
-
-	.skeleton-ring {
-		width: 52px;
-		height: 52px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	/* Loading */
-	.loading-indicator {
-		display: flex;
+		flex-wrap: wrap;
 		justify-content: center;
-		padding: 2rem;
+		gap: 0.75rem;
 	}
-
-	.spinner {
-		width: 24px;
-		height: 24px;
-		border: 2px solid var(--border-card);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
-
-	/* Load More */
-	.load-more {
-		text-align: center;
-		padding: 2rem;
-	}
-
-	.load-more-btn {
-		background: transparent;
-		color: var(--accent);
-		border: 1px solid var(--accent);
-		padding: 0.625rem 1.5rem;
+	.cta {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.75rem 1.4rem;
 		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 500;
-		font-family: var(--font-family);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.load-more-btn:hover {
 		background: var(--accent);
-		color: white;
-		box-shadow: var(--shadow-glow);
+		color: #fff;
+		font-weight: 600;
+		text-decoration: none;
+		transition: background 0.15s;
+	}
+	.cta:hover {
+		background: var(--accent-hover);
+		color: #fff;
+	}
+	.cta-ghost {
+		background: transparent;
+		border: 1px solid var(--border-card-hover);
+		color: var(--text-primary);
+	}
+	.cta-ghost:hover {
+		background: var(--bg-card);
+		color: var(--text-primary);
+	}
+
+	section {
+		margin-bottom: 5rem;
+		text-align: center;
+	}
+	.kicker {
+		display: block;
+		font-size: 0.75rem;
+		font-weight: 600;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--accent-hover);
+	}
+	h2 {
+		font-family: var(--font-serif);
+		font-size: clamp(1.7rem, 4.5vw, 2.3rem);
+		font-weight: 600;
+		line-height: 1.15;
+		margin: 0.3rem 0 2rem;
+		text-wrap: balance;
+	}
+
+	/* The example */
+	.ex-card {
+		max-width: 40rem;
+		margin: 0 auto;
+		padding: 1.5rem;
+		text-align: left;
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-card);
+	}
+	.ex-who {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		margin-bottom: 1.25rem;
+	}
+	.ex-avatar {
+		width: 44px;
+		height: 44px;
+	}
+	.av-bg {
+		fill: var(--bg-secondary);
+	}
+	.av-fg {
+		fill: var(--text-muted);
+	}
+	.ex-name {
+		font-weight: 600;
+	}
+	.ex-tag {
+		font-size: 0.7rem;
+		padding: 0.1rem 0.55rem;
+		border-radius: var(--radius-full);
+		border: 1px dashed var(--border-card-hover);
+		color: var(--text-muted);
+	}
+	.ex-body {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 9rem;
+		gap: 1.5rem;
+		align-items: center;
+	}
+	.ex-facts {
+		display: flex;
+		flex-direction: column;
+	}
+	.ex-fact {
+		padding: 0.9rem 1rem;
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+	}
+	.ex-fact p {
+		margin: 0.25rem 0 0.4rem;
+		font-size: 1rem;
+		line-height: 1.5;
+	}
+	.ex-year {
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+	.ex-src {
+		font-size: 0.72rem;
+		color: var(--text-muted);
+	}
+	.ex-clash {
+		position: relative;
+		display: flex;
+		justify-content: center;
+		padding: 0.7rem 0;
+	}
+	.ex-clash::before {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 50%;
+		border-left: 2px dashed var(--red);
+		opacity: 0.6;
+	}
+	.ex-clash span {
+		position: relative;
+		padding: 0.2rem 0.7rem;
+		border-radius: var(--radius-full);
+		background: var(--error-bg);
+		border: 1px solid var(--error-border);
+		color: var(--red);
+		font-size: 0.75rem;
+		font-weight: 600;
+		backdrop-filter: blur(6px);
+	}
+	.ex-score {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+	}
+	.ex-score {
+		width: min(20rem, 100%);
+		margin: 0 auto;
+	}
+	.steps {
+		list-style: none;
+		padding: 0;
+		margin: 2.5rem auto 0;
+		max-width: 44rem;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1rem;
+	}
+	.steps li {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.3rem;
+	}
+	.step-n {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2rem;
+		height: 2rem;
+		margin-bottom: 0.3rem;
+		border-radius: 50%;
+		border: 1px solid var(--accent);
+		color: var(--accent-hover);
+		font-weight: 600;
+		font-size: 0.9rem;
+	}
+	.steps strong {
+		font-family: var(--font-serif);
+		font-size: 1.25rem;
+		font-weight: 600;
+	}
+	.steps span:last-child {
+		color: var(--text-secondary);
+		font-size: 0.92rem;
+	}
+
+	/* The services */
+	.svc-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+		text-align: left;
+	}
+	.svc {
+		display: flex;
+		flex-direction: column;
+		padding: 1.5rem 1.4rem 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
+		border-radius: var(--radius-lg);
+		color: var(--text-primary);
+		text-decoration: none;
+		transition:
+			border-color 0.2s,
+			transform 0.2s;
+	}
+	.svc:hover {
+		border-color: var(--accent);
+		transform: translateY(-2px);
+	}
+	.svc-icon {
+		width: 28px;
+		height: 28px;
+		fill: none;
+		stroke: var(--accent-hover);
+		stroke-width: 1.8;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.svc h3 {
+		font-family: var(--font-serif);
+		font-size: 1.35rem;
+		font-weight: 600;
+		margin: 0.9rem 0 0.4rem;
+	}
+	.svc p {
+		flex: 1;
+		margin: 0 0 1rem;
+		color: var(--text-secondary);
+		line-height: 1.55;
+		font-size: 0.95rem;
+	}
+	.svc-cta {
+		font-weight: 600;
+		font-size: 0.9rem;
+		color: var(--accent-hover);
+	}
+	.more {
+		margin-top: 2rem;
+	}
+	.more a {
+		color: var(--text-secondary);
+	}
+	.more a:hover {
+		color: var(--text-primary);
+	}
+
+	/* Scroll reveal (added by the action, so no-JS shows everything). The
+	   ring fills when the example comes into view. */
+	section:global(.reveal) {
+		opacity: 0;
+		transform: translateY(14px);
+		transition:
+			opacity 0.7s ease,
+			transform 0.7s ease;
+	}
+	section:global(.reveal.shown) {
+		opacity: 1;
+		transform: none;
+	}
+	/* The example's marker slides once the section is in view. */
+	section:global(.reveal) :global(.marker--in) {
+		animation-play-state: paused;
+	}
+	section:global(.reveal.shown) :global(.marker--in) {
+		animation-play-state: running;
+	}
+
+	@media (max-width: 680px) {
+		.hero {
+			margin-bottom: 3.5rem;
+		}
+		section {
+			margin-bottom: 3.5rem;
+		}
+		.ex-card {
+			padding: 1.1rem;
+		}
+		.ex-body,
+		.svc-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.steps {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 1.5rem;
+		}
 	}
 </style>

@@ -29,7 +29,7 @@ func TestStanceCandidatesByIDs(t *testing.T) {
 	fact := func(text string, emb []float32) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(emb)).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(emb)).Scan(&id))
 		return id
 	}
 	stance := func(person int64, label string, factIDs ...int64) int64 {
@@ -86,7 +86,7 @@ func TestShortlistExcludesFactAndSamplesMultiFactStances(t *testing.T) {
 	fact := func(text string, emb []float32) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(emb)).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(emb)).Scan(&id))
 		return id
 	}
 	stance := func(label string, factIDs ...int64) int64 {

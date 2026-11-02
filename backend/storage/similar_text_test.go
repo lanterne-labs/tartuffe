@@ -32,7 +32,7 @@ func TestFindSimilarActiveFactsUnionsTextMatches(t *testing.T) {
 		seq++
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(emb)).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(emb)).Scan(&id))
 		var sid int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO fact_sources (fact_id, source_url, source_type) VALUES ($1, $2, 'news') RETURNING id",
@@ -77,7 +77,7 @@ func insertQuotedFact(ctx context.Context, t *testing.T, storer *PostgresStorer,
 	t.Helper()
 	var id int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
-		"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(emb)).Scan(&id))
+		"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(emb)).Scan(&id))
 	var sid int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		"INSERT INTO fact_sources (fact_id, source_url, source_type, original_quote, published_at) VALUES ($1, $2, $3, $4, NULLIF($5, '')::timestamptz) RETURNING id",
@@ -184,7 +184,7 @@ func TestListTextSimilarFactPairs(t *testing.T) {
 	insert := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(makeUnitEmbedding(0))).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(makeUnitEmbedding(0))).Scan(&id))
 		return id
 	}
 	a := insert("Olivier Faure a assuré qu'il serait aux côtés des Gilets jaunes s'ils se soulèvent de nouveau.")
@@ -214,7 +214,7 @@ func TestGetFoldFactsForPersonExcludesFolded(t *testing.T) {
 	insert := func(text string, persons ...int64) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(makeUnitEmbedding(0))).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(makeUnitEmbedding(0))).Scan(&id))
 		for _, person := range persons {
 			seq++
 			var sid int64

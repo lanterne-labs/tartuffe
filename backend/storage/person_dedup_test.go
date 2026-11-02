@@ -48,7 +48,7 @@ func TestMergePersons(t *testing.T) {
 	require.NotEqual(t, intoID, fromID)
 
 	// Each person gets a fact (-> fact_source + fact_mention + stance via stub).
-	intoFactID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	intoFactID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity:      "alice into",
 		SubjectEntityType:  "human",
 		Lang:               "en",
@@ -60,7 +60,7 @@ func TestMergePersons(t *testing.T) {
 		SourceType:         "web",
 	})
 	require.NoError(t, err)
-	fromFactID, fromSourceID, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	fromFactID, fromSourceID, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity:      "alice from",
 		SubjectEntityType:  "human",
 		Lang:               "en",

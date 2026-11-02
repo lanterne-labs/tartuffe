@@ -91,7 +91,7 @@ func TestFindSimilarActiveFactsCarriesVerb(t *testing.T) {
 	require.NoError(t, err)
 
 	emb := makeUnitEmbedding(0)
-	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity: "similar subject", SubjectEntityType: "human", Lang: "fr",
 		NormalizedFactText: "a voté pour le texte", EmbeddingText: "vote texte",
 		Embedding: emb, CanonicalVerb: "VOTED_FOR",
@@ -137,7 +137,7 @@ func TestGetNeighborPairsForPerson(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO facts (fact_text, canonical_verb, embedding) VALUES ($1, $2, $3) RETURNING id",
-			text, verb, pgvector.NewVector(emb)).Scan(&id))
+			text, verb, pgvector.NewHalfVector(emb)).Scan(&id))
 		var sourceID int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO fact_sources (fact_id, source_url, source_type, published_at) VALUES ($1, $2, 'news', $3) RETURNING id",
@@ -179,14 +179,14 @@ func TestGetNeighborPairsForPerson(t *testing.T) {
 	require.Len(t, pairs, 3, "a-b, a-c, b-c; dup and far excluded: %+v", pairs)
 
 	assert.Equal(t, [2]int64{a, b}, [2]int64{pairs[0].FactID, pairs[0].NeighborID})
-	assert.InDelta(t, 0.1, pairs[0].Distance, 1e-6)
+	assert.InDelta(t, 0.1, pairs[0].Distance, 1e-3) // halfvec: about 4 significant digits
 	assert.Equal(t, "DENIED", pairs[0].NeighborVerb)
 	assert.Equal(t, b, pairs[0].TargetID, "no ancestor: the neighbor is the target")
 	assert.Equal(t, "fact b", pairs[0].TargetText)
 	assert.Nil(t, pairs[0].TargetDate)
 
 	assert.Equal(t, [2]int64{a, c}, [2]int64{pairs[1].FactID, pairs[1].NeighborID})
-	assert.InDelta(t, 0.2, pairs[1].Distance, 1e-6)
+	assert.InDelta(t, 0.2, pairs[1].Distance, 1e-3)
 	assert.Equal(t, "PROMISED", pairs[1].NeighborVerb, "the verb gate reads the neighbor, not the ancestor")
 	assert.Equal(t, e, pairs[1].TargetID, "deepest implication ancestor")
 	assert.Equal(t, "fact e", pairs[1].TargetText)

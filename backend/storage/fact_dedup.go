@@ -35,7 +35,7 @@ func (s *PostgresStorer) GetFactsForDeduplication(ctx context.Context, personID 
 	var results []core.FactForDedup
 	for rows.Next() {
 		var f core.FactForDedup
-		var emb pgvector.Vector
+		var emb pgvector.HalfVector
 		var isActive bool
 		err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText,
 			&f.CanonicalVerb, &f.OriginalQuote, &emb, &isActive)
@@ -81,7 +81,7 @@ func (s *PostgresStorer) FindSimilarFactsForDedup(ctx context.Context, personIDs
 
 	rows, err := s.pool.Query(ctx, query,
 		personIDs,
-		pgvector.NewVector(embedding),
+		pgvector.NewHalfVector(embedding),
 		excludeFactID,
 		distanceThreshold,
 	)

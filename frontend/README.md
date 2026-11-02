@@ -1,38 +1,23 @@
-# sv
+# tartuffe.me, the site
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+SvelteKit 5 (Svelte 5 runes), TypeScript, Vite. The API it reads is the Go
+server of the repository (`dm web serve`); the vote page talks to no server
+of ours at all: it reads the public data mirror and posts through Nostr
+relays, through isoloir's `@isoloir/web` (`src/lib/vote/isoloir.ts`).
 
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project in the current directory
-npx sv create
-
-# create a new project in my-app
-npx sv create my-app
+```bash
+npm install
+npm run dev -- --port 3000     # expects the API on 8080 (VITE_API_BASE)
+npm run check                  # svelte-check
+npx vitest run                 # unit tests (src/lib/**/*.test.ts)
+npm run build                  # production build
 ```
 
-## Developing
+Settings are `VITE_*` variables (`src/lib/config.ts`; the vote's in
+`src/lib/vote/sources.ts`): `VITE_API_BASE`, `VITE_VOTE_MIRROR` (a directory
+URL of the mirror), `VITE_VOTE_MIRROR_REPO` (owner/repo, read through
+jsDelivr by commit), `VITE_VOTE_LOG_KEY` (the log's verifier key, pinned),
+`VITE_ZKPASSPORT_DOMAIN`.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+Translations are in `src/lib/i18n.ts` (`tr(key, lang)`); French copy keeps
+its typography (a non-breaking space before `: ; ? !`).

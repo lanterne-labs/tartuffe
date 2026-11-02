@@ -33,8 +33,11 @@ func Run(ctx context.Context, dbURL string, migrationsDir string) error {
 		return fmt.Errorf("failed to stamp existing migrations: %w", err)
 	}
 
+	// Branches merge with migrations older than the ones already applied
+	// (each branch numbers its own by date): goose applies the missing ones
+	// instead of refusing to start.
 	log.Info().Str("dir", migrationsDir).Msg("Running database migrations...")
-	if err := goose.UpContext(ctx, db, migrationsDir); err != nil {
+	if err := goose.UpContext(ctx, db, migrationsDir, goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 

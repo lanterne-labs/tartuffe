@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/alerting"
+	"digital-mirror/backend/complaints"
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
@@ -100,6 +101,14 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		<-ctx.Done()
 		log.Info().Msg("Worker stopped while paused")
 		return nil
+	}
+
+	if judge, err := complaints.NewOpenAIJudgeFromEnv(); err != nil {
+		log.Error().Err(err).Msg("Worker: no LLM client for the user reports; they stay pending")
+	} else {
+		go worker.RunReports(ctx, func(ctx context.Context) (int, error) {
+			return complaints.JudgeReports(ctx, storer, judge, 10)
+		}, worker.ReportsEvery)
 	}
 
 	d := deps.New(storer)

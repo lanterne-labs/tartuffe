@@ -10,7 +10,10 @@
 		scoreLabel: string;
 	}
 
-	let { points: allPoints, lang, scoreLabel }: Props = $props();
+	let { points: rawPoints, lang, scoreLabel }: Props = $props();
+	// The chart draws the Tartuffe-Score: 1 − the honesty score the API
+	// gives, so a contradiction makes the line rise.
+	let allPoints = $derived(rawPoints.map((p) => ({ ...p, score: 1 - p.score, recent_score: 1 - p.recent_score })));
 
 	// Time range, as on trading charts: the last 3 months by default, the last
 	// year or everything on request. Every point carries its own cumulative and

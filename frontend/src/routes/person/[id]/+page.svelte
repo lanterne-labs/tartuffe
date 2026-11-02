@@ -1,15 +1,21 @@
 <script lang="ts">
+	import Spinner from '$lib/components/Spinner.svelte';
 	import { sourceDomain } from '$lib/sources';
 	import FactVersions from '$lib/components/FactVersions.svelte';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Restatement } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
-	import { API_BASE, TALLY_FORM_ID } from '$lib/config';
+	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
-	import ScoreGauge from '$lib/components/ScoreGauge.svelte';
+	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
+	import ShareMenu from '$lib/components/ShareMenu.svelte';
+	import ReportButton from '$lib/components/ReportButton.svelte';
+	import type { ShareTarget } from '$lib/types';
+	import { tick } from 'svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => {
@@ -126,25 +132,77 @@
 		}
 	}
 
-	async function goToFact(factId: number) {
-		factsExpanded = true;
+	// The item a shared link points at (?stance=, ?c=, ?fact=), highlighted
+	// for a moment once its stance is open.
+	let highlightContradiction: number | null = $state(null);
+	let highlightStance: number | null = $state(null);
 
-		const factExists = facts.some(f => f.fact_id === factId);
-		if (!factExists) {
-			await loadFacts(0);
+	function flash(elementId: string, clear: () => void) {
+		tick().then(() => {
+			const el = document.getElementById(elementId);
+			el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			setTimeout(clear, 2500);
+		});
+	}
+
+	async function openStance(stanceId: number, tab: StanceTab = 'contradictions') {
+		if (!stances.some((s) => s.id === stanceId)) return false;
+		stanceTab[stanceId] = tab;
+		if (!expandedStances[stanceId]) await toggleStance(stanceId);
+		if (tab === 'facts' && stanceFacts[stanceId] === undefined) await loadStanceFacts(stanceId);
+		return true;
+	}
+
+	// goToFact opens the facts of the stance that holds the fact (inStance
+	// when it does, else the fact's own stance of this person) and shows it.
+	async function goToFact(factId: number, inStance?: number) {
+		let stanceId = inStance;
+		if (stanceId !== undefined) {
+			if (stanceFacts[stanceId] === undefined) await loadStanceFacts(stanceId);
+			if (!stanceFacts[stanceId]?.some((f) => f.fact_id === factId)) stanceId = undefined;
 		}
-
+		if (stanceId === undefined) {
+			const t = await shareTarget('fact', factId);
+			stanceId = t?.stance_id ?? undefined;
+		}
+		if (stanceId === undefined || !(await openStance(stanceId, 'facts'))) return;
 		highlightedFactId = factId;
+		flash(`fact-${factId}`, () => (highlightedFactId = null));
+	}
 
-		setTimeout(() => {
-			const element = document.getElementById(`fact-${factId}`);
-			if (element) {
-				element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	async function shareTarget(kind: 'stance' | 'contradiction' | 'fact', id: number): Promise<ShareTarget | null> {
+		try {
+			const res = await fetch(`${API_BASE}/api/share/${kind}/${id}?person=${personId}`);
+			if (!res.ok) return null;
+			const t: ShareTarget = await res.json();
+			return t.person_id === personId ? t : null;
+		} catch (err) {
+			console.error('failed to resolve the shared item', err);
+			return null;
+		}
+	}
+
+	// openPointed opens what the link of the page points at.
+	async function openPointed() {
+		const q = $page.url.searchParams;
+		const num = (k: string) => (/^\d+$/.test(q.get(k) ?? '') ? Number(q.get(k)) : null);
+		const c = num('c'), f = num('fact'), st = num('stance');
+		if (c !== null) {
+			const t = await shareTarget('contradiction', c);
+			if (t?.stance_id && (await openStance(t.stance_id))) {
+				// The contradiction may sit past the first few shown.
+				const items = stanceContradictions[t.stance_id] ?? [];
+				const at = items.findIndex((g) => g.contradicting_facts.some((x) => x.contradiction_id === c));
+				if (at >= (stanceContradictionsShown[t.stance_id] ?? INITIAL_CONTRADICTIONS_SHOWN)) stanceContradictionsShown[t.stance_id] = at + 1;
+				highlightContradiction = c;
+				flash(`c-${c}`, () => (highlightContradiction = null));
 			}
-			setTimeout(() => {
-				highlightedFactId = null;
-			}, 2000);
-		}, 100);
+		} else if (f !== null) {
+			await goToFact(f);
+		} else if (st !== null && (await openStance(st))) {
+			highlightStance = st;
+			flash(`stance-${st}`, () => (highlightStance = null));
+		}
 	}
 
 	async function loadPerson() {
@@ -251,6 +309,18 @@
 		}
 	}
 
+	// The candidates, to place this one among them (only on a candidate's page).
+	let candidates: PersonSummary[] = $state([]);
+	async function loadCandidates() {
+		try {
+			const response = await fetch(`${API_BASE}/api/persons?candidate=true&limit=100`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			candidates = (await response.json()) ?? [];
+		} catch (err) {
+			console.error('failed to load the candidates', err);
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = null;
@@ -264,8 +334,10 @@
 		if (person?.entity_type === 'party') {
 			await loadMembers();
 		}
+		if (person?.candidate) loadCandidates();
 
 		loading = false;
+		await openPointed();
 	}
 
 	async function loadHistory() {
@@ -318,20 +390,15 @@
 		await loadFactPersons(factId, nextPage);
 	}
 
-	function getHonestyLabel(score: number, l: Lang): string {
-		if (score >= 0.8) return tr('person.honest', l);
-		if (score >= 0.4) return tr('person.mixed', l);
-		return tr('person.dishonest', l);
-	}
 
-	function getHonestyColor(score: number): string {
-		if (score >= 0.8) return 'var(--green)';
-		if (score >= 0.4) return 'var(--amber)';
-		return 'var(--red)';
+
+	// A label as a sentence: its first letter upper case.
+	function sentence(s: string | null | undefined): string {
+		return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 	}
 
 	function formatDate(dateString: string): string {
-		return new Date(dateString).toLocaleDateString();
+		return new Date(dateString).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
 
 	function formatDateWithTime(dateString: string): string {
@@ -342,65 +409,6 @@
 			day: 'numeric',
 			hour: '2-digit',
 			minute: '2-digit'
-		});
-	}
-
-	// --- User-complaints (Tally) ---
-	// One helper per kind so call sites read as `reportFact(fact)` etc., with no
-	// string-typed kind parameter to get wrong. The Tally popup carries the kind +
-	// the relevant id as hidden fields; the triage CLI reads them back via the API.
-	function openTally(hiddenFields: Record<string, string | number>) {
-		if (!TALLY_FORM_ID) {
-			console.warn('VITE_TALLY_FORM_ID is not set; report button is a no-op.');
-			return;
-		}
-		// Tally embed.js is loaded async from app.html; the global may not exist yet
-		// on a very early click. Bail gracefully — the user can re-click.
-		const tally = (window as any).Tally;
-		if (!tally?.openPopup) {
-			console.warn('Tally widget is still loading; please retry in a moment.');
-			return;
-		}
-		tally.openPopup(TALLY_FORM_ID, {
-			layout: 'modal',
-			width: 460,
-			hiddenFields
-		});
-	}
-
-	function reportFact(fact: FactWithSource) {
-		const previewSrc = pickFactText(fact);
-		const preview = previewSrc.length > 80 ? previewSrc.slice(0, 80) + '…' : previewSrc;
-		openTally({
-			target_kind: 'fact',
-			fact_id: fact.fact_id,
-			contradiction_id: '',
-			stance_id: '',
-			target_label: `Fact #${fact.fact_id}: ${preview}`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
-	function reportContradiction(g: ContradictionGroup) {
-		openTally({
-			target_kind: 'contradiction',
-			contradiction_id: g.contradicting_facts[0]?.contradiction_id ?? '',
-			fact_id: '',
-			stance_id: '',
-			target_label: `Contradiction group (base fact #${g.base_fact_id}, ${g.contradicting_facts.length} conflicting)`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
-		});
-	}
-
-	function reportStance(s: StanceDocument) {
-		const preview = s.label.length > 60 ? s.label.slice(0, 60) + '…' : s.label;
-		openTally({
-			target_kind: 'stance',
-			stance_id: s.id,
-			fact_id: '',
-			contradiction_id: '',
-			target_label: `Stance #${s.id}: ${preview}`,
-			source_url: typeof location !== 'undefined' ? location.href : ''
 		});
 	}
 
@@ -436,15 +444,15 @@
 </script>
 
 <svelte:head>
-	<title>{person?.name || 'Person'} - Digital Mirror</title>
+	<title>{person?.name ?? tr('person.loading', currentLang)} — tartuffe.me</title>
 </svelte:head>
 
 <div class="detail-page">
-	<a href="/" class="back-link">
+	<a href="/dashboard" class="back-link">
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 			<path d="m15 18-6-6 6-6"/>
 		</svg>
-		Back to Dashboard
+		{tr('nav.dashboard', currentLang)}
 	</a>
 
 	{#if loading && !person}
@@ -471,13 +479,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				{#if person.image_url}
-					<img src={person.image_url} alt={person.name} class="hero-avatar" />
-				{:else}
-					<div class="hero-avatar hero-avatar-placeholder">
-						{person.name.charAt(0).toUpperCase()}
-					</div>
-				{/if}
+				<TartuffeScore honesty={person.candidate ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 				<div class="hero-info">
 					<h1>
 						{person.name}
@@ -486,30 +488,30 @@
 						{/if}
 					</h1>
 					{#if person.candidate}
-						<p class="hero-label">{getHonestyLabel(person.honesty_score, currentLang)} — {(person.honesty_score * 100).toFixed(1)}%</p>
-						<p class="hero-summary">
-							{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
-							<span class="dot">·</span>
-							{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
-						</p>
+					<p class="hero-summary">
+						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
+						<span class="dot">·</span>
+						{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
+						<span class="dot">·</span>
+						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
+					</p>
+					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
 					{:else}
 						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
 						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
 					{/if}
 				</div>
 			</div>
-			{#if person.candidate}
-				<div class="hero-gauge">
-					<ScoreGauge score={person.honesty_score} size={80} showLabel label={tr('person.score', currentLang)} />
-				</div>
-			{/if}
+			<div class="hero-gauge">
+				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.candidate ? person.honesty_score : undefined }} />
+			</div>
 		</div>
 
-		{#if person.entity_type !== 'human' && person.members_score != null}
+		{#if person.candidate && person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
-				<ScoreGauge score={person.own_score ?? person.honesty_score} size={56} showLabel label="Own Score" />
-				<ScoreGauge score={person.members_score} size={56} showLabel label="Members Score" />
-				<ScoreGauge score={person.honesty_score} size={56} showLabel label="Aggregate" />
+				<TartuffeScore honesty={person.own_score ?? person.honesty_score} lang={currentLang} size="md" caption={tr('person.own_score', currentLang)} />
+				<TartuffeScore honesty={person.members_score} lang={currentLang} size="md" caption={tr('person.members_score', currentLang)} />
+				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="md" caption={tr('person.aggregate', currentLang)} />
 			</div>
 		{/if}
 
@@ -519,24 +521,15 @@
 					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="chevron" class:expanded={membersExpanded}>
 						<path d="m9 18 6-6-6-6"/>
 					</svg>
-					{members.length} members
+					{members.length} {tr('score.members', currentLang).toLowerCase()}
 				</button>
 
 				{#if membersExpanded}
 					<div class="members-grid">
 						{#each members as member (member.id)}
 							<a href="/person/{member.id}" class="member-chip">
-								{#if member.image_url}
-									<img src={member.image_url} alt={member.name} class="member-avatar" />
-								{:else}
-									<div class="member-avatar member-avatar-placeholder">
-										{member.name.charAt(0).toUpperCase()}
-									</div>
-								{/if}
+								<TartuffeScore honesty={member.honesty_score} lang={currentLang} size="xs" image={member.image_url} initial={member.name.charAt(0).toUpperCase()} />
 								<span class="member-name">{member.name}</span>
-								<span class="member-score" style="color: {getHonestyColor(member.honesty_score)}">
-									{(member.honesty_score * 100).toFixed(0)}%
-								</span>
 							</a>
 						{/each}
 					</div>
@@ -594,7 +587,8 @@
 						{@const items = stanceContradictions[stance.id] ?? []}
 						{@const shown = stanceContradictionsShown[stance.id] ?? INITIAL_CONTRADICTIONS_SHOWN}
 						{@const remaining = Math.max(0, items.length - shown)}
-						<div class="card stance-card" class:open={isOpen}>
+						{@const topic = pickLang(stance.label, stance.label_en, currentLang)}
+						<div class="card stance-card" class:open={isOpen} class:highlight={highlightStance === stance.id} id="stance-{stance.id}">
 							<!-- The whole header is one click target — tap anywhere on the card top to
 							     toggle. Interactive children inside (the report button) stop propagation
 							     so they don't also flip the toggle. The contradictions panel below sits
@@ -614,7 +608,7 @@
 								<div class="stance-top">
 									<div class="stance-main">
 										<div class="stance-label-row">
-											<span class="stance-label">{pickLang(stance.label, stance.label_en, currentLang)}</span>
+											<span class="stance-label">{sentence(pickLang(stance.label, stance.label_en, currentLang))}</span>
 											<svg class="stance-chevron" class:expanded={isOpen} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 												<path d="m6 9 6 6 6-6"/>
 											</svg>
@@ -631,23 +625,12 @@
 											{#if !hasContradictions}
 												<span class="no-contradictions-chip">{tr('person.no_contradictions_chip', currentLang)}</span>
 											{/if}
-											{#if TALLY_FORM_ID}
-												<button
-													class="meta-report-btn"
-													title="Report this stance"
-													aria-label="Report this stance"
-													onclick={(e) => { e.stopPropagation(); reportStance(stance); }}
-												>
-													<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-														<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-														<line x1="12" y1="9" x2="12" y2="13"/>
-														<line x1="12" y1="17" x2="12.01" y2="17"/>
-													</svg>
-												</button>
-											{/if}
+											<ShareMenu item={{ kind: 'stance', id: stance.id, personId: person.id, personName: person.name, topic }} />
 										</div>
 									</div>
-									<ScoreGauge score={stance.score} size={56} />
+									<div class="stance-gauge">
+										<TartuffeScore honesty={stance.score} lang={currentLang} />
+									</div>
 								</div>
 							</div>
 
@@ -672,10 +655,16 @@
 								<div class="stance-tab-body" role="tabpanel">
 									{#if tab === 'contradictions'}
 										{#if stanceLoading[stance.id]}
-											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+											<p class="empty-mini loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 										{:else if items.length > 0}
 											{#each items.slice(0, shown) as g (g.base_fact_id)}
-												<ContradictionGroupCard {g} onGoToFact={goToFact} onReport={reportContradiction} />
+												<ContradictionGroupCard
+													{g}
+													person={{ id: person.id, name: person.name }}
+													{topic}
+													onGoToFact={(id) => goToFact(id, stance.id)}
+													highlight={highlightContradiction}
+												/>
 											{/each}
 											{#if remaining > 0}
 												<div class="stance-more-row">
@@ -694,11 +683,11 @@
 										{/if}
 									{:else}
 										{#if stanceFactsLoading[stance.id]}
-											<p class="empty-mini">{tr('person.loading', currentLang)}</p>
+											<p class="empty-mini loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 										{:else if (stanceFacts[stance.id]?.length ?? 0) > 0}
 											<div class="stance-facts-list">
 												{#each stanceFacts[stance.id] as f (f.fact_id)}
-													<div class="stance-fact-row">
+													<div class="stance-fact-row" id="fact-{f.fact_id}" class:highlight={highlightedFactId === f.fact_id}>
 														<div class="stance-fact-text">
 															<span class="fact-id">[{f.fact_id}]</span>
 															{pickFactText(f)}
@@ -718,6 +707,10 @@
 															<div class="quote-block">"{f.original_quote.length > 200 ? f.original_quote.slice(0, 200) + '…' : f.original_quote}"</div>
 														{/if}
 														<FactVersions sourceUrls={[f.source_url]} restatements={f.restatements ?? []} lang={currentLang} />
+														<div class="fact-actions">
+															<ShareMenu item={{ kind: 'fact', id: f.fact_id, personId: person.id, personName: person.name, topic, text: pickFactText(f) }} />
+															<ReportButton kind="fact" targetId={f.fact_id} preview={f.fact_text} />
+														</div>
 													</div>
 												{/each}
 											</div>
@@ -732,6 +725,13 @@
 				</div>
 			{/if}
 		</section>
+
+		{#if person.candidate && candidates.length > 1}
+			<section class="compare-section">
+				<h2>{tr('score.compare.title', currentLang)}</h2>
+				<ScoreCompare people={candidates} lang={currentLang} focus={person.id} />
+			</section>
+		{/if}
 
 		<!-- Facts disclosure removed: facts now live inside each stance card under a
 		     "Facts" tab next to "Contradictions". See stance card markup above. -->
@@ -761,9 +761,10 @@
 	/* Hero */
 	.person-hero {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: space-between;
-		gap: 2rem;
+		justify-content: center;
+		gap: 1rem;
 		margin-bottom: 2rem;
 		padding: 1.5rem;
 		background: var(--bg-card);
@@ -773,31 +774,14 @@
 		border-radius: var(--radius-lg);
 	}
 
+	/* The dial with the portrait, the name and the summary under it. */
 	.hero-left {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 1.25rem;
-		flex: 1;
+		text-align: center;
+		gap: 0.75rem;
 		min-width: 0;
-	}
-
-	.hero-avatar {
-		width: 80px;
-		height: 80px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.hero-avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		font-weight: 600;
-		font-size: 2rem;
-		border: 1px solid var(--border-card);
 	}
 
 	.hero-info h1 {
@@ -810,13 +794,7 @@
 		text-transform: capitalize;
 	}
 
-	.hero-label {
-		color: var(--text-secondary);
-		font-size: 0.875rem;
-		margin-top: 0.25rem;
-	}
-
-	.hero-note {
+		.hero-note {
 		color: var(--text-secondary);
 		font-size: 0.8125rem;
 		margin-top: 0.5rem;
@@ -849,43 +827,14 @@
 
 	.hero-gauge {
 		flex-shrink: 0;
-	}
-
-	.lang-toggle {
-		display: inline-flex;
-		gap: 2px;
-		padding: 2px;
-		background: var(--bg-card);
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		flex-shrink: 0;
-		margin-left: 0.5rem;
-	}
-	.lang-pill {
-		background: transparent;
-		border: none;
-		padding: 0.25rem 0.6rem;
-		border-radius: var(--radius-full);
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: all var(--transition-normal);
-	}
-	.lang-pill:hover {
-		color: var(--text-primary);
-	}
-	.lang-pill.active {
-		background: var(--accent);
-		color: white;
+		width: min(20rem, 100%);
 	}
 
 	/* Score Breakdown */
 	.score-breakdown {
 		display: flex;
 		justify-content: center;
-		gap: 2rem;
+		gap: 1.25rem;
 		margin-bottom: 1.5rem;
 		padding: 1rem 1.5rem;
 		background: var(--bg-card);
@@ -960,34 +909,10 @@
 		border-color: var(--accent);
 	}
 
-	.member-avatar {
-		width: 24px;
-		height: 24px;
-		border-radius: 50%;
-		object-fit: cover;
-		flex-shrink: 0;
-	}
-
-	.member-avatar-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: var(--bg-secondary);
-		color: var(--text-muted);
-		font-weight: 600;
-		font-size: 0.625rem;
-		border: 1px solid var(--border-card);
-	}
-
 	.member-name {
 		color: var(--text-primary);
 		text-transform: capitalize;
 		flex: 1;
-	}
-
-	.member-score {
-		font-weight: 600;
-		font-size: 0.688rem;
 	}
 
 	/* Error */
@@ -1030,6 +955,15 @@
 		color: var(--text-muted);
 		font-style: italic;
 		padding: 3rem;
+	}
+
+	.compare-section {
+		margin: 2rem 0 1.5rem;
+	}
+	.compare-section h2 {
+		text-align: center;
+		font-size: 1.15rem;
+		margin-bottom: 0.9rem;
 	}
 
 	/* Stances section: the headline content of the profile. */
@@ -1103,53 +1037,6 @@
 		position: relative;
 	}
 
-	/* Report-issue affordance: small warning icon used on fact cards. Stance cards
-	   place their report button inside the meta line (no absolute positioning) so it
-	   doesn't collide with the per-stance gauge. */
-	.report-btn {
-		position: absolute;
-		top: 0.5rem;
-		right: 0.5rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: var(--text-secondary);
-		opacity: 0.5;
-		cursor: pointer;
-		transition: color var(--transition-fast), opacity var(--transition-fast), background var(--transition-fast);
-	}
-	.report-btn:hover,
-	.report-btn:focus-visible {
-		color: var(--red);
-		opacity: 1;
-		background: rgba(255, 255, 255, 0.05);
-		outline: none;
-	}
-
-	.meta-report-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		margin-left: auto;
-		background: transparent;
-		border: none;
-		color: var(--text-muted);
-		opacity: 0.6;
-		cursor: pointer;
-		transition: color var(--transition-fast), opacity var(--transition-fast);
-	}
-	.meta-report-btn:hover {
-		color: var(--red);
-		opacity: 1;
-	}
-
 	/* Stance card */
 	.stance-card {
 		padding: 0;
@@ -1179,14 +1066,6 @@
 		outline-offset: -2px;
 	}
 
-	.stance-clickable.disabled {
-		cursor: default;
-	}
-
-	.stance-clickable.disabled:hover {
-		background: transparent;
-	}
-
 	.stance-top {
 		display: flex;
 		align-items: flex-start;
@@ -1209,7 +1088,6 @@
 		font-size: 0.938rem;
 		font-weight: 600;
 		color: var(--text-primary);
-		text-transform: capitalize;
 	}
 
 	.stance-chevron {
@@ -1336,12 +1214,6 @@
 		opacity: 0.8;
 	}
 
-	.stance-contradictions {
-		margin: 0 1.25rem 1rem;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--border-card);
-	}
-
 	.stance-more-row {
 		display: flex;
 		gap: 1rem;
@@ -1367,52 +1239,9 @@
 		border-radius: var(--radius-full);
 	}
 
-	/* Facts disclosure (de-emphasized — stances are the headline). */
-	.facts-disclosure {
-		margin-top: 1.5rem;
-		padding-top: 1rem;
-		border-top: 1px solid var(--border-card);
-	}
-
-	.facts-disclosure-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		background: transparent;
-		border: none;
-		padding: 0.25rem 0;
-		font-family: var(--font-family);
-		font-size: 0.813rem;
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: color var(--transition-fast);
-	}
-
-	.facts-disclosure-toggle:hover {
-		color: var(--text-primary);
-	}
-
-	.facts-list {
-		margin-top: 0.75rem;
-	}
-
-	/* Fact Card (used inside the facts disclosure) */
-	.fact-card.highlighted {
-		border-color: var(--accent);
-		box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-glow);
-		animation: pulse-glow 1s ease-in-out;
-	}
-
 	@keyframes pulse-glow {
 		0%, 100% { box-shadow: 0 0 0 3px var(--accent-glow); }
 		50% { box-shadow: 0 0 0 6px var(--accent-glow); }
-	}
-
-	.fact-text {
-		font-size: 0.938rem;
-		line-height: 1.6;
-		color: var(--text-primary);
-		margin-bottom: 0.75rem;
 	}
 
 	.fact-id {
@@ -1420,11 +1249,6 @@
 		font-weight: 600;
 		color: var(--text-muted);
 		margin-right: 0.25rem;
-	}
-
-	.fact-source a {
-		color: var(--accent);
-		font-size: 0.813rem;
 	}
 
 	.quote-block {
@@ -1436,81 +1260,6 @@
 		background: var(--bg-secondary);
 		border-radius: var(--radius-sm);
 		border-left: 3px solid var(--accent);
-	}
-
-	/* Fact Persons */
-	.fact-persons-section {
-		margin-top: 0.75rem;
-		padding-top: 0.75rem;
-		border-top: 1px solid var(--border-card);
-	}
-
-	.persons-toggle {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.75rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		font-size: 0.75rem;
-		font-family: var(--font-family);
-		color: var(--text-secondary);
-		transition: border-color var(--transition-fast);
-	}
-
-	.persons-toggle:hover {
-		border-color: var(--border-card-hover);
-	}
-
-	.fact-persons-grid {
-		margin-top: 0.5rem;
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-		gap: 0.5rem;
-	}
-
-	.person-chip {
-		display: flex;
-		justify-content: space-between;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		color: inherit;
-		font-size: 0.75rem;
-		transition: border-color var(--transition-fast);
-	}
-
-	.person-chip:hover {
-		border-color: var(--accent);
-	}
-
-	.person-chip-name {
-		color: var(--text-primary);
-		text-transform: capitalize;
-	}
-
-	.person-chip-score {
-		color: var(--text-muted);
-	}
-
-	.load-more-inline {
-		grid-column: 1 / -1;
-		padding: 0.375rem;
-		background: transparent;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		color: var(--accent);
-		font-size: 0.75rem;
-		font-family: var(--font-family);
-		transition: background var(--transition-fast);
-	}
-
-	.load-more-inline:hover {
-		background: var(--bg-secondary);
 	}
 
 	.empty-mini {
@@ -1533,36 +1282,6 @@
 
 	.link-btn:hover {
 		color: var(--accent-hover);
-	}
-
-	/* Load More */
-	.load-more {
-		text-align: center;
-		padding: 2rem;
-	}
-
-	.load-more-btn {
-		background: transparent;
-		color: var(--accent);
-		border: 1px solid var(--accent);
-		padding: 0.625rem 1.5rem;
-		border-radius: var(--radius-full);
-		font-size: 0.875rem;
-		font-weight: 500;
-		font-family: var(--font-family);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.load-more-btn:hover:not(:disabled) {
-		background: var(--accent);
-		color: white;
-		box-shadow: var(--shadow-glow);
-	}
-
-	.load-more-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	/* Skeleton */
@@ -1628,5 +1347,35 @@
 			flex-direction: column-reverse;
 			align-items: flex-start;
 		}
+	}
+
+	.hero-gauge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	.stance-gauge {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.3rem;
+		flex-shrink: 0;
+		width: 8.5rem;
+	}
+	.fact-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.25rem;
+		margin-top: 0.35rem;
+	}
+	.stance-card.highlight,
+	.stance-fact-row.highlight {
+		box-shadow: 0 0 0 3px var(--accent-glow);
+		border-color: var(--accent);
+		transition: box-shadow 0.6s ease;
+	}
+	.feed-link {
+		color: var(--accent-hover);
+		white-space: nowrap;
 	}
 </style>

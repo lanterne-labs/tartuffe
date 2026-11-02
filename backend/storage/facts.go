@@ -142,7 +142,7 @@ func (s *PostgresStorer) FindSimilarActiveFacts(ctx context.Context, q core.Simi
 
 	rows, err := s.pool.Query(ctx, query,
 		q.PersonIDs,
-		pgvector.NewVector(q.Embedding),
+		pgvector.NewHalfVector(q.Embedding),
 		q.MaxDistance,
 		limit,
 		q.Text,
@@ -193,7 +193,7 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		input.NormalizedFactText,
 		input.NormalizedFactTextEn,
 		input.EmbeddingText,
-		pgvector.NewVector(input.Embedding),
+		pgvector.NewHalfVector(input.Embedding),
 		input.CanonicalVerb,
 		input.Lang,
 		date,
@@ -484,7 +484,7 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 	var results []FactWithEmbedding
 	for rows.Next() {
 		var f FactWithEmbedding
-		var emb pgvector.Vector
+		var emb pgvector.HalfVector
 		var sd statementDate
 		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("failed to scan fact for person %d: %w", personID, err)
@@ -556,7 +556,7 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 
 	rows, err := queryer.Query(ctx, query,
 		personID,                      // $1
-		pgvector.NewVector(embedding), // $2
+		pgvector.NewHalfVector(embedding), // $2
 		excludeFactID,                 // $3
 		embeddingSimilarityThreshold,  // $4
 	)
@@ -1281,7 +1281,7 @@ func (s *PostgresStorer) GetFactByID(ctx context.Context, factID int64) (*core.F
 		WHERE f.id = $1`
 
 	var f core.FactForDedup
-	var emb pgvector.Vector
+	var emb pgvector.HalfVector
 	var isActive bool
 	err := s.pool.QueryRow(ctx, query, factID).Scan(
 		&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.OriginalQuote, &emb, &isActive)
@@ -1304,7 +1304,7 @@ func (s *PostgresStorer) UpdateFactEmbedding(ctx context.Context, factID int64, 
 		SET embedding = $1
 		WHERE id = $2`
 
-	result, err := s.pool.Exec(ctx, query, pgvector.NewVector(embedding), factID)
+	result, err := s.pool.Exec(ctx, query, pgvector.NewHalfVector(embedding), factID)
 	if err != nil {
 		return fmt.Errorf("failed to update fact %d embedding: %w", factID, err)
 	}

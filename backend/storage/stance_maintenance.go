@@ -33,7 +33,7 @@ func (s *PostgresStorer) GetFactsForStanceBackfill(ctx context.Context, personID
 	var facts []core.StanceRoutingFact
 	for rows.Next() {
 		var f core.StanceRoutingFact
-		var vec pgvector.Vector
+		var vec pgvector.HalfVector
 		var sd statementDate
 		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec, &f.PublishedAt, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning fact: %w", err)

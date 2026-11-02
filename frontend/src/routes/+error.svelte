@@ -1,15 +1,19 @@
 <script lang="ts">
 	import { page } from '$app/stores';
+	import { lang, tr, type Lang } from '$lib/i18n';
+
+	let currentLang = $state<Lang>('fr');
+	$effect(() => lang.subscribe((v) => (currentLang = v)));
 </script>
 
 <svelte:head>
-	<title>Error {$page.status} — tartuffe.me</title>
+	<title>{tr('error.title', currentLang, { status: $page.status })} — tartuffe.me</title>
 </svelte:head>
 
 <div class="error-page">
 	<div class="error-code">{$page.status}</div>
-	<p class="error-message">{$page.error?.message || 'Something went wrong'}</p>
-	<a href="/" class="back-btn">Back to Dashboard</a>
+	<p class="error-message">{$page.error?.message || tr('error.generic', currentLang)}</p>
+	<a href="/" class="back-btn">{tr('error.back', currentLang)}</a>
 </div>
 
 <style>

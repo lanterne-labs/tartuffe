@@ -21,3 +21,11 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+static/srs/
+static/mirror
+
+.vote-routes/
+build-vote/
+
+# The vote app build writes the candidates here (scripts/vote-app.mjs).
+static/vote/

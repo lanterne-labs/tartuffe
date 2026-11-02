@@ -7,9 +7,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.13
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.6
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/coreos/go-oidc/v3 v3.15.0
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
+	github.com/go-jose/go-jose/v4 v4.1.1
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/johannesboyne/gofakes3 v0.0.0-20260208201424-4c385a1f6a73
 	github.com/joho/godotenv v1.5.1
@@ -20,6 +22,11 @@ require (
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/text v0.43.0
+)
+
+require (
+	github.com/jmoiron/sqlx v1.4.0 // indirect
+	golang.org/x/oauth2 v0.28.0 // indirect
 )
 
 require (
@@ -36,7 +43,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.8 // indirect
 	github.com/aws/smithy-go v1.28.7 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/elliotchance/pie/v2 v2.9.0 // indirect
 	github.com/forPelevin/gomoji v1.2.0 // indirect
@@ -75,11 +82,12 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
-	google.golang.org/protobuf v1.33.0 // indirect
+	google.golang.org/protobuf v1.36.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )

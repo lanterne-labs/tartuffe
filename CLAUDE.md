@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Digital Mirror is a fact-checking and honesty-scoring system for political figures. It extracts facts from web content and political data sources, stores them with semantic embeddings, and uses LLM-based contradiction detection to compute honesty scores.
 
-**Tech Stack**: Go 1.23 backend (Chi router, pgx/PostgreSQL, pgvector), SvelteKit 5 frontend, Supabase for local development.
+**Tech Stack**: Go 1.24 backend (Chi router, pgx/PostgreSQL, pgvector), SvelteKit 5 frontend, Supabase for local development.
 
 ## Common Commands
 
@@ -49,6 +49,43 @@ go build -o dm .                                # Build binary
 **The candidates** (`persons.attributes.candidate`, `backend/storage/candidates.go`; the presidential candidates since 2026-11-01) are the persons whose facts get the AI work after extraction: the grouping gate, a stance, and the maintenance pass (refresh, merge, fold, pairs, detection, translations) run for them only. The facts of everyone are still extracted and stored (the feed's votes and transcripts of every deputy), but a fact of another person gets no stance and no contradiction detection, and the site says so. The queue is theirs: `dm collect add` and `dm queue add` refuse another person unless `--not-candidate`. The API lists them with `/api/persons?candidate=true` (`false`: the others).
 
 The worker (`backend/worker`) replaces the nightly cron. It runs the work in the order of priority. The daily feed after 03:00 UTC (frpolitics votes and transcripts, the backfills for 1 h, the watch list tasks) goes before every task: it runs beside the tasks as soon as it is due, and while it is due or runs no backfill task starts and no maintenance pass (only the watch list's tasks, added at the start of the feed, are claimed; the backfills already running go on). The watch list tasks (the day before) have priority 50, above the backfills (`--priority`, 0 to 20). Within a priority, a task of a person no task runs for goes first (the facts of one person are inserted one at a time). The maintenance pass (stance refresh, stance merge, the fold of the split claim groups of the persons whose facts changed, contradiction detection over the persons with new facts, duplicate repoint, regroup, audit every 5 days, translations) runs alone, without a task or the feed, since it rewrites the stances they insert into: when no task is pending after facts were added, and at the latest every 6 h although tasks are pending (the worker stops claiming, lets the running tasks end, runs the pass, then goes on: a due pass goes before a new task, so free lanes do not fill first; while a feed is due or runs, the pass waits for its end). The pass judges what changed since the start of the last one (`job_metrics`, job `maintenance`). Its stance merge makes at most 2000 LLM calls, the persons at once as the seats serve, its fold at most 2000 grouping gate calls (a pair the gate judged at insertion or in an earlier fold keeps its stored verdict, `occurrence_checks`), and its detection judges at most 2000 pairs (about 2 h); a pass cut there records `cut_since_unix`, and the next pass goes on over the same persons once the tasks and the feed left room.
+
+### Pre-polls (presidential election)
+```bash
+./dm poll list                                              # events, state
+./dm poll event set presidentielle-2027 --min-voters 50 --featured   # create/change an event (flags given only)
+./dm poll candidate add presidentielle-2027 "Marine Le Pen" "Jordan Bardella"
+./dm poll candidate remove presidentielle-2027 "Name"
+./dm poll blackout add presidentielle-2027 --from 2027-04-15T22:00:00Z --to 2027-04-18T18:00:00Z
+./dm poll isoloir-setup presidentielle-2027 --id 6 --registry 1 --pk <hex> --sign-key <hex> \
+    --circuit rankedm12_single_linked_d20 --vk-hash <hex>   # prints the isoloir poll JSON for `isoloir submit poll`
+./dm poll purge-users --provider noop --yes                 # drop the test accounts
+```
+
+An event (`poll_events`, seeded: `presidentielle-2027`) lists candidates among the tracked persons, its blackouts and its minimum of voters. The ballots, the log and the tallies are **isoloir** (see "The anonymous vote" below): the Go backend only serves the event, its candidates' cards and its blackouts (`GET /api/polls/<slug>`). `dm poll isoloir-setup` turns an event into the isoloir poll: the options are the candidates sorted by name, then the blank.
+
+The page `/election/[slug]/voter` shows the ranking (the slots ordered by the head-to-head wins of the tally's margins, the Condorcet winner marked) with the first choices, the honesty score /100 of each candidate (red to green), and the blank vote as its own line; results are hidden during a blackout (polling law: the day before and the day of a vote). `/election/[slug]/fonctionnement` tells the voter how it works; every line there must stay true to the code.
+
+Rate limits key by client address: behind the host's edge that is `X-Real-IP` (the edge overwrites the client's own), elsewhere the connection's address (`CLIENT_IP_HEADER` names another header, `none` turns it off). `RATE_LIMIT_PER_MINUTE` (600: a page view makes about ten requests, and a mobile carrier puts many users behind one address) applies to every route, `SIGNIN_RATE_LIMIT_PER_MINUTE` (30) to the challenges and sign-ins together.
+
+Accounts (`backend/accounts`, `AUTH_PROVIDERS`): an account comes from `google` (OpenID Connect, implicit flow in a popup, scope `openid` only: Google sends no e-mail, name or photo; the ID token's `sub` is stored as its HMAC under `AUTH_SUBJECT_KEY`, and the token's nonce is a one-time challenge; needs `GOOGLE_CLIENT_ID`, with `https://<site>/auth/google` as an authorized redirect URI of the OAuth client) or `noop` (tests: a pseudonym, no proof). An account is for the +1 and the reports; voting needs none (isoloir checks the passport itself). `zkpassport` proves a document for the polls (`accounts.ProveDocument`): the user scans the chip of their passport with the ZKPassport app; the phone proves in zero knowledge "adult, French" and gives an identifier unique per document for this domain and scope; nothing else leaves the phone. The proof carries a one-time server challenge (`auth_challenges`) and the voting key's commitment, bound as `custom_data`. `noop` also proves test documents (the pseudonym is the "document"). A Google account has no name: the user picks a pseudonym after the sign-in (`PATCH /api/auth/me`), shown to them alone; no route returns another user's pseudonym or +1. The API verifies the proofs itself with `zkverifier/verify.mjs` (Node, the open-source verifier of `@zkpassport/sdk`, `verifierMode: "local"`, no ZKPassport account or key); run `npm ci` in `zkverifier/` for a local zkpassport verification. Sessions are bearer tokens (hashed in `user_sessions`). Removing a provider from `AUTH_PROVIDERS` ends its sessions at once. The explainer for users is `/verification`, the privacy page `/about/privacy`. The Grafana dashboard **Users** follows the sign-ins, document checks, registrations, ballots, +1 and reports.
+
+### The three parts of the site
+
+The HTTP API is three products side by side, each a Go package with its own routes, its own storage and its own tables; `backend/api` only assembles them (middleware, CORS, rate limits, `/health`, `Wire`):
+- **mirror** (`backend/mirror`, data in `backend/storage`): the politicians' record: persons, facts, stances, contradictions, the feed, shared links, score explanations, the users' +1 and reports.
+- **accounts** (`backend/accounts`, providers in `backend/accounts/providers`): users, sessions, challenges (`app_users`, `user_sessions`, `auth_challenges`). It gives the others `RequireUser`, `UserFrom`, `ViewerID`, and `ProveDocument`, which checks a document's proof and gives its HMAC without keeping it.
+- **polls** (`backend/polls`): the events of a vote, the presidential pre-poll first (`poll_events`, `poll_blackouts`, `poll_candidates`). The vote itself is isoloir, outside this repository. It keeps only ids: the candidates' cards come from the mirror through `polls.People`.
+
+A part never reads or writes another's tables; a need crosses through an interface or a method. Tests of a part that needs signed-in users use `backend/accounts/accountstest` (an in-memory accounts store and the noop sign-in).
+
+### Sharing, the feed, the score explanations and the users' reports
+
+Every person, stance, contradiction and fact has a link: `/person/{id}`, `?stance=`, `?c=` (contradiction), `?fact=` (`frontend/src/lib/share.ts`). The page opens the stance and highlights the item; the SvelteKit server reads the same parameters to fill the link preview (`routes/person/[id]/+page.server.ts`, from `GET /api/share/{kind}/{id}`; it reaches the API at `API_INTERNAL_URL`, else `VITE_API_BASE`). Other pages set their preview with `meta` in their load data (the layout renders it). The share menu posts on X, copies the link, or opens the phone's share sheet.
+
+`/feed` lists the contradictions and facts in an endless scroll (`GET /api/feed?sort=hot|new&kind=&person=&from=&to=&after=<cursor>`; a fact is listed once it is in a stance, a person only above the public floor of 4 facts). A signed-in user gives a +1 to an item (`PUT`/`DELETE /api/likes/{kind}/{id}`, table `feed_likes`, one per user and item). "À la une" (`sort=hot`, the page's default) ranks by the gravity of Hacker News, `(likes + 1) / (age in hours + 2)^1.8`, over the items of the last 14 days (all of them when one person is chosen), and stops after 200 items; "Récent" (`sort=new`) is newest first. The feed marks the viewer's +1 when the request carries their session. Every score has a "?" with its inputs and the formula (`GET /api/person/{id}/score`; a stance's from its card). `/about` explains the method, `/corrections` lists the corrections.
+
+A signed-in user reports a fact or a contradiction once (`POST /api/reports`, `user_reports`, at most 20 waiting per user; `GET /api/me/reports`, shown on `/profile`). The worker judges the pending reports every minute beside its tasks (`complaints.JudgeReports`, the complaint judge with the target, its sources and the report): accepted removes the target (a contradiction is dismissed so its pair is not detected again, a fact goes with its contradictions and the scores are recomputed) and enters the public log (`GET /api/corrections`, the judge's reason only, not the reporter's words); rejected keeps it; ambiguous (or 3 failed judgings) waits for a person: `./dm complaints reports --status ambiguous`.
 
 ### News Search
 ```bash
@@ -98,7 +135,8 @@ go test -v ./backend/storage -run TestSpecificName
 3. **Fact Generation**: Convert domain events (votes, statements) to structured Fact objects
 4. **Embedding**: Generate vector embeddings via OpenAI-compatible API, store in pgvector
 5. **Contradiction Detection**: Query K-nearest neighbors per person, compare with LLM
-6. **Score Update**: Recalculate honesty score: `exp(-4 * contradictions/facts - 0.02 * contradictions)` (hybrid: ratio decay k=4 + absolute decay j=0.02)
+6. **Score Update**: Recalculate honesty score: `exp(-1.5 * B/max(F, 75) - 0.03 * B - 0.05 * ln(1 + E))`, F facts, B distinct contradictions (the pairs of one stance count once), E the extra pairs (`backend/core/honesty.go`; the site explains it with the same numbers, `frontend/src/lib/score.ts`)
+   The site never shows this number as is: it shows the **Tartuffe-Score**, 100 × (1 − honesty), as a barometer from « cohérent » to « tartuffe » (`frontend/src/lib/components/TartuffeScore.svelte`, no number in the headline, no marker under 10 facts). The API keeps `honesty_score`.
 7. **Event Emission**: Insert events to `event_log` table for SSE streaming
 
 ### Key Components
@@ -125,9 +163,10 @@ PostgreSQL with pgvector extension. Migrations in `supabase/migrations/` are ide
 - Migrations are run by **goose** on `dm web serve` startup (in prod) and applied locally by `supabase db reset` / `make db-start`.
 - **Every new migration MUST begin with `-- +goose Up` and include a `-- +goose Down` block** — without them goose throws a parse error at boot and the deploy fails.
 - Migrations should be incremental (ALTER TABLE, not DROP/CREATE).
+- **Two migrations must never share a version** (goose panics at boot: `Migrations.Less`); before merging a branch, check its versions against main's. Versions older than the latest applied (a branch merged after main moved on) are applied: the runner passes `goose.WithAllowMissing()`.
 - **Never reset the database without user permission** - data loss is permanent.
 
-Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `news_queue` (queue for news search).
+Key tables: `persons` (with `honesty_score`), `facts` (with `embedding` vector), `contradictions`, `person_links` (temporal affiliations), `event_log` (for SSE), `search_queue` (the queue of the news searches).
 
 ## Environment Variables
 
@@ -178,12 +217,61 @@ Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (p
   3. If it is better, edit the `mirror-llm` entry in `llama-swap.yaml` (llama-swap reloads the file). Nothing changes on the host, except `FALLBACK_CHAT_MODEL` if the OpenRouter name changes.
   4. Record the result in CHANGES.md.
 
+## The anonymous vote (isoloir)
+
+The vote is [isoloir](https://github.com/tartuffeme/isoloir) (its own repository, beside this one; read its `SPEC.md` and README): passport eligibility through ZKPassport, ballots proved in the browser (Noir, UltraHonk), posted to Nostr relays, logged by the ledger's ingest in a signed append-only log (RFC 6962), mirrored to `tartuffeme/vote-data`, decrypted as sums by the authority with proofs. isoloir knows nothing of tartuffe: keep it that way, a need of ours is a generic feature there.
+
+- **Ledger** (`tartuffe.me/vote-log`): the host service `ingest`, built from the isoloir repository (`isoloir ingest --mirror-dir /app/mirror`), the log's only writer. The log key is `ISOLOIR_LOG_KEY` (its verifier key is the frontend's `VITE_VOTE_LOG_KEY`).
+- **Authority**: the host service `tally` (`isoloir authority --db $DATABASE_URL`), with `ISOLOIR_AUTHORITY_KEYS`; no inbound port.
+- **A poll**: `dm poll isoloir-setup` prints its JSON, `isoloir submit poll <file>` posts it. A change to a fixed field (keys, circuit, `k_real`) is a new poll.
+- Audit: `isoloir audit` (anyone, from the mirror).
+
+### The vote app (frontend, isoloir)
+
+The vote pages (`frontend/src/routes/election/[slug]/`, `VoteKeyDialog`,
+`VotePassport`) run the isoloir protocol through the library
+`@isoloir/web` (the repository `isoloir`, beside this one: read its
+`js/README.md` and `SPEC.md`). `src/lib/vote/isoloir.ts` builds one
+`Session` per event and gives its state as Svelte stores; the protocol is
+the library's, never the app's. The library is not on npm: it is vendored
+as `frontend/vendor/isoloir-web-<v>.tgz` (`frontend/scripts/vendor-isoloir.sh`
+rebuilds it from the isoloir checkout, `ISOLOIR_SRC` to point elsewhere;
+then `npm install`).
+
+- Settings (build time): `VITE_VOTE_ORIGIN` (the ledger's origin, e.g.
+  `tartuffe.me/isoloir`), `VITE_VOTE_LOG_KEY` (the log's verifier key,
+  pinned), `VITE_VOTE_REGISTRY` (default 1), `VITE_VOTE_POLLS` (the poll of
+  each event, `slug:id,…`), `VITE_VOTE_MIRROR` (the mirror as a directory
+  URL) and/or `VITE_VOTE_MIRROR_REPO` (owner/repo, read by commit through
+  jsDelivr). `VITE_VOTE_SIMULATE_PASSPORT=1` stands in for the ZKPassport
+  app (a `dev` registry only), `VITE_ZKPASSPORT_DEV=1` the SDK's dev mode,
+  `VITE_VOTE_APP_ORIGIN` (the site's build only) sends the vote pages of
+  tartuffe.me to the app's origin.
+- The candidates: the poll's options are names in slot order (blank last);
+  their cards (person id, photo, honesty score) come from
+  `GET /api/polls/<slug>`, matched by name. `npm run build:vote` fetches
+  them into `static/vote/candidates/<slug>.json` (needs `VITE_API_BASE`),
+  so the published app never calls the API for them.
+- Local stack (from the isoloir checkout, `target/release/isoloir`; README
+  "A local trial"): `isoloir relay`, `isoloir genesis`, `isoloir ingest
+  --dev --no-stamps --mirror-dir <dir>`, `isoloir submit registry|poll`
+  (a `dev` registry, a ranked poll), `isoloir authority --once` for a tally.
+  Symlink the mirror into `frontend/static/mirror`, set
+  `VITE_VOTE_MIRROR=http://localhost:<port>/mirror` and the other settings,
+  and fetch the SRS once (`scripts/srs.sh`). `npm run build:vote` rewrites
+  `.svelte-kit/generated` for the app's routes: restart the dev server
+  after it.
+
 ## Deployment (the host)
 
 Services on the host:
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
+  Sign-in on `mirror`: `AUTH_PROVIDERS` (`google`; `noop` to test). The vote needs no account.
 - **`worker`** — long-lived `dm worker run` (root `Dockerfile`, start command set in the service settings). Claims the collection tasks (`dm collect add`) and runs the ingest of their plugin for their person and period, as many tasks at once as the LLM endpoint serves (`llm.Concurrency()`: one on the local GPU box, on claude-team the processes of every seat: `CLAUDE_TEAM_PLAN_PROCS_PER_SEAT`, default 4, times the seats; every seat that is not at its limit serves at the same time); the facts of one person are inserted one at a time across the tasks. The daily feed and the maintenance pass in the order of priority (see Collection tasks above). Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `mirror` except no HTTP `PORT`. On a deploy the tasks it is on go back to pending and resumes where its fetch log stopped.
+- **`ingest`** — the isoloir ledger (`isoloir ingest --mirror-dir /app/mirror --zkverifier /app/zkverifier/verify.mjs`), built from the `Dockerfile` of `tartuffeme/isoloir`. Needs `DATABASE_URL`, `ISOLOIR_LOG_KEY`, `ISOLOIR_NOSTR_KEY`, `ISOLOIR_MIRROR_GIT` (`tartuffeme/vote-data`), `ISOLOIR_MIRROR_SSH_KEY`, `ISOLOIR_ETH_RPC`. The only writer of the log: one instance.
+- **`tally`** — the isoloir authority (`isoloir authority --db $DATABASE_URL --zkverifier /app/zkverifier/verify.mjs`), same image. Needs `DATABASE_URL`, `ISOLOIR_LOG_KEY`, `ISOLOIR_AUTHORITY_KEYS`, `ISOLOIR_MIRROR_GIT`.
+- **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`). Grafana alerts (`grafana/provisioning/alerting/worker.yml`: feed missing after 06:00 UTC, no maintenance pass ended for 12 h) go to Telegram: the service needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before it is deployed.
 - **`observability`** — colocated Prometheus + Grafana under s6-overlay (built from `deploy/observability/Dockerfile`). Scrapes `mirror.host.internal:9090/metrics` and `worker.host.internal:9090/metrics` every 15s. A push does not deploy it: deploy it with `host up deploy/observability --path-as-root --service observability`. Grafana exposed publicly via the host-issued domain. **App Sleeping must stay off on this service** (it was on until 2026-11-02: Prometheus and the Telegram alerts slept whenever nobody opened Grafana, and two thirds of the month went unscraped); the dashboard toggle is the only switch (`host.json` in the upload does not set it; `host config pull` + `apply` from a scratch folder does). One persistent volume mounted at `/data` (Prometheus TSDB at `/data/prometheus`, Grafana state at `/data/grafana`). Grafana alerts (`grafana/provisioning/alerting/worker.yml`: feed missing after 06:00 UTC, no maintenance pass ended for 12 h) go to Telegram: the service needs `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` before it is deployed.
 
 To collect facts, add tasks with `./dm collect add`; the worker runs them.

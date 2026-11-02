@@ -90,7 +90,7 @@ func TestPersonGate_FactInserterSkipsRejectedSubject(t *testing.T) {
 
 	inserter := core.NewFactInserter(storer, &stubStanceProcessor{storer: storer})
 	res, err := inserter.InsertFacts(ctx, []core.StoreFactInput{
-		{
+		{PublishedAt: &storageTestDate,
 			SubjectEntity:      "Junk Subject",
 			NormalizedFactText: "junk subject said X",
 			Embedding:          mockEmbedding(),
@@ -99,7 +99,7 @@ func TestPersonGate_FactInserterSkipsRejectedSubject(t *testing.T) {
 			SourceType:         "test",
 			Lang:               "en",
 		},
-		{
+		{PublishedAt: &storageTestDate,
 			SubjectEntity:      "Real Person",
 			NormalizedFactText: "real person said Y",
 			Embedding:          mockEmbedding(),
@@ -133,7 +133,7 @@ func TestPersonGate_UnavailableValidatorFailsTheFact(t *testing.T) {
 		return fmt.Errorf("validating new entity %q: %w", name, llm.ErrUnavailable)
 	})
 	inserter := core.NewFactInserter(storer, &stubStanceProcessor{storer: storer})
-	res, err := inserter.InsertFacts(ctx, []core.StoreFactInput{{
+	res, err := inserter.InsertFacts(ctx, []core.StoreFactInput{{PublishedAt: &storageTestDate,
 		SubjectEntity:      "New Subject",
 		NormalizedFactText: "new subject said X",
 		Embedding:          mockEmbedding(),

@@ -13,6 +13,11 @@
   --accent: #9a2640;
   --accent-hover: #b8324f;
   --accent-glow: rgba(154, 38, 64, 0.35);
+  /* The lab's temporary events (the presidential vote): their own colour, so
+     they never read as the contradiction checker itself. */
+  --event: #7f9fd6;
+  --event-strong: #5b7fc0;
+  --event-glow: rgba(127, 159, 214, 0.14);
   --green: #5fa56a;
   --amber: #d4923a;
   --red: #c2334a;
@@ -129,4 +134,72 @@ a:hover {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+/* Buttons of the vote pages (election, profile) and their dialogs. */
+.btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn-danger {
+  background: transparent;
+  border-color: var(--error-border);
+  color: var(--red);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--error-bg);
+  border-color: var(--red);
+}
+
+/* Anchors (#score, a shared stance) clear the sticky nav. */
+html {
+	scroll-padding-top: 5.5rem;
+}
+
+/* A loading place: the wheel, centred (Spinner). */
+.loading {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0;
+}
+
+/* The site reads centred: every title, kicker and lead, on every page.
+   Lists and tables keep their rows; what a page wants left, it says. */
+.page-content h1,
+.page-content h2,
+.page-content h3,
+.page-content h4,
+.page-content .kicker,
+.page-content .sec-kicker,
+.page-content .lead,
+.page-content .section-lead {
+  text-align: center;
+}
+.page-content .lead,
+.page-content .section-lead {
+  margin-left: auto;
+  margin-right: auto;
 }

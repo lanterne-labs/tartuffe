@@ -52,7 +52,7 @@ func TestStanceFanoutPendingSet(t *testing.T) {
 	otherB, _, err := storer.AddPerson(ctx, "Fanout Other B")
 	require.NoError(t, err)
 
-	emb := pgvector.NewVector(makeUnitEmbedding(0))
+	emb := pgvector.NewHalfVector(makeUnitEmbedding(0))
 	insertFact := func(text string, withEmbedding bool) int64 {
 		var id int64
 		if withEmbedding {

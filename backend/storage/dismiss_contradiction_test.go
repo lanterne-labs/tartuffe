@@ -29,7 +29,7 @@ func TestDismissContradictionAsFalsePositive(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()),
+			text, pgvector.NewHalfVector(mockEmbedding()),
 		).Scan(&id))
 		_, err := storer.pool.Exec(ctx,
 			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, $2, $3, 'test')`,
@@ -130,7 +130,7 @@ func TestDeleteContradictionClearsPairCheck(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()),
+			text, pgvector.NewHalfVector(mockEmbedding()),
 		).Scan(&id))
 		_, err := storer.pool.Exec(ctx,
 			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, $2, $3, 'test')`,

@@ -3,7 +3,8 @@ import type { EventData } from './types';
 import { API_BASE } from './config';
 
 export interface RealtimeEvent {
-	type: 'person_updated' | 'contradiction_added';
+	type: 'person_updated' | 'contradiction_added' | 'poll_updated';
+	// The person of a person event; the poll event of a poll_updated.
 	personId: number;
 	data: any;
 }
@@ -53,6 +54,12 @@ class RealtimeManager {
 				} else if (eventData.topic === 'contradiction_added' && eventData.entity_type === 'person') {
 					realtimeEvent = {
 						type: 'contradiction_added',
+						personId: eventData.entity_id,
+						data: eventData.payload
+					};
+				} else if (eventData.topic === 'poll_updated' && eventData.entity_type === 'poll_event') {
+					realtimeEvent = {
+						type: 'poll_updated',
 						personId: eventData.entity_id,
 						data: eventData.payload
 					};
@@ -126,6 +133,7 @@ export function subscribeToPersonEvents(personId: number, callback: (event: Real
 		// Only process NEW events (after lastProcessedIndex)
 		for (let i = lastProcessedIndex + 1; i < events.length; i++) {
 			const event = events[i];
+			if (event.type === 'poll_updated') continue;
 			if (personId === -1 || event.personId === personId) {
 				callback(event);
 			}
@@ -140,6 +148,21 @@ export function subscribeToPersonEvents(personId: number, callback: (event: Real
 	});
 
 	return unsubscribe;
+}
+
+// subscribeToPollEvents calls back when a ballot of the poll event changes.
+export function subscribeToPollEvents(eventId: number, callback: () => void) {
+	// The last event handled, by identity: the store gets trimmed, so indexes move.
+	let last: RealtimeEvent | undefined;
+	let initialized = false;
+	return realtimeEvents.subscribe((events) => {
+		const start = initialized ? (last ? events.lastIndexOf(last) + 1 : 0) : events.length;
+		initialized = true;
+		if (start < events.length && events.slice(start).some((e) => e.type === 'poll_updated' && e.personId === eventId)) {
+			callback();
+		}
+		last = events[events.length - 1];
+	});
 }
 
 // Helper function to clear old events

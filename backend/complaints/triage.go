@@ -18,10 +18,14 @@ import (
 type Storer interface {
 	GetFactByID(ctx context.Context, factID int64) (*core.FactForDedup, error)
 	GetFactSourceURLs(ctx context.Context, factID int64) ([]string, error)
-	DeleteFact(ctx context.Context, factID int64) error
+	// DeleteFactsAndCleanup removes the facts with their contradictions and
+	// recomputes the scores they counted in.
+	DeleteFactsAndCleanup(ctx context.Context, factIDs []int64) (storage.FactDeletionCleanupResult, error)
 
 	GetContradictionByID(ctx context.Context, id int64) (*storage.ContradictionWithFacts, error)
-	DeleteContradiction(ctx context.Context, id int64) error
+	// DismissContradictionAsFalsePositive removes the contradiction and
+	// keeps its pair from being detected again.
+	DismissContradictionAsFalsePositive(ctx context.Context, id int64) error
 
 	GetStanceDocumentByID(ctx context.Context, id int64) (*core.StanceDocument, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error)
@@ -45,7 +49,9 @@ type Outcome struct {
 	// ComplaintDeleted is true when the Tally submission was removed (false on
 	// dry-run, ambiguous, or if the delete call failed).
 	ComplaintDeleted bool
-	Err              error
+	// Stale is true when the target was already gone: nothing was judged.
+	Stale bool
+	Err   error
 }
 
 // Report aggregates outcomes from one triage run.
@@ -154,7 +160,7 @@ func triageFactComplaint(ctx context.Context, store Storer, tally TallyDeleter, 
 
 	switch verdict.Verdict {
 	case VerdictDeleteTarget:
-		if err := store.DeleteFact(ctx, c.FactID); err != nil {
+		if _, err := store.DeleteFactsAndCleanup(ctx, []int64{c.FactID}); err != nil {
 			out.Err = fmt.Errorf("delete fact %d: %w", c.FactID, err)
 			return out
 		}
@@ -203,7 +209,7 @@ func triageContradictionComplaint(ctx context.Context, store Storer, tally Tally
 
 	switch verdict.Verdict {
 	case VerdictDeleteTarget:
-		if err := store.DeleteContradiction(ctx, c.ContradictionID); err != nil {
+		if err := store.DismissContradictionAsFalsePositive(ctx, c.ContradictionID); err != nil {
 			out.Err = fmt.Errorf("delete contradiction %d: %w", c.ContradictionID, err)
 			return out
 		}
@@ -284,6 +290,7 @@ func staleTarget(ctx context.Context, tally TallyDeleter, c Complaint, reason st
 		Complaint: c,
 		Verdict:   VerdictDismissComplaint,
 		Reason:    reason,
+		Stale:     true,
 	}
 	if dryRun {
 		return out
