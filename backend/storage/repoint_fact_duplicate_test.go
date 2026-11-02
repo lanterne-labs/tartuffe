@@ -21,7 +21,7 @@ func TestRepointFactDuplicate(t *testing.T) {
 	require.NoError(t, err)
 
 	mk := func(text, verb, url string) int64 {
-		id, _, e := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+		id, _, e := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 			SubjectEntity: "repoint subject", SubjectEntityType: "human", Lang: "en",
 			NormalizedFactText: text, EmbeddingText: text, Embedding: mockEmbedding(),
 			CanonicalVerb: verb, SourceURL: url, SourceType: "web",

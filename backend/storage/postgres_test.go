@@ -193,7 +193,7 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	assert.Equal(t, input.CanonicalVerb, queriedCanonicalVerb)
 	require.NotNil(t, queriedEmbedding, "Embedding should not be nil in DB")
 	// Compare float slices carefully
-	assert.InDeltaSlice(t, input.Embedding, queriedEmbedding.Slice(), 0.00001, "Embedding mismatch")
+	assert.InDeltaSlice(t, input.Embedding, queriedEmbedding.Slice(), 1e-3, "Embedding mismatch (halfvec precision)")
 
 	// 2. Verify the source exists in 'fact_sources' table
 	var queriedFactID, queriedSourceURL, queriedOriginalQuote, queriedSourceType string
@@ -548,7 +548,7 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	normalizedY := util.NormalizeString(personY)
 
 	// Input 1: About Person X
-	input1 := core.StoreFactInput{
+	input1 := core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity:      personX,
 		NormalizedFactText: "Fact 1 about Person X",
 		Embedding:          mockEmbedding(),
@@ -567,7 +567,7 @@ func TestPostgresStorer_StoreFact_ExistingPerson(t *testing.T) {
 	require.Positive(t, personXID)
 
 	// Input 2: About Person X, also mentions Person Y
-	input2 := core.StoreFactInput{
+	input2 := core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity:      " person X ", // Test normalization with different casing
 		NormalizedFactText: "Fact 2 involving Person X and Person Y",
 		Embedding:          mockEmbedding(),
@@ -939,7 +939,7 @@ func TestPersonSummaryQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, storer.SetCandidate(ctx, pre, true))
 
-	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity:      "Summary Testperson",
 		SubjectEntityType:  "party",
 		NormalizedFactText: "summary testperson backed policy z",
@@ -989,3 +989,6 @@ func TestPersonSummaryQueries(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, missing)
 }
+
+// storageTestDate dates the test facts: a fact without a date is never stored.
+var storageTestDate = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)

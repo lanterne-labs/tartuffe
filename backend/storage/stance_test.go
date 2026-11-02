@@ -284,7 +284,7 @@ func TestMergeStancesForPerson(t *testing.T) {
 	require.Len(t, stances, 1)
 	assert.Equal(t, dstID, stances[0].ID)
 	assert.Equal(t, 3, stances[0].FactCount, "dst should now have 3 unique facts (200,201,202)")
-	assert.InDeltaSlice(t, newCentroid, stances[0].ClusterEmbedding, 1e-5)
+	assert.InDeltaSlice(t, newCentroid, stances[0].ClusterEmbedding, 1e-3) // halfvec precision
 
 	// All three facts on dst
 	facts, err := storer.GetFactsForStance(ctx, dstID)

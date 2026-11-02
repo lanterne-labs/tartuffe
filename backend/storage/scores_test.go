@@ -46,13 +46,13 @@ func TestRecomputeParentEntityScores(t *testing.T) {
 	_, err = storer.pool.Exec(ctx, `UPDATE persons SET own_score = 0.9 WHERE id = $1`, party)
 	require.NoError(t, err)
 
-	faID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	faID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity: "rollup member", SubjectEntityType: "human", Lang: "en",
 		NormalizedFactText: "member promised to lower taxes", EmbeddingText: "promised to lower taxes",
 		Embedding: mockEmbedding(), CanonicalVerb: "PROMISED", SourceURL: "http://example.com/a", SourceType: "web",
 	})
 	require.NoError(t, err)
-	fbID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
+	fbID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
 		SubjectEntity: "rollup member", SubjectEntityType: "human", Lang: "en",
 		NormalizedFactText: "member voted to raise taxes", EmbeddingText: "voted to raise taxes",
 		Embedding: mockEmbedding(), CanonicalVerb: "VOTED_FOR", SourceURL: "http://example.com/b", SourceType: "web",
