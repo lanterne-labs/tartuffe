@@ -329,6 +329,7 @@
 		const s = ballot.state;
 		const d = closesAt ? closesText(closesAt) : '';
 		if (busy) return tr('v2.status.line.busy', currentLang);
+		if (dirty) return tr('v2.status.line.dirty', currentLang);
 		if (s === 'acked') return tr('v2.status.line.received', currentLang, { d });
 		if (s === 'verified') return tr('v2.status.line.verified', currentLang, { d });
 		return '';
@@ -525,9 +526,7 @@
 				</li>
 			{/each}
 		</ol>
-		{#if statusLine}
-			<p class="status-line" class:status-line--ok={ballot.state === 'acked' || ballot.state === 'verified'} aria-live="polite">{statusLine}</p>
-		{:else if ballot.state === 'missing'}
+		{#if ballot.state === 'missing'}
 			<div class="status-line status-line--fault" role="alert">
 				<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
 				{#if ballot.complaints?.length}
@@ -555,9 +554,8 @@
 					<button class="btn btn-small btn-primary" onclick={retry} disabled={busy}>{tr('v2.ballot.retry', currentLang)}</button>
 				{/if}
 			</div>
-			{#if event && voted && !dirty}
-				<p class="nudge">{tr('v2.share.nudge', currentLang)}</p>
-			{/if}
+			<!-- One line under the button, its place kept: reordering moves nothing. -->
+			<p class="vote-note" class:vote-note--ok={!dirty && !busy && (ballot.state === 'acked' || ballot.state === 'verified')} aria-live="polite">{statusLine}</p>
 		{/if}
 		{#if actionError}
 			<p class="save-error" role="alert">{@html actionError}</p>
@@ -1525,10 +1523,6 @@
 		line-height: 1.45;
 		color: var(--text-secondary);
 	}
-	.status-line--ok {
-		background: color-mix(in oklch, var(--green) 14%, var(--bg-card));
-		color: var(--text-primary);
-	}
 	.status-line--fault {
 		background: color-mix(in oklch, var(--red) 12%, var(--bg-card));
 		color: var(--text-primary);
@@ -1539,11 +1533,16 @@
 	.status-line--fault p:last-child {
 		margin: 0;
 	}
-	.nudge {
-		margin: 0.75rem 0 0;
-		font-size: 0.95rem;
+	.vote-note {
+		min-height: 2.9em;
+		margin: 0.6rem 0 0;
+		font-size: 0.88rem;
+		line-height: 1.45;
 		text-align: center;
-		color: var(--text-primary);
+		color: var(--text-secondary);
+	}
+	.vote-note--ok {
+		color: var(--green);
 	}
 	.tech {
 		margin: 0.4rem 0 0;
