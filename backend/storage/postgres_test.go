@@ -934,6 +934,11 @@ func TestPersonSummaryQueries(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 
+	// A candidate, so that its fact gets a stance (candidates.go).
+	pre, _, err := storer.AddPersonWithType(ctx, "Summary Testperson", "party")
+	require.NoError(t, err)
+	require.NoError(t, storer.SetCandidate(ctx, pre, true))
+
 	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity:      "Summary Testperson",
 		SubjectEntityType:  "party",

@@ -25,6 +25,10 @@ func TestFactPairQueue(t *testing.T) {
 	require.NoError(t, err)
 	personQ, _, err := storer.AddPerson(ctx, "Queue Person Q")
 	require.NoError(t, err)
+	// The pairs are queued for the candidates only (candidates.go).
+	require.NoError(t, storer.SetCandidate(ctx, personP, true))
+	require.NoError(t, storer.SetCandidate(ctx, personQ, true))
+	require.NoError(t, err)
 
 	newFact := func(text string) int64 {
 		var id int64

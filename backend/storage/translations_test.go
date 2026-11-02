@@ -22,6 +22,16 @@ func TestTranslations_UpsertAndList(t *testing.T) {
 		`INSERT INTO facts (fact_text, lang, embedding) VALUES ($1, 'fr', $2) RETURNING id`,
 		"xtrans: un fait de test en français", pgvector.NewVector(mockEmbedding()),
 	).Scan(&fid))
+	// The facts of the candidates only are translated (candidates.go).
+	pid, _, err := storer.AddPerson(ctx, "xtrans candidate")
+	require.NoError(t, err)
+	require.NoError(t, storer.SetCandidate(ctx, pid, true))
+	var sid int64
+	require.NoError(t, storer.pool.QueryRow(ctx,
+		`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, 'http://example.com/xtrans', 'q', 'test') RETURNING id`, fid,
+	).Scan(&sid))
+	_, err = storer.pool.Exec(ctx, `INSERT INTO fact_mentions (fact_source_id, person_id) VALUES ($1, $2)`, sid, pid)
+	require.NoError(t, err)
 
 	// Insert a translation.
 	require.NoError(t, storer.UpsertTranslation(ctx, "fact", fid, "text", "en", "xtrans: a test fact in English", "hash1"))

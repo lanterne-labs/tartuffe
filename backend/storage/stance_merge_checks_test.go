@@ -23,6 +23,10 @@ func TestMergeSweepMemo(t *testing.T) {
 	require.NoError(t, err)
 	oneStance, _, err := storer.AddPerson(ctx, "merge memo one")
 	require.NoError(t, err)
+	// The merge sweep lists the candidates only (candidates.go).
+	require.NoError(t, storer.SetCandidate(ctx, twoStances, true))
+	require.NoError(t, storer.SetCandidate(ctx, oneStance, true))
+	require.NoError(t, err)
 	stance := func(personID int64, label string) int64 {
 		id, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
 			PersonID: personID, ClusterLabel: label, ClusterEmbedding: mockEmbedding(), Summary: "s " + label,
