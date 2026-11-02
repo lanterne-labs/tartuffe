@@ -21,15 +21,19 @@
 		request: RegistrationRequest;
 		// The server's clock, ms (the session's): the proof's day and date.
 		serverNow: () => number;
-		devMode?: boolean;
-		// simulate shows a button that stands in for the app (local trials).
-		simulate?: boolean;
 		// onProof takes the proof; what it does with it (the registration)
 		// is the caller's, with its own states: it never throws back here.
 		onProof: (p: PassportProof) => Promise<void>;
 	}
 
-	let { lang, request, serverNow, devMode = false, simulate = false, onProof }: Props = $props();
+	let { lang, request, serverNow, onProof }: Props = $props();
+
+	// The test shortcuts, read from the build (vite.config.ts refuses them
+	// in a build): constants, so a production bundle compiles them out.
+	// SIMULATE stands in for the app (a local trial with a dev registry);
+	// DEV_MODE lets ZKPassport take its mock documents.
+	const SIMULATE = import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1';
+	const devMode = import.meta.env.VITE_ZKPASSPORT_DEV === '1';
 
 	// The app, once it took the request, is given this long before the
 	// page says it does not answer (the voter can always cancel before).
@@ -185,8 +189,8 @@
 	{#if step === 'idle'}
 		<ZKProofAnimation {lang} />
 		<button class="primary" onclick={start}>{tr('zk.start', lang)}</button>
-		{#if simulate}
-			<button class="link" onclick={simulateScan}>{tr('zk.simulate', lang)}</button>
+		{#if SIMULATE}
+			<button class="link" onclick={simulateScan}>{lang === 'en' ? 'Simulate a passport (local trial)' : 'Simuler un passeport (essai local)'}</button>
 		{/if}
 	{/if}
 	{#if step !== 'idle'}
@@ -215,7 +219,7 @@
 		<button class="primary" onclick={start}>{tr('zk.retry', lang)}</button>
 	{/if}
 	{#if devMode}
-		<p class="dev">{tr('zk.dev_mode', lang)}</p>
+		<p class="dev">{lang === 'en' ? 'Test mode: mock documents accepted.' : 'Mode test : les documents fictifs sont acceptés.'}</p>
 	{/if}
 </section>
 

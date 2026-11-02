@@ -52,6 +52,8 @@ export async function runAudit(onProgress: (p: AuditProgress) => void, signal?: 
 			throw last;
 		},
 		relays: new WebSocketTransport(),
+		// A local trial with simulated passports (never in a build: vite.config.ts).
+		allowDev: import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1',
 		onProgress,
 		signal
 	});

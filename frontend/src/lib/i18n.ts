@@ -199,7 +199,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'zk.anim.only': { fr: 'Nous ne recevons que', en: 'All we receive:' },
 	'zk.anim.and': { fr: 'et', en: 'and' },
 	'zk.anim.note': { fr: 'Nom, photo, date de naissance et numéro restent sur le téléphone. Il envoie seulement un identifiant anonyme, propre à ce site, pour qu’un passeport vote une seule fois.', en: 'Name, photo, date of birth and number stay on the phone. It sends only an anonymous identifier, unique to this site, so that a passport votes once.' },
-	'zk.dev_mode': { fr: 'Mode test : les documents fictifs sont acceptés.', en: 'Test mode: mock documents accepted.' },
 
 	// Sign-in
 	'auth.google.button': { fr: 'Continuer avec Google', en: 'Continue with Google' },
@@ -552,7 +551,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.link.send.hint': { fr: 'Si rien n’arrive là-bas, affichez-y un nouveau code et recommencez.', en: 'If nothing arrives there, show a new code there and start again.' },
 	// The passport scan.
 	'zk.timeout': { fr: 'L’application ne répond plus depuis 3 minutes. Recommencez ; votre clé reste la même.', en: 'The app has not answered for 3 minutes. Start again; your key stays the same.' },
-	'zk.simulate': { fr: 'Simuler un passeport (essai local)', en: 'Simulate a passport (local trial)' },
 	// The vote page.
 	'v2.join.posting': { fr: 'Inscription envoyée, attente de la confirmation…', en: 'Registration sent, waiting for the confirmation…' },
 	'v2.join.acked': { fr: 'Inscription confirmée, encore quelques secondes…', en: 'Registration confirmed, a few more seconds…' },

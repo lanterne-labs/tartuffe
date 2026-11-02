@@ -21,11 +21,9 @@
 		open: boolean;
 		lang: Lang;
 		session: VoteSession;
-		devMode?: boolean;
-		simulate?: boolean;
 		onclose: () => void;
 	}
-	let { open, lang, session, devMode = false, simulate = false, onclose }: Props = $props();
+	let { open, lang, session, onclose }: Props = $props();
 
 	// The session's state, followed from its store.
 	let st = $state<SessionState | null>(null);
@@ -387,7 +385,7 @@
 			<p class="text small">{tr('v2.key.pending.idle', lang)}</p>
 		{/if}
 		{#if request}
-			<VotePassport {lang} {request} serverNow={() => session.need().serverNow()} {devMode} {simulate} {onProof} />
+			<VotePassport {lang} {request} serverNow={() => session.need().serverNow()} {onProof} />
 		{/if}
 		{#if !key}
 			<button class="btn btn-way existing" onclick={() => (step = 'existing')} disabled={busy}>{tr('v2.key.existing', lang)}</button>
