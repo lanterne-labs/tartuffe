@@ -135,8 +135,8 @@
 		return 'log';
 	}
 	let failed = $derived(new Set((result?.problems ?? []).map(stepOf)));
-	// The checks told so far, the last one on top.
-	let told = $derived(STEPS.slice(0, Math.min(shown, STEPS.length)).reverse());
+	// The checks told so far, in order, each new one under the last.
+	let told = $derived(STEPS.slice(0, Math.min(shown, STEPS.length)));
 	let done = $derived(!!result && shown > STEPS.length);
 	const passed = (k: StepKey) => STEPS.indexOf(k) < shown && !failed.has(k);
 	const missed = (k: StepKey) => STEPS.indexOf(k) < shown && failed.has(k);
@@ -223,7 +223,27 @@
 				<span class="bar"><span style="width: {pct}%"></span></span>
 			</div>
 			<button class="btn btn--ghost" onclick={() => ctl?.abort()}>{c.stop}</button>
-		{:else}
+		{/if}
+
+		<ol class="stack">
+			{#each told as k (k)}
+				<li class="card" class:card--ko={failed.has(k)}>
+					<span class="icon">
+						{#if failed.has(k)}
+							<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></svg>
+						{:else}
+							<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+						{/if}
+					</span>
+					<span class="text">
+						<strong>{c.steps[k]}</strong>
+						<span class="count">{count(k)}</span>
+					</span>
+				</li>
+			{/each}
+		</ol>
+
+		{#if !running}
 			{#if done && result}
 				{#if result.ok}
 					<div class="verdict verdict--ok" role="status">
@@ -250,23 +270,6 @@
 			{/if}
 		{/if}
 
-		<ol class="stack">
-			{#each told as k (k)}
-				<li class="card" class:card--ko={failed.has(k)}>
-					<span class="icon">
-						{#if failed.has(k)}
-							<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></svg>
-						{:else}
-							<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-						{/if}
-					</span>
-					<span class="text">
-						<strong>{c.steps[k]}</strong>
-						<span class="count">{count(k)}</span>
-					</span>
-				</li>
-			{/each}
-		</ol>
 	{/if}
 
 	<p class="links">
