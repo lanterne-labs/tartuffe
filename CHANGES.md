@@ -2,6 +2,22 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-02: Dependency vulnerabilities (govulncheck, npm audit)
+
+- `govulncheck` found 14 reachable vulnerabilities: the HTML parser of `golang.org/x/net` (quadratic
+  parsing, infinite loops, XSS, reached by trafilatura on every page we scrape), a SQL injection by
+  placeholder confusion in pgx 5.7 (dollar-quoted literals), `golang.org/x/text`, the AWS SDK
+  (eventstream panic, s3), and `crypto/x509` of Go 1.27.2. All modules bumped (x/net 0.62, pgx 5.12,
+  x/text 0.43, s3 1.114); the builder image goes from the unsupported `golang:1.24-alpine` to
+  `golang:1.27-alpine` (1.27.3 carries the x509 fix). go.mod now says `go 1.26.0` (pulled by a dep).
+- `npm audit fix` cleared the frontend's critical and high items (dompurify, devalue, nanoid,
+  postcss, rollup, source-map-js, svelte, vite). 8 low ones remain: they need SvelteKit 3
+  (`@sveltejs/kit` 3.1.1, adapter-node 6), a major upgrade left for its own PR.
+- The "MPTCP" kernel flaw (CVE-2026-98432, use-after-free in Linux IPv4 TCP, remote root) is not a
+  dependency: it is the kernel of the host. the host's hosts are the host's; the local GPU box behind the
+  Cloudflare tunnel is ours and its kernel is the thing to patch.
+- To check again: `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` and `cd frontend && npm audit`.
+
 ## 2026-10-18: The Claude API spend cap is per day
 
 - On `LLM_PROFILE=claude-team` the Team seats serve first and the Claude API (`ANTHROPIC_API_KEY`)
