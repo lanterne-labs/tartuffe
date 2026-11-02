@@ -67,7 +67,7 @@ func setCandidates(names []string, candidate bool) error {
 			return err
 		}
 		if candidate {
-			fmt.Printf("%s (ID: %d) is a candidate\n", person.Name, person.ID)
+			fmt.Printf("%s (ID: %d) is a candidate; run `dm embeddings regenerate` to embed their earlier facts\n", person.Name, person.ID)
 		} else {
 			fmt.Printf("%s (ID: %d) is no longer a candidate\n", person.Name, person.ID)
 		}

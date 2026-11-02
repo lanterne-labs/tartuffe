@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -468,4 +468,3 @@ func runPollPurgeUsers(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%d %s user(s) deleted\n", n, provider)
 	return nil
 }
-

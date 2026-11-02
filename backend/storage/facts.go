@@ -555,10 +555,10 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
         LIMIT 30`
 
 	rows, err := queryer.Query(ctx, query,
-		personID,                      // $1
+		personID,                          // $1
 		pgvector.NewHalfVector(embedding), // $2
-		excludeFactID,                 // $3
-		embeddingSimilarityThreshold,  // $4
+		excludeFactID,                     // $3
+		embeddingSimilarityThreshold,      // $4
 	)
 	if err != nil {
 		timer.ObserveDuration(err)

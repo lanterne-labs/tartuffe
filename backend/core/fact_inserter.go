@@ -429,6 +429,14 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		groupTarget, groupVerdict, judged = target, verdict, verdicts
 	}
 
+	// Only a candidate's facts are compared (grouping, stances, detection):
+	// another person's fact is stored without its embedding, which would only
+	// take space. `dm embeddings regenerate` fills it in if the person
+	// becomes a candidate.
+	if !candidate {
+		input.Embedding = nil
+	}
+
 	// Insert the fact
 	factID, err := fi.storer.InsertFact(ctx, input)
 	if err != nil {

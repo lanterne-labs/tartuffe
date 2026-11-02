@@ -342,10 +342,10 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 
 	rows, err := s.pool.Query(ctx, query,
 		pgvector.NewHalfVector(factEmbedding), // $1
-		personID,                          // $2
-		topK,                              // $3
-		factsPerStance,                    // $4
-		excludeFactID,                     // $5
+		personID,                              // $2
+		topK,                                  // $3
+		factsPerStance,                        // $4
+		excludeFactID,                         // $5
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying nearest-fact stance shortlist for person %d: %w", personID, err)

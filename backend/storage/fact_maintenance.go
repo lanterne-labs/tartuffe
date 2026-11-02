@@ -124,10 +124,37 @@ func (s *PostgresStorer) UpdateFactVerbAndEmbedding(ctx context.Context, factID 
 	return nil
 }
 
-// CountFactsWithoutEmbedding counts the facts whose embedding is NULL.
+// candidateFactSQL keeps the facts that name a candidate (on any of their
+// sources): only those are compared, so only those carry an embedding.
+const candidateFactSQL = `EXISTS (
+	SELECT 1 FROM fact_sources fs
+	JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+	JOIN persons p ON p.id = fm.person_id
+	WHERE fs.fact_id = facts.id AND ` + CandidateSQL + `)`
+
+// PruneOtherEmbeddings clears the embedding of the facts that name no
+// candidate (dry: only counts them). Returns the facts concerned.
+func (s *PostgresStorer) PruneOtherEmbeddings(ctx context.Context, apply bool) (int64, error) {
+	if !apply {
+		var n int64
+		err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL AND NOT `+candidateFactSQL).Scan(&n)
+		if err != nil {
+			return 0, fmt.Errorf("count the embeddings to prune: %w", err)
+		}
+		return n, nil
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE facts SET embedding = NULL WHERE embedding IS NOT NULL AND NOT `+candidateFactSQL)
+	if err != nil {
+		return 0, fmt.Errorf("prune the embeddings: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// CountFactsWithoutEmbedding counts the candidates' facts whose embedding is
+// NULL (the others carry none, see candidateFactSQL).
 func (s *PostgresStorer) CountFactsWithoutEmbedding(ctx context.Context) (int64, error) {
 	var total int64
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NULL`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM facts WHERE embedding IS NULL AND `+candidateFactSQL).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count facts to regenerate: %w", err)
 	}
 	return total, nil
@@ -140,7 +167,7 @@ func (s *PostgresStorer) ListFactsWithoutEmbedding(ctx context.Context, limit in
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, COALESCE(NULLIF(embedding_text, ''), fact_text)
 		FROM facts
-		WHERE embedding IS NULL
+		WHERE embedding IS NULL AND `+candidateFactSQL+`
 		ORDER BY id
 		LIMIT $1`, limit)
 	if err != nil {
