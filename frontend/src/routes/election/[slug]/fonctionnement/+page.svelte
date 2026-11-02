@@ -24,19 +24,19 @@
 			title: 'Votre vote reste secret. Même pour nous.',
 			lead: 'Quatre idées simples, et chacun peut vérifier qu’elles tiennent.',
 			passport: 'Il prouve seulement que vous êtes majeur et français, une seule fois. Un passeport, une voix.',
-			ballotTitle: 'Votre bulletin ne passe pas par nous',
-			ballot: 'Il part scellé vers des relais publics, tenus par d’autres. Nous allons l’y chercher, au milieu des autres : nous ne voyons jamais d’où il vient.',
+			ballotTitle: 'Votre bulletin voyage incognito',
+			ballot: 'Il part scellé vers des relais publics, tenus par d’autres. Votre adresse IP reste là-bas : nous recueillons le bulletin seul, au milieu des autres.',
 			countTitle: 'Seul le résultat est révélé',
-			count: 'Les bulletins sont comptés sans être ouverts. Personne ne lit le vôtre : seul le résultat est révélé, avec une preuve que chacun peut contrôler.',
+			count: 'Les bulletins sont comptés tout scellés. Votre choix reste secret : seul le résultat est révélé, avec une preuve que chacun peut contrôler.',
 			auditTitle: 'Chacun peut tout recompter',
 			audit: 'Tout est inscrit dans un registre public, signé et daté dans Bitcoin. Votre navigateur peut refaire chaque contrôle, de l’inscription au résultat.',
 			auditCta: 'Vérifier maintenant',
 			limitsTitle: 'Les limites, franchement',
 			limits: [
 				'La clé qui révèle le résultat pourrait aussi ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les résultats, avec leurs preuves.',
-				'Vous pouvez montrer votre vote à quelqu’un en lui donnant votre clé : l’achat de votes n’est pas empêché.',
+				'Qui détient votre clé peut voir et changer votre vote : gardez-la pour vous.',
 				'Il faut un smartphone NFC et un passeport à puce.',
-				'C’est une expérience de tartuffe.me : ni un scrutin officiel, ni un sondage représentatif.'
+				'C’est une expérience indépendante de tartuffe.me : un vote d’opinion en ligne, distinct du scrutin officiel et des sondages.'
 			],
 			tech: 'La version technique',
 			vote: 'Aller voter'
@@ -45,19 +45,19 @@
 			title: 'Your vote stays secret. Even from us.',
 			lead: 'Four simple ideas, and anyone can check they hold.',
 			passport: 'It only proves you are an adult French national, once. One passport, one vote.',
-			ballotTitle: 'Your ballot never goes through us',
-			ballot: 'It leaves sealed for public relays run by others. We fetch it there, among the rest: we never see where it came from.',
+			ballotTitle: 'Your ballot travels incognito',
+			ballot: 'It leaves sealed for public relays run by others. Your IP address stays there: we collect the ballot alone, among the rest.',
 			countTitle: 'Only the result is revealed',
-			count: 'Ballots are counted without being opened. No one reads yours: only the result is revealed, with a proof anyone can check.',
+			count: 'Ballots are counted still sealed. Your choice stays secret: only the result is revealed, with a proof anyone can check.',
 			auditTitle: 'Anyone can recount everything',
 			audit: 'Everything goes into a public log, signed and dated in Bitcoin. Your browser can redo every check, from registration to result.',
 			auditCta: 'Verify now',
 			limitsTitle: 'The limits, frankly',
 			limits: [
 				'The key that reveals the result could also open a single ballot, without knowing whose it is. We only publish results, with their proofs.',
-				'You can show your vote to someone by giving them your key: vote buying is not prevented.',
+				'Whoever holds your key can see and change your vote: keep it to yourself.',
 				'You need an NFC smartphone and a chip passport.',
-				'It is an experiment by tartuffe.me: neither an official election nor a representative poll.'
+				'It is an independent experiment by tartuffe.me: an online opinion vote, distinct from the official election and from polls.'
 			],
 			tech: 'The technical version',
 			vote: 'Go vote'

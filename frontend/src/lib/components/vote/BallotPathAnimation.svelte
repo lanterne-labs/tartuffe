@@ -7,8 +7,8 @@
 
 	let { lang }: { lang: Lang } = $props();
 	const t = {
-		fr: { phone: 'Votre téléphone', relays: 'Relais publics', server: 'tartuffe.me', ip: 'votre IP', stops: 's’arrête ici', reads: 'lit les relais' },
-		en: { phone: 'Your phone', relays: 'Public relays', server: 'tartuffe.me', ip: 'your IP', stops: 'stops here', reads: 'reads the relays' }
+		fr: { phone: 'Votre téléphone', relays: 'Relais publics', server: 'tartuffe.me', ip: 'votre IP', stops: 'reste ici', reads: 'lit les relais' },
+		en: { phone: 'Your phone', relays: 'Public relays', server: 'tartuffe.me', ip: 'your IP', stops: 'stays here', reads: 'reads the relays' }
 	};
 	let c = $derived(t[lang]);
 </script>

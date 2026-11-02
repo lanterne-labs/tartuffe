@@ -31,11 +31,11 @@
 			stop: 'Arrêter',
 			nodes: ['Électeurs', 'Relais', 'Serveur', 'Registre', 'Résultats'],
 			steps: {
-				log: 'Registre signé, rien de réécrit',
+				log: 'Registre signé et intact',
 				registrations: 'Un passeport, une inscription',
 				ballots: 'Bulletins valides',
 				tallies: 'Résultats recomptés',
-				relays: 'Aucun bulletin écarté'
+				relays: 'Chaque bulletin envoyé est inscrit'
 			} as Record<StepKey, string>,
 			reading: (a: number, b: number) => `Lecture du registre · ${a}/${b}`,
 			checking: (a: number, b: number) => `Vérification des preuves · ${a}/${b}`,
@@ -50,9 +50,9 @@
 			okTitle: 'Tout est vérifié',
 			koTitle: (n: number) => `${n} anomalie${n > 1 ? 's' : ''}`,
 			report: 'Signaler',
-			failed: 'La vérification n’a pas pu aller au bout',
+			failed: 'La vérification s’est interrompue',
 			code: 'Le code de la vérification',
-			notConfigured: 'La vérification n’est pas encore ouverte pour ce vote.',
+			notConfigured: 'La vérification ouvrira avec le vote.',
 			back: 'Retour au vote'
 		},
 		en: {
@@ -63,11 +63,11 @@
 			stop: 'Stop',
 			nodes: ['Voters', 'Relays', 'Server', 'Log', 'Results'],
 			steps: {
-				log: 'Log signed, nothing rewritten',
+				log: 'Log signed and intact',
 				registrations: 'One passport, one registration',
 				ballots: 'Valid ballots',
 				tallies: 'Results recounted',
-				relays: 'No ballot dropped'
+				relays: 'Every ballot sent is logged'
 			} as Record<StepKey, string>,
 			reading: (a: number, b: number) => `Reading the log · ${a}/${b}`,
 			checking: (a: number, b: number) => `Checking the proofs · ${a}/${b}`,
@@ -82,9 +82,9 @@
 			okTitle: 'Everything checks out',
 			koTitle: (n: number) => `${n} anomal${n > 1 ? 'ies' : 'y'}`,
 			report: 'Report',
-			failed: 'The check could not finish',
+			failed: 'The check stopped',
 			code: 'The code of the check',
-			notConfigured: 'The check is not open yet for this vote.',
+			notConfigured: 'The check opens with the vote.',
 			back: 'Back to the vote'
 		}
 	};
