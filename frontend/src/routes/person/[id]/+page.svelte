@@ -479,7 +479,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				<TartuffeScore honesty={person.honesty_score} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
+				<TartuffeScore honesty={person.candidate ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
 				<div class="hero-info">
 					<h1>
 						{person.name}
@@ -487,6 +487,7 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
+					{#if person.candidate}
 					<p class="hero-summary">
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
@@ -494,14 +495,18 @@
 						<span class="dot">·</span>
 						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
+					{:else}
+						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
+						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
+					{/if}
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.honesty_score }} />
+				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.candidate ? person.honesty_score : undefined }} />
 			</div>
 		</div>
 
-		{#if person.entity_type !== 'human' && person.members_score != null}
+		{#if person.candidate && person.entity_type !== 'human' && person.members_score != null}
 			<div class="score-breakdown">
 				<TartuffeScore honesty={person.own_score ?? person.honesty_score} lang={currentLang} size="md" caption={tr('person.own_score', currentLang)} />
 				<TartuffeScore honesty={person.members_score} lang={currentLang} size="md" caption={tr('person.members_score', currentLang)} />
@@ -786,6 +791,13 @@
 		align-items: center;
 		gap: 0.5rem;
 		text-transform: capitalize;
+	}
+
+		.hero-note {
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
+		margin-top: 0.5rem;
+		max-width: 60ch;
 	}
 
 	.hero-summary {

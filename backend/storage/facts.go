@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/metrics"
@@ -182,10 +183,11 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 	timer := metrics.NewQueryTimer("insert_fact")
 
 	query := `
-		INSERT INTO facts (fact_text, fact_text_en, embedding_text, embedding, canonical_verb, lang)
-		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6)
+		INSERT INTO facts (fact_text, fact_text_en, embedding_text, embedding, canonical_verb, lang, statement_date, statement_date_precision, statement_date_checked_at)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, now())
 		RETURNING id
 	`
+	date, precision := statementDateArgs(input.StatementDate)
 	var factID int64
 	err := s.pool.QueryRow(ctx, query,
 		input.NormalizedFactText,
@@ -194,6 +196,8 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		pgvector.NewVector(input.Embedding),
 		input.CanonicalVerb,
 		input.Lang,
+		date,
+		precision,
 	).Scan(&factID)
 
 	timer.ObserveDuration(err)
@@ -445,7 +449,7 @@ type FactWithEmbedding struct {
 	ID            int64
 	Text          string
 	Embedding     []float32
-	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	PublishedAt   *time.Time // The statement's date when known, else the earliest publication date from fact_sources (backend.FactDate)
 	CanonicalVerb string
 }
 
@@ -458,7 +462,8 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 			FROM fact_sources fs
 			GROUP BY fs.fact_id
 		)
-		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at, COALESCE(f.canonical_verb, '') AS canonical_verb
+		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at, COALESCE(f.canonical_verb, '') AS canonical_verb,
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN fact_sources fs ON fs.fact_id = f.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -480,9 +485,11 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 	for rows.Next() {
 		var f FactWithEmbedding
 		var emb pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("failed to scan fact for person %d: %w", personID, err)
 		}
+		f.PublishedAt = sd.of(f.PublishedAt)
 		f.Embedding = emb.Slice()
 		results = append(results, f)
 	}
@@ -501,7 +508,7 @@ type NeighborFactResult struct {
 	ID            int64
 	Text          string
 	Distance      float64    // Include distance for potential future use/logging
-	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	PublishedAt   *time.Time // The statement's date when known, else the earliest publication date from fact_sources (backend.FactDate)
 	CanonicalVerb string     // Canonical verb for verb-aware filtering
 }
 
@@ -530,7 +537,8 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
             f.fact_text,
             f.embedding <-> $2 AS distance,
             fd.earliest_published_at,
-            COALESCE(f.canonical_verb, '') AS canonical_verb
+            COALESCE(f.canonical_verb, '') AS canonical_verb,
+            f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
         FROM facts f
         JOIN PersonFacts pf ON f.id = pf.fact_id
         LEFT JOIN FactDates fd ON f.id = fd.fact_id
@@ -561,10 +569,12 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	var results []NeighborFactResult
 	for rows.Next() {
 		var res NeighborFactResult
-		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt, &res.CanonicalVerb); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt, &res.CanonicalVerb, &sd.date, &sd.precision); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("failed to scan neighbor fact result for person %d: %w", personID, err)
 		}
+		res.PublishedAt = sd.of(res.PublishedAt)
 		results = append(results, res)
 	}
 
@@ -1495,6 +1505,121 @@ func (s *PostgresStorer) SetFactEnglish(ctx context.Context, factID int64, engli
 		factID, english)
 	if err != nil {
 		return fmt.Errorf("set fact english for %d: %w", factID, err)
+	}
+	return nil
+}
+
+// FactSourceRow is a fact_sources row as the repairs of sources read it.
+type FactSourceRow struct {
+	ID            int64
+	FactID        int64
+	SourceURL     string
+	OriginalQuote string
+	PublishedAt   *time.Time
+	Metadata      map[string]any
+}
+
+// ListFactSourcesByType returns up to limit fact_sources rows of the source
+// type with an id above afterID, by id.
+func (s *PostgresStorer) ListFactSourcesByType(ctx context.Context, sourceType string, afterID int64, limit int) ([]FactSourceRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, fact_id, source_url, COALESCE(original_quote, ''), published_at, COALESCE(metadata, '{}')
+		FROM fact_sources
+		WHERE source_type = $1 AND id > $2
+		ORDER BY id
+		LIMIT $3`, sourceType, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s fact sources: %w", sourceType, err)
+	}
+	defer rows.Close()
+	var out []FactSourceRow
+	for rows.Next() {
+		var r FactSourceRow
+		var meta []byte
+		if err := rows.Scan(&r.ID, &r.FactID, &r.SourceURL, &r.OriginalQuote, &r.PublishedAt, &meta); err != nil {
+			return nil, fmt.Errorf("scanning fact source: %w", err)
+		}
+		if len(meta) > 0 {
+			if err := json.Unmarshal(meta, &r.Metadata); err != nil {
+				return nil, fmt.Errorf("decoding metadata of fact source %d: %w", r.ID, err)
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetFactSourceURLAndDate moves a fact source to the page it comes from.
+func (s *PostgresStorer) SetFactSourceURLAndDate(ctx context.Context, id int64, sourceURL string, publishedAt *time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE fact_sources SET source_url = $2, published_at = $3 WHERE id = $1`, id, sourceURL, publishedAt)
+	if err != nil {
+		return fmt.Errorf("setting the source of fact source %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("setting the source of fact source %d: no such row", id)
+	}
+	return nil
+}
+
+// FindActiveFactByQuote returns the person's active fact (not a member of a
+// claim group) whose source quote is the same text as quote, letters and
+// digits compared, or nil. Two reports with the same quote of one person
+// are one occurrence by definition: the inserter groups them without the
+// gate (review of 2026-10-31: a document extracted again after a cut run
+// stored its facts two or three times, and the gate missed some).
+func (s *PostgresStorer) FindActiveFactByQuote(ctx context.Context, personID int64, quote string, sourceTypes []string) (*core.SimilarFact, error) {
+	var sf core.SimilarFact
+	err := s.pool.QueryRow(ctx, `
+		SELECT f.id, f.fact_text, COALESCE(f.canonical_verb, '')
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		JOIN facts f ON f.id = fs.fact_id
+		WHERE fm.person_id = $1
+		  AND fs.source_type = ANY($3)
+		  AND lower(regexp_replace(fs.original_quote, '[^[:alnum:]]+', '', 'g')) = lower(regexp_replace($2, '[^[:alnum:]]+', '', 'g'))
+		  AND NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = f.id)
+		ORDER BY f.id
+		LIMIT 1`, personID, quote, sourceTypes).Scan(&sf.ID, &sf.Text, &sf.CanonicalVerb)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("finding the fact with the same quote: %w", err)
+	}
+	return &sf, nil
+}
+
+// FactText is a fact's id, text and language.
+type FactText struct {
+	ID   int64
+	Text string
+	Lang string
+}
+
+// ListFactsWithISODates returns the facts whose text holds an ISO date
+// ("2026-10-28"), for their rewrite in words.
+func (s *PostgresStorer) ListFactsWithISODates(ctx context.Context) ([]FactText, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, fact_text, COALESCE(lang, '') FROM facts WHERE fact_text ~ '\m\d{4}-\d{2}-\d{2}\M' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing facts with ISO dates: %w", err)
+	}
+	defer rows.Close()
+	var out []FactText
+	for rows.Next() {
+		var f FactText
+		if err := rows.Scan(&f.ID, &f.Text, &f.Lang); err != nil {
+			return nil, fmt.Errorf("scanning fact: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// SetFactText rewrites a fact's text; the embedding is of embedding_text,
+// which is kept.
+func (s *PostgresStorer) SetFactText(ctx context.Context, id int64, text string) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE facts SET fact_text = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id, text); err != nil {
+		return fmt.Errorf("setting the text of fact %d: %w", id, err)
 	}
 	return nil
 }

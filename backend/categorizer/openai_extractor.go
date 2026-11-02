@@ -162,19 +162,39 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg prompt
 		finalFacts = append(finalFacts, fact)
 	}
 
-	log.Info().Str("url", cfg.SourceURL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).Msg("Fact extraction completed")
+	// Every fact against its quote (grounding.go): a fact that adds a claim
+	// is cut down to its quote, or dropped.
+	finalFacts, grounding, err := groundFacts(ctx, m.client, cfg.TargetName, cfg.Content, cfg.SourceURL, finalFacts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info().Str("url", cfg.SourceURL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).
+		Int("rewritten", grounding.Rewritten).Int("dropped", grounding.Dropped).Int("unchecked", grounding.Unchecked).Msg("Fact extraction completed")
 	return finalFacts, nil
+}
+
+// contentConfig is the extraction config of a scraped page: the reference date
+// of the prompt is the page's publication date when it is known, so that a
+// relative date in the body ("lundi", "hier") resolves against the article,
+// not against the day of the run (a backfill reads old articles; mirror-ds6.9).
+func contentConfig(targetName string, content extractor.ExtractedContent, pluginInstructions string) promptrules.FactExtractorConfig {
+	cfg := promptrules.FactExtractorConfig{
+		TargetName:         targetName,
+		SourceURL:          content.URL,
+		Content:            content.Content,
+		PluginInstructions: pluginInstructions,
+	}
+	if content.DatePublished != nil && !content.DatePublished.IsZero() {
+		cfg.Now = *content.DatePublished
+	}
+	return cfg
 }
 
 // ExtractFacts extracts facts from content about a person/target using the core prompt.
 // This is a convenience method that wraps ExtractFactsWithConfig.
 func (m *OpenAIExtractor) ExtractFacts(ctx context.Context, targetName string, content extractor.ExtractedContent) ([]backend.Fact, error) {
-	cfg := promptrules.FactExtractorConfig{
-		TargetName: targetName,
-		SourceURL:  content.URL,
-		Content:    content.Content,
-	}
-	return m.ExtractFactsWithConfig(ctx, cfg)
+	return m.ExtractFactsWithConfig(ctx, contentConfig(targetName, content, ""))
 }
 
 // ExtractFactsWithType extracts facts using plugin instructions appropriate for the target type.
@@ -191,13 +211,7 @@ func (m *OpenAIExtractor) ExtractFactsWithType(ctx context.Context, targetName s
 		pluginInstructions = ""
 	}
 
-	cfg := promptrules.FactExtractorConfig{
-		TargetName:         targetName,
-		SourceURL:          content.URL,
-		Content:            content.Content,
-		PluginInstructions: pluginInstructions,
-	}
-	return m.ExtractFactsWithConfig(ctx, cfg)
+	return m.ExtractFactsWithConfig(ctx, contentConfig(targetName, content, pluginInstructions))
 }
 
 // ExtractFactsForPersonWithParties extracts facts about a person while providing party context.
@@ -211,12 +225,7 @@ func (m *OpenAIExtractor) ExtractFactsForPersonWithParties(ctx context.Context, 
 
 	pluginInstructions := fmt.Sprintf(promptrules.PersonWithPartiesInstructions, partiesStr)
 
-	cfg := promptrules.FactExtractorConfig{
-		TargetName:         personName,
-		SourceURL:          content.URL,
-		Content:            content.Content,
-		PluginInstructions: pluginInstructions,
-	}
+	cfg := contentConfig(personName, content, pluginInstructions)
 	return m.ExtractFactsWithConfig(ctx, cfg)
 }
 

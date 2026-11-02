@@ -122,8 +122,9 @@ func (e *WebcrawlerAPIExtractor) ExtractContent(url string) (*ExtractedContent, 
 		return nil, fmt.Errorf("webcrawlerapi extraction returned empty markdown for url %s", url)
 	}
 
-	cleaned := stripTrailingSidebarSections(result.Markdown)
+	cleaned := stripTrailingSidebarSections(stripLeadBeforeTitle(result.Markdown, result.PageTitle))
 
+	// The API does not report the page's final URL: the asked one stands.
 	extracted := &ExtractedContent{
 		URL:           url,
 		Title:         result.PageTitle,

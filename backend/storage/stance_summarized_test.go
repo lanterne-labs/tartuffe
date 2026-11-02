@@ -155,6 +155,9 @@ func TestListStancesPendingRefresh(t *testing.T) {
 
 	personID, _, err := storer.AddPerson(ctx, "Pending Refresh")
 	require.NoError(t, err)
+	// The stance refresh runs for the candidates only (candidates.go).
+	require.NoError(t, storer.SetCandidate(ctx, personID, true))
+	require.NoError(t, err)
 	insertFact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,

@@ -56,6 +56,11 @@ type Fact struct {
 	// the plugin's PickPublishedAt call — not the final value. Nil when the LLM
 	// did not find an explicit date in the body.
 	ArticlePublishedAt *time.Time `json:"article_published_at,omitempty"`
+	// StatementDate is the OPTIONAL date the subject said or did what the
+	// fact states, when the text gives it (fact_date.go): a year, a month or
+	// a day, its precision in the time's zone. Nil when the text does not
+	// date the statement: the judges then read the source's date.
+	StatementDate *time.Time `json:"statement_date,omitempty"`
 	// Embedding is the vector embedding of the EmbeddingText (optional, usually filled later).
 	Embedding []float32 `json:"embedding,omitempty"`
 }

@@ -80,7 +80,7 @@ func verdictOf(same bool) OccurrenceVerdict {
 // countingStance fails the test if stance analysis runs for a folded fact.
 type countingStance struct{ calls int }
 
-func (c *countingStance) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (c *countingStance) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string, _ *time.Time) (*StanceProcessResult, error) {
 	c.calls++
 	return &StanceProcessResult{Verdict: "NEW_STANCE", StanceID: 1}, nil
 }

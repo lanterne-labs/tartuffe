@@ -23,6 +23,7 @@ type fakeStore struct {
 	rankedArgs struct {
 		limit, offset, minFacts  int
 		entityType, search, sort string
+		candidate                string
 	}
 	ranked []storage.PersonSummary
 
@@ -45,7 +46,8 @@ type fakeStore struct {
 	likes map[string]map[int64]bool
 }
 
-func (f *fakeStore) GetPersonsRankedByScore(_ context.Context, limit, offset int, entityType, search, sort string, minFacts int) ([]storage.PersonSummary, error) {
+func (f *fakeStore) GetPersonsRankedByScore(_ context.Context, limit, offset int, entityType, search, sort string, minFacts int, candidate string) ([]storage.PersonSummary, error) {
+	f.rankedArgs.candidate = candidate
 	f.rankedArgs.limit, f.rankedArgs.offset, f.rankedArgs.minFacts = limit, offset, minFacts
 	f.rankedArgs.entityType, f.rankedArgs.search, f.rankedArgs.sort = entityType, search, sort
 	return f.ranked, nil

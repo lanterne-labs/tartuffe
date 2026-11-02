@@ -30,7 +30,8 @@ func (s *PostgresStorer) ListPersonsNeedingMergeSweep(ctx context.Context, ruleb
 			GROUP BY person_id HAVING COUNT(*) >= 2
 		) s ON s.person_id = p.id
 		LEFT JOIN stance_merge_checks c ON c.person_id = p.id
-		WHERE c.fingerprint IS DISTINCT FROM (s.fp || ':' || $1)
+		WHERE `+CandidateSQL+`
+		  AND c.fingerprint IS DISTINCT FROM (s.fp || ':' || $1)
 		ORDER BY p.name`, rulebookKey)
 }
 

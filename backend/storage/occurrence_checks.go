@@ -93,7 +93,8 @@ func (s *PostgresStorer) ListPersonsNeedingFold(ctx context.Context, ruleHash st
 			GROUP BY fm.person_id HAVING count(DISTINCT f.id) >= 2
 		) a ON a.person_id = p.id
 		LEFT JOIN fact_fold_checks c ON c.person_id = p.id
-		WHERE c.fingerprint IS DISTINCT FROM (a.fp || ':' || $1)
+		WHERE `+CandidateSQL+`
+		  AND c.fingerprint IS DISTINCT FROM (a.fp || ':' || $1)
 		ORDER BY a.last_id DESC`, ruleHash)
 }
 

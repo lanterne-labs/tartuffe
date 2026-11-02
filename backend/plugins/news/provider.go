@@ -575,10 +575,37 @@ func (p *Provider) extractAndInsertFromArticles(
 	// Fetch step of the document state machine: every scraped article is
 	// saved now, before any LLM call. Empty and thin pages are saved as
 	// extracted with no facts: nothing to do, and never scraped again.
+	// A page read at another URL than the search gave (a Google redirect, a
+	// moved article) is stored under the URL it was read at; when that page
+	// is already known, the result is a second link to it: nothing to do.
+	redirected := map[int]string{}
+	var finals []string
+	for i, article := range articlesToProcess {
+		if c := extractedContents[i]; extractionErrors[i] == nil && c != nil && c.URL != "" && c.URL != article.Link {
+			redirected[i] = c.URL
+			finals = append(finals, c.URL)
+		}
+	}
+	knownFinal := map[string]bool{}
+	if len(finals) > 0 {
+		var err error
+		if knownFinal, err = p.Storer.KnownDocumentURLs(ctx, "news", finals); err != nil {
+			return fmt.Errorf("news: checking the redirected pages: %w", err)
+		}
+	}
+
 	var docs []core.SourceDocument
 	var nothingToExtract []string
 	for i, article := range articlesToProcess {
 		content := extractedContents[i]
+		if final, ok := redirected[i]; ok {
+			if knownFinal[final] {
+				log.Debug().Str("url", article.Link).Str("final_url", final).Msg("news: the page is already known under its final URL")
+				webfetch.Note(ctx, "news", article.Link, "article_known")
+				continue
+			}
+			article.Link = final
+		}
 		if extractErr := extractionErrors[i]; extractErr != nil {
 			log.Error().Err(extractErr).Str("url", article.Link).Msg("Failed to extract content")
 			result.Errors = append(result.Errors, extractErr)
@@ -595,13 +622,8 @@ func (p *Provider) extractAndInsertFromArticles(
 			PersonID:    target.PersonID,
 			Title:       content.Title,
 			Content:     content.Content,
-			PublishedAt: core.PickPublishedAt(nil, content.DatePublished, article.Date),
-			Metadata: map[string]any{
-				"source_name": article.Source,
-				"story_token": article.StoryToken,
-				"target_type": targetKind(target),
-				"target_name": target.Name,
-			},
+			PublishedAt: core.PickPublishedAt(nil, content.DatePublished, article.Date, DateFromURL(article.Link, time.Now())),
+			Metadata:    documentMetadata(article, target, opts),
 		})
 		text := strings.TrimSpace(content.Content)
 		switch {
@@ -747,6 +769,7 @@ func (p *Provider) extractDocument(
 			EmbeddingText:        fact.EmbeddingText,
 			Embedding:            embeddings[0],
 			OriginalQuote:        fact.OriginalQuote,
+			StatementDate:        fact.StatementDate,
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople,
 			SourceURL:            doc.URL,
@@ -1235,6 +1258,7 @@ func (p *Provider) CollectFactsForTargets(ctx context.Context, targets []plugins
 // newFactInserter builds the inserter every news insertion path uses:
 // same-claim facts grouped with the fact they restate.
 func (p *Provider) newFactInserter() *core.FactInserter {
+	var _ core.QuoteElsewhereStorer = p.Storer // the page-furniture guard runs on the news facts
 	inserter := core.NewFactInserter(p.Storer, p.StanceManager)
 	inserter.EnableDedupe(p.Storer)
 	return inserter
@@ -1245,6 +1269,13 @@ func (p *Provider) newFactInserter() *core.FactInserter {
 // of the body. The LLM resolves "mis à jour il y a 2 heures" against today: on
 // the Oct 2026 backfill it dated 17 % of the articles with a dated URL on the
 // day they were scraped, while the document had the right date.
+//
+// An LLM date after the end of the search window the page was found in is
+// dropped: the page was returned for an older period, so a date of the day it
+// was read is the prompt's reference date echoed back, not the article's
+// (review of 2026-10-30, mirror-zdn: an undated JDD piece on the 2023 RN
+// case got the scrape day and was read as news of October 2026). The fact is
+// then undated, which the judges treat with care, instead of wrongly dated.
 func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
 	var llmDate *time.Time
 	for _, f := range facts {
@@ -1253,5 +1284,46 @@ func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
 			break
 		}
 	}
+	if llmDate != nil && doc.PublishedAt == nil {
+		if to, ok := searchWindowEnd(doc); ok && llmDate.After(to.Add(searchWindowSlack)) {
+			log.Debug().Str("url", doc.URL).Time("llm_date", *llmDate).Time("window_to", to).
+				Msg("news: LLM article date after the search window; the page stays undated")
+			llmDate = nil
+		}
+	}
 	return core.PickPublishedAt(doc.PublishedAt, llmDate)
+}
+
+// searchWindowSlack is how far past the end of its search window a page may
+// still be published: the search engines' date filters are loose by a day or
+// two, and an article updated the next days keeps its place.
+const searchWindowSlack = 7 * 24 * time.Hour
+
+// documentMetadata is the metadata stored with a fetched page; search_to is
+// the end of the search window, which articleDate checks the LLM date against.
+func documentMetadata(article search.NewsResult, target plugins.Target, opts Options) map[string]any {
+	m := map[string]any{
+		"source_name": article.Source,
+		"story_token": article.StoryToken,
+		"target_type": targetKind(target),
+		"target_name": target.Name,
+	}
+	if opts.DateTo != nil && !opts.DateTo.IsZero() {
+		m["search_to"] = opts.DateTo.UTC().Format(time.RFC3339)
+	}
+	return m
+}
+
+// searchWindowEnd reads the end of the search window stored with a page.
+func searchWindowEnd(doc core.SourceDocument) (time.Time, bool) {
+	raw, _ := doc.Metadata["search_to"].(string)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		log.Warn().Err(err).Str("url", doc.URL).Str("search_to", raw).Msg("news: unreadable search window end in document metadata")
+		return time.Time{}, false
+	}
+	return t, true
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/llmtest"
 
@@ -16,6 +17,7 @@ type analyzeKeyFact struct {
 	ID   int64  `yaml:"id"`
 	Verb string `yaml:"verb"`
 	Text string `yaml:"text"`
+	Date string `yaml:"date"` // optional YYYY-MM-DD
 }
 
 // analyzeCase is one row of testdata/analyze_cases.yaml.
@@ -24,6 +26,7 @@ type analyzeCase struct {
 	Summary       string           `yaml:"summary"`
 	KeyFacts      []analyzeKeyFact `yaml:"key_facts"`
 	NewFact       string           `yaml:"new_fact"`
+	NewFactDate   string           `yaml:"new_fact_date"`  // optional YYYY-MM-DD
 	ExpectVerdict string           `yaml:"expect_verdict"` // optional; empty = don't assert
 	MustFlag      []int64          `yaml:"must_flag"`
 	MustNotFlag   []int64          `yaml:"must_not_flag"`
@@ -87,10 +90,11 @@ func TestAnalyzeGolden(t *testing.T) {
 						ID:                 kf.ID,
 						CanonicalVerb:      kf.Verb,
 						NormalizedFactText: kf.Text,
+						Date:               goldenDate(t, kf.Date),
 					})
 				}
 
-				agg, err := sm.analyzeAcrossBatches(ctx, tc.Summary, keyFacts, tc.NewFact)
+				agg, err := sm.analyzeAcrossBatches(ctx, tc.Summary, keyFacts, tc.NewFact, goldenDate(t, tc.NewFactDate))
 				if err != nil {
 					t.Fatalf("analyzeAcrossBatches: %v", err)
 				}
@@ -140,4 +144,18 @@ func keysOf(m map[int64]string) []int64 {
 		out = append(out, k)
 	}
 	return out
+}
+
+// goldenDate parses an optional YYYY-MM-DD of a golden case; empty is nil
+// (an undated fact).
+func goldenDate(t *testing.T, s string) *time.Time {
+	t.Helper()
+	if s == "" {
+		return nil
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Fatalf("golden date %q: %v", s, err)
+	}
+	return &d
 }

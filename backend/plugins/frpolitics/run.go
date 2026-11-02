@@ -96,7 +96,7 @@ func Run(ctx context.Context, storer *storage.PostgresStorer, opts Options) (int
 		// amendement judges the modification only, so its fact text says what
 		// the amendment does. selectLaws resolved it and gated the scrutins
 		// whose object could not be resolved.
-		objectPhrase := votedObjectPhrase(sel.amendments[law.Key], summary)
+		objectPhrase := votedObjectPhrase(sel.amendments[law.Key], law.Title, summary)
 
 		group := groupStats[law.Key]
 		// Collect party seeds (ensure parties exist with entity_type='party')
@@ -513,9 +513,30 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 		if len(batch) == 0 {
 			return nil
 		}
-		summaries, err := SummarizeLaws(ctx, batch)
+		// A law with facts already keeps the summary its facts carry; only
+		// the others go to the summarizer.
+		keys := make([]string, len(batch))
+		for i, law := range batch {
+			keys[i] = law.Key
+		}
+		summaries, err := store.StoredLawSummaries(ctx, keys)
 		if err != nil {
 			return err
+		}
+		var fresh []Law
+		for _, law := range batch {
+			if _, ok := summaries[law.Key]; !ok {
+				fresh = append(fresh, law)
+			}
+		}
+		if len(fresh) > 0 {
+			made, err := SummarizeLaws(ctx, fresh)
+			if err != nil {
+				return err
+			}
+			for k, v := range made {
+				summaries[k] = v
+			}
 		}
 		for _, law := range batch {
 			summary, ok := summaries[law.Key]

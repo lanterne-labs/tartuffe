@@ -13,7 +13,8 @@ import (
 // embedding are skipped (they cannot be routed).
 func (s *PostgresStorer) GetFactsForStanceBackfill(ctx context.Context, personID int64) ([]core.StanceRoutingFact, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), f.embedding
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), f.embedding, MIN(fs.published_at),
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN fact_sources fs ON f.id = fs.fact_id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -33,9 +34,11 @@ func (s *PostgresStorer) GetFactsForStanceBackfill(ctx context.Context, personID
 	for rows.Next() {
 		var f core.StanceRoutingFact
 		var vec pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec, &f.PublishedAt, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning fact: %w", err)
 		}
+		f.PublishedAt = sd.of(f.PublishedAt)
 		f.Embedding = vec.Slice()
 		if len(f.Embedding) == 0 {
 			continue

@@ -104,3 +104,16 @@ func TestStanceScore(t *testing.T) {
 	assert.Less(t, three, one, "extras add a repetition penalty")
 	assert.False(t, math.IsNaN(three))
 }
+
+// TestGetPersons_CandidateFilter: the candidates, the others, or everyone.
+func TestGetPersons_CandidateFilter(t *testing.T) {
+	fs := &fakeStore{}
+	h := routerFor(fs)
+	get(t, h, "/api/persons")
+	assert.Equal(t, "", fs.rankedArgs.candidate)
+	get(t, h, "/api/persons?candidate=true")
+	assert.Equal(t, "true", fs.rankedArgs.candidate)
+	get(t, h, "/api/persons?candidate=false")
+	assert.Equal(t, "false", fs.rankedArgs.candidate)
+	assert.Equal(t, http.StatusBadRequest, get(t, h, "/api/persons?candidate=maybe").Code)
+}

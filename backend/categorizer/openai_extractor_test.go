@@ -682,6 +682,7 @@ func TestRemoteLLMExtractor_SecondHandClaims(t *testing.T) {
 		name, person, title, text string
 		leak                      *regexp.Regexp // a fact matching it is the bad case
 		keep                      *regexp.Regexp // the real position that must stay
+		published                 string         // the article's date (YYYY-MM-DD), optional
 	}{
 		{
 			name:   "entourage",
@@ -717,6 +718,99 @@ Elle n'a pas fait de reniement sur la retraite à 60 ans pour ceux qui ont comme
 			leak: regexp.MustCompile(`(?i)reniement|renié|pas mentionné|tva sociale|60 ans`),
 			keep: regexp.MustCompile(`(?i)impôt sur le revenu`),
 		},
+		// mirror-ds6.8: the writer's active-voice gloss of her position
+		// (fact 105047: "tout en défendant pourtant le retour à 60 ans de
+		// l'âge pivot") is not a statement she made at the congress.
+		{
+			name:   "active gloss",
+			person: "Marine Le Pen",
+			title:  "Un congrès du RN sous haute tension à Orléans, Marine Le Pen en position de force",
+			text: `Devant 5 000 militants réunis à Orléans, Marine Le Pen a lancé sa campagne présidentielle. « On a le vent de face, mais on est resté ultra-favori », a-t-elle déclaré à la tribune.
+
+La candidate a promis une loi d'urgence sur l'immigration dès l'été 2027 : « Le premier texte que je présenterai au Parlement sera la loi sur la priorité nationale. »
+
+Un congrès où la ligne sociale du parti s'est faite plus discrète, la candidate ménageant les milieux économiques tout en défendant pourtant le retour à 60 ans de l'âge pivot.`,
+			leak: regexp.MustCompile(`(?i)60 ans|âge pivot|milieux économiques`),
+			keep: regexp.MustCompile(`(?i)priorité nationale|immigration`),
+		},
+		// mirror-ds6.8: an analyst's summary of her line (fact 95213,
+		// Carnegie: "has been clear that she would halt military support").
+		{
+			name:   "analyst summary",
+			person: "Marine Le Pen",
+			title:  "How Le Pen benefits from the stalemate in Ukraine",
+			text: `The stalemate on the Ukrainian front plays into the hands of France's far right. Marine Le Pen has been clear that, if elected in 2027, she would halt French military support to Ukraine and suspend sanctions against Russia, and she promises to bring peace through diplomacy.
+
+Asked on France Inter on Tuesday about the war, Le Pen said: "We can no longer help Ukraine financially; France's own deficit forbids it."`,
+			leak: regexp.MustCompile(`(?i)halt|suspend|sanctions|diplomacy|military support`),
+			keep: regexp.MustCompile(`(?i)financ`),
+		},
+		// mirror-ds6.10: the writer's framing of a reply ("a rejeté
+		// l'argument selon lequel...") kept instead of what she asserted
+		// (fact 14923: she assumes the 9 billion cost as a choice).
+		{
+			name:   "framing verb",
+			person: "Marine Le Pen",
+			title:  "Débat du Medef : Marine Le Pen assume le coût de sa réforme des retraites",
+			text: `Interrogée sur le financement de son retour à la retraite à 62 ans, Marine Le Pen a rejeté l'argument selon lequel sa réforme coûtera 9 milliards d'euros par an. « C'est un choix de société. Assumons les choix de société, moi je les assume », a-t-elle affirmé devant les patrons réunis au Medef.
+
+Elle a par ailleurs promis une baisse de la TVA sur l'énergie à 5,5 % dès l'été 2027.`,
+			leak: regexp.MustCompile(`(?i)rejet|contest|nié|dément`),
+			keep: regexp.MustCompile(`(?i)assum|choix de société`),
+		},
+		// mirror-ds6.23: a political scientist sorting the candidates
+		// (fact 90691: "celles qui refusent le principe d'une primaire :
+		// François Hollande et Raphaël Glucksmann") is not his position.
+		{
+			name:   "pollster classification",
+			person: "Raphaël Glucksmann",
+			title:  "Primaire à gauche : « Le paysage est encore très mouvant », selon le politologue Bruno Cautrès",
+			text: `Pour le politologue Bruno Cautrès, chercheur au Cevipof, la gauche se divise en trois familles : « Il y a ceux qui veulent une primaire de toute la gauche, ceux qui hésitent, et celles qui refusent le principe d'une primaire : François Hollande et Raphaël Glucksmann. »
+
+De son côté, Raphaël Glucksmann a déclaré samedi à Lille : « Je ne ferai pas alliance avec La France insoumise, ni en 2027 ni après. »`,
+			leak: regexp.MustCompile(`(?i)primaire`),
+			keep: regexp.MustCompile(`(?i)insoumise|LFI|alliance`),
+		},
+		// mirror-ds6.25: a recall of an event a year earlier ("Il y a un
+		// an, Philippe appelait...") read as news of the article's day
+		// (facts 95875, 95932). The fact must carry the event's date.
+		{
+			name:      "recalled event",
+			person:    "Édouard Philippe",
+			title:     "Édouard Philippe, un an après la rupture avec Emmanuel Macron",
+			published: "2026-10-21",
+			text: `Il y a un an, Édouard Philippe appelait Emmanuel Macron à organiser une élection présidentielle anticipée, une fois le budget adopté. Le président n'en a rien fait.
+
+Ce mardi, sur France Inter, le maire du Havre a promis : « Si je suis élu, je présenterai une vingtaine d'ordonnances dès juillet 2027. »`,
+			leak: regexp.MustCompile(`(?i)^[^0-9]*anticipée[^0-9]*$`),
+			keep: regexp.MustCompile(`(?i)ordonnances`),
+		},
+		// mirror-afv: a writer's sentence grouping several people under one
+		// verb (fact 4885: "Attal, Philippe et Retailleau réfutent...")
+		// became each person's own refusal; it fed 4 contradictions.
+		{
+			name:   "several people under one verb",
+			person: "Bruno Retailleau",
+			title:  "Bloc central : la primaire que personne ne veut",
+			text: `Gabriel Attal, Édouard Philippe et Bruno Retailleau réfutent toute idée de primaire au sein du bloc central, chacun se voyant déjà candidat.
+
+Interrogé mardi sur RTL, Bruno Retailleau a seulement déclaré : « Je serai candidat à la présidentielle, et les Français trancheront. »`,
+			leak: regexp.MustCompile(`(?i)réfut|primaire`),
+			keep: regexp.MustCompile(`(?i)candidat`),
+		},
+		// mirror-ds6.24: a subject named by its role resolved to the wrong
+		// target (fact 40331: "le patron de Place publique" attributed to
+		// Olivier Faure).
+		{
+			name:   "role subject",
+			person: "Olivier Faure",
+			title:  "Débat de la primaire socialiste : le mot « génocide » divise",
+			text: `Lors du deuxième débat de la primaire, Olivier Faure a estimé qu'« il faut nommer les choses : ce qui se passe à Gaza est un génocide ».
+
+Le patron de Place publique, lui, se refuse toujours à employer le terme de génocide, arguant que la Cour pénale internationale ne l'utilise pas.`,
+			leak: regexp.MustCompile(`(?i)faure[^.]*(refus|CPI|Cour pénale)`), // the refusal is Glucksmann's
+			keep: regexp.MustCompile(`(?i)génocide`),
+		},
 	}
 	ctx := context.Background()
 	const samples = 3
@@ -725,6 +819,7 @@ Elle n'a pas fait de reniement sur la retraite à 60 ans pour ceux qui ont comme
 		c := cases[i/samples]
 		results[i].facts, results[i].err = extractorClient.ExtractFacts(ctx, c.person, extractor.ExtractedContent{
 			URL: "http://example.com/" + strings.ReplaceAll(c.name, " ", "-"), Title: c.title, Content: c.text,
+			DatePublished: publishedDate(t, c.published),
 		})
 	})
 	for ci, c := range cases {
@@ -758,5 +853,128 @@ Elle n'a pas fait de reniement sur la retraite à 60 ans pour ceux qui ont comme
 		if keepRuns <= samples/2 {
 			t.Errorf("%s: the real position survived in only %d of %d runs", c.name, keepRuns, samples)
 		}
+	}
+}
+
+// publishedDate parses a case's optional article date (YYYY-MM-DD); empty
+// is nil, as an article without a date.
+func publishedDate(t *testing.T, s string) *time.Time {
+	t.Helper()
+	if s == "" {
+		return nil
+	}
+	d, err := time.Parse("2006-01-02", s)
+	if err != nil {
+		t.Errorf("published %q: %v", s, err)
+		return nil
+	}
+	return &d
+}
+
+// TestRemoteLLMExtractor_ReferentStaysInQuote locks the REFERENTS rule of the
+// 2026-11-01 audit (7 % of the band's news facts): the fact named the target
+// the article's framing gave while the quote held only "un projet" (prod fact
+// 166871 "gouvernement du Rassemblement national" from « un projet qui n'est
+// pas le bon »). The fact may name the RN only when the quote carries the
+// sentence that names it.
+func TestRemoteLLMExtractor_ReferentStaysInQuote(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Bruno Retailleau exclut toute alliance avec le RN malgré certaines convergences
+
+Invité de RTL ce mardi, le président des Républicains a été interrogé sur les points communs
+entre son programme et celui du Rassemblement national. « Je n'apporterai jamais mon concours
+à un projet qui n'est pas le bon pour la France », a-t-il répondu, avant d'ajouter : « Nous
+avons des convergences sur l'immigration, cela ne fait pas une alliance. »`
+
+	mockContent := extractor.ExtractedContent{
+		URL:     "http://example.com/referent",
+		Title:   "Bruno Retailleau exclut toute alliance avec le RN",
+		Content: mockText,
+	}
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Bruno Retailleau", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	for i, f := range facts {
+		t.Logf("  [%d] normalized=%q quote=%q", i+1, f.NormalizedFactText, f.OriginalQuote)
+		// The prod error: the fact built on « un projet qui n'est pas le bon »
+		// named the RN. (The "convergences" sentence, whose referent the
+		// framing gives unambiguously, is left to the model's judgement.)
+		fact := strings.ToLower(f.NormalizedFactText + " " + f.NormalizedFactTextEn)
+		quote := strings.ToLower(f.OriginalQuote)
+		if !strings.Contains(quote, "concours") {
+			continue
+		}
+		namesRN := strings.Contains(fact, "rassemblement national") || strings.Contains(fact, " rn") || strings.Contains(fact, "national rally")
+		if namesRN && !strings.Contains(quote, "rassemblement national") && !strings.Contains(quote, " rn") {
+			t.Errorf("Fact %d names the RN while its quote does not: %q / %q", i+1, f.NormalizedFactText, f.OriginalQuote)
+		}
+	}
+}
+
+// TestRemoteLLMExtractor_StatementDate checks that a statement the article
+// quotes from years before gets its own date, not the article's: Le Pen's
+// 2019 tweet, quoted in a November 2025 piece, was stored as 2025-11-09
+// (fact 156560, review of 2026-11-01, mirror-fmf), and the judges read it as
+// recent.
+func TestRemoteLLMExtractor_StatementDate(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Euro : quand Marine Le Pen voulait en sortir
+
+Les internautes ont exhumé un tweet de Marine Le Pen publié en 2019, dans lequel elle écrivait :
+« L'euro est un boulet pour notre économie, il faudra en sortir. » Interrogée ce dimanche sur
+France Inter, la candidate a répondu : « Je ne propose plus la sortie de l'euro, les Français
+y sont attachés. »`
+
+	published := time.Date(2025, 11, 9, 9, 0, 0, 0, time.UTC)
+	mockContent := extractor.ExtractedContent{
+		URL:           "http://example.com/statement-date",
+		Title:         "Euro : quand Marine Le Pen voulait en sortir",
+		Content:       mockText,
+		DatePublished: &published,
+	}
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Marine Le Pen", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	dated2019 := false
+	for i, f := range facts {
+		t.Logf("  [%d] normalized=%q quote=%q statement_date=%q", i+1, f.NormalizedFactText, f.OriginalQuote, backend.FormatFactDateISO(f.StatementDate))
+		quote := strings.ToLower(f.OriginalQuote)
+		switch {
+		case strings.Contains(quote, "boulet") || strings.Contains(quote, "il faudra en sortir"):
+			if f.StatementDate == nil || f.StatementDate.Year() != 2019 {
+				t.Errorf("Fact %d quotes the 2019 tweet but its statement date is %q, want 2019", i+1, backend.FormatFactDateISO(f.StatementDate))
+			} else {
+				dated2019 = true
+			}
+		case strings.Contains(quote, "je ne propose plus"):
+			if f.StatementDate != nil && f.StatementDate.Year() != 2025 {
+				t.Errorf("Fact %d is the statement of the article's day but is dated %q", i+1, backend.FormatFactDateISO(f.StatementDate))
+			}
+		}
+	}
+	if !dated2019 {
+		t.Error("no fact of the 2019 tweet with its 2019 date")
 	}
 }

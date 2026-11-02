@@ -39,7 +39,7 @@ func TestDeriveDeputyFactsSkipNonVoting(t *testing.T) {
 	}, LawSummary{}, testObjectPhrase)
 
 	require.Len(t, facts, 1)
-	require.Equal(t, "Marie Curie s'est abstenu lors du vote sur "+testObjectPhrase, facts[0].FactText)
+	require.Equal(t, "Marie Curie a choisi l'abstention lors du vote sur "+testObjectPhrase, facts[0].FactText)
 }
 
 // A party's majority fact names the party.
@@ -55,6 +55,34 @@ func TestDerivePartyMajorityFactsNameTheParty(t *testing.T) {
 	require.Equal(t, "party", facts[0].EntityType)
 	require.Equal(t, "Rassemblement National a collectivement voté CONTRE "+testObjectPhrase, facts[0].FactText)
 	require.Equal(t, testObjectPhrase, facts[0].EmbeddingText)
+}
+
+// A group whose members mostly did not vote gives no collective fact
+// (2 voters of 23 LIOT deputies, 2026-11-01).
+func TestDerivePartyMajorityFactsParticipationFloor(t *testing.T) {
+	law := Law{Key: "17-1", URL: "https://an.test/17-1"}
+	organes := map[string]OrganeInfo{"PO1": {OrganeRef: "PO1", ShortName: "LIOT", LongName: "Libertés, Indépendants, Outre-mer et Territoires"}}
+	tooFew := LawGroupStats{"PO1": {Position: VoteFor, For: 2, NonVot: 21}}
+	require.Empty(t, derivePartyMajorityFacts(law, tooFew, 0.5, organes, LawSummary{}, testObjectPhrase))
+	enough := LawGroupStats{"PO1": {Position: VoteFor, For: 5, NonVot: 18}}
+	require.Len(t, derivePartyMajorityFacts(law, enough, 0.5, organes, LawSummary{}, testObjectPhrase), 1)
+	// nonVotants is usually 0: the group's size is the base (7 of 69 PS).
+	minority := LawGroupStats{"PO1": {Position: VoteFor, For: 7, Members: 69}}
+	require.Empty(t, derivePartyMajorityFacts(law, minority, 0.5, organes, LawSummary{}, testObjectPhrase))
+	half := LawGroupStats{"PO1": {Position: VoteFor, For: 20, Members: 69}}
+	require.Len(t, derivePartyMajorityFacts(law, half, 0.5, organes, LawSummary{}, testObjectPhrase), 1)
+	ni := map[string]OrganeInfo{"PO2": {OrganeRef: "PO2", ShortName: "NI", LongName: "Non inscrit"}}
+	require.Empty(t, derivePartyMajorityFacts(law, LawGroupStats{"PO2": {Position: VoteFor, For: 8, Members: 9}}, 0.5, ni, LawSummary{}, testObjectPhrase))
+}
+
+// A vote on a declaration of the Government (art. 50-1) is not "le texte de
+// loi"; the phrase is the declaration itself (one scrutin, 468 ballots on
+// 2026-11-01).
+func TestLawPhraseForDeclaration(t *testing.T) {
+	title := "la déclaration du Gouvernement portant sur la lutte contre le narcotrafic (application de l'article 50-1 de la Constitution)"
+	got := lawPhraseFor(title, "Approuve la déclaration du Gouvernement visant à renforcer la lutte contre le narcotrafic.")
+	require.Equal(t, "la déclaration du Gouvernement visant à renforcer la lutte contre le narcotrafic.", got)
+	require.Equal(t, "la déclaration du Gouvernement : « Autre résumé »", lawPhraseFor(title, "Autre résumé"))
 }
 
 // Every record becomes its own single-subject input; records on one scrutin

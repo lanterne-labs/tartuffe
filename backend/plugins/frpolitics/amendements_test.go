@@ -28,6 +28,11 @@ func TestCleanAmdTextAndPurpose(t *testing.T) {
 	if purposePhrase(&AmendementInfo{}) != "" {
 		t.Error("empty amendment must yield empty purpose (gate)")
 	}
+	// A long exposé is cut inside the guillemets, never the closing » (2026-11-01).
+	long := purposePhrase(&AmendementInfo{Expose: strings.Repeat("Par cet amendement de repli, le groupe souhaite supprimer l'obligation. ", 6)})
+	if !strings.HasSuffix(long, "… »") || len([]rune(long)) > purposeMaxRunes+40 {
+		t.Errorf("long exposé = %q, want it cut before the closing »", long)
+	}
 }
 
 // TestLookupAmendement_ProdCase resolves the exact sous-amendement behind prod
@@ -65,7 +70,7 @@ func TestLookupAmendement_ProdCase(t *testing.T) {
 	if !ok {
 		t.Fatal("resolveVotedObject gated a resolvable sous-amendement")
 	}
-	phrase := votedObjectPhrase(amendment, LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"})
+	phrase := votedObjectPhrase(amendment, "", LawSummary{SimpleStatement: "Nationalise ArcelorMittal France pour préserver la souveraineté industrielle"})
 	t.Logf("phrase: %s", phrase)
 	for _, want := range []string{"le sous-amendement n° 372", "(UDR)", "visant à accorder", "déposé sur le texte de loi"} {
 		if !strings.Contains(phrase, want) {

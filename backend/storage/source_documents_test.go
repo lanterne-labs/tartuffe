@@ -63,7 +63,7 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 	var content string
 	var facts int
 	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT content, facts_count FROM source_documents WHERE id = $1", id).Scan(&content, &facts))
-	require.Equal(t, "", content, "extracted deletes the raw content")
+	require.Equal(t, "body A", content, "extracted keeps the content")
 	require.Equal(t, 3, facts)
 
 	for i := 1; i < core.MaxExtractionAttempts; i++ {

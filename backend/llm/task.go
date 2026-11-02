@@ -31,6 +31,8 @@ const (
 	TaskTranslate     Task = "translate"      // translation of a statement or a text
 	TaskGroupSummary  Task = "group-summary"  // one summary sentence of a contradiction group
 	TaskLawSummary    Task = "law-summary"    // short titles and summaries of a batch of laws
+	TaskRestatement   Task = "restatement"    // two contradictions sharing a fact: one counted twice?
+	TaskGround        Task = "ground"         // extracted facts against their quotes: grounded, rewrite or drop
 )
 
 // AllTasks lists every task, for flag parsing and documentation.
@@ -38,7 +40,7 @@ var AllTasks = []Task{
 	TaskOccurrence, TaskDedupBatch, TaskExtract, TaskStanceAnalyze, TaskStanceAssign,
 	TaskStanceLabel, TaskStanceMerge, TaskDetect, TaskVerify, TaskAudit, TaskBundle,
 	TaskEntityDedup, TaskEntityFilter, TaskComplaint, TaskHandle, TaskTranslate, TaskGroupSummary,
-	TaskLawSummary,
+	TaskLawSummary, TaskRestatement, TaskGround,
 }
 
 // thinkingTasks are the tasks that think in production. A task thinks only

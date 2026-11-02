@@ -15,7 +15,8 @@ func (s *PostgresStorer) PersonsWithFactsSince(ctx context.Context, since time.T
 	rows, err := s.pool.Query(ctx, `
 		SELECT p.id, p.name, COALESCE(p.entity_type, 'person')
 		FROM persons p
-		WHERE EXISTS (
+		WHERE `+CandidateSQL+`
+		  AND EXISTS (
 			SELECT 1 FROM fact_mentions fm
 			JOIN fact_sources fs ON fs.id = fm.fact_source_id
 			JOIN facts f ON f.id = fs.fact_id

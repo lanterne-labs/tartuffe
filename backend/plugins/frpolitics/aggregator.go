@@ -9,12 +9,29 @@ import (
 )
 
 // derivePartyMajorityFacts builds party-level facts based on majority positions
+// The participation floor of a group's collective vote: at least
+// groupVoteMinVoters members voting, and at least groupVoteMinShare of the
+// group's members (nombreMembresGroupe; nonVotants are the members present
+// who did not vote, usually 0, so they cannot stand for the absent: the
+// review of 2026-11-01 found 7 of 69 PS deputies making a "collective" vote).
+const (
+	groupVoteMinVoters = 3
+	groupVoteMinShare  = 0.2
+)
+
 func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float64, organeCache map[string]OrganeInfo, summary LawSummary, objectPhrase string) []FactRecord {
 	facts := make([]FactRecord, 0, len(groupStats))
 	for orgRef, stats := range groupStats {
 		total := stats.For + stats.Against + stats.Abst
-		// Avoid division by zero; skip if no present voters
-		if total == 0 {
+		// A collective position needs the group to have voted: no voters,
+		// or fewer than groupVoteMinVoters and groupVoteMinShare of the
+		// members (2 of 23 LIOT deputies made a "collective" vote,
+		// 2026-11-01), gives no fact.
+		members := stats.Members
+		if members < total+stats.NonVot {
+			members = total + stats.NonVot
+		}
+		if total == 0 || total < groupVoteMinVoters || float64(total) < groupVoteMinShare*float64(members) {
 			continue
 		}
 		var majorityFrac float64
@@ -50,8 +67,13 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			// Strict mode: skip when we cannot resolve a proper name
 			continue
 		}
+		// The non-attached deputies are not a group: their votes are each
+		// their own, never a collective position.
+		if isNonInscrits(name) {
+			continue
+		}
 
-		factText := name + " " + buildCollectiveVoteStatement(pos, objectPhrase)
+		factText := name + " " + buildCollectiveVoteStatement(pos, objectPhrase) + voteDateSuffix(law, objectPhrase)
 		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
 		embeddingText := objectPhrase
 		log.Debug().Str("party", name).Float64("frac", majorityFrac).Str("text", factText).Msg("frpolitics: derived collective party fact")
@@ -89,12 +111,32 @@ func buildCollectiveVoteStatement(pos VotePosition, lawPhrase string) string {
 	case VoteAgainst:
 		return fmt.Sprintf("a collectivement voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("s'est collectivement abstenu lors du vote sur %s", lawPhrase)
+		return fmt.Sprintf("a collectivement choisi l'abstention lors du vote sur %s", lawPhrase)
 	default:
 		return fmt.Sprintf("n'a pas pris part au vote collectif sur %s", lawPhrase)
 	}
 }
 
+// voteDateSuffix is the date of the scrutin at the end of a ballot: two texts
+// of one title voted a year apart (the postponement of the New Caledonia
+// elections, 6 November 2024 and 28 October 2025) read as one text without
+// it, and the stance summaries invented a contrast between them (review of
+// 2026-11-01). The embedding text keeps the object alone. A censure motion
+// already names its date.
+func voteDateSuffix(law Law, objectPhrase string) string {
+	if law.VoteDate == nil {
+		return ""
+	}
+	date := frenchDate(*law.VoteDate)
+	if strings.Contains(objectPhrase, date) {
+		return ""
+	}
+	return " (scrutin du " + date + ")"
+}
+
+// buildVoteStatement is the vote of one deputy. The abstention is worded
+// without a past participle: the AN records give no civility, and "s'est
+// abstenu" was wrong for every woman deputy (audit of 2026-10-31).
 func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	switch pos {
 	case VoteFor:
@@ -102,10 +144,55 @@ func buildVoteStatement(pos VotePosition, lawPhrase string) string {
 	case VoteAgainst:
 		return fmt.Sprintf("a voté CONTRE %s", lawPhrase)
 	case VoteAbstention:
-		return fmt.Sprintf("s'est abstenu lors du vote sur %s", lawPhrase)
+		return fmt.Sprintf("a choisi l'abstention lors du vote sur %s", lawPhrase)
 	default:
 		return fmt.Sprintf("n'a pas pris part au vote sur %s", lawPhrase)
 	}
+}
+
+// textNoun names the kind of text a scrutin title votes on: a proposition
+// de résolution or a résolution européenne is not a law, and calling it "le
+// texte de loi" misstates the vote (2 of 100 audited vote facts, 2026-10-31).
+func textNoun(title string) string {
+	t := strings.ToLower(title)
+	switch {
+	case strings.Contains(t, "proposition de résolution"), strings.Contains(t, "proposition de resolution"):
+		return "la proposition de résolution"
+	case strings.Contains(t, "projet de loi organique"), strings.Contains(t, "proposition de loi organique"):
+		return "le texte de loi organique"
+	case strings.Contains(t, "déclaration du gouvernement"), strings.Contains(t, "declaration du gouvernement"):
+		// A vote on a declaration of the Government (article 50-1 of the
+		// Constitution): not a law.
+		return "la déclaration du Gouvernement"
+	default:
+		return "le texte de loi"
+	}
+}
+
+// lawPhraseFor is prepareLawPhrase with the noun of the scrutin's text.
+func lawPhraseFor(title, lawSimple string) string {
+	phrase := prepareLawPhrase(lawSimple)
+	noun := textNoun(title)
+	if noun == "la déclaration du Gouvernement" {
+		// The summary of a declaration repeats the noun ("Approuve la
+		// déclaration du Gouvernement visant à …"): the phrase is the
+		// declaration itself, not a quote of it.
+		if rest, ok := cutPrefixFold(strings.TrimSpace(lawSimple), "approuve la déclaration du gouvernement "); ok {
+			return noun + " " + rest
+		}
+	}
+	if noun != "le texte de loi" {
+		phrase = noun + strings.TrimPrefix(phrase, "le texte de loi")
+	}
+	return phrase
+}
+
+// cutPrefixFold is strings.CutPrefix without regard to case.
+func cutPrefixFold(s, prefix string) (string, bool) {
+	if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+		return s[len(prefix):], true
+	}
+	return s, false
 }
 
 func prepareLawPhrase(lawSimple string) string {
@@ -119,4 +206,11 @@ func prepareLawPhrase(lawSimple string) string {
 		return "le texte de loi"
 	}
 	return fmt.Sprintf("le texte de loi : « %s »", guard)
+}
+
+// isNonInscrits reports whether an organe name is the non-attached deputies
+// ("Non inscrit", "Non inscrits", "NI").
+func isNonInscrits(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "ni" || strings.HasPrefix(n, "non inscrit") || strings.HasPrefix(n, "non-inscrit")
 }

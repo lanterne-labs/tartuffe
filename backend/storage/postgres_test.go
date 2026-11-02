@@ -83,7 +83,7 @@ type stubStanceProcessor struct {
 	storer *PostgresStorer
 }
 
-func (s *stubStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string) (*core.StanceProcessResult, error) {
+func (s *stubStanceProcessor) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, _ string, _ *time.Time) (*core.StanceProcessResult, error) {
 	label := factText
 	if len(label) > 120 {
 		label = label[:120]
@@ -934,6 +934,11 @@ func TestPersonSummaryQueries(t *testing.T) {
 	defer teardown()
 	ctx := context.Background()
 
+	// A candidate, so that its fact gets a stance (candidates.go).
+	pre, _, err := storer.AddPersonWithType(ctx, "Summary Testperson", "party")
+	require.NoError(t, err)
+	require.NoError(t, storer.SetCandidate(ctx, pre, true))
+
 	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{
 		SubjectEntity:      "Summary Testperson",
 		SubjectEntityType:  "party",
@@ -962,7 +967,7 @@ func TestPersonSummaryQueries(t *testing.T) {
 	assert.Equal(t, 1, byID.StanceCount, "the stub stance processor gives every fact a stance")
 	assert.Equal(t, 0, byID.ContradictionCount)
 
-	ranked, err := storer.GetPersonsRankedByScore(ctx, 10, 0, "party", "testperson", "", 1)
+	ranked, err := storer.GetPersonsRankedByScore(ctx, 10, 0, "party", "testperson", "", 1, "")
 	require.NoError(t, err)
 	require.Len(t, ranked, 1)
 	assert.Equal(t, byID.ID, ranked[0].ID)

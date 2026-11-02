@@ -68,8 +68,8 @@ type DocumentStorer interface {
 	// or failed with attempts left), oldest fetch first; personID 0 means
 	// every person, a zero publishedSince any publication date.
 	ListUnfinishedDocuments(ctx context.Context, sourceType string, personID int64, publishedSince time.Time, limit int) ([]SourceDocument, error)
-	// MarkDocumentExtracted records a successful extraction and deletes the
-	// raw content.
+	// MarkDocumentExtracted records a successful extraction; the content
+	// stays for reviews and re-extraction.
 	MarkDocumentExtracted(ctx context.Context, id int64, factsCount int) error
 	// MarkDocumentFailed records a failed attempt.
 	MarkDocumentFailed(ctx context.Context, id int64, extractErr error) error

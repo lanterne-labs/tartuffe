@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog/log"
 )
@@ -90,6 +91,8 @@ type StanceFactInfo struct {
 	EmbeddingText      string
 	CanonicalVerb      string
 	Lang               string // BCP-47 source language ("fr", "en", ...); always set on new inserts.
+	// Date is the day of the fact (its earliest source), nil when unknown.
+	Date *time.Time
 }
 
 // StanceContradictionEntry is one (new_fact, key_fact) contradiction the LLM
@@ -215,6 +218,12 @@ func (s *flexibleString) UnmarshalJSON(data []byte) error {
 // across multiple sequential analyze calls; contradictions are unioned.
 const keyFactBatchSize = 40
 
+// stanceContextTokens is the context of the endpoint that serves task in
+// the active routing (14K on the local box, 200K on Claude): the budget of
+// the prompt is sized on it, not on a constant of one model (the 12K of the
+// first local model left no room once the rules grew).
+func stanceContextTokens(task llm.Task) int { return llm.ContextTokens(task) }
+
 // Token budget for the stance-analyze LLM call. The analyze prompt is dominated
 // by the shared promptrules.ContradictionRules body (~6.3K tokens) plus the
 // template prose; with the model's 12K context that leaves little room, so the
@@ -224,10 +233,9 @@ const keyFactBatchSize = 40
 // back facts in prod (the old code reserved 4K output against an 8K base = 12K,
 // leaving zero room for facts).
 const (
-	stanceMaxContextTokens    = 12000 // gemma-4 via litellm
-	stanceAnalyzeOutputTokens = 2048  // was 4000; budget-batching bounds entries/output per call so this is ample
-	stanceContextSafetyTokens = 600   // absorbs token-estimate error
-	stanceCharsPerToken       = 4     // measured ~4.1 on the French analyze prompt; 4 is slightly conservative
+	stanceAnalyzeOutputTokens = 2048 // was 4000; budget-batching bounds entries/output per call so this is ample
+	stanceContextSafetyTokens = 600  // absorbs token-estimate error
+	stanceCharsPerToken       = 4    // measured ~4.1 on the French analyze prompt; 4 is slightly conservative
 	// stanceTemplateProseTokens is the fixed analyze-template prose AROUND the
 	// shared rules (which are measured directly in estimateStanceBaseTokens).
 	// Bump only if you substantially edit the analyze template in callLLM.
@@ -242,6 +250,9 @@ const (
 type StanceManager struct {
 	storer StanceStorer
 	client *llm.Client
+	// restate keeps a contradiction counted twice out (RestatesExisting);
+	// nil: no check.
+	restate *RestatementJudge
 }
 
 // NewStanceManagerFromEnv creates a new StanceManager using OPEN_AI_* environment variables.
@@ -251,7 +262,12 @@ func NewStanceManagerFromEnv(storer StanceStorer) (*StanceManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &StanceManager{storer: storer, client: client}, nil
+	restate, err := NewRestatementJudgeFromEnv()
+	if err != nil {
+		log.Warn().Err(err).Msg("stance manager: no restatement judge; a contradiction counted twice is recorded twice")
+		restate = nil
+	}
+	return &StanceManager{storer: storer, client: client, restate: restate}, nil
 }
 
 // ErrStanceRefreshPending marks a ProcessNewFact error returned after the fact
@@ -269,7 +285,7 @@ var ErrStanceRefreshPending = errors.New("fact linked to its stance; label and s
 // label + summary (see refreshAfterVerdict). An error wrapping
 // ErrStanceRefreshPending means the fact was routed and only that refresh
 // failed.
-func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string, date *time.Time) (*StanceProcessResult, error) {
 	decision, matched, err := sm.assignStance(ctx, personID, factID, factText, embedding)
 	if err != nil {
 		return nil, err
@@ -289,12 +305,12 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 	// contradictions across batches. The fact joins the stance only once the
 	// analysis and its verification are done (handleVerdict): a failed call
 	// leaves nothing written, so the (person, fact) pair stays pending.
-	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText)
+	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText, date)
 	if err != nil {
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
 	}
 
-	return sm.handleVerdict(ctx, matched, personID, factID, factText, keyFacts, embedding, agg)
+	return sm.handleVerdict(ctx, matched, personID, factID, factText, date, keyFacts, embedding, agg)
 }
 
 // AssignStance decides the stance of a fact of the person without the
@@ -485,7 +501,7 @@ func analyzeVoteKey(r *stanceLLMResponse) string {
 // KeyFactID). The primary verdict is CONTRADICTION if any batch returned
 // contradictions, else DUPLICATE if any batch returned DUPLICATE, else
 // NEW_INFO.
-func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*aggregatedAnalysis, error) {
+func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*aggregatedAnalysis, error) {
 	batches := chunkKeyFactsByBudget(stanceSummary, newFactText, keyFacts)
 	if len(batches) == 0 {
 		// No key facts at all — degenerate but possible. Treat the new fact as
@@ -506,7 +522,7 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 		// single-sample). Early exit keeps the usual cost at 2 calls.
 		resp, err := llm.MajorityVote(AnalyzeVotes,
 			func() (*stanceLLMResponse, error) {
-				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText)
+				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText, newFactDate)
 			},
 			analyzeVoteKey,
 		)
@@ -575,7 +591,34 @@ func estimateStanceTokens(s string) int {
 // formatKeyFactLine renders one key fact as it appears in the analyze prompt.
 // Shared by the prompt builder and the budget estimator so the two never drift.
 func formatKeyFactLine(f StanceFactInfo) string {
-	return fmt.Sprintf("- [ID %d] (%s) %s\n", f.ID, f.CanonicalVerb, f.NormalizedFactText)
+	return fmt.Sprintf("- [ID %d] (%s) %s%s\n", f.ID, f.CanonicalVerb, datedPrefix(f.Date), f.NormalizedFactText)
+}
+
+// datedPrefix is the date a judge sees before a fact's text: "(dated
+// YYYY-MM-DD) " when known, "(undated) " else. The rules reason on dates (a
+// reversal needs both, a yearly text a year apart is two texts); until
+// 2026-10-27 the stance judges saw none (the Le Pen review: two budgets a
+// year apart judged as one text).
+func datedPrefix(t *time.Time) string {
+	d := promptrules.DateOf(t)
+	if d == "" {
+		return "(undated) "
+	}
+	return "(dated " + d + ") "
+}
+
+// keyFactByID indexes the key facts of a stance by id.
+func keyFactByID(facts []StanceFactInfo) map[int64]StanceFactInfo {
+	m := make(map[int64]StanceFactInfo, len(facts))
+	for _, f := range facts {
+		m[f.ID] = f
+	}
+	return m
+}
+
+// statementOf is the fact as the verifier judges it: its text and its date.
+func statementOf(f StanceFactInfo) promptrules.Statement {
+	return promptrules.Statement{Text: f.NormalizedFactText, Date: promptrules.DateOf(f.Date)}
 }
 
 // estimateStanceBaseTokens estimates the analyze prompt's fixed cost EXCLUDING
@@ -590,7 +633,7 @@ func estimateStanceBaseTokens(stanceSummary, newFactText string) int {
 }
 
 // chunkKeyFactsByBudget batches key facts so each analyze call fits the model's
-// context: base prompt + facts + output reservation + safety ≤ stanceMaxContextTokens.
+// context: base prompt + facts + output reservation + safety ≤ stanceContextTokens().
 // Falls back to a minimal budget (with a WARN) if the base prompt alone is near
 // the ceiling — that signals the analyze template itself needs trimming. Never
 // emits an empty batch, so a single oversized fact is still attempted alone.
@@ -599,7 +642,7 @@ func chunkKeyFactsByBudget(stanceSummary, newFactText string, facts []StanceFact
 		return nil
 	}
 	base := estimateStanceBaseTokens(stanceSummary, newFactText)
-	factsBudget := stanceMaxContextTokens - stanceAnalyzeOutputTokens - stanceContextSafetyTokens - base
+	factsBudget := stanceContextTokens(llm.TaskStanceAnalyze) - stanceAnalyzeOutputTokens - stanceContextSafetyTokens - base
 	if factsBudget < stanceMinFactsBudget {
 		log.Warn().
 			Int("base_tokens", base).
@@ -685,7 +728,7 @@ func (sm *StanceManager) createNewStance(ctx context.Context, personID int64, fa
 // label+summary refresh for non-duplicate verdicts. Nothing is written before
 // the verification succeeded, so a failed verifier call leaves the fact out
 // of the stance, still pending.
-func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
+func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocument, personID int64, factID int64, newFactText string, newFactDate *time.Time, keyFacts []StanceFactInfo, embedding []float32, agg *aggregatedAnalysis) (*StanceProcessResult, error) {
 	decision := StanceDecision{StanceID: matched.ID, Verdict: agg.PrimaryVerdict, Reasoning: agg.Reasoning}
 	switch agg.PrimaryVerdict {
 	case VerdictDuplicate, VerdictNewInfo:
@@ -693,7 +736,7 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 		// Adversarial verification pass: survivors only — refuted pairs are
 		// never recorded, so they never dent the honesty score. If every pair
 		// is refuted the fact is just new info for the stance.
-		verified, err := sm.verifyEntries(ctx, personID, factID, newFactText, keyTextByID(keyFacts), agg.Contradictions)
+		verified, err := sm.verifyEntries(ctx, personID, factID, promptrules.Statement{Text: newFactText, Date: promptrules.DateOf(newFactDate)}, keyFactByID(keyFacts), agg.Contradictions)
 		if err != nil {
 			return nil, err
 		}
@@ -792,7 +835,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	if len(otherFacts) == 0 {
 		return nil, nil
 	}
-	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText)
+	agg, err := sm.analyzeAcrossBatches(ctx, stance.Summary, otherFacts, fact.NormalizedFactText, fact.Date)
 	if err != nil {
 		return nil, fmt.Errorf("analyze: %w", err)
 	}
@@ -801,7 +844,7 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 	}
 	// Adversarial verification pass (same gate as the live ingest path in
 	// handleVerdict).
-	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, fact.NormalizedFactText, keyTextByID(otherFacts), agg.Contradictions)
+	return sm.verifyEntries(ctx, stance.PersonID, fact.ID, statementOf(fact), keyFactByID(otherFacts), agg.Contradictions)
 }
 
 // VerifyContradiction runs the adversarial refutation pass over a single
@@ -815,8 +858,8 @@ func (sm *StanceManager) verifiedContradictionsInStance(
 // identical refutation logic. The stance path judges plain texts (no group
 // members) because the stance analysis that found the contradiction saw
 // plain texts too: a veto never sees less than the finder.
-func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, claimedReason string) (keep bool, reason string, err error) {
-	return llm.VerifyContradiction(ctx, sm.client, promptrules.Statement{Text: factA}, promptrules.Statement{Text: factB}, claimedReason)
+func (sm *StanceManager) VerifyContradiction(ctx context.Context, a, b promptrules.Statement, claimedReason string) (keep bool, reason string, err error) {
+	return llm.VerifyContradiction(ctx, sm.client, a, b, claimedReason)
 }
 
 // verifyEntries runs the adversarial refutation pass over the flagged
@@ -841,7 +884,7 @@ func (sm *StanceManager) VerifyContradiction(ctx context.Context, factA, factB, 
 //
 // When the LLM is unavailable nothing is decided: the error (wrapping
 // llm.ErrUnavailable) is returned and the caller must record nothing.
-func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFactText string, keyTexts map[int64]string, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
+func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int64, newFact promptrules.Statement, keyFacts map[int64]StanceFactInfo, entries []StanceContradictionEntry) ([]StanceContradictionEntry, error) {
 	if len(entries) == 0 {
 		return entries, nil
 	}
@@ -852,13 +895,13 @@ func (sm *StanceManager) verifyEntries(ctx context.Context, personID, factID int
 				Msg("One contradiction per fact and stance: the other flagged key facts are not judged")
 			break
 		}
-		keyText, ok := keyTexts[c.KeyFactID]
-		if !ok || strings.TrimSpace(keyText) == "" {
+		keyFact, ok := keyFacts[c.KeyFactID]
+		if !ok || strings.TrimSpace(keyFact.NormalizedFactText) == "" {
 			log.Warn().Int64("fact_id", factID).Int64("key_fact_id", c.KeyFactID).Str("flagged_reason", c.Reason).
 				Msg("Contradiction with a key fact the analysis was not shown; dropping")
 			continue
 		}
-		keep, reason, err := sm.VerifyContradiction(ctx, newFactText, keyText, c.Reason)
+		keep, reason, err := sm.VerifyContradiction(ctx, newFact, statementOf(keyFact), c.Reason)
 		if errors.Is(err, llm.ErrUnavailable) {
 			return nil, fmt.Errorf("verifying contradiction with key fact %d: %w", c.KeyFactID, err)
 		}
@@ -914,6 +957,11 @@ func (sm *StanceManager) recordStanceContradictions(
 		// The bundler-needed signal is dropped: both facts are in the same
 		// stance OF THIS PERSON, so the person-scoped fast path in storage
 		// always sets bundle_stance_id directly.
+		if rs, ok := sm.storer.(RestatementStorer); ok {
+			if restated, _ := RestatesExisting(ctx, rs, sm.restate, "", personID, factID, c.KeyFactID, c.Reason); restated > 0 {
+				continue
+			}
+		}
 		if _, _, err := sm.storer.RecordContradictionImmediate(ctx, personID, factID, c.KeyFactID, c.Reason, c.ReasonEn); err != nil {
 			log.Warn().Err(err).
 				Int64("stance_id", stanceID).
@@ -1045,7 +1093,7 @@ func newFactsFromStanceFacts(facts []StanceFactInfo, tensions map[int64][]Stance
 
 // refreshFactsBudgetTokens is the fact-text budget of one refresh call.
 func refreshFactsBudgetTokens() int {
-	return stanceMaxContextTokens - stanceRefreshOutputTokens - stanceContextSafetyTokens - stanceRefreshPromptTokens
+	return stanceContextTokens(llm.TaskStanceLabel) - stanceRefreshOutputTokens - stanceContextSafetyTokens - stanceRefreshPromptTokens
 }
 
 // fullRefreshFits reports whether inlining every fact into the full-rebuild
@@ -1259,7 +1307,7 @@ func (sm *StanceManager) callJSONLLM(
 // and parses the response. Callers split into batches via chunkKeyFacts; this
 // function handles a single batch and returns whatever contradictions the LLM
 // found within it.
-func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string) (*stanceLLMResponse, error) {
+func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*stanceLLMResponse, error) {
 	var factsBuilder strings.Builder
 	for _, f := range keyFacts {
 		factsBuilder.WriteString(formatKeyFactLine(f))
@@ -1312,7 +1360,7 @@ The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction 
 EXISTING STANCE SUMMARY:
 %s
 
-KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
+KEY FACTS IN THIS STANCE (each line is "[ID N] (verb) (dated YYYY-MM-DD) text", "(undated)" when the date is unknown; the NEW FACT carries its date the same way — use them for the TEMPORAL REASONING rules):
 %s
 
 NEW FACT:
@@ -1340,7 +1388,7 @@ Return ONLY valid JSON:
 For DUPLICATE: contradictions MUST be []. Set duplicate_of_key_fact_id to the [ID N] of the key fact the new fact paraphrases.
 For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
 For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
-		stanceSummary, factsBuilder.String(), newFactText)
+		stanceSummary, factsBuilder.String(), datedPrefix(newFactDate)+newFactText)
 
 	// temp=0.1 matches the rest of the codebase (every other contradiction /
 	// detector / auditor / dedup path uses 0.1 or lower); the 0.2 default that
@@ -1741,10 +1789,7 @@ func (sm *StanceManager) refreshStanceMetadata(ctx context.Context, stanceID int
 
 `+stanceLabelRules+`
 
-SUMMARY RULES:
-- 2-4 sentences. Describe what the person has said / done in this subject area, grounded in the listed facts.
-- If two or more key facts CONFLICT (e.g. one promise and one walk-back), the summary MUST PRESERVE THE TENSION — do not smooth it into a unified narrative. Surface that the position has shifted / been walked back / has internal conflict.
-- Do not add facts or claims beyond what's in the listed facts.
+`+stanceSummaryRules+`
 
 FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 %s
@@ -1753,6 +1798,26 @@ FACTS IN THIS STANCE (each line is "[ID N] (verb) text"):
 
 	return sm.callRefreshLLM(ctx, prompt)
 }
+
+// stanceSummaryRules is the single source of what a stance summary is,
+// shared by the full rebuild, the incremental refresh and the merge. A
+// summary is read in a list of stances on a person's page, above the facts
+// and their sources: it says the position at a glance. Before 2026-11-01 it
+// listed measures, figures, dates and events (median 436 characters, 7579
+// stances over 600, up to 4017), and the incremental refresh kept adding.
+// The contradictions have their own cards: a summary does not judge them
+// (the "tensions" it named were often not contradictions at all).
+const stanceSummaryRules = `SUMMARY RULES:
+- At most 2 sentences and about 300 characters. It says, at a glance, the person's POSITION on the subject and its direction (for, against, demanding, opposing, how it moved over time if it clearly did).
+- High level only: no list of measures, no figures, no dates, no places, no names of laws or events, no quotes, unless one of them IS the position (a single flagship measure, the one figure the person campaigns on). The facts below the summary carry the details and their sources.
+- Do not narrate what happened (announcements, events, who said what to whom): describe the stance.
+- Do not judge or name contradictions, tensions, contrasts or paradoxes: the contradictions are shown separately.
+- Every claim must be supported by the facts; no inference about motives.
+- Describe the person, never the list below: no "les faits listés", "les faits relevés", "les éléments ci-dessus". The reader sees a position, not a list.
+- No order in time between undated facts: "passé de X à Y", "d'abord, puis" need dated facts.
+`
+
+const stanceSummaryMaxRunes = 420
 
 // stanceLabelRules is the single source of what a stance label may be, shared
 // by topic assignment, the fallback label generator, the full rebuild and the
@@ -1801,7 +1866,7 @@ const stanceRefreshLanguageAndFormat = `LANGUAGE RULES:
 - Write "label" and "summary" in FRENCH, always — even when some or all listed facts are in English. Do NOT emit any translation here; English (and any other language) is produced separately by the translation phase.
 
 Return ONLY valid JSON:
-{"label": "subject-area label in French", "summary": "2-4 sentence summary in French"}`
+{"label": "subject-area label in French", "summary": "at most 2 sentences, about 300 characters, in French"}`
 
 // formatRefreshNewFact renders one new fact for the incremental prompt,
 // including the tensions the analyze verified for it.
@@ -1847,10 +1912,8 @@ func (sm *StanceManager) foldStanceMetadata(ctx context.Context, label, summary 
 `+stanceLabelRules+`
 - KEEP the current label unless the new facts fall outside it; then broaden it to a neutral subject that covers both the old summary and the new facts. Never narrow it.
 
-SUMMARY RULES:
-- 2-4 sentences, French (up to 6 when several ⚠ tensions must be kept). Integrate the new facts into the current summary: keep what the current summary says about earlier facts (rewrite for length, never drop a position or a tension it already records), add what the new facts say / do.
-- Every ⚠ tension MUST be preserved explicitly: state both positions and that the position shifted, was walked back, or conflicts. Do not smooth a contradiction into one narrative. If there are more tensions than the summary can name, keep the most recent ones individually and say that the position has shifted repeatedly on this subject.
-- Do not add facts or claims beyond the current summary and the new facts.
+`+stanceSummaryRules+`
+- REWRITE the whole summary from the current one and the new facts so that it stays within that length: the new facts change the summary only when they change the position or its direction; a new detail, figure or event is not added.
 
 %s
 
@@ -1871,7 +1934,40 @@ func (sm *StanceManager) callRefreshLLM(ctx context.Context, prompt string) (str
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return "", "", fmt.Errorf("parsing refresh response: %w", err)
 	}
-	return strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary), nil
+	label, summary := strings.TrimSpace(string(resp.Label)), strings.TrimSpace(resp.Summary)
+	return label, sm.shortenSummary(ctx, summary), nil
+}
+
+// shortenSummary sends a summary over stanceSummaryMaxRunes back once to be
+// shortened to its position; a failed or still-long rewrite keeps the
+// original (logged): a long summary is better than none.
+func (sm *StanceManager) shortenSummary(ctx context.Context, summary string) string {
+	if utf8.RuneCountInString(summary) <= stanceSummaryMaxRunes {
+		return summary
+	}
+	prompt := `Shorten this summary of a politician's stance to AT MOST 2 sentences and about 300 characters, in French. Keep only the position and its direction; drop measures, figures, dates, places, events and any mention of tension or contrast. Do not add anything.
+
+SUMMARY:
+` + summary + `
+
+Return ONLY valid JSON: {"summary": "the shortened summary"}`
+	content, err := sm.callJSONLLM(ctx, "You shorten texts. Return only valid JSON.", prompt, 0.0, stanceRefreshOutputTokens, llm.TaskStanceLabel)
+	if err != nil {
+		log.Warn().Err(err).Int("runes", utf8.RuneCountInString(summary)).Msg("stance summary: shortening failed; the long summary is kept")
+		return summary
+	}
+	var resp struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(content), &resp); err != nil || strings.TrimSpace(resp.Summary) == "" {
+		log.Warn().Err(err).Msg("stance summary: shortening returned no summary; the long summary is kept")
+		return summary
+	}
+	short := strings.TrimSpace(resp.Summary)
+	if utf8.RuneCountInString(short) >= utf8.RuneCountInString(summary) {
+		return summary
+	}
+	return short
 }
 
 // parseStanceLLMResponse parses the LLM's JSON response, handling optional markdown code blocks.
@@ -2063,8 +2159,7 @@ UNIFIED LABEL RULES (for the `+"`label`"+` field of each merge):
 - Length: 4-12 words. Max 120 chars.
 
 UNIFIED SUMMARY RULES (for the `+"`summary`"+` field):
-- 1-3 sentences describing what the person has said / done across all merged stances on this subject.
-- If merged stances express OPPOSING positions on the subject, the summary MUST PRESERVE THE TENSION — name both directions explicitly. Do not smooth opposing positions into a single narrative. Example: "X has promised to defend public hospitals (services publics stance) while simultaneously voting for austerity budgets that cut hospital subsidies (discipline budgétaire stance)."
+`+stanceSummaryRules+`
 
 **LANGUAGE RULE:** Write the unified `+"`summary`"+` and `+"`label`"+` in the same language as the stances provided. If stances span multiple languages, use French.
 

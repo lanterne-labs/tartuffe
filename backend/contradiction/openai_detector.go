@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
@@ -71,10 +72,7 @@ var axisRegex = regexp.MustCompile(`(?i)PAIR\s*(\d+)\s*:\s*AXIS\s*:\s*(.*)`)
 // formatDateForLLM formats a time pointer for display in the LLM prompt.
 // Returns "unknown date" if the time is nil.
 func formatDateForLLM(t *time.Time) string {
-	if t == nil {
-		return "unknown date"
-	}
-	return t.Format("January 2, 2006")
+	return backend.FormatFactDate(t)
 }
 
 // ContradictionRulesAndExamples is the shared rule body used by both the

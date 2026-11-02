@@ -47,6 +47,24 @@ func TestLLMFilter_ScopeGolden(t *testing.T) {
 		hits       []GoogleHit
 		wantReal   bool
 	}{
+		// R11 (review of 2026-10-30, mirror-y0q): organs of the state are not
+		// political actors; advocacy organisations and unions stay in scope.
+		{
+			name: "parquet de bobigny", entityType: "organization", wantReal: false,
+			hits: []GoogleHit{{Title: "Tribunal judiciaire de Bobigny - Le parquet", Snippet: "Le parquet de Bobigny, dirigé par le procureur de la République, conduit l'action publique en Seine-Saint-Denis.", URL: "https://www.tribunal-bobigny.justice.fr/parquet"}},
+		},
+		{
+			name: "prefecture de maine-et-loire", entityType: "organization", wantReal: false,
+			pages: []WikiPage{{Lang: "fr", Title: "Préfecture de Maine-et-Loire", Extract: "La préfecture de Maine-et-Loire est l'administration de l'État dans le département, dirigée par le préfet, à Angers."}},
+		},
+		{
+			name: "tribunal de l'union europeenne", entityType: "organization", wantReal: false,
+			pages: []WikiPage{{Lang: "fr", Title: "Tribunal (Union européenne)", Extract: "Le Tribunal est une juridiction de la Cour de justice de l'Union européenne, compétente en première instance pour les recours des particuliers et des entreprises."}},
+		},
+		{
+			name: "licra", entityType: "organization", wantReal: true,
+			pages: []WikiPage{{Lang: "fr", Title: "Ligue internationale contre le racisme et l'antisémitisme", Extract: "La Licra est une association française de lutte contre le racisme et l'antisémitisme, fondée en 1927, qui intervient dans le débat public et devant les tribunaux."}},
+		},
 		{
 			name: "jimin", entityType: "human", wantReal: false,
 			pages: []WikiPage{{Lang: "en", Title: "Jimin", Extract: "Park Ji-min, known mononymously as Jimin, is a South Korean singer and dancer. In 2013, he made his debut as a member of the boy band BTS."}},

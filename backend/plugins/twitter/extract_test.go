@@ -88,7 +88,7 @@ func (failingFactStorer) LinkPersonsToSourceMention(context.Context, int64, []in
 
 type noopStance struct{}
 
-func (noopStance) ProcessNewFact(context.Context, int64, int64, string, []float32, string) (*core.StanceProcessResult, error) {
+func (noopStance) ProcessNewFact(context.Context, int64, int64, string, []float32, string, *time.Time) (*core.StanceProcessResult, error) {
 	return &core.StanceProcessResult{}, nil
 }
 
@@ -110,7 +110,8 @@ const embeddingOK = `{"object":"list","data":[{"object":"embedding","embedding":
 func TestExtractTweetBatchFailsOnEmbeddingOrInsertError(t *testing.T) {
 	ctx := context.Background()
 	handle := Handle{Handle: "jdupont", PersonName: "Jean Dupont", PersonID: 1}
-	docs := []core.SourceDocument{{ID: 1, URL: "https://x.com/jdupont/status/1", Content: "Nous baisserons la TVA"}}
+	published := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	docs := []core.SourceDocument{{ID: 1, URL: "https://x.com/jdupont/status/1", Content: "Nous baisserons la TVA", PublishedAt: &published}}
 
 	t.Run("embedding rejected", func(t *testing.T) {
 		ext, emb := stubLLM(t, oneFactReply, http.StatusBadRequest, `{"error":{"message":"bad input"}}`)

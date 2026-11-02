@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"text/tabwriter"
 	"time"
 
@@ -76,7 +78,22 @@ var twitterFactsCmd = &cobra.Command{
 	RunE:        runTwitterFacts,
 }
 
+var twitterRedateCmd = &cobra.Command{
+	Use:   "redate",
+	Short: "Move every tweet fact to the tweet that holds its quote (URL and date)",
+	Long: `Until 2026-10-30 the facts of a batch of tweets all carried the profile URL
+and the date of the batch's first tweet. This fetches again, by id, the text of
+the tweets deleted at extraction (twitterapi.io, TWITTER_API_IO_KEY), stores it,
+and matches each tweet fact to its tweet by its quote. Without --apply it only
+reports; --output writes the facts no tweet holds as JSONL.`,
+	RunE: runTwitterRedate,
+}
+
 func init() {
+	twitterCmd.AddCommand(twitterRedateCmd)
+	twitterRedateCmd.Flags().Bool("apply", false, "write the new URL and date of the matched facts")
+	twitterRedateCmd.Flags().String("output", "", "JSONL file of the facts no tweet holds")
+
 	pluginCmd.AddCommand(twitterCmd)
 	twitterCmd.AddCommand(twitterAddCmd)
 	twitterCmd.AddCommand(twitterRemoveCmd)
@@ -435,5 +452,48 @@ func runTwitterFacts(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nTotal: %d facts from Twitter across %d persons\n", totalFacts, len(factsByPerson))
+	return nil
+}
+
+func runTwitterRedate(cmd *cobra.Command, args []string) error {
+	_ = godotenv.Load()
+	ctx := context.Background()
+
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+	fetcher, err := twitter.NewTwitterAPIIOFetcherFromEnv()
+	if err != nil {
+		return err
+	}
+	apply, _ := cmd.Flags().GetBool("apply")
+	output, _ := cmd.Flags().GetString("output")
+
+	rep, err := twitter.Redate(ctx, storer, fetcher, twitter.RedateOptions{Apply: apply})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("tweets: %d read, %d fetched again, %d no longer available\n", rep.Tweets, rep.TweetsFetched, rep.TweetsMissing)
+	fmt.Printf("fact sources: %d read, %d matched to their tweet (%d with another date), %d unmatched\n",
+		rep.Sources, rep.Matched, rep.DateChanged, len(rep.Unmatched))
+	if !apply {
+		fmt.Println("dry run: nothing written to fact_sources (use --apply)")
+	}
+	if output != "" {
+		f, err := os.Create(output)
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", output, err)
+		}
+		defer f.Close()
+		enc := json.NewEncoder(f)
+		for _, u := range rep.Unmatched {
+			if err := enc.Encode(u); err != nil {
+				return fmt.Errorf("writing %s: %w", output, err)
+			}
+		}
+		fmt.Printf("unmatched facts written to %s\n", output)
+	}
 	return nil
 }

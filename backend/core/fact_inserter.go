@@ -7,6 +7,8 @@ import (
 	"digital-mirror/backend/util"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -32,7 +34,7 @@ type InsertResult struct {
 // StanceManager.ApplyStanceDecision; tests may supply a stub that satisfies
 // the invariant without an LLM round-trip.
 type StanceProcessor interface {
-	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error)
+	ProcessNewFact(ctx context.Context, personID int64, factID int64, factText string, embedding []float32, verb string, date *time.Time) (*StanceProcessResult, error)
 }
 
 // FactInserter handles fact insertion with mandatory stance-based processing.
@@ -46,6 +48,8 @@ type FactInserter struct {
 	stanceProcessor StanceProcessor
 	groupStorer     GroupStorer         // Set by EnableDedupe; stores the group a same-claim fact joins
 	dedupeJudge     SameOccurrenceJudge // Set by EnableDedupe; the mandatory last decider on grouping
+	candidatesMu    sync.Mutex
+	candidates      map[int64]bool // the candidate flag of the persons seen (isCandidate)
 }
 
 // dedupeEmbeddingFloor is the cosine similarity at or above which an existing
@@ -116,9 +120,19 @@ type StoreFactInput struct {
 	InvolvedPeople       []string // Secondary people mentioned in the fact (not the subject)
 	SourceURL            string
 	PublishedAt          *time.Time
+	StatementDate        *time.Time // the statement's own date when the text gives it (backend.FactDate); nil otherwise
 	SourceType           string
 	Metadata             map[string]any
 	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
+}
+
+// JudgeDate is the date the judges read for the fact: the statement's own
+// date when the text gives it, else the source's.
+func (in StoreFactInput) JudgeDate() *time.Time {
+	if in.StatementDate != nil {
+		return in.StatementDate
+	}
+	return in.PublishedAt
 }
 
 // SimilarFactQuery selects the grouping candidates of a new fact: the active
@@ -162,6 +176,48 @@ func NewFactInserter(storer Storer, stance StanceProcessor) *FactInserter {
 		storer:          storer,
 		stanceProcessor: stance,
 	}
+}
+
+// sameQuoteMinRunes is the shortest quote taken as the identity of an
+// occurrence: a short quote ("Non.", a slogan) recurs on other occasions.
+const sameQuoteMinRunes = 40
+
+// QuoteLookupStorer finds a person's active fact by its source quote.
+// Implemented by storage.PostgresStorer; a Storer without it goes to the gate.
+type QuoteLookupStorer interface {
+	FindActiveFactByQuote(ctx context.Context, personID int64, quote string, sourceTypes []string) (*SimilarFact, error)
+}
+
+// CandidateStorer tells whether a person is a candidate: the AI work after
+// extraction (the grouping gate, the stance) runs for the candidates only
+// (storage/candidates.go). Implemented by storage.PostgresStorer; a Storer
+// without it processes every person (tests).
+type CandidateStorer interface {
+	IsCandidate(ctx context.Context, personID int64) (bool, error)
+}
+
+// isCandidate reports whether the person gets the AI work after extraction.
+// The answer is cached for the inserter's life: a run inserts thousands of
+// facts of a few hundred deputies.
+func (fi *FactInserter) isCandidate(ctx context.Context, personID int64) (bool, error) {
+	cs, ok := fi.storer.(CandidateStorer)
+	if !ok {
+		return true, nil
+	}
+	fi.candidatesMu.Lock()
+	defer fi.candidatesMu.Unlock()
+	if v, seen := fi.candidates[personID]; seen {
+		return v, nil
+	}
+	v, err := cs.IsCandidate(ctx, personID)
+	if err != nil {
+		return false, err
+	}
+	if fi.candidates == nil {
+		fi.candidates = map[int64]bool{}
+	}
+	fi.candidates[personID] = v
+	return v, nil
 }
 
 // EnableDedupe turns on claim grouping: an incoming fact that reports an
@@ -254,6 +310,19 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 		Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 		Msg("Processing fact for insertion")
 
+	// A fact with no date is never stored (the user, 2026-11-02): neither the
+	// statement's own date nor its source's. The judges order the facts by
+	// date (JudgeDate); an undated fact cannot be placed before or after
+	// another, and the site shows the date of every fact.
+	if fact.JudgeDate() == nil {
+		log.Warn().
+			Str("source_type", fact.SourceType).
+			Str("source_url", fact.SourceURL).
+			Str("subject", fact.SubjectEntity).
+			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
+			Msg("Skipping fact: no date (neither the statement's nor its source's)")
+		return factOutcome{skipped: true}, nil
+	}
 	factID, personID, err := fi.insertSingleFact(ctx, fact)
 	if err == nil {
 		return factOutcome{meta: &InsertedFactMeta{FactID: factID, PersonID: personID}}, nil
@@ -278,6 +347,16 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 			Str("subject", fact.SubjectEntity).
 			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 			Msg("Skipping fact: web-extracted source has empty original_quote (unverifiable)")
+		return factOutcome{skipped: true}, nil
+	}
+	// The quote is already stored from a page of another date: the site's
+	// ticker or related links, not this article.
+	if isPageFurniture(err) {
+		log.Info().
+			Str("source_url", fact.SourceURL).
+			Str("subject", fact.SubjectEntity).
+			Str("quote", util.TruncateString(fact.OriginalQuote, 100)).
+			Msg("Skipping fact: its quote is already stored from a page of another date (site furniture)")
 		return factOutcome{skipped: true}, nil
 	}
 	return factOutcome{}, fmt.Errorf("failed to insert fact %d/%d: %w", i+1, n, err)
@@ -318,6 +397,20 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		subjectID = subjectIDs[0]
 	}
 
+	// A quote the person already has from a page of another date is the
+	// site's furniture (ticker, related links), not this article's.
+	if err := fi.checkPageFurniture(ctx, subjectID, input); err != nil {
+		return 0, 0, err
+	}
+
+	// The gate and the stance are for the candidates (CandidateStorer):
+	// another person's fact is stored as it is, without a stance, and the
+	// maintenance pass leaves the person out.
+	candidate, err := fi.isCandidate(ctx, subjectID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("candidate flag of %s: %w", input.SubjectEntity, err)
+	}
+
 	// Same-occurrence check before inserting: embedding distance and text
 	// similarity nominate the subject's active facts as candidates, storage
 	// keeps the ones that meet the evidence rule, and the LLM gate is the
@@ -328,7 +421,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	var groupTarget *SimilarFact
 	groupVerdict := OccurrenceDifferent
 	var judged map[int64]OccurrenceVerdict
-	if len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
+	if candidate && len(input.Embedding) > 0 && fi.dedupeEnabled() && isWebExtractedSource(input.SourceType) {
 		target, verdict, verdicts, err := fi.findGroupTarget(ctx, subjectID, input)
 		if err != nil {
 			return 0, 0, err
@@ -363,6 +456,10 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 		fi.compensateDelete(ctx, factID, "linking subject entity")
 		return 0, 0, fmt.Errorf("failed to link subject entity: %w", err)
 	}
+	if !candidate {
+		log.Debug().Int64("fact_id", factID).Str("subject_entity", input.SubjectEntity).Msg("Inserted fact of a person who is not a candidate; no stance")
+		return factID, subjectID, nil
+	}
 
 	// Fold path: the fact is a same-claim restatement — group it with the fact
 	// it restates instead of running stance analysis (the group's parent holds
@@ -382,7 +479,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Mandatory stance processing. Failure rolls back the fact via compensating
 	// delete so that the "every fact has a stance" invariant holds — unless the
 	// fact is already in its stance and only the label refresh is pending.
-	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb)
+	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb, input.JudgeDate())
 	if err != nil {
 		if !errors.Is(err, ErrStanceRefreshPending) {
 			fi.compensateDelete(ctx, factID, "stance processing")
@@ -409,6 +506,15 @@ func (fi *FactInserter) findGroupTarget(ctx context.Context, subjectID int64, in
 	rule, err := groupEvidenceRule()
 	if err != nil {
 		return nil, OccurrenceDifferent, nil, err
+	}
+	// The same quote of the same person is the same occurrence: no gate.
+	if qs, ok := fi.storer.(QuoteLookupStorer); ok && len([]rune(strings.TrimSpace(input.OriginalQuote))) >= sameQuoteMinRunes {
+		same, err := qs.FindActiveFactByQuote(ctx, subjectID, input.OriginalQuote, rule.SourceTypes)
+		if err != nil {
+			log.Warn().Err(err).Str("fact", util.TruncateString(input.NormalizedFactText, 80)).Msg("Same-quote lookup failed, proceeding with the gate")
+		} else if same != nil {
+			return same, OccurrenceSame, map[int64]OccurrenceVerdict{same.ID: OccurrenceSame}, nil
+		}
 	}
 	similar, err := fi.storer.FindSimilarActiveFacts(ctx, SimilarFactQuery{
 		PersonIDs:   []int64{subjectID},

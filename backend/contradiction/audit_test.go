@@ -68,7 +68,7 @@ func TestAuditGolden(t *testing.T) {
 			}
 			t.Run(tc.Name, func(t *testing.T) {
 				llmtest.Parallel(t)
-				res := auditor.Audit(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, nil, nil, tc.ClaimedReason)
+				res := auditor.Audit(ctx, promptrules.Statement{Text: tc.FactA, Also: tc.AlsoA}, promptrules.Statement{Text: tc.FactB, Also: tc.AlsoB}, caseDate(t, tc.DateA), caseDate(t, tc.DateB), tc.ClaimedReason)
 				if res.Err != nil {
 					t.Fatalf("Audit error: %v", res.Err)
 				}

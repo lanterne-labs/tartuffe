@@ -42,6 +42,7 @@ func (s *PostgresStorer) EnqueueFactPairsBySharedSourceKey(ctx context.Context, 
 			       GREATEST(a.fact_id, b.fact_id) AS fact_b_id
 			FROM a
 			JOIN b ON b.person_id = a.person_id AND b.k = a.k AND b.fact_id <> a.fact_id
+			JOIN persons p ON p.id = a.person_id AND `+CandidateSQL+`
 		)
 		INSERT INTO fact_pair_queue (person_id, fact_a_id, fact_b_id, source)
 		SELECT c.person_id, c.fact_a_id, c.fact_b_id, $4

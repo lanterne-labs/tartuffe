@@ -11,8 +11,9 @@ export interface PersonSummary {
 	stance_count: number;
 	contradiction_count: number;
 	image_url?: string;
-	/** A presidential candidate (the AI work runs for them). */
-	candidate?: boolean;
+	// The AI work after extraction (stances, contradiction detection) runs
+	// for the candidates; the others have their facts and no score.
+	candidate: boolean;
 }
 
 export interface FactWithSource {

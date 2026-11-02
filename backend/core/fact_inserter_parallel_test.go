@@ -65,7 +65,7 @@ type orderingStancer struct {
 	peak     int
 }
 
-func (o *orderingStancer) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string) (*StanceProcessResult, error) {
+func (o *orderingStancer) ProcessNewFact(ctx context.Context, personID, factID int64, factText string, embedding []float32, verb string, _ *time.Time) (*StanceProcessResult, error) {
 	o.mu.Lock()
 	o.inFlight++
 	o.peak = max(o.peak, o.inFlight)
@@ -87,7 +87,7 @@ func TestInsertFactsConcurrency(t *testing.T) {
 		for k := 0; k < 3; k++ {
 			facts = append(facts, StoreFactInput{
 				SubjectEntity: fmt.Sprintf("voter %d", p), NormalizedFactText: fmt.Sprintf("p%d-f%d", p, k),
-				SourceType: "assemblee_law_page",
+				SourceType: "assemblee_law_page", PublishedAt: &testDate,
 			})
 		}
 	}

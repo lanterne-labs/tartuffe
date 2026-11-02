@@ -1,0 +1,276 @@
+# Goldens of the grounding check (grounding.go), from the facts of the audit
+# of 2026-11-01 (band 153992-161991, text.audit.jsonl). Most source
+# documents were no longer stored: the context is the quote with the framing
+# the article gave, as the audit notes and the fact texts show it.
+#
+# expect:
+#   grounded: the fact is kept as it is.
+#   fix:      rewrite or drop; a rewrite must not keep any phrase of `forbid`
+#             unless the (possibly longer) quote now holds it.
+#   drop:     the fact is dropped.
+#   grounded_or_fix: either; the case only checks nothing is invented.
+cases:
+  - name: "157323_lepen_flambeau_added"
+    subject: "Marine Le Pen"
+    fact: "Marine Le Pen a affirmé être la candidate de Jordan Bardella à la présidentielle et soutenir qu'il reprenne le flambeau dès 2027 si nécessaire."
+    quote: "Je suis la candidate de Jordan à la présidentielle, mais je ne vais pas y retourner vingt-cinq fois de suite."
+    context: "Interrogée sur son avenir politique et sur l'hypothèse que Jordan Bardella reprenne le flambeau dès 2027 si elle restait inéligible, Marine Le Pen a répondu : « Je suis la candidate de Jordan à la présidentielle, mais je ne vais pas y retourner vingt-cinq fois de suite. » Le président du RN, lui, assure qu'il sera prêt."
+    expect: fix
+    forbid: ["flambeau", "si nécessaire"]
+
+  - name: "160716_lepen_hcfp_attribution_added"
+    subject: "Marine Le Pen"
+    fact: "Marine Le Pen a affirmé que, selon le Haut Conseil aux Finances Publiques, l'effort budgétaire se fera à 70% par des hausses de prélèvements et 30% par des baisses de dépenses, et non l'inverse comme le prétend le gouvernement."
+    quote: "Il y aura 70% d’augmentation des prélèvements et seulement 30% de baisse des dépenses de l’État."
+    context: "Le budget du gouvernement, c'est un matraquage fiscal. Il y aura 70% d’augmentation des prélèvements et seulement 30% de baisse des dépenses de l’État. Les Français paieront."
+    expect: fix
+    forbid: ["Haut Conseil", "l'inverse"]
+
+  - name: "159149_attal_goal_added"
+    subject: "Gabriel Attal"
+    fact: "Gabriel Attal a appelé le 28 octobre 2026 au journal de 20 heures de TF1 à organiser une grande primaire du centre, de la droite et de la gauche modérée pour empêcher un second tour entre La France insoumise et le Rassemblement national."
+    quote: "Il est temps d'être tous responsables et d'organiser le rassemblement auquel des millions de Français aspirent à travers une grande primaire"
+    context: "Invité du 20 heures de TF1 ce mardi 28 octobre, Gabriel Attal a relancé l'idée d'une primaire. « Il est temps d'être tous responsables et d'organiser le rassemblement auquel des millions de Français aspirent à travers une grande primaire », a déclaré le secrétaire général de Renaissance, alors que les sondages promettent un second tour entre LFI et le RN."
+    expect: fix
+    forbid: ["empêcher", "gauche modérée"]
+
+  - name: "155725_berge_goal_added"
+    subject: "Aurore Bergé"
+    fact: "Aurore Bergé a demandé un processus de sélection pour désigner un candidat unique à la présidentielle afin d'éviter un second tour Mélenchon-Le Pen."
+    quote: "Ça veut dire un processus de sélection. Ça veut dire une candidature unique. Ça veut dire un projet."
+    context: "JOURNALISTE : Vous parlez de rassemblement du bloc central, concrètement ? AURORE BERGÉ : Ça veut dire un processus de sélection. Ça veut dire une candidature unique. Ça veut dire un projet. JOURNALISTE : Pour éviter un second tour Mélenchon-Le Pen ?"
+    expect: fix
+    forbid: ["Mélenchon", "éviter"]
+
+  - name: "156002_retailleau_referent_from_question"
+    subject: "Bruno Retailleau"
+    fact: "Bruno Retailleau a déclaré qu'il partirait si le PS obtenait en échange du vote du budget qu'on le musèle."
+    quote: "Si c'était ainsi, je partirais."
+    context: "JOURNALISTE : Le PS pourrait obtenir, en échange de son vote du budget, que le gouvernement vous muselle sur l'immigration. BRUNO RETAILLEAU : Si c'était ainsi, je partirais. Mais ce n'est pas le cas."
+    # The referent is only in the journalist's question: the quote must not
+    # be extended into it (run of 2026-11-02 did), the fact must lose it.
+    expect: fix
+    forbid: ["PS", "budget", "musel", "musèle"]
+    quote_forbid: ["JOURNALISTE", "Le PS pourrait"]
+
+  - name: "157577_melenchon_judgment_added"
+    subject: "Jean-Luc Mélenchon"
+    fact: "Jean-Luc Mélenchon a jugé que les auditions de la commission d'enquête innocentent absolument LFI, aucun responsable de services de renseignement n'ayant dit qu'il y a un lien entre LFI et les islamistes."
+    quote: "Tous les responsables de services de renseignement que vous avez entendus, aucun ne dit qu'il y a un lien entre nous et les islamistes"
+    context: "Devant la commission d'enquête sur les liens supposés entre des mouvements politiques et l'islamisme, Jean-Luc Mélenchon a lancé aux députés : « Tous les responsables de services de renseignement que vous avez entendus, aucun ne dit qu'il y a un lien entre nous et les islamistes ». Pour ses proches, les auditions innocentent absolument LFI."
+    expect: fix
+    forbid: ["innocentent"]
+
+  - name: "156188_retailleau_second_claim_added"
+    subject: "Bruno Retailleau"
+    fact: "Bruno Retailleau a affirmé que la régularisation doit se faire uniquement au compte-goutte et qu'une OQTF doit être rédhibitoire."
+    quote: "la régularisation, c'est au compte-goutte uniquement."
+    context: "BRUNO RETAILLEAU : Ma circulaire est claire : la régularisation, c'est au compte-goutte uniquement. JOURNALISTE : Et pour les personnes sous OQTF ? BRUNO RETAILLEAU : Nous verrons au cas par cas avec les préfets."
+    expect: fix
+    forbid: ["OQTF", "rédhibitoire"]
+
+  - name: "156895_glucksmann_condition_added"
+    subject: "Raphaël Glucksmann"
+    fact: "Raphaël Glucksmann a promis de soutenir chacune des propositions du gouvernement si celui-ci prend des mesures allant dans le sens d'une défense européenne et accroît l'aide à l'Ukraine."
+    quote: "nous serons là pour soutenir chacune des propositions"
+    context: "Raphaël Glucksmann a tendu la main au gouvernement sur l'Europe : « nous serons là pour soutenir chacune des propositions », a-t-il dit, alors que l'exécutif prépare un plan pour la défense européenne et l'aide à l'Ukraine."
+    expect: fix
+    forbid: ["si celui-ci", "Ukraine"]
+
+  - name: "156537_glucksmann_referent_munich_from_framing"
+    subject: "Raphaël Glucksmann"
+    fact: "Raphaël Glucksmann a reproché à Donald Trump de «sacrifier l'Ukraine» et a affirmé que ce qu'il fait est exactement comme les accords de Munich de 1938."
+    quote: "«Ce que Trump est en train de faire [avec l’Ukraine] c’est exactement ça», s’est indigné l’eurodéputé."
+    context: "Munich, 1938 : les démocraties cèdent à Hitler. L'image revient sous la plume des éditorialistes depuis le sommet de l'Alaska. «Ce que Trump est en train de faire [avec l’Ukraine] c’est exactement ça», s’est indigné l’eurodéputé."
+    # The audit read "ça" = Munich as the article's framing; the article
+    # sets his words right after it, so reading Munich is defensible (Sonnet
+    # kept it twice, 2026-11-02). "sacrifier l'Ukraine" is in no words: cut.
+    expect: grounded_or_fix
+    forbid: ["sacrifier"]
+
+  - name: "155713_berge_bien_sur_referent_from_question"
+    subject: "Aurore Bergé"
+    fact: "Aurore Bergé a déclaré soutenir les mesures introduites par Agnès Evren, dont la création d'un fichier regroupant les violences sur mineurs dans le périscolaire."
+    quote: "Bien sûr."
+    context: "JOURNALISTE : La sénatrice Agnès Evren propose de créer un fichier regroupant les violences sur mineurs dans le périscolaire. Vous soutenez ses mesures ? AURORE BERGÉ : Bien sûr. Il faut protéger les enfants partout."
+    expect: fix
+    forbid: ["fichier", "Evren"]
+
+  - name: "157042_melenchon_score_not_a_position"
+    subject: "Jean-Luc Mélenchon"
+    fact: "Jean-Luc Mélenchon a obtenu 60,6% des voix à Trappes."
+    quote: "les scores de Jean-Luc Mélenchon aient atteint des niveaux stratosphériques, comme à Trappes (60,6%)"
+    context: "Il n'est pas étonnant que dans certaines villes, les scores de Jean-Luc Mélenchon aient atteint des niveaux stratosphériques, comme à Trappes (60,6%), écrit le politologue."
+    expect: drop
+
+  - name: "157710_bregeon_ceremony_date_not_a_position"
+    subject: "Maud Bregeon"
+    fact: "Maud Bregeon a indiqué le 29 octobre 2026 que la date de l'hommage national à Pengo Bossio Wangi sera décidée en discussion avec la famille de la victime."
+    quote: "décidée en discussion avec la famille de la victime"
+    context: "Un hommage national sera rendu à Pengo Bossio Wangi, a annoncé la porte-parole du gouvernement Maud Bregeon mercredi 29 octobre. Sa date sera « décidée en discussion avec la famille de la victime », a-t-elle précisé."
+    # Her own words: whether they are a position is the extractor's call, not
+    # the grounding check's (Sonnet kept it, run of 2026-11-02).
+    expect: grounded_or_fix
+
+  - name: "155923_hollande_private_aside"
+    subject: "François Hollande"
+    fact: "François Hollande a répondu en privé à Édouard Philippe, le 29 août 2026 à Sens, qu'il faut déjà passer le premier tour de la présidentielle, alors qu'il n'était pas encore candidat déclaré."
+    quote: "« Certes, mais il faut déjà passer le premier tour ! »"
+    context: "À Sens, le 29 août, Édouard Philippe glisse à François Hollande qu'il le verrait bien au second tour. L'ancien président, qui n'est pas candidat déclaré, lui répond en aparté : « Certes, mais il faut déjà passer le premier tour ! »"
+    # His own words; "not yet a declared candidate" is the article's framing
+    # of the occasion: keeping it or cutting it are both defensible (Sonnet
+    # did each once, 2026-11-02).
+    expect: grounded_or_fix
+
+  - name: "retailleau_concours_referent_rn"
+    subject: "Bruno Retailleau"
+    fact: "Bruno Retailleau a déclaré qu'il n'apporterait jamais son concours au projet du Rassemblement national, qui n'est pas le bon pour la France."
+    quote: "Je n'apporterai jamais mon concours à un projet qui n'est pas le bon pour la France"
+    context: "Invité de RTL ce mardi, le président des Républicains a été interrogé sur les points communs entre son programme et celui du Rassemblement national. « Je n'apporterai jamais mon concours à un projet qui n'est pas le bon pour la France », a-t-il répondu, avant d'ajouter : « Nous avons des convergences sur l'immigration, cela ne fait pas une alliance. »"
+    expect: fix
+    forbid: ["Rassemblement national", "RN"]
+
+  - name: "156084_melenchon_procedure_clean"
+    subject: "Jean-Luc Mélenchon"
+    fact: "Jean-Luc Mélenchon a déclaré qu'en cas de présidentielle, anticipée ou non, la coordination du mouvement insoumis proposera un nom soumis ensuite à un vote."
+    quote: "la coordination de notre mouvement proposera un nom qui sera ensuite soumis à un vote. Cette procédure sera respectée en cas de présidentielle, anticipée ou non."
+    context: "Jean-Luc Mélenchon a précisé la méthode : « la coordination de notre mouvement proposera un nom qui sera ensuite soumis à un vote. Cette procédure sera respectée en cas de présidentielle, anticipée ou non. »"
+    expect: grounded
+
+  - name: "158225_berge_parole_raciste_clean"
+    subject: "Aurore Bergé"
+    fact: "Aurore Bergé a affirmé qu'il y a une libération de la parole raciste et antisémite."
+    quote: "Oui il y a une libération de la parole raciste et antisémite."
+    context: "Oui il y a une libération de la parole raciste et antisémite. Et ce climat est insupportable. Il conduit des Français à s'interroger sur leur avenir en France et celui de leurs enfants. \n\nLe sursaut républicain est une nécessité.\n\n🎙️@rcf_notre_dame https://t.co/EDMPdGnWHT"
+    expect: grounded
+
+  - name: "158308_bardella_patriotisme_clean"
+    subject: "Jordan Bardella"
+    fact: "Jordan Bardella a déclaré défendre le patriotisme économique et la priorité aux producteurs français dans la commande publique."
+    quote: "nous défendons le patriotisme économique et la priorité donnée, dans la commande publique, aux producteurs français."
+    context: "L'UE, avec le soutien d'Emmanuel Macron, continue de négocier des accords de libre-échange avec le monde entier.\n\nPour consommer français, nous défendons le patriotisme économique et la priorité donnée, dans la commande publique, aux producteurs français.\n\n#SommetElevage @CNEWS https://t.co/2PIyFLquIp"
+    expect: grounded
+
+  - name: "156712_retailleau_commission_clean"
+    subject: "Bruno Retailleau"
+    fact: "Bruno Retailleau a affirmé avoir demandé, il y a deux ans lorsqu'il était sénateur, une commission d'enquête sur le narcotrafic."
+    quote: "c'est moi qui, il y a deux ans, ai demandé une commission d'enquête sur le narcotrafic quand j'étais sénateur."
+    context: "BRUNO RETAILLEAU : Je rappelle que c'est moi qui, il y a deux ans, ai demandé une commission d'enquête sur le narcotrafic quand j'étais sénateur. Le constat était déjà là."
+    expect: grounded
+
+  - name: "159536_attal_date_from_framing_clean"
+    subject: "Gabriel Attal"
+    fact: "Gabriel Attal a affirmé qu'à ce stade, il n'y a pas d'impact de la vague de chaleur sur les réseaux de transport ou d'énergie, le 30 juillet 2024."
+    quote: "À ce stade, il n'y a pas d'impact et au contraire, tout est fait pour limiter au maximum un possible impact de ces vagues de chaleur sur les réseaux de transport ou les réseaux d'énergie."
+    context: "Déclaration de M. Gabriel Attal, Premier ministre, sur la vague de chaleur, à Paris le 30 juillet 2024. À ce stade, il n'y a pas d'impact et au contraire, tout est fait pour limiter au maximum un possible impact de ces vagues de chaleur sur les réseaux de transport ou les réseaux d'énergie."
+    expect: grounded
+
+  - name: "157778_retailleau_occasion_from_framing_clean"
+    subject: "Bruno Retailleau"
+    fact: "Bruno Retailleau a estimé vers le 29 septembre 2024, dans le JDD, que l'état de droit n'est ni « intangible » ni « sacré »."
+    quote: "avait estimé que « l'état de droit » n'était ni « intangible » ni « sacré »"
+    context: "Le ministre de l'Intérieur, qui dans le JDD du 29 septembre 2024 avait estimé que « l'état de droit » n'était ni « intangible » ni « sacré », a tenté de rassurer."
+    expect: grounded
+
+  # The first prod decisions of the check (worker, 2026-11-02T01:33Z): the
+  # rewrite was too literal. Quotes and contexts rebuilt from the log.
+  - name: "prod_lepen_nous_resolved_to_her_camp"
+    subject: "Marine Le Pen"
+    fact: "Marine Le Pen a affirmé que son camp a la capacité d'obtenir la majorité absolue aux législatives de 2024."
+    quote: "Nous avons la capacité d'obtenir la majorité absolue."
+    context: "Nous avons la capacité d'obtenir la majorité absolue. Dimanche, mobilisez-vous massivement pour le changement !"
+    date: "2024-07-04"
+    # "nous" resolved to her camp in the third person is not an addition,
+    # and the election is plain from the date: keep it (it was rewritten
+    # into "que nous avons la capacité...").
+    expect: keep
+    never: ["nous avons"]
+
+  - name: "prod_attal_same_sentence_context_kept"
+    subject: "Gabriel Attal"
+    fact: "Gabriel Attal a déclaré le 8 février 2024 qu'il allait « revoir » le dispositif de soutien psychologique pour les jeunes qui ne « marche pas »."
+    quote: "il allait « revoir » le dispositif de soutien psychologique, qui ne « marche pas »"
+    context: "Interrogé sur la santé mentale des jeunes, le Premier ministre Gabriel Attal a annoncé jeudi 8 février qu'il allait « revoir » le dispositif de soutien psychologique, qui ne « marche pas », pour les jeunes en détresse."
+    date: "2024-02-08"
+    # "pour les jeunes" is in the same sentence of the narration of his
+    # words: grounded (it was cut).
+    expect: keep
+    must_keep: ["jeunes"]
+
+  - name: "prod_lepen_ni_ni_mais_meaning_kept"
+    subject: "Marine Le Pen"
+    fact: "Marine Le Pen a déclaré que l'urgence n'est pas de supprimer des jours fériés ni d'augmenter l'impôt sur le revenu, mais de créer les conditions d'une hausse des salaires."
+    quote: "L'urgence n'est pas d'imposer aux actifs la suppression de jours fériés, tout en augmentant l'impôt sur le revenu."
+    context: "L'urgence n'est pas d'imposer aux actifs la suppression de jours fériés, tout en augmentant l'impôt sur le revenu. L'urgence, c'est de créer les conditions d'une hausse des salaires !"
+    date: "2025-07-16"
+    # The "hausse des salaires" is her own next sentence: requote, or keep.
+    # The prod rewrite ("l'urgence n'est pas d'imposer..., tout en
+    # augmentant l'impôt sur le revenu") read as if she proposed the tax.
+    expect: keep
+    must_keep: ["hausse des salaires"]
+    never: ["tout en augmentant"]
+
+  - name: "prod_lepen_vote_8_septembre_requote_ok"
+    subject: "Marine Le Pen"
+    fact: "Marine Le Pen a jugé inenvisageable que le président de la République ne rappelle pas les Français aux urnes pour désigner une nouvelle Assemblée après le vote des députés du 8 septembre 2025."
+    quote: "Il me paraît inenvisageable qu'il ne rappelle pas les Français aux urnes pour désigner une nouvelle Assemblée."
+    context: "Après le vote des députés du 8 septembre, le président de la République doit tirer les conséquences. Il me paraît inenvisageable qu'il ne rappelle pas les Français aux urnes pour désigner une nouvelle Assemblée."
+    date: "2025-08-26"
+    # The referent and the vote are in her own sentence before: kept by a
+    # longer quote in prod, which is right.
+    expect: keep
+    must_keep: ["président de la République"]
+
+  - name: "155608_alsoumi_salue_troubles_added"
+    subject: "Omar Alsoumi"
+    fact: "Omar Alsoumi a salué les troubles en France dans un post Facebook, appelant à une 'GLOBAL INTIFADA'."
+    quote: "On one side Palestine, the youth, those who fight for Justice, dignity and life, on the other the old bourgeois fascist Zionist bastards. GLOBAL INTIFADA!"
+    context: "Alors que des violences éclataient dans plusieurs villes, Omar Alsoumi a publié sur Facebook : « On one side Palestine, the youth, those who fight for Justice, dignity and life, on the other the old bourgeois fascist Zionist bastards. GLOBAL INTIFADA! »"
+    expect: fix
+    forbid: ["salué les troubles", "troubles en France"]
+
+  - name: "156262_bouamrane_motive_added"
+    subject: "Karim Bouamrane"
+    fact: "Karim Bouamrane critique la fermeture de la centrale nucléaire de Fessenheim, qu'il présente comme la conséquence d'un accord politique ayant affaibli la souveraineté énergétique française."
+    quote: "Il critique par ailleurs la fermeture de la centrale nucléaire de Fessenheim"
+    context: "Le maire de Saint-Ouen veut une gauche de gouvernement. Il critique par ailleurs la fermeture de la centrale nucléaire de Fessenheim, fruit selon l'auteur de l'article d'un accord politique qui a affaibli la souveraineté énergétique du pays."
+    expect: fix
+    forbid: ["accord politique", "souveraineté"]
+
+  # Debate facts of the audit of 2026-11-02 (debates.audit.jsonl, gloss 22 pct
+  # of the window): the context is the stored debate document.
+  - name: "190477_juvin_debate_next_sentence_added"
+    subject: "Philippe Juvin"
+    fact: "Philippe Juvin a déclaré que son opinion sur l'autonomie de la Corse avait beaucoup évolué : le mot autonomie le dérangeait longtemps au regard de l'unité et de l'indivisibilité de la République, mais il considère désormais que la Corse n'est pas une collectivité comme une autre."
+    quote: "Mon opinion sur ces sujets a beaucoup évolué. J’ai longtemps considéré que la République une et indivisible devait avancer vers plus de décentralisation mais le mot autonomie me dérangeait"
+    context: "Mon opinion sur ces sujets a beaucoup évolué. J’ai longtemps considéré que la République une et indivisible devait avancer vers plus de décentralisation mais le mot autonomie me dérangeait, compte tenu justement de l’unité et de l’indivisibilité de la République. En réalité, la Corse présente des spécificités, ne serait-ce qu’en raison de son insularité : quand les bateaux n’accostent plus, les rayons des supermarchés sont vides trois jours plus tard. Je pense aussi à la question des déchets ou de l’énergie. La Corse n’est pas une collectivité comme une autre. Par ailleurs, cela fait maintenant plusi"
+    date: "2026-06-17"
+    # A debate: every sentence around is the speaker's own. The fact adds his
+    # later sentence (« La Corse n'est pas une collectivité comme une autre »):
+    # the quote must be made longer to hold it, or the fact cut to the quote.
+    expect: fix
+    forbid: ["collectivité comme une autre", "désormais"]
+
+  - name: "193826_faucillon_debate_contrast_added"
+    subject: "Elsa Faucillon"
+    fact: "Elsa Faucillon a soutenu qu'accélérer le traitement des affaires suppose de recruter des magistrats, des greffiers, des enquêteurs et des personnels pénitentiaires, et non de réduire les garanties des justiciables."
+    quote: "mais à recruter des magistrats, des greffiers, des enquêteurs et enquêtrices, des personnels pénitentiaires, à donner du temps aux juridictions"
+    context: "on de ce texte, vous affirmiez vouloir « répondre à l’urgence d’amélioration de notre justice criminelle ». Pourtant, vous ne cherchez pas à améliorer les choses. Accélérer le traitement des affaires ne consiste pas à réduire les garanties des justiciables ou à rechercher des économies sur le fonctionnement de la justice (Applaudissements sur quelques bancs du groupe EcoS. – M. Marcellin Nadeau applaudit également), mais à recruter des magistrats, des greffiers, des enquêteurs et enquêtrices, des personnels pénitentiaires, à donner du temps aux juridictions et à permettre aux victimes d’obtenir enfin des décisions dans des délais raisonnables.Le symbole de cette logique aura été le plaider-coupable criminel, dont vous aviez fait la mesure emblématique d"
+    date: "2026-07-08"
+    # The fact adds the sentence before the quote (« Accélérer le traitement des
+    # affaires ne consiste pas à réduire les garanties »): requote or cut.
+    expect: fix
+    forbid: ["réduire les garanties", "garanties des justiciables"]
+
+  - name: "193765_faucillon_debate_objection_widened"
+    subject: "Elsa Faucillon"
+    fact: "Elsa Faucillon s'oppose à la suspension de six mois du permis de conduire décidée par le préfet pour usage illicite de stupéfiants, qu'elle juge disproportionnée, dans le texte n° 2984 sur l'ordre public."
+    quote: "le fait de confier cette décision disproportionnée au préfet est problématique."
+    context: "t déployées de manière homogène sur tout le territoire, y compris aux abords de l’Assemblée nationale ! (Sourires.)Ensuite, la disposition que vous proposez prévoit une suspension du permis de conduire de six mois, soit une durée très longue, dans l’attente d’une décision du juge. Vous auriez proposé une durée de quelques jours, je ne m’y serais pas opposée, notamment pour les cas d’usage maintes fois réitéré.Enfin, le fait de confier cette décision disproportionnée au préfet est problématique. Certes, l’usage de stupéfiants constitue un problème en matière de sécurité routière, mais ce problème appelle d’autres types de réponse. Les AFD et le tout-répressif ne fonctionnent pas pour juguler"
+    date: "2026-07-09"
+    # She objects to the préfet deciding and to the six-month length; the
+    # quote holds neither the six months nor her objection to them. Requote
+    # to her sentences on the length (« une durée très longue… quelques jours,
+    # je ne m'y serais pas opposée »), or cut the fact to the préfet.
+    expect: fix
+    forbid: ["six mois"]

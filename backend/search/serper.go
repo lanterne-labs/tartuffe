@@ -2,6 +2,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -237,6 +238,12 @@ func (s *SerperProvider) SearchNews(query string, opts NewsSearchOptions) ([]New
 		page++
 	}
 
+	links := make([]*string, len(all))
+	for i := range all {
+		links[i] = &all[i].Link
+	}
+	resolveGoogleLinks(context.Background(), links)
+
 	log.Debug().Int("count", len(all)).Str("query", query).Msg("Serper news search completed")
 	return all, nil
 }
@@ -361,12 +368,58 @@ func parseSerperDate(s string, now time.Time) (time.Time, bool) {
 			return t, true
 		}
 	}
+	// Day, month name, year: what Serper gives in French for any result
+	// older than a few days ("8 oct. 2025", "1 janv. 2025"), and in English
+	// "8 Oct 2025". Before 2026-11-01 these were not read, so every page of
+	// a backfill window whose own page carries no date was stored undated
+	// (lejdd.fr, leparisien.fr since 2026-10-28, mirror-rxd).
+	if t, ok := parseDayMonthYear(s); ok {
+		return t, true
+	}
 	// Relative formats — English + French. Returns the resolved time or
 	// (zero, false) if no relative pattern matched.
 	if t, ok := parseSerperRelativeDate(s, now); ok {
 		return t, true
 	}
 	return time.Time{}, false
+}
+
+// serperDayMonthYear matches "8 oct. 2025", "16 Oct 2025", "1er janv. 2025".
+var serperDayMonthYear = regexp.MustCompile(`(?i)^\s*(\d{1,2})(?:er)?\s+([\p{L}]+)\.?\s+(\d{4})\s*$`)
+
+// monthNames maps the French and English month names and their
+// abbreviations, lower case and without the final dot, to the month.
+var monthNames = map[string]time.Month{
+	"janv": 1, "janvier": 1, "jan": 1, "january": 1,
+	"févr": 2, "fevr": 2, "février": 2, "fevrier": 2, "feb": 2, "february": 2,
+	"mars": 3, "mar": 3, "march": 3,
+	"avr": 4, "avril": 4, "apr": 4, "april": 4,
+	"mai": 5, "may": 5,
+	"juin": 6, "jun": 6, "june": 6,
+	"juil": 7, "juillet": 7, "jul": 7, "july": 7,
+	"août": 8, "aout": 8, "aug": 8, "august": 8,
+	"sept": 9, "septembre": 9, "sep": 9, "september": 9,
+	"oct": 10, "octobre": 10, "october": 10,
+	"nov": 11, "novembre": 11, "november": 11,
+	"déc": 12, "dec": 12, "décembre": 12, "decembre": 12, "december": 12,
+}
+
+func parseDayMonthYear(s string) (time.Time, bool) {
+	m := serperDayMonthYear.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	month, ok := monthNames[strings.ToLower(m[2])]
+	if !ok {
+		return time.Time{}, false
+	}
+	day, _ := strconv.Atoi(m[1])
+	year, _ := strconv.Atoi(m[3])
+	t := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	if t.Day() != day { // 31 nov.
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 // Relative-date regexes. All case-insensitive (compiled with (?i)).

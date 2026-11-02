@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"digital-mirror/backend/core"
@@ -282,6 +283,58 @@ func (s *Store) RearticleBallots(ctx context.Context, lawKey, article, object st
 	return ids, rows.Err()
 }
 
+// TruncatedAmendmentRe matches, in a ballot, the amendment object whose
+// quoted exposé was cut inside the guillemets ("dont l'objet est : « … ,
+// déposé sur"): the object, from "l'amendement n° N" to the ellipsis, with
+// the ", déposé sur" that follows (ReamendBallots puts it back). An exposé
+// may quote words in « » of its own (« chaque fois que cela est possible »,
+// 1,697 ballots left by the first run, review of 2026-11-01): a closed inner
+// pair is part of the object, and the cut may fall inside one. The pattern
+// is POSIX ARE and RE2 at once: the test compiles it with Go's regexp.
+const TruncatedAmendmentRe = `(l'amendement|le sous-amendement) n° [0-9]+( \([^)]*\))? dont (l'objet|le dispositif) est : « ([^«»]|«[^«»]*»)*(«[^«»]*)?…, déposé sur`
+
+// TruncatedAmendmentBallots counts the ballots of the scrutin lawKey whose
+// amendment object lost its closing » (TruncatedAmendmentRe).
+func (s *Store) TruncatedAmendmentBallots(ctx context.Context, lawKey string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.metadata->>'law_key' = $1 AND f.fact_text ~ $2`, lawKey, TruncatedAmendmentRe).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting the truncated ballots of %s: %w", lawKey, err)
+	}
+	return n, nil
+}
+
+// ReamendBallots rewrites the truncated amendment object of the ballots of
+// the scrutin lawKey with object (the amendment and its purpose, closed) and
+// returns the ids of the facts it rewrote. The pair verdicts stay: the vote
+// is the same, the quote is only completed. The English text is reset for
+// the translation repair.
+func (s *Store) ReamendBallots(ctx context.Context, lawKey, object string) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		UPDATE facts f
+		SET fact_text = regexp_replace(f.fact_text, $2, $3),
+		    fact_text_en = NULL, updated_at = now()
+		FROM fact_sources fs
+		WHERE fs.fact_id = f.id AND fs.metadata->>'law_key' = $1 AND f.fact_text ~ $2
+		RETURNING f.id`, lawKey, TruncatedAmendmentRe, strings.ReplaceAll(object, `\`, `\\`)+", déposé sur")
+	if err != nil {
+		return nil, fmt.Errorf("rewriting the truncated ballots of %s: %w", lawKey, err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("rewriting the truncated ballots of %s: %w", lawKey, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // RemotionBallots rewrites the ballots of the motion lawKey that name the
 // bill phrase ("a voté CONTRE le texte de loi : « ... »") with the motion,
 // and returns the ids of the facts it rewrote. The bill phrase ends the
@@ -351,4 +404,126 @@ func (s *Store) ReopenPairsOf(ctx context.Context, factIDs []int64) (persons []i
 		return nil, 0, fmt.Errorf("reopening pairs: %w", err)
 	}
 	return persons, removed, nil
+}
+
+// StoredSummaryVariants returns every distinct bill summary stored with the
+// ballots of each law key: a scrutin built in two runs before
+// StoredLawSummaries can carry two (8 amendment scrutins on 2026-11-01).
+func (s *Store) StoredSummaryVariants(ctx context.Context, keys []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT metadata->>'law_key', metadata->>'law_summary'
+		FROM fact_sources
+		WHERE source_type = 'assemblee_law_page' AND metadata->>'law_key' = ANY($1)
+		  AND COALESCE(metadata->>'law_summary', '') <> ''
+		ORDER BY 1, 2`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("loading the stored summary variants: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, summary string
+		if err := rows.Scan(&key, &summary); err != nil {
+			return nil, fmt.Errorf("scanning a stored summary variant: %w", err)
+		}
+		out[key] = append(out[key], summary)
+	}
+	return out, rows.Err()
+}
+
+// BallotsQuoting counts the ballots of the scrutin lawKey whose text carries
+// quote (summaryQuote of the stored bill summary).
+func (s *Store) BallotsQuoting(ctx context.Context, lawKey, quote string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.source_type = 'assemblee_law_page' AND fs.metadata->>'law_key' = $1 AND strpos(f.fact_text, $2) > 0`, lawKey, quote).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting the ballots of %s quoting the summary: %w", lawKey, err)
+	}
+	return n, nil
+}
+
+// ResummarizeBallots replaces, in the ballots of the scrutin lawKey, each
+// quote of an old bill summary with the quote of the new one, stores sum as
+// the summary of the scrutin's sources (StoredLawSummaries then returns it),
+// and returns the ids of the facts it rewrote. The English text is reset for
+// the translation repair.
+func (s *Store) ResummarizeBallots(ctx context.Context, lawKey string, oldQuotes []string, newQuote string, sum LawSummary) ([]int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resummarizing %s: %w", lawKey, err)
+	}
+	defer tx.Rollback(ctx)
+	var ids []int64
+	for _, oldQuote := range oldQuotes {
+		rows, err := tx.Query(ctx, `
+			UPDATE facts f
+			SET fact_text = replace(f.fact_text, $2, $3),
+			    fact_text_en = NULL, updated_at = now()
+			FROM fact_sources fs
+			WHERE fs.fact_id = f.id AND fs.source_type = 'assemblee_law_page' AND fs.metadata->>'law_key' = $1 AND strpos(f.fact_text, $2) > 0
+			RETURNING f.id`, lawKey, oldQuote, newQuote)
+		if err != nil {
+			return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("rewriting the ballots of %s: %w", lawKey, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE fact_sources
+		SET metadata = metadata || jsonb_build_object('law_summary', $2::text, 'law_short_title', $3::text)
+		WHERE source_type = 'assemblee_law_page' AND metadata->>'law_key' = $1`, lawKey, sum.SimpleStatement, sum.ShortTitle); err != nil {
+		return nil, fmt.Errorf("storing the summary of %s: %w", lawKey, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("resummarizing %s: %w", lawKey, err)
+	}
+	return ids, nil
+}
+
+// StoredLawSummaries returns the summary already given to the facts of each
+// law key that has facts: a law whose facts are built in two runs keeps one
+// wording (scrutin 17-7980 had 301 facts with one summary and 246 with
+// another, audit of 2026-10-31). A stored summary passed the AI filter, so
+// its confidence is 1.
+func (s *Store) StoredLawSummaries(ctx context.Context, keys []string) (map[string]LawSummary, error) {
+	out := make(map[string]LawSummary, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (metadata->>'law_key') metadata->>'law_key', COALESCE(metadata->>'law_short_title', ''), metadata->>'law_summary'
+		FROM fact_sources
+		WHERE source_type = 'assemblee_law_page' AND metadata->>'law_key' = ANY($1)
+		  AND COALESCE(metadata->>'law_summary', '') <> ''
+		ORDER BY metadata->>'law_key', id`, keys)
+	if err != nil {
+		return nil, fmt.Errorf("loading the stored law summaries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key string
+		var sum LawSummary
+		if err := rows.Scan(&key, &sum.ShortTitle, &sum.SimpleStatement); err != nil {
+			return nil, fmt.Errorf("scanning a stored law summary: %w", err)
+		}
+		sum.Confidence = 1
+		out[key] = sum
+	}
+	return out, rows.Err()
 }

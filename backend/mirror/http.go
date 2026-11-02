@@ -28,6 +28,11 @@ func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 	search := r.URL.Query().Get("search")          // case-insensitive partial match on name
 	sort := r.URL.Query().Get("sort")              // "honesty_desc", "honesty_asc", or empty for default (fact_count)
 	minFactsStr := r.URL.Query().Get("min_facts")  // minimum fact_count to include
+	candidate := r.URL.Query().Get("candidate")    // "true": the candidates, "false": the others, empty: everyone
+	if candidate != "" && candidate != "true" && candidate != "false" {
+		http.Error(w, "candidate must be true or false", http.StatusBadRequest)
+		return
+	}
 
 	limit := 50 // default
 	if limitStr != "" {
@@ -54,7 +59,7 @@ func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	persons, err := s.store.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts)
+	persons, err := s.store.GetPersonsRankedByScore(ctx, limit, offset, entityType, search, sort, minFacts, candidate)
 	if err != nil {
 		httpx.InternalError(w, err, "failed to get persons")
 		return

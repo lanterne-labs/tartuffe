@@ -33,6 +33,7 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 		OriginalQuote      string   `json:"original_quote"`      // Match the prompt's JSON key
 		InvolvedPeople     []string `json:"involved_people"`
 		ArticlePublishedAt string   `json:"article_published_at"` // Optional YYYY-MM-DD when LLM found a pub date in the body
+		StatementDate      string   `json:"statement_date"`       // Optional YYYY, YYYY-MM or YYYY-MM-DD: when the statement itself was made
 	}
 
 	jsonContent := string(jsonData)
@@ -167,19 +168,30 @@ func ParseFactJSON(jsonData []byte, sourceURL string, publishedAt *time.Time) ([
 			}
 		}
 
+		var statementDate *time.Time
+		if raw := strings.TrimSpace(rawFact.StatementDate); raw != "" {
+			if d, err := backend.ParseStatementDate(raw); err == nil {
+				statementDate = &d
+			} else {
+				log.Debug().Err(err).Int("fact_index", i).Str("source_url", sourceURL).
+					Msg("LLM statement_date not a year, month or day — ignoring")
+			}
+		}
+
 		finalFacts = append(finalFacts, backend.Fact{
-			SubjectEntity:        rawFact.SubjectEntity,     // Primary entity this fact is about
-			SubjectEntityType:    rawFact.SubjectEntityType, // Entity type (human/party/organization)
-			NormalizedFactText:   rawFact.NormalizedFact,    // Native-language fact text
-			NormalizedFactTextEn: rawFact.NormalizedFactEn,  // English translation (empty if source is English)
-			Lang:                 rawFact.Lang,              // BCP-47 source language
-			EmbeddingText:        rawFact.EmbeddingText,     // Name-free version for embeddings
-			OriginalQuote:        rawFact.OriginalQuote,     // Map to correct field
+			SubjectEntity:        rawFact.SubjectEntity,                                 // Primary entity this fact is about
+			SubjectEntityType:    rawFact.SubjectEntityType,                             // Entity type (human/party/organization)
+			NormalizedFactText:   isoDatesInWords(rawFact.NormalizedFact, rawFact.Lang), // Native-language fact text, dates in words
+			NormalizedFactTextEn: rawFact.NormalizedFactEn,                              // English translation (empty if source is English)
+			Lang:                 rawFact.Lang,                                          // BCP-47 source language
+			EmbeddingText:        rawFact.EmbeddingText,                                 // Name-free version for embeddings
+			OriginalQuote:        rawFact.OriginalQuote,                                 // Map to correct field
 			CanonicalVerb:        rawFact.CanonicalVerb,
 			InvolvedPeople:       rawFact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:            sourceURL,              // Add context passed from extractor
 			PublishedAt:          publishedAt,            // Plugin-supplied default; plugin overrides via PickPublishedAt
 			ArticlePublishedAt:   llmArticleDate,         // Optional LLM signal; plugin chooses final
+			StatementDate:        statementDate,          // Optional: the date of the statement itself
 		})
 	}
 
