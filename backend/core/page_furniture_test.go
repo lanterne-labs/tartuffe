@@ -41,6 +41,7 @@ func TestPageFurnitureGuard(t *testing.T) {
 				SubjectEntity: "Test Person", NormalizedFactText: "Test Person a déclaré X.",
 				OriginalQuote: "Pillages : Test Person demande aux plateformes de coopérer",
 				SourceType:    tc.sourceType, SourceURL: "https://example.test/old-page",
+				PublishedAt: &testDate,
 			}})
 			if err != nil {
 				t.Fatalf("InsertFacts: %v", err)

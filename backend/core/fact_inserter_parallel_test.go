@@ -87,7 +87,7 @@ func TestInsertFactsConcurrency(t *testing.T) {
 		for k := 0; k < 3; k++ {
 			facts = append(facts, StoreFactInput{
 				SubjectEntity: fmt.Sprintf("voter %d", p), NormalizedFactText: fmt.Sprintf("p%d-f%d", p, k),
-				SourceType: "assemblee_law_page",
+				SourceType: "assemblee_law_page", PublishedAt: &testDate,
 			})
 		}
 	}
