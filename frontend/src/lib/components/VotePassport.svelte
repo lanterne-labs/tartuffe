@@ -108,7 +108,9 @@
 				// The proof is valid as long as the registry says; the ingest
 				// judges freshness by proof_date.
 				validity: request.validity,
-				uniqueIdentifierType: NullifierType.NON_SALTED
+				// The registry's identifier: salted by its OPRF key (the
+				// issuing state cannot compute it alone), or the document's own.
+				...(e.oprf_key ? { uniqueIdentifierType: NullifierType.SALTED, oprfKeyId: e.oprf_key.id } : { uniqueIdentifierType: NullifierType.NON_SALTED })
 			});
 			if (e.min_age) builder = builder.gte('age', e.min_age);
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
