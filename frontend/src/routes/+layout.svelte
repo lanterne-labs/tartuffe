@@ -155,7 +155,7 @@
 						<svg class="caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
 					</button>
 					<div class="drop-menu" id="event-menu">
-						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how]] as [k, href] (k)}
+						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how], ['verify', ep.verify]] as [k, href] (k)}
 							<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
 								<strong>{tr(`event.menu.${k}`, currentLang)}</strong>
 								<span>{tr(`event.menu.${k}_sub`, currentLang)}</span>

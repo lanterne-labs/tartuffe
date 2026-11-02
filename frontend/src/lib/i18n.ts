@@ -228,9 +228,11 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.menu.intro': { fr: 'Présentation', en: 'Overview' },
 	'event.menu.vote': { fr: 'Voter', en: 'Vote' },
 	'event.menu.how': { fr: 'Comment ça marche', en: 'How it works' },
+	'event.menu.verify': { fr: 'Vérifier', en: 'Verify' },
 	'event.menu.intro_sub': { fr: 'L’expérience en une minute', en: 'The experiment in a minute' },
 	'event.menu.vote_sub': { fr: 'Classer jusqu’à 3 candidats', en: 'Rank up to 3 candidates' },
 	'event.menu.how_sub': { fr: 'Anonymat, vérifications, limites', en: 'Anonymity, checks, limits' },
+	'event.menu.verify_sub': { fr: 'Recompter tout le vote vous-même', en: 'Recount the whole vote yourself' },
 	'event.strip.why': { fr: 'Pourquoi', en: 'Why' },
 	'vote.error.full': { fr: 'Déjà {n} candidats : retirez-en un.', en: 'Already {n} candidates: remove one.' },
 	// The voting key (lib/voter.ts)

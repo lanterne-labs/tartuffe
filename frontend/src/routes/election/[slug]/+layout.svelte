@@ -27,7 +27,8 @@
 	let tabs = $derived([
 		{ href: paths.intro, label: tr('event.menu.intro', currentLang) },
 		{ href: paths.vote, label: tr('event.menu.vote', currentLang) },
-		{ href: paths.how, label: tr('event.menu.how', currentLang) }
+		{ href: paths.how, label: tr('event.menu.how', currentLang) },
+		{ href: paths.verify, label: tr('event.menu.verify', currentLang) }
 	]);
 
 	function dateText(iso: string): string {
