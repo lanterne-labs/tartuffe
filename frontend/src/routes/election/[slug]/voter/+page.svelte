@@ -195,6 +195,8 @@
 	// The key's copies: none is a warning on the key button.
 	let keyUnprotected = $derived(!!$voteKey && keyStatusKey() === 'profile.key.unprotected');
 
+	// A touch screen holds to drag; a mouse drags at once (the hint says which).
+	const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 	let suppressClick = false;
 	function movable(id: number | undefined): boolean {
 		return id !== undefined && id !== BLANK && !busy && open && shown.filter((x) => x !== BLANK).length > 1;
@@ -202,7 +204,9 @@
 	function sortable(node: HTMLElement) {
 		const s = Sortable.create(node, {
 			draggable: '.movable',
+			// A finger holds first (so the page still scrolls); a mouse drags at once.
 			delay: 350,
+			delayOnTouchOnly: true,
 			forceFallback: true,
 			animation: 150,
 			chosenClass: 'chosen',
@@ -461,7 +465,7 @@
 		<p class="hint">
 			{tr(open ? 'vote.hint' : 'vote.closed_hint', currentLang, { n: depth })}
 			{#if open && shown.filter((x) => x !== BLANK).length > 1}
-				{tr('vote.hint.move', currentLang)}
+				{tr(coarse ? 'vote.hint.move' : 'vote.hint.drag', currentLang)}
 			{/if}
 		</p>
 		{#if hasKey && ($warm === 'loading' || $warm === 'failed')}
@@ -1342,9 +1346,11 @@
 		font-size: 0.85rem;
 		margin: 0.6rem 0 0;
 	}
+	/* As wide as a row needs: the name and its share stay close. */
 	.vote-list {
 		list-style: none;
-		margin: 0;
+		max-width: 30rem;
+		margin: 0 auto;
 		padding: 0;
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
