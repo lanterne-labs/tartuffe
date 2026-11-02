@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"digital-mirror/backend"
 	"digital-mirror/backend/llm"
 )
 
@@ -114,10 +115,10 @@ type restatementReply struct {
 }
 
 func dateOrUnknown(t *time.Time) string {
-	if t == nil || t.IsZero() {
-		return "undated"
+	if d := backend.FormatFactDateISO(t); d != "" {
+		return d
 	}
-	return t.Format("2006-01-02")
+	return "undated"
 }
 
 // SameContradiction reports whether the new contradiction (shared fact with

@@ -190,6 +190,7 @@ Return a JSON array. Each object has 10 fields (in this order):
 8. 'involved_people': Other people MENTIONED in the fact who are NOT the actor/speaker.
    These people will NOT have this fact attributed to them — only subject_entity owns the fact
 9. 'article_published_at': OPTIONAL ISO 8601 timestamp when THIS ARTICLE was published. Use the most precise form supplied ("YYYY-MM-DD", "YYYY-MM-DDTHH:MM:SS", or full RFC3339 with timezone). Set this when the body explicitly states either (a) an absolute date/time in a byline ("Publié le 19/05/2026 à 09h", "Posted on May 19, 2026"), OR (b) a relative phrase ("Publié hier", "Posted 2 days ago", "il y a 3 heures") — resolve relative phrases to absolute values using the REFERENCE DATE above, preserving the implied hour when given. OMIT this field entirely otherwise. DO NOT guess from article content, topic, or named events.
+10. 'statement_date': OPTIONAL date when the subject SAID or DID what the fact states — not when the article was published. Set it only when the text states it or plainly ties the statement to a date: a quoted old tweet or speech with its date ("dans un tweet de 2019", "en mars 2024, elle avait affirmé", "lors de son discours du 14 juillet 2023", "hier" resolved against the REFERENCE DATE), a vote or a hearing on a stated day. Write only as much as the text gives: "YYYY" for a year, "YYYY-MM" for a month, "YYYY-MM-DD" for a day. OMIT it when the text gives no date for the statement itself: never take the article's date for it, never guess one from the topic or from events you know. A statement the article reports as said today or in its own interview is dated by the article: OMIT it then too.
 
 %s
 
@@ -222,7 +223,8 @@ Example (French source — note 'lang' = "fr", NO translation field, 'article_pu
     "embedding_text": "délits affaire-assistants-parlementaires",
     "original_quote": "nous n'avions aucun sentiment d'avoir commis le moindre délit, ce qu'elle appelle une 'bonne foi totale'",
     "involved_people": [],
-    "article_published_at": "2026-01-14T09:00:00+01:00"
+    "article_published_at": "2026-01-14T09:00:00+01:00",
+    "statement_date": "2026-01-13"
   }
 ]
 

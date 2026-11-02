@@ -1,0 +1,122 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+
+	"digital-mirror/backend"
+	"digital-mirror/backend/core"
+	"digital-mirror/backend/deps"
+	"digital-mirror/backend/llm"
+	"digital-mirror/backend/storage"
+)
+
+// factsStatementDatesCmd gives the stored text facts their statement date:
+// the date the person said or did what the fact states, when the text gives
+// it (a 2019 tweet quoted in a 2025 article). The extractor gives it to new
+// facts (mirror-fmf); the facts stored before carry only their source's date,
+// which the judges read as the statement's. One LLM call per fact; a fact
+// checked once (statement_date_checked_at) is not asked again.
+var factsStatementDatesCmd = &cobra.Command{
+	Use:         "statement-dates",
+	Short:       "Find the statement date of the stored text facts (the candidates' by default)",
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runFactsStatementDates,
+}
+
+func init() {
+	factsCmd.AddCommand(factsStatementDatesCmd)
+	factsStatementDatesCmd.Flags().Bool("apply", false, "write the dates found (default: report only)")
+	factsStatementDatesCmd.Flags().Bool("all", false, "every person's facts, not only the candidates'")
+	factsStatementDatesCmd.Flags().Int("limit", 0, "at most this many facts (0: all; a dry run defaults to 20)")
+}
+
+func runFactsStatementDates(cmd *cobra.Command, args []string) error {
+	_ = godotenv.Load()
+	ctx := context.Background()
+	apply, _ := cmd.Flags().GetBool("apply")
+	all, _ := cmd.Flags().GetBool("all")
+	limit, _ := cmd.Flags().GetInt("limit")
+	if !apply && limit == 0 {
+		limit = 20
+	}
+
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+	dater, err := core.NewStatementDaterFromEnv()
+	if err != nil {
+		return fmt.Errorf("statement dater: %w", err)
+	}
+
+	var mu sync.Mutex
+	var checked, dated, same, failed int
+	for {
+		batch := 500
+		if limit > 0 && limit-checked-failed < batch {
+			batch = limit - checked - failed
+		}
+		if batch <= 0 {
+			break
+		}
+		facts, err := storer.ListFactsForStatementDate(ctx, !all, batch)
+		if err != nil {
+			return err
+		}
+		if len(facts) == 0 {
+			break
+		}
+		err = llm.ForEach(ctx, facts, func(ctx context.Context, f storage.StatementDateFact) error {
+			date, why, err := dater.StatementDate(ctx, f.PersonName, f.Text, f.Quote, f.PublishedAt)
+			if err != nil {
+				log.Warn().Err(err).Int64("fact_id", f.ID).Msg("statement date: the fact stays unchecked")
+				mu.Lock()
+				failed++
+				mu.Unlock()
+				return nil
+			}
+			repeats := core.SameStatementDay(date, f.PublishedAt)
+			mu.Lock()
+			checked++
+			switch {
+			case date == nil:
+			case repeats:
+				same++
+			default:
+				dated++
+				fmt.Printf("%d\t%s\tsource %s\tstatement %s\t%s\n", f.ID, f.PersonName, backend.FormatFactDateISO(f.PublishedAt), backend.FormatFactDateISO(date), why)
+			}
+			mu.Unlock()
+			if !apply {
+				return nil
+			}
+			if date == nil || repeats {
+				date = nil // the source's date stands
+			}
+			return storer.SetStatementDate(ctx, f.ID, date)
+		})
+		if err != nil {
+			return err
+		}
+		if !apply {
+			// a dry run marks nothing: the next batch would be the same facts
+			break
+		}
+		log.Info().Int("checked", checked).Int("dated", dated).Time("at", time.Now()).Msg("statement dates: batch done")
+	}
+	mode := "dry run"
+	if apply {
+		mode = "written"
+	}
+	fmt.Printf("%d facts checked: %d dated before their source, %d of the source's own date, %d with no date in the text; %d failed (%s)\n",
+		checked, dated, same, checked-dated-same, failed, mode)
+	return nil
+}

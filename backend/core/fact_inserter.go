@@ -120,9 +120,19 @@ type StoreFactInput struct {
 	InvolvedPeople       []string // Secondary people mentioned in the fact (not the subject)
 	SourceURL            string
 	PublishedAt          *time.Time
+	StatementDate        *time.Time // the statement's own date when the text gives it (backend.FactDate); nil otherwise
 	SourceType           string
 	Metadata             map[string]any
 	Lang                 string // BCP-47 language code ("fr", "en", ...); REQUIRED on all new inserts.
+}
+
+// JudgeDate is the date the judges read for the fact: the statement's own
+// date when the text gives it, else the source's.
+func (in StoreFactInput) JudgeDate() *time.Time {
+	if in.StatementDate != nil {
+		return in.StatementDate
+	}
+	return in.PublishedAt
 }
 
 // SimilarFactQuery selects the grouping candidates of a new fact: the active
@@ -456,7 +466,7 @@ func (fi *FactInserter) insertSingleFact(ctx context.Context, input StoreFactInp
 	// Mandatory stance processing. Failure rolls back the fact via compensating
 	// delete so that the "every fact has a stance" invariant holds — unless the
 	// fact is already in its stance and only the label refresh is pending.
-	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb, input.PublishedAt)
+	stanceResult, err := fi.stanceProcessor.ProcessNewFact(ctx, subjectID, factID, input.NormalizedFactText, input.Embedding, input.CanonicalVerb, input.JudgeDate())
 	if err != nil {
 		if !errors.Is(err, ErrStanceRefreshPending) {
 			fi.compensateDelete(ctx, factID, "stance processing")

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"digital-mirror/backend"
 )
 
 // Statement is one side of a judged pair: the statement's text and, when it
@@ -35,10 +37,7 @@ func (s Statement) Dated() string {
 
 // DateOf is the Date of a statement made on t: empty when t is nil or zero.
 func DateOf(t *time.Time) string {
-	if t == nil || t.IsZero() {
-		return ""
-	}
-	return t.UTC().Format("2006-01-02")
+	return backend.FormatFactDateISO(t)
 }
 
 // Render is the statement as a prompt shows it: the quoted text, then one

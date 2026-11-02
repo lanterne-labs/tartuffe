@@ -3,6 +3,8 @@ package categorizer
 import (
 	"testing"
 	"time"
+
+	"digital-mirror/backend"
 )
 
 func TestParseFactJSON(t *testing.T) {
@@ -49,6 +51,24 @@ func TestParseFactJSON(t *testing.T) {
 		}
 		if facts[0].NormalizedFactTextEn != "" {
 			t.Errorf("expected empty NormalizedFactTextEn for English source, got %q", facts[0].NormalizedFactTextEn)
+		}
+	})
+
+	t.Run("statement_date keeps its precision", func(t *testing.T) {
+		input := []byte(`[{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen a écrit en 2019 que l'euro devait être abandonné.","lang":"fr","canonical_verb":"CLAIMED","embedding_text":"euro sortie","original_quote":"dans un tweet de 2019, elle écrivait","involved_people":[],"statement_date":"2019"},
+			{"subject_entity":"Marine Le Pen","subject_entity_type":"human","normalized_fact":"Marine Le Pen a dit X.","lang":"fr","canonical_verb":"CLAIMED","embedding_text":"x","original_quote":"x","involved_people":[],"statement_date":"mars 2024"}]`)
+		facts, err := ParseFactJSON(input, sourceURL, &now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(facts) != 2 {
+			t.Fatalf("expected 2 facts, got %d", len(facts))
+		}
+		if got := backend.FormatFactDateISO(facts[0].StatementDate); got != "2019" {
+			t.Errorf("statement date %q, want 2019", got)
+		}
+		if facts[1].StatementDate != nil {
+			t.Errorf("a malformed statement_date is dropped, got %v", facts[1].StatementDate)
 		}
 	})
 

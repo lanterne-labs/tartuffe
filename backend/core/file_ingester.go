@@ -257,6 +257,7 @@ func (fi *FileIngester) storeFacts(ctx context.Context, facts []backend.Fact, op
 			EmbeddingText:        fact.EmbeddingText,
 			Embedding:            embeddings[0],
 			OriginalQuote:        fact.OriginalQuote,
+			StatementDate:        fact.StatementDate,
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople, // Secondary people mentioned
 			SourceURL:            fact.SourceURL,

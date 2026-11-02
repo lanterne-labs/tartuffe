@@ -433,7 +433,8 @@ func (s *PostgresStorer) listContradictions(ctx context.Context, whereClause, or
 		       COALESCE(fsa.urls, '{}') AS fact_a_urls, COALESCE(fsb.urls, '{}') AS fact_b_urls,
 		       COALESCE(fsa.earliest, fa.created_at) AS fact_a_date,
 		       COALESCE(fsb.earliest, fb.created_at) AS fact_b_date,
-		       c.reason, c.detected_at, c.last_audit_hash
+		       c.reason, c.detected_at, c.last_audit_hash,
+		       fa.statement_date::timestamp AT TIME ZONE 'UTC', fa.statement_date_precision, fb.statement_date::timestamp AT TIME ZONE 'UTC', fb.statement_date_precision
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -460,6 +461,7 @@ func (s *PostgresStorer) listContradictions(ctx context.Context, whereClause, or
 	out := make([]ContradictionAuditRow, 0)
 	for rows.Next() {
 		var r ContradictionAuditRow
+		var sda, sdb statementDate
 		if err := rows.Scan(
 			&r.ID, &r.PersonID, &r.PersonName,
 			&r.FactAID, &r.FactBID,
@@ -467,9 +469,11 @@ func (s *PostgresStorer) listContradictions(ctx context.Context, whereClause, or
 			&r.FactASourceURLs, &r.FactBSourceURLs,
 			&r.FactADate, &r.FactBDate,
 			&r.Reason, &r.DetectedAt, &r.LastAuditHash,
+			&sda.date, &sda.precision, &sdb.date, &sdb.precision,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan contradiction row: %w", err)
 		}
+		r.FactADate, r.FactBDate = sda.of(r.FactADate), sdb.of(r.FactBDate)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -681,7 +685,8 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 		       COALESCE(fsa.urls, '{}'), COALESCE(fsb.urls, '{}'),
 		       COALESCE(fsa.earliest, fa.created_at), COALESCE(fsb.earliest, fb.created_at),
 		       COALESCE(fsa.quotes[1], ''), COALESCE(fsb.quotes[1], ''),
-		       c.reason, c.detected_at
+		       c.reason, c.detected_at,
+		       fa.statement_date::timestamp AT TIME ZONE 'UTC', fa.statement_date_precision, fb.statement_date::timestamp AT TIME ZONE 'UTC', fb.statement_date_precision
 		FROM contradictions c
 		JOIN facts fa ON fa.id = c.fact_a_id
 		JOIN facts fb ON fb.id = c.fact_b_id
@@ -700,6 +705,7 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 		WHERE c.id = $1`
 
 	var r ContradictionWithFacts
+	var sda, sdb statementDate
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&r.ID, &r.PersonID, &r.FactAID, &r.FactBID,
 		&r.FactAText, &r.FactBText,
@@ -707,7 +713,9 @@ func (s *PostgresStorer) GetContradictionByID(ctx context.Context, id int64) (*C
 		&r.FactADate, &r.FactBDate,
 		&r.FactAQuote, &r.FactBQuote,
 		&r.Reason, &r.DetectedAt,
+		&sda.date, &sda.precision, &sdb.date, &sdb.precision,
 	)
+	r.FactADate, r.FactBDate = sda.of(r.FactADate), sdb.of(r.FactBDate)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, pgx.ErrNoRows
@@ -1020,7 +1028,9 @@ func (s *PostgresStorer) ContradictionsSharingFact(ctx context.Context, personID
 		SELECT cand.id, cand.shared, cand.other, cand.reason, cand.created_at,
 		       fs.fact_text, (SELECT min(published_at) FROM fact_sources WHERE fact_id = cand.shared),
 		       fo.fact_text, (SELECT min(published_at) FROM fact_sources WHERE fact_id = cand.other),
-		       CASE WHEN cand.shared = $2 THEN $3 ELSE $2 END AS new_other
+		       CASE WHEN cand.shared = $2 THEN $3 ELSE $2 END AS new_other,
+		       fs.statement_date::timestamp AT TIME ZONE 'UTC', fs.statement_date_precision,
+		       fo.statement_date::timestamp AT TIME ZONE 'UTC', fo.statement_date_precision
 		FROM cand
 		JOIN facts fs ON fs.id = cand.shared
 		JOIN facts fo ON fo.id = cand.other
@@ -1033,10 +1043,13 @@ func (s *PostgresStorer) ContradictionsSharingFact(ctx context.Context, personID
 	for rows.Next() {
 		var c core.SharedContradiction
 		var reason *string
+		var sds, sdo statementDate
 		if err := rows.Scan(&c.ID, &c.SharedFact, &c.OtherFact, &reason, &c.CreatedAt,
-			&c.SharedText, &c.SharedDate, &c.OtherText, &c.OtherDate, &c.NewOther); err != nil {
+			&c.SharedText, &c.SharedDate, &c.OtherText, &c.OtherDate, &c.NewOther,
+			&sds.date, &sds.precision, &sdo.date, &sdo.precision); err != nil {
 			return nil, fmt.Errorf("scanning a contradiction sharing a fact: %w", err)
 		}
+		c.SharedDate, c.OtherDate = sds.of(c.SharedDate), sdo.of(c.OtherDate)
 		if reason != nil {
 			c.Reason = *reason
 		}
@@ -1047,10 +1060,13 @@ func (s *PostgresStorer) ContradictionsSharingFact(ctx context.Context, personID
 		return nil, err
 	}
 	for i := range out {
-		if err := s.pool.QueryRow(ctx, `SELECT f.fact_text, (SELECT min(published_at) FROM fact_sources WHERE fact_id = f.id) FROM facts f WHERE f.id = $1`, out[i].NewOther).
-			Scan(&out[i].NewText, &out[i].NewDate); err != nil {
+		var sd statementDate
+		if err := s.pool.QueryRow(ctx, `SELECT f.fact_text, (SELECT min(published_at) FROM fact_sources WHERE fact_id = f.id),
+			f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision FROM facts f WHERE f.id = $1`, out[i].NewOther).
+			Scan(&out[i].NewText, &out[i].NewDate, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("loading fact %d: %w", out[i].NewOther, err)
 		}
+		out[i].NewDate = sd.of(out[i].NewDate)
 	}
 	return out, nil
 }
