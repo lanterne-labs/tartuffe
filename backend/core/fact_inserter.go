@@ -310,6 +310,19 @@ func (fi *FactInserter) insertOne(ctx context.Context, i, n int, fact StoreFactI
 		Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
 		Msg("Processing fact for insertion")
 
+	// A fact with no date is never stored (the user, 2026-11-02): neither the
+	// statement's own date nor its source's. The judges order the facts by
+	// date (JudgeDate); an undated fact cannot be placed before or after
+	// another, and the site shows the date of every fact.
+	if fact.JudgeDate() == nil {
+		log.Warn().
+			Str("source_type", fact.SourceType).
+			Str("source_url", fact.SourceURL).
+			Str("subject", fact.SubjectEntity).
+			Str("fact_text", util.TruncateString(fact.NormalizedFactText, 100)).
+			Msg("Skipping fact: no date (neither the statement's nor its source's)")
+		return factOutcome{skipped: true}, nil
+	}
 	factID, personID, err := fi.insertSingleFact(ctx, fact)
 	if err == nil {
 		return factOutcome{meta: &InsertedFactMeta{FactID: factID, PersonID: personID}}, nil

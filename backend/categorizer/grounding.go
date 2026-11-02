@@ -35,6 +35,13 @@ import (
 //     third party's words). Whether a statement is a POSITION stays the
 //     extractor's call: the checker only reads the fact against its quote.
 //
+// A claim counts as grounded only when the QUOTE holds it: the subject's own
+// words next to the quote extend the quote (rewrite with a longer quote), they
+// do not ground the fact as it is. Until the audit of 2026-11-02 they did, and
+// in a debate document, where every sentence is the speaker's, 22 pct of the
+// new facts carried a sentence their quote does not show (Juvin "la Corse
+// n'est pas une collectivité comme une autre" on a quote that stops before it).
+//
 // Only free text goes through it: the frpolitics votes are built from their
 // records and never reach the extractor.
 
@@ -55,15 +62,16 @@ const groundingPrompt = `You check facts extracted from a source about a politic
 
 For each fact you get its QUOTE (the words of the source it was extracted from), the TEXT AROUND the quote in the source, and the SOURCE DATE when known. The subject is %s.
 
-Judge each fact against its QUOTE and the subject's own words around it:
-- "grounded" (the default): the fact says what the quote says. NOT additions, keep the fact as it is:
+The QUOTE is what the site shows under the fact and what the judges read: every claim of the fact must be in the QUOTE itself. The text around is there to find the referent of a pronoun and the occasion, and to make the quote longer when the fact needs it; it does not ground a claim the quote lacks, even when it holds the subject's own words (in a parliamentary debate EVERY sentence around is the speaker's own).
+
+Judge each fact against its QUOTE:
+- "grounded" (the default): every claim of the fact is in the quote. NOT additions, keep the fact as it is:
   - a pronoun or a "nous", "on", "notre camp" of the subject resolved to its referent: the person's party, camp, government or movement, written in the third person ("nous avons la capacité d'obtenir la majorité absolue" said by Marine Le Pen = "son camp a la capacité..."); a fact NEVER keeps the "nous", "je" or "vous" of the quote;
-  - the subject's name, the date and the occasion (an interview, a debate, a post), and the event made plain by the source's date or the text around (a call to vote "dimanche" in a tweet of 4 July 2024 = the 2024 legislative elections);
-  - words in the SAME SENTENCE as the quote, or in the subject's OWN words just before or after it;
+  - the subject's name, the date and the occasion (an interview, a debate, a post, the text or amendment under debate), and the event made plain by the source's date or the text around (a call to vote "dimanche" in a tweet of 4 July 2024 = the 2024 legislative elections);
   - a reported "il a affirmé que" turned into a direct statement, small differences of wording, a referent the quote's own words make unambiguous.
-- "rewrite": ONLY when the fact clearly adds a claim that neither the quote nor the subject's own words around it carry: a condition ("si nécessaire", "si le gouvernement..."), a reason or a goal ("afin d'éviter un second tour..."), an attribution ("selon le HCFP"), a judgement, a second claim, or a referent taken from a QUESTION or another person's words while the subject's words have only a pronoun (« Si c'était ainsi, je partirais. » answering a journalist's question about the PS and the budget). This holds for a bare answer too: « Bien sûr. », « Oui », « C'est exactement ça » whose content is only in the journalist's question or in the article's own framing (an editorial sentence, the writer's comparison) are not the subject's words on that content — the fact keeps only what the subject's words carry (rewrite), or nothing is left (drop). Two ways, in this order of preference:
-  1. if the added part is in the subject's OWN words next to the quote (the same sentence, the next sentence of the subject, or the article's narration of what the subject said), keep the fact and give "quote": the longer span COPIED EXACTLY from the text around, which must contain the whole original quote. Never extend it into a question or another person's words.
-  2. else write "fact": the same fact without the added claim, in the third person, with the subject's full name and the same verb, keeping the MEANING of what the quote says. A rewrite must never change the meaning: do not cut a "ni... ni..., mais..." into something the person did not say, do not turn a rejection into a proposal. If you cannot cut the addition without changing the meaning, answer "grounded".
+- "rewrite": when the fact carries a claim the QUOTE does not: a condition ("si nécessaire", "si le gouvernement..."), a reason or a goal ("afin d'éviter un second tour..."), an attribution ("selon le HCFP"), a judgement, a second claim, a contrast ("et non de...", "mais désormais..."), a detail from another sentence, or a referent taken from a QUESTION or another person's words while the subject's words have only a pronoun (« Si c'était ainsi, je partirais. » answering a journalist's question about the PS and the budget). This holds for a bare answer too: « Bien sûr. », « Oui », « C'est exactement ça » whose content is only in the journalist's question or in the article's own framing (an editorial sentence, the writer's comparison) are not the subject's words on that content — the fact keeps only what the subject's words carry (rewrite), or nothing is left (drop). Two ways, in this order of preference:
+  1. if the added part is in the subject's OWN words next to the quote (the same sentence, the subject's sentence just before or after, or the article's narration of what the subject said), keep the fact and give "quote": the longer span COPIED EXACTLY from the text around, which must contain the whole original quote and every claim of the fact. Never extend it into a question or another person's words.
+  2. else write "fact": the same fact without the added claim, in the third person, with the subject's full name and the same verb, keeping the MEANING of what the quote says. A rewrite must never change the meaning: do not cut a "ni... ni..., mais..." into something the person did not say, do not turn a rejection into a proposal, do not widen an objection to one part of a measure (who decides it, its length) into an objection to the whole measure. If no cut keeps the meaning, extend the quote (way 1); if that is not possible either, answer "drop".
 - "drop": the quote holds no statement or act of the subject (an electoral score the subject obtained, a third party's words about the subject), or nothing would be left of the fact.
 
 When unsure, answer "grounded". Judge only against the source, never against what you know.
@@ -71,7 +79,7 @@ When unsure, answer "grounded". Judge only against the source, never against wha
 FACTS:
 %s
 Return ONLY strict JSON, one entry per fact in the same order, the reasoning first and the verdict last:
-{"facts": [{"n": 1, "reasoning": "<what the quote and the subject's words around it say, and what the fact adds if anything>", "fact": "<the rewritten fact, only for a rewrite of kind 2>", "quote": "<the longer verbatim quote, only for a rewrite of kind 1>", "verdict": "grounded" | "rewrite" | "drop"}]}`
+{"facts": [{"n": 1, "reasoning": "<what the quote says, and what the fact claims beyond it if anything (and whether the subject's own words next to the quote carry it)>", "fact": "<the rewritten fact, only for a rewrite of kind 2>", "quote": "<the longer verbatim quote, only for a rewrite of kind 1>", "verdict": "grounded" | "rewrite" | "drop"}]}`
 
 type groundingEntry struct {
 	N         int    `json:"n"`

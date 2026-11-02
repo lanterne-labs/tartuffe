@@ -91,6 +91,7 @@ func TestEmptyQuoteGuard(t *testing.T) {
 				OriginalQuote:      tc.quote,
 				SourceType:         tc.sourceType,
 				SourceURL:          "https://example.test/a",
+				PublishedAt:        &testDate,
 			}})
 			if err != nil {
 				t.Fatalf("InsertFacts returned error: %v", err)
@@ -113,13 +114,33 @@ func TestEmptyQuoteGuard(t *testing.T) {
 func TestEmptyQuoteGuard_DoesNotAbortBatch(t *testing.T) {
 	fi, st := newTestInserter()
 	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{
-		{SubjectEntity: "A", NormalizedFactText: "A empty quote", OriginalQuote: "", SourceType: "news", SourceURL: "u1"},
-		{SubjectEntity: "B", NormalizedFactText: "B good quote", OriginalQuote: "snippet", SourceType: "news", SourceURL: "u2"},
+		{SubjectEntity: "A", NormalizedFactText: "A empty quote", OriginalQuote: "", SourceType: "news", SourceURL: "u1", PublishedAt: &testDate},
+		{SubjectEntity: "B", NormalizedFactText: "B good quote", OriginalQuote: "snippet", SourceType: "news", SourceURL: "u2", PublishedAt: &testDate},
 	})
 	if err != nil {
 		t.Fatalf("batch should not error: %v", err)
 	}
 	if res.Skipped != 1 || res.Inserted != 1 || st.inserted != 1 {
 		t.Fatalf("want 1 skipped + 1 inserted, got Skipped=%d Inserted=%d storer.inserted=%d", res.Skipped, res.Inserted, st.inserted)
+	}
+}
+
+var testDate = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+
+// TestUndatedFactSkipped: a fact with neither a statement date nor a source
+// date is skipped without aborting the batch; either date alone is enough.
+func TestUndatedFactSkipped(t *testing.T) {
+	stmt := time.Date(2025, 4, 23, 0, 0, 0, 0, time.UTC)
+	fi, st := newTestInserter()
+	res, err := fi.InsertFacts(context.Background(), []StoreFactInput{
+		{SubjectEntity: "A", NormalizedFactText: "A undated", OriginalQuote: "q", SourceType: "news", SourceURL: "u1"},
+		{SubjectEntity: "B", NormalizedFactText: "B source date", OriginalQuote: "q", SourceType: "news", SourceURL: "u2", PublishedAt: &testDate},
+		{SubjectEntity: "C", NormalizedFactText: "C statement date", OriginalQuote: "q", SourceType: "news", SourceURL: "u3", StatementDate: &stmt},
+	})
+	if err != nil {
+		t.Fatalf("batch should not error: %v", err)
+	}
+	if res.Skipped != 1 || res.Inserted != 2 || st.inserted != 2 {
+		t.Fatalf("want 1 skipped + 2 inserted, got Skipped=%d Inserted=%d storer.inserted=%d", res.Skipped, res.Inserted, st.inserted)
 	}
 }

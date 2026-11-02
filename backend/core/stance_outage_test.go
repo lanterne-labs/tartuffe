@@ -458,7 +458,7 @@ func (p stanceErrProcessor) ProcessNewFact(context.Context, int64, int64, string
 // the fact back, except when the fact is already in its stance and only the
 // refresh is pending; either way the error reaches the caller.
 func TestInsertFacts_KeepsFactLinkedBeforeRefreshOutage(t *testing.T) {
-	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page"}
+	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page", PublishedAt: &testDate}
 	for name, tc := range map[string]struct {
 		err         error
 		wantDeleted int
@@ -485,7 +485,7 @@ func TestInsertFacts_KeepsFactLinkedBeforeRefreshOutage(t *testing.T) {
 func TestInsertFacts_RollsBackFactCutByDeadline(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page"}
+	input := StoreFactInput{SubjectEntity: "p", NormalizedFactText: "veut la retraite à 64 ans", SourceType: "assemblee_law_page", PublishedAt: &testDate}
 	st := &fakeInserterStorer{}
 	_, err := NewFactInserter(st, stanceErrProcessor{ctx.Err()}).InsertFacts(ctx, []StoreFactInput{input})
 	if !errors.Is(err, context.DeadlineExceeded) {

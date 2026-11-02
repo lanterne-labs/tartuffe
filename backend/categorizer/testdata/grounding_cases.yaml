@@ -236,3 +236,41 @@ cases:
     context: "Le maire de Saint-Ouen veut une gauche de gouvernement. Il critique par ailleurs la fermeture de la centrale nucléaire de Fessenheim, fruit selon l'auteur de l'article d'un accord politique qui a affaibli la souveraineté énergétique du pays."
     expect: fix
     forbid: ["accord politique", "souveraineté"]
+
+  # Debate facts of the audit of 2026-11-02 (debates.audit.jsonl, gloss 22 pct
+  # of the window): the context is the stored debate document.
+  - name: "190477_juvin_debate_next_sentence_added"
+    subject: "Philippe Juvin"
+    fact: "Philippe Juvin a déclaré que son opinion sur l'autonomie de la Corse avait beaucoup évolué : le mot autonomie le dérangeait longtemps au regard de l'unité et de l'indivisibilité de la République, mais il considère désormais que la Corse n'est pas une collectivité comme une autre."
+    quote: "Mon opinion sur ces sujets a beaucoup évolué. J’ai longtemps considéré que la République une et indivisible devait avancer vers plus de décentralisation mais le mot autonomie me dérangeait"
+    context: "Mon opinion sur ces sujets a beaucoup évolué. J’ai longtemps considéré que la République une et indivisible devait avancer vers plus de décentralisation mais le mot autonomie me dérangeait, compte tenu justement de l’unité et de l’indivisibilité de la République. En réalité, la Corse présente des spécificités, ne serait-ce qu’en raison de son insularité : quand les bateaux n’accostent plus, les rayons des supermarchés sont vides trois jours plus tard. Je pense aussi à la question des déchets ou de l’énergie. La Corse n’est pas une collectivité comme une autre. Par ailleurs, cela fait maintenant plusi"
+    date: "2026-06-17"
+    # A debate: every sentence around is the speaker's own. The fact adds his
+    # later sentence (« La Corse n'est pas une collectivité comme une autre »):
+    # the quote must be made longer to hold it, or the fact cut to the quote.
+    expect: fix
+    forbid: ["collectivité comme une autre", "désormais"]
+
+  - name: "193826_faucillon_debate_contrast_added"
+    subject: "Elsa Faucillon"
+    fact: "Elsa Faucillon a soutenu qu'accélérer le traitement des affaires suppose de recruter des magistrats, des greffiers, des enquêteurs et des personnels pénitentiaires, et non de réduire les garanties des justiciables."
+    quote: "mais à recruter des magistrats, des greffiers, des enquêteurs et enquêtrices, des personnels pénitentiaires, à donner du temps aux juridictions"
+    context: "on de ce texte, vous affirmiez vouloir « répondre à l’urgence d’amélioration de notre justice criminelle ». Pourtant, vous ne cherchez pas à améliorer les choses. Accélérer le traitement des affaires ne consiste pas à réduire les garanties des justiciables ou à rechercher des économies sur le fonctionnement de la justice (Applaudissements sur quelques bancs du groupe EcoS. – M. Marcellin Nadeau applaudit également), mais à recruter des magistrats, des greffiers, des enquêteurs et enquêtrices, des personnels pénitentiaires, à donner du temps aux juridictions et à permettre aux victimes d’obtenir enfin des décisions dans des délais raisonnables.Le symbole de cette logique aura été le plaider-coupable criminel, dont vous aviez fait la mesure emblématique d"
+    date: "2026-07-08"
+    # The fact adds the sentence before the quote (« Accélérer le traitement des
+    # affaires ne consiste pas à réduire les garanties »): requote or cut.
+    expect: fix
+    forbid: ["réduire les garanties", "garanties des justiciables"]
+
+  - name: "193765_faucillon_debate_objection_widened"
+    subject: "Elsa Faucillon"
+    fact: "Elsa Faucillon s'oppose à la suspension de six mois du permis de conduire décidée par le préfet pour usage illicite de stupéfiants, qu'elle juge disproportionnée, dans le texte n° 2984 sur l'ordre public."
+    quote: "le fait de confier cette décision disproportionnée au préfet est problématique."
+    context: "t déployées de manière homogène sur tout le territoire, y compris aux abords de l’Assemblée nationale ! (Sourires.)Ensuite, la disposition que vous proposez prévoit une suspension du permis de conduire de six mois, soit une durée très longue, dans l’attente d’une décision du juge. Vous auriez proposé une durée de quelques jours, je ne m’y serais pas opposée, notamment pour les cas d’usage maintes fois réitéré.Enfin, le fait de confier cette décision disproportionnée au préfet est problématique. Certes, l’usage de stupéfiants constitue un problème en matière de sécurité routière, mais ce problème appelle d’autres types de réponse. Les AFD et le tout-répressif ne fonctionnent pas pour juguler"
+    date: "2026-07-09"
+    # She objects to the préfet deciding and to the six-month length; the
+    # quote holds neither the six months nor her objection to them. Requote
+    # to her sentences on the length (« une durée très longue… quelques jours,
+    # je ne m'y serais pas opposée »), or cut the fact to the préfet.
+    expect: fix
+    forbid: ["six mois"]

@@ -26,6 +26,8 @@ type CLIOptions struct {
 	Rejudge bool
 	// reamend
 	DryRun bool
+	// redate: write (the mode is a dry run without it)
+	Apply bool
 	// debats
 	MaxDocs         int
 	NewestFirst     bool
@@ -47,6 +49,7 @@ var cliModes = []cliMode{
 	{"rearticle", "rewrite the ballots of the article scrutins with what the article does", runRearticleMode},
 	{"remotion", "name the motion in the stored ballots of the motion scrutins; reopens the pairs of the motions other than censure", runRemotionMode},
 	{"reamend", "complete the quoted object of the amendment ballots cut inside the guillemets (--dry-run to count)", runReamendMode},
+	{"redate", "give the stored ballots the scrutin date suffix and the current abstention wording, no LLM (dry run unless --apply)", runRedateMode},
 	{"resummarize", "give the amendment ballots whose bill summary describes the amendment the bill's summary (--dry-run to count, --rejudge to reopen their pairs)", runResummarizeMode},
 }
 
@@ -159,6 +162,26 @@ func runReamendMode(ctx context.Context, storer *storage.PostgresStorer, opts CL
 	}
 	fmt.Printf("%d amendment scrutins, %d ballots %s; %d scrutins gated (%s)\n",
 		res.Scrutins, res.Ballots, verb, len(res.Gated), strings.Join(res.Gated, ", "))
+	return nil
+}
+
+// runRedateMode gives the stored ballots the « (scrutin du …) » suffix and
+// the abstention wording of the current code (RedateBallots). A dry run
+// unless --apply.
+func runRedateMode(ctx context.Context, storer *storage.PostgresStorer, opts CLIOptions) error {
+	res, err := RedateBallots(ctx, NewStore(storer), !opts.Apply)
+	if err != nil {
+		return err
+	}
+	for _, ex := range res.Examples {
+		fmt.Printf("%d\n  old: %s\n  new: %s\n", ex.ID, ex.Old, ex.New)
+	}
+	mode := "dry run: nothing written (use --apply)"
+	if opts.Apply {
+		mode = fmt.Sprintf("%d written", res.Written)
+	}
+	fmt.Printf("%d ballots read; %d to rewrite: %d given the date suffix, %d abstention wordings fixed; %s\n",
+		res.Ballots, res.Rewritten, res.Suffixed, res.Abstention, mode)
 	return nil
 }
 

@@ -42,7 +42,7 @@ func TestCandidateGate(t *testing.T) {
 	ctx := context.Background()
 
 	fact := func(subject string) StoreFactInput {
-		return StoreFactInput{SubjectEntity: subject, NormalizedFactText: subject + " a dit quelque chose", SourceType: "news", OriginalQuote: "quelque chose de long à citer"}
+		return StoreFactInput{SubjectEntity: subject, NormalizedFactText: subject + " a dit quelque chose", SourceType: "news", OriginalQuote: "quelque chose de long à citer", PublishedAt: &testDate}
 	}
 	res, err := fi.InsertFacts(ctx, []StoreFactInput{fact("Other"), fact("Other"), fact("Candidate")})
 	if err != nil {
@@ -68,7 +68,7 @@ func TestNoCandidateStorer(t *testing.T) {
 	st := &fakeInserterStorer{}
 	sp := &countingStanceProcessor{}
 	fi := NewFactInserter(st, sp)
-	_, err := fi.InsertFacts(context.Background(), []StoreFactInput{{SubjectEntity: "Anyone", NormalizedFactText: "x", SourceType: "news", OriginalQuote: "a quote that is long enough"}})
+	_, err := fi.InsertFacts(context.Background(), []StoreFactInput{{SubjectEntity: "Anyone", NormalizedFactText: "x", SourceType: "news", OriginalQuote: "a quote that is long enough", PublishedAt: &testDate}})
 	if err != nil {
 		t.Fatal(err)
 	}
