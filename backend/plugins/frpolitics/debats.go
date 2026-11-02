@@ -418,6 +418,7 @@ func ingestDebateDocument(ctx context.Context, extractor *categorizer.OpenAIExtr
 			EmbeddingText:        fact.EmbeddingText,
 			Embedding:            embs[i],
 			OriginalQuote:        fact.OriginalQuote,
+			StatementDate:        fact.StatementDate,
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople,
 			SourceURL:            meta.sourceURL,

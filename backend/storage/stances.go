@@ -154,7 +154,8 @@ func (s *PostgresStorer) GetStanceMetadata(ctx context.Context, stanceID int64) 
 func (s *PostgresStorer) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, ''),
-		       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id)
+		       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id),
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
 		JOIN stance_documents sd ON sd.id = sdf.stance_document_id
@@ -171,9 +172,11 @@ func (s *PostgresStorer) GetUnsummarizedFactsForStance(ctx context.Context, stan
 	var facts []core.StanceFactInfo
 	for rows.Next() {
 		var f core.StanceFactInfo
-		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang, &f.Date); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang, &f.Date, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning unsummarized stance fact: %w", err)
 		}
+		f.Date = sd.of(f.Date)
 		facts = append(facts, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -396,7 +399,8 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, ''),
-		       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id)
+		       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id),
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
 		WHERE sdf.stance_document_id = $1
@@ -411,9 +415,11 @@ func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) 
 	var facts []core.StanceFactInfo
 	for rows.Next() {
 		var f core.StanceFactInfo
-		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang, &f.Date); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.NormalizedFactText, &f.EmbeddingText, &f.CanonicalVerb, &f.Lang, &f.Date, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning stance fact: %w", err)
 		}
+		f.Date = sd.of(f.Date)
 		facts = append(facts, f)
 	}
 
@@ -671,7 +677,8 @@ func (s *PostgresStorer) ListPersonsWithOrphanFacts(ctx context.Context) ([]core
 func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID int64) ([]core.StanceRoutingFact, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''),
-		       COALESCE(f.canonical_verb, ''), f.embedding, MIN(fs.published_at)
+		       COALESCE(f.canonical_verb, ''), f.embedding, MIN(fs.published_at),
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN fact_sources fs ON f.id = fs.fact_id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -697,9 +704,11 @@ func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID 
 	for rows.Next() {
 		var f core.StanceRoutingFact
 		var vec pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec, &f.PublishedAt); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec, &f.PublishedAt, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning orphan fact: %w", err)
 		}
+		f.PublishedAt = sd.of(f.PublishedAt)
 		f.Embedding = vec.Slice()
 		if len(f.Embedding) == 0 {
 			continue

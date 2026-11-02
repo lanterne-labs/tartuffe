@@ -183,10 +183,11 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 	timer := metrics.NewQueryTimer("insert_fact")
 
 	query := `
-		INSERT INTO facts (fact_text, fact_text_en, embedding_text, embedding, canonical_verb, lang)
-		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6)
+		INSERT INTO facts (fact_text, fact_text_en, embedding_text, embedding, canonical_verb, lang, statement_date, statement_date_precision, statement_date_checked_at)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, now())
 		RETURNING id
 	`
+	date, precision := statementDateArgs(input.StatementDate)
 	var factID int64
 	err := s.pool.QueryRow(ctx, query,
 		input.NormalizedFactText,
@@ -195,6 +196,8 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		pgvector.NewVector(input.Embedding),
 		input.CanonicalVerb,
 		input.Lang,
+		date,
+		precision,
 	).Scan(&factID)
 
 	timer.ObserveDuration(err)
@@ -446,7 +449,7 @@ type FactWithEmbedding struct {
 	ID            int64
 	Text          string
 	Embedding     []float32
-	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	PublishedAt   *time.Time // The statement's date when known, else the earliest publication date from fact_sources (backend.FactDate)
 	CanonicalVerb string
 }
 
@@ -459,7 +462,8 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 			FROM fact_sources fs
 			GROUP BY fs.fact_id
 		)
-		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at, COALESCE(f.canonical_verb, '') AS canonical_verb
+		SELECT DISTINCT f.id, f.fact_text, f.embedding, fd.earliest_published_at, COALESCE(f.canonical_verb, '') AS canonical_verb,
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
 		FROM facts f
 		JOIN fact_sources fs ON fs.fact_id = f.id
 		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
@@ -481,9 +485,11 @@ func (s *PostgresStorer) GetFactsWithEmbeddingsForPerson(ctx context.Context, pe
 	for rows.Next() {
 		var f FactWithEmbedding
 		var emb pgvector.Vector
-		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&f.ID, &f.Text, &emb, &f.PublishedAt, &f.CanonicalVerb, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("failed to scan fact for person %d: %w", personID, err)
 		}
+		f.PublishedAt = sd.of(f.PublishedAt)
 		f.Embedding = emb.Slice()
 		results = append(results, f)
 	}
@@ -502,7 +508,7 @@ type NeighborFactResult struct {
 	ID            int64
 	Text          string
 	Distance      float64    // Include distance for potential future use/logging
-	PublishedAt   *time.Time // Earliest publication date from fact_sources
+	PublishedAt   *time.Time // The statement's date when known, else the earliest publication date from fact_sources (backend.FactDate)
 	CanonicalVerb string     // Canonical verb for verb-aware filtering
 }
 
@@ -531,7 +537,8 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
             f.fact_text,
             f.embedding <-> $2 AS distance,
             fd.earliest_published_at,
-            COALESCE(f.canonical_verb, '') AS canonical_verb
+            COALESCE(f.canonical_verb, '') AS canonical_verb,
+            f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
         FROM facts f
         JOIN PersonFacts pf ON f.id = pf.fact_id
         LEFT JOIN FactDates fd ON f.id = fd.fact_id
@@ -562,10 +569,12 @@ func (s *PostgresStorer) FindNeighborFactsForPerson(ctx context.Context, queryer
 	var results []NeighborFactResult
 	for rows.Next() {
 		var res NeighborFactResult
-		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt, &res.CanonicalVerb); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&res.ID, &res.Text, &res.Distance, &res.PublishedAt, &res.CanonicalVerb, &sd.date, &sd.precision); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("failed to scan neighbor fact result for person %d: %w", personID, err)
 		}
+		res.PublishedAt = sd.of(res.PublishedAt)
 		results = append(results, res)
 	}
 

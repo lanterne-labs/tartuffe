@@ -100,10 +100,12 @@ func (s *PostgresStorer) GetNeighborPairsForPerson(ctx context.Context, personID
 		       COALESCE(af.id, nb.neighbor_id) AS target_id,
 		       COALESCE(af.fact_text, nb.fact_text) AS target_text,
 		       (SELECT MIN(fs.published_at) FROM fact_sources fs
-		        WHERE fs.fact_id = COALESCE(af.id, nb.neighbor_id)) AS target_date
+		        WHERE fs.fact_id = COALESCE(af.id, nb.neighbor_id)) AS target_date,
+		       tf.statement_date::timestamp AT TIME ZONE 'UTC', tf.statement_date_precision
 		FROM neighbors nb
 		JOIN top_ancestor ta ON ta.start_id = nb.neighbor_id
 		LEFT JOIN facts af ON af.id = ta.fact_id AND ta.fact_id <> nb.neighbor_id
+		JOIN facts tf ON tf.id = COALESCE(af.id, nb.neighbor_id)
 		ORDER BY nb.fact_id, nb.distance, nb.neighbor_id`
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -116,10 +118,12 @@ func (s *PostgresStorer) GetNeighborPairsForPerson(ctx context.Context, personID
 	var results []NeighborPair
 	for rows.Next() {
 		var p NeighborPair
-		if err := rows.Scan(&p.FactID, &p.NeighborID, &p.NeighborVerb, &p.Distance, &p.TargetID, &p.TargetText, &p.TargetDate); err != nil {
+		var sd statementDate
+		if err := rows.Scan(&p.FactID, &p.NeighborID, &p.NeighborVerb, &p.Distance, &p.TargetID, &p.TargetText, &p.TargetDate, &sd.date, &sd.precision); err != nil {
 			timer.ObserveDuration(err)
 			return nil, fmt.Errorf("failed to scan neighbor pair for person %d: %w", personID, err)
 		}
+		p.TargetDate = sd.of(p.TargetDate)
 		results = append(results, p)
 	}
 

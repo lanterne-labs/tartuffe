@@ -2,6 +2,7 @@ package contradiction
 
 import (
 	"context"
+	"digital-mirror/backend"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/promptrules"
@@ -416,8 +417,5 @@ func recordAuditJobMetrics(ctx context.Context, storer *storage.PostgresStorer, 
 
 // formatAuditDate renders a fact date for the audit row ("" when unknown).
 func formatAuditDate(t *time.Time) string {
-	if t == nil {
-		return ""
-	}
-	return t.Format("2006-01-02")
+	return backend.FormatFactDateISO(t)
 }

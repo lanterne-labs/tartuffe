@@ -769,6 +769,7 @@ func (p *Provider) extractDocument(
 			EmbeddingText:        fact.EmbeddingText,
 			Embedding:            embeddings[0],
 			OriginalQuote:        fact.OriginalQuote,
+			StatementDate:        fact.StatementDate,
 			CanonicalVerb:        fact.CanonicalVerb,
 			InvolvedPeople:       fact.InvolvedPeople,
 			SourceURL:            doc.URL,

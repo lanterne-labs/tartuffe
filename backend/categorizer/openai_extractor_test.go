@@ -921,3 +921,60 @@ avons des convergences sur l'immigration, cela ne fait pas une alliance. »`
 		}
 	}
 }
+
+// TestRemoteLLMExtractor_StatementDate checks that a statement the article
+// quotes from years before gets its own date, not the article's: Le Pen's
+// 2019 tweet, quoted in a November 2025 piece, was stored as 2025-11-09
+// (fact 156560, review of 2026-11-01, mirror-fmf), and the judges read it as
+// recent.
+func TestRemoteLLMExtractor_StatementDate(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	mockText := `Euro : quand Marine Le Pen voulait en sortir
+
+Les internautes ont exhumé un tweet de Marine Le Pen publié en 2019, dans lequel elle écrivait :
+« L'euro est un boulet pour notre économie, il faudra en sortir. » Interrogée ce dimanche sur
+France Inter, la candidate a répondu : « Je ne propose plus la sortie de l'euro, les Français
+y sont attachés. »`
+
+	published := time.Date(2025, 11, 9, 9, 0, 0, 0, time.UTC)
+	mockContent := extractor.ExtractedContent{
+		URL:           "http://example.com/statement-date",
+		Title:         "Euro : quand Marine Le Pen voulait en sortir",
+		Content:       mockText,
+		DatePublished: &published,
+	}
+
+	facts, err := extractorClient.ExtractFacts(context.Background(), "Marine Le Pen", mockContent)
+	if err != nil {
+		t.Fatalf("ExtractFacts failed: %v", err)
+	}
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact, got 0")
+	}
+	dated2019 := false
+	for i, f := range facts {
+		t.Logf("  [%d] normalized=%q quote=%q statement_date=%q", i+1, f.NormalizedFactText, f.OriginalQuote, backend.FormatFactDateISO(f.StatementDate))
+		quote := strings.ToLower(f.OriginalQuote)
+		switch {
+		case strings.Contains(quote, "boulet") || strings.Contains(quote, "il faudra en sortir"):
+			if f.StatementDate == nil || f.StatementDate.Year() != 2019 {
+				t.Errorf("Fact %d quotes the 2019 tweet but its statement date is %q, want 2019", i+1, backend.FormatFactDateISO(f.StatementDate))
+			} else {
+				dated2019 = true
+			}
+		case strings.Contains(quote, "je ne propose plus"):
+			if f.StatementDate != nil && f.StatementDate.Year() != 2025 {
+				t.Errorf("Fact %d is the statement of the article's day but is dated %q", i+1, backend.FormatFactDateISO(f.StatementDate))
+			}
+		}
+	}
+	if !dated2019 {
+		t.Error("no fact of the 2019 tweet with its 2019 date")
+	}
+}

@@ -421,6 +421,7 @@ func (ing *ingester) extract(ctx context.Context, t plugins.Target, doc core.Sou
 			EmbeddingText:        f.EmbeddingText,
 			Embedding:            embs[i],
 			OriginalQuote:        f.OriginalQuote,
+			StatementDate:        f.StatementDate,
 			CanonicalVerb:        f.CanonicalVerb,
 			InvolvedPeople:       f.InvolvedPeople,
 			SourceURL:            sourceURL,
