@@ -1,0 +1,171 @@
+<script lang="ts">
+	// Counting without reading, looping: sealed ballots drop into the sum,
+	// still sealed; only the sum is opened, and the results come out of it.
+	// Without motion the last frame shows.
+	import type { Lang } from '$lib/i18n';
+
+	let { lang }: { lang: Lang } = $props();
+	const t = {
+		fr: { ballots: 'Bulletins scellés', sum: 'La somme', only: 'seule la somme s’ouvre', results: 'Résultats' },
+		en: { ballots: 'Sealed ballots', sum: 'The sum', only: 'only the sum opens', results: 'Results' }
+	};
+	let c = $derived(t[lang]);
+</script>
+
+<svg viewBox="0 0 340 150" class="anim" role="img" aria-label="{c.ballots} → {c.sum} → {c.results}">
+	<text x="48" y="132" text-anchor="middle" class="label">{c.ballots}</text>
+
+	<!-- The sum: a closed box that opens -->
+	<g class="box">
+		<rect x="140" y="58" width="60" height="44" rx="6" class="body" />
+		<text x="170" y="87" text-anchor="middle" class="sigma">Σ</text>
+		<g class="lid">
+			<rect x="136" y="48" width="68" height="12" rx="4" />
+		</g>
+	</g>
+	<text x="170" y="132" text-anchor="middle" class="label">{c.sum}</text>
+	<!-- The ballots, drawn over the box: they drop in through the top. -->
+	{#each [0, 1, 2, 3] as i (i)}
+		<g class="env e{i}">
+			<rect width="22" height="15" rx="2.5" />
+			<path d="M0 0l11 8 11-8" />
+		</g>
+	{/each}
+
+	<text x="170" y="30" text-anchor="middle" class="only">{c.only}</text>
+
+	<!-- The results -->
+	<g class="bars">
+		<rect x="262" y="70" width="12" height="32" rx="2" class="b1" />
+		<rect x="280" y="54" width="12" height="48" rx="2" class="b2" />
+		<rect x="298" y="80" width="12" height="22" rx="2" class="b3" />
+	</g>
+	<text x="286" y="132" text-anchor="middle" class="label">{c.results}</text>
+</svg>
+
+<style>
+	.anim {
+		display: block;
+		width: 100%;
+		max-width: 26rem;
+		height: auto;
+		margin: 0 auto;
+		font-family: var(--font-family);
+	}
+	.env rect {
+		fill: var(--accent);
+	}
+	.env path {
+		fill: none;
+		stroke: #0a0a0f;
+		stroke-width: 1.4;
+	}
+	.label {
+		font-size: 9px;
+		fill: var(--text-secondary);
+	}
+	.only {
+		font-size: 9px;
+		font-weight: 700;
+		fill: var(--green);
+	}
+	.box .body {
+		fill: #2a2430;
+		stroke: var(--glass-border);
+	}
+	.lid rect {
+		fill: #3a3038;
+		stroke: var(--glass-border);
+	}
+	.lid {
+		transform-box: fill-box;
+		transform-origin: 0% 100%;
+		transform: rotate(-28deg);
+	}
+	.sigma {
+		font-size: 22px;
+		font-weight: 800;
+		fill: var(--green);
+	}
+	.bars rect {
+		fill: var(--green);
+		transform-box: fill-box;
+		transform-origin: 50% 100%;
+	}
+	/* The last frame: the ballots in the box, the box open, the results up. */
+	.env {
+		opacity: 0;
+	}
+	.e0 {
+		transform: translate(20px, 60px);
+	}
+	.e1 {
+		transform: translate(46px, 50px);
+	}
+	.e2 {
+		transform: translate(22px, 88px);
+	}
+	.e3 {
+		transform: translate(50px, 92px);
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.e0 {
+			animation: drop0 7s infinite;
+		}
+		.e1 {
+			animation: drop1 7s infinite;
+		}
+		.e2 {
+			animation: drop2 7s infinite;
+		}
+		.e3 {
+			animation: drop3 7s infinite;
+		}
+		.lid {
+			animation: lid 7s infinite;
+		}
+		.sigma,
+		.only {
+			animation: show 7s infinite;
+		}
+		.bars rect {
+			animation: grow 7s infinite;
+		}
+	}
+	@keyframes drop0 {
+		0%, 4% { opacity: 1; transform: translate(20px, 60px); }
+		22% { opacity: 1; transform: translate(159px, 34px); }
+		26%, 100% { opacity: 0; transform: translate(159px, 52px); }
+	}
+	@keyframes drop1 {
+		0%, 10% { opacity: 1; transform: translate(46px, 50px); }
+		28% { opacity: 1; transform: translate(159px, 34px); }
+		32%, 100% { opacity: 0; transform: translate(159px, 52px); }
+	}
+	@keyframes drop2 {
+		0%, 16% { opacity: 1; transform: translate(22px, 88px); }
+		34% { opacity: 1; transform: translate(159px, 34px); }
+		38%, 100% { opacity: 0; transform: translate(159px, 52px); }
+	}
+	@keyframes drop3 {
+		0%, 22% { opacity: 1; transform: translate(50px, 92px); }
+		40% { opacity: 1; transform: translate(159px, 34px); }
+		44%, 100% { opacity: 0; transform: translate(159px, 52px); }
+	}
+	@keyframes lid {
+		0%, 46% { transform: rotate(0deg); }
+		56%, 92% { transform: rotate(-28deg); }
+		100% { transform: rotate(0deg); }
+	}
+	@keyframes show {
+		0%, 50% { opacity: 0; }
+		58%, 94% { opacity: 1; }
+		100% { opacity: 0; }
+	}
+	@keyframes grow {
+		0%, 60% { transform: scaleY(0); }
+		72%, 94% { transform: scaleY(1); }
+		100% { transform: scaleY(0); }
+	}
+</style>
