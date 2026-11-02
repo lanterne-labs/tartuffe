@@ -1,13 +1,13 @@
 <script lang="ts">
-	// Counting without reading, looping: sealed ballots drop into the sum,
-	// still sealed; only the sum is opened, and the results come out of it.
+	// Counting without reading, looping: sealed ballots drop into the count,
+	// still sealed; only the result is revealed, out of the opened box.
 	// Without motion the last frame shows.
 	import type { Lang } from '$lib/i18n';
 
 	let { lang }: { lang: Lang } = $props();
 	const t = {
-		fr: { ballots: 'Bulletins scellés', sum: 'La somme', only: 'seule la somme s’ouvre', results: 'Résultats' },
-		en: { ballots: 'Sealed ballots', sum: 'The sum', only: 'only the sum opens', results: 'Results' }
+		fr: { ballots: 'Bulletins scellés', sum: 'Le comptage', only: 'seul le résultat est révélé', results: 'Résultats' },
+		en: { ballots: 'Sealed ballots', sum: 'The count', only: 'only the result is revealed', results: 'Results' }
 	};
 	let c = $derived(t[lang]);
 </script>
@@ -18,7 +18,6 @@
 	<!-- The sum: a closed box that opens -->
 	<g class="box">
 		<rect x="140" y="58" width="60" height="44" rx="6" class="body" />
-		<text x="170" y="87" text-anchor="middle" class="sigma">Σ</text>
 		<g class="lid">
 			<rect x="136" y="48" width="68" height="12" rx="4" />
 		</g>
@@ -82,11 +81,6 @@
 		transform-origin: 0% 100%;
 		transform: rotate(-28deg);
 	}
-	.sigma {
-		font-size: 22px;
-		font-weight: 800;
-		fill: var(--green);
-	}
 	.bars rect {
 		fill: var(--green);
 		transform-box: fill-box;
@@ -125,7 +119,6 @@
 		.lid {
 			animation: lid 7s infinite;
 		}
-		.sigma,
 		.only {
 			animation: show 7s infinite;
 		}

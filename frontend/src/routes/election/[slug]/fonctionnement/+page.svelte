@@ -1,8 +1,8 @@
 <script lang="ts">
 	// How the vote works, for everyone: four ideas, each with its short
 	// animation (the passport stays on the phone, the ballot never comes to
-	// our server, we only open the sum, anyone checks every step), what we
-	// receive and what stays with you, the limits said plainly. The
+	// our server, only the result is revealed, anyone checks every step),
+	// and the limits said plainly. The
 	// technical version lives with the code (isoloir, docs/comment-ca-marche.md).
 	// Every line must stay true to isoloir (DESIGN.md) and to the app.
 	import { page } from '$app/stores';
@@ -26,18 +26,14 @@
 			passport: 'Il prouve seulement que vous êtes majeur et français, une seule fois. Un passeport, une voix.',
 			ballotTitle: 'Votre bulletin ne passe pas par nous',
 			ballot: 'Il part scellé vers des relais publics, tenus par d’autres. Nous allons l’y chercher, au milieu des autres : nous ne voyons jamais d’où il vient.',
-			countTitle: 'Nous n’ouvrons que la somme',
-			count: 'Les bulletins s’additionnent sans être ouverts. Seul le total est déchiffré, avec une preuve que chacun peut contrôler.',
+			countTitle: 'Seul le résultat est révélé',
+			count: 'Les bulletins sont comptés sans être ouverts. Personne ne lit le vôtre : seul le résultat est révélé, avec une preuve que chacun peut contrôler.',
 			auditTitle: 'Chacun peut tout recompter',
 			audit: 'Tout est inscrit dans un registre public, signé et daté dans Bitcoin. Votre navigateur peut refaire chaque contrôle, de l’inscription au résultat.',
 			auditCta: 'Vérifier maintenant',
-			getTitle: 'Ce que nous recevons',
-			get: ['« Majeur et français : oui »', 'Un identifiant anonyme du passeport, pour ce site', 'Des bulletins scellés', 'Les totaux'],
-			keepTitle: 'Ce qui reste chez vous',
-			keep: ['Votre nom, votre photo, votre numéro de passeport', 'Votre clé de vote et vos 12 mots', 'Quel bulletin est le vôtre', 'Le lien entre votre adresse IP et votre vote'],
 			limitsTitle: 'Les limites, franchement',
 			limits: [
-				'La clé qui ouvre la somme pourrait ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les totaux, avec leurs preuves.',
+				'La clé qui révèle le résultat pourrait aussi ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les résultats, avec leurs preuves.',
 				'Vous pouvez montrer votre vote à quelqu’un en lui donnant votre clé : l’achat de votes n’est pas empêché.',
 				'Il faut un smartphone NFC et un passeport à puce.',
 				'C’est une expérience de tartuffe.me : ni un scrutin officiel, ni un sondage représentatif.'
@@ -51,18 +47,14 @@
 			passport: 'It only proves you are an adult French national, once. One passport, one vote.',
 			ballotTitle: 'Your ballot never goes through us',
 			ballot: 'It leaves sealed for public relays run by others. We fetch it there, among the rest: we never see where it came from.',
-			countTitle: 'We only open the sum',
-			count: 'Ballots add up without being opened. Only the total is decrypted, with a proof anyone can check.',
+			countTitle: 'Only the result is revealed',
+			count: 'Ballots are counted without being opened. No one reads yours: only the result is revealed, with a proof anyone can check.',
 			auditTitle: 'Anyone can recount everything',
 			audit: 'Everything goes into a public log, signed and dated in Bitcoin. Your browser can redo every check, from registration to result.',
 			auditCta: 'Verify now',
-			getTitle: 'What we receive',
-			get: ['“Adult and French: yes”', 'An anonymous passport identifier, for this site', 'Sealed ballots', 'The totals'],
-			keepTitle: 'What stays with you',
-			keep: ['Your name, photo, passport number', 'Your voting key and your 12 words', 'Which ballot is yours', 'Any link between your IP address and your vote'],
 			limitsTitle: 'The limits, frankly',
 			limits: [
-				'The key that opens the sum could open a single ballot, without knowing whose it is. We only publish totals, with their proofs.',
+				'The key that reveals the result could also open a single ballot, without knowing whose it is. We only publish results, with their proofs.',
 				'You can show your vote to someone by giving them your key: vote buying is not prevented.',
 				'You need an NFC smartphone and a chip passport.',
 				'It is an experiment by tartuffe.me: neither an official election nor a representative poll.'
@@ -108,16 +100,6 @@
 		<a class="btn btn--primary" href={paths.verify}>{c.auditCta}</a>
 	</section>
 
-	<section class="two">
-		<div class="col col--get">
-			<h2>{c.getTitle}</h2>
-			<ul>{#each c.get as g (g)}<li>{g}</li>{/each}</ul>
-		</div>
-		<div class="col col--keep">
-			<h2>{c.keepTitle}</h2>
-			<ul>{#each c.keep as k (k)}<li>{k}</li>{/each}</ul>
-		</div>
-	</section>
 
 	<details class="limits">
 		<summary>{c.limitsTitle}</summary>
@@ -215,38 +197,8 @@
 		border: 1px solid var(--glass-border);
 		color: var(--text-primary);
 	}
-	.two {
-		display: grid;
-		grid-template-columns: 1fr;
-		gap: 0.8rem;
-		margin: 2rem 0 1rem;
-	}
 	@media (min-width: 640px) {
-		.two {
-			grid-template-columns: 1fr 1fr;
 		}
-	}
-	.col {
-		padding: 1rem 1.1rem;
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-	}
-	.col h2 {
-		font-size: 1rem;
-		margin: 0 0 0.6rem;
-	}
-	.col--keep h2 {
-		color: var(--green);
-	}
-	.col ul {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: grid;
-		gap: 0.4rem;
-		font-size: 0.9rem;
-		color: var(--text-secondary);
-	}
 	.limits {
 		margin: 0.8rem 0 1.5rem;
 		padding: 0.8rem 1.1rem;
