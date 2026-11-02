@@ -73,7 +73,7 @@ func derivePartyMajorityFacts(law Law, groupStats LawGroupStats, threshold float
 			continue
 		}
 
-		factText := name + " " + buildCollectiveVoteStatement(pos, objectPhrase)
+		factText := name + " " + buildCollectiveVoteStatement(pos, objectPhrase) + voteDateSuffix(law, objectPhrase)
 		// Use just the law topic for embedding - action verb is in FactText for LLM comparison
 		embeddingText := objectPhrase
 		log.Debug().Str("party", name).Float64("frac", majorityFrac).Str("text", factText).Msg("frpolitics: derived collective party fact")
@@ -115,6 +115,23 @@ func buildCollectiveVoteStatement(pos VotePosition, lawPhrase string) string {
 	default:
 		return fmt.Sprintf("n'a pas pris part au vote collectif sur %s", lawPhrase)
 	}
+}
+
+// voteDateSuffix is the date of the scrutin at the end of a ballot: two texts
+// of one title voted a year apart (the postponement of the New Caledonia
+// elections, 6 November 2024 and 28 October 2025) read as one text without
+// it, and the stance summaries invented a contrast between them (review of
+// 2026-11-01). The embedding text keeps the object alone. A censure motion
+// already names its date.
+func voteDateSuffix(law Law, objectPhrase string) string {
+	if law.VoteDate == nil {
+		return ""
+	}
+	date := frenchDate(*law.VoteDate)
+	if strings.Contains(objectPhrase, date) {
+		return ""
+	}
+	return " (scrutin du " + date + ")"
 }
 
 // buildVoteStatement is the vote of one deputy. The abstention is worded

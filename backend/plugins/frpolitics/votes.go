@@ -24,7 +24,7 @@ func deriveDeputyFacts(law Law, events []VoteEvent, summary LawSummary, objectPh
 			continue
 		}
 		// The text names its voter, like any fact: one fact row per ballot.
-		text := ev.DisplayName + " " + buildVoteStatement(ev.Position, objectPhrase)
+		text := ev.DisplayName + " " + buildVoteStatement(ev.Position, objectPhrase) + voteDateSuffix(law, objectPhrase)
 		if len(out) < 3 {
 			log.Debug().Str("deputy", ev.DisplayName).Str("text", text).Msg("frpolitics: derived deputy fact")
 		}
