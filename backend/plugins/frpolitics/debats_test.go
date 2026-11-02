@@ -245,3 +245,20 @@ func TestDebateDocumentStoredForm(t *testing.T) {
 	require.Equal(t, []string{"1er"}, meta.articles)
 	require.Equal(t, []string{"109"}, meta.amendements)
 }
+
+// The audit of 2026-11-02 found 11 pct of the debate facts procedural: a
+// request under article 100 for one speaker per group (192954), a bare
+// « défavorable au sous-amendement no 6 » (151905). The instructions name
+// both as non-positions, and keep an amendment's content as a position.
+func TestDebatsInstructions_ProceduralIsNotAPosition(t *testing.T) {
+	for _, want := range []string{
+		"HOW the debate runs",
+		"one speaker per group",
+		"articles 44, 49 or 100",
+		"named only by its number",
+		"Je suis défavorable au sous-amendement n° 6",
+		"says what the amendment does",
+	} {
+		require.Contains(t, debatsExtractionInstructions, want)
+	}
+}
