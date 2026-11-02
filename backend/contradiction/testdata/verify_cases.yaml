@@ -1016,3 +1016,43 @@ cases:
     notes: "He acknowledges his change ('j'ai eu tort en partie'): an explained change is never a contradiction (the user's example, 2026-11-01). Prod 2256."
     date_a: "2025-04-02"
     date_b: "2025-10-20"
+
+  - name: "FP_2368_lepen_no_candidacy_under_bracelet_vs_campaign_with_bardella"
+    fact_a: "Marine Le Pen avait indiqué ne pas vouloir se présenter à l'élection présidentielle de 2027 sous bracelet électronique."
+    fact_b: "Marine Le Pen a promis de mener la campagne présidentielle avec Jordan Bardella, quel que soit le résultat de l'appel."
+    claimed_reason: "L'engagement de mener campagne quelle que soit la décision d'appel s'oppose à son affirmation qu'un bracelet rendrait la campagne impossible."
+    expect: drop
+    bucket: condition_later_met
+    notes: "A condition on her own CANDIDACY is compatible with a pledge to CAMPAIGN with a running mate whatever the verdict (the carve-out exception). The judge read it as PAIR 5b (a refusal to campaign). Prod 2368 (2026-11-02)."
+    date_a: "2026-07-10"
+    date_b: "2025-06-25"
+
+  - name: "FP_2354_attal_reform_suspended_by_snap_elections"
+    fact_a: "Gabriel Attal a déclaré que le gouvernement assumera d'avancer sur la réforme de l'assurance chômage."
+    fact_b: "Gabriel Attal a suspendu sa réforme de l'assurance-chômage, dont le décret devait paraître le 1er juillet, entre les deux tours des élections législatives anticipées."
+    claimed_reason: "Il avait promis d'assumer d'avancer sur la réforme, puis il l'a suspendue."
+    expect: drop
+    bucket: announcement_then_action
+    notes: "A reform suspended between the rounds of a snap election called by the President is postponed under an outside event, not abandoned. Prod 2354 (2026-11-02); fact B carries the context the source gives."
+    date_a: "2024-03-23"
+    date_b: "2024-07-01"
+
+  - name: "TP_2354b_attal_reform_pledge_then_abandoned"
+    fact_a: "Gabriel Attal a déclaré que le gouvernement assumera d'avancer sur la réforme de l'assurance chômage."
+    fact_b: "Gabriel Attal a annoncé renoncer définitivement à sa réforme de l'assurance chômage, jugeant qu'elle n'était plus nécessaire."
+    claimed_reason: "Il avait promis d'avancer sur la réforme, puis il y a renoncé."
+    expect: keep
+    bucket: announcement_then_action
+    notes: "The twin of FP_2354: abandoning the measure by his own choice breaks the pledge to carry it out."
+    date_a: "2024-03-23"
+    date_b: "2024-06-01"
+
+  - name: "FP_2349_retailleau_reported_private_threat_vs_public_no"
+    fact_a: "Bruno Retailleau a répondu non à la question de savoir s'il démissionnerait à cause de la proportionnelle."
+    fact_b: "Bruno Retailleau aurait menacé, le 2 juin 2025 dans la cour de Matignon, de démissionner du gouvernement si François Bayrou allait au bout de son projet de proportionnelle, selon l'Opinion."
+    claimed_reason: "Il a menacé de démissionner si la proportionnelle était instaurée, puis a répondu non deux jours plus tard à la question de savoir s'il démissionnerait."
+    expect: drop
+    bucket: third_party_narrative
+    notes: "A private remark reported by the press against his own public answer: the paper's account against his words, a doubtful fact. Prod 2349 (2026-11-02), with fact B as the new extraction rule writes it."
+    date_a: "2025-06-04"
+    date_b: "2025-06-02"
