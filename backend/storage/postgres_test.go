@@ -181,7 +181,7 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 
 	// --- Verification ---
 	var queriedFactText string
-	var queriedEmbedding pgvector.Vector
+	var queriedEmbedding pgvector.HalfVector
 	// 1. Verify the fact exists in 'facts' table
 	factQuery := "SELECT fact_text, embedding, COALESCE(canonical_verb, '') FROM facts WHERE id = $1"
 	var queriedCanonicalVerb string
@@ -652,7 +652,7 @@ func TestPostgresStorer_IsURLVisitable(t *testing.T) {
 		INSERT INTO facts (fact_text, embedding) VALUES
 		('dummy fact for url2', $1),
 		('dummy fact for url3', $1) RETURNING id
-	`, pgvector.NewVector(mockEmbedding()))
+	`, pgvector.NewHalfVector(mockEmbedding()))
 	require.NoError(t, err, "Failed to insert dummy facts for IsURLVisitable test")
 
 	var factIDForURL2, factIDForURL3 int64
@@ -802,7 +802,7 @@ func TestStanceBundledContradictions(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()),
+			text, pgvector.NewHalfVector(mockEmbedding()),
 		).Scan(&id))
 		_, err := storer.pool.Exec(ctx,
 			`INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type) VALUES ($1, $2, $3, 'test')`,

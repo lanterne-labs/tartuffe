@@ -30,7 +30,7 @@ func TestMergeFactIntoGroup(t *testing.T) {
 	fact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		return id
 	}
 	stance := func(label string, factIDs ...int64) int64 {
@@ -148,7 +148,7 @@ func TestMergeFactIntoGroupRefusesSecondParent(t *testing.T) {
 	fact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		return id
 	}
 	parentsOf := func(f int64) []int64 {
@@ -186,7 +186,7 @@ func TestGroupMemberTexts(t *testing.T) {
 	fact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		return id
 	}
 	parent := fact("Un plan pour ramener le déficit.")
@@ -238,7 +238,7 @@ func TestClaimGroupReviewStorage(t *testing.T) {
 	fact := func(text, url string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		var sid int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO fact_sources (fact_id, source_url, source_type) VALUES ($1, $2, 'news') RETURNING id", id, url).Scan(&sid))
@@ -300,7 +300,7 @@ func TestMergeFactIntoGroupPromotionTakesVisibleSlot(t *testing.T) {
 	fact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		return id
 	}
 	stance := func(label string, keys []int64, members ...int64) int64 {
@@ -357,7 +357,7 @@ func TestClaimGroupParent(t *testing.T) {
 	fact := func(text string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		return id
 	}
 	parent, member, alone := fact("appeal ruling, 15 months"), fact("appeal ruling, 45 months of which 30 suspended"), fact("other")
@@ -384,7 +384,7 @@ func TestStanceContradictionGroupsCarryRestatements(t *testing.T) {
 	fact := func(text, url string) int64 {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
-			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewVector(mockEmbedding())).Scan(&id))
+			"INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id", text, pgvector.NewHalfVector(mockEmbedding())).Scan(&id))
 		_, err := storer.pool.Exec(ctx, "INSERT INTO fact_sources (fact_id, source_url) VALUES ($1, $2)", id, url)
 		require.NoError(t, err)
 		return id

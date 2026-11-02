@@ -24,7 +24,7 @@ func insertDatedFact(t *testing.T, storer *PostgresStorer, personID int64, text 
 	var id int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		`INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`,
-		text, pgvector.NewVector(mockEmbedding()),
+		text, pgvector.NewHalfVector(mockEmbedding()),
 	).Scan(&id))
 	var sourceID int64
 	require.NoError(t, storer.pool.QueryRow(ctx,

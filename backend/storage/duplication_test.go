@@ -182,7 +182,7 @@ func TestPersonSimilarity(t *testing.T) {
 		// Insert Fact
 		var factDBID int64
 		insertFactStmt := `INSERT INTO facts (fact_text, embedding) VALUES ($1, $2) RETURNING id`
-		err = txPopulate.QueryRow(ctx, insertFactStmt, entry.Text, pgvector.NewVector(currentEmbedding)).Scan(&factDBID)
+		err = txPopulate.QueryRow(ctx, insertFactStmt, entry.Text, pgvector.NewHalfVector(currentEmbedding)).Scan(&factDBID)
 		require.NoError(t, err, "Failed to insert fact for corpus entry %d", entry.ID)
 
 		// Insert Fact Source

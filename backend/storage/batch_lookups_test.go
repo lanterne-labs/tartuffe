@@ -137,7 +137,7 @@ func TestGetNeighborPairsForPerson(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO facts (fact_text, canonical_verb, embedding) VALUES ($1, $2, $3) RETURNING id",
-			text, verb, pgvector.NewVector(emb)).Scan(&id))
+			text, verb, pgvector.NewHalfVector(emb)).Scan(&id))
 		var sourceID int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			"INSERT INTO fact_sources (fact_id, source_url, source_type, published_at) VALUES ($1, $2, 'news', $3) RETURNING id",

@@ -20,7 +20,7 @@ func TestTranslations_UpsertAndList(t *testing.T) {
 	var fid int64
 	require.NoError(t, storer.pool.QueryRow(ctx,
 		`INSERT INTO facts (fact_text, lang, embedding) VALUES ($1, 'fr', $2) RETURNING id`,
-		"xtrans: un fait de test en français", pgvector.NewVector(mockEmbedding()),
+		"xtrans: un fait de test en français", pgvector.NewHalfVector(mockEmbedding()),
 	).Scan(&fid))
 	// The facts of the candidates only are translated (candidates.go).
 	pid, _, err := storer.AddPerson(ctx, "xtrans candidate")
@@ -79,7 +79,7 @@ func TestTranslations_FollowDeletes(t *testing.T) {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			`INSERT INTO facts (fact_text, lang, embedding) VALUES ($1, 'fr', $2) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()),
+			text, pgvector.NewHalfVector(mockEmbedding()),
 		).Scan(&id))
 		return id
 	}

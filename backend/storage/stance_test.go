@@ -163,11 +163,11 @@ func TestStanceDocumentFactsJoinTable(t *testing.T) {
 
 	// Insert a fact — must use pgvector.NewVector for the embedding parameter
 	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
-		100, "Test fact text", pgvector.NewVector(makeUnitEmbedding(0)))
+		100, "Test fact text", pgvector.NewHalfVector(makeUnitEmbedding(0)))
 	require.NoError(t, err)
 
 	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding, canonical_verb, embedding_text) VALUES ($1, $2, $3, $4, $5)`,
-		101, "Second fact text", pgvector.NewVector(makeUnitEmbedding(1)), "DENIED", "wrongdoing case")
+		101, "Second fact text", pgvector.NewHalfVector(makeUnitEmbedding(1)), "DENIED", "wrongdoing case")
 	require.NoError(t, err)
 
 	// Insert stance
@@ -233,13 +233,13 @@ func TestMergeStancesForPerson(t *testing.T) {
 	// on dst so we can verify ON CONFLICT doesn't choke when src has the same
 	// fact attached (we add fact 200 to both stances).
 	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
-		200, "Fact on both src and dst", pgvector.NewVector(makeUnitEmbedding(0)))
+		200, "Fact on both src and dst", pgvector.NewHalfVector(makeUnitEmbedding(0)))
 	require.NoError(t, err)
 	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
-		201, "Fact only on src", pgvector.NewVector(makeUnitEmbedding(1)))
+		201, "Fact only on src", pgvector.NewHalfVector(makeUnitEmbedding(1)))
 	require.NoError(t, err)
 	_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
-		202, "Fact only on dst", pgvector.NewVector(makeUnitEmbedding(2)))
+		202, "Fact only on dst", pgvector.NewHalfVector(makeUnitEmbedding(2)))
 	require.NoError(t, err)
 
 	srcID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{

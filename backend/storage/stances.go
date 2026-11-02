@@ -34,7 +34,7 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc core.Stan
 		doc.PersonID,
 		doc.ClusterLabel,
 		doc.LabelEn,
-		pgvector.NewVector(doc.ClusterEmbedding),
+		pgvector.NewHalfVector(doc.ClusterEmbedding),
 		doc.Summary,
 		doc.SummaryEn,
 		doc.KeyFactIDs,
@@ -59,7 +59,7 @@ func (s *PostgresStorer) UpdateStanceDocument(ctx context.Context, id int64, sum
 		SET summary = $1, summary_en = NULLIF($2,''), cluster_embedding = $3, key_fact_ids = $4, last_updated_at = NOW()
 		WHERE id = $5`
 
-	_, err := s.pool.Exec(ctx, query, summary, summaryEn, pgvector.NewVector(embedding), keyFactIDs, id)
+	_, err := s.pool.Exec(ctx, query, summary, summaryEn, pgvector.NewHalfVector(embedding), keyFactIDs, id)
 	if err != nil {
 		return fmt.Errorf("updating stance document %d: %w", id, err)
 	}
@@ -215,7 +215,7 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 	var docs []core.StanceDocument
 	for rows.Next() {
 		var doc core.StanceDocument
-		var vec pgvector.Vector
+		var vec pgvector.HalfVector
 		if err := rows.Scan(
 			&doc.ID,
 			&doc.PersonID,
@@ -245,7 +245,7 @@ func (s *PostgresStorer) GetStanceDocumentsForPerson(ctx context.Context, person
 // GetStanceDocument returns one stance document by id.
 func (s *PostgresStorer) GetStanceDocument(ctx context.Context, id int64) (core.StanceDocument, error) {
 	var doc core.StanceDocument
-	var vec pgvector.Vector
+	var vec pgvector.HalfVector
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, person_id, cluster_label, COALESCE(label_en,''), cluster_embedding,
 		       summary, COALESCE(summary_en,''), key_fact_ids, fact_count, last_updated_at, created_at
@@ -341,7 +341,7 @@ func (s *PostgresStorer) ShortlistStancesByNearestFact(ctx context.Context, pers
 		ORDER BY r.stance_min_dist ASC, r.stance_id ASC, r.dist ASC`
 
 	rows, err := s.pool.Query(ctx, query,
-		pgvector.NewVector(factEmbedding), // $1
+		pgvector.NewHalfVector(factEmbedding), // $1
 		personID,                          // $2
 		topK,                              // $3
 		factsPerStance,                    // $4
@@ -387,7 +387,7 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 		FROM ranked
 		WHERE fact_rn <= $4
 		ORDER BY stance_min_dist ASC, stance_id ASC, dist ASC`
-	rows, err := s.pool.Query(ctx, query, pgvector.NewVector(factEmbedding), personID, stanceIDs, factsPerStance, excludeFactID)
+	rows, err := s.pool.Query(ctx, query, pgvector.NewHalfVector(factEmbedding), personID, stanceIDs, factsPerStance, excludeFactID)
 	if err != nil {
 		return nil, fmt.Errorf("querying stance candidates by id for person %d: %w", personID, err)
 	}
@@ -462,7 +462,7 @@ func (s *PostgresStorer) GetStanceDocumentByID(ctx context.Context, id int64) (*
 		WHERE id = $1`
 
 	var doc core.StanceDocument
-	var vec pgvector.Vector
+	var vec pgvector.HalfVector
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&doc.ID, &doc.PersonID, &doc.ClusterLabel, &vec,
 		&doc.Summary, &doc.KeyFactIDs, &doc.FactCount,
@@ -555,7 +555,7 @@ func (s *PostgresStorer) MergeStancesForPerson(ctx context.Context, srcID, dstID
 		SET cluster_embedding = $1,
 		    fact_count = (SELECT count(*) FROM stance_document_facts WHERE stance_document_id = $2),
 		    last_updated_at = NOW()
-		WHERE id = $2`, pgvector.NewVector(newDstCentroid), dstID); err != nil {
+		WHERE id = $2`, pgvector.NewHalfVector(newDstCentroid), dstID); err != nil {
 		return fmt.Errorf("updating dst stance %d: %w", dstID, err)
 	}
 
@@ -619,7 +619,7 @@ func (s *PostgresStorer) FindTopStancesForPerson(ctx context.Context, personID i
 		FROM stance_documents
 		WHERE person_id = $1
 		ORDER BY cluster_embedding <-> $2
-		LIMIT $3`, personID, pgvector.NewVector(embedding), limit)
+		LIMIT $3`, personID, pgvector.NewHalfVector(embedding), limit)
 	if err != nil {
 		return nil, fmt.Errorf("querying top stances for person %d: %w", personID, err)
 	}
@@ -703,7 +703,7 @@ func (s *PostgresStorer) ListOrphanFactsForPerson(ctx context.Context, personID 
 	var out []core.StanceRoutingFact
 	for rows.Next() {
 		var f core.StanceRoutingFact
-		var vec pgvector.Vector
+		var vec pgvector.HalfVector
 		var sd statementDate
 		if err := rows.Scan(&f.ID, &f.FactText, &f.EmbeddingText, &f.CanonicalVerb, &vec, &f.PublishedAt, &sd.date, &sd.precision); err != nil {
 			return nil, fmt.Errorf("scanning orphan fact: %w", err)

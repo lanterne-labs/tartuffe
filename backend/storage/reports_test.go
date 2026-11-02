@@ -30,12 +30,12 @@ func newReportFixture(t *testing.T, storer *PostgresStorer, factCount int) repor
 	require.NoError(t, storer.pool.QueryRow(ctx, `
 		INSERT INTO stance_documents (person_id, cluster_label, cluster_embedding, summary, label_en)
 		VALUES ($1, 'Retraites', $2, 'Sa position sur les retraites.', 'Pensions') RETURNING id`,
-		f.person, pgvector.NewVector(mockEmbedding())).Scan(&f.stance))
+		f.person, pgvector.NewHalfVector(mockEmbedding())).Scan(&f.stance))
 	for i, text := range []string{"Il faut la retraite à 60 ans.", "Il faut la retraite à 65 ans.", "Il a voté la réforme."} {
 		var id int64
 		require.NoError(t, storer.pool.QueryRow(ctx,
 			`INSERT INTO facts (fact_text, embedding, created_at) VALUES ($1, $2, $3) RETURNING id`,
-			text, pgvector.NewVector(mockEmbedding()), time.Date(2026, 10, 1, 12, i, 0, 0, time.UTC)).Scan(&id))
+			text, pgvector.NewHalfVector(mockEmbedding()), time.Date(2026, 10, 1, 12, i, 0, 0, time.UTC)).Scan(&id))
 		_, err := storer.pool.Exec(ctx, `
 			WITH src AS (
 				INSERT INTO fact_sources (fact_id, source_url, original_quote, source_type, published_at)

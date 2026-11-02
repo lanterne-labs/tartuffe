@@ -71,7 +71,7 @@ func (s *PostgresStorer) GetFoldFactsForPerson(ctx context.Context, personID int
 	var out []core.FactForFold
 	for rows.Next() {
 		var f core.FactForFold
-		var vec pgvector.Vector
+		var vec pgvector.HalfVector
 		if err := rows.Scan(&f.ID, &f.Text, &vec, &f.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning fold fact: %w", err)
 		}
@@ -117,7 +117,7 @@ func (s *PostgresStorer) UpdateFactVerbAndEmbedding(ctx context.Context, factID 
 		UPDATE facts
 		SET canonical_verb = $1, embedding_text = $2, embedding = $3
 		WHERE id = $4`,
-		verb, embeddingText, pgvector.NewVector(embedding), factID)
+		verb, embeddingText, pgvector.NewHalfVector(embedding), factID)
 	if err != nil {
 		return fmt.Errorf("failed to update fact %d: %w", factID, err)
 	}
