@@ -22,6 +22,9 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 	<meta name="robots" content="noindex" />
+	<!-- No Referer: the sites the app loads from (the candidates' photos on
+	     Wikimedia, ZKPassport, the relays) are not told the page asking is the vote. -->
+	<meta name="referrer" content="no-referrer" />
 </svelte:head>
 
 <header class="vote-app-strip">
