@@ -31,7 +31,7 @@
 		</g>
 	{/each}
 
-	<text x="170" y="30" text-anchor="middle" class="only">{c.only}</text>
+	<text x="170" y="16" text-anchor="middle" class="only">{c.only}</text>
 
 	<!-- The results -->
 	<g class="bars">
@@ -79,7 +79,7 @@
 	.lid {
 		transform-box: fill-box;
 		transform-origin: 0% 100%;
-		transform: rotate(-28deg);
+		transform: rotate(-20deg);
 	}
 	.bars rect {
 		fill: var(--green);
@@ -148,7 +148,7 @@
 	}
 	@keyframes lid {
 		0%, 46% { transform: rotate(0deg); }
-		56%, 92% { transform: rotate(-28deg); }
+		56%, 92% { transform: rotate(-20deg); }
 		100% { transform: rotate(0deg); }
 	}
 	@keyframes show {
