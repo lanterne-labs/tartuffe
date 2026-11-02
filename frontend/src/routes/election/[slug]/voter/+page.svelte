@@ -591,13 +591,13 @@
 		<div class="picker">
 			{#each choosable as o (o)}
 				<button class="pick-card" onclick={() => chooseFor(o)} disabled={busy}>
-					<TartuffeScore honesty={cardOf(o)?.honesty_score} lang={currentLang} image={imageOf(o)} initial={nameOf(o).charAt(0).toUpperCase()} />
+					<TartuffeScore honesty={cardOf(o)?.honesty_score} lang={currentLang} image={imageOf(o)} initial={nameOf(o).charAt(0).toUpperCase()} help={false} />
 					<span class="pick-name">{nameOf(o)}</span>
 				</button>
 			{/each}
 			{#if kind?.blank && !shown.includes(BLANK)}
 				<button class="pick-card pick-card--blank" onclick={() => chooseFor(BLANK)} disabled={busy}>
-					<span class="pick-initial" aria-hidden="true">◻</span>
+					<span class="pick-initial" aria-hidden="true"></span>
 					<span class="pick-name">{tr('vote.blank.name', currentLang)}</span>
 				</button>
 			{/if}
@@ -700,7 +700,7 @@
 						<div class="vote-main">
 							<span class="who">
 								{#if o.blank}
-									<span class="photo photo--empty">◻</span>
+									<span class="photo photo--empty" aria-hidden="true"></span>
 								{:else}
 									<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
 								{/if}
@@ -836,9 +836,11 @@
 		gap: 0.5rem;
 		min-width: min(28rem, 80vw);
 	}
+	/* The dial (with its score line), then the name under it. */
 	.pick-card {
 		display: grid;
-		grid-template-rows: 4.6rem 2.4em auto;
+		grid-template-rows: auto auto;
+		align-content: start;
 		justify-items: center;
 		align-items: start;
 		gap: 0.4rem;
@@ -877,11 +879,13 @@
 		font-size: 1.4rem;
 		color: var(--text-secondary);
 	}
+	/* The blank vote: a plain white disc, the size and place of a dial's portrait. */
 	.pick-card--blank .pick-initial {
+		width: 3.85rem;
+		height: 3.85rem;
+		margin: 0.95rem 0 1.15rem;
 		background: #fff;
-		color: #0a0a0f;
 		border: 1px solid var(--glass-border);
-		font-size: 1.1rem;
 	}
 	.pick-name {
 		display: -webkit-box;
@@ -943,9 +947,10 @@
 		stroke-width: 2;
 		stroke-linecap: round;
 	}
+	/* The blank vote: a plain white disc where the others have a dial's portrait. */
 	.vote-row--blank .photo--empty {
 		background: #fff;
-		color: #0a0a0f;
+		border: 1px solid var(--glass-border);
 	}
 	.slot-rank {
 		position: absolute;
@@ -1405,10 +1410,10 @@
 		align-items: center;
 	}
 	.vote-row .photo {
-		width: 36px;
-		height: 36px;
+		width: 2.4rem;
+		height: 2.4rem;
+		margin: 0.55rem 0.6rem 0;
 		flex-shrink: 0;
-		font-size: 1rem;
 	}
 	.vote-row .meta {
 		justify-content: flex-start;

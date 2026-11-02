@@ -128,7 +128,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'score.unrated.n': { fr: 'Pas assez de faits ({f})', en: 'Not enough facts ({f})' },
 	'score.evidence': { fr: '{c} contradictions sur {f} faits', en: '{c} contradictions out of {f} facts' },
 	'score.evidence.one': { fr: '1 contradiction sur {f} faits', en: '1 contradiction out of {f} facts' },
-	'score.legend': { fr: 'Le repère : le Tartuffe-Score, de cohérent à tartuffe, d’après les contradictions.', en: 'The marker: the Tartuffe-Score, from coherent to tartuffe, from the contradictions.' },
+	'score.legend': { fr: 'Autour de chaque visage, le Tartuffe-Score : plus le cadran se remplit, plus nous avons trouvé de contradictions.', en: 'Around each face, the Tartuffe-Score: the fuller the dial, the more contradictions we found.' },
 	'vote.score.tip': { fr: 'Le Tartuffe-Score de tartuffe.me, de cohérent à tartuffe : paroles et actes comparés, sources à l’appui. Il n’influence pas le comptage.', en: 'The Tartuffe-Score of tartuffe.me, from coherent to tartuffe: words against deeds, with sources. It has no effect on the count.' },
 	'vote.closed_hint': { fr: 'Le vote est clos.', en: 'Voting is closed.' },
 	'vote.move_up': { fr: 'Monter {name}', en: 'Move {name} up' },

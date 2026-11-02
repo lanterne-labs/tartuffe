@@ -217,7 +217,7 @@
 				{#each ['①', '②', '③'] as n, i}
 					<div class="ph-slot" style="--d: {i * 0.25}s"><span class="ph-num">{n}</span><span class="ph-name" style="width: {[62, 48, 55][i]}%"></span></div>
 				{/each}
-				<div class="ph-blank">◻ {c.phBlank}</div>
+				<div class="ph-blank"><span class="ph-disc" aria-hidden="true"></span>{c.phBlank}</div>
 				<div class="ph-seal">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.3 8.3-8 9-4.7-.7-8-4.5-8-9V6z" /><path d="M8.5 12l2.5 2.5 4.5-5" /></svg>
 					<span>{c.phSeal}</span>
@@ -240,7 +240,7 @@
 						{#if imageOf(o.slot)}
 							<img src={imageOf(o.slot)} alt="" />
 						{:else}
-							<span class="initial" aria-hidden="true">{o.blank ? '◻' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
+							<span class="initial" class:initial--blank={o.blank} aria-hidden="true">{o.blank ? '' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 						{/if}
 						<span class="top3-name">{nameOf(o.slot)}</span>
 						<strong>{pctText(o.first, shown.counted)}</strong>
@@ -476,6 +476,9 @@
 		background: var(--event-glow);
 	}
 	.top3 img,
+	.top3 .initial.initial--blank {
+		background: #fff;
+	}
 	.top3 .initial {
 		width: 2.2rem;
 		height: 2.2rem;
@@ -622,6 +625,15 @@
 		height: 8px;
 		border-radius: 4px;
 		background: color-mix(in oklch, var(--text-primary) 55%, transparent);
+	}
+	.ph-disc {
+		display: inline-block;
+		width: 0.7rem;
+		height: 0.7rem;
+		margin-right: 0.4rem;
+		border-radius: 50%;
+		background: #fff;
+		vertical-align: -0.1rem;
 	}
 	.ph-blank {
 		margin: 0.7rem 0 0.9rem;

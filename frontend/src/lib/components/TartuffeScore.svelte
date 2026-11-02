@@ -22,6 +22,8 @@
 		initial?: string;
 		/** The score out of 100 and its "?" under the dial. */
 		named?: boolean;
+		/** The "?": off where the dial sits in a button (a button holds no button). */
+		help?: boolean;
 		/** Below MIN_FACTS facts the dial is unrated. */
 		facts?: number;
 		/** A caption over the dial (an own score, a members' score). */
@@ -29,7 +31,7 @@
 		/** The needle sweeps in from the coherent end (an example being told). */
 		animate?: boolean;
 	}
-	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, facts, caption = '', animate = false }: Props = $props();
+	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false }: Props = $props();
 
 	const uid = $props.id();
 	// Below this many facts the score says too little to be shown.
@@ -150,7 +152,7 @@
 	{#if named && !(centreNumber && !unrated && (size === 'xs' || size === 'sm'))}
 		<span class="value" bind:this={root}>
 			<span class:value--none={unrated}>{value}</span>
-			{#if !unrated && size !== 'xs'}
+			{#if !unrated && size !== 'xs' && withHelp}
 				<button class="q" onclick={toggle} aria-expanded={help} aria-label={tr('score.help', lang)}>?</button>
 				{#if help}
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
