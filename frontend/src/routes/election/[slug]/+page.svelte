@@ -1,8 +1,7 @@
 <script lang="ts">
-	// The event's presentation: what the lab's temporary experiment is, its
-	// promise and how to take part, with its two buttons, to vote and to see
-	// how it works. The vote itself is on /voter, the explanation on
-	// /fonctionnement.
+	// The event's presentation, simply: the promise, the current top 3, what
+	// the vote offers, and that it is private by default (one diagram). The
+	// vote itself is on /voter; how it works is on /fonctionnement, not here.
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { lang, tr, type Lang } from '$lib/i18n';
@@ -12,6 +11,7 @@
 	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
 	import { rankedRows, byFirst } from '$lib/vote/results';
 	import { displayName } from '$lib/share';
+	import BallotPathAnimation from '$lib/components/vote/BallotPathAnimation.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -79,47 +79,24 @@
 			until: 'Jusqu’au {d}',
 			title1: 'Votez.',
 			title2: 'Les résultats en direct.',
-			lead: 'Un vote en ligne ouvert à tous les citoyens, avant l’heure. Classez vos 3 candidats préférés, suivez les résultats en direct, changez d’avis jusqu’à la clôture. Et personne ne saura pour qui vous avez voté.',
+			lead: 'Classez vos candidats, suivez les résultats en direct, changez d’avis jusqu’à la clôture. Votre vote est privé par défaut.',
 			vote: 'Voter maintenant',
 			how: 'Comment ça marche',
 			votersNow: '{n} votants · {c} candidats',
 			candidatesNow: '{c} candidats',
-			stats: [
-				['0', 'lien entre vous et votre vote'],
-				['1', 'voix par passeport'],
-				['3', 'choix, classés'],
-				['100 %', 'recomptable par tous']
+			features: [
+				['Classez jusqu’à 3 candidats', 'Ou votez blanc : il compte vraiment.'],
+				['Les résultats en direct', 'Au premier choix et avec le classement.'],
+				['Changez d’avis', 'Jusqu’à la clôture, votre dernier vote compte.'],
+				['Jugez sur pièces', 'Chaque candidat avec son Tartuffe-Score.']
 			],
-			stepsKicker: 'Trois gestes',
-			stepsTitle: 'Une minute, une seule fois.',
-			steps: [
-				['Scannez votre passeport', 'Vous ne le faites qu’une fois : il prouve seulement que vous êtes majeur et français.'],
-				['Classez jusqu’à 3 candidats', 'Vous pouvez aussi voter blanc, et changer votre vote à tout moment.'],
-				['Vérifiez', 'Votre navigateur s’assure que votre vote est bien compté.']
-			],
-			anonKicker: 'Le secret du vote',
-			anonTitle: 'Votre document ouvre la porte. Il ne vote pas.',
-			anonBody: 'Le scan crée une clé de vote, sur votre appareil seulement. Le bulletin prouve qu’il vient d’une clé inscrite, majeure et française, sans dire laquelle, et passe par des relais publics. Votre document et votre adresse IP restent chez vous : un bulletin arrive sans eux.',
-			anonLabels: ['Votre document', 'Votre clé', 'Votre bulletin'],
-			anonCut: 'aucun lien',
-			countKicker: 'Même vote, deux résultats',
-			countTitle: 'Et si le premier tour mentait ?',
-			countBody: 'Les mêmes bulletins sont comptés de deux façons. Au premier choix seulement, on ne compte que le candidat placé en tête par chaque votant, comme au premier tour. Avec le classement, le gagnant est celui qu’une majorité préfère à chacun des autres.',
-			countMajority: 'Premier choix seulement',
-			countRanking: 'Avec le classement',
-			countWinner: 'bat chacun des autres',
-			countMore: 'Comprendre les deux comptages',
-			blankTitle: 'Le vote blanc compte.',
-			blankBody: 'C’est un bulletin à part entière, compté dans chaque pourcentage.',
-			honestyTitle: 'Votez, et jugez sur pièces.',
-			honestyBody: 'Chaque candidat est affiché avec son Tartuffe-Score, de cohérent à tartuffe, calculé à partir de ses contradictions, sources à l’appui.',
-			checkTitle: 'Impossible de tricher sans que ça se voie.',
-			checkBody: 'Chaque bulletin entre, chiffré, dans une liste publique que personne ne peut modifier après coup. Tout le monde peut la télécharger et recompter.',
-			checkMore: 'Comment vérifier',
-			disclaimer: 'Ce n’est ni un scrutin officiel ni un sondage : les votants ne sont pas représentatifs. Les résultats sont masqués la veille et le jour de l’élection.',
+			privateKicker: 'Privé par défaut',
+			privateTitle: 'Votre vote reste secret, même pour nous.',
+			privateBody: 'Votre passeport reste sur votre téléphone, votre bulletin voyage scellé, et chacun peut tout recompter.',
+			verify: 'Vérifier le vote',
+			disclaimer: 'Un vote d’opinion en ligne, distinct du scrutin officiel et des sondages. Les résultats sont masqués la veille et le jour de l’élection.',
 			finalTitle: 'J-{n}. À vous de voter.',
 			finalTitleNoDate: 'À vous de voter.',
-			labLine: 'Une expérience du labo tartuffe.me.',
 			labLink: 'Le labo',
 			phTitle: 'Mon vote',
 			phBlank: 'Vote blanc',
@@ -130,47 +107,24 @@
 			until: 'Until {d}',
 			title1: 'Vote.',
 			title2: 'Live results.',
-			lead: 'An online vote open to every citizen, ahead of time. Rank your 3 favourite candidates, follow the results live, change your mind until the close. And nobody will know whom you voted for.',
+			lead: 'Rank your candidates, follow the results live, change your mind until the close. Your vote is private by default.',
 			vote: 'Vote now',
 			how: 'How it works',
 			votersNow: '{n} voters · {c} candidates',
 			candidatesNow: '{c} candidates',
-			stats: [
-				['0', 'link between you and your vote'],
-				['1', 'vote per passport'],
-				['3', 'choices, ranked'],
-				['100 %', 'recountable by anyone']
+			features: [
+				['Rank up to 3 candidates', 'Or vote blank: it really counts.'],
+				['Live results', 'By first choice and with the ranking.'],
+				['Change your mind', 'Until the close, your last vote counts.'],
+				['Look at their record', 'Every candidate with their Tartuffe-Score.']
 			],
-			stepsKicker: 'Three steps',
-			stepsTitle: 'One minute, once.',
-			steps: [
-				['Scan your passport', 'Only once. Adult and French, nothing more.'],
-				['Rank up to 3 candidates', 'Or vote blank. Change it any time.'],
-				['Check', 'Your browser makes sure your vote is counted.']
-			],
-			anonKicker: 'The secret ballot',
-			anonTitle: 'Your document opens the door. It does not vote.',
-			anonBody: 'The scan makes a voting key, on your device only. The ballot proves it comes from a registered key, an adult French national’s, without saying which, and goes through public relays. Your document and your IP address stay with you: a ballot arrives without them.',
-			anonLabels: ['Your document', 'Your key', 'Your ballot'],
-			anonCut: 'no link',
-			countKicker: 'Same votes, two results',
-			countTitle: 'What if the first round lied?',
-			countBody: 'The same ballots, counted twice. With the first choice only, only the candidate each voter put first is counted, as in a first round. With the ranking, the winner is the one a majority prefers to each other candidate.',
-			countMajority: 'First choice only',
-			countRanking: 'With the ranking',
-			countWinner: 'beats each other one',
-			countMore: 'Understand the two counts',
-			blankTitle: 'The blank vote counts.',
-			blankBody: 'A ballot in its own right, counted in every share.',
-			honestyTitle: 'Vote, and look at their record.',
-			honestyBody: 'Next to each candidate, their Tartuffe-Score, from coherent to tartuffe: their contradictions, with sources.',
-			checkTitle: 'We cannot cheat without it showing.',
-			checkBody: 'Every ballot goes, encrypted, into a public list that nobody can alter afterwards. Anyone can download it and recount.',
-			checkMore: 'How to check',
-			disclaimer: 'Neither an official election nor an opinion poll: the voters are not representative. Results hidden the day before and the day of the election.',
+			privateKicker: 'Private by default',
+			privateTitle: 'Your vote stays secret, even from us.',
+			privateBody: 'Your passport stays on your phone, your ballot travels sealed, and anyone can recount everything.',
+			verify: 'Verify the vote',
+			disclaimer: 'An online opinion vote, distinct from the official election and from polls. Results hidden the day before and the day of the election.',
 			finalTitle: '{n} days left. Your turn.',
 			finalTitleNoDate: 'Your turn.',
-			labLine: 'An experiment of the tartuffe.me lab.',
 			labLink: 'The lab',
 			phTitle: 'My vote',
 			phBlank: 'Blank vote',
@@ -179,14 +133,6 @@
 	};
 	let c = $derived(content[currentLang]);
 
-	// The example of the two counts: the same ballots, two winners.
-	const majority = [
-		['B', 35],
-		['C', 28],
-		['A', 20],
-		['D', 7]
-	] as const;
-	const ranking = ['A', 'B', 'C', 'D'];
 </script>
 
 <svelte:head>
@@ -252,123 +198,35 @@
 		</section>
 	{/if}
 
-	<ul class="stats">
-		{#each c.stats as [n, label]}<li><strong>{n}</strong><span>{label}</span></li>{/each}
+	<ul class="features">
+		{#each c.features as [title, line], i (i)}
+			<li>
+				<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					{#if i === 0}
+						<rect x="8" y="8" width="32" height="8" rx="2" /><rect x="8" y="20" width="32" height="8" rx="2" /><rect x="8" y="32" width="32" height="8" rx="2" /><path d="M12 12h3M12 24h3M12 36h3" />
+					{:else if i === 1}
+						<path d="M10 38V26M20 38V14M30 38V20M40 38V8" />
+					{:else if i === 2}
+						<path d="M36 18a13 13 0 1 0 2 10" /><path d="M38 8v10H28" />
+					{:else}
+						<path d="M8 34a16 16 0 0 1 32 0" /><path d="M24 34l8-10" /><circle cx="24" cy="34" r="2.5" />
+					{/if}
+				</svg>
+				<h3>{title}</h3>
+				<p>{line}</p>
+			</li>
+		{/each}
 	</ul>
 
-	<section class="block">
-		<span class="sec-kicker">{c.stepsKicker}</span>
-		<h2>{c.stepsTitle}</h2>
-		<ol class="steps">
-			{#each c.steps as [title, body], i}
-				<li>
-					<svg class="step-icon" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						{#if i === 0}
-							<rect x="9" y="6" width="30" height="36" rx="3" /><circle cx="24" cy="20" r="6" /><path d="M15 34h18M24 26v0" /><path d="M36 14c3 2 3 8 0 10M40 11c5 4 5 13 0 17" />
-						{:else if i === 1}
-							<rect x="8" y="8" width="32" height="8" rx="2" /><rect x="8" y="20" width="32" height="8" rx="2" /><rect x="8" y="32" width="32" height="8" rx="2" /><path d="M12 12h3M12 24h3M12 36h3" />
-						{:else}
-							<path d="M24 5l15 6v11c0 9-6.5 16.5-15 18-8.5-1.5-15-9-15-18V11z" /><path d="M17 24l5 5 9-10" />
-						{/if}
-					</svg>
-					<span class="step-n">{i + 1}</span>
-					<h3>{title}</h3>
-					<p>{body}</p>
-				</li>
-			{/each}
-		</ol>
-	</section>
-
-	<section class="block anon">
-		<div>
-			<span class="sec-kicker">{c.anonKicker}</span>
-			<h2>{c.anonTitle}</h2>
-			<p>{c.anonBody}</p>
-		</div>
-		<!-- The document admits a key; the key casts the ballot; nothing joins the document to the ballot. -->
-		<svg class="anon-diagram" viewBox="0 0 360 230" role="img" aria-label="{c.anonLabels[0]} → {c.anonLabels[1]} → {c.anonLabels[2]} : {c.anonCut}">
-			<defs>
-				<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--event)" /></marker>
-			</defs>
-			<g class="node">
-				<rect x="10" y="20" width="100" height="70" rx="10" />
-				<rect x="38" y="34" width="44" height="30" rx="4" class="ico" />
-				<circle cx="60" cy="47" r="7" class="ico" />
-				<text x="60" y="82">{c.anonLabels[0]}</text>
-			</g>
-			<g class="node">
-				<rect x="130" y="140" width="100" height="70" rx="10" />
-				<circle cx="166" cy="166" r="9" class="ico" />
-				<path d="M175 166h26M193 166v8M200 166v6" class="ico" />
-				<text x="180" y="202">{c.anonLabels[1]}</text>
-			</g>
-			<g class="node">
-				<rect x="250" y="20" width="100" height="70" rx="10" />
-				<rect x="278" y="32" width="44" height="34" rx="4" class="ico" />
-				<path d="M286 42h28M286 50h20M286 58h24" class="ico" />
-				<text x="300" y="82">{c.anonLabels[2]}</text>
-			</g>
-			<path d="M70 92 C80 130, 110 160, 128 170" class="flow" marker-end="url(#arrow)" />
-			<path d="M232 170 C255 160, 285 130, 295 94" class="flow" marker-end="url(#arrow)" />
-			<path d="M114 55 H246" class="cut" />
-			<g class="cut-mark">
-				<circle cx="180" cy="55" r="14" />
-				<path d="M174 49l12 12M186 49l-12 12" />
-			</g>
-			<text x="180" y="36" class="cut-label">{c.anonCut}</text>
-		</svg>
-	</section>
-
-	<section class="block count">
-		<span class="sec-kicker">{c.countKicker}</span>
-		<h2>{c.countTitle}</h2>
-		<p>{c.countBody}</p>
-		<div class="count-grid">
-			<div class="count-card">
-				<h3>{c.countMajority}</h3>
-				<ol>
-					{#each majority as [name, pct], i}
-						<li class:top={i === 0}>
-							<span class="who">{name}</span>
-							<span class="bar"><span style="width: {pct * 2.4}%"></span></span>
-							<span class="pct">{pct}&nbsp;%</span>
-						</li>
-					{/each}
-				</ol>
-			</div>
-			<div class="count-vs" aria-hidden="true">≠</div>
-			<div class="count-card count-card--ranking">
-				<h3>{c.countRanking}</h3>
-				<ol>
-					{#each ranking as name, i}
-						<li class:top={i === 0}>
-							<span class="who">{name}</span>
-							{#if i === 0}<span class="winner">{c.countWinner}</span>{:else}<span class="rank">{i + 1}</span>{/if}
-						</li>
-					{/each}
-				</ol>
-			</div>
-		</div>
-		<p class="more"><a href="{paths.how}#comptage">{c.countMore} →</a></p>
-	</section>
-
-	<section class="trio">
-		<div class="card">
-			<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="10" y="8" width="28" height="32" rx="3" /><rect x="17" y="17" width="14" height="14" rx="1" /></svg>
-			<h3>{c.blankTitle}</h3>
-			<p>{c.blankBody}</p>
-		</div>
-		<div class="card">
-			<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M8 34a16 16 0 0 1 32 0" /><path d="M24 34l8-10" /><circle cx="24" cy="34" r="2.5" /></svg>
-			<h3>{c.honestyTitle}</h3>
-			<p>{c.honestyBody}</p>
-		</div>
-		<div class="card">
-			<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="10" r="4" /><circle cx="12" cy="26" r="4" /><circle cx="36" cy="26" r="4" /><circle cx="6" cy="40" r="3" /><circle cx="18" cy="40" r="3" /><circle cx="30" cy="40" r="3" /><circle cx="42" cy="40" r="3" /><path d="M21 13l-6 10M27 13l6 10M10 30l-3 7M14 30l3 7M34 30l-3 7M38 30l3 7" /></svg>
-			<h3>{c.checkTitle}</h3>
-			<p>{c.checkBody}</p>
-			<a href="{paths.how}#journal">{c.checkMore} →</a>
-		</div>
+	<section class="private">
+		<span class="sec-kicker">{c.privateKicker}</span>
+		<h2>{c.privateTitle}</h2>
+		<BallotPathAnimation lang={currentLang} />
+		<p>{c.privateBody}</p>
+		<p class="private-links">
+			<a href={paths.how}>{c.how} →</a>
+			<a href={paths.verify}>{c.verify} →</a>
+		</p>
 	</section>
 
 	<section class="final">
@@ -475,10 +333,10 @@
 	.top3 li.first {
 		background: var(--event-glow);
 	}
-	.top3 img,
 	.top3 .initial.initial--blank {
 		background: #fff;
 	}
+	.top3 img,
 	.top3 .initial {
 		width: 2.2rem;
 		height: 2.2rem;
@@ -535,6 +393,7 @@
 	.live {
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 0.5rem;
 		margin: 1.1rem 0 0;
 		font-size: 0.85rem;
@@ -671,42 +530,6 @@
 		}
 	}
 
-	/* Stats */
-	.stats {
-		list-style: none;
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 0.75rem;
-		margin: 0 0 4rem;
-		padding: 0;
-	}
-	.stats li {
-		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-		padding: 1rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		text-align: center;
-	}
-	.stats strong {
-		font-size: 1.9rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		line-height: 1;
-		color: var(--event);
-	}
-	.stats span {
-		font-size: 0.8rem;
-		color: var(--text-secondary);
-	}
-
-	/* Blocks */
-	.block {
-		margin: 0 0 4.5rem;
-		text-align: center;
-	}
 	h2 {
 		font-family: var(--font-serif);
 		font-size: clamp(1.8rem, 4.5vw, 2.6rem);
@@ -714,231 +537,10 @@
 		line-height: 1.1;
 		margin: 0.4rem 0 1rem;
 	}
-	.block p {
-		color: var(--text-secondary);
-		line-height: 1.65;
-		max-width: 40rem;
-		margin-left: auto;
-		margin-right: auto;
-	}
-	.steps {
-		list-style: none;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 1rem;
-		margin: 1.5rem 0 0;
-		padding: 0;
-		counter-reset: step;
-	}
-	.steps li {
-		position: relative;
-		padding: 1.4rem 1.2rem 1.2rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: radial-gradient(ellipse 80% 60% at 0% 0%, var(--event-glow), transparent 70%), var(--bg-card);
-	}
-	.step-icon {
-		display: block;
-		margin: 0 auto;
-		width: 2.6rem;
-		height: 2.6rem;
-		color: var(--event);
-	}
-	.step-n {
-		position: absolute;
-		top: 0.9rem;
-		right: 1.1rem;
-		font-family: var(--font-serif);
-		font-size: 2.4rem;
-		line-height: 1;
-		color: var(--glass-border);
-	}
-	.steps h3 {
-		margin: 0.7rem 0 0.35rem;
-		font-size: 1.05rem;
-	}
-	.steps p {
-		margin: 0;
-		font-size: 0.92rem;
-	}
 
-	.anon {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-		gap: 2rem;
-		align-items: center;
-	}
-	.anon-diagram {
-		width: 100%;
-		max-width: 26rem;
-		justify-self: center;
-	}
-	.node rect:first-child {
-		fill: var(--bg-card);
-		stroke: var(--event);
-		stroke-width: 1.5;
-	}
-	.node .ico {
-		fill: none;
-		stroke: var(--text-secondary);
-		stroke-width: 2;
-		stroke-linecap: round;
-	}
-	.node text {
-		fill: var(--text-primary);
-		font-size: 12px;
-		font-weight: 600;
-		text-anchor: middle;
-	}
-	.flow {
-		fill: none;
-		stroke: var(--event);
-		stroke-width: 2;
-	}
-	.cut {
-		stroke: var(--red);
-		stroke-width: 2;
-		stroke-dasharray: 5 6;
-	}
-	.cut-mark circle {
-		fill: var(--bg-primary);
-		stroke: var(--red);
-		stroke-width: 2;
-	}
-	.cut-mark path {
-		stroke: var(--red);
-		stroke-width: 2.5;
-		stroke-linecap: round;
-	}
-	.cut-label {
-		fill: var(--red);
-		font-size: 12px;
-		font-weight: 700;
-		text-anchor: middle;
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
-	}
-
-	.count-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-		gap: 1rem;
-		align-items: center;
-		margin: 1.5rem 0 0.5rem;
-	}
-	.count-card {
-		padding: 1.1rem 1.2rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-	}
-	.count-card--ranking {
-		border-color: var(--event);
-	}
-	.count-card h3 {
-		margin: 0 0 0.8rem;
-		font-size: 0.78rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-	.count-card ol {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: grid;
-		gap: 0.5rem;
-	}
-	.count-card li {
-		display: grid;
-		grid-template-columns: 2rem 1fr auto;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0.35rem 0.5rem;
-		border-radius: var(--radius-sm);
-	}
-	.count-card li.top {
-		background: var(--event-glow);
-	}
-	.who {
-		display: grid;
-		place-items: center;
-		width: 1.8rem;
-		height: 1.8rem;
-		border-radius: 50%;
-		background: var(--bg-secondary);
-		font-weight: 700;
-	}
-	.bar {
-		height: 8px;
-		border-radius: 4px;
-		background: var(--bg-secondary);
-		overflow: hidden;
-	}
-	.bar span {
-		display: block;
-		height: 100%;
-		background: var(--event-strong);
-	}
-	.pct {
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-	}
-	.winner {
-		grid-column: 2 / -1;
-		justify-self: start;
-		padding: 0.12rem 0.55rem;
-		border-radius: var(--radius-full);
-		background: var(--event-strong);
-		color: white;
-		font-size: 0.72rem;
-		font-weight: 700;
-	}
-	.rank {
-		grid-column: 2 / -1;
-		color: var(--text-muted);
-		font-size: 0.85rem;
-	}
-	.count-vs {
-		font-family: var(--font-serif);
-		font-size: 2.6rem;
-		color: var(--event);
-	}
-	.more a,
-	.card a {
+	.more a {
 		color: var(--event);
 		font-weight: 600;
-	}
-
-	.trio {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 1rem;
-		margin: 0 0 4.5rem;
-	}
-	.card {
-		padding: 1.3rem 1.2rem;
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-	}
-	.card svg {
-		width: 2.4rem;
-		height: 2.4rem;
-		color: var(--event);
-	}
-	.card h3 {
-		margin: 0.6rem 0 0.4rem;
-		font-family: var(--font-serif);
-		font-size: 1.35rem;
-		line-height: 1.15;
-	}
-	.card p {
-		margin: 0 0 0.6rem;
-		color: var(--text-secondary);
-		font-size: 0.92rem;
-		line-height: 1.6;
 	}
 
 	.final {
@@ -968,27 +570,12 @@
 	}
 
 	@media (max-width: 860px) {
-		.hero,
-		.anon {
+		.hero {
 			grid-template-columns: minmax(0, 1fr);
 		}
 		.phone {
 			width: min(14rem, 80%);
 			margin-top: 1rem;
-		}
-		.stats {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
-		.steps,
-		.trio {
-			grid-template-columns: minmax(0, 1fr);
-		}
-		.count-grid {
-			grid-template-columns: minmax(0, 1fr);
-		}
-		.count-vs {
-			justify-self: center;
-			line-height: 1;
 		}
 	}
 	@media (max-width: 560px) {
@@ -999,5 +586,72 @@
 			right: -0.4rem;
 			width: 4.2rem;
 		}
+	}
+	.features {
+		list-style: none;
+		padding: 0;
+		margin: 2.5rem 0;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.8rem;
+		text-align: center;
+	}
+	@media (min-width: 820px) {
+		.features {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
+	}
+	.features li {
+		padding: 1.2rem 0.9rem;
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+		border: 1px solid var(--border-card, var(--glass-border));
+	}
+	.features svg {
+		width: 2.2rem;
+		height: 2.2rem;
+		color: var(--event);
+	}
+	.features h3 {
+		margin: 0.5rem 0 0.25rem;
+		font-size: 1rem;
+		line-height: 1.25;
+	}
+	.features p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+	}
+	.private {
+		max-width: 38rem;
+		margin: 0 auto 2.5rem;
+		padding: 1.6rem 1.2rem 1.3rem;
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+		border: 1px solid var(--border-card, var(--glass-border));
+		text-align: center;
+	}
+	.private h2 {
+		font-family: var(--font-serif);
+		font-size: clamp(1.6rem, 4.5vw, 2.2rem);
+		line-height: 1.15;
+		margin: 0.4rem 0 1rem;
+		text-wrap: balance;
+	}
+	.private p {
+		color: var(--text-secondary);
+		margin: 0.9rem auto 0;
+		max-width: 30rem;
+		text-wrap: balance;
+	}
+	.private-links {
+		display: flex;
+		justify-content: center;
+		gap: 1.2rem;
+		flex-wrap: wrap;
+	}
+	.private-links a {
+		color: var(--event);
+		font-weight: 600;
 	}
 </style>
