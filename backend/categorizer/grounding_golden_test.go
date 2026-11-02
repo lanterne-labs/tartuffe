@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -24,6 +25,11 @@ type groundingCase struct {
 	// QuoteForbid are words the final quote must not hold: another
 	// speaker's words a longer quote must not take in.
 	QuoteForbid []string `yaml:"quote_forbid"`
+	// MustKeep are phrases the final fact must still hold; Never are
+	// phrases it must not hold, whatever the quote (a "nous" of the quote).
+	MustKeep []string `yaml:"must_keep"`
+	Never    []string `yaml:"never"`
+	Date     string   `yaml:"date"` // the source's date, when the case gives one
 }
 
 // TestGroundingGolden runs the grounding check on the facts of the audit of
@@ -55,6 +61,13 @@ func TestGroundingGolden(t *testing.T) {
 			t.Run(tc.Name, func(t *testing.T) {
 				llmtest.Parallel(t)
 				in := backend.Fact{SubjectEntity: tc.Subject, NormalizedFactText: tc.Fact, OriginalQuote: tc.Quote, Lang: "fr"}
+				if tc.Date != "" {
+					d, err := time.Parse("2006-01-02", tc.Date)
+					if err != nil {
+						t.Fatal(err)
+					}
+					in.PublishedAt = &d
+				}
 				out, res, err := groundFacts(ctx, ext.client, tc.Subject, tc.Context, "golden://"+tc.Name, []backend.Fact{in})
 				if err != nil {
 					t.Fatalf("grounding: %v", err)
@@ -73,6 +86,9 @@ func TestGroundingGolden(t *testing.T) {
 				switch tc.Expect {
 				case "grounded":
 					ok = got == "grounded"
+				case "keep":
+					// The fact stays, or only its quote is made longer.
+					ok = got == "grounded" || (got == "rewrite" && res.Requoted == 1)
 				case "drop":
 					ok = got == "drop"
 				case "fix", "grounded_or_fix":
@@ -91,6 +107,20 @@ func TestGroundingGolden(t *testing.T) {
 								ok = false
 								t.Logf("the quote took in %q", p)
 							}
+						}
+					}
+				}
+				if ok && len(out) == 1 {
+					for _, p := range tc.MustKeep {
+						if !containsWord(out[0].NormalizedFactText, p) {
+							ok = false
+							t.Logf("the fact lost %q", p)
+						}
+					}
+					for _, p := range tc.Never {
+						if containsWord(out[0].NormalizedFactText, p) {
+							ok = false
+							t.Logf("the fact holds %q", p)
 						}
 					}
 				}

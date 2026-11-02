@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/rs/zerolog/log"
@@ -50,21 +51,27 @@ const groundingWindow = 400
 // rewritten fact).
 const groundingMaxTokens = 220
 
-const groundingPrompt = `You check facts extracted from a source about a political figure, for a political honesty tracker. A false or inflated fact becomes a false accusation, so each fact must say NO MORE than its quote supports.
+const groundingPrompt = `You check facts extracted from a source about a political figure, for a political honesty tracker. A fact must not claim what its source does not say: an added condition or reason becomes a false accusation. But a fact must also stand alone, in the third person, and keep the meaning of what was said.
 
-For each fact you get its QUOTE (the words of the source it was extracted from) and the TEXT AROUND the quote in the source. The subject is %s.
+For each fact you get its QUOTE (the words of the source it was extracted from), the TEXT AROUND the quote in the source, and the SOURCE DATE when known. The subject is %s.
 
-Judge each fact against its QUOTE:
-- "grounded": every claim of the fact is in the quote: the position, the act, its object, its conditions, its reasons. The fact may name the subject, the date and the occasion (an interview, a debate, a post) given by the text around, and may turn a reported "il a affirmé que" into a direct statement: that is not adding. It may use a referent the quote names, or one the quote's own words make unambiguous (« Je n'irai pas à Matignon » is about Matignon).
-- "rewrite": the fact adds something the quote does not carry: a condition ("si nécessaire", "si le gouvernement..."), a motive or a goal ("afin d'éviter un second tour..."), an attribution ("selon le HCFP"), a judgment, a second claim, or a REFERENT taken from the question or the framing while the quote has only a pronoun or a general word (« Si c'était ainsi, je partirais. » made into "s'il obtenait l'accord du PS sur le budget, il partirait"). Write "fact": the same fact cut down to what the quote says, in the language of the fact, with the subject's full name and the same verb; keep it as general as the quote. If the TEXT AROUND holds, verbatim, a sentence OF THE SUBJECT (their own words, or the article's narration of what they said) that names the referent next to the quote, you may instead keep the referent and give "quote": the longer span COPIED EXACTLY from the text around, which must contain the whole original quote. Never extend the quote into a question or the words of another person (a journalist, an interviewer): the quote is the subject's; when the referent is only in the question, rewrite the fact without it.
+Judge each fact against its QUOTE and the subject's own words around it:
+- "grounded" (the default): the fact says what the quote says. NOT additions, keep the fact as it is:
+  - a pronoun or a "nous", "on", "notre camp" of the subject resolved to its referent: the person's party, camp, government or movement, written in the third person ("nous avons la capacité d'obtenir la majorité absolue" said by Marine Le Pen = "son camp a la capacité..."); a fact NEVER keeps the "nous", "je" or "vous" of the quote;
+  - the subject's name, the date and the occasion (an interview, a debate, a post), and the event made plain by the source's date or the text around (a call to vote "dimanche" in a tweet of 4 July 2024 = the 2024 legislative elections);
+  - words in the SAME SENTENCE as the quote, or in the subject's OWN words just before or after it;
+  - a reported "il a affirmé que" turned into a direct statement, small differences of wording, a referent the quote's own words make unambiguous.
+- "rewrite": ONLY when the fact clearly adds a claim that neither the quote nor the subject's own words around it carry: a condition ("si nécessaire", "si le gouvernement..."), a reason or a goal ("afin d'éviter un second tour..."), an attribution ("selon le HCFP"), a judgement, a second claim, or a referent taken from a QUESTION or another person's words while the subject's words have only a pronoun (« Si c'était ainsi, je partirais. » answering a journalist's question about the PS and the budget). This holds for a bare answer too: « Bien sûr. », « Oui », « C'est exactement ça » whose content is only in the journalist's question or in the article's own framing (an editorial sentence, the writer's comparison) are not the subject's words on that content — the fact keeps only what the subject's words carry (rewrite), or nothing is left (drop). Two ways, in this order of preference:
+  1. if the added part is in the subject's OWN words next to the quote (the same sentence, the next sentence of the subject, or the article's narration of what the subject said), keep the fact and give "quote": the longer span COPIED EXACTLY from the text around, which must contain the whole original quote. Never extend it into a question or another person's words.
+  2. else write "fact": the same fact without the added claim, in the third person, with the subject's full name and the same verb, keeping the MEANING of what the quote says. A rewrite must never change the meaning: do not cut a "ni... ni..., mais..." into something the person did not say, do not turn a rejection into a proposal. If you cannot cut the addition without changing the meaning, answer "grounded".
 - "drop": the quote holds no statement or act of the subject (an electoral score the subject obtained, a third party's words about the subject), or nothing would be left of the fact.
 
-Small differences of wording are not additions. Judge only against the quote, never against what you know.
+When unsure, answer "grounded". Judge only against the source, never against what you know.
 
 FACTS:
 %s
 Return ONLY strict JSON, one entry per fact in the same order, the reasoning first and the verdict last:
-{"facts": [{"n": 1, "reasoning": "<what the quote says, and what the fact adds if anything>", "fact": "<the rewritten fact, only for rewrite>", "quote": "<the longer verbatim quote, optional, only for rewrite>", "verdict": "grounded" | "rewrite" | "drop"}]}`
+{"facts": [{"n": 1, "reasoning": "<what the quote and the subject's words around it say, and what the fact adds if anything>", "fact": "<the rewritten fact, only for a rewrite of kind 2>", "quote": "<the longer verbatim quote, only for a rewrite of kind 1>", "verdict": "grounded" | "rewrite" | "drop"}]}`
 
 type groundingEntry struct {
 	N         int    `json:"n"`
@@ -175,6 +182,9 @@ func askGrounding(ctx context.Context, client *llm.Client, subject, source strin
 	var b strings.Builder
 	for i, f := range batch {
 		fmt.Fprintf(&b, "\n[%d] FACT: %s\n    QUOTE: %s\n    TEXT AROUND: %s\n", i+1, f.NormalizedFactText, oneLine(f.OriginalQuote), oneLine(quoteContext(source, f.OriginalQuote)))
+		if d := factSourceDate(f); d != "" {
+			fmt.Fprintf(&b, "    SOURCE DATE: %s\n", d)
+		}
 	}
 	content, _, err := client.Chat(ctx, llm.ChatRequest{
 		Messages:       []llm.ChatMessage{{Role: "user", Content: fmt.Sprintf(groundingPrompt, subject, b.String())}},
@@ -302,3 +312,14 @@ outer:
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// factSourceDate is the date of the fact's source as the extraction knows
+// it: the page's, else the one the extractor read in the text.
+func factSourceDate(f backend.Fact) string {
+	for _, d := range []*time.Time{f.PublishedAt, f.ArticlePublishedAt} {
+		if d != nil && !d.IsZero() {
+			return d.Format("2006-01-02")
+		}
+	}
+	return ""
+}
