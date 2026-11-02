@@ -204,8 +204,11 @@ the changed packages must pass (the storage time-zone test is a known failure).
 
 Ship: commit (end the message with the attribution line the session gives),
 push, `gh pr create` with the summary and the golden table, `gh pr merge
---merge --delete-branch`, then `host up --service worker --detach` and
-watch the deployment until SUCCESS.
+--merge --delete-branch`. The merge on main deploys `mirror` and `worker` by
+itself: do not run `host up` or `host redeploy` on top (that built the
+same commit twice and restarted the worker twice per merge, cancelling the
+tasks in flight). Watch with `host deployment list --service worker` until
+the merge commit is SUCCESS.
 
 ## 5. Cleanup — prepared, then the user's call
 

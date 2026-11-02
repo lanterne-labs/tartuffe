@@ -2,6 +2,21 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-02: The host deploys: the red ones, the double ones, the sleeping observability
+
+- Why a deploy shows red sometimes: in 433 deployments, 6 FAILED, the only recent one (worker,
+  2026-10-26) in the host's build daemon (`buildkitd.sock: use of closed network connection`),
+  before our Dockerfile ran; the 5 others are from May. No crash restart in 30 days of Prometheus
+  (every process start sits within 12 min of a deploy); both commands exit 0 on SIGTERM.
+- Every merge deployed twice: the audit skill ran `host up --service worker --detach` after the
+  merge, which already deploys. 36 such deploys on the worker, each a second build of the same
+  commit and a second restart that cancelled the tasks in flight (the SKIPPED rows). The skill now
+  says to rely on the git trigger and watch `host deployment list --service worker`.
+- The observability service had App Sleeping on: Prometheus and the Telegram alerts slept whenever
+  nobody opened Grafana (worker scraped 149 h of 720). Turned off with `host config pull`,
+  `sleepApplication: false`, `host config apply` from a scratch folder (the public API refuses the
+  CLI token; a `host.json` in the `host up` upload does not set it).
+
 ## 2026-11-02: Dependency vulnerabilities (govulncheck, npm audit)
 
 - `govulncheck` found 14 reachable vulnerabilities: the HTML parser of `golang.org/x/net` (quadratic
