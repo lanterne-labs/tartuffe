@@ -59,7 +59,8 @@ func TestExtractFactsWithConfig_FailedChunkFailsDocument(t *testing.T) {
 
 // TestExtraction_RetriesAReplyThatDoesNotParse: one malformed JSON reply is
 // asked again (run 112: it failed every tweet of a handle's batch); a second
-// one fails the call.
+// one fails the call. A document with facts then gets its grounding check
+// (grounding.go): one more call.
 func TestExtraction_RetriesAReplyThatDoesNotParse(t *testing.T) {
 	const fact = `[{"subject_entity":"Jean Dupont","subject_entity_type":"human","normalized_fact":"Jean Dupont a déclaré soutenir la réforme.","lang":"fr","canonical_verb":"SUPPORTED","embedding_text":"réforme","original_quote":"soutenir la réforme"}]`
 	for _, tc := range []struct {
@@ -67,9 +68,10 @@ func TestExtraction_RetriesAReplyThatDoesNotParse(t *testing.T) {
 		replies   []string
 		wantFacts int
 		wantErr   bool
+		wantCalls int32
 	}{
-		{"recovered on the retry", []string{`[{"subject_entity": _broken`, fact}, 1, false},
-		{"two bad replies fail the call", []string{`[{"subject_entity": _broken`, `not json`}, 0, true},
+		{"recovered on the retry", []string{`[{"subject_entity": _broken`, fact, `{"facts":[{"n":1,"reasoning":"ok","verdict":"grounded"}]}`}, 1, false, 3},
+		{"two bad replies fail the call", []string{`[{"subject_entity": _broken`, `not json`}, 0, true, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -95,8 +97,8 @@ func TestExtraction_RetriesAReplyThatDoesNotParse(t *testing.T) {
 			facts, err := ext.ExtractFactsWithConfig(context.Background(), promptrules.FactExtractorConfig{
 				TargetName: "Jean Dupont", SourceURL: "https://example.test/a", Content: "Jean Dupont a déclaré soutenir la réforme.",
 			})
-			if (err != nil) != tc.wantErr || len(facts) != tc.wantFacts || calls.Load() != 2 {
-				t.Fatalf("err=%v facts=%d calls=%d; want err=%v facts=%d calls=2", err, len(facts), calls.Load(), tc.wantErr, tc.wantFacts)
+			if (err != nil) != tc.wantErr || len(facts) != tc.wantFacts || calls.Load() != tc.wantCalls {
+				t.Fatalf("err=%v facts=%d calls=%d; want err=%v facts=%d calls=%d", err, len(facts), calls.Load(), tc.wantErr, tc.wantFacts, tc.wantCalls)
 			}
 		})
 	}
