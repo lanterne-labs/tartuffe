@@ -277,6 +277,16 @@ func TestParseSerperDate(t *testing.T) {
 		{"jan-day-year", "Jan 5, 2026", time.Date(2026, 1, 5, 0, 0, 0, 0, time.UTC), true},
 		{"rfc3339", "2026-05-19T10:30:00Z", time.Date(2026, 5, 19, 10, 30, 0, 0, time.UTC), true},
 
+		// Day month year, French and English (Serper hl=fr, mirror-rxd)
+		{"fr abbrev", "8 oct. 2025", time.Date(2025, 10, 8, 0, 0, 0, 0, time.UTC), true},
+		{"fr janv", "1 janv. 2025", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), true},
+		{"fr 1er", "1er févr. 2024", time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC), true},
+		{"fr août", "15 août 2025", time.Date(2025, 8, 15, 0, 0, 0, 0, time.UTC), true},
+		{"fr full", "28 octobre 2026", time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC), true},
+		{"en day month", "8 Oct 2025", time.Date(2025, 10, 8, 0, 0, 0, 0, time.UTC), true},
+		{"bad day", "31 nov. 2025", time.Time{}, false},
+		{"bad month", "8 foo. 2025", time.Time{}, false},
+
 		// English relative
 		{"yesterday", "yesterday", now.AddDate(0, 0, -1), true},
 		{"today", "today", now, true},
