@@ -1,8 +1,8 @@
 # The vote app (isoloir, through @isoloir/web) as static files on
-# https://tartuffeme.github.io: built from the frontend with the vote's
+# https://lanterne-labs.github.io: built from the frontend with the vote's
 # settings (the repository variables VOTE_*), the candidates' cards fetched
 # from the API at build time, pushed to the public repository
-# tartuffeme/tartuffeme.github.io with a deploy key (the secret
+# lanterne-labs/lanterne-labs.github.io with a deploy key (the secret
 # VOTE_APP_DEPLOY_KEY: the private key whose public half is a write deploy
 # key of that repository).
 name: vote-app
@@ -48,8 +48,8 @@ jobs:
           VITE_VOTE_LOG_KEY: ${{ vars.VOTE_LOG_KEY }}
           VITE_VOTE_REGISTRY: ${{ vars.VOTE_REGISTRY || '1' }}
           VITE_VOTE_POLLS: ${{ vars.VOTE_POLLS }}
-          VITE_VOTE_MIRROR: ${{ vars.VOTE_MIRROR || 'https://tartuffeme.github.io/vote-data' }}
-          VITE_VOTE_MIRROR_REPO: ${{ vars.VOTE_MIRROR_REPO || 'tartuffeme/vote-data' }}
+          VITE_VOTE_MIRROR: ${{ vars.VOTE_MIRROR || 'https://lanterne-labs.github.io/vote-data' }}
+          VITE_VOTE_MIRROR_REPO: ${{ vars.VOTE_MIRROR_REPO || 'lanterne-labs/vote-data' }}
         run: npm run build:vote
       - name: Publish
         env:
@@ -60,7 +60,7 @@ jobs:
           mkdir -p ~/.ssh && printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes"
-          git clone -q --depth 1 git@github.com:tartuffeme/tartuffeme.github.io.git pages
+          git clone -q --depth 1 git@github.com:lanterne-labs/lanterne-labs.github.io.git pages
           find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
           cp -R frontend/build-vote/. pages/
           touch pages/.nojekyll

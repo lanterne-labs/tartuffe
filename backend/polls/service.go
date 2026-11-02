@@ -1,7 +1,7 @@
 // Package polls is the site's events: the polls (the 2027 presidential
 // consultation first), their candidates and blackouts. It serves
 // /api/polls/*: what the event is and who its candidates are, with their
-// cards. The votes themselves are isoloir's (github.com/tartuffeme/isoloir):
+// cards. The votes themselves are isoloir's (github.com/lanterne-labs/isoloir):
 // the ballots, the log and the results live on the vote ledger's mirror,
 // and the vote app reads them there. Who the candidates are comes from
 // People: the polls keep only their ids.

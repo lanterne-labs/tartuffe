@@ -8,8 +8,8 @@
 	let { lang }: { lang: Lang } = $props();
 
 	const N = ' ';
-	const ISOLOIR = 'https://github.com/tartuffeme/isoloir';
-	const SITE = 'https://github.com/tartuffeme/mirror';
+	const ISOLOIR = 'https://github.com/lanterne-labs/isoloir';
+	const SITE = 'https://github.com/lanterne-labs/mirror';
 
 	const t = {
 		fr: {

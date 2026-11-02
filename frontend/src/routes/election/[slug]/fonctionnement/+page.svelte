@@ -18,7 +18,7 @@
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 	let paths = $derived(eventPaths($page.params.slug ?? ''));
 
-	const TECH = 'https://github.com/tartuffeme/isoloir/blob/main/docs/comment-ca-marche.md';
+	const TECH = 'https://github.com/lanterne-labs/isoloir/blob/main/docs/comment-ca-marche.md';
 
 	const content = {
 		fr: {

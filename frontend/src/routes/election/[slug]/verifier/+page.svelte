@@ -20,7 +20,7 @@
 
 	type StepKey = 'log' | 'registrations' | 'ballots' | 'tallies' | 'relays';
 	const STEPS: StepKey[] = ['log', 'registrations', 'ballots', 'tallies', 'relays'];
-	const REPO = 'https://github.com/tartuffeme/isoloir';
+	const REPO = 'https://github.com/lanterne-labs/isoloir';
 
 	const content = {
 		fr: {

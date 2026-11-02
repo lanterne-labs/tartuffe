@@ -1,5 +1,5 @@
 #!/bin/sh
-# Rebuilds and vendors @isoloir/web from a checkout of tartuffeme/isoloir
+# Rebuilds and vendors @isoloir/web from a checkout of lanterne-labs/isoloir
 # (ISOLOIR_SRC, default: the isoloir checkout beside the mirror
 # repository, found from the repository's git directory so that a worktree
 # finds it too). The package is not on npm: the tarball in

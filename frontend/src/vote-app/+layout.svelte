@@ -1,5 +1,5 @@
 <script lang="ts">
-	// The vote app's frame (https://tartuffeme.github.io): the fonts and
+	// The vote app's frame (https://lanterne-labs.github.io): the fonts and
 	// styles of the site, a strip naming the site, the language toggle.
 	// The event's pages bring their own sub-menu.
 	import '@fontsource/inter/400.css';
