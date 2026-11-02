@@ -396,30 +396,8 @@
 	<p class="state loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 {:else}
 	<header class="hero">
-		<span class="kicker">{tr('poll.kicker', currentLang)}</span>
 		<h1>{event ? (currentLang === 'en' ? event.title_en : event.title_fr) : slug}</h1>
-		{#if event}<p class="lead">{currentLang === 'en' ? event.description_en : event.description_fr}</p>{/if}
-		<p class="meta">
-			{#if results && showVoters(results.counted)}
-				<strong>{tr('poll.voters', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</strong>
-				<span class="dot"></span>
-			{/if}
-			{#if open}
-				{tr('poll.closes', currentLang, { d: closesText(closesAt) })}
-			{:else}
-				{tr('poll.closed', currentLang)}
-			{/if}
-		</p>
-		<p class="disclaimer">{tr('poll.disclaimer', currentLang)}</p>
 	</header>
-
-	{#if poll.publish.mode === 'open'}
-		{#if results}
-			<p class="live">
-				<span>{tr(results.counted === 1 ? 'v2.counter.counted.one' : 'v2.counter.counted', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
-			</p>
-		{/if}
-	{/if}
 
 	{#if blackout}
 		<div class="notice notice--legal">{tr('poll.hidden.blackout', currentLang)}</div>
@@ -454,6 +432,12 @@
 					<span class="state-icon state-icon--fault" title={actionError} aria-label={actionError}>!</span>
 				{/if}
 			</h2>
+			<p class="ballot-meta">
+				{#if open}{tr('poll.closes', currentLang, { d: closesText(closesAt) })}{:else}{tr('poll.closed', currentLang)}{/if}
+				{#if results && showVoters(results.counted)}
+					<span class="dot"></span>{tr('poll.voters', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}
+				{/if}
+			</p>
 			{#if hasKey && !joined}
 				{#if regPosting}
 					<span class="joining"><Spinner size="sm" label={tr('v2.join.posting', currentLang)} /> {tr('v2.join.posting', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
@@ -665,6 +649,15 @@
 
 	<section class="results" aria-labelledby="results-title">
 		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
+		<!-- One line: how many, how recent, checked here. -->
+		{#if poll.publish.mode === 'open' && results && !blackout}
+			<p class="live">
+				<span>{tr(results.counted === 1 ? 'v2.counter.counted.one' : 'v2.counter.counted', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
+				{#if $tallyAt}<span class="dot"></span><span>{tr('v2.results.updated.short', currentLang, { when: ago($tallyAt) })}</span>{/if}
+				{#if verified}<span class="dot"></span><a class="checked" href={paths.verify}>✓ {tr('v2.results.verified.short', currentLang)}</a>{/if}
+			</p>
+		{/if}
+
 		{#if blackout}
 			<p class="state">{tr('v2.blackout', currentLang)}</p>
 		{:else}
@@ -674,13 +667,6 @@
 			<p class="legend legend--results">{tr('score.legend', currentLang)}</p>
 			{#if !results}
 				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
-			{:else}
-				{#if $tallyAt}
-					<p class="updated">{tr('v2.results.updated', currentLang, { when: ago($tallyAt) })}</p>
-				{/if}
-				{#if verified}
-					<p class="updated">{tr('v2.results.verified', currentLang)}</p>
-				{/if}
 			{/if}
 			<div class="tabs" role="tablist">
 				<button role="tab" class="tab" class:tab--on={tab === 'ranking'} aria-selected={tab === 'ranking'} onclick={() => (tab = 'ranking')}>{tr('poll.tab.ranking', currentLang)}</button>
@@ -721,6 +707,7 @@
 				{/each}
 			</ol>
 		{/if}
+		<p class="disclaimer">{tr('poll.disclaimer', currentLang)}</p>
 	</section>
 
 	<p class="how-link"><a href={paths.how}>{tr('poll.how.title', currentLang)}</a></p>
@@ -1174,15 +1161,7 @@
 	.hero {
 		text-align: center;
 		max-width: 46rem;
-		margin: 1rem auto 2rem;
-	}
-	.kicker {
-		display: inline-block;
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--accent-hover);
+		margin: 1rem auto 1.5rem;
 	}
 	h1 {
 		font-family: var(--font-serif);
@@ -1191,21 +1170,16 @@
 		margin: 0.25rem 0 0.75rem;
 		line-height: 1.05;
 	}
-	.lead {
-		font-size: 1.1rem;
-		color: var(--text-secondary);
-		line-height: 1.5;
-		margin: 0 0 1rem;
-	}
+	/* A results row's second line (it was the hero's rule too). */
 	.meta {
 		display: flex;
 		justify-content: center;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: 0.5rem;
-		font-size: 0.9rem;
-		color: var(--text-secondary);
 		margin: 0;
+		font-size: 0.72rem;
+		color: var(--text-muted);
 	}
 	.dot {
 		width: 4px;
@@ -1216,7 +1190,8 @@
 	.disclaimer {
 		font-size: 0.75rem;
 		color: var(--text-muted);
-		margin: 0.75rem 0 0;
+		margin: 1.2rem 0 0;
+		text-align: center;
 	}
 
 	.notice {
@@ -1267,6 +1242,16 @@
 	}
 	.ballot {
 		position: relative;
+	}
+	.ballot-meta {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: -0.2rem 0 0;
+		font-size: 0.82rem;
+		color: var(--text-secondary);
 	}
 	.ballot-head {
 		display: flex;
@@ -1428,10 +1413,6 @@
 		font-size: 0.7rem;
 		font-weight: 700;
 	}
-	.meta {
-		font-size: 0.72rem;
-		color: var(--text-muted);
-	}
 	.who {
 		display: flex;
 		flex-direction: column;
@@ -1513,10 +1494,9 @@
 	.muted {
 		color: var(--text-muted);
 	}
-	.updated {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		margin: 0 0 0.75rem;
+	.checked {
+		color: var(--green);
+		text-decoration: none;
 	}
 	.how-link {
 		text-align: center;
@@ -1579,7 +1559,6 @@
 		margin: 0 0 0.6rem;
 	}
 	.results h2,
-	.updated,
 	.winner-line,
 	.explain,
 	.explain summary {

@@ -98,7 +98,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 
 	// Pre-poll (election page)
 	'poll.kicker': { fr: 'Consultation citoyenne', en: 'Citizen pre-poll' },
-	'poll.disclaimer': { fr: 'Ce n’est ni un scrutin officiel ni un sondage : les votants, utilisateurs de tartuffe.me, ne sont pas représentatifs.', en: 'Neither an official election nor an opinion poll: the voters, tartuffe.me users, are not representative.' },
+	'poll.disclaimer': { fr: 'Un vote d’opinion en ligne, distinct du scrutin officiel et des sondages : les votants sont des utilisateurs de tartuffe.me.', en: 'An online opinion vote, distinct from the official election and from polls: the voters are tartuffe.me users.' },
 	'poll.voters': { fr: '{n} votants', en: '{n} voters' },
 	'poll.closes': { fr: 'Vote ouvert jusqu’au {d}', en: 'Voting open until {d}' },
 	'poll.closed': { fr: 'Le vote est clos.', en: 'Voting is closed.' },
@@ -388,7 +388,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.results.none.first': { fr: 'Les premiers résultats s’affichent dès le premier vote, après un court délai.', en: 'The first results appear at the first vote, after a short delay.' },
 	'v2.results.none.one': { fr: 'Les résultats s’affichent par paquets de {k} votes, pour qu’aucun vote ne puisse être deviné. Encore un vote avant la première mise à jour.', en: 'Results appear in batches of {k} votes, so that no single vote can be guessed. One more vote before the first update.' },
 	'v2.results.none': { fr: 'Les résultats s’affichent par paquets de {k} votes, pour qu’aucun vote ne puisse être deviné. Encore {m} votes avant la première mise à jour.', en: 'Results appear in batches of {k} votes, so that no single vote can be guessed. {m} more votes before the first update.' },
-	'v2.results.updated': { fr: 'Résultats mis à jour {when}', en: 'Results updated {when}' },
 	'v2.blackout': { fr: 'Résultats figés pendant la période électorale.', en: 'Results frozen during the electoral period.' },
 	'v2.status.proving': { fr: 'Préparation de votre bulletin…', en: 'Preparing your ballot…' },
 	'v2.status.sending': { fr: 'Envoi…', en: 'Sending…' },
@@ -573,7 +572,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.report.text': { fr: 'signalez-le', en: 'report it' },
 	'v2.report.url': { fr: 'https://tartuffe.me/corrections', en: 'https://tartuffe.me/corrections' },
 	'v2.results.unverified': { fr: 'Ce comptage n’a pas pu être vérifié par votre navigateur.', en: 'This count could not be checked by your browser.' },
-	'v2.results.verified': { fr: 'Comptage vérifié dans votre navigateur.', en: 'Count checked in your browser.' },
+	'v2.results.updated.short': { fr: 'mis à jour {when}', en: 'updated {when}' },
+	'v2.results.verified.short': { fr: 'vérifié', en: 'checked' },
 	'v2.complaint.error': { fr: 'La lecture a échoué. Réessayez.', en: 'The reading failed. Try again.' },
 	'v2.complaint.nosetup': { fr: 'La copie publique ne contient pas encore cette élection.', en: 'The public copy does not hold this election yet.' },
 	'v2.complaint.noid': { fr: 'Ce lien est incomplet : il ne désigne aucune réclamation.', en: 'This link is incomplete: it names no complaint.' },
