@@ -937,6 +937,26 @@ cases:
     date_a: "2025-02-04"
     date_b: "2024-11-08"
 
+  - name: "FP_2342_melenchon_denial_then_later_call"
+    fact_a: "Jean-Luc Mélenchon a affirmé qu'il n'existe aucun tract, discours ou appel incitant les Insoumis à se mettre en mouvement dans les lycées."
+    fact_b: "Jean-Luc Mélenchon a appelé les élus et les militants à s'interposer partout, à démasquer les provocateurs et à rassembler des témoignages sur les conditions des gardes à vue."
+    claimed_reason: "Mélenchon a appelé les militants LFI à s'interposer pour soutenir les lycéens, puis a nié qu'existe le moindre appel incitant les Insoumis à se mobiliser dans les lycées."
+    expect: drop
+    bucket: learning_over_time
+    notes: "The past-tense denial (2 Oct) is contradicted only by a call dated before it; this call is of 5 Oct and is about the gardes à vue, not the lycées (ORDER rule). His 29 Sept call stays real (2343). Prod 2342 (2026-11-01)."
+    date_a: "2026-10-02"
+    date_b: "2026-10-05"
+
+  - name: "TP_2343_melenchon_call_then_denial"
+    fact_a: "Jean-Luc Mélenchon a appelé les parents et les militants à se mobiliser pour s'interposer face à la 'sauvagerie policière' devant les lycées."
+    fact_b: "Jean-Luc Mélenchon a affirmé qu'il n'existe aucun tract, discours ou appel incitant les Insoumis à se mettre en mouvement dans les lycées."
+    claimed_reason: "Il nie l'existence de tout appel aux Insoumis à se mobiliser dans les lycées alors qu'il a lui-même appelé les militants LFI à s'interposer pour protéger les lycéens."
+    expect: keep
+    bucket: learning_over_time
+    notes: "The call (29 Sept) is dated BEFORE the past-tense denial (2 Oct): a denial of his own earlier act, real at any gap. The twin of FP_2342. Prod 2343 (2026-11-01)."
+    date_a: "2026-09-29"
+    date_b: "2026-10-02"
+
   - name: "TP_112b_christophe_motivation_reversal_weeks"
     fact_a: "Paul Christophe s'est dit « très motivé » pour prendre ce poste ministériel."
     fact_b: "Paul Christophe a déclaré ne pas être « particulièrement enthousiaste » à l'idée de prendre ce poste."

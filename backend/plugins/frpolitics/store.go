@@ -286,9 +286,12 @@ func (s *Store) RearticleBallots(ctx context.Context, lawKey, article, object st
 // TruncatedAmendmentRe matches, in a ballot, the amendment object whose
 // quoted exposé was cut inside the guillemets ("dont l'objet est : « … ,
 // déposé sur"): the object, from "l'amendement n° N" to the ellipsis, with
-// the ", déposé sur" that follows (ReamendBallots puts it back). The pattern
+// the ", déposé sur" that follows (ReamendBallots puts it back). An exposé
+// may quote words in « » of its own (« chaque fois que cela est possible »,
+// 1,697 ballots left by the first run, review of 2026-11-01): a closed inner
+// pair is part of the object, and the cut may fall inside one. The pattern
 // is POSIX ARE and RE2 at once: the test compiles it with Go's regexp.
-const TruncatedAmendmentRe = `(l'amendement|le sous-amendement) n° [0-9]+( \([^)]*\))? dont (l'objet|le dispositif) est : « [^»]*…, déposé sur`
+const TruncatedAmendmentRe = `(l'amendement|le sous-amendement) n° [0-9]+( \([^)]*\))? dont (l'objet|le dispositif) est : « ([^«»]|«[^«»]*»)*(«[^«»]*)?…, déposé sur`
 
 // TruncatedAmendmentBallots counts the ballots of the scrutin lawKey whose
 // amendment object lost its closing » (TruncatedAmendmentRe).

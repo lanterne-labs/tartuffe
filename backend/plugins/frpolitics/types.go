@@ -90,8 +90,11 @@ type GroupStats struct {
 	Against int
 	// Abst is the number of group members who abstained
 	Abst int
-	// NonVot is the number of group members who were absent/did not vote
+	// NonVot is the number of group members present who did not vote
+	// (usually 0: the absent are in no count)
 	NonVot int
+	// Members is the size of the group at the scrutin (nombreMembresGroupe)
+	Members int
 }
 
 // LawGroupStats maps organeRef to voting statistics for a specific law
