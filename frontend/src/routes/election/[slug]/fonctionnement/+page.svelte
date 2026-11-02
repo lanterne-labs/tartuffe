@@ -34,7 +34,7 @@
 			limitsTitle: 'Les limites, franchement',
 			limits: [
 				'La clé qui révèle le résultat pourrait aussi ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les résultats, avec leurs preuves.',
-				'Qui détient votre clé peut voir et changer votre vote : gardez-la pour vous.',
+				'Votre clé permet de prouver votre vote à quelqu’un : un acheteur de voix pourrait l’exiger. Gardez-la pour vous.',
 				'Il faut un smartphone NFC et un passeport à puce.',
 				'C’est une expérience indépendante de tartuffe.me : un vote d’opinion en ligne, distinct du scrutin officiel et des sondages.'
 			],
@@ -55,7 +55,7 @@
 			limitsTitle: 'The limits, frankly',
 			limits: [
 				'The key that reveals the result could also open a single ballot, without knowing whose it is. We only publish results, with their proofs.',
-				'Whoever holds your key can see and change your vote: keep it to yourself.',
+				'Your key lets you prove your vote to someone: a vote buyer could demand it. Keep it to yourself.',
 				'You need an NFC smartphone and a chip passport.',
 				'It is an independent experiment by tartuffe.me: an online opinion vote, distinct from the official election and from polls.'
 			],
