@@ -222,8 +222,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.who': { fr: 'Une expérience de tartuffe.me, un site indépendant et sans publicité qui compare ce que disent et font les responsables politiques.', en: 'An experiment by tartuffe.me, an independent, ad-free site that compares what politicians say and do.' },
 	'event.ends': { fr: 'Fin le {d} (J-{n})', en: 'Ends {d} ({n} days left)' },
 	'event.cta': { fr: 'Voter', en: 'Vote' },
-	'event.strip': { fr: 'Une expérience du labo tartuffe.me : le vote en ligne vraiment secret.', en: 'An experiment of the tartuffe.me lab: truly secret online voting.' },
-	'event.strip.ends': { fr: 'Une expérience du labo tartuffe.me, jusqu’au {d}.', en: 'An experiment of the tartuffe.me lab, until {d}.' },
 	'event.menu.label': { fr: 'Pages de l’événement', en: 'Event pages' },
 	'event.menu.intro': { fr: 'Présentation', en: 'Overview' },
 	'event.menu.vote': { fr: 'Voter', en: 'Vote' },
@@ -233,7 +231,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.menu.vote_sub': { fr: 'Classer jusqu’à 3 candidats', en: 'Rank up to 3 candidates' },
 	'event.menu.how_sub': { fr: 'Anonymat, vérifications, limites', en: 'Anonymity, checks, limits' },
 	'event.menu.verify_sub': { fr: 'Recompter tout le vote vous-même', en: 'Recount the whole vote yourself' },
-	'event.strip.why': { fr: 'Pourquoi', en: 'Why' },
 	'vote.error.full': { fr: 'Déjà {n} candidats : retirez-en un.', en: 'Already {n} candidates: remove one.' },
 	// The voting key (lib/voter.ts)
 	'poll.list.ranking': { fr: 'Classement', en: 'Ranking' },

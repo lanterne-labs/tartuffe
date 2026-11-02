@@ -120,22 +120,6 @@
 			</span>
 		</a>
 		<div class="nav-right">
-			<div class="lang-toggle" role="group" aria-label="Language">
-				<button
-					class="lang-pill"
-					class:active={currentLang === 'fr'}
-					aria-pressed={currentLang === 'fr'}
-					onclick={() => setLang('fr')}
-					title="Français"
-				>FR</button>
-				<button
-					class="lang-pill"
-					class:active={currentLang === 'en'}
-					aria-pressed={currentLang === 'en'}
-					onclick={() => setLang('en')}
-					title="English"
-				>EN</button>
-			</div>
 			{#if featured}
 				{@const ep = eventPaths(featured.slug)}
 				<div class="nav-drop nav-event" class:open={openMenu === 'event'} bind:this={menuEls.event} onfocusout={(e) => onMenuFocusOut('event', e)}>
@@ -198,6 +182,22 @@
 			{:else if $voteKey}
 				<a href="/profile" class="nav-link" class:active={$page.url.pathname === '/profile'}>{tr('nav.profile', currentLang)}</a>
 			{/if}
+			<div class="lang-toggle" role="group" aria-label="Language">
+				<button
+					class="lang-pill"
+					class:active={currentLang === 'fr'}
+					aria-pressed={currentLang === 'fr'}
+					onclick={() => setLang('fr')}
+					title="Français"
+				>FR</button>
+				<button
+					class="lang-pill"
+					class:active={currentLang === 'en'}
+					aria-pressed={currentLang === 'en'}
+					onclick={() => setLang('en')}
+					title="English"
+				>EN</button>
+			</div>
 		</div>
 	</div>
 </nav>
