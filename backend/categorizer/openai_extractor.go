@@ -162,7 +162,15 @@ func (m *OpenAIExtractor) ExtractFactsWithConfig(ctx context.Context, cfg prompt
 		finalFacts = append(finalFacts, fact)
 	}
 
-	log.Info().Str("url", cfg.SourceURL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).Msg("Fact extraction completed")
+	// Every fact against its quote (grounding.go): a fact that adds a claim
+	// is cut down to its quote, or dropped.
+	finalFacts, grounding, err := groundFacts(ctx, m.client, cfg.TargetName, cfg.Content, cfg.SourceURL, finalFacts)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info().Str("url", cfg.SourceURL).Int("initial_facts", len(allExtractedFacts)).Int("final_facts", len(finalFacts)).
+		Int("rewritten", grounding.Rewritten).Int("dropped", grounding.Dropped).Int("unchecked", grounding.Unchecked).Msg("Fact extraction completed")
 	return finalFacts, nil
 }
 
