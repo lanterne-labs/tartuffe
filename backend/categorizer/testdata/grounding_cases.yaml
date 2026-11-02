@@ -268,7 +268,9 @@ cases:
     quote: "le fait de confier cette décision disproportionnée au préfet est problématique."
     context: "t déployées de manière homogène sur tout le territoire, y compris aux abords de l’Assemblée nationale ! (Sourires.)Ensuite, la disposition que vous proposez prévoit une suspension du permis de conduire de six mois, soit une durée très longue, dans l’attente d’une décision du juge. Vous auriez proposé une durée de quelques jours, je ne m’y serais pas opposée, notamment pour les cas d’usage maintes fois réitéré.Enfin, le fait de confier cette décision disproportionnée au préfet est problématique. Certes, l’usage de stupéfiants constitue un problème en matière de sécurité routière, mais ce problème appelle d’autres types de réponse. Les AFD et le tout-répressif ne fonctionnent pas pour juguler"
     date: "2026-07-09"
-    # She objects to the préfet deciding and to the six-month length; the fact
-    # makes her oppose the licence suspension itself. Requote or cut, never as is.
+    # She objects to the préfet deciding and to the six-month length; the
+    # quote holds neither the six months nor her objection to them. Requote
+    # to her sentences on the length (« une durée très longue… quelques jours,
+    # je ne m'y serais pas opposée »), or cut the fact to the préfet.
     expect: fix
-    forbid: ["s'oppose à la suspension"]
+    forbid: ["six mois"]
