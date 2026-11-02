@@ -74,6 +74,7 @@ func runFactsStatementDates(cmd *cobra.Command, args []string) error {
 		if len(facts) == 0 {
 			break
 		}
+		checkedBefore := checked
 		err = llm.ForEach(ctx, facts, func(ctx context.Context, f storage.StatementDateFact) error {
 			date, why, err := dater.StatementDate(ctx, f.PersonName, f.Text, f.Quote, f.PublishedAt)
 			if err != nil {
@@ -109,6 +110,13 @@ func runFactsStatementDates(cmd *cobra.Command, args []string) error {
 		if !apply {
 			// a dry run marks nothing: the next batch would be the same facts
 			break
+		}
+		// A failed fact stays unchecked, so the next batch lists it again: a
+		// batch where no call succeeded (the API at its day cap and every seat
+		// at its limit) would be listed again without end (2026-11-02: 2.4M
+		// warnings in 30 min). Stop; a later run takes the facts left.
+		if checked == checkedBefore {
+			return fmt.Errorf("statement dates: no fact of a batch of %d could be checked (the LLM is unavailable); %d checked, %d dated before stopping", len(facts), checked, dated)
 		}
 		log.Info().Int("checked", checked).Int("dated", dated).Time("at", time.Now()).Msg("statement dates: batch done")
 	}
