@@ -143,7 +143,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'profile.google': { fr: 'Vous êtes connecté avec Google, qui ne nous transmet ni e-mail ni nom.', en: 'Signed in with Google, no e-mail or name shared.' },
 	'profile.test': { fr: 'Ce compte de test n’est pas vérifié.', en: 'Test account, not verified.' },
 	'profile.provider_other': { fr: 'Connecté avec {p}', en: 'Signed in with {p}' },
-	'profile.votes': { fr: 'Mes votes', en: 'My votes' },
+	'profile.votes': { fr: 'Mes participations', en: 'My participation' },
+	'profile.votes.here': { fr: 'Gardé par ce navigateur, sur cet appareil.', en: 'Kept by this browser, on this device.' },
 	'profile.no_events': { fr: 'Aucun vote ouvert.', en: 'No vote open.' },
 	'profile.open_until': { fr: 'Ouvert jusqu’au {d}', en: 'Open until {d}' },
 	'profile.open': { fr: 'Ouvert', en: 'Open' },
@@ -228,10 +229,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.menu.vote': { fr: 'Voter', en: 'Vote' },
 	'event.menu.how': { fr: 'Comment ça marche', en: 'How it works' },
 	'event.menu.verify': { fr: 'Vérifier', en: 'Verify' },
-	'event.menu.intro_sub': { fr: 'L’expérience en une minute', en: 'The experiment in a minute' },
-	'event.menu.vote_sub': { fr: 'Classer jusqu’à 3 candidats', en: 'Rank up to 3 candidates' },
-	'event.menu.how_sub': { fr: 'Anonymat, vérifications, limites', en: 'Anonymity, checks, limits' },
-	'event.menu.verify_sub': { fr: 'Recompter tout le vote vous-même', en: 'Recount the whole vote yourself' },
 	'vote.error.full': { fr: 'Déjà {n} candidats : retirez-en un.', en: 'Already {n} candidates: remove one.' },
 	// The voting key (lib/voter.ts)
 	'poll.list.ranking': { fr: 'Classement', en: 'Ranking' },
@@ -295,11 +292,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	// Nav
 	'nav.feed': { fr: 'Le fil', en: 'Feed' },
 	'nav.menu.project': { fr: 'Le projet', en: 'The project' },
-	'nav.menu.project_sub': { fr: 'Ce que mesure tartuffe.me', en: 'What tartuffe.me measures' },
 	'nav.menu.lab': { fr: 'Le labo', en: 'The lab' },
-	'nav.menu.lab_sub': { fr: 'Nos expériences temporaires', en: 'Our temporary experiments' },
 	'nav.menu.privacy': { fr: 'Confidentialité', en: 'Privacy' },
-	'nav.menu.privacy_sub': { fr: 'Ce que nous gardons, et pourquoi', en: 'What we keep, and why' },
 	'nav.about': { fr: 'À propos', en: 'About' },
 	'nav.privacy': { fr: 'Confidentialité', en: 'Privacy' },
 

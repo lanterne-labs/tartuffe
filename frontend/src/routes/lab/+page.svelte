@@ -30,76 +30,72 @@
 		fr: {
 			kicker: 'Le labo',
 			title: 'Un laboratoire pour une démocratie plus transparente',
-			lead: 'tartuffe.me conçoit des outils au service de la démocratie. Nous les construisons, les publions et les testons en conditions réelles : des outils qui rendent l’action publique lisible par tous, et que chacun peut vérifier.',
-			whyTitle: 'Pourquoi maintenant',
+			whyTitle: 'Pourquoi',
 			why: [
 				'La défiance envers les responsables politiques n’a jamais été aussi forte, et la désinformation va plus vite que les démentis.',
-				'Les promesses s’oublient, les votes passent inaperçus, et les citoyens n’ont souvent que des opinions à opposer à des opinions.',
-				'Notre réponse : des preuves. Ce que les élus disent et ce qu’ils font, confrontés publiquement, sources à l’appui ; des votes en ligne que chacun peut recompter, sans que personne ne sache qui a voté quoi.'
+				'Les outils d’aujourd’hui permettent enfin de suivre ce que disent et font les élus, et de le rendre lisible par tous, sources à l’appui.',
+				'Le labo invente et met à l’épreuve de nouvelles façons de donner ce pouvoir aux citoyens : comprendre, comparer, s’exprimer.'
 			],
-			releasesTitle: 'Ce que le labo publie',
 			mainTag: 'Produit permanent',
 			mainTitle: 'Tartuffe, le détecteur de contradictions',
-			mainBody: 'Tartuffe lit ce que disent les responsables politiques (discours, interviews, réseaux sociaux) et ce qu’ils font (leurs votes à l’Assemblée), puis signale quand les deux se contredisent. Chaque contradiction est sourcée, les règles sont les mêmes pour tous, et chacun peut signaler une erreur. Un Tartuffe-Score situe chacun, de cohérent à tartuffe.',
+			mainBody: 'Tartuffe confronte ce que disent les responsables politiques à ce qu’ils votent, et signale quand les deux se contredisent. Chaque contradiction est sourcée, les règles sont les mêmes pour tous.',
 			mainCta: 'Voir le classement',
 			mainCta2: 'Comment le score est calculé',
 			eventTag: 'Expérience temporaire',
-			eventTitle: 'Voter en secret en ligne : la présidentielle',
-			eventEnds: 'Jusqu’au {d}. L’expérience s’arrêtera ensuite.',
-			eventBody: 'Une démonstration : peut-on voter en ligne en toute confidentialité, en s’appuyant sur ce que l’État fournit déjà, la puce du passeport ?',
+			eventTitle: 'La présidentielle, par classement',
+			eventEnds: 'Jusqu’au {d}.',
+			eventBody: 'Classez jusqu’à 3 candidats et voyez, en direct, qui une majorité préfère à chacun des autres, et pas seulement qui arrive en tête. En ligne, et en toute confidentialité.',
 			eventPoints: [
-				'Votre passeport prouve, sur votre téléphone, que vous êtes majeur et français : rien d’autre n’en sort.',
-				'Votre bulletin est chiffré et prouvé par une clé conservée sur vos appareils : ni nous, ni personne, ni l’État ne peut le relier à vous.',
-				'Chaque bulletin et chaque total sont publiés dans un registre public : chacun peut recompter.',
-				'Aucun compte, aucun e-mail, aucun numéro de téléphone.'
+				'Le classement et le premier choix, côte à côte, mis à jour à chaque vote.',
+				'Votre passeport prouve seulement que vous êtes majeur et français, depuis votre téléphone.',
+				'Nous ne détenons rien qui vous identifie : même une fuite chez nous ne révélerait rien.',
+				'Chacun peut recompter tous les bulletins.'
 			],
-			eventNote: 'Ce n’est ni un scrutin officiel ni un sondage représentatif, mais une preuve de faisabilité en conditions réelles.',
+			eventNote: 'Un vote d’opinion en ligne, distinct du scrutin officiel et des sondages : une preuve de faisabilité, en conditions réelles.',
 			eventCta: 'Participer',
-			eventHow: 'Ce que nous voyons, et ce que nous ne voyons pas',
+			eventHow: 'Comment ça marche',
 			principlesTitle: 'Nos principes',
 			principles: [
 				['Vérifiable', 'Les sources sont citées, les méthodes publiées et les résultats recomptables.'],
-				['Privé dès la conception', 'Ni publicité, ni traceur, ni e-mail : nous ne savons pas qui vous êtes.'],
-				['Les mêmes règles pour tous', 'Aucun parti, aucun élu ne bénéficie d’un traitement à part.'],
-				['Lucide sur ses limites', 'Ce que nos outils ne garantissent pas est écrit noir sur blanc.']
+				['Privé dès la conception', 'Ni publicité, ni traceur, ni e-mail.'],
+				['Les mêmes règles pour tous', 'Chaque parti, chaque élu, traité de la même façon.'],
+				['Lucide sur ses limites', 'Ce que nos outils garantissent, et ce qu’ils ne garantissent pas, est écrit noir sur blanc.']
 			],
 			next: 'D’autres expériences suivront.'
 		},
 		en: {
 			kicker: 'The lab',
 			title: 'A lab for more transparent democracies',
-			lead: 'tartuffe.me is a research and development lab for the tools of democracy. We build, publish and test in real conditions tools that make public action readable by everyone, and that anyone can check.',
-			whyTitle: 'Why now',
+			whyTitle: 'Why',
 			why: [
 				'Distrust of politicians has never been higher, and disinformation travels faster than denials.',
-				'Promises are forgotten, votes go unnoticed, and citizens often have only opinions to set against opinions.',
-				'The answer we stand for: evidence. What politicians say and do, compared in public, with the sources; online votes anyone can recount, without ever knowing who voted what.'
+				'Today’s tools finally make it possible to follow what elected officials say and do, and to make it readable by everyone, with sources.',
+				'The lab invents and tests new ways to give that power to citizens: to understand, compare, speak up.'
 			],
-			releasesTitle: 'What the lab releases',
 			mainTag: 'Permanent product',
 			mainTitle: 'Tartuffe, the contradiction checker',
-			mainBody: 'Tartuffe reads what politicians say (speeches, interviews, social media) and what they do (their votes in Parliament), then flags when the two clash. Every contradiction is sourced, the same rules apply to all, and anyone can report an error. A Tartuffe-Score places each one, from coherent to tartuffe.',
+			mainBody: 'Tartuffe sets what politicians say against how they vote, and flags when the two clash. Every contradiction is sourced; the same rules apply to all.',
 			mainCta: 'See the ranking',
 			mainCta2: 'How the score is computed',
 			eventTag: 'Temporary experiment',
-			eventTitle: 'The private presidential vote',
-			eventEnds: 'Until {d}, then the experiment ends.',
-			eventBody: 'A demonstration: can we vote online in full privacy, relying on the State’s own infrastructure, the passport’s chip?',
+			eventTitle: 'The presidential election, ranked',
+			eventEnds: 'Until {d}.',
+			eventBody: 'Rank up to 3 candidates and see, live, whom a majority prefers to each other one, not only who comes first. Online, and in full privacy.',
 			eventPoints: [
-				'Your passport proves, on your phone, that you are an adult and French: nothing else leaves it.',
-				'Your ballot is encrypted and proven by a key kept on your devices: neither we, nor anyone, nor the State can tie it to you.',
-				'Every ballot and every total go to a public log: anyone can recount.',
-				'No account, no e-mail, no phone number.'
+				'The ranking and the first choices side by side, updated with every vote.',
+				'Your passport only proves you are an adult French national, from your phone.',
+				'We hold nothing that identifies you: even a leak on our side would reveal nothing.',
+				'Anyone can recount every ballot.'
 			],
-			eventNote: 'It is neither an official election nor a representative poll: it is a proof of feasibility, in real conditions.',
+			eventNote: 'An online opinion vote, distinct from the official election and from polls: a proof of feasibility, in real conditions.',
 			eventCta: 'Take part',
-			eventHow: 'What we see, and what we don’t',
+			eventHow: 'How it works',
 			principlesTitle: 'Our principles',
 			principles: [
 				['Verifiable', 'Sources cited, methods published, results recountable.'],
-				['Private by design', 'No ads, no trackers, no e-mail: we don’t know who you are.'],
-				['Same rules for all', 'No party, no politician is treated apart.'],
-				['Honest about its limits', 'What our tools do not guarantee is written down, plainly.']
+				['Private by design', 'No ads, no trackers, no e-mail.'],
+				['Same rules for all', 'Every party, every politician, treated alike.'],
+				['Honest about its limits', 'What our tools guarantee, and what they do not, is written down plainly.']
 			],
 			next: 'More experiments will follow.'
 		}
@@ -113,9 +109,7 @@
 
 <article class="lab">
 	<header class="hero">
-		<span class="kicker">{c.kicker}</span>
 		<h1>{c.title}</h1>
-		<p class="lead">{c.lead}</p>
 	</header>
 
 	<section class="part">
@@ -126,7 +120,6 @@
 	</section>
 
 	<section class="part">
-		<h2>{c.releasesTitle}</h2>
 		<div class="releases">
 			<div class="release release--main">
 				<span class="tag">{c.mainTag}</span>
@@ -179,13 +172,6 @@
 		text-align: center;
 		margin-bottom: 3rem;
 	}
-	.kicker {
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--accent-hover);
-	}
 	h1 {
 		font-family: var(--font-serif);
 		font-size: clamp(2.1rem, 6vw, 3.2rem);
@@ -193,14 +179,6 @@
 		line-height: 1.08;
 		margin: 0.4rem auto 1rem;
 		max-width: 38rem;
-		text-wrap: balance;
-	}
-	.lead {
-		font-size: 1.08rem;
-		color: var(--text-secondary);
-		line-height: 1.6;
-		max-width: 38rem;
-		margin: 0 auto;
 		text-wrap: balance;
 	}
 	.part {

@@ -142,7 +142,6 @@
 						{#each [['intro', ep.intro], ['vote', ep.vote], ['how', ep.how], ['verify', ep.verify]] as [k, href] (k)}
 							<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
 								<strong>{tr(`event.menu.${k}`, currentLang)}</strong>
-								<span>{tr(`event.menu.${k}_sub`, currentLang)}</span>
 							</a>
 						{/each}
 					</div>
@@ -166,7 +165,6 @@
 					{#each [['project', '/about'], ['lab', '/lab'], ['privacy', '/about/privacy']] as [k, href] (k)}
 						<a {href} class:active={$page.url.pathname === href} aria-current={$page.url.pathname === href ? 'page' : undefined}>
 							<strong>{tr(`nav.menu.${k}`, currentLang)}</strong>
-							<span>{tr(`nav.menu.${k}_sub`, currentLang)}</span>
 						</a>
 					{/each}
 				</div>
@@ -430,10 +428,6 @@
 	.drop-menu a strong {
 		font-size: 0.88rem;
 		font-weight: 600;
-	}
-	.drop-menu a span {
-		font-size: 0.75rem;
-		color: var(--text-muted);
 	}
 	.drop-menu a:hover,
 	.drop-menu a:focus-visible {

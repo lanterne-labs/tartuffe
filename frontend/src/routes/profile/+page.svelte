@@ -165,6 +165,7 @@
 	</section>
 
 	<h2 class="section-title">{tr('profile.votes', currentLang)}</h2>
+	<p class="muted here">{tr('profile.votes.here', currentLang)}</p>
 	{#if eventsError}
 		<div class="card">
 			<p class="error">{tr('profile.error', currentLang)}</p>
@@ -305,6 +306,10 @@
 	}
 	.section-title {
 		margin: 2rem 0 0.75rem;
+	}
+	.here {
+		margin: -0.4rem 0 0.75rem;
+		font-size: 0.85rem;
 	}
 	h3 {
 		font-size: 1.05rem;
