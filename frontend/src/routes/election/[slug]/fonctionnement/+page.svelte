@@ -12,6 +12,7 @@
 	import BallotPathAnimation from '$lib/components/vote/BallotPathAnimation.svelte';
 	import CountAnimation from '$lib/components/vote/CountAnimation.svelte';
 	import AuditLoop from '$lib/components/vote/AuditLoop.svelte';
+	import AskAI from '$lib/components/vote/AskAI.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -76,6 +77,7 @@
 		<span class="num">1</span>
 		<ZKProofAnimation lang={currentLang} />
 		<p>{c.passport}</p>
+		<div class="ask"><AskAI lang={currentLang} /></div>
 	</section>
 
 	<section class="idea">
@@ -171,6 +173,9 @@
 		line-height: 1.55;
 		max-width: 30rem;
 		text-wrap: balance;
+	}
+	.ask {
+		margin-top: 1rem;
 	}
 	.loop {
 		margin: 0.4rem 0 0;

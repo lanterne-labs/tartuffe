@@ -12,6 +12,8 @@
 	import { rankedRows, byFirst } from '$lib/vote/results';
 	import { displayName } from '$lib/share';
 	import BallotPathAnimation from '$lib/components/vote/BallotPathAnimation.svelte';
+	import ZKProofAnimation from '$lib/components/ZKProofAnimation.svelte';
+	import AskAI from '$lib/components/vote/AskAI.svelte';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -221,8 +223,10 @@
 	<section class="private">
 		<span class="sec-kicker">{c.privateKicker}</span>
 		<h2>{c.privateTitle}</h2>
+		<div class="private-anim"><ZKProofAnimation lang={currentLang} /></div>
 		<BallotPathAnimation lang={currentLang} />
 		<p>{c.privateBody}</p>
+		<div class="private-ask"><AskAI lang={currentLang} /></div>
 		<p class="private-links">
 			<a href={paths.how}>{c.how} →</a>
 			<a href={paths.verify}>{c.verify} →</a>
@@ -643,6 +647,12 @@
 		margin: 0.9rem auto 0;
 		max-width: 30rem;
 		text-wrap: balance;
+	}
+	.private-anim {
+		margin: 0 0 1.4rem;
+	}
+	.private-ask {
+		margin: 1.1rem 0 0;
 	}
 	.private-links {
 		display: flex;
