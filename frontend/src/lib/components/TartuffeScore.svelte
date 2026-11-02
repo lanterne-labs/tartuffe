@@ -64,6 +64,12 @@
 	export function tartuffeOf(honesty: number | null | undefined): number | null {
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
 	}
+	/** The colour of a Tartuffe value, its place on the track: green, amber, red. */
+	export function tartuffeColor(t: number): string {
+		return t < 50
+			? `color-mix(in oklch, var(--green) ${Math.round(100 - t * 2)}%, var(--amber))`
+			: `color-mix(in oklch, var(--amber) ${Math.round(100 - (t - 50) * 2)}%, var(--red))`;
+	}
 </script>
 
 <svelte:window onclick={outside} onkeydown={(e) => e.key === 'Escape' && (help = false)} />

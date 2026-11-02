@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { eventPaths, showVoters } from '$lib/event';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	import ScoreLineup from '$lib/components/ScoreLineup.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
@@ -16,6 +17,7 @@
 	let persons: PersonSummary[] = $state([]);
 	let topHonest: PersonSummary[] = $state([]);
 	let topDishonest: PersonSummary[] = $state([]);
+	let candidates: PersonSummary[] = $state([]);
 	let panelsLoading = $state(true);
 	let loading = $state(true);
 	let error: string | null = $state(null);
@@ -102,12 +104,14 @@
 			panelsLoading = true;
 			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS });
 			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS });
-			const [bestRes, worstRes] = await Promise.all([
+			const [bestRes, worstRes, candRes] = await Promise.all([
 				fetch(`${API_BASE}/api/persons?${bestQs}`),
-				fetch(`${API_BASE}/api/persons?${worstQs}`)
+				fetch(`${API_BASE}/api/persons?${worstQs}`),
+				fetch(`${API_BASE}/api/persons?candidate=true&limit=100`)
 			]);
 			if (bestRes.ok) topHonest = (await bestRes.json()) ?? [];
 			if (worstRes.ok) topDishonest = (await worstRes.json()) ?? [];
+			if (candRes.ok) candidates = (await candRes.json()) ?? [];
 		} catch (err) {
 			// Panel errors are non-fatal; main list error banner covers retries.
 		} finally {
@@ -305,6 +309,14 @@
 			{/if}
 		</section>
 	</div>
+
+	{#if candidates.length > 1}
+		<section class="lineup-section">
+			<h2 class="section-title">{tr('score.lineup.title', currentLang)}</h2>
+			<p class="lineup-lead">{tr('score.lineup.lead', currentLang)}</p>
+			<ScoreLineup people={candidates} lang={currentLang} />
+		</section>
+	{/if}
 
 	<h2 class="section-title">{tr('home.all_entities', currentLang)}</h2>
 
@@ -516,6 +528,16 @@
 	.rank-panel--worst {
 		background: var(--bg-card);
 		border: 1px solid var(--border-card);
+	}
+
+	.lineup-section {
+		margin-bottom: 2.5rem;
+	}
+	.lineup-lead {
+		text-align: center;
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+		margin: -0.5rem 0 1rem;
 	}
 
 	.rank-panel-header {
