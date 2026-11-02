@@ -978,6 +978,12 @@ type FactAuditScope struct {
 	FactID        *int64
 	CreatedFrom   time.Time
 	CreatedBefore time.Time
+	// ActiveOnly leaves out the duplicates (the specific side of a
+	// 'duplicate' relation): the site shows their canonical fact.
+	ActiveOnly bool
+	// TextOnly leaves out the votes (assemblee_law_page): they are written
+	// from the scrutin record, not extracted by the LLM.
+	TextOnly bool
 }
 
 // ListFactsForAudit returns facts for the auditor in scope. Order is
@@ -1008,6 +1014,12 @@ func (s *PostgresStorer) ListFactsForAudit(ctx context.Context, scope FactAuditS
 	if factID != nil {
 		args = append(args, *factID)
 		conds = append(conds, fmt.Sprintf("f.id = $%d", len(args)))
+	}
+	if scope.ActiveOnly {
+		conds = append(conds, `NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')`)
+	}
+	if scope.TextOnly {
+		conds = append(conds, `NOT EXISTS (SELECT 1 FROM fact_sources fs WHERE fs.fact_id = f.id AND fs.source_type = 'assemblee_law_page')`)
 	}
 	whereClause := ""
 	if len(conds) > 0 {

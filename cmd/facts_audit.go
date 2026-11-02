@@ -32,6 +32,8 @@ var (
 	factsAuditEndpoint                                                    string
 	factsAuditModel                                                       string
 	factsAuditAPIKey                                                      string
+	factsAuditActiveOnly, factsAuditTextOnly                              bool
+	factsAuditSkipDone                                                    string
 )
 
 var factsAuditCmd = &cobra.Command{
@@ -84,6 +86,9 @@ func init() {
 	factsAuditCmd.Flags().StringVar(&factsAuditCreatedFrom, "created-from", "", "Only facts created on or after this day (YYYY-MM-DD)")
 	factsAuditCmd.Flags().StringVar(&factsAuditCreatedBefore, "created-before", "", "Only facts created before this day (YYYY-MM-DD)")
 	factsAuditCmd.Flags().StringVar(&factsAuditDeleteRules, "delete-rules", "", "With --apply, delete only the facts whose rule is in this comma-separated list (e.g. not_about_entity,journalist_characterization); default: every delete verdict")
+	factsAuditCmd.Flags().BoolVar(&factsAuditActiveOnly, "active-only", false, "Leave out the duplicates (the site shows their canonical fact)")
+	factsAuditCmd.Flags().BoolVar(&factsAuditTextOnly, "text-only", false, "Leave out the votes (written from the scrutin record, not by the LLM)")
+	factsAuditCmd.Flags().StringVar(&factsAuditSkipDone, "skip-done", "", "A JSONL output of an earlier run: its facts are not audited again (resume a cut run)")
 	factsAuditCmd.Flags().StringVar(&factsAuditEndpoint, "endpoint", "", "Override OPEN_AI_API for this run (e.g. http://cachy:4000/v1)")
 	factsAuditCmd.Flags().StringVar(&factsAuditModel, "model", "", "Override OPEN_AI_CHAT_MODEL for this run")
 	factsAuditCmd.Flags().StringVar(&factsAuditAPIKey, "apikey", "", "Override OPEN_AI_KEY for this run (some local gateways use a fixed token)")
@@ -145,7 +150,7 @@ func runFactsAudit(cmd *cobra.Command, args []string) (runErr error) {
 		personIDPtr = &person.ID
 	}
 
-	scope := storage.FactAuditScope{PersonID: personIDPtr, FactID: factIDPtr}
+	scope := storage.FactAuditScope{PersonID: personIDPtr, FactID: factIDPtr, ActiveOnly: factsAuditActiveOnly, TextOnly: factsAuditTextOnly}
 	for _, b := range []struct {
 		flag string
 		dst  *time.Time
@@ -168,6 +173,20 @@ func runFactsAudit(cmd *cobra.Command, args []string) (runErr error) {
 	rows, err := storer.ListFactsForAudit(ctx, scope, factsAuditRandom, factsAuditMax)
 	if err != nil {
 		return fmt.Errorf("failed to list facts: %w", err)
+	}
+	if factsAuditSkipDone != "" {
+		done, err := readAuditedFactIDs(factsAuditSkipDone)
+		if err != nil {
+			return err
+		}
+		kept := rows[:0]
+		for _, r := range rows {
+			if !done[r.ID] {
+				kept = append(kept, r)
+			}
+		}
+		log.Info().Int("skipped", len(rows)-len(kept)).Int("left", len(kept)).Str("file", factsAuditSkipDone).Msg("Fact audit: facts already audited are skipped")
+		rows = kept
 	}
 	if len(rows) == 0 {
 		fmt.Fprintln(os.Stderr, "No facts to audit.")
@@ -389,4 +408,28 @@ func printFactAuditSummary(w *os.File, total, keep, del, unsure, errors int, ela
 	fmt.Fprintf(w, "Delete:     %d%s\n", del, pct(del))
 	fmt.Fprintf(w, "Unsure:     %d%s\n", unsure, pct(unsure))
 	fmt.Fprintf(w, "Errors:     %d\n", errors)
+}
+
+// readAuditedFactIDs reads the fact ids of an earlier JSONL output; a missing
+// file is an empty set (the first run of a resumable loop). A cut last line is
+// ignored: that fact is audited again.
+func readAuditedFactIDs(path string) (map[int64]bool, error) {
+	done := map[int64]bool{}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return done, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		var row struct {
+			FactID int64 `json:"fact_id"`
+		}
+		if strings.TrimSpace(line) == "" || json.Unmarshal([]byte(line), &row) != nil || row.FactID == 0 {
+			continue
+		}
+		done[row.FactID] = true
+	}
+	return done, nil
 }
