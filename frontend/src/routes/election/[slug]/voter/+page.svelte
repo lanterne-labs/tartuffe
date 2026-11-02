@@ -558,6 +558,7 @@
 			</div>
 			<!-- One line under the button, its place kept: reordering moves nothing. -->
 			<p class="vote-note" class:vote-note--ok={!dirty && !busy && (ballot.state === 'acked' || ballot.state === 'verified')} aria-live="polite">{statusLine}</p>
+			{#if kReal > 1}<p class="vote-note vote-note--privacy">{tr('v2.privacy.batch', currentLang)}</p>{/if}
 		{/if}
 		{#if actionError}
 			<p class="save-error" role="alert">{@html actionError}</p>
@@ -669,7 +670,7 @@
 				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
 			{/if}
 			{#if !results}
-				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
+				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang)}</p>
 			{/if}
 			<!-- The two counts side by side: the ranking, and the first choices. -->
 			<div class="two-counts">

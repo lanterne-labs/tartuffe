@@ -37,6 +37,7 @@ export function pickLang(native: string | null | undefined, en: string | null | 
 // string needs a count, build it in the component (e.g. `${n} ${t('facts', n)}`).
 const dict: Record<string, { fr: string; en: string }> = {
 	// Nav
+	'dashboard.title': { fr: 'Classement des candidats', en: 'Candidate ranking' },
 	'nav.dashboard': { fr: 'Tableau de bord', en: 'Dashboard' },
 
 	// Home / dashboard
@@ -54,6 +55,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'home.sourced': { fr: 'Personnalités politiques suivies', en: 'Tracked political figures' },
 	'home.sourced_note': { fr: 'Leurs déclarations et votes sont collectés, mais pas encore confrontés : aucune détection de contradictions pour l’instant, donc pas de score.', en: 'Their statements and votes are collected but not yet checked against each other: no contradiction detection for now, so no score.' },
 	'home.no_detection': { fr: 'Sans détection', en: 'No detection' },
+	'person.ai_note': { fr: 'Les contradictions sont détectées automatiquement par une IA, qui peut se tromper. Chaque fait renvoie à sa source.', en: 'Contradictions are detected automatically by an AI, which can be wrong. Every fact links to its source.' },
+	'person.ai_note_link': { fr: 'La méthode', en: 'The method' },
 	'person.no_detection_note': { fr: 'Les faits de cette personnalité sont collectés, mais pas encore confrontés entre eux : aucune détection de contradictions pour l’instant, donc pas de score.', en: 'This figure’s facts are collected but not yet checked against each other: no contradiction detection for now, so no score.' },
 	'home.no_data': { fr: 'Aucune donnée.', en: 'No data yet.' },
 	'home.load_more': { fr: 'Afficher plus', en: 'Load more' },
@@ -169,7 +172,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'nav.profile': { fr: 'Mon profil', en: 'My profile' },
 
 	// Home promotion of the featured pre-poll
-	'home.poll.title': { fr: 'Votre candidat tient-il parole ?', en: 'Does your candidate tell the truth?' },
+	'home.poll.title': { fr: 'Votre candidat tient-il parole ?', en: 'Does your candidate keep their word?' },
 	'home.poll.lead': { fr: 'Classez vos candidats et découvrez leur Tartuffe-Score.', en: 'Rank your candidates and see their Tartuffe-Score alongside.' },
 	'home.poll.cta': { fr: 'Voter et comparer', en: 'Vote and compare' },
 	'home.poll.candidates': { fr: '{n} candidats', en: '{n} candidates' },
@@ -302,6 +305,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'nav.menu.lab': { fr: 'Le labo', en: 'The lab' },
 	'nav.menu.privacy': { fr: 'Confidentialité', en: 'Privacy' },
 	'nav.about': { fr: 'À propos', en: 'About' },
+	'nav.contact': { fr: 'Contact', en: 'Contact' },
+	'nav.legal': { fr: 'Mentions légales', en: 'Legal notice' },
 	'nav.privacy': { fr: 'Confidentialité', en: 'Privacy' },
 
 	// Share
@@ -393,7 +398,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.counter.next.zero': { fr: 'mise à jour en préparation', en: 'update in preparation' },
 	'v2.results.none.first': { fr: 'Les premiers résultats s’affichent dès le premier vote, après un court délai.', en: 'The first results appear at the first vote, after a short delay.' },
 	'v2.results.none.one': { fr: 'Les résultats s’affichent par paquets de {k} votes, pour qu’aucun vote ne puisse être deviné. Encore un vote avant la première mise à jour.', en: 'Results appear in batches of {k} votes, so that no single vote can be guessed. One more vote before the first update.' },
-	'v2.results.none': { fr: 'Les résultats s’affichent par paquets de {k} votes, pour qu’aucun vote ne puisse être deviné. Encore {m} votes avant la première mise à jour.', en: 'Results appear in batches of {k} votes, so that no single vote can be guessed. {m} more votes before the first update.' },
+	'v2.results.none': { fr: 'Les résultats s’affichent dès que quelques votes de plus ont été comptés : ainsi, aucun vote ne peut être deviné.', en: 'Results appear once a few more votes have been counted, so that no single vote can be guessed.' },
+	'v2.privacy.batch': { fr: 'Pour protéger le secret du vote, votre vote entre dans les résultats en direct une fois que quelques autres votes ont été comptés.', en: 'To keep the vote secret, your vote joins the live results once a few other votes have been counted.' },
 	'v2.blackout': { fr: 'Résultats figés pendant la période électorale.', en: 'Results frozen during the electoral period.' },
 	'v2.status.proving': { fr: 'Préparation de votre bulletin…', en: 'Preparing your ballot…' },
 	'v2.status.sending': { fr: 'Envoi…', en: 'Sending…' },

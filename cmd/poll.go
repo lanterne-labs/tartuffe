@@ -98,8 +98,8 @@ var pollIsoloirSetupCmd = &cobra.Command{
 	Long: `Print the poll setup (isoloir SPEC §7) of an event, to log with
 isoloir submit poll: a ranked poll of the event's candidates (by name), the
 blank last, ranked up to the event's max choices with pairwise margins,
-encrypted for one authority, results open after every changed ballot
-(k_real 1) outside the blackouts, linked re-votes. A poll's options never
+encrypted for one authority, results open after every two changed ballots
+(k_real 2: a tally waits for two changed ballots) outside the blackouts, linked re-votes. A poll's options never
 change once logged: add the candidates first (dm poll candidate add).`,
 	Annotations: map[string]string{"needs_db": "true"},
 	Args:        cobra.ExactArgs(1),
@@ -429,7 +429,7 @@ func runPollIsoloirSetup(cmd *cobra.Command, args []string) error {
 		"v": 1, "id": id, "version": 1, "registry": registry, "title": e.TitleFR,
 		"kind":       map[string]any{"type": "ranked", "options": names, "blank": true, "depth": e.MaxChoices, "margins": true},
 		"encryption": map[string]any{"mode": "elgamal", "pk": pk, "authority": map[string]any{"type": "single", "sign_key": signKey}},
-		"publish":    map[string]any{"mode": "open", "k_real": 1, "min_gap": 0, "coin": false},
+		"publish":    map[string]any{"mode": "open", "k_real": 2, "min_gap": 0, "coin": false},
 		"revote":     "linked",
 		"opens":      opens.Unix(),
 		"closes":     e.ClosesAt.Unix(),

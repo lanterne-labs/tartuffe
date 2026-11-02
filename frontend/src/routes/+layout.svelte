@@ -222,6 +222,10 @@
 	<a href="/corrections">{tr('corrections.title', currentLang)}</a>
 	<span aria-hidden="true">·</span>
 	<a href="/feed">{tr('nav.feed', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/contact">{tr('nav.contact', currentLang)}</a>
+	<span aria-hidden="true">·</span>
+	<a href="/mentions-legales">{tr('nav.legal', currentLang)}</a>
 </footer>
 
 <style>

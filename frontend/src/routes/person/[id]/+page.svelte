@@ -495,6 +495,7 @@
 						<span class="dot">·</span>
 						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
+					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
 					{:else}
 						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
 						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>

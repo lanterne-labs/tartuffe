@@ -24,6 +24,12 @@
 	let currentPage = $state(0);
 	let pageSize = 50;
 	let hasMore = $state(true);
+	// The others: their facts are collected, nothing is judged; no score.
+	let others: PersonSummary[] = $state([]);
+	let othersLoading = $state(true);
+	let othersPage = $state(0);
+	let othersHasMore = $state(true);
+	const OTHERS_PAGE = 24;
 	let entityFilter: '' | 'party' | 'human' = $state('');
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -62,6 +68,7 @@
 		}
 		debounceTimer = setTimeout(() => {
 			loadPersons(0);
+			loadOthers(0);
 			loadPanels();
 		}, 300);
 	}
@@ -81,11 +88,11 @@
 		try {
 			loading = true;
 			const offset = page * pageSize;
-			const qs = buildQuery({ limit: pageSize, offset });
+			const qs = buildQuery({ limit: pageSize, offset, candidate: 'true' });
 			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
 
 			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
+				throw new Error(tr('error.generic', currentLang));
 			}
 
 			const data = await response.json();
@@ -93,17 +100,37 @@
 			hasMore = data.length === pageSize;
 			currentPage = page;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred';
+			console.error('failed to load the candidates', err);
+			error = tr('error.generic', currentLang);
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadOthers(page = 0) {
+		try {
+			othersLoading = true;
+			const qs = buildQuery({ limit: OTHERS_PAGE, offset: page * OTHERS_PAGE, candidate: 'false' });
+			const response = await fetch(`${API_BASE}/api/persons?${qs}`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			const data: PersonSummary[] = (await response.json()) ?? [];
+			others = page === 0 ? data : [...others, ...data];
+			othersHasMore = data.length === OTHERS_PAGE;
+			othersPage = page;
+		} catch (err) {
+			// The candidates' error banner offers the retry.
+			console.error('failed to load the other figures', err);
+		} finally {
+			othersLoading = false;
 		}
 	}
 
 	async function loadPanels() {
 		try {
 			panelsLoading = true;
-			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS });
-			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS });
+			// The rankings are among the candidates only: only they are judged.
+			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
+			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
 			const [bestRes, worstRes, candRes] = await Promise.all([
 				fetch(`${API_BASE}/api/persons?${bestQs}`),
 				fetch(`${API_BASE}/api/persons?${worstQs}`),
@@ -113,7 +140,8 @@
 			if (worstRes.ok) topDishonest = (await worstRes.json()) ?? [];
 			if (candRes.ok) candidates = (await candRes.json()) ?? [];
 		} catch (err) {
-			// Panel errors are non-fatal; main list error banner covers retries.
+			// Non-fatal: the candidates' error banner offers the retry.
+			console.error('failed to load the ranking panels', err);
 		} finally {
 			panelsLoading = false;
 		}
@@ -122,11 +150,12 @@
 	function setFilter(filter: '' | 'party' | 'human') {
 		entityFilter = filter;
 		loadPersons(0);
+		loadOthers(0);
 		loadPanels();
 	}
 
 	async function refreshAll() {
-		await Promise.all([loadPersons(0), loadPanels()]);
+		await Promise.all([loadPersons(0), loadOthers(0), loadPanels()]);
 	}
 
 	function loadMore() {
@@ -144,6 +173,7 @@
 	onMount(() => {
 		loadFeatured();
 		loadPersons();
+		loadOthers();
 		loadPanels();
 		realtimeManager.connect();
 		unsubscribe = subscribeToPersonEvents(-1, handleRealtimeEvent);
@@ -162,7 +192,7 @@
 </script>
 
 <svelte:head>
-	<title>tartuffe.me — {tr('home.poll.title', currentLang)}</title>
+	<title>tartuffe.me — {tr('dashboard.title', currentLang)}</title>
 </svelte:head>
 
 <div class="dashboard">
@@ -185,7 +215,7 @@
 	{#if error}
 		<div class="error-banner">
 			<p>{error}</p>
-			<button class="retry-btn" onclick={() => loadPersons(0)}>{tr('home.retry', currentLang)}</button>
+			<button class="retry-btn" onclick={() => refreshAll()}>{tr('home.retry', currentLang)}</button>
 		</div>
 	{/if}
 
@@ -303,7 +333,10 @@
 		</section>
 	{/if}
 
-	<h2 class="section-title">{tr('home.all_entities', currentLang)}</h2>
+	<header class="section-header">
+		<h2 class="section-title">{tr('home.candidates', currentLang)}</h2>
+		<p class="section-sub">{tr('home.candidates_sub', currentLang)}</p>
+	</header>
 
 	{#if loading && persons.length === 0}
 		<div class="persons-grid">
@@ -356,9 +389,85 @@
 			<button class="load-more-btn" onclick={loadMore}>{tr('home.load_more', currentLang)}</button>
 		</div>
 	{/if}
+
+	<section class="others">
+		<header class="section-header">
+			<h2 class="section-title">{tr('home.sourced', currentLang)}</h2>
+			<p class="section-sub">{tr('home.sourced_note', currentLang)}</p>
+		</header>
+		{#if othersLoading && others.length === 0}
+			<div class="loading-indicator"><div class="spinner"></div></div>
+		{:else if others.length === 0}
+			<p class="empty">{tr('home.no_data', currentLang)}</p>
+		{:else}
+			<div class="persons-grid">
+				{#each others as person (person.id)}
+					<a href="/person/{person.id}" class="card">
+						<div class="card-content">
+							<div class="card-left">
+								{#if person.image_url}
+									<img src={person.image_url} alt="" class="other-avatar" loading="lazy" />
+								{:else}
+									<div class="other-avatar other-avatar-placeholder" aria-hidden="true">{person.name.charAt(0).toUpperCase()}</div>
+								{/if}
+								<div class="card-info">
+									<div class="card-name">
+										{person.name}
+										{#if person.entity_type === 'party'}
+											<span class="badge">{tr('home.party_badge', currentLang)}</span>
+										{/if}
+									</div>
+									<div class="card-meta">
+										{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)} · {tr('home.no_detection', currentLang)}
+									</div>
+								</div>
+							</div>
+						</div>
+					</a>
+				{/each}
+			</div>
+			{#if othersHasMore && !othersLoading}
+				<div class="load-more">
+					<button class="load-more-btn" onclick={() => loadOthers(othersPage + 1)}>{tr('home.load_more', currentLang)}</button>
+				</div>
+			{/if}
+		{/if}
+	</section>
 </div>
 
 <style>
+	.section-header {
+		margin-bottom: 1rem;
+	}
+	.section-header .section-title {
+		margin-bottom: 0.25rem;
+	}
+	.section-sub {
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
+		max-width: 60ch;
+	}
+	.others {
+		margin-top: 3rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--border-card);
+	}
+	.other-avatar {
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+	.other-avatar-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--bg-secondary);
+		color: var(--text-secondary);
+		font-weight: 600;
+	}
+
 	.dashboard {
 		max-width: 1200px;
 		margin: 0 auto;

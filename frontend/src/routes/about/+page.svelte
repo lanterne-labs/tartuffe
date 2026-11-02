@@ -85,7 +85,7 @@
 			limitsTitle: 'L’IA détecte, vous corrigez',
 			limits: [
 				['Tout est sourcé.', 'Date, citation exacte, lien vers l’original.'],
-				['Vérifié deux fois.', 'Chaque contradiction est relue avant publication, puis auditée régulièrement.'],
+				['Vérifié deux fois, par l’IA.', 'Chaque contradiction est relue par une seconde IA avant publication, et nous en contrôlons régulièrement un échantillon. L’IA peut se tromper : signalez-nous les erreurs.'],
 				['Vous avez le dernier mot.', 'Un fait ou une contradiction vous semble faux ? Signalez-le : si vous avez raison, il est retiré.'],
 				['Corrections publiques.', 'Chaque retrait est affiché, avec sa raison.']
 			],
@@ -160,7 +160,7 @@
 			limitsTitle: 'The AI detects, you correct',
 			limits: [
 				['Everything is sourced.', 'Date, exact quote, link to the original.'],
-				['Checked twice.', 'Each contradiction is reread before it is published, then audited regularly.'],
+				['Checked twice, by AI.', 'Each contradiction is checked by a second AI before it is published, and we review a sample regularly. AI can be wrong: tell us about errors.'],
 				['You have the last word.', 'A wrong fact or contradiction? Report it: if you are right, it goes.'],
 				['Public corrections.', 'Every removal is shown, with its reason.']
 			],

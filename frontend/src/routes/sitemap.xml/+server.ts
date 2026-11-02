@@ -4,7 +4,7 @@ import { env } from '$env/dynamic/private';
 import { API_BASE } from '$lib/config';
 import type { RequestHandler } from './$types';
 
-const STATIC = ['/', '/dashboard', '/feed', '/about', '/about/privacy', '/corrections', '/lab'];
+const STATIC = ['/', '/dashboard', '/feed', '/about', '/about/privacy', '/corrections', '/lab', '/contact', '/mentions-legales'];
 
 export const GET: RequestHandler = async ({ url, fetch }) => {
 	const origin = url.origin;
