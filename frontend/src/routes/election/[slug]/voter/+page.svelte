@@ -306,7 +306,6 @@
 	let winnerSlot = $derived(results?.condorcet ?? null);
 	// The two readings of the same results: the ranking and the first
 	// choices only (the same rows, re-sorted by their first-choice share).
-	let tab = $state<'ranking' | 'first'>('ranking');
 	// Before the first tally, the same table at zero: the candidates are
 	// there to see, the numbers come.
 	let emptyResults = $derived<Shown>({
@@ -315,8 +314,11 @@
 		condorcet: null
 	});
 	let table = $derived(results ?? emptyResults);
-	let rows = $derived(tab === 'ranking' ? table.rows : byFirst(table.rows));
-	let winnerName = $derived(winnerSlot !== null ? nameOf(winnerSlot) : '');
+	// The two counts shown side by side.
+	let counts = $derived([
+		{ kind: 'ranking' as const, list: table.rows },
+		{ kind: 'first' as const, list: byFirst(table.rows) }
+	]);
 	// The consistency score of a candidate, from its card; none for the
 	// blank or a card without one.
 	function scoreOf(slot: number): number | null {
@@ -666,48 +668,42 @@
 			{#if $st.tallyUnverified}
 				<div class="notice notice--legal" role="alert">{tr('v2.results.unverified', currentLang)}</div>
 			{/if}
-			<p class="legend legend--results">{tr('score.legend', currentLang)}</p>
 			{#if !results}
 				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang, { k: kReal, m: kReal })}</p>
 			{/if}
-			<div class="tabs" role="tablist">
-				<button role="tab" class="tab" class:tab--on={tab === 'ranking'} aria-selected={tab === 'ranking'} onclick={() => (tab = 'ranking')}>{tr('poll.tab.ranking', currentLang)}</button>
-				<button role="tab" class="tab" class:tab--on={tab === 'first'} aria-selected={tab === 'first'} onclick={() => (tab = 'first')}>{tr('poll.tab.first', currentLang)}</button>
+			<!-- The two counts side by side: the ranking, and the first choices. -->
+			<div class="two-counts">
+				{#each counts as { kind, list } (kind)}
+					<div class="count">
+						<h3>{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}</h3>
+						<ol class="vote-list">
+							{#each list as o, i (o.slot)}
+								<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={!!results && i === 0} class:vote-row--blank={o.blank}>
+									<span class="vote-rank">{results ? (kind === 'ranking' ? o.rank : i + 1) : '–'}</span>
+									{#if o.blank}
+										<span class="photo photo--empty" aria-hidden="true"></span>
+									{:else}
+										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
+									{/if}
+									<span class="who-text">
+										<span class="name">{nameOf(o.slot)}{#if o.blank}&nbsp;{@render help(tr('vote.blank.tip', currentLang))}{/if}</span>
+										{#if kind === 'ranking'}
+											<span class="meta">{tr('poll.top3.short', currentLang, { r: pct(o.ranked, table.counted) })}</span>
+										{:else}
+											<strong class="share">{pct(o.first, table.counted)}</strong>
+										{/if}
+									</span>
+								</li>
+							{/each}
+						</ol>
+					</div>
+				{/each}
 			</div>
 			<details class="explain">
-				<summary><span class="explain-lead">{tr(tab === 'ranking' ? 'poll.explain.ranking.lead' : 'poll.explain.first.lead', currentLang)}</span> <span class="explain-q">{tr('poll.explain.q', currentLang)}</span></summary>
-				<p>{tr(tab === 'ranking' ? 'poll.explain.ranking.rest' : 'poll.explain.first.rest', currentLang)}</p>
+				<summary>{tr('poll.explain.both', currentLang)}</summary>
+				<p><strong>{tr('poll.tab.ranking', currentLang)}.</strong> {tr('poll.explain.ranking.lead', currentLang)} {tr('poll.explain.ranking.rest', currentLang)}</p>
+				<p><strong>{tr('poll.tab.first.short', currentLang)}.</strong> {tr('poll.explain.first.rest.only', currentLang)} {tr('poll.explain.first.rest', currentLang)}</p>
 			</details>
-			{#if tab === 'ranking' && winnerName}
-				<p class="winner-line">{tr('poll.winner.line', currentLang, { name: winnerName })}</p>
-			{/if}
-			<ol class="vote-list">
-				{#each rows as o, i (o.slot)}
-					<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={!!results && i === 0} class:vote-row--blank={o.blank}>
-						<span class="vote-rank">{results ? (tab === 'ranking' ? o.rank : i + 1) : '–'}</span>
-						<div class="vote-main">
-							<span class="who">
-								{#if o.blank}
-									<span class="photo photo--empty" aria-hidden="true"></span>
-								{:else}
-									<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
-								{/if}
-								<span class="who-text">
-									<span class="name">{nameOf(o.slot)}</span>
-									{#if o.blank}
-										{@render help(tr('vote.blank.tip', currentLang))}
-									{/if}
-								</span>
-							</span>
-							{#if tab === 'ranking' && winnerSlot === o.slot}
-								<span class="winner">{tr('poll.condorcet', currentLang)}</span>
-							{/if}
-							<span class="meta">{tr('poll.top3', currentLang, { r: pct(o.ranked, table.counted) })}</span>
-						</div>
-						<span class="big"><strong>{pct(o.first, table.counted)}</strong><small>{tr('poll.first.label', currentLang)}</small></span>
-					</li>
-				{/each}
-			</ol>
 		{/if}
 		<p class="disclaimer">{tr('poll.disclaimer', currentLang)}</p>
 	</section>
@@ -1298,10 +1294,6 @@
 		background: var(--accent-hover);
 		border-color: var(--accent-hover);
 	}
-	.legend--results {
-		text-align: center;
-		margin: 0 0 0.75rem;
-	}
 	.legend {
 		margin: -0.25rem 0 0.9rem;
 		font-size: 0.8rem;
@@ -1344,11 +1336,31 @@
 		font-size: 0.85rem;
 		margin: 0.6rem 0 0;
 	}
-	/* As wide as a row needs: the name and its share stay close. */
+	/* The two counts side by side, each as narrow as its rows. */
+	.two-counts {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.6rem;
+		max-width: 40rem;
+		margin: 0.4rem auto 0.8rem;
+	}
+	.count h3 {
+		margin: 0 0 0.5rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		text-align: center;
+		color: var(--text-secondary);
+	}
+	.share {
+		font-size: 1.05rem;
+		font-weight: 800;
+		font-variant-numeric: tabular-nums;
+	}
 	.vote-list {
 		list-style: none;
-		max-width: 30rem;
-		margin: 0 auto;
+		margin: 0;
 		padding: 0;
 		border: 1px solid var(--border-card);
 		border-radius: var(--radius-lg);
@@ -1357,10 +1369,10 @@
 	}
 	.vote-row {
 		display: grid;
-		grid-template-columns: 1.8rem minmax(0, 1fr) auto;
+		grid-template-columns: 1.1rem auto minmax(0, 1fr);
 		align-items: center;
-		gap: 0.75rem;
-		padding: 0.7rem 1rem;
+		gap: 0.5rem;
+		padding: 0.55rem 0.6rem;
 		border-bottom: 1px solid var(--border-card);
 	}
 	.vote-row:last-child {
@@ -1379,24 +1391,12 @@
 		text-align: center;
 		font-variant-numeric: tabular-nums;
 	}
-	.vote-main {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-		min-width: 0;
-	}
 	.who-text {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
 		gap: 0.3rem;
 		min-width: 0;
-	}
-	.vote-row .who {
-		flex-direction: row;
-		gap: 0.6rem;
-		text-align: left;
-		align-items: center;
 	}
 	.vote-row .photo {
 		width: 2.4rem;
@@ -1407,25 +1407,6 @@
 	.vote-row .meta {
 		justify-content: flex-start;
 		text-align: left;
-	}
-	.winner {
-		width: fit-content;
-		padding: 0.1rem 0.5rem;
-		border-radius: var(--radius-full);
-		background: var(--accent);
-		color: white;
-		font-size: 0.7rem;
-		font-weight: 700;
-	}
-	.who {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.45rem;
-		color: var(--text-primary);
-	}
-	.who:hover .name {
-		color: var(--accent-hover);
 	}
 	.photo {
 		width: 64px;
@@ -1471,8 +1452,8 @@
 			height: 48px;
 		}
 		.vote-row {
-			gap: 0.5rem;
-			padding: 0.7rem 0.75rem;
+			gap: 0.35rem;
+			padding: 0.5rem 0.4rem;
 		}
 		.name {
 			font-size: 0.82rem;
@@ -1557,33 +1538,10 @@
 		font-family: var(--font-mono, monospace);
 		overflow-wrap: anywhere;
 	}
-	.tabs {
-		display: flex;
-		justify-content: center;
-		gap: 0.4rem;
-		margin: 0 0 0.6rem;
-	}
 	.results h2,
-	.winner-line,
 	.explain,
 	.explain summary {
 		text-align: center;
-	}
-	.tab {
-		padding: 0.4rem 0.9rem;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		background: transparent;
-		color: var(--text-secondary);
-		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-	}
-	.tab--on {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: white;
 	}
 	.explain {
 		margin: 0 0 0.75rem;
@@ -1594,38 +1552,8 @@
 	.explain summary {
 		cursor: pointer;
 	}
-	.explain-q {
-		color: var(--accent-hover);
-		text-decoration: underline;
-		text-underline-offset: 0.15em;
-	}
 	.explain p {
 		margin: 0.4rem 0 0;
-	}
-	.winner-line {
-		margin: 0 0 0.75rem;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-	.big {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		line-height: 1.1;
-	}
-	.big strong {
-		font-size: 1.35rem;
-		font-weight: 700;
-		font-variant-numeric: tabular-nums;
-		color: var(--text-primary);
-	}
-	.big small {
-		font-size: 0.68rem;
-		color: var(--text-muted);
-	}
-	.vote-row .who {
-		flex-wrap: wrap;
 	}
 	.vote-row .help summary {
 		width: 1.1rem;

@@ -152,7 +152,7 @@
 	{#if named && !(centreNumber && !unrated && (size === 'xs' || size === 'sm'))}
 		<span class="value" bind:this={root}>
 			<span class:value--none={unrated}>{value}</span>
-			{#if !unrated && size !== 'xs' && withHelp}
+			{#if !unrated && withHelp}
 				<button class="q" onclick={toggle} aria-expanded={help} aria-label={tr('score.help', lang)}>?</button>
 				{#if help}
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -314,6 +314,14 @@
 		font-weight: 700;
 		line-height: 1;
 		cursor: pointer;
+	}
+	.ts--xs .q {
+		width: 0.85rem;
+		height: 0.85rem;
+		font-size: 0.55rem;
+	}
+	.ts--xs .value {
+		gap: 0.2rem;
 	}
 	.q:hover,
 	.q[aria-expanded='true'] {
