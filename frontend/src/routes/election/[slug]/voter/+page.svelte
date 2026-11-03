@@ -319,6 +319,41 @@
 		{ kind: 'ranking' as const, list: table.rows },
 		{ kind: 'first' as const, list: byFirst(table.rows) }
 	]);
+	// A line joins each option's row in one count to its row in the other;
+	// a click on a card brings its line forward.
+	let picked = $state<number | null>(null);
+	let countsEl = $state<HTMLElement | null>(null);
+	let rowEls = $state<Record<'ranking' | 'first', Record<number, HTMLElement>>>({ ranking: {}, first: {} });
+	let links = $state<{ slot: number; d: string }[]>([]);
+	function measure() {
+		if (!countsEl) return;
+		const box = countsEl.getBoundingClientRect();
+		const out: { slot: number; d: string }[] = [];
+		for (const o of table.rows) {
+			const a = rowEls.ranking[o.slot]?.getBoundingClientRect();
+			const b = rowEls.first[o.slot]?.getBoundingClientRect();
+			if (!a || !b) continue;
+			const x1 = a.right - box.left, y1 = a.top + a.height / 2 - box.top;
+			const x2 = b.left - box.left, y2 = b.top + b.height / 2 - box.top;
+			const m = (x1 + x2) / 2;
+			out.push({ slot: o.slot, d: `M${x1} ${y1}C${m} ${y1} ${m} ${y2} ${x2} ${y2}` });
+		}
+		links = out;
+	}
+	$effect(() => {
+		void counts;
+		if (!countsEl) return;
+		const ro = new ResizeObserver(() => measure());
+		ro.observe(countsEl);
+		const f = requestAnimationFrame(measure);
+		return () => {
+			ro.disconnect();
+			cancelAnimationFrame(f);
+		};
+	});
+	function pickRow(slot: number) {
+		picked = picked === slot ? null : slot;
+	}
 	// The consistency score of a candidate, from its card; none for the
 	// blank or a card without one.
 	function scoreOf(slot: number): number | null {
@@ -673,13 +708,37 @@
 				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang)}</p>
 			{/if}
 			<!-- The two counts side by side: the ranking, and the first choices. -->
-			<div class="two-counts">
+			<div class="two-counts" bind:this={countsEl}>
+				<svg class="links" aria-hidden="true">
+					{#each links as l (l.slot)}
+						<path d={l.d} class:on={picked === l.slot} class:off={picked !== null && picked !== l.slot} />
+					{/each}
+				</svg>
 				{#each counts as { kind, list } (kind)}
 					<div class="count">
 						<h3>{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}</h3>
 						<ol class="vote-list">
 							{#each list as o, i (o.slot)}
-								<li class="vote-row" class:vote-row--mine={shown.includes(o.slot)} class:vote-row--top={!!results && i === 0} class:vote-row--blank={o.blank}>
+								{@const pid = o.blank ? undefined : cardOf(o.slot)?.person_id}
+								<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+								<li
+									bind:this={rowEls[kind][o.slot]}
+									class="vote-row"
+									class:vote-row--mine={shown.includes(o.slot)}
+									class:vote-row--top={!!results && i === 0}
+									class:vote-row--blank={o.blank}
+									class:vote-row--picked={picked === o.slot}
+									role="button"
+									tabindex="0"
+									aria-pressed={picked === o.slot}
+									onclick={() => pickRow(o.slot)}
+									onkeydown={(e) => {
+										if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+											e.preventDefault();
+											pickRow(o.slot);
+										}
+									}}
+								>
 									<span class="vote-rank">{results ? (kind === 'ranking' ? o.rank : i + 1) : '–'}</span>
 									{#if o.blank}
 										<span class="photo photo--empty" aria-hidden="true"></span>
@@ -687,7 +746,11 @@
 										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
 									{/if}
 									<span class="who-text">
-										<span class="name">{nameOf(o.slot)}{#if o.blank}&nbsp;{@render help(tr('vote.blank.tip', currentLang))}{/if}</span>
+										{#if pid !== undefined}
+											<a class="name name--link" href={`/person/${pid}`} onclick={(e) => e.stopPropagation()}>{nameOf(o.slot)}</a>
+										{:else}
+											<span class="name">{nameOf(o.slot)}{#if o.blank}&nbsp;{@render help(tr('vote.blank.tip', currentLang))}{/if}</span>
+										{/if}
 										{#if kind === 'ranking'}
 											<span class="meta">{tr('poll.top3.short', currentLang, { r: pct(o.ranked, table.counted) })}</span>
 										{:else}
@@ -1337,13 +1400,57 @@
 		font-size: 0.85rem;
 		margin: 0.6rem 0 0;
 	}
-	/* The two counts side by side, each as narrow as its rows. */
+	/* The two counts side by side, each as narrow as its rows, the lines
+	   between them in the gap. */
 	.two-counts {
+		position: relative;
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.6rem;
-		max-width: 40rem;
+		column-gap: 3.5rem;
+		max-width: 44rem;
 		margin: 0.4rem auto 0.8rem;
+	}
+	.links {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		overflow: visible;
+		pointer-events: none;
+	}
+	.links path {
+		fill: none;
+		stroke: var(--text-muted);
+		stroke-width: 1;
+		opacity: 0.35;
+		transition: opacity var(--transition-fast), stroke var(--transition-fast);
+	}
+	.links path.off {
+		opacity: 0.12;
+	}
+	.links path.on {
+		stroke: var(--accent);
+		stroke-width: 2;
+		opacity: 1;
+	}
+	.vote-row[role='button'] {
+		cursor: pointer;
+	}
+	.vote-row--picked {
+		box-shadow: inset 3px 0 0 var(--accent);
+		background: var(--accent-glow);
+	}
+	.vote-row:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: -2px;
+	}
+	.name--link {
+		color: inherit;
+		text-decoration: none;
+	}
+	.name--link:hover {
+		color: var(--accent-hover);
+		text-decoration: underline;
 	}
 	.count h3 {
 		margin: 0 0 0.5rem;
@@ -1451,6 +1558,9 @@
 		.photo {
 			width: 48px;
 			height: 48px;
+		}
+		.two-counts {
+			column-gap: 1.6rem;
 		}
 		.vote-row {
 			gap: 0.35rem;
