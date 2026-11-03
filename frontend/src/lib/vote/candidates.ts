@@ -37,7 +37,11 @@ export async function loadEventMeta(slug: string): Promise<EventMeta> {
 	const res = await fetch(url);
 	if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
 	const body = await res.json();
-	return fromStatic ? (body as EventMeta) : metaFromPoll(body as PollResponse);
+	if (!fromStatic) return metaFromPoll(body as PollResponse);
+	// The app's photos are its own files, named relative to its base path.
+	const meta = body as EventMeta;
+	for (const c of meta.candidates) if (c.image_url && !/^https?:/.test(c.image_url)) c.image_url = `${base}/${c.image_url}`;
+	return meta;
 }
 
 // The key a name is matched by: the same letters whatever the case, the

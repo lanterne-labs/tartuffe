@@ -6,7 +6,11 @@
 // The published app never calls the site's API: the candidates' cards of
 // each event of VITE_VOTE_POLLS (slug:id,…) are fetched here from
 // VITE_API_BASE (GET /api/polls/<slug>) into static/vote/candidates/<slug>.json,
-// and the app reads them (VITE_VOTE_STATIC_CANDIDATES=1).
+// and the app reads them (VITE_VOTE_STATIC_CANDIDATES=1). Their photos are
+// shrunk to 256 px and shipped with the app (static/vote/candidates/<slug>/):
+// the originals weigh up to a few MB each, and their host would see every
+// voter's address.
+import sharp from 'sharp';
 import { cpSync, rmSync, mkdirSync, existsSync, lstatSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
@@ -33,6 +37,20 @@ for (const slug of slugs) {
 			.filter((o) => o.kind === 'candidate')
 			.map((o) => ({ name: o.name, person_id: o.person_id ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
 	};
+	mkdirSync(`${candidates}/candidates/${slug}`, { recursive: true });
+	for (const c of meta.candidates) {
+		if (!c.image_url || c.person_id === undefined) continue;
+		const r = await fetch(c.image_url);
+		if (!r.ok) throw new Error(`vote app: the photo of ${c.name}, ${c.image_url}, answered HTTP ${r.status}`);
+		const file = `candidates/${slug}/${c.person_id}.jpg`;
+		await sharp(Buffer.from(await r.arrayBuffer()))
+			.rotate()
+			.resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+			.jpeg({ quality: 80, mozjpeg: true })
+			.toFile(`${candidates}/${file}`);
+		// Relative to the app's base path (lib/vote/candidates.ts).
+		c.image_url = `vote/${file}`;
+	}
 	writeFileSync(`${candidates}/candidates/${slug}.json`, JSON.stringify(meta));
 	console.log(`vote app: ${slug}, ${meta.candidates.length} candidates`);
 }
