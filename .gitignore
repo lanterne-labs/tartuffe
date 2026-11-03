@@ -53,3 +53,6 @@ scoped_persons*.txt
 # macOS
 .DS_Store
 !.claude/skills/**/*.md
+
+# bd (beads) is local only: its database and files never go to GitHub
+.beads/
