@@ -37,7 +37,6 @@ import {
 	type ProverOptions
 } from '@isoloir/web';
 import ProveWorker from '@isoloir/web/prove.worker?worker';
-import { bech32, hex } from '@scure/base';
 import { ensureIsolated } from './isolate';
 
 // The prover's large public files, fetched whole from jsDelivr and used only
@@ -192,6 +191,7 @@ const emptyState: SessionState = {
 	kinds: 'legacy',
 	pow: { bits: 0, state: 'none' },
 	revoteGap: 0,
+	complaints: [],
 	linkAvailable: false,
 	storage: 'best-effort'
 };
@@ -360,17 +360,6 @@ export function linkURL(votePage: string, publicKey: string): string {
 export function parseLink(fragment: string): string | null {
 	const m = /^#?link=(0[23][0-9a-f]{64})$/.exec(fragment.trim());
 	return m ? m[1] : null;
-}
-
-// neventLink is a public page of a Nostr event (njump renders any event):
-// an nevent code with the relays as hints.
-export function neventLink(id: string, relays: string[]): string {
-	const tlv: number[] = [0, 32, ...hex.decode(id)];
-	for (const r of relays.slice(0, 3)) {
-		const b = new TextEncoder().encode(r);
-		tlv.push(1, b.length, ...b);
-	}
-	return 'https://njump.me/' + bech32.encode('nevent', bech32.toWords(Uint8Array.from(tlv)), 5000);
 }
 
 // The latest tally of an event, read without a session (the landing

@@ -2,7 +2,7 @@
 // audit): the whole log read from the mirror, every ballot proof checked
 // with bb.js, every passport proof with the ZKPassport SDK (the
 // certificate registry read on Ethereum through a public RPC), every
-// tally recomputed, and the relays' copies compared with the log.
+// tally recomputed. The relays keep no copies, so none is compared.
 
 import { audit, bbVerifier, zkPassportVerifier, type AuditProgress, type AuditResult, type AuditWasm, type ZkPassportSdk } from '@isoloir/web';
 import { LOG_KEY, mirrorSources, wasmModule } from './isoloir';
@@ -30,17 +30,15 @@ async function fromMirror<T>(path: string, read: (r: Response) => Promise<T>): P
 
 export type { AuditProgress, AuditResult };
 
-/** Runs the audit; `onProgress` follows it. */
-export async function runAudit(onProgress: (p: AuditProgress) => void, signal?: AbortSignal): Promise<AuditResult> {
-	const wasm = (await wasmModule()) as unknown as Parameters<typeof audit>[0] & AuditWasm;
+/** The proof checks the audit and a complaint's judge need: ballot proofs
+ * with bb.js, passport proofs with the ZKPassport SDK (an endpoint that
+ * fails gives way to the next; a refusal is a refusal). */
+export async function verifiers() {
 	const sdk = (await import('@zkpassport/sdk')) as unknown as ZkPassportSdk;
 	const passports = ETH_RPCS.map((rpc) => zkPassportVerifier(sdk, rpc));
-	return audit(wasm, {
-		text: (p) => fromMirror(p, (r) => r.text()),
-		logKey: LOG_KEY,
-		verifyProof: bbVerifier((p) => fromMirror(p, async (r) => new Uint8Array(await r.arrayBuffer()))),
-		// An endpoint that fails gives way to the next; a refusal is a refusal.
-		verifyPassport: async (req) => {
+	return {
+		verifyProof: bbVerifier((p: string) => fromMirror(p, async (r) => new Uint8Array(await r.arrayBuffer()))),
+		verifyPassport: async (req: Parameters<ReturnType<typeof zkPassportVerifier>>[0]) => {
 			let last: unknown = null;
 			for (const v of passports) {
 				try {
@@ -50,7 +48,17 @@ export async function runAudit(onProgress: (p: AuditProgress) => void, signal?: 
 				}
 			}
 			throw last;
-		},
+		}
+	};
+}
+
+/** Runs the audit; `onProgress` follows it. */
+export async function runAudit(onProgress: (p: AuditProgress) => void, signal?: AbortSignal): Promise<AuditResult> {
+	const wasm = (await wasmModule()) as unknown as Parameters<typeof audit>[0] & AuditWasm;
+	return audit(wasm, {
+		text: (p) => fromMirror(p, (r) => r.text()),
+		logKey: LOG_KEY,
+		...(await verifiers()),
 		// A local trial with simulated passports (never in a build: vite.config.ts).
 		allowDev: import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1',
 		onProgress,

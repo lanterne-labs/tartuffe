@@ -17,7 +17,9 @@
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, showVoters } from '$lib/event';
-	import { sessionFor, parseLink, neventLink, voteKey } from '$lib/vote/isoloir';
+	import { sessionFor, parseLink, voteKey } from '$lib/vote/isoloir';
+	import { encodeComplaint } from '@isoloir/web';
+	import { goto } from '$app/navigation';
 	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
 	import { rankedRows, byFirst, type Shown } from '$lib/vote/results';
 	import { describeError, toVoteError, reportLink } from '$lib/vote/errors';
@@ -116,6 +118,18 @@
 	let loggedUnknown = $derived(!!key && $st.revote.seq !== null && !ballot.choice && !inFlight);
 	let canResend = $derived(ballot.state === 'failed' && !!ballot.kept);
 	let canRetry = $derived((ballot.state === 'failed' || ballot.state === 'rejected') && !ballot.kept && !!rankOf(ballot.choice));
+
+	// A refusal the voter thinks wrong: the complaint, made from the signed
+	// refusal and the ballot, is judged on its own page (and kept there).
+	let contestable = $derived(ballot.state === 'rejected' && !['too_soon', 'stale_seq', 'seq_gap', 'revote_off', 'closed', 'not_open'].includes(ballot.reason ?? ''));
+	async function contest() {
+		try {
+			const saved = await vs.need().complainOfRefusal('ballot');
+			await goto(`${paths.complaint}#c=${saved.link}`);
+		} catch (e) {
+			failed(e);
+		}
+	}
 
 	function failed(e: unknown) {
 		const ve = toVoteError(e);
@@ -573,13 +587,12 @@
 		{#if ballot.state === 'missing'}
 			<div class="status-line status-line--fault" role="alert">
 				<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
-				{#if ballot.complaints?.length}
+				{#if ballot.complaintEvents?.length}
 					<p>
 						{tr('v2.status.missing.links', currentLang)}
-						{#each ballot.complaints as id, i (id)}
+						{#each ballot.complaintEvents as ev, i (ev.id)}
 							{#if i > 0}, {/if}
-							<a href="{paths.complaint}?id={id}">{tr('v2.status.missing.verify', currentLang)}</a>
-							(<a href={neventLink(id, $st.channels.filter((c) => c.type === 'nostr').map((c) => c.url))} rel="noopener">{tr('v2.status.missing.event', currentLang)}</a>)
+							<a href="{paths.complaint}#c={encodeComplaint(ev)}">{tr('v2.status.missing.verify', currentLang)}</a>
 						{/each}
 					</p>
 				{/if}
@@ -606,6 +619,9 @@
 			<p class="save-error" role="alert">{@html actionError}</p>
 			{#if actionDetail}
 				<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{actionDetail}</p></details>
+			{/if}
+			{#if contestable}
+				<button class="btn btn-small btn--ghost" onclick={contest} disabled={busy}>{tr('v2.ballot.contest', currentLang)}</button>
 			{/if}
 		{/if}
 		{#if hasKey}

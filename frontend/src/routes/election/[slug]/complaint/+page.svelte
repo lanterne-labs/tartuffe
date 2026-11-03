@@ -1,178 +1,224 @@
 <script lang="ts">
-	// A complaint (isoloir SPEC §11.3), checked in the reader's browser: the
-	// ack the ingest signed, the checkpoint it names (signed by the log key
-	// pinned in this app), and whether that checkpoint's entries hold the
-	// body. Everything comes from the relays and the mirror; nothing from
-	// our server directly. Every outcome is a named verdict; a failure to
-	// read names itself and offers to read again.
+	// A complaint (isoloir SPEC §11.3), judged in the reader's browser. The
+	// complaint is the voter's own copy: the relays keep none, so it comes in
+	// the link's fragment (#c=…, which no server ever receives), a pasted
+	// text or a saved file. It holds the ack our server signed and the body
+	// it answered; the library judges it against the public copy of the log,
+	// with the log key pinned in this app. Nothing comes from our server.
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { lang, tr, type Lang } from '$lib/i18n';
+	import { lang, type Lang } from '$lib/i18n';
 	import { eventPaths } from '$lib/event';
-	import { Mirror, WebSocketTransport, IsoloirError, type LedgerSetup, type NostrEvent } from '@isoloir/web';
-	import { core, mirrorSources, settingsProblem, neventLink, LOG_KEY } from '$lib/vote/isoloir';
+	import { decodeComplaint, encodeComplaint, judgeComplaint, type ComplaintVerdict, type NostrEvent } from '@isoloir/web';
+	import { core, mirrorSources, settingsProblem, LOG_KEY } from '$lib/vote/isoloir';
+	import { verifiers } from '$lib/vote/audit';
 	import { messageOf } from '$lib/vote/errors';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 	let paths = $derived(eventPaths($page.params.slug ?? ''));
-	let id = $derived($page.url.searchParams.get('id') ?? '');
 
-	type Verdict = { kind: 'loading' | 'noid' | 'nosetup' | 'error' | 'notfound' | 'badack' | 'nocp' | 'badcp' | 'present' | 'absent'; pi?: string; n?: number; seq?: number; at?: string; detail?: string };
-	let verdict = $state<Verdict>({ kind: 'loading' });
-	let relays = $state<string[]>([]);
-	let complaintId = $state('');
+	const content = {
+		fr: {
+			title: 'Une réclamation',
+			lead: 'Un votant montre la confirmation que notre serveur a signée, avec ce qu’il avait envoyé. Votre navigateur refait la vérification sur la copie publique du registre : rien n’est à croire sur parole.',
+			paste: 'Collez ici le lien ou le texte de la réclamation, ou ouvrez le fichier enregistré.',
+			file: 'Ouvrir un fichier',
+			judge: 'Vérifier',
+			loading: 'Vérification…',
+			replay: (a: number, b: number) => `Relecture du registre · ${a}/${b}`,
+			nosetup: 'Ce vote n’est pas encore configuré sur ce site.',
+			unreadable: 'Ce texte n’est pas une réclamation lisible.',
+			error: 'La vérification a échoué. Réessayez.',
+			retry: 'Réessayer',
+			other: 'Vérifier une autre réclamation',
+			what: (k: string) => (k === 'ballot' ? 'bulletin' : 'inscription'),
+			dropped: {
+				holds: (w: string, n: number) => `Notre serveur a confirmé ce ${w} pour la signature n° ${n} du registre, mais ne l’y a pas inscrit : la réclamation est fondée.`,
+				late: (w: string, n: number, m: number) => `Notre serveur a confirmé ce ${w} pour la signature n° ${n}, mais ne l’a inscrit qu’à la n° ${m}, en retard : la réclamation est fondée.`,
+				fails: (w: string, n: number, seq: number) => `Le ${w} figure dans le registre (signature n° ${n}, position ${seq}) : la réclamation n’est pas fondée.`,
+				pending: (n: number) => `La copie publique ne va pas encore jusqu’à la signature n° ${n}. Réessayez dans quelques minutes.`
+			},
+			refusal: {
+				holds: (w: string) => `Notre serveur a refusé ce ${w}, mais votre navigateur l’accepte en rejouant le registre à ce moment-là : le refus était injustifié.`,
+				fails: (w: string) => `Votre navigateur refuse lui aussi ce ${w} : le refus était justifié.`,
+				uncertain: 'Le verdict dépend de la seconde exacte du refus : impossible de trancher.',
+				unchecked: 'Une preuve n’a pas pu être vérifiée dans votre navigateur. Réessayez.'
+			},
+			invalid: 'Ce n’est pas une réclamation valable pour ce vote : la confirmation n’est pas signée par notre serveur, ou le texte a été modifié.',
+			verified: 'Vérifié dans votre navigateur : la signature de la confirmation, celle du registre, et son contenu.',
+			details: 'Détails techniques',
+			copy: 'Copier le lien de la réclamation',
+			copied: 'Lien copié',
+			save: 'Enregistrer le fichier',
+			how: 'Comment ça marche'
+		},
+		en: {
+			title: 'A complaint',
+			lead: 'A voter shows the confirmation our server signed, with what they had sent. Your browser checks it again against the public copy of the log: nothing is to be taken on trust.',
+			paste: 'Paste the complaint’s link or text here, or open the saved file.',
+			file: 'Open a file',
+			judge: 'Check',
+			loading: 'Checking…',
+			replay: (a: number, b: number) => `Replaying the log · ${a}/${b}`,
+			nosetup: 'This vote is not set up on this site yet.',
+			unreadable: 'This text is not a readable complaint.',
+			error: 'The check failed. Try again.',
+			retry: 'Try again',
+			other: 'Check another complaint',
+			what: (k: string) => (k === 'ballot' ? 'ballot' : 'registration'),
+			dropped: {
+				holds: (w: string, n: number) => `Our server confirmed this ${w} for signature no. ${n} of the log, but did not log it: the complaint holds.`,
+				late: (w: string, n: number, m: number) => `Our server confirmed this ${w} for signature no. ${n}, but logged it only at no. ${m}, late: the complaint holds.`,
+				fails: (w: string, n: number, seq: number) => `The ${w} is in the log (signature no. ${n}, position ${seq}): the complaint does not hold.`,
+				pending: (n: number) => `The public copy does not reach signature no. ${n} yet. Try again in a few minutes.`
+			},
+			refusal: {
+				holds: (w: string) => `Our server refused this ${w}, but your browser accepts it, replaying the log at that time: the refusal was wrong.`,
+				fails: (w: string) => `Your browser refuses this ${w} too: the refusal was right.`,
+				uncertain: 'The verdict depends on the exact second of the refusal: it cannot be settled.',
+				unchecked: 'A proof could not be checked in your browser. Try again.'
+			},
+			invalid: 'This is not a valid complaint for this vote: the confirmation is not signed by our server, or the text was changed.',
+			verified: 'Checked in your browser: the confirmation’s signature, the log’s, and its contents.',
+			details: 'Technical details',
+			copy: 'Copy the complaint’s link',
+			copied: 'Link copied',
+			save: 'Save the file',
+			how: 'How it works'
+		}
+	};
+	let c = $derived(content[currentLang]);
 
-	const FETCH_TIMEOUT = 20_000;
+	type View = { kind: 'input' } | { kind: 'loading' } | { kind: 'nosetup' } | { kind: 'unreadable'; detail: string } | { kind: 'error'; detail: string } | { kind: 'done'; v: ComplaintVerdict };
+	let view = $state<View>({ kind: 'input' });
+	let pasted = $state('');
+	let event = $state<NostrEvent | null>(null);
+	let progress = $state<{ checkpoint: number; checkpoints: number } | null>(null);
+	let copied = $state(false);
 
-	// fetchEvent reads an event by id from the relays, the first that has it.
-	function fetchEvent(urls: string[], eventId: string): Promise<NostrEvent | null> {
-		const t = new WebSocketTransport();
-		return new Promise((resolve) => {
-			let left = urls.length;
-			const stops: (() => void)[] = [];
-			const finish = (e: NostrEvent | null) => {
-				clearTimeout(timer);
-				stops.splice(0).forEach((s) => s());
-				resolve(e);
-			};
-			const timer = setTimeout(() => finish(null), FETCH_TIMEOUT);
-			if (left === 0) finish(null);
-			for (const url of urls) {
-				stops.push(
-					t.subscribe(url, { ids: [eventId] }, (e) => e.id === eventId && finish(e), {
-						onEose: () => --left === 0 && finish(null),
-						onDown: () => --left === 0 && finish(null)
-					})
-				);
-			}
-		});
-	}
-
-	async function check() {
-		verdict = { kind: 'loading' };
-		if (!/^[0-9a-f]{64}$/i.test(id)) {
-			verdict = { kind: 'noid' };
+	async function judge(text: string) {
+		progress = null;
+		copied = false;
+		if (settingsProblem($page.params.slug ?? '')) {
+			view = { kind: 'nosetup' };
 			return;
 		}
+		let ev: NostrEvent;
 		try {
-			if (settingsProblem($page.params.slug ?? '')) {
-				verdict = { kind: 'nosetup' };
-				return;
-			}
-			const c = await core();
-			const mirror = new Mirror(c, mirrorSources(), LOG_KEY);
-			const ledger = await mirror.setup<LedgerSetup>('setup/ledger.json', 'ledger');
-			if (!ledger) {
-				verdict = { kind: 'nosetup' };
-				return;
-			}
-			relays = ledger.body.channels.filter((ch) => ch.type === 'nostr').map((ch) => ch.url);
-			complaintId = id;
-			const ev = await fetchEvent(relays, id);
-			if (!ev || !c.verifyEvent(ev)) {
-				verdict = { kind: 'notfound' };
-				return;
-			}
-			// The complaint: {v, ack: <the ack event>, body: <the body, as JSON>}.
-			let ackHash = '';
-			let n = 0;
-			try {
-				const body = JSON.parse(ev.content) as { ack?: NostrEvent; body?: unknown };
-				if (!body.ack || body.body === undefined) throw new Error('no ack or body');
-				const ack = c.readAck(body.ack, ledger.body.ingest);
-				if (ack.outcome !== 'accepted' || ack.checkpoint === undefined) throw new Error('not an acceptance naming a checkpoint');
-				if (c.bodyHash(c.canonical(body.body)) !== ack.hash) throw new Error('the ack is of another body');
-				ackHash = ack.hash;
-				n = ack.checkpoint;
-			} catch (e) {
-				verdict = { kind: 'badack', detail: messageOf(e) };
-				return;
-			}
-			let cp;
-			try {
-				cp = await mirror.checkpoint(n);
-			} catch (e) {
-				if (e instanceof IsoloirError && e.code === 'log_key') {
-					verdict = { kind: 'badcp', pi: ackHash, n, detail: e.detail };
-					return;
-				}
-				throw e;
-			}
-			if (!cp) {
-				verdict = { kind: 'nocp', pi: ackHash, n };
-				return;
-			}
-			const entries = await mirror.entries(n, cp.mirror ?? '');
-			if (entries === null) {
-				verdict = { kind: 'nocp', pi: ackHash, n };
-				return;
-			}
-			const found = entries.find((e) => c.bodyHash(e.body) === ackHash);
-			if (found) {
-				verdict = { kind: 'present', pi: ackHash, n, seq: found.seq };
-				return;
-			}
-			const at = new Date(cp.time * 1000);
-			verdict = { kind: 'absent', pi: ackHash, n, at: at.toLocaleString(currentLang === 'fr' ? 'fr-FR' : 'en-GB', { timeZone: 'Europe/Paris' }) };
+			ev = decodeComplaint(text.trim());
+		} catch (e) {
+			view = { kind: 'unreadable', detail: messageOf(e) };
+			return;
+		}
+		event = ev;
+		view = { kind: 'loading' };
+		try {
+			const v = await judgeComplaint(await core(), ev, {
+				mirror: mirrorSources(),
+				verifierKey: LOG_KEY,
+				...(await verifiers()),
+				allowDev: import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1',
+				onProgress: (p) => (progress = p)
+			});
+			view = { kind: 'done', v };
 		} catch (e) {
 			console.error('complaint', e);
-			verdict = { kind: 'error', detail: messageOf(e) };
+			view = { kind: 'error', detail: messageOf(e) };
 		}
 	}
 
-	onMount(check);
+	async function openFile(e: Event) {
+		const f = (e.currentTarget as HTMLInputElement).files?.[0];
+		if (f) await judge(await f.text());
+	}
 
-	const short = (s: string) => (s.length > 18 ? s.slice(0, 10) + '…' + s.slice(-6) : s);
+	function sentence(v: ComplaintVerdict): { text: string; tone: 'ok' | 'bad' | 'none' } {
+		if (v.verdict === 'invalid' || !v.claim) return { text: c.invalid, tone: 'none' };
+		const w = c.what(v.claim.kind);
+		const n = v.claim.checkpoint ?? 0;
+		if (v.claim.claim === 'dropped') {
+			if (v.verdict === 'holds') return { text: v.found?.late ? c.dropped.late(w, n, v.found.checkpoint) : c.dropped.holds(w, n), tone: 'bad' };
+			if (v.verdict === 'fails') return { text: c.dropped.fails(w, v.found?.checkpoint ?? n, v.found?.seq ?? 0), tone: 'ok' };
+			return { text: c.dropped.pending(n), tone: 'none' };
+		}
+		if (v.verdict === 'holds') return { text: c.refusal.holds(w), tone: 'bad' };
+		if (v.verdict === 'fails') return { text: c.refusal.fails(w), tone: 'ok' };
+		if (v.verdict === 'uncertain') return { text: c.refusal.uncertain, tone: 'none' };
+		return { text: c.refusal.unchecked, tone: 'none' };
+	}
+
+	let link = $derived(event ? `${window.location.origin}${window.location.pathname}#c=${encodeComplaint(event)}` : '');
+	let fileUrl = $derived(event ? URL.createObjectURL(new Blob([JSON.stringify(event)], { type: 'application/json' })) : '');
+
+	async function copy() {
+		try {
+			await navigator.clipboard.writeText(link);
+			copied = true;
+		} catch (e) {
+			console.warn('complaint: copy', e);
+		}
+	}
+
+	function fromHash() {
+		const h = window.location.hash;
+		if (h.startsWith('#c=')) void judge(h);
+	}
+
+	onMount(() => {
+		fromHash();
+		window.addEventListener('hashchange', fromHash);
+		return () => window.removeEventListener('hashchange', fromHash);
+	});
 </script>
 
 <svelte:head>
-	<title>{tr('v2.complaint.title', currentLang)}</title>
+	<title>{c.title}</title>
 </svelte:head>
 
 <article class="complaint">
-	<h1>{tr('v2.complaint.title', currentLang)}</h1>
-	<p class="lead">{tr('v2.complaint.lead', currentLang)}</p>
-	{#if verdict.kind === 'loading'}
-		<p class="muted">{tr('v2.complaint.loading', currentLang)}</p>
-	{:else if verdict.kind === 'noid'}
-		<p class="verdict verdict--none">{tr('v2.complaint.noid', currentLang)}</p>
-	{:else if verdict.kind === 'nosetup'}
-		<p class="verdict verdict--none">{tr('v2.complaint.nosetup', currentLang)}</p>
-		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
-	{:else if verdict.kind === 'error'}
-		<p class="verdict verdict--none" role="alert">{tr('v2.complaint.error', currentLang)}</p>
-		{#if verdict.detail}
-			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{verdict.detail}</p></details>
+	<h1>{c.title}</h1>
+	<p class="lead">{c.lead}</p>
+
+	{#if view.kind === 'input' || view.kind === 'unreadable'}
+		<label class="muted" for="complaint-text">{c.paste}</label>
+		<textarea id="complaint-text" rows="4" bind:value={pasted}></textarea>
+		{#if view.kind === 'unreadable'}
+			<p class="verdict verdict--none" role="alert">{c.unreadable}</p>
 		{/if}
-		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
-	{:else if verdict.kind === 'notfound'}
-		<p class="verdict verdict--none">{tr('v2.complaint.notfound', currentLang)}</p>
-		<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
-	{:else if verdict.kind === 'badack'}
-		<p class="verdict verdict--none">{tr('v2.complaint.badack', currentLang)}</p>
-		{#if verdict.detail}
-			<details class="tech"><summary>{tr('v2.details', currentLang)}</summary><p>{verdict.detail}</p></details>
-		{/if}
-	{:else}
-		<p>{tr('v2.complaint.ack', currentLang, { pi: short(verdict.pi ?? ''), n: verdict.n ?? 0 })}</p>
-		{#if verdict.kind === 'nocp'}
-			<p class="verdict verdict--none">{tr('v2.complaint.nocp', currentLang, { n: verdict.n ?? 0 })}</p>
-			<button class="btn" onclick={check}>{tr('home.retry', currentLang)}</button>
-		{:else if verdict.kind === 'badcp'}
-			<p class="verdict verdict--bad">{tr('v2.complaint.badcp', currentLang, { n: verdict.n ?? 0 })}</p>
-		{:else if verdict.kind === 'present'}
-			<p class="verdict verdict--ok">{tr('v2.complaint.present', currentLang, { n: verdict.n ?? 0, seq: verdict.seq ?? 0 })}</p>
-		{:else}
-			<p class="verdict verdict--bad">{tr('v2.complaint.absent', currentLang, { n: verdict.n ?? 0, at: verdict.at ?? '' })}</p>
-		{/if}
-		<p class="muted">{tr('v2.complaint.verified', currentLang)}</p>
-	{/if}
-	{#if complaintId}
-		<p class="links">
-			<a href={neventLink(complaintId, relays)} rel="noopener">{tr('v2.complaint.post', currentLang)}</a> · <a href={paths.how}>{tr('event.menu.how', currentLang)}</a>
+		<p class="actions">
+			<button class="btn btn--primary" disabled={!pasted.trim()} onclick={() => judge(pasted)}>{c.judge}</button>
+			<label class="btn btn--ghost file">{c.file}<input type="file" accept=".json,application/json,text/plain" onchange={openFile} /></label>
 		</p>
+	{:else if view.kind === 'loading'}
+		<p class="muted" aria-live="polite">{progress ? c.replay(progress.checkpoint, progress.checkpoints) : c.loading}</p>
+	{:else if view.kind === 'nosetup'}
+		<p class="verdict verdict--none">{c.nosetup}</p>
+	{:else if view.kind === 'error'}
+		<p class="verdict verdict--none" role="alert">{c.error}</p>
+		<details class="tech"><summary>{c.details}</summary><p>{view.detail}</p></details>
+		<button class="btn" onclick={() => event && judge(encodeComplaint(event))}>{c.retry}</button>
+	{:else}
+		{@const s = sentence(view.v)}
+		<p class="verdict verdict--{s.tone}">{s.text}</p>
+		{#if view.v.verdict === 'pending' || view.v.verdict === 'unchecked'}
+			<button class="btn" onclick={() => event && judge(encodeComplaint(event))}>{c.retry}</button>
+		{/if}
+		{#if view.v.verdict !== 'invalid'}
+			<p class="muted">{c.verified}</p>
+		{/if}
+		<details class="tech"><summary>{c.details}</summary><p>{view.v.detail}</p></details>
+		{#if event && view.v.verdict !== 'invalid'}
+			<p class="actions">
+				<button class="btn btn--ghost" onclick={copy}>{copied ? c.copied : c.copy}</button>
+				<a class="btn btn--ghost" href={fileUrl} download="reclamation.json">{c.save}</a>
+			</p>
+		{/if}
 	{/if}
+
+	<p class="links">
+		{#if view.kind !== 'input'}<a href={paths.complaint} onclick={() => ((view = { kind: 'input' }), (event = null))}>{c.other}</a> · {/if}<a href={paths.how}>{c.how}</a>
+	</p>
 </article>
 
 <style>
@@ -180,6 +226,21 @@
 		max-width: 40rem;
 		margin: 0 auto;
 		padding: 1.5rem 1rem 3rem;
+	}
+	textarea {
+		width: 100%;
+		box-sizing: border-box;
+		margin: 0.5rem 0;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.8rem;
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+	}
+	.file input {
+		display: none;
 	}
 	.tech {
 		margin: 0 0 0.9rem;
