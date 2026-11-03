@@ -3,7 +3,7 @@
 	// animation (the passport stays on the phone, the ballot never comes to
 	// our server, only the result is revealed, anyone checks every step),
 	// and the limits said plainly. The
-	// technical version lives with the code (isoloir, docs/comment-ca-marche.md).
+	// technical version lives with the code (isoloir, docs/how-it-works.md).
 	// Every line must stay true to isoloir (DESIGN.md) and to the app.
 	import { page } from '$app/stores';
 	import { lang, type Lang } from '$lib/i18n';
@@ -18,7 +18,7 @@
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 	let paths = $derived(eventPaths($page.params.slug ?? ''));
 
-	const TECH = 'https://github.com/lanterne-labs/isoloir/blob/main/docs/comment-ca-marche.md';
+	const TECH = 'https://github.com/lanterne-labs/isoloir/blob/main/docs/how-it-works.md';
 
 	const content = {
 		fr: {
