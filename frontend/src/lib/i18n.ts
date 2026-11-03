@@ -229,7 +229,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'event.label': { fr: 'Expérience temporaire du labo', en: 'Temporary experiment of the lab' },
 	'event.tag': { fr: 'Expérience temporaire', en: 'Temporary experiment' },
 	'event.tag_short': { fr: 'Événement', en: 'Event' },
-	'event.pitch': { fr: 'Votez dès maintenant, en ligne, et suivez les résultats en direct. Ouvert à tous les citoyens, anonyme grâce au passeport.', en: 'Vote now, online, and follow the results live. Open to every citizen, anonymous thanks to your passport.' },
+	'event.pitch': { fr: 'Votez dès maintenant, en ligne, et suivez les résultats en direct. Ouvert à tout Français majeur muni d’un passeport valide, et anonyme.', en: 'Vote now, online, and follow the results live. Open to every French adult with a valid passport, and anonymous.' },
 	'event.needs': { fr: 'Il vous faut votre passeport et un smartphone. Deux minutes, une seule fois.', en: 'You need your passport and a smartphone. Two minutes, once.' },
 	'event.who': { fr: 'Une expérience de tartuffe.me, un site indépendant et sans publicité qui compare ce que disent et font les responsables politiques.', en: 'An experiment by tartuffe.me, an independent, ad-free site that compares what politicians say and do.' },
 	'event.ends': { fr: 'Fin le {d} (J-{n})', en: 'Ends {d} ({n} days left)' },
@@ -318,7 +318,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'share.text.person': { fr: 'Le Tartuffe-Score de {name} sur tartuffe.me', en: 'The Tartuffe-Score of {name} on tartuffe.me' },
 	'share.text.stance': { fr: 'Les déclarations et les votes de {name} sur « {topic} »', en: 'What {name} says and votes on “{topic}”' },
 	'share.text.contradiction': { fr: '{name} : « {a} » puis « {b} »', en: '{name}: “{a}”, then “{b}”' },
-	'share.text.event': { fr: 'J’ai voté à {name} sur tartuffe.me : un vote en ligne ouvert à tous, résultats en direct, anonyme grâce au passeport. À votre tour !', en: 'I voted in {name} on tartuffe.me: an online vote open to all, live results, anonymous thanks to the passport. Your turn!' },
+	'share.text.event': { fr: 'J’ai voté à {name} sur tartuffe.me : un vote en ligne ouvert à tout Français majeur muni d’un passeport valide, anonyme, résultats en direct. À votre tour !', en: 'I voted in {name} on tartuffe.me: an online vote open to every French adult with a valid passport, anonymous, live results. Your turn!' },
 	'share.text.fact': { fr: '{name} : « {fact} »', en: '{name}: “{fact}”' },
 
 	// Score explanation
