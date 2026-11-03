@@ -120,6 +120,9 @@
 			// A passport still valid on the proof's day: the base proof does
 			// not check the expiry, a query does (the verifier expects that day).
 			if (e.require_expiry) builder = builder.gte('expiry_date', new Date(serverNow()));
+			// A salted identifier comes with ZKPassport's strict face match:
+			// the app matches the holder's face to the chip's photo, on the phone.
+			if (e.oprf_key) builder = builder.facematch('strict');
 			builder = builder.bind('custom_data', request.customData);
 			const req = builder.done();
 			url = req.url;
