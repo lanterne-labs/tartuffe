@@ -89,7 +89,7 @@
 			features: [
 				['Classez jusqu’à 3 candidats', 'Ou votez blanc : il compte vraiment.'],
 				['Deux résultats en direct', 'Le classement et le premier choix, côte à côte.'],
-				['Changez d’avis', 'Jusqu’à la clôture, votre dernier vote compte.'],
+				['Changez d’avis', 'Jusqu’à la clôture, votre dernier vote compte, au plus un changement par heure.'],
 				['Jugez sur pièces', 'Chaque candidat avec son Tartuffe-Score.']
 			],
 			privateKicker: 'Privé par défaut',
@@ -117,7 +117,7 @@
 			features: [
 				['Rank up to 3 candidates', 'Or vote blank: it really counts.'],
 				['Two live results', 'The ranking and the first choices, side by side.'],
-				['Change your mind', 'Until the close, your last vote counts.'],
+				['Change your mind', 'Until the close, your last vote counts, at most one change an hour.'],
 				['Look at their record', 'Every candidate with their Tartuffe-Score.']
 			],
 			privateKicker: 'Private by default',

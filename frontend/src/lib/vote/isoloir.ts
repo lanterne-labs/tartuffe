@@ -189,6 +189,9 @@ const emptyState: SessionState = {
 	tallyUnverified: null,
 	prover: 'idle',
 	channels: [],
+	kinds: 'legacy',
+	pow: { bits: 0, state: 'none' },
+	revoteGap: 0,
 	linkAvailable: false,
 	storage: 'best-effort'
 };

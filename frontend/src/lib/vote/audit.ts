@@ -4,7 +4,7 @@
 // certificate registry read on Ethereum through a public RPC), every
 // tally recomputed, and the relays' copies compared with the log.
 
-import { audit, bbVerifier, zkPassportVerifier, WebSocketTransport, type AuditProgress, type AuditResult, type AuditWasm, type ZkPassportSdk } from '@isoloir/web';
+import { audit, bbVerifier, zkPassportVerifier, type AuditProgress, type AuditResult, type AuditWasm, type ZkPassportSdk } from '@isoloir/web';
 import { LOG_KEY, mirrorSources, wasmModule } from './isoloir';
 
 // Public Ethereum endpoints (chainlist.org/chain/1), tried in order: the
@@ -51,7 +51,6 @@ export async function runAudit(onProgress: (p: AuditProgress) => void, signal?: 
 			}
 			throw last;
 		},
-		relays: new WebSocketTransport(),
 		// A local trial with simulated passports (never in a build: vite.config.ts).
 		allowDev: import.meta.env.VITE_VOTE_SIMULATE_PASSPORT === '1',
 		onProgress,

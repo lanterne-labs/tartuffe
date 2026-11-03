@@ -61,6 +61,9 @@
 		untrack(() => {
 			try {
 				request = session.need().registrationRequest();
+				// The proof of work the ledger asks of every message, mined in the
+				// background while the voter scans the passport.
+				void session.need().startWork().catch(() => {});
 			} catch (e) {
 				fail(e);
 			}

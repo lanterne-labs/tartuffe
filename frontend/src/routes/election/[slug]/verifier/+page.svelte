@@ -18,8 +18,8 @@
 	let paths = $derived(eventPaths(slug));
 	let problem = $derived(settingsProblem(slug));
 
-	type StepKey = 'log' | 'registrations' | 'ballots' | 'tallies' | 'relays';
-	const STEPS: StepKey[] = ['log', 'registrations', 'ballots', 'tallies', 'relays'];
+	type StepKey = 'log' | 'registrations' | 'ballots' | 'tallies';
+	const STEPS: StepKey[] = ['log', 'registrations', 'ballots', 'tallies'];
 	const REPO = 'https://github.com/lanterne-labs/isoloir';
 
 	const content = {
@@ -34,19 +34,15 @@
 				log: 'Registre signé et intact',
 				registrations: 'Un passeport, une inscription',
 				ballots: 'Bulletins valides',
-				tallies: 'Résultats recomptés',
-				relays: 'Chaque bulletin envoyé est inscrit'
+				tallies: 'Résultats recomptés'
 			} as Record<StepKey, string>,
 			reading: (a: number, b: number) => `Lecture du registre · ${a}/${b}`,
 			checking: (a: number, b: number) => `Vérification des preuves · ${a}/${b}`,
 			replay: (a: number, b: number) => `Recomptage · ${a}/${b}`,
-			relaysRun: 'Lecture des relais',
 			checkpoints: (n: number) => `${n} points de contrôle`,
 			regs: (n: number) => `${n} inscription${n > 1 ? 's' : ''}`,
 			proofs: (n: number) => `${n} preuve${n > 1 ? 's' : ''} vérifiée${n > 1 ? 's' : ''}`,
 			tallies: (n: number) => `${n} résultat${n > 1 ? 's' : ''}`,
-			events: (n: number) => `${n} messages comparés`,
-			noRelays: 'aucun relais',
 			okTitle: 'Tout est vérifié',
 			koTitle: (n: number) => `${n} anomalie${n > 1 ? 's' : ''}`,
 			report: 'Signaler',
@@ -66,19 +62,15 @@
 				log: 'Log signed and intact',
 				registrations: 'One passport, one registration',
 				ballots: 'Valid ballots',
-				tallies: 'Results recounted',
-				relays: 'Every ballot sent is logged'
+				tallies: 'Results recounted'
 			} as Record<StepKey, string>,
 			reading: (a: number, b: number) => `Reading the log · ${a}/${b}`,
 			checking: (a: number, b: number) => `Checking the proofs · ${a}/${b}`,
 			replay: (a: number, b: number) => `Recounting · ${a}/${b}`,
-			relaysRun: 'Reading the relays',
 			checkpoints: (n: number) => `${n} checkpoints`,
 			regs: (n: number) => `${n} registration${n > 1 ? 's' : ''}`,
 			proofs: (n: number) => `${n} proof${n > 1 ? 's' : ''} verified`,
 			tallies: (n: number) => `${n} result${n > 1 ? 's' : ''}`,
-			events: (n: number) => `${n} messages compared`,
-			noRelays: 'no relay',
 			okTitle: 'Everything checks out',
 			koTitle: (n: number) => `${n} anomal${n > 1 ? 'ies' : 'y'}`,
 			report: 'Report',
@@ -131,7 +123,6 @@
 		if (/\(register\)|registr/i.test(p)) return 'registrations';
 		if (/\(ballot\)/.test(p)) return 'ballots';
 		if (/tally|close/.test(p)) return 'tallies';
-		if (/relay|event |acknowledged/.test(p)) return 'relays';
 		return 'log';
 	}
 	let failed = $derived(new Set((result?.problems ?? []).map(stepOf)));
@@ -153,8 +144,6 @@
 				return c.proofs(r.proofs.checked);
 			case 'tallies':
 				return c.tallies(r.tallies);
-			case 'relays':
-				return r.relays ? c.events(r.relays.events) : c.noRelays;
 		}
 	}
 	let live = $derived.by(() => {
@@ -162,8 +151,7 @@
 		if (!p) return '';
 		if (p.phase === 'download') return c.reading(p.checkpoint, p.checkpoints);
 		if (p.phase === 'proofs') return c.checking(p.verified, p.asked);
-		if (p.phase === 'replay') return c.replay(p.checkpoint, p.checkpoints);
-		return c.relaysRun;
+		return c.replay(p.checkpoint, p.checkpoints);
 	});
 	let pct = $derived(
 		!progress
@@ -178,8 +166,8 @@
 	);
 
 	// The pipeline: what each check covers, node by node and link by link.
-	const NODE_STEPS: StepKey[][] = [['registrations', 'ballots'], ['relays'], ['log'], ['log'], ['tallies']];
-	const LINK_STEPS: StepKey[] = ['relays', 'relays', 'log', 'tallies'];
+	const NODE_STEPS: StepKey[][] = [['registrations', 'ballots'], ['ballots'], ['log'], ['log'], ['tallies']];
+	const LINK_STEPS: StepKey[] = ['ballots', 'ballots', 'log', 'tallies'];
 	function lit(ks: StepKey[]): 'idle' | 'ok' | 'ko' {
 		if (ks.some(missed)) return 'ko';
 		return ks.every(passed) ? 'ok' : 'idle';

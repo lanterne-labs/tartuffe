@@ -121,7 +121,12 @@
 		const ve = toVoteError(e);
 		const b = $st.ballot;
 		const code = b.state === 'rejected' || b.state === 'failed' ? (b.reason ?? ve.code) : ve.code;
-		actionError = describeError(code, currentLang);
+		if (code === 'too_soon') {
+			// A re-vote counts only revoteGap after the last one: say when.
+			const data = ve.data as { waitSeconds?: number } | undefined;
+			const wait = Math.max(1, Math.ceil((data?.waitSeconds ?? $st.revoteGap) / 60));
+			actionError = tr('v2.reason.too_soon', currentLang, { wait: String(wait) });
+		} else actionError = describeError(code, currentLang);
 		actionDetail = b.detail ?? ve.detail ?? '';
 	}
 
@@ -396,6 +401,8 @@
 			console.warn('vote: the candidates', e);
 		}
 		await vs.init();
+		// The next ballot's proof of work, mined while the voter chooses.
+		void vs.session?.startWork().catch(() => {});
 	}
 
 	onMount(async () => {
