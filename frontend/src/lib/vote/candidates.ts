@@ -41,9 +41,16 @@ export async function loadEventMeta(slug: string): Promise<EventMeta> {
 }
 
 // The key a name is matched by: the same letters whatever the case, the
-// spaces and the Unicode form.
+// spaces, the Unicode form and the accents. A poll's options are fixed once
+// it is logged ("jean-luc melenchon"); the person's name may gain its accents
+// later ("Jean-Luc Mélenchon") and must still find its card.
 export function nameKey(name: string): string {
-	return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('fr');
+	return name
+		.normalize('NFD')
+		.replace(/\p{M}/gu, '')
+		.trim()
+		.replace(/\s+/g, ' ')
+		.toLocaleLowerCase('fr');
 }
 
 export function byName(list: Candidate[]): Map<string, Candidate> {
