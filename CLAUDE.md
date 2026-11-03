@@ -266,6 +266,8 @@ then `npm install`).
 
 Services on the host:
 
+A push to `main` deploys `mirror`, `worker` and `frontend` through the GitHub workflow `deploy` (`.github/workflows/deploy.yml`: `host up --service <s> --ci` with the project token `DEPLOY_TOKEN`, a repository secret); `ingest` is deployed the same way from isoloir's own workflow. The host cannot read the lanterne-labs repositories itself (its login is a personal GitHub account outside the org), so its own deploy on push does nothing; to deploy by hand, run `host up --service <s>` from the repository root (not `frontend/`: its root directory is a service setting).
+
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
   Sign-in on `mirror`: `AUTH_PROVIDERS` (`google`; `noop` to test). The vote needs no account.
 - **`worker`** — long-lived `dm worker run` (root `Dockerfile`, start command set in the service settings). Claims the collection tasks (`dm collect add`) and runs the ingest of their plugin for their person and period, as many tasks at once as the LLM endpoint serves (`llm.Concurrency()`: one on the local GPU box, on claude-team the processes of every seat: `CLAUDE_TEAM_PLAN_PROCS_PER_SEAT`, default 4, times the seats; every seat that is not at its limit serves at the same time); the facts of one person are inserted one at a time across the tasks. The daily feed and the maintenance pass in the order of priority (see Collection tasks above). Serves Prometheus metrics on `METRICS_PORT` (default 9090). Same env vars as `mirror` except no HTTP `PORT`. On a deploy the tasks it is on go back to pending and resumes where its fetch log stopped.

@@ -1,0 +1,31 @@
+# Deploys main to the host on every push. The host cannot read the
+# lanterne-labs repositories itself (its login is a personal GitHub
+# account), so the code is uploaded with a project token instead:
+# DEPLOY_TOKEN, a token of the project's production environment.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # frontend's root directory (frontend/) is a service setting:
+        # every service is uploaded from the repository root.
+        service: [mirror, worker, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g host-cli@5.70.0
+      - name: host up ${{ matrix.service }}
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: host up --service ${{ matrix.service }} --ci
