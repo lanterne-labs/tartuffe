@@ -37,7 +37,7 @@ func newWikiFilter() *wikiFilter {
 	return &wikiFilter{
 		HTTP:      &http.Client{Timeout: 15 * time.Second},
 		Languages: []string{"fr", "en"},
-		UserAgent: "Mirror-Entity-Validator/1.0 (https://tartuffe.me; contact: noreply@tartuffe.me)",
+		UserAgent: "Mirror-Entity-Validator/1.0 (https://tartuffe.me; contact: lanternelabs@proton.me)",
 		MaxPages:  3,
 	}
 }
