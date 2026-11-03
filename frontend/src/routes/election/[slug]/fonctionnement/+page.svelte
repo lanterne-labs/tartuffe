@@ -36,6 +36,7 @@
 			limits: [
 				'La clé qui révèle le résultat pourrait aussi ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les résultats, avec leurs preuves.',
 				'Votre clé permet de prouver votre vote à quelqu’un : un acheteur de voix pourrait l’exiger. Gardez-la pour vous.',
+				'Votre navigateur télécharge les fichiers publics du vote (le registre, les paramètres du calcul de preuve) chez jsDelivr, un service tiers, et vérifie chacun. jsDelivr voit votre adresse IP et le moment où vous préparez un bulletin, jamais son contenu.',
 				'Il faut un smartphone NFC et un passeport à puce.',
 				'C’est une expérience indépendante de tartuffe.me : un vote d’opinion en ligne, distinct du scrutin officiel et des sondages.'
 			],
@@ -57,6 +58,7 @@
 			limits: [
 				'The key that reveals the result could also open a single ballot, without knowing whose it is. We only publish results, with their proofs.',
 				'Your key lets you prove your vote to someone: a vote buyer could demand it. Keep it to yourself.',
+				'Your browser downloads the vote’s public files (the log, the proving parameters) from jsDelivr, a third-party service, and checks each one. jsDelivr sees your IP address and when you prepare a ballot, never what it holds.',
 				'You need an NFC smartphone and a chip passport.',
 				'It is an independent experiment by tartuffe.me: an online opinion vote, distinct from the official election and from polls.'
 			],

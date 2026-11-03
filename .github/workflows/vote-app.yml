@@ -24,9 +24,6 @@ jobs:
       - name: Install
         working-directory: frontend
         run: npm ci
-      - name: SRS
-        working-directory: frontend
-        run: ./scripts/srs.sh
       - name: Settings
         env:
           VOTE_ORIGIN: ${{ vars.VOTE_ORIGIN }}

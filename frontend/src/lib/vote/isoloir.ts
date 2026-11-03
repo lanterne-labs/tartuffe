@@ -33,11 +33,31 @@ import {
 	type PollSetup,
 	type TallyVerdict,
 	type StoredKey,
-	type WorkerLike
+	type WorkerLike,
+	type ProverOptions
 } from '@isoloir/web';
 import ProveWorker from '@isoloir/web/prove.worker?worker';
 import { bech32, hex } from '@scure/base';
 import { ensureIsolated } from './isolate';
+
+// The prover's large public files, fetched whole from jsDelivr and used only
+// if their SHA-256 is the one pinned here, so this site's host serves none
+// of them. The SRS is the head of Aztec's (lanterne-labs/vote-srs, at one
+// commit: every ballot circuit fits in 2^17 points); the wasm is bb.js's
+// own build, from npm at the version the library runs.
+const SRS = 'https://cdn.jsdelivr.net/gh/lanterne-labs/vote-srs@5d97f5383bc827f0b3cda77ffb2d96168ccc2899';
+const PROVER_FILES: ProverOptions = {
+	srs: {
+		g1: { url: `${SRS}/g1_compressed.dat`, sha256: 'fad8203ae1fd103658d4bb33b2b4cf126a28352b5de4684737cff23cc15fb94b' },
+		g2: { url: `${SRS}/g2.dat`, sha256: '01797bfc4de5a96f0e516a9ea4537d18786dc30cb991aca4274c95822b69c32f' }
+	},
+	wasm: {
+		threads: {
+			url: 'https://cdn.jsdelivr.net/npm/@aztec/bb.js@5.0.0/dest/node/barretenberg_wasm/barretenberg-threads.wasm.gz',
+			sha256: '2da2861cee60c2af5a87621474517e56b5d833db8a765f075e6cbc5509308eaa'
+		}
+	}
+};
 
 const env = import.meta.env;
 
@@ -228,7 +248,8 @@ export class VoteSession {
 					const text = await this.session?.mirror.text(`circuits/${circuit}/artifact.json`);
 					if (!text) throw new IsoloirError('mirror', `circuits/${circuit}/artifact.json is not on the mirror`);
 					return text;
-				}
+				},
+				PROVER_FILES
 			);
 			this.prover = prover;
 			const s = new Session({
