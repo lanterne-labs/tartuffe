@@ -24,7 +24,8 @@ import (
 // French, which was not parsed (mirror-rxd). Both are fixed at fetch time;
 // this repairs the stored pages: the date in the URL first, then, with
 // --search, the date of the search result for the page's title that links
-// to the same page.
+// to the same page. --late first undates the pages dated after the end of the
+// search window that found them (audit 2026-11-04c).
 var factsRedateNewsCmd = &cobra.Command{
 	Use:         "redate-news",
 	Short:       "Date the undated news fact sources from their URL or the search result",
@@ -35,6 +36,7 @@ var factsRedateNewsCmd = &cobra.Command{
 func init() {
 	factsCmd.AddCommand(factsRedateNewsCmd)
 	factsRedateNewsCmd.Flags().Bool("apply", false, "write the dates (default: report only)")
+	factsRedateNewsCmd.Flags().Bool("late", false, "first undate the pages dated after the end of the search window that found them (their update, not their publication), then date them again")
 	factsRedateNewsCmd.Flags().Bool("search", false, "search the page's title for the pages whose URL carries no date (one search per page)")
 }
 
@@ -43,6 +45,7 @@ func runFactsRedateNews(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	apply, _ := cmd.Flags().GetBool("apply")
 	withSearch, _ := cmd.Flags().GetBool("search")
+	late, _ := cmd.Flags().GetBool("late")
 
 	storer, err := deps.OpenStorer(ctx)
 	if err != nil {
@@ -54,6 +57,19 @@ func runFactsRedateNews(cmd *cobra.Command, args []string) error {
 	if withSearch {
 		if searcher, err = deps.New(storer).NewsSearcher(); err != nil {
 			return fmt.Errorf("news searcher: %w", err)
+		}
+	}
+
+	if late {
+		lp, ls, err := storer.ClearLateNewsPageDates(ctx, news.SearchWindowSlack, apply)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("news pages dated after their search window: %d (%d fact sources)", lp, ls)
+		if !apply {
+			fmt.Println("; dry run: kept (the counts below leave them out)")
+		} else {
+			fmt.Println("; undated")
 		}
 	}
 

@@ -1136,3 +1136,13 @@ cases:
     notes: "A rule for parliamentarians, applied by the reason to an ally's presidential candidacy: another office, and not the person exempting themself. Prod 2379 (2026-11-04)."
     date_a: "2024-11-18"
     date_b: "2026-07-08"
+
+  - name: "TP_2278_lepen_wont_run_if_sentence_confirmed_on_appeal"
+    fact_a: "Marine Le Pen a affirmé début novembre 2025 qu'elle ne se présenterait « évidemment pas » en 2027 si sa peine était confirmée en appel, et qu'elle annoncerait sa décision dans la foulée, sans attendre une éventuelle cassation."
+    fact_b: "Le 7 juillet 2026, après que la cour d'appel de Paris a confirmé sa condamnation en réduisant sa peine (45 mois d'inéligibilité dont 30 avec sursis, sans exécution provisoire), Marine Le Pen s'est déclarée candidate le soir même sur TF1."
+    claimed_reason: "Elle avait affirmé qu'elle ne se présenterait évidemment pas si sa peine était confirmée en appel, puis s'est déclarée candidate le soir de sa condamnation en appel."
+    expect: keep
+    bucket: stated_condition_walk_back
+    notes: "Stated-condition walk-back: an appeal that upholds the conviction meets « si ma peine est confirmée en appel » even though it softens the sentence (user's decision, 2026-11-04). FP_1600 stays a drop: its condition names the ban on office, which the appeal did not apply at once. Prod 2278 (fact B joins the appeal ruling 157076 and the candidacy of fact 2278-A)."
+    date_a: "2025-11-04"
+    date_b: "2026-07-07"

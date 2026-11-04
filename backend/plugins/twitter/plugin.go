@@ -181,6 +181,12 @@ func collectHandles(ctx context.Context, handles []Handle, targetIDs []int64, co
 			stats.Items += result.TweetsFetched
 			stats.Facts += result.FactsExtracted
 			stats.Errors += len(result.Errors)
+			if len(result.Errors) > 0 {
+				// The first error names the cause in the task's last_error:
+				// on 2026-11-03 the API's credits ran out (402) and the
+				// failed tasks said only "1 item or window errors".
+				stats.Details = append(stats.Details, "@"+h.Handle+": "+result.Errors[0].Error())
+			}
 		}
 	}
 	stats.Done = done()
