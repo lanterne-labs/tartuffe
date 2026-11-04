@@ -18,7 +18,7 @@
 				{ title: 'Une erreur', body: 'Un fait mal rapporté, une date fausse, une contradiction qui n’en est pas une. Donnez le lien de la page : nous vérifions, et chaque retrait est publié sur la page des corrections.', subject: 'Erreur' },
 				{ title: 'Droit de réponse', body: 'Vous êtes une personne citée sur le site, ou vous la représentez ? Écrivez-nous : nous publions votre réponse sous l’élément concerné, et nous corrigeons ce qui doit l’être.', subject: 'Droit de réponse' },
 				{ title: 'Presse et partenariats', body: 'Une question sur la méthode, les données ou le vote en ligne.', subject: 'Presse' },
-				{ title: 'Vos données', body: 'Accéder à vos données, les effacer, ou une question sur la confidentialité.', subject: 'Données personnelles' }
+				{ title: 'Vos données', body: 'Nous gardons très peu sur vous : l’empreinte de votre compte, votre pseudonyme, vos +1 et vos signalements. Votre profil supprime votre compte d’un clic. Une question ?', subject: 'Données personnelles' }
 			],
 			write: 'Écrire',
 			soon: 'L’adresse de contact arrive dans quelques jours.',
@@ -33,7 +33,7 @@
 				{ title: 'An error', body: 'A misreported fact, a wrong date, a contradiction that isn’t one. Send the link of the page: we check, and every removal is published on the corrections page.', subject: 'Error' },
 				{ title: 'Right of reply', body: 'You are a person named on the site, or you represent them? Write to us: we publish your reply under the item, and correct what needs correcting.', subject: 'Right of reply' },
 				{ title: 'Press and partnerships', body: 'A question about the method, the data or the online vote.', subject: 'Press' },
-				{ title: 'Your data', body: 'Access or erase your data, or a question about privacy.', subject: 'Personal data' }
+				{ title: 'Your data', body: 'We keep very little about you: a fingerprint of your account, your pseudonym, your +1s and your reports. Your profile deletes your account in one click. A question?', subject: 'Personal data' }
 			],
 			write: 'Write',
 			soon: 'The contact address is coming in a few days.',
@@ -72,10 +72,10 @@
 
 <style>
 	.legal { max-width: 760px; margin: 0 auto; padding: 1rem 0 3rem; }
-	.kicker { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
+	.kicker { display: block; text-align: center; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
 	h1 { font-size: 2rem; margin: 0.25rem 0 0.75rem; }
 	.lead { color: var(--text-secondary); line-height: 1.6; }
-	.address { margin: 1.5rem 0; font-size: 1.125rem; font-weight: 600; }
+	.address { margin: 1.5rem 0; text-align: center; font-size: 1.125rem; font-weight: 600; }
 	.address.soon { font-weight: 400; color: var(--text-muted); font-style: italic; }
 	.topics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
 	.topic { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius-md); padding: 1rem 1.25rem; }
