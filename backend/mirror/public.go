@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"digital-mirror/backend/accounts"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/httpx"
 	"digital-mirror/backend/metrics"
 	"digital-mirror/backend/storage"
@@ -119,6 +120,14 @@ func (s *Service) handleFeed(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to get feed")
 		return
 	}
+	rate, err := s.contradictionRate(r.Context())
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		return
+	}
+	for i := range items {
+		items[i].Person.ScoreConfidence = confidence(items[i].Person.FactCount, rate)
+	}
 	// An empty feed is an empty list, not null: the page reads the items.
 	page := feedPage{Items: append([]storage.FeedItem{}, items...)}
 	switch {
@@ -205,6 +214,12 @@ func (s *Service) handleScoreExplanation(w http.ResponseWriter, r *http.Request)
 		httpx.InternalError(w, err, "failed to explain score")
 		return
 	}
+	rate, err := s.contradictionRate(r.Context())
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		return
+	}
+	e.Rate, e.Reliable, e.ScoreConfidence = rate, core.ScoreReliableExpected, confidence(e.Facts, rate)
 	httpx.WriteJSON(w, http.StatusOK, e)
 }
 

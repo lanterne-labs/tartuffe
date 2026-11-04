@@ -37,11 +37,15 @@
 		}
 	});
 	let current = $derived(rated.find((r) => r.p.id === chosen) ?? null);
-	// How many are more tartuffe (above) and more coherent (below) than the focus.
-	let above = $derived(current ? rated.filter((r) => r.t > current.t).length : 0);
-	let below = $derived(current ? rated.filter((r) => r.t < current.t).length : 0);
+	// How many are more tartuffe (above) and more coherent (below) than the
+	// focus, among the people whose score is reliable: a clean score on few
+	// facts is no evidence of coherence. An uncertain focus is not ranked.
+	let sure = $derived(rated.filter((r) => r.p.score_reliable !== false));
+	let above = $derived(current ? sure.filter((r) => r.p.id !== current.p.id && r.t > current.t).length : 0);
+	let below = $derived(current ? sure.filter((r) => r.p.id !== current.p.id && r.t < current.t).length : 0);
 	let rank = $derived.by(() => {
-		const n = rated.length - 1;
+		if (current?.p.score_reliable === false) return tr('score.compare.unsure', lang);
+		const n = sure.filter((r) => r.p.id !== current?.p.id).length;
 		if (above > 0 && below > 0) return tr('score.compare.both', lang, { a: above, b: below, n });
 		if (above > 0) return tr('score.compare.coherent', lang, { a: above, n });
 		if (below > 0) return tr('score.compare.tartuffe', lang, { b: below, n });
@@ -81,7 +85,7 @@
 	<div class="compare" style="--c: {tartuffeColor(current.at)}">
 		<div class="head">
 			<a class="name" href="/person/{current.p.id}">{displayName(current.p.name)} →</a>
-			<span class="value">{tr('score.short', lang, { n: current.t })}</span>
+			<span class="value">{current.p.score_reliable === false ? '≈ ' : ''}{tr('score.short', lang, { n: current.t })}</span>
 			<span class="rank">{rank}</span>
 		</div>
 
@@ -109,10 +113,11 @@
 					<button
 						class="other"
 						class:other--on={r.p.id === current.p.id}
+						class:other--unsure={r.p.score_reliable === false}
 						style="left: {spots[i].x}px; top: {spots[i].row * (SMALL + 6) + 4}px; --oc: {tartuffeColor(r.at)}"
 						onclick={() => (chosen = r.p.id)}
 						aria-pressed={r.p.id === current.p.id}
-						title={tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t })}
+						title={tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t }) + (r.p.score_reliable === false ? ` (${tr('score.unsure.short', lang)})` : '')}
 					>
 						{#if r.p.image_url}
 							<img src={r.p.image_url} alt={displayName(r.p.name)} />
@@ -300,5 +305,9 @@
 			transition: none;
 			animation: none;
 		}
+	}
+	.other--unsure:not(.other--on) {
+		opacity: 0.45;
+		border-style: dashed;
 	}
 </style>

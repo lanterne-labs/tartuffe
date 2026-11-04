@@ -317,9 +317,13 @@
 		{#each items as it, i (it.kind + it.id)}
 			{@const topic = pickLang(it.stance_label, it.stance_label_en, currentLang)}
 			{@const link = sharePath(it.kind, it.id, it.person.id)}
-			<li class="item" class:is-contradiction={it.kind === 'contradiction'}>
+			<li class="item item--{it.kind}" class:is-contradiction={it.kind === 'contradiction'}>
+				<span class="kind kind--{it.kind}">
+					<span class="kind-mark" aria-hidden="true">{it.kind === 'contradiction' ? '⟷' : '●'}</span>
+					{tr(`feed.kind.${it.kind}`, currentLang)}
+				</span>
 				<a href="/person/{it.person.id}" class="avatar-link" aria-label={it.person.name}>
-					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} />
+					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} expected={it.person.expected_contradictions} />
 				</a>
 				<div class="main">
 					<div class="head">
@@ -334,9 +338,6 @@
 								<span aria-hidden="true">{it.score_effect < 0 ? '▲' : '▼'}</span>
 								{move(-it.score_effect)}
 							</span>
-						{/if}
-						{#if it.kind === 'contradiction'}
-							<span class="tag">{tr('feed.tag.contradiction', currentLang)}</span>
 						{/if}
 						<time datetime={it.at} title={new Date(it.at).toLocaleString()}>{ago(it.at)}</time>
 					</div>
@@ -661,22 +662,36 @@
 		padding: 1.1rem 1.2rem 0.8rem;
 		background: var(--bg-card);
 		border: 1px solid var(--border-card);
+		border-left: 3px solid var(--kind-c);
 		border-radius: var(--radius-lg);
+		--kind-c: var(--text-muted);
+	}
+	.item--contradiction {
+		--kind-c: var(--red);
+	}
+	/* What the card is, across its top: a contradiction or a fact. */
+	.kind {
+		grid-column: 1 / -1;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: -0.2rem 0 -0.35rem;
+		color: var(--kind-c);
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+	}
+	.kind-mark {
+		font-size: 0.85rem;
+		letter-spacing: 0;
+	}
+	.kind--fact .kind-mark {
+		font-size: 0.55rem;
 	}
 	.avatar-link {
 		position: relative;
 		align-self: start;
-	}
-	.item.is-contradiction .avatar-link::after {
-		content: '';
-		position: absolute;
-		right: -2px;
-		bottom: -2px;
-		width: 12px;
-		height: 12px;
-		border-radius: 50%;
-		background: var(--red);
-		border: 2px solid var(--bg-card);
 	}
 	.main {
 		min-width: 0;
@@ -720,15 +735,6 @@
 	}
 	.ticker span {
 		font-size: 0.6rem;
-	}
-	.tag {
-		flex-shrink: 0;
-		padding: 0.05rem 0.5rem;
-		border-radius: var(--radius-full);
-		background: var(--error-bg, rgba(220, 38, 38, 0.12));
-		color: var(--red);
-		font-size: 0.7rem;
-		font-weight: 600;
 	}
 	.topic {
 		display: block;
@@ -820,9 +826,6 @@
 	}
 	@media (max-width: 480px) {
 		/* The red move and the red dot on the photo say it already. */
-		.tag {
-			display: none;
-		}
 		.item {
 			grid-template-columns: 36px minmax(0, 1fr);
 			gap: 0.7rem;

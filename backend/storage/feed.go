@@ -24,6 +24,8 @@ type FeedPerson struct {
 	Name         string  `json:"name"`
 	ImageURL     *string `json:"image_url,omitempty"`
 	HonestyScore float64 `json:"honesty_score"`
+	FactCount    int     `json:"fact_count"`
+	ScoreConfidence
 }
 
 // FeedFactSide is one fact of a feed item.
@@ -279,7 +281,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		order = `rank DESC, ` + order
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score,
+		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("c.detected_at")+` AS rank,
 		       CASE WHEN c.bundle_stance_id IS NULL THEN 1 ELSE (
 		         SELECT COUNT(*) FROM contradictions c2
@@ -312,7 +314,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 	for rows.Next() {
 		it := FeedItem{Kind: FeedContradiction, Other: &FeedFactSide{}}
 		var reason, reasonEn *string
-		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore,
+		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank, &it.bundleSize,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn,
 			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote,
@@ -335,7 +337,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		order = `rank DESC, ` + order
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score,
+		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("f.created_at")+` AS rank,
 		       sd.id, sd.cluster_label, sd.label_en,
 		       f.fact_text, f.fact_text_en, sf.earliest, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
@@ -371,7 +373,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 	out := []FeedItem{}
 	for rows.Next() {
 		it := FeedItem{Kind: FeedFact}
-		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore,
+		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn,
 			&it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote); err != nil {
@@ -504,6 +506,12 @@ type ScoreExplanation struct {
 	MembersScore *float64 `json:"members_score,omitempty"`
 	Members      int      `json:"members"`
 	Score        float64  `json:"score"`
+
+	// Rate is the candidates' contradictions per fact; Reliable the
+	// expected count at which a score is trusted.
+	Rate     float64 `json:"rate"`
+	Reliable float64 `json:"reliable_expected"`
+	ScoreConfidence
 }
 
 // GetScoreExplanation computes the inputs of the person's score now. It

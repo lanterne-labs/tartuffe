@@ -58,6 +58,12 @@
 	type StanceSort = 'worst' | 'recent' | 'most_facts';
 
 	let person: PersonSummary | null = $state(null);
+	// A person has a score shown when detection runs for them (a candidate)
+	// or found contradictions before it was kept to the candidates.
+	let scored = $derived.by(() => {
+		const p: PersonSummary | null = person;
+		return !!p && (p.candidate || p.contradiction_count > 0);
+	});
 	let facts: FactWithSource[] = $state([]);
 	let members: MemberInfo[] = $state([]);
 	let stances: StanceDocument[] = $state([]);
@@ -479,7 +485,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				<TartuffeScore honesty={person.candidate ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
+				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
 				<div class="hero-info">
 					<h1>
 						{person.name}
@@ -487,7 +493,7 @@
 							<span class="badge">{tr('person.party_badge', currentLang)}</span>
 						{/if}
 					</h1>
-					{#if person.candidate}
+					{#if scored}
 					<p class="hero-summary">
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
 						<span class="dot">·</span>
@@ -495,6 +501,9 @@
 						<span class="dot">·</span>
 						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
+					{#if !person.candidate}
+						<p class="hero-note">{tr('person.detection_paused_note', currentLang)}</p>
+					{/if}
 					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
 					{:else}
 						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
@@ -503,7 +512,7 @@
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: person.candidate ? person.honesty_score : undefined }} />
+				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: scored ? person.honesty_score : undefined }} />
 			</div>
 		</div>
 

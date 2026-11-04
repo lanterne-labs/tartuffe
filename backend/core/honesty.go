@@ -68,3 +68,17 @@ func ComputeAggregateScore(ownScore float64, membersScore *float64) float64 {
 	}
 	return 0.5*ownScore + 0.5*(*membersScore)
 }
+
+// ScoreReliableExpected is the number of contradictions a person's facts
+// must be expected to hold, at the candidates' average rate, before the
+// score is trusted: below it, finding none by chance is likelier than 5 %
+// (Poisson: e^-3), so a clean score says little.
+const ScoreReliableExpected = 3.0
+
+// ScoreReliability returns the contradictions expected in facts at rate
+// (contradictions per fact) and whether the score built on them is
+// reliable. With no rate yet (no contradiction found anywhere), no score is.
+func ScoreReliability(facts int, rate float64) (expected float64, reliable bool) {
+	expected = float64(facts) * rate
+	return expected, rate > 0 && expected >= ScoreReliableExpected
+}

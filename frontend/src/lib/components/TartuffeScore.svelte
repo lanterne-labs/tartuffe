@@ -4,7 +4,10 @@
 	// into it, a white needle on the place. The portrait sits in the circle
 	// (or, without a person, the number). Under it, the score out of 100 in
 	// the colour of the place, with a small "?" saying what a higher score
-	// means. Too few facts: a grey band, no needle, "not enough facts".
+	// means. Too few facts: a grey band, no needle, "not enough facts". Too
+	// few contradictions expected for the score to be trusted (reliable
+	// false): the needle and the band fade, a "≈" marks the number and the
+	// portrait, and the "?" says why.
 	//
 	// The dial is logarithmic in contradictions (dialOf): the first
 	// contradictions move the needle a lot, each later one a little less, so
@@ -30,8 +33,15 @@
 		caption?: string;
 		/** The needle sweeps in from the coherent end (an example being told). */
 		animate?: boolean;
+		/** False when too few contradictions are expected for the score to be trusted (the API's score_reliable). */
+		reliable?: boolean;
+		/** The contradictions expected at the average rate (the API's expected_contradictions). */
+		expected?: number;
 	}
-	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false }: Props = $props();
+	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false, reliable, expected }: Props = $props();
+
+	// RELIABLE_FROM is core.ScoreReliableExpected.
+	const RELIABLE_FROM = 3;
 
 	const uid = $props.id();
 	// Below this many facts the score says too little to be shown.
@@ -40,6 +50,14 @@
 	let unrated = $derived(tartuffe === null || (facts !== undefined && facts < MIN_FACTS));
 	let at = $derived(unrated || tartuffe === null ? 0 : dialOf(tartuffe));
 	let colour = $derived(unrated ? 'var(--text-muted)' : tartuffeColor(at));
+	let unsure = $derived(!unrated && reliable === false);
+	let unsureText = $derived(
+		tr('score.unsure', lang, {
+			f: (facts ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR'),
+			e: (expected ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR', { maximumFractionDigits: 1 }),
+			r: RELIABLE_FROM
+		})
+	);
 	// The graduations: one every 3 contradictions, every 6 on a small dial.
 	let marks = $derived(MARKS.filter((_, i) => size === 'lg' || size === 'md' || i % 2 === 0));
 	let centreNumber = $derived(!image && !initial);
@@ -48,9 +66,7 @@
 			? facts !== undefined
 				? tr('score.unrated.n', lang, { f: facts })
 				: tr('score.unrated', lang)
-			: size === 'lg' || size === 'md'
-				? tr('score.short', lang, { n: tartuffe ?? 0 })
-				: `${tartuffe}/100`
+			: (unsure ? '≈ ' : '') + (size === 'lg' || size === 'md' ? tr('score.short', lang, { n: tartuffe ?? 0 }) : `${tartuffe}/100`)
 	);
 
 	// Polar point on the dial: r from the centre (60, 60), at a place 0 to 100.
@@ -112,7 +128,8 @@
 
 <svelte:window onclick={outside} onkeydown={(e) => e.key === 'Escape' && (help = false)} />
 
-<span class="ts ts--{size}" class:ts--unrated={unrated} style="--c: {colour}">
+<span class="ts ts--{size}" class:ts--unrated={unrated} class:ts--unsure={unsure} style="--c: {colour}">
+	{#if unsure}<span class="unsure-mark" title={tr('score.unsure.short', lang)} aria-hidden="true">≈</span>{/if}
 	{#if caption}<span class="caption">{caption}</span>{/if}
 	<svg viewBox="0 0 120 102" class="dial" role="img" aria-label={value}>
 		<defs>
@@ -157,6 +174,7 @@
 				{#if help}
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 					<span class="tip" role="note" onclick={keep}>
+						{#if unsure}<strong class="tip-unsure">{unsureText}</strong>{/if}
 						{tr('score.tip', lang)}
 						<a href="/about#score">{tr('score.tip.more', lang)}</a>
 					</span>
@@ -168,6 +186,7 @@
 
 <style>
 	.ts {
+		position: relative;
 		display: inline-flex;
 		flex-direction: column;
 		align-items: center;
@@ -184,6 +203,33 @@
 	}
 	.ts--lg {
 		--w: 13rem;
+	}
+	.ts--unsure .fill,
+	.ts--unsure .needle {
+		opacity: 0.4;
+	}
+	.unsure-mark {
+		position: absolute;
+		top: 0;
+		right: 0;
+		z-index: 1;
+		display: grid;
+		place-items: center;
+		width: 1.25em;
+		height: 1.25em;
+		border-radius: 50%;
+		background: var(--bg-card);
+		border: 1px solid var(--amber);
+		color: var(--amber);
+		font-size: max(0.7rem, calc(var(--w) * 0.11));
+		font-weight: 700;
+		line-height: 1;
+	}
+	.tip-unsure {
+		display: block;
+		margin-bottom: 0.4rem;
+		color: var(--amber);
+		font-weight: 600;
 	}
 	.caption {
 		font-size: 0.7rem;
