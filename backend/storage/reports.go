@@ -15,11 +15,11 @@ const (
 	ReportKindFact          = "fact"
 	ReportKindContradiction = "contradiction"
 
-	ReportPending   = "pending"
-	ReportAccepted  = "accepted"
-	ReportRejected  = "rejected"
-	ReportAmbiguous = "ambiguous"
-	ReportStale     = "stale"
+	ReportPending  = "pending"  // the AI has not read it yet
+	ReportReview   = "review"   // the AI gave its advice, a person decides
+	ReportAccepted = "accepted" // a person accepted it: the target was removed
+	ReportRejected = "rejected" // a person refused it: the target stays
+	ReportStale    = "stale"    // the target was already gone
 )
 
 // ErrAlreadyReported is returned when the user already reported the target.
@@ -39,26 +39,33 @@ const MaxPendingReportsPerUser = 20
 
 // UserReport is one row of user_reports.
 type UserReport struct {
-	ID            int64      `json:"id"`
-	TargetKind    string     `json:"target_kind"`
-	TargetID      int64      `json:"target_id"`
-	PersonID      int64      `json:"person_id"`
-	PersonName    string     `json:"person_name"`
-	TargetText    string     `json:"target_text"`
-	Reason        string     `json:"reason"`
-	Status        string     `json:"status"`
-	VerdictReason string     `json:"verdict_reason"`
-	Attempts      int        `json:"-"`
-	CreatedAt     time.Time  `json:"created_at"`
-	JudgedAt      *time.Time `json:"judged_at,omitempty"`
+	ID            int64  `json:"id"`
+	TargetKind    string `json:"target_kind"`
+	TargetID      int64  `json:"target_id"`
+	PersonID      int64  `json:"person_id"`
+	PersonName    string `json:"person_name"`
+	TargetText    string `json:"target_text"`
+	Reason        string `json:"reason"`
+	Status        string `json:"status"`
+	VerdictReason string `json:"verdict_reason"`
+	// AIVerdict is the judge's advice (delete_target, dismiss_complaint,
+	// ambiguous), nil before it judged or when it failed.
+	AIVerdict *string `json:"ai_verdict,omitempty"`
+	// Enabled is the person's decision: true accepted (the target was
+	// removed), false refused, nil not decided yet.
+	Enabled   *bool      `json:"enabled"`
+	Attempts  int        `json:"-"`
+	CreatedAt time.Time  `json:"created_at"`
+	JudgedAt  *time.Time `json:"judged_at,omitempty"`
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
 }
 
-const userReportColumns = `id, target_kind, target_id, person_id, person_name, target_text, reason, status, verdict_reason, attempts, created_at, judged_at`
+const userReportColumns = `id, target_kind, target_id, person_id, person_name, target_text, reason, status, verdict_reason, ai_verdict, enabled, attempts, created_at, judged_at, decided_at`
 
 func scanUserReport(row pgx.Row) (UserReport, error) {
 	var r UserReport
 	err := row.Scan(&r.ID, &r.TargetKind, &r.TargetID, &r.PersonID, &r.PersonName, &r.TargetText,
-		&r.Reason, &r.Status, &r.VerdictReason, &r.Attempts, &r.CreatedAt, &r.JudgedAt)
+		&r.Reason, &r.Status, &r.VerdictReason, &r.AIVerdict, &r.Enabled, &r.Attempts, &r.CreatedAt, &r.JudgedAt, &r.DecidedAt)
 	return r, err
 }
 
@@ -202,39 +209,66 @@ func (s *PostgresStorer) ListUserReports(ctx context.Context, status string, lim
 	return out, nil
 }
 
-// RecordUserReportVerdict closes a report with the judge's verdict. An
-// accepted report removed its target: the other pending reports on the same
-// target are accepted with it.
-func (s *PostgresStorer) RecordUserReportVerdict(ctx context.Context, id int64, status, reason string) error {
+// GetUserReport returns one report (pgx.ErrNoRows when there is none).
+func (s *PostgresStorer) GetUserReport(ctx context.Context, id int64) (*UserReport, error) {
+	r, err := scanUserReport(s.pool.QueryRow(ctx, `SELECT `+userReportColumns+` FROM user_reports WHERE id = $1`, id))
+	if err != nil {
+		return nil, fmt.Errorf("report %d: %w", id, err)
+	}
+	return &r, nil
+}
+
+// RecordUserReportVerdict records the judge's advice on a report: status is
+// review (a person decides) or stale (the target was already gone).
+// aiVerdict is empty when the judge gave none.
+func (s *PostgresStorer) RecordUserReportVerdict(ctx context.Context, id int64, status, aiVerdict, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE user_reports SET status = $2, ai_verdict = NULLIF($3, ''), verdict_reason = $4, judged_at = now()
+		WHERE id = $1`, id, status, aiVerdict, reason)
+	if err != nil {
+		return fmt.Errorf("record verdict of report %d: %w", id, err)
+	}
+	return nil
+}
+
+// DecideUserReport records a person's decision on a report: accepted (its
+// target was removed), rejected, or stale (the target was gone when it was
+// accepted). A reason replaces the judge's in the public log. An accepted
+// report takes the other undecided reports on the same target with it.
+func (s *PostgresStorer) DecideUserReport(ctx context.Context, id int64, status, reason string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin report verdict: %w", err)
+		return fmt.Errorf("begin report decision: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	var kind string
 	var targetID int64
 	err = tx.QueryRow(ctx, `
-		UPDATE user_reports SET status = $2, verdict_reason = $3, judged_at = now()
+		UPDATE user_reports SET status = $2,
+			enabled = CASE $2 WHEN 'accepted' THEN true WHEN 'rejected' THEN false END,
+			verdict_reason = COALESCE(NULLIF($3, ''), verdict_reason),
+			decided_at = now()
 		WHERE id = $1 RETURNING target_kind, target_id`, id, status, reason).Scan(&kind, &targetID)
 	if err != nil {
-		return fmt.Errorf("record verdict of report %d: %w", id, err)
+		return fmt.Errorf("decide report %d: %w", id, err)
 	}
-	if status == ReportAccepted {
+	if status == ReportAccepted || status == ReportStale {
 		if _, err := tx.Exec(ctx, `
-			UPDATE user_reports SET status = 'accepted', verdict_reason = $3, judged_at = now()
-			WHERE target_kind = $1 AND target_id = $2 AND status = 'pending'`, kind, targetID, reason); err != nil {
-			return fmt.Errorf("accept the other reports on %s %d: %w", kind, targetID, err)
+			UPDATE user_reports SET status = $3, enabled = CASE $3 WHEN 'accepted' THEN true END,
+				verdict_reason = (SELECT verdict_reason FROM user_reports WHERE id = $4), decided_at = now()
+			WHERE target_kind = $1 AND target_id = $2 AND status IN ('pending', 'review')`, kind, targetID, status, id); err != nil {
+			return fmt.Errorf("close the other reports on %s %d: %w", kind, targetID, err)
 		}
 	}
 	return tx.Commit(ctx)
 }
 
 // CountUserReportAttempt counts a failed judging of the report; past
-// maxAttempts the report waits for a person (ambiguous).
+// maxAttempts the report goes to review without the judge's advice.
 func (s *PostgresStorer) CountUserReportAttempt(ctx context.Context, id int64, lastError string, maxAttempts int) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE user_reports SET attempts = attempts + 1,
-			status = CASE WHEN attempts + 1 >= $3 THEN 'ambiguous' ELSE status END,
+			status = CASE WHEN attempts + 1 >= $3 THEN 'review' ELSE status END,
 			verdict_reason = CASE WHEN attempts + 1 >= $3 THEN 'judge failed: ' || $2 ELSE verdict_reason END,
 			judged_at = CASE WHEN attempts + 1 >= $3 THEN now() ELSE judged_at END
 		WHERE id = $1`, id, lastError, maxAttempts)
@@ -245,7 +279,7 @@ func (s *PostgresStorer) CountUserReportAttempt(ctx context.Context, id int64, l
 }
 
 // Correction is one accepted report in the public log: what was removed,
-// the judge's reason, and when. Neither the reporter nor their own words
+// the reason, and when. Neither the reporter nor their own words
 // are shown.
 type Correction struct {
 	ID            int64     `json:"id"`
@@ -262,7 +296,7 @@ type Correction struct {
 // report), newest report first, before the given id (0: from the newest).
 func (s *PostgresStorer) ListCorrections(ctx context.Context, beforeID int64, limit int) ([]Correction, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, target_kind, person_id, person_name, target_text, verdict_reason, created_at, judged_at
+		SELECT id, target_kind, person_id, person_name, target_text, verdict_reason, created_at, COALESCE(decided_at, judged_at)
 		FROM (
 			SELECT DISTINCT ON (target_kind, target_id) *
 			FROM user_reports WHERE status = 'accepted'

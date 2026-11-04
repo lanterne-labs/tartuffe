@@ -447,7 +447,7 @@
 	.status--rejected {
 		color: var(--text-muted);
 	}
-	.status--ambiguous,
+	.status--review,
 	.status--pending {
 		color: var(--amber);
 		border-color: var(--amber);

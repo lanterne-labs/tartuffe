@@ -12,9 +12,9 @@ import (
 )
 
 // TestJudgeReportsDB runs the whole loop on the database: a user reports a
-// contradiction, the judge finds the report right, the contradiction goes
-// for good (its pair is dismissed), the score rises and the correction is
-// public.
+// contradiction, the judge finds the report right but removes nothing, a
+// person accepts it, the contradiction goes for good (its pair is
+// dismissed), the score rises and the correction is public.
 func TestJudgeReportsDB(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Skip("DATABASE_URL not set")
@@ -59,6 +59,18 @@ func TestJudgeReportsDB(t *testing.T) {
 
 	var left int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM contradictions WHERE id = $1`, cid).Scan(&left))
+	assert.Equal(t, 1, left, "the judge's verdict is advice")
+	corrections, err := st.ListCorrections(ctx, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, corrections)
+
+	review, err := st.ListUserReports(ctx, storage.ReportReview, 10)
+	require.NoError(t, err)
+	require.Len(t, review, 1)
+	status, err := DecideReport(ctx, st, review[0].ID, true, "")
+	require.NoError(t, err)
+	assert.Equal(t, storage.ReportAccepted, status)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM contradictions WHERE id = $1`, cid).Scan(&left))
 	assert.Zero(t, left)
 	var dismissed bool
 	a, b := min(facts[0], facts[1]), max(facts[0], facts[1])
@@ -68,7 +80,7 @@ func TestJudgeReportsDB(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT honesty_score FROM persons WHERE id = $1`, person).Scan(&after))
 	assert.Greater(t, after, before)
 
-	corrections, err := st.ListCorrections(ctx, 0, 10)
+	corrections, err = st.ListCorrections(ctx, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, corrections, 1)
 	assert.Equal(t, "because RIGHT", corrections[0].VerdictReason)

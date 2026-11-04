@@ -268,7 +268,7 @@
     {
       "type": "stat",
       "title": "Reports waiting",
-      "description": "Reports the worker's judge has not answered yet.",
+      "description": "Reports waiting for the judge (pending) or for a person's decision (review: dm complaints reports, then accept or refuse).",
       "datasource": {
         "type": "postgres",
         "uid": "mirrordb"
@@ -287,7 +287,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(*) FROM user_reports WHERE status = 'pending'",
+          "rawSql": "SELECT COUNT(*) FROM user_reports WHERE status IN ('pending', 'review')",
           "refId": "A"
         }
       ],

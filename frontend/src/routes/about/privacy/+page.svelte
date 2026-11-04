@@ -66,7 +66,7 @@
 					title: 'Les +1 et les signalements',
 					get: [
 						'Vos +1, pour classer le fil, et vos signalements, rattachés à votre compte.',
-						'Un signalement est relu par une IA avec les sources. S’il est fondé, l’élément est retiré et la correction publiée.'
+						'Un signalement est relu par une IA avec les sources, puis une personne de l’équipe décide. S’il est fondé, l’élément est retiré et la correction publiée.'
 					],
 					never: [
 						'La correction publiée montre la raison de l’IA, jamais votre texte ni votre compte.',
@@ -119,7 +119,7 @@
 				},
 				{
 					title: '+1 and reports',
-					get: ['Your +1, to rank the feed, and your reports, tied to your account.', 'A report is reread by an AI with the sources. When it holds, the item is removed and the correction published.'],
+					get: ['Your +1, to rank the feed, and your reports, tied to your account.', 'A report is reread by an AI with the sources, then a person on the team decides. When it holds, the item is removed and the correction published.'],
 					never: ['The published correction shows the AI’s reason, never your words or your account.', 'The AI gets the report’s text, never who wrote it.'],
 					note: 'The AI runs on our own machine; when it is overloaded, an outside AI provider may reread the report.'
 				},
