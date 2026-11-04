@@ -46,16 +46,41 @@ func TestDocumentDatePrefersURLOverSearch(t *testing.T) {
 	page := time.Date(2022, 3, 15, 8, 0, 0, 0, time.UTC)
 	search := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
 	u := "https://www.lemonde.fr/en/opinion/article/2022/03/14/eric-zemmour-s-rollercoaster-candidacy_5978632_23.html"
-	if got := documentDate(&page, &search, u, now); !got.Equal(page) {
+	if got := documentDate(&page, &search, u, nil, now); !got.Equal(page) {
 		t.Fatalf("page metadata first: got %v", got)
 	}
-	if got := documentDate(nil, &search, u, now); !got.Equal(time.Date(2022, 3, 14, 0, 0, 0, 0, time.UTC)) {
+	if got := documentDate(nil, &search, u, nil, now); !got.Equal(time.Date(2022, 3, 14, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("URL before search: got %v", got)
 	}
-	if got := documentDate(nil, &search, "https://example.org/article-sans-date", now); !got.Equal(search) {
+	if got := documentDate(nil, &search, "https://example.org/article-sans-date", nil, now); !got.Equal(search) {
 		t.Fatalf("search last: got %v", got)
 	}
-	if got := documentDate(nil, nil, "https://example.org/a", now); got != nil {
+	if got := documentDate(nil, nil, "https://example.org/a", nil, now); got != nil {
 		t.Fatalf("no date: got %v", got)
+	}
+}
+
+// A page date after the search window's end (beyond the slack) is the page's
+// update, not its publication: the URL, then the search date, are used.
+func TestDocumentDateDropsAPageDateAfterTheWindow(t *testing.T) {
+	now := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2024, 5, 13, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	search := time.Date(2024, 5, 12, 0, 0, 0, 0, time.UTC)
+	u := "https://www.blast-info.fr/articles/2024/gud-quand-marine-le-pen-defendait-des-antisemites-amUBl"
+	if got := documentDate(&late, &search, u, &end, now); !got.Equal(search) {
+		t.Fatalf("late page date: got %v, want the search date", got)
+	}
+	u2 := "https://charliehebdo.fr/2025/01/14/politique/recit"
+	if got := documentDate(&late, &search, u2, &end, now); !got.Equal(time.Date(2025, 1, 14, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("late page date with a dated URL: got %v", got)
+	}
+	inSlack := end.Add(3 * 24 * time.Hour)
+	if got := documentDate(&inSlack, &search, u, &end, now); !got.Equal(inSlack) {
+		t.Fatalf("page date within the slack is kept: got %v", got)
+	}
+	old := time.Date(2017, 5, 8, 0, 0, 0, 0, time.UTC)
+	if got := documentDate(&old, &search, u, &end, now); !got.Equal(old) {
+		t.Fatalf("an old page found by a later window keeps its date: got %v", got)
 	}
 }

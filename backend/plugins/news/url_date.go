@@ -58,12 +58,24 @@ func DateFromURL(u string, now time.Time) *time.Time {
 // before the search result: a search engine dates a page by when it indexed
 // it again, so an old article without metadata took that day
 // (lemonde.fr/en/.../2022/03/14/... stored as 2026-10-25, audit 2026-11-04).
-func documentDate(page, search *time.Time, url string, now time.Time) *time.Time {
-	if page != nil {
+// A page date later than the end of the search window (windowEnd, nil when
+// unknown) by more than SearchWindowSlack is not the publication: it is the
+// page's update or the day it was served (blast-info.fr 2024 articles dated
+// 2026-10-29, pcf.fr's site-wide 2024-11-01 on a 2023 statement; 149 pages,
+// audit 2026-11-04c), so the URL or the search date is used instead.
+func documentDate(page, search *time.Time, url string, windowEnd *time.Time, now time.Time) *time.Time {
+	if page != nil && !LateForWindow(*page, windowEnd) {
 		return page
 	}
 	if d := DateFromURL(url, now); d != nil {
 		return d
 	}
 	return search
+}
+
+// LateForWindow reports whether date falls after the end of the search
+// window that found the page, beyond SearchWindowSlack: such a date cannot be
+// the page's publication. A nil or zero windowEnd is never late.
+func LateForWindow(date time.Time, windowEnd *time.Time) bool {
+	return windowEnd != nil && !windowEnd.IsZero() && date.After(windowEnd.Add(SearchWindowSlack))
 }

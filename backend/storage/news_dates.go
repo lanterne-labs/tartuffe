@@ -62,3 +62,46 @@ func (s *PostgresStorer) SetNewsPageDate(ctx context.Context, url string, publis
 	}
 	return tag.RowsAffected(), nil
 }
+
+// ClearLateNewsPageDates removes the dates of the news pages dated later
+// than the end of the search window that found them, by more than slack: the
+// page's update or the day it was served, not its publication (audit
+// 2026-11-04c). The fact sources dated so and the documents go undated, for
+// ListUndatedNewsPages to date again. With apply false it only counts.
+// Returns the pages and the fact sources concerned.
+func (s *PostgresStorer) ClearLateNewsPageDates(ctx context.Context, slack time.Duration, apply bool) (pages, sources int64, err error) {
+	const late = `sd.source_type = 'news' AND sd.metadata ? 'search_to'
+		AND sd.published_at > (sd.metadata->>'search_to')::timestamptz + $1::interval`
+	interval := fmt.Sprintf("%d seconds", int64(slack.Seconds()))
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(DISTINCT sd.url), count(fs.id)
+		FROM source_documents sd
+		LEFT JOIN fact_sources fs ON fs.source_type = 'news' AND fs.source_url = sd.url
+			AND fs.published_at > (sd.metadata->>'search_to')::timestamptz + $1::interval
+		WHERE `+late, interval).Scan(&pages, &sources); err != nil {
+		return 0, 0, fmt.Errorf("counting the late news page dates: %w", err)
+	}
+	if !apply {
+		return pages, sources, nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("clearing the late news page dates: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE fact_sources fs SET published_at = NULL
+		FROM source_documents sd
+		WHERE fs.source_type = 'news' AND fs.source_url = sd.url
+			AND fs.published_at > (sd.metadata->>'search_to')::timestamptz + $1::interval
+			AND `+late, interval); err != nil {
+		return 0, 0, fmt.Errorf("clearing the late fact source dates: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE source_documents sd SET published_at = NULL WHERE `+late, interval); err != nil {
+		return 0, 0, fmt.Errorf("clearing the late document dates: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("clearing the late news page dates: %w", err)
+	}
+	return pages, sources, nil
+}

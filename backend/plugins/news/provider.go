@@ -622,7 +622,7 @@ func (p *Provider) extractAndInsertFromArticles(
 			PersonID:    target.PersonID,
 			Title:       content.Title,
 			Content:     content.Content,
-			PublishedAt: documentDate(content.DatePublished, article.Date, article.Link, time.Now()),
+			PublishedAt: documentDate(content.DatePublished, article.Date, article.Link, opts.DateTo, time.Now()),
 			Metadata:    documentMetadata(article, target, opts),
 		})
 		text := strings.TrimSpace(content.Content)
@@ -1285,7 +1285,7 @@ func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
 		}
 	}
 	if llmDate != nil && doc.PublishedAt == nil {
-		if to, ok := searchWindowEnd(doc); ok && llmDate.After(to.Add(searchWindowSlack)) {
+		if to, ok := searchWindowEnd(doc); ok && LateForWindow(*llmDate, &to) {
 			log.Debug().Str("url", doc.URL).Time("llm_date", *llmDate).Time("window_to", to).
 				Msg("news: LLM article date after the search window; the page stays undated")
 			llmDate = nil
@@ -1294,10 +1294,10 @@ func articleDate(doc core.SourceDocument, facts []backend.Fact) *time.Time {
 	return core.PickPublishedAt(doc.PublishedAt, llmDate)
 }
 
-// searchWindowSlack is how far past the end of its search window a page may
+// SearchWindowSlack is how far past the end of its search window a page may
 // still be published: the search engines' date filters are loose by a day or
 // two, and an article updated the next days keeps its place.
-const searchWindowSlack = 7 * 24 * time.Hour
+const SearchWindowSlack = 7 * 24 * time.Hour
 
 // documentMetadata is the metadata stored with a fetched page; search_to is
 // the end of the search window, which articleDate checks the LLM date against.
