@@ -193,7 +193,7 @@ func (s *PostgresStorer) InsertFact(ctx context.Context, input core.StoreFactInp
 		input.NormalizedFactText,
 		input.NormalizedFactTextEn,
 		input.EmbeddingText,
-		pgvector.NewHalfVector(input.Embedding),
+		halfVecOrNull(input.Embedding),
 		input.CanonicalVerb,
 		input.Lang,
 		date,
@@ -1634,4 +1634,15 @@ func (s *PostgresStorer) SetFactText(ctx context.Context, id int64, text string)
 		return fmt.Errorf("setting the text of fact %d: %w", id, err)
 	}
 	return nil
+}
+
+// halfVecOrNull encodes an embedding for a halfvec column, or NULL when there
+// is none: a fact of a person who is not a candidate is stored without its
+// embedding, and an empty halfvec is an error in pgvector ("halfvec must have
+// at least 1 dimension").
+func halfVecOrNull(embedding []float32) any {
+	if len(embedding) == 0 {
+		return nil
+	}
+	return pgvector.NewHalfVector(embedding)
 }

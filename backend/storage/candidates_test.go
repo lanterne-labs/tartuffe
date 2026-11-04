@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"digital-mirror/backend/core"
 )
 
 // TestCandidateFlag checks the flag and that the maintenance queries follow it:
@@ -49,4 +51,24 @@ func TestCandidateFlag(t *testing.T) {
 		require.NotEqual(t, id, p.ID, "an unflagged person is left out of the pass")
 	}
 	require.Error(t, storer.SetCandidate(ctx, id+1_000_000, true), "an unknown person is an error")
+}
+
+// TestInsertFactWithoutEmbedding: a fact of a person who is not a candidate is
+// stored without its embedding (core.FactInserter drops it); the insert must
+// write NULL, not an empty halfvec, which pgvector rejects. From 2026-11-02 to
+// 2026-11-04 every such fact failed this way (the feed's votes and debates).
+func TestInsertFactWithoutEmbedding(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	id, err := storer.InsertFact(ctx, core.StoreFactInput{
+		NormalizedFactText: "fact without embedding testcase",
+		EmbeddingText:      "fact without embedding testcase",
+		Lang:               "fr",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = storer.pool.Exec(ctx, `DELETE FROM facts WHERE id = $1`, id) })
+	var isNull bool
+	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT embedding IS NULL FROM facts WHERE id = $1`, id).Scan(&isNull))
+	require.True(t, isNull)
 }
