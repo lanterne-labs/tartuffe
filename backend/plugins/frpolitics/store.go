@@ -240,6 +240,81 @@ func (s *Store) StoreArticleStatement(ctx context.Context, legislature, texteNum
 	return nil
 }
 
+// StoredAmendmentStatement returns the cached statement of an amendment.
+func (s *Store) StoredAmendmentStatement(ctx context.Context, legislature int, texteRef string, numero int) (LawSummary, bool, error) {
+	var summary LawSummary
+	err := s.pool.QueryRow(ctx, `
+		SELECT statement, confidence FROM vote_amendments
+		WHERE legislature = $1 AND texte_ref = $2 AND numero = $3`, legislature, texteRef, numero).Scan(&summary.SimpleStatement, &summary.Confidence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LawSummary{}, false, nil
+	}
+	if err != nil {
+		return LawSummary{}, false, fmt.Errorf("loading the statement of amendment %d of %s: %w", numero, texteRef, err)
+	}
+	return summary, true, nil
+}
+
+// StoreAmendmentStatement keeps the statement of an amendment.
+func (s *Store) StoreAmendmentStatement(ctx context.Context, legislature int, texteRef string, numero int, summary LawSummary) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO vote_amendments (legislature, texte_ref, numero, statement, confidence)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (legislature, texte_ref, numero) DO UPDATE SET statement = EXCLUDED.statement, confidence = EXCLUDED.confidence`,
+		legislature, texteRef, numero, summary.SimpleStatement, summary.Confidence)
+	if err != nil {
+		return fmt.Errorf("storing the statement of amendment %d of %s: %w", numero, texteRef, err)
+	}
+	return nil
+}
+
+// BallotText is one stored ballot: its fact id and text.
+type BallotText struct {
+	ID   int64
+	Text string
+}
+
+// AmendmentBallots returns the ballots of the scrutin lawKey that name an
+// amendment.
+func (s *Store) AmendmentBallots(ctx context.Context, lawKey string) ([]BallotText, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT f.id, f.fact_text FROM facts f
+		JOIN fact_sources fs ON fs.fact_id = f.id
+		WHERE fs.metadata->>'law_key' = $1 AND f.fact_text ~ '(l''amendement|le sous-amendement) n° [0-9]+'`, lawKey)
+	if err != nil {
+		return nil, fmt.Errorf("loading the amendment ballots of %s: %w", lawKey, err)
+	}
+	defer rows.Close()
+	var out []BallotText
+	for rows.Next() {
+		var b BallotText
+		if err := rows.Scan(&b.ID, &b.Text); err != nil {
+			return nil, fmt.Errorf("loading the amendment ballots of %s: %w", lawKey, err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// RewriteBallotTexts sets the text of the given ballots, in one transaction.
+// The English text is reset for the translation repair.
+func (s *Store) RewriteBallotTexts(ctx context.Context, ballots []BallotText) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("rewriting ballots: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	for _, b := range ballots {
+		if _, err := tx.Exec(ctx, `UPDATE facts SET fact_text = $2, fact_text_en = NULL, updated_at = now() WHERE id = $1`, b.ID, b.Text); err != nil {
+			return fmt.Errorf("rewriting ballot %d: %w", b.ID, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("rewriting ballots: %w", err)
+	}
+	return nil
+}
+
 // BallotsNamingArticle counts the ballots of the scrutin lawKey whose text
 // names the article alone ("l'article 7 du texte de loi : « ... »"). The
 // scrutin is the law_key of the source: the source URL is the dossier's,

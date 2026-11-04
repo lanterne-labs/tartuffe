@@ -473,6 +473,7 @@ type lawSelection struct {
 func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Store, laws []Law, groupStats map[string]LawGroupStats, eventsByLaw LawEventMap, orgCache OrganeInfoMap, threshold float64, opts Options) (*lawSelection, error) {
 	sel := &lawSelection{summaries: make(map[string]LawSummary), amendments: make(map[string]string)}
 	articles := newArticleResolver(store, laws, orgCache)
+	amendments := newAmendmentStatements(store)
 
 	keys := make([]string, len(laws))
 	for i, law := range laws {
@@ -598,7 +599,7 @@ func selectLaws(ctx context.Context, storer *storage.PostgresStorer, store *Stor
 		if ClassifyScrutinObject(law.Title) == ObjectArticle {
 			object, ok, err = articles.resolve(ctx, law)
 		} else {
-			object, ok, err = resolveVotedObject(ctx, law, orgCache)
+			object, ok, _, err = resolveVotedObjectWith(ctx, law, orgCache, amendments)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve the voted object of %s: %w", law.Key, err)
