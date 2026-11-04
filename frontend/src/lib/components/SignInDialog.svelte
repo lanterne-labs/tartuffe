@@ -7,6 +7,7 @@
 	import { signInOpen, loadProviders, signIn, session, setDisplayName } from '$lib/auth';
 	import { signInWithGoogle, GoogleClosed } from '$lib/google';
 	import { lang, tr } from '$lib/i18n';
+	import { CONTACT_EMAIL, mailto } from '$lib/contact';
 	import type { AuthProvider } from '$lib/types';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -116,7 +117,7 @@
 	{:else if providers === null}
 		<p class="muted loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 	{:else if providers.length === 0}
-		<p class="muted">{tr('auth.none', currentLang)}</p>
+		<p class="muted">{tr('auth.none', currentLang)} <a href={mailto(currentLang === 'fr' ? 'Signalement' : 'Report')}>{CONTACT_EMAIL}</a></p>
 	{:else}
 		{#each providers as p (p.name)}
 			{#if p.name === 'google'}

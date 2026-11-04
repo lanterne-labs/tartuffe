@@ -283,7 +283,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'auth.signed_in_as': { fr: 'Connecté : {name}', en: 'Signed in: {name}' },
 	'auth.sign_out': { fr: 'Se déconnecter', en: 'Sign out' },
 	'auth.close': { fr: 'Fermer', en: 'Close' },
-	'auth.none': { fr: 'Le vote n’est pas encore ouvert.', en: 'Voting is not open yet.' },
+	'auth.none': { fr: 'La connexion n’est pas encore ouverte. En attendant, écrivez-nous :', en: 'Sign-in is not open yet. Meanwhile, write to us:' },
 	'auth.noop.title': { fr: 'Compte de test', en: 'Test account' },
 	'auth.noop.hint': { fr: 'Réservé aux tests : un pseudonyme suffit, sans vérification.', en: 'Testing only: a pseudonym, with no check.' },
 	'auth.noop.placeholder': { fr: 'Pseudonyme', en: 'Pseudonym' },
