@@ -49,6 +49,7 @@ var cliModes = []cliMode{
 	{"rearticle", "rewrite the ballots of the article scrutins with what the article does", runRearticleMode},
 	{"remotion", "name the motion in the stored ballots of the motion scrutins; reopens the pairs of the motions other than censure", runRemotionMode},
 	{"reamend", "complete the quoted object of the amendment ballots cut inside the guillemets (--dry-run to count)", runReamendMode},
+	{"reword", "give the stored amendment ballots what the amendment does (an LLM statement per amendment, cached) instead of the quoted exposé (--dry-run to count, --rejudge to reopen their pairs)", runRewordMode},
 	{"redate", "give the stored ballots the scrutin date suffix and the current abstention wording, no LLM (dry run unless --apply)", runRedateMode},
 	{"resummarize", "give the amendment ballots whose bill summary describes the amendment the bill's summary (--dry-run to count, --rejudge to reopen their pairs)", runResummarizeMode},
 }
@@ -162,6 +163,22 @@ func runReamendMode(ctx context.Context, storer *storage.PostgresStorer, opts CL
 	}
 	fmt.Printf("%d amendment scrutins, %d ballots %s; %d scrutins gated (%s)\n",
 		res.Scrutins, res.Ballots, verb, len(res.Gated), strings.Join(res.Gated, ", "))
+	return nil
+}
+
+// runRewordMode rewrites the stored amendment ballots with the amendment's
+// statement (RewordAmendmentBallots).
+func runRewordMode(ctx context.Context, storer *storage.PostgresStorer, opts CLIOptions) error {
+	res, err := BackfillAmendmentStatements(ctx, storer, Options{Since: opts.Since, Legislatures: opts.Legislatures}, opts.Rejudge, opts.DryRun)
+	if err != nil {
+		return err
+	}
+	verb := "rewritten"
+	if opts.DryRun {
+		verb = "to rewrite (dry run)"
+	}
+	fmt.Printf("%d amendment scrutins, %d ballots %s; %d scrutins keep the quoted exposé (%s); %d contradictions reopened\n",
+		res.Scrutins, res.Ballots, verb, len(res.Kept), strings.Join(res.Kept, ", "), res.Reopened)
 	return nil
 }
 

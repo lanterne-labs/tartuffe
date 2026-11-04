@@ -149,38 +149,49 @@ var scrutinNumeroRe = regexp.MustCompile(`n°\s*(\d+)`)
 //
 // The error is non-nil only when the amendments archive is not available.
 func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]OrganeInfo) (object string, ok bool, err error) {
+	object, ok, _, err = resolveVotedObjectWith(ctx, law, orgCache, nil)
+	return object, ok, err
+}
+
+// resolveVotedObjectWith is resolveVotedObject with the amendments' statements
+// (amendments, nil for the quoted exposé). stated tells that an amendment's
+// object is its statement.
+func resolveVotedObjectWith(ctx context.Context, law Law, orgCache map[string]OrganeInfo, amendments *amendmentStatements) (object string, ok, stated bool, err error) {
 	objType := ClassifyScrutinObject(law.Title)
 	if objType == ObjectArticle {
 		// An article vote is resolved by articleResolver, which reads what
 		// the article does in the text. Without it the ballot would carry
 		// the bill's purpose for one article: gated.
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if objType == ObjectMotion {
 		if object, ok := motionObject(law); ok {
-			return object, true, nil
+			return object, true, false, nil
 		}
 	}
 	if IsTextLevelVote(objType) || objType == ObjectOther {
-		return "", true, nil
+		return "", true, false, nil
 	}
 
 	m := scrutinNumeroRe.FindStringSubmatch(law.Title)
 	if m == nil {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	numero := 0
 	fmt.Sscanf(m[1], "%d", &numero)
 	info, err := LookupAmendement(ctx, law.Legislature, numero, law.VoteDate)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	if info == nil {
-		return "", false, nil
+		return "", false, false, nil
 	}
-	purpose := purposePhrase(info)
+	purpose, stated, err := amendments.purpose(ctx, law, info)
+	if err != nil {
+		return "", false, false, err
+	}
 	if purpose == "" {
-		return "", false, nil
+		return "", false, false, nil
 	}
 
 	label := "l'amendement"
@@ -197,7 +208,7 @@ func resolveVotedObject(ctx context.Context, law Law, orgCache map[string]Organe
 			group = fmt.Sprintf(" (%s)", name)
 		}
 	}
-	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true, nil
+	return fmt.Sprintf("%s n° %d%s %s", label, numero, group, purpose), true, stated, nil
 }
 
 // censureAlineaRe pulls the paragraph of article 49 out of a censure motion

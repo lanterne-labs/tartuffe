@@ -155,7 +155,7 @@ func cleanAmdText(s string) string {
 	return strings.TrimSpace(spaceRe.ReplaceAllString(s, " "))
 }
 
-var purposeLeadRe = regexp.MustCompile(`(?i)^ce (sous-)?amendement (vise à|tend à|a pour objet d[e'']\s*|propose d[e'']\s*)`)
+var purposeLeadRe = regexp.MustCompile(`(?i)^cet? (sous-)?amendement (vise à|tend à|a pour objet d[e'']\s*|propose d[e'']\s*)`)
 
 // purposePhrase turns the exposé sommaire (or, failing that, the dispositif)
 // into a "visant à ..." clause for the fact text.
