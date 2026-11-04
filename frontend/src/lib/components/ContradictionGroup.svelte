@@ -60,7 +60,6 @@
 			{/each}
 			<span class="spacer"></span>
 			<ShareMenu item={{ kind: 'fact', id: g.base_fact_id, personId: person.id, personName: person.name, topic, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang) }} />
-			<ReportButton kind="fact" targetId={g.base_fact_id} preview={g.base_fact_text} />
 		</div>
 		<FactVersions sourceUrls={g.base_fact_source_urls} restatements={g.base_restatements ?? []} lang={currentLang} />
 	</div>
@@ -91,7 +90,15 @@
 							other: pickLang(f.fact_text, f.fact_text_en, currentLang)
 						}}
 					/>
-					<ReportButton kind="contradiction" targetId={f.contradiction_id} preview={`${g.base_fact_text}\n⟷\n${f.fact_text}`} />
+					<ReportButton
+						kind="contradiction"
+						targetId={f.contradiction_id}
+						pair={{
+							a: { id: g.base_fact_id, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang), date: g.base_fact_date },
+							b: { id: f.fact_id, text: pickLang(f.fact_text, f.fact_text_en, currentLang), date: f.fact_date },
+							reason: pickLang(f.reason, f.reason_en, currentLang)
+						}}
+					/>
 				</div>
 				<FactVersions sourceUrls={f.source_urls} restatements={f.restatements ?? []} lang={currentLang} />
 			</div>

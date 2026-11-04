@@ -370,7 +370,19 @@
 								other: it.other ? pickLang(it.other.text, it.other.text_en, currentLang) : undefined
 							}}
 						/>
-						<ReportButton kind={it.kind} targetId={it.id} preview={it.other ? `${it.fact.text}\n⟷\n${it.other.text}` : it.fact.text} />
+						{#if it.other}
+							<ReportButton
+								kind="contradiction"
+								targetId={it.id}
+								pair={{
+									a: { id: it.fact.id, text: pickLang(it.fact.text, it.fact.text_en, currentLang), date: it.fact.date },
+									b: { id: it.other.id, text: pickLang(it.other.text, it.other.text_en, currentLang), date: it.other.date },
+									reason: pickLang(it.reason, it.reason_en, currentLang)
+								}}
+							/>
+						{:else}
+							<ReportButton kind="fact" targetId={it.id} preview={pickLang(it.fact.text, it.fact.text_en, currentLang)} />
+						{/if}
 					</div>
 				</div>
 			</li>
