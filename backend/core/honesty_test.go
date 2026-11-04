@@ -99,3 +99,23 @@ func TestComputeAggregateScore(t *testing.T) {
 func ptrFloat64(v float64) *float64 {
 	return &v
 }
+
+// TestScoreReliability: a score is trusted once its facts would hold 3
+// contradictions at the average rate; with no rate, none is.
+func TestScoreReliability(t *testing.T) {
+	for _, c := range []struct {
+		facts    int
+		rate     float64
+		expected float64
+		reliable bool
+	}{
+		{287, 0.001, 0.287, false},
+		{2999, 0.001, 2.999, false},
+		{3000, 0.001, 3, true},
+		{5000, 0, 0, false},
+	} {
+		expected, reliable := ScoreReliability(c.facts, c.rate)
+		assert.InDelta(t, c.expected, expected, 1e-9)
+		assert.Equal(t, c.reliable, reliable, "%d facts at %g", c.facts, c.rate)
+	}
+}

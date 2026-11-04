@@ -128,16 +128,19 @@
 	async function loadPanels() {
 		try {
 			panelsLoading = true;
-			// The rankings are among the candidates only: only they are judged.
-			const bestQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
-			const worstQs = buildQuery({ limit: PANEL_SIZE, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
+			// The rankings are among the candidates only: only they are judged,
+			// and among those whose score is reliable (enough contradictions
+			// expected): a clean score on few facts says little.
+			const bestQs = buildQuery({ limit: 100, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
+			const worstQs = buildQuery({ limit: 100, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
 			const [bestRes, worstRes, candRes] = await Promise.all([
 				fetch(`${API_BASE}/api/persons?${bestQs}`),
 				fetch(`${API_BASE}/api/persons?${worstQs}`),
 				fetch(`${API_BASE}/api/persons?candidate=true&limit=100`)
 			]);
-			if (bestRes.ok) topHonest = (await bestRes.json()) ?? [];
-			if (worstRes.ok) topDishonest = (await worstRes.json()) ?? [];
+			const reliable = (list: PersonSummary[] | null) => (list ?? []).filter((p) => p.score_reliable !== false).slice(0, PANEL_SIZE);
+			if (bestRes.ok) topHonest = reliable(await bestRes.json());
+			if (worstRes.ok) topDishonest = reliable(await worstRes.json());
 			if (candRes.ok) candidates = (await candRes.json()) ?? [];
 		} catch (err) {
 			// Non-fatal: the candidates' error banner offers the retry.
@@ -279,7 +282,7 @@
 						<li>
 							<a href="/person/{person.id}" class="rank-row">
 								<span class="rank-pos">{i + 1}</span>
-								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
+								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
@@ -313,7 +316,7 @@
 						<li>
 							<a href="/person/{person.id}" class="rank-row">
 								<span class="rank-pos">{i + 1}</span>
-								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
+								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
 								<div class="rank-info">
 									<div class="rank-name">{person.name}</div>
 									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
@@ -359,7 +362,7 @@
 				<a href="/person/{person.id}" class="card">
 					<div class="card-content">
 						<div class="card-left">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} />
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
 							<div class="card-info">
 								<div class="card-name">
 									{person.name}

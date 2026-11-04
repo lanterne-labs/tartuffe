@@ -64,6 +64,14 @@ func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to get persons")
 		return
 	}
+	rate, err := s.contradictionRate(ctx)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		return
+	}
+	for i := range persons {
+		persons[i].ScoreConfidence = confidence(persons[i].FactCount, rate)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60, stale-while-revalidate=300")
@@ -91,6 +99,12 @@ func (s *Service) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Person not found", http.StatusNotFound)
 		return
 	}
+	rate, err := s.contradictionRate(ctx)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		return
+	}
+	person.ScoreConfidence = confidence(person.FactCount, rate)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(person)

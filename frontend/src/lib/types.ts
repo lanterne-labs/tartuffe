@@ -14,6 +14,10 @@ export interface PersonSummary {
 	// The AI work after extraction (stances, contradiction detection) runs
 	// for the candidates; the others have their facts and no score.
 	candidate: boolean;
+	// The contradictions the person's facts would hold at the candidates'
+	// average rate; the score is reliable from 3 (core.ScoreReliability).
+	expected_contradictions?: number;
+	score_reliable?: boolean;
 }
 
 export interface FactWithSource {
@@ -246,7 +250,7 @@ export interface FeedItem {
 	kind: 'contradiction' | 'fact';
 	id: number;
 	at: string;
-	person: { id: number; name: string; image_url?: string | null; honesty_score: number };
+	person: { id: number; name: string; image_url?: string | null; honesty_score: number; fact_count?: number; expected_contradictions?: number; score_reliable?: boolean };
 	stance_id?: number | null;
 	stance_label?: string | null;
 	stance_label_en?: string | null;

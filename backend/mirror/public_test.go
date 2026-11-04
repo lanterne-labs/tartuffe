@@ -336,3 +336,6 @@ func TestShareAndScore(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"bundles":2`)
 	assert.Equal(t, http.StatusNotFound, do(t, h, http.MethodGet, "/api/person/11/score", "", nil).Code)
 }
+
+// ContradictionRate: one contradiction per 1000 facts.
+func (m *fakeStore) ContradictionRate(context.Context) (float64, error) { return 0.001, nil }

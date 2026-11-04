@@ -393,6 +393,7 @@ type PersonSummary struct {
 	FactCount          int  `json:"fact_count"`
 	StanceCount        int  `json:"stance_count"`
 	ContradictionCount int  `json:"contradiction_count"`
+	ScoreConfidence
 }
 
 // GetPersonsRankedByScore returns persons ranked by the chosen sort order.
