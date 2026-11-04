@@ -1056,3 +1056,83 @@ cases:
     notes: "A private remark reported by the press against his own public answer: the paper's account against his words, a doubtful fact. Prod 2349 (2026-11-02), with fact B as the new extraction rule writes it."
     date_a: "2025-06-04"
     date_b: "2025-06-02"
+
+  - name: "FP_2409_ruffin_primaire_ou_pas_vs_rally_pledge"
+    fact_a: "François Ruffin a promis que, quel que soit le vainqueur de la primaire à gauche, il se rangerait loyalement derrière lui."
+    fact_b: "François Ruffin a déclaré le 22 avril 2026 à Poitiers : « Primaire ou pas, j'irai de toute façon. »"
+    claimed_reason: "Il avait promis de se ranger derrière le vainqueur de la primaire, mais affirme maintenant qu'il sera candidat primaire ou pas."
+    expect: drop
+    bucket: condition_later_met
+    notes: "A pledge to rally behind a primary's winner binds only once a primary is held and another wins it; being in the race whether or not a primary takes place does not break it. Prod 2409 (2026-11-04)."
+    date_a: "2026-04-10"
+    date_b: "2026-04-22"
+
+  - name: "TP_2409b_rally_pledge_then_runs_against_winner"
+    fact_a: "François Ruffin a promis que, quel que soit le vainqueur de la primaire à gauche, il se rangerait loyalement derrière lui."
+    fact_b: "François Ruffin a maintenu sa candidature à l'élection présidentielle contre Marine Tondelier, désignée par la primaire de la gauche qu'il avait perdue."
+    claimed_reason: "Il avait promis de se ranger derrière le vainqueur de la primaire, puis s'est présenté contre la gagnante."
+    expect: keep
+    bucket: condition_later_met
+    notes: "The twin of FP_2409 (invented): running against the designated winner after losing the primary breaks the pledge."
+    date_a: "2026-04-10"
+    date_b: "2026-12-15"
+
+  - name: "FP_2413_lisnard_not_hinder_vs_not_support"
+    fact_a: "David Lisnard a déclaré que s'il perd une primaire, il acceptera le résultat et ne gênera pas le candidat retenu."
+    fact_b: "David Lisnard voudrait se réserver la possibilité de ne pas soutenir le vainqueur de la primaire si celui-ci ne lui convient pas."
+    claimed_reason: "Il promet d'accepter le résultat d'une primaire perdue et de ne pas gêner le vainqueur, puis dit vouloir se réserver la possibilité de ne pas le soutenir."
+    expect: drop
+    bucket: condition_later_met
+    notes: "Not hindering is not endorsing: withholding support does not break a promise not to get in the winner's way. Prod 2413 (2026-11-04)."
+    date_a: "2026-08-11"
+    date_b: "2026-10-25"
+
+  - name: "FP_2405_tondelier_collective_call_not_followed"
+    fact_a: "Marine Tondelier a appelé les membres du Nouveau Front populaire à quitter Twitter (X), le 12 janvier 2025."
+    fact_b: "Marine Tondelier a annoncé le 20 janvier 2025 qu'elle restait sur le réseau social X, faute d'un « départ collectif et massif » des responsables politiques de gauche."
+    claimed_reason: "Elle a appelé le NFP à quitter X le 12 janvier 2025, puis a annoncé le 20 janvier qu'elle n'y renoncerait finalement pas."
+    expect: drop
+    bucket: condition_later_met
+    notes: "A call for a collective move, not followed alone once the others did not move, with the reason given. Prod 2405 (2026-11-04)."
+    date_a: "2025-01-12"
+    date_b: "2025-01-20"
+
+  - name: "FP_2414_bardella_pledge_narrowed_before_any_act"
+    fact_a: "Jordan Bardella a affirmé vouloir abroger dès l'automne la réforme des retraites adoptée en 2023."
+    fact_b: "Jordan Bardella a renvoyé à plus tard l'abrogation de la réforme des retraites, en avançant un coût de 1,6 milliard d'euros pour une abrogation immédiate."
+    claimed_reason: "Il affirmait vouloir abroger la réforme dès l'automne 2024, puis a écarté l'abrogation immédiate la même année."
+    expect: drop
+    bucket: announcement_then_action
+    notes: "A pledge narrowed or postponed by the person before any act is a revised programme (user decision 2026-11-01). Prod 2414 (2026-11-04); fact B rewritten from the quote (the stored fact 91567 glossed it)."
+    date_a: "2024-06-18"
+    date_b: "2024-06-24"
+
+  - name: "FP_2400_attal_declines_to_argue_then_backs_primary"
+    fact_a: "Gabriel Attal a déclaré qu'il ne perdrait pas de temps et d'énergie à discuter de la possibilité d'une primaire alors que certains s'y opposent, précisant n'avoir jamais rien exclu."
+    fact_b: "Gabriel Attal défend l'idée d'une « grande primaire des démocrates » et cherche à y soumettre Edouard Philippe."
+    claimed_reason: "Attal refusait fin août de perdre du temps et de l'énergie à discuter d'une primaire, et en défend désormais activement une."
+    expect: drop
+    bucket: date_only_no_commitment
+    notes: "Declining to argue about X now, while excluding nothing, is not a position against X. Prod 2400 (2026-11-04); fact A carries « je n'ai jamais rien exclu » from its quote."
+    date_a: "2026-08-30"
+    date_b: "2026-11-03"
+
+  - name: "FP_2392_lepen_bill_rewritten_in_cmp"
+    fact_a: "Marine Le Pen a déclaré que le RN est frontalement opposé au projet de loi sur l'immigration."
+    fact_b: "Marine Le Pen a affirmé que le RN avait voté la loi immigration issue de la commission mixte paritaire car il considérait que l'intérêt des Français était qu'elle soit votée."
+    claimed_reason: "Après avoir déclaré le RN frontalement opposé au projet de loi, Marine Le Pen a affirmé que le RN l'avait voté dans l'intérêt des Français."
+    expect: drop
+    bucket: different_events
+    notes: "Opposition to the government's bill, then a vote for the text rewritten in CMP with the reason given: two versions. Prod 2392 (2026-11-04)."
+    date_a: "2023-12-10"
+    date_b: "2024-01-13"
+
+  - name: "FP_2379_bardella_parliamentarian_rule_vs_ally_candidacy"
+    fact_a: "Jordan Bardella a déclaré le 18 novembre 2024 que ne pas avoir de condamnation à son casier judiciaire est pour lui une règle numéro une lorsqu'on souhaite être parlementaire de la République."
+    fact_b: "Jordan Bardella a affirmé, le mercredi 8 juillet, qu'il ne ressentait ni soulagement ni déception de ne pas être le candidat de son parti pour l'élection présidentielle, et qu'il se réjouissait que Marine Le Pen puisse porter les couleurs du Rassemblement national."
+    claimed_reason: "Il avait promis d'exiger un casier vierge pour porter les couleurs du RN, mais se réjouit que Marine Le Pen, condamnée, les porte à la présidentielle."
+    expect: drop
+    bucket: vague_vs_specific
+    notes: "A rule for parliamentarians, applied by the reason to an ally's presidential candidacy: another office, and not the person exempting themself. Prod 2379 (2026-11-04)."
+    date_a: "2024-11-18"
+    date_b: "2026-07-08"

@@ -52,3 +52,18 @@ func DateFromURL(u string, now time.Time) *time.Time {
 	}
 	return nil
 }
+
+// documentDate is a news page's publication date: the page's own metadata,
+// else the date written in its URL, else the search result's. The URL comes
+// before the search result: a search engine dates a page by when it indexed
+// it again, so an old article without metadata took that day
+// (lemonde.fr/en/.../2022/03/14/... stored as 2026-10-25, audit 2026-11-04).
+func documentDate(page, search *time.Time, url string, now time.Time) *time.Time {
+	if page != nil {
+		return page
+	}
+	if d := DateFromURL(url, now); d != nil {
+		return d
+	}
+	return search
+}
