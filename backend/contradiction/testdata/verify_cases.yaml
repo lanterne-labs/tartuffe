@@ -1097,6 +1097,24 @@ cases:
     date_a: "2025-01-12"
     date_b: "2025-01-20"
 
+  - name: "TP_1510_zemmour_deportation_figures_vs_not_studied"
+    fact_a: "Eric Zemmour affirme que 40% des Juifs non français ont été déportés contre 10% des Juifs français."
+    fact_b: "Eric Zemmour a déclaré à propos du sort des Juifs sous Vichy : « ce n'est pas mon sujet, je ne l'ai pas étudié »."
+    claimed_reason: "Il avance des pourcentages précis de déportation tout en disant ne pas avoir étudié la question."
+    expect: keep
+    bucket: denial_of_own_position
+    notes: "Precise claims on a subject, then the person's own disclaimer of having studied it: the disclaimer disowns the knowledge the claims asserted (user's decision, 2026-11-04). Prod 1510 (and 1509)."
+
+  - name: "FP_2218_melenchon_media_blame_vs_press_exclusion"
+    fact_a: "Jean-Luc Mélenchon a exclu de sa conférence de presse du 23 février 2026 la grande majorité des organes nationaux, dont Libération, Le Monde, France Info et TF1, n'invitant que quelques « nouveaux médias »."
+    fact_b: "Jean-Luc Mélenchon a affirmé lors de sa conférence de presse du 23 février 2026 : « Je n'ai pas de problème avec les médias, ce sont les médias qui ont un problème avec moi »."
+    claimed_reason: "Il affirme n'avoir aucun problème avec les médias alors qu'il a exclu de cette même conférence la plupart des grands médias nationaux."
+    expect: drop
+    bucket: same_direction
+    notes: "A claim about who is to blame in a conflict fits the speaker's hostile act in it; the reason infers an attitude from the act (user's decision, 2026-11-04). Prod 2218."
+    date_a: "2026-02-23"
+    date_b: "2026-02-23"
+
   - name: "FP_2414_bardella_pledge_narrowed_before_any_act"
     fact_a: "Jordan Bardella a affirmé vouloir abroger dès l'automne la réforme des retraites adoptée en 2023."
     fact_b: "Jordan Bardella a renvoyé à plus tard l'abrogation de la réforme des retraites, en avançant un coût de 1,6 milliard d'euros pour une abrogation immédiate."
