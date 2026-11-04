@@ -68,10 +68,33 @@ func (m *memReports) ListPendingUserReports(_ context.Context, limit int) ([]sto
 	}
 	return out, nil
 }
-func (m *memReports) RecordUserReportVerdict(_ context.Context, id int64, status, reason string) error {
+func (m *memReports) RecordUserReportVerdict(_ context.Context, id int64, status, verdict, reason string) error {
 	for i := range m.reports {
 		if m.reports[i].ID == id {
 			m.reports[i].Status, m.reports[i].VerdictReason = status, reason
+			if verdict != "" {
+				m.reports[i].AIVerdict = &verdict
+			}
+		}
+	}
+	return nil
+}
+func (m *memReports) GetUserReport(_ context.Context, id int64) (*storage.UserReport, error) {
+	for i := range m.reports {
+		if m.reports[i].ID == id {
+			r := m.reports[i]
+			return &r, nil
+		}
+	}
+	return nil, pgx.ErrNoRows
+}
+func (m *memReports) DecideUserReport(_ context.Context, id int64, status, reason string) error {
+	for i := range m.reports {
+		if m.reports[i].ID == id {
+			m.reports[i].Status = status
+			if reason != "" {
+				m.reports[i].VerdictReason = reason
+			}
 		}
 	}
 	return nil
@@ -82,9 +105,18 @@ func (m *memReports) CountUserReportAttempt(_ context.Context, id int64, _ strin
 	}
 	m.attempts[id]++
 	if m.attempts[id] >= max {
-		return m.RecordUserReportVerdict(context.Background(), id, storage.ReportAmbiguous, "judge failed")
+		return m.RecordUserReportVerdict(context.Background(), id, storage.ReportReview, "", "judge failed")
 	}
 	return nil
+}
+
+func (m *memReports) advice(id int64) string {
+	for _, r := range m.reports {
+		if r.ID == id && r.AIVerdict != nil {
+			return *r.AIVerdict
+		}
+	}
+	return ""
 }
 
 func (m *memReports) status(id int64) string {
@@ -120,37 +152,61 @@ func report(id int64, kind string, target int64, reason string) storage.UserRepo
 	return storage.UserReport{ID: id, TargetKind: kind, TargetID: target, Reason: reason, Status: storage.ReportPending}
 }
 
-// TestJudgeReports: the judge sees the target and the report; a report
-// found right removes its target the safe way, a wrong one keeps it, and a
-// report on a target already gone is stale.
+// TestJudgeReports: the judge sees the target and the report, and its
+// verdict is only advice: nothing is removed, every report waits for a
+// person. A report on a target already gone is stale.
 func TestJudgeReports(t *testing.T) {
 	m := &memReports{reports: []storage.UserReport{
 		report(1, storage.ReportKindContradiction, 2, "RIGHT: two different laws"),
 		report(2, storage.ReportKindFact, 1, "WRONG: he never voted"),
-		report(3, storage.ReportKindContradiction, 2, "RIGHT: same as above"),
-		report(4, storage.ReportKindFact, 1, "MAYBE: unclear"),
+		report(3, storage.ReportKindFact, 1, "MAYBE: unclear"),
+		report(4, storage.ReportKindFact, 7, "RIGHT: no such fact"),
 	}}
 	j := &fakeJudge{verdicts: map[string]Verdict{"RIGHT": VerdictDeleteTarget, "WRONG": VerdictDismissComplaint}}
 	n, err := JudgeReports(context.Background(), m, j, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 4, n)
 
-	assert.Equal(t, storage.ReportAccepted, m.status(1))
-	assert.Equal(t, []int64{2}, m.dismissed, "the contradiction is dismissed for good")
 	assert.Contains(t, j.prompts[0], "60 ans")
 	assert.Contains(t, j.prompts[0], "RIGHT: two different laws")
-
-	assert.Equal(t, storage.ReportRejected, m.status(2))
+	for id, advice := range map[int64]Verdict{1: VerdictDeleteTarget, 2: VerdictDismissComplaint, 3: VerdictAmbiguous} {
+		assert.Equal(t, storage.ReportReview, m.status(id))
+		assert.Equal(t, string(advice), m.advice(id))
+	}
+	assert.Empty(t, m.dismissed, "the judge removes nothing")
 	assert.Empty(t, m.deletedFacts)
-	assert.Equal(t, storage.ReportStale, m.status(3), "the target went with report 1")
-	assert.Equal(t, storage.ReportAmbiguous, m.status(4))
+	assert.Equal(t, storage.ReportStale, m.status(4))
 	assert.Len(t, j.prompts, 3, "a stale report costs no call")
+}
 
-	m.reports = append(m.reports, report(5, storage.ReportKindFact, 1, "RIGHT: misattributed"))
-	_, err = JudgeReports(context.Background(), m, j, 10)
+// TestDecideReport: a person's accept removes the target the safe way, a
+// refusal keeps it, and a refused report can still be accepted later.
+func TestDecideReport(t *testing.T) {
+	ctx := context.Background()
+	m := &memReports{reports: []storage.UserReport{
+		report(1, storage.ReportKindContradiction, 2, "two different laws"),
+		report(2, storage.ReportKindFact, 1, "he never voted"),
+		report(3, storage.ReportKindContradiction, 2, "same as 1"),
+	}}
+	status, err := DecideReport(ctx, m, 1, true, "")
 	require.NoError(t, err)
-	assert.Equal(t, storage.ReportAccepted, m.status(5))
+	assert.Equal(t, storage.ReportAccepted, status)
+	assert.Equal(t, []int64{2}, m.dismissed, "the contradiction is dismissed for good")
+
+	status, err = DecideReport(ctx, m, 2, false, "")
+	require.NoError(t, err)
+	assert.Equal(t, storage.ReportRejected, status)
+	assert.Empty(t, m.deletedFacts)
+	status, err = DecideReport(ctx, m, 2, true, "misattributed")
+	require.NoError(t, err)
+	assert.Equal(t, storage.ReportAccepted, status)
 	assert.Equal(t, []int64{1}, m.deletedFacts, "the fact goes with its cleanup")
+
+	status, err = DecideReport(ctx, m, 3, true, "")
+	require.NoError(t, err)
+	assert.Equal(t, storage.ReportStale, status, "the target went with report 1")
+	_, err = DecideReport(ctx, m, 1, false, "")
+	assert.ErrorIs(t, err, ErrReportDecided)
 }
 
 // TestJudgeReportsFailures: an unavailable LLM stops the pass and leaves
@@ -166,6 +222,7 @@ func TestJudgeReportsFailures(t *testing.T) {
 		_, err = JudgeReports(context.Background(), m, &fakeJudge{err: errors.New("bad json")}, 1)
 		require.NoError(t, err)
 	}
-	assert.Equal(t, storage.ReportAmbiguous, m.status(1), "after the attempts a person decides")
+	assert.Equal(t, storage.ReportReview, m.status(1), "after the attempts a person decides")
+	assert.Empty(t, m.advice(1))
 	assert.Equal(t, storage.ReportPending, m.status(2))
 }

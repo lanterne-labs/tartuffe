@@ -105,31 +105,53 @@ func TestUserReports(t *testing.T) {
 	require.Len(t, pending, 3)
 	assert.Equal(t, r.ID, pending[0].ID, "oldest first")
 
-	require.NoError(t, storer.RecordUserReportVerdict(ctx, r.ID, ReportAccepted, "The two facts are years apart."))
+	// The judge's verdict is advice: the report waits for a person, nothing
+	// is public yet.
+	require.NoError(t, storer.RecordUserReportVerdict(ctx, r.ID, ReportReview, "delete_target", "The two facts are years apart."))
+	got, err := storer.GetUserReport(ctx, r.ID)
+	require.NoError(t, err)
+	assert.Equal(t, ReportReview, got.Status)
+	require.NotNil(t, got.AIVerdict)
+	assert.Equal(t, "delete_target", *got.AIVerdict)
+	assert.Nil(t, got.Enabled, "not decided")
+	corrections, err := storer.ListCorrections(ctx, 0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, corrections, "the judge publishes nothing")
+
+	require.NoError(t, storer.DecideUserReport(ctx, r.ID, ReportAccepted, ""))
 	mine, err := storer.GetUserReports(ctx, other)
 	require.NoError(t, err)
 	require.Len(t, mine, 1)
 	assert.Equal(t, r2.ID, mine[0].ID)
 	assert.Equal(t, ReportAccepted, mine[0].Status, "the other report on the target is accepted with it")
-	require.NoError(t, storer.RecordUserReportVerdict(ctx, fr.ID, ReportRejected, "The source says he voted for."))
+	require.NotNil(t, mine[0].Enabled)
+	assert.True(t, *mine[0].Enabled)
+	require.NoError(t, storer.RecordUserReportVerdict(ctx, fr.ID, ReportReview, "dismiss_complaint", "The source says he voted for."))
+	require.NoError(t, storer.DecideUserReport(ctx, fr.ID, ReportRejected, ""))
+	got, err = storer.GetUserReport(ctx, fr.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Enabled)
+	assert.False(t, *got.Enabled)
 
-	corrections, err := storer.ListCorrections(ctx, 0, 10)
+	corrections, err = storer.ListCorrections(ctx, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, corrections, 1, "one correction per target")
 	assert.Equal(t, r.ID, corrections[0].ID)
 	assert.Equal(t, "The two facts are years apart.", corrections[0].VerdictReason)
 
-	// Failed judgings: past the cap the report waits for a person.
+	// Failed judgings: past the cap the report waits for a person, without
+	// advice.
 	require.NoError(t, storer.CountUserReportAttempt(ctx, fr.ID, "boom", 2))
 	r3, err := storer.CreateUserReport(ctx, other, ReportKindFact, f.facts[2], "Il a voté contre, pas pour.")
 	require.NoError(t, err)
 	require.NoError(t, storer.CountUserReportAttempt(ctx, r3.ID, "boom", 2))
 	require.NoError(t, storer.CountUserReportAttempt(ctx, r3.ID, "boom", 2))
-	got, err := storer.ListUserReports(ctx, ReportAmbiguous, 10)
+	review, err := storer.ListUserReports(ctx, ReportReview, 10)
 	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, r3.ID, got[0].ID)
-	assert.Equal(t, "judge failed: boom", got[0].VerdictReason)
+	require.Len(t, review, 1)
+	assert.Equal(t, r3.ID, review[0].ID)
+	assert.Equal(t, "judge failed: boom", review[0].VerdictReason)
+	assert.Nil(t, review[0].AIVerdict)
 
 	// Erasing the account keeps the report, without the user.
 	_, err = storer.pool.Exec(ctx, `DELETE FROM app_users WHERE id = $1`, f.user)

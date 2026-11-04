@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The public log of corrections: every fact or contradiction removed after
-	// a report, with the judge's reason (GET /api/corrections). Neither the
+	// a report a person accepted, with the reason (GET /api/corrections). Neither the
 	// reporter nor their words are shown.
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { onMount } from 'svelte';

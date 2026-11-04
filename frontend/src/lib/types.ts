@@ -289,7 +289,9 @@ export interface ShareTarget {
 }
 
 export type ReportKind = 'fact' | 'contradiction';
-export type ReportStatus = 'pending' | 'accepted' | 'rejected' | 'ambiguous' | 'stale';
+// pending: the AI has not read it; review: the AI gave its advice, a person
+// decides; accepted (the item was removed) or rejected by that person.
+export type ReportStatus = 'pending' | 'review' | 'accepted' | 'rejected' | 'stale';
 
 // A signed-in user's report (POST /api/reports, GET /api/me/reports).
 export interface UserReport {
@@ -302,8 +304,11 @@ export interface UserReport {
 	reason: string;
 	status: ReportStatus;
 	verdict_reason: string;
+	ai_verdict?: 'delete_target' | 'dismiss_complaint' | 'ambiguous';
+	enabled: boolean | null;
 	created_at: string;
 	judged_at?: string | null;
+	decided_at?: string | null;
 }
 
 export interface MyReports {

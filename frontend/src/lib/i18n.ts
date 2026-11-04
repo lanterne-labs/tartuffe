@@ -334,11 +334,11 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'report.why.contradiction': { fr: 'Pourquoi n’est-ce pas une contradiction ? (contextes différents, fait erroné…)', en: 'Why is it not a contradiction? (different contexts, a wrong fact…)' },
 	'report.placeholder.fact': { fr: 'Par exemple : dans la vidéo, elle cite un adversaire ; ce n’est pas sa position.', en: 'E.g. in the video she quotes an opponent; it is not her position.' },
 	'report.placeholder.contradiction': { fr: 'Par exemple : le premier vote porte sur la loi de 2019, le second sur un autre texte.', en: 'E.g. the first vote is on the 2019 law, the second on another text.' },
-	'report.hint': { fr: 'Une IA relit votre signalement avec les sources : apportez un élément concret.', en: 'An AI checks your report against the sources. Give concrete evidence.' },
+	'report.hint': { fr: 'Une IA relit votre signalement avec les sources, puis une personne de l’équipe décide : apportez un élément concret.', en: 'An AI checks your report against the sources, then a person on the team decides. Give concrete evidence.' },
 	'report.submit': { fr: 'Envoyer', en: 'Send' },
 	'report.sending': { fr: 'Envoi…', en: 'Sending…' },
 	'report.sent': { fr: 'Merci, votre signalement est enregistré.', en: 'Thanks, report recorded.' },
-	'report.sent_next': { fr: 'Une IA le relit avec les sources dans les minutes qui viennent. Si vous avez raison, l’élément est retiré et la correction publiée.', en: 'An AI checks it against the sources within minutes. If you are right, the item is removed and the correction published.' },
+	'report.sent_next': { fr: 'Une IA le relit avec les sources, puis une personne de l’équipe décide. Si vous avez raison, l’élément est retiré et la correction publiée.', en: 'An AI checks it against the sources, then a person on the team decides. If you are right, the item is removed and the correction published.' },
 	'report.see_profile': { fr: 'Suivre mes signalements', en: 'Follow my reports' },
 	'report.error.too_many_reports': { fr: 'Vous avez déjà 20 signalements en attente.', en: 'You already have 20 reports waiting.' },
 	'report.error.not_found': { fr: 'Cet élément n’existe plus : il a sans doute déjà été corrigé.', en: 'This item no longer exists: it may have been corrected already.' },
@@ -347,7 +347,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'report.status.pending': { fr: 'En cours d’examen', en: 'Being reviewed' },
 	'report.status.accepted': { fr: 'Corrigé', en: 'Corrected' },
 	'report.status.rejected': { fr: 'Maintenu', en: 'Kept' },
-	'report.status.ambiguous': { fr: 'En attente de relecture humaine', en: 'Waiting for a human review' },
+	'report.status.review': { fr: 'En attente de relecture humaine', en: 'Waiting for a human review' },
 	'report.status.stale': { fr: 'Déjà retiré', en: 'Already removed' },
 
 	// Profile: reports
