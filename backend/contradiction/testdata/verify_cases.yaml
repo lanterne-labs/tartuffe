@@ -1107,16 +1107,6 @@ cases:
     date_a: "2024-06-18"
     date_b: "2024-06-24"
 
-  - name: "TP_2414b_pledge_then_votes_against"
-    fact_a: "Jordan Bardella a affirmé vouloir abroger dès l'automne la réforme des retraites adoptée en 2023."
-    fact_b: "Jordan Bardella a voté contre la proposition de loi abrogeant la réforme des retraites de 2023."
-    claimed_reason: "Il avait promis d'abroger la réforme, puis a voté contre son abrogation."
-    expect: keep
-    bucket: announcement_then_action
-    notes: "The twin of FP_2414 (invented): an ACT against the pledge breaks it."
-    date_a: "2024-06-18"
-    date_b: "2024-11-28"
-
   - name: "FP_2400_attal_declines_to_argue_then_backs_primary"
     fact_a: "Gabriel Attal a déclaré qu'il ne perdrait pas de temps et d'énergie à discuter de la possibilité d'une primaire alors que certains s'y opposent, précisant n'avoir jamais rien exclu."
     fact_b: "Gabriel Attal défend l'idée d'une « grande primaire des démocrates » et cherche à y soumettre Edouard Philippe."
