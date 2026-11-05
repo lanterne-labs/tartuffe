@@ -23,9 +23,9 @@
 		parts: Part[];
 		eraseTitle: string;
 		erase: string[];
-		promiseTitle: string;
-		promises: string[];
-		hosting: string;
+		keepTitle: string;
+		keep: string[];
+		keepNote: string;
 		eventLine: string;
 		back: string;
 	}> = {
@@ -84,9 +84,9 @@
 			erase: [
 				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.'
 			],
-			promiseTitle: 'Nos engagements',
-			promises: ['Vos données restent ici : jamais vendues, louées ni partagées.', 'Le site vit sans publicité.', 'Votre boîte mail reste tranquille : nous n’avons pas votre adresse.', 'Vos données restent à part de celles d’autres sites.'],
-			hosting: 'Le site est hébergé chez the host, qui peut journaliser les connexions comme tout hébergeur.',
+			keepTitle: 'Ce que nous gardons, en tout',
+			keep: ['L’empreinte de votre compte Google (pas l’identifiant lui-même).', 'Le pseudo que vous avez choisi.', 'Vos +1.', 'Vos signalements.', 'L’empreinte de votre jeton de connexion, pour 30 jours.'],
+			keepNote: 'Rien d’autre. Nous n’en vendons, louons ni partageons rien.',
 			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
 			back: 'À propos'
 		},
@@ -133,9 +133,9 @@
 			erase: [
 				'On your profile, “Delete my account” erases at once the account, its sessions and its +1. Your reports stay, detached from you: they served to correct the site.'
 			],
-			promiseTitle: 'Our commitments',
-			promises: ['Your data stays here: never sold, rented or shared.', 'The site runs without ads.', 'Your inbox stays quiet: we don’t have your address.', 'Your data stays apart from other sites’.'],
-			hosting: 'The site is hosted by the host, which may log connections like any host.',
+			keepTitle: 'All we keep',
+			keep: ['The fingerprint of your Google account (not the identifier itself).', 'The pseudonym you chose.', 'Your +1.', 'Your reports.', 'The fingerprint of your sign-in token, for 30 days.'],
+			keepNote: 'Nothing else. We sell, rent or share none of it.',
 			eventLine: 'The presidential vote is a separate experiment of the lab: its anonymity is explained on its own page',
 			back: 'About'
 		}
@@ -191,11 +191,11 @@
 	</section>
 
 	<section class="part">
-		<h2>{c.promiseTitle}</h2>
-		<ul class="promises">
-			{#each c.promises as line}<li>{line}</li>{/each}
+		<h2>{c.keepTitle}</h2>
+		<ul class="plain">
+			{#each c.keep as line}<li>{line}</li>{/each}
 		</ul>
-		<p class="note">{c.hosting}</p>
+		<p class="note">{c.keepNote}</p>
 	</section>
 
 	<p class="note event-line"><a href="{eventPaths().how}#donnees">{c.eventLine} →</a></p>
@@ -303,19 +303,8 @@
 		color: var(--text-secondary);
 		line-height: 1.55;
 	}
-	.plain li,
-	.promises li {
+	.plain li {
 		color: var(--text-secondary);
-	}
-	.promises {
-		list-style: none;
-		padding: 0;
-	}
-	.promises li::before {
-		content: '✕';
-		margin-right: 0.6rem;
-		color: var(--red);
-		font-weight: 700;
 	}
 	.event-line {
 		text-align: center;
