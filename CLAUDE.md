@@ -284,6 +284,7 @@ The Grafana dashboard **Quality** (`deploy/observability/grafana/dashboards/qual
 - the precision of the detection, from the verdicts in `contradiction_reviews`. To review, run `dm contradictions review sample --reviewer <name> --max 30 > todo.jsonl`, add `"verdict"` (real, debatable, false) and an optional `"note"` to each line, then run `dm contradictions review record --reviewer <name> < todo.jsonl`. A review keeps the facts as they were reviewed: it survives a reset or an audit, and it counts in the week the contradiction was detected;
 - the quality gauges: stances, one-fact stances, claim groups, contradictions per score bundle. They are rows of `job_metrics` under the job `quality`, recorded at the end of each maintenance pass, or now with `dm quality record`;
 - the verdicts of the periodic LLM audit.
+- the result of each `/audit`: the rate of wrong rows per sample and per run, window and band apart (a graph and a table). Rows of `job_metrics` under the job `audit_run`, written by `.claude/skills/audit/scripts/audit_record.py`.
 
 ### Sources
 The Grafana dashboard **Sources** (`sources.json`) shows, per source (news, viepublique, assemblee, photos, archive) and for the news per site, what the sites answered (ok, throttled, refused, gone, errors, timeouts), what the pages gave (articles ok, failed, empty or too thin, the bot check), the documents and facts per source, and the failures per hour. It reads `fetch_log` (90 days kept) and `source_documents`.
