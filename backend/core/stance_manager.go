@@ -1671,6 +1671,10 @@ ASSIGNMENT RULES (ONE SUBJECT per topic — avoid BOTH multi-subject mega-bucket
   * new fact "réduire l'usage des pesticides dans les exploitations" + existing "politique agricole" (revenus des agriculteurs, prix planchers) → ASSIGN: farming practices are another facet of agricultural policy.
   * new fact "livrer des armes à l'Arménie" + existing "relations diplomatiques et politique étrangère" whose facts are about Israel → ASSIGN: another country or another conflict is another facet of foreign policy, not a new domain.
   Reserve a NEW topic for a genuinely different DOMAIN, never for a different facet, event, or wording within the same domain. When an existing focused candidate is a reasonable home, USE IT.
+- A SHARED WORD IS NOT A SHARED SUBJECT. The facet rule above needs the new fact to take a position on, or report an act about, the QUESTION the candidate's facts are about; a name, a country, an institution or a word in common is not enough. When the ONLY link is such a word, create a NEW topic:
+  * new fact "la victoire de Rob Jetten aux législatives néerlandaises montre que les idées pro-européennes peuvent convaincre" + existing "élections européennes de 2024" (the person's list, campaign, score) → NEW: another country's national election is not the person's European campaign.
+  * new fact "Bruno Le Maire devrait demander la nationalité américaine" + existing "dette publique et déficit" whose facts are about Le Maire's budgets → NEW: a jab at a person is not a position on the debt.
+  * new fact "a confirmé sa présence à la messe du pape place de la Concorde" + existing "laïcité et islamisme" → NEW: attending a ceremony is not a position on laïcité.
 - A fact that touches SEVERAL subjects (e.g. "contre la TVA sociale et contre l'entrée de l'Ukraine dans l'UE") is assigned by its MAIN subject — the one its first clause is about — to the matching single-subject candidate. NEVER create a multi-subject topic for it.
 
 `+stanceLabelRules+`
