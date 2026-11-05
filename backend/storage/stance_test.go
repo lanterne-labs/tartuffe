@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"context"
 	"digital-mirror/backend/core"
 	"math"
@@ -400,4 +401,41 @@ func TestStanceDocumentUniqueConstraint(t *testing.T) {
 	var summary string
 	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT summary FROM stance_documents WHERE id=$1", firstID).Scan(&summary))
 	require.Equal(t, "First", summary, "existing stance content must not be clobbered")
+}
+
+func TestGetClosestFactsForStance(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+	_, err := storer.pool.Exec(ctx, "TRUNCATE TABLE stance_document_facts, stance_documents RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	personID, _, err := storer.AddPerson(ctx, "Test Person Closest")
+	require.NoError(t, err)
+
+	stanceID, err := storer.InsertStanceDocument(ctx, core.StanceDocument{
+		PersonID: personID, ClusterLabel: "test-closest", ClusterEmbedding: makeUnitEmbedding(0), Summary: "Closest test",
+	})
+	require.NoError(t, err)
+	// 200 is the nearest, 201 next, 202 far; 203 is as near as 200 but a
+	// grouped duplicate of it.
+	for id, emb := range map[int64][]float32{
+		200: makeUnitEmbedding(0),
+		201: makeMixedEmbedding(0, 1, 0.8, 0.6),
+		202: makeUnitEmbedding(1),
+		203: makeUnitEmbedding(0),
+	} {
+		_, err = storer.pool.Exec(ctx, `INSERT INTO facts (id, fact_text, embedding) VALUES ($1, $2, $3)`,
+			id, fmt.Sprintf("fact %d", id), pgvector.NewHalfVector(emb))
+		require.NoError(t, err)
+		require.NoError(t, storer.AddFactToStance(ctx, stanceID, id))
+	}
+	_, err = storer.pool.Exec(ctx,
+		"INSERT INTO fact_relations (general_fact_id, specific_fact_id, relation_type) VALUES (200, 203, 'duplicate')")
+	require.NoError(t, err)
+
+	facts, err := storer.GetClosestFactsForStance(ctx, stanceID, makeUnitEmbedding(0), 2)
+	require.NoError(t, err)
+	require.Len(t, facts, 2)
+	require.Equal(t, int64(200), facts[0].ID)
+	require.Equal(t, int64(201), facts[1].ID)
 }

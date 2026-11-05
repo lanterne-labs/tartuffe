@@ -674,5 +674,8 @@ func outputSnippet(s string) string {
 	return s
 }
 
+// Steady implements steadyEndpoint: a judge asks Claude once.
+func (*ClaudeTeamEndpoint) Steady() bool { return true }
+
 // ContextTokens is the context of one Claude call.
 func (*ClaudeTeamEndpoint) ContextTokens() int { return claudeContextTokens }

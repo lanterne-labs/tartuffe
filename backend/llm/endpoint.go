@@ -460,6 +460,27 @@ func Concurrency() int {
 	return 1
 }
 
+// steadyEndpoint is an endpoint whose answers need no vote.
+type steadyEndpoint interface {
+	Steady() bool
+}
+
+// Votes is how many samples a judge of task takes on the active routing: its
+// votes on the local GPU box, whose verdicts flip between runs (a smaller
+// model, and a verdict there depends on what else is in flight), and 1 on a
+// Claude endpoint, where a sample is a call of the seats' budget that the
+// vote does not earn back. A contradiction still goes through the verifier.
+func Votes(task Task, votes int) int {
+	r := activeRouting()
+	if r == nil {
+		return votes
+	}
+	if e, ok := r.Endpoints[r.Route(task).Endpoint].(steadyEndpoint); ok && e.Steady() {
+		return 1
+	}
+	return votes
+}
+
 // LocalContextTokens is the context of a call on the local endpoint: the
 // mirror-llm slot holds 16k tokens (llama-swap entry: -c 32768 -np 2), 14k of
 // them usable. An endpoint that does not say otherwise gets it.

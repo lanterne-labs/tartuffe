@@ -2,6 +2,13 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-05: The seats' budget: a fact is compared with its 40 closest, and a judge asks Claude once
+
+Over 11 hours (11-04 22:22 to 11-05 09:29, $327 at list price) `stance-analyze` took 47 % of the seats (12,756 calls), `detect` 26 %, `extract` + `ground` 15 %. A new fact was compared with every fact of its stance (median 45, 90th percentile 607, max 1,108) 40 at a time, each batch asked at least twice: about 10 calls per fact.
+- `ProcessNewFact` compares with the 40 closest facts of the stance (`GetClosestFactsForStance`), without the grouped duplicates. The other paths (merge, refresh) still read the whole stance.
+- `llm.Votes(task, n)`: the endpoint decides whether a judge votes. n on the local GPU box, 1 on the Claude endpoints (analyze, verify, audit). The rulebook hash keeps the vote constants, so no verdict is reopened.
+- Not measured on the goldens: the prompts did not change; the next `/audit` shows the precision and the contradictions per fact.
+
 ## 2026-11-02: The host deploys: the red ones, the double ones, the sleeping observability
 
 - Why a deploy shows red sometimes: in 433 deployments, 6 FAILED, the only recent one (worker,

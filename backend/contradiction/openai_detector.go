@@ -380,7 +380,7 @@ func (d *OpenAIContradictionDetector) VerifyContradiction(ctx context.Context, a
 		keep   bool
 		reason string
 	}
-	v, err := llm.MajorityVote(JudgeVotes,
+	v, err := llm.MajorityVote(llm.Votes(llm.TaskVerify, JudgeVotes),
 		func() (verdict, error) {
 			k, r, e := llm.VerifyContradiction(ctx, d.client, a, b, claimedReason)
 			return verdict{keep: k, reason: r}, e
