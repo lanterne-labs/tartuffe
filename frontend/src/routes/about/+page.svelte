@@ -96,7 +96,7 @@
 			privacy: [
 				['Sans e-mail.', 'Google ne nous transmet qu’un identifiant anonyme.'],
 				['Votre identité reste à vous.', 'Votre passeport prouve « français et majeur » sans quitter votre téléphone.'],
-				['Sans traceur.', 'Sans publicité, sans mesure d’audience, sans adresse IP conservée.']
+				['Sans traceur.', 'Sans publicité, sans cookie, sans adresse IP conservée ;  une mesure d’audience anonyme, hébergée par nous.']
 			],
 			privacyLink: 'Tout le détail',
 
@@ -171,7 +171,7 @@
 			privacy: [
 				['E-mail-free.', 'Google gives us only an anonymous identifier.'],
 				['Your identity stays yours.', 'Your passport proves “French, adult” without leaving your phone.'],
-				['Tracker-free.', 'Without ads, audience measurement or a kept IP address.']
+				['Tracker-free.', 'Without ads, cookies or a kept IP address; an anonymous audience measure, hosted by us.']
 			],
 			privacyLink: 'All the details',
 

@@ -1,10 +1,10 @@
 <script lang="ts">
 	// Privacy of the contradiction checker: what the site receives, keeps and
 	// never sees, feature by feature (reading, the Google account, the +1 and
-	// the reports, the session), and how to erase everything. The vote
+	// the reports, the session, the audience measure), and how to erase everything. The vote
 	// experiment explains its own on its "how it works" page. Every line must
 	// stay true to the code: backend/accounts, the access log of backend/api,
-	// the fonts served by the site.
+	// the fonts served by the site, the Umami proxy (lib/server/umami.ts).
 	import { lang, type Lang } from '$lib/i18n';
 	import { eventPaths } from '$lib/event';
 
@@ -33,7 +33,7 @@
 			kicker: 'Confidentialité',
 			title: 'Vous restez anonyme.',
 			lead: 'C’est voulu : un site qui juge les responsables politiques laisse ses lecteurs tranquilles. Voici, point par point, ce que nous recevons, ce que nous gardons, et ce qui reste chez vous.',
-			pills: ['Sans pub', 'Sans traceur', 'Sans e-mail', 'Adresse IP non conservée'],
+			pills: ['Sans pub', 'Sans cookie', 'Sans e-mail', 'Adresse IP non conservée'],
 			getLabel: 'Ce que nous recevons',
 			neverLabel: 'Reste chez vous',
 			parts: [
@@ -41,10 +41,11 @@
 					title: 'Lire le site',
 					get: [
 						'Les pages demandées, comme tout site. Nos journaux notent la page, l’heure et la réponse, pas votre adresse IP.',
-						'Votre adresse IP sert une minute, en mémoire, à freiner les abus (trop de requêtes), puis s’efface.'
+						'Votre adresse IP sert une minute, en mémoire, à freiner les abus (trop de requêtes), puis s’efface.',
+						'Une mesure d’audience anonyme, hébergée par nous : la page vue, le site d’où vous venez, le pays, le type d’appareil. L’empreinte qui compte les visiteurs change chaque jour : rien ne relie vos visites d’un jour à l’autre. Si votre navigateur demande « Ne pas me suivre », rien n’est compté.'
 					],
 					never: [
-						'Aucun cookie de suivi, aucune mesure d’audience, aucune publicité.',
+						'Aucun cookie, aucune publicité.',
 						'Aucun script d’un autre site : même les polices de caractères sont servies par nous.'
 					],
 					note: 'Les photos des responsables politiques viennent de leurs sources publiques : votre navigateur les charge chez elles.'
@@ -85,7 +86,7 @@
 				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.'
 			],
 			keepTitle: 'Ce que nous gardons, en tout',
-			keep: ['L’empreinte de votre compte Google (pas l’identifiant lui-même).', 'Le pseudo que vous avez choisi.', 'Vos +1.', 'Vos signalements.', 'L’empreinte de votre jeton de connexion, pour 30 jours.'],
+			keep: ['L’empreinte de votre compte Google (pas l’identifiant lui-même).', 'Le pseudo que vous avez choisi.', 'Vos +1.', 'Vos signalements.', 'L’empreinte de votre jeton de connexion, pour 30 jours.', 'Des statistiques de visite anonymes, qui ne disent rien de vous.'],
 			keepNote: 'Rien d’autre. Nous n’en vendons, louons ni partageons rien.',
 			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
 			back: 'À propos'
@@ -94,7 +95,7 @@
 			kicker: 'Privacy',
 			title: 'You stay anonymous.',
 			lead: 'On purpose: a site that judges politicians leaves its readers alone. Here, point by point, is what we receive, what we keep, and what stays with you.',
-			pills: ['Ad-free', 'Tracker-free', 'E-mail-free', 'IP address not kept'],
+			pills: ['Ad-free', 'Cookie-free', 'E-mail-free', 'IP address not kept'],
 			getLabel: 'What we receive',
 			neverLabel: 'Stays with you',
 			parts: [
@@ -102,9 +103,10 @@
 					title: 'Reading the site',
 					get: [
 						'The pages requested, like any site. Our logs note the page, the time and the answer, not your IP address.',
-						'Your IP address serves for one minute, in memory, to slow down abuse (too many requests), then it is gone.'
+						'Your IP address serves for one minute, in memory, to slow down abuse (too many requests), then it is gone.',
+						'An anonymous audience measure, hosted by us: the page viewed, the site you came from, the country, the kind of device. The fingerprint that counts visitors changes every day: nothing ties your visits of one day to the next. If your browser asks “Do Not Track”, nothing is counted.'
 					],
-					never: ['No tracking cookie, no audience measurement, no ads.', 'No script from another site: even the fonts are served by us.'],
+					never: ['No cookie, no ads.', 'No script from another site: even the fonts are served by us.'],
 					note: 'The politicians’ photos come from their public sources: your browser loads them there.'
 				},
 				{
@@ -134,7 +136,7 @@
 				'On your profile, “Delete my account” erases at once the account, its sessions and its +1. Your reports stay, detached from you: they served to correct the site.'
 			],
 			keepTitle: 'All we keep',
-			keep: ['The fingerprint of your Google account (not the identifier itself).', 'The pseudonym you chose.', 'Your +1.', 'Your reports.', 'The fingerprint of your sign-in token, for 30 days.'],
+			keep: ['The fingerprint of your Google account (not the identifier itself).', 'The pseudonym you chose.', 'Your +1.', 'Your reports.', 'The fingerprint of your sign-in token, for 30 days.', 'Anonymous visit statistics, which say nothing about you.'],
 			keepNote: 'Nothing else. We sell, rent or share none of it.',
 			eventLine: 'The presidential vote is a separate experiment of the lab: its anonymity is explained on its own page',
 			back: 'About'
