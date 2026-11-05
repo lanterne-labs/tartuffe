@@ -142,8 +142,11 @@ func (s *PostgresStorer) GetFeed(ctx context.Context, f FeedFilter, after *FeedC
 		at, ckind, cid = after.At, after.Kind, after.ID
 	}
 	// The hot order reads the first Offset+limit of each kind, merges them
-	// and keeps its page.
+	// and keeps its page. An item without likes ranks by its age alone, so
+	// the first Offset+limit by rank are among the newest Offset+limit and
+	// the liked ones: those two short reads, not a rank over the window.
 	q := feedQuery{at: at, ckind: ckind, cid: cid, limit: limit, minFacts: minFacts, now: time.Now()}
+	reads := []feedQuery{q}
 	if f.Hot {
 		q.at, q.ckind, q.cid = time.Now().Add(time.Hour), "~", 0
 		q.limit = f.Offset + limit
@@ -151,23 +154,38 @@ func (s *PostgresStorer) GetFeed(ctx context.Context, f FeedFilter, after *FeedC
 			w := q.now.Add(-HotWindow)
 			q.since = &w
 		}
+		liked := q
+		liked.liked = true
+		reads = []feedQuery{q, liked}
 	}
 	var out []FeedItem
-	if kind == "" || kind == FeedContradiction {
-		items, err := s.feedContradictions(ctx, f, q)
-		if err != nil {
-			return nil, err
+	seen := map[string]bool{}
+	add := func(items []FeedItem) {
+		for _, it := range items {
+			key := fmt.Sprintf("%s:%d", it.Kind, it.ID)
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, it)
+			}
 		}
-		out = append(out, items...)
 	}
-	if kind == "" || kind == FeedFact {
-		items, err := s.feedFacts(ctx, f, q)
-		if err != nil {
-			return nil, err
+	for _, q := range reads {
+		if kind == "" || kind == FeedContradiction {
+			items, err := s.feedContradictions(ctx, f, q)
+			if err != nil {
+				return nil, err
+			}
+			add(items)
 		}
-		out = append(out, items...)
+		if kind == "" || kind == FeedFact {
+			items, err := s.feedFacts(ctx, f, q)
+			if err != nil {
+				return nil, err
+			}
+			add(items)
+		}
 	}
-	// Merge the two pages and keep the page.
+	// Merge the pages and keep the page.
 	sortFeed(out, f.Hot)
 	if f.Hot {
 		out = out[min(f.Offset, len(out)):]
@@ -204,10 +222,9 @@ func (s *PostgresStorer) feedScoreEffects(ctx context.Context, items []FeedItem)
 		id := items[i].Person.ID
 		in, ok := byPerson[id]
 		if !ok {
-			in = &inputs{}
-			if in.facts, err = s.getPersonFactsCount(ctx, tx, id); err != nil {
-				return err
-			}
+			// persons.fact_count is the same count, kept in sync
+			// (refreshPersonFactCount): not counted again.
+			in = &inputs{facts: items[i].Person.FactCount}
 			if in.stats, err = s.getPersonContradictionStats(ctx, tx, id); err != nil {
 				return err
 			}
@@ -245,7 +262,8 @@ func (s *PostgresStorer) feedScoreEffects(ctx context.Context, items []FeedItem)
 
 // feedQuery holds the bounds of the queries of one page: the cursor (at,
 // ckind, cid), the rows to read, the public floor, the instant of the hot
-// rank and the start of its window (nil: none).
+// rank and the start of its window (nil: none). A liked read keeps the
+// items with likes, by rank; the others read newest first.
 type feedQuery struct {
 	at              time.Time
 	ckind           string
@@ -253,6 +271,7 @@ type feedQuery struct {
 	limit, minFacts int
 	now             time.Time
 	since           *time.Time
+	liked           bool
 }
 
 func sortFeed(items []FeedItem, hot bool) {
@@ -276,9 +295,10 @@ func sortFeed(items []FeedItem, hot bool) {
 }
 
 func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q feedQuery) ([]FeedItem, error) {
-	order := `c.detected_at DESC, c.id DESC`
-	if f.Hot {
+	order, liked := `c.detected_at DESC, c.id DESC`, ``
+	if q.liked {
 		order = `rank DESC, ` + order
+		liked = `AND c.id IN (SELECT target_id FROM feed_likes WHERE target_kind = 'contradiction')`
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
@@ -304,6 +324,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		  AND ($7::timestamptz IS NULL OR GREATEST(sa.earliest, sb.earliest) >= $7)
 		  AND ($8::timestamptz IS NULL OR GREATEST(sa.earliest, sb.earliest) < $8)
 		  AND (c.detected_at < $1 OR (c.detected_at = $1 AND ('contradiction' < $2 OR ('contradiction' = $2 AND c.id < $3))))
+		  `+liked+`
 		ORDER BY `+order+`
 		LIMIT $4`, q.at, q.ckind, q.cid, q.limit, q.minFacts, f.PersonID, f.From, f.To, q.now, q.since, f.ViewerID)
 	if err != nil {
@@ -332,9 +353,10 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 }
 
 func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuery) ([]FeedItem, error) {
-	order := `f.created_at DESC, f.id DESC`
-	if f.Hot {
+	order, liked := `f.created_at DESC, f.id DESC`, ``
+	if q.liked {
 		order = `rank DESC, ` + order
+		liked = `AND f.id IN (SELECT target_id FROM feed_likes WHERE target_kind = 'fact')`
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
@@ -364,6 +386,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		  AND ($8::timestamptz IS NULL OR sf.earliest < $8)
 		  AND (f.created_at < $1 OR (f.created_at = $1 AND ('fact' < $2 OR ('fact' = $2 AND f.id < $3))))
 		  AND NOT EXISTS (SELECT 1 FROM fact_relations fr WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
+		  `+liked+`
 		ORDER BY `+order+`
 		LIMIT $4`, q.at, q.ckind, q.cid, q.limit, q.minFacts, f.PersonID, f.From, f.To, q.now, q.since, f.ViewerID)
 	if err != nil {
