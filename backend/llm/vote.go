@@ -20,7 +20,8 @@ import (
 // This exists because temperature-0 LLM verdicts are still samples: judges
 // flip on boundary cases, and a single unlucky sample must not evict a real
 // contradiction or mint a false edge. See contradiction.JudgeVotes /
-// AuditVotes and core.AnalyzeVotes for the production vote counts.
+// AuditVotes and core.AnalyzeVotes for the vote counts, and Votes: the endpoint
+// decides whether a judge votes at all.
 func MajorityVote[T any](votes int, once func() (T, error), key func(T) string) (T, error) {
 	if votes <= 1 {
 		return once()

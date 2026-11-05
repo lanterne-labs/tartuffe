@@ -375,4 +375,7 @@ func (t *ClaudeAPIEndpoint) UsageReport() string {
 }
 
 // ContextTokens is the context of one Claude call.
+// Steady implements steadyEndpoint: a judge asks Claude once.
+func (*ClaudeAPIEndpoint) Steady() bool { return true }
+
 func (*ClaudeAPIEndpoint) ContextTokens() int { return claudeContextTokens }

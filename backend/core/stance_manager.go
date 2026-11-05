@@ -40,6 +40,9 @@ type StanceStorer interface {
 	// shape as ShortlistStancesByNearestFact, ordered by nearest member fact.
 	StanceCandidatesByIDs(ctx context.Context, personID int64, factEmbedding []float32, stanceIDs []int64, factsPerStance int, excludeFactID int64) ([]StanceCandidate, error)
 	GetFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error)
+	// GetClosestFactsForStance returns the limit facts of the stance nearest to
+	// embedding, nearest first, without the grouped duplicates.
+	GetClosestFactsForStance(ctx context.Context, stanceID int64, embedding []float32, limit int) ([]StanceFactInfo, error)
 	// GetUnsummarizedFactsForStance returns the facts whose membership was added
 	// after the stance's last metadata refresh (all facts if never refreshed),
 	// oldest membership first.
@@ -218,6 +221,10 @@ func (s *flexibleString) UnmarshalJSON(data []byte) error {
 // across multiple sequential analyze calls; contradictions are unioned.
 const keyFactBatchSize = 40
 
+// stanceCompareFacts is how many facts of its stance a new fact is compared
+// with: its nearest ones, one analyze call on Claude.
+const stanceCompareFacts = keyFactBatchSize
+
 // stanceContextTokens is the context of the endpoint that serves task in
 // the active routing (14K on the local box, 200K on Claude): the budget of
 // the prompt is sized on it, not on a constant of one model (the 12K of the
@@ -294,15 +301,18 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return sm.ApplyStanceDecision(ctx, personID, factID, factText, embedding, decision)
 	}
 
-	// Get key facts for the matched stance and analyze relationship.
-	keyFacts, err := sm.storer.GetFactsForStance(ctx, matched.ID)
+	// The new fact is compared with the facts of the stance closest to it, not
+	// with all of them: stances reach 1,100 facts, and comparing with all of
+	// them took 47% of the seats' budget (2026-11-05). The maintenance pass's
+	// detection judges the nearest pairs of the person across the stances.
+	keyFacts, err := sm.storer.GetClosestFactsForStance(ctx, matched.ID, embedding, stanceCompareFacts)
 	if err != nil {
 		return nil, fmt.Errorf("getting facts for stance %d: %w", matched.ID, err)
 	}
 
-	// Analyze the new fact against the stance's key facts. When there are too
-	// many key facts to fit in one prompt, batch the call and union the
-	// contradictions across batches. The fact joins the stance only once the
+	// Analyze the new fact against those facts. When they do not fit in one
+	// prompt, batch the call and union the contradictions across batches. The
+	// fact joins the stance only once the
 	// analysis and its verification are done (handleVerdict): a failed call
 	// leaves nothing written, so the (person, fact) pair stays pending.
 	agg, err := sm.analyzeAcrossBatches(ctx, matched.Summary, keyFacts, factText, date)
@@ -477,7 +487,7 @@ type aggregatedAnalysis struct {
 }
 
 // AnalyzeVotes is the majority-vote count for the stance analyze judge
-// (judge #1, the only edge creator). 1 = historical single-sample behaviour.
+// (judge #1, the only edge creator) on an endpoint that votes (llm.Votes).
 var AnalyzeVotes = 3
 
 // analyzeVoteKey reduces an analyze response to what must agree across votes:
@@ -516,11 +526,11 @@ func (sm *StanceManager) analyzeAcrossBatches(ctx context.Context, stanceSummary
 		idxs[i] = i
 	}
 	err := llm.ForEach(ctx, idxs, func(ctx context.Context, batchIdx int) error {
-		// The analyze verdict is a sample, and this judge CREATES contradiction
-		// edges — vote per batch, keyed on (verdict, duplicate, edge set), same
-		// strategy as the verifier/auditor (mirror-hc4: D_denial flaked ~25%
-		// single-sample). Early exit keeps the usual cost at 2 calls.
-		resp, err := llm.MajorityVote(AnalyzeVotes,
+		// On the local GPU box the verdict is a sample and this judge CREATES
+		// contradiction edges: vote per batch, keyed on (verdict, duplicate, edge
+		// set), as the verifier and the auditor do (mirror-hc4: D_denial flaked
+		// ~25% single-sample). On Claude llm.Votes makes it one call.
+		resp, err := llm.MajorityVote(llm.Votes(llm.TaskStanceAnalyze, AnalyzeVotes),
 			func() (*stanceLLMResponse, error) {
 				return sm.callLLM(ctx, stanceSummary, batches[batchIdx], newFactText, newFactDate)
 			},

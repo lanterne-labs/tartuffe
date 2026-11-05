@@ -134,6 +134,14 @@ func (m *mockStanceStorer) GetFactsForStance(ctx context.Context, stanceID int64
 	return m.facts[stanceID], nil
 }
 
+func (m *mockStanceStorer) GetClosestFactsForStance(ctx context.Context, stanceID int64, embedding []float32, limit int) ([]StanceFactInfo, error) {
+	facts := m.facts[stanceID]
+	if len(facts) > limit {
+		facts = facts[:limit]
+	}
+	return facts, nil
+}
+
 // unsummarized, when set, is what GetUnsummarizedFactsForStance returns for
 // every stance; nil means "all facts are new" (never summarized).
 func (m *mockStanceStorer) GetUnsummarizedFactsForStance(ctx context.Context, stanceID int64) ([]StanceFactInfo, error) {

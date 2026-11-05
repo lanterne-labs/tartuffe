@@ -281,3 +281,18 @@ func TestChatRoutesByTask(t *testing.T) {
 		t.Fatal("detect must not start the CLI")
 	}
 }
+
+func TestVotes(t *testing.T) {
+	setRouting(t, ClaudeRouting(EndpointClaudeTeam, &ClaudeTeamEndpoint{}, "claude-sonnet-5-5"))
+	if got := Votes(TaskStanceAnalyze, 3); got != 1 {
+		t.Errorf("claude seats: got %d votes, want 1", got)
+	}
+	setRouting(t, ClaudeRouting(EndpointClaudeAPI, &ClaudeAPIEndpoint{}, "claude-sonnet-5-5"))
+	if got := Votes(TaskAudit, 5); got != 1 {
+		t.Errorf("claude api: got %d votes, want 1", got)
+	}
+	setRouting(t, localRouting())
+	if got := Votes(TaskStanceAnalyze, 3); got != 3 {
+		t.Errorf("local GPU box: got %d votes, want 3", got)
+	}
+}

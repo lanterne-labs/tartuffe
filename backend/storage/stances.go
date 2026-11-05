@@ -395,6 +395,31 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 	return scanStanceCandidates(rows, personID)
 }
 
+// GetClosestFactsForStance returns the limit facts of the stance nearest to
+// embedding (cosine), nearest first, without the grouped duplicates: they
+// would fill the limit with one occurrence.
+func (s *PostgresStorer) GetClosestFactsForStance(ctx context.Context, stanceID int64, embedding []float32, limit int) ([]core.StanceFactInfo, error) {
+	query := `
+		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, ''),
+		       (SELECT MIN(fs.published_at) FROM fact_sources fs WHERE fs.fact_id = f.id),
+		       f.statement_date::timestamp AT TIME ZONE 'UTC', f.statement_date_precision
+		FROM facts f
+		JOIN stance_document_facts sdf ON f.id = sdf.fact_id
+		WHERE sdf.stance_document_id = $1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM fact_relations fr
+		      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate'
+		  )
+		ORDER BY f.embedding <=> $2
+		LIMIT $3`
+	rows, err := s.pool.Query(ctx, query, stanceID, pgvector.NewHalfVector(embedding), limit)
+	if err != nil {
+		return nil, fmt.Errorf("querying the closest facts of stance %d: %w", stanceID, err)
+	}
+	defer rows.Close()
+	return scanStanceFactInfos(rows, stanceID)
+}
+
 // GetFactsForStance retrieves all facts associated with a stance document.
 func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) ([]core.StanceFactInfo, error) {
 	query := `
@@ -411,7 +436,11 @@ func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) 
 		return nil, fmt.Errorf("querying facts for stance %d: %w", stanceID, err)
 	}
 	defer rows.Close()
+	return scanStanceFactInfos(rows, stanceID)
+}
 
+// scanStanceFactInfos reads the rows of GetFactsForStance's columns.
+func scanStanceFactInfos(rows pgx.Rows, stanceID int64) ([]core.StanceFactInfo, error) {
 	var facts []core.StanceFactInfo
 	for rows.Next() {
 		var f core.StanceFactInfo
@@ -422,11 +451,9 @@ func (s *PostgresStorer) GetFactsForStance(ctx context.Context, stanceID int64) 
 		f.Date = sd.of(f.Date)
 		facts = append(facts, f)
 	}
-
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating facts for stance %d: %w", stanceID, err)
 	}
-
 	return facts, nil
 }
 

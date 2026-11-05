@@ -354,4 +354,7 @@ func (t *ClaudeBatchEndpoint) applyKnownPrefix(family string, c *batchCall, ttl 
 }
 
 // ContextTokens is the context of one Claude call.
+// Steady implements steadyEndpoint: a judge asks Claude once.
+func (*ClaudeBatchEndpoint) Steady() bool { return true }
+
 func (*ClaudeBatchEndpoint) ContextTokens() int { return claudeContextTokens }

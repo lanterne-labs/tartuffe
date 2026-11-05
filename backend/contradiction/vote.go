@@ -1,7 +1,8 @@
 package contradiction
 
 // JudgeVotes is how many times a binary judging call (audit, verify) is
-// repeated before its verdict is taken by majority.
+// repeated before its verdict is taken by majority, on an endpoint that votes:
+// the local GPU box. On Claude the judges ask once (llm.Votes).
 //
 // 3 since 2026-09-01. It is a knob rather than a constant because the golden
 // suites showed the judges are NOT deterministic
