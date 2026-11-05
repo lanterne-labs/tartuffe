@@ -1164,3 +1164,27 @@ cases:
       facts:
       - Marine Tondelier a affirmé vouloir mener une « politique du sensible » qui place le lien, la santé, la vulnérabilité et l'attention aux autres au centre de l'action publique.
     expect: NEW
+
+  - name: shared_word_foreign_election_is_not_own_campaign
+    new_fact: "Gabriel Attal a affirmé que la victoire de Rob Jetten aux législatives néerlandaises démontre que les idées pro-européennes, libérales et progressistes peuvent convaincre face à l'extrême droite."
+    candidates:
+      - label: "élections européennes de 2024"
+        summary: "La campagne de la majorité présidentielle aux élections européennes de juin 2024, sa liste et son résultat."
+        facts:
+          - "Gabriel Attal a soutenu la liste de Valérie Hayer aux élections européennes de 2024."
+          - "Gabriel Attal a reconnu la défaite de la liste de la majorité aux européennes du 9 juin 2024."
+      - label: "dissolution de l'Assemblée nationale de 2024"
+        summary: "La dissolution de juin 2024 et ses conséquences."
+        facts:
+          - "Gabriel Attal a déclaré ne pas avoir été consulté avant la dissolution de l'Assemblée."
+    expect: "NEW"
+
+  - name: shared_word_jab_at_a_person_is_not_a_debt_position
+    new_fact: "François Ruffin a affirmé que Bruno Le Maire devrait demander la nationalité américaine."
+    candidates:
+      - label: "dette publique et déficit"
+        summary: "Positions de François Ruffin sur la dette publique, le déficit et la politique budgétaire des ministres de l'Économie."
+        facts:
+          - "François Ruffin a reproché à Bruno Le Maire d'avoir creusé la dette de mille milliards d'euros."
+          - "François Ruffin a affirmé que le déficit vient de la baisse des recettes, pas d'un excès de dépenses."
+    expect: "NEW"
