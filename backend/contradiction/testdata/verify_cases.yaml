@@ -1113,6 +1113,24 @@ cases:
     bucket: same_direction
     notes: "Guard for the disowned-claim rule: asking for an independent costing does not withdraw his own figure; the reason infers the withdrawal (synthetic, 2026-11-05)."
 
+  - name: "TP_2374_bardella_only_presidential_then_legislatives"
+    fact_a: "Jordan Bardella a déclaré ne « voir aucune autre solution » à la crise politique que de se « tourner vers les Français », en organisant de nouvelles législatives."
+    fact_b: "Jordan Bardella a affirmé que seule une présidentielle permettra de sortir de la crise démocratique provoquée par les alliances de second tour aux législatives."
+    claimed_reason: "Il affirme que seule une présidentielle permet de sortir de la crise, puis qu'il n'y a pas d'autre solution que de nouvelles législatives."
+    expect: keep
+    bucket: position_reversal
+    notes: "The legislatives are the journalist's words, but a plain report of what he asks for is a fact, not an opinion (user's decision, 2026-11-05). Prod 2374; 2.5 months apart, unexplained."
+    date_a: "2025-08-30"
+    date_b: "2025-06-16"
+
+  - name: "FP_journalist_motive_is_not_a_position"
+    fact_a: "Bruno Retailleau a déclaré soutenir le gouvernement."
+    fact_b: "Bruno Retailleau cherche en réalité à affaiblir le gouvernement pour préparer sa candidature, analyse le quotidien."
+    claimed_reason: "Il affirme soutenir le gouvernement alors qu'il cherche à l'affaiblir pour préparer sa candidature."
+    expect: drop
+    bucket: third_party_narrative
+    notes: "Guard for the reported position: the journalist's interpretation of a motive is not the person's position (synthetic, 2026-11-05)."
+
   - name: "FP_2218_melenchon_media_blame_vs_press_exclusion"
     fact_a: "Jean-Luc Mélenchon a exclu de sa conférence de presse du 23 février 2026 la grande majorité des organes nationaux, dont Libération, Le Monde, France Info et TF1, n'invitant que quelques « nouveaux médias »."
     fact_b: "Jean-Luc Mélenchon a affirmé lors de sa conférence de presse du 23 février 2026 : « Je n'ai pas de problème avec les médias, ce sont les médias qui ont un problème avec moi »."

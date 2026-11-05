@@ -274,3 +274,20 @@ cases:
     # je ne m'y serais pas opposée »), or cut the fact to the préfet.
     expect: fix
     forbid: ["six mois"]
+
+  - name: "183052_bardella_reported_position_kept"
+    subject: "Jordan Bardella"
+    fact: "Jordan Bardella a déclaré ne « voir aucune autre solution » à la crise politique que de se « tourner vers les Français », en organisant de nouvelles législatives."
+    quote: "je ne vois aucune autre solution que de se tourner vers les Français."
+    context: "Jordan Bardella a déclaré samedi ne \"pas voir d'autre solution\" à la crise politique que de se \"tourner vers les Français\" en organisant de nouvelles législatives. Sur place, il a lancé : « je ne vois aucune autre solution que de se tourner vers les Français. On ne peut pas tenir deux ans comme cela. »"
+    expect: keep
+    must_keep: ["législatives"]
+
+  - name: "synthetic_journalist_motive_is_not_a_report"
+    subject: "Jordan Bardella"
+    fact: "Jordan Bardella a réclamé de nouvelles législatives pour faire pression sur l'Élysée."
+    quote: "Il faut retourner aux urnes."
+    context: "Pour faire pression sur l'Élysée, Jordan Bardella a réclamé samedi de nouvelles législatives : « Il faut retourner aux urnes. »"
+    expect: fix
+    forbid: ["faire pression"]
+    quote_forbid: ["faire pression"]

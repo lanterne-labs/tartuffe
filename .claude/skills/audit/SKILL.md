@@ -121,7 +121,7 @@ Take every contradiction with no review, every one whose last verdict is
 `debatable` (a rule added since may settle it), and the history slice: the 40
 rows whose latest review is the oldest, `real` ones included (a rule added
 since may show one is false, and a fact behind it may have been wrongly
-extracted). Dump them with their facts, dates and every source quote:
+extracted). Dump them with their facts, dates and every source quote: (a detail missing from the quote may be in the article: read `source_documents.content` before calling a fact wrong, 2374)
 
 ```bash
 env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review sample --reviewer <model> --max 0 > sample.jsonl
@@ -152,7 +152,7 @@ when the window is empty), and tag every row with where it came from:
 
 | sample | size | what to judge |
 |---|---|---|
-| text facts (news, twitter, viepublique, debates) | ~240 random | against the quote: misattribution, gloss, wrong date, not a position, wrong entity, duplicate, garbled |
+| text facts (news, twitter, viepublique, debates) | ~240 random | against the quote: misattribution, gloss, wrong date, not a position, wrong entity, duplicate, garbled. Before calling a fact a gloss, read the article (`source_documents.content`): a plain report of what the person asks or did is not a gloss, even outside the quote (2374) |
 | votes (`assemblee_law_page`) | ~100 recent | against the scrutin record: wrong object, inverted, garbled, unclear; read `backend/plugins/frpolitics/` for the cause |
 | debates (`assemblee_debat`) | ~45 recent | speaker of the words, procedural talk, duplicates |
 | stances | ~70 of the main persons, 3–40 facts | mixed subjects, strays, label, summary vs facts, duplicates, missed contradictions |
