@@ -234,6 +234,16 @@ The report, in this order, short:
 5. What waits for the user: the cleanup script, decisions to take.
 6. The bd issues filed.
 
+Record the run for the history (Grafana, dashboard **Quality**: error rate per
+run, table of the runs). It reads the folder, so every `*.audit.jsonl` row must
+carry `tag` (`window` or `band`) and `verdict` (`ok`, or the error type):
+
+```bash
+DATABASE_URL="$DBURL" uv run -q --with 'psycopg[binary]' python -I \
+  .claude/skills/audit/scripts/audit_record.py --dir <audit folder> --at <UTC timestamp> --apply
+```
+
 Then: `bd remember --key audit-last-run "<UTC timestamp>: <the gauges in one line>"`,
 `bd remember --key audit-cursor "facts_below=<N> stances_below=<M> (run of <date>)"`,
-`git pull --rebase`, `bd dolt push`, `git push`, `git status`.
+`git pull --rebase`, `git push`, `git status`. (`bd` stays on this machine: no
+`bd dolt push`.)

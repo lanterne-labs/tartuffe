@@ -214,6 +214,75 @@
     },
     {
       "type": "timeseries",
+      "title": "Audit error rate per run (samples of 20 rows or more)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT n.created_at AS time, n.target AS metric, 100 * e.value / n.value AS value FROM job_metrics n JOIN job_metrics e ON e.job_type = n.job_type AND e.target = n.target AND e.created_at = n.created_at AND e.metric = 'errors' WHERE n.job_type = 'audit_run' AND n.metric = 'n' AND n.value >= 20 AND $__timeFilter(n.created_at) ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "description": "Each /audit: the percentage of wrong rows per sample, window = what the worker just produced, band = older data. Contradictions: the share of the reviewed rows found false. The definitions tightened over the first runs (summary length on 11-01, the vote suffix on 11-02), so early peaks are not comparable; the rows are in job_metrics, job audit_run.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 7,
+            "showPoints": "always",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "id": 15
+    },
+    {
+      "type": "table",
+      "title": "Audit runs: wrong rows per sample",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH r AS (SELECT n.created_at, n.target, round((100 * e.value / n.value)::numeric, 1) || ' % (' || e.value || '/' || n.value || ')' AS pct FROM job_metrics n JOIN job_metrics e ON e.job_type = n.job_type AND e.target = n.target AND e.created_at = n.created_at AND e.metric = 'errors' WHERE n.job_type = 'audit_run' AND n.metric = 'n') SELECT created_at AS run, MAX(CASE WHEN target = 'contradictions/all' THEN pct END) AS \"contradictions/all\", MAX(CASE WHEN target = 'text/window' THEN pct END) AS \"text/window\", MAX(CASE WHEN target = 'text/band' THEN pct END) AS \"text/band\", MAX(CASE WHEN target = 'text/all' THEN pct END) AS \"text/all\", MAX(CASE WHEN target = 'votes/window' THEN pct END) AS \"votes/window\", MAX(CASE WHEN target = 'votes/band' THEN pct END) AS \"votes/band\", MAX(CASE WHEN target = 'votes/all' THEN pct END) AS \"votes/all\", MAX(CASE WHEN target = 'debates/window' THEN pct END) AS \"debates/window\", MAX(CASE WHEN target = 'debates/band' THEN pct END) AS \"debates/band\", MAX(CASE WHEN target = 'debates/all' THEN pct END) AS \"debates/all\", MAX(CASE WHEN target = 'stances/window' THEN pct END) AS \"stances/window\", MAX(CASE WHEN target = 'stances/band' THEN pct END) AS \"stances/band\", MAX(CASE WHEN target = 'stances/all' THEN pct END) AS \"stances/all\", MAX(CASE WHEN target = 'entities/all' THEN pct END) AS \"entities/all\" FROM r GROUP BY created_at ORDER BY created_at DESC",
+          "refId": "A"
+        }
+      ],
+      "id": 16
+    },
+    {
+      "type": "timeseries",
       "title": "Precision by detection week",
       "datasource": {
         "type": "postgres",
@@ -223,7 +292,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 24
       },
       "targets": [
         {
@@ -259,7 +328,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 24
       },
       "targets": [
         {
@@ -298,7 +367,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 32
       },
       "targets": [
         {
@@ -325,7 +394,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 32
       },
       "targets": [
         {
@@ -353,7 +422,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 20
+        "y": 40
       },
       "targets": [
         {
@@ -381,7 +450,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 20
+        "y": 40
       },
       "targets": [
         {
@@ -408,7 +477,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 48
       },
       "targets": [
         {
@@ -445,7 +514,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 56
       },
       "targets": [
         {
