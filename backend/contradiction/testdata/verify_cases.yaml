@@ -1103,7 +1103,15 @@ cases:
     claimed_reason: "Il avance des pourcentages précis de déportation tout en disant ne pas avoir étudié la question."
     expect: keep
     bucket: denial_of_own_position
-    notes: "Precise claims on a subject, then the person's own disclaimer of having studied it: the disclaimer disowns the knowledge the claims asserted (user's decision, 2026-11-04). Prod 1510 (and 1509)."
+    notes: "A disowned claim: precise claims on a subject, then the person's own disclaimer of having studied it withdraws their basis (user's decision, 2026-11-04). Prod 1510 (and 1509)."
+
+  - name: "FP_disowned_claim_not_inferred_from_softer_tone"
+    fact_a: "Jordan Bardella a affirmé que l'immigration coûtait 40 milliards d'euros par an aux finances publiques."
+    fact_b: "Jordan Bardella a déclaré que le chiffrage du coût de l'immigration devait être confié à une commission indépendante pour sortir des polémiques."
+    claimed_reason: "Il avance un coût précis de l'immigration puis reconnaît qu'il faut une commission pour le chiffrer, ce qui retire tout fondement à son chiffre."
+    expect: drop
+    bucket: same_direction
+    notes: "Guard for the disowned-claim rule: asking for an independent costing does not withdraw his own figure; the reason infers the withdrawal (synthetic, 2026-11-05)."
 
   - name: "FP_2218_melenchon_media_blame_vs_press_exclusion"
     fact_a: "Jean-Luc Mélenchon a exclu de sa conférence de presse du 23 février 2026 la grande majorité des organes nationaux, dont Libération, Le Monde, France Info et TF1, n'invitant que quelques « nouveaux médias »."
