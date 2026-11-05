@@ -51,6 +51,7 @@
 	let at = $derived(unrated || tartuffe === null ? 0 : dialOf(tartuffe));
 	let colour = $derived(unrated ? 'var(--text-muted)' : tartuffeColor(at));
 	let unsure = $derived(!unrated && reliable === false);
+	let unsureOpen = $state(false);
 	let unsureText = $derived(
 		tr('score.unsure', lang, {
 			f: (facts ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR'),
@@ -129,8 +130,27 @@
 <svelte:window onclick={outside} onkeydown={(e) => e.key === 'Escape' && (help = false)} />
 
 <span class="ts ts--{size}" class:ts--unrated={unrated} class:ts--unsure={unsure} style="--c: {colour}">
-	{#if unsure}<span class="unsure-mark" title={tr('score.unsure.short', lang)} aria-hidden="true">≈</span>{/if}
 	{#if caption}<span class="caption">{caption}</span>{/if}
+	<span class="dial-box">
+	{#if unsure}
+		<!-- The mark's meaning shows on hover, on focus, and on a tap (a
+		     phone has no hover); a tap never opens the card it sits in. -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<span
+			class="unsure-mark"
+			class:unsure-mark--on={unsureOpen}
+			tabindex="0"
+			role="note"
+			aria-label={unsureText}
+			onclick={(e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				unsureOpen = !unsureOpen;
+			}}
+			onkeydown={(e) => e.key === 'Escape' && (unsureOpen = false)}
+			onblur={() => (unsureOpen = false)}
+		>≈<span class="unsure-tip" aria-hidden="true">{unsureText}</span></span>
+	{/if}
 	<svg viewBox="0 0 120 102" class="dial" role="img" aria-label={value}>
 		<defs>
 			<linearGradient id="{uid}-g" x1="11" x2="109" gradientUnits="userSpaceOnUse">
@@ -166,6 +186,7 @@
 			</g>
 		{/if}
 	</svg>
+	</span>
 	{#if named && !(centreNumber && !unrated && (size === 'xs' || size === 'sm'))}
 		<span class="value" bind:this={root}>
 			<span class:value--none={unrated}>{value}</span>
@@ -208,11 +229,17 @@
 	.ts--unsure .needle {
 		opacity: 0.4;
 	}
+	.dial-box {
+		position: relative;
+		display: block;
+		width: 100%;
+	}
 	.unsure-mark {
 		position: absolute;
-		top: 0;
+		bottom: 0;
 		right: 0;
-		z-index: 1;
+		z-index: 2;
+		cursor: help;
 		display: grid;
 		place-items: center;
 		width: 1.25em;
@@ -224,6 +251,30 @@
 		font-size: max(0.7rem, calc(var(--w) * 0.11));
 		font-weight: 700;
 		line-height: 1;
+	}
+	.unsure-tip {
+		display: none;
+		position: absolute;
+		bottom: calc(100% + 0.35rem);
+		right: -0.3rem;
+		width: min(15rem, 75vw);
+		padding: 0.5rem 0.65rem;
+		border-radius: var(--radius-md, 10px);
+		background: var(--bg-elevated, #1c1a22);
+		border: 1px solid var(--amber);
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+		color: var(--text-primary);
+		font-size: 0.78rem;
+		font-weight: 500;
+		line-height: 1.4;
+		text-align: left;
+		white-space: normal;
+		pointer-events: none;
+	}
+	.unsure-mark:hover .unsure-tip,
+	.unsure-mark:focus-visible .unsure-tip,
+	.unsure-mark--on .unsure-tip {
+		display: block;
 	}
 	.tip-unsure {
 		display: block;
