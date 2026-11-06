@@ -978,3 +978,74 @@ y sont attachés. »`
 		t.Error("no fact of the 2019 tweet with its 2019 date")
 	}
 }
+
+// TestRemoteLLMExtractor_NotXButY checks the two halves of a « non pas X,
+// mais Y » sentence. Prod 2383 (audit 2026-11-06): Lisnard's op-ed « il ne
+// s'agit pas de réclamer la démission d'Emmanuel Macron [...], mais de lui
+// demander [...] Programmer sa démission » gave a fact of the first half
+// alone (200643), which the judge set against his later call for the
+// resignation. Prod 2377: a tweet that adds spending cuts to a tax cut gave
+// « plutôt que de baisser ces taxes » (207588), a contrast the tweet does not
+// make.
+func TestRemoteLLMExtractor_NotXButY(t *testing.T) {
+	llmtest.Setup(t)
+
+	extractorClient, err := NewOpenAIExtractorFromEnv()
+	if err != nil {
+		t.Fatalf("Failed to create OpenAI extractor: %v", err)
+	}
+
+	cases := []struct {
+		name, text string
+		check      func(fact, quote string) string
+	}{
+		{
+			name: "lisnard_programmed_resignation",
+			text: `Légitimité légale, légitimité politique : la difficile équation présidentielle – par David Lisnard
+
+Qui oserait reprocher au Général d'avoir trahi l'esprit de la Constitution en démissionnant ? Personne.
+Il ne s'agit pas de réclamer la démission d'Emmanuel Macron comme le fait l'extrême gauche, qui cède à
+ses vieux réflexes factieux, mais de lui demander d'avoir une conception assez exigeante du mandat
+présidentiel pour assumer cette responsabilité à son tour. Programmer sa démission serait une façon
+pour lui de sortir par le haut et, surtout, de préserver autant nos institutions que les intérêts du pays.`,
+			check: func(fact, quote string) string {
+				if strings.Contains(fact, "ne s'agit pas de réclamer") && !strings.Contains(fact, "programm") && !strings.Contains(fact, "assumer") {
+					return "keeps only the 'pas X' half"
+				}
+				return ""
+			},
+		},
+		{
+			name: "lisnard_spending_and_taxes",
+			text: `David Lisnard (@davidlisnard) sur X, le 10 avril 2026 :
+
+Prix du carburant et pouvoir d'achat, certains proposent de baisser les taxes. Et s'arrêtent là dans
+l'argumentation. Je propose de baisser les dépenses publiques qui rendent ces taxes nécessaires.`,
+			check: func(fact, quote string) string {
+				for _, w := range []string{"plutôt que", "au lieu de", "rather than", "instead of"} {
+					if strings.Contains(fact, w) && !strings.Contains(quote, w) {
+						return "adds the contrast " + w
+					}
+				}
+				return ""
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			facts, err := extractorClient.ExtractFacts(context.Background(), "David Lisnard", extractor.ExtractedContent{
+				URL: "http://example.com/" + tc.name, Title: "David Lisnard", Content: tc.text,
+			})
+			if err != nil {
+				t.Fatalf("ExtractFacts failed: %v", err)
+			}
+			for i, f := range facts {
+				t.Logf("  [%d] normalized=%q quote=%q", i+1, f.NormalizedFactText, f.OriginalQuote)
+				fact := strings.ToLower(f.NormalizedFactText + " " + f.NormalizedFactTextEn)
+				if msg := tc.check(fact, strings.ToLower(f.OriginalQuote)); msg != "" {
+					t.Errorf("Fact %d %s: %q", i+1, msg, f.NormalizedFactText)
+				}
+			}
+		})
+	}
+}

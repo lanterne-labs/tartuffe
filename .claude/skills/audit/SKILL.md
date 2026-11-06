@@ -54,7 +54,7 @@ work, Fish shell quirks).
 The user keeps talking to you during an audit. Start every command that can
 take more than a minute or two in the background (`run_in_background`): the
 goldens, the replay, dry runs and repairs against prod, the rescore, the
-deploy watch. Reviewers and samplers are background agents. Answer the user
+deploy watch. Answer the user
 while they run, and report when each one ends.
 
 ## Setup
@@ -129,23 +129,25 @@ env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review sample -
 DATABASE_URL="$DBURL" uv run -q --with 'psycopg[binary]' python -I .claude/skills/audit/scripts/dump_pairs.py < todo.jsonl > enriched.jsonl
 ```
 
-Split by person into files of about 40 rows and give each to a reviewer agent
-(`subagent_type: fork`, in parallel, in one message). Each writes
-`<part>.verdicts.jsonl` (`id`, `verdict`, `note`; a false note names the cause:
-extraction error with the fact id, rule the prompts lack, rule the judge
-missed, chronology, fan-out duplicate), `<part>.facts.jsonl` (`fact_id`,
-`problem`) and `<part>.rules.md` (judgement gaps the prompts do not cover, data
-bug patterns). Reviewers are read-only on the DB.
+Review them yourself, in this session, one person at a time. **No subagents
+or forks for the reviews or the samples**: the audit runs on this session's own
+billing, never on another account's (the user, 2026-11-06, after five audit
+agents hit a weekly limit). Write `contradictions.verdicts.jsonl` (`id`,
+`verdict`, `note`; a false note names the cause: extraction error with the
+fact id, rule the prompts lack, rule the judge missed, chronology, fan-out
+duplicate), `contradictions.facts.jsonl` (`fact_id`, `problem`) and
+`contradictions.rules.md` (judgement gaps the prompts do not cover, data bug
+patterns).
 
-Merge, check every id has one verdict, then record:
+Check every id has one verdict, then record:
 
 ```bash
-env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review record --reviewer claude-<model> < all.verdicts.jsonl
+env DATABASE_URL="$DBURL" ANTHROPIC_API_KEY= ./dm contradictions review record --reviewer claude-<model> < contradictions.verdicts.jsonl
 ```
 
 ## 3. Audit samples
 
-In parallel with step 2, one agent per sample, each writing
+After step 2, audit each sample yourself (no subagents), writing
 `<sample>.audit.jsonl` and a short patterns note. Draw each sample from the
 new window and from the history band, about half and half (all from the band
 when the window is empty), and tag every row with where it came from:
