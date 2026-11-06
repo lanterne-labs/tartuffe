@@ -32,6 +32,7 @@ const (
 // pluginInstructions provides twitter-specific extraction instructions for the LLM.
 const pluginInstructions = `## Twitter-Specific Instructions
 The content below consists of tweets (social media posts). Apply these rules:
+- EVERY tweet below is written by its Author line, the target, and nobody else (retweets are removed before you see them). There is no journalist, no aide and no third party: the attribution rules about articles do not apply. subject_entity is ALWAYS the target, for every fact. What a tweet says of someone else (another politician's words, a vote, a party's line, a minister's decision) is the TARGET's own claim about them: "Laurent Nuñez a reconnu que…" in a tweet of Éric Zemmour → ✅ "Éric Zemmour affirme que Laurent Nuñez a reconnu que…" ❌ subject "Laurent Nuñez". A position the target gives for their party or group ("La France insoumise demande…", "nous voterons contre", "le RN propose") is the target's own position: ✅ subject "Jean-Luc Mélenchon", "Jean-Luc Mélenchon affirme que La France insoumise demande…" ❌ subject "La France insoumise".
 - Each tweet has a URL in the format "https://x.com/handle/status/...". Use this URL as the source_url for facts extracted from that tweet.
 - Tweets use informal language — normalize to formal factual statements.
 - Skip tweets that are purely opinions, jokes, memes, or personal greetings with no factual content.
@@ -341,6 +342,18 @@ func (p *Provider) extractTweetBatch(ctx context.Context, handle Handle, factIns
 			continue
 		}
 		sourceURL, tweetCreatedAt := tw.URL, tw.CreatedAt
+		// A tweet is its author's words, and only the author's: a fact the
+		// extractor gave to someone else (the party the author speaks for,
+		// a minister the tweet quotes) would put the author's claim in
+		// another person's record. 189 of 28625 tweet facts (audit
+		// 2026-11-06). The prompt says so; this keeps it true.
+		if !isAuthor(fact.SubjectEntity, handle.PersonName) {
+			log.Warn().Str("handle", handle.Handle).Str("subject", fact.SubjectEntity).
+				Str("fact", util.TruncateString(fact.NormalizedFactText, 80)).
+				Msg("twitter: the fact's subject is not the tweet's author; the fact is skipped")
+			metrics.IncrementTweets("fact_not_author")
+			continue
+		}
 
 		embeddings, err := p.Embedder.GenerateEmbeddings(ctx, embedding.PurposeFactStorage, []string{fact.EmbeddingText})
 		if core.FailsDocument(ctx, err) {
@@ -571,6 +584,13 @@ func determineDateRange(handle Handle, opts Options) (time.Time, time.Time) {
 	}
 
 	return dateFrom, dateTo
+}
+
+// isAuthor reports whether a fact's subject names the tweet's author: the
+// same person name once accents, case and separators are folded.
+func isAuthor(subject, author string) bool {
+	k := util.PersonNameKey(subject)
+	return k != "" && k == util.PersonNameKey(author)
 }
 
 // formatTweetBatch formats a slice of tweets into a text block for the LLM.

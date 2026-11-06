@@ -215,3 +215,22 @@ func TestFindMatchingTweet(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAuthor(t *testing.T) {
+	cases := []struct {
+		subject, author string
+		want            bool
+	}{
+		{"Jean-Luc Mélenchon", "jean-luc melenchon", true},
+		{"Éric Zemmour", "eric zemmour", true},
+		{"jean luc melenchon", "jean-luc melenchon", true},
+		{"La France insoumise", "jean-luc melenchon", false},
+		{"Laurent Nuñez", "eric zemmour", false},
+		{"", "eric zemmour", false},
+	}
+	for _, c := range cases {
+		if got := isAuthor(c.subject, c.author); got != c.want {
+			t.Errorf("isAuthor(%q, %q) = %v, want %v", c.subject, c.author, got, c.want)
+		}
+	}
+}
