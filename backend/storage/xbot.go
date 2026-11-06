@@ -171,19 +171,6 @@ func (s *PostgresStorer) PersonXHandles(ctx context.Context, personID int64) ([]
 	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
-// PersonParties returns the ids of the parties a person belongs to today.
-func (s *PostgresStorer) PersonParties(ctx context.Context, personID int64) ([]int64, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT pp.id FROM person_links pl
-		JOIN persons pp ON pp.id = pl.dst_person_id
-		WHERE pl.src_person_id = $1 AND pp.entity_type = 'party'
-		  AND (pl.valid_to IS NULL OR pl.valid_to >= CURRENT_DATE)`, personID)
-	if err != nil {
-		return nil, fmt.Errorf("parties of person %d: %w", personID, err)
-	}
-	return pgx.CollectRows(rows, pgx.RowTo[int64])
-}
-
 const xAccountColumns = `id, handle, name, category, person_id, domain, status, note, last_tagged_at`
 
 func scanXAccount(row pgx.CollectableRow) (XAccount, error) {
@@ -252,14 +239,13 @@ func (s *PostgresStorer) SetXAccountStatus(ctx context.Context, status string, h
 	return tag.RowsAffected(), nil
 }
 
-// BotTagPool is what the tags of one tweet are chosen from: the approved
-// accounts of the person and their parties, of the sites of the facts'
-// sources, and the approved others, the least recently tagged first.
+// BotTagPool is what the tags of one tweet are chosen from: the accounts of
+// the person and the approved accounts of the sites that published the
+// facts, the least recently tagged first. Nobody else: a tag must be the
+// person spoken of or the outlet whose report is quoted.
 type BotTagPool struct {
 	Person  []string
-	Parties []XAccount
 	Outlets []XAccount
-	Others  []XAccount
 }
 
 // BotTagPool gathers the accounts a tweet on the contradiction may tag.
@@ -296,20 +282,6 @@ func (s *PostgresStorer) BotTagPool(ctx context.Context, c *BotContradiction, do
 		}
 	}
 	pool.Person = person
-	parties, err := s.PersonParties(ctx, c.PersonID)
-	if err != nil {
-		return nil, err
-	}
-	if len(parties) > 0 {
-		rows, err := s.pool.Query(ctx, `SELECT `+xAccountColumns+` FROM x_accounts
-			WHERE status = 'approved' AND person_id = ANY($1) ORDER BY last_tagged_at ASC NULLS FIRST, random()`, parties)
-		if err != nil {
-			return nil, fmt.Errorf("party x accounts: %w", err)
-		}
-		if pool.Parties, err = pgx.CollectRows(rows, scanXAccount); err != nil {
-			return nil, fmt.Errorf("party x accounts: %w", err)
-		}
-	}
 	if len(domains) > 0 {
 		rows, err := s.pool.Query(ctx, `SELECT `+xAccountColumns+` FROM x_accounts
 			WHERE status = 'approved' AND domain = ANY($1) ORDER BY last_tagged_at ASC NULLS FIRST, random()`, domains)
@@ -319,16 +291,6 @@ func (s *PostgresStorer) BotTagPool(ctx context.Context, c *BotContradiction, do
 		if pool.Outlets, err = pgx.CollectRows(rows, scanXAccount); err != nil {
 			return nil, fmt.Errorf("outlet x accounts: %w", err)
 		}
-	}
-	rows, err = s.pool.Query(ctx, `SELECT `+xAccountColumns+` FROM x_accounts
-		WHERE status = 'approved' AND category IN ('factcheck', 'association', 'independent', 'journalist', 'outlet')
-		  AND person_id IS NULL
-		ORDER BY last_tagged_at ASC NULLS FIRST, random() LIMIT 20`)
-	if err != nil {
-		return nil, fmt.Errorf("other x accounts: %w", err)
-	}
-	if pool.Others, err = pgx.CollectRows(rows, scanXAccount); err != nil {
-		return nil, fmt.Errorf("other x accounts: %w", err)
 	}
 	return pool, nil
 }

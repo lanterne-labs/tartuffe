@@ -65,8 +65,8 @@ func TestPickBotContradictions(t *testing.T) {
 	assert.Empty(t, pick())
 }
 
-// TestBotTagPool: the person's handles (a refused one left out), their
-// party's approved account, the outlets of the sources' sites, the others.
+// TestBotTagPool: the person's handles (a refused one left out) and the
+// approved outlets of the sources' sites; not their party, nor the others.
 func TestBotTagPool(t *testing.T) {
 	storer, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -100,15 +100,8 @@ func TestBotTagPool(t *testing.T) {
 	pool, err := storer.BotTagPool(ctx, c, []string{"ex"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"reportperson"}, pool.Person)
-	require.Len(t, pool.Parties, 1)
-	assert.Equal(t, "leparti", pool.Parties[0].Handle)
-	require.Len(t, pool.Outlets, 1)
+	require.Len(t, pool.Outlets, 1, "only the outlet of the facts' site: no party, no other")
 	assert.Equal(t, "exnews", pool.Outlets[0].Handle)
-	var others []string
-	for _, a := range pool.Others {
-		others = append(others, a.Handle)
-	}
-	assert.ElementsMatch(t, []string{"exnews", "othernews", "factcheck"}, others, "approved only, no party")
 
 	// An update keeps the fields not given.
 	updated, err := storer.UpsertXAccount(ctx, XAccount{Handle: "exnews", Note: "quotidien"})

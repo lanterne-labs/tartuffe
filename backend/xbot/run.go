@@ -215,7 +215,7 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 		if err != nil {
 			return err
 		}
-		msg, err := b.Telegram.Send(ctx, DraftMessage(d, slot.In(b.Zone), b.Site), draftButtons(id, len(d.Versions)))
+		msg, err := b.Telegram.Send(ctx, DraftMessage(d, slot.In(b.Zone), b.Site), draftButtons(id, d.Labels))
 		if err != nil {
 			return fmt.Errorf("send draft %d: %w", id, err)
 		}
@@ -226,10 +226,11 @@ func (b *Bot) Draft(ctx context.Context, slot time.Time) error {
 	return nil
 }
 
-func draftButtons(id int64, versions int) [][]Button {
+// draftButtons publishes a version by its label, skips, or marks false.
+func draftButtons(id int64, labels []string) [][]Button {
 	var publish []Button
-	for i := 1; i <= versions; i++ {
-		publish = append(publish, Button{Text: fmt.Sprintf("✅ Publier %d", i), Data: fmt.Sprintf("p:%d:%d", id, i)})
+	for i, l := range labels {
+		publish = append(publish, Button{Text: "✅ Publier " + strings.ToLower(l), Data: fmt.Sprintf("p:%d:%d", id, i+1)})
 	}
 	return [][]Button{publish, {
 		{Text: "⏭ Passer", Data: fmt.Sprintf("s:%d", id)},
@@ -269,10 +270,18 @@ func DraftMessage(d *Draft, slot time.Time, site string) string {
 	side("Fait 2", c.B)
 	fmt.Fprintf(&b, "<b>Pourquoi</b> : %s\n<a href=\"%s\">sur le site</a>\n", esc(c.Reason), esc(ContradictionLink(site, &c)))
 	for i, v := range d.Versions {
-		fmt.Fprintf(&b, "\n<b>Version %d</b> (%d car.)\n<pre>%s</pre>\n", i+1, Length(v), esc(v))
+		fmt.Fprintf(&b, "\n<b>%s</b> (%d car.)\n<pre>%s</pre>\n", esc(label(d, i)), Length(v), esc(v))
 	}
 	b.WriteString("\nPour publier votre propre texte : répondez à ce message avec le tweet (les tags sont ajoutés s'il n'en a pas).")
 	return b.String()
+}
+
+// label is the name of a version: its style, else its number.
+func label(d *Draft, i int) string {
+	if i < len(d.Labels) {
+		return d.Labels[i]
+	}
+	return fmt.Sprintf("Version %d", i+1)
 }
 
 func clip(s string, n int) string {
