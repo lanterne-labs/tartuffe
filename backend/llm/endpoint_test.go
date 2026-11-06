@@ -148,6 +148,9 @@ func TestProfileRouting(t *testing.T) {
 				model = "claude-opus-5-5"
 			}
 			want := Route{Endpoint: EndpointClaudeTeam, Model: model, Effort: claudeEffort(task), Fallback: fallback}
+			if task == TaskTweet {
+				want.Model, want.Effort = "claude-opus-5-5", EffortHigh
+			}
 			if got := r.Route(task); got != want {
 				t.Errorf("claude-team profile (key %q), task %s: got %v, want %v", key, task, got, want)
 			}
