@@ -31,16 +31,14 @@ func TestDomains(t *testing.T) {
 func TestChooseTags(t *testing.T) {
 	pool := &storage.BotTagPool{
 		Person:  []string{"jdupont", "jdupont_bis"},
-		Parties: []storage.XAccount{{Handle: "parti"}},
 		Outlets: []storage.XAccount{{Handle: "lemondefr"}, {Handle: "lemondefr"}, {Handle: "libe"}, {Handle: "figaro"}},
-		Others:  []storage.XAccount{{Handle: "afpfactuel"}, {Handle: "asso"}},
 	}
-	// The person, one party, two outlets: the cap of four is reached.
-	assert.Equal(t, []string{"jdupont", "parti", "lemondefr", "libe"}, ChooseTags(pool, 4))
-	// Without outlets, the others fill in.
+	// The person and two outlets: the cap is reached.
+	assert.Equal(t, []string{"jdupont", "lemondefr", "libe"}, ChooseTags(pool, MaxTags))
+	// Without outlets, the person alone: nobody fills in.
 	pool.Outlets = nil
-	assert.Equal(t, []string{"jdupont", "parti", "afpfactuel", "asso"}, ChooseTags(pool, 4))
-	assert.Empty(t, ChooseTags(&storage.BotTagPool{}, 4))
+	assert.Equal(t, []string{"jdupont"}, ChooseTags(pool, MaxTags))
+	assert.Empty(t, ChooseTags(&storage.BotTagPool{}, MaxTags))
 }
 
 func TestCheck(t *testing.T) {
@@ -83,17 +81,18 @@ func (f *fakeWriter) Write(_ context.Context, prompt string) (Reply, error) {
 }
 
 func TestCompose(t *testing.T) {
-	w := &fakeWriter{reply: Reply{Reasoning: "r", Tweets: []string{
-		"Jean Dupont, 2022 : « la retraite à 60 ans ». 2025 : vote pour 64. La justice a pris quatre ans de retard.",
-		"Jean Dupont : « Je défendrai toujours 60 ans ».",
-	}}}
+	w := &fakeWriter{reply: Reply{Reasoning: "r",
+		Standard:  "Jean Dupont, 2022 : « la retraite à 60 ans ». 2025 : vote pour 64. La justice a pris quatre ans de retard.",
+		Satirical: "Jean Dupont : « Je défendrai toujours 60 ans ».",
+	}}
 	d, err := Compose(context.Background(), w, contradiction(), []string{"jdupont", "lemondefr"}, "https://tartuffe.me/person/3?c=7")
 	require.NoError(t, err)
 	require.Len(t, d.Versions, 1)
 	assert.True(t, strings.HasSuffix(d.Versions[0], "\n\n@jdupont @lemondefr\nhttps://tartuffe.me/person/3?c=7"), d.Versions[0])
 	assert.LessOrEqual(t, Length(d.Versions[0]), MaxLength)
+	assert.Equal(t, []string{"Sobre"}, d.Labels)
 	require.Len(t, d.Dropped, 1)
-	assert.Contains(t, d.Dropped[0], "quote not in the sources")
+	assert.Contains(t, d.Dropped[0], "Satirique, quote not in the sources")
 	// The room the prompt gives leaves space for the tags and the link.
 	assert.Contains(t, w.prompt, "At most 235 characters")
 	assert.Contains(t, w.prompt, "Je me battrai pour la retraite à 60 ans")

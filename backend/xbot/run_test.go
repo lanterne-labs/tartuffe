@@ -103,7 +103,7 @@ func testBot(t *testing.T) (*Bot, *fakeTelegram, *fakePoster, *pgxpool.Pool) {
 	zone, _ := time.LoadLocation("Europe/Paris")
 	now := time.Date(2026, 11, 10, 11, 30, 0, 0, zone)
 	b := &Bot{Store: store, Telegram: NewTelegram("tok", 42, srv.URL), Poster: poster,
-		Writer: &fakeWriter{reply: Reply{Tweets: []string{"Jean Dupont : « la retraite à 60 ans ». Puis 64. Logique.", "Jean Dupont, toujours constant."}}},
+		Writer: &fakeWriter{reply: Reply{Standard: "Jean Dupont : « la retraite à 60 ans ». Puis 64. Logique.", Satirical: "Jean Dupont, toujours constant."}},
 		Slots:  []Clock{{12, 0}, {19, 0}}, Zone: zone, Lead: time.Hour, Grace: time.Hour, Site: "https://tartuffe.me",
 		Now: func() time.Time { return now }}
 	return b, tg, poster, pool
@@ -126,7 +126,7 @@ func TestBotFlow(t *testing.T) {
 	require.NoError(t, b.Tick(ctx))
 	msg := tg.last("sendMessage")
 	require.NotNil(t, msg, "a draft is sent an hour before noon")
-	assert.Contains(t, msg["text"], "Version 1")
+	assert.Contains(t, msg["text"], "<b>Satirique</b>")
 	assert.Contains(t, msg["text"], "@jdupont @lemondefr")
 	require.NoError(t, b.Tick(ctx))
 	var drafts int

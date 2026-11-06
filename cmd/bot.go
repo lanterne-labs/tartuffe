@@ -115,7 +115,7 @@ func printDraft(d *xbot.Draft) {
 	fmt.Printf("why: %s\n", c.Reason)
 	fmt.Printf("tags: %s\n", strings.Join(d.Tags, " "))
 	for i, v := range d.Versions {
-		fmt.Printf("--- version %d (%d chars)\n%s\n", i+1, xbot.Length(v), v)
+		fmt.Printf("--- %s (%d chars)\n%s\n", d.Labels[i], xbot.Length(v), v)
 	}
 	for _, why := range d.Dropped {
 		fmt.Printf("--- dropped: %s\n", why)
