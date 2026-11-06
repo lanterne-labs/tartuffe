@@ -332,3 +332,164 @@ func (s *PostgresStorer) BotTagPool(ctx context.Context, c *BotContradiction, do
 	}
 	return pool, nil
 }
+
+// XPost is a tweet of the X bot (x_posts).
+type XPost struct {
+	ID                int64
+	ContradictionID   *int64
+	PersonID          int64
+	Slot              time.Time
+	Variants          []string
+	Tags              []string
+	Chosen            *string
+	Status            string
+	TelegramMessageID *int64
+	TweetID           *string
+	Error             string
+	CreatedAt         time.Time
+}
+
+const xPostColumns = `id, contradiction_id, person_id, slot, variants, tags, chosen, status, telegram_message_id, tweet_id, error, created_at`
+
+func scanXPost(row pgx.CollectableRow) (XPost, error) {
+	var p XPost
+	err := row.Scan(&p.ID, &p.ContradictionID, &p.PersonID, &p.Slot, &p.Variants, &p.Tags, &p.Chosen, &p.Status,
+		&p.TelegramMessageID, &p.TweetID, &p.Error, &p.CreatedAt)
+	return p, err
+}
+
+// ErrNoXPost is returned when the tweet does not exist.
+var ErrNoXPost = errors.New("no such tweet")
+
+// InsertXPost stores a draft for its slot.
+func (s *PostgresStorer) InsertXPost(ctx context.Context, p XPost) (int64, error) {
+	if p.Variants == nil {
+		p.Variants = []string{}
+	}
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO x_posts (contradiction_id, person_id, slot, variants, tags, status)
+		VALUES ($1, $2, $3, $4, $5, 'draft') RETURNING id`,
+		p.ContradictionID, p.PersonID, p.Slot, p.Variants, p.Tags).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("insert x post: %w", err)
+	}
+	return id, nil
+}
+
+// GetXPost loads a tweet.
+func (s *PostgresStorer) GetXPost(ctx context.Context, id int64) (*XPost, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts WHERE id = $1`, id)
+	if err != nil {
+		return nil, fmt.Errorf("x post %d: %w", id, err)
+	}
+	p, err := pgx.CollectExactlyOneRow(rows, scanXPost)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoXPost
+	}
+	if err != nil {
+		return nil, fmt.Errorf("x post %d: %w", id, err)
+	}
+	return &p, nil
+}
+
+// XPostByTelegramMessage finds the tweet a Telegram message shows.
+func (s *PostgresStorer) XPostByTelegramMessage(ctx context.Context, messageID int64) (*XPost, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `SELECT id FROM x_posts WHERE telegram_message_id = $1`, messageID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoXPost
+	}
+	if err != nil {
+		return nil, fmt.Errorf("x post of telegram message %d: %w", messageID, err)
+	}
+	return s.GetXPost(ctx, id)
+}
+
+// XPostSlotTaken reports whether a tweet (of any status: a skipped slot is
+// not drafted again) holds the slot.
+func (s *PostgresStorer) XPostSlotTaken(ctx context.Context, slot time.Time) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM x_posts WHERE slot = $1)`, slot).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("x post slot: %w", err)
+	}
+	return ok, nil
+}
+
+// OpenXPostPersons returns the persons of the drafts and approved tweets not
+// posted yet: a new draft is about someone else.
+func (s *PostgresStorer) OpenXPostPersons(ctx context.Context) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT person_id FROM x_posts WHERE status IN ('draft', 'approved')`)
+	if err != nil {
+		return nil, fmt.Errorf("open x post persons: %w", err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[int64])
+}
+
+// SetXPostTelegram records the Telegram message that shows the draft.
+func (s *PostgresStorer) SetXPostTelegram(ctx context.Context, id, messageID int64) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE x_posts SET telegram_message_id = $2 WHERE id = $1`, id, messageID); err != nil {
+		return fmt.Errorf("x post %d telegram: %w", id, err)
+	}
+	return nil
+}
+
+// DecideXPost moves a draft to status (approved with its chosen text,
+// skipped, false); it returns false when the tweet was no longer a draft.
+func (s *PostgresStorer) DecideXPost(ctx context.Context, id int64, status string, chosen *string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE x_posts SET status = $2, chosen = COALESCE($3, chosen), decided_at = now()
+		WHERE id = $1 AND status = 'draft'`, id, status, chosen)
+	if err != nil {
+		return false, fmt.Errorf("decide x post %d: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// DueXPosts returns the approved tweets whose slot has come.
+func (s *PostgresStorer) DueXPosts(ctx context.Context, now time.Time) ([]XPost, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+xPostColumns+` FROM x_posts WHERE status = 'approved' AND slot <= $1 ORDER BY slot`, now)
+	if err != nil {
+		return nil, fmt.Errorf("due x posts: %w", err)
+	}
+	return pgx.CollectRows(rows, scanXPost)
+}
+
+// MarkXPostPosted records the tweet posted and its tags as tagged now.
+func (s *PostgresStorer) MarkXPostPosted(ctx context.Context, id int64, tweetID string, tags []string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin x post posted: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE x_posts SET status = 'posted', tweet_id = $2, posted_at = now(), error = '' WHERE id = $1`, id, tweetID); err != nil {
+		return fmt.Errorf("x post %d posted: %w", id, err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE x_accounts SET last_tagged_at = now() WHERE handle = ANY($1)`, tags); err != nil {
+		return fmt.Errorf("x post %d tags: %w", id, err)
+	}
+	return tx.Commit(ctx)
+}
+
+// MarkXPostFailed records why a tweet could not be posted.
+func (s *PostgresStorer) MarkXPostFailed(ctx context.Context, id int64, reason string) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE x_posts SET status = 'failed', error = $2 WHERE id = $1`, id, reason); err != nil {
+		return fmt.Errorf("x post %d failed: %w", id, err)
+	}
+	return nil
+}
+
+// ExpireXPosts sets the drafts whose slot ended before `before` expired and
+// returns them.
+func (s *PostgresStorer) ExpireXPosts(ctx context.Context, before time.Time) ([]XPost, error) {
+	rows, err := s.pool.Query(ctx, `UPDATE x_posts SET status = 'expired', decided_at = now()
+		WHERE status = 'draft' AND slot < $1 RETURNING `+xPostColumns, before)
+	if err != nil {
+		return nil, fmt.Errorf("expire x posts: %w", err)
+	}
+	return pgx.CollectRows(rows, scanXPost)
+}

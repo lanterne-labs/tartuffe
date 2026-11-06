@@ -15,7 +15,10 @@ import (
 	"digital-mirror/backend/deps"
 	"digital-mirror/backend/llm"
 	"digital-mirror/backend/metrics"
+	"digital-mirror/backend/polls"
+	"digital-mirror/backend/storage"
 	"digital-mirror/backend/worker"
+	"digital-mirror/backend/xbot"
 
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog/log"
@@ -111,6 +114,14 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		}, worker.ReportsEvery)
 	}
 
+	// XBOT_ENABLED=true starts the X bot beside the tasks (backend/xbot): a
+	// draft before each slot on Telegram, a tweet once approved.
+	if on, _ := strconv.ParseBool(os.Getenv("XBOT_ENABLED")); on {
+		if err := startXBot(ctx, storer); err != nil {
+			log.Error().Err(err).Msg("Worker: the X bot did not start")
+		}
+	}
+
 	d := deps.New(storer)
 	err = worker.Run(ctx, storer, worker.PluginRunner{Deps: d}, worker.NewHousekeeping(storer, d), opts)
 	if errors.Is(err, context.Canceled) {
@@ -118,4 +129,45 @@ func runWorker(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// startXBot runs the X bot until ctx ends. The blackouts of the poll events
+// (the eve and the day of each round) are its electoral silence.
+func startXBot(ctx context.Context, storer *storage.PostgresStorer) error {
+	tg, err := xbot.NewTelegramFromEnv()
+	if err != nil {
+		return err
+	}
+	if tg == nil {
+		return errors.New("no Telegram bot (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID): nobody to approve the tweets")
+	}
+	writer, err := xbot.NewLLMWriterFromEnv()
+	if err != nil {
+		return err
+	}
+	events := polls.NewPGStore(storer.Pool())
+	bot := &xbot.Bot{Store: storer, Writer: writer, Telegram: tg,
+		Silence: func(ctx context.Context, t time.Time) (bool, error) {
+			list, err := events.ListEvents(ctx)
+			if err != nil {
+				return false, err
+			}
+			for i := range list {
+				if polls.InBlackout(&list[i], t) {
+					return true, nil
+				}
+			}
+			return false, nil
+		}}
+	if p := xbot.NewXAPIPosterFromEnv(); p != nil {
+		bot.Poster = p
+	} else {
+		log.Warn().Msg("Worker: no X keys (X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET): the X bot drafts and asks, but posts nothing")
+	}
+	if err := bot.Config(); err != nil {
+		return err
+	}
+	log.Info().Int("slots", len(bot.Slots)).Bool("link", bot.Link).Msg("Worker: X bot started")
+	go bot.Run(ctx)
+	return nil
 }
