@@ -87,6 +87,17 @@ Every person, stance, contradiction and fact has a link: `/person/{id}`, `?stanc
 
 A signed-in user reports a fact or a contradiction once (`POST /api/reports`, `user_reports`, at most 20 waiting per user; `GET /api/me/reports`, shown on `/profile`). The worker judges the pending reports every minute beside its tasks (`complaints.JudgeReports`, the complaint judge with the target, its sources and the report), but the judge only advises (`ai_verdict`, `verdict_reason`): an LLM is easy to talk into agreeing, so nothing is removed until a person decides. The report waits in `review` (also after 3 failed judgings, without advice): `./dm complaints reports` lists them, `./dm complaints reports accept <id>... [--reason]` removes the target (a contradiction is dismissed so its pair is not detected again, a fact goes with its contradictions and the scores are recomputed) and enters the public log (`GET /api/corrections`, the judge's reason or `--reason`, never the reporter's words), `refuse <id>...` keeps it (`enabled`: true accepted, false refused, null undecided).
 
+### The X bot
+```bash
+./dm bot draft --n 5                      # drafts of tweets, one per candidate: nothing saved or sent
+./dm bot draft --contradiction 1206       # a draft of one contradiction
+./dm bot accounts import backend/xbot/accounts.csv   # the starting list of accounts to tag (suggested)
+./dm bot accounts list --status suggested
+./dm bot accounts approve lemondefr decodeurs        # only approved accounts are tagged
+./dm bot accounts add rnational_off --category party --person "rassemblement national" --status approved
+```
+The bot (`backend/xbot`, tables `x_accounts`, `x_posts`) tweets the contradictions of the candidates from an anonymous account. It picks one contradiction per candidate, the candidates it has not tweeted on for the longest first (the ones reviewed real first; never a reported one or one reviewed false); the LLM (`TaskTweet`) writes 3 versions in French, ironic and lively, and a version whose « quote » is not the person's own words, word for word, is dropped (`xbot.Check`). A tweet tags at most 4 accounts: the person (`twitter_handles`), one of their parties, up to two outlets that published the facts (`x_accounts.domain`), then the approved others, the least recently tagged first. A person approves every tweet before it is posted.
+
 ### News Search
 ```bash
 # Search news and scrape articles (uses SerpAPI + webcrawler)
