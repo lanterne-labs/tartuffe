@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"digital-mirror/backend/core"
 	"digital-mirror/backend/deps"
@@ -34,6 +35,7 @@ var (
 	botDraftLink bool
 	botDraftSite string
 	botDraftID   int64
+	botDraftTG   bool
 )
 
 var botDraftCmd = &cobra.Command{
@@ -49,6 +51,15 @@ var botDraftCmd = &cobra.Command{
 		writer, err := xbot.NewLLMWriterFromEnv()
 		if err != nil {
 			return fmt.Errorf("init LLM: %w", err)
+		}
+		var tg *xbot.Telegram
+		if botDraftTG {
+			if tg, err = xbot.NewTelegramFromEnv(); err != nil {
+				return err
+			}
+			if tg == nil {
+				return fmt.Errorf("--telegram: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are not set")
+			}
 		}
 		var picked []storage.BotContradiction
 		if botDraftID > 0 {
@@ -74,6 +85,12 @@ var botDraftCmd = &cobra.Command{
 				return err
 			}
 			printDraft(d)
+			if tg != nil {
+				msg := "🔎 <b>APERÇU</b>, rien ne sera publié\n\n" + xbot.DraftMessage(d, time.Now(), botDraftSite)
+				if _, err := tg.Send(ctx, msg, nil); err != nil {
+					return fmt.Errorf("send the preview: %w", err)
+				}
+			}
 		}
 		fmt.Printf("%d draft(s); nothing saved or sent\n", len(picked))
 		return nil
@@ -278,6 +295,7 @@ func init() {
 	botDraftCmd.Flags().IntVar(&botDraftN, "n", 5, "how many drafts (one per person)")
 	botDraftCmd.Flags().Int64Var(&botDraftID, "contradiction", 0, "draft this contradiction instead of choosing")
 	botDraftCmd.Flags().BoolVar(&botDraftLink, "link", false, "add the contradiction's link (X bills a tweet with a link more)")
+	botDraftCmd.Flags().BoolVar(&botDraftTG, "telegram", false, "also send each draft to Telegram as a preview (no buttons, nothing saved)")
 	botDraftCmd.Flags().StringVar(&botDraftSite, "site", "https://tartuffe.me", "the site of the links")
 	botAccountsListCmd.Flags().StringVar(&botAccountsStatus, "status", "", "suggested, approved or refused (default all)")
 	botAccountsAddCmd.Flags().StringVar(&botAccount.name, "name", "", "display name")
