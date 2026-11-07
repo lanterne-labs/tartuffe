@@ -415,7 +415,9 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT `+PersonSummaryColumns+`, p.fact_count
+		SELECT `+PersonSummaryColumns+`, p.fact_count,
+			COALESCE((SELECT COUNT(*) FROM stance_documents WHERE person_id = p.id), 0) AS stance_count,
+			COALESCE((SELECT COUNT(*) FROM contradictions WHERE person_id = p.id), 0) AS contradiction_count
 		FROM persons p
 		WHERE ($3 = '' OR p.entity_type = $3)
 		  AND ($4 = '' OR p.name ILIKE '%%' || $4 || '%%')
@@ -433,7 +435,7 @@ func (s *PostgresStorer) GetPersonsRankedByScore(ctx context.Context, limit int,
 	var persons []PersonSummary
 	for rows.Next() {
 		var person PersonSummary
-		if err := ScanPersonSummary(rows, &person, &person.FactCount); err != nil {
+		if err := ScanPersonSummary(rows, &person, &person.FactCount, &person.StanceCount, &person.ContradictionCount); err != nil {
 			return nil, fmt.Errorf("failed to scan person: %w", err)
 		}
 		persons = append(persons, person)
