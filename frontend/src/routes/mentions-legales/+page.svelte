@@ -15,13 +15,12 @@
 		['GitHub, Inc.', '88 Colin P. Kelly Jr. Street, San Francisco, CA 94107, États-Unis — github.com', 'l’application de vote (GitHub Pages)'],
 		['Cloudflare, Inc.', '101 Townsend Street, San Francisco, CA 94107, États-Unis — cloudflare.com', 'les photos des responsables politiques']
 	];
-	const content: Record<Lang, { title: string; publisherTitle: string; publisherAnon: string; contactLabel: string; contactSoon: string; hostsTitle: string; sections: Section[] }> = {
+	const content: Record<Lang, { title: string; publisherTitle: string; publisherAnon: string; contactLabel: string; hostsTitle: string; sections: Section[] }> = {
 		fr: {
 			title: 'Mentions légales et conditions d’utilisation',
 			publisherTitle: 'Éditeur',
 			publisherAnon: 'Ce site est édité à titre non professionnel par une personne physique qui, conformément à l’article 6-III-2 de la loi n° 2004-575 du 21 juin 2004 pour la confiance dans l’économie numérique, a communiqué ses éléments d’identification à l’hébergeur.',
 			contactLabel: 'Contact',
-			contactSoon: 'l’adresse arrive dans quelques jours (page Contact).',
 			hostsTitle: 'Hébergement',
 			sections: [
 				{ title: 'Ce qu’est le site', paras: [
@@ -50,7 +49,6 @@
 			publisherTitle: 'Publisher',
 			publisherAnon: 'This site is published on a non-professional basis by a private individual who, under article 6-III-2 of French law no. 2004-575 of 21 June 2004, has given their identity to the host.',
 			contactLabel: 'Contact',
-			contactSoon: 'the address is coming in a few days (Contact page).',
 			hostsTitle: 'Hosting',
 			sections: [
 				{ title: 'What the site is', paras: [
@@ -88,7 +86,7 @@
 		{:else}
 			<p>{c.publisherAnon}</p>
 		{/if}
-		<p>{c.contactLabel} : {#if CONTACT_EMAIL}<a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a>{:else}{c.contactSoon}{/if} <a href="/contact">/contact</a></p>
+		<p>{c.contactLabel} : <a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a> · <a href="/contact">/contact</a></p>
 	</section>
 
 	<section>

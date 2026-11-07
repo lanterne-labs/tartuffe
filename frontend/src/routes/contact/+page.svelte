@@ -9,7 +9,7 @@
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
 	type Topic = { title: string; body: string; subject: string };
-	const content: Record<Lang, { kicker: string; title: string; lead: string; topics: Topic[]; write: string; soon: string; report: string; reportLink: string }> = {
+	const content: Record<Lang, { kicker: string; title: string; lead: string; topics: Topic[]; write: string; report: string; reportLink: string }> = {
 		fr: {
 			kicker: 'Contact',
 			title: 'Nous écrire',
@@ -21,7 +21,6 @@
 				{ title: 'Vos données', body: 'Nous gardons très peu sur vous : l’empreinte de votre compte, votre pseudonyme, vos +1 et vos signalements. Votre profil supprime votre compte d’un clic. Une question ?', subject: 'Données personnelles' }
 			],
 			write: 'Écrire',
-			soon: 'L’adresse de contact arrive dans quelques jours.',
 			report: 'Pour un fait ou une contradiction précis, le plus rapide reste le bouton « Signaler » de l’élément.',
 			reportLink: 'Voir les corrections publiées'
 		},
@@ -36,7 +35,6 @@
 				{ title: 'Your data', body: 'We keep very little about you: a fingerprint of your account, your pseudonym, your +1s and your reports. Your profile deletes your account in one click. A question?', subject: 'Personal data' }
 			],
 			write: 'Write',
-			soon: 'The contact address is coming in a few days.',
 			report: 'For one specific fact or contradiction, the quickest is its “Report” button.',
 			reportLink: 'See the published corrections'
 		}
@@ -49,20 +47,14 @@
 	<h1>{c.title}</h1>
 	<p class="lead">{c.lead}</p>
 
-	{#if CONTACT_EMAIL}
-		<p class="address"><a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>
-	{:else}
-		<p class="address soon">{c.soon}</p>
-	{/if}
+	<p class="address"><a href="mailto:{CONTACT_EMAIL}">{CONTACT_EMAIL}</a></p>
 
 	<div class="topics">
 		{#each c.topics as t (t.subject)}
 			<section class="topic">
 				<h2>{t.title}</h2>
 				<p>{t.body}</p>
-				{#if CONTACT_EMAIL}
-					<a class="write" href={mailto(t.subject)}>{c.write} →</a>
-				{/if}
+				<a class="write" href={mailto(t.subject)}>{c.write} →</a>
 			</section>
 		{/each}
 	</div>
@@ -76,7 +68,6 @@
 	h1 { font-size: 2rem; margin: 0.25rem 0 0.75rem; }
 	.lead { color: var(--text-secondary); line-height: 1.6; }
 	.address { margin: 1.5rem 0; text-align: center; font-size: 1.125rem; font-weight: 600; }
-	.address.soon { font-weight: 400; color: var(--text-muted); font-style: italic; }
 	.topics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
 	.topic { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius-md); padding: 1rem 1.25rem; }
 	.topic h2 { font-size: 1rem; margin-bottom: 0.5rem; }
