@@ -28,8 +28,8 @@ type Store interface {
 	GetStanceDocumentsForPerson(ctx context.Context, personID int64) ([]core.StanceDocument, error)
 	GetStanceContradictionCounts(ctx context.Context, personID int64) (map[int64]int, error)
 	GetStanceGroupCounts(ctx context.Context, personID int64) (map[int64]int, error)
-	GetStanceContradictionGroups(ctx context.Context, stanceID int64) ([]storage.ContradictionGroup, error)
-	GetFactsInStance(ctx context.Context, stanceID int64) ([]storage.FactInStance, error)
+	GetStanceContradictionGroups(ctx context.Context, stanceID, viewerID int64) ([]storage.ContradictionGroup, error)
+	GetFactsInStance(ctx context.Context, stanceID, viewerID int64) ([]storage.FactInStance, error)
 	GetMaxEventID(ctx context.Context) (int64, error)
 	GetEventsAfter(ctx context.Context, sinceID int64, limit int) ([]storage.Event, error)
 

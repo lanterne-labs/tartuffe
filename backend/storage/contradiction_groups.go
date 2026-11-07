@@ -309,6 +309,10 @@ type ContradictionGroup struct {
 	BaseFactTextEn     string     `json:"base_fact_text_en,omitempty"`
 	BaseFactDate       *time.Time `json:"base_fact_date"`
 	BaseFactSourceURLs []string   `json:"base_fact_source_urls"`
+	// BaseLikes counts the users' +1 on the base fact; BaseLiked says the
+	// viewer gave one.
+	BaseLikes int  `json:"base_likes"`
+	BaseLiked bool `json:"base_liked"`
 	// BaseRestatements are the base fact's other wordings (its claim group).
 	BaseRestatements   []Restatement       `json:"base_restatements"`
 	Summary            *string             `json:"summary"`              // merged reason; nil for single-spoke
@@ -329,13 +333,18 @@ type ContradictingFact struct {
 	Restatements []Restatement `json:"restatements"`
 	Reason       string        `json:"reason"`
 	ReasonEn     string        `json:"reason_en,omitempty"`
+	// Likes counts the users' +1 on the contradiction; Liked says the viewer
+	// gave one.
+	Likes int  `json:"likes"`
+	Liked bool `json:"liked"`
 }
 
 // GetStanceContradictionGroups returns the distinct-inconsistency groups whose BASE
 // fact belongs to the given stance (via stance_document_facts), each as one base
 // fact + its contradicting facts. Grouping is by base fact (fact_a_id); the regroup
-// pass must have run for the orientation to be meaningful.
-func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanceID int64) ([]ContradictionGroup, error) {
+// pass must have run for the orientation to be meaningful. The likes of the
+// viewer (viewerID, 0: none) are marked.
+func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanceID, viewerID int64) ([]ContradictionGroup, error) {
 	// base = base_fact_id once regrouped, else fact_a_id (graceful pre-regroup fallback:
 	// each un-grouped row renders as its own base + single spoke). spoke = the other fact.
 	query := `
@@ -353,7 +362,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		       sp.fact_text, COALESCE(sp.fact_text_en,''),
 		       COALESCE(fsb.urls, '{}'), fsb.earliest,
 		       COALESCE(fss.urls, '{}'), fss.earliest,
-		       ` + restatementsJSON("g.base_id") + `, ` + restatementsJSON("g.spoke_id") + `
+		       ` + restatementsJSON("g.base_id") + `, ` + restatementsJSON("g.spoke_id") + `,
+		       blk.n, blk.mine, clk.n, clk.mine
 		FROM g
 		JOIN stance_document_facts sdf ON sdf.fact_id = g.base_id AND sdf.stance_document_id = $1
 		-- Only this stance owner's contradictions: a fact mentioned by several
@@ -370,9 +380,11 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			SELECT array_agg(source_url ORDER BY published_at ASC NULLS LAST) AS urls, MIN(published_at) AS earliest
 			FROM fact_sources WHERE fact_id = g.spoke_id
 		) fss ON true
+		` + likesJoin("fact", "g.base_id", "blk", "$2") + `
+		` + likesJoin("contradiction", "g.id", "clk", "$2") + `
 		ORDER BY g.base_id, g.id`
 
-	rows, err := s.pool.Query(ctx, query, stanceID)
+	rows, err := s.pool.Query(ctx, query, stanceID, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("query contradiction groups for stance %d: %w", stanceID, err)
 	}
@@ -390,12 +402,15 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			baseURLs, spokeURLs                          []string
 			baseDate, spokeDate                          *time.Time
 			baseRestatements, spokeRestatements          []byte
+			baseLikes, spokeLikes                        float64
+			baseLiked, spokeLiked                        bool
 		)
 		if err := rows.Scan(&cid, &baseID, &spokeID, &reason, &reasonEn,
 			&summary, &summaryEn,
 			&baseText, &baseTextEn, &spokeText, &spokeTextEn,
 			&baseURLs, &baseDate, &spokeURLs, &spokeDate,
-			&baseRestatements, &spokeRestatements); err != nil {
+			&baseRestatements, &spokeRestatements,
+			&baseLikes, &baseLiked, &spokeLikes, &spokeLiked); err != nil {
 			return nil, fmt.Errorf("scan contradiction group row: %w", err)
 		}
 		var spokeAlso []Restatement
@@ -416,6 +431,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 				BaseFactTextEn:     baseTextEn,
 				BaseFactDate:       baseDate,
 				BaseFactSourceURLs: baseURLs,
+				BaseLikes:          int(baseLikes),
+				BaseLiked:          baseLiked,
 				Summary:            summary,
 				SummaryEn:          summaryEn,
 			})
@@ -432,6 +449,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			Restatements:    spokeAlso,
 			Reason:          reason,
 			ReasonEn:        reasonEn,
+			Likes:           int(spokeLikes),
+			Liked:           spokeLiked,
 		})
 	}
 	return groups, rows.Err()

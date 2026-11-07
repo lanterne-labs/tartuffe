@@ -264,7 +264,8 @@ func stanceScore(factCount, contradictionTotal int) float64 {
 }
 
 // handleGetStanceFacts returns all facts attached to a stance, with both native and
-// English text so the frontend language toggle can swap per-fact without a second round trip.
+// English text so the frontend language toggle can swap per-fact without a second round trip,
+// and the likes of the signed-in viewer marked.
 func (s *Service) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
@@ -273,7 +274,7 @@ func (s *Service) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid stance ID", http.StatusBadRequest)
 		return
 	}
-	items, err := s.store.GetFactsInStance(ctx, stanceID)
+	items, err := s.store.GetFactsInStance(ctx, stanceID, s.accounts.ViewerID(r))
 	if err != nil {
 		httpx.InternalError(w, err, "failed to get stance facts")
 		return
@@ -285,7 +286,7 @@ func (s *Service) handleGetStanceFacts(w http.ResponseWriter, r *http.Request) {
 // handleGetStanceContradictions returns the distinct-inconsistency GROUPS whose base
 // fact belongs to this stance — one base fact + its N contradicting facts each, so the
 // UI shows one card per inconsistency instead of a wall of pairwise rows. Used by the
-// profile UI when a stance card is expanded.
+// profile UI when a stance card is expanded. The likes of the signed-in viewer are marked.
 func (s *Service) handleGetStanceContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stanceIDStr := chi.URLParam(r, "id")
@@ -296,7 +297,7 @@ func (s *Service) handleGetStanceContradictions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	items, err := s.store.GetStanceContradictionGroups(ctx, stanceID)
+	items, err := s.store.GetStanceContradictionGroups(ctx, stanceID, s.accounts.ViewerID(r))
 	if err != nil {
 		httpx.InternalError(w, err, "failed to get stance contradiction groups")
 		return

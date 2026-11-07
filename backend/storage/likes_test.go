@@ -74,3 +74,61 @@ func TestFeedHot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 }
+
+// TestLikesOnPersonPage: the reads of the person page (the contradiction
+// groups and the facts of a stance) and the share target carry the likes,
+// with the viewer's marked.
+func TestLikesOnPersonPage(t *testing.T) {
+	storer, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	f := newReportFixture(t, storer, 3)
+	other, err := testUser(ctx, storer, "liker")
+	require.NoError(t, err)
+	for _, u := range []int64{f.user, other} {
+		_, err = storer.SetLike(ctx, u, FeedFact, f.facts[0], true)
+		require.NoError(t, err)
+	}
+	_, err = storer.SetLike(ctx, other, FeedContradiction, f.contradiction, true)
+	require.NoError(t, err)
+
+	groups, err := storer.GetStanceContradictionGroups(ctx, f.stance, f.user)
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Len(t, groups[0].ContradictingFacts, 1)
+	assert.Equal(t, f.facts[0], groups[0].BaseFactID)
+	assert.Equal(t, 2, groups[0].BaseLikes)
+	assert.True(t, groups[0].BaseLiked, "the viewer liked the base fact")
+	spoke := groups[0].ContradictingFacts[0]
+	assert.Equal(t, 1, spoke.Likes)
+	assert.False(t, spoke.Liked, "another user liked the contradiction")
+
+	groups, err = storer.GetStanceContradictionGroups(ctx, f.stance, other)
+	require.NoError(t, err)
+	assert.True(t, groups[0].ContradictingFacts[0].Liked)
+
+	facts, err := storer.GetFactsInStance(ctx, f.stance, 0)
+	require.NoError(t, err)
+	byID := map[int64]FactInStance{}
+	for _, fa := range facts {
+		byID[fa.FactID] = fa
+	}
+	assert.Equal(t, 2, byID[f.facts[0]].Likes)
+	assert.False(t, byID[f.facts[0]].Liked, "no viewer")
+	assert.Equal(t, 0, byID[f.facts[1]].Likes)
+	facts, err = storer.GetFactsInStance(ctx, f.stance, other)
+	require.NoError(t, err)
+	for _, fa := range facts {
+		assert.Equal(t, fa.FactID == f.facts[0], fa.Liked)
+	}
+
+	c, err := storer.GetShareTarget(ctx, "contradiction", f.contradiction, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, c.Likes)
+	fa, err := storer.GetShareTarget(ctx, "fact", f.facts[0], f.person)
+	require.NoError(t, err)
+	assert.Equal(t, 2, fa.Likes)
+	fb, err := storer.GetShareTarget(ctx, "fact", f.facts[2], f.person)
+	require.NoError(t, err)
+	assert.Equal(t, 0, fb.Likes)
+}

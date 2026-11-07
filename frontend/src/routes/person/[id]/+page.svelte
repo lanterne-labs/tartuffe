@@ -14,6 +14,8 @@
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
+	import LikeButton from '$lib/components/LikeButton.svelte';
+	import { authFetch } from '$lib/auth';
 	import type { ShareTarget } from '$lib/types';
 	import { tick } from 'svelte';
 
@@ -34,6 +36,8 @@
 		original_quote?: string;
 		archive_url?: string | null;
 		restatements?: Restatement[];
+		likes: number;
+		liked: boolean;
 	}
 	let stanceFacts: Record<number, StanceFact[]> = $state({});
 	let stanceFactsLoading: Record<number, boolean> = $state({});
@@ -121,7 +125,8 @@
 	async function loadStanceFacts(stanceId: number) {
 		stanceFactsLoading[stanceId] = true;
 		try {
-			const response = await fetch(`${API_BASE}/api/stances/${stanceId}/facts`);
+			// With the session, so the viewer's +1 are marked.
+			const response = await authFetch(`/api/stances/${stanceId}/facts`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			stanceFacts[stanceId] = (await response.json()) ?? [];
 		} catch (err) {
@@ -242,7 +247,7 @@
 	async function loadStanceContradictions(stanceId: number) {
 		stanceLoading[stanceId] = true;
 		try {
-			const response = await fetch(`${API_BASE}/api/stances/${stanceId}/contradictions`);
+			const response = await authFetch(`/api/stances/${stanceId}/contradictions`);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
@@ -695,7 +700,7 @@
 											<p class="empty-mini loading"><Spinner label={tr('person.loading', currentLang)} /></p>
 										{:else if (stanceFacts[stance.id]?.length ?? 0) > 0}
 											<div class="stance-facts-list">
-												{#each stanceFacts[stance.id] as f (f.fact_id)}
+												{#each stanceFacts[stance.id] as f, i (f.fact_id)}
 													<div class="stance-fact-row" id="fact-{f.fact_id}" class:highlight={highlightedFactId === f.fact_id}>
 														<div class="stance-fact-text">
 															<span class="fact-id">[{f.fact_id}]</span>
@@ -717,6 +722,7 @@
 														{/if}
 														<FactVersions sourceUrls={[f.source_url]} restatements={f.restatements ?? []} lang={currentLang} />
 														<div class="fact-actions">
+															<LikeButton kind="fact" targetId={f.fact_id} bind:likes={stanceFacts[stance.id][i].likes} bind:liked={stanceFacts[stance.id][i].liked} />
 															<ShareMenu item={{ kind: 'fact', id: f.fact_id, personId: person.id, personName: person.name, topic, text: pickFactText(f) }} />
 															<ReportButton kind="fact" targetId={f.fact_id} preview={f.fact_text} />
 														</div>

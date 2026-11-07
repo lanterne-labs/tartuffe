@@ -102,10 +102,17 @@ func hotRank(atCol string) string {
 // likesLateral reads the likes of the target alias t of the kind into lk.n,
 // and whether the user $11 is among them into lk.mine.
 func likesLateral(kind, t string) string {
+	return likesJoin(kind, t+".id", "lk", "$11")
+}
+
+// likesJoin reads the likes of the target of the kind whose id is idExpr into
+// <as>.n, and whether the viewer (the parameter userParam, 0: none) is among
+// them into <as>.mine.
+func likesJoin(kind, idExpr, as, userParam string) string {
 	return fmt.Sprintf(`LEFT JOIN LATERAL (
-			SELECT COUNT(*)::float8 AS n, COALESCE(bool_or(user_id = $11), false) AS mine
-			FROM feed_likes WHERE target_kind = '%s' AND target_id = %s.id
-		) lk ON true`, kind, t)
+			SELECT COUNT(*)::float8 AS n, COALESCE(bool_or(user_id = %s), false) AS mine
+			FROM feed_likes WHERE target_kind = '%s' AND target_id = %s
+		) %s ON true`, userParam, kind, idExpr, as)
 }
 
 // FeedCursor is the position after the last item of a page: the items
@@ -430,6 +437,14 @@ type ShareTarget struct {
 	Other  *string `json:"other,omitempty"`
 	// Quote is the first source quote of a fact.
 	Quote string `json:"quote,omitempty"`
+	// Likes counts the users' +1 on a fact or a contradiction.
+	Likes int `json:"likes"`
+}
+
+// likesCount is the SQL of the count of likes of the target of the kind
+// whose id is idExpr.
+func likesCount(kind, idExpr string) string {
+	return fmt.Sprintf(`(SELECT COUNT(*) FROM feed_likes WHERE target_kind = '%s' AND target_id = %s)`, kind, idExpr)
 }
 
 // ErrNoShareTarget is returned when the shared item does not exist.
@@ -458,7 +473,8 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 		var other string
 		var reason *string
 		err = s.pool.QueryRow(ctx, `
-			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en, c.reason, fa.fact_text, fb.fact_text
+			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en, c.reason, fa.fact_text, fb.fact_text,
+			       `+likesCount("contradiction", "c.id")+`
 			FROM contradictions c
 			JOIN persons p ON p.id = c.person_id
 			JOIN facts fa ON fa.id = c.fact_a_id
@@ -466,7 +482,7 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
 			WHERE c.id = $1`, id).
 			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
-				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other)
+				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other, &t.Likes)
 		t.Other = &other
 		if reason != nil && *reason != "" {
 			// The reason says why the two facts cannot both hold: the
@@ -477,7 +493,8 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 		err = s.pool.QueryRow(ctx, `
 			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en, f.fact_text, f.fact_text_en,
 			       COALESCE((SELECT original_quote FROM fact_sources WHERE fact_id = f.id AND original_quote <> ''
-			                 ORDER BY published_at ASC NULLS LAST LIMIT 1), '')
+			                 ORDER BY published_at ASC NULLS LAST LIMIT 1), ''),
+			       `+likesCount("fact", "f.id")+`
 			FROM facts f
 			JOIN LATERAL (
 				SELECT sd.id, sd.cluster_label, sd.label_en, sd.person_id
@@ -489,7 +506,7 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 			JOIN persons p ON p.id = sd.person_id
 			WHERE f.id = $1`, id, personID).
 			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
-				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &t.Text, &t.TextEn, &t.Quote)
+				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &t.Text, &t.TextEn, &t.Quote, &t.Likes)
 		if errors.Is(err, pgx.ErrNoRows) && personID != 0 {
 			return s.GetShareTarget(ctx, kind, id, 0)
 		}

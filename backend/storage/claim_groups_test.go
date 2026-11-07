@@ -409,7 +409,7 @@ func TestStanceContradictionGroupsCarryRestatements(t *testing.T) {
 		"INSERT INTO contradictions (person_id, fact_a_id, fact_b_id, base_fact_id, reason) VALUES ($1, $2, $3, $4, 'r')", pid, a, b, base)
 	require.NoError(t, err)
 
-	groups, err := storer.GetStanceContradictionGroups(ctx, stance)
+	groups, err := storer.GetStanceContradictionGroups(ctx, stance, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	require.Empty(t, groups[0].BaseRestatements, "the base fact has no other wording")

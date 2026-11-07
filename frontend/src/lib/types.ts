@@ -86,6 +86,9 @@ export interface ContradictingFact {
 	restatements: Restatement[];
 	reason: string;
 	reason_en?: string;
+	// likes counts the +1 of the users on the contradiction; liked says the viewer gave one.
+	likes: number;
+	liked: boolean;
 }
 
 // A distinct inconsistency: one base (anchor) fact contradicted by N facts. Returned
@@ -97,6 +100,9 @@ export interface ContradictionGroup {
 	base_fact_text_en?: string;
 	base_fact_date: string | null;
 	base_fact_source_urls: string[];
+	// The +1 of the users on the base fact, and whether the viewer gave one.
+	base_likes: number;
+	base_liked: boolean;
 	base_restatements: Restatement[];
 	summary: string | null;
 	summary_en?: string | null;
@@ -290,6 +296,8 @@ export interface ShareTarget {
 	text_en?: string | null;
 	other?: string | null;
 	quote?: string;
+	// likes counts the +1 of the users on a fact or a contradiction.
+	likes: number;
 }
 
 export type ReportKind = 'fact' | 'contradiction';
