@@ -179,3 +179,32 @@ func TestPace(t *testing.T) {
 		t.Errorf("after 10 fine: %v", p.Current())
 	}
 }
+
+// TestRedirect: the Location of a redirect, asked with the browser headers
+// and recorded; an answer that is not a redirect is an HTTPError.
+func TestRedirect(t *testing.T) {
+	rec := &memRecorder{}
+	SetRecorder(rec)
+	defer SetRecorder(nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/goto" && r.Header.Get("Accept-Language") != "" {
+			http.Redirect(w, r, "https://www.lepoint.fr/a", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	final, err := Redirect(context.Background(), "search", srv.URL+"/goto?url=CAES")
+	if err != nil || final != "https://www.lepoint.fr/a" {
+		t.Fatalf("redirect: got %q, %v", final, err)
+	}
+	_, err = Redirect(context.Background(), "search", srv.URL+"/plain")
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusOK {
+		t.Fatalf("a page that does not redirect: got %v", err)
+	}
+	if got := strings.Join(rec.outcomes(), ","); got != "search:ok,search:ok" {
+		t.Errorf("recorded %s", got)
+	}
+}

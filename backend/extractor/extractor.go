@@ -25,3 +25,16 @@ type ContentExtractor interface {
 	// It returns an ExtractedContent struct or an error if extraction fails.
 	ExtractContent(url string) (*ExtractedContent, error)
 }
+
+// RedirectedError is a failed extraction of a page that redirected: URL is
+// where the redirects led. A fallback extractor reads that URL instead of
+// the one asked, so the page is stored under its own URL and not under a
+// redirect link (a Google result link) the fallback cannot see through.
+type RedirectedError struct {
+	URL string
+	Err error
+}
+
+func (e *RedirectedError) Error() string { return e.Err.Error() + " (redirected to " + e.URL + ")" }
+
+func (e *RedirectedError) Unwrap() error { return e.Err }

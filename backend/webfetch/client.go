@@ -31,6 +31,9 @@ var BrowserUserAgents = []string{
 
 type client struct {
 	http *http.Client
+	// noFollow shares the jar and the transport but stops at a redirect:
+	// the answer of a redirect link is its Location (Redirect).
+	noFollow *http.Client
 }
 
 type sourceKey struct{}
@@ -53,6 +56,10 @@ func sourceOf(ctx context.Context) string {
 }
 
 func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return c.send(ctx, c.http, req)
+}
+
+func (c *client) send(ctx context.Context, hc *http.Client, req *http.Request) (*http.Response, error) {
 	req = req.WithContext(ctx)
 	for k, v := range browserHeaders {
 		if req.Header.Get(k) == "" {
@@ -60,7 +67,7 @@ func (c *client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 		}
 	}
 	start := time.Now()
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	o := Outcome{At: start, Source: sourceOf(ctx), Host: req.URL.Hostname(), Duration: time.Since(start)}
 	switch {
 	case err != nil:
