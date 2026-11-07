@@ -51,10 +51,13 @@ type failoverEntry struct {
 
 // ExtractContent tries each extractor in order. Returns the first successful
 // result. If all fail, returns a wrapped error listing every failure.
+// A page that redirected before it failed is asked of the next extractors
+// at the URL it was redirected to (RedirectedError).
 func (e *failoverExtractor) ExtractContent(url string) (*ExtractedContent, error) {
 	var failures []string
+	asked := url
 	for i, n := range e.extractors {
-		result, err := n.ext.ExtractContent(url)
+		result, err := n.ext.ExtractContent(asked)
 		if err == nil {
 			if i > 0 {
 				log.Info().Str("url", url).Str("winner", n.name).Int("attempt", i+1).Msg("Failover extractor: fell through to backup")
@@ -64,6 +67,10 @@ func (e *failoverExtractor) ExtractContent(url string) (*ExtractedContent, error
 			return result, nil
 		}
 		failures = append(failures, fmt.Sprintf("%s: %v", n.name, err))
+		var re *RedirectedError
+		if errors.As(err, &re) && re.URL != "" {
+			asked = re.URL
+		}
 		log.Warn().Err(err).Str("url", url).Str("extractor", n.name).Int("attempt", i+1).Int("remaining", len(e.extractors)-i-1).Msg("Failover extractor: attempt failed, trying next")
 	}
 	return nil, fmt.Errorf("failover extractor: all %d extractors failed for %s — %s",

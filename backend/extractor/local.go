@@ -59,6 +59,11 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 	log.Debug().Str("url", url).Msg("LocalExtractor: fetching")
 	page, err := webfetch.Fetch(ctx, webfetch.Request{URL: url, Source: "news", Purpose: "article", MaxBytes: 8 << 20})
 	if err != nil {
+		if page != nil && page.URL != "" && page.URL != url {
+			// The redirect was followed and the page refused us: the
+			// fallback reads it at its own URL.
+			return nil, &RedirectedError{URL: page.URL, Err: fmt.Errorf("local extractor: %w", err)}
+		}
 		return nil, fmt.Errorf("local extractor: %w", err)
 	}
 	body := page.Body

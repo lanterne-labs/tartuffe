@@ -101,15 +101,18 @@ func Register(s Site) {
 func Shared() Client {
 	initOne.Do(func() {
 		jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-		shared = &client{http: &http.Client{
-			Jar: jar,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				ResponseHeaderTimeout: 30 * time.Second,
-				MaxIdleConnsPerHost:   4,
-				IdleConnTimeout:       90 * time.Second,
-			},
-		}}
+		transport := &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ResponseHeaderTimeout: 30 * time.Second,
+			MaxIdleConnsPerHost:   4,
+			IdleConnTimeout:       90 * time.Second,
+		}
+		shared = &client{
+			http: &http.Client{Jar: jar, Transport: transport},
+			noFollow: &http.Client{Jar: jar, Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}},
+		}
 	})
 	return shared
 }
@@ -121,6 +124,35 @@ func Fetch(ctx context.Context, r Request) (*Page, error) {
 		return nil, fmt.Errorf("webfetch: invalid url %q", r.URL)
 	}
 	return siteOf(u.Hostname()).Fetch(withSource(ctx, r.Source), Shared(), r)
+}
+
+// Redirect returns where a redirect link points without following it: the
+// Location of its answer, asked with the common headers and cookies and
+// recorded like any request. A Google result link (google.com/goto) answers
+// a browser with a 302; a bare request from a server gets a page of Google
+// instead (2026-11-06). Any other answer is an *HTTPError with its status.
+func Redirect(ctx context.Context, source, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("webfetch: %w", err)
+	}
+	Shared()
+	c := shared
+	resp, err := c.send(withSource(ctx, source), c.noFollow, req)
+	if err != nil {
+		return "", err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
+		return "", &HTTPError{URL: rawURL, Status: resp.StatusCode}
+	}
+	target, err := url.Parse(loc)
+	if err != nil {
+		return "", fmt.Errorf("webfetch: redirect of %s: %w", rawURL, err)
+	}
+	return req.URL.ResolveReference(target).String(), nil
 }
 
 func siteOf(host string) Site {

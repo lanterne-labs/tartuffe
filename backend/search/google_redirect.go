@@ -3,11 +3,11 @@ package search
 import (
 	"context"
 	"errors"
-	"net/http"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
+
+	"digital-mirror/backend/webfetch"
 
 	"github.com/rs/zerolog/log"
 )
@@ -16,10 +16,13 @@ import (
 // directly; the links after them come back from the search APIs as
 // google.com/goto redirects (Serper's notice of 2026-10-31). Stored as they
 // came, 579 fact sources pointed at google.com instead of the article
-// (review of 2026-10-31). The redirect answers a plain request with the
+// (review of 2026-10-31). The redirect answers a browser's request with the
 // article's URL in Location, so each such link is resolved before the
-// result is returned; a link that does not resolve is kept as it is, and
-// the fetch of the page follows it anyway.
+// result is returned, through webfetch (the headers and cookies of a
+// browser: from 2026-11-06 a bare request from the worker got a page of
+// Google instead, and 516 sources were stored under the redirect). A link
+// that does not resolve is kept as it is; the fetch of the page follows it,
+// and its fallback reads the page at the URL it was redirected to.
 
 // IsGoogleRedirect reports whether link is a Google redirect (/goto or
 // /url on a google host) rather than the page itself.
@@ -42,40 +45,20 @@ func isGoogleRedirect(link string) bool {
 	return u.Path == "/goto" || u.Path == "/url"
 }
 
-// redirectResolver resolves Google redirect links; it keeps its own client,
-// which never follows the redirect (the Location is the answer).
+// redirectResolver resolves Google redirect links; redirect is
+// webfetch.Redirect (a test server's in the tests).
 type redirectResolver struct {
-	client *http.Client
+	redirect func(ctx context.Context, source, link string) (string, error)
 }
 
-var googleResolver = &redirectResolver{client: &http.Client{
-	Timeout: 8 * time.Second,
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
-}}
+var googleResolver = &redirectResolver{redirect: webfetch.Redirect}
 
 // resolve returns the URL a Google redirect link points at, or an error.
 func (r *redirectResolver) resolve(ctx context.Context, link string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	final, err := r.redirect(ctx, "search", link)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	resp.Body.Close()
-	loc := resp.Header.Get("Location")
-	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
-		return "", errors.New("no redirect in the answer")
-	}
-	target, err := url.Parse(loc)
-	if err != nil {
-		return "", err
-	}
-	final := req.URL.ResolveReference(target).String()
 	if isGoogleRedirect(final) {
 		return "", errors.New("the redirect points at another google redirect")
 	}

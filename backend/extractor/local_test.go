@@ -97,6 +97,25 @@ func TestLocalExtractor_HTTPError(t *testing.T) {
 	assert.Contains(t, err.Error(), "HTTP 403")
 }
 
+// A page that redirected and then refused the fetch fails with the URL it
+// was redirected to, for the fallback.
+func TestLocalExtractor_RedirectThenRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/goto" {
+			http.Redirect(w, r, "/article", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	_, err := newLocalExtractor().ExtractContent(srv.URL + "/goto")
+	var re *RedirectedError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, srv.URL+"/article", re.URL)
+	assert.Contains(t, err.Error(), "HTTP 403")
+}
+
 // TestLocalExtractor_InvalidURL — bad URLs fail fast before any HTTP.
 func TestLocalExtractor_InvalidURL(t *testing.T) {
 	ext := newLocalExtractor()
