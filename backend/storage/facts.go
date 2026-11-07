@@ -722,6 +722,9 @@ type FactInStance struct {
 	// Restatements are the other statements of the same claim (the fact's
 	// claim-group members), each with its own source, oldest first.
 	Restatements []Restatement `json:"restatements,omitempty"`
+	// Likes counts the users' +1 on the fact; Liked says the viewer gave one.
+	Likes int  `json:"likes"`
+	Liked bool `json:"liked"`
 }
 
 // Restatement is one other wording of a fact's claim, with its source.
@@ -754,14 +757,16 @@ func restatementsJSON(factIDExpr string) string {
 // GetFactsInStance returns the stance's active facts with both native and
 // English text + source info, for the per-stance Facts tab on the person page.
 // A claim group's members are not listed on their own but under their
-// parent's Restatements. One query.
-func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) ([]FactInStance, error) {
+// parent's Restatements. The likes of the viewer (viewerID, 0: none) are
+// marked. One query.
+func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID, viewerID int64) ([]FactInStance, error) {
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.fact_text_en,'') AS fact_text_en,
 		       COALESCE(f.lang,'') AS lang, COALESCE(f.canonical_verb,'') AS canonical_verb,
 		       src.source_url, COALESCE(src.original_quote,'') AS original_quote, src.archive_url,
-		       ` + restatementsJSON("f.id") + ` AS restatements
+		       ` + restatementsJSON("f.id") + ` AS restatements, lk.n, lk.mine
 		FROM facts f
+		` + likesJoin("fact", "f.id", "lk", "$2") + `
 		LEFT JOIN LATERAL (
 		    SELECT fs.source_url, fs.original_quote, fs.archive_url
 		    FROM fact_sources fs WHERE fs.fact_id = f.id ORDER BY fs.id LIMIT 1
@@ -772,7 +777,7 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 		      SELECT 1 FROM fact_relations fr
 		      WHERE fr.specific_fact_id = f.id AND fr.relation_type = 'duplicate')
 		ORDER BY f.id`
-	rows, err := s.pool.Query(ctx, query, stanceID)
+	rows, err := s.pool.Query(ctx, query, stanceID, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("GetFactsInStance(%d): %w", stanceID, err)
 	}
@@ -782,9 +787,11 @@ func (s *PostgresStorer) GetFactsInStance(ctx context.Context, stanceID int64) (
 		var f FactInStance
 		var src *string
 		var restatements []byte
-		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote, &f.ArchiveURL, &restatements); err != nil {
+		var likes float64
+		if err := rows.Scan(&f.FactID, &f.FactText, &f.FactTextEn, &f.Lang, &f.CanonicalVerb, &src, &f.OriginalQuote, &f.ArchiveURL, &restatements, &likes, &f.Liked); err != nil {
 			return nil, err
 		}
+		f.Likes = int(likes)
 		if src != nil {
 			f.SourceURL = *src
 		}

@@ -89,11 +89,11 @@ func (f *fakeStore) GetStanceGroupCounts(context.Context, int64) (map[int64]int,
 	return f.groupCounts, nil
 }
 
-func (f *fakeStore) GetStanceContradictionGroups(context.Context, int64) ([]storage.ContradictionGroup, error) {
+func (f *fakeStore) GetStanceContradictionGroups(context.Context, int64, int64) ([]storage.ContradictionGroup, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) GetFactsInStance(context.Context, int64) ([]storage.FactInStance, error) {
+func (f *fakeStore) GetFactsInStance(context.Context, int64, int64) ([]storage.FactInStance, error) {
 	return nil, nil
 }
 

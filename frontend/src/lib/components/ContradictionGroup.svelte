@@ -3,6 +3,7 @@
 	import FactVersions from './FactVersions.svelte';
 	import ShareMenu from './ShareMenu.svelte';
 	import ReportButton from './ReportButton.svelte';
+	import LikeButton from './LikeButton.svelte';
 	import type { ContradictionGroup } from '$lib/types';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 
@@ -59,6 +60,7 @@
 				<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 			{/each}
 			<span class="spacer"></span>
+			<LikeButton kind="fact" targetId={g.base_fact_id} likes={g.base_likes} liked={g.base_liked} />
 			<ShareMenu item={{ kind: 'fact', id: g.base_fact_id, personId: person.id, personName: person.name, topic, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang) }} />
 		</div>
 		<FactVersions sourceUrls={g.base_fact_source_urls} restatements={g.base_restatements ?? []} lang={currentLang} />
@@ -79,6 +81,7 @@
 						<a href={url} target="_blank" rel="noopener noreferrer" class="link-btn" title={url}>{sourceDomain(url)}</a>
 					{/each}
 					<span class="spacer"></span>
+					<LikeButton kind="contradiction" targetId={f.contradiction_id} likes={f.likes} liked={f.liked} />
 					<ShareMenu
 						item={{
 							kind: 'contradiction',

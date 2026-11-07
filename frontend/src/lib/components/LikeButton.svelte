@@ -1,7 +1,9 @@
 <script lang="ts">
-	// The +1 of a signed-in user on a fact or a contradiction of the feed
-	// (PUT / DELETE /api/likes/{kind}/{id}); the hot feed ranks by them. A
-	// signed-out click opens the sign-in, then gives the +1.
+	// The +1 of a signed-in user on a fact or a contradiction, in the feed
+	// and on the person page (PUT / DELETE /api/likes/{kind}/{id}); the hot
+	// feed ranks by them. A signed-out click opens the sign-in, then gives
+	// the +1. The count and the mark are bound when the parent keeps them
+	// (the feed), else the button keeps its own after a click.
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import { authFetch, session, signInOpen } from '$lib/auth';
 	import type { ReportKind } from '$lib/types';

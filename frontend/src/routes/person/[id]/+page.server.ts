@@ -17,16 +17,18 @@ function pointed(url: URL): { kind: ShareKind; id: string } | null {
 function describe(target: ShareTarget): { title: string; description: string } {
 	const t = { ...target, person_name: displayName(target.person_name) };
 	const counts = `${t.contradiction_count} contradiction${t.contradiction_count === 1 ? '' : 's'} sur ${t.fact_count} fait${t.fact_count === 1 ? '' : 's'}`;
+	// The +1 of the users on a fact or a contradiction, after the text.
+	const likes = t.likes > 0 ? ` · ${t.likes} +1` : '';
 	switch (t.kind) {
 		case 'stance':
 			return { title: `${t.person_name} — ${t.stance_label ?? ''}`, description: clip(t.text || `Ce que ${t.person_name} dit et vote.`, 200) };
 		case 'contradiction':
 			return {
 				title: `${t.person_name} se contredit${t.stance_label ? ` : ${t.stance_label}` : ''}`,
-				description: clip(`« ${clip(t.text, 110)} » puis « ${clip(t.other ?? '', 110)} »${t.quote ? ` — ${t.quote}` : ''}`, 280)
+				description: clip(`« ${clip(t.text, 110)} » puis « ${clip(t.other ?? '', 110)} »${t.quote ? ` — ${t.quote}` : ''}`, 280) + likes
 			};
 		case 'fact':
-			return { title: `${t.person_name}${t.stance_label ? ` — ${t.stance_label}` : ''}`, description: clip(t.quote || t.text, 240) };
+			return { title: `${t.person_name}${t.stance_label ? ` — ${t.stance_label}` : ''}`, description: clip(t.quote || t.text, 240) + likes };
 		default:
 			return { title: `Le Tartuffe-Score de ${t.person_name}`, description: `${counts}, avec leurs sources, sur tartuffe.me.` };
 	}

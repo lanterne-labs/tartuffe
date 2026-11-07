@@ -127,7 +127,7 @@ func TestRegroupPersonContradictions(t *testing.T) {
 	assert.Equal(t, 3, baseRows)
 
 	// Grouped read returns one card: base + 3 spokes + persisted summary.
-	groups, err := storer.GetStanceContradictionGroups(ctx, stance)
+	groups, err := storer.GetStanceContradictionGroups(ctx, stance, 0)
 	require.NoError(t, err)
 	require.Len(t, groups, 1, "one inconsistency card")
 	g := groups[0]
