@@ -18,6 +18,10 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # A host build takes about 2 minutes. On 2026-11-07 a job ran for 3 h:
+    # `host up --ci` waits for the deployment to end, and a build the host
+    # skips ("no changes detected in watch paths") never ends.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -26,8 +30,30 @@ jobs:
         service: [mirror, worker, frontend]
     steps:
       - uses: actions/checkout@v4
-      - run: npm install -g host-cli@5.70.0
+        with:
+          fetch-depth: 0
+      # Upload a service only when a file of its own changed in the push:
+      # frontend/ for the frontend, the rest for mirror and worker (the watch
+      # paths of the host services say the same, and a skipped build would
+      # hang the CLI, see above). A manual run uploads everything.
+      - name: files of ${{ matrix.service }} changed?
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" != push ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            echo run=true >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files=$(git diff --name-only "$BEFORE" HEAD)
+          case "${{ matrix.service }}" in
+            frontend) own=$(echo "$files" | grep -E '^frontend/' || true) ;;
+            *)        own=$(echo "$files" | grep -vE '^frontend/|^docs/|\.md$' || true) ;;
+          esac
+          if [ -n "$own" ]; then echo run=true >> "$GITHUB_OUTPUT"; else echo "nothing of ${{ matrix.service }} changed, skipping"; echo run=false >> "$GITHUB_OUTPUT"; fi
+      - if: steps.changed.outputs.run == 'true'
+        run: npm install -g host-cli@5.70.0
       - name: host up ${{ matrix.service }}
+        if: steps.changed.outputs.run == 'true'
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
         run: host up --service ${{ matrix.service }} --ci
