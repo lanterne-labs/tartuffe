@@ -132,7 +132,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'score.compare.both': { fr: 'Plus cohérent que {a} et plus tartuffe que {b} des {n} autres candidats', en: 'More coherent than {a} and more tartuffe than {b} of the {n} other candidates' },
 	'score.compare.coherent': { fr: 'Plus cohérent que {a} des {n} autres candidats', en: 'More coherent than {a} of the {n} other candidates' },
 	'score.compare.tartuffe': { fr: 'Plus tartuffe que {b} des {n} autres candidats', en: 'More tartuffe than {b} of the {n} other candidates' },
-	'score.compare.unsure': { fr: 'Difficilement comparable : pas encore assez de contradictions trouvées', en: 'Hard to compare: not enough contradictions found yet' },
+	'score.compare.unsure': { fr: 'Difficilement comparable : pas encore assez de faits relevés pour juger ce score', en: 'Hard to compare: not enough facts collected yet to judge this score' },
 	'score.unsure': { fr: 'Pas encore assez de données pour être sûr de ce score : avec {f} faits, on s’attendrait à trouver {e} contradictions en moyenne, et le score devient fiable à partir de {r}.', en: 'Not enough data yet to trust this score: with {f} facts, about {e} contradictions would be expected on average, and the score becomes reliable from {r}.' },
 	'score.unsure.short': { fr: 'Score encore incertain', en: 'Score still uncertain' },
 	'score.compare.tie': { fr: 'Au même niveau que tous les autres candidats', en: 'Level with all the other candidates' },
