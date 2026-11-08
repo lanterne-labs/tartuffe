@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { eventPaths, showVoters } from '$lib/event';
-	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+		import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, PollEvent, PollResponse } from '$lib/types';
+	import type { PersonSummary } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr } from '$lib/i18n';
@@ -36,28 +35,6 @@
 	let entityFilter: '' | 'party' | 'human' = $state('');
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// The featured pre-poll (the presidential election) heads the page.
-	let featured: PollEvent | null = $state(null);
-	let featuredVoters: number | null = $state(null);
-	let featuredCandidates: number | null = $state(null);
-
-	async function loadFeatured() {
-		try {
-			const res = await fetch(`${API_BASE}/api/polls`);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const events: PollEvent[] = await res.json();
-			featured = events.find((e) => e.featured) ?? null;
-			if (!featured) return;
-			const pr = await fetch(`${API_BASE}/api/polls/${encodeURIComponent(featured.slug)}`);
-			if (!pr.ok) throw new Error(`HTTP ${pr.status}`);
-			const poll: PollResponse = await pr.json();
-			featuredVoters = poll.results.voters;
-			featuredCandidates = poll.results.options.filter((o) => o.kind === 'candidate').length;
-		} catch (err) {
-			console.error('failed to load the featured poll', err);
-		}
-	}
 
 	const PANEL_SIZE = 3;
 	const PANEL_MIN_FACTS = 3;
@@ -172,7 +149,6 @@
 	let unsubscribe: (() => void) | null = null;
 
 	onMount(() => {
-		loadFeatured();
 		loadPersons();
 		loadOthers();
 		loadPanels();
@@ -197,21 +173,38 @@
 </svelte:head>
 
 <div class="dashboard">
-	{#if featured}
-		<a class="poll-hero" href={eventPaths(featured.slug).vote}>
-			<div class="poll-hero-text">
-				<span class="poll-hero-kicker">{currentLang === 'en' ? featured.title_en : featured.title_fr}</span>
-				<h1 class="poll-hero-title">{tr('home.poll.title', currentLang)}</h1>
-				{#if showVoters(featuredVoters)}
-					<p class="poll-hero-meta">
-						{tr('poll.voters', currentLang, { n: (featuredVoters ?? 0).toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}
-						{#if featuredCandidates}<span class="dot"></span>{tr('home.poll.candidates', currentLang, { n: featuredCandidates })}{/if}
-					</p>
-				{/if}
-			</div>
-			<span class="poll-hero-cta">{tr('home.poll.cta', currentLang)} →</span>
-		</a>
-	{/if}
+	<section class="podium-section" aria-labelledby="podium-title">
+		<header class="podium-header">
+			<h2 id="podium-title">{tr('home.least_honest', currentLang)}</h2>
+			<p>{tr('home.podium_sub', currentLang)}</p>
+		</header>
+		{#if panelsLoading && worst.length === 0}
+			<ol class="podium" aria-busy="true">
+				{#each [1, 2, 3] as rank (rank)}
+					<li class="step step--{rank}">
+						<div class="skeleton skeleton-rank-avatar"></div>
+						<div class="skeleton skeleton-rank-name"></div>
+						<div class="block"><span class="pos">{rank}</span></div>
+					</li>
+				{/each}
+			</ol>
+		{:else if worst.length === 0}
+			<p class="empty">{tr('home.no_data', currentLang)}</p>
+		{:else}
+			<ol class="podium">
+				{#each worst as person, i (person.id)}
+					<li class="step step--{i + 1}">
+						<a href="/person/{person.id}" class="laureate">
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
+							<span class="name">{person.name}</span>
+							<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
+						</a>
+						<div class="block"><span class="pos">{i + 1}</span></div>
+					</li>
+				{/each}
+			</ol>
+		{/if}
+	</section>
 
 	{#if error}
 		<div class="error-banner">
@@ -257,38 +250,6 @@
 		</div>
 	</div>
 
-	<section class="podium-section" aria-labelledby="podium-title">
-		<header class="podium-header">
-			<h2 id="podium-title">{tr('home.least_honest', currentLang)}</h2>
-			<p>{tr('home.podium_sub', currentLang)}</p>
-		</header>
-		{#if panelsLoading && worst.length === 0}
-			<ol class="podium" aria-busy="true">
-				{#each [1, 2, 3] as rank (rank)}
-					<li class="step step--{rank}">
-						<div class="skeleton skeleton-rank-avatar"></div>
-						<div class="skeleton skeleton-rank-name"></div>
-						<div class="block"><span class="pos">{rank}</span></div>
-					</li>
-				{/each}
-			</ol>
-		{:else if worst.length === 0}
-			<p class="empty">{tr('home.no_data', currentLang)}</p>
-		{:else}
-			<ol class="podium">
-				{#each worst as person, i (person.id)}
-					<li class="step step--{i + 1}">
-						<a href="/person/{person.id}" class="laureate">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
-							<span class="name">{person.name}</span>
-							<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
-						</a>
-						<div class="block"><span class="pos">{i + 1}</span></div>
-					</li>
-				{/each}
-			</ol>
-		{/if}
-	</section>
 
 	{#if candidates.length > 1}
 		<section class="lineup-section">
@@ -777,13 +738,6 @@
 		gap: 0.375rem;
 	}
 
-	.dot {
-		width: 3px;
-		height: 3px;
-		border-radius: 50%;
-		background: var(--text-muted);
-	}
-
 	/* Skeleton */
 	.skeleton-card {
 		padding: 1.25rem;
@@ -871,69 +825,6 @@
 		box-shadow: var(--shadow-glow);
 	}
 
-	.poll-hero {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1.5rem;
-		margin-bottom: 2rem;
-		padding: 1.75rem 2rem;
-		border: 1px solid var(--accent);
-		border-radius: var(--radius-lg);
-		background:
-			radial-gradient(120% 140% at 0% 0%, var(--accent-glow), transparent 60%),
-			var(--bg-card);
-		color: var(--text-primary);
-		box-shadow: var(--shadow-glow);
-		transition: transform var(--transition-normal), box-shadow var(--transition-normal);
-	}
-
-	.poll-hero:hover {
-		transform: translateY(-2px);
-		color: var(--text-primary);
-		box-shadow: 0 0 32px var(--accent-glow);
-	}
-
-	.poll-hero-kicker {
-		font-size: 0.75rem;
-		font-weight: 600;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--accent-hover);
-	}
-
-	.poll-hero-title {
-		font-family: var(--font-serif);
-		font-size: clamp(1.75rem, 4vw, 2.5rem);
-		font-weight: 600;
-		line-height: 1.1;
-		margin: 0.25rem 0 0.5rem;
-	}
-
-	.poll-hero-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin: 0.75rem 0 0;
-		font-size: 0.85rem;
-		color: var(--text-muted);
-	}
-
-	.poll-hero-cta {
-		flex-shrink: 0;
-		padding: 0.75rem 1.25rem;
-		border-radius: var(--radius-full);
-		background: var(--accent);
-		color: white;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-
 	@media (max-width: 700px) {
-		.poll-hero {
-			flex-direction: column;
-			align-items: flex-start;
-			padding: 1.25rem;
 		}
-	}
 </style>
