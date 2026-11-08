@@ -199,6 +199,8 @@ func (fi *FileIngester) processFile(ctx context.Context, path string, opts Inges
 		return nil, fmt.Errorf("failed to extract facts: %w", err)
 	}
 
+	datePublished(facts, content.DatePublished)
+
 	// Dump source content + extracted facts for debugging if requested
 	if opts.KeepSourceDir != "" {
 		if dumpErr := DumpSourceAndFacts(opts.KeepSourceDir, opts.TargetName, content.URL, content.Title, content.Content, content.DatePublished, facts); dumpErr != nil {
@@ -212,6 +214,16 @@ func (fi *FileIngester) processFile(ctx context.Context, path string, opts Inges
 		Msg("Extracted facts from file")
 
 	return facts, nil
+}
+
+// datePublished gives every fact of a file the publication date of its
+// document: the date of the file first, else the one the LLM read in the text.
+// Without it the facts were stored with no source date, and a fact whose
+// statement has no date of its own was skipped as undated.
+func datePublished(facts []backend.Fact, fileDate *time.Time) {
+	for i := range facts {
+		facts[i].PublishedAt = PickPublishedAt(facts[i].PublishedAt, fileDate, facts[i].ArticlePublishedAt)
+	}
 }
 
 // parseJSONFile reads and parses a cached content JSON file.

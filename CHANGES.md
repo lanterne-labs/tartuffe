@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-08: `dm ingest files` stored its facts without the article's date
+
+37 press articles ingested from cache files (both sides of 11 known reversals of the candidates, to follow how the pipeline treats them) gave 95 facts with no `published_at`, and 42 more were skipped as undated (« Je souhaite être remplacé », Mélenchon 2022, among them): each file carried its `date_published`, but the file ingester handed it to the extractor only and never to the facts, which only the news plugin dates.
+- `core.datePublished`: a fact of a file takes the file's date, else the date the LLM read in the text (the order of the news plugin).
+- The 95 facts were dated from their files, and the 11 articles that had lost facts ingested again.
+
 ## 2026-11-08: The vote audit read 700 checkpoints for one ballot
 
 « Lecture du registre · 584/695 » with a single voter: the ledger takes a checkpoint at least every 10 minutes whatever happened (isoloir SPEC §4), so the log held 696 checkpoints for 18 entries after 8 days (about 31 000 a year with no vote), and the browser's audit read each as two files, twice: 2 800 fetches, 125 000 a year from now. Fixed in isoloir (lanterne-labs/isoloir#10): the mirror writes `windows/<k>.json` (256 checkpoints, or 1 MiB), the readers take the windows first and the checkpoint files only for what no window holds, and the browser's audit keeps its first pass for the replay. The ingest backfills the windows of the existing log at boot. The site takes `@isoloir/web` 0.1.4; the progress line still counts checkpoints, now read in a handful of fetches.
