@@ -26,6 +26,7 @@
 					title: 'Faits',
 					body: [
 						'Chaque vote, chaque déclaration devient un fait daté, attribué à une personne.',
+						'Une décision de justice qui la concerne aussi : une condamnation, un jugement.',
 						'Un fait garde toujours le lien vers sa source et la citation exacte : vous pouvez vérifier par vous-même.',
 						'Les faits qui disent la même chose sont fusionnés, pour qu’une phrase répétée dix fois ne compte qu’une fois.'
 					]
@@ -73,6 +74,7 @@
 					title: 'Facts',
 					body: [
 						'Every vote, every statement becomes a dated fact, attributed to a person.',
+						'So does a court ruling about them: a conviction, a judgment.',
 						'A fact always keeps the link to its source and the exact quote: you can check for yourself.',
 						'Facts that say the same thing are merged, so that a sentence repeated ten times counts once.'
 					]

@@ -68,7 +68,7 @@
 			ctaFeed: 'Lire le fil',
 
 			scoreName: 'Le Tartuffe-Score mesure la cohérence',
-			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Plus il se contredit, plus son score monte.',
+			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Et avec la justice : nier ce qu’un tribunal a établi à son sujet compte aussi. Plus il se contredit, plus son score monte.',
 			scoreLow: 'Cohérent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'après cette contradiction',
@@ -82,7 +82,7 @@
 			exDidSrc: 'Scrutin à l’Assemblée',
 			exClash: 'Contradiction',
 			steps: [
-				['On relève', 'Ses déclarations et ses votes.'],
+				['On relève', 'Ses déclarations, ses votes, et les décisions de justice qui le concernent.'],
 				['On confronte', 'Quand ils se contredisent, on le note.'],
 				['On publie', 'Son Tartuffe-Score monte, preuves à l’appui.']
 			],
@@ -117,7 +117,7 @@
 			ctaFeed: 'Read the feed',
 
 			scoreName: 'The Tartuffe-Score measures consistency',
-			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. The more they contradict themselves, the higher their score.',
+			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. And with the courts: denying what a court has established about them counts too. The more they contradict themselves, the higher their score.',
 			scoreLow: 'Coherent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'after this contradiction',
@@ -131,7 +131,7 @@
 			exDidSrc: 'Vote in Parliament',
 			exClash: 'Contradiction',
 			steps: [
-				['We listen', 'What they say, how they vote.'],
+				['We listen', 'What they say, how they vote, and what courts ruled about them.'],
 				['We compare', 'The two clash? It’s on record.'],
 				['We show', 'The Tartuffe-Score rises. With the sources.']
 			],
