@@ -393,6 +393,11 @@ type PersonSummary struct {
 	FactCount          int  `json:"fact_count"`
 	StanceCount        int  `json:"stance_count"`
 	ContradictionCount int  `json:"contradiction_count"`
+	// CollectedFrom and CollectedTo bound the period the person's
+	// statements were collected over (GetPersonByID only): the periods
+	// of the collection tasks that ended, else the dates of the facts.
+	CollectedFrom *time.Time `json:"collected_from,omitempty"`
+	CollectedTo   *time.Time `json:"collected_to,omitempty"`
 	ScoreConfidence
 }
 
@@ -492,6 +497,17 @@ func (s *PostgresStorer) GetPersonByID(ctx context.Context, personID int64) (*Pe
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to query person %d: %w", personID, err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(t.since, f.since::date), COALESCE(t.until, f.until::date)
+		FROM (SELECT MIN(since) AS since, MAX(until) - 1 AS until FROM collection_tasks WHERE person_id = $1 AND status = 'done') t,
+		     (SELECT MIN(d) AS since, MAX(d) AS until
+		      FROM (SELECT COALESCE(fa.statement_date, fs.published_at) AS d
+		            FROM fact_mentions fm
+		            JOIN fact_sources fs ON fs.id = fm.fact_source_id
+		            JOIN facts fa ON fa.id = fs.fact_id
+		            WHERE fm.person_id = $1) x) f`, personID).Scan(&person.CollectedFrom, &person.CollectedTo); err != nil {
+		return nil, fmt.Errorf("failed to query the collected period of person %d: %w", personID, err)
 	}
 
 	return &person, nil

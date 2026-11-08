@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-08: A score above a reliable one is reliable; the site says 🚧 and shows the period covered
+
+The rule "3 contradictions expected at the candidates' rate" marked Roussel (6/100, 2 168 facts) with ≈ and « Difficilement comparable » beside Mélenchon (3/100, 4 470 facts, reliable): a higher score marked unreliable under a lower one marked reliable, which makes no sense. First principle: the detection misses contradictions far more than it invents them, so a score can only be too low, never too high; the mark warns that a low score may be luck.
+- `core.ScoreReliability`: reliable when covered (the old rule, kept as the coverage threshold: dynamic through the rate), or when the score is strictly above the lowest covered score, which more facts could only push up. Upward-closed in the score by construction. A clean sheet needs coverage (strictly: a covered 0 does not unmark the 0 on few facts). Today: seven candidates unmarked (Zemmour, Glucksmann, Ruffin, Philippe, Roussel, Lisnard, Bertrand), the three at 0 stay marked (Tondelier, Dupont-Aignan, Polony). No score changes.
+- Tried and dropped the same day: an empirical Bayes threshold (own facts ≥ 20 % of the estimate, the spread from the candidates). Measured on the live numbers, with 15 candidates it is unstable: one more contradiction for Mélenchon moved it from 3 052 to 10 875 facts (everyone marked), three more for Le Pen to 1 062. Also dropped: a progress bar and « 70 % » under the dial (the barometer and another bar is too much), a « ≥ 6 / au moins 6 » wording (reads as final), « Score provisoire » (reads as likely false), and « pas assez de faits relevés » (false at 2 168 facts, and it states a data gap).
+- The site shows 🚧 on the dial with « Score en cours de consolidation : ses N faits relevés sont tous analysés, et un score se stabilise à partir de ~S faits » (the N facts are all analysed; S is a threshold for everyone, not a total of the person's facts). The person page says « Période couverte : octobre 2023 → novembre 2026 » from the collection tasks that ended (the facts' dates before any task), so a smaller record reads as what it is.
+- Juan Branco (candidate since 10-22) has 3 facts: his news backfills are pending on « document extraction outage: 5 consecutive failures », his twitter ones on the API spend cap.
+
 ## 2026-11-05: The seats' budget: a fact is compared with its 40 closest, and a judge asks Claude once
 
 Over 11 hours (11-04 22:22 to 11-05 09:29, $327 at list price) `stance-analyze` took 47 % of the seats (12,756 calls), `detect` 26 %, `extract` + `ground` 15 %. A new fact was compared with every fact of its stance (median 45, 90th percentile 607, max 1,108) 40 at a time, each batch asked at least twice: about 10 calls per fact.

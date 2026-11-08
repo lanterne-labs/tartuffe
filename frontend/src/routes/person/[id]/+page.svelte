@@ -408,6 +408,13 @@
 		return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 	}
 
+	// The period the person's statements were collected over, month to month.
+	let collected = $derived.by(() => {
+		if (!person?.collected_from || !person?.collected_to) return '';
+		const month = (d: string) => new Date(d).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { month: 'long', year: 'numeric' });
+		return tr('person.collected', currentLang, { from: month(person.collected_from), to: month(person.collected_to) });
+	});
+
 	function formatDate(dateString: string): string {
 		return new Date(dateString).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
 	}
@@ -490,7 +497,7 @@
 	{:else if person}
 		<div class="person-hero">
 			<div class="hero-left">
-				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
+				<TartuffeScore honesty={scored ? person.honesty_score : null} lang={currentLang} size="lg" image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 				<div class="hero-info">
 					<h1>
 						{person.name}
@@ -506,12 +513,14 @@
 						<span class="dot">·</span>
 						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
+					{#if collected}<p class="hero-summary">{collected}</p>{/if}
 					{#if !person.candidate}
 						<p class="hero-note">{tr('person.detection_paused_note', currentLang)}</p>
 					{/if}
 					<p class="hero-note">{tr('person.ai_note', currentLang)} <a href="/about">{tr('person.ai_note_link', currentLang)}</a></p>
 					{:else}
 						<p class="hero-summary">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</p>
+						{#if collected}<p class="hero-summary">{collected}</p>{/if}
 						<p class="hero-note">{tr('person.no_detection_note', currentLang)}</p>
 					{/if}
 				</div>
@@ -805,6 +814,7 @@
 		letter-spacing: -0.025em;
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 0.5rem;
 		text-transform: capitalize;
 	}

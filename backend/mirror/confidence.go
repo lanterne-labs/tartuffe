@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -9,35 +10,37 @@ import (
 	"digital-mirror/backend/storage"
 )
 
-// rateTTL is how long the candidates' contradiction rate is kept: it moves
-// with detection, over hours.
-const rateTTL = 5 * time.Minute
+// baselineTTL is how long the candidates' score baseline is kept: it moves
+// with detection and collection, over hours.
+const baselineTTL = 5 * time.Minute
 
-// rateCache keeps the candidates' contradiction rate between requests.
-type rateCache struct {
+// baselineCache keeps the candidates' score baseline between requests.
+type baselineCache struct {
 	mu   sync.Mutex
-	rate float64
+	base core.ScoreBaseline
 	at   time.Time
 }
 
-// contradictionRate returns the candidates' contradictions per fact, read
-// again past rateTTL.
-func (s *Service) contradictionRate(ctx context.Context) (float64, error) {
-	s.rate.mu.Lock()
-	defer s.rate.mu.Unlock()
-	if !s.rate.at.IsZero() && time.Since(s.rate.at) < rateTTL {
-		return s.rate.rate, nil
+// scoreBaseline returns the candidates' score baseline, measured again past
+// baselineTTL.
+func (s *Service) scoreBaseline(ctx context.Context) (core.ScoreBaseline, error) {
+	s.baseline.mu.Lock()
+	defer s.baseline.mu.Unlock()
+	if !s.baseline.at.IsZero() && time.Since(s.baseline.at) < baselineTTL {
+		return s.baseline.base, nil
 	}
-	rate, err := s.store.ContradictionRate(ctx)
+	base, err := s.store.ScoreBaseline(ctx)
 	if err != nil {
-		return 0, err
+		return core.ScoreBaseline{}, err
 	}
-	s.rate.rate, s.rate.at = rate, time.Now()
-	return rate, nil
+	s.baseline.base, s.baseline.at = base, time.Now()
+	return base, nil
 }
 
-// confidence is the confidence of a score built on facts at rate.
-func confidence(facts int, rate float64) storage.ScoreConfidence {
-	expected, reliable := core.ScoreReliability(facts, rate)
-	return storage.ScoreConfidence{ExpectedContradictions: expected, ScoreReliable: reliable}
+// confidence says whether the score honesty, built on facts, is reliable.
+func confidence(facts int, honesty float64, base core.ScoreBaseline) storage.ScoreConfidence {
+	return storage.ScoreConfidence{
+		CoveredFacts:  int(math.Round(base.CoveredFacts)),
+		ScoreReliable: base.ScoreReliability(facts, honesty),
+	}
 }

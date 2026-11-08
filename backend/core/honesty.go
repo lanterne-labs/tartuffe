@@ -70,15 +70,59 @@ func ComputeAggregateScore(ownScore float64, membersScore *float64) float64 {
 }
 
 // ScoreReliableExpected is the number of contradictions a person's facts
-// must be expected to hold, at the candidates' average rate, before the
-// score is trusted: below it, finding none by chance is likelier than 5 %
-// (Poisson: e^-3), so a clean score says little.
+// must be expected to hold, at the candidates' average rate, for the
+// person to be covered: below it, finding none by chance is likelier than
+// 5 % (Poisson: e^-3), so a clean score says little.
 const ScoreReliableExpected = 3.0
 
-// ScoreReliability returns the contradictions expected in facts at rate
-// (contradictions per fact) and whether the score built on them is
-// reliable. With no rate yet (no contradiction found anywhere), no score is.
-func ScoreReliability(facts int, rate float64) (expected float64, reliable bool) {
-	expected = float64(facts) * rate
-	return expected, rate > 0 && expected >= ScoreReliableExpected
+// ScoreBaseline is what every person's score is measured against: the
+// candidates' contradictions per fact, the facts from which a person is
+// covered (ScoreReliableExpected at that rate), and the highest honesty
+// (the lowest Tartuffe-Score) among the covered candidates. Both move with
+// the candidates' facts and contradictions.
+type ScoreBaseline struct {
+	Rate         float64
+	CoveredFacts float64
+	// FloorHonesty is the honesty of the most coherent covered candidate;
+	// nil when none is covered.
+	FloorHonesty *float64
+}
+
+// NewScoreBaseline measures the baseline from each candidate's facts,
+// distinct contradictions and honesty score. With no contradiction
+// anywhere no one is covered.
+func NewScoreBaseline(facts, bundles []int, honesty []float64) ScoreBaseline {
+	var sumF, sumB float64
+	for i := range facts {
+		sumF += float64(facts[i])
+		sumB += float64(bundles[i])
+	}
+	if sumF == 0 || sumB == 0 {
+		return ScoreBaseline{}
+	}
+	b := ScoreBaseline{Rate: sumB / sumF}
+	b.CoveredFacts = ScoreReliableExpected / b.Rate
+	for i := range facts {
+		if float64(facts[i]) >= b.CoveredFacts && (b.FloorHonesty == nil || honesty[i] > *b.FloorHonesty) {
+			h := honesty[i]
+			b.FloorHonesty = &h
+		}
+	}
+	return b
+}
+
+// ScoreReliability says whether a score built on facts is reliable. The
+// detection misses contradictions far more than it invents them, so a
+// score can only be too low, never too high: a person is reliable when
+// covered (enough facts for a clean score to mean something), or when
+// their score is already strictly above the lowest score of the covered,
+// which more facts can only push further up. A clean sheet needs coverage.
+func (b ScoreBaseline) ScoreReliability(facts int, honesty float64) bool {
+	if b.CoveredFacts <= 0 {
+		return false
+	}
+	if float64(facts) >= b.CoveredFacts {
+		return true
+	}
+	return b.FloorHonesty != nil && honesty < *b.FloorHonesty
 }

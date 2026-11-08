@@ -266,6 +266,45 @@ func deref(s *string) string {
 	return *s
 }
 
+// TestScoreBaseline: the baseline measures the candidates only.
+func TestScoreBaseline(t *testing.T) {
+	storer, cleanup := setupTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	f := newReportFixture(t, storer, 3)
+
+	base, err := storer.ScoreBaseline(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, base.Rate, "no candidate yet")
+
+	_, err = storer.pool.Exec(ctx, `UPDATE persons SET fact_count = 4000, honesty_score = 0.97, attributes = COALESCE(attributes, '{}'::jsonb) || '{"candidate": true}' WHERE id = $1`, f.person)
+	require.NoError(t, err)
+	base, err = storer.ScoreBaseline(ctx)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.00025, base.Rate, 1e-9)
+	assert.InDelta(t, 12000, base.CoveredFacts, 1e-6)
+	assert.Nil(t, base.FloorHonesty, "4000 facts: not covered")
+
+	_, err = storer.pool.Exec(ctx, `UPDATE persons SET fact_count = 12000 WHERE id = $1`, f.person)
+	require.NoError(t, err)
+	base, err = storer.ScoreBaseline(ctx)
+	require.NoError(t, err)
+	if assert.NotNil(t, base.FloorHonesty) {
+		assert.InDelta(t, 0.97, *base.FloorHonesty, 1e-9)
+	}
+
+	// The collected period: the facts' dates, the tasks' once one ended.
+	p, err := storer.GetPersonByID(ctx, f.person)
+	require.NoError(t, err)
+	require.NotNil(t, p.CollectedFrom)
+	_, err = storer.pool.Exec(ctx, `INSERT INTO collection_tasks (person_id, plugin, since, until, status) VALUES ($1, 'news', '2023-10-01', '2026-11-01', 'done')`, f.person)
+	require.NoError(t, err)
+	p, err = storer.GetPersonByID(ctx, f.person)
+	require.NoError(t, err)
+	assert.Equal(t, "2023-10-01", p.CollectedFrom.Format("2006-01-02"))
+	assert.Equal(t, "2026-10-31", p.CollectedTo.Format("2006-01-02"), "until is exclusive")
+}
+
 func TestShareTargetAndScore(t *testing.T) {
 	storer, cleanup := setupTestDB(t)
 	defer cleanup()

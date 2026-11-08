@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"digital-mirror/backend/accounts/accountstest"
+	"digital-mirror/backend/core"
 	"digital-mirror/backend/storage"
 
 	"github.com/jackc/pgx/v5"
@@ -334,8 +335,14 @@ func TestShareAndScore(t *testing.T) {
 	rec = do(t, h, http.MethodGet, "/api/person/10/score", "", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"bundles":2`)
+	assert.Contains(t, rec.Body.String(), `"covered_facts":3000`)
+	assert.Contains(t, rec.Body.String(), `"score_reliable":true`, "0.9 is below the floor 0.97: above it on the Tartuffe-Score")
 	assert.Equal(t, http.StatusNotFound, do(t, h, http.MethodGet, "/api/person/11/score", "", nil).Code)
 }
 
-// ContradictionRate: one contradiction per 1000 facts.
-func (m *fakeStore) ContradictionRate(context.Context) (float64, error) { return 0.001, nil }
+// ScoreBaseline: one contradiction per 1000 facts, covered from 3000 facts,
+// the floor at 0.97.
+func (m *fakeStore) ScoreBaseline(context.Context) (core.ScoreBaseline, error) {
+	floor := 0.97
+	return core.ScoreBaseline{Rate: 0.001, CoveredFacts: 3000, FloorHonesty: &floor}, nil
+}

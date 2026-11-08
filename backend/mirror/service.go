@@ -37,7 +37,7 @@ type Store interface {
 	GetFeed(ctx context.Context, f storage.FeedFilter, after *storage.FeedCursor, limit, minFacts int) ([]storage.FeedItem, error)
 	GetShareTarget(ctx context.Context, kind string, id, personID int64) (*storage.ShareTarget, error)
 	GetScoreExplanation(ctx context.Context, personID int64) (*storage.ScoreExplanation, error)
-	ContradictionRate(ctx context.Context) (float64, error)
+	ScoreBaseline(ctx context.Context) (core.ScoreBaseline, error)
 
 	// What the users add: their +1 and their reports.
 	SetLike(ctx context.Context, userID int64, kind string, targetID int64, on bool) (int, error)
@@ -50,7 +50,7 @@ type Store interface {
 type Service struct {
 	store    Store
 	accounts *accounts.Service
-	rate     rateCache
+	baseline baselineCache
 }
 
 // NewService serves the mirror of the store, for the users of accounts.

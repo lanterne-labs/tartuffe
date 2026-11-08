@@ -547,10 +547,13 @@ type ScoreExplanation struct {
 	Members      int      `json:"members"`
 	Score        float64  `json:"score"`
 
-	// Rate is the candidates' contradictions per fact; Reliable the
-	// expected count at which a score is trusted.
-	Rate     float64 `json:"rate"`
-	Reliable float64 `json:"reliable_expected"`
+	// Rate is the candidates' contradictions per fact; ReliableExpected
+	// the contradictions expected at which a person is covered;
+	// FloorHonesty the honesty of the most coherent covered candidate, the
+	// score an uncovered person must be strictly above (core.ScoreBaseline).
+	Rate             float64  `json:"rate"`
+	ReliableExpected float64  `json:"reliable_expected"`
+	FloorHonesty     *float64 `json:"floor_honesty,omitempty"`
 	ScoreConfidence
 }
 

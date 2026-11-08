@@ -120,13 +120,13 @@ func (s *Service) handleFeed(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to get feed")
 		return
 	}
-	rate, err := s.contradictionRate(r.Context())
+	base, err := s.scoreBaseline(r.Context())
 	if err != nil {
-		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		httpx.InternalError(w, err, "failed to get the score baseline")
 		return
 	}
 	for i := range items {
-		items[i].Person.ScoreConfidence = confidence(items[i].Person.FactCount, rate)
+		items[i].Person.ScoreConfidence = confidence(items[i].Person.FactCount, items[i].Person.HonestyScore, base)
 	}
 	// An empty feed is an empty list, not null: the page reads the items.
 	page := feedPage{Items: append([]storage.FeedItem{}, items...)}
@@ -214,12 +214,12 @@ func (s *Service) handleScoreExplanation(w http.ResponseWriter, r *http.Request)
 		httpx.InternalError(w, err, "failed to explain score")
 		return
 	}
-	rate, err := s.contradictionRate(r.Context())
+	base, err := s.scoreBaseline(r.Context())
 	if err != nil {
-		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		httpx.InternalError(w, err, "failed to get the score baseline")
 		return
 	}
-	e.Rate, e.Reliable, e.ScoreConfidence = rate, core.ScoreReliableExpected, confidence(e.Facts, rate)
+	e.Rate, e.ReliableExpected, e.FloorHonesty, e.ScoreConfidence = base.Rate, core.ScoreReliableExpected, base.FloorHonesty, confidence(e.Facts, e.Score, base)
 	httpx.WriteJSON(w, http.StatusOK, e)
 }
 
