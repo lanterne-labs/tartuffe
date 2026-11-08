@@ -10,7 +10,7 @@ import (
 
 // clientIPHeader is the request header that carries the address of the
 // client when the server runs behind a proxy, or "" when the connection's
-// own address is the client's. On the host every request comes from its edge
+// own address is the client's. In production (DM_PRODUCTION) every request comes from the host's edge
 // proxy, which sets X-Real-IP to the client's address and overwrites the one
 // a client sends; CLIENT_IP_HEADER names another header behind another proxy,
 // or "none" to use the connection's address.

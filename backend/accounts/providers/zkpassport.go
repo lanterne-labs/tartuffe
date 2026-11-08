@@ -97,7 +97,7 @@ func NewZKPassportFromEnv() (Provider, error) {
 		}
 	}
 	if z.DevMode && os.Getenv("DM_PRODUCTION") != "" {
-		return nil, fmt.Errorf("ZKPASSPORT_DEV_MODE: mock documents are for local development, never on the host")
+		return nil, fmt.Errorf("ZKPASSPORT_DEV_MODE: mock documents are for local development, never in production")
 	}
 	if z.Script == "" {
 		// The image installs the verifier at /app/zkverifier; a local run
