@@ -205,6 +205,7 @@
 	// first, and submits again once registered.
 	async function submit() {
 		if (draft === null) return;
+		if (regPending) return;
 		if (!joined) {
 			keyOpen = true;
 			return;
@@ -394,6 +395,9 @@
 	let voted = $derived(accepted || (lastAccepted !== null && lastAccepted.length > 0));
 	let registration = $derived($st.registration);
 	let regPosting = $derived(registration.state === 'posting' || registration.state === 'sent');
+	// The registration is on its way into the public log: the ballot waits, the
+	// button says so, and the page opens the vote by itself once the log shows it.
+	let regPending = $derived(regPosting || registration.state === 'acked');
 	let regFailed = $derived(registration.state === 'failed' || registration.state === 'rejected' || registration.state === 'missing');
 	let errorCode = $derived($st.error?.code ?? '');
 	let errorDetail = $derived($st.error?.detail ?? '');
@@ -601,7 +605,7 @@
 		{#if open}
 			<div class="ballot-actions">
 				{#if dirty}
-					<button class="btn submit" class:btn-primary={draft !== null && draft.length > 0} class:btn-danger={draft !== null && draft.length === 0} onclick={submit} disabled={busy}>{tr(draft !== null && draft.length === 0 ? 'vote.withdraw_all' : 'vote.submit', currentLang)}</button>
+					<button class="btn submit" class:btn-primary={draft !== null && draft.length > 0} class:btn-danger={draft !== null && draft.length === 0} onclick={submit} disabled={busy || regPending}>{tr(regPending ? 'v2.join.wait_button' : draft !== null && draft.length === 0 ? 'vote.withdraw_all' : 'vote.submit', currentLang)}</button>
 				{:else if event && voted}
 					<div class="share-big"><ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} /></div>
 				{/if}

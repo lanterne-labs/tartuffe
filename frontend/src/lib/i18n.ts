@@ -552,7 +552,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.key.failed.title': { fr: 'L’inscription n’a pas abouti', en: 'The registration did not go through' },
 	'v2.key.resend': { fr: 'Renvoyer l’inscription', en: 'Send the registration again' },
 	'v2.key.rescan': { fr: 'Scanner à nouveau mon passeport', en: 'Scan my passport again' },
-	'v2.key.pending.acked': { fr: 'Inscription confirmée.', en: 'Registration confirmed.' },
+	'v2.key.pending.acked': { fr: 'Inscription confirmée. Elle est en cours de publication dans le registre public : le vote s’ouvrira tout seul dans quelques minutes, sans recharger la page.', en: 'Registration confirmed. It is being published in the public log: the vote opens by itself in a few minutes, no reload needed.' },
 	'v2.key.pending.idle': { fr: 'Votre clé existe ; il reste à scanner votre passeport.', en: 'Your key exists; your passport remains to be scanned.' },
 	'v2.reg.bad_sig': { fr: 'Inscription refusée : la signature de votre clé n’a pas été reconnue. Scannez à nouveau votre passeport ; si cela se répète, {report}.', en: 'Registration refused: your key’s signature was not recognised. Scan your passport again; if it repeats, {report}.' },
 	'v2.key.restore.passkey.notfound': { fr: 'Aucune inscription pour cette clé. Essayez vos 12 mots ou votre autre appareil ; ou votez une première fois avec votre passeport.', en: 'No registration for this key. Try your 12 words or your other device; or vote once with your passport.' },
@@ -569,7 +569,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'zk.timeout': { fr: 'L’application ne répond plus depuis 3 minutes. Recommencez ; votre clé reste la même.', en: 'The app has not answered for 3 minutes. Start again; your key stays the same.' },
 	// The vote page.
 	'v2.join.posting': { fr: 'Inscription envoyée, attente de la confirmation…', en: 'Registration sent, waiting for the confirmation…' },
-	'v2.join.acked': { fr: 'Inscription confirmée, encore quelques secondes…', en: 'Registration confirmed, a few more seconds…' },
+	'v2.join.acked': { fr: 'Inscription confirmée, en cours de publication dans le registre public : quelques minutes au plus, le vote s’ouvrira tout seul.', en: 'Registration confirmed, being published in the public log: a few minutes at most, then the vote opens by itself.' },
+	'v2.join.wait_button': { fr: 'Inscription en cours de publication…', en: 'Registration being published…' },
 	'v2.join.failed': { fr: 'Inscription non confirmée', en: 'Registration not confirmed' },
 	'v2.join.idle': { fr: 'Terminer mon inscription', en: 'Finish my registration' },
 	'v2.join.details': { fr: 'Détails', en: 'Details' },
