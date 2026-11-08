@@ -15,8 +15,11 @@
 	});
 
 	let persons: PersonSummary[] = $state([]);
-	let topHonest: PersonSummary[] = $state([]);
-	let topDishonest: PersonSummary[] = $state([]);
+	// The podium: the three candidates with the most contradictions for their
+	// facts, among those whose score is reliable. No podium of the most coherent
+	// while scores are still being established: a clean score on few facts
+	// would rank who was looked at least.
+	let worst: PersonSummary[] = $state([]);
 	let candidates: PersonSummary[] = $state([]);
 	let panelsLoading = $state(true);
 	let loading = $state(true);
@@ -128,19 +131,14 @@
 	async function loadPanels() {
 		try {
 			panelsLoading = true;
-			// The rankings are among the candidates only: only they are judged,
-			// and among those whose score is reliable (enough contradictions
-			// expected): a clean score on few facts says little.
-			const bestQs = buildQuery({ limit: 100, sort: 'honesty_desc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
+			// The podium is among the candidates only (only they are judged) and
+			// among those whose score is reliable: enough contradictions expected.
 			const worstQs = buildQuery({ limit: 100, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
-			const [bestRes, worstRes, candRes] = await Promise.all([
-				fetch(`${API_BASE}/api/persons?${bestQs}`),
+			const [worstRes, candRes] = await Promise.all([
 				fetch(`${API_BASE}/api/persons?${worstQs}`),
 				fetch(`${API_BASE}/api/persons?candidate=true&limit=100`)
 			]);
-			const reliable = (list: PersonSummary[] | null) => (list ?? []).filter((p) => p.score_reliable !== false).slice(0, PANEL_SIZE);
-			if (bestRes.ok) topHonest = reliable(await bestRes.json());
-			if (worstRes.ok) topDishonest = reliable(await worstRes.json());
+			if (worstRes.ok) worst = ((await worstRes.json()) as PersonSummary[] | null ?? []).filter((p) => p.score_reliable !== false).slice(0, PANEL_SIZE);
 			if (candRes.ok) candidates = (await candRes.json()) ?? [];
 		} catch (err) {
 			// Non-fatal: the candidates' error banner offers the retry.
@@ -259,75 +257,38 @@
 		</div>
 	</div>
 
-	<div class="ranking-panels">
-		<section class="rank-panel rank-panel--best">
-			<header class="rank-panel-header">
-				<h2>{tr('home.most_honest', currentLang)}</h2>
-			</header>
-			{#if panelsLoading && topHonest.length === 0}
-				<ul class="rank-list">
-					{#each Array(PANEL_SIZE) as _}
-						<li class="rank-row skeleton-row">
-							<div class="skeleton skeleton-rank-avatar"></div>
-							<div class="skeleton skeleton-rank-name"></div>
-							<div class="skeleton skeleton-rank-score"></div>
-						</li>
-					{/each}
-				</ul>
-			{:else if topHonest.length === 0}
-				<p class="empty">{tr('home.no_data', currentLang)}</p>
-			{:else}
-				<ol class="rank-list">
-					{#each topHonest as person, i (person.id)}
-						<li>
-							<a href="/person/{person.id}" class="rank-row">
-								<span class="rank-pos">{i + 1}</span>
-								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
-								<div class="rank-info">
-									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
-								</div>
-							</a>
-						</li>
-					{/each}
-				</ol>
-			{/if}
-		</section>
-
-		<section class="rank-panel rank-panel--worst">
-			<header class="rank-panel-header">
-				<h2>{tr('home.least_honest', currentLang)}</h2>
-			</header>
-			{#if panelsLoading && topDishonest.length === 0}
-				<ul class="rank-list">
-					{#each Array(PANEL_SIZE) as _}
-						<li class="rank-row skeleton-row">
-							<div class="skeleton skeleton-rank-avatar"></div>
-							<div class="skeleton skeleton-rank-name"></div>
-							<div class="skeleton skeleton-rank-score"></div>
-						</li>
-					{/each}
-				</ul>
-			{:else if topDishonest.length === 0}
-				<p class="empty">{tr('home.no_data', currentLang)}</p>
-			{:else}
-				<ol class="rank-list">
-					{#each topDishonest as person, i (person.id)}
-						<li>
-							<a href="/person/{person.id}" class="rank-row">
-								<span class="rank-pos">{i + 1}</span>
-								<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
-								<div class="rank-info">
-									<div class="rank-name">{person.name}</div>
-									<div class="rank-meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</div>
-								</div>
-							</a>
-						</li>
-					{/each}
-				</ol>
-			{/if}
-		</section>
-	</div>
+	<section class="podium-section" aria-labelledby="podium-title">
+		<header class="podium-header">
+			<h2 id="podium-title">{tr('home.least_honest', currentLang)}</h2>
+			<p>{tr('home.podium_sub', currentLang)}</p>
+		</header>
+		{#if panelsLoading && worst.length === 0}
+			<ol class="podium" aria-busy="true">
+				{#each [1, 2, 3] as rank (rank)}
+					<li class="step step--{rank}">
+						<div class="skeleton skeleton-rank-avatar"></div>
+						<div class="skeleton skeleton-rank-name"></div>
+						<div class="block"><span class="pos">{rank}</span></div>
+					</li>
+				{/each}
+			</ol>
+		{:else if worst.length === 0}
+			<p class="empty">{tr('home.no_data', currentLang)}</p>
+		{:else}
+			<ol class="podium">
+				{#each worst as person, i (person.id)}
+					<li class="step step--{i + 1}">
+						<a href="/person/{person.id}" class="laureate">
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
+							<span class="name">{person.name}</span>
+							<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
+						</a>
+						<div class="block"><span class="pos">{i + 1}</span></div>
+					</li>
+				{/each}
+			</ol>
+		{/if}
+	</section>
 
 	{#if candidates.length > 1}
 		<section class="lineup-section">
@@ -588,112 +549,126 @@
 		box-shadow: 0 0 12px var(--accent-glow);
 	}
 
-	/* Ranking panels */
-	.ranking-panels {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
+	/* The podium of the most tartuffe: three steps, the first in the middle and
+	   the highest; the list stays in rank order for a reader, the steps are
+	   placed with `order`. */
+	.podium-section {
 		margin-bottom: 2rem;
-	}
-
-	@media (max-width: 720px) {
-		.ranking-panels {
-			grid-template-columns: minmax(0, 1fr);
-		}
-	}
-
-	.rank-panel {
-		min-width: 0;
+		padding: 1.25rem 1rem 0;
 		border-radius: var(--radius-md);
-		padding: 1.25rem;
+		background: var(--bg-card);
+		border: 1px solid var(--border-card);
 		backdrop-filter: var(--glass-blur);
 		-webkit-backdrop-filter: var(--glass-blur);
 		box-shadow: var(--shadow-card);
+		overflow: hidden;
 	}
 
-	.rank-panel--best,
-	.rank-panel--worst {
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
+	.podium-header {
+		text-align: center;
+		margin-bottom: 1.25rem;
+	}
+
+	.podium-header h2 {
+		font-size: 1.1rem;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		color: var(--red);
+	}
+
+	.podium-header p {
+		margin-top: 0.25rem;
+		font-size: 0.8rem;
+		color: var(--text-muted);
+	}
+
+	.podium {
+		list-style: none;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		align-items: end;
+		gap: 0.5rem;
+	}
+
+	.step {
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.step--1 { order: 2; }
+	.step--2 { order: 1; }
+	.step--3 { order: 3; }
+
+	.laureate {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.25rem;
+		max-width: 100%;
+		padding: 0.5rem 0.25rem 0;
+		text-decoration: none;
+		color: inherit;
+		border-radius: var(--radius-sm);
+		transition: background var(--transition-fast);
+	}
+
+	.laureate:hover {
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.name {
+		max-width: 100%;
+		font-weight: 600;
+		font-size: 0.938rem;
+		text-transform: capitalize;
+		text-align: center;
+		color: var(--text-primary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.step--1 .name { font-size: 1.05rem; }
+
+	.meta {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.block {
+		width: 100%;
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding-top: 0.5rem;
+		border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+		background: linear-gradient(180deg, rgba(220, 38, 38, 0.28), rgba(220, 38, 38, 0.06));
+		border: 1px solid rgba(220, 38, 38, 0.35);
+		border-bottom: none;
+	}
+
+	.step--1 .block { height: 5.5rem; background: linear-gradient(180deg, rgba(220, 38, 38, 0.45), rgba(220, 38, 38, 0.08)); }
+	.step--2 .block { height: 4rem; }
+	.step--3 .block { height: 3rem; }
+
+	.pos {
+		font-size: 1.25rem;
+		font-weight: 800;
+		color: var(--text-primary);
+		opacity: 0.85;
+	}
+
+	@media (max-width: 480px) {
+		.podium { gap: 0.25rem; }
+		.name { font-size: 0.8rem; }
+		.step--1 .name { font-size: 0.9rem; }
 	}
 
 	.lineup-section {
 		margin-bottom: 2.5rem;
-	}
-
-	.rank-panel-header {
-		display: flex;
-		align-items: baseline;
-		justify-content: center;
-		margin-bottom: 0.75rem;
-	}
-
-	.rank-panel-header h2 {
-		font-size: 1rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-	}
-
-	.rank-panel--best .rank-panel-header h2 { color: var(--green); }
-	.rank-panel--worst .rank-panel-header h2 { color: var(--red); }
-
-	.rank-list {
-		list-style: none;
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	.rank-row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.5rem 0.625rem;
-		border-radius: var(--radius-sm);
-		text-decoration: none;
-		color: inherit;
-		transition: background var(--transition-fast);
-	}
-
-	.rank-row:hover {
-		background: rgba(255, 255, 255, 0.04);
-	}
-
-	.rank-pos {
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: var(--text-muted);
-		width: 1rem;
-		text-align: center;
-		flex-shrink: 0;
-	}
-
-	.rank-info {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.rank-name {
-		font-weight: 600;
-		font-size: 0.938rem;
-		text-transform: capitalize;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		color: var(--text-primary);
-	}
-
-	.rank-meta {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-		margin-top: 0.125rem;
-	}
-
-	.skeleton-row {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.5rem 0.625rem;
 	}
 
 	.skeleton-rank-avatar {
@@ -704,13 +679,8 @@
 	}
 
 	.skeleton-rank-name {
-		flex: 1;
+		width: 70%;
 		height: 14px;
-	}
-
-	.skeleton-rank-score {
-		width: 2.25rem;
-		height: 18px;
 	}
 
 	.empty {

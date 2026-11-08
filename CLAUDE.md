@@ -267,7 +267,7 @@ then `npm install`).
 
 Services on the host:
 
-A push to `main` deploys `mirror`, `worker` and `frontend` through the GitHub workflow `deploy` (`.github/workflows/deploy.yml`: `host up --service <s> --ci` with the project token `DEPLOY_TOKEN`, a repository secret); `mirror-ingest` and `mirror-authority` are deployed the same way from isoloir's own workflow. The host cannot read the lanterne-labs repositories itself (its login is a personal GitHub account outside the org), so its own deploy on push does nothing; to deploy by hand, run `host up --service <s>` from the repository root (not `frontend/`: its root directory is a service setting).
+A push to `main` deploys `mirror`, `worker` and `frontend` through the GitHub workflow `deploy` (`.github/workflows/deploy.yml`: `host up --service <s> --detach` with the project token `DEPLOY_TOKEN`, a repository secret, then the status of the deployment until it ends: SUCCESS or SKIPPED, the service's watch paths unchanged, passes); `mirror-ingest` and `mirror-authority` are deployed the same way from isoloir's own workflow. The host cannot read the lanterne-labs repositories itself (its login is a personal GitHub account outside the org), so its own deploy on push does nothing; to deploy by hand, run `host up --service <s>` from the repository root (not `frontend/`: its root directory is a service setting).
 
 - **`mirror`** — long-lived `dm web serve` (built from root `Dockerfile`). Hosts the HTTP API, the balance alerter, and exposes Prometheus metrics on `METRICS_PORT` (default 9090).
   Sign-in on `mirror`: `AUTH_PROVIDERS` (`google`; `noop` to test). The vote needs no account.
