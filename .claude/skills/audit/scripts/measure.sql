@@ -47,7 +47,19 @@ WITH q AS (
   FROM fact_sources fs JOIN fact_mentions fm ON fm.fact_source_id = fs.id
   WHERE fs.source_type IN ('news', 'twitter', 'viepublique', 'assemblee_debat') AND length(fs.original_quote) > 40),
 g AS (SELECT person_id, k, array_agg(DISTINCT fact_id) ids FROM q GROUP BY 1, 2 HAVING count(DISTINCT fact_id) > 1)
-SELECT 'same-quote groups with 2+ active facts', count(*),
+SELECT 'same-quote groups with 2+ active facts (candidates)', count(*),
+       sum((SELECT count(*) FROM unnest(g.ids) i
+            WHERE NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = i)) - 1)
+FROM g JOIN persons p ON p.id = g.person_id AND p.attributes->>'candidate' = 'true'
+WHERE (SELECT count(*) FROM unnest(g.ids) i
+       WHERE NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = i)) >= 2;
+
+WITH q AS (
+  SELECT fm.person_id, lower(regexp_replace(fs.original_quote, '\W+', '', 'g')) k, fs.fact_id
+  FROM fact_sources fs JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+  WHERE fs.source_type IN ('news', 'twitter', 'viepublique', 'assemblee_debat') AND length(fs.original_quote) > 40),
+g AS (SELECT person_id, k, array_agg(DISTINCT fact_id) ids FROM q GROUP BY 1, 2 HAVING count(DISTINCT fact_id) > 1)
+SELECT 'same-quote groups with 2+ active facts (everyone)', count(*),
        sum((SELECT count(*) FROM unnest(g.ids) i
             WHERE NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = i)) - 1)
 FROM g

@@ -129,7 +129,9 @@ cases:
     claimed_reason: "Very motivated vs not particularly enthusiastic about the same post is a reversal."
     expect: keep
     bucket: position_reversal
-    notes: "Attitude reversal in different words about the same thing."
+    notes: "Attitude reversal in different words about the same thing, days apart (the 2024 government): dated, since an undated opinion pair is an evolution under the rule of 2026-11-01 (TP_152)."
+    date_a: "2024-09-21"
+    date_b: "2024-09-24"
 
   - name: "TP_114_rn_retirement_promise"
     fact_a: "Le Rassemblement national a promis de maintenir l'âge de départ à la retraite à 62 ans."
@@ -1190,3 +1192,23 @@ cases:
     notes: "Stated-condition walk-back: an appeal that upholds the conviction meets « si ma peine est confirmée en appel » even though it softens the sentence (user's decision, 2026-11-04). FP_1600 stays a drop: its condition names the ban on office, which the appeal did not apply at once. Prod 2278 (fact B joins the appeal ruling 157076 and the candidacy of fact 2278-A)."
     date_a: "2025-11-04"
     date_b: "2026-07-07"
+
+  - name: "FP_2385_retailleau_self_positioning_idiom"
+    fact_a: "Bruno Retailleau a affirmé ne s'être jamais situé vis-à-vis du Rassemblement national."
+    fact_b: "Bruno Retailleau a déclaré qu'il ne pense pas que le FN soit un parti néofasciste, et qu'il faut le combattre pour ce qu'il est : un parti démagogue qui entraînerait la France à la faillite."
+    claimed_reason: "Il a déclaré en juin 2024 une position nette sur le FN (à combattre, démagogue, non néofasciste), puis a affirmé en octobre 2024 ne s'être jamais situé vis-à-vis du RN, ce qui nie sa propre position antérieure."
+    expect: drop
+    bucket: different_subjects
+    notes: "« Se situer vis-à-vis de » is self-positioning (not defining oneself by reference to the RN), not a denial of ever having judged it. Prod 2385 (2026-11-08)."
+    date_a: "2024-10-15"
+    date_b: "2024-06-14"
+
+  - name: "FP_2395_lisnard_acknowledged_correction"
+    fact_a: "David Lisnard a affirmé le 13 octobre 2024 que le manuel d'histoire-géo de 3e Hatier de son fils ne mentionnait nulle part le pacte germano-soviétique d'août 1939."
+    fact_b: "David Lisnard a reconnu que le pacte germano-soviétique figure page 70 du manuel, mais a estimé qu'il n'apparaît pas dans les chapitres sur l'URSS, l'Allemagne nazie et le déroulé du conflit, et qu'il n'y est évoqué que de façon lapidaire."
+    claimed_reason: "Lisnard affirmait que le pacte n'apparaissait nulle part dans le manuel, puis a reconnu lui-même qu'il y figure page 70 et a concédé son erreur, ce qui contredit directement sa première affirmation."
+    expect: drop
+    bucket: learning_over_time
+    notes: "A factual error the person corrects the next day, saying so: a correction, not a reversal. Prod 2395 (2026-11-08)."
+    date_a: "2024-10-13"
+    date_b: "2024-10-14"
