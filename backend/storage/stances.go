@@ -28,6 +28,12 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc core.Stan
 		ON CONFLICT (person_id, cluster_label) DO UPDATE SET last_updated_at = NOW()
 		RETURNING id, (xmax = 0) AS inserted`
 
+	// key_fact_ids is NOT NULL: a stance without key facts yet is an empty
+	// array, not NULL (a nil slice would be encoded as NULL).
+	keyFactIDs := doc.KeyFactIDs
+	if keyFactIDs == nil {
+		keyFactIDs = []int64{}
+	}
 	var id int64
 	var inserted bool
 	err := s.pool.QueryRow(ctx, query,
@@ -37,7 +43,7 @@ func (s *PostgresStorer) InsertStanceDocument(ctx context.Context, doc core.Stan
 		pgvector.NewHalfVector(doc.ClusterEmbedding),
 		doc.Summary,
 		doc.SummaryEn,
-		doc.KeyFactIDs,
+		keyFactIDs,
 		doc.FactCount,
 	).Scan(&id, &inserted)
 	if err != nil {

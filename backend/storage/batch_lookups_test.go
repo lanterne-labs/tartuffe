@@ -89,6 +89,8 @@ func TestFindSimilarActiveFactsCarriesVerb(t *testing.T) {
 
 	pid, _, err := storer.AddPersonWithType(ctx, "similar subject", "human")
 	require.NoError(t, err)
+	// Only the candidates' facts carry an embedding.
+	require.NoError(t, storer.SetCandidate(ctx, pid, true))
 
 	emb := makeUnitEmbedding(0)
 	factID, _, err := insertFactForTest(ctx, t, storer, core.StoreFactInput{PublishedAt: &storageTestDate,
