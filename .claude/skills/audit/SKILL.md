@@ -26,8 +26,8 @@ work, Fish shell quirks).
   user's yes. Once they say yes, run it yourself.
 - Never print a secret. Capture tokens and URLs in shell variables only, and
   filter output with `grep -v 'sk-ant'`. Seat tokens live in
-  `CLAUDE_TEAM_PLAN_TOKENS` (named by account: `test1`, `seat-2`,
-  `keio`); the user's own account is never a seat.
+  `CLAUDE_TEAM_PLAN_TOKENS` (named by account); the user's own account is
+  never a seat.
 - Contradiction definition (revised by the user on 2026-10-31, bd memory
   `contradiction-definition`): real at any gap are the person's words against
   their own ACTS (a vote, a decision, an alliance, a candidacy), a broken
