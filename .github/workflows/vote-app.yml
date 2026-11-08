@@ -1,5 +1,5 @@
 # The vote app (isoloir, through @isoloir/web) as static files on
-# https://lanterne-labs.github.io: built from the frontend with the vote's
+# https://lanterne-labs.github.io (or its own domain, VOTE_APP_DOMAIN): built from the frontend with the vote's
 # settings (the repository variables VOTE_*), the candidates' cards fetched
 # from the API at build time, pushed to the public repository
 # lanterne-labs/lanterne-labs.github.io with a deploy key (the secret
@@ -48,9 +48,15 @@ jobs:
           VITE_VOTE_MIRROR: ${{ vars.VOTE_MIRROR || 'https://lanterne-labs.github.io/vote-data' }}
           VITE_VOTE_MIRROR_REPO: ${{ vars.VOTE_MIRROR_REPO || 'lanterne-labs/vote-data' }}
         run: npm run build:vote
+      # The app's own domain (the repository variable VOTE_APP_DOMAIN, e.g.
+      # vote.tartuffe.me): the publish writes the CNAME file GitHub Pages
+      # reads it from, since every publish replaces the files. Set the
+      # variable only once the DNS record points at lanterne-labs.github.io:
+      # with the file in place the github.io address redirects to the domain.
       - name: Publish
         env:
           DEPLOY_KEY: ${{ secrets.VOTE_APP_DEPLOY_KEY }}
+          VOTE_APP_DOMAIN: ${{ vars.VOTE_APP_DOMAIN }}
         run: |
           set -eu
           [ -n "$DEPLOY_KEY" ] || { echo "no VOTE_APP_DEPLOY_KEY secret: build kept, nothing published"; exit 0; }
@@ -61,6 +67,7 @@ jobs:
           find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
           cp -R frontend/build-vote/. pages/
           touch pages/.nojekyll
+          [ -z "${VOTE_APP_DOMAIN:-}" ] || printf '%s\n' "$VOTE_APP_DOMAIN" > pages/CNAME
           cd pages
           git add -A
           git -c user.name=tartuffe-vote -c user.email=vote@tartuffe.me commit -q -m "build ${GITHUB_SHA::12}" || { echo "nothing changed"; exit 0; }
