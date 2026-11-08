@@ -255,3 +255,14 @@ func (s *PostgresStorer) CountCollectionTasks(ctx context.Context) (map[string]i
 	}
 	return out, rows.Err()
 }
+
+// CountPendingTasksBelow returns the pending tasks of a priority under
+// priority: the backfills, under the watch list's.
+func (s *PostgresStorer) CountPendingTasksBelow(ctx context.Context, priority int) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM collection_tasks WHERE status = 'pending' AND priority < $1`, priority).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("pending tasks: %w", err)
+	}
+	return n, nil
+}

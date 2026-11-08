@@ -338,6 +338,12 @@ func (t *ClaudeTeamEndpoint) wakeLocked() {
 
 // serving reports whether a seat is not down at now; when none is, earliest is
 // the seat that comes back first.
+// Serving reports whether a seat is not at its limit.
+func (t *ClaudeTeamEndpoint) Serving() bool {
+	_, ok := t.serving(time.Now())
+	return ok
+}
+
 func (t *ClaudeTeamEndpoint) serving(now time.Time) (earliest claudeSeat, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

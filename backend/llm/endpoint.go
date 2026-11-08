@@ -460,6 +460,25 @@ func Concurrency() int {
 	return 1
 }
 
+// seatedEndpoint is an endpoint served by seats that reach usage limits.
+type seatedEndpoint interface {
+	Serving() bool
+}
+
+// SeatsServing reports whether the default route's seats can serve now: false
+// only when every seat is at its limit, so the calls go to the API key.
+// Without seats (the local box) it is true.
+func SeatsServing() bool {
+	r := activeRouting()
+	if r == nil {
+		return true
+	}
+	if e, ok := r.Endpoints[r.Default.Endpoint].(seatedEndpoint); ok {
+		return e.Serving()
+	}
+	return true
+}
+
 // steadyEndpoint is an endpoint whose answers need no vote.
 type steadyEndpoint interface {
 	Steady() bool

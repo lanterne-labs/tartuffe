@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -206,6 +207,38 @@ func spendLedger() SpendLedger {
 	return ledger
 }
 
+// PhaseLedger is a SpendLedger that also keeps the real cost per phase.
+type PhaseLedger interface {
+	AddPhase(ctx context.Context, day time.Time, phase string, cost float64) error
+}
+
+// The phases of the spend. The worker's maintenance pass runs alone, so one
+// value for the process says what a call pays for.
+const (
+	PhaseExtraction  = "extraction"
+	PhaseMaintenance = "maintenance"
+)
+
+var spendPhase atomic.Value // string
+
+// SetSpendPhase names what the calls of the process pay for from now on, and
+// returns the function that restores the phase before.
+func SetSpendPhase(phase string) (restore func()) {
+	before := currentSpendPhase()
+	spendPhase.Store(phase)
+	return func() { spendPhase.Store(before) }
+}
+
+func currentSpendPhase() string {
+	if p, ok := spendPhase.Load().(string); ok {
+		return p
+	}
+	return PhaseExtraction
+}
+
+// APIDayCapUSD is the spend cap of the API key per UTC day (CLAUDE_API_DAY_CAP_USD).
+func APIDayCapUSD() (float64, error) { return claudeAPIDayCapFromEnv() }
+
 // claudeLedgerTimeout bounds one write to the spend ledger.
 const claudeLedgerTimeout = 10 * time.Second
 
@@ -276,6 +309,13 @@ func (t *ClaudeAPIEndpoint) settle(day time.Time, reserved, cost float64) {
 	t.mu.Unlock()
 	if l := spendLedger(); l != nil {
 		t.settleLedger(l, day, cost-reserved)
+		if pl, ok := l.(PhaseLedger); ok && cost > 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), claudeLedgerTimeout)
+			defer cancel()
+			if err := pl.AddPhase(ctx, day, currentSpendPhase(), cost); err != nil {
+				log.Warn().Err(err).Msg("claude api: the spend per phase missed a call; the cap is not affected")
+			}
+		}
 	}
 }
 

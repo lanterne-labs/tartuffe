@@ -92,13 +92,24 @@ type Housekeeping struct {
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 
+	split *spendSplit // shares the API key's day (nil: no split)
+	// readSpend and seatsServing replace the ledger and the seats in the tests.
+	readSpend    func(ctx context.Context, day time.Time) (spent, cap float64, err error)
+	seatsServing func() bool
+
 	dirty   atomic.Bool // facts were added since the last pass (set by the tasks run at once)
 	feeding atomic.Bool // the feed runs
 }
 
 // NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
 func NewHousekeeping(storer *storage.PostgresStorer, d *deps.Deps) *Housekeeping {
+	share, err := extractionShareFromEnv()
+	if err != nil {
+		log.Error().Err(err).Float64("share", defaultExtractionShare).Msg("Worker: the default extraction share is used")
+		share = defaultExtractionShare
+	}
 	return &Housekeeping{
+		split:            &spendSplit{share: share},
 		Storer:           storer,
 		Deps:             d,
 		MaintenanceEvery: 6 * time.Hour,
@@ -154,10 +165,28 @@ func (h *Housekeeping) MinPriority(ctx context.Context) (int, error) {
 // Urgent implements Idle: a maintenance pass is due although tasks are
 // pending when none ran for MaintenanceEvery (a cut pass waits for it too,
 // so the passes do not hold the worker back to back).
+//
+// While the API key pays (every seat at its limit) the split decides instead:
+// extraction spends its share first, then the pass runs if there is anything
+// for it; with nothing to judge the next round of extraction starts.
 func (h *Housekeeping) Urgent(ctx context.Context) (bool, error) {
 	last, err := h.lastMaintenance(ctx)
 	if err != nil {
 		return false, err
+	}
+	spent, limit, pays, err := h.apiPays(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Worker: reading the spend failed; the usual order holds")
+	} else if pays {
+		if !h.split.reached(h.now(), spent, limit) {
+			return false, nil
+		}
+		if h.dirty.Load() || last.cut {
+			log.Info().Float64("spent_usd", spent).Float64("cap_usd", limit).Msg("Worker: extraction spent its share of the day; the maintenance pass goes next")
+			return true, nil
+		}
+		h.split.nextRound(h.now(), spent, limit)
+		return false, nil
 	}
 	return last.end.IsZero() || h.now().Sub(last.end) >= h.MaintenanceEvery, nil
 }
@@ -169,7 +198,18 @@ func (h *Housekeeping) Idle(ctx context.Context) error {
 	if err != nil || !due {
 		return err
 	}
-	return h.maintenance(ctx, since)
+	defer llm.SetSpendPhase(llm.PhaseMaintenance)()
+	if err := h.maintenance(ctx, since); err != nil {
+		return err
+	}
+	// What is left of the day starts the next round of extraction.
+	if spent, limit, pays, err := h.apiPays(ctx); err != nil {
+		log.Error().Err(err).Msg("Worker: reading the spend failed; the round of extraction goes on")
+	} else if pays {
+		h.split.nextRound(h.now(), spent, limit)
+		log.Info().Float64("spent_usd", spent).Float64("cap_usd", limit).Msg("Maintenance pass done; a new round of extraction")
+	}
+	return nil
 }
 
 // feedDue reports whether the feed of the day has not run yet: the last feed
@@ -229,22 +269,31 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 	}
 	h.FactsAdded(in.Result.Total.Facts)
 
-	// The cap is a deadline of the context too: a backfill that does not read
-	// the deadline it is given (photos) stops with the context.
-	deadline := h.now().Add(h.BackfillCap)
-	bctx, cancel := context.WithDeadline(ctx, deadline)
-	var bf pipeline.BackfillRun
-	err = bf.Run(bctx, h.Deps, deadline)
-	cancel()
-	if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
-		return fmt.Errorf("backfill: %w", err)
-	}
-	for name, e := range bf.Errs {
-		if errors.Is(e, context.DeadlineExceeded) && ctx.Err() == nil {
-			log.Info().Str("plugin", name).Msg("Feed: backfill stopped at its cap; the next feed goes on")
-			continue
+	// The plugins' backfills (the old transcripts of every deputy) get what the
+	// candidates' collection leaves: they wait while its tasks are pending.
+	waiting, err := h.Storer.CountPendingTasksBelow(ctx, watchPriority)
+	if err != nil {
+		errs = append(errs, err)
+	} else if waiting > 0 {
+		log.Info().Int("tasks", waiting).Msg("Feed: the backfills wait for the pending collection tasks")
+	} else {
+		// The cap is a deadline of the context too: a backfill that does not read
+		// the deadline it is given (photos) stops with the context.
+		deadline := h.now().Add(h.BackfillCap)
+		bctx, cancel := context.WithDeadline(ctx, deadline)
+		var bf pipeline.BackfillRun
+		err = bf.Run(bctx, h.Deps, deadline)
+		cancel()
+		if errors.Is(err, llm.ErrUnavailable) || ctx.Err() != nil {
+			return fmt.Errorf("backfill: %w", err)
 		}
-		errs = append(errs, fmt.Errorf("backfill %s: %w", name, e))
+		for name, e := range bf.Errs {
+			if errors.Is(e, context.DeadlineExceeded) && ctx.Err() == nil {
+				log.Info().Str("plugin", name).Msg("Feed: backfill stopped at its cap; the next feed goes on")
+				continue
+			}
+			errs = append(errs, fmt.Errorf("backfill %s: %w", name, e))
+		}
 	}
 
 	if err := h.Storer.RecordJobMetrics(ctx, []storage.JobMetric{
