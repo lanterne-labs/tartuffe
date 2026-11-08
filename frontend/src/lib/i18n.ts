@@ -197,7 +197,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'zk.flow.qr': { fr: 'QR code', en: 'QR code' },
 	'zk.flow.app': { fr: 'Dans l’app', en: 'In the app' },
 	'zk.flow.proof': { fr: 'Calcul', en: 'Computing' },
-	'zk.flow.check': { fr: 'Vérifié', en: 'Checked' },
+	'zk.flow.check': { fr: 'Preuve du passeport vérifiée', en: 'Passport proof checked' },
 	'zk.rejected': { fr: 'Vous avez refusé dans l’app.', en: 'Declined in the app.' },
 	'zk.error': { fr: 'La vérification a échoué.', en: 'Verification failed.' },
 	'zk.retry': { fr: 'Recommencer', en: 'Start again' },
