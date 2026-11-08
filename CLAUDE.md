@@ -208,7 +208,7 @@ SERPAPI_KEY=...                  # https://serpapi.com
 
 ## Local LLM
 
-Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (production: the Cloudflare tunnel to the local GPU box). llama-swap on that box maps the name to the real model (`~/claude-ai/llama-swap.yaml`); today it is Qwen3.8-27B (unsloth UD-Q3_K_XL GGUF, llama.cpp, fully in the 16 GB of VRAM). `FALLBACK_CHAT_MODEL` names the same model on OpenRouter.
+Production and local runs call one model name, `mirror-llm`, at `OPEN_AI_API` (production: the Cloudflare tunnel to the local GPU box). llama-swap on that box maps the name to the real model (its `llama-swap.yaml`); today it is Qwen3.8-27B (unsloth UD-Q3_K_XL GGUF, llama.cpp, fully in the 16 GB of VRAM). `FALLBACK_CHAT_MODEL` names the same model on OpenRouter.
 
 - Every LLM decision call declares its task (`ChatRequest.Task`, `backend/llm/task.go`). One table there says which tasks think; the client then turns thinking on with a thinking budget (`llm.ThinkingBudgetTokens`) on top of the call's own `MaxTokens`. Thinking is off on the server by default. Today only the grouping gate (`TaskOccurrence`) thinks: a task thinks only when its golden shows a gain, and the nightly must still fit its window (a thinking call costs about 3 times a plain call).
 - To measure a task with thinking: `make llm-goldens LLM_THINK=occurrence,detect` (the exact set of thinking tasks for the run, or `none`).
