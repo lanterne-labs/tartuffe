@@ -509,7 +509,7 @@
 				{#if regPosting}
 					<span class="joining"><Spinner size="sm" label={tr('v2.join.posting', currentLang)} /> {tr('v2.join.posting', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
 				{:else if registration.state === 'acked'}
-					<span class="joining"><Spinner size="sm" label={tr('v2.join.acked', currentLang)} /> {tr('v2.join.acked', currentLang)} <button class="link-btn" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
+					<span class="joining"><Spinner size="sm" label={tr('v2.join.acked', currentLang)} /> {tr('v2.join.acked', currentLang)}</span>
 				{:else if regFailed}
 					<span class="joining joining--fault"><span class="state-icon state-icon--fault" aria-hidden="true">!</span> {tr('v2.join.failed', currentLang)} <button class="btn btn-small" onclick={() => (keyOpen = true)}>{tr('v2.join.details', currentLang)}</button></span>
 				{:else}
