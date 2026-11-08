@@ -100,22 +100,45 @@ func ptrFloat64(v float64) *float64 {
 	return &v
 }
 
-// TestScoreReliability: a score is trusted once its facts would hold 3
-// contradictions at the average rate; with no rate, none is.
-func TestScoreReliability(t *testing.T) {
-	for _, c := range []struct {
-		facts    int
-		rate     float64
-		expected float64
-		reliable bool
-	}{
-		{287, 0.001, 0.287, false},
-		{2999, 0.001, 2.999, false},
-		{3000, 0.001, 3, true},
-		{5000, 0, 0, false},
-	} {
-		expected, reliable := ScoreReliability(c.facts, c.rate)
-		assert.InDelta(t, c.expected, expected, 1e-9)
-		assert.Equal(t, c.reliable, reliable, "%d facts at %g", c.facts, c.rate)
+// TestScoreBaseline: a person is reliable when covered (3 contradictions
+// expected at the candidates' rate), or when their score is strictly above
+// the lowest covered score; a clean sheet needs coverage. The candidates of
+// 2026-11-08: the covered are the five above 3 283 facts, the floor is
+// Mélenchon (1 contradiction, honesty 0.970).
+func TestScoreBaseline(t *testing.T) {
+	facts := []int{4517, 4470, 4331, 4136, 3780, 2809, 2411, 2393, 2168, 2166, 2121, 1503, 1062, 978, 547}
+	bundles := []int{7, 1, 7, 6, 4, 0, 3, 0, 2, 1, 2, 1, 1, 1, 0}
+	honesty := make([]float64, len(facts))
+	for i := range facts {
+		honesty[i] = ComputeHonestyScore(facts[i], ContradictionStats{Bundles: bundles[i], Total: bundles[i]})
 	}
+	b := NewScoreBaseline(facts, bundles, honesty)
+	assert.InDelta(t, 36.0/39392, b.Rate, 1e-12)
+	assert.InDelta(t, 3283, b.CoveredFacts, 1)
+	if assert.NotNil(t, b.FloorHonesty) {
+		assert.InDelta(t, honesty[1], *b.FloorHonesty, 1e-12)
+	}
+
+	assert.True(t, b.ScoreReliability(4470, honesty[1]), "covered")
+	assert.True(t, b.ScoreReliability(2168, honesty[8]), "Roussel: 2 contradictions, above the floor")
+	assert.True(t, b.ScoreReliability(978, honesty[13]), "Bertrand: 1 contradiction on fewer facts scores above the floor")
+	assert.False(t, b.ScoreReliability(2809, 1), "Tondelier: a clean sheet, not covered")
+	assert.False(t, b.ScoreReliability(547, 1), "Polony")
+
+	// A covered candidate with a clean sheet: the floor is 1, the other
+	// clean sheets stay flagged (strictly above), the rest are reliable.
+	clean := NewScoreBaseline(facts, []int{7, 0, 7, 6, 4, 0, 3, 0, 2, 1, 2, 1, 1, 1, 0}, append([]float64{honesty[0], 1}, honesty[2:]...))
+	assert.Equal(t, 1.0, *clean.FloorHonesty)
+	assert.True(t, clean.ScoreReliability(4470, 1))
+	assert.False(t, clean.ScoreReliability(547, 1))
+	assert.True(t, clean.ScoreReliability(978, honesty[13]))
+
+	// No contradiction anywhere: no one is reliable.
+	none := NewScoreBaseline(facts, make([]int, len(facts)), honesty)
+	assert.False(t, none.ScoreReliability(5000, 1))
+	// No candidate covered: coverage alone makes reliable.
+	small := NewScoreBaseline([]int{1000, 1000}, []int{1, 0}, []float64{0.97, 1})
+	assert.Nil(t, small.FloorHonesty)
+	assert.False(t, small.ScoreReliability(1000, 0.97))
+	assert.True(t, small.ScoreReliability(6000, 1))
 }

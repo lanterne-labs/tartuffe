@@ -71,6 +71,7 @@
 			rules: [
 				['< 10', 'faits : pas de repère, il n’y a pas encore assez à juger.'],
 				['≈ 5', 'pour une seule contradiction.'],
+				['🚧', 'score en cours de consolidation : la détection manque des contradictions bien plus qu’elle n’en invente, donc un score ne peut qu’être trop bas, jamais trop haut. Un score compte dans les classements quand la personne a assez de faits pour qu’une feuille blanche veuille dire quelque chose (le seuil suit la moyenne des candidats), ou dès qu’il dépasse le plus bas score d’un candidat qui y est déjà : plus de faits ne pourraient que le faire monter.'],
 				['75', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits ne fait pas bondir le score.'],
 				['½ + ½', 'pour un parti : la moitié vient de son propre score, l’autre moitié de la moyenne de ses membres.']
 			],
@@ -146,6 +147,7 @@
 			rules: [
 				['< 10', 'facts: no marker, not enough to judge yet.'],
 				['≈ 5', 'with one contradiction.'],
+				['🚧', 'score being consolidated: detection misses contradictions far more than it invents them, so a score can only be too low, never too high. A score counts in the rankings once the person has enough facts for a clean sheet to mean something (the threshold follows the candidates’ average), or as soon as it passes the lowest score of a candidate already ranked: more facts could only push it up.'],
 				['75', 'facts at least in the computation: one contradiction among very few facts does not send the score soaring.'],
 				['½ + ½', 'for a party: half comes from its own score, half from the average of its members.']
 			],

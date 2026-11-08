@@ -323,7 +323,7 @@
 					{tr(`feed.kind.${it.kind}`, currentLang)}
 				</span>
 				<a href="/person/{it.person.id}" class="avatar-link" aria-label={it.person.name}>
-					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} expected={it.person.expected_contradictions} />
+					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} covered={it.person.covered_facts} />
 				</a>
 				<div class="main">
 					<div class="head">

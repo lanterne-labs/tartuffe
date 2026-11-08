@@ -4,10 +4,10 @@
 	// into it, a white needle on the place. The portrait sits in the circle
 	// (or, without a person, the number). Under it, the score out of 100 in
 	// the colour of the place, with a small "?" saying what a higher score
-	// means. Too few facts: a grey band, no needle, "not enough facts". Too
-	// few contradictions expected for the score to be trusted (reliable
-	// false): the needle and the band fade, a "≈" marks the number and the
-	// portrait, and the "?" says why.
+	// means. Too few facts: a grey band, no needle, "not enough facts". A
+	// score not reliable (reliable false, core.ScoreReliability): a 🚧 on
+	// the portrait, and it and the "?" say from how many facts a score
+	// settles.
 	//
 	// The dial is logarithmic in contradictions (dialOf): the first
 	// contradictions move the needle a lot, each later one a little less, so
@@ -33,15 +33,12 @@
 		caption?: string;
 		/** The needle sweeps in from the coherent end (an example being told). */
 		animate?: boolean;
-		/** False when too few contradictions are expected for the score to be trusted (the API's score_reliable). */
+		/** False while the score is not reliable (the API's score_reliable). */
 		reliable?: boolean;
-		/** The contradictions expected at the average rate (the API's expected_contradictions). */
-		expected?: number;
+		/** The facts from which a person is covered (the API's covered_facts). */
+		covered?: number;
 	}
-	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false, reliable, expected }: Props = $props();
-
-	// RELIABLE_FROM is core.ScoreReliableExpected.
-	const RELIABLE_FROM = 3;
+	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false, reliable, covered }: Props = $props();
 
 	const uid = $props.id();
 	// Below this many facts the score says too little to be shown.
@@ -53,10 +50,9 @@
 	let unsure = $derived(!unrated && reliable === false);
 	let unsureOpen = $state(false);
 	let unsureText = $derived(
-		tr('score.unsure', lang, {
+		tr('score.consolidating', lang, {
 			f: (facts ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR'),
-			e: (expected ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR', { maximumFractionDigits: 1 }),
-			r: RELIABLE_FROM
+			s: coveredText(covered, lang)
 		})
 	);
 	// The graduations: one every 3 contradictions, every 6 on a small dial.
@@ -67,7 +63,7 @@
 			? facts !== undefined
 				? tr('score.unrated.n', lang, { f: facts })
 				: tr('score.unrated', lang)
-			: (unsure ? '≈ ' : '') + (size === 'lg' || size === 'md' ? tr('score.short', lang, { n: tartuffe ?? 0 }) : `${tartuffe}/100`)
+			: size === 'lg' || size === 'md' ? tr('score.short', lang, { n: tartuffe ?? 0 }) : `${tartuffe}/100`
 	);
 
 	// Polar point on the dial: r from the centre (60, 60), at a place 0 to 100.
@@ -97,6 +93,11 @@
 </script>
 
 <script lang="ts" module>
+	/** The facts from which a person is covered, as shown: rounded to 50. */
+	export function coveredText(covered: number | undefined, lang: Lang): string {
+		return (Math.round((covered ?? 0) / 50) * 50).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR');
+	}
+
 	/** The Tartuffe value, 0 (coherent) to 100 (tartuffe), of an honesty score 0 to 1. */
 	export function tartuffeOf(honesty: number | null | undefined): number | null {
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
@@ -149,7 +150,7 @@
 			}}
 			onkeydown={(e) => e.key === 'Escape' && (unsureOpen = false)}
 			onblur={() => (unsureOpen = false)}
-		>≈<span class="unsure-tip" aria-hidden="true">{unsureText}</span></span>
+		>🚧<span class="unsure-tip" aria-hidden="true">{unsureText}</span></span>
 	{/if}
 	<svg viewBox="0 0 120 102" class="dial" role="img" aria-label={value}>
 		<defs>
@@ -225,10 +226,6 @@
 	.ts--lg {
 		--w: 13rem;
 	}
-	.ts--unsure .fill,
-	.ts--unsure .needle {
-		opacity: 0.4;
-	}
 	.dial-box {
 		position: relative;
 		display: block;
@@ -244,12 +241,7 @@
 		place-items: center;
 		width: 1.25em;
 		height: 1.25em;
-		border-radius: 50%;
-		background: var(--bg-card);
-		border: 1px solid var(--amber);
-		color: var(--amber);
-		font-size: max(0.7rem, calc(var(--w) * 0.11));
-		font-weight: 700;
+		font-size: max(0.8rem, calc(var(--w) * 0.13));
 		line-height: 1;
 	}
 	.unsure-tip {

@@ -64,13 +64,13 @@ func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 		httpx.InternalError(w, err, "failed to get persons")
 		return
 	}
-	rate, err := s.contradictionRate(ctx)
+	base, err := s.scoreBaseline(ctx)
 	if err != nil {
-		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		httpx.InternalError(w, err, "failed to get the score baseline")
 		return
 	}
 	for i := range persons {
-		persons[i].ScoreConfidence = confidence(persons[i].FactCount, rate)
+		persons[i].ScoreConfidence = confidence(persons[i].FactCount, persons[i].HonestyScore, base)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -99,12 +99,12 @@ func (s *Service) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Person not found", http.StatusNotFound)
 		return
 	}
-	rate, err := s.contradictionRate(ctx)
+	base, err := s.scoreBaseline(ctx)
 	if err != nil {
-		httpx.InternalError(w, err, "failed to get the contradiction rate")
+		httpx.InternalError(w, err, "failed to get the score baseline")
 		return
 	}
-	person.ScoreConfidence = confidence(person.FactCount, rate)
+	person.ScoreConfidence = confidence(person.FactCount, person.HonestyScore, base)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(person)

@@ -195,7 +195,7 @@
 				{#each worst as person, i (person.id)}
 					<li class="step step--{i + 1}">
 						<a href="/person/{person.id}" class="laureate">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 							<span class="name">{person.name}</span>
 							<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
 						</a>
@@ -284,7 +284,7 @@
 				<a href="/person/{person.id}" class="card">
 					<div class="card-content">
 						<div class="card-left">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} expected={person.expected_contradictions} />
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 							<div class="card-info">
 								<div class="card-name">
 									{person.name}

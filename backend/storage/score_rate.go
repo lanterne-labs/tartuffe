@@ -3,35 +3,47 @@ package storage
 import (
 	"context"
 	"fmt"
+
+	"digital-mirror/backend/core"
 )
 
-// ScoreConfidence says how much a score can be trusted: the contradictions
-// its facts would hold at the candidates' average rate, and whether that is
-// enough (core.ScoreReliability).
+// ScoreConfidence says whether a score is reliable (core.ScoreReliability)
+// and from how many facts a person is covered (the same for everyone, from
+// the candidates' average rate).
 type ScoreConfidence struct {
-	ExpectedContradictions float64 `json:"expected_contradictions"`
-	ScoreReliable          bool    `json:"score_reliable"`
+	CoveredFacts  int  `json:"covered_facts"`
+	ScoreReliable bool `json:"score_reliable"`
 }
 
-// ContradictionRate is the candidates' average number of contradictions per
-// fact: their distinct contradictions (a stance's pairs count once, as in
-// the score) over their facts. Detection runs for the candidates only, so
-// their rate is the one a person's facts are measured against.
-func (s *PostgresStorer) ContradictionRate(ctx context.Context) (float64, error) {
-	var facts, bundles int64
-	err := s.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(p.fact_count), 0), COALESCE(SUM(b.n), 0)
+// ScoreBaseline measures the candidates' facts, distinct contradictions (a
+// stance's pairs count once, as in the score) and honesty scores:
+// core.NewScoreBaseline. Detection runs for the candidates only, so they are
+// the ones a person's score is measured against.
+func (s *PostgresStorer) ScoreBaseline(ctx context.Context) (core.ScoreBaseline, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.fact_count, COALESCE(b.n, 0), p.honesty_score
 		FROM persons p
 		LEFT JOIN (
 			SELECT person_id, COUNT(DISTINCT COALESCE(bundle_stance_id::text, 'solo:' || id::text)) AS n
 			FROM contradictions GROUP BY person_id
 		) b ON b.person_id = p.id
-		WHERE `+CandidateSQL+` AND p.entity_type = 'human'`).Scan(&facts, &bundles)
+		WHERE `+CandidateSQL+` AND p.entity_type = 'human'`)
 	if err != nil {
-		return 0, fmt.Errorf("contradiction rate: %w", err)
+		return core.ScoreBaseline{}, fmt.Errorf("score baseline: %w", err)
 	}
-	if facts == 0 {
-		return 0, nil
+	defer rows.Close()
+	var facts, bundles []int
+	var honesty []float64
+	for rows.Next() {
+		var f, b int
+		var h float64
+		if err := rows.Scan(&f, &b, &h); err != nil {
+			return core.ScoreBaseline{}, fmt.Errorf("scan score baseline: %w", err)
+		}
+		facts, bundles, honesty = append(facts, f), append(bundles, b), append(honesty, h)
 	}
-	return float64(bundles) / float64(facts), nil
+	if err := rows.Err(); err != nil {
+		return core.ScoreBaseline{}, fmt.Errorf("score baseline rows: %w", err)
+	}
+	return core.NewScoreBaseline(facts, bundles, honesty), nil
 }
