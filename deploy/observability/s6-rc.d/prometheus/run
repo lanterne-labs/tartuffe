@@ -1,6 +1,10 @@
 #!/bin/sh
+# The scrape targets are variables of the service (prometheus.yml).
+sed -e "s|\${MIRROR_METRICS_TARGET}|$MIRROR_METRICS_TARGET|" -e "s|\${WORKER_METRICS_TARGET}|$WORKER_METRICS_TARGET|" \
+  /etc/prometheus/prometheus.yml > /tmp/prometheus.yml
+chmod 644 /tmp/prometheus.yml
 exec s6-setuidgid nobody /usr/local/bin/prometheus \
-  --config.file=/etc/prometheus/prometheus.yml \
+  --config.file=/tmp/prometheus.yml \
   --storage.tsdb.path=/data/prometheus \
   --storage.tsdb.retention.time=180d \
   --web.listen-address=127.0.0.1:9090 \

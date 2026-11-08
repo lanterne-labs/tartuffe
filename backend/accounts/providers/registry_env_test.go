@@ -8,8 +8,8 @@ import (
 )
 
 // The noop provider (a sign-in without proof) is for local development:
-// on the host it is refused, and nothing is enabled unless named.
-func TestRegistryFromEnvRefusesNoopOnthe host(t *testing.T) {
+// in production it is refused, and nothing is enabled unless named.
+func TestRegistryFromEnvRefusesNoopInProduction(t *testing.T) {
 	t.Setenv("DM_PRODUCTION", "production")
 	t.Setenv("AUTH_PROVIDERS", "noop")
 	_, err := RegistryFromEnv()
@@ -28,10 +28,10 @@ func TestRegistryFromEnvRefusesNoopOnthe host(t *testing.T) {
 
 // ZKPassport's mock documents are for local development: on the host the
 // provider refuses to start with them.
-func TestZKPassportRefusesDevModeOnthe host(t *testing.T) {
+func TestZKPassportRefusesDevModeInProduction(t *testing.T) {
 	t.Setenv("ZKPASSPORT_DOMAIN", "tartuffe.me")
 	t.Setenv("ZKPASSPORT_DEV_MODE", "true")
 	t.Setenv("DM_PRODUCTION", "production")
 	_, err := NewZKPassportFromEnv()
-	require.ErrorContains(t, err, "never on the host")
+	require.ErrorContains(t, err, "never in production")
 }

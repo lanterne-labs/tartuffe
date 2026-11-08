@@ -56,3 +56,6 @@ scoped_persons*.txt
 
 # bd (beads) is local only: its database and files never go to GitHub
 .beads/
+
+# The host's specifics, on this machine only
+CLAUDE.local.md

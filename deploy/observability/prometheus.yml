@@ -1,3 +1,5 @@
+# ${...}: the private addresses of the services, variables of the observability
+# service, filled in by s6-rc.d/prometheus/run.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -5,7 +7,7 @@ global:
 scrape_configs:
   - job_name: 'mirror'
     static_configs:
-      - targets: ['mirror.host.internal:9090']
+      - targets: ['${MIRROR_METRICS_TARGET}']
     metrics_path: /metrics
     scheme: http
 
@@ -14,7 +16,7 @@ scrape_configs:
   # with rate() or increase().
   - job_name: 'worker'
     static_configs:
-      - targets: ['worker.host.internal:9090']
+      - targets: ['${WORKER_METRICS_TARGET}']
     metrics_path: /metrics
     scheme: http
 

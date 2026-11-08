@@ -137,14 +137,14 @@ func Register(name string, f Factory) {
 
 // RegistryFromEnv enables the providers named in AUTH_PROVIDERS
 // (comma-separated). Unset, it enables noop for local development, and none
-// on the host (DM_PRODUCTION set), where voting stays closed until the
+// in production (DM_PRODUCTION set), where voting stays closed until the
 // providers are named; noop is refused there: a test sign-in in production
 // would make the +1 and the reports anyone's.
 func RegistryFromEnv() (*Registry, error) {
 	names, ok := os.LookupEnv("AUTH_PROVIDERS")
-	host := os.Getenv("DM_PRODUCTION") != ""
+	production := os.Getenv("DM_PRODUCTION") != ""
 	if !ok {
-		if host {
+		if production {
 			names = ""
 		} else {
 			names = NoopName
@@ -156,8 +156,8 @@ func RegistryFromEnv() (*Registry, error) {
 		if n == "" {
 			continue
 		}
-		if n == NoopName && host {
-			return nil, fmt.Errorf("AUTH_PROVIDERS: %s is for local development, never on the host", NoopName)
+		if n == NoopName && production {
+			return nil, fmt.Errorf("AUTH_PROVIDERS: %s is for local development, never in production", NoopName)
 		}
 		f, ok := factories[n]
 		if !ok {
