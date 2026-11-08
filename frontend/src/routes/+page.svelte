@@ -64,7 +64,7 @@
 			ctaFeed: 'Lire le fil',
 
 			scoreName: 'Le Tartuffe-Score mesure la cohérence',
-			scoreWhat: 'Celle d’un élu entre ce qu’il dit et ce qu’il fait. Plus ses actes contredisent ses paroles, plus son score monte.',
+			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Plus il se contredit, plus son score monte.',
 			scoreLow: 'Cohérent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'après cette contradiction',
@@ -112,7 +112,7 @@
 			ctaFeed: 'Read the feed',
 
 			scoreName: 'The Tartuffe-Score measures consistency',
-			scoreWhat: 'Between what a politician says and what they do. The more their acts contradict their words, the higher their score.',
+			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. The more they contradict themselves, the higher their score.',
 			scoreLow: 'Coherent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'after this contradiction',
