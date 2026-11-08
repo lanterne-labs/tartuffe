@@ -64,8 +64,21 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes"
           git clone -q --depth 1 git@github.com:lanterne-labs/lanterne-labs.github.io.git pages
-          find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md -exec rm -rf {} +
+          # GitHub Pages serves the page with a 10-minute cache: a page of the
+          # previous build may still load for that long and ask for its own
+          # scripts. The previous build's _app/immutable files are kept one
+          # publish more (listed in .immutable), older ones are dropped.
+          prev=$(cat pages/.immutable 2>/dev/null || true)
+          find pages -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md ! -name _app -exec rm -rf {} +
+          find pages/_app -mindepth 1 -maxdepth 1 ! -name immutable -exec rm -rf {} + 2>/dev/null || true
+          cur=$(cd frontend/build-vote && find _app/immutable -type f | sort)
+          if [ -d pages/_app/immutable ]; then
+            (cd pages && find _app/immutable -type f | sort) | while read -r f; do
+              printf '%s\n%s\n' "$cur" "$prev" | grep -qxF "$f" || rm -f "pages/$f"
+            done
+          fi
           cp -R frontend/build-vote/. pages/
+          printf '%s\n' "$cur" > pages/.immutable
           touch pages/.nojekyll
           [ -z "${VOTE_APP_DOMAIN:-}" ] || printf '%s\n' "$VOTE_APP_DOMAIN" > pages/CNAME
           cd pages
