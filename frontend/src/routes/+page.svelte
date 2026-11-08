@@ -1,5 +1,5 @@
 <script lang="ts">
-	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
 	// The landing page: the contradiction checker first (the slogan, one
 	// made-up example of a contradiction and its score, the ranking and the
 	// feed), then the lab's temporary event, the private presidential vote,
@@ -49,8 +49,11 @@
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 	}
 	// The example: one contradiction among few facts, as the API would
-	// give it (an honesty score, 0 to 1).
+	// give it (an honesty score, 0 to 1), before and after it. The rise
+	// shows as the feed shows a score's move: a red ▲ and the change.
+	const HONESTY_BEFORE = 0.78;
 	const HONESTY = 0.62;
+	const RISE = (tartuffeOf(HONESTY) ?? 0) - (tartuffeOf(HONESTY_BEFORE) ?? 0);
 
 	const content = {
 		fr: {
@@ -60,7 +63,12 @@
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
 
-			exKicker: 'Concrètement',
+			scoreName: 'Le Tartuffe-Score mesure la cohérence',
+			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Plus il se contredit, plus son score monte.',
+			scoreLow: 'Cohérent',
+			scoreHigh: 'Tartuffe',
+			exRise: 'après cette contradiction',
+			exRiseLabel: 'Le Tartuffe-Score monte de {n} points',
 			exTitle: 'Une contradiction, et le Tartuffe-Score monte',
 			exWho: 'Un député',
 			exTag: 'Exemple',
@@ -103,7 +111,12 @@
 			ctaMain: 'See the ranking',
 			ctaFeed: 'Read the feed',
 
-			exKicker: 'At a glance',
+			scoreName: 'The Tartuffe-Score measures consistency',
+			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. The more they contradict themselves, the higher their score.',
+			scoreLow: 'Coherent',
+			scoreHigh: 'Tartuffe',
+			exRise: 'after this contradiction',
+			exRiseLabel: 'The Tartuffe-Score rises by {n} points',
 			exTitle: 'One contradiction, the Tartuffe-Score rises',
 			exWho: 'A politician',
 			exTag: 'Example',
@@ -173,7 +186,15 @@
 	</header>
 
 	<section class="example" use:reveal>
-		<span class="kicker">{c.exKicker}</span>
+		<h2>{c.scoreName}</h2>
+		<div class="ex-card score-intro">
+			<p class="si-what">{c.scoreWhat}</p>
+			<div class="si-scale" aria-hidden="true">
+				<span class="si-bar"></span>
+				<span class="si-ends"><span>0 · {c.scoreLow}</span><span>{c.scoreHigh} · 100</span></span>
+			</div>
+		</div>
+
 		<h2>{c.exTitle}</h2>
 
 		<div class="ex-card">
@@ -204,6 +225,10 @@
 
 				<div class="ex-score">
 					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
+					<span class="ex-rise" aria-label={c.exRiseLabel.replace('{n}', String(RISE))}>
+						<span class="ex-ticker" aria-hidden="true"><span>▲</span> +{RISE}</span>
+						<span class="ex-rise-note" aria-hidden="true">{c.exRise}</span>
+					</span>
 				</div>
 			</div>
 		</div>
@@ -421,6 +446,30 @@
 		text-wrap: balance;
 	}
 
+	/* What the Tartuffe-Score is, before the example: the example's card. */
+	.ex-card.score-intro {
+		margin-bottom: 3.5rem;
+	}
+	.si-what {
+		margin: 0 0 1.1rem;
+		font-size: 1rem;
+		line-height: 1.5;
+	}
+	.si-bar {
+		display: block;
+		height: 0.5rem;
+		border-radius: var(--radius-full);
+		background: linear-gradient(90deg, var(--green), var(--amber), var(--red));
+	}
+	.si-ends {
+		display: flex;
+		justify-content: space-between;
+		margin-top: 0.35rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		color: var(--text-muted);
+	}
+
 	/* The example */
 	.ex-card {
 		max-width: 40rem;
@@ -618,6 +667,33 @@
 	}
 	.more a {
 		color: var(--text-secondary);
+	}
+	/* The rise, drawn as the feed's ticker: a red ▲ and the change. */
+	.ex-rise {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		margin-top: 0.4rem;
+	}
+	.ex-ticker {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.6rem;
+		border-radius: var(--radius-full);
+		background: var(--error-bg);
+		border: 1px solid var(--error-border);
+		color: var(--red);
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+	.ex-ticker span {
+		font-size: 0.7rem;
+	}
+	.ex-rise-note {
+		margin-top: 0.25rem;
+		font-size: 0.72rem;
+		color: var(--text-muted);
 	}
 	.more a:hover {
 		color: var(--text-primary);
