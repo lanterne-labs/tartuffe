@@ -99,6 +99,10 @@
 						{:else}
 							<span class="noimg">{current.p.name.charAt(0).toUpperCase()}</span>
 						{/if}
+						{#if current.p.score_reliable === false}
+							<!-- The same mark as on the dial: a score being consolidated. -->
+							<span class="unsure-mark unsure-mark--big" role="note" aria-label={tr('score.consolidating.short', lang)}>🚧</span>
+						{/if}
 					{/key}
 				</span>
 				<span class="needle" style="left: {place}px"></span>
@@ -124,6 +128,9 @@
 							<img src={r.p.image_url} alt={displayName(r.p.name)} />
 						{:else}
 							<span class="noimg">{r.p.name.charAt(0).toUpperCase()}</span>
+						{/if}
+						{#if r.p.score_reliable === false}
+							<span class="unsure-mark" aria-hidden="true">🚧</span>
 						{/if}
 					</button>
 				{/each}
@@ -251,25 +258,22 @@
 		background: none;
 		cursor: pointer;
 		opacity: 0.55;
-		filter: grayscale(1);
 		transition:
 			opacity 0.2s,
-			filter 0.2s,
 			transform 0.15s;
 	}
 	.other:hover,
 	.other:focus-visible {
 		opacity: 1;
-		filter: none;
 		border-color: var(--oc);
 		transform: translateX(-50%) scale(1.15);
 		z-index: 2;
 	}
 	.other--on {
 		opacity: 1;
-		filter: none;
 		border-color: var(--oc);
 	}
+	/* The face is grey until it is in focus; the mark on it keeps its colour. */
 	.other img,
 	.other .noimg {
 		width: 100%;
@@ -282,6 +286,16 @@
 		color: var(--text-muted);
 		font-size: 0.75rem;
 		font-weight: 700;
+		filter: grayscale(1);
+		transition: filter 0.2s;
+	}
+	.other:hover img,
+	.other:hover .noimg,
+	.other:focus-visible img,
+	.other:focus-visible .noimg,
+	.other--on img,
+	.other--on .noimg {
+		filter: none;
 	}
 	.ends {
 		display: flex;
@@ -310,5 +324,24 @@
 	.other--unsure:not(.other--on) {
 		opacity: 0.45;
 		border-style: dashed;
+	}
+	/* The consolidation mark of the dial (TartuffeScore), at the foot of the
+	   face: the small faces are grey and dim, the mark stays in colour. */
+	.unsure-mark {
+		position: absolute;
+		right: -4px;
+		bottom: -4px;
+		z-index: 2;
+		display: grid;
+		place-items: center;
+		width: 1.25em;
+		height: 1.25em;
+		font-size: 0.8rem;
+		line-height: 1;
+	}
+	.unsure-mark--big {
+		right: -2px;
+		bottom: -2px;
+		font-size: 1.15rem;
 	}
 </style>

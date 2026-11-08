@@ -207,6 +207,25 @@ func (s *Service) handleGetPersonHistory(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(points)
 }
 
+// handleGetPersonCoverage returns the histogram of a person's facts by year of statement.
+func (s *Service) handleGetPersonCoverage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	personID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+		return
+	}
+
+	coverage, err := s.store.GetPersonCoverage(ctx, personID)
+	if err != nil {
+		httpx.InternalError(w, err, "failed to get person coverage")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(coverage)
+}
+
 // handleGetPersonMembers returns persons affiliated with an entity (e.g., deputies in a party)
 func (s *Service) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

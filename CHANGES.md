@@ -28,6 +28,13 @@ The worker's usage report (per task, from the log of one deployment) and `decisi
 - `core.datePublished`: a fact of a file takes the file's date, else the date the LLM read in the text (the order of the news plugin).
 - The 95 facts were dated from their files, and the 11 articles that had lost facts ingested again.
 
+## 2026-11-09: The person page shows the facts per year beside the contradictions over time
+
+« Période couverte : janvier 2011 → novembre 2026 » for Marine Le Pen read as fifteen years of record, while 4 400 of her 4 524 facts are from 2022 on (2011: 26 facts, 2006 to 2010: 3). The line is true (a collection task that ended starts in January 2011) but one early date sets its start, so it says nothing of where the record is thick.
+- `GET /api/person/{id}/coverage` (`storage.GetPersonCoverage`): the facts per year of statement (the statement date, else the earliest source's publication; duplicates left out, as in the fact count), every year from the first to this one with the empty ones at 0, and the undated facts counted apart.
+- The person page puts two cards of equal width side by side, one under the other on a phone: « Évolution des contradictions » (the chart that was « Évolution ») and « Faits par année » (`CoverageChart.svelte`, the same legend, axis, bars and tooltip as the chart beside it).
+- The comparison of the candidates (`ScoreCompare.svelte`) carries the 🚧 of the dial on a score being consolidated: on the portrait in focus and on the small face in the rows. The grey of the small faces is now on the photo, not on the button, so the mark keeps its colour.
+
 ## 2026-11-08: The vote audit read 700 checkpoints for one ballot
 
 « Lecture du registre · 584/695 » with a single voter: the ledger takes a checkpoint at least every 10 minutes whatever happened (isoloir SPEC §4), so the log held 696 checkpoints for 18 entries after 8 days (about 31 000 a year with no vote), and the browser's audit read each as two files, twice: 2 800 fetches, 125 000 a year from now. Fixed in isoloir (lanterne-labs/isoloir#10): the mirror writes `windows/<k>.json` (256 checkpoints, or 1 MiB), the readers take the windows first and the checkpoint files only for what no window holds, and the browser's audit keeps its first pass for the replay. The ingest backfills the windows of the existing log at boot. The site takes `@isoloir/web` 0.1.4; the progress line still counts checkpoints, now read in a handful of fetches.

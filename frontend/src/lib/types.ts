@@ -151,6 +151,18 @@ export interface HistoryPoint {
 	recent_score: number;
 }
 
+// The histogram of a person's facts by year of statement, every year from the
+// first to the last; undated counts the facts on no year.
+export interface CoverageYear {
+	year: number;
+	facts: number;
+}
+export interface Coverage {
+	years: CoverageYear[];
+	undated: number;
+	total: number;
+}
+
 // Polls (backend/polls)
 
 export interface PollBlackout {

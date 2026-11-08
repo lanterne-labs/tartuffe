@@ -73,6 +73,10 @@ func (f *fakeStore) GetPersonHistory(context.Context, int64) ([]storage.HistoryP
 	return f.history, nil
 }
 
+func (f *fakeStore) GetPersonCoverage(context.Context, int64) (*storage.Coverage, error) {
+	return &storage.Coverage{Years: []storage.CoverageYear{}}, nil
+}
+
 func (f *fakeStore) GetFactPersons(context.Context, int64, int, int) ([]storage.PersonSummary, error) {
 	return nil, nil
 }
