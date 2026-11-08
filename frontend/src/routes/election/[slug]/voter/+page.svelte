@@ -149,7 +149,19 @@
 		actionError = '';
 		actionDetail = '';
 		try {
-			await vs.need().cast({ rank: next });
+			const s = vs.need();
+			// A ballot proven before and never acknowledged (the relays did
+			// not take it) waits in the browser: the same ranking is sent
+			// again, another one replaces it. Casting over it is refused.
+			if (ballot.state === 'sent' || (ballot.state === 'failed' && ballot.kept)) {
+				const kept = rankOf(ballot.choice);
+				if (kept && JSON.stringify(kept) === JSON.stringify(next)) {
+					await s.resendBallot();
+					return true;
+				}
+				s.discardKeptBallot();
+			}
+			await s.cast({ rank: next });
 			return true;
 		} catch (e) {
 			failed(e);
