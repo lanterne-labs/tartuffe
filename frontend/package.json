@@ -34,7 +34,7 @@
 		"@aztec/bb.js": "5.0.0",
 		"@fontsource/cormorant-garamond": "5.3.0",
 		"@fontsource/inter": "5.3.0",
-		"@isoloir/web": "file:vendor/isoloir-web-0.1.0.tgz",
+		"@isoloir/web": "file:vendor/isoloir-web-0.1.1.tgz",
 		"@noir-lang/noir_js": "1.0.0-beta.22",
 		"@scure/base": "2.0.0",
 		"@sveltejs/adapter-node": "^5.0.0",
