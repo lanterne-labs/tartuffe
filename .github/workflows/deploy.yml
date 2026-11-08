@@ -1,6 +1,7 @@
-# Deploys main to the host on every push. What is specific to the host (its
-# tools, how a deployment is followed) is in the secret DEPLOY_SCRIPT, run with
-# SERVICE and DEPLOY_TOKEN set; its output stays out of the public log.
+# Deploys main to the host on every push. The host cannot read the
+# lanterne-labs repositories itself (its login is a personal GitHub
+# account), so the code is uploaded with a project token instead:
+# DEPLOY_TOKEN, a token of the project's production environment.
 name: deploy
 
 on:
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # A build takes about 2 minutes; the backstop of the wait in the script.
+    # A host build takes about 2 minutes; the backstop of the wait below.
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -27,14 +28,25 @@ jobs:
         service: [mirror, worker, frontend]
     steps:
       - uses: actions/checkout@v4
-      - name: deploy ${{ matrix.service }}
+      - run: npm install -g host-cli@5.70.0
+      # The upload returns at once; the deployment is then followed by its
+      # status. `host up --ci` would wait for it too, but a build the host
+      # skips (nothing changed in the service's watch paths, a setting of the
+      # service) never reaches an end for the CLI: on 2026-11-07 a job ran
+      # for 3 h and 2026-11-08 another until the timeout. SKIPPED is an end
+      # here: the service runs the same code already.
+      - name: host up ${{ matrix.service }}
         env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           SERVICE: ${{ matrix.service }}
-          DEPLOY_TOKEN: ${{ secrets[secrets.DEPLOY_TOKEN_NAME] }}
-          DEPLOY_SCRIPT: ${{ secrets.DEPLOY_SCRIPT }}
         run: |
-          printf '%s\n' "$DEPLOY_SCRIPT" > "$RUNNER_TEMP/deploy.sh"
-          status=0
-          sh "$RUNNER_TEMP/deploy.sh" > "$RUNNER_TEMP/deploy.log" 2>&1 || status=$?
-          echo "deploy of $SERVICE: exit $status"
-          exit "$status"
+          host up --service "$SERVICE" --detach
+          while true; do
+            status=$(host deployment list --service "$SERVICE" --limit 1 --json | jq -r '.[0].status')
+            case "$status" in
+              SUCCESS|SKIPPED|SLEEPING) echo "deployment $status"; exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "deployment $status"; exit 1 ;;
+            esac
+            echo "deployment $status, waiting"
+            sleep 15
+          done
