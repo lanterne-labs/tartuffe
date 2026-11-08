@@ -622,9 +622,9 @@
 					<div class="share-big"><ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} /></div>
 				{/if}
 				{#if canResend}
-					<button class="btn btn-small btn-primary" onclick={resend} disabled={busy}>{tr('v2.ballot.resend', currentLang)}</button>
+					<button class="btn submit btn-primary" onclick={resend} disabled={busy}>{tr('v2.ballot.resend', currentLang)}</button>
 				{:else if canRetry}
-					<button class="btn btn-small btn-primary" onclick={retry} disabled={busy}>{tr('v2.ballot.retry', currentLang)}</button>
+					<button class="btn submit btn-primary" onclick={retry} disabled={busy}>{tr('v2.ballot.retry', currentLang)}</button>
 				{/if}
 			</div>
 			<!-- One line under the button, its place kept: reordering moves nothing. -->
