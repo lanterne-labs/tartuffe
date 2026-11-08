@@ -56,3 +56,29 @@ func (l *APISpendLedger) Settle(ctx context.Context, day time.Time, delta float6
 	}
 	return nil
 }
+
+// AddPhase adds the real cost of a call to its phase of the day
+// (llm.PhaseLedger).
+func (l *APISpendLedger) AddPhase(ctx context.Context, day time.Time, phase string, cost float64) error {
+	_, err := l.pool.Exec(ctx, `
+		INSERT INTO llm_api_spend_phase (day, phase, spent_usd) VALUES ($1, $2, $3)
+		ON CONFLICT (day, phase) DO UPDATE SET spent_usd = llm_api_spend_phase.spent_usd + EXCLUDED.spent_usd, updated_at = NOW()`,
+		day.UTC(), phase, cost)
+	if err != nil {
+		return fmt.Errorf("api spend phase: %w", err)
+	}
+	return nil
+}
+
+// Spent returns the spend of day, reservations included, as the cap counts it.
+func (l *APISpendLedger) Spent(ctx context.Context, day time.Time) (float64, error) {
+	var spent float64
+	err := l.pool.QueryRow(ctx, `SELECT spent_usd FROM llm_api_spend WHERE day = $1`, day.UTC()).Scan(&spent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("api spend: %w", err)
+	}
+	return spent, nil
+}

@@ -280,6 +280,46 @@
         }
       ],
       "id": 7
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Claude API spend per day and phase (USD)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "mirrordb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 70
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "mirrordb"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT day::timestamptz AS time, phase AS metric, spent_usd AS value FROM llm_api_spend_phase WHERE $__timeFilter(day::timestamptz) ORDER BY 1"
+        }
+      ]
     }
   ]
 }
