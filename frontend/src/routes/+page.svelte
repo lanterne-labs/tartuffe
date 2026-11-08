@@ -63,9 +63,8 @@
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
 
-			exKicker: 'Concrètement',
-			scoreName: 'Le Tartuffe-Score',
-			scoreWhat: 'Il mesure la cohérence d’un élu : ce qu’il dit face à ce qu’il fait. Plus ses actes contredisent ses paroles, plus il monte.',
+			scoreName: 'Le Tartuffe-Score mesure la cohérence',
+			scoreWhat: 'Celle d’un élu entre ce qu’il dit et ce qu’il fait. Plus ses actes contredisent ses paroles, plus son score monte.',
 			scoreLow: 'Cohérent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'après cette contradiction',
@@ -112,9 +111,8 @@
 			ctaMain: 'See the ranking',
 			ctaFeed: 'Read the feed',
 
-			exKicker: 'At a glance',
-			scoreName: 'The Tartuffe-Score',
-			scoreWhat: 'It measures how consistent a politician is: what they say against what they do. The more their acts contradict their words, the higher it goes.',
+			scoreName: 'The Tartuffe-Score measures consistency',
+			scoreWhat: 'Between what a politician says and what they do. The more their acts contradict their words, the higher their score.',
 			scoreLow: 'Coherent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'after this contradiction',
@@ -188,10 +186,8 @@
 	</header>
 
 	<section class="example" use:reveal>
-		<span class="kicker">{c.exKicker}</span>
-
-		<div class="score-intro">
-			<h2 class="si-name">{c.scoreName}</h2>
+		<h2>{c.scoreName}</h2>
+		<div class="ex-card score-intro">
 			<p class="si-what">{c.scoreWhat}</p>
 			<div class="si-scale" aria-hidden="true">
 				<span class="si-bar"></span>
@@ -450,26 +446,14 @@
 		text-wrap: balance;
 	}
 
-	/* What the Tartuffe-Score is, before the example */
-	.score-intro {
-		max-width: 40rem;
-		margin: 0.9rem auto 2.5rem;
-		padding: 1.25rem 1.5rem;
-		text-align: left;
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-card);
-	}
-	.score-intro .si-name {
-		margin: 0 0 0.4rem;
-		font-size: 1.4rem;
-		text-align: left;
+	/* What the Tartuffe-Score is, before the example: the example's card. */
+	.ex-card.score-intro {
+		margin-bottom: 3.5rem;
 	}
 	.si-what {
-		margin: 0 0 1rem;
-		line-height: 1.55;
-		color: var(--text-secondary);
+		margin: 0 0 1.1rem;
+		font-size: 1rem;
+		line-height: 1.5;
 	}
 	.si-bar {
 		display: block;
@@ -481,8 +465,8 @@
 		display: flex;
 		justify-content: space-between;
 		margin-top: 0.35rem;
-		font-size: 0.75rem;
-		font-weight: 600;
+		font-size: 0.72rem;
+		font-weight: 700;
 		color: var(--text-muted);
 	}
 
