@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"digital-mirror/backend/core"
 
@@ -102,11 +103,21 @@ func TestStoreBallotsPlacesBySubject(t *testing.T) {
 	organes := map[string]OrganeInfo{"PO1": {OrganeRef: "PO1", LongName: "Groupe Placement"}}
 	emb := make([]float32, 4096)
 	emb[0] = 1
+	// A fact without a date is never stored: every scrutin has its vote date.
+	voteDate := time.Date(2026, 1, 15, 15, 0, 0, 0, time.UTC)
+	// The stance is for the candidates: every voter of the test is one.
+	for _, v := range []struct{ name, kind string }{
+		{"Placement Alpha", "human"}, {"Placement Beta", "human"}, {"Placement Gamma", "human"}, {"Groupe Placement", "party"},
+	} {
+		id, _, err := storer.AddPersonWithType(ctx, v.name, v.kind)
+		require.NoError(t, err)
+		require.NoError(t, storer.SetCandidate(ctx, id, true))
+	}
 	// scrutin stores the ballots of the deputies (and of the party when
 	// withParty) on one scrutin of the law at dossier.
 	scrutin := func(dossier, key, title, summary, phrase string, deputies []VoteEvent, withParty bool) {
 		t.Helper()
-		law := Law{Key: key, Title: title, URL: dossier}
+		law := Law{Key: key, Title: title, URL: dossier, VoteDate: &voteDate}
 		records := deriveDeputyFacts(law, deputies, LawSummary{}, phrase)
 		if withParty {
 			records = append(records, derivePartyMajorityFacts(law, LawGroupStats{"PO1": {Position: VoteFor, For: 9, Against: 1}}, 0.8, organes, LawSummary{}, phrase)...)

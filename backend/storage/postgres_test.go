@@ -158,6 +158,10 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	defer teardown()
 
 	ctx := context.Background()
+	// Only the candidates' facts carry an embedding: the subject is one.
+	personAID, _, err := storer.AddPersonWithType(ctx, "person a", "human")
+	require.NoError(t, err)
+	require.NoError(t, storer.SetCandidate(ctx, personAID, true))
 	pubDate := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	input := core.StoreFactInput{
 		SubjectEntity:      "Person A",
@@ -210,10 +214,10 @@ func TestPostgresStorer_StoreFact(t *testing.T) {
 	assert.WithinDuration(t, *input.PublishedAt, *queriedPublishedAt, time.Second, "PublishedAt mismatch in fact_sources")
 
 	// 3. Verify only the subject entity person exists (InvolvedPeople no longer create DB links)
-	var personAID int64
-	err = storer.pool.QueryRow(ctx, "SELECT id FROM persons WHERE name = $1", "person a").Scan(&personAID)
+	var personACount int
+	err = storer.pool.QueryRow(ctx, "SELECT COUNT(*) FROM persons WHERE name = $1", "person a").Scan(&personACount)
 	require.NoError(t, err, "Subject entity 'person a' should exist")
-	require.Positive(t, personAID)
+	require.Equal(t, 1, personACount, "the insert reuses the existing person")
 
 	// Person B (InvolvedPeople only) should NOT be in the DB
 	var personBCount int
