@@ -57,3 +57,20 @@ func TestAPIPays(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, pays, "a share of 0 turns the split off")
 }
+
+func TestRejudgeBudgetFromEnv(t *testing.T) {
+	t.Setenv("DETECT_REJUDGE_BUDGET", "")
+	if v, err := rejudgeBudgetFromEnv(); err != nil || v != defaultRejudgeBudget {
+		t.Errorf("unset: got %d, %v; want %d", v, err, defaultRejudgeBudget)
+	}
+	t.Setenv("DETECT_REJUDGE_BUDGET", "4500")
+	if v, err := rejudgeBudgetFromEnv(); err != nil || v != 4500 {
+		t.Errorf("4500: got %d, %v", v, err)
+	}
+	for _, bad := range []string{"-1", "many"} {
+		t.Setenv("DETECT_REJUDGE_BUDGET", bad)
+		if _, err := rejudgeBudgetFromEnv(); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}

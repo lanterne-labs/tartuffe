@@ -42,6 +42,8 @@ go build -o dm .                                # Build binary
 ./dm queue add "Marine Le Pen"                   # the watch list: one task per day for yesterday, per period plugin
 ./dm worker run                                  # the long-lived worker (the host service `worker`)
 # WORKER_PAUSED=true on the worker service stops all its work (tasks, feed, maintenance) until removed
+# DETECT_REJUDGE_BUDGET=4500 on the worker service: how many negative pair verdicts of an older rulebook a pass
+#   re-opens for the detector (default 0: a rule change keeps the old NOs; set it when a change is meant to find more)
 ./dm persons candidate add "Marine Le Pen"       # the candidates: the persons the AI work after extraction runs for
 ./dm persons candidate list
 ```

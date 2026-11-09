@@ -31,6 +31,25 @@ func extractionShareFromEnv() (float64, error) {
 	return v, nil
 }
 
+// rejudgeBudgetFromEnv reads DETECT_REJUDGE_BUDGET: how many stale negative
+// pair verdicts (a NO under an older rulebook hash) a maintenance pass
+// re-opens for the detector. Not set: defaultRejudgeBudget, none. A rulebook
+// change re-judged every NO ever recorded (13,987 pairs after the review of
+// 2026-11-08, 35,000 judged on 2026-11-05), while most changes add rules
+// against false positives, which can only turn a YES into a NO: the re-judge
+// is asked for, on the worker service, when a change is meant to find more.
+func rejudgeBudgetFromEnv() (int, error) {
+	s := strings.TrimSpace(os.Getenv("DETECT_REJUDGE_BUDGET"))
+	if s == "" {
+		return defaultRejudgeBudget, nil
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("DETECT_REJUDGE_BUDGET %q: want a whole number, 0 or more", s)
+	}
+	return v, nil
+}
+
 // spendSplit shares the API key's day between extraction and the rest of the
 // pipeline, in rounds. A round of extraction may spend share of what is left;
 // then the maintenance pass runs; what is left after it starts the next round.
