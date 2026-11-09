@@ -535,6 +535,25 @@ func activeRouting() *Routing {
 	return routing
 }
 
+// UsesLocal reports whether some task of the routing is served by the local
+// endpoint (the OpenAI-compatible server with its OpenRouter fallback).
+// On the claude-team profile no task is: the box and its fallback are not
+// probed, so that their state is never reported for calls that go to Claude.
+func (r *Routing) UsesLocal() bool {
+	if r.Default.Endpoint == EndpointLocal {
+		return true
+	}
+	for _, rt := range r.Tasks {
+		if rt.Endpoint == EndpointLocal {
+			return true
+		}
+	}
+	return false
+}
+
+// ActiveRoutingUsesLocal reports UsesLocal of the routing of the process.
+func ActiveRoutingUsesLocal() bool { return activeRouting().UsesLocal() }
+
 // SetRouting makes r the routing of every Client.Chat call of the process
 // until restore is called. The process start installs the routing of
 // LLM_PROFILE (InstallProfileFromEnv); the goldens install their own.

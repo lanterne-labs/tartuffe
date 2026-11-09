@@ -118,9 +118,13 @@ func MarkPrimaryUp() {
 // of per-call. Returns true when the primary answered.
 //
 // No fallback configured ⇒ always returns true without probing (there is
-// nothing to flip to, so the breaker would only add noise).
+// nothing to flip to, so the breaker would only add noise). A routing that
+// sends no task to the local endpoint (the claude-team profile) ⇒ the same:
+// on 2026-11-09 the probe of the idle GPU box logged "routing calls straight
+// to fallback" on a worker whose every call went to a Claude seat, and the
+// line was read as the pass running on OpenRouter.
 func ProbePrimary(ctx context.Context) bool {
-	if strings.TrimSpace(os.Getenv("FALLBACK_URL")) == "" {
+	if strings.TrimSpace(os.Getenv("FALLBACK_URL")) == "" || !ActiveRoutingUsesLocal() {
 		return true
 	}
 	base := primaryBaseURL()
