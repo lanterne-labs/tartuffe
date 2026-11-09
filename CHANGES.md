@@ -2,6 +2,16 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: The score stretched: a contradiction costs 9, the repeats 2.5 times more; the dial is linear
+
+On the candidates' real inputs (1 000 to 4 500 facts, 0 to 7 distinct contradictions, up to 45 pairs) the formula `exp(-1.5·B/max(F,75) - 0.03·B - 0.05·ln(1+E))` had one live term: the ratio term is a few thousandths at these fact counts, so the score was `exp(-0.03·B - 0.05·ln(1+E))`, and the most contradicted candidate (7 bundles, 45 pairs) read a Tartuffe-Score of 33, six points above one with the same 7 bundles and 14 pairs. The constants were sized when a person held one or two contradictions. Now `0.09` per bundle (one contradiction: 9 instead of 3) and `0.125` on the repeats, so 7 bundles with 45 pairs read 66, with 14 pairs 59, 6 bundles 51, one 9 (`backend/core/honesty.go`, `frontend/src/lib/score.ts`; the about page and its explorer read the constants from `score.ts` instead of repeating them). The ratio term stays: at the floor of 75 facts it still weighs (0.14 for 7 bundles).
+
+The repeat constant has a ceiling: a bundle of N pairs must always cost less than N distinct bundles (`j + a·ln N < j·N`, tightest at N = 2), so `a < j / ln 2`; the first pick (0.08 and 0.15) broke it, and `TestComputeHonestyScore_BundlingReducesPenalty` now asserts the inequality on the constants, not only on sample points at 200 facts where the ratio term hid the breach.
+
+The dial (`TartuffeScore.svelte`, and the band of `ScoreCompare`) was logarithmic in contradictions, with its scale (`K`) still that of a formula two changes old: under the new scores the three most contradicted would have sat between 63 and 73 % of the arc while a single contradiction sat at 23 %. It is now linear in the score: the needle is at the number shown, the graduations every 5 points (10 on a small dial), a long one at 0, 50 and 100.
+
+Ordering is unchanged (the transform is monotone in B and E), so the reliability marks and the podiums do not move. After the deploy, `dm scores recompute` on production rewrites the stored `persons.honesty_score` (the stored score is read, not recomputed, by the API).
+
 ## 2026-11-09: A rule change no longer re-judges every NO; the re-judge is asked for
 
 Every change to the detector's rules (its prompt, the false-positive catalog) gave the pair verdicts a new hash, and the maintenance pass re-opened every negative verdict under an older hash, 4,500 per pass, until all were judged again: 13,987 pairs after the review of 2026-11-08, 35,000 judged on 2026-11-05, 20,000 on 11-07. That was the largest part of the detection's calls, and most changes add rules against false positives, which can only turn a YES into a NO. The pass now re-opens `DETECT_REJUDGE_BUDGET` stale negatives per pass (default 0: none), to set on the worker service when a change is meant to find more; the stale count stays in the log.

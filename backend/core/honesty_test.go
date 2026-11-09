@@ -1,6 +1,7 @@
 package core
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,7 +9,7 @@ import (
 
 func TestComputeHonestyScore(t *testing.T) {
 	// Each test fully bundles: bundles == total, so the extras penalty is zero. With the
-	// smoothed formula (RD=1.5, AD=0.03, floor=75), score = exp(-1.5*ratio - 0.03*bundles)
+	// smoothed formula (RD=1.5, AD=0.09, floor=75), score = exp(-1.5*ratio - 0.09*bundles)
 	// where ratio = bundles / max(facts, 75).
 	tests := []struct {
 		name        string
@@ -20,17 +21,17 @@ func TestComputeHonestyScore(t *testing.T) {
 	}{
 		{"zero facts returns 1.0", 0, 0, 0, 1.0, 1.0},
 		{"zero contradictions returns 1.0", 200, 0, 0, 1.0, 1.0},
-		// 1 contradiction in a tiny fact base must stay generous (>95%).
-		{"1/2 stays near 95%", 2, 1, 1, 0.94, 0.96},
-		{"1/200 ~ 96%", 200, 1, 1, 0.95, 0.97},
-		{"5/200 ~ 83%", 200, 5, 5, 0.82, 0.84},
-		{"14/200 ~ 59%", 200, 14, 14, 0.58, 0.60},
-		{"20/200 ~ 47%", 200, 20, 20, 0.46, 0.48},
-		{"50/200 ~ 15%", 200, 50, 50, 0.14, 0.16},
-		{"100/200 ~ 2%", 200, 100, 100, 0.02, 0.03},
+		// 1 contradiction in a tiny fact base must stay generous (~90%).
+		{"1/2 stays near 90%", 2, 1, 1, 0.89, 0.90},
+		{"1/200 ~ 91%", 200, 1, 1, 0.90, 0.91},
+		{"5/200 ~ 61%", 200, 5, 5, 0.61, 0.62},
+		{"14/200 ~ 26%", 200, 14, 14, 0.25, 0.26},
+		{"20/200 ~ 14%", 200, 20, 20, 0.14, 0.15},
+		{"50/200 ~ 0.8%", 200, 50, 50, 0.007, 0.008},
+		{"100/200 ~ 0", 200, 100, 100, 0.0, 0.001},
 		// With the smoothing floor, extreme ratios at tiny fact counts stay above zero;
 		// the absolute decay still pulls them down as bundles grow.
-		{"10/10 with smoothing ~ 61%", 10, 10, 10, 0.60, 0.62},
+		{"10/10 with smoothing ~ 33%", 10, 10, 10, 0.33, 0.34},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,12 +44,12 @@ func TestComputeHonestyScore(t *testing.T) {
 
 // TestComputeHonestyScore_LowFactSmoothing asserts that one contradiction against
 // a tiny fact base does not collapse the score: with the smoothing floor of 75,
-// 1 contradiction out of 2 facts should yield ~95%, and the score should decay
+// 1 contradiction out of 2 facts should yield ~90%, and the score should decay
 // exponentially from there as bundles grow.
 func TestComputeHonestyScore_LowFactSmoothing(t *testing.T) {
 	score := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
-	assert.Greater(t, score, 0.94, "1 contradiction against 2 facts must stay above 94%%")
-	assert.Less(t, score, 0.96, "1 contradiction against 2 facts should still cost ~5%%")
+	assert.Greater(t, score, 0.89, "1 contradiction against 2 facts must stay above 89%%")
+	assert.Less(t, score, 0.91, "1 contradiction against 2 facts should still cost ~10%%")
 
 	// Decay should be exponential in bundles when fact count is below the smoothing floor.
 	s1 := ComputeHonestyScore(2, ContradictionStats{Bundles: 1, Total: 1})
@@ -64,13 +65,18 @@ func TestComputeHonestyScore_LowFactSmoothing(t *testing.T) {
 
 // TestComputeHonestyScore_BundlingReducesPenalty asserts the core property of bundling:
 // for any N >= 2, replacing N independent pairs with one bundle of size N strictly raises
-// the score (i.e. the penalty 0.02 + 0.05*ln(N) is strictly less than the legacy 0.02*N).
+// the score (i.e. the penalty j + a*ln(N) is strictly less than j*N). The condition on
+// the constants is a < j / ln 2 (the case N = 2, the tightest); with many facts the ratio
+// term no longer helps the bundle, so the constants alone must hold it.
 func TestComputeHonestyScore_BundlingReducesPenalty(t *testing.T) {
-	const facts = 200
-	for _, n := range []int{2, 3, 5, 10, 20, 40} {
-		flat := ComputeHonestyScore(facts, ContradictionStats{Bundles: n, Total: n})
-		bundled := ComputeHonestyScore(facts, ContradictionStats{Bundles: 1, Total: n})
-		assert.Greater(t, bundled, flat, "bundling N=%d pairs should improve the score", n)
+	assert.Less(t, HonestyScoreBundleExtraDecay*math.Ln2, HonestyScoreAbsoluteDecay,
+		"a bundle of 2 pairs must cost less than 2 distinct bundles whatever the fact count")
+	for _, facts := range []int{200, 5000} {
+		for _, n := range []int{2, 3, 5, 10, 20, 40} {
+			flat := ComputeHonestyScore(facts, ContradictionStats{Bundles: n, Total: n})
+			bundled := ComputeHonestyScore(facts, ContradictionStats{Bundles: 1, Total: n})
+			assert.Greater(t, bundled, flat, "bundling N=%d pairs should improve the score (%d facts)", n, facts)
+		}
 	}
 }
 
