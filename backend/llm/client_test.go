@@ -134,6 +134,7 @@ func TestIsCreditError(t *testing.T) {
 		{402, "", true},
 		{200, "insufficient credits", true},
 		{200, "Insufficient_Quota reached", true},
+		{400, `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}`, true},
 		{429, "RESOURCE_EXHAUSTED: quota exceeded", true},
 		{429, "rate limit exceeded", false},
 		{500, "internal server error", false},

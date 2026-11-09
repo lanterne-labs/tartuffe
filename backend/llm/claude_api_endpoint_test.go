@@ -333,12 +333,15 @@ func TestClaudeAPIEndpoint_CreditErrorStopsTheRun(t *testing.T) {
 	for name, c := range map[string]struct {
 		status int
 		body   string
+		alert  bool // the credit alert of do
 	}{
-		"402":         {http.StatusPaymentRequired, `{"type":"error","error":{"type":"billing_error","message":"no credit"}}`},
-		"spend limit": {http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","details":{"error_code":"enforced_spend_limit_reached"}}}`},
-		"401":         {http.StatusUnauthorized, `{"type":"error","error":{"type":"authentication_error"}}`},
-		"403":         {http.StatusForbidden, `{"type":"error","error":{"type":"permission_error"}}`},
-		"404":         {http.StatusNotFound, `{"type":"error","error":{"type":"not_found_error"}}`},
+		"402":         {http.StatusPaymentRequired, `{"type":"error","error":{"type":"billing_error","message":"no credit"}}`, true},
+		"spend limit": {http.StatusTooManyRequests, `{"type":"error","error":{"type":"rate_limit_error","details":{"error_code":"enforced_spend_limit_reached"}}}`, true},
+		// The answer of 2026-11-09 when the prepaid credit ran out: a 400, not a 402.
+		"400 credit": {http.StatusBadRequest, `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}`, true},
+		"401":        {http.StatusUnauthorized, `{"type":"error","error":{"type":"authentication_error"}}`, false},
+		"403":        {http.StatusForbidden, `{"type":"error","error":{"type":"permission_error"}}`, false},
+		"404":        {http.StatusNotFound, `{"type":"error","error":{"type":"not_found_error"}}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var credit string
@@ -350,9 +353,9 @@ func TestClaudeAPIEndpoint_CreditErrorStopsTheRun(t *testing.T) {
 			req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskAudit}
 			_, _, err := e.Call(context.Background(), req, apiOpts)
 			wantStopped(t, err, time.Time{})
-			wantAlert := "claude" // the credit alert of do
-			if c.status != http.StatusPaymentRequired && c.status != http.StatusTooManyRequests {
-				wantAlert = ""
+			wantAlert := ""
+			if c.alert {
+				wantAlert = "claude"
 			}
 			if credit != wantAlert {
 				t.Fatalf("credit alert %q, want %q", credit, wantAlert)
