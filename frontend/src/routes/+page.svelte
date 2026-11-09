@@ -1,8 +1,8 @@
 <script lang="ts">
 	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
 	// The landing page: the contradiction checker first (the slogan, one
-	// made-up example of a contradiction and its score, the ranking and the
-	// feed), then the lab's temporary event, the private presidential vote,
+	// made-up example of a contradiction and its score, the ranking, the
+	// feed and the code), then the lab's temporary event, the private presidential vote,
 	// in its own colour with its end date, then the lab itself. The ranking is
 	// at /dashboard.
 	import { eventPaths } from '$lib/event';
@@ -55,6 +55,10 @@
 	const HONESTY = 0.62;
 	const RISE = (tartuffeOf(HONESTY) ?? 0) - (tartuffeOf(HONESTY_BEFORE) ?? 0);
 
+	// The site's source, public under the AGPL: the third way in, beside
+	// the ranking and the feed.
+	const CODE = 'https://github.com/lanterne-labs/mirror';
+
 	const content = {
 		fr: {
 			title: 'Les actes suivent‑ils les paroles ?',
@@ -64,7 +68,7 @@
 			ctaFeed: 'Lire le fil',
 
 			scoreName: 'Le Tartuffe-Score mesure la cohérence',
-			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Plus il se contredit, plus son score monte.',
+			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Et avec la justice : nier ce qu’un tribunal a établi à son sujet compte aussi. Plus il se contredit, plus son score monte.',
 			scoreLow: 'Cohérent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'après cette contradiction',
@@ -78,17 +82,18 @@
 			exDidSrc: 'Scrutin à l’Assemblée',
 			exClash: 'Contradiction',
 			steps: [
-				['On relève', 'Ses déclarations et ses votes.'],
+				['On relève', 'Ses déclarations, ses votes, et les décisions de justice qui le concernent.'],
 				['On confronte', 'Quand ils se contredisent, on le note.'],
 				['On publie', 'Son Tartuffe-Score monte, preuves à l’appui.']
 			],
 			exNote: 'On mesure la cohérence, pas la vérité.',
 
-			svcKicker: 'Deux façons de suivre',
+			svcKicker: 'Suivre et vérifier',
 			svcTitle: 'Tout est en accès libre',
 			services: [
 				{ href: '/dashboard', icon: 'rank', title: 'Le classement', body: 'Chaque élu et chaque parti, de cohérent à tartuffe. Cherchez un nom, comparez.', cta: 'Ouvrir' },
-				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, au fil de l’eau. Un +1 les fait remonter.', cta: 'Lire' }
+				{ href: '/feed', icon: 'feed', title: 'Le fil', body: 'Les dernières contradictions, au fil de l’eau. Un +1 les fait remonter.', cta: 'Lire' },
+				{ href: CODE, icon: 'code', title: 'Le code', body: 'Le site est open source : la collecte, la détection, le calcul du score. Lisez-le, vérifiez-le, corrigez-le.', cta: 'Voir le code' }
 			],
 			aboutLink: 'Comment le score est calculé',
 
@@ -112,7 +117,7 @@
 			ctaFeed: 'Read the feed',
 
 			scoreName: 'The Tartuffe-Score measures consistency',
-			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. The more they contradict themselves, the higher their score.',
+			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. And with the courts: denying what a court has established about them counts too. The more they contradict themselves, the higher their score.',
 			scoreLow: 'Coherent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'after this contradiction',
@@ -126,17 +131,18 @@
 			exDidSrc: 'Vote in Parliament',
 			exClash: 'Contradiction',
 			steps: [
-				['We listen', 'What they say, how they vote.'],
+				['We listen', 'What they say, how they vote, and what courts ruled about them.'],
 				['We compare', 'The two clash? It’s on record.'],
 				['We show', 'The Tartuffe-Score rises. With the sources.']
 			],
 			exNote: 'Consistency, not truth.',
 
-			svcKicker: 'Two ways to use it',
+			svcKicker: 'Follow and verify',
 			svcTitle: 'Everything is public',
 			services: [
 				{ href: '/dashboard', icon: 'rank', title: 'The ranking', body: 'Every politician and party, from coherent to tartuffe. Search, compare.', cta: 'Open' },
-				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' }
+				{ href: '/feed', icon: 'feed', title: 'The feed', body: 'The latest contradictions, live. A +1 pushes them up.', cta: 'Read' },
+				{ href: CODE, icon: 'code', title: 'The code', body: 'The site is open source: the collection, the detection, the score. Read it, check it, fix it.', cta: 'See the code' }
 			],
 			aboutLink: 'How the score is computed',
 
@@ -166,6 +172,8 @@
 		<path d="M5 20V11M12 20V5M19 20v-6" />
 	{:else if name === 'feed'}
 		<path d="M5 6h14M5 12h14M5 18h9" />
+	{:else if name === 'code'}
+		<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14" />
 	{:else}
 		<path d="M5 12l4 4 10-10" /><rect x="3" y="3" width="18" height="18" rx="4" />
 	{/if}
@@ -245,7 +253,7 @@
 		<h2>{c.svcTitle}</h2>
 		<div class="svc-grid">
 			{#each c.services as s (s.href)}
-				<a class="svc" href={s.href}>
+				<a class="svc" href={s.href} target={s.href.startsWith('http') ? '_blank' : undefined} rel={s.href.startsWith('http') ? 'noopener noreferrer' : undefined}>
 					<svg class="svc-icon" viewBox="0 0 24 24" aria-hidden="true">{@render icon(s.icon)}</svg>
 					<h3>{s.title}</h3>
 					<p>{s.body}</p>
@@ -614,7 +622,7 @@
 	/* The services */
 	.svc-grid {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 1rem;
 		text-align: left;
 	}

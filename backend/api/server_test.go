@@ -70,6 +70,7 @@ func TestRoutes(t *testing.T) {
 		"GET /api/person/{id}/contradictions",
 		"GET /api/person/{id}/members",
 		"GET /api/person/{id}/history",
+		"GET /api/person/{id}/coverage",
 		"GET /api/facts/{id}/persons",
 		"GET /api/person/{id}/stances",
 		"GET /api/stances/{id}/contradictions",

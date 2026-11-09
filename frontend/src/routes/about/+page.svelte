@@ -56,6 +56,12 @@
 				'Préciser sa pensée n’est pas se contredire. On ne retient que deux faits qui ne peuvent pas être vrais en même temps.',
 				'Les deux faits sont présentés côte à côte, datés, cités et sourcés.'
 			],
+			courtTitle: 'Les paroles, les actes, et la justice',
+			courtBody: [
+				'Un élu peut se contredire de trois façons : par une autre déclaration, par un acte (un vote), ou en niant ce que la justice a établi à son sujet.',
+				'Une condamnation, une décision de justice ou la conclusion d’une enquête officielle est un fait, comme un vote. Nier ce qu’elle a tranché compte comme une contradiction, même si un recours est en cours.',
+				'Une accusation, une mise en examen ou un procès en cours ne comptent pas : seule une décision rendue compte, et seulement sur le point précis qu’elle tranche.'
+			],
 
 			scoreKicker: 'Le Tartuffe-Score',
 			scoreTitle: 'De cohérent à tartuffe',
@@ -131,6 +137,12 @@
 			sortBody: [
 				'Clarifying is not contradicting. We keep only two facts that cannot both be true.',
 				'Both facts side by side, dated, quoted, sourced.'
+			],
+			courtTitle: 'Words, deeds, and the courts',
+			courtBody: [
+				'A politician can contradict themselves in three ways: by another statement, by a deed (a vote), or by denying what a court has established about them.',
+				'A conviction, a court ruling or the conclusion of an official inquiry is a fact, like a vote. Denying what it settled counts as a contradiction, even while an appeal is pending.',
+				'An accusation, a charge or a trial under way does not count: only a ruling handed down does, and only on the precise point it settles.'
 			],
 
 			scoreKicker: 'The Tartuffe-Score',
@@ -234,6 +246,8 @@
 		<div class="sort-text">
 			<h3>{c.sortTitle}</h3>
 			{#each c.sortBody as p}<p>{p}</p>{/each}
+			<h3 class="sort-sub">{c.courtTitle}</h3>
+			{#each c.courtBody as p}<p>{p}</p>{/each}
 		</div>
 		<div class="sort-figure"><ContradictionFlow lang={currentLang} /></div>
 	</section>
@@ -430,6 +444,11 @@
 		gap: 1.5rem;
 		align-items: center;
 		margin-top: -1.5rem;
+	}
+
+	/* The second heading of the card: what counts as a fact against a denial. */
+	.sort-sub {
+		margin-top: 1.5rem;
 	}
 
 	/* Formula */

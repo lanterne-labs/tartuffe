@@ -4,7 +4,7 @@
 	import FactVersions from '$lib/components/FactVersions.svelte';
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
-	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Restatement } from '$lib/types';
+	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Coverage, Restatement } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
@@ -12,6 +12,7 @@
 	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
 	import HistoryChart from '$lib/components/HistoryChart.svelte';
+	import CoverageChart from '$lib/components/CoverageChart.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
 	import LikeButton from '$lib/components/LikeButton.svelte';
@@ -73,6 +74,8 @@
 	let stances: StanceDocument[] = $state([]);
 	let historyPoints: HistoryPoint[] = $state([]);
 	let historyError: string | null = $state(null);
+	let coverage: Coverage | null = $state(null);
+	let coverageError: string | null = $state(null);
 	let loading = $state(true);
 	let error: string | null = $state(null);
 	let membersExpanded = $state(false);
@@ -340,7 +343,7 @@
 		// contradiction counts for the summary line) and the stance list. Facts are lazy-
 		// loaded when the user opens the facts disclosure; per-stance contradictions are
 		// lazy-loaded when a stance card is expanded.
-		await Promise.all([loadPerson(), loadStances(), loadHistory()]);
+		await Promise.all([loadPerson(), loadStances(), loadHistory(), loadCoverage()]);
 
 		if (person?.entity_type === 'party') {
 			await loadMembers();
@@ -359,6 +362,17 @@
 			historyPoints = (await response.json()) ?? [];
 		} catch (err) {
 			historyError = err instanceof Error ? err.message : 'Failed to load history';
+		}
+	}
+
+	async function loadCoverage() {
+		coverageError = null;
+		try {
+			const response = await fetch(`${API_BASE}/api/person/${personId}/coverage`);
+			if (!response.ok) throw new Error(`HTTP ${response.status}`);
+			coverage = await response.json();
+		} catch (err) {
+			coverageError = err instanceof Error ? err.message : 'Failed to load coverage';
 		}
 	}
 
@@ -437,6 +451,7 @@
 		loadPerson();
 		loadStances();
 		loadHistory();
+		loadCoverage();
 		// Drop any cached per-stance contradictions so the next expand re-fetches.
 		stanceContradictions = {};
 		if (factsExpanded) {
@@ -560,20 +575,33 @@
 			</div>
 		{/if}
 
-		<section class="history-section">
-			<h2 class="section-heading">{tr('person.history', currentLang)}</h2>
-			{#if historyError}
-				<p class="empty-state">{tr('person.history.error', currentLang)} ({historyError})</p>
-			{:else if historyPoints.length > 0}
-				<HistoryChart
-					points={historyPoints}
-					lang={currentLang}
-					scoreLabel={tr(person.entity_type === 'human' ? 'person.history.score' : 'person.history.own_score', currentLang)}
-				/>
-			{:else}
-				<p class="empty-state">{tr('person.history.empty', currentLang)}</p>
-			{/if}
-		</section>
+		<div class="charts">
+			<section class="history-section">
+				<h2 class="section-heading">{tr('person.history', currentLang)}</h2>
+				{#if historyError}
+					<p class="empty-state">{tr('person.history.error', currentLang)} ({historyError})</p>
+				{:else if historyPoints.length > 0}
+					<HistoryChart
+						points={historyPoints}
+						lang={currentLang}
+						scoreLabel={tr(person.entity_type === 'human' ? 'person.history.score' : 'person.history.own_score', currentLang)}
+					/>
+				{:else}
+					<p class="empty-state">{tr('person.history.empty', currentLang)}</p>
+				{/if}
+			</section>
+
+			<section class="history-section">
+				<h2 class="section-heading">{tr('person.coverage', currentLang)}</h2>
+				{#if coverageError}
+					<p class="empty-state">{tr('person.coverage.error', currentLang)} ({coverageError})</p>
+				{:else if coverage && coverage.years.length > 0}
+					<CoverageChart {coverage} lang={currentLang} />
+				{:else}
+					<p class="empty-state">{tr('person.coverage.empty', currentLang)}</p>
+				{/if}
+			</section>
+		</div>
 
 		{#if error}
 			<div class="error-banner" style="margin-bottom: 1rem;">
@@ -991,9 +1019,17 @@
 		margin-bottom: 0.9rem;
 	}
 
-	/* Stances section: the headline content of the profile. */
-	.history-section {
+	/* The two charts, side by side: the contradictions over time and the
+	   facts per year. One under the other on a narrow screen. */
+	.charts {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
 		margin-bottom: 1.5rem;
+	}
+
+	.history-section {
+		margin: 0;
 		padding: 1rem 1.25rem 0.75rem;
 		background: var(--bg-card);
 		backdrop-filter: var(--glass-blur);
@@ -1356,6 +1392,12 @@
 	.skeleton-line-short {
 		height: 12px;
 		width: 40%;
+	}
+
+	@media (max-width: 760px) {
+		.charts {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 
 	@media (max-width: 640px) {
