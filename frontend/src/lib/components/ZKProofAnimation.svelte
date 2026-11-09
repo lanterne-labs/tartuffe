@@ -14,8 +14,9 @@
 		<span class="only">
 			{tr('zk.anim.only', lang)}
 			<b class="tag">{tr('zk.anim.french', lang)}</b>
-			{tr('zk.anim.and', lang)}
 			<b class="tag">{tr('zk.anim.adult', lang)}</b>
+			{tr('zk.anim.and', lang)}
+			<b class="tag">{tr('zk.anim.id', lang)}</b>
 		</span>
 	</figcaption>
 	<svg viewBox="0 0 340 150" role="img" aria-label={tr('zk.anim.alt', lang)}>
@@ -349,10 +350,12 @@
 		line-height: 1.2;
 		color: var(--text-primary);
 	}
-	/* One line, whatever the width: the font shrinks before it wraps. */
+	/* The font shrinks with the width, then the tags wrap whole. */
 	.only {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
+		justify-content: center;
 		gap: 0.3em;
 		white-space: nowrap;
 		font-size: clamp(0.7rem, 3.2vw, 0.95rem);

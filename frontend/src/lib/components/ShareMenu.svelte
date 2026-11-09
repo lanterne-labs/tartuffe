@@ -129,6 +129,13 @@
 		border-color: var(--border-card);
 		padding: 0 0.6rem;
 	}
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.share-btn {
+			min-width: 36px;
+			height: 36px;
+		}
+	}
 	.menu {
 		position: absolute;
 		top: calc(100% + 4px);

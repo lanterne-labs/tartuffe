@@ -205,6 +205,13 @@
 		color: var(--red);
 		border-color: var(--border-card);
 	}
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.report-btn {
+			min-width: 36px;
+			height: 36px;
+		}
+	}
 	.report-btn.done {
 		color: var(--amber);
 		cursor: default;

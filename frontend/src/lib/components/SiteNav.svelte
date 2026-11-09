@@ -22,9 +22,9 @@
 	// The nav's menus (the event's pages, the About pages) open on a click or
 	// a tap, on hover with a mouse, and close on Escape, outside, or on a new
 	// page. One is open at a time.
-	type Menu = 'event' | 'about';
+	type Menu = 'event' | 'about' | 'main';
 	let openMenu = $state<Menu | null>(null);
-	let menuEls = $state<Record<Menu, HTMLElement | null>>({ event: null, about: null });
+	let menuEls = $state<Record<Menu, HTMLElement | null>>({ event: null, about: null, main: null });
 	$effect(() => {
 		pathname;
 		openMenu = null;
@@ -117,7 +117,7 @@
 					<button class="nav-signout" onclick={onsignout}>{tr('auth.sign_out', lang)}</button>
 				</span>
 			{:else if showProfile}
-				<a href="{site}/profile" class="nav-link" class:active={pathname === '/profile'}>{tr('nav.profile', lang)}</a>
+				<a href="{site}/profile" class="nav-link nav-link--profile" class:active={pathname === '/profile'}>{tr('nav.profile', lang)}</a>
 			{/if}
 			<div class="lang-toggle" role="group" aria-label="Language">
 				<button
@@ -134,6 +134,43 @@
 					onclick={() => setLang('en')}
 					title="English"
 				>EN</button>
+			</div>
+			<!-- On a phone or a tablet the links do not fit: one menu holds them all. -->
+			<div class="nav-drop nav-main" class:open={openMenu === 'main'} bind:this={menuEls.main} onfocusout={(e) => onMenuFocusOut('main', e)}>
+				<button
+					class="nav-burger"
+					aria-haspopup="true"
+					aria-expanded={openMenu === 'main'}
+					aria-controls="main-menu"
+					aria-label={tr('nav.menu', lang)}
+					onclick={() => toggleMenu('main')}
+				>
+					<svg viewBox="0 0 24 24" aria-hidden="true">
+						{#if openMenu === 'main'}
+							<path d="M6 6l12 12M18 6L6 18" />
+						{:else}
+							<path d="M4 7h16M4 12h16M4 17h16" />
+						{/if}
+					</svg>
+				</button>
+				<div class="drop-menu drop-menu--end" id="main-menu">
+					<a href="{site}/dashboard" class:active={pathname === '/dashboard'} aria-current={pathname === '/dashboard' ? 'page' : undefined}><strong>{tr('nav.dashboard', lang)}</strong></a>
+					<a href="{site}/feed" class:active={pathname === '/feed'} aria-current={pathname === '/feed' ? 'page' : undefined}><strong>{tr('nav.feed', lang)}</strong></a>
+					{#each [['project', '/about'], ['lab', '/lab'], ['privacy', '/about/privacy']] as [k, href] (k)}
+						<a href="{site}{href}" class:active={pathname === href} aria-current={pathname === href ? 'page' : undefined}>
+							<strong>{tr(`nav.menu.${k}`, lang)}</strong>
+						</a>
+					{/each}
+					{#if userName || showProfile}
+						<a href="{site}/profile" class="menu-profile" class:active={pathname === '/profile'} aria-current={pathname === '/profile' ? 'page' : undefined}>
+							<strong>{tr('nav.profile', lang)}</strong>
+							{#if userName}<span class="menu-user">{userName}</span>{/if}
+						</a>
+					{/if}
+					{#if userName}
+						<button class="menu-signout" onclick={onsignout}>{tr('auth.sign_out', lang)}</button>
+					{/if}
+				</div>
 			</div>
 		</div>
 	</div>
@@ -430,6 +467,7 @@
 	.lang-pill {
 		background: transparent;
 		border: none;
+		min-height: 1.6rem;
 		padding: 0.2rem 0.55rem;
 		border-radius: var(--radius-full);
 		font-size: 0.7rem;
@@ -447,8 +485,67 @@
 		color: var(--on-accent);
 	}
 
+	/* The menu of a phone or a tablet: hidden where the links fit. */
+	.nav-main {
+		display: none;
+	}
+	.nav-burger {
+		display: grid;
+		place-items: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		margin: -0.5rem -0.5rem -0.5rem 0;
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--text-primary);
+		cursor: pointer;
+	}
+	.nav-burger svg {
+		width: 1.4rem;
+		height: 1.4rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.menu-profile {
+		border-top: 1px solid var(--glass-border);
+		margin-top: 0.25rem;
+		padding-top: 0.7rem !important;
+	}
+	.menu-user {
+		font-size: 0.78rem;
+		color: var(--text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.menu-signout {
+		padding: 0.55rem 0.75rem;
+		border: none;
+		border-radius: var(--radius-md);
+		background: none;
+		color: var(--text-muted);
+		font: inherit;
+		font-size: 0.85rem;
+		text-align: left;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.menu-signout:hover {
+		color: var(--text-primary);
+	}
+
 	@media (max-width: 860px) {
-		.nav-link--about {
+		.nav-main {
+			display: block;
+		}
+		.nav-link--about,
+		.nav-link--home,
+		.nav-link--feed,
+		.nav-user,
+		.nav-link--profile {
 			display: none;
 		}
 	}
@@ -465,24 +562,12 @@
 			gap: 0.6rem;
 			min-width: 0;
 		}
-		.nav-user-name,
-		.nav-link--home,
-		.nav-link--feed,
-		.nav-link--about {
-			display: none;
-		}
-		.nav-user-short {
-			display: inline;
-		}
-		/* On a phone, sign out from the profile page. */
-		.nav-signout {
-			display: none;
-		}
 		.poll-tag {
 			display: none;
 		}
 		.nav-link--poll {
 			min-width: 0;
+			min-height: 2rem;
 			font-size: 0.8rem;
 			padding: 0.25rem 0.5rem 0.25rem 0.6rem;
 		}

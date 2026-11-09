@@ -25,6 +25,8 @@
 		initial?: string;
 		/** The score out of 100 and its "?" under the dial. */
 		named?: boolean;
+		/** The number alone ("66/100") under a large dial: a narrow column. */
+		compact?: boolean;
 		/** The "?": off where the dial sits in a button (a button holds no button). */
 		help?: boolean;
 		/** Below MIN_FACTS facts the dial is unrated. */
@@ -38,7 +40,7 @@
 		/** The facts from which a person is covered (the API's covered_facts). */
 		covered?: number;
 	}
-	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, help: withHelp = true, facts, caption = '', animate = false, reliable, covered }: Props = $props();
+	let { honesty, lang, size = 'sm', image = null, initial = '', named = true, compact = false, help: withHelp = true, facts, caption = '', animate = false, reliable, covered }: Props = $props();
 
 	const uid = $props.id();
 	// Below this many facts the score says too little to be shown.
@@ -63,7 +65,7 @@
 			? facts !== undefined
 				? tr('score.unrated.n', lang, { f: facts })
 				: tr('score.unrated', lang)
-			: size === 'lg' || size === 'md' ? tr('score.short', lang, { n: tartuffe ?? 0 }) : `${tartuffe}/100`
+			: !compact && (size === 'lg' || size === 'md') ? tr('score.short', lang, { n: tartuffe ?? 0 }) : `${tartuffe}/100`
 	);
 
 	// Polar point on the dial: r from the centre (60, 60), at a place 0 to 100.
@@ -383,6 +385,7 @@
 		text-align: center;
 	}
 	.q {
+		position: relative;
 		width: 1.05rem;
 		height: 1.05rem;
 		padding: 0;
@@ -402,6 +405,14 @@
 	}
 	.ts--xs .value {
 		gap: 0.2rem;
+	}
+	/* A finger: the small "?" answers to a larger area around it. */
+	@media (pointer: coarse) {
+		.q::after {
+			content: '';
+			position: absolute;
+			inset: -0.6rem;
+		}
 	}
 	.q:hover,
 	.q[aria-expanded='true'] {

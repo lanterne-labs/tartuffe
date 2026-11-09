@@ -19,7 +19,7 @@
 			copy: 'Copier',
 			copied: 'Copié',
 			close: 'Fermer',
-			prompt: `Je veux vérifier une affirmation du site tartuffe.me${N}: «${N}votre passeport ne quitte jamais votre téléphone${N}; le site ne reçoit qu’une preuve que vous êtes majeur et français${N}».
+			prompt: `Je veux vérifier une affirmation du site tartuffe.me${N}: «${N}votre passeport ne quitte jamais votre téléphone${N}; le site ne reçoit qu’une preuve que vous êtes majeur et français, et un identifiant anonyme, publié au registre, pour qu’un passeport ne vote qu’une fois${N}».
 
 Lis le code source public ci-dessous et dis-moi si c’est vrai, en citant les fichiers et les lignes.
 
@@ -28,7 +28,7 @@ Lis le code source public ci-dessous et dis-moi si c’est vrai, en citant les f
 2. La page de vote de tartuffe.me${N}: ${SITE}/blob/main/frontend/src/lib/components/VotePassport.svelte
    Que reçoit le navigateur de l’app ZKPassport, et qu’en fait-il${N}?
 3. La bibliothèque de vote isoloir${N}: ${ISOLOIR}
-   Regarde js/src/session.ts (scanPassport, submitRegistration) et crates/proto/src/client.rs (register_body)${N}: que contient l’inscription envoyée${N}? Y a-t-il un nom, une photo, une date de naissance ou un numéro de passeport${N}?
+   Regarde js/src/session.ts (scanPassport, submitRegistration) et crates/proto/src/client.rs (register_body)${N}: que contient l’inscription envoyée${N}? Y a-t-il un nom, une photo, une date de naissance ou un numéro de passeport${N}? L’identifiant envoyé permet-il de retrouver la personne ou son bulletin${N}?
 4. Le serveur qui vérifie l’inscription${N}: ${ISOLOIR}/blob/main/crates/server/src/eligibility.rs et ${ISOLOIR}/blob/main/zkverifier/verify.mjs
    Que reçoit-il et que vérifie-t-il${N}?
 
@@ -41,7 +41,7 @@ Réponds d’abord par OUI ou NON à la question${N}: «${N}Le nom, la photo, la
 			copy: 'Copy',
 			copied: 'Copied',
 			close: 'Close',
-			prompt: `I want to check a claim of the site tartuffe.me: “your passport never leaves your phone; the site only receives a proof that you are an adult French national”.
+			prompt: `I want to check a claim of the site tartuffe.me: “your passport never leaves your phone; the site only receives a proof that you are an adult French national, and an anonymous identifier, published in the register, so that a passport votes once”.
 
 Read the public source code below and tell me whether it is true, citing the files and lines.
 
@@ -50,7 +50,7 @@ Read the public source code below and tell me whether it is true, citing the fil
 2. The tartuffe.me vote page: ${SITE}/blob/main/frontend/src/lib/components/VotePassport.svelte
    What does the browser receive from the ZKPassport app, and what does it do with it?
 3. The isoloir voting library: ${ISOLOIR}
-   Look at js/src/session.ts (scanPassport, submitRegistration) and crates/proto/src/client.rs (register_body): what does the registration sent contain? Is there a name, a photo, a date of birth or a passport number?
+   Look at js/src/session.ts (scanPassport, submitRegistration) and crates/proto/src/client.rs (register_body): what does the registration sent contain? Is there a name, a photo, a date of birth or a passport number? Can the identifier sent lead back to the person or to their ballot?
 4. The server that checks the registration: ${ISOLOIR}/blob/main/crates/server/src/eligibility.rs and ${ISOLOIR}/blob/main/zkverifier/verify.mjs
    What does it receive and what does it check?
 

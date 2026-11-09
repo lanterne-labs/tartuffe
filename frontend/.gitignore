@@ -28,3 +28,5 @@ build-vote/
 
 # The vote app build writes the candidates here (scripts/vote-app.mjs).
 static/vote/
+# The screenshots of `npm run audit:mobile`
+mobile-audit/

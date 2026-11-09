@@ -64,7 +64,7 @@
 			{#each worst as person, i (person.id)}
 				<li class="step step--{i + 1}">
 					<a href="/person/{person.id}" class="laureate">
-						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
+						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 						<span class="name">{person.name}</span>
 						<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>
 					</a>
@@ -134,7 +134,9 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.25rem;
+		width: 100%;
 		max-width: 100%;
+		min-width: 0;
 		padding: 0.5rem 0.25rem 0;
 		text-decoration: none;
 		color: inherit;
@@ -147,6 +149,8 @@
 	}
 
 	.name {
+		display: block;
+		width: 100%;
 		max-width: 100%;
 		font-weight: 600;
 		font-size: 0.938rem;
@@ -207,7 +211,12 @@
 
 	@media (max-width: 480px) {
 		.podium { gap: 0.25rem; }
+		.podium-section { padding: 1rem 0.5rem 0; }
 		.name { font-size: 0.8rem; }
 		.step--1 .name { font-size: 0.9rem; }
+		.meta { font-size: 0.7rem; }
+		/* The dials fit their column: the middle one a little larger. */
+		.laureate :global(.ts) { --w: 100%; }
+		.step--1 .laureate { padding-left: 0; padding-right: 0; }
 	}
 </style>

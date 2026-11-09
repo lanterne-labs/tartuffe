@@ -92,8 +92,8 @@
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
 
-			scoreName: 'Le Tartuffe-Score mesure la cohérence',
-			scoreWhat: 'Celle d’un élu avec lui-même : ce qu’il dit, ce qu’il promet, ce qu’il vote. Et avec la justice : nier ce qu’un tribunal a établi à son sujet compte aussi. Plus il se contredit, plus son score monte.',
+			scoreName: 'Le Tartuffe-Score mesure les contradictions',
+			scoreWhat: 'Celles d’un élu avec lui-même : entre ce qu’il dit, ce qu’il promet et ce qu’il vote. Et avec la justice : nier ce qu’un tribunal a établi à son sujet compte aussi. Plus il se contredit, plus son score monte.',
 			scoreLow: 'Cohérent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'après cette contradiction',
@@ -145,8 +145,8 @@
 			ctaMain: 'See the ranking',
 			ctaFeed: 'Read the feed',
 
-			scoreName: 'The Tartuffe-Score measures consistency',
-			scoreWhat: 'A politician’s consistency with themselves: what they say, what they promise, how they vote. And with the courts: denying what a court has established about them counts too. The more they contradict themselves, the higher their score.',
+			scoreName: 'The Tartuffe-Score measures contradictions',
+			scoreWhat: 'A politician’s contradictions with themselves: between what they say, what they promise and how they vote. And with the courts: denying what a court has established about them counts too. The more they contradict themselves, the higher their score.',
 			scoreLow: 'Coherent',
 			scoreHigh: 'Tartuffe',
 			exRise: 'after this contradiction',

@@ -109,6 +109,13 @@
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
 	}
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.like {
+			height: 36px;
+			padding: 0 0.8rem;
+		}
+	}
 	.n {
 		padding-left: 0.4rem;
 		border-left: 1px solid currentColor;

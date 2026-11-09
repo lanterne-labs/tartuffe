@@ -20,6 +20,7 @@
 		{ href: paths.how, label: tr('event.menu.how', currentLang) },
 		{ href: paths.verify, label: tr('event.menu.verify', currentLang) }
 	]);
+
 </script>
 
 <div class="event-page">
@@ -66,9 +67,16 @@
 		background: var(--event-strong);
 		color: white;
 	}
+	/* A phone: the four tabs do not fit on one line, so they wrap into two
+	   rows; nothing is hidden off the edge. */
 	@media (max-width: 560px) {
+		.event-tabs {
+			flex-wrap: wrap;
+			max-width: 100%;
+			border-radius: var(--radius-lg);
+		}
 		.event-tabs a {
-			padding: 0.4rem 0.7rem;
+			padding: 0.5rem 0.85rem;
 			font-size: 0.8rem;
 		}
 	}

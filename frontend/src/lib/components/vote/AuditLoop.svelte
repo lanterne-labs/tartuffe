@@ -90,6 +90,23 @@
 		margin-top: 1.45rem;
 		background: var(--green);
 	}
+	/* A narrow phone: the five parts fit the width. */
+	@media (max-width: 400px) {
+		.node {
+			width: 3.2rem;
+		}
+		.disc {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+		.link {
+			min-width: 0.4rem;
+			margin-top: 1.25rem;
+		}
+		.name {
+			font-size: 0.62rem;
+		}
+	}
 	/* Each part turns green in turn (0.7 s apart), holds, and the loop starts again. */
 	@media (prefers-reduced-motion: no-preference) {
 		.disc,

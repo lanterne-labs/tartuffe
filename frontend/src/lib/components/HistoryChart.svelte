@@ -218,6 +218,12 @@
 		cursor: pointer;
 	}
 	.range:hover { color: var(--text-primary); }
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.range {
+			padding: 0.45rem 0.75rem;
+		}
+	}
 	.range.active {
 		background: var(--bg-secondary);
 		color: var(--text-primary);

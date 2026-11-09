@@ -351,6 +351,10 @@
 		{ kind: 'ranking' as const, list: table.rows },
 		{ kind: 'first' as const, list: byFirst(table.rows) }
 	]);
+	// On a phone the two counts do not fit side by side: one shows at a time,
+	// chosen with the switch above them (CSS shows the switch and hides the
+	// other count under 560px).
+	let countShown = $state<'ranking' | 'first'>('ranking');
 	// A line joins each option's row in one count to its row in the other;
 	// a click on a card brings its line forward.
 	let picked = $state<number | null>(null);
@@ -747,6 +751,13 @@
 				<p class="state state--soon">{tr(kReal === 1 ? 'v2.results.none.first' : 'v2.results.none', currentLang)}</p>
 			{/if}
 			<!-- The two counts side by side: the ranking, and the first choices. -->
+			<div class="count-switch" role="tablist" aria-label={tr('poll.results.title', currentLang)}>
+				{#each counts as { kind } (kind)}
+					<button role="tab" aria-selected={countShown === kind} class:on={countShown === kind} onclick={() => (countShown = kind)}>
+						{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}
+					</button>
+				{/each}
+			</div>
 			<div class="two-counts" bind:this={countsEl}>
 				<svg class="links" aria-hidden="true">
 					{#each links as l (l.slot)}
@@ -754,7 +765,7 @@
 					{/each}
 				</svg>
 				{#each counts as { kind, list } (kind)}
-					<div class="count">
+					<div class="count" class:count--off={countShown !== kind}>
 						<h3>{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}</h3>
 						<ol class="vote-list">
 							{#each list as o, i (o.slot)}
@@ -1598,16 +1609,52 @@
 			width: 48px;
 			height: 48px;
 		}
+		/* One count at a time, full width, chosen with the switch; the lines
+		   between the two have nothing to join. */
+		.count-switch {
+			display: flex;
+		}
 		.two-counts {
-			column-gap: 1.6rem;
+			grid-template-columns: minmax(0, 1fr);
+			column-gap: 0;
+		}
+		.two-counts .links,
+		.count--off,
+		.count h3 {
+			display: none;
 		}
 		.vote-row {
-			gap: 0.35rem;
-			padding: 0.5rem 0.4rem;
+			gap: 0.6rem;
+			padding: 0.6rem 0.75rem;
 		}
-		.name {
-			font-size: 0.82rem;
-		}
+	}
+	.count-switch {
+		display: none;
+		justify-content: center;
+		gap: 0.25rem;
+		width: fit-content;
+		max-width: 100%;
+		margin: 0.4rem auto 0.9rem;
+		padding: 4px;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: var(--bg-card);
+	}
+	.count-switch button {
+		padding: 0.45rem 1rem;
+		border: none;
+		border-radius: var(--radius-full);
+		background: none;
+		color: var(--text-secondary);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.count-switch button.on {
+		background: var(--accent);
+		color: white;
 	}
 	.live {
 		display: flex;

@@ -146,5 +146,9 @@
 		.page-content {
 			padding: 1.25rem 1rem;
 		}
+		/* Room for the event's bar at the bottom of a phone (EventBanner). */
+		.site-footer {
+			padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+		}
 	}
 </style>

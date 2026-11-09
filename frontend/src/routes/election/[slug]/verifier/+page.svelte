@@ -369,6 +369,23 @@
 		overflow: hidden;
 		transition: background 0.4s;
 	}
+	/* A narrow phone: the five parts fit the width. */
+	@media (max-width: 400px) {
+		.node {
+			width: 3.2rem;
+		}
+		.disc {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+		.link {
+			min-width: 0.4rem;
+			margin-top: 1.25rem;
+		}
+		.name {
+			font-size: 0.62rem;
+		}
+	}
 	.link--ok {
 		background: var(--green);
 	}

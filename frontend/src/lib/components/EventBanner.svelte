@@ -1,8 +1,9 @@
 <script lang="ts">
 	// The lab's temporary event (the featured poll) as a small card in a
-	// corner of the page: what it is, until when, one link. Closed once, it
-	// stays closed for that event in this browser. Not shown on the event's
-	// own page.
+	// corner of the page: what it is, until when, one link. On a phone the
+	// card would hide half the screen: it is a slim bar at the bottom, the
+	// title, the days left and the link. Closed once, it stays closed for
+	// that event in this browser. Not shown on the event's own page.
 	import { page } from '$app/stores';
 	import { tr, type Lang } from '$lib/i18n';
 	import type { PollEvent } from '$lib/types';
@@ -40,8 +41,13 @@
 	<aside class="event-card" aria-label={tr('event.label', lang)}>
 		<button class="close" onclick={close} aria-label={tr('auth.close', lang)}>×</button>
 		<span class="tag">{tr('event.tag', lang)}</span>
-		<strong>{lang === 'en' ? event.title_en : event.title_fr}</strong>
-		<p>{tr('event.pitch', lang)}</p>
+		<span class="head">
+			<strong>{lang === 'en' ? event.title_en : event.title_fr}</strong>
+			{#if daysLeft !== null}
+				<span class="ends-short">{tr('event.ends_short', lang, { n: daysLeft })}</span>
+			{/if}
+		</span>
+		<p class="pitch">{tr('event.pitch', lang)}</p>
 		{#if ends}
 			<p class="ends">{tr('event.ends', lang, { d: dateText(ends), n: daysLeft ?? 0 })}</p>
 		{/if}
@@ -84,10 +90,24 @@
 		text-transform: uppercase;
 		color: var(--event);
 	}
+	.head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		min-width: 0;
+	}
 	strong {
 		font-family: var(--font-serif);
 		font-size: 1.25rem;
 		line-height: 1.15;
+	}
+	/* The days left, short: on the bar of a phone. */
+	.ends-short {
+		display: none;
+		flex-shrink: 0;
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--text-secondary);
 	}
 	p {
 		margin: 0;
@@ -109,14 +129,19 @@
 		font-size: 0.85rem;
 		font-weight: 600;
 		text-decoration: none;
+		white-space: nowrap;
 	}
 	.go:hover {
 		background: var(--event);
 	}
 	.close {
 		position: absolute;
-		top: 0.35rem;
-		right: 0.55rem;
+		top: 0;
+		right: 0;
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
 		background: none;
 		border: none;
 		color: var(--text-muted);
@@ -127,12 +152,52 @@
 	.close:hover {
 		color: var(--text-primary);
 	}
+	/* The bar of a phone: the title, the days left, the link and the cross
+	   on one line, above the home indicator. */
 	@media (max-width: 640px) {
 		.event-card {
-			right: 1rem;
-			left: 1rem;
-			bottom: 1rem;
+			right: 0;
+			left: 0;
+			bottom: 0;
 			width: auto;
+			grid-template-columns: minmax(0, 1fr) auto auto;
+			align-items: center;
+			gap: 0.6rem;
+			padding: 0.55rem 0.25rem 0.55rem 1rem;
+			padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+			border-radius: 0;
+			border-width: 1px 0 0;
+			background: color-mix(in oklch, var(--event) 12%, var(--bg-primary));
+		}
+		.tag,
+		.pitch,
+		.ends {
+			display: none;
+		}
+		.head {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0;
+		}
+		strong {
+			font-size: 1.05rem;
+			line-height: 1.2;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			max-width: 100%;
+		}
+		.ends-short {
+			display: inline;
+		}
+		.go {
+			margin: 0;
+			padding: 0.5rem 0.85rem;
+		}
+		.close {
+			position: static;
+			width: 2.5rem;
+			height: 2.5rem;
 		}
 	}
 </style>

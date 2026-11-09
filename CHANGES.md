@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: The site on a phone
+
+Rendered at 360 and 375px (a headless Chrome, `npm run audit:mobile` in `frontend/`, which reports the horizontal overflows, what sticks out, the targets under 32px and the text under 11px, with a screenshot of every page): the event card covered half the screen on every page; the nav hid the links to the dashboard, the feed and About on a phone, leaving the footer; the podium's "Tartuffe-Score : 66/100" ran across its neighbours and the dials overlapped; the event's tabs stuck out of every `/election/*` page (a horizontal scroll); the two counts of the vote sat side by side with the names clipped; a candidate's page was 46 000px tall (one card per stance, a hundred of them, each a screen); the share, report and +1 buttons were 28px, the "?" 14px.
+
+Now: the card is a bar at the bottom on a phone (the title, the days left, the link); the nav has a menu under 860px with every link; the podium shows the number alone and its dials fit their column; the tabs wrap to two rows; one count shows at a time, chosen with a switch; the page shows 12 stances and "Afficher 12 de plus" (a shared link to a stance further down shows up to it), the dial sits beside the title and the meta wraps; the buttons are 36px where the pointer is a finger and the "?" answers to a larger area. Nothing changes on a desktop except the podium's label. The audit found no overflow after.
+
+Lessons: a full-page screenshot of this site needs a scroll through first (the landing sections fade in on scroll) and a viewport as tall as the page (Chrome tiles the fixed nav otherwise); a fixed card sized for a desktop corner is a modal on a phone.
+
 ## 2026-11-09: The score stretched: a contradiction costs 9, the repeats 2.5 times more; the dial is linear
 
 On the candidates' real inputs (1 000 to 4 500 facts, 0 to 7 distinct contradictions, up to 45 pairs) the formula `exp(-1.5·B/max(F,75) - 0.03·B - 0.05·ln(1+E))` had one live term: the ratio term is a few thousandths at these fact counts, so the score was `exp(-0.03·B - 0.05·ln(1+E))`, and the most contradicted candidate (7 bundles, 45 pairs) read a Tartuffe-Score of 33, six points above one with the same 7 bundles and 14 pairs. The constants were sized when a person held one or two contradictions. Now `0.09` per bundle (one contradiction: 9 instead of 3) and `0.125` on the repeats, so 7 bundles with 45 pairs read 66, with 14 pairs 59, 6 bundles 51, one 9 (`backend/core/honesty.go`, `frontend/src/lib/score.ts`; the about page and its explorer read the constants from `score.ts` instead of repeating them). The ratio term stays: at the floor of 75 facts it still weighs (0.14 for 7 bundles).

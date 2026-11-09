@@ -18,7 +18,8 @@
 
 	// Below this many facts a person has no place on the band (as on the dial).
 	const MIN_FACTS = 10;
-	const SMALL = 30;
+	// The small faces: large enough for a finger (CSS .other).
+	const SMALL = 34;
 
 	let rated = $derived(
 		people
@@ -280,8 +281,8 @@
 	.other {
 		position: absolute;
 		transform: translateX(-50%);
-		width: 30px;
-		height: 30px;
+		width: 34px;
+		height: 34px;
 		padding: 0;
 		border: 2px solid transparent;
 		border-radius: 50%;

@@ -82,6 +82,11 @@
 
 	// Stance-first profile state.
 	let stanceSort: StanceSort = $state('worst');
+	// How many stance cards the page shows: a candidate has a hundred, and on
+	// a phone each is a screen. "Show more" grows it; a shared link to a
+	// stance further down shows up to it.
+	const STANCES_STEP = 12;
+	let stancesShown = $state(STANCES_STEP);
 	let expandedStances: Record<number, boolean> = $state({});
 	let stanceContradictions: Record<number, ContradictionGroup[]> = $state({});
 	let stanceLoading: Record<number, boolean> = $state({});
@@ -160,7 +165,9 @@
 	}
 
 	async function openStance(stanceId: number, tab: StanceTab = 'contradictions') {
-		if (!stances.some((s) => s.id === stanceId)) return false;
+		const at = sortedStances.findIndex((s) => s.id === stanceId);
+		if (at < 0) return false;
+		if (at >= stancesShown) stancesShown = at + 1;
 		stanceTab[stanceId] = tab;
 		if (!expandedStances[stanceId]) await toggleStance(stanceId);
 		if (tab === 'facts' && stanceFacts[stanceId] === undefined) await loadStanceFacts(stanceId);
@@ -632,7 +639,7 @@
 				<p class="empty-state">{tr('person.no_stances', currentLang)}</p>
 			{:else}
 				<div class="items-list">
-					{#each sortedStances as stance (stance.id)}
+					{#each sortedStances.slice(0, stancesShown) as stance (stance.id)}
 						{@const hasContradictions = stance.contradiction_count > 0}
 						{@const isOpen = !!expandedStances[stance.id]}
 						{@const items = stanceContradictions[stance.id] ?? []}
@@ -775,6 +782,16 @@
 						</div>
 					{/each}
 				</div>
+				{#if sortedStances.length > stancesShown}
+					<div class="stances-more">
+						<button class="btn" onclick={() => (stancesShown += STANCES_STEP)}>
+							{tr('person.show_n_more', currentLang, { n: Math.min(STANCES_STEP, sortedStances.length - stancesShown) })}
+						</button>
+						<button class="link-btn link-btn-muted" onclick={() => (stancesShown = sortedStances.length)}>
+							{tr('person.show_all_n', currentLang, { n: sortedStances.length })}
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 
@@ -1171,11 +1188,32 @@
 
 	.stance-meta {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.25rem;
+		gap: 0.2rem 0.25rem;
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-top: 0.5rem;
+	}
+	/* Each piece stays on one line; the share button ends the row. */
+	.stance-meta > span {
+		white-space: nowrap;
+	}
+	.stance-meta > :global(.share) {
+		margin-left: auto;
+	}
+
+	.stances-more {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem 1.25rem;
+		margin-top: 1rem;
+	}
+	.stances-more .link-btn {
+		padding: 0.6rem 0.5rem;
+		font-size: 0.85rem;
 	}
 
 	.stance-tabs {
@@ -1294,7 +1332,7 @@
 	.no-contradictions-chip {
 		display: inline-block;
 		padding: 0.125rem 0.5rem;
-		font-size: 0.625rem;
+		font-size: 0.7rem;
 		color: var(--green);
 		background: rgba(34, 197, 94, 0.1);
 		border-radius: var(--radius-full);
@@ -1410,9 +1448,42 @@
 			align-self: center;
 		}
 
+		/* A phone: the dial sits small beside the title, the summary and the
+		   meta take the whole width under them. The main block dissolves into
+		   the grid so its children can be placed. */
 		.stance-top {
-			flex-direction: column-reverse;
-			align-items: flex-start;
+			display: grid;
+			grid-template-columns: auto minmax(0, 1fr);
+			align-items: center;
+			gap: 0.4rem 0.75rem;
+		}
+		.stance-main {
+			display: contents;
+		}
+		.stance-gauge {
+			grid-column: 1;
+			grid-row: 1;
+			width: 3.6rem;
+		}
+		.stance-label-row {
+			grid-column: 2;
+			grid-row: 1;
+		}
+		.stance-summary,
+		.stance-meta {
+			grid-column: 1 / -1;
+			margin-top: 0;
+		}
+		.stance-clickable {
+			padding: 0.9rem 1rem;
+		}
+		.stance-tabs {
+			padding-left: 1rem;
+			padding-right: 1rem;
+		}
+		.stance-tab-body {
+			padding-left: 0.75rem;
+			padding-right: 0.75rem;
 		}
 	}
 

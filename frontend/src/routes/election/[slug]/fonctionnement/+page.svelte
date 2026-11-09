@@ -24,7 +24,7 @@
 		fr: {
 			title: 'Votre vote reste secret. Même pour nous.',
 			lead: 'Quatre idées simples, et chacun peut vérifier qu’elles tiennent.',
-			passport: 'Il prouve seulement que vous êtes majeur et français, une seule fois. Un passeport, une voix.',
+			passport: 'Il prouve seulement que vous êtes majeur et français, et donne un identifiant anonyme, inscrit au registre public : un passeport, une voix. Cet identifiant ne dit ni qui vous êtes, ni ce que vous votez.',
 			ballotTitle: 'Votre bulletin voyage incognito',
 			ballot: 'Il part scellé vers des relais publics, tenus par d’autres. Votre adresse IP reste là-bas : nous recueillons le bulletin seul, au milieu des autres.',
 			countTitle: 'Seul le résultat est révélé',
@@ -46,7 +46,7 @@
 		en: {
 			title: 'Your vote stays secret. Even from us.',
 			lead: 'Four simple ideas, and anyone can check they hold.',
-			passport: 'It only proves you are an adult French national, once. One passport, one vote.',
+			passport: 'It only proves you are an adult French national, and gives an anonymous identifier, written in the public register: one passport, one vote. That identifier says neither who you are nor how you vote.',
 			ballotTitle: 'Your ballot travels incognito',
 			ballot: 'It leaves sealed for public relays run by others. Your IP address stays there: we collect the ballot alone, among the rest.',
 			countTitle: 'Only the result is revealed',
