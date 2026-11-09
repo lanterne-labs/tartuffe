@@ -2,6 +2,10 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: The stance label is refreshed at insertion only on a contradiction
+
+Every fact that joined a stance refreshed its label and summary at once: about one `stance-label` call per new fact (9,700 on 2026-11-06, the day of the Twitter backfill). The maintenance pass already folds every unsummarized fact of a stance in one call (`RefreshPendingStances`, `summarized_at`), so a fact that only adds information now waits for it; a contradiction still refreshes at once, since it changes what the stance says. The label of a stance can lag behind its newest facts by one pass (at most 6 h).
+
 ## 2026-11-08: The vote audit read 700 checkpoints for one ballot
 
 « Lecture du registre · 584/695 » with a single voter: the ledger takes a checkpoint at least every 10 minutes whatever happened (isoloir SPEC §4), so the log held 696 checkpoints for 18 entries after 8 days (about 31 000 a year with no vote), and the browser's audit read each as two files, twice: 2 800 fetches, 125 000 a year from now. Fixed in isoloir (lanterne-labs/isoloir#10): the mirror writes `windows/<k>.json` (256 checkpoints, or 1 MiB), the readers take the windows first and the checkpoint files only for what no window holds, and the browser's audit keeps its first pass for the replay. The ingest backfills the windows of the existing log at boot. The site takes `@isoloir/web` 0.1.4; the progress line still counts checkpoints, now read in a handful of fetches.

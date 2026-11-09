@@ -795,13 +795,17 @@ func (sm *StanceManager) handleVerdict(ctx context.Context, matched *StanceDocum
 			Msg("Contradictions detected in stance")
 	}
 
-	// For non-duplicate verdicts the stance content has materially changed —
-	// fold the new fact (and the tensions the analyze just found) into the
-	// label + summary. Failures here do not fail the verdict (the stance is
-	// still correct, just using its prior label/summary until the next refresh
-	// picks the fact up via summarized_at); an unavailable LLM is returned,
-	// marked ErrStanceRefreshPending, so the run stops.
-	if (result.Verdict == VerdictNewInfo || result.Verdict == VerdictContradiction) && !refreshDeferred(ctx) {
+	// A contradiction changes what the stance says: fold the new fact and the
+	// tensions the analysis found into the label + summary now. A fact that
+	// only adds information waits for the maintenance pass, which folds every
+	// unsummarized fact of a stance in one call (RefreshPendingStances,
+	// summarized_at): refreshing at each insertion made about one label call
+	// per new fact (9,700 on 2026-11-06), the pass makes one per stance
+	// touched. Failures here do not fail the verdict (the stance is still
+	// correct, just using its prior label/summary until the next refresh picks
+	// the fact up via summarized_at); an unavailable LLM is returned, marked
+	// ErrStanceRefreshPending, so the run stops.
+	if result.Verdict == VerdictContradiction && !refreshDeferred(ctx) {
 		if err := sm.refreshAfterVerdict(ctx, matched, factID, result.Contradictions, keyTextByID(keyFacts)); err != nil {
 			if errors.Is(err, llm.ErrUnavailable) {
 				return nil, fmt.Errorf("%w: stance %d: %w", ErrStanceRefreshPending, matched.ID, err)
