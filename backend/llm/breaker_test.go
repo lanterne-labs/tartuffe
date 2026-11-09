@@ -109,7 +109,7 @@ func TestProbePrimary_ClaudeRoutingSkipsTheProbe(t *testing.T) {
 	t.Setenv("FALLBACK_URL", "http://127.0.0.1:1/v1")
 	t.Setenv("OPEN_AI_API", deadURL)
 	restore, err := SetRouting(&Routing{
-		Default:   Route{Endpoint: EndpointClaudeTeam, Model: "claude-sonnet-5-5"},
+		Default:   Route{Endpoint: EndpointClaudeTeam, Model: "claude-sonnet-5-5", Effort: "medium"},
 		Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}},
 	})
 	if err != nil {
