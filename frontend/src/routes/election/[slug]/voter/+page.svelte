@@ -586,6 +586,13 @@
 								<button onclick={() => move(id, 1)} disabled={busy || i >= shown.filter((x) => x !== BLANK).length - 1} aria-label={tr('vote.move_down', currentLang, { name: nameOf(id) })}>▼</button>
 							</span>
 						{/if}
+					{:else if open && endsBlank}
+						<!-- After the blank, nothing: the protocol ranks the blank last. The
+						     slot says so instead of inviting a pick that would slip before it. -->
+						<div class="slot-closed" aria-label={tr('vote.slot.closed', currentLang, { rank: rankWord(i + 1) })}>
+							<span class="slot-photo slot-photo--empty slot-photo--closed"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M6.5 6.5l11 11" /></svg></span>
+							<span class="slot-name slot-name--empty slot-name--closed">{tr('vote.slot.closed_short', currentLang)}</span>
+						</div>
 					{:else if open && i === shown.length}
 						<button class="slot-add" onclick={() => (slotPick = shown.length)} disabled={busy}>
 							<span class="slot-photo slot-photo--empty"><span class="slot-plus" aria-hidden="true">+</span></span>
@@ -604,6 +611,12 @@
 				</li>
 			{/each}
 		</ol>
+		{#if open && endsBlank && shown.length < depth}
+			<p class="blank-note" role="status">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3L2.5 20h19z" /><path d="M12 10v4.5M12 17.2v.3" /></svg>
+				<span>{tr(shown.length === 1 ? 'vote.blank.closes.alone' : 'vote.blank.closes', currentLang)}</span>
+			</p>
+		{/if}
 		{#if ballot.state === 'missing'}
 			<div class="status-line status-line--fault" role="alert">
 				<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
@@ -1045,6 +1058,57 @@
 		stroke: var(--text-muted);
 		stroke-width: 2;
 		stroke-linecap: round;
+	}
+	/* A slot after the blank vote: closed, in amber, since nothing can follow it. */
+	.slot:has(.slot-closed) {
+		border-color: color-mix(in oklch, var(--amber) 55%, transparent);
+		background: color-mix(in oklch, var(--amber) 6%, transparent);
+	}
+	.slot-closed {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.45rem;
+	}
+	.slot-photo--closed {
+		border-color: color-mix(in oklch, var(--amber) 60%, transparent);
+	}
+	.slot-photo--closed svg {
+		width: 1.6rem;
+		height: 1.6rem;
+		fill: none;
+		stroke: var(--amber);
+		stroke-width: 2;
+		stroke-linecap: round;
+	}
+	.slot-name--closed {
+		color: var(--amber);
+		font-weight: 600;
+	}
+	.blank-note {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.6rem;
+		margin: 0 0 0.9rem;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid color-mix(in oklch, var(--amber) 50%, transparent);
+		border-radius: var(--radius-md);
+		background: color-mix(in oklch, var(--amber) 10%, var(--bg-card));
+		color: var(--text-primary);
+		font-size: 0.88rem;
+		line-height: 1.45;
+		text-align: left;
+	}
+	.blank-note svg {
+		flex-shrink: 0;
+		width: 1.2rem;
+		height: 1.2rem;
+		margin-top: 0.1rem;
+		fill: none;
+		stroke: var(--amber);
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
 	}
 	/* The blank vote: a plain white disc where the others have a dial's portrait. */
 	.vote-row--blank .photo--empty {
