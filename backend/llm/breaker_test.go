@@ -96,6 +96,34 @@ func TestProbePrimary_NoFallbackConfigured(t *testing.T) {
 	}
 }
 
+// TestProbePrimary_ClaudeRoutingSkipsTheProbe: a routing that sends no task
+// to the local endpoint (the claude-team profile) has nothing to learn from
+// the box: the probe is a no-op that reports healthy, a dead box notwithstanding,
+// and the breaker stays unarmed (2026-11-09: its warning was read as the
+// maintenance pass running on OpenRouter while every call went to a seat).
+func TestProbePrimary_ClaudeRoutingSkipsTheProbe(t *testing.T) {
+	defer resetBreaker()
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+	t.Setenv("FALLBACK_URL", "http://127.0.0.1:1/v1")
+	t.Setenv("OPEN_AI_API", deadURL)
+	restore, err := SetRouting(&Routing{
+		Default:   Route{Endpoint: EndpointClaudeTeam, Model: "claude-sonnet-5-5", Effort: "medium"},
+		Endpoints: map[EndpointName]Endpoint{EndpointClaudeTeam: &ClaudeTeamEndpoint{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	if !ProbePrimary(context.Background()) {
+		t.Fatal("a routing without a local route must not probe the box")
+	}
+	if PrimaryDown() {
+		t.Fatal("the breaker must stay unarmed: no call goes to the box")
+	}
+}
+
 // TestProbePrimary_DownArmsBreaker: a dead primary with a fallback configured
 // must arm the breaker.
 func TestProbePrimary_DownArmsBreaker(t *testing.T) {
