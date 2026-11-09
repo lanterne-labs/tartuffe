@@ -23,12 +23,15 @@ const (
 	// historical accuracy baseline on Gemini (we briefly raised to 5 for cost;
 	// cross-pair confusion observed at 5, reverted).
 	MaxPairsPerBatch = 3
-	// MaxPairsPerBatchSync is the bundle size on the sync OpenAI-compatible path.
-	// Held at 1: smaller models (local Gemma) occasionally swap fact IDs across
-	// pairs when verdicts share a prompt — observed on the eval as a fabricated
-	// contradiction between an unrelated pair carrying another pair's reason.
-	// One pair per call eliminates the swap entirely. Per-call latency is higher
-	// but throughput on a local GPU is fine.
+	// MaxPairsPerBatchSync is the bundle size on the sync path of the local
+	// GPU box. Held at 1: smaller models (local Gemma) occasionally swap fact
+	// IDs across pairs when verdicts share a prompt — observed on the eval as
+	// a fabricated contradiction between an unrelated pair carrying another
+	// pair's reason. One pair per call eliminates the swap entirely. Per-call
+	// latency is higher but throughput on a local GPU is fine. A Claude
+	// endpoint takes MaxPairsPerBatch (PairsPerCall): the rules are read from
+	// the cache once per call, not once per pair, and the detection was the
+	// largest LLM line of the worker (10,000 to 35,000 calls a day, 11-2026).
 	MaxPairsPerBatchSync = 1
 	// contradictionMaxTokens caps the LLM response budget. The reservation is
 	// charged against the context window BEFORE generation, so every token
@@ -429,6 +432,16 @@ type BatchResult struct {
 
 // AreContradictoryBatch checks multiple pairs for contradictions in a single LLM call.
 // Returns results for each pair in the same order as input.
+// PairsPerCall is how many pairs one detection call judges on the active
+// routing: MaxPairsPerBatch on a Claude endpoint, MaxPairsPerBatchSync on the
+// local GPU box.
+func PairsPerCall() int {
+	if llm.Steady(llm.TaskDetect) {
+		return MaxPairsPerBatch
+	}
+	return MaxPairsPerBatchSync
+}
+
 func (d *OpenAIContradictionDetector) AreContradictoryBatch(ctx context.Context, pairs []FactPair) []BatchResult {
 	results := make([]BatchResult, len(pairs))
 

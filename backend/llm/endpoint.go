@@ -490,14 +490,24 @@ type steadyEndpoint interface {
 // Claude endpoint, where a sample is a call of the seats' budget that the
 // vote does not earn back. A contradiction still goes through the verifier.
 func Votes(task Task, votes int) int {
-	r := activeRouting()
-	if r == nil {
-		return votes
-	}
-	if e, ok := r.Endpoints[r.Route(task).Endpoint].(steadyEndpoint); ok && e.Steady() {
+	if Steady(task) {
 		return 1
 	}
 	return votes
+}
+
+// Steady reports whether the endpoint of task on the active routing gives
+// the same verdict to the same prompt from one run to the next (a Claude
+// endpoint): a judge there asks once, and a prompt there can carry several
+// pairs without the verdicts of one leaking into another. False without a
+// routing, and on the local GPU box.
+func Steady(task Task) bool {
+	r := activeRouting()
+	if r == nil {
+		return false
+	}
+	e, ok := r.Endpoints[r.Route(task).Endpoint].(steadyEndpoint)
+	return ok && e.Steady()
 }
 
 // LocalContextTokens is the context of a call on the local endpoint: the

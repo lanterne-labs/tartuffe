@@ -100,9 +100,15 @@ func TestDetectEval(t *testing.T) {
 			TextB: p.TextB, DateB: date(p.DateB), AlsoB: p.AlsoB,
 		}
 	}
+	// The pairs go PairsPerCall per call, as the detection sends them on
+	// this endpoint: on Claude the eval measures the pairs sharing a prompt.
 	results := make([]BatchResult, len(pairs))
-	llmtest.ForEach(len(pairs), func(i int) {
-		results[i] = detector.AreContradictoryBatch(ctx, []FactPair{factPairs[i]})[0]
+	perCall := PairsPerCall()
+	calls := (len(pairs) + perCall - 1) / perCall
+	t.Logf("detect eval: %d pairs, %d per call", len(pairs), perCall)
+	llmtest.ForEach(calls, func(c int) {
+		from, to := c*perCall, min((c+1)*perCall, len(pairs))
+		copy(results[from:to], detector.AreContradictoryBatch(ctx, factPairs[from:to]))
 	})
 	errorsSeen := 0
 	for i, p := range pairs {

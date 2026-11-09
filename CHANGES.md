@@ -2,6 +2,10 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: Three pairs per detection call on Claude (to measure before merging)
+
+The detection judged one pair per call everywhere (`MaxPairsPerBatchSync = 1`, a guard against a local model that swapped fact IDs across the pairs of one prompt). On a Claude endpoint the rules are then read from the cache once per pair instead of once per call, and the detection was the largest LLM line of the worker (10,000 to 35,000 calls a day). `PairsPerCall` gives 3 pairs per call on a Claude endpoint (`llm.Steady`), 1 on the local GPU box; the detect eval sends its pairs the same way, so `make llm-eval LLM_CLAUDE=...` measures the pairs sharing a prompt. To merge once the eval shows no loss against the reference numbers.
+
 ## 2026-11-08: The vote audit read 700 checkpoints for one ballot
 
 « Lecture du registre · 584/695 » with a single voter: the ledger takes a checkpoint at least every 10 minutes whatever happened (isoloir SPEC §4), so the log held 696 checkpoints for 18 entries after 8 days (about 31 000 a year with no vote), and the browser's audit read each as two files, twice: 2 800 fetches, 125 000 a year from now. Fixed in isoloir (lanterne-labs/isoloir#10): the mirror writes `windows/<k>.json` (256 checkpoints, or 1 MiB), the readers take the windows first and the checkpoint files only for what no window holds, and the browser's audit keeps its first pass for the replay. The ingest backfills the windows of the existing log at boot. The site takes `@isoloir/web` 0.1.4; the progress line still counts checkpoints, now read in a handful of fetches.

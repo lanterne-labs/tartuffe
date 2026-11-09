@@ -296,3 +296,14 @@ func TestVotes(t *testing.T) {
 		t.Errorf("local GPU box: got %d votes, want 3", got)
 	}
 }
+
+func TestSteady(t *testing.T) {
+	setRouting(t, ClaudeRouting(EndpointClaudeAPI, &ClaudeAPIEndpoint{}, "claude-sonnet-5-5"))
+	if !Steady(TaskDetect) {
+		t.Error("claude api: want steady")
+	}
+	setRouting(t, localRouting())
+	if Steady(TaskDetect) {
+		t.Error("local GPU box: want not steady")
+	}
+}
