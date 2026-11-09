@@ -18,7 +18,7 @@ func TestBuildFactExtractionPrompt(t *testing.T) {
 	plain := BuildFactExtractionPrompt(base)
 	for _, want := range []string{
 		"REFERENCE DATE: 2026-09-16",
-		"Focus especially on the primary subject 'Marine Le Pen'",
+		"Focus especially on the primary subject (named under Input Data below)",
 		"Primary Subject: Marine Le Pen\nSource URL: https://example.com/article\nContent:\nArticle body with 100% and a \"quote\".",
 	} {
 		if !strings.Contains(plain, want) {
