@@ -22,9 +22,10 @@ import (
 // The caps of one maintenance pass. The pending work carries over to the
 // next pass: every step derives its pending set from the database.
 const (
-	// rejudgeBudget caps how many stale negative pair verdicts are re-opened
-	// per pass after a rulebook change.
-	rejudgeBudget = 4500
+	// defaultRejudgeBudget is how many stale negative pair verdicts a pass
+	// re-opens after a rulebook change when DETECT_REJUDGE_BUDGET is not set:
+	// none. See rejudgeBudgetFromEnv.
+	defaultRejudgeBudget = 0
 	// translateLimit caps how many translations a pass fills, so a large
 	// first-time backlog drains over several passes.
 	translateLimit = 4500
@@ -479,12 +480,18 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	// first. Then the plugins queue the structural pairs the detector cannot
 	// see, and the detector judges the persons with new facts (every person
 	// after a rulebook change or on the first pass).
-	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, []string{contradiction.JudgeRulebookHash(), core.StanceJudgeHash()}, rejudgeBudget)
+	rejudge, err := rejudgeBudgetFromEnv()
+	if err != nil {
+		log.Error().Err(err).Int("budget", defaultRejudgeBudget).Msg("Maintenance: the default re-judge budget is used")
+		rejudge = defaultRejudgeBudget
+	}
+	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, []string{contradiction.JudgeRulebookHash(), core.StanceJudgeHash()}, rejudge)
 	if err := step("stale verdict eviction", err); err != nil {
 		return err
 	}
 	if deleted > 0 || remaining > 0 {
-		log.Info().Int("reopened", deleted).Int("stale_remaining", remaining).Msg("Maintenance: re-opened stale negative pair verdicts")
+		log.Info().Int("reopened", deleted).Int("stale_remaining", remaining).Int("budget", rejudge).
+			Msg("Maintenance: stale negative pair verdicts (re-opened within DETECT_REJUDGE_BUDGET, the rest kept)")
 	}
 	if _, pErrs := pipeline.ProducePairs(ctx, h.Deps); len(pErrs) > 0 {
 		for name, e := range pErrs {

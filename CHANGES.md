@@ -2,6 +2,10 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: A rule change no longer re-judges every NO; the re-judge is asked for
+
+Every change to the detector's rules (its prompt, the false-positive catalog) gave the pair verdicts a new hash, and the maintenance pass re-opened every negative verdict under an older hash, 4,500 per pass, until all were judged again: 13,987 pairs after the review of 2026-11-08, 35,000 judged on 2026-11-05, 20,000 on 11-07. That was the largest part of the detection's calls, and most changes add rules against false positives, which can only turn a YES into a NO. The pass now re-opens `DETECT_REJUDGE_BUDGET` stale negatives per pass (default 0: none), to set on the worker service when a change is meant to find more; the stale count stays in the log.
+
 ## 2026-11-09: The stance label is refreshed at insertion only on a contradiction
 
 Every fact that joined a stance refreshed its label and summary at once: about one `stance-label` call per new fact (9,700 on 2026-11-06, the day of the Twitter backfill). The maintenance pass already folds every unsummarized fact of a stance in one call (`RefreshPendingStances`, `summarized_at`), so a fact that only adds information now waits for it; a contradiction still refreshes at once, since it changes what the stance says. The label of a stance can lag behind its newest facts by one pass (at most 6 h).
