@@ -10,7 +10,7 @@
 	import BundleDiagram from '$lib/components/about/BundleDiagram.svelte';
 	import ScoreExplorer from '$lib/components/about/ScoreExplorer.svelte';
 	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR, RATIO_DECAY, formatConstant } from '$lib/score';
-	import Mirror from '$lib/components/about/Mirror.svelte';
+	import BrandMark from '$lib/components/BrandMark.svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -225,7 +225,7 @@
 <article class="page">
 	<!-- Hero -->
 	<header class="hero">
-		<Mirror />
+		<BrandMark size="hero" />
 		<span class="kicker">{c.kicker}</span>
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
