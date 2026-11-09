@@ -59,22 +59,26 @@ func (s *PostgresStorer) GetCheckedPairs(ctx context.Context, personID int64) (m
 // negatives a dismissal recorded (dismissed): their NO does not come from the
 // detector's rulebook. Self-terminating: once every negative carries the
 // current hash, nothing is deleted.
-func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHash string, limit int) (deleted, remaining int, err error) {
+//
+// currentHashes are the hashes of the judges whose verdicts stand: the
+// detector's rulebook, and the stance analysis that judges a new fact against
+// the closest facts of its stance (core.StanceJudgeHash).
+func (s *PostgresStorer) EvictStaleJudgedPairs(ctx context.Context, currentHashes []string, limit int) (deleted, remaining int, err error) {
 	res, err := s.pool.Exec(ctx, `
 		WITH victims AS (
 			SELECT id FROM fact_pair_checks
-			WHERE is_contradiction = false AND NOT dismissed AND judge_hash IS DISTINCT FROM $1
+			WHERE is_contradiction = false AND NOT dismissed AND (judge_hash IS NULL OR judge_hash <> ALL($1))
 			ORDER BY checked_at ASC
 			LIMIT $2
 		)
-		DELETE FROM fact_pair_checks WHERE id IN (SELECT id FROM victims)`, currentHash, limit)
+		DELETE FROM fact_pair_checks WHERE id IN (SELECT id FROM victims)`, currentHashes, limit)
 	if err != nil {
 		return 0, 0, fmt.Errorf("evicting stale judged pairs: %w", err)
 	}
 	deleted = int(res.RowsAffected())
 	err = s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND NOT dismissed AND judge_hash IS DISTINCT FROM $1`,
-		currentHash).Scan(&remaining)
+		`SELECT count(*) FROM fact_pair_checks WHERE is_contradiction = false AND NOT dismissed AND (judge_hash IS NULL OR judge_hash <> ALL($1))`,
+		currentHashes).Scan(&remaining)
 	if err != nil {
 		return deleted, 0, fmt.Errorf("counting stale judged pairs: %w", err)
 	}

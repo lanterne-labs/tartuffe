@@ -142,6 +142,9 @@ type StanceMergeSweepStats struct {
 }
 
 // Add folds one person's counters into the sweep totals.
+// mergeMaxConsecutiveFailures is how many LLM failures in a row stop a merge run.
+const mergeMaxConsecutiveFailures = 3
+
 func (s *StanceMergeSweepStats) Add(ps PersonMergeStats) {
 	s.PersonsProcessed++
 	if ps.Skipped {
@@ -500,11 +503,18 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		return StanceForMerge{ID: docs[i].ID, Label: docs[i].ClusterLabel, Summary: docs[i].Summary}
 	}
 	var unavailable error
+	consecutive := 0 // LLM failures in a row
 	failed := func(err error) bool {
 		llmFailures++
+		consecutive++
 		metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeError)
 		if errors.Is(err, llm.ErrUnavailable) {
 			unavailable = err
+		} else if consecutive >= mergeMaxConsecutiveFailures {
+			// An endpoint that fails every call without saying it is down
+			// (2026-11-09: an account without credit answered 400 to every
+			// call) must not get the whole candidate list: the merge stops.
+			unavailable = fmt.Errorf("stance merge: %d LLM failures in a row, the merge stops: %w", consecutive, err)
 		}
 		return false
 	}
@@ -519,6 +529,7 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 			if err != nil {
 				return failed(err)
 			}
+			consecutive = 0
 			if !same {
 				metrics.RecordDecision(metrics.StageStanceMerge, metrics.OutcomeMergeLookupRejected)
 				return false
@@ -536,6 +547,7 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 			if err != nil {
 				return failed(err)
 			}
+			consecutive = 0
 			if !same {
 				metrics.RecordDecision(metrics.StageStanceMerge, rejected)
 				return false
@@ -546,6 +558,7 @@ func pairwiseGroupStances(ctx context.Context, sm *StanceManager, personName str
 		if err != nil {
 			return failed(err)
 		}
+		consecutive = 0
 		if dec != nil && len(dec.Merges) > 0 {
 			metrics.RecordDecision(metrics.StageStanceMerge, confirmed)
 			return true

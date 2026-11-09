@@ -305,6 +305,7 @@ The admin password of Grafana is the service variable `GF_SECURITY_ADMIN_PASSWOR
 ### Operations tracking
 The Grafana dashboard **Operations** (`operations.json`) shows where each long operation stands: how far it is, its speed over the last 3 hours, when it should end at that speed, and what it produces (pairs judged, contradictions, claim groups, facts).
 - The fold (`dm facts fold --apply` over everyone) and the detection over every person record their progress in persons, as `job_metrics` rows under the job `progress` (`storage.RecordProgress`). A new long operation without a table of its own records its progress the same way.
+- The LLM usage of each feed and each maintenance pass: rows of `job_metrics` under the job `llm_usage` (target `endpoint/task/model`; metrics `calls`, `failed`, `input_tokens`, `cache_write_tokens`, `cache_read_tokens`, `output_tokens`, `thinking_tokens`, `cost_usd`, at list price). The worker also logs the cumulative report (`LLM usage of the process`).
 - A collection batch is named at its creation: `dm collect add "Name" --from 2024-10-01 --operation "backfill 2y"`. Its progress is its tasks (`collection_tasks.operation`).
 
 ## Development Status

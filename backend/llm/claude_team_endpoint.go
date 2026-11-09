@@ -665,6 +665,13 @@ func claudeReset(text string, now time.Time) (reset string, at time.Time) {
 // UsageReport returns one line per task and model: calls, failures, tokens
 // and cost. The cost is the list price that the CLI reports; the seats do not
 // pay it.
+// usageRows implements usageEndpoint.
+func (t *ClaudeTeamEndpoint) usageRows() []UsageRow {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return usageRowsOf(t.usage)
+}
+
 func (t *ClaudeTeamEndpoint) UsageReport() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

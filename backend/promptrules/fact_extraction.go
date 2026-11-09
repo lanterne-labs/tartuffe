@@ -15,7 +15,7 @@ REFERENCE DATE: %s (YYYY-MM-DD) — the article's publication date when it is kn
 
 ## Task
 Extract facts about ALL relevant persons, parties, and organizations mentioned in the article.
-Focus especially on the primary subject '%s' but do NOT limit extraction to only that entity.
+Focus especially on the primary subject (named under Input Data below) but do NOT limit extraction to only that entity.
 We track facts to detect CONTRADICTIONS in an entity's OWN positions over time.
 
 ## What is a VALID Fact?
@@ -292,12 +292,16 @@ func BuildFactExtractionPrompt(cfg FactExtractorConfig) string {
 	}
 
 	return fmt.Sprintf(CoreFactExtractionPrompt,
+		// The name of the person comes after the rules, not in the intro: the
+		// Claude endpoints cache the common start of the prompts of a task,
+		// and a name in the intro ended that start before the rules, so the
+		// rules were written to the cache again for every person (2026-11-09:
+		// 4,900 tokens written per extract call, 1,200 read).
 		now.Format("2006-01-02"), // First %s - REFERENCE DATE for relative-date resolution
-		cfg.TargetName,           // Second %s - target name in intro
-		pluginSection,            // Third %s - plugin instructions section
-		cfg.TargetName,           // Fourth %s - target name in input data
-		cfg.SourceURL,            // Fifth %s - source URL
-		cfg.Content,              // Sixth %s - content
+		pluginSection,            // Second %s - plugin instructions section
+		cfg.TargetName,           // Third %s - target name in input data
+		cfg.SourceURL,            // Fourth %s - source URL
+		cfg.Content,              // Fifth %s - content
 	)
 }
 
