@@ -6,7 +6,6 @@
 	// link leaves for the site, and nothing loads before a click.
 	import { setLang, tr, type Lang } from '$lib/i18n';
 	import BrandMark from './BrandMark.svelte';
-	import { theme } from '$lib/brand';
 	import { eventPaths } from '$lib/event';
 
 	type Featured = { slug: string; title_fr: string; title_en: string };
@@ -54,7 +53,7 @@
 <nav class="nav-bar">
 	<div class="nav-content">
 		<a href={site || '/'} class="nav-brand" aria-label="tartuffe.me — home">
-			<span class="mask-glyph"><BrandMark variant={$theme} size="nav" /></span>
+			<span class="mask-glyph"><BrandMark size="nav" /></span>
 			<span class="brand-text">
 				<span class="brand-name">tartuffe<span class="brand-dot">.</span>me</span>
 			</span>

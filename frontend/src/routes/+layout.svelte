@@ -19,25 +19,10 @@
 	import SignInDialog from '$lib/components/SignInDialog.svelte';
 	import EventBanner from '$lib/components/EventBanner.svelte';
 	import SiteNav from '$lib/components/SiteNav.svelte';
-	import { theme, worldOf } from '$lib/brand';
 	import { voteKey } from '$lib/vote/isoloir';
 	import type { PollEvent } from '$lib/types';
 
 	let { children } = $props();
-	// The design mock-ups of the lab (/lab/design/<name>) carry their own
-	// header, footer and width: the site's are not drawn around them.
-	let bare = $derived($page.url.pathname.startsWith('/lab/design/'));
-	// A theme to compare (`?theme=<name>`: a colour theme of /lab/themes or a
-	// world of /lab/logo) is kept while browsing, until `?theme=` empties it.
-	$effect(() => {
-		const t = $page.url.searchParams.get('theme');
-		if (t !== null) theme.set(t || null);
-	});
-	$effect(() => {
-		if ($theme) document.documentElement.dataset.theme = $theme;
-		else delete document.documentElement.dataset.theme;
-	});
-	let world = $derived(worldOf($theme));
 
 	// The link preview of the page (X, WhatsApp, search engines): a page sets
 	// it with `meta` in the data of its load, the others get the site's.
@@ -91,27 +76,22 @@
 	<meta name="twitter:card" content="summary" />
 	<meta name="twitter:title" content={meta.title} />
 	<meta name="twitter:description" content={meta.description} />
-	{#if world}
-		<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family={world.fontCss}&display=swap" />
-	{/if}
 </svelte:head>
 
-{#if !bare}
-	<SiteNav lang={currentLang} pathname={$page.url.pathname} {featured} {userName} showProfile={!!$voteKey} onsignout={signOut} />
-{/if}
+<SiteNav lang={currentLang} pathname={$page.url.pathname} {featured} {userName} showProfile={!!$voteKey} onsignout={signOut} />
 
 <SignInDialog />
-{#if featured && !bare}
+{#if featured}
 	<EventBanner event={featured} lang={currentLang} />
 {/if}
 
 {#key $page.url.pathname}
-	<main class="page-content" class:bare in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>
+	<main class="page-content" in:fly={{ y: 8, duration: 200, delay: 100 }} out:fly={{ y: -8, duration: 150 }}>
 		{@render children()}
 	</main>
 {/key}
 
-<footer class="site-footer" class:hidden={bare}>
+<footer class="site-footer">
 	<p class="footer-lab">{tr('footer.lab', currentLang)}</p>
 	<a href="/lab">{tr('nav.lab', currentLang)}</a>
 	<span aria-hidden="true">·</span>
@@ -161,13 +141,6 @@
 		max-width: 1200px;
 		margin: 0 auto;
 		padding: 2rem;
-	}
-	.page-content.bare {
-		max-width: none;
-		padding: 0;
-	}
-	.site-footer.hidden {
-		display: none;
 	}
 	@media (max-width: 560px) {
 		.page-content {

@@ -14,7 +14,6 @@
 	import { sourceDomain } from '$lib/sources';
 	import { displayName } from '$lib/share';
 	import BrandMark from '$lib/components/BrandMark.svelte';
-	import { theme } from '$lib/brand';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -215,7 +214,7 @@
 
 <article class="landing">
 	<header class="hero">
-		<BrandMark variant={$theme} size="hero" />
+		<BrandMark size="hero" />
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
 		<ul class="pills">
