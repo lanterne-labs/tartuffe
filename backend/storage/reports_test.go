@@ -290,7 +290,12 @@ func TestScoreBaseline(t *testing.T) {
 	// is 3/4000 and 4000 facts cover. (More facts alone never cover a single
 	// candidate: the rate falls with them.)
 	for _, pair := range [][2]int64{{f.facts[0], f.facts[2]}, {f.facts[1], f.facts[2]}} {
-		_, _, err = storer.RecordContradictionImmediate(ctx, f.person, pair[0], pair[1], "Encore.", "Again.")
+		id, _, err := storer.RecordContradictionImmediate(ctx, f.person, pair[0], pair[1], "Encore.", "Again.")
+		require.NoError(t, err)
+		// The three facts share one stance, so the recording bundles the pair
+		// with the fixture's contradiction; a bundle is one contradiction of
+		// the rate. Each pair stands alone here.
+		_, err = storer.pool.Exec(ctx, `UPDATE contradictions SET bundle_stance_id = NULL WHERE id = $1`, id)
 		require.NoError(t, err)
 	}
 	_, err = storer.pool.Exec(ctx, `UPDATE persons SET fact_count = 4000, honesty_score = 0.97 WHERE id = $1`, f.person)
