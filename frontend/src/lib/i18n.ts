@@ -87,6 +87,10 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'person.coverage.empty': { fr: 'Pas encore de faits.', en: 'No facts yet.' },
 	'person.coverage.error': { fr: 'Répartition indisponible', en: 'Breakdown unavailable' },
 	'person.coverage.axis_note': { fr: 'Comptés par année, à la date des déclarations.', en: 'Yearly, by statement date.' },
+	'person.coverage.ongoing': {
+		fr: 'La collecte ne s’arrête jamais : nous parcourons le web en continu pour ajouter des faits et des contradictions. Chaque document demande une analyse coûteuse, alors la couverture s’étoffe mois après mois.',
+		en: 'Collection never stops: we keep reading the web to add facts and contradictions. Each document takes a costly analysis, so the coverage fills in month after month.'
+	},
 	'person.history.score': { fr: 'Tartuffe-Score depuis le début', en: 'Tartuffe-Score (all time)' },
 	'person.history.own_score': { fr: 'Son propre Tartuffe-Score depuis le début', en: 'Own Tartuffe-Score (all time)' },
 	'person.history.recent': { fr: 'Tartuffe-Score sur les 12 derniers mois', en: 'Tartuffe-Score (last 12 months)' },

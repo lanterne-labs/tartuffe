@@ -118,6 +118,7 @@
 		{/if}
 	{/if}
 	<p class="axis-note">{tr('person.coverage.axis_note', lang)}</p>
+	<p class="ongoing">{tr('person.coverage.ongoing', lang)}</p>
 </div>
 
 <style>
@@ -202,5 +203,13 @@
 		margin: 0.5rem 0 0;
 		font-size: 0.7rem;
 		color: var(--text-muted);
+	}
+	.ongoing {
+		margin: 0.6rem 0 0;
+		padding-top: 0.6rem;
+		border-top: 1px solid var(--border-card);
+		font-size: 0.8rem;
+		line-height: 1.5;
+		color: var(--text-secondary);
 	}
 </style>
