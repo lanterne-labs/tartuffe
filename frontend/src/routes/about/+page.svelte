@@ -9,6 +9,7 @@
 	import ContradictionFlow from '$lib/components/about/ContradictionFlow.svelte';
 	import BundleDiagram from '$lib/components/about/BundleDiagram.svelte';
 	import ScoreExplorer from '$lib/components/about/ScoreExplorer.svelte';
+	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR, RATIO_DECAY, formatConstant } from '$lib/score';
 	import Mirror from '$lib/components/about/Mirror.svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -76,7 +77,7 @@
 				'Trois faits qui se contredisent sur les retraites forment trois paires, mais un seul lot : on ne compte pas trois fois le même revirement.',
 			rules: [
 				['< 10', 'faits : pas de repère, il n’y a pas encore assez à juger.'],
-				['≈ 5', 'pour une seule contradiction.'],
+				['≈ 9', 'pour une seule contradiction.'],
 				['🚧', 'score en cours de consolidation : la détection manque des contradictions bien plus qu’elle n’en invente, donc un score ne peut qu’être trop bas, jamais trop haut. Un score compte dans les classements quand la personne a assez de faits pour qu’une feuille blanche veuille dire quelque chose (le seuil suit la moyenne des candidats), ou dès qu’il dépasse le plus bas score d’un candidat qui y est déjà : plus de faits ne pourraient que le faire monter.'],
 				['75', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits ne fait pas bondir le score.'],
 				['½ + ½', 'pour un parti : la moitié vient de son propre score, l’autre moitié de la moyenne de ses membres.']
@@ -158,7 +159,7 @@
 				'Three facts that contradict each other on pensions form three pairs, but a single bundle: the same U-turn is not counted three times.',
 			rules: [
 				['< 10', 'facts: no marker, not enough to judge yet.'],
-				['≈ 5', 'with one contradiction.'],
+				['≈ 9', 'with one contradiction.'],
 				['🚧', 'score being consolidated: detection misses contradictions far more than it invents them, so a score can only be too low, never too high. A score counts in the rankings once the person has enough facts for a clean sheet to mean something (the threshold follows the candidates’ average), or as soon as it passes the lowest score of a candidate already ranked: more facts could only push it up.'],
 				['75', 'facts at least in the computation: one contradiction among very few facts does not send the score soaring.'],
 				['½ + ½', 'for a party: half comes from its own score, half from the average of its members.']
@@ -262,8 +263,8 @@
 			<span class="formula-label">{c.formulaLabel}</span>
 			<p class="formula">
 				<span class="fx">Tartuffe-Score</span> = 100 × (1 − exp(
-				<span class="frac"><span>−1{currentLang === 'fr' ? ',' : '.'}5 × <b>B</b></span><span>max(<b>F</b>, 75)</span></span>
-				− 0{currentLang === 'fr' ? ',' : '.'}03 × <b>B</b> − 0{currentLang === 'fr' ? ',' : '.'}05 × ln(1 + <b>E</b>) ))
+				<span class="frac"><span>−{formatConstant(RATIO_DECAY, currentLang)} × <b>B</b></span><span>max(<b>F</b>, {MIN_DENOMINATOR})</span></span>
+				− {formatConstant(ABSOLUTE_DECAY, currentLang)} × <b>B</b> − {formatConstant(EXTRA_DECAY, currentLang)} × ln(1 + <b>E</b>) ))
 			</p>
 			<dl class="defs">
 				{#each c.defs as [k, v]}

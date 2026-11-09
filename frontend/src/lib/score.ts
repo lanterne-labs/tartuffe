@@ -4,9 +4,14 @@
 // one bundle).
 
 export const RATIO_DECAY = 1.5;
-export const ABSOLUTE_DECAY = 0.03;
-export const EXTRA_DECAY = 0.05;
+export const ABSOLUTE_DECAY = 0.09;
+export const EXTRA_DECAY = 0.125;
 export const MIN_DENOMINATOR = 75;
+
+/** A constant of the formula as shown: French writes the decimal with a comma. */
+export function formatConstant(n: number, lang: string): string {
+	return String(n).replace('.', lang === 'fr' ? ',' : '.');
+}
 
 export interface ScoreInputs {
 	facts: number;

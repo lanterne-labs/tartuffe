@@ -9,9 +9,9 @@
 	// the portrait, and it and the "?" say from how many facts a score
 	// settles.
 	//
-	// The dial is logarithmic in contradictions (dialOf): the first
-	// contradictions move the needle a lot, each later one a little less, so
-	// the graduations (one every few contradictions) crowd towards the red.
+	// The dial is linear in the score (dialOf): the needle sits at the number
+	// shown, so two persons 10 points apart are 10 points apart on every
+	// dial, and the graduations are every 5 points (10 on a small dial).
 	import { tr, type Lang } from '$lib/i18n';
 
 	interface Props {
@@ -55,7 +55,7 @@
 			s: coveredText(covered, lang)
 		})
 	);
-	// The graduations: one every 3 contradictions, every 6 on a small dial.
+	// The graduations: one every 5 points, every 10 on a small dial.
 	let marks = $derived(MARKS.filter((_, i) => size === 'lg' || size === 'md' || i % 2 === 0));
 	let centreNumber = $derived(!image && !initial);
 	let value = $derived(
@@ -103,23 +103,14 @@
 		return typeof honesty === 'number' && Number.isFinite(honesty) ? Math.round((1 - honesty) * 100) : null;
 	}
 
-	// The score of c distinct contradictions is about 100 × (1 − exp(−K·c))
-	// for a person with 2000 facts (k = 4, j = 0.02 in the formula).
-	const K = 4 / 2000 + 0.02;
-	// The dial ends at 150 contradictions; BEND softens the logarithm so the
-	// first graduations are not too far apart.
-	const CMAX = 150;
-	const BEND = 3;
-	function placeOfContradictions(c: number): number {
-		return (100 * Math.log1p(c / BEND)) / Math.log1p(CMAX / BEND);
-	}
-	/** Where a Tartuffe value sits on the dial, 0 to 100. */
+	/** Where a Tartuffe value sits on the dial, 0 to 100: its own value. The
+	 * dial was logarithmic in contradictions until 2026-11-09, which crowded
+	 * the most contradicted into its last third. */
 	export function dialOf(t: number): number {
-		const c = -Math.log(1 - Math.min(t, 99.9) / 100) / K;
-		return Math.min(100, placeOfContradictions(c));
+		return Math.min(100, Math.max(0, t));
 	}
-	/** The places of the graduations: one every 3 contradictions. */
-	export const MARKS = Array.from({ length: CMAX / 3 + 1 }, (_, i) => placeOfContradictions(i * 3));
+	/** The places of the graduations: one every 5 points, a long one every 50. */
+	export const MARKS = Array.from({ length: 21 }, (_, i) => i * 5);
 	/** The colour of a place on the dial (or a bar): green, amber, red. */
 	export function tartuffeColor(place: number): string {
 		return place < 50

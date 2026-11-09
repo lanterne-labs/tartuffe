@@ -2,20 +2,21 @@
 	// An interactive chart of the Tartuffe-Score: the reader picks a number
 	// of distinct contradictions (B), of facts (F) and of extra pairs inside
 	// the bundles (E), and sees the score, its barometer and its curve over
-	// B change live.
-	// Tartuffe-Score = 100 · (1 − exp(−1.5·B / max(F, 75) − 0.03·B − 0.05·ln(1 + E)))
+	// B change live. The formula and its constants are those of $lib/score
+	// (backend/core/honesty.go): Tartuffe-Score = 100 · (1 − honesty).
 	import type { Lang } from '$lib/i18n';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
+	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR, RATIO_DECAY, formatConstant, scoreTerms } from '$lib/score';
 
 	let { lang }: { lang: Lang } = $props();
 
-	const FLOOR = 75;
+	const FLOOR = MIN_DENOMINATOR;
 	const B_MAX = 40;
-	const factOptions = [75, 300, 1000];
+	const factOptions = [FLOOR, 300, 1000];
 
 	function score(b: number, f: number, e: number): number {
 		if (f <= 0) return 0;
-		return 100 * (1 - Math.exp((-1.5 * b) / Math.max(f, FLOOR) - 0.03 * b - 0.05 * Math.log(1 + e)));
+		return 100 * (1 - scoreTerms({ facts: f, bundles: b, pairs: b + e }).score);
 	}
 
 	let b = $state(1);
@@ -74,7 +75,7 @@
 		}
 	};
 	let c = $derived(text[lang]);
-	let dec = $derived(lang === 'fr' ? ',' : '.');
+	let k = $derived([RATIO_DECAY, ABSOLUTE_DECAY, EXTRA_DECAY].map((n) => formatConstant(n, lang)));
 </script>
 
 <div class="explorer">
@@ -109,7 +110,7 @@
 		</div>
 		<TartuffeScore honesty={1 - value / 100} {lang} size="md" />
 		<p class="formula" aria-hidden="true">
-			100 × (1 − exp(−1{dec}5×{b}/{Math.max(f, FLOOR)} − 0{dec}03×{b} − 0{dec}05×ln(1+{e})))
+			100 × (1 − exp(−{k[0]}×{b}/{Math.max(f, FLOOR)} − {k[1]}×{b} − {k[2]}×ln(1+{e})))
 		</p>
 		<p class="hint">{f <= FLOOR ? c.few : c.many}</p>
 	</div>
@@ -134,7 +135,7 @@
 			{#each ghosts as g}
 				<path class="ghost" d={g.d} />
 				<text class="ghost-label" x={x(B_MAX) - 2} y={y(score(B_MAX, g.f, e)) - 4} text-anchor="end"
-					>{g.f === FLOOR ? "F ≤ 75" : `F = ${g.f}`}</text
+					>{g.f === FLOOR ? `F ≤ ${FLOOR}` : `F = ${g.f}`}</text
 				>
 			{/each}
 			<path class="area" d={areaPath} fill="url(#score-area)" />

@@ -3,25 +3,29 @@ package core
 import "math"
 
 // HonestyScoreRatioDecay controls the exponential penalty based on the bundle/facts ratio.
-// Kept moderate (was 4) so a single contradiction in a tiny fact base does not crush the score.
+// It only matters near the smoothing floor: with the thousands of facts a tracked person
+// has, 1.5 * B/F is a few thousandths and the two terms below decide the score.
 const HonestyScoreRatioDecay = 1.5
 
 // HonestyScoreAbsoluteDecay controls the exponential penalty per distinct contradiction bundle.
 // Each bundle contributes one full penalty regardless of how many raw pairs it contains.
-// Sized so that one contradiction yields ~95% honesty and the score decays exponentially
-// from there as more contradictions are added.
-const HonestyScoreAbsoluteDecay = 0.03
+// Sized (2026-11-09, from 0.03) so that one contradiction yields ~91% honesty (a
+// Tartuffe-Score of 9) and seven distinct contradictions about 50: the candidates hold
+// 1 to 7 bundles, and at 0.03 the most contradicted of them read 33 with 45 pairs.
+const HonestyScoreAbsoluteDecay = 0.09
 
 // HonestyScoreBundleExtraDecay controls the (logarithmic) penalty for repeated contradictions
-// inside the same bundle. extras = total raw pairs - distinct bundles. The constant 0.05 is
-// chosen so that any bundle of size N >= 2 strictly reduces the penalty vs. counting each pair
-// independently.
-const HonestyScoreBundleExtraDecay = 0.05
+// inside the same bundle. extras = total raw pairs - distinct bundles. It must stay under
+// HonestyScoreAbsoluteDecay / ln 2 (0.1298) so that a bundle of N >= 2 pairs always costs
+// strictly less than N distinct bundles: j + a*ln(N) < j*N, binding at N = 2. At 0.125, 45
+// pairs in 7 bundles cost 0.46 on top of the bundles' 0.63 (a Tartuffe-Score of 66 against
+// 59 for 14 pairs in 7 bundles); at 0.05 they cost 0.18 and the two read 6 points apart.
+const HonestyScoreBundleExtraDecay = 0.125
 
 // HonestyScoreMinDenominator is the Bayesian-style smoothing floor for the ratio term:
 // ratio = bundles / max(facts, HonestyScoreMinDenominator). Without it, a person with
 // 1 contradiction out of 2 facts gets crushed even though the sample size is too small
-// to justify that confidence. The floor of 75 keeps a single contradiction near ~95%
+// to justify that confidence. The floor of 75 keeps a single contradiction near ~90%
 // honesty until enough facts accumulate to confirm the ratio is real.
 const HonestyScoreMinDenominator = 75
 
