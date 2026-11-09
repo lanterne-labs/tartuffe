@@ -220,6 +220,13 @@ func (t *ClaudeBatchEndpoint) reply(c *batchCall, res ClaudeJobResult) batchRepl
 
 // UsageReport returns one line per task and model: calls, failures, tokens
 // and cost.
+// usageRows implements usageEndpoint.
+func (t *ClaudeBatchEndpoint) usageRows() []UsageRow {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return usageRowsOf(t.usage)
+}
+
 func (t *ClaudeBatchEndpoint) UsageReport() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -408,6 +408,13 @@ func (t *ClaudeAPIEndpoint) withPrefix(task Task, creq ClaudeRequest) (ClaudeReq
 
 // UsageReport returns one line per task and model: calls, failures, tokens
 // and cost.
+// usageRows implements usageEndpoint.
+func (t *ClaudeAPIEndpoint) usageRows() []UsageRow {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return usageRowsOf(t.usage)
+}
+
 func (t *ClaudeAPIEndpoint) UsageReport() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()

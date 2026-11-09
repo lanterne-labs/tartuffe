@@ -2,6 +2,14 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: Where the LLM spend goes, and four cuts
+
+The worker's usage report (per task, from the log of one deployment) and `decision_counters` over 7 days: the detection judged 81,572 pairs for 61 contradictions kept (one pair per call, 10,000 to 35,000 calls a day); `extract` cost $0.039 a call, 3 to 5 times any other task, because 4,900 tokens were written to the cache per call and 1,200 read; a new fact then costs 3 to 4 calls (occurrence gate, assign, analyze, label); and since 00:13 UTC the worker had sent 150,000 calls to an API without credit.
+- The person's name leaves the intro of the extraction prompt: the Claude endpoints cache the common start of the prompts of a task, and the name ended it before the rules. The rules are now one cached prefix for every person (`promptrules.BuildFactExtractionPrompt`).
+- The stance analysis records its verdict on the pairs of the new fact and the key facts it was compared with (`fact_pair_checks`, `core.StanceJudgeHash`), so the detection skips them; the eviction of stale negatives keeps the verdicts of both judges (`EvictStaleJudgedPairs` takes the current hashes).
+- The 400 for the credit balance stops the endpoint since PR 75 (the same morning, another session). The stance merge also stops after 3 LLM failures in a row, whatever they are: an endpoint that fails every call without saying it is down got the whole candidate list (1,935 failed merge calls that night).
+- The LLM usage of each feed and each pass is kept in `job_metrics` (job `llm_usage`, target endpoint/task/model, metrics calls, failed, the token kinds, cost_usd): the usage report of the log dies with the deployment, and the question "where does it go" needed a week of history that did not exist.
+- Not done here: 3 pairs per detection call on Claude (`MaxPairsPerBatchSync` guards a local model that swapped fact IDs), to be measured on the detect golden first.
 ## 2026-11-09: Two backend tests failed on every branch
 
 - `TestChatReturnsTheErrorOfTheFallback` depended on the hour: the API cap resets at the next UTC day, so in the last 2 hours of the day the API came back before the seat and the error named the API. The test now expects the endpoint that comes back first, which is the rule (`bothFailed`).

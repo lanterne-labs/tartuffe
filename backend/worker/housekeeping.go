@@ -99,6 +99,51 @@ type Housekeeping struct {
 
 	dirty   atomic.Bool // facts were added since the last pass (set by the tasks run at once)
 	feeding atomic.Bool // the feed runs
+
+	lastUsage map[string]llm.TaskUsage // the LLM usage at the last record, per endpoint/task/model
+}
+
+// llmUsageJob is the job of the job_metrics rows of the LLM usage: after each
+// feed and each maintenance pass, one row per endpoint, task, model and
+// measure (target "endpoint/task/model") with what was used since the last
+// record. The endpoints count since the start of the process (UsageReport,
+// in the log); the rows keep the history the log loses at each deploy, so the
+// cost per task can be read back over weeks.
+const llmUsageJob = "llm_usage"
+
+// recordLLMUsage records the LLM usage since the last record as job_metrics.
+func (h *Housekeeping) recordLLMUsage(ctx context.Context) error {
+	if h.lastUsage == nil {
+		h.lastUsage = map[string]llm.TaskUsage{}
+	}
+	var rows []storage.JobMetric
+	for _, r := range llm.UsageRows() {
+		key := string(r.Endpoint) + "/" + string(r.Task) + "/" + r.Model
+		prev := h.lastUsage[key]
+		h.lastUsage[key] = r.TaskUsage
+		if r.Calls == prev.Calls {
+			continue
+		}
+		for metric, value := range map[string]float64{
+			"calls":              float64(r.Calls - prev.Calls),
+			"failed":             float64(r.Failed - prev.Failed),
+			"input_tokens":       float64(r.Usage.InputTokens - prev.Usage.InputTokens),
+			"cache_write_tokens": float64(r.Usage.CacheCreationInputTokens - prev.Usage.CacheCreationInputTokens),
+			"cache_read_tokens":  float64(r.Usage.CacheReadInputTokens - prev.Usage.CacheReadInputTokens),
+			"output_tokens":      float64(r.Usage.OutputTokens - prev.Usage.OutputTokens),
+			"thinking_tokens":    float64(r.Usage.OutputTokensDetails.ThinkingTokens - prev.Usage.OutputTokensDetails.ThinkingTokens),
+			"cost_usd":           r.CostUSD - prev.CostUSD,
+		} {
+			rows = append(rows, storage.JobMetric{JobType: llmUsageJob, Target: key, Metric: metric, Value: value})
+		}
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	if err := h.Storer.RecordJobMetrics(ctx, rows); err != nil {
+		return fmt.Errorf("recording the LLM usage: %w", err)
+	}
+	return nil
 }
 
 // NewHousekeeping returns the housekeeping of `dm worker run` on storer and d.
@@ -305,6 +350,9 @@ func (h *Housekeeping) feed(ctx context.Context) error {
 	log.Info().Dur("elapsed", h.now().Sub(start).Round(time.Second)).Int("facts", in.Result.Total.Facts).
 		Int("watch_tasks", added).Int("errors", len(errs)).Msg("Feed done")
 	llm.LogUsage()
+	if err := h.recordLLMUsage(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -522,6 +570,9 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	log.Info().Dur("elapsed", elapsed.Round(time.Second)).Int("persons_detected", len(persons)).Int("persons_regrouped", len(ids)).
 		Bool("detection_cut", cut).Int("errors", len(errs)).Msg("Maintenance pass done")
 	llm.LogUsage()
+	if err := h.recordLLMUsage(ctx); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
