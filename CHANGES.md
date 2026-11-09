@@ -2,6 +2,9 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: The stance label is refreshed at insertion only on a contradiction
+
+Every fact that joined a stance refreshed its label and summary at once: about one `stance-label` call per new fact (9,700 on 2026-11-06, the day of the Twitter backfill). The maintenance pass already folds every unsummarized fact of a stance in one call (`RefreshPendingStances`, `summarized_at`), so a fact that only adds information now waits for it; a contradiction still refreshes at once, since it changes what the stance says. The label of a stance can lag behind its newest facts by one pass (at most 6 h).
 ## 2026-11-09: Where the LLM spend goes, and four cuts
 
 The worker's usage report (per task, from the log of one deployment) and `decision_counters` over 7 days: the detection judged 81,572 pairs for 61 contradictions kept (one pair per call, 10,000 to 35,000 calls a day); `extract` cost $0.039 a call, 3 to 5 times any other task, because 4,900 tokens were written to the cache per call and 1,200 read; a new fact then costs 3 to 4 calls (occurrence gate, assign, analyze, label); and since 00:13 UTC the worker had sent 150,000 calls to an API without credit.
