@@ -1588,6 +1588,37 @@
 		transition: color var(--transition-fast);
 	}
 
+	/* The switch between the two counts: shown on a phone only (the media
+	   query below, which must come after this rule to win). */
+	.count-switch {
+		display: none;
+		justify-content: center;
+		gap: 0.25rem;
+		width: fit-content;
+		max-width: 100%;
+		margin: 0.4rem auto 0.9rem;
+		padding: 4px;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: var(--bg-card);
+	}
+	.count-switch button {
+		padding: 0.45rem 1rem;
+		border: none;
+		border-radius: var(--radius-full);
+		background: none;
+		color: var(--text-secondary);
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.count-switch button.on {
+		background: var(--accent);
+		color: white;
+	}
+
 	@media (max-width: 560px) {
 		.ballot {
 			padding: 1rem;
@@ -1627,34 +1658,6 @@
 			gap: 0.6rem;
 			padding: 0.6rem 0.75rem;
 		}
-	}
-	.count-switch {
-		display: none;
-		justify-content: center;
-		gap: 0.25rem;
-		width: fit-content;
-		max-width: 100%;
-		margin: 0.4rem auto 0.9rem;
-		padding: 4px;
-		border: 1px solid var(--glass-border);
-		border-radius: var(--radius-full);
-		background: var(--bg-card);
-	}
-	.count-switch button {
-		padding: 0.45rem 1rem;
-		border: none;
-		border-radius: var(--radius-full);
-		background: none;
-		color: var(--text-secondary);
-		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 600;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-	.count-switch button.on {
-		background: var(--accent);
-		color: white;
 	}
 	.live {
 		display: flex;
