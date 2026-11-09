@@ -115,6 +115,46 @@ regression to explain before anything else. Also check the worker:
 `host logs --service worker -n 300` for errors, seats at their limit, the
 last maintenance pass.
 
+### The extraction: did the pipeline work at all?
+
+The last rows of `measure.sql` judge the extraction itself, before the
+quality of what it produced. Read them first: a pipeline that failed makes
+every other number of the run meaningless, and the quality steps would not
+show it (the facts it did make are fine; the loss is what it did not make).
+On 2026-11-09 the API's prepaid credit ran out at 00:20 UTC; the API answered
+`400 … credit balance is too low`, which the worker took for an error of each
+document: 18 000 documents (13 365 news, 4 709 tweets) were tried three times
+and marked `failed` in three hours, 102 Twitter tasks ended "done" with 30
+facts in all, no alert went out, and it was found the next day by chance.
+
+Stop and fix before anything else when:
+
+- **documents of the window by state**: a source with more `failed` than
+  `extracted` documents, or a source with documents and no facts;
+- **failed documents of the window by error**: an error that names the LLM
+  endpoint, not the document (`LLM API`, `fallback claude-api`, `credit`,
+  `unavailable`, `overloaded`, `rate limit`, a timeout) — an outage that
+  consumed the documents' attempts. The endpoint must have halted instead
+  (`llm.ErrUnavailable`: the plugins put the work back; `claude_batch.go` `do`
+  and `callError` classify the API's answers, `OnCreditError` sends the
+  Telegram alert). Fix the classification with a case in
+  `TestClaudeAPIEndpoint_CreditErrorStopsTheRun`, then give the documents
+  their attempts back (`dm documents retry --match <error text>`, dry run by
+  default; `--apply` after the user's yes and once the cause is gone);
+- **collection tasks of the window**: tasks `done` with items and no facts
+  (`with_items_no_facts`), beyond a few: the task's `last_error` and
+  `details` name the first cause;
+- **facts per 100 documents**: a source whose yield fell by half against the
+  14 days before, with no prompt change to explain it;
+- **api spend by phase**: a day where extraction spent little while tasks
+  were pending (the worker could not spend: an outage), or the maintenance
+  phase absent for two days.
+
+Every such finding is a code fix with a test in step 4 and a line in the
+report, even when the data repaired itself since. Also compare the window's
+facts per source with the tasks that ran (`collection_tasks`): a plugin that
+ran and produced nothing is a bug until explained.
+
 ## 2. Review the contradictions
 
 Take every contradiction with no review, every one whose last verdict is

@@ -291,6 +291,7 @@ func isCreditError(statusCode int, body string) bool {
 	}
 	return strings.Contains(lower, "insufficient credits") ||
 		strings.Contains(lower, "insufficient_quota") ||
+		strings.Contains(lower, "credit balance") ||
 		strings.Contains(lower, "payment required")
 }
 

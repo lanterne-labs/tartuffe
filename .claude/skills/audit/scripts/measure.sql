@@ -73,3 +73,40 @@ SELECT 'stances by size', CASE WHEN fact_count > 100 THEN '>100' WHEN fact_count
 FROM stance_documents GROUP BY 2 ORDER BY 2;
 
 SELECT 'api spend', day, round(spent_usd::numeric, 2) FROM llm_api_spend ORDER BY day DESC LIMIT 3;
+
+SELECT 'api spend by phase', day, phase, round(spent_usd::numeric, 2) FROM llm_api_spend_phase ORDER BY day DESC, phase LIMIT 6;
+
+-- The extraction itself (SKILL.md, step 1 "The extraction"). A source whose
+-- documents of the window mostly failed, or a failure whose error names the
+-- LLM endpoint, is an outage taken for an error of each document: on
+-- 2026-11-09 the API's credit ran out and 18 000 documents were marked failed
+-- in three hours, with 30 facts out of 102 Twitter tasks, and nobody noticed
+-- before the next day.
+SELECT 'documents of the window by state', source_type, state, count(*), sum(facts_count) facts
+FROM source_documents WHERE fetched_at >= :since::timestamptz GROUP BY 2, 3 ORDER BY 2, 3;
+
+SELECT 'failed documents of the window by error', source_type, count(*), max(attempts) attempts,
+       left(regexp_replace(min(last_error), 'https?://\S+', 'URL', 'g'), 160) one_error
+FROM source_documents
+WHERE fetched_at >= :since::timestamptz AND state = 'failed'
+GROUP BY 2, left(regexp_replace(regexp_replace(last_error, 'https?://\S+', 'URL', 'g'), '\d+', 'N', 'g'), 90)
+ORDER BY 3 DESC LIMIT 8;
+
+SELECT 'failed documents whose error names the LLM endpoint (all time, attempts exhausted)', source_type, count(*)
+FROM source_documents
+WHERE state = 'failed' AND attempts >= 3
+  AND last_error ~* 'LLM (API|unavailable)|claude|fallback|credit|endpoint|overloaded|rate limit'
+GROUP BY 2 ORDER BY 3 DESC;
+
+SELECT 'collection tasks of the window', plugin, status, count(*), sum(items) items, sum(facts) facts,
+       count(*) FILTER (WHERE items > 0 AND facts = 0) with_items_no_facts
+FROM collection_tasks WHERE finished_at >= :since::timestamptz GROUP BY 2, 3 ORDER BY 2, 3;
+
+SELECT 'facts per 100 documents, window vs the 14 days before', source_type,
+       round(100.0 * sum(facts_count) FILTER (WHERE fetched_at >= :since::timestamptz)
+             / greatest(count(*) FILTER (WHERE fetched_at >= :since::timestamptz), 1), 1) AS window,
+       round(100.0 * sum(facts_count) FILTER (WHERE fetched_at < :since::timestamptz)
+             / greatest(count(*) FILTER (WHERE fetched_at < :since::timestamptz), 1), 1) AS before
+FROM source_documents
+WHERE fetched_at >= :since::timestamptz - interval '14 days' AND state <> 'fetched'
+GROUP BY 2 ORDER BY 2;

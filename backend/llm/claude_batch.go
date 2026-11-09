@@ -183,15 +183,25 @@ func (c *ClaudeBatchClient) doJSON(ctx context.Context, method, url string, body
 	return nil
 }
 
-// errClaudeCredit marks the error of a 402 or of a 429 for the spend limit:
-// the account has no credit left, or reached its spend limit.
+// errClaudeCredit marks the error of an exhausted account: a 402, a 429 for
+// the spend limit, or the 400 the API sends when the prepaid credit is gone.
 var errClaudeCredit = errors.New("claude account: no credit or spend limit reached")
+
+// isClaudeCreditBody reports whether an error body names an exhausted
+// account. On 2026-11-09 the prepaid credit ran out and the API answered
+// 400 invalid_request_error "Your credit balance is too low to access the
+// Anthropic API", not 402: the worker took it for an error of each document
+// and marked 18 000 documents failed in three hours, without an alert.
+func isClaudeCreditBody(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "credit balance") || strings.Contains(lower, "billing_error")
+}
 
 // do sends one HTTP request with retry. It retries a transport error, a 5xx
 // (529 is "overloaded") and a 429, which waits the retry-after header first.
-// Every other 4xx is a permanent *ClientError. A 402, and a 429 for the spend
-// limit, also call OnCreditError and wrap errClaudeCredit: no retry helps
-// until the account changes.
+// Every other 4xx is a permanent *ClientError. A 402, a 429 for the spend
+// limit and a 400 for the credit balance also call OnCreditError and wrap
+// errClaudeCredit: no retry helps until the account changes.
 func (c claudeHTTP) do(ctx context.Context, method, url string, body []byte) ([]byte, error) {
 	var out []byte
 	op := func() error {
@@ -247,7 +257,7 @@ func (c claudeHTTP) do(ctx context.Context, method, url string, body []byte) ([]
 		default:
 			log.Error().Str("request_id", reqID).Int("status_code", resp.StatusCode).Str("body", snippet).Msg("claude request rejected")
 			var err error = &ClientError{StatusCode: resp.StatusCode, Status: resp.Status, Body: snippet}
-			if resp.StatusCode == http.StatusPaymentRequired {
+			if resp.StatusCode == http.StatusPaymentRequired || isClaudeCreditBody(snippet) {
 				if OnCreditError != nil {
 					OnCreditError("claude", snippet)
 				}
