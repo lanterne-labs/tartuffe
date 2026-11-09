@@ -2,6 +2,11 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-09: Two backend tests failed on every branch
+
+- `TestChatReturnsTheErrorOfTheFallback` depended on the hour: the API cap resets at the next UTC day, so in the last 2 hours of the day the API came back before the seat and the error named the API. The test now expects the endpoint that comes back first, which is the rule (`bothFailed`).
+- `TestScoreBaseline` gave its only candidate 12 000 facts to cover it, but the candidates' rate falls with the facts: one bundle over F facts expects 3 contradictions at 3F facts, never reached. A single candidate is covered through its bundles (3 over 4 000 facts), not its facts.
+
 ## 2026-11-08: `dm ingest files` stored its facts without the article's date
 
 37 press articles ingested from cache files (both sides of 11 known reversals of the candidates, to follow how the pipeline treats them) gave 95 facts with no `published_at`, and 42 more were skipped as undated (« Je souhaite être remplacé », Mélenchon 2022, among them): each file carried its `date_published`, but the file ingester handed it to the extractor only and never to the facts, which only the news plugin dates.
