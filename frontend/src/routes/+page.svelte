@@ -1,16 +1,20 @@
 <script lang="ts">
 	import TartuffeScore, { tartuffeOf } from '$lib/components/TartuffeScore.svelte';
-	// The landing page: the contradiction checker first (the slogan, one
-	// made-up example of a contradiction and its score, the ranking, the
-	// feed and the code), then the lab's temporary event, the private presidential vote,
+	// The landing page: the contradiction checker first (the question, the
+	// podium of the day, the contradiction of the day from the feed and its
+	// score, or a made-up example while it loads), then the lab's temporary event, the private presidential vote,
 	// in its own colour with its end date, then the lab itself. The ranking is
 	// at /dashboard.
 	import { eventPaths } from '$lib/event';
 	import { onMount } from 'svelte';
 	import { lang, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
-	import type { PollEvent } from '$lib/types';
-	import Mirror from '$lib/components/about/Mirror.svelte';
+	import type { PollEvent, FeedItem, FeedPage } from '$lib/types';
+	import Podium from '$lib/components/Podium.svelte';
+	import { sourceDomain } from '$lib/sources';
+	import { displayName } from '$lib/share';
+	import BrandMark from '$lib/components/BrandMark.svelte';
+	import { theme } from '$lib/brand';
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -36,14 +40,36 @@
 
 	const POLL = eventPaths();
 	let featured = $state<PollEvent | null>(null);
+	// The contradiction of the day: the hottest of the feed. Without one
+	// (an empty feed, an error) the made-up example stands in.
+	let clash = $state<FeedItem | null>(null);
 	onMount(async () => {
+		const [polls, feed] = await Promise.allSettled([fetch(`${API_BASE}/api/polls`), fetch(`${API_BASE}/api/feed?sort=hot&kind=contradiction&limit=1`)]);
 		try {
-			const res = await fetch(`${API_BASE}/api/polls`);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			featured = ((await res.json()) as PollEvent[]).find((e) => e.featured) ?? null;
+			if (polls.status === 'rejected' || !polls.value.ok) throw new Error(polls.status === 'rejected' ? String(polls.reason) : `HTTP ${polls.value.status}`);
+			featured = ((await polls.value.json()) as PollEvent[]).find((e) => e.featured) ?? null;
 		} catch (err) {
 			console.error('failed to load the featured poll', err);
 		}
+		try {
+			if (feed.status === 'rejected' || !feed.value.ok) throw new Error(feed.status === 'rejected' ? String(feed.reason) : `HTTP ${feed.value.status}`);
+			const first = ((await feed.value.json()) as FeedPage).items?.[0];
+			if (first?.other) clash = first;
+		} catch (err) {
+			console.error('failed to load the contradiction of the day', err);
+		}
+	});
+	// The two sides of the clash, the older first, as the example reads.
+	let sides = $derived.by(() => {
+		if (!clash?.other) return null;
+		const [x, y] = [clash.fact, clash.other];
+		const [a, b] = (x.date ?? '') <= (y.date ?? '') ? [x, y] : [y, x];
+		const side = (f: typeof x) => ({
+			year: f.date ? String(new Date(f.date).getFullYear()) : '',
+			text: currentLang === 'en' ? f.text_en || f.text : f.quote || f.text,
+			src: f.source_urls?.[0] ? sourceDomain(f.source_urls[0]) : ''
+		});
+		return { a: side(a), b: side(b), rise: Math.max(1, Math.round(-(clash.score_effect ?? 0))) };
 	});
 	function dateText(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -61,8 +87,8 @@
 
 	const content = {
 		fr: {
-			title: 'Les actes suivent‑ils les paroles ?',
-			lead: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.',
+			title: 'Cohérent ou tartuffe ?',
+			lead: 'Ce qu’ils disent, ce qu’ils votent, ce que la justice a tranché : quand ça ne colle pas, nous le montrons, sources à l’appui. Nous ne jugeons pas qui a raison.',
 			pills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
@@ -76,6 +102,8 @@
 			exTitle: 'Une contradiction, et le Tartuffe-Score monte',
 			exWho: 'Un député',
 			exTag: 'Exemple',
+			exTagLive: 'Aujourd’hui',
+			exLink: 'La fiche et les sources',
 			exSaid: '« Je ne toucherai jamais à l’âge de départ à la retraite. »',
 			exSaidSrc: 'En interview',
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
@@ -96,6 +124,8 @@
 				{ href: CODE, icon: 'code', title: 'Le code', body: 'Le site est open source : la collecte, la détection, le calcul du score. Lisez-le, vérifiez-le, corrigez-le.', cta: 'Voir le code' }
 			],
 			aboutLink: 'Comment le score est calculé',
+			podiumKicker: 'Aujourd’hui',
+			podiumLink: 'Tout le classement',
 
 			evTag: 'Expérience temporaire du labo',
 			evTitle: 'Présidentielle 2027 : voter en ligne, vraiment en secret',
@@ -110,8 +140,8 @@
 			labCta: 'Découvrir le labo'
 		},
 		en: {
-			title: 'Do their actions match their words?',
-			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
+			title: 'Coherent or tartuffe?',
+			lead: 'What they say, how they vote, what the courts ruled: when it does not add up, we show it, with the sources. We don’t say who is right.',
 			pills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 			ctaMain: 'See the ranking',
 			ctaFeed: 'Read the feed',
@@ -125,6 +155,8 @@
 			exTitle: 'One contradiction, the Tartuffe-Score rises',
 			exWho: 'A politician',
 			exTag: 'Example',
+			exTagLive: 'Today',
+			exLink: 'The record and the sources',
 			exSaid: '“I will never touch the retirement age.”',
 			exSaidSrc: 'Interview',
 			exDid: 'Votes to raise the retirement age to 64.',
@@ -145,6 +177,8 @@
 				{ href: CODE, icon: 'code', title: 'The code', body: 'The site is open source: the collection, the detection, the score. Read it, check it, fix it.', cta: 'See the code' }
 			],
 			aboutLink: 'How the score is computed',
+			podiumKicker: 'Today',
+			podiumLink: 'The whole ranking',
 
 			evTag: 'A temporary experiment of the lab',
 			evTitle: 'Presidential 2027: online voting, truly private',
@@ -181,7 +215,7 @@
 
 <article class="landing">
 	<header class="hero">
-		<Mirror />
+		<BrandMark variant={$theme} size="hero" />
 		<h1>{c.title}</h1>
 		<p class="lead">{c.lead}</p>
 		<ul class="pills">
@@ -192,6 +226,12 @@
 			<a class="cta cta-ghost" href="/feed">{c.ctaFeed} →</a>
 		</div>
 	</header>
+
+	<section class="podium" use:reveal>
+		<span class="kicker">{c.podiumKicker}</span>
+		<Podium lang={currentLang} />
+		<p class="more"><a href="/dashboard">{c.podiumLink} →</a></p>
+	</section>
 
 	<section class="example" use:reveal>
 		<h2>{c.scoreName}</h2>
@@ -206,39 +246,72 @@
 		<h2>{c.exTitle}</h2>
 
 		<div class="ex-card">
-			<div class="ex-who">
-				<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true">
-					<circle cx="24" cy="24" r="24" class="av-bg" />
-					<circle cx="24" cy="19" r="8" class="av-fg" />
-					<path d="M9 42c2-9 8-13 15-13s13 4 15 13" class="av-fg" />
-				</svg>
-				<span class="ex-name">{c.exWho}</span>
-				<span class="ex-tag">{c.exTag}</span>
-			</div>
-
-			<div class="ex-body">
-				<div class="ex-facts">
-					<div class="ex-fact">
-						<span class="ex-year">2019</span>
-						<p>{c.exSaid}</p>
-						<span class="ex-src">{c.exSaidSrc}</span>
+			{#if clash && sides}
+				<div class="ex-who">
+					{#if clash.person.image_url}
+						<img class="ex-avatar" src={clash.person.image_url} alt="" />
+					{:else}
+						<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="24" class="av-bg" /><circle cx="24" cy="19" r="8" class="av-fg" /><path d="M9 42c2-9 8-13 15-13s13 4 15 13" class="av-fg" /></svg>
+					{/if}
+					<a class="ex-name" href="/person/{clash.person.id}?c={clash.id}">{displayName(clash.person.name)}</a>
+					<span class="ex-tag ex-tag--live">{c.exTagLive}</span>
+				</div>
+				<div class="ex-body">
+					<div class="ex-facts">
+						<div class="ex-fact">
+							<span class="ex-year">{sides.a.year}</span>
+							<p>{sides.a.text}</p>
+							<span class="ex-src">{sides.a.src}</span>
+						</div>
+						<div class="ex-clash" aria-hidden="true"><span>⚡ {c.exClash}</span></div>
+						<div class="ex-fact">
+							<span class="ex-year">{sides.b.year}</span>
+							<p>{sides.b.text}</p>
+							<span class="ex-src">{sides.b.src}</span>
+						</div>
 					</div>
-					<div class="ex-clash" aria-hidden="true"><span>⚡ {c.exClash}</span></div>
-					<div class="ex-fact">
-						<span class="ex-year">2023</span>
-						<p>{c.exDid}</p>
-						<span class="ex-src">{c.exDidSrc}</span>
+					<div class="ex-score">
+						<TartuffeScore honesty={clash.person.honesty_score} lang={currentLang} size="lg" named={false} animate />
+						<span class="ex-rise" aria-label={c.exRiseLabel.replace('{n}', String(sides.rise))}>
+							<span class="ex-ticker" aria-hidden="true"><span>▲</span> +{sides.rise}</span>
+							<span class="ex-rise-note" aria-hidden="true">{c.exRise}</span>
+						</span>
 					</div>
 				</div>
-
-				<div class="ex-score">
-					<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
-					<span class="ex-rise" aria-label={c.exRiseLabel.replace('{n}', String(RISE))}>
-						<span class="ex-ticker" aria-hidden="true"><span>▲</span> +{RISE}</span>
-						<span class="ex-rise-note" aria-hidden="true">{c.exRise}</span>
-					</span>
+				<a class="ex-link" href="/person/{clash.person.id}?c={clash.id}">{c.exLink} →</a>
+			{:else}
+				<div class="ex-who">
+					<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true">
+						<circle cx="24" cy="24" r="24" class="av-bg" />
+						<circle cx="24" cy="19" r="8" class="av-fg" />
+						<path d="M9 42c2-9 8-13 15-13s13 4 15 13" class="av-fg" />
+					</svg>
+					<span class="ex-name">{c.exWho}</span>
+					<span class="ex-tag">{c.exTag}</span>
 				</div>
-			</div>
+				<div class="ex-body">
+					<div class="ex-facts">
+						<div class="ex-fact">
+							<span class="ex-year">2019</span>
+							<p>{c.exSaid}</p>
+							<span class="ex-src">{c.exSaidSrc}</span>
+						</div>
+						<div class="ex-clash" aria-hidden="true"><span>⚡ {c.exClash}</span></div>
+						<div class="ex-fact">
+							<span class="ex-year">2023</span>
+							<p>{c.exDid}</p>
+							<span class="ex-src">{c.exDidSrc}</span>
+						</div>
+					</div>
+					<div class="ex-score">
+						<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
+						<span class="ex-rise" aria-label={c.exRiseLabel.replace('{n}', String(RISE))}>
+							<span class="ex-ticker" aria-hidden="true"><span>▲</span> +{RISE}</span>
+							<span class="ex-rise-note" aria-hidden="true">{c.exRise}</span>
+						</span>
+					</div>
+				</div>
+			{/if}
 		</div>
 
 		<ol class="steps">
@@ -246,22 +319,6 @@
 				<li><span class="step-n">{i + 1}</span><strong>{head}</strong><span>{body}</span></li>
 			{/each}
 		</ol>
-	</section>
-
-	<section class="services" use:reveal>
-		<span class="kicker">{c.svcKicker}</span>
-		<h2>{c.svcTitle}</h2>
-		<div class="svc-grid">
-			{#each c.services as s (s.href)}
-				<a class="svc" href={s.href} target={s.href.startsWith('http') ? '_blank' : undefined} rel={s.href.startsWith('http') ? 'noopener noreferrer' : undefined}>
-					<svg class="svc-icon" viewBox="0 0 24 24" aria-hidden="true">{@render icon(s.icon)}</svg>
-					<h3>{s.title}</h3>
-					<p>{s.body}</p>
-					<span class="svc-cta">{s.cta} →</span>
-				</a>
-			{/each}
-		</div>
-		<p class="more"><a href="/about">{c.aboutLink} →</a></p>
 	</section>
 
 	<section class="event" use:reveal>
@@ -284,6 +341,21 @@
 		<h2>{c.labTitle}</h2>
 		<p>{c.labBody}</p>
 		<p class="more"><a href="/lab">{c.labCta} →</a></p>
+	</section>
+	<section class="services" use:reveal>
+		<span class="kicker">{c.svcKicker}</span>
+		<h2>{c.svcTitle}</h2>
+		<div class="svc-grid">
+			{#each c.services as s (s.href)}
+				<a class="svc" href={s.href} target={s.href.startsWith('http') ? '_blank' : undefined} rel={s.href.startsWith('http') ? 'noopener noreferrer' : undefined}>
+					<svg class="svc-icon" viewBox="0 0 24 24" aria-hidden="true">{@render icon(s.icon)}</svg>
+					<h3>{s.title}</h3>
+					<p>{s.body}</p>
+					<span class="svc-cta">{s.cta} →</span>
+				</a>
+			{/each}
+		</div>
+		<p class="more"><a href="/about">{c.aboutLink} →</a></p>
 	</section>
 </article>
 
@@ -414,14 +486,14 @@
 		padding: 0.75rem 1.4rem;
 		border-radius: var(--radius-full);
 		background: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 		font-weight: 600;
 		text-decoration: none;
 		transition: background 0.15s;
 	}
 	.cta:hover {
 		background: var(--accent-hover);
-		color: #fff;
+		color: var(--on-accent);
 	}
 	.cta-ghost {
 		background: transparent;
@@ -498,6 +570,8 @@
 	.ex-avatar {
 		width: 44px;
 		height: 44px;
+		border-radius: 50%;
+		object-fit: cover;
 	}
 	.av-bg {
 		fill: var(--bg-secondary);
@@ -507,6 +581,27 @@
 	}
 	.ex-name {
 		font-weight: 600;
+		color: var(--text-primary);
+		text-decoration: none;
+	}
+	a.ex-name:hover {
+		text-decoration: underline;
+	}
+	.ex-tag--live {
+		border-style: solid;
+		border-color: var(--accent);
+		color: var(--accent-hover);
+	}
+	.ex-link {
+		display: inline-block;
+		margin-top: 1rem;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--accent-hover);
+		text-decoration: none;
+	}
+	.ex-link:hover {
+		text-decoration: underline;
 	}
 	.ex-tag {
 		font-size: 0.7rem;
@@ -617,6 +712,17 @@
 	.steps span:last-child {
 		color: var(--text-secondary);
 		font-size: 0.92rem;
+	}
+
+	/* The podium of the day, as on the dashboard */
+	.podium {
+		max-width: 44rem;
+		margin-left: auto;
+		margin-right: auto;
+	}
+	.podium .kicker {
+		display: block;
+		margin-bottom: 1rem;
 	}
 
 	/* The services */

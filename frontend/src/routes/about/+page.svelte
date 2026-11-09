@@ -43,8 +43,8 @@
 			kicker: 'À propos',
 			labLine: 'Tartuffe est le premier produit du labo tartuffe.me, un laboratoire d’outils pour une démocratie plus transparente.',
 			labLink: 'Le labo',
-			title: 'Les actes suivent‑ils les paroles ?',
-			lead: 'Nous ne jugeons pas qui a raison : nous montrons qui se contredit, sources à l’appui.',
+			title: 'Cohérent ou tartuffe ?',
+			lead: 'Ce qu’ils disent, ce qu’ils votent, ce que la justice a tranché : quand ça ne colle pas, nous le montrons, sources à l’appui. Nous ne jugeons pas qui a raison.',
 			heroPills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
 
 			howKicker: 'Méthode',
@@ -125,8 +125,8 @@
 			kicker: 'About',
 			labLine: 'Tartuffe is the first product of the tartuffe.me lab, an R&D lab for more transparent democracies.',
 			labLink: 'The lab',
-			title: 'They say. They act. We compare.',
-			lead: 'Consistency, not truth: we don’t say who is right, we show who contradicts themselves. With the proof.',
+			title: 'Coherent or tartuffe?',
+			lead: 'What they say, how they vote, what the courts ruled: when it does not add up, we show it, with the sources. We don’t say who is right.',
 			heroPills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 
 			howKicker: 'Method',

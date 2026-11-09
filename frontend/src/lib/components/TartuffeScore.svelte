@@ -292,11 +292,11 @@
 		stroke-width: 8;
 	}
 	.track {
-		stroke: rgba(255, 255, 255, 0.1);
+		stroke: var(--dial-track);
 	}
 	.ts--unrated .track {
 		stroke-dasharray: 3 3;
-		stroke: rgba(255, 255, 255, 0.14);
+		stroke: var(--dial-track-strong);
 	}
 	.fill {
 		stroke-dasharray: var(--at) 100;
@@ -333,7 +333,7 @@
 		transform: rotate(var(--turn));
 	}
 	.needle line {
-		stroke: #fff;
+		stroke: var(--needle);
 		stroke-width: 2.6;
 		stroke-linecap: round;
 	}

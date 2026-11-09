@@ -1,6 +1,7 @@
 <script lang="ts">
 		import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
+	import Podium from '$lib/components/Podium.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import type { PersonSummary } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
@@ -14,11 +15,8 @@
 	});
 
 	let persons: PersonSummary[] = $state([]);
-	// The podium: the three candidates with the most contradictions for their
-	// facts, among those whose score is reliable. No podium of the most coherent
-	// while scores are still being established: a clean score on few facts
-	// would rank who was looked at least.
-	let worst: PersonSummary[] = $state([]);
+	// The podium is its own component (Podium.svelte); the lineup needs the candidates.
+	let podium: Podium | undefined = $state();
 	let candidates: PersonSummary[] = $state([]);
 	let panelsLoading = $state(true);
 	let loading = $state(true);
@@ -36,8 +34,6 @@
 	let searchQuery = $state('');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-	const PANEL_SIZE = 3;
-	const PANEL_MIN_FACTS = 3;
 
 	function handleSearchInput(event: Event) {
 		const target = event.target as HTMLInputElement;
@@ -108,14 +104,7 @@
 	async function loadPanels() {
 		try {
 			panelsLoading = true;
-			// The podium is among the candidates only (only they are judged) and
-			// among those whose score is reliable: enough contradictions expected.
-			const worstQs = buildQuery({ limit: 100, sort: 'honesty_asc', min_facts: PANEL_MIN_FACTS, candidate: 'true' });
-			const [worstRes, candRes] = await Promise.all([
-				fetch(`${API_BASE}/api/persons?${worstQs}`),
-				fetch(`${API_BASE}/api/persons?candidate=true&limit=100`)
-			]);
-			if (worstRes.ok) worst = ((await worstRes.json()) as PersonSummary[] | null ?? []).filter((p) => p.score_reliable !== false).slice(0, PANEL_SIZE);
+			const [candRes] = await Promise.all([fetch(`${API_BASE}/api/persons?candidate=true&limit=100`), podium?.load()]);
 			if (candRes.ok) candidates = (await candRes.json()) ?? [];
 		} catch (err) {
 			// Non-fatal: the candidates' error banner offers the retry.
@@ -173,38 +162,7 @@
 </svelte:head>
 
 <div class="dashboard">
-	<section class="podium-section" aria-labelledby="podium-title">
-		<header class="podium-header">
-			<h2 id="podium-title">{tr('home.least_honest', currentLang)}</h2>
-			<p>{tr('home.podium_sub', currentLang)}</p>
-		</header>
-		{#if panelsLoading && worst.length === 0}
-			<ol class="podium" aria-busy="true">
-				{#each [1, 2, 3] as rank (rank)}
-					<li class="step step--{rank}">
-						<div class="skeleton skeleton-rank-avatar"></div>
-						<div class="skeleton skeleton-rank-name"></div>
-						<div class="block"><span class="pos">{rank}</span></div>
-					</li>
-				{/each}
-			</ol>
-		{:else if worst.length === 0}
-			<p class="empty">{tr('home.no_data', currentLang)}</p>
-		{:else}
-			<ol class="podium">
-				{#each worst as person, i (person.id)}
-					<li class="step step--{i + 1}">
-						<a href="/person/{person.id}" class="laureate">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} size={i === 0 ? 'md' : 'sm'} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
-							<span class="name">{person.name}</span>
-							<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}</span>
-						</a>
-						<div class="block"><span class="pos">{i + 1}</span></div>
-					</li>
-				{/each}
-			</ol>
-		{/if}
-	</section>
+	<div class="podium-wrap"><Podium bind:this={podium} lang={currentLang} /></div>
 
 	{#if error}
 		<div class="error-banner">
@@ -510,139 +468,15 @@
 		box-shadow: 0 0 12px var(--accent-glow);
 	}
 
-	/* The podium of the most tartuffe: three steps, the first in the middle and
-	   the highest; the list stays in rank order for a reader, the steps are
-	   placed with `order`. */
-	.podium-section {
+	.podium-wrap {
 		margin-bottom: 2rem;
-		padding: 1.25rem 1rem 0;
-		border-radius: var(--radius-md);
-		background: var(--bg-card);
-		border: 1px solid var(--border-card);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
-		box-shadow: var(--shadow-card);
-		overflow: hidden;
-	}
-
-	.podium-header {
-		text-align: center;
-		margin-bottom: 1.25rem;
-	}
-
-	.podium-header h2 {
-		font-size: 1.1rem;
-		font-weight: 700;
-		letter-spacing: -0.01em;
-		color: var(--red);
-	}
-
-	.podium-header p {
-		margin-top: 0.25rem;
-		font-size: 0.8rem;
-		color: var(--text-muted);
-	}
-
-	.podium {
-		list-style: none;
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		align-items: end;
-		gap: 0.5rem;
-	}
-
-	.step {
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.step--1 { order: 2; }
-	.step--2 { order: 1; }
-	.step--3 { order: 3; }
-
-	.laureate {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.25rem;
-		max-width: 100%;
-		padding: 0.5rem 0.25rem 0;
-		text-decoration: none;
-		color: inherit;
-		border-radius: var(--radius-sm);
-		transition: background var(--transition-fast);
-	}
-
-	.laureate:hover {
-		background: rgba(255, 255, 255, 0.04);
-	}
-
-	.name {
-		max-width: 100%;
-		font-weight: 600;
-		font-size: 0.938rem;
-		text-transform: capitalize;
-		text-align: center;
-		color: var(--text-primary);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.step--1 .name { font-size: 1.05rem; }
-
-	.meta {
-		font-size: 0.75rem;
-		color: var(--text-muted);
-	}
-
-	.block {
-		width: 100%;
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding-top: 0.5rem;
-		border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-		background: linear-gradient(180deg, rgba(220, 38, 38, 0.28), rgba(220, 38, 38, 0.06));
-		border: 1px solid rgba(220, 38, 38, 0.35);
-		border-bottom: none;
-	}
-
-	.step--1 .block { height: 5.5rem; background: linear-gradient(180deg, rgba(220, 38, 38, 0.45), rgba(220, 38, 38, 0.08)); }
-	.step--2 .block { height: 4rem; }
-	.step--3 .block { height: 3rem; }
-
-	.pos {
-		font-size: 1.25rem;
-		font-weight: 800;
-		color: var(--text-primary);
-		opacity: 0.85;
-	}
-
-	@media (max-width: 480px) {
-		.podium { gap: 0.25rem; }
-		.name { font-size: 0.8rem; }
-		.step--1 .name { font-size: 0.9rem; }
 	}
 
 	.lineup-section {
 		margin-bottom: 2.5rem;
 	}
 
-	.skeleton-rank-avatar {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
 
-	.skeleton-rank-name {
-		width: 70%;
-		height: 14px;
-	}
 
 	.empty {
 		color: var(--text-muted);
