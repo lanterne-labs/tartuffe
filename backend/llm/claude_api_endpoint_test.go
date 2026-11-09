@@ -467,10 +467,19 @@ func TestChatReturnsTheErrorOfTheFallback(t *testing.T) {
 	setRouting(t, r)
 	req := ChatRequest{Messages: []ChatMessage{{Role: "user", Content: "x"}}, MaxTokens: 10, Task: TaskDetect}
 	_, _, err := c.Chat(context.Background(), req)
+	// Both are down, and the error carries the endpoint that comes back
+	// first: the seat in 2 hours, unless the cap of the API, which resets at
+	// the next UTC day, comes first (a run in the last 2 hours of the day).
 	seatReset := time.Unix(reset, 0).Add(claudeResetMargin)
+	now := time.Now().UTC()
+	capReset := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	wantEndpoint, wantAt := EndpointClaudeTeam, seatReset
+	if !capReset.After(seatReset) {
+		wantEndpoint, wantAt = EndpointClaudeAPI, capReset
+	}
 	var ue *UnavailableError
-	if !errors.As(err, &ue) || ue.Endpoint != EndpointClaudeTeam || !ue.RetryAt.Equal(seatReset) {
-		t.Fatalf("err = %v, want the UnavailableError of the seat with RetryAt %v", err, seatReset)
+	if !errors.As(err, &ue) || ue.Endpoint != wantEndpoint || !ue.RetryAt.Equal(wantAt) {
+		t.Fatalf("err = %v, want the UnavailableError of %s with RetryAt %v", err, wantEndpoint, wantAt)
 	}
 	if !strings.Contains(err.Error(), "usage limit") || !strings.Contains(err.Error(), "passes the cap") {
 		t.Fatalf("the error must name both failures: %v", err)
