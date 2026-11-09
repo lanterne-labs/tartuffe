@@ -58,6 +58,16 @@ type StanceStorer interface {
 	RecordContradictionImmediate(ctx context.Context, personID int64, factAID int64, factBID int64, reason, reasonEn string) (contradictionID int64, needsBundler bool, err error)
 	// EnqueueFactPair asks the contradiction detector to judge a pair.
 	EnqueueFactPair(ctx context.Context, personID, factA, factB int64, source string) error
+	// RecordJudgedPairs records the verdict of the stance analysis on the
+	// pairs of a new fact and the key facts it was compared with, under
+	// judgeHash (StanceJudgeHash), so the detection does not judge them again.
+	RecordJudgedPairs(ctx context.Context, personID int64, judgeHash string, pairs []JudgedPair) error
+}
+
+// JudgedPair is the verdict of a judge on a pair of facts of one person.
+type JudgedPair struct {
+	FactAID, FactBID int64
+	Contradiction    bool
 }
 
 // StanceDocument is the core type for stance documents.
@@ -320,7 +330,42 @@ func (sm *StanceManager) ProcessNewFact(ctx context.Context, personID int64, fac
 		return nil, fmt.Errorf("LLM stance analysis: %w", err)
 	}
 
-	return sm.handleVerdict(ctx, matched, personID, factID, factText, date, keyFacts, embedding, agg)
+	res, err := sm.handleVerdict(ctx, matched, personID, factID, factText, date, keyFacts, embedding, agg)
+	if err != nil {
+		return nil, err
+	}
+	sm.recordJudgedPairs(ctx, personID, factID, keyFacts, res)
+	return res, nil
+}
+
+// recordJudgedPairs records the verdict of the analysis on the pairs of the
+// new fact and the key facts it was compared with: a contradiction for the
+// pairs handleVerdict kept, none for the others. The maintenance pass's
+// detection then skips these pairs (fact_pair_checks): over a week of
+// November 2026 it judged 81,000 pairs for 61 contradictions, and the closest
+// facts of a person are mostly the key facts of its stance, judged here
+// already. A failure to record is logged: the fact is in, the pairs are only
+// judged again later.
+func (sm *StanceManager) recordJudgedPairs(ctx context.Context, personID, factID int64, keyFacts []StanceFactInfo, res *StanceProcessResult) {
+	contradicted := map[int64]bool{}
+	if res != nil {
+		for _, c := range res.Contradictions {
+			contradicted[c.KeyFactID] = true
+		}
+	}
+	pairs := make([]JudgedPair, 0, len(keyFacts))
+	for _, f := range keyFacts {
+		if f.ID == factID || f.ID <= 0 {
+			continue
+		}
+		pairs = append(pairs, JudgedPair{FactAID: factID, FactBID: f.ID, Contradiction: contradicted[f.ID]})
+	}
+	if len(pairs) == 0 {
+		return
+	}
+	if err := sm.storer.RecordJudgedPairs(ctx, personID, StanceJudgeHash(), pairs); err != nil {
+		log.Warn().Err(err).Int64("fact_id", factID).Int("pairs", len(pairs)).Msg("stance analysis: the judged pairs were not recorded")
+	}
 }
 
 // AssignStance decides the stance of a fact of the person without the
@@ -1313,17 +1358,10 @@ func (sm *StanceManager) callJSONLLM(
 	return strings.TrimSpace(content), nil
 }
 
-// callLLM sends the stance analysis prompt for ONE batch of key facts to the LLM
-// and parses the response. Callers split into batches via chunkKeyFacts; this
-// function handles a single batch and returns whatever contradictions the LLM
-// found within it.
-func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*stanceLLMResponse, error) {
-	var factsBuilder strings.Builder
-	for _, f := range keyFacts {
-		factsBuilder.WriteString(formatKeyFactLine(f))
-	}
-
-	prompt := fmt.Sprintf(`You are analyzing whether a new fact about a political figure updates, duplicates, or contradicts their known stance on a topic.
+// stanceAnalysisPromptTpl is the prompt of the stance analysis: the stance
+// summary, the key facts and the new fact fill its three %s. Its text is the
+// judge of the pairs the analysis records (StanceJudgeHash).
+var stanceAnalysisPromptTpl = `You are analyzing whether a new fact about a political figure updates, duplicates, or contradicts their known stance on a topic.
 
 The EXISTING STANCE SUMMARY, the KEY FACTS IN THIS STANCE and the NEW FACT are given after the rules.
 
@@ -1362,7 +1400,7 @@ Every contradiction entry MUST be a DIRECT opposition between the NEW FACT and t
 
 The COMPLETENESS and DIRECT-EDGE rules are complementary: COMPLETENESS says "don't drop direct edges to avoid redundancy", DIRECT-EDGE says "don't add transitive edges to seem thorough". Both together: list every pair the mental check says YES on, no more, no less.
 
-`+promptrules.ContradictionRules+`
+` + promptrules.ContradictionRules + `
 
 **HOW TO MAP THE PAIR-WISE EXAMPLES TO THIS TASK:**
 The examples above are framed as "PAIR N: YES/NO". Treat YES as a contradiction entry (one per DIRECTLY contradicted key fact — see DIRECT-EDGE REQUIREMENT above). Treat NO as either DUPLICATE (same position, different words — set duplicate_of_key_fact_id) or NEW_INFO (compatible-but-distinct).
@@ -1379,7 +1417,7 @@ NEW FACT:
 **RESPONSE FORMAT:**
 Compare the NEW FACT against EACH key fact independently before deciding the primary verdict. For each contradiction entry, write its per-pair reasoning BEFORE its verdict — and apply the mental check from the DIRECT-EDGE REQUIREMENT to that entry. Put the clearest opposition first in the array.
 
-**LANGUAGE RULE:** Write each contradiction's `+"`reason`"+` in FRENCH (even when the facts are in English). Do NOT provide any translation — English and other languages are produced separately by the translation phase. `+"`reasoning`"+` fields (both top-level and per-contradiction) may follow the language of the facts.
+**LANGUAGE RULE:** Write each contradiction's ` + "`reason`" + ` in FRENCH (even when the facts are in English). Do NOT provide any translation — English and other languages are produced separately by the translation phase. ` + "`reasoning`" + ` fields (both top-level and per-contradiction) may follow the language of the facts.
 
 Return ONLY valid JSON:
 {
@@ -1397,7 +1435,19 @@ Return ONLY valid JSON:
 
 For DUPLICATE: contradictions MUST be []. Set duplicate_of_key_fact_id to the [ID N] of the key fact the new fact paraphrases.
 For NEW_INFO: contradictions MUST be []. Set duplicate_of_key_fact_id to 0.
-For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`,
+For CONTRADICTION: contradictions MUST contain at least one entry; set duplicate_of_key_fact_id to 0.`
+
+// callLLM sends the stance analysis prompt for ONE batch of key facts to the LLM
+// and parses the response. Callers split into batches via chunkKeyFacts; this
+// function handles a single batch and returns whatever contradictions the LLM
+// found within it.
+func (sm *StanceManager) callLLM(ctx context.Context, stanceSummary string, keyFacts []StanceFactInfo, newFactText string, newFactDate *time.Time) (*stanceLLMResponse, error) {
+	var factsBuilder strings.Builder
+	for _, f := range keyFacts {
+		factsBuilder.WriteString(formatKeyFactLine(f))
+	}
+
+	prompt := fmt.Sprintf(stanceAnalysisPromptTpl,
 		stanceSummary, factsBuilder.String(), datedPrefix(newFactDate)+newFactText)
 
 	// temp=0.1 matches the rest of the codebase (every other contradiction /

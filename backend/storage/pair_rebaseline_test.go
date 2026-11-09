@@ -45,7 +45,7 @@ func TestEvictStaleJudgedPairs(t *testing.T) {
 	ins(factIDs[1], factIDs[3], false, &cur, now.Add(-time.Hour))    // current rulebook — final
 	ins(factIDs[2], factIDs[4], false, nil, now)                     // never hashed, newest
 
-	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, cur, 2)
+	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, []string{cur}, 2)
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted, "limit honored, oldest first")
 	require.Equal(t, 2, remaining, "two stale negatives left")
@@ -61,7 +61,7 @@ func TestEvictStaleJudgedPairs(t *testing.T) {
 	rows.Close()
 	require.Equal(t, []int64{factIDs[3], factIDs[3], factIDs[4]}, left, "the two oldest stale negatives are gone")
 
-	deleted, remaining, err = storer.EvictStaleJudgedPairs(ctx, cur, 1500)
+	deleted, remaining, err = storer.EvictStaleJudgedPairs(ctx, []string{cur}, 1500)
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted)
 	require.Equal(t, 0, remaining, "self-terminating: every negative carries the current hash")
@@ -77,7 +77,7 @@ func TestEvictStaleJudgedPairs(t *testing.T) {
 	var h string
 	require.NoError(t, storer.pool.QueryRow(ctx, "SELECT judge_hash FROM fact_pair_checks WHERE fact_a_id=$1 AND fact_b_id=$2", factIDs[0], factIDs[1]).Scan(&h))
 	require.Equal(t, cur, h)
-	_, remaining, err = storer.EvictStaleJudgedPairs(ctx, cur, 1500)
+	_, remaining, err = storer.EvictStaleJudgedPairs(ctx, []string{cur}, 1500)
 	require.NoError(t, err)
 	require.Equal(t, 0, remaining)
 }

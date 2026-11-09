@@ -17,7 +17,15 @@ type mockStanceStorer struct {
 	queued         [][2]int64
 	unsummarized   []StanceFactInfo
 	tensions       map[int64][]StanceTension
-	consumed       [][]int64 // fact ids passed to UpdateStanceMetadata, per call
+	consumed       [][]int64    // fact ids passed to UpdateStanceMetadata, per call
+	judged         []JudgedPair // the pairs RecordJudgedPairs got, in order
+	judgeHash      string
+}
+
+func (m *mockStanceStorer) RecordJudgedPairs(ctx context.Context, personID int64, judgeHash string, pairs []JudgedPair) error {
+	m.judged = append(m.judged, pairs...)
+	m.judgeHash = judgeHash
+	return nil
 }
 
 type mockContradiction struct {

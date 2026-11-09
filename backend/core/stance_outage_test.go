@@ -136,8 +136,8 @@ func TestProcessNewFact_UnavailableLLMWritesNothing(t *testing.T) {
 			if got := storer.facts[1]; len(got) != 1 || got[0].ID != 10 {
 				t.Errorf("stance 1 facts = %+v, want only fact 10: the failed fact must stay pending", got)
 			}
-			if len(storer.contradictions) != 0 || storer.stances[1].FactCount != 1 {
-				t.Errorf("nothing may be recorded: contradictions=%v fact_count=%d", storer.contradictions, storer.stances[1].FactCount)
+			if len(storer.contradictions) != 0 || storer.stances[1].FactCount != 1 || len(storer.judged) != 0 {
+				t.Errorf("nothing may be recorded: contradictions=%v fact_count=%d judged=%v", storer.contradictions, storer.stances[1].FactCount, storer.judged)
 			}
 		})
 	}
@@ -153,6 +153,28 @@ func TestProcessNewFact_UnavailableLLMWritesNothing(t *testing.T) {
 			t.Fatalf("verdict=%s contradictions=%v facts=%+v", res.Verdict, storer.contradictions, storer.facts[1])
 		}
 	})
+}
+
+// TestProcessNewFact_RecordsTheJudgedPairs: the pairs of the new fact and
+// the key facts it was compared with are recorded under the stance judge
+// hash, a contradiction for the pair the verification kept and none for the
+// other, so the detection does not judge them again.
+func TestProcessNewFact_RecordsTheJudgedPairs(t *testing.T) {
+	storer := pensionStorer()
+	storer.facts[1] = append(storer.facts[1], StanceFactInfo{ID: 11, NormalizedFactText: "veut une retraite par points"})
+	sm, _ := newOutageManager(t, storer, answers(nil))
+	if _, err := sm.ProcessNewFact(context.Background(), 1, 20, "veut la retraite à 64 ans", []float32{1, 0}, "declared", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []JudgedPair{{FactAID: 20, FactBID: 10, Contradiction: true}, {FactAID: 20, FactBID: 11, Contradiction: false}}
+	if storer.judgeHash != StanceJudgeHash() || len(storer.judged) != len(want) {
+		t.Fatalf("judged = %+v under %q, want %+v under %q", storer.judged, storer.judgeHash, want, StanceJudgeHash())
+	}
+	for i := range want {
+		if storer.judged[i] != want[i] {
+			t.Errorf("pair %d = %+v, want %+v", i, storer.judged[i], want[i])
+		}
+	}
 }
 
 // fanoutStorer lists person 1 with two orphan facts.

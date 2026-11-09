@@ -404,6 +404,16 @@ func (s *PostgresStorer) StanceCandidatesByIDs(ctx context.Context, personID int
 // GetClosestFactsForStance returns the limit facts of the stance nearest to
 // embedding (cosine), nearest first, without the grouped duplicates: they
 // would fill the limit with one occurrence.
+// RecordJudgedPairs implements core.StanceStorer: the verdicts of the stance
+// analysis go to fact_pair_checks under judgeHash, like the detector's.
+func (s *PostgresStorer) RecordJudgedPairs(ctx context.Context, personID int64, judgeHash string, pairs []core.JudgedPair) error {
+	results := make([]PairCheckResult, 0, len(pairs))
+	for _, p := range pairs {
+		results = append(results, PairCheckResult{FactAID: p.FactAID, FactBID: p.FactBID, IsContradiction: p.Contradiction})
+	}
+	return s.RecordPairChecksBatch(ctx, personID, judgeHash, results)
+}
+
 func (s *PostgresStorer) GetClosestFactsForStance(ctx context.Context, stanceID int64, embedding []float32, limit int) ([]core.StanceFactInfo, error) {
 	query := `
 		SELECT f.id, f.fact_text, COALESCE(f.embedding_text, ''), COALESCE(f.canonical_verb, ''), COALESCE(f.lang, ''),

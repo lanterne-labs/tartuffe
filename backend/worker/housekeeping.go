@@ -431,7 +431,7 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	// first. Then the plugins queue the structural pairs the detector cannot
 	// see, and the detector judges the persons with new facts (every person
 	// after a rulebook change or on the first pass).
-	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, contradiction.JudgeRulebookHash(), rejudgeBudget)
+	deleted, remaining, err := storer.EvictStaleJudgedPairs(ctx, []string{contradiction.JudgeRulebookHash(), core.StanceJudgeHash()}, rejudgeBudget)
 	if err := step("stale verdict eviction", err); err != nil {
 		return err
 	}

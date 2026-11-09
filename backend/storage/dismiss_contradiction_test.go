@@ -84,7 +84,7 @@ func TestDismissContradictionAsFalsePositive(t *testing.T) {
 
 	// 3b. The nightly re-judge of stale negatives leaves a dismissed pair
 	//     alone: its NO comes from the auditor, not the detector's rulebook.
-	deleted, stale, err := storer.EvictStaleJudgedPairs(ctx, "current-rulebook", 1500)
+	deleted, stale, err := storer.EvictStaleJudgedPairs(ctx, []string{"current-rulebook"}, 1500)
 	require.NoError(t, err)
 	assert.Equal(t, 0, deleted, "a dismissed pair must not be re-opened")
 	assert.Equal(t, 0, stale, "a dismissed pair is not a stale verdict")
@@ -101,7 +101,7 @@ func TestDismissContradictionAsFalsePositive(t *testing.T) {
 		`SELECT dismissed FROM fact_pair_checks WHERE person_id=$1 AND fact_a_id=$2 AND fact_b_id=$3`,
 		personID, a, b).Scan(&dismissed))
 	assert.False(t, dismissed, "a re-judged pair is no longer a dismissal")
-	_, stale, err = storer.EvictStaleJudgedPairs(ctx, "current-rulebook", 0)
+	_, stale, err = storer.EvictStaleJudgedPairs(ctx, []string{"current-rulebook"}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 1, stale, "the re-judged negative is stale under a new rulebook")
 
