@@ -2,6 +2,16 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-10: A contradiction is shown with an explanation that carries its context
+
+The home page showed the contradiction of the day as two source quotes and "⚡ Contradiction", and the feed as two facts: no word on why they conflict. The quote of a fact is an excerpt of an article ("« Sur mon nom ? Je crois, oui. Une fois élu, je ne redoublerai pas. »"), and a reader took the conditional clause for the claim and saw no contradiction with a new candidacy. Only the person page showed the judge's reason, one line written from the two fact texts, without the quotes.
+
+Now each contradiction has an explanation (`contradictions.explanation`, `backend/contradiction/explain.go`): two or three sentences written from the two facts, the quotes of their sources and their dates, for a reader who has nothing else. The prompt (`promptrules.ExplanationPrompt`) asks for the context the facts lack (the question answered, what an elliptical quote refers to), for the part of a quote the contradiction is about when another part could mislead, and for the person's hedges to stay hedges. The home page, the feed, the person page and the link preview show it; the judge's `reason` stands in until it is written. The maintenance pass writes the missing ones (500 a pass, newest first) and `dm contradictions explain` does it by hand. The English text comes from the translation phase.
+
+The writer reads the quotes, which the detector does not: its reply ends with a `doubt` when the quotes weaken the pair (someone else's words, a condition that did not occur). The doubt removes nothing: it is logged, and the command prints it, as the list of contradictions to review.
+
+Lesson: a text shown to readers must be written for them. The judge's reason was written to justify a verdict to us, from the fact texts alone, and it was the only explanation the site had.
+
 ## 2026-11-10: The count of votes shows by hundreds
 
 The vote page showed the exact count of votes from the first tally ("2 votes comptés"), and the event page from 1000. An exact count beside two tallies also tells how many ballots came in between. Now `votersShown` (`frontend/src/lib/event.ts`) gives the count rounded down to the hundred ("300+"), and nothing under 100: the results line then keeps the time of the last tally and the check mark.

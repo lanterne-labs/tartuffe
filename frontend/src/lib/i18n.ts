@@ -32,6 +32,17 @@ export function pickLang(native: string | null | undefined, en: string | null | 
 	return native ?? '';
 }
 
+// whyOf is the text shown with a contradiction: its explanation (what was
+// said or done each time, with its context, and why the two conflict), or the
+// judge's one-line reason until the explanation is written.
+export function whyOf(
+	c: { reason?: string | null; reason_en?: string | null; explanation?: string | null; explanation_en?: string | null },
+	currentLang: Lang
+): string {
+	if (c.explanation && c.explanation.trim() !== '') return pickLang(c.explanation, c.explanation_en, currentLang);
+	return pickLang(c.reason, c.reason_en, currentLang);
+}
+
 // Static UI translations. Keep this small and explicit — every key is a string
 // that appears verbatim in a Svelte template. No interpolation framework; if a
 // string needs a count, build it in the component (e.g. `${n} ${t('facts', n)}`).

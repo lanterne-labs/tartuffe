@@ -10,7 +10,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { API_BASE } from '$lib/config';
-	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
+	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 	import { sourceDomain } from '$lib/sources';
 	import { sharePath } from '$lib/share';
 	import { realtimeManager, subscribeToPersonEvents } from '$lib/realtime';
@@ -349,6 +349,9 @@
 						{#if it.kind === 'contradiction' && it.other}
 							<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 							<p class="line line-b"><span class="yr">{year(it.other.date)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+							{#if whyOf(it, currentLang)}
+								<p class="why">{whyOf(it, currentLang)}</p>
+							{/if}
 						{:else}
 							<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 						{/if}
@@ -378,7 +381,7 @@
 								pair={{
 									a: { id: it.fact.id, text: pickLang(it.fact.text, it.fact.text_en, currentLang), date: it.fact.date },
 									b: { id: it.other.id, text: pickLang(it.other.text, it.other.text_en, currentLang), date: it.other.date },
-									reason: pickLang(it.reason, it.reason_en, currentLang)
+									reason: whyOf(it, currentLang)
 								}}
 							/>
 						{:else}
@@ -775,6 +778,17 @@
 		margin-top: 0.7rem;
 		padding-top: 0.7rem;
 		border-top: 1px dashed var(--error-border);
+	}
+	/* Why the two lines conflict, in full: it is what makes the pair readable. */
+	.why {
+		margin: 0.7rem 0 0;
+		padding: 0.55rem 0.75rem;
+		border-left: 2px solid var(--error-border);
+		background: var(--error-bg);
+		border-radius: 0 var(--radius-md) var(--radius-md) 0;
+		font-size: 0.88rem;
+		line-height: 1.55;
+		color: var(--text-secondary);
 	}
 	.yr {
 		font-size: 0.72rem;

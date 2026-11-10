@@ -7,7 +7,7 @@
 	// at /dashboard.
 	import { eventPaths } from '$lib/event';
 	import { onMount } from 'svelte';
-	import { lang, type Lang } from '$lib/i18n';
+	import { lang, whyOf, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
 	import type { PollEvent, FeedItem, FeedPage } from '$lib/types';
 	import Podium from '$lib/components/Podium.svelte';
@@ -68,7 +68,7 @@
 			text: currentLang === 'en' ? f.text_en || f.text : f.quote || f.text,
 			src: f.source_urls?.[0] ? sourceDomain(f.source_urls[0]) : ''
 		});
-		return { a: side(a), b: side(b), rise: Math.max(1, Math.round(-(clash.score_effect ?? 0))) };
+		return { a: side(a), b: side(b), why: whyOf(clash, currentLang), rise: Math.max(1, Math.round(-(clash.score_effect ?? 0))) };
 	});
 	function dateText(iso: string): string {
 		return new Date(iso).toLocaleDateString(currentLang === 'en' ? 'en-GB' : 'fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -107,6 +107,7 @@
 			exSaidSrc: 'En interview',
 			exDid: 'Il vote le report de l’âge de départ à 64 ans.',
 			exDidSrc: 'Scrutin à l’Assemblée',
+			exWhy: 'En 2019, il s’engageait à ne jamais toucher à l’âge de départ à la retraite. En 2023, il vote son report à 64 ans : son vote va contre son engagement.',
 			exClash: 'Contradiction',
 			steps: [
 				['On relève', 'Ses déclarations, ses votes, et les décisions de justice qui le concernent.'],
@@ -160,6 +161,7 @@
 			exSaidSrc: 'Interview',
 			exDid: 'Votes to raise the retirement age to 64.',
 			exDidSrc: 'Vote in Parliament',
+			exWhy: 'In 2019 he pledged never to touch the retirement age. In 2023 he votes to raise it to 64: his vote goes against his pledge.',
 			exClash: 'Contradiction',
 			steps: [
 				['We listen', 'What they say, how they vote, and what courts ruled about them.'],
@@ -268,6 +270,9 @@
 							<p>{sides.b.text}</p>
 							<span class="ex-src">{sides.b.src}</span>
 						</div>
+						{#if sides.why}
+							<p class="ex-why">{sides.why}</p>
+						{/if}
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={clash.person.honesty_score} lang={currentLang} size="lg" named={false} animate />
@@ -301,6 +306,7 @@
 							<p>{c.exDid}</p>
 							<span class="ex-src">{c.exDidSrc}</span>
 						</div>
+						<p class="ex-why">{c.exWhy}</p>
 					</div>
 					<div class="ex-score">
 						<TartuffeScore honesty={HONESTY} lang={currentLang} size="lg" named={false} animate />
@@ -663,6 +669,17 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		backdrop-filter: blur(6px);
+	}
+	/* Why the two conflict: the context the two lines lack. */
+	.ex-why {
+		margin: 0.8rem 0 0;
+		padding: 0.6rem 0.85rem;
+		border-left: 2px solid var(--error-border);
+		background: var(--error-bg);
+		border-radius: 0 var(--radius-md) var(--radius-md) 0;
+		font-size: 0.9rem;
+		line-height: 1.55;
+		color: var(--text-secondary);
 	}
 	.ex-score {
 		position: relative;
