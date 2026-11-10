@@ -7,12 +7,19 @@ import (
 )
 
 // ExplainSide is one fact of a contradiction to explain, as the reader sees
-// it: its text, the date of its first source, that source and its quote.
+// it: its text, its date (the statement's when the fact has one, with its
+// precision, else its first source's), that source and its quote.
 type ExplainSide struct {
-	FactID    int64
-	Text      string
-	Date      *time.Time
-	Quote     string
+	FactID int64
+	Text   string
+	Date   *time.Time
+	// SourceDate is the date of the first source: the article that holds
+	// Quote, which may recall a statement of years before.
+	SourceDate *time.Time
+	Quote      string
+	// Article is the stored text of a source of the fact, empty when none
+	// was kept: the writer reads the passage around the quote in it.
+	Article   string
 	SourceURL string
 }
 
@@ -42,7 +49,8 @@ type ExplainFilter struct {
 }
 
 // explainSideLateral is the first source of fact f (alias out): its date, its
-// URL, and the first quote any source of the fact holds.
+// URL, and the first quote any source of the fact holds; and (alias out+"d")
+// the stored text of a source of the fact, one with a quote first.
 func explainSideLateral(f, out string) string {
 	return fmt.Sprintf(`LEFT JOIN LATERAL (
 			SELECT MIN(published_at) AS earliest,
@@ -50,12 +58,19 @@ func explainSideLateral(f, out string) string {
 			       (array_agg(original_quote ORDER BY published_at ASC NULLS LAST)
 			          FILTER (WHERE COALESCE(original_quote, '') <> ''))[1] AS quote
 			FROM fact_sources WHERE fact_id = %[1]s.id
-		) %[2]s ON true`, f, out)
+		) %[2]s ON true
+		LEFT JOIN LATERAL (
+			SELECT d.content
+			FROM fact_sources fs JOIN source_documents d ON d.url = fs.source_url AND d.content <> ''
+			WHERE fs.fact_id = %[1]s.id
+			ORDER BY (COALESCE(fs.original_quote, '') <> '') DESC, fs.published_at ASC NULLS LAST
+			LIMIT 1
+		) %[2]sd ON true`, f, out)
 }
 
-// explanationHashSQL is the hash of what an explanation is written from: the
-// prompt version ($1) and the two facts.
-const explanationHashSQL = `md5($1::text || ':' || fa.id || ':' || fa.fact_text || ':' || fb.id || ':' || fb.fact_text)`
+// explanationHashSQL is the hash of what an explanation is written from:
+// the prompt version ($1) and the two facts with their statement dates.
+const explanationHashSQL = `md5($1::text || ':' || fa.id || ':' || fa.fact_text || ':' || COALESCE(fa.statement_date::text, '') || ':' || fb.id || ':' || fb.fact_text || ':' || COALESCE(fb.statement_date::text, ''))`
 
 // ListContradictionsToExplain returns the contradictions to explain under
 // version (promptrules.ExplanationVersion), the newest detected first: those
@@ -67,8 +82,8 @@ func (s *PostgresStorer) ListContradictionsToExplain(ctx context.Context, versio
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, p.id, p.name, COALESCE(c.reason, ''), `+explanationHashSQL+`,
-		       fa.id, fa.fact_text, sa.earliest, COALESCE(sa.quote, ''), COALESCE(sa.url, ''),
-		       fb.id, fb.fact_text, sb.earliest, COALESCE(sb.quote, ''), COALESCE(sb.url, '')
+		       fa.id, fa.fact_text, sa.earliest, fa.statement_date::timestamp AT TIME ZONE 'UTC', fa.statement_date_precision, COALESCE(sa.quote, ''), COALESCE(sa.url, ''), COALESCE(sad.content, ''),
+		       fb.id, fb.fact_text, sb.earliest, fb.statement_date::timestamp AT TIME ZONE 'UTC', fb.statement_date_precision, COALESCE(sb.quote, ''), COALESCE(sb.url, ''), COALESCE(sbd.content, '')
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -89,11 +104,14 @@ func (s *PostgresStorer) ListContradictionsToExplain(ctx context.Context, versio
 	var out []ContradictionToExplain
 	for rows.Next() {
 		var c ContradictionToExplain
+		var sda, sdb statementDate
 		if err := rows.Scan(&c.ID, &c.PersonID, &c.Person, &c.Reason, &c.Hash,
-			&c.A.FactID, &c.A.Text, &c.A.Date, &c.A.Quote, &c.A.SourceURL,
-			&c.B.FactID, &c.B.Text, &c.B.Date, &c.B.Quote, &c.B.SourceURL); err != nil {
+			&c.A.FactID, &c.A.Text, &c.A.Date, &sda.date, &sda.precision, &c.A.Quote, &c.A.SourceURL, &c.A.Article,
+			&c.B.FactID, &c.B.Text, &c.B.Date, &sdb.date, &sdb.precision, &c.B.Quote, &c.B.SourceURL, &c.B.Article); err != nil {
 			return nil, fmt.Errorf("scan contradiction to explain: %w", err)
 		}
+		c.A.SourceDate, c.B.SourceDate = c.A.Date, c.B.Date
+		c.A.Date, c.B.Date = sda.of(c.A.Date), sdb.of(c.B.Date)
 		out = append(out, c)
 	}
 	return out, rows.Err()

@@ -86,6 +86,8 @@ export interface ContradictingFact {
 	fact_text: string;
 	fact_text_en?: string;
 	fact_date: string | null;
+	// 'year' | 'month' | 'day' when fact_date is the statement's own date (dates.ts); absent for a source's date.
+	fact_date_precision?: string | null;
 	source_urls: string[];
 	restatements: Restatement[];
 	reason: string;
@@ -107,6 +109,7 @@ export interface ContradictionGroup {
 	base_fact_text: string;
 	base_fact_text_en?: string;
 	base_fact_date: string | null;
+	base_fact_date_precision?: string | null;
 	base_fact_source_urls: string[];
 	// The +1 of the users on the base fact, and whether the viewer gave one.
 	base_likes: number;
@@ -267,6 +270,8 @@ export interface FeedFactSide {
 	text: string;
 	text_en?: string | null;
 	date?: string | null;
+	// 'year' | 'month' | 'day' when date is the statement's own date (dates.ts); absent for a source's date.
+	date_precision?: string | null;
 	source_urls: string[];
 	quote?: string;
 }

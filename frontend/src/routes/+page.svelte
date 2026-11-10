@@ -12,6 +12,7 @@
 	import type { PollEvent, FeedItem, FeedPage } from '$lib/types';
 	import Podium from '$lib/components/Podium.svelte';
 	import { sourceDomain } from '$lib/sources';
+	import { factYear } from '$lib/dates';
 	import { displayName } from '$lib/share';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 
@@ -69,7 +70,7 @@
 		const [x, y] = [clash.fact, clash.other];
 		const [a, b] = (x.date ?? '') <= (y.date ?? '') ? [x, y] : [y, x];
 		const side = (f: typeof x) => ({
-			year: f.date ? String(new Date(f.date).getFullYear()) : '',
+			year: factYear(f.date, f.date_precision),
 			text: currentLang === 'en' ? f.text_en || f.text : f.quote || f.text,
 			src: f.source_urls?.[0] ? sourceDomain(f.source_urls[0]) : ''
 		});

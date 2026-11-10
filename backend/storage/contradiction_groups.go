@@ -304,11 +304,15 @@ func starPeel(rows []regroupRow) (base map[int64]int64, other map[int64]int64) {
 // ContradictionGroup is one distinct inconsistency: a base fact contradicted by N
 // facts. It replaces the wall of pairwise cards on the person/stance view.
 type ContradictionGroup struct {
-	BaseFactID         int64      `json:"base_fact_id"`
-	BaseFactText       string     `json:"base_fact_text"`
-	BaseFactTextEn     string     `json:"base_fact_text_en,omitempty"`
-	BaseFactDate       *time.Time `json:"base_fact_date"`
-	BaseFactSourceURLs []string   `json:"base_fact_source_urls"`
+	BaseFactID     int64  `json:"base_fact_id"`
+	BaseFactText   string `json:"base_fact_text"`
+	BaseFactTextEn string `json:"base_fact_text_en,omitempty"`
+	// BaseFactDate is the date of the statement or act when the fact has
+	// one, else the date of its first source; BaseFactDatePrecision is
+	// "year", "month" or "day" for a statement date, nil for a source's.
+	BaseFactDate          *time.Time `json:"base_fact_date"`
+	BaseFactDatePrecision *string    `json:"base_fact_date_precision,omitempty"`
+	BaseFactSourceURLs    []string   `json:"base_fact_source_urls"`
 	// BaseLikes counts the users' +1 on the base fact; BaseLiked says the
 	// viewer gave one.
 	BaseLikes int  `json:"base_likes"`
@@ -328,7 +332,9 @@ type ContradictingFact struct {
 	FactText        string     `json:"fact_text"`
 	FactTextEn      string     `json:"fact_text_en,omitempty"`
 	FactDate        *time.Time `json:"fact_date"`
-	SourceURLs      []string   `json:"source_urls"`
+	// FactDatePrecision: as ContradictionGroup.BaseFactDatePrecision.
+	FactDatePrecision *string  `json:"fact_date_precision,omitempty"`
+	SourceURLs        []string `json:"source_urls"`
 	// Restatements are the fact's other wordings (its claim group).
 	Restatements []Restatement `json:"restatements"`
 	Reason       string        `json:"reason"`
@@ -365,8 +371,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		       g.group_summary, g.group_summary_en,
 		       fb.fact_text, COALESCE(fb.fact_text_en,''),
 		       sp.fact_text, COALESCE(sp.fact_text_en,''),
-		       COALESCE(fsb.urls, '{}'), fsb.earliest,
-		       COALESCE(fss.urls, '{}'), fss.earliest,
+		       COALESCE(fsb.urls, '{}'), ` + shownDateSQL("fb", "fsb.earliest") + `, fb.statement_date_precision,
+		       COALESCE(fss.urls, '{}'), ` + shownDateSQL("sp", "fss.earliest") + `, sp.statement_date_precision,
 		       ` + restatementsJSON("g.base_id") + `, ` + restatementsJSON("g.spoke_id") + `,
 		       blk.n, blk.mine, clk.n, clk.mine
 		FROM g
@@ -406,6 +412,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			baseText, baseTextEn, spokeText, spokeTextEn string
 			baseURLs, spokeURLs                          []string
 			baseDate, spokeDate                          *time.Time
+			basePrecision, spokePrecision                *string
 			baseRestatements, spokeRestatements          []byte
 			baseLikes, spokeLikes                        float64
 			baseLiked, spokeLiked                        bool
@@ -413,7 +420,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		if err := rows.Scan(&cid, &baseID, &spokeID, &reason, &reasonEn, &explanation, &explanationEn,
 			&summary, &summaryEn,
 			&baseText, &baseTextEn, &spokeText, &spokeTextEn,
-			&baseURLs, &baseDate, &spokeURLs, &spokeDate,
+			&baseURLs, &baseDate, &basePrecision, &spokeURLs, &spokeDate, &spokePrecision,
 			&baseRestatements, &spokeRestatements,
 			&baseLikes, &baseLiked, &spokeLikes, &spokeLiked); err != nil {
 			return nil, fmt.Errorf("scan contradiction group row: %w", err)
@@ -430,34 +437,36 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 				return nil, fmt.Errorf("decoding restatements of fact %d: %w", baseID, err)
 			}
 			groups = append(groups, ContradictionGroup{
-				BaseRestatements:   baseAlso,
-				BaseFactID:         baseID,
-				BaseFactText:       baseText,
-				BaseFactTextEn:     baseTextEn,
-				BaseFactDate:       baseDate,
-				BaseFactSourceURLs: baseURLs,
-				BaseLikes:          int(baseLikes),
-				BaseLiked:          baseLiked,
-				Summary:            summary,
-				SummaryEn:          summaryEn,
+				BaseRestatements:      baseAlso,
+				BaseFactID:            baseID,
+				BaseFactText:          baseText,
+				BaseFactTextEn:        baseTextEn,
+				BaseFactDate:          baseDate,
+				BaseFactDatePrecision: basePrecision,
+				BaseFactSourceURLs:    baseURLs,
+				BaseLikes:             int(baseLikes),
+				BaseLiked:             baseLiked,
+				Summary:               summary,
+				SummaryEn:             summaryEn,
 			})
 			i = len(groups) - 1
 			idx[baseID] = i
 		}
 		groups[i].ContradictingFacts = append(groups[i].ContradictingFacts, ContradictingFact{
-			ContradictionID: cid,
-			FactID:          spokeID,
-			FactText:        spokeText,
-			FactTextEn:      spokeTextEn,
-			FactDate:        spokeDate,
-			SourceURLs:      spokeURLs,
-			Restatements:    spokeAlso,
-			Reason:          reason,
-			ReasonEn:        reasonEn,
-			Explanation:     explanation,
-			ExplanationEn:   explanationEn,
-			Likes:           int(spokeLikes),
-			Liked:           spokeLiked,
+			ContradictionID:   cid,
+			FactID:            spokeID,
+			FactText:          spokeText,
+			FactTextEn:        spokeTextEn,
+			FactDate:          spokeDate,
+			FactDatePrecision: spokePrecision,
+			SourceURLs:        spokeURLs,
+			Restatements:      spokeAlso,
+			Reason:            reason,
+			ReasonEn:          reasonEn,
+			Explanation:       explanation,
+			ExplanationEn:     explanationEn,
+			Likes:             int(spokeLikes),
+			Liked:             spokeLiked,
 		})
 	}
 	return groups, rows.Err()
