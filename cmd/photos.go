@@ -30,9 +30,20 @@ var photosSearchCmd = &cobra.Command{
 	RunE:        runPhotosSearch,
 }
 
+// photosSetCmd makes a given image the photo of a person.
+var photosSetCmd = &cobra.Command{
+	Use:   "set [name] [image-url]",
+	Short: "Make the image at a URL the photo of a person",
+	Long: `Download the image at the URL, upload it to the object store under a new key and store its address on the person.
+For a photo the search chose badly: pick one by hand (dm plugin photos search --targets "Name" --force --dry-run lists the candidates with their URLs).`,
+	Args:        cobra.ExactArgs(2),
+	Annotations: map[string]string{"needs_db": "true"},
+	RunE:        runPhotosSet,
+}
+
 func init() {
 	pluginCmd.AddCommand(photosCmd)
-	photosCmd.AddCommand(photosSearchCmd)
+	photosCmd.AddCommand(photosSearchCmd, photosSetCmd)
 
 	photosSearchCmd.Flags().StringSlice("targets", nil, "specific persons/parties by name (comma-separated)")
 	photosSearchCmd.Flags().Bool("all", false, "process all persons without photos")
@@ -126,5 +137,44 @@ func runPhotosSearch(cmd *cobra.Command, args []string) error {
 			log.Error().Err(err).Msg("Failed to record job metrics")
 		}
 	}
+	return nil
+}
+
+func runPhotosSet(cmd *cobra.Command, args []string) error {
+	_ = godotenv.Load()
+	ctx := context.Background()
+
+	storer, err := deps.OpenStorer(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+	defer storer.Close()
+
+	record, ok, err := resolvePersonInteractive(ctx, storer, args[0], false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("person %q not found", args[0])
+	}
+	person, err := storer.GetPersonByID(ctx, record.ID)
+	if err != nil {
+		return fmt.Errorf("person %d: %w", record.ID, err)
+	}
+	if person == nil {
+		return fmt.Errorf("person %d not found", record.ID)
+	}
+
+	d := deps.New(storer)
+	store, err := d.ObjectStore()
+	if err != nil {
+		return fmt.Errorf("object store: %w", err)
+	}
+	provider := &photos.Provider{R2: store, Storer: photos.NewStore(storer)}
+	result := provider.SetFromURL(ctx, *person, args[1])
+	if result.Error != nil {
+		return result.Error
+	}
+	fmt.Printf("%s (ID: %d): photo set, %s\n", person.Name, person.ID, result.ImageURL)
 	return nil
 }

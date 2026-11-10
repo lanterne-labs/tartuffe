@@ -2,6 +2,10 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-10: A photo chosen by hand
+
+The photo search takes the best-scored image of `"Name" official`; when it chooses badly (Juan Branco's was a 2019 conference frame, at 29 he looked a teenager) nothing could replace it but SQL. `dm plugin photos set "Name" <image-url>` makes the image at a URL the person's photo: downloaded through `webfetch`, uploaded under a key of its own (`photos/<id>_<slug>_<unix>.<ext>`, so a replaced photo gets a new address and no cache keeps the old one), stored on the person. `dm plugin photos search --targets "Name" --force --dry-run` lists the candidates with their URLs to pick from.
+
 ## 2026-11-10: A contradiction is shown with an explanation that carries its context
 
 The home page showed the contradiction of the day as two source quotes and "⚡ Contradiction", and the feed as two facts: no word on why they conflict. The quote of a fact is an excerpt of an article ("« Sur mon nom ? Je crois, oui. Une fois élu, je ne redoublerai pas. »"), and a reader took the conditional clause for the claim and saw no contradiction with a new candidacy. Only the person page showed the judge's reason, one line written from the two fact texts, without the quotes.

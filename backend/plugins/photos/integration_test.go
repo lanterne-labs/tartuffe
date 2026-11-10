@@ -375,3 +375,26 @@ func TestSearchAndUpload_AllCandidatesFail(t *testing.T) {
 	assert.Contains(t, result.Error.Error(), "download attempts failed")
 	assert.False(t, result.Downloaded)
 }
+
+// A photo chosen by hand is downloaded, uploaded under a key of its own (the
+// time of the change: a replaced photo gets a new address) and stored on the
+// person; a URL that is not an image sets nothing.
+func TestSetFromURL(t *testing.T) {
+	r2, s3srv := newFakeS3(t, "photos")
+	defer s3srv.Close()
+	imgSrv := newFakeImageServer(t)
+	defer imgSrv.Close()
+	storer := newMockStorer()
+	p := &Provider{R2: r2, Storer: storer, HTTPClient: imgSrv.Client()}
+	person := storage.PersonSummary{ID: 7, Name: "Juan Branco"}
+
+	res := p.SetFromURL(context.Background(), person, imgSrv.URL+"/photo.jpg")
+	require.NoError(t, res.Error)
+	assert.True(t, res.Uploaded)
+	assert.Regexp(t, `/photos/7_juan_branco_\d+\.jpg$`, res.ImageURL)
+	assert.Equal(t, res.ImageURL, storer.imageURLs[7])
+
+	res = p.SetFromURL(context.Background(), person, imgSrv.URL+"/nothing")
+	require.Error(t, res.Error)
+	assert.False(t, res.Uploaded)
+}

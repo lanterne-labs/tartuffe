@@ -146,28 +146,14 @@ func (p *Provider) SearchAndUpload(ctx context.Context, person storage.PersonSum
 
 		result.Downloaded = true
 
-		// Build R2 key
-		ext := extensionFromContentType(contentType)
-		key := fmt.Sprintf("photos/%d_%s%s", person.ID, normalizeName(person.Name), ext)
-
-		publicURL, err := p.R2.Upload(ctx, key, data, contentType)
-		if err != nil {
-			result.Error = fmt.Errorf("R2 upload failed: %w", err)
+		key := fmt.Sprintf("photos/%d_%s%s", person.ID, normalizeName(person.Name), extensionFromContentType(contentType))
+		if err := p.store(ctx, person, key, data, contentType, result); err != nil {
+			result.Error = err
 			return result
 		}
-
-		result.Uploaded = true
-		result.ImageURL = publicURL
-
-		// Store in DB
-		if err := p.Storer.SetPersonImageURL(ctx, person.ID, publicURL); err != nil {
-			result.Error = fmt.Errorf("failed to store image URL: %w", err)
-			return result
-		}
-
 		log.Info().
 			Str("person", person.Name).
-			Str("url", publicURL).
+			Str("url", result.ImageURL).
 			Str("source", candidate.Source).
 			Msg("photo uploaded and stored")
 
@@ -176,6 +162,49 @@ func (p *Provider) SearchAndUpload(ctx context.Context, person storage.PersonSum
 
 	result.Error = fmt.Errorf("all %d download attempts failed for %q", limit, person.Name)
 	return result
+}
+
+// SetFromURL makes the image at url the person's photo, chosen by hand: it is
+// downloaded, uploaded and stored like a search result, but under a key of its
+// own (the time of the change), so a photo replaced gets a new address and no
+// cache keeps serving the old one.
+func (p *Provider) SetFromURL(ctx context.Context, person storage.PersonSummary, url string) *Result {
+	result := &Result{PersonID: person.ID, PersonName: person.Name}
+
+	data, contentType, err := downloadImage(ctx, p.HTTPClient, url)
+	if err != nil {
+		result.Error = fmt.Errorf("download %s: %w", url, err)
+		return result
+	}
+	result.Downloaded = true
+
+	key := fmt.Sprintf("photos/%d_%s_%d%s", person.ID, normalizeName(person.Name), time.Now().Unix(), extensionFromContentType(contentType))
+	if err := p.store(ctx, person, key, data, contentType, result); err != nil {
+		result.Error = err
+		return result
+	}
+	log.Info().
+		Str("person", person.Name).
+		Str("url", result.ImageURL).
+		Str("source", url).
+		Msg("photo set by hand, uploaded and stored")
+	return result
+}
+
+// store uploads the image under key and records its public address on the
+// person, filling result.
+func (p *Provider) store(ctx context.Context, person storage.PersonSummary, key string, data []byte, contentType string, result *Result) error {
+	publicURL, err := p.R2.Upload(ctx, key, data, contentType)
+	if err != nil {
+		return fmt.Errorf("R2 upload failed: %w", err)
+	}
+	result.Uploaded = true
+	result.ImageURL = publicURL
+
+	if err := p.Storer.SetPersonImageURL(ctx, person.ID, publicURL); err != nil {
+		return fmt.Errorf("failed to store image URL: %w", err)
+	}
+	return nil
 }
 
 // buildSearchQuery constructs an appropriate search query for the person.
