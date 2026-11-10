@@ -30,6 +30,8 @@ go build -o dm .                                # Build binary
 ./dm persons add "Name"                         # Add a tracked person
 ./dm facts list --person "Name"                 # List facts for a person
 ./dm facts delete --person "Name"               # Delete all facts for a person
+./dm facts refetch-articles --apply             # Read again the news pages whose text was not kept (before 2026-10-30) and store it: the date finder
+                                                # and the explanation writer read the article around a quote
 ./dm facts statement-dates --apply              # Date the statements the text or the article dates before their source (a 2013 quote in a 2026 article);
                                                 # --recheck-before <RFC 3339> reads again, with their article, the facts left without a date
 ```

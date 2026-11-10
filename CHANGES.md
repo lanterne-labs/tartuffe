@@ -2,6 +2,10 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-10: The news pages whose text was not kept are read again
+
+The date finder and the explanation writer read the article around a fact's quote (the entry below), but `source_documents` holds the text of a news page only since 2026-10-30: 4 169 pages of the candidates' facts had none (extracted before, or read before the documents table). `dm facts refetch-articles --apply` reads them again through `webfetch` (the local extractor, each site at its pace) and stores the text under the URL the facts cite, in the `extracted` state: no fact is extracted or changed, and the worker does not take the document. A page that gives under 600 characters (a paywall stub) or fails is marked (`metadata.refetch_failed`) and not asked for again. After it, `dm facts statement-dates --apply --recheck-before <now>` dates the facts of the pages found.
+
 ## 2026-11-10: The site shows the date of the statement, and the date finder reads the article
 
 A review of the 100 candidates' contradictions with a local model (does a reader who has only the two excerpts understand the conflict?) found about 14 pairs with a misleading date: "en 2013, Marine Le Pen réclamait l'inéligibilité à vie" shown as 2026, the year of the article that recalls it, and placed after the 2025 statement it contradicts. Two causes.

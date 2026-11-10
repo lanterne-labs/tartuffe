@@ -239,3 +239,74 @@ func (s *PostgresStorer) SetDocumentContent(ctx context.Context, id int64, conte
 	}
 	return nil
 }
+
+// ListNewsURLsWithoutText returns up to limit URLs of the news sources of the
+// candidates' facts (of everyone's when candidatesOnly is false) whose page
+// text is not stored: the documents extracted before 2026-10-30 lost it, and
+// the pages read before the documents table have no row. The pages of the
+// facts of a contradiction come first. A URL whose refetch failed is not
+// given again.
+func (s *PostgresStorer) ListNewsURLsWithoutText(ctx context.Context, candidatesOnly bool, limit int) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT fs.source_url
+		FROM fact_sources fs
+		JOIN fact_mentions fm ON fm.fact_source_id = fs.id
+		JOIN persons p ON p.id = fm.person_id
+		WHERE fs.source_type = 'news'
+		  AND ($1 = false OR `+CandidateSQL+`)
+		  AND NOT EXISTS (SELECT 1 FROM fact_relations r WHERE r.relation_type = 'duplicate' AND r.specific_fact_id = fs.fact_id)
+		  AND NOT EXISTS (SELECT 1 FROM source_documents d WHERE d.url = fs.source_url
+		                  AND (d.content <> '' OR d.metadata ? 'refetch_failed'))
+		GROUP BY fs.source_url
+		ORDER BY bool_or(EXISTS (SELECT 1 FROM contradictions c WHERE fs.fact_id IN (c.fact_a_id, c.fact_b_id))) DESC,
+		         COUNT(DISTINCT fs.fact_id) DESC, fs.source_url
+		LIMIT $2`, candidatesOnly, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing the news pages without text: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("listing the news pages without text: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// StoreRefetchedArticle keeps the text of a news page read again, under url
+// (the URL its facts cite). The document stays or is created in the
+// extracted state: its facts exist, and the worker must not extract it
+// again. Its stored date and title stand when it has them.
+func (s *PostgresStorer) StoreRefetchedArticle(ctx context.Context, url, title, content string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO source_documents (source_type, url, title, content, state, extracted_at, metadata)
+		VALUES ('news', $1, $2, $3, 'extracted', now(), jsonb_build_object('refetched_at', now()))
+		ON CONFLICT (source_type, url) DO UPDATE
+		SET content = EXCLUDED.content,
+		    title = CASE WHEN source_documents.title = '' THEN EXCLUDED.title ELSE source_documents.title END,
+		    metadata = source_documents.metadata || jsonb_build_object('refetched_at', now())`,
+		url, title, content)
+	if err != nil {
+		return fmt.Errorf("storing the refetched page %s: %w", url, err)
+	}
+	return nil
+}
+
+// MarkRefetchFailed records that the page of url could not be read again
+// (gone, behind a paywall, refused), so the refetch does not ask for it at
+// every run. The document keeps its state.
+func (s *PostgresStorer) MarkRefetchFailed(ctx context.Context, url, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO source_documents (source_type, url, content, state, extracted_at, metadata)
+		VALUES ('news', $1, '', 'extracted', now(), jsonb_build_object('refetch_failed', $2::text))
+		ON CONFLICT (source_type, url) DO UPDATE
+		SET metadata = source_documents.metadata || jsonb_build_object('refetch_failed', $2::text)`,
+		url, reason)
+	if err != nil {
+		return fmt.Errorf("marking the refetch of %s failed: %w", url, err)
+	}
+	return nil
+}
