@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -32,7 +31,11 @@ const statementDatePrompt = `You date a statement of a politician stored by a fa
 
 The fact below was extracted from a source (an article, a tweet, a transcript) published on the SOURCE DATE. Most facts state what the person said or did around that date. Some state what they said or did long before: an old tweet the article brings back, "en 2019, elle avait déclaré…", "lors de la campagne de 2017", a vote of a past year.
 
-Give the date of the STATEMENT OR ACT ITSELF only when the fact text or the quote states it or plainly ties it to a date: a year, a month or a day, as precise as the text gives ("2019", "2024-03", "2023-07-14"). A relative phrase ("hier", "la semaine dernière", "dimanche") is resolved against the source date. When the text gives no date for the statement, or the statement is of the source's own day or interview, answer null: the source date then stands. Never guess a date from the topic or from events you know.
+Give the date of the STATEMENT OR ACT ITSELF only when the fact text or the quote states it or plainly ties it to a date: a year, a month or a day, as precise as the text gives ("2019", "2024-03", "2023-07-14"). A relative phrase ("hier", "la semaine dernière", "dimanche") is resolved against the source date.
+- A date that the text only TALKS ABOUT is not the date of the statement or act: "il évoque la rupture de 2015", "elle promet une réforme pour 2027", "l'affaire qui débute à l'été 2013 lui vaut une condamnation" (the conviction is not of 2013), "il appelle à voter dimanche 7 juillet" (the call is not of that Sunday) say nothing of when the words were said or the act done.
+- A past moment the person mentions INSIDE their own words does not date those words: « Je me suis présentée à l'automne dernier devant le tribunal » is a statement of the source's days.
+- The statement is never later than the source that reports it.
+- When the text gives no date for the statement, or the statement is of the source's own day or interview, answer null: the source date then stands. Never guess a date from the topic or from events you know.
 
 Person: %s
 Source date: %s
@@ -59,7 +62,8 @@ Find in the ARTICLE EXCERPT the passage the fact comes from (the quote marks it)
 
 Give the date of the STATEMENT OR ACT ITSELF, as precise as the article gives it ("2019", "2024-03", "2023-07-14"). A relative phrase ("hier", "la semaine dernière", "dimanche") is resolved against the source date.
 - The fact text may state the date itself ("a félicité Maduro en avril 2021", "lors du débat du 23 septembre 2021"): that date counts even when the excerpt does not show the passage.
-- A date that the statement only TALKS ABOUT is not its date: "il évoque la rupture de 2015", "elle promet une réforme pour 2027", "candidat à la présidentielle de 2027", "il affirme que le 15 décembre dernier l'État a refusé…" say nothing of when the words were said.
+- A date that the statement only TALKS ABOUT is not its date: "il évoque la rupture de 2015", "elle promet une réforme pour 2027", "candidat à la présidentielle de 2027", "il affirme que le 15 décembre dernier l'État a refusé…", "l'affaire qui débute à l'été 2013 lui vaut une condamnation" (the conviction is not of 2013), "il appelle à voter dimanche 7 juillet" (the call is not of that Sunday) say nothing of when the words were said or the act done.
+- The statement is never later than the source that reports it.
 - A past moment the person mentions INSIDE their own words does not date those words: « Je me suis présentée à l'automne dernier devant le tribunal », said in an interview of this week, is a statement of this week.
 - When the article reports the statement as news of its own days (said this week, in this interview, yesterday), or gives no date for it, answer null: the source date then stands.
 - Never guess a date from the topic or from events you know. Only what the excerpt or the fact states.
@@ -85,32 +89,12 @@ const (
 	excerptNotFound = 9000
 )
 
-var excerptWord = regexp.MustCompile(`[\p{L}\p{N}]+`)
-
 // ArticleExcerpt returns the part of article around quote: the opening, then
-// the text before and after the quote. The quote is found by its first words,
-// whatever the typography between them; an article where it is not found is
-// given from its start.
+// the text before and after the quote (backend.QuotePosition finds it); an
+// article where it is not found is given from its start.
 func ArticleExcerpt(article, quote string) string {
 	r := []rune(article)
-	pos := -1
-	var words []string
-	for _, w := range excerptWord.FindAllString(quote, 6) {
-		words = append(words, regexp.QuoteMeta(w))
-	}
-	for _, n := range []int{6, 4, 3} {
-		if len(words) < n {
-			continue
-		}
-		re, err := regexp.Compile(`(?i)` + strings.Join(words[:n], `[^\p{L}\p{N}]+`))
-		if err != nil {
-			break
-		}
-		if loc := re.FindStringIndex(article); loc != nil {
-			pos = len([]rune(article[:loc[0]]))
-			break
-		}
-	}
+	pos := backend.QuotePosition(article, quote)
 	if pos < 0 {
 		return string(r[:min(len(r), excerptNotFound)])
 	}
@@ -165,6 +149,12 @@ func (d *StatementDater) StatementDateInArticle(ctx context.Context, person, fac
 	t, err := backend.ParseStatementDate(strings.TrimSpace(*reply.StatementDate))
 	if err != nil {
 		return nil, reply.Reasoning, fmt.Errorf("statement dater: %w", err)
+	}
+	// A source cannot report what was not said yet: a later date is the
+	// date of something the statement talks about (a vote called for
+	// "dimanche"), and the source's date stands.
+	if sourceDate != nil && t.After(sourceDate.UTC().Add(24*time.Hour)) {
+		return nil, reply.Reasoning, nil
 	}
 	return &t, reply.Reasoning, nil
 }

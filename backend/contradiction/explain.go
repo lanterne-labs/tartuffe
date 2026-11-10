@@ -49,6 +49,13 @@ func NewExplainerFromEnv() (*LLMExplainer, error) {
 	return &LLMExplainer{client: client}, nil
 }
 
+// How much of the article the writer reads around a fact's excerpt, in
+// characters: the question or the occasion comes before the quoted words.
+const (
+	explainPassageBefore = 700
+	explainPassageAfter  = 500
+)
+
 // explainSide renders one fact for the prompt: its date, its text, and the
 // quote of its source when it has one.
 func explainSide(s storage.ExplainSide) string {
@@ -63,6 +70,12 @@ func explainSide(s storage.ExplainSide) string {
 			src += ", published " + backend.FormatFactDate(s.SourceDate)
 		}
 		fmt.Fprintf(&b, "\nExcerpt of %s it was taken from: \"%s\"", src, q)
+		// The excerpt is often the answer without its question, or the words
+		// without the sentence that says what they are about: the passage
+		// of the article around it carries them.
+		if passage, ok := backend.QuotePassage(s.Article, q, explainPassageBefore, explainPassageAfter); ok {
+			fmt.Fprintf(&b, "\nThe passage of the article around this excerpt: \"…%s…\"", strings.Join(strings.Fields(passage), " "))
+		}
 	}
 	return b.String()
 }

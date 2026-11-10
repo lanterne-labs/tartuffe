@@ -3,7 +3,7 @@ package promptrules
 // ExplanationVersion names the rules of ExplanationPrompt. It is part of the
 // hash stored with each explanation (contradictions.explanation_hash): a new
 // version makes the maintenance pass write every explanation again.
-const ExplanationVersion = "1"
+const ExplanationVersion = "2"
 
 // ExplanationPrompt asks for the text the site shows with a contradiction. The
 // reader has the two facts and this text, not the articles: the text carries
@@ -35,6 +35,7 @@ Write the explanation in French, 2 or 3 sentences, 90 words at most, in this ord
 
 Rules:
 - Use only what the statements and the source excerpts say. Add no fact, date, motive or judgement of your own. No "mensonge", "hypocrisie", "trahison", "volte-face honteuse": say what conflicts, not what to think of it.
+- When a statement comes with the passage of the article around its excerpt, take the context from it: the question asked, the occasion, the date, what the person had just said or done. The excerpt alone can be an answer without its question (« Non, il faut que la droite lâche le pouvoir » answers "does she deserve a new term?") or a defence without what it defends (« L'union fait la force » defends taking part in a campaign). Other people speak in the passage too: use only what is about the person's own words or acts.
 - An excerpt is often a journalist's sentence that introduces the person's quoted words. That sentence says what the words answer: read the quote through it. If the article writes that the person "confirme qu'il quittera son poste" and then quotes « Oui, je crois. Après le vote, je ne resterai pas », the « oui, je crois » is the confirmation of leaving, and the clause after it is a second remark, not a condition on the first.
 - When an excerpt holds a part that could send the reader to the wrong conflict (a conditional clause, a second claim beside the one contradicted), say which part carries the contradiction and that the other part is not what is contradicted.
 - Keep the person's hedges (« je crois », « a priori », « pourquoi pas ») as hedges: never turn a hedged statement into a firm promise.

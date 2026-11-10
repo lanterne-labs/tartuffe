@@ -143,3 +143,20 @@ func TestExplainPromptOrdersByDateAndCarriesQuotes(t *testing.T) {
 		t.Error("a fact without a quote must not have an excerpt line")
 	}
 }
+
+// The writer reads the passage of the article around a fact's excerpt, when
+// the article is stored: the question the quoted words answer is there.
+func TestExplainPromptCarriesThePassage(t *testing.T) {
+	c := explainCase(1)
+	c.A.Quote = "Non, il faut que la droite européenne du PPE lâche le pouvoir"
+	c.A.Article = "Désignez votre principal adversaire. Le RN.\nAu vu de son bilan, Ursula von der Leyen mérite-t-elle d'être reconduite?\nNon, il faut que la droite européenne du PPE lâche le pouvoir après deux décennies."
+	p := ExplainPrompt(c)
+	if !strings.Contains(p, "The passage of the article around this excerpt") || !strings.Contains(p, "mérite-t-elle d'être reconduite? Non, il faut") {
+		t.Errorf("the prompt lacks the passage with the question:\n%s", p)
+	}
+	// An article that does not hold the excerpt adds nothing.
+	c.A.Article = "Un autre article."
+	if strings.Contains(ExplainPrompt(c), "The passage of the article") {
+		t.Error("a passage was given for an excerpt the article does not hold")
+	}
+}
