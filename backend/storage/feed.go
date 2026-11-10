@@ -30,12 +30,17 @@ type FeedPerson struct {
 
 // FeedFactSide is one fact of a feed item.
 type FeedFactSide struct {
-	ID         int64      `json:"id"`
-	Text       string     `json:"text"`
-	TextEn     *string    `json:"text_en,omitempty"`
-	Date       *time.Time `json:"date,omitempty"`
-	SourceURLs []string   `json:"source_urls"`
-	Quote      string     `json:"quote,omitempty"`
+	ID     int64   `json:"id"`
+	Text   string  `json:"text"`
+	TextEn *string `json:"text_en,omitempty"`
+	// Date is the date of the statement or act when the fact has one, else
+	// the date of its first source. DatePrecision says how much of a
+	// statement date is known ("year", "month", "day"); empty for a source's
+	// date, which is a full date.
+	Date          *time.Time `json:"date,omitempty"`
+	DatePrecision *string    `json:"date_precision,omitempty"`
+	SourceURLs    []string   `json:"source_urls"`
+	Quote         string     `json:"quote,omitempty"`
 }
 
 // FeedItem is a new contradiction or a new fact. At orders the feed: the
@@ -320,8 +325,8 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		         WHERE c2.person_id = c.person_id AND c2.bundle_stance_id = c.bundle_stance_id) END,
 		       sd.id, sd.cluster_label, sd.label_en,
 		       c.reason, c.reason_en, NULLIF(c.explanation, ''), NULLIF(c.explanation_en, ''),
-		       fa.id, fa.fact_text, fa.fact_text_en, sa.earliest, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
-		       fb.id, fb.fact_text, fb.fact_text_en, sb.earliest, COALESCE(sb.urls, '{}'), COALESCE(sb.quote, '')
+		       fa.id, fa.fact_text, fa.fact_text_en, `+shownDateSQL("fa", "sa.earliest")+`, fa.statement_date_precision, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
+		       fb.id, fb.fact_text, fb.fact_text_en, `+shownDateSQL("fb", "sb.earliest")+`, fb.statement_date_precision, COALESCE(sb.urls, '{}'), COALESCE(sb.quote, '')
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -350,8 +355,8 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank, &it.bundleSize,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn, &it.Explanation, &it.ExplanationEn,
-			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote,
-			&it.Other.ID, &it.Other.Text, &it.Other.TextEn, &it.Other.Date, &it.Other.SourceURLs, &it.Other.Quote); err != nil {
+			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.DatePrecision, &it.Fact.SourceURLs, &it.Fact.Quote,
+			&it.Other.ID, &it.Other.Text, &it.Other.TextEn, &it.Other.Date, &it.Other.DatePrecision, &it.Other.SourceURLs, &it.Other.Quote); err != nil {
 			return nil, fmt.Errorf("scan feed contradiction: %w", err)
 		}
 		it.Reason, it.ReasonEn = reason, reasonEn
@@ -374,7 +379,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("f.created_at")+` AS rank,
 		       sd.id, sd.cluster_label, sd.label_en,
-		       f.fact_text, f.fact_text_en, sf.earliest, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
+		       f.fact_text, f.fact_text_en, `+shownDateSQL("f", "sf.earliest")+`, f.statement_date_precision, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
 		FROM facts f
 		JOIN LATERAL (
 			SELECT sd.id, sd.cluster_label, sd.label_en, sd.person_id
@@ -411,7 +416,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn,
-			&it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote); err != nil {
+			&it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.DatePrecision, &it.Fact.SourceURLs, &it.Fact.Quote); err != nil {
 			return nil, fmt.Errorf("scan feed fact: %w", err)
 		}
 		it.Fact.ID = it.ID

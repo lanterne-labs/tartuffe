@@ -7,13 +7,17 @@ import (
 )
 
 // ExplainSide is one fact of a contradiction to explain, as the reader sees
-// it: its text, the date of its first source, that source and its quote.
+// it: its text, its date (the statement's when the fact has one, with its
+// precision, else its first source's), that source and its quote.
 type ExplainSide struct {
-	FactID    int64
-	Text      string
-	Date      *time.Time
-	Quote     string
-	SourceURL string
+	FactID int64
+	Text   string
+	Date   *time.Time
+	// SourceDate is the date of the first source: the article that holds
+	// Quote, which may recall a statement of years before.
+	SourceDate *time.Time
+	Quote      string
+	SourceURL  string
 }
 
 // ContradictionToExplain is a contradiction whose explanation is missing or
@@ -53,9 +57,9 @@ func explainSideLateral(f, out string) string {
 		) %[2]s ON true`, f, out)
 }
 
-// explanationHashSQL is the hash of what an explanation is written from: the
-// prompt version ($1) and the two facts.
-const explanationHashSQL = `md5($1::text || ':' || fa.id || ':' || fa.fact_text || ':' || fb.id || ':' || fb.fact_text)`
+// explanationHashSQL is the hash of what an explanation is written from:
+// the prompt version ($1) and the two facts with their statement dates.
+const explanationHashSQL = `md5($1::text || ':' || fa.id || ':' || fa.fact_text || ':' || COALESCE(fa.statement_date::text, '') || ':' || fb.id || ':' || fb.fact_text || ':' || COALESCE(fb.statement_date::text, ''))`
 
 // ListContradictionsToExplain returns the contradictions to explain under
 // version (promptrules.ExplanationVersion), the newest detected first: those
@@ -67,8 +71,8 @@ func (s *PostgresStorer) ListContradictionsToExplain(ctx context.Context, versio
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT c.id, p.id, p.name, COALESCE(c.reason, ''), `+explanationHashSQL+`,
-		       fa.id, fa.fact_text, sa.earliest, COALESCE(sa.quote, ''), COALESCE(sa.url, ''),
-		       fb.id, fb.fact_text, sb.earliest, COALESCE(sb.quote, ''), COALESCE(sb.url, '')
+		       fa.id, fa.fact_text, sa.earliest, fa.statement_date::timestamp AT TIME ZONE 'UTC', fa.statement_date_precision, COALESCE(sa.quote, ''), COALESCE(sa.url, ''),
+		       fb.id, fb.fact_text, sb.earliest, fb.statement_date::timestamp AT TIME ZONE 'UTC', fb.statement_date_precision, COALESCE(sb.quote, ''), COALESCE(sb.url, '')
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -89,11 +93,14 @@ func (s *PostgresStorer) ListContradictionsToExplain(ctx context.Context, versio
 	var out []ContradictionToExplain
 	for rows.Next() {
 		var c ContradictionToExplain
+		var sda, sdb statementDate
 		if err := rows.Scan(&c.ID, &c.PersonID, &c.Person, &c.Reason, &c.Hash,
-			&c.A.FactID, &c.A.Text, &c.A.Date, &c.A.Quote, &c.A.SourceURL,
-			&c.B.FactID, &c.B.Text, &c.B.Date, &c.B.Quote, &c.B.SourceURL); err != nil {
+			&c.A.FactID, &c.A.Text, &c.A.Date, &sda.date, &sda.precision, &c.A.Quote, &c.A.SourceURL,
+			&c.B.FactID, &c.B.Text, &c.B.Date, &sdb.date, &sdb.precision, &c.B.Quote, &c.B.SourceURL); err != nil {
 			return nil, fmt.Errorf("scan contradiction to explain: %w", err)
 		}
+		c.A.SourceDate, c.B.SourceDate = c.A.Date, c.B.Date
+		c.A.Date, c.B.Date = sda.of(c.A.Date), sdb.of(c.B.Date)
 		out = append(out, c)
 	}
 	return out, rows.Err()

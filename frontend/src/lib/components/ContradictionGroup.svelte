@@ -5,6 +5,7 @@
 	import ReportButton from './ReportButton.svelte';
 	import LikeButton from './LikeButton.svelte';
 	import type { ContradictionGroup } from '$lib/types';
+	import { statementDateText } from '$lib/dates';
 	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 
 	interface Props {
@@ -50,7 +51,7 @@
 		<div class="base-label">
 			<strong>{tr('contradiction.base_fact', currentLang)}</strong>
 			{#if g.base_fact_date}
-				<span class="comp-date">{formatDateWithTime(g.base_fact_date)}</span>
+				<span class="comp-date">{statementDateText(g.base_fact_date, g.base_fact_date_precision, currentLang) || formatDateWithTime(g.base_fact_date)}</span>
 			{/if}
 		</div>
 		<div class="comp-text"><span class="fact-id">[{g.base_fact_id}]</span> {pickLang(g.base_fact_text, g.base_fact_text_en, currentLang)}</div>
@@ -74,7 +75,7 @@
 				<div class="comp-text"><span class="fact-id">[{f.fact_id}]</span> {pickLang(f.fact_text, f.fact_text_en, currentLang)}</div>
 				<div class="comp-links">
 					{#if f.fact_date}
-						<span class="comp-date">{formatDateWithTime(f.fact_date)}</span>
+						<span class="comp-date">{statementDateText(f.fact_date, f.fact_date_precision, currentLang) || formatDateWithTime(f.fact_date)}</span>
 					{/if}
 					<button class="link-btn" onclick={() => onGoToFact(f.fact_id)}>{tr('contradiction.view_in_facts', currentLang)}</button>
 					{#each f.source_urls as url}
@@ -97,8 +98,8 @@
 						kind="contradiction"
 						targetId={f.contradiction_id}
 						pair={{
-							a: { id: g.base_fact_id, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang), date: g.base_fact_date },
-							b: { id: f.fact_id, text: pickLang(f.fact_text, f.fact_text_en, currentLang), date: f.fact_date },
+							a: { id: g.base_fact_id, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang), date: g.base_fact_date, precision: g.base_fact_date_precision },
+							b: { id: f.fact_id, text: pickLang(f.fact_text, f.fact_text_en, currentLang), date: f.fact_date, precision: f.fact_date_precision },
 							reason: whyOf(f, currentLang)
 						}}
 					/>

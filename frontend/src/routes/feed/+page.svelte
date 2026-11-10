@@ -12,6 +12,7 @@
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 	import { sourceDomain } from '$lib/sources';
+	import { factYear } from '$lib/dates';
 	import { sharePath } from '$lib/share';
 	import { realtimeManager, subscribeToPersonEvents } from '$lib/realtime';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
@@ -195,9 +196,6 @@
 		return rtf.format(Math.round(v), 'year');
 	}
 
-	function year(iso: string | null | undefined): string {
-		return iso ? String(new Date(iso).getFullYear()) : '';
-	}
 
 	// move is a market-style move of the score: "+0,5 %", "−1,3 %".
 	function move(pct: number): string {
@@ -365,13 +363,13 @@
 
 					<a href={link} class="body">
 						{#if it.kind === 'contradiction' && it.other}
-							<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
-							<p class="line line-b"><span class="yr">{year(it.other.date)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
+							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line line-b"><span class="yr">{factYear(it.other.date, it.other.date_precision)}</span>{pickLang(it.other.text, it.other.text_en, currentLang)}</p>
 							{#if whyOf(it, currentLang)}
 								<p class="why">{whyOf(it, currentLang)}</p>
 							{/if}
 						{:else}
-							<p class="line"><span class="yr">{year(it.fact.date)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
+							<p class="line"><span class="yr">{factYear(it.fact.date, it.fact.date_precision)}</span>{pickLang(it.fact.text, it.fact.text_en, currentLang)}</p>
 						{/if}
 					</a>
 
@@ -397,8 +395,8 @@
 								kind="contradiction"
 								targetId={it.id}
 								pair={{
-									a: { id: it.fact.id, text: pickLang(it.fact.text, it.fact.text_en, currentLang), date: it.fact.date },
-									b: { id: it.other.id, text: pickLang(it.other.text, it.other.text_en, currentLang), date: it.other.date },
+									a: { id: it.fact.id, text: pickLang(it.fact.text, it.fact.text_en, currentLang), date: it.fact.date, precision: it.fact.date_precision },
+									b: { id: it.other.id, text: pickLang(it.other.text, it.other.text_en, currentLang), date: it.other.date, precision: it.other.date_precision },
 									reason: whyOf(it, currentLang)
 								}}
 							/>

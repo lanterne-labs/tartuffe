@@ -21,8 +21,11 @@ import (
 // the date the person said or did what the fact states, when the text gives
 // it (a 2019 tweet quoted in a 2025 article). The extractor gives it to new
 // facts (mirror-fmf); the facts stored before carry only their source's date,
-// which the judges read as the statement's. One LLM call per fact; a fact
-// checked once (statement_date_checked_at) is not asked again.
+// which the judges read as the statement's. The dater reads the fact, its
+// quote and, when the source's page is stored, the article around the quote.
+// One LLM call per fact; a fact checked once (statement_date_checked_at) is
+// not asked again, unless --recheck-before names the run that checked it
+// without its article.
 var factsStatementDatesCmd = &cobra.Command{
 	Use:         "statement-dates",
 	Short:       "Find the statement date of the stored text facts (the candidates' by default)",
@@ -35,6 +38,7 @@ func init() {
 	factsStatementDatesCmd.Flags().Bool("apply", false, "write the dates found (default: report only)")
 	factsStatementDatesCmd.Flags().Bool("all", false, "every person's facts, not only the candidates'")
 	factsStatementDatesCmd.Flags().Int("limit", 0, "at most this many facts (0: all; a dry run defaults to 20)")
+	factsStatementDatesCmd.Flags().String("recheck-before", "", "also check again, with their article, the facts checked before this time (RFC 3339) without a date; give the same time to resume a run")
 }
 
 func runFactsStatementDates(cmd *cobra.Command, args []string) error {
@@ -45,6 +49,14 @@ func runFactsStatementDates(cmd *cobra.Command, args []string) error {
 	limit, _ := cmd.Flags().GetInt("limit")
 	if !apply && limit == 0 {
 		limit = 20
+	}
+	var recheckBefore *time.Time
+	if v, _ := cmd.Flags().GetString("recheck-before"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return fmt.Errorf("--recheck-before: %w", err)
+		}
+		recheckBefore = &t
 	}
 
 	storer, err := deps.OpenStorer(ctx)
@@ -67,7 +79,7 @@ func runFactsStatementDates(cmd *cobra.Command, args []string) error {
 		if batch <= 0 {
 			break
 		}
-		facts, err := storer.ListFactsForStatementDate(ctx, !all, batch)
+		facts, err := storer.ListFactsForStatementDate(ctx, !all, batch, recheckBefore)
 		if err != nil {
 			return err
 		}
@@ -76,7 +88,7 @@ func runFactsStatementDates(cmd *cobra.Command, args []string) error {
 		}
 		checkedBefore := checked
 		err = llm.ForEach(ctx, facts, func(ctx context.Context, f storage.StatementDateFact) error {
-			date, why, err := dater.StatementDate(ctx, f.PersonName, f.Text, f.Quote, f.PublishedAt)
+			date, why, err := dater.StatementDateInArticle(ctx, f.PersonName, f.Text, f.Quote, f.PublishedAt, f.ArticleTitle, f.Article)
 			if err != nil {
 				log.Warn().Err(err).Int64("fact_id", f.ID).Msg("statement date: the fact stays unchecked")
 				mu.Lock()

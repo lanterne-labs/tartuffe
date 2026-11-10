@@ -11,11 +11,14 @@
 	import { session, signInOpen } from '$lib/auth';
 	import { createReport, reported, reportKey, ReportError, MIN_REASON, MAX_REASON } from '$lib/reports';
 	import type { ReportKind } from '$lib/types';
+	import { statementDateText } from '$lib/dates';
 
 	interface Side {
 		id: number;
 		text: string;
 		date?: string | null;
+		// how much of a statement date is known (dates.ts); absent for a source's date
+		precision?: string | null;
 	}
 
 	interface Props {
@@ -126,12 +129,12 @@
 		{#if pair}
 			<div class="pair">
 				<div class="side">
-					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 1 })}{#if pair.a.date}{' · '}{day(pair.a.date)}{/if}</span>
+					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 1 })}{#if pair.a.date}{' · '}{statementDateText(pair.a.date, pair.a.precision, currentLang) || day(pair.a.date)}{/if}</span>
 					<p>{pair.a.text}</p>
 				</div>
 				<div class="versus" aria-hidden="true">⟷</div>
 				<div class="side">
-					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 2 })}{#if pair.b.date}{' · '}{day(pair.b.date)}{/if}</span>
+					<span class="side-label">{tr('report.pair.fact', currentLang, { n: 2 })}{#if pair.b.date}{' · '}{statementDateText(pair.b.date, pair.b.precision, currentLang) || day(pair.b.date)}{/if}</span>
 					<p>{pair.b.text}</p>
 				</div>
 				{#if pair.reason}

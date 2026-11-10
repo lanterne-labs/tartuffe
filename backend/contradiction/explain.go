@@ -59,6 +59,9 @@ func explainSide(s storage.ExplainSide) string {
 		if u, err := url.Parse(s.SourceURL); err == nil && u.Hostname() != "" {
 			src = strings.TrimPrefix(u.Hostname(), "www.")
 		}
+		if s.SourceDate != nil && s.Date != nil && !s.SourceDate.Equal(*s.Date) && backend.DatePrecisionOf(*s.Date) != "" {
+			src += ", published " + backend.FormatFactDate(s.SourceDate)
+		}
 		fmt.Fprintf(&b, "\nExcerpt of %s it was taken from: \"%s\"", src, q)
 	}
 	return b.String()
