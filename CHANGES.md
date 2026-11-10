@@ -14,6 +14,8 @@ A review of the 100 candidates' contradictions with a local model (does a reader
 
 The prompt was measured on the GPU box model (Qwen3.8-27B) against the dates the extractor gave to 160 news facts: 147 agree; of the 13 others, 4 are the reference's errors and most of the rest are within a month. Its failure is to take a date the statement talks about for the date of the statement (the first run dated a 2026 conviction 2013, the year the affair began: 1 wrong date of 13 written, undone); the rules of both prompts now name the cases met. The pass over the candidates' facts runs on the GPU box (about 1.7 s a fact).
 
+- **A date long before the source is asked about twice.** A wrong old date shows on the site as a statement of that year, so a date more than 60 days before its source is kept only when a second, narrower question agrees that the text ties it to the statement itself (`statementDateConfirmPrompt`). On the far dates of 700 undated news facts and the known errors it rejected 6 of the 7 wrong dates and kept 30 of the 33 right ones; a rejected date leaves the source's date, as before.
+
 Lesson: a column that the judges read is not a column the site reads. When a value has two readers (the pipeline and the display), a change to one needs a check of the other; here the date pass of 2026-11-02 fixed the judges and left every page on the article's date.
 ## 2026-11-10: The vote's presentation says why to vote, and the site is reviewed for phones
 

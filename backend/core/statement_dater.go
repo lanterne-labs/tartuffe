@@ -106,6 +106,66 @@ func ArticleExcerpt(article, quote string) string {
 	return out
 }
 
+// statementDateConfirmPrompt asks again about a date found long before the
+// source. The dater's failure is to take a date the text mentions for the
+// date of the statement (a 2026 conviction dated 2013, the year the affair
+// began): a wrong old date shows on the site as a statement of that year,
+// so it is kept only when a second, narrower question agrees. On the far
+// dates of 700 news facts plus the known errors (2026-11-10, GPU box model)
+// it rejected 6 of the 7 wrong dates and kept 30 of the 33 right ones; a
+// rejected date leaves the source's date, as before.
+//
+// Format args: the source date, the date found, the person, the fact, the
+// quote, the passage, then the date found three times.
+const statementDateConfirmPrompt = `You check a date given to a statement of a politician by a fact-checking site.
+
+The fact below comes from a source published on %s. It was given the date %s, long before its source. That is right only if the text (the fact, the quote or the passage) says the person SAID or DID this very thing then.
+
+Person: %s
+Fact: %s
+Quote: %s
+Passage of the source around the quote: %s
+
+Which is true?
+- "statement": the text says that the words were said, or the act done (a vote, a conviction pronounced, a candidacy declared), in %s. Example: "En 2013, elle réclamait…", "a jugé en 2014 que…", "a déclaré le 7 février 2022", "condamnée le 31 mars 2025".
+- "other": %s is the date of something else the text mentions: when an affair or a period BEGAN ("l'affaire qui débute à l'été 2013 lui vaut une condamnation": the conviction is not of 2013), an event the words are ABOUT ("il évoque la rupture de 2015"), someone else's act or change ("à propos de X, passée au RN en juin"), a period only implied ("lorsqu'il était ministre"); or the date is nowhere in the text.
+
+Return ONLY strict JSON, the reasoning first:
+{"reasoning": "<one sentence: what the text ties %s to>", "verdict": "statement" | "other"}`
+
+// confirmGap is how long before its source a date must be to be asked
+// about again: a date of the source's own weeks does little harm when wrong.
+const confirmGap = 60 * 24 * time.Hour
+
+type statementDateConfirmReply struct {
+	Reasoning string `json:"reasoning"`
+	Verdict   string `json:"verdict"`
+}
+
+// confirmed reports whether the date found for the fact is the date of the
+// statement itself, by the second question.
+func (d *StatementDater) confirmed(ctx context.Context, person, factText, quote, src, found, article string) (bool, string, error) {
+	passage, ok := backend.QuotePassage(article, quote, 700, 500)
+	if !ok {
+		passage = "(not available)"
+	}
+	content, _, err := d.client.Chat(ctx, llm.ChatRequest{
+		Messages:       []llm.ChatMessage{{Role: "user", Content: fmt.Sprintf(statementDateConfirmPrompt, src, found, person, factText, quote, passage, found, found, found)}},
+		Temperature:    0.0,
+		MaxTokens:      250,
+		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+		Task:           llm.TaskExtract,
+	})
+	if err != nil {
+		return false, "", fmt.Errorf("statement dater: confirming: %w", err)
+	}
+	reply, err := llm.ParseJSONResponse[statementDateConfirmReply](content)
+	if err != nil {
+		return false, "", fmt.Errorf("statement dater: parsing %q: %w", content, err)
+	}
+	return strings.EqualFold(strings.TrimSpace(reply.Verdict), "statement"), reply.Reasoning, nil
+}
+
 type statementDateReply struct {
 	Reasoning     string  `json:"reasoning"`
 	StatementDate *string `json:"statement_date"`
@@ -153,8 +213,17 @@ func (d *StatementDater) StatementDateInArticle(ctx context.Context, person, fac
 	// A source cannot report what was not said yet: a later date is the
 	// date of something the statement talks about (a vote called for
 	// "dimanche"), and the source's date stands.
-	if sourceDate != nil && t.After(sourceDate.UTC().Add(24*time.Hour)) {
+	if sourceDate != nil && t.After(sourceDate.UTC()) {
 		return nil, reply.Reasoning, nil
+	}
+	if sourceDate == nil || sourceDate.Sub(t) > confirmGap {
+		ok, why, err := d.confirmed(ctx, person, factText, quote, src, strings.TrimSpace(*reply.StatementDate), article)
+		if err != nil {
+			return nil, reply.Reasoning, err
+		}
+		if !ok {
+			return nil, "not confirmed: " + why, nil
+		}
 	}
 	return &t, reply.Reasoning, nil
 }
