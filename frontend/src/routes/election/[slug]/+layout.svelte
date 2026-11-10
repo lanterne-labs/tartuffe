@@ -67,17 +67,20 @@
 		background: var(--event-strong);
 		color: white;
 	}
-	/* A phone: the four tabs do not fit on one line, so they wrap into two
-	   rows; nothing is hidden off the edge. */
+	/* A phone: the four tabs do not fit on one line, so they take a grid of
+	   two by two, every cell the same size and the same pill, instead of a
+	   wrap that leaves one tab alone on the second row. */
 	@media (max-width: 560px) {
 		.event-tabs {
-			flex-wrap: wrap;
-			max-width: 100%;
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			width: 100%;
 			border-radius: var(--radius-lg);
 		}
 		.event-tabs a {
-			padding: 0.5rem 0.85rem;
+			padding: 0.6rem 0.5rem;
 			font-size: 0.8rem;
+			text-align: center;
 		}
 	}
 </style>

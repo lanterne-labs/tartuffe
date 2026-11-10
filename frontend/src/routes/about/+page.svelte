@@ -11,15 +11,31 @@
 	import ScoreExplorer from '$lib/components/about/ScoreExplorer.svelte';
 	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_DENOMINATOR, RATIO_DECAY, formatConstant } from '$lib/score';
 	import BrandMark from '$lib/components/BrandMark.svelte';
+	import { onMount } from 'svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
-	// Fades a section in when it scrolls into view. Without JS, or with
-	// reduced motion, the section is simply shown.
+	// Fades a section in when it scrolls into view, with a mouse only: on a
+	// touch screen a fast flick leaves the sections blank until the observer
+	// catches up, and the page is simply shown; the same without JS or with
+	// reduced motion. The hidden style applies once the root says so, after
+	// the mount, so the server-rendered page never flashes.
+	function wantsReveal(): boolean {
+		if (typeof IntersectionObserver === 'undefined') return false;
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+		if (window.matchMedia('(hover: none)').matches) return false;
+		return true;
+	}
+	let revealOn = $state(false);
+	onMount(() => {
+		revealOn = wantsReveal();
+	});
 	function reveal(node: HTMLElement) {
-		if (typeof IntersectionObserver === 'undefined') return;
-		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		if (!wantsReveal()) return;
+		// A section already on the screen stays as it is: hiding it to fade
+		// it in again would be the flash the reveal is meant to avoid.
+		if (node.getBoundingClientRect().top < window.innerHeight) return;
 		node.classList.add("about-reveal");
 		const io = new IntersectionObserver(
 			(entries) => {
@@ -222,7 +238,7 @@
 	{/if}
 {/snippet}
 
-<article class="page">
+<article class="page" class:reveal-on={revealOn}>
 	<!-- Hero -->
 	<header class="hero">
 		<BrandMark size="hero" />
@@ -340,7 +356,7 @@
 
 <style>
 	.lab-line {
-		margin: 0.75rem auto 0;
+		margin: 0.75rem auto 1rem;
 		font-size: 0.9rem;
 		color: var(--text-muted);
 		text-align: center;
@@ -461,7 +477,7 @@
 		margin-bottom: 1.75rem;
 	}
 	.formula-label {
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
 		color: var(--text-muted);
@@ -659,15 +675,16 @@
 		text-align: center;
 	}
 
-	/* Scroll reveal (added by the action, so no-JS shows everything). */
-	section:global(.about-reveal) {
+	/* Scroll reveal: the section's class comes from the action, the root's
+	   from the mount, so no-JS and the server-rendered page show everything. */
+	.page.reveal-on section:global(.about-reveal) {
 		opacity: 0;
 		transform: translateY(14px);
 		transition:
 			opacity 0.7s ease,
 			transform 0.7s ease;
 	}
-	section:global(.about-reveal.shown) {
+	.page.reveal-on section:global(.about-reveal.shown) {
 		opacity: 1;
 		transform: none;
 	}

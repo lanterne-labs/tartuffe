@@ -69,6 +69,11 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'person.collected': { fr: 'Période couverte : {from} → {to}', en: 'Period covered: {from} → {to}' },
 	'person.ai_note': { fr: 'Les contradictions sont détectées automatiquement par une IA, qui peut se tromper. Chaque fait renvoie à sa source.', en: 'Contradictions are detected automatically by an AI, which can be wrong. Every fact links to its source.' },
 	'person.ai_note_link': { fr: 'La méthode', en: 'The method' },
+	// The call to the vote on a candidate's page: to the vote's presentation,
+	// never the ballot (lib/event.ts).
+	'person.vote.title': { fr: 'Et vous, vous votez pour qui ?', en: 'And you, whom do you vote for?' },
+	'person.vote.body': { fr: 'Classez jusqu’à 3 candidats pour la présidentielle 2027, sans vote utile. En ligne, deux minutes, et votre vote reste secret.', en: 'Rank up to 3 candidates for the 2027 presidential election, no tactical vote. Online, two minutes, and your vote stays secret.' },
+	'person.vote.cta': { fr: 'Voter', en: 'Vote' },
 	'person.no_detection_note': { fr: 'Ses déclarations et votes sont collectés. La détection des contradictions tourne d’abord pour les candidats à la présidentielle : aucune n’a encore été cherchée pour cette personnalité, donc pas de score.', en: 'Their statements and votes are collected. Contradiction detection runs for the presidential candidates first: none has been looked for yet for this person, so no score.' },
 	'person.detection_paused_note': { fr: 'La détection des contradictions tourne d’abord pour les candidats à la présidentielle : celles affichées ici ont été trouvées avant, et le score ne compte pas dans le classement.', en: 'Contradiction detection runs for the presidential candidates first: the ones shown here were found earlier, and the score does not count in the ranking.' },
 	'home.no_data': { fr: 'Aucune donnée.', en: 'No data yet.' },

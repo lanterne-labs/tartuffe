@@ -80,10 +80,15 @@
 
 <div class="explorer">
 	<div class="controls">
-		<label class="ctl">
-			<span class="ctl-head"><span>{c.contradictions}</span><output>{b}</output></span>
-			<input type="range" min="0" max={B_MAX} step="1" bind:value={b} />
-		</label>
+		<!-- A − and a + beside each slider: a finger cannot set it to the unit. -->
+		<div class="ctl">
+			<span class="ctl-head"><span id="b-label">{c.contradictions}</span><output>{b}</output></span>
+			<div class="slider">
+				<button type="button" class="step" aria-label="−1" onclick={() => (b = Math.max(0, b - 1))}>−</button>
+				<input type="range" min="0" max={B_MAX} step="1" bind:value={b} aria-labelledby="b-label" />
+				<button type="button" class="step" aria-label="+1" onclick={() => (b = Math.min(B_MAX, b + 1))}>+</button>
+			</div>
+		</div>
 
 		<div class="ctl">
 			<span class="ctl-head"><span id="facts-label">{c.facts}</span></span>
@@ -100,10 +105,14 @@
 			</div>
 		</div>
 
-		<label class="ctl">
-			<span class="ctl-head"><span>{c.extra}</span><output>{e}</output></span>
-			<input type="range" min="0" max="30" step="1" bind:value={e} />
-		</label>
+		<div class="ctl">
+			<span class="ctl-head"><span id="e-label">{c.extra}</span><output>{e}</output></span>
+			<div class="slider">
+				<button type="button" class="step" aria-label="−1" onclick={() => (e = Math.max(0, e - 1))}>−</button>
+				<input type="range" min="0" max="30" step="1" bind:value={e} aria-labelledby="e-label" />
+				<button type="button" class="step" aria-label="+1" onclick={() => (e = Math.min(30, e + 1))}>+</button>
+			</div>
+		</div>
 
 		<div class="readout" style:--tone={tone}>
 			<span class="big">{shown}</span><span class="out">/100</span>
@@ -132,9 +141,12 @@
 			{/each}
 			<text class="axis" x={(L + W - R) / 2} y={H - 3} text-anchor="middle">{c.axisX}</text>
 
-			{#each ghosts as g}
+			<!-- The curves meet at the right end: each label sits on its curve
+			     at its own B, so they never cover each other. -->
+			{#each ghosts as g, i}
+				{@const gb = B_MAX - 10 * i}
 				<path class="ghost" d={g.d} />
-				<text class="ghost-label" x={x(B_MAX) - 2} y={y(score(B_MAX, g.f, e)) - 4} text-anchor="end"
+				<text class="ghost-label" x={x(gb) - 2} y={y(score(gb, g.f, e)) - 4} text-anchor="end"
 					>{g.f === FLOOR ? `F ≤ ${FLOOR}` : `F = ${g.f}`}</text
 				>
 			{/each}
@@ -182,9 +194,37 @@
 		color: var(--text-primary);
 		font-weight: 600;
 	}
+	.slider {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
 	input[type='range'] {
+		flex: 1;
+		min-width: 0;
 		width: 100%;
 		accent-color: var(--accent);
+	}
+	.step {
+		flex-shrink: 0;
+		display: grid;
+		place-items: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		padding: 0;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--text-secondary);
+		font: inherit;
+		font-size: 1.1rem;
+		line-height: 1;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+	}
+	.step:hover {
+		border-color: var(--border-card-hover);
+		color: var(--text-primary);
 	}
 	.toggles {
 		display: flex;
@@ -211,6 +251,11 @@
 		border-color: var(--accent);
 		color: white;
 	}
+	@media (pointer: coarse) {
+		.toggles button {
+			min-height: 2.5rem;
+		}
+	}
 	.readout {
 		display: flex;
 		align-items: baseline;
@@ -232,7 +277,7 @@
 	}
 	.formula {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		color: var(--text-muted);
 		overflow-wrap: anywhere;
 		margin: 0;
@@ -257,15 +302,13 @@
 		stroke: var(--border-card-hover);
 		stroke-width: 1;
 	}
+	/* 12px in the drawing: still 11px once the chart shrinks to a phone. */
 	.tick,
 	.axis,
 	.ghost-label {
 		fill: var(--text-muted);
-		font-size: 10px;
+		font-size: 12px;
 		font-family: var(--font-family);
-	}
-	.axis {
-		font-size: 10.5px;
 	}
 	.ghost {
 		fill: none;

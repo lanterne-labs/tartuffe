@@ -18,11 +18,16 @@
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
 
-	// Fades a section in when it scrolls into view. Without JS, or with
-	// reduced motion, the section is simply shown.
+	// Fades a section in when it scrolls into view. Without JS, with reduced
+	// motion or on a touch screen (a fast flick outruns the fade and leaves
+	// screens blank), the section is simply shown. The action runs after
+	// mount, so the server-rendered page is never hidden before it; a section
+	// already on screen at mount is left alone, or it would vanish and fade
+	// back in.
 	function reveal(node: HTMLElement) {
 		if (typeof IntersectionObserver === 'undefined') return;
-		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		if (window.matchMedia('(prefers-reduced-motion: reduce), (hover: none)').matches) return;
+		if (node.getBoundingClientRect().top < window.innerHeight) return;
 		node.classList.add('reveal');
 		const io = new IntersectionObserver(
 			(entries) => {
@@ -87,7 +92,7 @@
 	const content = {
 		fr: {
 			title: 'Cohérent ou tartuffe ?',
-			lead: 'Ce qu’ils disent, ce qu’ils votent, ce que la justice a tranché : quand ça ne colle pas, nous le montrons, sources à l’appui. Nous ne jugeons pas qui a raison.',
+			lead: 'Un score par élu : ses contradictions entre ce qu’il dit, ce qu’il vote et ce que la justice a tranché. Plus il est haut, plus il est tartuffe.',
 			pills: ['Tout est sourcé', 'Les mêmes règles pour tous', 'Vous pouvez nous corriger'],
 			ctaMain: 'Voir le classement',
 			ctaFeed: 'Lire le fil',
@@ -141,7 +146,7 @@
 		},
 		en: {
 			title: 'Coherent or tartuffe?',
-			lead: 'What they say, how they vote, what the courts ruled: when it does not add up, we show it, with the sources. We don’t say who is right.',
+			lead: 'One score per politician: their contradictions between what they say, how they vote and what the courts ruled. The higher it is, the more tartuffe.',
 			pills: ['100 % sourced', 'Same rules for all', 'Corrected by you'],
 			ctaMain: 'See the ranking',
 			ctaFeed: 'Read the feed',
@@ -382,7 +387,7 @@
 		align-items: center;
 	}
 	.ev-tag {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
@@ -426,6 +431,14 @@
 	.ev-more {
 		color: var(--text-secondary);
 		font-size: 0.9rem;
+	}
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.ev-more {
+			display: inline-flex;
+			align-items: center;
+			min-height: 2.5rem;
+		}
 	}
 	.lab-teaser {
 		margin: 4.5rem 0 1rem;
@@ -552,7 +565,7 @@
 		display: flex;
 		justify-content: space-between;
 		margin-top: 0.35rem;
-		font-size: 0.72rem;
+		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--text-muted);
 	}
@@ -611,7 +624,7 @@
 		text-decoration: underline;
 	}
 	.ex-tag {
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		padding: 0.1rem 0.55rem;
 		border-radius: var(--radius-full);
 		border: 1px dashed var(--border-card-hover);
@@ -638,12 +651,12 @@
 		line-height: 1.5;
 	}
 	.ex-year {
-		font-size: 0.72rem;
+		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--text-muted);
 	}
 	.ex-src {
-		font-size: 0.72rem;
+		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 	.ex-clash {
@@ -824,7 +837,7 @@
 	}
 	.ex-rise-note {
 		margin-top: 0.25rem;
-		font-size: 0.72rem;
+		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 	.more a:hover {

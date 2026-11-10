@@ -7,8 +7,9 @@
 
 	let { lang }: { lang: Lang } = $props();
 	const t = {
-		fr: { phone: 'Votre téléphone', relays: 'Relais publics', server: 'tartuffe.me', ip: 'votre IP', stops: 'reste ici', reads: 'lit les relais' },
-		en: { phone: 'Your phone', relays: 'Public relays', server: 'tartuffe.me', ip: 'your IP', stops: 'stays here', reads: 'reads the relays' }
+		// The pull's label is two lines: one does not fit between the relays and the server.
+		fr: { phone: 'Votre téléphone', relays: 'Relais publics', server: 'tartuffe.me', ip: 'votre IP', stops: 'reste ici', reads: ['lit les', 'relais'] },
+		en: { phone: 'Your phone', relays: 'Public relays', server: 'tartuffe.me', ip: 'your IP', stops: 'stays here', reads: ['reads the', 'relays'] }
 	};
 	let c = $derived(t[lang]);
 </script>
@@ -16,10 +17,10 @@
 <svg viewBox="0 0 340 150" class="anim" role="img" aria-label="{c.phone} → {c.relays} → {c.server}">
 	<!-- The phone -->
 	<g class="phone">
-		<rect x="18" y="34" width="44" height="74" rx="8" />
-		<rect x="24" y="44" width="32" height="50" rx="3" class="screen" />
+		<rect x="26" y="34" width="44" height="74" rx="8" />
+		<rect x="32" y="44" width="32" height="50" rx="3" class="screen" />
 	</g>
-	<text x="40" y="128" text-anchor="middle" class="label">{c.phone}</text>
+	<text x="48" y="128" text-anchor="middle" class="label">{c.phone}</text>
 
 	<!-- The relays: three antennas -->
 	{#each [138, 170, 202] as x, i (x)}
@@ -41,7 +42,8 @@
 	</g>
 	<text x="296" y="128" text-anchor="middle" class="label">{c.server}</text>
 	<line x1="262" y1="68" x2="222" y2="68" class="pull" />
-	<text x="242" y="62" text-anchor="middle" class="tiny">{c.reads}</text>
+	<text x="240" y="82" text-anchor="middle" class="tiny">{c.reads[0]}</text>
+	<text x="240" y="95" text-anchor="middle" class="tiny">{c.reads[1]}</text>
 
 	<!-- The ballot: sealed, with the address tag riding it up to the relays -->
 	<g class="ballot">
@@ -49,8 +51,8 @@
 		<path d="M0 0l11 8 11-8" />
 	</g>
 	<g class="ip">
-		<rect width="44" height="14" rx="7" />
-		<text x="22" y="10" text-anchor="middle">{c.ip}</text>
+		<rect width="64" height="17" rx="8.5" />
+		<text x="32" y="12.5" text-anchor="middle">{c.ip}</text>
 	</g>
 	<text x="170" y="22" text-anchor="middle" class="stops">{c.ip} {c.stops}</text>
 </svg>
@@ -84,12 +86,13 @@
 		fill: #2a2430;
 		stroke: var(--glass-border);
 	}
+	/* 12px in the drawing is about 11px on a phone: the floor of a caption. */
 	.label {
-		font-size: 9px;
+		font-size: 12px;
 		fill: var(--text-secondary);
 	}
 	.tiny {
-		font-size: 7px;
+		font-size: 12px;
 		fill: var(--text-muted);
 	}
 	.pull {
@@ -120,12 +123,12 @@
 		fill: var(--amber);
 	}
 	.ip text {
-		font-size: 7.5px;
+		font-size: 12px;
 		font-weight: 800;
 		fill: #0a0a0f;
 	}
 	.stops {
-		font-size: 9px;
+		font-size: 12px;
 		font-weight: 700;
 		fill: var(--amber);
 		opacity: 1;
@@ -157,12 +160,12 @@
 	@keyframes ballot {
 		0%,
 		10% {
-			transform: translate(29px, 62px);
+			transform: translate(37px, 62px);
 			opacity: 0;
 		}
 		14% {
 			opacity: 1;
-			transform: translate(29px, 62px);
+			transform: translate(37px, 62px);
 		}
 		38%,
 		52% {
@@ -181,12 +184,12 @@
 	@keyframes ip {
 		0%,
 		10% {
-			transform: translate(18px, 40px);
+			transform: translate(26px, 40px);
 			opacity: 0;
 		}
 		14% {
 			opacity: 1;
-			transform: translate(18px, 40px);
+			transform: translate(26px, 40px);
 		}
 		38%,
 		96% {

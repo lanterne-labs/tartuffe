@@ -245,7 +245,7 @@
 							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 							<div class="card-info">
 								<div class="card-name">
-									{person.name}
+									<span class="name-text">{person.name}</span>
 									{#if person.entity_type === 'party'}
 										<span class="badge">{tr('home.party_badge', currentLang)}</span>
 									{/if}
@@ -295,7 +295,7 @@
 								{/if}
 								<div class="card-info">
 									<div class="card-name">
-										{person.name}
+										<span class="name-text">{person.name}</span>
 										{#if person.entity_type === 'party'}
 											<span class="badge">{tr('home.party_badge', currentLang)}</span>
 										{/if}
@@ -495,7 +495,8 @@
 	/* Grid */
 	.persons-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+		/* A column never wider than the screen: a narrow phone would scroll sideways. */
+		grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
 		gap: 1rem;
 	}
 
@@ -545,18 +546,23 @@
 		font-size: 0.938rem;
 		color: var(--text-primary);
 		text-transform: capitalize;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
 	}
+	/* A bare text node in a flex box is cut, not ellipsized: the name is a
+	   box of its own that shrinks, and the badge keeps its width. */
+	.name-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 
 	.badge {
-		background: rgba(59, 130, 246, 0.15);
+		background: color-mix(in oklch, var(--accent) 15%, transparent);
 		color: var(--accent);
-		font-size: 0.688rem;
+		font-size: 0.75rem;
 		font-weight: 500;
 		padding: 0.125rem 0.5rem;
 		border-radius: var(--radius-full);
@@ -659,6 +665,4 @@
 		box-shadow: var(--shadow-glow);
 	}
 
-	@media (max-width: 700px) {
-		}
 </style>

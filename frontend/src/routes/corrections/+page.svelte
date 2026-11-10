@@ -123,6 +123,15 @@
 		color: var(--text-primary);
 		text-transform: capitalize;
 	}
+	/* A finger needs the person's link 40px tall. */
+	@media (pointer: coarse) {
+		.who {
+			display: inline-flex;
+			align-items: center;
+			min-height: 2.5rem;
+			padding: 0 0.4rem;
+		}
+	}
 	time {
 		color: var(--text-muted);
 	}

@@ -163,7 +163,7 @@
 			grid-template-columns: minmax(0, 1fr) auto auto;
 			align-items: center;
 			gap: 0.6rem;
-			padding: 0.55rem 0.25rem 0.55rem 1rem;
+			padding: 0.55rem 0.75rem 0.55rem 1rem;
 			padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
 			border-radius: 0;
 			border-width: 1px 0 0;
@@ -174,7 +174,10 @@
 		.ends {
 			display: none;
 		}
+		/* The cross is the first child (the corner of the card), so without an
+		   order it would take the stretchy column: the title gets it. */
 		.head {
+			order: 1;
 			flex-direction: column;
 			align-items: flex-start;
 			gap: 0;
@@ -191,10 +194,12 @@
 			display: inline;
 		}
 		.go {
+			order: 2;
 			margin: 0;
 			padding: 0.5rem 0.85rem;
 		}
 		.close {
+			order: 3;
 			position: static;
 			width: 2.5rem;
 			height: 2.5rem;

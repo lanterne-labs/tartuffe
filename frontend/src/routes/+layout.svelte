@@ -93,19 +93,17 @@
 
 <footer class="site-footer">
 	<p class="footer-lab">{tr('footer.lab', currentLang)}</p>
-	<a href="/lab">{tr('nav.lab', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/about">{tr('nav.about', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/about/privacy">{tr('nav.privacy', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/corrections">{tr('corrections.title', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/feed">{tr('nav.feed', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/contact">{tr('nav.contact', currentLang)}</a>
-	<span aria-hidden="true">·</span>
-	<a href="/mentions-legales">{tr('nav.legal', currentLang)}</a>
+	<!-- The dot is drawn by CSS on every link but the first, so a wrapped
+	     line never ends with one. -->
+	<ul class="footer-links">
+		<li><a href="/lab">{tr('nav.lab', currentLang)}</a></li>
+		<li><a href="/about">{tr('nav.about', currentLang)}</a></li>
+		<li><a href="/about/privacy">{tr('nav.privacy', currentLang)}</a></li>
+		<li><a href="/corrections">{tr('corrections.title', currentLang)}</a></li>
+		<li><a href="/feed">{tr('nav.feed', currentLang)}</a></li>
+		<li><a href="/contact">{tr('nav.contact', currentLang)}</a></li>
+		<li><a href="/mentions-legales">{tr('nav.legal', currentLang)}</a></li>
+	</ul>
 </footer>
 
 <style>
@@ -129,11 +127,45 @@
 		color: var(--text-muted);
 		font-size: 0.8rem;
 	}
+	.footer-links {
+		flex-basis: 100%;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.5rem 0;
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.footer-links li {
+		display: inline-flex;
+		align-items: center;
+		white-space: nowrap;
+	}
+	.footer-links li + li::before {
+		content: '·';
+		margin: 0 0.375rem;
+	}
 	.site-footer a {
 		color: var(--text-secondary);
 	}
 	.site-footer a:hover {
 		color: var(--accent-hover);
+	}
+	/* A finger needs a link at least 40px tall. */
+	@media (pointer: coarse) {
+		.footer-links {
+			row-gap: 0;
+		}
+		.site-footer a {
+			display: inline-flex;
+			align-items: center;
+			min-height: 2.5rem;
+			padding: 0 0.25rem;
+		}
+		.footer-links li + li::before {
+			margin: 0 0.125rem;
+		}
 	}
 
 
@@ -149,6 +181,14 @@
 		/* Room for the event's bar at the bottom of a phone (EventBanner). */
 		.site-footer {
 			padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px));
+		}
+		/* The links wrap on a phone, and a dot would then open or close a
+		   line: a gap separates them instead. */
+		.footer-links {
+			column-gap: 0.9rem;
+		}
+		.footer-links li + li::before {
+			display: none;
 		}
 	}
 </style>

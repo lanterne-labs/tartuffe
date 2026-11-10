@@ -64,14 +64,18 @@
 
 <style>
 	.legal { max-width: 760px; margin: 0 auto; padding: 1rem 0 3rem; }
-	.kicker { display: block; text-align: center; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
-	h1 { font-size: 2rem; margin: 0.25rem 0 0.75rem; }
+	/* The kicker and the title as on the other pages (about, privacy). */
+	.kicker { display: block; text-align: center; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-hover); }
+	h1 { font-family: var(--font-serif); font-size: clamp(2rem, 6.5vw, 3.1rem); font-weight: 600; line-height: 1.08; margin: 0.35rem 0 0.75rem; }
 	.lead { color: var(--text-secondary); line-height: 1.6; }
 	.address { margin: 1.5rem 0; text-align: center; font-size: 1.125rem; font-weight: 600; }
+	.address a { display: inline-flex; align-items: center; min-height: 2.5rem; padding: 0 0.5rem; }
 	.topics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
 	.topic { background: var(--bg-card); border: 1px solid var(--border-card); border-radius: var(--radius-md); padding: 1rem 1.25rem; }
 	.topic h2 { font-size: 1rem; margin-bottom: 0.5rem; }
 	.topic p { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.55; }
-	.write { display: inline-block; margin-top: 0.75rem; font-size: 0.875rem; }
+	/* The link is 40px tall and bleeds into the card's padding, so the text
+	   stays where it was. */
+	.write { display: inline-flex; align-items: center; min-height: 2.5rem; margin: 0.25rem 0 -0.5rem -0.5rem; padding: 0 0.5rem; font-size: 0.875rem; }
 	.note { color: var(--text-muted); font-size: 0.875rem; }
 </style>

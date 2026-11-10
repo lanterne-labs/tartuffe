@@ -11,6 +11,7 @@
 	import { displayName } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
 	import Modal from '$lib/components/Modal.svelte';
+	import HintSheet from '$lib/components/HintSheet.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
@@ -25,6 +26,7 @@
 	import { rankedRows, byFirst, type Shown } from '$lib/vote/results';
 	import { describeError, toVoteError, reportLink } from '$lib/vote/errors';
 	import type { PollEvent } from '$lib/types';
+	import type { Snippet } from 'svelte';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
@@ -61,6 +63,16 @@
 		}
 		introOpen = true;
 	}
+	// A touch screen (no hover): a "?" or a status icon opens its text in the
+	// middle of the screen, over the dimmed page (HintSheet), and any tap
+	// closes it; a bubble under the icon would be clipped by the list it
+	// sits in and run off the screen. Judged after the mount: the page is
+	// server-rendered.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
+	let hint = $state<{ text: string; html: boolean } | null>(null);
 	let keyMenuOpen = $state(false);
 	let showWords = $state(false);
 	let forgetOpen = $state(false);
@@ -518,26 +530,14 @@
 			<h2 id="ballot-title">
 				{tr('vote.title', currentLang)}
 				{#if ballot.state === 'verified'}
-					<details class="help status-tip">
-						<summary class="state-icon state-icon--logged" aria-label={tr('v2.status.verified', currentLang)}>
-							<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
-						</summary>
-						<p>{tr(ballot.late ? 'v2.status.late.help' : 'v2.status.verified.help', currentLang)}</p>
-					</details>
+					{@render statusTip('state-icon--logged', tr('v2.status.verified', currentLang), tr(ballot.late ? 'v2.status.late.help' : 'v2.status.verified.help', currentLang), false, iconLogged)}
 				{:else if ballot.state === 'acked'}
-					<details class="help status-tip">
-						<summary class="state-icon state-icon--ok" aria-label={tr('v2.status.received', currentLang)}>
-							<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
-						</summary>
-						<p>{tr('v2.status.received.help', currentLang)}</p>
-					</details>
+					{@render statusTip('state-icon--ok', tr('v2.status.received', currentLang), tr('v2.status.received.help', currentLang), false, iconOk)}
 				{:else if ballot.state === 'missing'}
-					<details class="help status-tip">
-						<summary class="state-icon state-icon--fault" aria-label={tr('v2.status.missing', currentLang)}>!</summary>
-						<p>{@html tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) })}</p>
-					</details>
+					{@render statusTip('state-icon--fault', tr('v2.status.missing', currentLang), tr('v2.status.missing.help', currentLang, { report: reportLink(currentLang) }), true, iconFault)}
 				{:else if busy}
-					<span class="state-icon" title={busyLabel}><Spinner size="sm" label={busyLabel} /></span>
+					<!-- The label is written beside the wheel: a finger has no title to hover. -->
+					<span class="state-icon" title={busyLabel}><Spinner size="sm" label={busyLabel} /></span><span class="busy-text" aria-hidden="true">{busyLabel}</span>
 				{:else if ballot.state === 'rejected' || ballot.state === 'failed'}
 					<span class="state-icon state-icon--fault" title={actionError} aria-label={actionError}>!</span>
 				{/if}
@@ -763,12 +763,40 @@
 
 	<VoteKeyDialog open={keyOpen} lang={currentLang} session={vs} onclose={() => (keyOpen = false)} />
 
+	<!-- A "?" or a status icon: a bubble under it on a desktop, the sheet in
+	     the middle of the screen on a touch screen. A tap on it never picks
+	     the row it sits in. -->
 	{#snippet help(text: string)}
-		<details class="help">
-			<summary aria-label="?">?</summary>
-			<p>{text}</p>
-		</details>
+		{#if touch}
+			<button type="button" class="help-btn" aria-label="?" onclick={(e) => { e.stopPropagation(); hint = { text, html: false }; }}>?</button>
+		{:else}
+			<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+			<details class="help" onclick={(e) => e.stopPropagation()}>
+				<summary aria-label="?">?</summary>
+				<p>{text}</p>
+			</details>
+		{/if}
 	{/snippet}
+	{#snippet iconLogged()}
+		<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2" /><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" /><path class="tick" d="M9.3 15.6l1.9 1.9 3.6-3.7" /></svg>
+	{/snippet}
+	{#snippet iconOk()}
+		<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+	{/snippet}
+	{#snippet iconFault()}!{/snippet}
+	{#snippet statusTip(cls: string, label: string, text: string, html: boolean, icon: Snippet)}
+		{#if touch}
+			<button type="button" class="state-icon status-btn {cls}" aria-label={label} onclick={() => (hint = { text, html })}>{@render icon()}</button>
+		{:else}
+			<details class="help status-tip">
+				<summary class="state-icon {cls}" aria-label={label}>{@render icon()}</summary>
+				<p>{#if html}{@html text}{:else}{text}{/if}</p>
+			</details>
+		{/if}
+	{/snippet}
+	<HintSheet open={hint !== null} onclose={() => (hint = null)}>
+		{#if hint?.html}{@html hint.text}{:else}{hint?.text}{/if}
+	</HintSheet>
 
 	<section class="results" aria-labelledby="results-title">
 		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
@@ -1202,6 +1230,30 @@
 		line-height: 1;
 		cursor: pointer;
 	}
+	/* A finger: the "×" and the arrows keep their size in the slot but take
+	   40px around them; the arrows' areas meet between the two, the lower
+	   one in front where they overlap. */
+	@media (pointer: coarse) {
+		.unpick::after {
+			content: '';
+			position: absolute;
+			inset: -0.5rem;
+		}
+		.slot-move {
+			gap: 0.2rem;
+		}
+		.slot-move button {
+			position: relative;
+			width: 1.9rem;
+			height: 1.9rem;
+			font-size: 0.7rem;
+		}
+		.slot-move button::after {
+			content: '';
+			position: absolute;
+			inset: -0.3rem;
+		}
+	}
 	.slot-move {
 		position: absolute;
 		left: 0.3rem;
@@ -1279,18 +1331,53 @@
 	.help {
 		position: relative;
 	}
-	.help summary {
+	.help summary,
+	.help-btn {
+		position: relative;
 		list-style: none;
 		width: 1.3rem;
 		height: 1.3rem;
+		padding: 0;
 		display: grid;
 		place-items: center;
 		border-radius: 50%;
 		border: 1px solid var(--glass-border);
+		background: none;
 		color: var(--text-secondary);
+		font: inherit;
 		font-size: 0.75rem;
 		font-weight: 700;
+		line-height: 1;
 		cursor: pointer;
+	}
+	/* The icon that opens the sheet on a touch screen is a button with the
+	   icon's look. */
+	.status-btn {
+		position: relative;
+		padding: 0;
+		border: none;
+		color: white;
+		cursor: pointer;
+	}
+	.busy-text {
+		margin-left: 0.4rem;
+		font-family: var(--font-family);
+		font-size: 0.8rem;
+		font-weight: 400;
+		color: var(--text-secondary);
+	}
+	/* A finger: the small icons keep their size but take 40px around them. */
+	@media (pointer: coarse) {
+		.help summary::after,
+		.help-btn::after,
+		.status-btn::after {
+			content: '';
+			position: absolute;
+			inset: -0.65rem;
+		}
+		.vote-row .help-btn::after {
+			inset: -0.75rem;
+		}
 	}
 	.help summary::-webkit-details-marker {
 		display: none;
@@ -1862,7 +1949,8 @@
 	.explain p {
 		margin: 0.4rem 0 0;
 	}
-	.vote-row .help summary {
+	.vote-row .help summary,
+	.vote-row .help-btn {
 		width: 1.1rem;
 		height: 1.1rem;
 		font-size: 0.65rem;

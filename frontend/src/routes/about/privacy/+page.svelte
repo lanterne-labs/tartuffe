@@ -46,22 +46,22 @@
 					],
 					never: [
 						'Aucun cookie, aucune publicité.',
-						'Aucun script d’un autre site : même les polices de caractères sont servies par nous.'
+						'Aucun script d’un autre site : même les polices de caractères sont servies par nous.'
 					],
-					note: 'Les photos des responsables politiques viennent de leurs sources publiques : votre navigateur les charge chez elles.'
+					note: 'Les photos des responsables politiques viennent de leurs sources publiques : votre navigateur les charge chez elles.'
 				},
 				{
 					title: 'Se connecter avec Google',
 					get: [
-						'Un identifiant de votre compte Google : une suite de chiffres, sans votre nom ni votre e-mail.',
-						'Nous ne le gardons même pas tel quel. Nous le passons dans une « moulinette » à sens unique, avec une clé secrète que nous seuls avons : il en sort une empreinte. Quand vous revenez, la même moulinette redonne la même empreinte, et nous vous reconnaissons. Mais de l’empreinte, impossible de revenir à l’identifiant : si notre base fuitait un jour, personne ne pourrait relier un compte du site à un compte Google.',
+						'Un identifiant de votre compte Google : une suite de chiffres, sans votre nom ni votre e-mail.',
+						'Nous ne le gardons même pas tel quel. Nous le passons dans une « moulinette » à sens unique, avec une clé secrète que nous seuls avons : il en sort une empreinte. Quand vous revenez, la même moulinette redonne la même empreinte, et nous vous reconnaissons. Mais de l’empreinte, impossible de revenir à l’identifiant : si notre base fuitait un jour, personne ne pourrait relier un compte du site à un compte Google.',
 						'Le pseudo que vous choisissez, que vous seul voyez.'
 					],
 					never: [
 						'Votre e-mail, votre nom, votre photo, vos contacts.',
-						'Nous ne demandons à Google que le droit « openid », le plus petit qui existe : l’écran de Google le montre.'
+						'Nous ne demandons à Google que le droit « openid », le plus petit qui existe : l’écran de Google le montre.'
 					],
-					note: 'Google sait que vous vous connectez à tartuffe.me, comme pour tout bouton « Continuer avec Google ».'
+					note: 'Google sait que vous vous connectez à tartuffe.me, comme pour tout bouton « Continuer avec Google ».'
 				},
 				{
 					title: 'Les +1 et les signalements',
@@ -73,22 +73,22 @@
 						'La correction publiée montre la raison de l’IA, jamais votre texte ni votre compte.',
 						'L’IA reçoit le texte du signalement, jamais qui l’a écrit.'
 					],
-					note: 'L’IA tourne sur notre propre machine ; quand elle est saturée, un fournisseur d’IA externe peut relire le signalement.'
+					note: 'L’IA tourne sur notre propre machine ; quand elle est saturée, un fournisseur d’IA externe peut relire le signalement.'
 				},
 				{
 					title: 'Votre session',
 					get: ['Un jeton de connexion, gardé dans votre navigateur (pas un cookie), valable 30 jours. Se déconnecter l’efface.'],
-					never: ['Votre mot de passe : il n’y en a pas.']
+					never: ['Votre mot de passe : il n’y en a pas.']
 				}
 			],
 			eraseTitle: 'Tout effacer',
 			erase: [
-				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.'
+				'Sur votre profil, « Supprimer mon compte » efface d’un coup le compte, ses sessions et ses +1. Vos signalements restent, détachés de vous : ils ont servi à corriger le site.'
 			],
 			keepTitle: 'Ce que nous gardons, en tout',
 			keep: ['L’empreinte de votre compte Google (pas l’identifiant lui-même).', 'Le pseudo que vous avez choisi.', 'Vos +1.', 'Vos signalements.', 'L’empreinte de votre jeton de connexion, pour 30 jours.', 'Des statistiques de visite anonymes, qui ne disent rien de vous.'],
 			keepNote: 'Rien d’autre. Nous n’en vendons, louons ni partageons rien.',
-			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
+			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
 			back: 'À propos'
 		},
 		en: {

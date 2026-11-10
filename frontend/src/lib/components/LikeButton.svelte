@@ -112,7 +112,8 @@
 	/* A finger needs more than a mouse. */
 	@media (pointer: coarse) {
 		.like {
-			height: 36px;
+			min-width: 2.5rem;
+			height: 2.5rem;
 			padding: 0 0.8rem;
 		}
 	}

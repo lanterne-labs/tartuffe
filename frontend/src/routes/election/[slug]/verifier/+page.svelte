@@ -277,7 +277,7 @@
 		font-family: var(--font-serif);
 		font-size: clamp(1.7rem, 5vw, 2.3rem);
 		line-height: 1.15;
-		margin: 0.5rem 0 0.5rem;
+		margin: 1.5rem 0 0.5rem;
 	}
 	.lead {
 		color: var(--text-secondary);
@@ -354,7 +354,7 @@
 		font-weight: 900;
 	}
 	.name {
-		font-size: 0.68rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--text-secondary);
 	}
@@ -381,9 +381,6 @@
 		.link {
 			min-width: 0.4rem;
 			margin-top: 1.25rem;
-		}
-		.name {
-			font-size: 0.62rem;
 		}
 	}
 	.link--ok {
@@ -595,14 +592,24 @@
 		font-size: 0.78rem;
 		word-break: break-word;
 	}
+	/* The error of a stopped check is one long line: it breaks anywhere
+	   rather than running off a phone. */
+	.verdict p code {
+		font-size: 0.78rem;
+		overflow-wrap: anywhere;
+	}
 	.links {
 		display: flex;
 		justify-content: center;
-		gap: 0.6rem;
+		align-items: center;
+		gap: 0.3rem;
 		margin-top: 1.5rem;
 		font-size: 0.85rem;
 	}
+	/* The links are a finger's target: the padding brings them to 40px. */
 	.links a {
+		display: inline-block;
+		padding: 0.65rem 0.5rem;
 		color: var(--text-secondary);
 	}
 	@media (prefers-reduced-motion: reduce) {

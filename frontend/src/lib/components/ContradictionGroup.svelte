@@ -184,7 +184,7 @@
 		margin-bottom: 0.5rem;
 	}
 	.fact-id {
-		font-size: 0.688rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--text-muted);
 		margin-right: 0.25rem;

@@ -241,7 +241,7 @@
 	}
 	.tag {
 		align-self: flex-start;
-		font-size: 0.68rem;
+		font-size: 0.75rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
@@ -293,6 +293,15 @@
 	.link {
 		font-size: 0.88rem;
 		color: var(--text-secondary);
+	}
+	/* A finger needs the text links as tall as the buttons beside them. */
+	@media (pointer: coarse) {
+		.link {
+			display: inline-flex;
+			align-items: center;
+			min-height: 2.5rem;
+			padding: 0 0.25rem;
+		}
 	}
 	.principles {
 		display: grid;

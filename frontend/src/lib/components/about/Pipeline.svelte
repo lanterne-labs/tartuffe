@@ -294,7 +294,7 @@
 	}
 	.num {
 		font-family: var(--font-family);
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		font-weight: 600;
 		color: var(--accent-hover);
 		letter-spacing: 0.08em;

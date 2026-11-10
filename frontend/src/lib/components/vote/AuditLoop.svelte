@@ -78,7 +78,7 @@
 		font-weight: 900;
 	}
 	.name {
-		font-size: 0.68rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--text-secondary);
 	}
@@ -102,9 +102,6 @@
 		.link {
 			min-width: 0.4rem;
 			margin-top: 1.25rem;
-		}
-		.name {
-			font-size: 0.62rem;
 		}
 	}
 	/* Each part turns green in turn (0.7 s apart), holds, and the loop starts again. */

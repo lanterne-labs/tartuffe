@@ -6,6 +6,13 @@
 	import { tr, type Lang } from '$lib/i18n';
 
 	let { lang }: { lang: Lang } = $props();
+	// "stays on the phone" on two lines: at a readable size one line is
+	// wider than the document.
+	let stays = $derived.by(() => {
+		const words = tr('zk.anim.stays', lang).split(' ');
+		const half = Math.ceil(words.length / 2);
+		return [words.slice(0, half).join(' '), words.slice(half).join(' ')];
+	});
 </script>
 
 <figure class="anim">
@@ -23,7 +30,7 @@
 		<!-- The document: the data page of a passport. -->
 		<g class="doc">
 			<rect x="8" y="14" width="96" height="112" rx="6" class="page" />
-			<text x="16" y="27" class="doc-head">PASSEPORT · RF</text>
+			<text x="16" y="27" class="doc-head">PASSEPORT</text>
 			<rect x="16" y="34" width="26" height="32" rx="2" class="photo" />
 			<rect x="48" y="36" width="44" height="5" rx="2" class="line" />
 			<rect x="48" y="45" width="34" height="5" rx="2" class="line" />
@@ -31,8 +38,8 @@
 			<rect x="48" y="63" width="30" height="5" rx="2" class="line hl" />
 			<rect x="16" y="76" width="76" height="5" rx="2" class="line" />
 			<rect x="16" y="85" width="56" height="5" rx="2" class="line" />
-			<text x="16" y="105" class="mrz">P&lt;FRA&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</text>
-			<text x="16" y="115" class="mrz">0X0X0X0X&lt;&lt;&lt;&lt;&lt;</text>
+			<text x="16" y="104" class="mrz">P&lt;FRA&lt;&lt;&lt;&lt;&lt;</text>
+			<text x="16" y="117" class="mrz">0X0X0X&lt;&lt;&lt;&lt;</text>
 		</g>
 		<!-- Once the two facts are out, the rest of the document is locked on the phone. -->
 		<g class="shut">
@@ -41,7 +48,8 @@
 				<path d="M-6 -3 v-4 a6 6 0 0 1 12 0 v4" />
 				<rect x="-9" y="-3" width="18" height="14" rx="3" />
 			</g>
-			<text x="56" y="92" text-anchor="middle" class="veil-text">{tr('zk.anim.stays', lang)}</text>
+			<text x="56" y="90" text-anchor="middle" class="veil-text">{stays[0]}</text>
+			<text x="56" y="104" text-anchor="middle" class="veil-text">{stays[1]}</text>
 		</g>
 
 		<!-- The path to the server. -->
@@ -49,12 +57,12 @@
 
 		<!-- The two facts, pulled out of the document. -->
 		<g class="chip chip-fr">
-			<rect width="72" height="20" rx="10" />
-			<text x="36" y="14" text-anchor="middle">{tr('zk.anim.french', lang)}</text>
+			<rect width="84" height="20" rx="10" />
+			<text x="42" y="14.5" text-anchor="middle">{tr('zk.anim.french', lang)}</text>
 		</g>
 		<g class="chip chip-age">
-			<rect width="72" height="20" rx="10" />
-			<text x="36" y="14" text-anchor="middle">{tr('zk.anim.adult', lang)}</text>
+			<rect width="84" height="20" rx="10" />
+			<text x="42" y="14.5" text-anchor="middle">{tr('zk.anim.adult', lang)}</text>
 		</g>
 
 		<!-- Our server. -->
@@ -103,8 +111,9 @@
 		fill: #1f1a22;
 		stroke: var(--glass-border);
 	}
+	/* 12px in the drawing is about 11px on a phone: the floor of any text here. */
 	.doc-head {
-		font-size: 7px;
+		font-size: 12px;
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		fill: var(--text-muted);
@@ -120,7 +129,7 @@
 	}
 	.mrz {
 		font-family: ui-monospace, monospace;
-		font-size: 7px;
+		font-size: 12px;
 		fill: var(--text-muted);
 	}
 	.veil {
@@ -137,7 +146,7 @@
 		fill: var(--text-primary);
 	}
 	.veil-text {
-		font-size: 8px;
+		font-size: 12px;
 		font-weight: 600;
 		fill: var(--text-primary);
 	}
@@ -150,7 +159,7 @@
 		fill: var(--green);
 	}
 	.chip text {
-		font-size: 10px;
+		font-size: 12px;
 		font-weight: 700;
 		fill: #0a0a0f;
 	}
@@ -177,12 +186,12 @@
 		stroke-width: 1.5;
 	}
 	.proof-label {
-		font-size: 10px;
+		font-size: 12px;
 		font-weight: 700;
 		fill: var(--text-primary);
 	}
 	.proof-sub {
-		font-size: 8px;
+		font-size: 12px;
 		font-weight: 600;
 		fill: var(--green);
 	}
@@ -204,7 +213,7 @@
 		stroke-linejoin: round;
 	}
 	.caption {
-		font-size: 9px;
+		font-size: 12px;
 		fill: var(--text-secondary);
 	}
 

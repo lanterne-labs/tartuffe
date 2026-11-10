@@ -45,7 +45,9 @@
 <style>
 	.modal {
 		margin: auto;
+		/* dvh: the height left under the browser's bars on a phone. */
 		max-height: calc(100vh - 2rem);
+		max-height: calc(100dvh - 2rem);
 		overflow-y: auto;
 		width: min(480px, calc(100vw - 2rem));
 		padding: 0;
@@ -78,11 +80,17 @@
 		font-weight: 600;
 		margin: 0;
 	}
+	/* A 44px square under the finger; pulled out so the cross stays in the corner. */
 	.close {
 		position: absolute;
-		right: 0;
+		right: -0.75rem;
 		top: 50%;
 		transform: translateY(-50%);
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		padding: 0;
 		background: none;
 		border: none;
 		color: var(--text-muted);

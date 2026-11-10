@@ -227,12 +227,30 @@
 		margin: 0 auto;
 		padding: 1.5rem 1rem 3rem;
 	}
+	h1 {
+		font-family: var(--font-serif);
+		font-size: clamp(1.7rem, 5vw, 2.3rem);
+		line-height: 1.15;
+		margin: 0.5rem 0;
+	}
+	/* The site's dark field, at 1rem: under 16px iOS zooms into a field on focus. */
 	textarea {
 		width: 100%;
 		box-sizing: border-box;
 		margin: 0.5rem 0;
+		padding: 0.7rem 0.8rem;
+		border: 1px solid var(--glass-border);
+		border-radius: var(--radius-md);
+		background: var(--bg-secondary);
+		color: var(--text-primary);
 		font-family: var(--font-mono, monospace);
-		font-size: 0.8rem;
+		font-size: 1rem;
+		line-height: 1.4;
+		resize: vertical;
+	}
+	textarea:focus {
+		outline: none;
+		border-color: var(--accent);
 	}
 	.actions {
 		display: flex;
@@ -256,12 +274,12 @@
 		overflow-wrap: anywhere;
 	}
 	.lead {
-		color: var(--muted, #9aa);
+		color: var(--text-secondary);
 	}
 	.verdict {
 		padding: 0.9rem 1rem;
 		border-radius: 0.6rem;
-		border: 1px solid var(--border, #334);
+		border: 1px solid var(--glass-border);
 		font-weight: 600;
 	}
 	.verdict--ok {
@@ -275,5 +293,10 @@
 	}
 	.links {
 		margin-top: 2rem;
+	}
+	/* The links are a finger's target: the padding brings them to 40px. */
+	.links a {
+		display: inline-block;
+		padding: 0.6rem 0.4rem;
 	}
 </style>

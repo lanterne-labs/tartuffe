@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { HistoryPoint } from '$lib/types';
 	import { tr, type Lang } from '$lib/i18n';
+	import HintSheet from './HintSheet.svelte';
 
 	interface Props {
 		points: HistoryPoint[];
@@ -95,15 +96,34 @@
 		return `${(s * 100).toFixed(1)}%`;
 	}
 
-	function onMove(e: MouseEvent) {
-		if (n === 0 || plotW <= 0) return;
+	function indexAt(e: MouseEvent): number | null {
+		if (n === 0 || plotW <= 0) return null;
 		const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
 		const px = e.clientX - rect.left - PAD.left;
 		const i = Math.round((px / plotW) * (n - 1));
-		hoverIndex = Math.min(n - 1, Math.max(0, i));
+		return Math.min(n - 1, Math.max(0, i));
+	}
+	function onMove(e: MouseEvent) {
+		hoverIndex = indexAt(e) ?? hoverIndex;
 	}
 	function onLeave() {
 		hoverIndex = null;
+	}
+
+	// A touch screen has no hover: a tap picks the nearest week, marks it with
+	// the crosshair and opens its details in a sheet. Read after mount: the
+	// page is server-rendered.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
+	let sheet = $state(false);
+	function onTap(e: MouseEvent) {
+		if (!touch) return;
+		const i = indexAt(e);
+		if (i === null) return;
+		hoverIndex = i;
+		sheet = true;
 	}
 
 	let hovered = $derived(hoverIndex === null ? null : points[hoverIndex]);
@@ -132,9 +152,17 @@
 		<span class="legend-item"><span class="swatch facts"></span>{tr('person.history.facts', lang)}</span>
 	</div>
 
+	{#snippet details(p: HistoryPoint)}
+		<div class="tooltip-date">{weekLabel(p.date)}</div>
+		<div><span class="swatch cumulative"></span>{scoreLabel}: <strong>{pct(p.score)}</strong></div>
+		<div><span class="swatch recent"></span>{tr('person.history.recent', lang)}: <strong>{pct(p.recent_score)}</strong></div>
+		<div><span class="swatch facts"></span>{tr('person.history.facts', lang)}: <strong>{p.facts_added}</strong></div>
+		<div class="tooltip-muted">{p.facts_total} {tr('person.history.facts_total', lang)} · {p.contradictions} {tr(p.contradictions === 1 ? 'count.contradiction' : 'count.contradictions', lang)}</div>
+	{/snippet}
+
 	{#if width > 0 && n > 0}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<svg {width} height={HEIGHT} role="img" aria-label={tr('person.history', lang)} onmousemove={onMove} onmouseleave={onLeave}>
+		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+		<svg {width} height={HEIGHT} role="img" aria-label={tr('person.history', lang)} onmousemove={onMove} onmouseleave={onLeave} onclick={onTap}>
 			<!-- score panel -->
 			{#each [0, 0.5, 1] as g}
 				<line class="grid" x1={PAD.left} x2={PAD.left + plotW} y1={yScore(g)} y2={yScore(g)} />
@@ -180,14 +208,16 @@
 			{/if}
 		</svg>
 
-		{#if hoverIndex !== null && hovered}
+		<!-- The hover tooltip is the mouse's; a tap gets the sheet instead. -->
+		{#if !touch && hoverIndex !== null && hovered}
 			<div class="tooltip" style="left: {tooltipX}px; max-width: {TOOLTIP_W}px;">
-				<div class="tooltip-date">{weekLabel(hovered.date)}</div>
-				<div><span class="swatch cumulative"></span>{scoreLabel}: <strong>{pct(hovered.score)}</strong></div>
-				<div><span class="swatch recent"></span>{tr('person.history.recent', lang)}: <strong>{pct(hovered.recent_score)}</strong></div>
-				<div><span class="swatch facts"></span>{tr('person.history.facts', lang)}: <strong>{hovered.facts_added}</strong></div>
-				<div class="tooltip-muted">{hovered.facts_total} {tr('person.history.facts_total', lang)} · {hovered.contradictions} {tr(hovered.contradictions === 1 ? 'count.contradiction' : 'count.contradictions', lang)}</div>
+				{@render details(hovered)}
 			</div>
+		{/if}
+		{#if touch && hovered}
+			<HintSheet open={sheet} onclose={() => (sheet = false)}>
+				<div class="sheet-details">{@render details(hovered)}</div>
+			</HintSheet>
 		{/if}
 	{/if}
 	<p class="axis-note">{tr('person.history.axis_note', lang)}</p>
@@ -221,7 +251,8 @@
 	/* A finger needs more than a mouse. */
 	@media (pointer: coarse) {
 		.range {
-			padding: 0.45rem 0.75rem;
+			min-height: 2.5rem;
+			padding: 0.45rem 0.85rem;
 		}
 	}
 	.range.active {
@@ -271,7 +302,7 @@
 	}
 	.axis {
 		fill: var(--text-muted);
-		font-size: 10px;
+		font-size: 11px;
 	}
 
 	.line {
@@ -317,10 +348,17 @@
 	.tooltip strong { color: var(--text-primary); }
 	.tooltip-date { color: var(--text-primary); font-weight: 600; margin-bottom: 0.15rem; }
 	.tooltip-muted { color: var(--text-muted); margin-top: 0.15rem; }
+	/* The same lines in the sheet of a touch screen, read as a list. */
+	.sheet-details {
+		text-align: left;
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+	}
+	.sheet-details strong { color: var(--text-primary); }
 
 	.axis-note {
 		margin: 0.5rem 0 0;
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 </style>

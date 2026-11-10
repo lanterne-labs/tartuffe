@@ -130,6 +130,16 @@ a:hover {
   color: var(--accent-hover);
 }
 
+/* A long URL or token in a text breaks rather than widen the page; a
+   preformatted block scrolls inside its box instead. */
+p, li, dd, blockquote, code {
+  overflow-wrap: anywhere;
+}
+pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
@@ -150,11 +160,14 @@ a:hover {
 
 /* Buttons of the vote pages (election, profile) and their dialogs. */
 .btn {
+  min-height: 2.5rem;
   padding: 0.5rem 1rem;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
+  /* A button has the browser's font unless told: the site's. */
+  font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;

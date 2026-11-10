@@ -17,6 +17,7 @@
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
 	import LikeButton from '$lib/components/LikeButton.svelte';
+	import HintSheet from '$lib/components/HintSheet.svelte';
 	import { authFetch, session } from '$lib/auth';
 	import type { FeedItem, FeedPage, PersonSummary } from '$lib/types';
 
@@ -24,6 +25,14 @@
 
 	let currentLang = $state<Lang>('fr');
 	$effect(() => lang.subscribe((v) => (currentLang = v)));
+
+	// A touch screen has no hover: the title of the score move opens in a
+	// sheet on a tap instead. Read after mount: the page is server-rendered.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
+	let effectHint = $state<FeedItem | null>(null);
 
 	const isDay = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
 	let filter = $derived(($page.url.searchParams.get('kind') ?? '') as Filter);
@@ -173,7 +182,9 @@
 	}
 
 	function ago(iso: string): string {
-		const rtf = new Intl.RelativeTimeFormat(currentLang === 'en' ? 'en' : 'fr', { numeric: 'auto', style: 'narrow' });
+		// The short style, not the narrow one: in French the narrow "-2 h" reads
+		// as a negative number, the short "il y a 2 h" as a time.
+		const rtf = new Intl.RelativeTimeFormat(currentLang === 'en' ? 'en' : 'fr', { numeric: 'auto', style: 'short' });
 		const s = (new Date(iso).getTime() - Date.now()) / 1000;
 		const steps: [number, Intl.RelativeTimeFormatUnit][] = [[60, 'second'], [60, 'minute'], [24, 'hour'], [7, 'day'], [4.35, 'week'], [12, 'month']];
 		let v = s;
@@ -329,15 +340,22 @@
 					<div class="head">
 						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
 						{#if it.score_effect != null}
-							<span
+							<!-- On a touch screen the move is a button: its title opens in a
+							     sheet. The element is a button exactly when it has the click
+							     handler, which the check cannot see. -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<svelte:element
+								this={touch ? 'button' : 'span'}
+								type={touch ? 'button' : undefined}
 								class="ticker"
 								class:down={it.score_effect < 0}
 								title={tr('feed.effect', currentLang, { name: it.person.name })}
 								aria-label={`${tr('feed.effect', currentLang, { name: it.person.name })} : ${move(-it.score_effect)}`}
+								onclick={touch ? () => (effectHint = it) : undefined}
 							>
 								<span aria-hidden="true">{it.score_effect < 0 ? '▲' : '▼'}</span>
 								{move(-it.score_effect)}
-							</span>
+							</svelte:element>
 						{/if}
 						<time datetime={it.at} title={new Date(it.at).toLocaleString()}>{ago(it.at)}</time>
 					</div>
@@ -392,6 +410,12 @@
 			</li>
 		{/each}
 	</ol>
+
+	{#if touch && effectHint && effectHint.score_effect != null}
+		<HintSheet open={true} onclose={() => (effectHint = null)}>
+			{tr('feed.effect', currentLang, { name: effectHint.person.name })} : <strong>{move(-effectHint.score_effect)}</strong>
+		</HintSheet>
+	{/if}
 
 	<div bind:this={sentinel} class="sentinel"></div>
 	{#if items.length > 0}
@@ -470,7 +494,7 @@
 		border-radius: var(--radius-full);
 		background: var(--accent);
 		color: #fff;
-		font-size: 0.65rem;
+		font-size: 0.72rem;
 		font-weight: 700;
 		line-height: 16px;
 	}
@@ -634,6 +658,40 @@
 		cursor: pointer;
 		padding: 0.2rem;
 	}
+	/* A finger needs more than a mouse: every control of the head and of
+	   the filter panel is at least 40px high. */
+	@media (pointer: coarse) {
+		.sort {
+			min-height: 2.5rem;
+		}
+		.filter-btn {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+		.tab {
+			min-height: 2.5rem;
+			padding: 0.3rem 0.9rem;
+		}
+		.picker input,
+		.day input,
+		.chip {
+			height: 2.5rem;
+		}
+		.chip {
+			padding-right: 0;
+		}
+		.chip button {
+			width: 2.5rem;
+			height: 2.5rem;
+		}
+		.matches button {
+			min-height: 2.5rem;
+		}
+		.reset {
+			min-height: 2.5rem;
+			padding: 0.2rem 0.6rem;
+		}
+	}
 	.fresh {
 		position: sticky;
 		top: 4.5rem;
@@ -680,7 +738,7 @@
 		gap: 0.4rem;
 		margin: -0.2rem 0 -0.35rem;
 		color: var(--kind-c);
-		font-size: 0.7rem;
+		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0.09em;
 		text-transform: uppercase;
@@ -724,10 +782,15 @@
 		text-overflow: ellipsis;
 	}
 	.ticker {
+		position: relative;
 		flex-shrink: 0;
 		display: inline-flex;
 		align-items: center;
 		gap: 0.2rem;
+		padding: 0;
+		border: none;
+		background: none;
+		font-family: inherit;
 		font-size: 0.75rem;
 		font-weight: 700;
 		font-variant-numeric: tabular-nums;
@@ -737,7 +800,15 @@
 		color: var(--red);
 	}
 	.ticker span {
-		font-size: 0.6rem;
+		font-size: 0.72rem;
+	}
+	/* A finger: the move answers to an area of 40px around it. */
+	@media (pointer: coarse) {
+		.ticker::after {
+			content: '';
+			position: absolute;
+			inset: -0.7rem -0.4rem;
+		}
 	}
 	.topic {
 		display: block;
@@ -839,9 +910,10 @@
 		margin-bottom: 0.5rem;
 	}
 	@media (max-width: 480px) {
-		/* The red move and the red dot on the photo say it already. */
+		/* The column is the width of the small dial (TartuffeScore xs): its
+		   value does not wrap, so a narrower column spills it into the text. */
 		.item {
-			grid-template-columns: 36px minmax(0, 1fr);
+			grid-template-columns: 3.6rem minmax(0, 1fr);
 			gap: 0.7rem;
 			padding: 0.95rem 0.9rem 0.7rem;
 		}

@@ -13,6 +13,15 @@
 	// shown, so two persons 10 points apart are 10 points apart on every
 	// dial, and the graduations are every 5 points (10 on a small dial).
 	import { tr, type Lang } from '$lib/i18n';
+	import HintSheet from './HintSheet.svelte';
+	// A touch screen (no hover): the "?" and the 🚧 open their text in the
+	// middle of the screen, and any tap closes it (HintSheet), instead of
+	// the bubble beside them.
+	// Known once mounted: the server renders the bubble's markup for everyone.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
 
 	interface Props {
 		/** The honesty score as the API gives it, 0 to 1 (1 is coherent); null or undefined when unknown. */
@@ -143,7 +152,12 @@
 			}}
 			onkeydown={(e) => e.key === 'Escape' && (unsureOpen = false)}
 			onblur={() => (unsureOpen = false)}
-		>🚧<span class="unsure-tip" aria-hidden="true">{unsureText}</span></span>
+		>🚧{#if !touch}<span class="unsure-tip" aria-hidden="true">{unsureText}</span>{/if}</span>
+		{#if touch}
+			<HintSheet open={unsureOpen} onclose={() => (unsureOpen = false)}>
+				<strong class="tip-unsure">{unsureText}</strong>
+			</HintSheet>
+		{/if}
 	{/if}
 	<svg viewBox="0 0 120 102" class="dial" role="img" aria-label={value}>
 		<defs>
@@ -186,7 +200,13 @@
 			<span class:value--none={unrated}>{value}</span>
 			{#if !unrated && withHelp}
 				<button class="q" onclick={toggle} aria-expanded={help} aria-label={tr('score.help', lang)}>?</button>
-				{#if help}
+				{#if help && touch}
+					<HintSheet open={help} onclose={() => (help = false)}>
+						{#if unsure}<strong class="tip-unsure">{unsureText}</strong>{/if}
+						{tr('score.tip', lang)}
+						<a href="/about#score">{tr('score.tip.more', lang)}</a>
+					</HintSheet>
+				{:else if help}
 					<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 					<span class="tip" role="note" onclick={keep}>
 						{#if unsure}<strong class="tip-unsure">{unsureText}</strong>{/if}
@@ -406,12 +426,16 @@
 	.ts--xs .value {
 		gap: 0.2rem;
 	}
-	/* A finger: the small "?" answers to a larger area around it. */
+	/* A finger: the small "?" and the 🚧 answer to an area of 40px around them. */
 	@media (pointer: coarse) {
-		.q::after {
+		.q::after,
+		.unsure-mark::after {
 			content: '';
 			position: absolute;
-			inset: -0.6rem;
+			inset: -0.75rem;
+		}
+		.ts--xs .q::after {
+			inset: -0.85rem;
 		}
 	}
 	.q:hover,

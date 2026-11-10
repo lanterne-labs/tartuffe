@@ -44,6 +44,15 @@
 		signInOpen.set(false);
 	}
 
+	// A click on the backdrop closes the dialog, as in Modal. The dialog has
+	// its own padding, so a click there is the dialog's target too: only a
+	// point outside its box counts.
+	function onBackdrop(e: MouseEvent) {
+		if (!dialog || e.target !== dialog) return;
+		const r = dialog.getBoundingClientRect();
+		if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close();
+	}
+
 	// naming: the Google account has no pseudonym yet (Google gives none):
 	// the dialog asks for one before it closes.
 	let naming = $state(false);
@@ -97,7 +106,7 @@
 	}
 </script>
 
-<dialog bind:this={dialog} class="signin" onclose={close} aria-labelledby="signin-title">
+<dialog bind:this={dialog} class="signin" onclose={close} onclick={onBackdrop} aria-labelledby="signin-title">
 	<header>
 		<h2 id="signin-title">{tr('auth.title', currentLang)}</h2>
 		<button class="close" onclick={close} aria-label={tr('auth.close', currentLang)}>×</button>
@@ -196,7 +205,9 @@
 	}
 	.signin {
 		margin: auto;
+		/* dvh: the height left under the browser's bars on a phone. */
 		max-height: calc(100vh - 2rem);
+		max-height: calc(100dvh - 2rem);
 		overflow-y: auto;
 		width: min(440px, calc(100vw - 2rem));
 		padding: 1.25rem 1.5rem 1.5rem;
@@ -226,7 +237,15 @@
 		font-size: 0.95rem;
 		margin: 0 0 0.25rem;
 	}
+	/* A 44px square under the finger; the negative margins keep the header
+	   as tall as its title and the cross in the corner. */
 	.close {
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		margin: -0.5rem -0.75rem -0.5rem 0;
+		padding: 0;
 		background: none;
 		border: none;
 		color: var(--text-muted);
@@ -264,7 +283,8 @@
 		border: 1px solid var(--glass-border);
 		border-radius: var(--radius-sm);
 		color: var(--text-primary);
-		font-size: 0.9rem;
+		/* Under 16px iOS zooms into the field. */
+		font-size: 1rem;
 	}
 	input:focus {
 		outline: none;

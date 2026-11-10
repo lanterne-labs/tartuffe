@@ -62,26 +62,28 @@
 		<path class="wire muted" d="M120 160 C120 180 88 178 88 196" />
 		<path class="wire flowing" d="M240 160 C240 180 272 178 272 196" />
 
+		<!-- The pills are as wide as the drawing allows: their text is 12.5px,
+		     the least that reads once the figure shrinks to a phone. -->
 		<g class="pill pill-yes">
-			<rect x="6" y="196" width="164" height="30" rx="15" />
+			<rect x="3" y="196" width="170" height="30" rx="15" />
 			<text x="88" y="215" text-anchor="middle">{c.yes}</text>
 		</g>
 		<g class="pill pill-no">
-			<rect x="190" y="196" width="164" height="30" rx="15" />
+			<rect x="187" y="196" width="170" height="30" rx="15" />
 			<text x="272" y="215" text-anchor="middle">{c.no}</text>
 		</g>
 
 		<path class="wire flowing" d="M272 226 L272 252" />
 
 		<g class="pill pill-kept">
-			<rect x="190" y="252" width="164" height="32" rx="16" />
+			<rect x="187" y="252" width="170" height="32" rx="16" />
 			<text x="272" y="272" text-anchor="middle">{c.kept}</text>
 		</g>
 
 		<!-- The audit comes back to the contradictions kept. -->
-		<path class="wire audit-wire" d="M170 268 L190 268" />
+		<path class="wire audit-wire" d="M173 268 L187 268" />
 		<g class="pill pill-audit">
-			<rect x="6" y="252" width="164" height="32" rx="16" />
+			<rect x="3" y="252" width="170" height="32" rx="16" />
 			<g class="spin" transform="translate(30 268)">
 				<path d="M-6 0 a6 6 0 1 1 2 4.5" />
 				<path d="M-6 -1 l0 5 l4.5 -1.5" />
@@ -108,15 +110,17 @@
 		fill: var(--bg-secondary);
 		stroke: var(--border-card-hover);
 	}
+	/* 12.5px in the drawing is 11px once the figure shrinks to a phone: no
+	   text goes under. The meta line keeps its case, uppercase would not fit
+	   the box at that size. */
 	.meta {
 		fill: var(--text-muted);
-		font-size: 9.5px;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
+		font-size: 12.5px;
+		letter-spacing: 0.02em;
 	}
 	.quote {
 		fill: var(--text-primary);
-		font-size: 12px;
+		font-size: 13px;
 		font-family: var(--font-serif);
 		font-weight: 600;
 	}
@@ -126,7 +130,7 @@
 	}
 	.judge-a {
 		fill: var(--text-secondary);
-		font-size: 10.5px;
+		font-size: 12.5px;
 	}
 	.judge-b {
 		fill: var(--text-primary);
@@ -156,7 +160,7 @@
 		}
 	}
 	.pill text {
-		font-size: 11.5px;
+		font-size: 12.5px;
 		font-weight: 600;
 	}
 	.pill-yes rect {

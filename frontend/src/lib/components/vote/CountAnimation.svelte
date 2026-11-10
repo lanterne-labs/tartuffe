@@ -1,7 +1,9 @@
 <script lang="ts">
 	// Counting without reading, looping: sealed ballots drop into the count,
 	// still sealed; only the result is revealed, out of the opened box.
-	// Without motion the last frame shows.
+	// Without motion the last frame shows. A pile of the other voters'
+	// ballots and the dim outline of the bars stay in every frame, so no
+	// column is ever empty under its label.
 	import type { Lang } from '$lib/i18n';
 
 	let { lang }: { lang: Lang } = $props();
@@ -13,7 +15,10 @@
 </script>
 
 <svg viewBox="0 0 340 150" class="anim" role="img" aria-label="{c.ballots} → {c.sum} → {c.results}">
-	<text x="48" y="132" text-anchor="middle" class="label">{c.ballots}</text>
+	<!-- The pile of the other ballots, which never leaves. -->
+	<g class="pile p1"><rect width="22" height="15" rx="2.5" /><path d="M0 0l11 8 11-8" /></g>
+	<g class="pile p2"><rect width="22" height="15" rx="2.5" /><path d="M0 0l11 8 11-8" /></g>
+	<text x="54" y="132" text-anchor="middle" class="label">{c.ballots}</text>
 
 	<!-- The sum: a closed box that opens -->
 	<g class="box">
@@ -33,7 +38,12 @@
 
 	<text x="170" y="16" text-anchor="middle" class="only">{c.only}</text>
 
-	<!-- The results -->
+	<!-- The results: the dim outline holds the place, the green grows over it. -->
+	<g class="ghost">
+		<rect x="262" y="70" width="12" height="32" rx="2" />
+		<rect x="280" y="54" width="12" height="48" rx="2" />
+		<rect x="298" y="80" width="12" height="22" rx="2" />
+	</g>
 	<g class="bars">
 		<rect x="262" y="70" width="12" height="32" rx="2" class="b1" />
 		<rect x="280" y="54" width="12" height="48" rx="2" class="b2" />
@@ -54,17 +64,31 @@
 	.env rect {
 		fill: var(--accent);
 	}
-	.env path {
+	.env path,
+	.pile path {
 		fill: none;
 		stroke: #0a0a0f;
 		stroke-width: 1.4;
 	}
+	.pile rect {
+		fill: color-mix(in oklch, var(--accent) 55%, #2a2430);
+	}
+	.p1 {
+		transform: translate(34px, 70px);
+	}
+	.p2 {
+		transform: translate(48px, 82px);
+	}
+	.ghost rect {
+		fill: #3a3038;
+	}
+	/* 12px in the drawing is about 11px on a phone: the floor of a caption. */
 	.label {
-		font-size: 9px;
+		font-size: 12px;
 		fill: var(--text-secondary);
 	}
 	.only {
-		font-size: 9px;
+		font-size: 12px;
 		font-weight: 700;
 		fill: var(--green);
 	}
@@ -91,16 +115,16 @@
 		opacity: 0;
 	}
 	.e0 {
-		transform: translate(20px, 60px);
+		transform: translate(26px, 60px);
 	}
 	.e1 {
-		transform: translate(46px, 50px);
+		transform: translate(52px, 50px);
 	}
 	.e2 {
-		transform: translate(22px, 88px);
+		transform: translate(28px, 88px);
 	}
 	.e3 {
-		transform: translate(50px, 92px);
+		transform: translate(56px, 92px);
 	}
 
 	@media (prefers-reduced-motion: no-preference) {
@@ -127,22 +151,22 @@
 		}
 	}
 	@keyframes drop0 {
-		0%, 4% { opacity: 1; transform: translate(20px, 60px); }
+		0%, 4% { opacity: 1; transform: translate(26px, 60px); }
 		22% { opacity: 1; transform: translate(159px, 34px); }
 		26%, 100% { opacity: 0; transform: translate(159px, 52px); }
 	}
 	@keyframes drop1 {
-		0%, 10% { opacity: 1; transform: translate(46px, 50px); }
+		0%, 10% { opacity: 1; transform: translate(52px, 50px); }
 		28% { opacity: 1; transform: translate(159px, 34px); }
 		32%, 100% { opacity: 0; transform: translate(159px, 52px); }
 	}
 	@keyframes drop2 {
-		0%, 16% { opacity: 1; transform: translate(22px, 88px); }
+		0%, 16% { opacity: 1; transform: translate(28px, 88px); }
 		34% { opacity: 1; transform: translate(159px, 34px); }
 		38%, 100% { opacity: 0; transform: translate(159px, 52px); }
 	}
 	@keyframes drop3 {
-		0%, 22% { opacity: 1; transform: translate(50px, 92px); }
+		0%, 22% { opacity: 1; transform: translate(56px, 92px); }
 		40% { opacity: 1; transform: translate(159px, 34px); }
 		44%, 100% { opacity: 0; transform: translate(159px, 52px); }
 	}

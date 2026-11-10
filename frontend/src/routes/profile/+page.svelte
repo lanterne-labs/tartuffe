@@ -180,7 +180,7 @@
 			<section class="card event" aria-labelledby="event-{ev.id}">
 				<div class="event-head">
 					<h3 id="event-{ev.id}">
-						<a href={eventPaths(ev.slug).intro}>{currentLang === 'en' ? ev.title_en : ev.title_fr}</a>
+						<a href={eventPaths(ev.slug).intro}>{currentLang === 'en' ? ev.title_en : ev.title_fr} →</a>
 					</h3>
 					<span class="badge" class:badge--open={isOpen(ev)}>
 						{#if !isOpen(ev)}
@@ -315,8 +315,9 @@
 		font-size: 1.05rem;
 		margin: 0;
 	}
+	/* The event's title is a link to its page: it reads as one. */
 	h3 a {
-		color: inherit;
+		color: var(--accent);
 		text-decoration: none;
 	}
 	h3 a:hover {
@@ -433,7 +434,7 @@
 		margin-bottom: 0.35rem;
 	}
 	.status {
-		font-size: 0.72rem;
+		font-size: 0.78rem;
 		font-weight: 600;
 		padding: 0.15rem 0.55rem;
 		border-radius: var(--radius-full);
@@ -501,6 +502,23 @@
 	@media (max-width: 640px) {
 		.card {
 			padding: 1rem;
+		}
+	}
+	/* A finger needs the text links and the summary 40px tall. */
+	@media (pointer: coarse) {
+		.link,
+		.report-head a,
+		h3 a {
+			display: inline-flex;
+			align-items: center;
+			min-height: 2.5rem;
+			padding: 0 0.4rem;
+		}
+		.danger-link {
+			margin: 0.5rem 0 0;
+		}
+		.lost summary {
+			padding: 0.6rem 0;
 		}
 	}
 </style>

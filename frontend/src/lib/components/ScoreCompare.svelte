@@ -6,6 +6,7 @@
 	import { tr, type Lang } from '$lib/i18n';
 	import { displayName } from '$lib/share';
 	import { tartuffeOf, tartuffeColor, dialOf, MARKS, coveredText } from './TartuffeScore.svelte';
+	import HintSheet from './HintSheet.svelte';
 	import type { PersonSummary } from '$lib/types';
 
 	interface Props {
@@ -18,8 +19,18 @@
 
 	// Below this many facts a person has no place on the band (as on the dial).
 	const MIN_FACTS = 10;
-	// The small faces: large enough for a finger (CSS .other).
+	// The small faces: large enough for a finger (CSS .other, --small). On a
+	// narrow lane (a phone) they are a little larger when they still fit in
+	// the rows without piling up.
 	const SMALL = 34;
+	const SMALL_PHONE = 40;
+
+	// A touch screen has no hover: the 🚧 of the portrait in focus opens its
+	// text in a sheet on a tap. Read after mount: the page is server-rendered.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
 
 	let rated = $derived(
 		people
@@ -76,21 +87,36 @@
 	// ROWS rows they pile up, each a little to the right of the one before.
 	const ROWS = 3;
 	const PILE = 14;
+	const PILE_PHONE = 18;
 	let width = $state(0);
-	let spots = $derived.by(() => {
+	function layout(size: number, pile: number) {
 		const ends: number[] = [];
-		return rated.map(({ at }) => {
+		let piled = false;
+		const spots = rated.map(({ at }) => {
 			let x = (left(at) / 100) * width;
 			let row = 0;
-			while (row < ROWS && ends[row] !== undefined && ends[row] > x - SMALL - 3) row++;
+			while (row < ROWS && ends[row] !== undefined && ends[row] > x - size - 3) row++;
 			if (row === ROWS) {
+				piled = true;
 				row = ends.indexOf(Math.min(...ends));
-				x = Math.max(x, ends[row] + PILE);
+				x = Math.max(x, ends[row] + pile);
 			}
 			ends[row] = x;
 			return { x, row };
 		});
+		return { spots, piled };
+	}
+	// The faces' size and places: the larger size on a narrow lane when it
+	// fits without a pile, else the usual one.
+	let sized = $derived.by(() => {
+		if (width > 0 && width < 480) {
+			const big = layout(SMALL_PHONE, PILE_PHONE);
+			if (!big.piled) return { spots: big.spots, small: SMALL_PHONE };
+		}
+		return { spots: layout(SMALL, PILE).spots, small: SMALL };
 	});
+	let spots = $derived(sized.spots);
+	let small = $derived(sized.small);
 	let depth = $derived(spots.reduce((m, s) => Math.max(m, s.row + 1), 1));
 	// The portrait in focus keeps whole inside the lane; its needle stays on the place.
 	const BIG = 66;
@@ -118,17 +144,27 @@
 						{#if current.p.score_reliable === false}
 							<!-- The same mark as on the dial: a score being consolidated. -->
 							<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+							<!-- On a touch screen the text opens in a sheet, and the blur
+							     does not close it: the tap that closes the sheet takes the
+							     focus first, and would land on the page beneath. -->
 							<span
 								class="unsure-mark unsure-mark--big"
-								class:unsure-mark--on={unsureOpen}
+								class:unsure-mark--on={unsureOpen && !touch}
 								class:unsure-mark--left={current.at > 50}
 								tabindex="0"
 								role="note"
 								aria-label={unsureText(current.p)}
 								onclick={() => (unsureOpen = !unsureOpen)}
 								onkeydown={(e) => e.key === 'Escape' && (unsureOpen = false)}
-								onblur={() => (unsureOpen = false)}
+								onblur={() => {
+									if (!touch) unsureOpen = false;
+								}}
 							>🚧<span class="unsure-tip" aria-hidden="true">{unsureText(current.p)}</span></span>
+							{#if touch}
+								<HintSheet open={unsureOpen} onclose={() => (unsureOpen = false)}>
+									{unsureText(current.p)}
+								</HintSheet>
+							{/if}
 						{/if}
 					{/key}
 				</span>
@@ -140,13 +176,13 @@
 					<span class="notch" class:notch--long={i % 10 === 0} style="left: {left(m)}%"></span>
 				{/each}
 			</div>
-			<div class="others" style="height: {depth * (SMALL + 6) + 4}px">
+			<div class="others" style="height: {depth * (small + 6) + 4}px; --small: {small}px">
 				{#each rated as r, i (r.p.id)}
 					<button
 						class="other"
 						class:other--on={r.p.id === current.p.id}
 						class:other--unsure={r.p.score_reliable === false}
-						style="left: {spots[i].x}px; top: {spots[i].row * (SMALL + 6) + 4}px; --oc: {tartuffeColor(r.at)}"
+						style="left: {spots[i].x}px; top: {spots[i].row * (small + 6) + 4}px; --oc: {tartuffeColor(r.at)}"
 						onclick={() => (chosen = r.p.id)}
 						aria-pressed={r.p.id === current.p.id}
 						title={r.p.score_reliable === false ? undefined : tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t })}
@@ -281,8 +317,8 @@
 	.other {
 		position: absolute;
 		transform: translateX(-50%);
-		width: 34px;
-		height: 34px;
+		width: var(--small, 34px);
+		height: var(--small, 34px);
 		padding: 0;
 		border: 2px solid transparent;
 		border-radius: 50%;
@@ -332,7 +368,7 @@
 		display: flex;
 		justify-content: space-between;
 		margin: 0.3rem 0.4rem 0;
-		font-size: 0.62rem;
+		font-size: 0.72rem;
 		font-weight: 700;
 		letter-spacing: 0.1em;
 		text-transform: uppercase;
@@ -410,10 +446,17 @@
 		left: auto;
 		right: -0.3rem;
 	}
-	/* On a small face the whole face shows it: the mark alone is a few pixels. */
-	.other:hover .unsure-tip,
+	/* On a small face the whole face shows it: the mark alone is a few pixels.
+	   The hover is the mouse's: a touch screen keeps a tapped face "hovered",
+	   and its bubble would stay; there the tap puts the face in focus, whose
+	   🚧 opens the sheet. */
+	@media (hover: hover) {
+		.other:hover .unsure-tip,
+		.unsure-mark:hover .unsure-tip {
+			display: block;
+		}
+	}
 	.other:focus-visible .unsure-tip,
-	.unsure-mark:hover .unsure-tip,
 	.unsure-mark:focus-visible .unsure-tip,
 	.unsure-mark--on .unsure-tip {
 		display: block;

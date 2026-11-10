@@ -208,8 +208,8 @@
 	/* A finger needs more than a mouse. */
 	@media (pointer: coarse) {
 		.report-btn {
-			min-width: 36px;
-			height: 36px;
+			min-width: 2.5rem;
+			height: 2.5rem;
 		}
 	}
 	.report-btn.done {

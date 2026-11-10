@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Coverage } from '$lib/types';
 	import { tr, type Lang } from '$lib/i18n';
+	import HintSheet from './HintSheet.svelte';
 
 	interface Props {
 		coverage: Coverage;
@@ -14,13 +15,16 @@
 	// Geometry: the same frame as the history chart beside it (its padding, its
 	// axis), one panel of bars, one per year.
 	const PAD = { left: 40, right: 12, top: 8, bottom: 22 };
-	// The history chart beside this one has a range row and a two-row legend
-	// above its panels: the taller panel here brings the two axis notes level.
-	const BARS_H = 312;
-	const HEIGHT = PAD.top + BARS_H + PAD.bottom;
 
 	let width = $state(0);
 	let hoverIndex: number | null = $state(null);
+
+	// The history chart beside this one has a range row and a two-row legend
+	// above its panels: the taller panel here brings the two axis notes level.
+	// On a phone the charts are stacked, not side by side: a panel that tall
+	// is a screen of bars, so it is shorter there.
+	let BARS_H = $derived(width > 0 && width < 480 ? 200 : 312);
+	let HEIGHT = $derived(PAD.top + BARS_H + PAD.bottom);
 
 	let plotW = $derived(Math.max(0, width - PAD.left - PAD.right));
 	// Years are evenly spaced, so x is index-based: the centre of the year's slot.
@@ -49,14 +53,33 @@
 		return coverage.total === 0 ? '0%' : `${((v / coverage.total) * 100).toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
 	}
 
-	function onMove(e: MouseEvent) {
-		if (n === 0 || slotW <= 0) return;
+	function indexAt(e: MouseEvent): number | null {
+		if (n === 0 || slotW <= 0) return null;
 		const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
 		const px = e.clientX - rect.left - PAD.left;
-		hoverIndex = Math.min(n - 1, Math.max(0, Math.floor(px / slotW)));
+		return Math.min(n - 1, Math.max(0, Math.floor(px / slotW)));
+	}
+	function onMove(e: MouseEvent) {
+		hoverIndex = indexAt(e) ?? hoverIndex;
 	}
 	function onLeave() {
 		hoverIndex = null;
+	}
+
+	// A touch screen has no hover: a tap picks the nearest year, marks it with
+	// the crosshair and opens its details in a sheet. Read after mount: the
+	// page is server-rendered.
+	let touch = $state(false);
+	$effect(() => {
+		touch = window.matchMedia('(hover: none)').matches;
+	});
+	let sheet = $state(false);
+	function onTap(e: MouseEvent) {
+		if (!touch) return;
+		const i = indexAt(e);
+		if (i === null) return;
+		hoverIndex = i;
+		sheet = true;
 	}
 
 	let hovered = $derived(hoverIndex === null ? null : years[hoverIndex]);
@@ -77,9 +100,15 @@
 		{/if}
 	</div>
 
+	{#snippet details(y: Coverage['years'][number])}
+		<div class="tooltip-date">{y.year}</div>
+		<div><span class="swatch facts"></span>{tr('person.coverage.facts', lang)}: <strong>{y.facts}</strong></div>
+		<div class="tooltip-muted">{share(y.facts)} {tr('person.coverage.share', lang)} · {coverage.total} {tr('person.history.facts_total', lang)}</div>
+	{/snippet}
+
 	{#if width > 0 && n > 0}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<svg {width} height={HEIGHT} role="img" aria-label={tr('person.coverage', lang)} onmousemove={onMove} onmouseleave={onLeave}>
+		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+		<svg {width} height={HEIGHT} role="img" aria-label={tr('person.coverage', lang)} onmousemove={onMove} onmouseleave={onLeave} onclick={onTap}>
 			{#each gridValues as g, k}
 				<line class="grid" x1={PAD.left} x2={PAD.left + plotW} y1={yFacts(g)} y2={yFacts(g)} />
 				<text class="axis" x={PAD.left - 6} y={yFacts(g)} text-anchor="end" dominant-baseline={k === 0 ? 'hanging' : 'middle'}>{g}</text>
@@ -109,12 +138,16 @@
 			{/if}
 		</svg>
 
-		{#if hoverIndex !== null && hovered}
+		<!-- The hover tooltip is the mouse's; a tap gets the sheet instead. -->
+		{#if !touch && hoverIndex !== null && hovered}
 			<div class="tooltip" style="left: {tooltipX}px; max-width: {TOOLTIP_W}px;">
-				<div class="tooltip-date">{hovered.year}</div>
-				<div><span class="swatch facts"></span>{tr('person.coverage.facts', lang)}: <strong>{hovered.facts}</strong></div>
-				<div class="tooltip-muted">{share(hovered.facts)} {tr('person.coverage.share', lang)} · {coverage.total} {tr('person.history.facts_total', lang)}</div>
+				{@render details(hovered)}
 			</div>
+		{/if}
+		{#if touch && hovered}
+			<HintSheet open={sheet} onclose={() => (sheet = false)}>
+				<div class="sheet-details">{@render details(hovered)}</div>
+			</HintSheet>
 		{/if}
 	{/if}
 	<p class="axis-note">{tr('person.coverage.axis_note', lang)}</p>
@@ -167,7 +200,7 @@
 	}
 	.axis {
 		fill: var(--text-muted);
-		font-size: 10px;
+		font-size: 11px;
 	}
 
 	.bar {
@@ -198,10 +231,17 @@
 	.tooltip strong { color: var(--text-primary); }
 	.tooltip-date { color: var(--text-primary); font-weight: 600; margin-bottom: 0.15rem; }
 	.tooltip-muted { color: var(--text-muted); margin-top: 0.15rem; }
+	/* The same lines in the sheet of a touch screen, read as a list. */
+	.sheet-details {
+		text-align: left;
+		font-size: 0.9rem;
+		color: var(--text-secondary);
+	}
+	.sheet-details strong { color: var(--text-primary); }
 
 	.axis-note {
 		margin: 0.5rem 0 0;
-		font-size: 0.7rem;
+		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 	.ongoing {

@@ -8,6 +8,7 @@
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
+	import { eventPaths } from '$lib/event';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import ScoreCompare from '$lib/components/ScoreCompare.svelte';
 	import ContradictionGroupCard from '$lib/components/ContradictionGroup.svelte';
@@ -487,6 +488,18 @@
 	<title>{person?.name ?? tr('person.loading', currentLang)} — tartuffe.me</title>
 </svelte:head>
 
+<!-- The call to the vote of a presidential candidate's page: to the vote's
+     presentation, never the ballot (a voter reads what the vote is first). -->
+{#snippet voteCall(corner: boolean)}
+	<aside class="vote-call" class:vote-call--corner={corner}>
+		<div>
+			<h2>{tr('person.vote.title', currentLang)}</h2>
+			{#if !corner}<p>{tr('person.vote.body', currentLang)}</p>{/if}
+		</div>
+		<a href={eventPaths().intro}>{tr('person.vote.cta', currentLang)} →</a>
+	</aside>
+{/snippet}
+
 <div class="detail-page">
 	<a href="/dashboard" class="back-link">
 		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -529,11 +542,11 @@
 					</h1>
 					{#if scored}
 					<p class="hero-summary">
+						<!-- The dot is glued to what follows it: a line may break before a
+						     dot, never after one, so no line ends on a lone "·". -->
 						{person.stance_count} {tr(person.stance_count === 1 ? 'count.stance' : 'count.stances', currentLang)}
-						<span class="dot">·</span>
-						{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
-						<span class="dot">·</span>
-						<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
+						<span class="dot">·</span>&nbsp;{person.contradiction_count} {tr(person.contradiction_count === 1 ? 'count.contradiction' : 'count.contradictions', currentLang)} {tr('count.over', currentLang)} {person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', currentLang)}
+						<span class="dot">·</span>&nbsp;<a href="/feed?person={person.id}" class="feed-link">{tr('feed.person', currentLang)} →</a>
 					</p>
 					{#if collected}<p class="hero-summary">{collected}</p>{/if}
 					{#if !person.candidate}
@@ -550,6 +563,10 @@
 			<div class="hero-gauge">
 				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: scored ? person.honesty_score : undefined }} />
 			</div>
+			{#if person.candidate && person.entity_type === 'human'}
+				<!-- A candidate's page leads to the vote: its presentation first. -->
+				{@render voteCall(true)}
+			{/if}
 		</div>
 
 		{#if person.candidate && person.entity_type !== 'human' && person.members_score != null}
@@ -802,6 +819,11 @@
 			</section>
 		{/if}
 
+		{#if person.candidate && person.entity_type === 'human'}
+			<!-- Again after the record: the reader who read it all votes from here. -->
+			{@render voteCall(false)}
+		{/if}
+
 		<!-- Facts disclosure removed: facts now live inside each stance card under a
 		     "Facts" tab next to "Contradictions". See stance card markup above. -->
 
@@ -829,6 +851,7 @@
 
 	/* Hero */
 	.person-hero {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -881,6 +904,10 @@
 		margin: 0 0.25rem;
 		color: var(--text-muted);
 	}
+	/* The no-break space after the dot is its right margin. */
+	.hero-summary .dot {
+		margin-right: 0;
+	}
 
 	.muted {
 		color: var(--text-muted);
@@ -898,6 +925,80 @@
 	.hero-gauge {
 		flex-shrink: 0;
 		width: min(20rem, 100%);
+	}
+
+	/* The call to the vote */
+	.vote-call {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem 1.5rem;
+		flex-wrap: wrap;
+		margin: 0 0 1.5rem;
+		padding: 1rem 1.4rem;
+		border: 1px solid var(--event);
+		border-radius: var(--radius-lg);
+		background: radial-gradient(ellipse 60% 100% at 0% 50%, var(--event-glow), transparent 70%), var(--bg-card);
+	}
+	.vote-call h2 {
+		font-family: var(--font-serif);
+		font-size: 1.3rem;
+		font-weight: 600;
+		line-height: 1.2;
+		margin: 0 0 0.25rem;
+	}
+	.vote-call p {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--text-secondary);
+		max-width: 44ch;
+	}
+	.vote-call a {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.7rem 1.4rem;
+		border-radius: var(--radius-full);
+		background: var(--event-strong);
+		color: #fff;
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+		box-shadow: 0 8px 28px var(--event-glow);
+		transition: all var(--transition-fast);
+	}
+	.vote-call a:hover {
+		background: var(--event);
+		transform: translateY(-1px);
+	}
+
+	.vote-call--corner {
+		width: 100%;
+		margin: 0;
+		padding: 0.8rem 1rem;
+		gap: 0.6rem 1rem;
+	}
+	.vote-call--corner h2 {
+		font-size: 1.1rem;
+		margin: 0;
+	}
+	.vote-call--corner a {
+		padding: 0.55rem 1.1rem;
+		font-size: 0.9rem;
+	}
+	@media (min-width: 900px) {
+		.vote-call--corner {
+			position: absolute;
+			top: 1rem;
+			right: 1rem;
+			width: 13rem;
+			flex-direction: column;
+			align-items: stretch;
+			text-align: center;
+			background: radial-gradient(ellipse 100% 60% at 50% 0%, var(--event-glow), transparent 70%), var(--bg-card);
+		}
+		.vote-call--corner a {
+			justify-content: center;
+		}
 	}
 
 	/* Score Breakdown */
@@ -1095,6 +1196,13 @@
 		padding: 0.25rem 0.5rem;
 		border-radius: var(--radius-sm);
 		cursor: pointer;
+	}
+	/* A finger needs more than a mouse. */
+	@media (pointer: coarse) {
+		.sort-control select {
+			min-height: 2.5rem;
+			padding: 0.25rem 0.75rem;
+		}
 	}
 
 	/* Items List */
@@ -1432,6 +1540,22 @@
 		width: 40%;
 	}
 
+	.hero-gauge {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.6rem;
+	}
+	/* Before the phone rules below: a rule of the same specificity written
+	   after the media query would win over the phone's narrower width. */
+	.stance-gauge {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.3rem;
+		flex-shrink: 0;
+		width: 8.5rem;
+	}
+
 	@media (max-width: 760px) {
 		.charts {
 			grid-template-columns: minmax(0, 1fr);
@@ -1487,19 +1611,6 @@
 		}
 	}
 
-	.hero-gauge {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
-	}
-	.stance-gauge {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.3rem;
-		flex-shrink: 0;
-		width: 8.5rem;
-	}
 	.fact-actions {
 		display: flex;
 		justify-content: flex-end;

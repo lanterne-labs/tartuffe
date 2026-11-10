@@ -537,6 +537,25 @@
 		color: var(--text-primary);
 	}
 
+	/* A finger needs 40px: the pills and the event button keep their size (the
+	   bar stays as tall) and grow their tap area around them. */
+	@media (pointer: coarse) {
+		.lang-pill,
+		.nav-link--poll {
+			position: relative;
+		}
+		.lang-pill::after {
+			content: '';
+			position: absolute;
+			inset: -0.45rem -1px;
+		}
+		.nav-link--poll::after {
+			content: '';
+			position: absolute;
+			inset: -0.25rem 0;
+		}
+	}
+
 	@media (max-width: 860px) {
 		.nav-main {
 			display: block;

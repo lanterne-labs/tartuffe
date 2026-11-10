@@ -86,10 +86,10 @@
 			inflated: 'Résultat gonflé',
 			people: 'Une personne : une voix',
 			verified: 'Résultat vérifié',
-			phone: 'Votre téléphone',
+			phone: 'Téléphone',
 			outside: 'Hors de notre contrôle',
 			relays: 'Relais publics',
-			counts: 'compte, c’est tout',
+			counts: 'compte seulement',
 			needs: ['Passeport à puce', 'Smartphone NFC', 'App ZKPassport']
 		},
 		en: {
@@ -149,10 +149,10 @@
 			inflated: 'Inflated result',
 			people: 'One person: one voice',
 			verified: 'Verified result',
-			phone: 'Your phone',
+			phone: 'Phone',
 			outside: 'Outside our control',
 			relays: 'Public relays',
-			counts: 'counts, nothing more',
+			counts: 'only counts',
 			needs: ['Chip passport', 'NFC smartphone', 'ZKPassport app']
 		}
 	};
@@ -285,7 +285,7 @@
      run; tartuffe.me only reads them and counts. -->
 {#snippet infra()}
 	<svg viewBox="0 0 340 150" class="fig" role="img" aria-label="{c.phone} → {c.relays} ({c.outside}) → tartuffe.me {c.counts}">
-		<g class="handset" transform="translate(26 40)">
+		<g class="handset" transform="translate(30 40)">
 			<rect x="0" y="0" width="36" height="62" rx="7" class="phone" />
 			<rect x="5" y="8" width="26" height="42" rx="3" class="screen" />
 		</g>
@@ -293,25 +293,25 @@
 			<rect width="20" height="14" rx="2" />
 			<path d="M0 0l10 8 10-8" />
 		</g>
-		<text x="46" y="124" text-anchor="middle" class="caption">{c.phone}</text>
+		<text x="50" y="129" text-anchor="middle" class="caption">{c.phone}</text>
 
 		<g class="outside">
-			<rect x="82" y="18" width="150" height="100" rx="10" />
-			<text x="157" y="33" text-anchor="middle" class="caption caption--out">{c.outside}</text>
-			{#each [112, 157, 202] as x, k (x)}
+			<rect x="80" y="18" width="156" height="96" rx="10" />
+			<text x="158" y="33" text-anchor="middle" class="caption caption--out">{c.outside}</text>
+			{#each [113, 158, 203] as x, k (x)}
 				<g class="relay" transform="translate({x} {k === 1 ? 54 : 62})">
 					<path d="M0 10v24M-7 4a10 10 0 0 1 14 0M-12 -1a17 17 0 0 1 24 0" />
 					<circle cx="0" cy="10" r="2.5" />
 				</g>
 			{/each}
-			<text x="157" y="110" text-anchor="middle" class="caption">{c.relays}</text>
+			<text x="158" y="107" text-anchor="middle" class="caption">{c.relays}</text>
 		</g>
 
 		<g class="envelope envelope--in">
 			<rect width="20" height="14" rx="2" />
 			<path d="M0 0l10 8 10-8" />
 		</g>
-		<g class="server" transform="translate(262 44)">
+		<g class="server" transform="translate(254 44)">
 			<rect x="0" y="0" width="60" height="14" rx="3" />
 			<rect x="0" y="18" width="60" height="14" rx="3" />
 			<rect x="0" y="36" width="60" height="14" rx="3" />
@@ -319,8 +319,8 @@
 			<circle cx="9" cy="25" r="2" class="led" />
 			<circle cx="9" cy="43" r="2" class="led" />
 		</g>
-		<text x="292" y="112" text-anchor="middle" class="caption">tartuffe.me</text>
-		<text x="292" y="124" text-anchor="middle" class="caption caption--good">{c.counts}</text>
+		<text x="284" y="116" text-anchor="middle" class="caption">tartuffe.me</text>
+		<text x="284" y="129" text-anchor="middle" class="caption caption--good">{c.counts}</text>
 	</svg>
 {/snippet}
 
@@ -377,7 +377,10 @@
 			<button class="close" onclick={onclose} aria-label={c.close}>×</button>
 		</div>
 
-		<div class="stage" bind:this={stage} {onpointerdown} {onpointerup}>
+		<!-- The dialog focuses the slide when it opens: left to itself it would
+		     focus the first focusable, the "×", and ring it. -->
+		<!-- svelte-ignore a11y_autofocus -->
+		<div class="stage" bind:this={stage} tabindex="-1" autofocus {onpointerdown} {onpointerup}>
 			{#key i}
 				<section class="slide" in:fly={{ x: 28 * dir, duration }}>
 					<div class="figure">
@@ -488,6 +491,9 @@
 	}
 	.stage {
 		touch-action: pan-y;
+	}
+	.stage:focus {
+		outline: none;
 	}
 	.slide {
 		min-height: 22rem;
@@ -603,20 +609,36 @@
 	}
 	.dots {
 		display: flex;
-		gap: 0.35rem;
 	}
+	/* Each dot is drawn in the middle of a button 40px high, the buttons
+	   side by side with no gap between them: the whole row is a finger's
+	   target, and the dots keep their look. */
 	.dots button {
-		width: 0.5rem;
-		height: 0.5rem;
+		position: relative;
+		width: 1rem;
+		height: 2.5rem;
 		padding: 0;
 		border: none;
+		background: none;
+		cursor: pointer;
+		transition: width var(--transition-fast, 0.15s);
+	}
+	.dots button::before {
+		content: '';
+		position: absolute;
+		left: 0.25rem;
+		right: 0.25rem;
+		top: 50%;
+		height: 0.5rem;
+		margin-top: -0.25rem;
 		border-radius: 0.3rem;
 		background: var(--glass-border);
-		cursor: pointer;
-		transition: all var(--transition-fast, 0.15s);
+		transition: background var(--transition-fast, 0.15s);
 	}
 	.dots button.on {
-		width: 1.3rem;
+		width: 1.8rem;
+	}
+	.dots button.on::before {
 		background: var(--event);
 	}
 	.btn {
@@ -656,8 +678,9 @@
 		height: auto;
 		font-family: var(--font-family);
 	}
+	/* 12px in the drawing is about 11px on a phone: the floor of a caption. */
 	.caption {
-		font-size: 9.5px;
+		font-size: 12px;
 		font-weight: 600;
 		fill: var(--text-secondary);
 	}
@@ -757,7 +780,7 @@
 		fill: var(--event-strong);
 	}
 	.person .one {
-		font-size: 9px;
+		font-size: 12px;
 		font-weight: 800;
 		fill: var(--green);
 	}
@@ -822,7 +845,7 @@
 	}
 	@keyframes leg-out {
 		0% {
-			transform: translate(52px, 58px);
+			transform: translate(56px, 58px);
 			opacity: 0;
 		}
 		10%,
@@ -850,7 +873,7 @@
 		}
 		95%,
 		100% {
-			transform: translate(242px, 62px);
+			transform: translate(232px, 62px);
 			opacity: 0;
 		}
 	}
@@ -945,10 +968,10 @@
 			opacity: 1;
 		}
 		.envelope--out {
-			transform: translate(52px, 58px);
+			transform: translate(56px, 58px);
 		}
 		.envelope--in {
-			transform: translate(242px, 62px);
+			transform: translate(232px, 62px);
 		}
 	}
 

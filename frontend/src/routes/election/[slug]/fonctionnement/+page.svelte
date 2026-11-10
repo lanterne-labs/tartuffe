@@ -204,8 +204,6 @@
 		border: 1px solid var(--glass-border);
 		color: var(--text-primary);
 	}
-	@media (min-width: 640px) {
-		}
 	.limits {
 		margin: 0.8rem 0 1.5rem;
 		padding: 0.8rem 1.1rem;

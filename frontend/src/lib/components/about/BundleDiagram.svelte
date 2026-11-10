@@ -100,13 +100,14 @@
 			opacity: 1;
 		}
 	}
+	/* 12.5px in the drawing: still 11px once the figure shrinks to a phone. */
 	.sub {
 		fill: var(--text-secondary);
-		font-size: 11.5px;
+		font-size: 12.5px;
 	}
 	.total {
 		fill: var(--amber);
-		font-size: 12px;
+		font-size: 12.5px;
 		font-weight: 600;
 		white-space: pre;
 	}
