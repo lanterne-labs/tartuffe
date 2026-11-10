@@ -29,6 +29,9 @@ const (
 	// translateLimit caps how many translations a pass fills, so a large
 	// first-time backlog drains over several passes.
 	translateLimit = 4500
+	// explainLimit caps how many contradiction explanations a pass writes
+	// (one LLM call each), the newest contradictions first.
+	explainLimit = 500
 	// refreshBudget caps how many stances a pass brings up to date (one LLM
 	// call each).
 	refreshBudget = 2000
@@ -76,7 +79,8 @@ const (
 // The maintenance pass brings the dataset up to date after new facts: the
 // stance refresh, the stance merge sweep, the contradiction detection over the
 // persons with new facts, the duplicate repoint, the regroup of the persons
-// with new contradictions, the audit when due, and the translations. It runs
+// with new contradictions, the audit when due, the explanations of the
+// contradictions that lack one, and the translations. It runs
 // when facts were added since the last pass, and at least every
 // MaintenanceEvery (the audit cadence, a backlog cut by a cap). A pass whose
 // detection stopped at detectBudget is followed by the next one as soon as
@@ -550,7 +554,11 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	if err := step("audit", h.auditIfDue(ctx)); err != nil {
 		return err
 	}
-	// 7. The missing translations.
+	// 7. The explanations the site shows with the contradictions.
+	if err := step("explain", h.explain(ctx)); err != nil {
+		return err
+	}
+	// 8. The missing translations.
 	if err := step("translate", h.translate(ctx)); err != nil {
 		return err
 	}
@@ -609,6 +617,23 @@ func (h *Housekeeping) auditIfDue(ctx context.Context) error {
 		log.Info().Int("checked", res.Total).Int("evicted", res.Deleted).Int("unstable", res.Unstable).Msg("Maintenance: contradiction audit done")
 	}
 	return nil
+}
+
+// explain writes the explanation of the candidates' contradictions that have
+// none or an outdated one, explainLimit at most.
+func (h *Housekeeping) explain(ctx context.Context) error {
+	ex, err := contradiction.NewExplainerFromEnv()
+	if err != nil {
+		return fmt.Errorf("explainer unavailable: %w", err)
+	}
+	res, err := contradiction.RunExplain(ctx, h.Storer, ex, contradiction.ExplainOptions{
+		ExplainFilter: storage.ExplainFilter{Limit: explainLimit},
+	})
+	if res.Written > 0 || res.Failed > 0 {
+		log.Info().Int("written", res.Written).Int("failed", res.Failed).Int("doubts", len(res.Doubts)).
+			Msg("Maintenance: contradiction explanations written")
+	}
+	return err
 }
 
 // translate fills the missing translations, translateLimit at most.

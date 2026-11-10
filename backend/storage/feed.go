@@ -52,6 +52,11 @@ type FeedItem struct {
 	Other         *FeedFactSide `json:"other,omitempty"`
 	Reason        *string       `json:"reason,omitempty"`
 	ReasonEn      *string       `json:"reason_en,omitempty"`
+	// Explanation is the text shown with a contradiction: what was said or
+	// done each time, with its context, and why the two conflict. Absent
+	// until the maintenance pass wrote it (Reason, the judge's line, stands in).
+	Explanation   *string `json:"explanation,omitempty"`
+	ExplanationEn *string `json:"explanation_en,omitempty"`
 	// Likes counts the +1 of the users; Liked says the viewer gave one.
 	Likes int  `json:"likes"`
 	Liked bool `json:"liked"`
@@ -314,7 +319,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		         SELECT COUNT(*) FROM contradictions c2
 		         WHERE c2.person_id = c.person_id AND c2.bundle_stance_id = c.bundle_stance_id) END,
 		       sd.id, sd.cluster_label, sd.label_en,
-		       c.reason, c.reason_en,
+		       c.reason, c.reason_en, NULLIF(c.explanation, ''), NULLIF(c.explanation_en, ''),
 		       fa.id, fa.fact_text, fa.fact_text_en, sa.earliest, COALESCE(sa.urls, '{}'), COALESCE(sa.quote, ''),
 		       fb.id, fb.fact_text, fb.fact_text_en, sb.earliest, COALESCE(sb.urls, '{}'), COALESCE(sb.quote, '')
 		FROM contradictions c
@@ -344,7 +349,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		var reason, reasonEn *string
 		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank, &it.bundleSize,
-			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn,
+			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn, &it.Explanation, &it.ExplanationEn,
 			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.SourceURLs, &it.Fact.Quote,
 			&it.Other.ID, &it.Other.Text, &it.Other.TextEn, &it.Other.Date, &it.Other.SourceURLs, &it.Other.Quote); err != nil {
 			return nil, fmt.Errorf("scan feed contradiction: %w", err)
@@ -430,12 +435,13 @@ type ShareTarget struct {
 	StanceID       *int64  `json:"stance_id,omitempty"`
 	StanceLabel    *string `json:"stance_label,omitempty"`
 	StanceLabelEn  *string `json:"stance_label_en,omitempty"`
-	// Text is the shared item: the stance summary, the fact, or the
-	// contradiction's reason; Other is the second fact of a contradiction.
+	// Text is the shared item: the stance summary, the fact, or the first
+	// fact of a contradiction; Other is its second fact.
 	Text   string  `json:"text"`
 	TextEn *string `json:"text_en,omitempty"`
 	Other  *string `json:"other,omitempty"`
-	// Quote is the first source quote of a fact.
+	// Quote is the first source quote of a fact, or the explanation of a
+	// contradiction.
 	Quote string `json:"quote,omitempty"`
 	// Likes counts the users' +1 on a fact or a contradiction.
 	Likes int `json:"likes"`
@@ -473,7 +479,8 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 		var other string
 		var reason *string
 		err = s.pool.QueryRow(ctx, `
-			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en, c.reason, fa.fact_text, fb.fact_text,
+			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en,
+			       COALESCE(NULLIF(c.explanation, ''), c.reason), fa.fact_text, fb.fact_text,
 			       `+likesCount("contradiction", "c.id")+`
 			FROM contradictions c
 			JOIN persons p ON p.id = c.person_id
@@ -485,8 +492,9 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other, &t.Likes)
 		t.Other = &other
 		if reason != nil && *reason != "" {
-			// The reason says why the two facts cannot both hold: the
-			// preview reads better with it than with the first fact.
+			// The explanation (the judge's reason until it is written) says
+			// why the two facts cannot both hold: the preview reads better
+			// with it than with the first fact.
 			t.Quote = *reason
 		}
 	case "fact":

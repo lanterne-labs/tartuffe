@@ -35,7 +35,7 @@ func (s *PostgresStorer) UpsertTranslation(ctx context.Context, entityType strin
 
 // UpdateLegacyEnColumn mirrors an English translation back into the entity's
 // legacy _en column (facts.fact_text_en, stance_documents.label_en/summary_en,
-// contradictions.reason_en). This is the backward-compat bridge: the API and
+// contradictions.reason_en and explanation_en). This is the backward-compat bridge: the API and
 // frontend still read those columns, so the async translate phase keeps them
 // fresh once generation stops emitting _en inline. No-op for fields without a
 // legacy column. Remove once the read path reads the translations table directly.
@@ -50,6 +50,8 @@ func (s *PostgresStorer) UpdateLegacyEnColumn(ctx context.Context, entityType, f
 		q = `UPDATE stance_documents SET summary_en = $1 WHERE id = $2`
 	case "contradiction/reason":
 		q = `UPDATE contradictions SET reason_en = $1 WHERE id = $2`
+	case "contradiction/explanation":
+		q = `UPDATE contradictions SET explanation_en = $1 WHERE id = $2`
 	default:
 		return nil // no legacy column for this (entity, field)
 	}
@@ -60,7 +62,7 @@ func (s *PostgresStorer) UpdateLegacyEnColumn(ctx context.Context, entityType, f
 }
 
 // ListTranslatableItems returns every translatable (entity, field) across facts,
-// stances (label + summary) and contradictions (reason), each with the
+// stances (label + summary) and contradictions (reason, explanation), each with the
 // translations already present. The async translate phase decides per item which
 // target languages are missing or stale. Adding a new translatable field is one
 // entry in the specs slice below. When entityTypes is non-empty, only those
@@ -84,6 +86,7 @@ func (s *PostgresStorer) ListTranslatableItems(ctx context.Context, entityTypes 
 		{"stance", "label", "stance_documents", "cluster_label", "'fr'", byPersonID},
 		{"stance", "summary", "stance_documents", "summary", "'fr'", byPersonID},
 		{"contradiction", "reason", "contradictions", "reason", "'fr'", byPersonID},
+		{"contradiction", "explanation", "contradictions", "explanation", "'fr'", byPersonID},
 	}
 	var all []TranslatableItem
 	for _, sp := range specs {

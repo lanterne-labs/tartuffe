@@ -333,6 +333,10 @@ type ContradictingFact struct {
 	Restatements []Restatement `json:"restatements"`
 	Reason       string        `json:"reason"`
 	ReasonEn     string        `json:"reason_en,omitempty"`
+	// Explanation is the text shown with the contradiction (feed.go,
+	// FeedItem.Explanation); empty until it is written.
+	Explanation   string `json:"explanation,omitempty"`
+	ExplanationEn string `json:"explanation_en,omitempty"`
 	// Likes counts the users' +1 on the contradiction; Liked says the viewer
 	// gave one.
 	Likes int  `json:"likes"`
@@ -351,12 +355,13 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 		WITH g AS (
 			SELECT c.id, c.person_id, c.group_summary, c.group_summary_en,
 			       COALESCE(c.reason,'') AS reason, COALESCE(c.reason_en,'') AS reason_en,
+			       COALESCE(c.explanation,'') AS explanation, COALESCE(c.explanation_en,'') AS explanation_en,
 			       COALESCE(c.base_fact_id, c.fact_a_id) AS base_id,
 			       CASE WHEN COALESCE(c.base_fact_id, c.fact_a_id) = c.fact_a_id
 			            THEN c.fact_b_id ELSE c.fact_a_id END AS spoke_id
 			FROM contradictions c
 		)
-		SELECT g.id, g.base_id, g.spoke_id, g.reason, g.reason_en,
+		SELECT g.id, g.base_id, g.spoke_id, g.reason, g.reason_en, g.explanation, g.explanation_en,
 		       g.group_summary, g.group_summary_en,
 		       fb.fact_text, COALESCE(fb.fact_text_en,''),
 		       sp.fact_text, COALESCE(sp.fact_text_en,''),
@@ -396,7 +401,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 	for rows.Next() {
 		var (
 			cid, baseID, spokeID                         int64
-			reason, reasonEn                             string
+			reason, reasonEn, explanation, explanationEn string
 			summary, summaryEn                           *string
 			baseText, baseTextEn, spokeText, spokeTextEn string
 			baseURLs, spokeURLs                          []string
@@ -405,7 +410,7 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			baseLikes, spokeLikes                        float64
 			baseLiked, spokeLiked                        bool
 		)
-		if err := rows.Scan(&cid, &baseID, &spokeID, &reason, &reasonEn,
+		if err := rows.Scan(&cid, &baseID, &spokeID, &reason, &reasonEn, &explanation, &explanationEn,
 			&summary, &summaryEn,
 			&baseText, &baseTextEn, &spokeText, &spokeTextEn,
 			&baseURLs, &baseDate, &spokeURLs, &spokeDate,
@@ -449,6 +454,8 @@ func (s *PostgresStorer) GetStanceContradictionGroups(ctx context.Context, stanc
 			Restatements:    spokeAlso,
 			Reason:          reason,
 			ReasonEn:        reasonEn,
+			Explanation:     explanation,
+			ExplanationEn:   explanationEn,
 			Likes:           int(spokeLikes),
 			Liked:           spokeLiked,
 		})

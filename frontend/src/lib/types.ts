@@ -90,6 +90,10 @@ export interface ContradictingFact {
 	restatements: Restatement[];
 	reason: string;
 	reason_en?: string;
+	// explanation is the text shown with the contradiction (whyOf, i18n.ts);
+	// absent until it is written, and the judge's reason stands in.
+	explanation?: string;
+	explanation_en?: string;
 	// likes counts the +1 of the users on the contradiction; liked says the viewer gave one.
 	likes: number;
 	liked: boolean;
@@ -280,6 +284,8 @@ export interface FeedItem {
 	other?: FeedFactSide | null;
 	reason?: string | null;
 	reason_en?: string | null;
+	explanation?: string | null;
+	explanation_en?: string | null;
 	// likes counts the +1 of the users; liked says the viewer gave one.
 	likes: number;
 	liked: boolean;

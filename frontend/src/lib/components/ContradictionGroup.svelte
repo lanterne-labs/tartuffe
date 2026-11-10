@@ -5,7 +5,7 @@
 	import ReportButton from './ReportButton.svelte';
 	import LikeButton from './LikeButton.svelte';
 	import type { ContradictionGroup } from '$lib/types';
-	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
+	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 
 	interface Props {
 		g: ContradictionGroup;
@@ -70,7 +70,7 @@
 	<div class="spokes">
 		{#each g.contradicting_facts as f (f.contradiction_id)}
 			<div class="spoke" id="c-{f.contradiction_id}" class:highlight={highlight === f.contradiction_id}>
-				<div class="spoke-reason">{pickLang(f.reason, f.reason_en, currentLang)}</div>
+				<div class="spoke-reason">{whyOf(f, currentLang)}</div>
 				<div class="comp-text"><span class="fact-id">[{f.fact_id}]</span> {pickLang(f.fact_text, f.fact_text_en, currentLang)}</div>
 				<div class="comp-links">
 					{#if f.fact_date}
@@ -99,7 +99,7 @@
 						pair={{
 							a: { id: g.base_fact_id, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang), date: g.base_fact_date },
 							b: { id: f.fact_id, text: pickLang(f.fact_text, f.fact_text_en, currentLang), date: f.fact_date },
-							reason: pickLang(f.reason, f.reason_en, currentLang)
+							reason: whyOf(f, currentLang)
 						}}
 					/>
 				</div>
@@ -168,6 +168,7 @@
 	}
 	.spoke-reason {
 		font-size: 0.813rem;
+		line-height: 1.5;
 		color: var(--text-secondary);
 		margin-bottom: 0.375rem;
 	}
