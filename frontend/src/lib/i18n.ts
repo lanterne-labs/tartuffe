@@ -57,7 +57,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'home.filter.people': { fr: 'Personnes', en: 'People' },
 	'home.filter.parties': { fr: 'Partis', en: 'Parties' },
 	'home.least_honest': { fr: 'Les plus tartuffes', en: 'Most tartuffe' },
-	'home.podium_sub': { fr: 'Les candidats dont le score est établi, classés par leurs contradictions.', en: 'The candidates with an established score, ranked by their contradictions.' },
+	'home.podium_sub': { fr: 'Plus c’est haut, plus ils sont tartuffes.', en: 'The higher, the more tartuffe.' },
 	'home.all_entities': { fr: 'Personnalités et partis', en: 'People and parties' },
 	'home.top_n_by_score': { fr: 'Top {n} par score', en: 'Top {n} by score' },
 	'home.bottom_n_by_score': { fr: 'Bas {n} par score', en: 'Bottom {n} by score' },
