@@ -132,7 +132,7 @@
 			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le Tartuffe-Score de chaque candidat s’affiche à côté.',
 			evEnds: 'Jusqu’au {d}',
 			evCta: 'Voter',
-			evMore: 'Découvrir l’expérience',
+			evMore: 'Comment ça marche',
 
 			labKicker: 'Le labo',
 			labTitle: 'Un laboratoire au service de la démocratie',
@@ -186,7 +186,7 @@
 			evBody: 'Rank up to 3 candidates, or vote blank, with your passport. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s Tartuffe-Score is right beside.',
 			evEnds: 'Until {d}',
 			evCta: 'Vote',
-			evMore: 'Discover the experiment',
+			evMore: 'How it works',
 
 			labKicker: 'The lab',
 			labTitle: 'A lab for democracy',
@@ -336,8 +336,10 @@
 		<h2>{c.evTitle}</h2>
 		<p>{c.evBody}</p>
 		<div class="ev-actions">
-			<a class="ev-cta" href={featured ? eventPaths(featured.slug).vote : POLL.vote}>{c.evCta} →</a>
-			<a class="ev-more" href={featured ? eventPaths(featured.slug).intro : POLL.intro}>{c.evMore}</a>
+			<!-- The vote's presentation first, never the ballot: a voter learns
+			     what the vote is and why it asks for a passport before they vote. -->
+			<a class="ev-cta" href={featured ? eventPaths(featured.slug).intro : POLL.intro}>{c.evCta} →</a>
+			<a class="ev-more" href={featured ? eventPaths(featured.slug).how : POLL.how}>{c.evMore}</a>
 		</div>
 	</section>
 

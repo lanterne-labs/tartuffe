@@ -144,7 +144,7 @@
 				<p class="note">{c.eventNote}</p>
 				<div class="actions">
 					{#if featured}
-						<a class="btn-event" href={eventPaths(featured.slug).vote}>{c.eventCta}</a>
+						<a class="btn-event" href={eventPaths(featured.slug).intro}>{c.eventCta}</a>
 					{/if}
 					<a class="link" href={eventPaths(featured?.slug).how}>{c.eventHow} →</a>
 				</div>

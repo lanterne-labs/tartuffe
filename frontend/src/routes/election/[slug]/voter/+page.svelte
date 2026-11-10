@@ -15,6 +15,7 @@
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
+	import VoteIntro from '$lib/components/vote/VoteIntro.svelte';
 	import Sortable from 'sortablejs';
 	import { eventPaths, sharesShown, votersShown } from '$lib/event';
 	import { sessionFor, parseLink, voteKey } from '$lib/vote/isoloir';
@@ -38,6 +39,28 @@
 	let event = $state<PollEvent | null>(null);
 	let cards = $state<Map<string, Candidate>>(new Map());
 	let keyOpen = $state(false);
+	// The presentation (why the passport, what leaves the phone, the secret
+	// ballot, what is needed) opens on the first visit, before anything
+	// else, and again from the ballot's "why the passport" link. The visit
+	// is remembered in this browser; a voter who comes to send their key to
+	// another device (a link in the URL) is not kept waiting by it.
+	let introOpen = $state(false);
+	const introKey = () => `vote-intro-seen:${slug}`;
+	function closeIntro() {
+		introOpen = false;
+		try {
+			window.localStorage.setItem(introKey(), '1');
+		} catch {}
+	}
+	function openIntroOnce() {
+		if (parseLink(window.location.hash)) return;
+		try {
+			if (window.localStorage.getItem(introKey()) === '1') return;
+		} catch {
+			return;
+		}
+		introOpen = true;
+	}
 	let keyMenuOpen = $state(false);
 	let showWords = $state(false);
 	let forgetOpen = $state(false);
@@ -442,6 +465,7 @@
 
 	onMount(async () => {
 		clock = setInterval(() => (now = Date.now()), 30_000);
+		openIntroOnce();
 		checkLink();
 		window.addEventListener('hashchange', checkLink);
 		await load();
@@ -487,6 +511,8 @@
 		<div class="notice notice--legal">{tr('poll.hidden.blackout', currentLang)}</div>
 	{/if}
 
+	<!-- The presentation again, for whoever closed it: one small line above the ballot. -->
+	<p class="intro-line"><button class="link-btn" onclick={() => (introOpen = true)}>{tr('v2.intro.why', currentLang)}</button></p>
 	<section class="ballot" aria-labelledby="ballot-title">
 		<div class="ballot-head">
 			<h2 id="ballot-title">
@@ -840,6 +866,9 @@
 
 	<p class="how-link"><a href={paths.how}>{tr('poll.how.title', currentLang)}</a></p>
 {/if}
+
+<!-- Outside the session's states: it opens while the mirror still loads. -->
+<VoteIntro open={introOpen} lang={currentLang} howHref={paths.how} onclose={closeIntro} />
 
 <style>
 	.joining--fault {
@@ -1413,6 +1442,17 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+	.intro-line {
+		margin: 0 0 0.4rem;
+		text-align: center;
+		font-size: 0.8rem;
+	}
+	.intro-line .link-btn {
+		color: var(--text-muted);
+	}
+	.intro-line .link-btn:hover {
+		color: var(--text-primary);
 	}
 	.unlock-btn {
 		padding: 0.9rem 1.6rem;

@@ -1,6 +1,9 @@
 // The pages of a poll event, the lab's temporary experiment: its
 // presentation, the vote, and how it works. They are the event's own and
-// never mix with the contradiction checker's pages.
+// never mix with the contradiction checker's pages. The rest of the site
+// (the home page, the banner, the lab, the nav) links to `intro`, never
+// to `vote`: a voter reads what the vote is before the ballot. Only the
+// event's own pages and a voter's profile link to `vote`.
 
 export const FEATURED_SLUG = "presidentielle-2027";
 

@@ -32,7 +32,7 @@
 			auditTitle: 'Chacun peut tout recompter',
 			audit: 'Tout est inscrit dans un registre public, signé et daté dans Bitcoin. Votre navigateur peut refaire chaque contrôle, de l’inscription au résultat.',
 			auditCta: 'Vérifier maintenant',
-			limitsTitle: 'Les limites, franchement',
+			limitsTitle: 'Les limites',
 			limits: [
 				'La clé qui révèle le résultat pourrait aussi ouvrir un bulletin seul, sans savoir de qui il vient. Nous publions seulement les résultats, avec leurs preuves.',
 				'Votre clé permet de prouver votre vote à quelqu’un : un acheteur de voix pourrait l’exiger. Gardez-la pour vous.',
@@ -54,7 +54,7 @@
 			auditTitle: 'Anyone can recount everything',
 			audit: 'Everything goes into a public log, signed and dated in Bitcoin. Your browser can redo every check, from registration to result.',
 			auditCta: 'Verify now',
-			limitsTitle: 'The limits, frankly',
+			limitsTitle: 'The limits',
 			limits: [
 				'The key that reveals the result could also open a single ballot, without knowing whose it is. We only publish results, with their proofs.',
 				'Your key lets you prove your vote to someone: a vote buyer could demand it. Keep it to yourself.',

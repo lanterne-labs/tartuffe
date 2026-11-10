@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { lang, tr, type Lang } from '$lib/i18n';
-	import { eventPaths, sharesShown, votersShown } from '$lib/event';
+	import { eventPaths, votersShown } from '$lib/event';
 	import type { PollEvent } from '$lib/types';
 	import { latestTally, type LatestTally } from '$lib/vote/isoloir';
 	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
@@ -192,7 +192,7 @@
 							<span class="initial" class:initial--blank={o.blank} aria-hidden="true">{o.blank ? '' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 						{/if}
 						<span class="top3-name">{nameOf(o.slot)}</span>
-						{#if sharesShown(shown.counted)}<strong>{pctText(o.first, shown.counted)}</strong>{/if}
+						<strong>{pctText(o.first, shown.counted)}</strong>
 					</li>
 				{/each}
 			</ol>
@@ -303,13 +303,19 @@
 		justify-content: center;
 		gap: 0.75rem;
 	}
-	/* The current top 3, from the mirror. */
+	/* The current top 3, from the mirror: a centred column, each line with
+	   its first-choice share (shown from the first ballot: this is the
+	   headline of the page, not the count). */
 	.top3 {
-		margin: 0 0 2.5rem;
-		padding: 1.1rem 1.2rem;
+		width: fit-content;
+		min-width: min(26rem, 100%);
+		max-width: 100%;
+		margin: 0 auto 2.5rem;
+		padding: 1.1rem 1.4rem;
 		border: 1px solid var(--event);
 		border-radius: var(--radius-lg);
 		background: var(--bg-card);
+		text-align: center;
 	}
 	.top3 h2 {
 		font-size: 0.78rem;
@@ -322,7 +328,8 @@
 	}
 	.top3 ol {
 		list-style: none;
-		margin: 0;
+		max-width: 24rem;
+		margin: 0 auto;
 		padding: 0;
 		display: grid;
 		gap: 0.45rem;
@@ -332,8 +339,9 @@
 		grid-template-columns: 2.2rem minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 0.7rem;
-		padding: 0.35rem 0.5rem;
+		padding: 0.35rem 0.6rem;
 		border-radius: var(--radius-sm);
+		text-align: left;
 	}
 	.top3 li.first {
 		background: var(--event-glow);

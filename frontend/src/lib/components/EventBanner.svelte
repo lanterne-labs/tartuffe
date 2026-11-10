@@ -51,7 +51,7 @@
 		{#if ends}
 			<p class="ends">{tr('event.ends', lang, { d: dateText(ends), n: daysLeft ?? 0 })}</p>
 		{/if}
-		<a class="go" href={eventPaths(event.slug).vote} onclick={close}>{tr('event.cta', lang)} →</a>
+		<a class="go" href={eventPaths(event.slug).intro} onclick={close}>{tr('event.cta', lang)} →</a>
 	</aside>
 {/if}
 

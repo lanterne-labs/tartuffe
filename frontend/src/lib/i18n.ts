@@ -457,6 +457,7 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.warm.failed': { fr: 'La préparation du vote a échoué. Rechargez la page.', en: 'Preparing the vote failed. Reload the page.' },
 	'v2.join.waiting': { fr: 'Inscription en cours, quelques secondes…', en: 'Registering, a few seconds…' },
 	'v2.key.get': { fr: 'Voter avec mon passeport', en: 'Vote with my passport' },
+	'v2.intro.why': { fr: 'Pourquoi le passeport ? Revoir la présentation', en: 'Why the passport? See the intro again' },
 	'v2.key.title': { fr: 'Pour voter', en: 'To vote' },
 	'v2.key.keep.title': { fr: 'Passeport vérifié.', en: 'Passport checked.' },
 	'v2.key.keep.text': { fr: 'Pour changer votre vote plus tard, ou depuis un autre appareil, gardez votre clé de vote avec Face ID.', en: 'To change your vote later, or from another device, keep your voting key with Face ID.' },
