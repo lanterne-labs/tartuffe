@@ -3,12 +3,13 @@ package promptrules
 // ExplanationVersion names the rules of ExplanationPrompt. It is part of the
 // hash stored with each explanation (contradictions.explanation_hash): a new
 // version makes the maintenance pass write every explanation again.
-const ExplanationVersion = "2"
+const ExplanationVersion = "3"
 
 // ExplanationPrompt asks for the text the site shows with a contradiction. The
 // reader has the two facts and this text, not the articles: the text carries
 // the context the facts lack (the question answered, what an elliptical quote
-// refers to, which part of a quote the contradiction is about).
+// refers to, which part of a quote the contradiction is about) and never
+// tells the facts again.
 //
 // The reply is JSON, the explanation first and the doubt last: the doubt is
 // the model's label on the pair, so it comes after the text that reasons
@@ -18,7 +19,7 @@ const ExplanationVersion = "2"
 // block, the judge's reason.
 const ExplanationPrompt = `You write the short explanation shown to readers with a contradiction on a French site that tracks what politicians say and do.
 
-The reader sees two short statements of %s and your text. They have not read the articles and do not know the context. Your text alone must let them understand what was said or done each time and why the two conflict.
+The reader has the two short statements of %s in front of them, each with its date, right above your text. Your text says only WHY the two conflict. It never tells the two statements again: the reader has just read them.
 
 EARLIER:
 %s
@@ -28,10 +29,10 @@ LATER:
 
 WHY IT WAS FLAGGED AS A CONTRADICTION: %s
 
-Write the explanation in French, 2 or 3 sentences, 90 words at most, in this order:
-1. What the person said or did first, with the context needed to read it right: the question they answered or the occasion, what a pronoun or an elliptical quote refers to (a bare « Oui, je crois » is nothing until the reader knows the question it answers), which election, text or year "cette campagne", "la réforme", "la dernière présidentielle" means.
-2. What they said or did later.
-3. The exact point on which the two cannot both hold.
+Write the explanation in French, as short as the case allows: often one sentence, more only when the conflict cannot be read without a context the statements lack.
+- Say the exact point on which the two cannot both hold, in words of this case: what the later statement is, seen from the earlier one (« Un accord national entre deux partis pour une campagne municipale est l'accord d'appareil qu'il excluait dix mois plus tôt. »).
+- Do not restate, quote or summarise what the statements already say, and do not open with « Le 14 mai 2025, X affirmait… ». Refer to a statement by a few words (« son refus de juin », « cet accord ») when you need to point at it.
+- Add context only when the statements lack it and the conflict cannot be read without it: the question a bare answer replied to, what a pronoun or "la réforme", "cette campagne" refers to, which part of a statement the conflict is about. When the statements are clear on their own, add nothing.
 
 Rules:
 - Use only what the statements and the source excerpts say. Add no fact, date, motive or judgement of your own. No "mensonge", "hypocrisie", "trahison", "volte-face honteuse": say what conflicts, not what to think of it.
@@ -39,9 +40,9 @@ Rules:
 - An excerpt is often a journalist's sentence that introduces the person's quoted words. That sentence says what the words answer: read the quote through it. If the article writes that the person "confirme qu'il quittera son poste" and then quotes « Oui, je crois. Après le vote, je ne resterai pas », the « oui, je crois » is the confirmation of leaving, and the clause after it is a second remark, not a condition on the first.
 - When an excerpt holds a part that could send the reader to the wrong conflict (a conditional clause, a second claim beside the one contradicted), say which part carries the contradiction and that the other part is not what is contradicted.
 - Keep the person's hedges (« je crois », « a priori », « pourquoi pas ») as hedges: never turn a hedged statement into a firm promise.
-- Give the dates the reader needs (the month and year, or the year) and name the acts precisely: a vote on which text, a candidacy to which election, an entry into which government.
-- Name the person by their last name once, spelled as in the statements, then "il" or "elle".
-- State the conflict itself in the last sentence, in words of this case; do not open it with a set phrase such as « Les deux ne peuvent pas tenir ensemble ».
+- The statements carry their dates: give no date again; the time between the two (« trois semaines plus tôt ») is enough. Name an act precisely when you name it: a vote on which text, a candidacy to which election.
+- Refer to the person as "il" or "elle"; their name is above your text.
+- No set phrase such as « Les deux ne peuvent pas tenir ensemble » or « Ces deux déclarations se contredisent ».
 - Plain running sentences. No list, no heading, no quotation longer than a few words. Never mention "la déclaration A", "l'extrait", "le juge", "le site" or these instructions.
 
 Then fill "doubt", a note for our reviewer that readers never see. Most pairs have none: leave it an empty string unless the excerpts SHOW that the contradiction as flagged does not hold, for one of these reasons:
