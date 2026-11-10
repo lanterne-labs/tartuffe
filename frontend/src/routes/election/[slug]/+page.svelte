@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { lang, tr, type Lang } from '$lib/i18n';
-	import { eventPaths, showVoters } from '$lib/event';
+	import { eventPaths, sharesShown, votersShown } from '$lib/event';
 	import type { PollEvent } from '$lib/types';
 	import { latestTally, type LatestTally } from '$lib/vote/isoloir';
 	import { loadEventMeta, byName, nameKey, type Candidate } from '$lib/vote/candidates';
@@ -48,6 +48,7 @@
 	// Only a tally that verified is shown.
 	let shown = $derived(latest?.verdict.ok ? rankedRows(latest.verdict.results) : null);
 	let voters = $derived(shown?.counted ?? null);
+	let votersText = $derived(votersShown(voters, currentLang));
 	let options = $derived(latest?.poll.kind.options ?? []);
 	let blankSlot = $derived(latest?.poll.kind.blank ? options.length : -1);
 	let candidates = $derived(latest ? options.length : cardCount);
@@ -153,7 +154,7 @@
 				<a class="btn-alt" href={paths.how}>{c.how}</a>
 			</div>
 			{#if voters !== null && candidates}
-				<p class="live"><span class="pulse" aria-hidden="true"></span>{(showVoters(voters) ? c.votersNow : c.candidatesNow).replace('{n}', String(voters)).replace('{c}', String(candidates))}</p>
+				<p class="live"><span class="pulse" aria-hidden="true"></span>{(votersText ? c.votersNow : c.candidatesNow).replace('{n}', votersText ?? '').replace('{c}', String(candidates))}</p>
 			{/if}
 		</div>
 
@@ -191,7 +192,7 @@
 							<span class="initial" class:initial--blank={o.blank} aria-hidden="true">{o.blank ? '' : nameOf(o.slot).charAt(0).toUpperCase()}</span>
 						{/if}
 						<span class="top3-name">{nameOf(o.slot)}</span>
-						<strong>{pctText(o.first, shown.counted)}</strong>
+						{#if sharesShown(shown.counted)}<strong>{pctText(o.first, shown.counted)}</strong>{/if}
 					</li>
 				{/each}
 			</ol>

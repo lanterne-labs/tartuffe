@@ -231,7 +231,7 @@ The vote is [isoloir](https://github.com/lanterne-labs/isoloir) (its own reposit
 
 - **Ledger** (`tartuffe.me/vote-log`): the host service `mirror-ingest`, built from the isoloir repository (`isoloir ingest --mirror-dir /app/mirror`), the log's only writer. The log key is `ISOLOIR_LOG_KEY` (its verifier key is the frontend's `VITE_VOTE_LOG_KEY`).
 - **Authority**: the host service `mirror-authority` (`isoloir authority --db $DATABASE_URL`), with `ISOLOIR_AUTHORITY_KEYS`; no inbound port.
-- **A poll**: `dm poll isoloir-setup` prints its JSON, `isoloir submit poll <file>` posts it. A change to a fixed field (keys, circuit, `k_real`) is a new poll.
+- **A poll**: `dm poll isoloir-setup` prints its JSON, `isoloir submit poll <file>` posts it. A change to a fixed field (keys, kind, registry, a new circuit variant) is a new poll; a later version of the same poll (`version + 1`, same id, submitted the same way) may change the title, the close (later only), future blackouts, and raise `publish.k_real` or `publish.min_gap` (never lower them; isoloir SPEC §13).
 - Audit: `isoloir audit` (anyone, from the mirror).
 
 ### The vote app (frontend, isoloir)

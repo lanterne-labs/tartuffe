@@ -9,8 +9,17 @@ export function eventPaths(slug: string = FEATURED_SLUG) {
   return { intro: base, vote: `${base}/voter`, how: `${base}/fonctionnement`, verify: `${base}/verifier`, complaint: `${base}/complaint` };
 }
 
-// The count of voters shows from SHOW_VOTERS_FROM on: the results show from
-// the first vote, but a handful of voters says nothing of the experiment.
-export const SHOW_VOTERS_FROM = 1000;
+// The count of voters shows by hundreds, rounded down ("300+"), and not at
+// all under the first hundred: the results show from the first tally, but a
+// handful of voters says nothing of the experiment, and an exact count beside
+// two tallies tells how many ballots came in between.
+export const VOTERS_STEP = 100;
 
-export const showVoters = (n: number | null | undefined) => (n ?? 0) >= SHOW_VOTERS_FROM;
+export function votersShown(n: number | null | undefined, lang: string): string | null {
+  const floor = Math.floor((n ?? 0) / VOTERS_STEP) * VOTERS_STEP;
+  return floor > 0 ? `${floor.toLocaleString(lang === "en" ? "en-GB" : "fr-FR")}+` : null;
+}
+
+// The shares of the results (percentages) show from the same floor: under it
+// the ranking shows alone, since "50 %" of two voters is the count again.
+export const sharesShown = (n: number | null | undefined) => (n ?? 0) >= VOTERS_STEP;

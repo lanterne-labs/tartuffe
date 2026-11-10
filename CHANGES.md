@@ -2,6 +2,12 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
+## 2026-11-10: The count of votes shows by hundreds
+
+The vote page showed the exact count of votes from the first tally ("2 votes comptés"), and the event page from 1000. An exact count beside two tallies also tells how many ballots came in between. Now `votersShown` (`frontend/src/lib/event.ts`) gives the count rounded down to the hundred ("300+"), and nothing under 100: the results line then keeps the time of the last tally and the check mark.
+
+The percentages follow the same floor (`sharesShown`): under 100 votes the ranking and the first-choice order show without shares, since "50 %" of two voters is the count again. The results are never held back.
+
 ## 2026-11-09: The site on a phone
 
 Rendered at 360 and 375px (a headless Chrome, `npm run audit:mobile` in `frontend/`, which reports the horizontal overflows, what sticks out, the targets under 32px and the text under 11px, with a screenshot of every page): the event card covered half the screen on every page; the nav hid the links to the dashboard, the feed and About on a phone, leaving the footer; the podium's "Tartuffe-Score : 66/100" ran across its neighbours and the dials overlapped; the event's tabs stuck out of every `/election/*` page (a horizontal scroll); the two counts of the vote sat side by side with the names clipped; a candidate's page was 46 000px tall (one card per stance, a hundred of them, each a screen); the share, report and +1 buttons were 28px, the "?" 14px.

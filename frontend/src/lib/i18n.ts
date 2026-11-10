@@ -551,7 +551,6 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'v2.reg.not_open': { fr: 'Les inscriptions ne sont pas encore ouvertes.', en: 'Registrations are not open yet.' },
 	'v2.warm.loading': { fr: 'Préparation du vote…', en: 'Preparing the vote…' },
 	'v2.counter.counted': { fr: '{n} votes comptés', en: '{n} votes counted' },
-	'v2.counter.counted.one': { fr: '1 vote compté', en: '1 vote counted' },
 	// A registration's rejection (SPEC §4 step 5).
 	'v2.reg.uid_used': { fr: 'Ce passeport a déjà une clé de vote : un passeport n’en donne qu’une. Retrouvez-la avec Face ID ou empreinte, vos 12 mots, ou depuis votre autre appareil.', en: 'This passport already has a voting key: a passport gives only one. Find it again with Face ID or fingerprint, your 12 words, or from your other device.' },
 	'v2.reg.id_used': { fr: 'Cette clé est déjà inscrite : vous pouvez voter.', en: 'This key is already registered: you can vote.' },

@@ -16,7 +16,7 @@
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
 	import VoteKeyDialog from '$lib/components/VoteKeyDialog.svelte';
 	import Sortable from 'sortablejs';
-	import { eventPaths, showVoters } from '$lib/event';
+	import { eventPaths, sharesShown, votersShown } from '$lib/event';
 	import { sessionFor, parseLink, voteKey } from '$lib/vote/isoloir';
 	import { encodeComplaint } from '@isoloir/web';
 	import { goto } from '$app/navigation';
@@ -335,6 +335,7 @@
 	let verdict = $derived($st.tally ?? $st.tallyUnverified?.verdict ?? null);
 	let verified = $derived(!!$st.tally);
 	let results = $derived(rankedRows(verdict?.results));
+	let votersText = $derived(votersShown(results?.counted, currentLang));
 	let winnerSlot = $derived(results?.condorcet ?? null);
 	// The two readings of the same results: the ranking and the first
 	// choices only (the same rows, re-sorted by their first-choice share).
@@ -517,8 +518,8 @@
 			</h2>
 			<p class="ballot-meta">
 				{#if open}{tr('poll.closes', currentLang, { d: closesText(closesAt) })}{:else}{tr('poll.closed', currentLang)}{/if}
-				{#if results && showVoters(results.counted)}
-					<span class="dot"></span>{tr('poll.voters', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}
+				{#if votersText}
+					<span class="dot"></span>{tr('poll.voters', currentLang, { n: votersText })}
 				{/if}
 			</p>
 			{#if hasKey && !joined}
@@ -745,12 +746,12 @@
 
 	<section class="results" aria-labelledby="results-title">
 		<h2 id="results-title">{tr('poll.results.title', currentLang)}</h2>
-		<!-- One line: how many, how recent, checked here. -->
-		{#if poll.publish.mode === 'open' && results && !blackout}
+		<!-- One line: how many (by hundreds), how recent, checked here. -->
+		{#if poll.publish.mode === 'open' && results && !blackout && (votersText || $tallyAt || verified)}
 			<p class="live">
-				<span>{tr(results.counted === 1 ? 'v2.counter.counted.one' : 'v2.counter.counted', currentLang, { n: results.counted.toLocaleString(currentLang === 'en' ? 'en-GB' : 'fr-FR') })}</span>
-				{#if $tallyAt}<span class="dot"></span><span>{tr('v2.results.updated.short', currentLang, { when: ago($tallyAt) })}</span>{/if}
-				{#if verified}<span class="dot"></span><a class="checked" href={paths.verify}>✓ {tr('v2.results.verified.short', currentLang)}</a>{/if}
+				{#if votersText}<span>{tr('v2.counter.counted', currentLang, { n: votersText })}</span>{/if}
+				{#if $tallyAt}{#if votersText}<span class="dot"></span>{/if}<span>{tr('v2.results.updated.short', currentLang, { when: ago($tallyAt) })}</span>{/if}
+				{#if verified}{#if votersText || $tallyAt}<span class="dot"></span>{/if}<a class="checked" href={paths.verify}>✓ {tr('v2.results.verified.short', currentLang)}</a>{/if}
 			</p>
 		{/if}
 
@@ -814,7 +815,9 @@
 										{:else}
 											<span class="name">{nameOf(o.slot)}{#if o.blank}&nbsp;{@render help(tr('vote.blank.tip', currentLang))}{/if}</span>
 										{/if}
-										{#if kind === 'ranking'}
+										{#if !sharesShown(table.counted)}
+											<!-- Under the floor the ranking shows alone. -->
+										{:else if kind === 'ranking'}
 											<span class="meta">{tr('poll.top3.short', currentLang, { r: pct(o.ranked, table.counted) })}</span>
 										{:else}
 											<strong class="share">{pct(o.first, table.counted)}</strong>
