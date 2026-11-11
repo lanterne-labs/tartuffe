@@ -31,6 +31,30 @@ func extractionShareFromEnv() (float64, error) {
 	return v, nil
 }
 
+// defaultMaintenanceEvery is how long the pending tasks may hold the
+// maintenance pass off (MAINTENANCE_EVERY_HOURS).
+const defaultMaintenanceEvery = 6 * time.Hour
+
+// maintenanceEveryFromEnv reads MAINTENANCE_EVERY_HOURS: the longest the
+// maintenance pass waits while collection tasks are pending (it runs as
+// soon as the queue is empty after facts were added, whatever the value).
+// Each pass takes the seats for two to three hours; in the week to
+// 2026-11-11 the seats spent 245 on detection and 113 on stances for 90 on
+// extraction (list price), while 16 000 documents waited. A longer wait
+// gives the seats to the extraction of the backlog: the user's order,
+// 2026-11-11 ("extract as much as possible with the capacity we have").
+func maintenanceEveryFromEnv() (time.Duration, error) {
+	s := strings.TrimSpace(os.Getenv("MAINTENANCE_EVERY_HOURS"))
+	if s == "" {
+		return defaultMaintenanceEvery, nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || v <= 0 || v > 24*7 {
+		return 0, fmt.Errorf("MAINTENANCE_EVERY_HOURS %q: want a number of hours above 0, at most 168", s)
+	}
+	return time.Duration(v * float64(time.Hour)), nil
+}
+
 // rejudgeBudgetFromEnv reads DETECT_REJUDGE_BUDGET: how many stale negative
 // pair verdicts (a NO under an older rulebook hash) a maintenance pass
 // re-opens for the detector. Not set: defaultRejudgeBudget, none. A rulebook
