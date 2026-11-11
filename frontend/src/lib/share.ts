@@ -1,7 +1,7 @@
 // Links to share a person, a stance, a contradiction or a fact. Every item
 // opens on its person's page: ?stance=, ?c= (contradiction) or ?fact= say
 // which stance to open and what to highlight; the server reads the same
-// parameters to fill the link preview (routes/person/[id]/+page.server.ts).
+// parameters to fill the link preview (routes/person/[slug]/+page.server.ts).
 
 import type { ShareKind } from './types';
 import { tr, type Lang } from './i18n';
@@ -9,7 +9,8 @@ import { tr, type Lang } from './i18n';
 export interface ShareItem {
 	kind: ShareKind;
 	id: number;
-	personId: number;
+	// The person's slug: their page is /person/<slug>.
+	personSlug: string;
 	personName: string;
 	// The person's score, for a person; the topic of a stance, contradiction or fact.
 	score?: number;
@@ -28,24 +29,31 @@ export function displayName(name: string): string {
 	return name.replace(/(^|[\s\-'’])(\p{L})/gu, (_, sep: string, c: string) => sep + c.toUpperCase());
 }
 
-export function sharePath(kind: ShareKind, id: number, personId: number, slug = ''): string {
+// personPath is the page of a person, by their slug (/person/marine-le-pen).
+// A numeric id still opens the page (the links shared before the slugs):
+// the server redirects it to the slug.
+export function personPath(slug: string | number): string {
+	return `/person/${encodeURIComponent(String(slug))}`;
+}
+
+export function sharePath(kind: ShareKind, id: number, personSlug: string, eventSlug = ''): string {
 	switch (kind) {
 		case 'event':
-			return `/election/${encodeURIComponent(slug)}`;
+			return `/election/${encodeURIComponent(eventSlug)}`;
 		case 'person':
-			return `/person/${personId}`;
+			return personPath(personSlug);
 		case 'stance':
-			return `/person/${personId}?stance=${id}`;
+			return `${personPath(personSlug)}?stance=${id}`;
 		case 'contradiction':
-			return `/person/${personId}?c=${id}`;
+			return `${personPath(personSlug)}?c=${id}`;
 		case 'fact':
-			return `/person/${personId}?fact=${id}`;
+			return `${personPath(personSlug)}?fact=${id}`;
 	}
 }
 
 export function shareURL(item: ShareItem): string {
 	const origin = typeof window === 'undefined' ? '' : window.location.origin;
-	return origin + sharePath(item.kind, item.id, item.personId, item.slug);
+	return origin + sharePath(item.kind, item.id, item.personSlug, item.slug);
 }
 
 export function clip(s: string, n: number): string {

@@ -10,6 +10,7 @@
 	import TartuffeScore from './TartuffeScore.svelte';
 	import { tr, type Lang } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
+	import { personPath } from '$lib/share';
 	import type { PersonSummary } from '$lib/types';
 
 	interface Props {
@@ -63,7 +64,7 @@
 		<ol class="podium">
 			{#each worst as person, i (person.id)}
 				<li class="step step--{i + 1}">
-					<a href="/person/{person.id}" class="laureate">
+					<a href={personPath(person.slug)} class="laureate">
 						<TartuffeScore honesty={person.honesty_score} {lang} size={i === 0 ? 'md' : 'sm'} compact image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
 						<span class="name">{person.name}</span>
 						<span class="meta">{person.fact_count} {tr(person.fact_count === 1 ? 'count.fact' : 'count.facts', lang)}</span>

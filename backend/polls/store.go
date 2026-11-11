@@ -37,7 +37,9 @@ type Blackout struct {
 // Card is what the polls show of a candidate: the people they are come from
 // the mirror (People), the polls keep only their ids.
 type Card struct {
-	Name               string
+	Name string
+	// Slug names the person's page on the site (/person/<slug>).
+	Slug               string
 	ImageURL           *string
 	HonestyScore       float64
 	FactCount          int

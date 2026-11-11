@@ -11,7 +11,7 @@
 	interface Props {
 		g: ContradictionGroup;
 		// The person and the topic, for the shared links.
-		person: { id: number; name: string };
+		person: { slug: string; name: string };
 		topic: string;
 		onGoToFact: (id: number) => void;
 		// highlight is the contradiction a link points at.
@@ -62,7 +62,7 @@
 			{/each}
 			<span class="spacer"></span>
 			<LikeButton kind="fact" targetId={g.base_fact_id} likes={g.base_likes} liked={g.base_liked} />
-			<ShareMenu item={{ kind: 'fact', id: g.base_fact_id, personId: person.id, personName: person.name, topic, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang) }} />
+			<ShareMenu item={{ kind: 'fact', id: g.base_fact_id, personSlug: person.slug, personName: person.name, topic, text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang) }} />
 		</div>
 		<FactVersions sourceUrls={g.base_fact_source_urls} restatements={g.base_restatements ?? []} lang={currentLang} />
 	</div>
@@ -87,7 +87,7 @@
 						item={{
 							kind: 'contradiction',
 							id: f.contradiction_id,
-							personId: person.id,
+							personSlug: person.slug,
 							personName: person.name,
 							topic,
 							text: pickLang(g.base_fact_text, g.base_fact_text_en, currentLang),

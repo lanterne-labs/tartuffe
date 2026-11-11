@@ -99,10 +99,10 @@ func (s *PostgresStorer) resolveOrInsertPerson(ctx context.Context, q rowQueryer
 // count columns after it.
 // PersonSummaryColumns is the persons projection every PersonSummary reader
 // selects (alias p); scan it with ScanPersonSummary.
-const PersonSummaryColumns = `p.id, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url, ` + CandidateSQL
+const PersonSummaryColumns = `p.id, p.slug, p.name, p.entity_type, p.honesty_score, p.own_score, p.members_score, p.image_url, ` + CandidateSQL
 
 // ScanPersonSummary scans PersonSummaryColumns, then extra, into person.
 func ScanPersonSummary(row pgx.Row, person *PersonSummary, extra ...any) error {
-	dest := append([]any{&person.ID, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.Candidate}, extra...)
+	dest := append([]any{&person.ID, &person.Slug, &person.Name, &person.EntityType, &person.HonestyScore, &person.OwnScore, &person.MembersScore, &person.ImageURL, &person.Candidate}, extra...)
 	return row.Scan(dest...)
 }

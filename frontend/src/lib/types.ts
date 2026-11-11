@@ -2,6 +2,8 @@
 
 export interface PersonSummary {
 	id: number;
+	// The person's page is /person/<slug> (lib/share.ts personPath).
+	slug: string;
 	name: string;
 	entity_type?: string;
 	honesty_score: number;
@@ -199,6 +201,7 @@ export interface PollOption {
 	slot: number;
 	kind: 'candidate' | 'blank';
 	person_id?: number;
+	person_slug?: string;
 	name: string;
 	image_url?: string;
 	honesty_score: number;
@@ -281,7 +284,7 @@ export interface FeedItem {
 	kind: 'contradiction' | 'fact';
 	id: number;
 	at: string;
-	person: { id: number; name: string; image_url?: string | null; honesty_score: number; fact_count?: number; covered_facts?: number; score_reliable?: boolean };
+	person: { id: number; slug: string; name: string; image_url?: string | null; honesty_score: number; fact_count?: number; covered_facts?: number; score_reliable?: boolean };
 	stance_id?: number | null;
 	stance_label?: string | null;
 	stance_label_en?: string | null;
@@ -311,6 +314,7 @@ export interface ShareTarget {
 	kind: ShareKind;
 	id: number;
 	person_id: number;
+	person_slug: string;
 	person_name: string;
 	image_url?: string | null;
 	honesty_score: number;
@@ -338,6 +342,8 @@ export interface UserReport {
 	target_kind: ReportKind;
 	target_id: number;
 	person_id: number;
+	// The person's page (/person/<slug>); absent once the person is gone.
+	person_slug?: string;
 	person_name: string;
 	target_text: string;
 	reason: string;
@@ -360,6 +366,7 @@ export interface Correction {
 	id: number;
 	target_kind: ReportKind;
 	person_id: number;
+	person_slug?: string;
 	person_name: string;
 	target_text: string;
 	verdict_reason: string;

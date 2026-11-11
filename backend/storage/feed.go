@@ -21,6 +21,7 @@ const (
 // FeedPerson is the person of a feed item.
 type FeedPerson struct {
 	ID           int64   `json:"id"`
+	Slug         string  `json:"slug"`
 	Name         string  `json:"name"`
 	ImageURL     *string `json:"image_url,omitempty"`
 	HonestyScore float64 `json:"honesty_score"`
@@ -318,7 +319,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 		liked = `AND c.id IN (SELECT target_id FROM feed_likes WHERE target_kind = 'contradiction')`
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.detected_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
+		SELECT c.id, c.detected_at, p.id, p.slug, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("c.detected_at")+` AS rank,
 		       CASE WHEN c.bundle_stance_id IS NULL THEN 1 ELSE (
 		         SELECT COUNT(*) FROM contradictions c2
@@ -352,7 +353,7 @@ func (s *PostgresStorer) feedContradictions(ctx context.Context, f FeedFilter, q
 	for rows.Next() {
 		it := FeedItem{Kind: FeedContradiction, Other: &FeedFactSide{}}
 		var reason, reasonEn *string
-		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
+		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Slug, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank, &it.bundleSize,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn, &reason, &reasonEn, &it.Explanation, &it.ExplanationEn,
 			&it.Fact.ID, &it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.DatePrecision, &it.Fact.SourceURLs, &it.Fact.Quote,
@@ -376,7 +377,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 		liked = `AND f.id IN (SELECT target_id FROM feed_likes WHERE target_kind = 'fact')`
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.created_at, p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
+		SELECT f.id, f.created_at, p.id, p.slug, p.name, p.image_url, p.honesty_score, p.fact_count,
 		       lk.n::int, lk.mine, `+hotRank("f.created_at")+` AS rank,
 		       sd.id, sd.cluster_label, sd.label_en,
 		       f.fact_text, f.fact_text_en, `+shownDateSQL("f", "sf.earliest")+`, f.statement_date_precision, COALESCE(sf.urls, '{}'), COALESCE(sf.quote, '')
@@ -413,7 +414,7 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 	out := []FeedItem{}
 	for rows.Next() {
 		it := FeedItem{Kind: FeedFact}
-		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
+		if err := rows.Scan(&it.ID, &it.At, &it.Person.ID, &it.Person.Slug, &it.Person.Name, &it.Person.ImageURL, &it.Person.HonestyScore, &it.Person.FactCount,
 			&it.Likes, &it.Liked, &it.rank,
 			&it.StanceID, &it.StanceLabel, &it.StanceLabelEn,
 			&it.Fact.Text, &it.Fact.TextEn, &it.Fact.Date, &it.Fact.DatePrecision, &it.Fact.SourceURLs, &it.Fact.Quote); err != nil {
@@ -430,7 +431,9 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 type ShareTarget struct {
 	Kind         string  `json:"kind"`
 	ID           int64   `json:"id"`
-	PersonID     int64   `json:"person_id"`
+	PersonID int64 `json:"person_id"`
+	// PersonSlug names the person's page (/person/<slug>).
+	PersonSlug   string  `json:"person_slug"`
 	PersonName   string  `json:"person_name"`
 	ImageURL     *string `json:"image_url,omitempty"`
 	HonestyScore float64 `json:"honesty_score"`
@@ -461,7 +464,7 @@ func likesCount(kind, idExpr string) string {
 // ErrNoShareTarget is returned when the shared item does not exist.
 var ErrNoShareTarget = errors.New("no such item")
 
-const sharePersonColumns = `p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
+const sharePersonColumns = `p.id, p.slug, p.name, p.image_url, p.honesty_score, p.fact_count,
 	(SELECT COUNT(*) FROM contradictions cc WHERE cc.person_id = p.id)`
 
 // GetShareTarget loads the item of a shared link: kind is person, stance,
@@ -473,12 +476,12 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 	switch kind {
 	case "person":
 		err = s.pool.QueryRow(ctx, `SELECT `+sharePersonColumns+` FROM persons p WHERE p.id = $1`, id).
-			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions)
+			Scan(&t.PersonID, &t.PersonSlug, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions)
 	case "stance":
 		err = s.pool.QueryRow(ctx, `
 			SELECT `+sharePersonColumns+`, sd.id, sd.cluster_label, sd.label_en, sd.summary, sd.summary_en
 			FROM stance_documents sd JOIN persons p ON p.id = sd.person_id WHERE sd.id = $1`, id).
-			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
+			Scan(&t.PersonID, &t.PersonSlug, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
 				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &t.Text, &t.TextEn)
 	case "contradiction":
 		var other string
@@ -493,7 +496,7 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 			JOIN facts fb ON fb.id = c.fact_b_id
 			LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
 			WHERE c.id = $1`, id).
-			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
+			Scan(&t.PersonID, &t.PersonSlug, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
 				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &reason, &t.Text, &other, &t.Likes)
 		t.Other = &other
 		if reason != nil && *reason != "" {
@@ -518,7 +521,7 @@ func (s *PostgresStorer) GetShareTarget(ctx context.Context, kind string, id, pe
 			) sd ON true
 			JOIN persons p ON p.id = sd.person_id
 			WHERE f.id = $1`, id, personID).
-			Scan(&t.PersonID, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
+			Scan(&t.PersonID, &t.PersonSlug, &t.PersonName, &t.ImageURL, &t.HonestyScore, &t.FactCount, &t.Contradictions,
 				&t.StanceID, &t.StanceLabel, &t.StanceLabelEn, &t.Text, &t.TextEn, &t.Quote, &t.Likes)
 		if errors.Is(err, pgx.ErrNoRows) && personID != 0 {
 			return s.GetShareTarget(ctx, kind, id, 0)

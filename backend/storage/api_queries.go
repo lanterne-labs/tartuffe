@@ -15,6 +15,7 @@ func (s *PostgresStorer) Ping(ctx context.Context) error {
 // MemberInfo represents a person who is a member/affiliate of another entity.
 type MemberInfo struct {
 	ID           int64   `json:"id"`
+	Slug         string  `json:"slug"`
 	Name         string  `json:"name"`
 	EntityType   string  `json:"entity_type"`
 	HonestyScore float64 `json:"honesty_score"`
@@ -25,7 +26,7 @@ type MemberInfo struct {
 // (e.g. the deputies of a party), ordered by name.
 func (s *PostgresStorer) GetPersonMembers(ctx context.Context, personID int64) ([]MemberInfo, error) {
 	query := `
-		SELECT DISTINCT p.id, p.name, p.entity_type, p.honesty_score, p.image_url
+		SELECT DISTINCT p.id, p.slug, p.name, p.entity_type, p.honesty_score, p.image_url
 		FROM persons p
 		JOIN person_links pl ON p.id = pl.src_person_id
 		WHERE pl.dst_person_id = $1
@@ -40,7 +41,7 @@ func (s *PostgresStorer) GetPersonMembers(ctx context.Context, personID int64) (
 	members := make([]MemberInfo, 0)
 	for rows.Next() {
 		var m MemberInfo
-		if err := rows.Scan(&m.ID, &m.Name, &m.EntityType, &m.HonestyScore, &m.ImageURL); err != nil {
+		if err := rows.Scan(&m.ID, &m.Slug, &m.Name, &m.EntityType, &m.HonestyScore, &m.ImageURL); err != nil {
 			return nil, fmt.Errorf("failed to scan member: %w", err)
 		}
 		members = append(members, m)

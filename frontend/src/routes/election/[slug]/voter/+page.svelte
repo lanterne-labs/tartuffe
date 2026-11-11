@@ -8,7 +8,7 @@
 	// action.
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import { displayName } from '$lib/share';
+	import { displayName, personPath } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
 	import Modal from '$lib/components/Modal.svelte';
 	import HintSheet from '$lib/components/HintSheet.svelte';
@@ -663,7 +663,7 @@
 				{#if dirty}
 					<button class="btn submit" class:btn-primary={draft !== null && draft.length > 0} class:btn-danger={draft !== null && draft.length === 0} onclick={submit} disabled={busy || regPending}>{tr(regPending ? 'v2.join.wait_button' : draft !== null && draft.length === 0 ? 'vote.withdraw_all' : 'vote.submit', currentLang)}</button>
 				{:else if event && voted}
-					<div class="share-big"><ShareMenu label item={{ kind: 'event', id: 0, personId: 0, personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} /></div>
+					<div class="share-big"><ShareMenu label item={{ kind: 'event', id: 0, personSlug: '', personName: currentLang === 'en' ? event.title_en : event.title_fr, slug }} /></div>
 				{/if}
 				{#if canResend}
 					<button class="btn submit btn-primary" onclick={resend} disabled={busy}>{tr('v2.ballot.resend', currentLang)}</button>
@@ -837,7 +837,7 @@
 						<h3>{tr(kind === 'ranking' ? 'poll.tab.ranking' : 'poll.tab.first.short', currentLang)}</h3>
 						<ol class="vote-list">
 							{#each list as o, i (o.slot)}
-								{@const pid = o.blank ? undefined : cardOf(o.slot)?.person_id}
+								{@const pslug = o.blank ? undefined : (cardOf(o.slot)?.person_slug ?? cardOf(o.slot)?.person_id)}
 								<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
 								<li
 									bind:this={rowEls[kind][o.slot]}
@@ -864,8 +864,8 @@
 										<TartuffeScore honesty={cardOf(o.slot)?.honesty_score} lang={currentLang} size="xs" image={imageOf(o.slot)} initial={nameOf(o.slot).charAt(0).toUpperCase()} />
 									{/if}
 									<span class="who-text">
-										{#if pid !== undefined}
-											<a class="name name--link" href={`/person/${pid}`} onclick={(e) => e.stopPropagation()}>{nameOf(o.slot)}</a>
+										{#if pslug !== undefined}
+											<a class="name name--link" href={personPath(pslug)} onclick={(e) => e.stopPropagation()}>{nameOf(o.slot)}</a>
 										{:else}
 											<span class="name">{nameOf(o.slot)}{#if o.blank}&nbsp;{@render help(tr('vote.blank.tip', currentLang))}{/if}</span>
 										{/if}

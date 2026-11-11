@@ -6,6 +6,7 @@
 	import type { PersonSummary } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
+	import { personPath } from '$lib/share';
 	import { lang, tr } from '$lib/i18n';
 
 	let currentLang = $state<'fr' | 'en'>('fr');
@@ -239,7 +240,7 @@
 	{:else}
 		<div class="persons-grid">
 			{#each persons as person (person.id)}
-				<a href="/person/{person.id}" class="card">
+				<a href={personPath(person.slug)} class="card">
 					<div class="card-content">
 						<div class="card-left">
 							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
@@ -285,7 +286,7 @@
 		{:else}
 			<div class="persons-grid">
 				{#each others as person (person.id)}
-					<a href="/person/{person.id}" class="card">
+					<a href={personPath(person.slug)} class="card">
 						<div class="card-content">
 							<div class="card-left">
 								{#if person.image_url}

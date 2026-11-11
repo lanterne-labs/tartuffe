@@ -13,7 +13,7 @@
 	import Podium from '$lib/components/Podium.svelte';
 	import { sourceDomain } from '$lib/sources';
 	import { factYear } from '$lib/dates';
-	import { displayName } from '$lib/share';
+	import { displayName, sharePath } from '$lib/share';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 
 	let currentLang = $state<Lang>('fr');
@@ -260,7 +260,7 @@
 					{:else}
 						<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="24" class="av-bg" /><circle cx="24" cy="19" r="8" class="av-fg" /><path d="M9 42c2-9 8-13 15-13s13 4 15 13" class="av-fg" /></svg>
 					{/if}
-					<a class="ex-name" href="/person/{clash.person.id}?c={clash.id}">{displayName(clash.person.name)}</a>
+					<a class="ex-name" href={sharePath('contradiction', clash.id, clash.person.slug)}>{displayName(clash.person.name)}</a>
 					<span class="ex-tag ex-tag--live">{c.exTagLive}</span>
 				</div>
 				<div class="ex-body">
@@ -288,7 +288,7 @@
 						</span>
 					</div>
 				</div>
-				<a class="ex-link" href="/person/{clash.person.id}?c={clash.id}">{c.exLink} →</a>
+				<a class="ex-link" href={sharePath('contradiction', clash.id, clash.person.slug)}>{c.exLink} →</a>
 			{:else}
 				<div class="ex-who">
 					<svg class="ex-avatar" viewBox="0 0 48 48" aria-hidden="true">

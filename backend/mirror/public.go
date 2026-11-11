@@ -180,12 +180,26 @@ func (s *Service) handleLike(w http.ResponseWriter, r *http.Request) {
 // handleShare returns what a shared link points at, for its preview and to
 // open the right stance (/api/share/{kind}/{id}?person=).
 func (s *Service) handleShare(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	var id int64
+	if chi.URLParam(r, "kind") == "person" {
+		// A person is named by id or by slug.
+		var ok bool
+		if id, ok = s.personID(w, r); !ok {
+			return
+		}
+	} else {
+		var err error
+		if id, err = strconv.ParseInt(chi.URLParam(r, "id"), 10, 64); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, "bad id")
+			return
+		}
+	}
+	// The person the link was shared from, by id or by slug.
+	personID, err := s.resolvePerson(r.Context(), r.URL.Query().Get("person"))
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad id")
+		httpx.InternalError(w, err, "failed to resolve person")
 		return
 	}
-	personID, _ := strconv.ParseInt(r.URL.Query().Get("person"), 10, 64)
 	t, err := s.store.GetShareTarget(r.Context(), chi.URLParam(r, "kind"), id, personID)
 	if errors.Is(err, storage.ErrNoShareTarget) {
 		httpx.WriteError(w, http.StatusNotFound, "no such item")
@@ -200,9 +214,8 @@ func (s *Service) handleShare(w http.ResponseWriter, r *http.Request) {
 
 // handleScoreExplanation returns every input of a person's score.
 func (s *Service) handleScoreExplanation(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "bad id")
+	id, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 	e, err := s.store.GetScoreExplanation(r.Context(), id)

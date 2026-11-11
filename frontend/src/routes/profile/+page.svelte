@@ -8,6 +8,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { lang, tr } from '$lib/i18n';
 	import { API_BASE } from '$lib/config';
+	import { personPath } from '$lib/share';
 	import { session, signInOpen, signOut, setDisplayName, authFetch } from '$lib/auth';
 	import { voteKey, forgetKey as forgetVoteKey, pollOf } from '$lib/vote/isoloir';
 	import Modal from '$lib/components/Modal.svelte';
@@ -246,7 +247,7 @@
 					<li class="card report">
 						<div class="report-head">
 							<span class="status status--{r.status}">{tr(`report.status.${r.status}`, currentLang)}</span>
-							<a href="/person/{r.person_id}">{r.person_name}</a>
+							<a href={personPath(r.person_slug ?? r.person_id)}>{r.person_name}</a>
 							<span class="small">{dateText(r.created_at)}</span>
 						</div>
 						<blockquote>{r.target_text}</blockquote>

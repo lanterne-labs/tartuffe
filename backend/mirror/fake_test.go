@@ -30,6 +30,9 @@ type fakeStore struct {
 	members    []storage.MemberInfo
 	membersErr error
 
+	// slugs maps a person's slug to their id (GetPersonIDBySlug).
+	slugs map[string]int64
+
 	stances      []core.StanceDocument
 	stanceCounts map[int64]int
 	groupCounts  map[int64]int
@@ -55,6 +58,10 @@ func (f *fakeStore) GetPersonsRankedByScore(_ context.Context, limit, offset int
 
 func (f *fakeStore) GetPersonByID(context.Context, int64) (*storage.PersonSummary, error) {
 	return nil, nil
+}
+
+func (f *fakeStore) GetPersonIDBySlug(_ context.Context, slug string) (int64, error) {
+	return f.slugs[slug], nil
 }
 
 func (f *fakeStore) GetPersonFacts(context.Context, int64, int, int) (*storage.PaginatedFacts, error) {

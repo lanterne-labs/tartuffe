@@ -12,6 +12,8 @@ import type { PollEvent, PollResponse } from '$lib/types';
 export interface Candidate {
 	name: string;
 	person_id?: number;
+	// The candidate's page on the site: /person/<person_slug>.
+	person_slug?: string;
 	image_url?: string;
 	honesty_score?: number;
 }
@@ -27,7 +29,7 @@ export function metaFromPoll(p: PollResponse): EventMeta {
 		event: p.event,
 		candidates: p.results.options
 			.filter((o) => o.kind === 'candidate')
-			.map((o) => ({ name: o.name ?? '', person_id: o.person_id ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
+			.map((o) => ({ name: o.name ?? '', person_id: o.person_id ?? undefined, person_slug: o.person_slug ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
 	};
 }
 

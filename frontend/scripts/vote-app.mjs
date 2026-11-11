@@ -35,7 +35,7 @@ for (const slug of slugs) {
 		event: p.event,
 		candidates: p.results.options
 			.filter((o) => o.kind === 'candidate')
-			.map((o) => ({ name: o.name, person_id: o.person_id ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
+			.map((o) => ({ name: o.name, person_id: o.person_id ?? undefined, person_slug: o.person_slug ?? undefined, image_url: o.image_url ?? undefined, honesty_score: o.honesty_score ?? undefined }))
 	};
 	mkdirSync(`${candidates}/candidates/${slug}`, { recursive: true });
 	for (const c of meta.candidates) {

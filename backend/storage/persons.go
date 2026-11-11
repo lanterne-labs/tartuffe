@@ -85,6 +85,20 @@ func (s *PostgresStorer) GetPersonIDByName(ctx context.Context, name string) (in
 	return id, nil
 }
 
+// GetPersonIDBySlug returns the id of the person whose page is
+// /person/<slug>, or 0 when no person has the slug.
+func (s *PostgresStorer) GetPersonIDBySlug(ctx context.Context, slug string) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `SELECT id FROM persons WHERE slug = $1`, slug).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("person by slug %q: %w", slug, err)
+	}
+	return id, nil
+}
+
 // GetSourceURLsForPerson returns every distinct source_url found in fact_sources
 // for facts mentioning the given person. Used by `dm scrape urls --from-person`
 // to re-scrape an existing corpus without re-running paid web search.
@@ -380,7 +394,10 @@ func (s *PostgresStorer) AddPersonWithType(ctx context.Context, name string, ent
 
 // PersonSummary represents a summary of a person for the API
 type PersonSummary struct {
-	ID           int64    `json:"id"`
+	ID int64 `json:"id"`
+	// Slug names the person's page (/person/<slug>): set from the name at
+	// the insert, never changed (the migration 20261111100000).
+	Slug         string   `json:"slug"`
 	Name         string   `json:"name"`
 	EntityType   *string  `json:"entity_type,omitempty"`
 	HonestyScore float64  `json:"honesty_score"`

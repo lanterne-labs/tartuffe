@@ -7,7 +7,9 @@ import (
 
 // PersonCard is what another part of the site (the polls) shows of a person.
 type PersonCard struct {
-	Name               string
+	Name string
+	// Slug names the person's page (/person/<slug>).
+	Slug               string
 	ImageURL           *string
 	HonestyScore       float64
 	FactCount          int
@@ -22,7 +24,7 @@ func (s *PostgresStorer) GetPersonCards(ctx context.Context, ids []int64) (map[i
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT p.id, p.name, p.image_url, p.honesty_score, p.fact_count,
+		SELECT p.id, p.name, p.slug, p.image_url, p.honesty_score, p.fact_count,
 			(SELECT COUNT(*) FROM contradictions c WHERE c.person_id = p.id)
 		FROM persons p WHERE p.id = ANY($1)`, ids)
 	if err != nil {
@@ -32,7 +34,7 @@ func (s *PostgresStorer) GetPersonCards(ctx context.Context, ids []int64) (map[i
 	for rows.Next() {
 		var id int64
 		var c PersonCard
-		if err := rows.Scan(&id, &c.Name, &c.ImageURL, &c.HonestyScore, &c.FactCount, &c.ContradictionCount); err != nil {
+		if err := rows.Scan(&id, &c.Name, &c.Slug, &c.ImageURL, &c.HonestyScore, &c.FactCount, &c.ContradictionCount); err != nil {
 			return nil, fmt.Errorf("scan person card: %w", err)
 		}
 		out[id] = c

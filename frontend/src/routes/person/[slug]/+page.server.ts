@@ -1,9 +1,11 @@
 // The link preview of a person's page, and of the stance, contradiction or
-// fact the link points at (?stance=, ?c=, ?fact=; lib/share.ts). The page
-// itself loads its data in the browser.
+// fact the link points at (?stance=, ?c=, ?fact=; lib/share.ts). A page
+// named by id (/person/42, the links shared before the slugs) is redirected
+// to the page named by slug. The page itself loads its data in the browser.
+import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { serverFetchJSON } from '$lib/server/api';
-import { clip, displayName } from '$lib/share';
+import { clip, displayName, personPath } from '$lib/share';
 import type { ShareKind, ShareTarget } from '$lib/types';
 
 function pointed(url: URL): { kind: ShareKind; id: string } | null {
@@ -12,6 +14,12 @@ function pointed(url: URL): { kind: ShareKind; id: string } | null {
 		if (id && /^\d+$/.test(id)) return { kind, id };
 	}
 	return null;
+}
+
+// isPerson says whether the target belongs to the person the page names,
+// by slug or by id.
+function isPerson(t: ShareTarget, ref: string): boolean {
+	return t.person_slug === ref || String(t.person_id) === ref;
 }
 
 function describe(target: ShareTarget): { title: string; description: string } {
@@ -35,13 +43,16 @@ function describe(target: ShareTarget): { title: string; description: string } {
 }
 
 export const load: PageServerLoad = async ({ params, url, fetch, setHeaders }) => {
-	if (!/^\d+$/.test(params.id)) return {};
-	const p = pointed(url) ?? { kind: 'person' as const, id: params.id };
-	const q = p.kind === 'fact' ? `?person=${params.id}` : '';
+	const ref = params.slug;
+	if (!/^[a-z0-9-]+$/.test(ref)) return {};
+	const p = pointed(url) ?? { kind: 'person' as const, id: ref };
+	const q = p.kind === 'fact' ? `?person=${ref}` : '';
 	let t = await serverFetchJSON<ShareTarget>(fetch, `/api/share/${p.kind}/${p.id}${q}`);
-	if (t && t.person_id !== Number(params.id)) t = null; // a link that mixes two persons
-	if (!t && p.kind !== 'person') t = await serverFetchJSON<ShareTarget>(fetch, `/api/share/person/${params.id}`);
+	if (t && !isPerson(t, ref)) t = null; // a link that mixes two persons
+	if (!t && p.kind !== 'person') t = await serverFetchJSON<ShareTarget>(fetch, `/api/share/person/${ref}`);
 	if (!t) return {};
+	// One address per person: a link by id goes to the page by slug, for good.
+	if (t.person_slug && ref !== t.person_slug) redirect(301, personPath(t.person_slug) + url.search);
 	setHeaders({ 'cache-control': 'public, max-age=300' });
 	return { meta: { ...describe(t), image: t.image_url ?? undefined } };
 };

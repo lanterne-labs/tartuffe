@@ -4,7 +4,7 @@
 	// it; every other candidate is a small face under the band, at their own
 	// place. A click on a face puts that person in focus.
 	import { tr, type Lang } from '$lib/i18n';
-	import { displayName } from '$lib/share';
+	import { displayName, personPath } from '$lib/share';
 	import { tartuffeOf, tartuffeColor, dialOf, MARKS, coveredText } from './TartuffeScore.svelte';
 	import HintSheet from './HintSheet.svelte';
 	import type { PersonSummary } from '$lib/types';
@@ -127,7 +127,7 @@
 {#if current}
 	<div class="compare" style="--c: {tartuffeColor(current.at)}">
 		<div class="head">
-			<a class="name" href="/person/{current.p.id}">{displayName(current.p.name)} →</a>
+			<a class="name" href={personPath(current.p.slug)}>{displayName(current.p.name)} →</a>
 			<span class="value">{tr('score.short', lang, { n: current.t })}</span>
 			<span class="rank">{rank}</span>
 		</div>

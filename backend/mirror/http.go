@@ -81,11 +81,8 @@ func (s *Service) handleGetPersons(w http.ResponseWriter, r *http.Request) {
 // handleGetPerson returns basic person information
 func (s *Service) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personIDStr := chi.URLParam(r, "id")
-
-	personID, err := strconv.ParseInt(personIDStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -113,11 +110,8 @@ func (s *Service) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 // handleGetPersonFacts returns facts for a specific person
 func (s *Service) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personIDStr := chi.URLParam(r, "id")
-
-	personID, err := strconv.ParseInt(personIDStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -152,11 +146,8 @@ func (s *Service) handleGetPersonFacts(w http.ResponseWriter, r *http.Request) {
 // handleGetPersonContradictions returns contradictions for a specific person
 func (s *Service) handleGetPersonContradictions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personIDStr := chi.URLParam(r, "id")
-
-	personID, err := strconv.ParseInt(personIDStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -191,9 +182,8 @@ func (s *Service) handleGetPersonContradictions(w http.ResponseWriter, r *http.R
 // handleGetPersonHistory returns the weekly honesty timeline of a person (statement-time axis).
 func (s *Service) handleGetPersonHistory(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -210,9 +200,8 @@ func (s *Service) handleGetPersonHistory(w http.ResponseWriter, r *http.Request)
 // handleGetPersonCoverage returns the histogram of a person's facts by year of statement.
 func (s *Service) handleGetPersonCoverage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -229,11 +218,8 @@ func (s *Service) handleGetPersonCoverage(w http.ResponseWriter, r *http.Request
 // handleGetPersonMembers returns persons affiliated with an entity (e.g., deputies in a party)
 func (s *Service) handleGetPersonMembers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personIDStr := chi.URLParam(r, "id")
-
-	personID, err := strconv.ParseInt(personIDStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 
@@ -330,11 +316,8 @@ func (s *Service) handleGetStanceContradictions(w http.ResponseWriter, r *http.R
 // honesty score and contradiction count attached.
 func (s *Service) handleGetPersonStances(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	personIDStr := chi.URLParam(r, "id")
-
-	personID, err := strconv.ParseInt(personIDStr, 10, 64)
-	if err != nil {
-		http.Error(w, "Invalid person ID", http.StatusBadRequest)
+	personID, ok := s.personID(w, r)
+	if !ok {
 		return
 	}
 

@@ -5,6 +5,7 @@
 	import Spinner from '$lib/components/Spinner.svelte';
 	import { onMount } from 'svelte';
 	import { API_BASE } from '$lib/config';
+	import { personPath } from '$lib/share';
 	import { lang, tr, type Lang } from '$lib/i18n';
 	import type { Correction } from '$lib/types';
 
@@ -62,7 +63,7 @@
 				<li class="card">
 					<div class="head">
 						<span class="kind">{tr(`corrections.kind.${c.target_kind}`, currentLang)}</span>
-						<a href="/person/{c.person_id}" class="who">{c.person_name}</a>
+						<a href={personPath(c.person_slug ?? c.person_id)} class="who">{c.person_name}</a>
 						<time datetime={c.corrected_at}>{tr('corrections.on', currentLang, { d: day(c.corrected_at) })}</time>
 					</div>
 					<blockquote>{c.target_text}</blockquote>

@@ -2,6 +2,7 @@
 // events. Read by crawlers; built from the API at each request.
 import { env } from '$env/dynamic/private';
 import { API_BASE } from '$lib/config';
+import { personPath } from '$lib/share';
 import type { RequestHandler } from './$types';
 
 const STATIC = ['/', '/dashboard', '/feed', '/about', '/about/privacy', '/corrections', '/lab', '/contact', '/mentions-legales'];
@@ -20,9 +21,9 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 		console.error('sitemap: events', e);
 	}
 	try {
-		const persons = (await (await fetch(`${api}/api/persons?limit=1000`)).json()) as { id: number }[] | { persons?: { id: number }[] };
+		const persons = (await (await fetch(`${api}/api/persons?limit=1000`)).json()) as { slug: string }[] | { persons?: { slug: string }[] };
 		const list = Array.isArray(persons) ? persons : (persons.persons ?? []);
-		for (const p of list) urls.push(`${origin}/person/${p.id}`);
+		for (const p of list) urls.push(origin + personPath(p.slug));
 	} catch (e) {
 		console.error('sitemap: persons', e);
 	}

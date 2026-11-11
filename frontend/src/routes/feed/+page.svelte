@@ -13,7 +13,7 @@
 	import { lang, tr, pickLang, whyOf, type Lang } from '$lib/i18n';
 	import { sourceDomain } from '$lib/sources';
 	import { factYear } from '$lib/dates';
-	import { sharePath } from '$lib/share';
+	import { personPath, sharePath } from '$lib/share';
 	import { realtimeManager, subscribeToPersonEvents } from '$lib/realtime';
 	import ShareMenu from '$lib/components/ShareMenu.svelte';
 	import ReportButton from '$lib/components/ReportButton.svelte';
@@ -325,18 +325,18 @@
 	<ol class="items">
 		{#each items as it, i (it.kind + it.id)}
 			{@const topic = pickLang(it.stance_label, it.stance_label_en, currentLang)}
-			{@const link = sharePath(it.kind, it.id, it.person.id)}
+			{@const link = sharePath(it.kind, it.id, it.person.slug)}
 			<li class="item item--{it.kind}" class:is-contradiction={it.kind === 'contradiction'}>
 				<span class="kind kind--{it.kind}">
 					<span class="kind-mark" aria-hidden="true">{it.kind === 'contradiction' ? '⟷' : '●'}</span>
 					{tr(`feed.kind.${it.kind}`, currentLang)}
 				</span>
-				<a href="/person/{it.person.id}" class="avatar-link" aria-label={it.person.name}>
+				<a href={personPath(it.person.slug)} class="avatar-link" aria-label={it.person.name}>
 					<TartuffeScore honesty={it.person.honesty_score} lang={currentLang} size="xs" image={it.person.image_url} initial={it.person.name.charAt(0).toUpperCase()} facts={it.person.fact_count} reliable={it.person.score_reliable} covered={it.person.covered_facts} />
 				</a>
 				<div class="main">
 					<div class="head">
-						<a href="/person/{it.person.id}" class="who"><span class="name">{it.person.name}</span></a>
+						<a href={personPath(it.person.slug)} class="who"><span class="name">{it.person.name}</span></a>
 						{#if it.score_effect != null}
 							<!-- On a touch screen the move is a button: its title opens in a
 							     sheet. The element is a button exactly when it has the click
@@ -358,7 +358,7 @@
 						<time datetime={it.at} title={new Date(it.at).toLocaleString()}>{ago(it.at)}</time>
 					</div>
 					{#if topic}
-						<a class="topic" href={it.stance_id ? `/person/${it.person.id}?stance=${it.stance_id}` : `/person/${it.person.id}`}>{topic}</a>
+						<a class="topic" href={it.stance_id ? sharePath('stance', it.stance_id, it.person.slug) : personPath(it.person.slug)}>{topic}</a>
 					{/if}
 
 					<a href={link} class="body">
@@ -383,7 +383,7 @@
 							item={{
 								kind: it.kind,
 								id: it.id,
-								personId: it.person.id,
+								personSlug: it.person.slug,
 								personName: it.person.name,
 								topic,
 								text: pickLang(it.fact.text, it.fact.text_en, currentLang),

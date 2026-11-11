@@ -42,10 +42,13 @@ type UserReport struct {
 	ID            int64  `json:"id"`
 	TargetKind    string `json:"target_kind"`
 	TargetID      int64  `json:"target_id"`
-	PersonID      int64  `json:"person_id"`
-	PersonName    string `json:"person_name"`
-	TargetText    string `json:"target_text"`
-	Reason        string `json:"reason"`
+	PersonID int64 `json:"person_id"`
+	// PersonSlug names the person's page (/person/<slug>); nil once the
+	// person is gone (the report keeps their name).
+	PersonSlug    *string `json:"person_slug,omitempty"`
+	PersonName    string  `json:"person_name"`
+	TargetText    string  `json:"target_text"`
+	Reason        string  `json:"reason"`
 	Status        string `json:"status"`
 	VerdictReason string `json:"verdict_reason"`
 	// AIVerdict is the judge's advice (delete_target, dismiss_complaint,
@@ -62,11 +65,12 @@ type UserReport struct {
 
 const userReportColumns = `id, target_kind, target_id, person_id, person_name, target_text, reason, status, verdict_reason, ai_verdict, enabled, attempts, created_at, judged_at, decided_at`
 
-func scanUserReport(row pgx.Row) (UserReport, error) {
-	var r UserReport
-	err := row.Scan(&r.ID, &r.TargetKind, &r.TargetID, &r.PersonID, &r.PersonName, &r.TargetText,
-		&r.Reason, &r.Status, &r.VerdictReason, &r.AIVerdict, &r.Enabled, &r.Attempts, &r.CreatedAt, &r.JudgedAt, &r.DecidedAt)
-	return r, err
+// scanUserReport scans userReportColumns into r, then the columns a query
+// adds after them into extra.
+func scanUserReport(row pgx.Row, r *UserReport, extra ...any) error {
+	dest := append([]any{&r.ID, &r.TargetKind, &r.TargetID, &r.PersonID, &r.PersonName, &r.TargetText,
+		&r.Reason, &r.Status, &r.VerdictReason, &r.AIVerdict, &r.Enabled, &r.Attempts, &r.CreatedAt, &r.JudgedAt, &r.DecidedAt}, extra...)
+	return row.Scan(dest...)
 }
 
 func collectUserReports(rows pgx.Rows, err error) ([]UserReport, error) {
@@ -76,8 +80,8 @@ func collectUserReports(rows pgx.Rows, err error) ([]UserReport, error) {
 	defer rows.Close()
 	out := []UserReport{}
 	for rows.Next() {
-		r, err := scanUserReport(rows)
-		if err != nil {
+		var r UserReport
+		if err := scanUserReport(rows, &r); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -142,10 +146,11 @@ func (s *PostgresStorer) CreateUserReport(ctx context.Context, userID int64, kin
 		return nil, fmt.Errorf("load reported %s %d: %w", kind, targetID, err)
 	}
 
-	r, err := scanUserReport(tx.QueryRow(ctx, `
+	var r UserReport
+	err = scanUserReport(tx.QueryRow(ctx, `
 		INSERT INTO user_reports (user_id, target_kind, target_id, person_id, person_name, target_text, reason)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING `+userReportColumns, userID, kind, targetID, personID, personName, text, reason))
+		RETURNING `+userReportColumns, userID, kind, targetID, personID, personName, text, reason), &r)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -161,9 +166,22 @@ func (s *PostgresStorer) CreateUserReport(ctx context.Context, userID int64, kin
 
 // GetUserReports lists the user's reports, newest first.
 func (s *PostgresStorer) GetUserReports(ctx context.Context, userID int64) ([]UserReport, error) {
-	out, err := collectUserReports(s.pool.Query(ctx, `
-		SELECT `+userReportColumns+` FROM user_reports WHERE user_id = $1 ORDER BY created_at DESC, id DESC`, userID))
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+userReportColumns+`, (SELECT slug FROM persons p WHERE p.id = user_reports.person_id)
+		FROM user_reports WHERE user_id = $1 ORDER BY created_at DESC, id DESC`, userID)
 	if err != nil {
+		return nil, fmt.Errorf("reports of user %d: %w", userID, err)
+	}
+	defer rows.Close()
+	out := []UserReport{}
+	for rows.Next() {
+		var r UserReport
+		if err := scanUserReport(rows, &r, &r.PersonSlug); err != nil {
+			return nil, fmt.Errorf("scan report of user %d: %w", userID, err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reports of user %d: %w", userID, err)
 	}
 	return out, nil
@@ -211,8 +229,8 @@ func (s *PostgresStorer) ListUserReports(ctx context.Context, status string, lim
 
 // GetUserReport returns one report (pgx.ErrNoRows when there is none).
 func (s *PostgresStorer) GetUserReport(ctx context.Context, id int64) (*UserReport, error) {
-	r, err := scanUserReport(s.pool.QueryRow(ctx, `SELECT `+userReportColumns+` FROM user_reports WHERE id = $1`, id))
-	if err != nil {
+	var r UserReport
+	if err := scanUserReport(s.pool.QueryRow(ctx, `SELECT `+userReportColumns+` FROM user_reports WHERE id = $1`, id), &r); err != nil {
 		return nil, fmt.Errorf("report %d: %w", id, err)
 	}
 	return &r, nil
@@ -284,7 +302,10 @@ func (s *PostgresStorer) CountUserReportAttempt(ctx context.Context, id int64, l
 type Correction struct {
 	ID            int64     `json:"id"`
 	TargetKind    string    `json:"target_kind"`
-	PersonID      int64     `json:"person_id"`
+	PersonID int64 `json:"person_id"`
+	// PersonSlug names the person's page (/person/<slug>); nil once the
+	// person is gone.
+	PersonSlug    *string   `json:"person_slug,omitempty"`
 	PersonName    string    `json:"person_name"`
 	TargetText    string    `json:"target_text"`
 	VerdictReason string    `json:"verdict_reason"`
@@ -296,7 +317,8 @@ type Correction struct {
 // report), newest report first, before the given id (0: from the newest).
 func (s *PostgresStorer) ListCorrections(ctx context.Context, beforeID int64, limit int) ([]Correction, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, target_kind, person_id, person_name, target_text, verdict_reason, created_at, COALESCE(decided_at, judged_at)
+		SELECT id, target_kind, person_id, (SELECT slug FROM persons p WHERE p.id = firsts.person_id), person_name,
+		       target_text, verdict_reason, created_at, COALESCE(decided_at, judged_at)
 		FROM (
 			SELECT DISTINCT ON (target_kind, target_id) *
 			FROM user_reports WHERE status = 'accepted'
@@ -311,7 +333,7 @@ func (s *PostgresStorer) ListCorrections(ctx context.Context, beforeID int64, li
 	out := []Correction{}
 	for rows.Next() {
 		var c Correction
-		if err := rows.Scan(&c.ID, &c.TargetKind, &c.PersonID, &c.PersonName, &c.TargetText,
+		if err := rows.Scan(&c.ID, &c.TargetKind, &c.PersonID, &c.PersonSlug, &c.PersonName, &c.TargetText,
 			&c.VerdictReason, &c.ReportedAt, &c.CorrectedAt); err != nil {
 			return nil, fmt.Errorf("scan correction: %w", err)
 		}

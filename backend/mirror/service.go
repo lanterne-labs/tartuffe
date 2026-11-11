@@ -20,6 +20,7 @@ import (
 type Store interface {
 	GetPersonsRankedByScore(ctx context.Context, limit int, offset int, entityType string, search string, sort string, minFacts int, candidate string) ([]storage.PersonSummary, error)
 	GetPersonByID(ctx context.Context, personID int64) (*storage.PersonSummary, error)
+	GetPersonIDBySlug(ctx context.Context, slug string) (int64, error)
 	GetPersonFacts(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedFacts, error)
 	GetPersonContradictions(ctx context.Context, personID int64, limit int, offset int) (*storage.PaginatedContradictions, error)
 	GetPersonMembers(ctx context.Context, personID int64) ([]storage.MemberInfo, error)

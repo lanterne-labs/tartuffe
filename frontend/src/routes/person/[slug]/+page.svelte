@@ -7,6 +7,7 @@
 	import type { PersonSummary, FactWithSource, ContradictionGroup, PaginatedResponse, StanceDocument, HistoryPoint, Coverage, Restatement } from '$lib/types';
 	import { realtimeManager, subscribeToPersonEvents, clearOldEvents } from '$lib/realtime';
 	import { API_BASE } from '$lib/config';
+	import { personPath } from '$lib/share';
 	import { lang, tr, pickLang, type Lang } from '$lib/i18n';
 	import { eventPaths } from '$lib/event';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
@@ -55,6 +56,7 @@
 
 	interface MemberInfo {
 		id: number;
+		slug: string;
 		name: string;
 		entity_type: string;
 		honesty_score: number;
@@ -129,7 +131,10 @@
 
 	let highlightedFactId: number | null = $state(null);
 
-	let personId = $derived(Number($page.params.id));
+	// The person of the page, by slug (/person/marine-le-pen) or by id (the
+	// links shared before the slugs; the server redirects them to the slug).
+	// The API reads both.
+	let personRef = $derived($page.params.slug);
 
 	async function loadStanceFacts(stanceId: number) {
 		stanceFactsLoading[stanceId] = true;
@@ -194,10 +199,10 @@
 
 	async function shareTarget(kind: 'stance' | 'contradiction' | 'fact', id: number): Promise<ShareTarget | null> {
 		try {
-			const res = await fetch(`${API_BASE}/api/share/${kind}/${id}?person=${personId}`);
+			const res = await fetch(`${API_BASE}/api/share/${kind}/${id}?person=${personRef}`);
 			if (!res.ok) return null;
 			const t: ShareTarget = await res.json();
-			return t.person_id === personId ? t : null;
+			return t.person_slug === personRef || String(t.person_id) === personRef ? t : null;
 		} catch (err) {
 			console.error('failed to resolve the shared item', err);
 			return null;
@@ -229,11 +234,12 @@
 
 	async function loadPerson() {
 		try {
-			const response = await fetch(`${API_BASE}/api/person/${personId}`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}`);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
 			person = await response.json();
+			if (!unsubscribe) unsubscribe = subscribeToPersonEvents(person!.id, handleRealtimeEvent);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'An error occurred';
 		}
@@ -242,7 +248,7 @@
 	async function loadFacts(page = 0) {
 		try {
 			const offset = page * factsPageSize;
-			const response = await fetch(`${API_BASE}/api/person/${personId}/facts?limit=${factsPageSize}&offset=${offset}`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}/facts?limit=${factsPageSize}&offset=${offset}`);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
@@ -309,7 +315,7 @@
 
 	async function loadMembers() {
 		try {
-			const response = await fetch(`${API_BASE}/api/person/${personId}/members`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}/members`);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
@@ -321,7 +327,7 @@
 
 	async function loadStances() {
 		try {
-			const response = await fetch(`${API_BASE}/api/person/${personId}/stances`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}/stances`);
 			if (!response.ok) {
 				throw new Error(`HTTP error! status: ${response.status}`);
 			}
@@ -365,7 +371,7 @@
 	async function loadHistory() {
 		historyError = null;
 		try {
-			const response = await fetch(`${API_BASE}/api/person/${personId}/history`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}/history`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			historyPoints = (await response.json()) ?? [];
 		} catch (err) {
@@ -376,7 +382,7 @@
 	async function loadCoverage() {
 		coverageError = null;
 		try {
-			const response = await fetch(`${API_BASE}/api/person/${personId}/coverage`);
+			const response = await fetch(`${API_BASE}/api/person/${personRef}/coverage`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			coverage = await response.json();
 		} catch (err) {
@@ -472,7 +478,6 @@
 	onMount(() => {
 		loadData();
 		realtimeManager.connect();
-		unsubscribe = subscribeToPersonEvents(personId, handleRealtimeEvent);
 	});
 
 	onDestroy(() => {
@@ -561,7 +566,7 @@
 				</div>
 			</div>
 			<div class="hero-gauge">
-				<ShareMenu label item={{ kind: 'person', id: person.id, personId: person.id, personName: person.name, score: scored ? person.honesty_score : undefined }} />
+				<ShareMenu label item={{ kind: 'person', id: person.id, personSlug: person.slug, personName: person.name, score: scored ? person.honesty_score : undefined }} />
 			</div>
 			{#if person.candidate && person.entity_type === 'human'}
 				<!-- A candidate's page leads to the vote: its presentation first. -->
@@ -589,7 +594,7 @@
 				{#if membersExpanded}
 					<div class="members-grid">
 						{#each members as member (member.id)}
-							<a href="/person/{member.id}" class="member-chip">
+							<a href={personPath(member.slug)} class="member-chip">
 								<TartuffeScore honesty={member.honesty_score} lang={currentLang} size="xs" image={member.image_url} initial={member.name.charAt(0).toUpperCase()} />
 								<span class="member-name">{member.name}</span>
 							</a>
@@ -700,7 +705,7 @@
 											{#if !hasContradictions}
 												<span class="no-contradictions-chip">{tr('person.no_contradictions_chip', currentLang)}</span>
 											{/if}
-											<ShareMenu item={{ kind: 'stance', id: stance.id, personId: person.id, personName: person.name, topic }} />
+											<ShareMenu item={{ kind: 'stance', id: stance.id, personSlug: person.slug, personName: person.name, topic }} />
 										</div>
 									</div>
 									<div class="stance-gauge">
@@ -735,7 +740,7 @@
 											{#each items.slice(0, shown) as g (g.base_fact_id)}
 												<ContradictionGroupCard
 													{g}
-													person={{ id: person.id, name: person.name }}
+													person={{ slug: person.slug, name: person.name }}
 													{topic}
 													onGoToFact={(id) => goToFact(id, stance.id)}
 													highlight={highlightContradiction}
@@ -784,7 +789,7 @@
 														<FactVersions sourceUrls={[f.source_url]} restatements={f.restatements ?? []} lang={currentLang} />
 														<div class="fact-actions">
 															<LikeButton kind="fact" targetId={f.fact_id} bind:likes={stanceFacts[stance.id][i].likes} bind:liked={stanceFacts[stance.id][i].liked} />
-															<ShareMenu item={{ kind: 'fact', id: f.fact_id, personId: person.id, personName: person.name, topic, text: pickFactText(f) }} />
+															<ShareMenu item={{ kind: 'fact', id: f.fact_id, personSlug: person.slug, personName: person.name, topic, text: pickFactText(f) }} />
 															<ReportButton kind="fact" targetId={f.fact_id} preview={f.fact_text} />
 														</div>
 													</div>

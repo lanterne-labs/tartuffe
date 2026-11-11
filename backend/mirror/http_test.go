@@ -49,16 +49,27 @@ func TestGetPersons_MinFactsFloorAndPagination(t *testing.T) {
 
 func TestGetPersonMembers(t *testing.T) {
 	img := "https://img/x.png"
-	fs := &fakeStore{members: []storage.MemberInfo{{ID: 3, Name: "Dep", EntityType: "human", HonestyScore: 0.5, ImageURL: &img}}}
+	fs := &fakeStore{
+		members: []storage.MemberInfo{{ID: 3, Slug: "dep", Name: "Dep", EntityType: "human", HonestyScore: 0.5, ImageURL: &img}},
+		slugs:   map[string]int64{"la-parti": 1},
+	}
 	h := routerFor(fs)
 
 	rec := get(t, h, "/api/person/1/members")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
-	assert.JSONEq(t, `[{"id":3,"name":"Dep","entity_type":"human","honesty_score":0.5,"image_url":"https://img/x.png"}]`, rec.Body.String())
+	assert.JSONEq(t, `[{"id":3,"slug":"dep","name":"Dep","entity_type":"human","honesty_score":0.5,"image_url":"https://img/x.png"}]`, rec.Body.String())
 
-	rec = get(t, h, "/api/person/abc/members")
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	// A person is named by id or by slug.
+	rec = get(t, h, "/api/person/la-parti/members")
+	require.Equal(t, http.StatusOK, rec.Code, "by slug")
+	assert.JSONEq(t, `[{"id":3,"slug":"dep","name":"Dep","entity_type":"human","honesty_score":0.5,"image_url":"https://img/x.png"}]`, rec.Body.String())
+
+	rec = get(t, h, "/api/person/nobody/members")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "an unknown slug")
+
+	rec = get(t, h, "/api/person/Abc!/members")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "neither an id nor a slug")
 
 	fs.membersErr = errors.New("boom")
 	rec = get(t, h, "/api/person/1/members")

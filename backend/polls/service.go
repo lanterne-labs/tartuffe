@@ -44,11 +44,13 @@ func (s *Service) Cards(ctx context.Context, ids []int64) (map[int64]Card, error
 // Option is one option of an event as the site lists it: a candidate with
 // their card, or the blank.
 type Option struct {
-	Kind     string  `json:"kind"`
-	PersonID int64   `json:"person_id,omitempty"`
-	Name     string  `json:"name"`
-	ImageURL *string `json:"image_url,omitempty"`
-	Honesty  float64 `json:"honesty_score"`
+	Kind     string `json:"kind"`
+	PersonID int64  `json:"person_id,omitempty"`
+	// PersonSlug names the candidate's page on the site (/person/<slug>).
+	PersonSlug string  `json:"person_slug,omitempty"`
+	Name       string  `json:"name"`
+	ImageURL   *string `json:"image_url,omitempty"`
+	Honesty    float64 `json:"honesty_score"`
 }
 
 // Options lists an event's candidates, by name, then the blank: the order
@@ -65,7 +67,7 @@ func (s *Service) Options(ctx context.Context, e *Event) ([]Option, error) {
 	out := make([]Option, 0, len(ids)+1)
 	for _, id := range ids {
 		c := cards[id]
-		out = append(out, Option{Kind: "candidate", PersonID: id, Name: c.Name, ImageURL: c.ImageURL, Honesty: c.HonestyScore})
+		out = append(out, Option{Kind: "candidate", PersonID: id, PersonSlug: c.Slug, Name: c.Name, ImageURL: c.ImageURL, Honesty: c.HonestyScore})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return append(out, Option{Kind: "blank"}), nil
