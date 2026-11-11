@@ -621,6 +621,9 @@ func profileRouting(profile string) (*Routing, error) {
 		for _, task := range claudeTeamOpusTasks {
 			r.Tasks[task] = Route{Endpoint: EndpointClaudeTeam, Model: claudeTeamOpusModel, Effort: claudeEffort(task)}
 		}
+		// The X bot's tweets are public writing under our name: Opus at
+		// effort high, for two calls a day.
+		r.Tasks[TaskTweet] = Route{Endpoint: EndpointClaudeTeam, Model: claudeTeamOpusModel, Effort: EffortHigh}
 		if strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")) == "" {
 			log.Info().Msg("LLM_PROFILE claude-team: ANTHROPIC_API_KEY is not set; the seat has no overflow to the API")
 			return r, nil
