@@ -257,11 +257,13 @@ export interface ScoreExplanation {
 	pairs: number;
 	extras: number;
 	denominator: number;
-	min_facts: number;
-	reference_facts: number;
-	facts_weight: number;
-	absolute_decay: number;
-	extra_decay: number;
+	weighted: number;
+	expected: number;
+	excess: number;
+	smoothing: number;
+	decay: number;
+	extra_weight: number;
+	rate: number;
 	own_score: number;
 	members_score?: number | null;
 	members: number;

@@ -259,13 +259,14 @@ type StanceResponse struct {
 // contradictions table), so a stance with N contradictions scores here as one
 // inconsistency plus N-1 repetition extras rather than as N bundles. This
 // divergence is deliberate for now; changing it must go with a review of the
-// person formula.
+// person formula. The rate is 0: the few facts of a stance expect no
+// contradiction to speak of, so the count alone decides.
 func stanceScore(factCount, contradictionTotal int) float64 {
 	bundles := 0
 	if contradictionTotal > 0 {
 		bundles = 1
 	}
-	return core.ComputeHonestyScore(factCount, core.ContradictionStats{Bundles: bundles, Total: contradictionTotal})
+	return core.ComputeHonestyScore(factCount, core.ContradictionStats{Bundles: bundles, Total: contradictionTotal}, 0)
 }
 
 // handleGetStanceFacts returns all facts attached to a stance, with both native and

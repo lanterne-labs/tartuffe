@@ -113,7 +113,13 @@ func (s *PostgresStorer) GetPersonHistory(ctx context.Context, personID int64) (
 	if err != nil {
 		return nil, err
 	}
-	points := buildPersonHistory(events, now)
+	// The whole series is read at today's rate: a past week shows what the
+	// record of then scores now.
+	rate, err := scoreRate(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	points := buildPersonHistory(events, now, rate)
 	s.historyCache.put(personID, fp, now, points)
 	log.Debug().Int64("person_id", personID).Int("events", len(events)).Msg("person history recomputed")
 	return points, nil
@@ -198,7 +204,7 @@ func weekStart(t time.Time) time.Time {
 // buildPersonHistory replays events (any order) into weekly points from the first event's
 // week (bounded by personHistoryMaxSpan) to now's week. Future-dated events are clamped
 // to now; events before the span start fold into the first point.
-func buildPersonHistory(events []historyEvent, now time.Time) []HistoryPoint {
+func buildPersonHistory(events []historyEvent, now time.Time, rate float64) []HistoryPoint {
 	if len(events) == 0 {
 		return []HistoryPoint{}
 	}
@@ -263,8 +269,8 @@ func buildPersonHistory(events []historyEvent, now time.Time) []HistoryPoint {
 			FactsAdded:     added,
 			FactsTotal:     factsTotal,
 			Contradictions: cumulTotal,
-			Score:          core.ComputeHonestyScore(factsTotal, core.ContradictionStats{Bundles: len(cumulBundles), Total: cumulTotal}),
-			RecentScore:    core.ComputeHonestyScore(windowFacts, core.ContradictionStats{Bundles: len(windowBundles), Total: windowTotal}),
+			Score:          core.ComputeHonestyScore(factsTotal, core.ContradictionStats{Bundles: len(cumulBundles), Total: cumulTotal}, rate),
+			RecentScore:    core.ComputeHonestyScore(windowFacts, core.ContradictionStats{Bundles: len(windowBundles), Total: windowTotal}, rate),
 		})
 	}
 	return points

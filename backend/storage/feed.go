@@ -235,6 +235,10 @@ func (s *PostgresStorer) feedScoreEffects(ctx context.Context, items []FeedItem)
 		stats   core.ContradictionStats
 		members *float64
 	}
+	rate, err := scoreRate(ctx, tx)
+	if err != nil {
+		return err
+	}
 	byPerson := map[int64]*inputs{}
 	for i := range items {
 		id := items[i].Person.ID
@@ -266,8 +270,8 @@ func (s *PostgresStorer) feedScoreEffects(ctx context.Context, items []FeedItem)
 			}
 			without.facts--
 		}
-		now := core.ComputeAggregateScore(core.ComputeHonestyScore(in.facts, in.stats), in.members)
-		before := core.ComputeAggregateScore(core.ComputeHonestyScore(without.facts, without.stats), without.members)
+		now := core.ComputeAggregateScore(core.ComputeHonestyScore(in.facts, in.stats, rate), in.members)
+		before := core.ComputeAggregateScore(core.ComputeHonestyScore(without.facts, without.stats, rate), without.members)
 		if before <= 0 {
 			continue
 		}
@@ -429,9 +433,9 @@ func (s *PostgresStorer) feedFacts(ctx context.Context, f FeedFilter, q feedQuer
 // ShareTarget is what a shared link points at: the person, and the stance to
 // open on their page, with the text of the preview.
 type ShareTarget struct {
-	Kind         string  `json:"kind"`
-	ID           int64   `json:"id"`
-	PersonID int64 `json:"person_id"`
+	Kind     string `json:"kind"`
+	ID       int64  `json:"id"`
+	PersonID int64  `json:"person_id"`
 	// PersonSlug names the person's page (/person/<slug>).
 	PersonSlug   string  `json:"person_slug"`
 	PersonName   string  `json:"person_name"`
@@ -550,15 +554,16 @@ type ScoreExplanation struct {
 	Bundles int `json:"bundles"`
 	Pairs   int `json:"pairs"`
 	Extras  int `json:"extras"`
-	// Denominator is max(Facts, MinFacts); FactsWeight what the facts make
-	// of a contradiction's weight, sqrt(ReferenceFacts / Denominator)
-	// (core.HonestyFactsWeight).
-	Denominator    int     `json:"denominator"`
-	MinFacts       int     `json:"min_facts"`
-	ReferenceFacts int     `json:"reference_facts"`
-	FactsWeight    float64 `json:"facts_weight"`
-	AbsoluteDecay  float64 `json:"absolute_decay"`
-	ExtraDecay     float64 `json:"extra_decay"`
+	// Weighted is Bundles plus ExtraWeight × ln(1 + Extras); Expected the
+	// contradictions the facts would hold at Rate (below); Excess is
+	// Weighted / (Expected + Smoothing), and the score exp(−Decay × Excess)
+	// (core.HonestyExcess).
+	Weighted    float64 `json:"weighted"`
+	Expected    float64 `json:"expected"`
+	Excess      float64 `json:"excess"`
+	Smoothing   float64 `json:"smoothing"`
+	Decay       float64 `json:"decay"`
+	ExtraWeight float64 `json:"extra_weight"`
 	// OwnScore is the score of the person's own facts; MembersScore the
 	// average of a party's members (nil for a person); Score the one shown.
 	OwnScore     float64  `json:"own_score"`
@@ -585,9 +590,11 @@ func (s *PostgresStorer) GetScoreExplanation(ctx context.Context, personID int64
 	}
 	defer tx.Rollback(ctx)
 	e := ScoreExplanation{
-		PersonID: personID, MinFacts: core.HonestyScoreMinFacts,
-		ReferenceFacts: core.HonestyScoreReferenceFacts, AbsoluteDecay: core.HonestyScoreAbsoluteDecay,
-		ExtraDecay: core.HonestyScoreBundleExtraDecay,
+		PersonID: personID, Smoothing: core.HonestyScoreSmoothing,
+		Decay: core.HonestyScoreDecay, ExtraWeight: core.HonestyScoreExtraWeight,
+	}
+	if e.Rate, err = scoreRate(ctx, tx); err != nil {
+		return nil, err
 	}
 	var entityType *string
 	if err := tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType); err != nil {
@@ -604,9 +611,9 @@ func (s *PostgresStorer) GetScoreExplanation(ctx context.Context, personID int64
 		return nil, err
 	}
 	e.Bundles, e.Pairs, e.Extras = stats.Bundles, stats.Total, max(0, stats.Total-stats.Bundles)
-	e.Denominator = max(e.Facts, core.HonestyScoreMinFacts)
-	e.FactsWeight = core.HonestyFactsWeight(e.Facts)
-	e.OwnScore = core.ComputeHonestyScore(e.Facts, stats)
+	e.Weighted, e.Expected = stats.Weighted(), e.Rate*float64(e.Facts)
+	e.Excess = core.HonestyExcess(e.Facts, stats, e.Rate)
+	e.OwnScore = core.ComputeHonestyScore(e.Facts, stats, e.Rate)
 	if e.EntityType != "" && e.EntityType != "human" {
 		if err := tx.QueryRow(ctx, `
 			SELECT COUNT(DISTINCT pl.src_person_id) FROM person_links pl

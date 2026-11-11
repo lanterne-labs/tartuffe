@@ -9,7 +9,7 @@
 	import ContradictionFlow from '$lib/components/about/ContradictionFlow.svelte';
 	import BundleDiagram from '$lib/components/about/BundleDiagram.svelte';
 	import ScoreExplorer from '$lib/components/about/ScoreExplorer.svelte';
-	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_FACTS, REFERENCE_FACTS, formatConstant } from '$lib/score';
+	import { DECAY, EXTRA_WEIGHT, SMOOTHING, formatConstant } from '$lib/score';
 	import BrandMark from '$lib/components/BrandMark.svelte';
 	import { onMount } from 'svelte';
 
@@ -82,20 +82,21 @@
 
 			scoreKicker: 'Le Tartuffe-Score',
 			scoreTitle: 'De cohérent à tartuffe',
-			scoreLead: 'On part de 0, tout à gauche du baromètre. Chaque contradiction distincte pousse le repère vers « tartuffe », d’autant moins que l’on connaît de faits : qui parle beaucoup finit par se contredire un peu, mais assez de contradictions finissent toujours par se voir.',
+			scoreLead: 'On part de 0, tout à gauche du baromètre. Chaque contradiction distincte pousse le repère vers « tartuffe ». Qui parle beaucoup finit par se contredire un peu : les contradictions d’une personne sont donc comparées à celles que l’on attendrait de ses faits, au taux moyen des candidats.',
 			formulaLabel: 'La formule',
 			defs: [
-				['F', 'le nombre de faits connus sur la personne'],
 				['B', 'le nombre de contradictions distinctes : les paires d’un même sujet forment un « lot » et ne comptent qu’une fois'],
-				['E', 'les paires en plus à l’intérieur des lots (nombre total de paires − B), qui pèsent très peu']
+				['E', 'les paires en plus à l’intérieur des lots (nombre total de paires − B), qui pèsent très peu'],
+				['A', 'les contradictions attendues : le nombre de faits connus sur la personne × le taux moyen des candidats (leurs contradictions distinctes divisées par leurs faits, mesuré en continu)']
 			],
 			bundleNote:
 				'Trois faits qui se contredisent sur les retraites forment trois paires, mais un seul lot : on ne compte pas trois fois le même revirement.',
 			rules: [
 				['< 10', 'faits : pas de repère, il n’y a pas encore assez à juger.'],
-				['≈ 9', 'pour une seule contradiction parmi 3 000 faits ; 7 parmi 5 000, 14 parmi 1 000. Quatre fois plus de faits, et chaque contradiction pèse moitié moins.'],
-				['🚧', 'score en cours de consolidation : la détection manque des contradictions bien plus qu’elle n’en invente, donc un score est bien plus souvent trop bas que trop haut. Un score compte dans les classements quand la personne a assez de faits pour qu’une feuille blanche veuille dire quelque chose (le seuil suit la moyenne des candidats), ou dès qu’il dépasse le plus bas score d’un candidat qui y est déjà : plus de faits y ajoutent d’ordinaire des contradictions.'],
-				['500', 'faits au minimum dans le calcul : une contradiction parmi très peu de faits ne fait pas bondir le score (20 au plus).'],
+				['≤ 18', 'pour une seule contradiction : 18 avec peu de faits, moins à mesure que l’on en connaît davantage.'],
+				['≈ 45', 'pour qui se contredit autant que la moyenne des candidats, une fois beaucoup de faits connus ; 70 pour le double de la moyenne. Plus de faits avec le même taux de contradictions ne changent pas le score.'],
+				['🚧', 'score en cours de consolidation : la détection manque des contradictions bien plus qu’elle n’en invente, donc un score est bien plus souvent trop bas que trop haut. Un score compte dans les classements quand la personne a assez de faits pour qu’une feuille blanche veuille dire quelque chose (le seuil suit la moyenne des candidats), ou dès qu’il dépasse le plus bas score d’un candidat qui y est déjà : avec si peu de faits c’est le nombre de ses contradictions qui l’y a mis, et plus de faits en apportent d’autres.'],
+				['+ 3', 'contradictions ajoutées aux attendues : avec peu de faits on n’en attend presque aucune, et c’est alors leur nombre qui compte, pas leur taux.'],
 				['½ + ½', 'pour un parti : la moitié vient de son propre score, l’autre moitié de la moyenne de ses membres.']
 			],
 			tryTitle: 'Essayez',
@@ -164,20 +165,21 @@
 
 			scoreKicker: 'The Tartuffe-Score',
 			scoreTitle: 'From coherent to tartuffe',
-			scoreLead: 'It starts at 0, at the left end of the barometer. Each distinct contradiction pushes the marker towards “tartuffe”, the less so the more facts we know: whoever speaks a lot ends up contradicting themselves a little, but enough contradictions always end up showing.',
+			scoreLead: 'It starts at 0, at the left end of the barometer. Each distinct contradiction pushes the marker towards “tartuffe”. Whoever speaks a lot ends up contradicting themselves a little: so a person’s contradictions are compared with those expected of their facts, at the candidates’ average rate.',
 			formulaLabel: 'The formula',
 			defs: [
-				['F', 'the number of known facts about the person'],
 				['B', 'the number of distinct contradictions: the pairs on one topic form a “bundle” and count once'],
-				['E', 'the extra pairs inside bundles (total pairs − B), which weigh very little']
+				['E', 'the extra pairs inside bundles (total pairs − B), which weigh very little'],
+				['A', 'the expected contradictions: the number of known facts about the person × the candidates’ average rate (their distinct contradictions divided by their facts, measured continuously)']
 			],
 			bundleNote:
 				'Three facts that contradict each other on pensions form three pairs, but a single bundle: the same U-turn is not counted three times.',
 			rules: [
 				['< 10', 'facts: no marker, not enough to judge yet.'],
-				['≈ 9', 'with one contradiction among 3,000 facts; 7 among 5,000, 14 among 1,000. Four times the facts, and each contradiction weighs half as much.'],
-				['🚧', 'score being consolidated: detection misses contradictions far more than it invents them, so a score is far more often too low than too high. A score counts in the rankings once the person has enough facts for a clean sheet to mean something (the threshold follows the candidates’ average), or as soon as it passes the lowest score of a candidate already ranked: more facts usually bring more contradictions.'],
-				['500', 'facts at least in the computation: one contradiction among very few facts does not send the score soaring (20 at most).'],
+				['≤ 18', 'with one contradiction: 18 with few facts, less as more of them are known.'],
+				['≈ 45', 'for someone who contradicts themselves as much as the candidates’ average, once many facts are known; 70 at twice the average. More facts at the same rate of contradictions do not change the score.'],
+				['🚧', 'score being consolidated: detection misses contradictions far more than it invents them, so a score is far more often too low than too high. A score counts in the rankings once the person has enough facts for a clean sheet to mean something (the threshold follows the candidates’ average), or as soon as it passes the lowest score of a candidate already ranked: with so few facts it is the count of their contradictions that put them there, and more facts bring more.'],
+				['+ 3', 'contradictions added to the expected ones: with few facts almost none is expected, and their count then decides, not their rate.'],
 				['½ + ½', 'for a party: half comes from its own score, half from the average of its members.']
 			],
 			tryTitle: 'Try it',
@@ -278,9 +280,9 @@
 		<div class="formula-box">
 			<span class="formula-label">{c.formulaLabel}</span>
 			<p class="formula">
-				<span class="fx">Tartuffe-Score</span> = 100 × (1 − exp( −√(
-				<span class="frac"><span>{REFERENCE_FACTS.toLocaleString(currentLang)}</span><span>max(<b>F</b>, {MIN_FACTS})</span></span>
-				) × ({formatConstant(ABSOLUTE_DECAY, currentLang)} × <b>B</b> + {formatConstant(EXTRA_DECAY, currentLang)} × ln(1 + <b>E</b>)) ))
+				<span class="fx">Tartuffe-Score</span> = 100 × (1 − exp( −{formatConstant(DECAY, currentLang)} ×
+				<span class="frac"><span><b>B</b> + {formatConstant(EXTRA_WEIGHT, currentLang)} × ln(1 + <b>E</b>)</span><span><b>A</b> + {SMOOTHING}</span></span>
+				))
 			</p>
 			<dl class="defs">
 				{#each c.defs as [k, v]}

@@ -1230,7 +1230,11 @@ func (s *PostgresStorer) recomputeScoreAfterFactDeletion(ctx context.Context, tx
 	if err != nil {
 		return err
 	}
-	ownScore := core.ComputeHonestyScore(factsCount, stats)
+	rate, err := scoreRate(ctx, tx)
+	if err != nil {
+		return err
+	}
+	ownScore := core.ComputeHonestyScore(factsCount, stats, rate)
 
 	var entityType *string
 	if err := tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType); err != nil {

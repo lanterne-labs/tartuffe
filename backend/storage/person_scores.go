@@ -61,6 +61,10 @@ func (s *PostgresStorer) refreshPersonScores(ctx context.Context, tx pgx.Tx, per
 		) cc ON cc.person_id = p.id
 		WHERE p.id = ANY($1)`
 
+	rate, err := scoreRate(ctx, tx)
+	if err != nil {
+		return err
+	}
 	rows, err := tx.Query(ctx, inputs, personIDs)
 	if err != nil {
 		return fmt.Errorf("query score inputs for %d persons: %w", len(personIDs), err)
@@ -77,7 +81,7 @@ func (s *PostgresStorer) refreshPersonScores(ctx context.Context, tx pgx.Tx, per
 			return fmt.Errorf("scan score inputs: %w", err)
 		}
 		ids = append(ids, id)
-		owns = append(owns, core.ComputeHonestyScore(facts, stats))
+		owns = append(owns, core.ComputeHonestyScore(facts, stats, rate))
 		counts = append(counts, facts)
 	}
 	rows.Close()

@@ -881,8 +881,8 @@ func TestStanceBundledContradictions(t *testing.T) {
 	// Score sanity: bundled (3 bundles, 5 total) must beat the legacy flat (5 bundles, 5 total).
 	factsCount, err := storer.getPersonFactsCount(ctx, tx, personID)
 	require.NoError(t, err)
-	bundled := core.ComputeHonestyScore(factsCount, stats)
-	flat := core.ComputeHonestyScore(factsCount, core.ContradictionStats{Bundles: 5, Total: 5})
+	bundled := core.ComputeHonestyScore(factsCount, stats, 0)
+	flat := core.ComputeHonestyScore(factsCount, core.ContradictionStats{Bundles: 5, Total: 5}, 0)
 	assert.Greater(t, bundled, flat, "bundling should improve the score vs. counting each pair")
 
 	// GetPersonContradictions: bundle fields populated and bundle_size accurate.

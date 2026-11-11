@@ -218,9 +218,11 @@ func TestFeed(t *testing.T) {
 
 	c := all[2]
 	// The contradiction costs its person's score today; a fact among so few
-	// does not move it (the formula counts at least 500 facts).
+	// does not move it (three facts expect no contradiction to speak of).
 	require.NotNil(t, c.ScoreEffect)
-	want := 100 * (core.ComputeHonestyScore(3, core.ContradictionStats{Bundles: 1, Total: 1}) - 1)
+	rate, err := storer.ScoreRate(ctx)
+	require.NoError(t, err)
+	want := 100 * (core.ComputeHonestyScore(3, core.ContradictionStats{Bundles: 1, Total: 1}, rate) - 1)
 	assert.InDelta(t, want, *c.ScoreEffect, 1e-9)
 	assert.Less(t, *c.ScoreEffect, -1.0)
 	assert.Nil(t, all[0].ScoreEffect)
@@ -360,7 +362,9 @@ func TestShareTargetAndScore(t *testing.T) {
 	assert.Equal(t, 3, e.Facts)
 	assert.Equal(t, 1, e.Bundles)
 	assert.Equal(t, 1, e.Pairs)
-	assert.Equal(t, core.HonestyScoreMinFacts, e.Denominator)
+	assert.InDelta(t, 1.0, e.Weighted, 1e-12)
+	assert.InDelta(t, e.Rate*3, e.Expected, 1e-12)
+	assert.InDelta(t, e.Weighted/(e.Expected+core.HonestyScoreSmoothing), e.Excess, 1e-12)
 	var stored float64
 	require.NoError(t, storer.pool.QueryRow(ctx, `SELECT honesty_score FROM persons WHERE id = $1`, f.person).Scan(&stored))
 	assert.InDelta(t, stored, e.Score, 1e-9, "the explanation computes the score shown")

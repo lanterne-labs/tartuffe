@@ -2,18 +2,25 @@
 
 This file tracks high-level changes to the codebase, lessons learned, and mistakes to avoid.
 
-## 2026-11-11: The score weighs a contradiction by the square root of the facts
+## 2026-11-11: The score compares the contradictions with those expected of the facts
 
-The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the candidates go from 1 000 to 4 600 facts. The rate alone (B/F) would err the other way: it forgives anything to who speaks enough, and two contradictions among 40 facts would read as fifty among 1 000.
+The formula `exp(-1.5·B/max(F,75) - 0.09·B - 0.125·ln(1+E))` counted the contradictions and nothing else once a person had a few hundred facts: 15 contradictions read 76 among 300 facts, 75 among 1 000 and 74 among 5 000. But whoever speaks a lot ends up contradicting themselves a little, and the facts are meant to grow fast.
 
-Now `exp(-√(3000/max(F,500)) · (0.09·B + 0.125·ln(1+E)))` (`core.HonestyFactsWeight`, `frontend/src/lib/score.ts`): the penalty is the geometric mean of the two readings, `B/√F`. A contradiction keeps its 9 points at 3 000 facts (about the candidates' median), costs 7 at 5 000, 14 at 1 000 and at most 20 (500 facts and under: a small sample tells no rate); 4 times the facts halve it. 15 contradictions read 96 among 300 facts, 90 among 1 000, 74 among 3 000, 52 among 10 000. The old ratio term and its floor of 75 are gone (the weight holds what they did). The weight applies to the repeats too, so the bundling inequality (`a < j / ln 2`) is unchanged.
+Now `exp(-0.6 · (B + 1.4·ln(1+E)) / (r·F + 3))` (`core.HonestyExcess`, `frontend/src/lib/score.ts`): the contradictions of a person against those expected of their facts at `r`, the candidates' contradictions per fact (`storage.ScoreRate`, 0.78 per 1 000 facts today; the rate the reliability baseline already measured). The 3 is the expectation from which a person is covered (`ScoreReliableExpected`):
+- with few facts (`r·F` small beside 3) the count decides: one contradiction costs 18 points at most, and enough of them show incoherence whatever was said;
+- with many facts the rate against the average decides: 45 at the candidates' average, 70 at twice;
+- no constant counts facts: ten times the facts and the contradictions of everyone leave the scores where they are.
 
-On the candidates (2026-11-11, before → after): Bardella 55 → 48, Retailleau 51 → 45, Le Pen 48 → 41, Zemmour 36 → 39, Glucksmann 30 → 33, Attal 30 → 27, Ruffin 16 → 18, Mélenchon 17 → 14, Bertrand 9 → 14. Zemmour (4 contradictions among 2 524 facts) now reads above Attal (4 among 3 910).
+15 contradictions read 94 among 300 facts, 91 among 1 000, 73 among 5 000, 38 among 20 000. On the candidates (before → after): Bardella 55 → 56, Retailleau 51 → 53, Le Pen 48 → 49, Zemmour 36 → 45, Glucksmann 30 → 39, Attal 30 → 33, Ruffin 16 → 22, Mélenchon 17 → 17, Bertrand 9 → 14. Zemmour (4 contradictions among 2 524 facts) now reads above Attal (4 among 3 910).
+
+A first version weighed each contradiction by `√(3000/F)`: it needed a number of facts as its unit, and since the count grows faster than the root, every score climbed to 100 as the facts grew. Rejected for that.
 
 What follows from it:
-- A stance's score uses the same function with the stance's facts, always under the floor: a contradicted stance reads 20 instead of 10, with three pairs 43 instead of 22.
-- "A score can only be too low" was exact when only contradictions moved a score; a fact without one now lowers the Tartuffe-Score a little. The reliability rule is kept (more facts bring contradictions faster than the root lightens them, so a thin score above a covered one still goes up on average); the about page says "far more often too low than too high".
-- `GET /api/person/{id}/score` gives `min_facts`, `reference_facts` and `facts_weight` in place of `min_denominator` and `ratio_decay`.
+- A score depends on the others: when a candidate gains a contradiction the rate moves, and everyone's score with it. The scores written at an insertion use the rate of the moment (read in the same transaction); the maintenance pass ends by writing every stored score again (`RecomputeAllHonestyScores`).
+- A stance's score is computed at rate 0 (its few facts expect nothing): a contradicted stance reads 18 instead of 10, with three pairs 40 instead of 22.
+- The history curve of a person is read at today's rate.
+- "A score can only be too low" was exact when only contradictions moved a score; a fact without one now lowers the Tartuffe-Score a little. The reliability rule is kept; the about page says "far more often too low than too high".
+- `GET /api/person/{id}/score` gives `weighted`, `expected`, `excess`, `smoothing`, `decay`, `extra_weight` in place of the old terms. The about page's explorer reads today's rate from the API (`covered_facts`).
 - After the deploy, `dm scores recompute` on production rewrites the stored `persons.honesty_score`.
 
 ## 2026-11-11: A denial made before the conviction is not a contradiction

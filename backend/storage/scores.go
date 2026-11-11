@@ -24,7 +24,11 @@ func (s *PostgresStorer) recomputeHonestyScoreAndEmitEvents(ctx context.Context,
 		return fmt.Errorf("failed to get contradiction stats for person %d: %w", personID, err)
 	}
 
-	ownScore := core.ComputeHonestyScore(factsCount, stats)
+	rate, err := scoreRate(ctx, tx)
+	if err != nil {
+		return err
+	}
+	ownScore := core.ComputeHonestyScore(factsCount, stats, rate)
 
 	// Check entity type to determine if we need members_score
 	var entityType *string
@@ -298,6 +302,10 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 		) cc ON cc.person_id = p.id
 		ORDER BY p.id`
 
+	rate, err := scoreRate(ctx, s.pool)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query persons for score recompute: %w", err)
@@ -310,7 +318,7 @@ func (s *PostgresStorer) RecomputeAllHonestyScores(ctx context.Context, dryRun b
 		if err := rows.Scan(&u.PersonID, &u.PersonName, &u.EntityType, &u.OldScore, &u.Facts, &u.Bundles, &u.Total); err != nil {
 			return nil, fmt.Errorf("failed to scan person row: %w", err)
 		}
-		u.OwnScore = core.ComputeHonestyScore(u.Facts, core.ContradictionStats{Bundles: u.Bundles, Total: u.Total})
+		u.OwnScore = core.ComputeHonestyScore(u.Facts, core.ContradictionStats{Bundles: u.Bundles, Total: u.Total}, rate)
 		u.NewScore = u.OwnScore // default for humans
 		updates = append(updates, u)
 	}

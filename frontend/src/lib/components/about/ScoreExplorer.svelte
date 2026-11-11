@@ -3,27 +3,45 @@
 	// of distinct contradictions (B), of facts (F) and of extra pairs inside
 	// the bundles (E), and sees the score, its barometer and its curve over
 	// B change live. The formula and its constants are those of $lib/score
-	// (backend/core/honesty.go): Tartuffe-Score = 100 · (1 − honesty).
+	// (backend/core/honesty.go): Tartuffe-Score = 100 · (1 − honesty). The
+	// candidates' average rate is today's, read from the API.
 	import type { Lang } from '$lib/i18n';
 	import TartuffeScore from '$lib/components/TartuffeScore.svelte';
-	import { ABSOLUTE_DECAY, EXTRA_DECAY, MIN_FACTS, REFERENCE_FACTS, formatConstant, scoreTerms } from '$lib/score';
+	import { onMount } from 'svelte';
+	import { API_BASE } from '$lib/config';
+	import { DECAY, DEFAULT_RATE, EXTRA_WEIGHT, SMOOTHING, formatConstant, rateFromCovered, scoreTerms } from '$lib/score';
 
 	let { lang }: { lang: Lang } = $props();
 
-	const FLOOR = MIN_FACTS;
 	const B_MAX = 40;
-	const factOptions = [FLOOR, REFERENCE_FACTS, 10000];
+	const FEW = 500;
+	const factOptions = [FEW, 5000, 20000];
 
-	function score(b: number, f: number, e: number): number {
+	// The candidates' contradictions per fact: every person carries the facts
+	// from which one is covered (SMOOTHING contradictions expected).
+	let rate = $state(DEFAULT_RATE);
+	onMount(async () => {
+		try {
+			const res = await fetch(`${API_BASE}/api/persons?candidate=true&limit=1`);
+			if (!res.ok) return;
+			const persons: { covered_facts?: number }[] = await res.json();
+			rate = rateFromCovered(persons[0]?.covered_facts);
+		} catch (err) {
+			console.warn('score explorer: the candidates\' rate was not read, the default stays', err);
+		}
+	});
+
+	function score(b: number, f: number, e: number, r: number): number {
 		if (f <= 0) return 0;
-		return 100 * (1 - scoreTerms({ facts: f, bundles: b, pairs: b + e }).score);
+		return 100 * (1 - scoreTerms({ facts: f, bundles: b, pairs: b + e }, r).score);
 	}
 
 	let b = $state(1);
-	let f = $state(REFERENCE_FACTS);
+	let f = $state(5000);
 	let e = $state(0);
 
-	let value = $derived(score(b, f, e));
+	let value = $derived(score(b, f, e, rate));
+	let expected = $derived(rate * f);
 	let shown = $derived(Math.round(value));
 
 	// Chart geometry (viewBox units).
@@ -36,17 +54,17 @@
 	const x = (v: number) => L + (v / B_MAX) * (W - L - R);
 	const y = (v: number) => T + (1 - v / 100) * (H - T - Bm);
 
-	function curve(fv: number, ev: number): string {
+	function curve(fv: number, ev: number, r: number): string {
 		let d = '';
 		for (let i = 0; i <= B_MAX; i += 0.5) {
-			d += `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(score(i, fv, ev)).toFixed(1)}`;
+			d += `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(score(i, fv, ev, r)).toFixed(1)}`;
 		}
 		return d;
 	}
 
-	let mainPath = $derived(curve(f, e));
+	let mainPath = $derived(curve(f, e, rate));
 	let areaPath = $derived(`${mainPath}L${x(B_MAX)},${y(0)}L${x(0)},${y(0)}Z`);
-	let ghosts = $derived(factOptions.filter((o) => o !== f).map((o) => ({ f: o, d: curve(o, e) })));
+	let ghosts = $derived(factOptions.filter((o) => o !== f).map((o) => ({ f: o, d: curve(o, e, rate) })));
 
 	let tone = $derived(value < 20 ? 'var(--green)' : value < 50 ? 'var(--amber)' : 'var(--red)');
 
@@ -55,27 +73,28 @@
 			contradictions: 'Contradictions distinctes (B)',
 			facts: 'Faits connus (F)',
 			extra: 'Paires en plus dans les mêmes lots (E)',
-			floor: `≤ ${FLOOR}`,
 			score: 'Tartuffe-Score',
 			axisX: 'contradictions distinctes',
-			few: 'Avec peu de faits, chaque contradiction pèse plus lourd, et un score bas veut surtout dire que l’on sait encore peu de choses sur cette personne.',
-			many: 'Plus on connaît de faits, moins chaque contradiction pèse : qui parle beaucoup finit par se contredire un peu. Quatre fois plus de faits, et elle pèse moitié moins.',
+			few: 'Avec peu de faits, on n’attend presque aucune contradiction : c’est leur nombre qui compte, et un score bas veut surtout dire que l’on sait encore peu de choses sur cette personne.',
+			expected: 'contradictions attendues pour ces faits, au taux moyen des candidats',
+			many: 'Qui parle beaucoup finit par se contredire un peu : avec beaucoup de faits, c’est le taux de contradictions comparé à la moyenne des candidats qui compte.',
 			alt: 'Courbe du Tartuffe-Score en fonction du nombre de contradictions'
 		},
 		en: {
 			contradictions: 'Distinct contradictions (B)',
 			facts: 'Known facts (F)',
 			extra: 'Extra pairs inside the same bundles (E)',
-			floor: `≤ ${FLOOR}`,
 			score: 'Tartuffe-Score',
 			axisX: 'distinct contradictions',
-			few: 'With few facts, each contradiction weighs more, and a low score mostly means we still know little about this person.',
-			many: 'The more facts we know, the less each contradiction weighs: whoever speaks a lot ends up contradicting themselves a little. Four times the facts, and it weighs half as much.',
+			few: 'With few facts, almost no contradiction is expected: their count decides, and a low score mostly means we still know little about this person.',
+			expected: 'contradictions expected of these facts, at the candidates’ average rate',
+			many: 'Whoever speaks a lot ends up contradicting themselves a little: with many facts, what counts is the rate of contradictions against the candidates’ average.',
 			alt: 'Curve of the Tartuffe-Score as a function of the number of contradictions'
 		}
 	};
 	let c = $derived(text[lang]);
-	let k = $derived([ABSOLUTE_DECAY, EXTRA_DECAY].map((n) => formatConstant(n, lang)));
+	let k = $derived([DECAY, EXTRA_WEIGHT].map((n) => formatConstant(n, lang)));
+	let expectedText = $derived(expected.toLocaleString(lang, { maximumFractionDigits: 1 }));
 </script>
 
 <div class="explorer">
@@ -99,7 +118,7 @@
 						role="radio"
 						aria-checked={f === o}
 						class:on={f === o}
-						onclick={() => (f = o)}>{o === FLOOR ? c.floor : o.toLocaleString(lang)}</button
+						onclick={() => (f = o)}>{o.toLocaleString(lang)}</button
 					>
 				{/each}
 			</div>
@@ -119,9 +138,9 @@
 		</div>
 		<TartuffeScore honesty={1 - value / 100} {lang} size="md" />
 		<p class="formula" aria-hidden="true">
-			100 × (1 − exp(−√({REFERENCE_FACTS}/{Math.max(f, FLOOR)}) × ({k[0]}×{b} + {k[1]}×ln(1+{e}))))
+			100 × (1 − exp(−{k[0]} × ({b} + {k[1]}×ln(1+{e})) / ({expectedText} + {SMOOTHING})))
 		</p>
-		<p class="hint">{f <= FLOOR ? c.few : c.many}</p>
+		<p class="hint"><b>{expectedText}</b> {c.expected}. {f <= FEW ? c.few : c.many}</p>
 	</div>
 
 	<figure class="chart">
@@ -146,8 +165,8 @@
 			{#each ghosts as g, i}
 				{@const gb = B_MAX - 10 * i}
 				<path class="ghost" d={g.d} />
-				<text class="ghost-label" x={x(gb) - 2} y={y(score(gb, g.f, e)) - 4} text-anchor="end"
-					>{g.f === FLOOR ? `F ≤ ${FLOOR}` : `F = ${g.f.toLocaleString(lang)}`}</text
+				<text class="ghost-label" x={x(gb) - 2} y={y(score(gb, g.f, e, rate)) - 4} text-anchor="end"
+					>{`F = ${g.f.toLocaleString(lang)}`}</text
 				>
 			{/each}
 			<path class="area" d={areaPath} fill="url(#score-area)" />

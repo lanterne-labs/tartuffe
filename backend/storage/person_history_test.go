@@ -51,7 +51,7 @@ func TestBuildPersonHistory_CumulativeAndRecentDiverge(t *testing.T) {
 		{at: now.AddDate(0, 0, 30)},             // future-dated fact, clamped to now
 	}
 
-	points := buildPersonHistory(events, now)
+	points := buildPersonHistory(events, now, 0.001)
 	require.NotEmpty(t, points)
 
 	first := points[0]
@@ -69,7 +69,7 @@ func TestBuildPersonHistory_CumulativeAndRecentDiverge(t *testing.T) {
 	assert.Equal(t, weekStart(now), last.Date)
 	assert.Equal(t, 4, last.FactsTotal, "future-dated fact folds into the current week")
 	assert.Equal(t, 1, last.Contradictions)
-	assert.Equal(t, core.ComputeHonestyScore(4, core.ContradictionStats{Bundles: 1, Total: 1}), last.Score)
+	assert.Equal(t, core.ComputeHonestyScore(4, core.ContradictionStats{Bundles: 1, Total: 1}, 0.001), last.Score)
 	assert.Equal(t, 1.0, last.RecentScore, "old contradiction and facts left the trailing window")
 
 	// At the contradiction's week both series carry it.
@@ -92,7 +92,7 @@ func TestBuildPersonHistory_OldEventsFoldIntoFirstPoint(t *testing.T) {
 		{at: time.Date(1908, 3, 21, 0, 0, 0, 0, time.UTC)},
 		{at: day(now, 3)},
 	}
-	points := buildPersonHistory(events, now)
+	points := buildPersonHistory(events, now, 0.001)
 	require.NotEmpty(t, points)
 	assert.Equal(t, weekStart(now.Add(-personHistoryMaxSpan)), points[0].Date)
 	assert.Equal(t, 1, points[0].FactsTotal, "ancient fact counted in the first bucket")
@@ -100,7 +100,7 @@ func TestBuildPersonHistory_OldEventsFoldIntoFirstPoint(t *testing.T) {
 }
 
 func TestBuildPersonHistory_Empty(t *testing.T) {
-	assert.Equal(t, []HistoryPoint{}, buildPersonHistory(nil, time.Now()))
+	assert.Equal(t, []HistoryPoint{}, buildPersonHistory(nil, time.Now(), 0.001))
 }
 
 // TestGetPersonHistory runs the SQL side: facts are dated by their earliest source

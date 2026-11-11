@@ -654,7 +654,8 @@ func (s *PostgresStorer) DeleteContradictionsForPerson(ctx context.Context, pers
 			return 0, fmt.Errorf("failed to get facts count for person %d: %w", personID, err)
 		}
 
-		honestyScore := core.ComputeHonestyScore(factsCount, core.ContradictionStats{})
+		// No contradiction left: 1.0 at any rate.
+		honestyScore := core.ComputeHonestyScore(factsCount, core.ContradictionStats{}, 0)
 
 		if err := s.updatePersonHonestyScore(ctx, tx, personID, honestyScore, nil, honestyScore); err != nil {
 			return 0, fmt.Errorf("failed to update honesty score for person %d: %w", personID, err)
@@ -845,7 +846,11 @@ func (s *PostgresStorer) removeContradiction(ctx context.Context, id int64, supp
 	if err != nil {
 		return fmt.Errorf("failed to compute contradiction stats: %w", err)
 	}
-	ownScore := core.ComputeHonestyScore(factsCount, stats)
+	rate, err := scoreRate(ctx, tx)
+	if err != nil {
+		return err
+	}
+	ownScore := core.ComputeHonestyScore(factsCount, stats, rate)
 
 	var entityType *string
 	if err := tx.QueryRow(ctx, `SELECT entity_type FROM persons WHERE id = $1`, personID).Scan(&entityType); err != nil {

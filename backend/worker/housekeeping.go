@@ -583,6 +583,12 @@ func (h *Housekeeping) maintenance(ctx context.Context, since time.Time) error {
 	if err := storer.RecordJobMetrics(ctx, rows); err != nil {
 		errs = append(errs, fmt.Errorf("recording the pass: %w", err))
 	}
+	// A score compares a person's contradictions with those expected at the
+	// candidates' rate (core.HonestyExcess), and the pass moved that rate:
+	// every stored score is written again.
+	if _, err := storer.RecomputeAllHonestyScores(ctx, false); err != nil {
+		errs = append(errs, fmt.Errorf("recomputing the scores: %w", err))
+	}
 	// The quality gauges after each pass make their history (Grafana, Quality).
 	if _, err := storer.RecordQualityMetrics(ctx); err != nil {
 		errs = append(errs, err)

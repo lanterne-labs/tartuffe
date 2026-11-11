@@ -96,7 +96,7 @@ func TestGetPersonStances_ScoreAndCounts(t *testing.T) {
 
 	// Stance with contradictions: one bundle + 2 extras, per stanceScore.
 	assert.Equal(t, 2, got[0].ContradictionCount, "badge shows the group count")
-	assert.InDelta(t, core.ComputeHonestyScore(20, core.ContradictionStats{Bundles: 1, Total: 3}), got[0].Score, 1e-12)
+	assert.InDelta(t, core.ComputeHonestyScore(20, core.ContradictionStats{Bundles: 1, Total: 3}, 0), got[0].Score, 1e-12)
 	assert.Equal(t, "", got[0].LabelEn)
 
 	// Clean stance: score 1.0, zero counts, translations passed through.
