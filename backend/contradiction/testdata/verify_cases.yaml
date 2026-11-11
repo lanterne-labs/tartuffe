@@ -121,7 +121,9 @@ cases:
     claimed_reason: "He denied any wrongdoing but was criminally convicted of illegal taking of interest."
     expect: keep
     bucket: denial_vs_finding
-    notes: "Personal denial of wrongdoing vs authoritative criminal conviction."
+    notes: "Personal denial of wrongdoing made after the authoritative criminal conviction (dated since 2026-11-11: the order decides, see FP_2363)."
+    date_a: "2024-06-12"
+    date_b: "2024-05-30"
 
   - name: "TP_112_christophe_motivation_reversal"
     fact_a: "Paul Christophe s'est dit « très motivé » pour prendre ce poste ministériel."
@@ -1242,3 +1244,40 @@ cases:
     notes: "The plea was made during the trial, before the verdict ('a protesté durant le procès de sa bonne foi'): the stage before the judgement, not a claim against it. Prod 1589 (2026-11-11); the post-verdict claim is 2345."
     date_a: "2024-11-01"
     date_b: "2025-03-31"
+
+  # ---- A denial made BEFORE the conviction is a plea of not guilty (user, 2026-11-11):
+  # ---- "she was pleading not guilty and was convicted after: that's not a contradiction,
+  # ---- it needs to happen after the conviction". Only the dates say it here.
+  - name: "FP_2363_lepen_innocence_before_verdict"
+    fact_a: "Marine Le Pen a été reconnue coupable par le tribunal correctionnel de Paris le 31 mars 2025 d'avoir orchestré un système de détournement de fonds publics européens de 4,4 millions d'euros entre 2004 et 2016."
+    fact_b: "Marine Le Pen a déclaré être totalement innocente des faits qui lui sont reprochés."
+    claimed_reason: "Elle affirme être totalement innocente alors qu'un tribunal l'a reconnue coupable de détournement de fonds publics dans cette affaire."
+    expect: drop
+    bucket: accusation_not_finding
+    notes: "The claim of innocence is of January 2025, two months before the first conviction: a defendant pleading not guilty. Prod 2363, also 2379, 2382 and RN 2267 (2026-11-11)."
+    date_a: "2025-03-31"
+    date_b: "2025-01-29"
+
+  # ---- Same rule when the two sources have the same date: the text places the denial
+  # ---- before the ruling ("devant les enquêteurs").
+  - name: "FP_2407_zemmour_denial_to_investigators"
+    fact_a: "Eric Zemmour a été condamné le 26 mars 2025 par le tribunal correctionnel de Paris à 9 000 euros d'amende (60 jours-amende à 150 euros) pour injure raciale, pour ses propos sur les « deux France » dans l'affaire de Crépol."
+    fact_b: "Devant les enquêteurs, Eric Zemmour a contesté le caractère injurieux de ses propos sur Crépol et revendiqué sa liberté de parole."
+    claimed_reason: "la condamnation pour injure raciale est un constat judiciaire qui contredit son déni du caractère injurieux de ses propos."
+    expect: drop
+    bucket: accusation_not_finding
+    notes: "What he told the investigators comes before the judgment, whatever the date of the article that reports both. Prod 2407 (2026-11-11)."
+    date_a: "2025-03-26"
+    date_b: "2025-03-26"
+
+  # ---- The other side of the rule: a claim of innocence made between the first-instance
+  # ---- conviction and the appeal ruling follows a conviction, and stays a contradiction.
+  - name: "TP_1626_lepen_innocence_between_conviction_and_appeal"
+    fact_a: "On 7 July 2026 the Paris Court of Appeal upheld Marine Le Pen's conviction, with 45 months of ineligibility (30 suspended), three years' imprisonment (two suspended) and a €100,000 fine."
+    fact_b: "Marine Le Pen a affirmé vouloir convaincre les nouveaux magistrats de son innocence dans l'affaire."
+    claimed_reason: "Elle affirme son innocence alors que la cour d'appel a confirmé sa condamnation pour détournement de fonds européens."
+    expect: keep
+    bucket: denial_vs_finding
+    notes: "January 2026, at her appeal trial: she was already convicted in first instance (the ruling 'upheld' it). Prod 1626."
+    date_a: "2026-07-07"
+    date_b: "2026-01-12"

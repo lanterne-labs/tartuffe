@@ -187,3 +187,23 @@ cases:
     new_fact_date: "2026-10-01"
     must_not_flag: [131586, 105881]
     notes: "October 2025 and January 2026 are about the 2026 budget; October 2026 about the 2027 budget. Two texts, no reversal."
+
+  # ── A denial made BEFORE the conviction is a plea of not guilty (user,
+  # ── 2026-11-11): the verdict that arrives later must not flag it. Her claim
+  # ── of innocence made after the verdict is not in this stance on purpose.
+  - name: "G_verdict_arrives_must_not_flag_plea_before_it"
+    summary: *mlp_summary
+    key_facts:
+      - id: 225329
+        verb: DENIED
+        date: "2024-11-05"
+        text: "Marine Le Pen a réfuté totalement la « théorie du système » de détournement d'assistants parlementaires européens, lors de son procès le 5 novembre 2024."
+      - id: 194979
+        verb: DENIED
+        date: "2025-01-29"
+        text: "Marine Le Pen a déclaré être totalement innocente des faits qui lui sont reprochés."
+    new_fact: "Marine Le Pen a été reconnue coupable par le tribunal correctionnel de Paris le 31 mars 2025 d'avoir orchestré un système de détournement de fonds publics européens de 4,4 millions d'euros entre 2004 et 2016."
+    new_fact_date: "2025-03-31"
+    must_not_flag: [225329, 194979]
+    notes: "Prod 2382 and 2363: pleas at the trial and before the verdict, paired with the first conviction."
+

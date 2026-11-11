@@ -103,7 +103,7 @@ The framework only applies when a "promise" actually exists. Try to identify one
 
 A breaker genuinely invalidates a promise when:
 - The person's OWN later or earlier statement directly contradicts their promise (e.g., "I knew X" vs "I never knew X")
-- An AUTHORITATIVE FINDING (conviction, court ruling, official investigation conclusion) contradicts the person's denial or claim
+- An AUTHORITATIVE FINDING (conviction, court ruling, official investigation conclusion) contradicts a denial or claim the person makes AFTER it. A denial made BEFORE any conviction in the case (to the investigators, at the trial, while the verdict is awaited) is a defendant pleading not guilty: the conviction that comes later does not make it a contradiction
 - The person's OWN ACTION contradicts their stated commitment or position
 
 A breaker does NOT invalidate a promise when:
@@ -155,19 +155,19 @@ Statement B (dated January 20, 2024): "Marine Le Pen said the EU Parliament neve
 PAIR 6: NO: Statement A is about her personal acknowledgment that criticism is warranted, while Statement B is about the EU Parliament's actions - these are different subjects (her belief vs Parliament's behavior).
 
 PAIR 7 (Person's Claim vs Authoritative Finding About Them - Contradictory):
-Statement A (dated January 20, 2024): "Marine Le Pen claimed she was unaware of the fund misappropriation scheme."
-Statement B (dated January 21, 2024): "Marine Le Pen ordered and supervised the fund misappropriation scheme according to court investigators."
-PAIR 7: YES: Her claim of ignorance directly contradicts the authoritative finding that she knew and supervised the scheme - both statements are about HER knowledge and actions.
+Statement A (dated April 2, 2024): "Marine Le Pen claimed she was unaware of the fund misappropriation scheme."
+Statement B (dated March 28, 2024): "Marine Le Pen ordered and supervised the fund misappropriation scheme, the court found in its judgment."
+PAIR 7: YES: After the judgment, her claim of ignorance directly contradicts the authoritative finding that she knew and supervised the scheme - both statements are about HER knowledge and actions.
 
 PAIR 8 (Trial/Accusation vs Denial - NOT Contradictory):
 Statement A (dated January 20, 2024): "Marine Le Pen a été jugée en appel pour détournement de fonds publics européens dans l'affaire des assistants parlementaires du FN."
 Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations dans l'affaire des assistants parlementaires."
 PAIR 8: NO: The promise is her denial of wrongdoing. Being tried (a procedural step) is NOT a finding of guilt — it does not break her denial. Only a conviction or court finding would.
 
-PAIR 9 (Court Finding vs Denial - Contradictory):
+PAIR 9 (Denial AFTER the Court Finding - Contradictory; a denial BEFORE it is not):
 Statement A (dated March 28, 2024): "Marine Le Pen a été reconnue coupable de détournement de fonds publics par la cour d'appel de Paris."
-Statement B (dated January 20, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations dans l'affaire des assistants parlementaires."
-PAIR 9: YES: The promise is her denial of any misappropriation. The court's guilty verdict is an authoritative finding that directly breaks her denial.
+Statement B (dated April 2, 2024): "Marine Le Pen a nié tout détournement de fonds publics et rejeté les accusations dans l'affaire des assistants parlementaires."
+PAIR 9: YES: The promise is her denial of any misappropriation, made after the court's guilty verdict: an authoritative finding breaks a denial made after it. Had Statement B been dated January 20, 2024, at her trial and before any conviction, the verdict would be NO: a defendant pleading not guilty, then convicted, is not a contradiction.
 
 PAIR 10 (Vague Reference vs Specific Reference - NOT Contradictory):
 Statement A (dated January 20, 2024): "Marine Le Pen said she discovered emails she wasn't the recipient of."
