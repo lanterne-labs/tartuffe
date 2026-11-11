@@ -122,6 +122,49 @@ func (s *PostgresStorer) KnownDocumentURLs(ctx context.Context, sourceType strin
 	return known, rows.Err()
 }
 
+// DocumentURL names a document by its id and URL.
+type DocumentURL struct {
+	ID  int64
+	URL string
+}
+
+// ListDocumentsUnderGoogleRedirect returns the documents of the source type
+// stored under a Google redirect link (google.com/goto, google.com/url)
+// instead of the page's own URL, by id.
+func (s *PostgresStorer) ListDocumentsUnderGoogleRedirect(ctx context.Context, sourceType string) ([]DocumentURL, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, url FROM source_documents
+		WHERE source_type = $1 AND url ~ '^https?://(www\.)?google\.[a-z.]+/(goto|url)'
+		ORDER BY id`, sourceType)
+	if err != nil {
+		return nil, fmt.Errorf("listing %s documents under a google redirect: %w", sourceType, err)
+	}
+	defer rows.Close()
+	var out []DocumentURL
+	for rows.Next() {
+		var d DocumentURL
+		if err := rows.Scan(&d.ID, &d.URL); err != nil {
+			return nil, fmt.Errorf("scanning document: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// MoveDocumentURL stores the document under url, the page's own URL, and
+// reports whether it did: a page already known under that URL keeps its own
+// document, and the redirect's copy stays as it is.
+func (s *PostgresStorer) MoveDocumentURL(ctx context.Context, id int64, url string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE source_documents d SET url = $2
+		WHERE d.id = $1
+		  AND NOT EXISTS (SELECT 1 FROM source_documents o WHERE o.source_type = d.source_type AND o.url = $2)`, id, url)
+	if err != nil {
+		return false, fmt.Errorf("moving document %d to %s: %w", id, url, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // ListUnfinishedDocuments returns the documents still to extract: fetched
 // ones, and failed ones with attempts left, oldest fetch first. personID 0
 // means every person; a zero publishedSince any publication date.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -47,7 +48,10 @@ type firecrawlResponse struct {
 			Title         string `json:"title"`
 			Description   string `json:"description"`
 			PublishedTime string `json:"publishedTime"` // String date, needs parsing
-			// Add other metadata fields if needed
+			// URL is the page's URL after the redirects Firecrawl followed;
+			// SourceURL the one asked.
+			URL       string `json:"url"`
+			SourceURL string `json:"sourceURL"`
 		} `json:"metadata"`
 	} `json:"data"`
 	// Message string `json:"message,omitempty"` // Included on failure
@@ -161,8 +165,14 @@ func (e *FirecrawlExtractor) ExtractContent(url string) (*ExtractedContent, erro
 		}
 	}
 
+	// The page's URL after the redirects, when the API reports it: a Google
+	// result link is never the source of a fact.
+	finalURL := url
+	if m := strings.TrimSpace(firecrawlResp.Data.Metadata.URL); m != "" {
+		finalURL = m
+	}
 	extracted := &ExtractedContent{
-		URL:           url, // Use original URL requested
+		URL:           finalURL,
 		Title:         firecrawlResp.Data.Metadata.Title,
 		DatePublished: publishedDate,
 		Content:       firecrawlResp.Data.Markdown, // Use Markdown as the primary content

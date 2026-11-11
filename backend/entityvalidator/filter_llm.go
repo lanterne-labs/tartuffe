@@ -161,7 +161,12 @@ a name that people actually use to refer to it (not a description).
       politicians (a minister, an elected official), never a judge, a
       prosecutor or a civil servant acting as such. A government, a party, a
       parliamentary group, a city council majority or a ministry's political
-      head stays IN scope: they are elected or political actors.
+      head stays IN scope: they are elected or political actors. A STATE
+      itself ("état du sénégal", "la France", "l'Allemagne") and a FOREIGN
+      public body or assembly ("conseil administratif de la ville de genève",
+      "syndicat des avocats du sénégal") are rejected too: the tracker follows
+      French politicians and parties, and foreign politicians in person, not
+      states or foreign institutions.
 
 ═══ DECISION RULE ═══
 

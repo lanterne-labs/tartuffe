@@ -1212,3 +1212,33 @@ cases:
     notes: "A factual error the person corrects the next day, saying so: a correction, not a reversal. Prod 2395 (2026-11-08)."
     date_a: "2024-10-13"
     date_b: "2024-10-14"
+
+  - name: "FP_2394_roussel_zucman_not_our_proposal"
+    fact_a: "Fabien Roussel a soutenu la mise en œuvre de la taxe Zucman."
+    fact_b: "Fabien Roussel a déclaré que la taxe Zucman n'est pas une position que le PCF défend."
+    claimed_reason: "Roussel a soutenu la taxe Zucman, puis a affirmé qu'elle n'est pas une position défendue par le PCF, ce qui nie ou renverse son soutien antérieur sur la même question."
+    expect: drop
+    bucket: different_subjects
+    notes: "His report to the PCF national council says the Zucman tax has become 'presque incontournable', 'une victoire idéologique à revendiquer, même si ce n'est pas une position que nous défendons': whose proposal it is, not a refusal of it. Prod 2394 (2026-11-11)."
+    date_a: "2025-09-21"
+    date_b: "2025-10-15"
+
+  - name: "FP_2332_retailleau_decrees_deadline_moved"
+    fact_a: "Bruno Retailleau a promis que les décrets de la loi immigration relevant du ministère de l'Intérieur seront tous publiés avant la fin de l'année 2024."
+    fact_b: "Bruno Retailleau s'est engagé à ce que tous les décrets d'application de la loi immigration relevant de son ministère soient signés d'ici la fin de mai."
+    claimed_reason: "Retailleau avait promis une publication de tous les décrets avant fin 2024, puis s'est engagé sur fin mai, abandonnant l'échéance qu'il avait lui-même fixée pour les mêmes décrets."
+    expect: drop
+    bucket: date_only_no_commitment
+    notes: "A deadline moved by the person five days later, before it passed, with no act and no denial: a pledge replaced, not broken. Prod 2332 (2026-11-11)."
+    date_a: "2024-11-21"
+    date_b: "2024-11-26"
+
+  - name: "FP_1589_le_pen_plea_before_the_verdict"
+    fact_a: "Marine Le Pen a protesté de sa « bonne foi » et a rejeté toute idée de « système » concernant l'affaire des assistants parlementaires."
+    fact_b: "Marine Le Pen a été reconnue coupable par le tribunal correctionnel de Paris le 31 mars 2025 d'avoir orchestré un système de détournement de fonds publics européens de 4,4 millions d'euros entre 2004 et 2016."
+    claimed_reason: "Sa dénégation de tout « système » et sa revendication de bonne foi sont contredites par la condamnation définitive pour détournement de fonds européens, une constatation judiciaire faisant autorité."
+    expect: drop
+    bucket: legal_process_stages
+    notes: "The plea was made during the trial, before the verdict ('a protesté durant le procès de sa bonne foi'): the stage before the judgement, not a claim against it. Prod 1589 (2026-11-11); the post-verdict claim is 2345."
+    date_a: "2024-11-01"
+    date_b: "2025-03-31"

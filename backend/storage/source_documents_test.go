@@ -94,6 +94,42 @@ func TestSourceDocumentStateMachine(t *testing.T) {
 // A publication floor keeps a recent-content feed off the backlog: older and
 // undated documents are left to the backfill (mirror-29j: the daily débats feed
 // walked 2,000 old transcripts past the run deadline).
+// A document stored under a Google redirect link is listed, and moved to
+// the page's own URL unless that page already has its document.
+func TestMoveDocumentURLFromGoogleRedirect(t *testing.T) {
+	storer, teardown := setupTestDB(t)
+	defer teardown()
+	ctx := context.Background()
+
+	pid, _, err := storer.AddPerson(ctx, "redirect person")
+	require.NoError(t, err)
+	ids, err := storer.SaveFetchedDocuments(ctx, []core.SourceDocument{
+		{SourceType: "news", URL: "https://www.google.com/goto?url=AAA", PersonID: pid, Content: "body A"},
+		{SourceType: "news", URL: "https://www.google.com/goto?url=BBB", PersonID: pid, Content: "body B"},
+		{SourceType: "news", URL: "https://d.test/b", PersonID: pid, Content: "body B, the page itself"},
+		{SourceType: "news", URL: "https://d.test/c", PersonID: pid, Content: "a page"},
+	})
+	require.NoError(t, err)
+
+	under, err := storer.ListDocumentsUnderGoogleRedirect(ctx, "news")
+	require.NoError(t, err)
+	require.Equal(t, []DocumentURL{
+		{ID: ids["https://www.google.com/goto?url=AAA"], URL: "https://www.google.com/goto?url=AAA"},
+		{ID: ids["https://www.google.com/goto?url=BBB"], URL: "https://www.google.com/goto?url=BBB"},
+	}, under)
+
+	moved, err := storer.MoveDocumentURL(ctx, under[0].ID, "https://d.test/a")
+	require.NoError(t, err)
+	require.True(t, moved)
+	moved, err = storer.MoveDocumentURL(ctx, under[1].ID, "https://d.test/b")
+	require.NoError(t, err)
+	require.False(t, moved, "the page is already known under its own URL")
+
+	known, err := storer.KnownDocumentURLs(ctx, "news", []string{"https://d.test/a", "https://www.google.com/goto?url=AAA", "https://www.google.com/goto?url=BBB"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"https://d.test/a": true, "https://www.google.com/goto?url=BBB": true}, known)
+}
+
 func TestListUnfinishedDocumentsPublishedSince(t *testing.T) {
 	storer, teardown := setupTestDB(t)
 	defer teardown()

@@ -116,6 +116,28 @@ func TestLocalExtractor_RedirectThenRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "HTTP 403")
 }
 
+// A page that redirected and then came back too thin for trafilatura fails
+// with the URL it was redirected to as well: the fallback reads the page
+// itself, and the document is stored under its own URL, not under the
+// Google result link (audit of 2026-11-11: 308 documents under google.com/goto).
+func TestLocalExtractor_RedirectThenThin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/goto" {
+			http.Redirect(w, r, "/article", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html><head><title>Thin</title></head><body><p>Trop court.</p></body></html>"))
+	}))
+	defer srv.Close()
+
+	_, err := newLocalExtractor().ExtractContent(srv.URL + "/goto")
+	var re *RedirectedError
+	require.ErrorAs(t, err, &re)
+	assert.Equal(t, srv.URL+"/article", re.URL)
+	assert.Contains(t, err.Error(), "below")
+}
+
 // TestLocalExtractor_InvalidURL — bad URLs fail fast before any HTTP.
 func TestLocalExtractor_InvalidURL(t *testing.T) {
 	ext := newLocalExtractor()
