@@ -164,8 +164,8 @@ const dict: Record<string, { fr: string; en: string }> = {
 	'score.compare.both': { fr: 'Plus cohérent que {a} et plus tartuffe que {b} des {n} autres candidats', en: 'More coherent than {a} and more tartuffe than {b} of the {n} other candidates' },
 	'score.compare.coherent': { fr: 'Plus cohérent que {a} des {n} autres candidats', en: 'More coherent than {a} of the {n} other candidates' },
 	'score.compare.tartuffe': { fr: 'Plus tartuffe que {b} des {n} autres candidats', en: 'More tartuffe than {b} of the {n} other candidates' },
-	'score.compare.unsure': { fr: 'Score en cours de consolidation : il rejoint le classement à partir de ~{s} faits, ou dès qu’il dépasse celui d’un candidat déjà classé', en: 'Score being consolidated: it joins the ranking from ~{s} facts, or as soon as it passes the score of a ranked candidate' },
-	'score.consolidating': { fr: 'Score en cours de consolidation : ses {f} faits relevés sont tous analysés, et un score se stabilise à partir de ~{s} faits.', en: 'Score being consolidated: all {f} facts collected are analysed, and a score settles from ~{s} facts.' },
+	'score.compare.unsure': { fr: 'Score en cours de consolidation : il rejoint le classement dès qu’il y a assez de faits pour s’y fier', en: 'Score being consolidated: it joins the ranking once there are enough facts to trust it' },
+	'score.consolidating': { fr: 'Score en cours de consolidation : ses faits sont bien analysés, mais il en faut plus pour être sûr de son score.', en: 'Score being consolidated: their facts are analysed, but more are needed to be sure of the score.' },
 	'score.consolidating.short': { fr: 'Score en consolidation', en: 'Score being consolidated' },
 	'score.compare.tie': { fr: 'Au même niveau que tous les autres candidats', en: 'Level with all the other candidates' },
 	'score.compare.hint': {

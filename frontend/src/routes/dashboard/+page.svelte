@@ -243,7 +243,7 @@
 				<a href={personPath(person.slug)} class="card">
 					<div class="card-content">
 						<div class="card-left">
-							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} covered={person.covered_facts} />
+							<TartuffeScore honesty={person.honesty_score} lang={currentLang} image={person.image_url} initial={person.name.charAt(0).toUpperCase()} facts={person.fact_count} reliable={person.score_reliable} />
 							<div class="card-info">
 								<div class="card-name">
 									<span class="name-text">{person.name}</span>

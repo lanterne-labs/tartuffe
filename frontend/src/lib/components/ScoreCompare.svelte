@@ -7,7 +7,7 @@
 	import { goto } from '$app/navigation';
 	import { tr, type Lang } from '$lib/i18n';
 	import { displayName, personPath } from '$lib/share';
-	import { tartuffeOf, tartuffeColor, dialOf, MARKS, coveredText } from './TartuffeScore.svelte';
+	import { tartuffeOf, tartuffeColor, dialOf, MARKS } from './TartuffeScore.svelte';
 	import HintSheet from './HintSheet.svelte';
 	import type { PersonSummary } from '$lib/types';
 
@@ -59,7 +59,7 @@
 	let above = $derived(current ? sure.filter((r) => r.p.id !== current.p.id && r.t > current.t).length : 0);
 	let below = $derived(current ? sure.filter((r) => r.p.id !== current.p.id && r.t < current.t).length : 0);
 	let rank = $derived.by(() => {
-		if (current?.p.score_reliable === false) return tr('score.compare.unsure', lang, { s: coveredText(current.p.covered_facts, lang) });
+		if (current?.p.score_reliable === false) return tr('score.compare.unsure', lang);
 		const n = sure.filter((r) => r.p.id !== current?.p.id).length;
 		if (above > 0 && below > 0) return tr('score.compare.both', lang, { a: above, b: below, n });
 		if (above > 0) return tr('score.compare.coherent', lang, { a: above, n });
@@ -69,12 +69,7 @@
 
 	// What the 🚧 says, in the words of the dial (TartuffeScore): on hover,
 	// on focus, and for the portrait in focus on a tap (a phone has no hover).
-	function unsureText(p: PersonSummary): string {
-		return tr('score.consolidating', lang, {
-			f: (p.fact_count ?? 0).toLocaleString(lang === 'en' ? 'en-GB' : 'fr-FR'),
-			s: coveredText(p.covered_facts, lang)
-		});
-	}
+	let unsureText = $derived(tr('score.consolidating', lang));
 	let unsureOpen = $state(false);
 	$effect(() => {
 		// Another person in focus: the explanation of the one before closes.
@@ -157,16 +152,16 @@
 								class:unsure-mark--left={current.at > 50}
 								tabindex="0"
 								role="note"
-								aria-label={unsureText(current.p)}
+								aria-label={unsureText}
 								onclick={() => (unsureOpen = !unsureOpen)}
 								onkeydown={(e) => e.key === 'Escape' && (unsureOpen = false)}
 								onblur={() => {
 									if (!touch) unsureOpen = false;
 								}}
-							>🚧<span class="unsure-tip" aria-hidden="true">{unsureText(current.p)}</span></span>
+							>🚧<span class="unsure-tip" aria-hidden="true">{unsureText}</span></span>
 							{#if touch}
 								<HintSheet open={unsureOpen} onclose={() => (unsureOpen = false)}>
-									{unsureText(current.p)}
+									{unsureText}
 								</HintSheet>
 							{/if}
 						{/if}
@@ -200,7 +195,7 @@
 						{#if r.p.score_reliable === false}
 							<!-- No native title on this face: the bubble says who and why. -->
 							<span class="unsure-mark" class:unsure-mark--left={r.at > 50} aria-hidden="true"
-								>🚧<span class="unsure-tip"><strong>{tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t })}</strong>{unsureText(r.p)}</span></span
+								>🚧<span class="unsure-tip"><strong>{tr('score.lineup.who', lang, { name: displayName(r.p.name), n: r.t })}</strong>{unsureText}</span></span
 							>
 						{/if}
 					</button>
