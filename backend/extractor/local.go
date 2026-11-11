@@ -67,6 +67,18 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 		return nil, fmt.Errorf("local extractor: %w", err)
 	}
 	body := page.Body
+	// Any failure after a followed redirect carries the URL the page was
+	// read at, so the fallback reads the page itself and the document is
+	// stored under its own URL: a Google result link whose page came back
+	// too thin for trafilatura was read by the fallback at the redirect
+	// link, and 308 documents were stored under google.com/goto (audit of
+	// 2026-11-11).
+	failed := func(err error) error {
+		if page.URL != "" && page.URL != url {
+			return &RedirectedError{URL: page.URL, Err: err}
+		}
+		return err
+	}
 
 	result, err := trafilatura.Extract(bytes.NewReader(body), trafilatura.Options{
 		OriginalURL:     parsedURL,
@@ -77,13 +89,13 @@ func (e *localExtractor) fetchAndExtract(ctx context.Context, url string, parsed
 		EnableFallback:  true, // falls back to Readability/Distiller if trafilatura is unsure
 	})
 	if err != nil {
-		return nil, fmt.Errorf("local extractor: trafilatura: %w", err)
+		return nil, failed(fmt.Errorf("local extractor: trafilatura: %w", err))
 	}
 
 	content := strings.TrimSpace(result.ContentText)
 	if len(content) < localMinContentChars {
-		return nil, fmt.Errorf("local extractor: extracted only %d chars from %s (below %d-char minimum, treating as failure)",
-			len(content), url, localMinContentChars)
+		return nil, failed(fmt.Errorf("local extractor: extracted only %d chars from %s (below %d-char minimum, treating as failure)",
+			len(content), url, localMinContentChars))
 	}
 
 	// The page's URL after the redirects: a Google redirect, a moved article

@@ -40,7 +40,12 @@ FROM fact_sources WHERE source_type = 'news' AND published_at IS NULL AND scrape
 SELECT 'sources dated before 1995', count(*) FROM fact_sources WHERE published_at < '1995-01-01';
 
 SELECT 'extracted documents without text (new)', source_type, count(*)
-FROM source_documents WHERE extracted_at >= :since::timestamptz AND length(content) = 0 GROUP BY 2;
+FROM source_documents WHERE extracted_at >= :since::timestamptz AND length(content) = 0 AND NOT metadata ? 'refetch_failed' GROUP BY 2;
+
+-- dm facts refetch-articles records a page it could not read again as an
+-- empty document with the reason (a 403, a bot check): not an extraction.
+SELECT 'refetch-articles pages not read (new)', coalesce(left(metadata->>'refetch_failed', 40), ''), count(*)
+FROM source_documents WHERE extracted_at >= :since::timestamptz AND metadata ? 'refetch_failed' GROUP BY 2 ORDER BY 3 DESC LIMIT 6;
 
 WITH q AS (
   SELECT fm.person_id, lower(regexp_replace(fs.original_quote, '\W+', '', 'g')) k, fs.fact_id
