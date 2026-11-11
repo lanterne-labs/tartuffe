@@ -104,10 +104,10 @@ func printDraft(d *xbot.Draft) {
 		reviewed = "reviewed real"
 	}
 	day := func(f storage.BotFact) string {
-		if f.Date == nil {
-			return "?"
+		if d := f.DateFR(); d != "" {
+			return d
 		}
-		return f.Date.Format("2006-01-02")
+		return "?"
 	}
 	fmt.Printf("\n=== contradiction %d · %s · %s · %s\n", c.ID, c.PersonName, c.StanceLabel, reviewed)
 	fmt.Printf("A (%s): %s\n", day(c.A), c.A.Text)

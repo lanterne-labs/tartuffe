@@ -11,13 +11,39 @@ import (
 )
 
 // BotFact is one side of a contradiction the X bot drafts a tweet on: the
-// statement, its first source quote, its date and its sources.
+// statement, the quotes of its sources (the first one in Quote), its date
+// and its sources. The date is the statement's when the fact has one, with
+// its precision ("year", "month", "day"), else the date of the first source
+// ("": a full date).
 type BotFact struct {
-	ID         int64
-	Text       string
-	Quote      string
-	Date       *time.Time
-	SourceURLs []string
+	ID            int64
+	Text          string
+	Quote         string
+	Quotes        []string
+	Date          *time.Time
+	DatePrecision string
+	SourceURLs    []string
+}
+
+// DateFR is the date as the site prints it, no more than is known: "2013",
+// "mars 2024", "14 mars 2024"; "" without a date.
+func (f BotFact) DateFR() string {
+	if f.Date == nil {
+		return ""
+	}
+	months := []string{"janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+	d := f.Date.UTC()
+	switch f.DatePrecision {
+	case "year":
+		return fmt.Sprintf("%d", d.Year())
+	case "month":
+		return fmt.Sprintf("%s %d", months[d.Month()-1], d.Year())
+	}
+	day := fmt.Sprintf("%d", d.Day())
+	if d.Day() == 1 {
+		day = "1er"
+	}
+	return fmt.Sprintf("%s %s %d", day, months[d.Month()-1], d.Year())
 }
 
 // BotContradiction is a contradiction the X bot may tweet, with what the
@@ -26,9 +52,12 @@ type BotContradiction struct {
 	ID          int64
 	PersonID    int64
 	PersonName  string
+	PersonSlug  string
 	StanceLabel string
-	Reason      string
-	A, B        BotFact
+	// Reason is why the two facts conflict: the explanation the site shows,
+	// else the judge's one line.
+	Reason string
+	A, B   BotFact
 	// Reviewed is true when a person reviewed it as real.
 	Reviewed bool
 }
@@ -132,10 +161,12 @@ func (s *PostgresStorer) GetBotContradiction(ctx context.Context, id int64) (*Bo
 	c := BotContradiction{ID: id}
 	var reason *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT c.person_id, p.name, COALESCE(sd.cluster_label, ''), c.reason,
+		SELECT c.person_id, p.name, p.slug, COALESCE(sd.cluster_label, ''), COALESCE(NULLIF(c.explanation, ''), c.reason),
 		       EXISTS (SELECT 1 FROM contradiction_reviews cr WHERE cr.contradiction_id = c.id AND cr.verdict = 'real'),
-		       fa.id, fa.fact_text, COALESCE(sa.quote, ''), sa.earliest, COALESCE(sa.urls, '{}'),
-		       fb.id, fb.fact_text, COALESCE(sb.quote, ''), sb.earliest, COALESCE(sb.urls, '{}')
+		       fa.id, fa.fact_text, COALESCE(sa.quote, ''), `+shownDateSQL("fa", "sa.earliest")+`, COALESCE(fa.statement_date_precision, ''), COALESCE(sa.urls, '{}'),
+		       ARRAY(SELECT original_quote FROM fact_sources WHERE fact_id = fa.id AND COALESCE(original_quote, '') <> '' ORDER BY published_at ASC NULLS LAST),
+		       fb.id, fb.fact_text, COALESCE(sb.quote, ''), `+shownDateSQL("fb", "sb.earliest")+`, COALESCE(fb.statement_date_precision, ''), COALESCE(sb.urls, '{}'),
+		       ARRAY(SELECT original_quote FROM fact_sources WHERE fact_id = fb.id AND COALESCE(original_quote, '') <> '' ORDER BY published_at ASC NULLS LAST)
 		FROM contradictions c
 		JOIN persons p ON p.id = c.person_id
 		JOIN facts fa ON fa.id = c.fact_a_id
@@ -143,9 +174,9 @@ func (s *PostgresStorer) GetBotContradiction(ctx context.Context, id int64) (*Bo
 		LEFT JOIN stance_documents sd ON sd.id = c.bundle_stance_id
 		`+factSidesLateral("fa", "sa")+`
 		`+factSidesLateral("fb", "sb")+`
-		WHERE c.id = $1`, id).Scan(&c.PersonID, &c.PersonName, &c.StanceLabel, &reason, &c.Reviewed,
-		&c.A.ID, &c.A.Text, &c.A.Quote, &c.A.Date, &c.A.SourceURLs,
-		&c.B.ID, &c.B.Text, &c.B.Quote, &c.B.Date, &c.B.SourceURLs)
+		WHERE c.id = $1`, id).Scan(&c.PersonID, &c.PersonName, &c.PersonSlug, &c.StanceLabel, &reason, &c.Reviewed,
+		&c.A.ID, &c.A.Text, &c.A.Quote, &c.A.Date, &c.A.DatePrecision, &c.A.SourceURLs, &c.A.Quotes,
+		&c.B.ID, &c.B.Text, &c.B.Quote, &c.B.Date, &c.B.DatePrecision, &c.B.SourceURLs, &c.B.Quotes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNoBotContradiction
 	}

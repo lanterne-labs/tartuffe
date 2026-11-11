@@ -250,9 +250,9 @@ func DraftMessage(d *Draft, slot time.Time, site string) string {
 	}
 	fmt.Fprintf(&b, "🐦 <b>Tweet de %s</b>\n<b>%s</b> · %s · %s\n\n", slot.Format("02/01 15:04"), esc(c.PersonName), esc(c.StanceLabel), reviewed)
 	side := func(label string, f storage.BotFact) {
-		day := "date ?"
-		if f.Date != nil {
-			day = f.Date.Format("02/01/2006")
+		day := f.DateFR()
+		if day == "" {
+			day = "date ?"
 		}
 		fmt.Fprintf(&b, "<b>%s</b> (%s) : %s\n", label, day, esc(f.Text))
 		if f.Quote != "" {

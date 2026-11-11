@@ -148,13 +148,13 @@ func (w *LLMWriter) Write(ctx context.Context, prompt string) (Reply, error) {
 // counted.
 func Prompt(c *storage.BotContradiction, room int) string {
 	side := func(f storage.BotFact) string {
-		date := "unknown date"
-		if f.Date != nil {
-			date = f.Date.Format("2 January 2006")
+		date := f.DateFR()
+		if date == "" {
+			date = "unknown date: give none"
 		}
 		s := fmt.Sprintf("- Statement (%s): %s", date, f.Text)
-		if f.Quote != "" {
-			s += fmt.Sprintf("\n  Their exact words in the source: %q", f.Quote)
+		for _, q := range quotesOf(f) {
+			s += fmt.Sprintf("\n  Their exact words in a source: %q", q)
 		}
 		return s
 	}
@@ -183,7 +183,7 @@ Rules, all of them:
 - French only, natural and current, no hashtags, no emoji spam (one emoji at most), no @mentions and no links: the tags and the link are added after.
 - At most %d characters each.
 - Anything between « » must be the person's own words, copied exactly from "their exact words" above (you may cut a quote short, never change a word). Never invent, extend or paraphrase inside « ».
-- Say only what the two statements and the reason above say: no fact, figure or date of your own.
+- Say only what the two statements and the reason above say: no fact, figure or date of your own. A date is given as above, never more precise ("2013" stays "en 2013").
 - Mock the contradiction, never the person: no insult, no slur, no contempt, nothing about their body, family, origin or private life (French law punishes insult and defamation).
 - Never name or imitate a newspaper: the style is ours.
 - Name the person so the tweet stands alone.
@@ -234,7 +234,9 @@ func Check(c *storage.BotContradiction, text string, room int) string {
 	if n := Length(text); n > room {
 		return fmt.Sprintf("too long (%d > %d)", n, room)
 	}
-	sources := fold(strings.Join([]string{c.A.Quote, c.A.Text, c.B.Quote, c.B.Text}, " \n "))
+	// Only the quotes of the sources: the fact's text is our summary, and a
+	// summary between « » would put our words in the person's mouth.
+	sources := fold(strings.Join(append(quotesOf(c.A), quotesOf(c.B)...), " \n "))
 	for _, m := range quoted.FindAllStringSubmatch(text, -1) {
 		q := m[1] + m[2] + m[3]
 		if f := strings.TrimSpace(fold(q)); f != "" && !strings.Contains(sources, f) {
@@ -242,6 +244,19 @@ func Check(c *storage.BotContradiction, text string, room int) string {
 		}
 	}
 	return ""
+}
+
+// quotesOf returns the source quotes of a fact, at most 3 (the prompt and the
+// check read the same ones).
+func quotesOf(f storage.BotFact) []string {
+	qs := f.Quotes
+	if len(qs) == 0 && f.Quote != "" {
+		qs = []string{f.Quote}
+	}
+	if len(qs) > 3 {
+		qs = qs[:3]
+	}
+	return qs
 }
 
 // Compose writes the versions of a tweet on the contradiction with its tags
@@ -272,7 +287,11 @@ func Compose(ctx context.Context, w Writer, c *storage.BotContradiction, tags []
 	return d, nil
 }
 
-// ContradictionLink is the page of a contradiction on the site.
+// ContradictionLink is the page of a contradiction on the site, by the
+// person's slug (by id for a person without one).
 func ContradictionLink(site string, c *storage.BotContradiction) string {
-	return fmt.Sprintf("%s/person/%d?c=%d", strings.TrimRight(site, "/"), c.PersonID, c.ID)
+	if c.PersonSlug == "" {
+		return fmt.Sprintf("%s/person/%d?c=%d", strings.TrimRight(site, "/"), c.PersonID, c.ID)
+	}
+	return fmt.Sprintf("%s/person/%s?c=%d", strings.TrimRight(site, "/"), c.PersonSlug, c.ID)
 }

@@ -50,6 +50,8 @@ func TestCheck(t *testing.T) {
 		// The quote cut short and with another apostrophe still matches.
 		{"« c’est une question de justice » disait Jean Dupont. Trois ans plus tard : 64 ans.", ""},
 		{"Jean Dupont : « Je me battrai pour les retraites à 62 ans ».", "quote not in the sources"},
+		// Our summary of the fact is not the person's words.
+		{"Jean Dupont : « défend la retraite à 60 ans ».", "quote not in the sources"},
 		{"Bravo @jdupont pour ce grand écart.", "a mention or a link"},
 		{"Voir https://tartuffe.me", "a mention or a link"},
 		{strings.Repeat("a", 300), "too long"},
@@ -96,4 +98,32 @@ func TestCompose(t *testing.T) {
 	// The room the prompt gives leaves space for the tags and the link.
 	assert.Contains(t, w.prompt, "At most 235 characters")
 	assert.Contains(t, w.prompt, "Je me battrai pour la retraite à 60 ans")
+}
+
+func TestCheckReadsEveryQuote(t *testing.T) {
+	c := contradiction()
+	c.B.Quotes = []string{"Un premier article.", "J'ai voté le report à 64 ans et je l'assume."}
+	assert.Empty(t, Check(c, "Jean Dupont en 2025 : « je l'assume ».", 250))
+	assert.Contains(t, Prompt(c, 250), "je l'assume")
+}
+
+func TestDatesAndLink(t *testing.T) {
+	c := contradiction()
+	c.A.DatePrecision = "year"
+	c.B.DatePrecision = "month"
+	assert.Equal(t, "2022", c.A.DateFR())
+	assert.Equal(t, "juin 2025", c.B.DateFR())
+	c.B.DatePrecision = ""
+	assert.Equal(t, "1er juin 2025", c.B.DateFR())
+	assert.Equal(t, "", storage.BotFact{}.DateFR())
+	// The prompt gives the year alone, never the day of the article.
+	c.B.Date = nil
+	p := Prompt(c, 250)
+	assert.Contains(t, p, "Statement (2022)")
+	assert.Contains(t, p, "unknown date")
+	assert.NotContains(t, p, "March")
+
+	assert.Equal(t, "https://tartuffe.me/person/3?c=7", ContradictionLink("https://tartuffe.me/", c))
+	c.PersonSlug = "jean-dupont"
+	assert.Equal(t, "https://tartuffe.me/person/jean-dupont?c=7", ContradictionLink("https://tartuffe.me/", c))
 }
