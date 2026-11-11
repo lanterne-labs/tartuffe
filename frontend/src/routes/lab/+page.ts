@@ -1,6 +1,6 @@
 export const load = () => ({
 	meta: {
-		title: 'Le labo — tartuffe.me',
-		description: 'Une expérience : voter en ligne en toute confidentialité, en s’appuyant sur la puce du passeport. Bulletin chiffré, registre public, aucun compte.'
+		title: 'Lanterne Labs — tartuffe.me',
+		description: 'Lanterne Labs, laboratoire indépendant, conçoit et finance tartuffe.me et ses expériences de vote en ligne : des outils pour une démocratie plus transparente.'
 	}
 });

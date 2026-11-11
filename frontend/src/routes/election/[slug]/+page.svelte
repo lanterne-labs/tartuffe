@@ -136,7 +136,7 @@
 			milestoneCall: 'Faites voter vos proches.',
 			finalTitle: 'J-{n}. À vous de voter.',
 			finalTitleNoDate: 'À vous de voter.',
-			labLink: 'Le labo',
+			labLink: 'Lanterne Labs',
 			phTitle: 'Mon vote',
 			phBlank: 'Vote blanc',
 			phSeal: 'preuve anonyme'
@@ -185,7 +185,7 @@
 			milestoneCall: 'Get your friends and family to vote.',
 			finalTitle: '{n} days left. Your turn.',
 			finalTitleNoDate: 'Your turn.',
-			labLink: 'The lab',
+			labLink: 'Lanterne Labs',
 			phTitle: 'My vote',
 			phBlank: 'Blank vote',
 			phSeal: 'anonymous proof'

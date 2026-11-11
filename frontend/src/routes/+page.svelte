@@ -135,7 +135,7 @@
 			podiumKicker: 'Aujourd’hui',
 			podiumLink: 'Tout le classement',
 
-			evTag: 'Expérience temporaire du labo',
+			evTag: 'Expérience temporaire de Lanterne Labs',
 			evTitle: 'Présidentielle 2027 : voter en ligne, vraiment en secret',
 			evBody: 'Classez jusqu’à trois candidats ou votez blanc, avec votre passeport. Personne, ni nous ni l’État, ne peut savoir qui a voté quoi, et chacun peut recompter. Le Tartuffe-Score de chaque candidat s’affiche à côté.',
 			evEnds: 'Jusqu’au {d}',
@@ -143,9 +143,9 @@
 			evMore: 'Comment ça marche',
 
 			labKicker: 'Lanterne Labs',
-			labTitle: 'Un laboratoire au service de la démocratie',
-			labBody: 'tartuffe.me conçoit et teste des outils pour une démocratie plus transparente. Les nouvelles technologies permettent enfin à chacun de suivre ce que disent et font les élus, sources à l’appui, de façon lisible. Le détecteur de contradictions est notre premier produit, le vote secret en ligne notre première expérience.',
-			labCta: 'Découvrir le labo'
+			labTitle: 'Le laboratoire indépendant derrière tartuffe.me',
+			labBody: 'Lanterne Labs conçoit, finance et teste des outils pour une démocratie plus transparente. Les nouvelles technologies permettent enfin à chacun de suivre ce que disent et font les élus, sources à l’appui, de façon lisible. tartuffe.me, le détecteur de contradictions, est son premier produit, le vote secret en ligne sa première expérience.',
+			labCta: 'Découvrir Lanterne Labs'
 		},
 		en: {
 			title: 'Coherent or tartuffe?',
@@ -190,7 +190,7 @@
 			podiumKicker: 'Today',
 			podiumLink: 'The whole ranking',
 
-			evTag: 'A temporary experiment of the lab',
+			evTag: 'A temporary experiment by Lanterne Labs',
 			evTitle: 'Presidential 2027: online voting, truly private',
 			evBody: 'Rank up to 3 candidates, or vote blank, with your passport. Nobody, neither we nor the State, can know who voted what, and anyone can recount. Each candidate’s Tartuffe-Score is right beside.',
 			evEnds: 'Until {d}',
@@ -198,9 +198,9 @@
 			evMore: 'How it works',
 
 			labKicker: 'Lanterne Labs',
-			labTitle: 'A lab for democracy',
-			labBody: 'tartuffe.me designs and tests tools for a more transparent democracy. New technology finally lets anyone follow what elected officials say and do, with sources, in a readable way. The contradiction checker is our first product; the private vote, our first experiment.',
-			labCta: 'Discover the lab'
+			labTitle: 'The independent lab behind tartuffe.me',
+			labBody: 'Lanterne Labs builds, funds and tests tools for a more transparent democracy. New technology finally lets anyone follow what elected officials say and do, with sources, in a readable way. tartuffe.me, the contradiction checker, is its first product; the private vote, its first experiment.',
+			labCta: 'Discover Lanterne Labs'
 		}
 	};
 	let c = $derived(content[currentLang]);

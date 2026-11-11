@@ -88,7 +88,7 @@
 			keepTitle: 'Ce que nous gardons, en tout',
 			keep: ['L’empreinte de votre compte Google (pas l’identifiant lui-même).', 'Le pseudo que vous avez choisi.', 'Vos +1.', 'Vos signalements.', 'L’empreinte de votre jeton de connexion, pour 30 jours.', 'Des statistiques de visite anonymes, qui ne disent rien de vous.'],
 			keepNote: 'Rien d’autre. Nous n’en vendons, louons ni partageons rien.',
-			eventLine: 'Le vote présidentiel est une expérience à part du labo : son anonymat est expliqué sur sa propre page',
+			eventLine: 'Le vote présidentiel est une expérience à part de Lanterne Labs : son anonymat est expliqué sur sa propre page',
 			back: 'À propos'
 		},
 		en: {
@@ -138,7 +138,7 @@
 			keepTitle: 'All we keep',
 			keep: ['The fingerprint of your Google account (not the identifier itself).', 'The pseudonym you chose.', 'Your +1.', 'Your reports.', 'The fingerprint of your sign-in token, for 30 days.', 'Anonymous visit statistics, which say nothing about you.'],
 			keepNote: 'Nothing else. We sell, rent or share none of it.',
-			eventLine: 'The presidential vote is a separate experiment of the lab: its anonymity is explained on its own page',
+			eventLine: 'The presidential vote is a separate experiment by Lanterne Labs: its anonymity is explained on its own page',
 			back: 'About'
 		}
 	};

@@ -28,13 +28,14 @@
 
 	const content = {
 		fr: {
-			kicker: 'Le labo',
-			title: 'Un laboratoire pour une démocratie plus transparente',
+			kicker: 'Lanterne Labs',
+			title: 'Lanterne Labs, un laboratoire pour une démocratie plus transparente',
+			lead: 'Lanterne Labs est un laboratoire indépendant. Il conçoit et finance tartuffe.me et les expériences présentées ici, sans publicité.',
 			whyTitle: 'Pourquoi',
 			why: [
 				'La défiance envers les responsables politiques n’a jamais été aussi forte, et la désinformation va plus vite que les démentis.',
 				'Les outils d’aujourd’hui permettent enfin de suivre ce que disent et font les élus, et de le rendre lisible par tous, sources à l’appui.',
-				'Le labo invente et met à l’épreuve de nouvelles façons de donner ce pouvoir aux citoyens : comprendre, comparer, s’exprimer.'
+				'Lanterne Labs invente et met à l’épreuve de nouvelles façons de donner ce pouvoir aux citoyens : comprendre, comparer, s’exprimer.'
 			],
 			mainTag: 'Produit permanent',
 			mainTitle: 'Tartuffe, le détecteur de contradictions',
@@ -64,13 +65,14 @@
 			next: 'D’autres expériences suivront.'
 		},
 		en: {
-			kicker: 'The lab',
-			title: 'A lab for more transparent democracies',
+			kicker: 'Lanterne Labs',
+			title: 'Lanterne Labs, a lab for more transparent democracies',
+			lead: 'Lanterne Labs is an independent lab. It builds and funds tartuffe.me and the experiments shown here, with no advertising.',
 			whyTitle: 'Why',
 			why: [
 				'Distrust of politicians has never been higher, and disinformation travels faster than denials.',
 				'Today’s tools finally make it possible to follow what elected officials say and do, and to make it readable by everyone, with sources.',
-				'The lab invents and tests new ways to give that power to citizens: to understand, compare, speak up.'
+				'Lanterne Labs invents and tests new ways to give that power to citizens: to understand, compare, speak up.'
 			],
 			mainTag: 'Permanent product',
 			mainTitle: 'Tartuffe, the contradiction checker',
@@ -110,6 +112,7 @@
 <article class="lab">
 	<header class="hero">
 		<h1>{c.title}</h1>
+		<p class="lead">{c.lead}</p>
 	</header>
 
 	<section class="part">
@@ -179,6 +182,14 @@
 		line-height: 1.08;
 		margin: 0.4rem auto 1rem;
 		max-width: 38rem;
+		text-wrap: balance;
+	}
+	.lead {
+		color: var(--text-secondary);
+		font-size: 1.1rem;
+		line-height: 1.55;
+		max-width: 34rem;
+		margin: 0 auto;
 		text-wrap: balance;
 	}
 	.part {
