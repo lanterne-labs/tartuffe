@@ -10,6 +10,9 @@
 //   npm run audit:mobile -- https://tartuffe.me   # the site
 //   AUDIT_PATHS="/,/feed,/person/1" npm run audit:mobile
 //   AUDIT_OUT=/tmp/shots npm run audit:mobile
+//   AUDIT_VIEWPORTS="412x915,915x412" npm run audit:mobile   # a Pixel, upright and on its side
+//   AUDIT_DPR=1 npm run audit:mobile              # lighter screenshots
+//   AUDIT_CHROME_ARGS="--disable-web-security" npm run audit:mobile   # a local page over another origin's API
 //
 // Needs Google Chrome (CHROME names another binary). The browser renders on
 // the CPU (SwiftShader): never give it the GPU on this machine.
@@ -26,18 +29,23 @@ if (!CHROME) {
 	console.error('no Chrome found: set CHROME to its binary');
 	process.exit(2);
 }
-const PATHS = (process.env.AUDIT_PATHS ?? '/,/dashboard,/feed,/person/1,/about,/election/presidentielle-2027,/election/presidentielle-2027/voter,/election/presidentielle-2027/fonctionnement,/election/presidentielle-2027/verifier,/corrections,/contact,/lab,/profile')
+const PATHS = (process.env.AUDIT_PATHS ?? '/,/dashboard,/feed,/person/marine-le-pen,/about,/about/privacy,/verification,/mentions-legales,/election/presidentielle-2027,/election/presidentielle-2027/voter,/election/presidentielle-2027/fonctionnement,/election/presidentielle-2027/verifier,/corrections,/contact,/lab,/profile')
 	.split(',')
 	.map((s) => s.trim())
 	.filter(Boolean);
-const WIDTHS = (process.env.AUDIT_WIDTHS ?? '360,375').split(',').map(Number);
-const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+// A small Android phone, a Pixel upright, a Pixel on its side.
+const VIEWPORTS = (process.env.AUDIT_VIEWPORTS ?? '360x740,412x915,915x412').split(',').map((v) => {
+	const [width, height] = v.trim().split('x').map(Number);
+	return { width, height: height || 740 };
+});
+const DPR = Number(process.env.AUDIT_DPR ?? 2);
+const UA = 'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36';
 
 mkdirSync(out, { recursive: true });
 const browser = await puppeteer.launch({
 	executablePath: CHROME,
 	headless: true,
-	args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-first-run', '--lang=fr-FR']
+	args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-first-run', '--lang=fr-FR', ...(process.env.AUDIT_CHROME_ARGS ?? '').split(/\s+/).filter(Boolean)]
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -72,10 +80,10 @@ const audit = () => {
 
 let problems = 0;
 for (const path of PATHS) {
-	for (const width of WIDTHS) {
+	for (const { width, height } of VIEWPORTS) {
 		const page = await browser.newPage();
 		await page.setUserAgent(UA);
-		await page.setViewport({ width, height: 740, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+		await page.setViewport({ width, height, deviceScaleFactor: DPR, isMobile: true, hasTouch: true, isLandscape: width > height });
 		const errors = [];
 		page.on('pageerror', (e) => errors.push(String(e)));
 		page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
@@ -92,17 +100,17 @@ for (const path of PATHS) {
 			await page.evaluate(() => window.scrollTo(0, 0));
 			await sleep(400);
 			const res = await page.evaluate(audit);
-			await page.screenshot({ path: `${out}/${slug}-${width}.png`, fullPage: true });
+			await page.screenshot({ path: `${out}/${slug}-${width}x${height}.png`, fullPage: true });
 			const overflow = res.sw > res.vw;
 			if (overflow) problems++;
-			console.log(`\n== ${path} @ ${width}px  height ${res.h}px  ${overflow ? `OVERFLOW: page is ${res.sw}px wide` : 'no overflow'}`);
+			console.log(`\n== ${path} @ ${width}x${height}  height ${res.h}px  ${overflow ? `OVERFLOW: page is ${res.sw}px wide` : 'no overflow'}`);
 			if (res.out.length) console.log('  sticks out:\n    ' + res.out.join('\n    '));
 			if (res.tiny.length) console.log('  small targets (<32px):\n    ' + res.tiny.join('\n    '));
 			if (res.small.length) console.log('  small text (<11px):\n    ' + res.small.join('\n    '));
 			if (errors.length) console.log('  errors:\n    ' + [...new Set(errors)].slice(0, 6).join('\n    '));
 		} catch (e) {
 			problems++;
-			console.log(`\n== ${path} @ ${width}px  FAILED: ${e.message}`);
+			console.log(`\n== ${path} @ ${width}x${height}  FAILED: ${e.message}`);
 		}
 		await page.close();
 	}

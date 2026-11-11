@@ -81,6 +81,8 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.35rem;
+		flex-shrink: 0;
+		white-space: nowrap;
 		height: 28px;
 		padding: 0 0.65rem;
 		border-radius: var(--radius-full);

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The lab's temporary event (the featured poll) as a small card in a
-	// corner of the page: what it is, until when, one link. On a phone the
-	// card would hide half the screen: it is a slim bar at the bottom, the
+	// corner of the page: what it is, until when, one link. On a phone (upright
+	// or on its side) the card would hide half the screen: it is a slim bar at the bottom, the
 	// title, the days left and the link. Closed once, it stays closed for
 	// that event in this browser. Not shown on the event's own page.
 	import { page } from '$app/stores';
@@ -153,8 +153,9 @@
 		color: var(--text-primary);
 	}
 	/* The bar of a phone: the title, the days left, the link and the cross
-	   on one line, above the home indicator. */
-	@media (max-width: 640px) {
+	   on one line, above the home indicator. A phone on its side is wide but
+	   short: the card would cover half of its screen, so it gets the bar too. */
+	@media (max-width: 640px), (max-height: 520px) {
 		.event-card {
 			right: 0;
 			left: 0;
